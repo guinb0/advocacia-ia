@@ -1,0 +1,324 @@
+/* Primitivos visuais compartilhados pelos painéis do resultado. */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.tituloCard {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 14px;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- banner */
+
+.banner {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 15px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  border-left: 4px solid;
+}
+
+.banner strong {
+  display: block;
+  font-size: 1rem;
+  margin-bottom: 2px;
+}
+
+.banner span {
+  font-size: 0.87rem;
+  color: var(--muted);
+}
+
+.bannerIcone {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.ok {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: var(--ok);
+}
+
+.warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-color: var(--warn);
+}
+
+.err {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  border-color: var(--err);
+}
+
+/* ----------------------------------------------------------------- stats */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.stat {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+
+.statChave {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.statValor {
+  font-size: 1.28rem;
+  font-weight: 700;
+  margin-top: 3px;
+  letter-spacing: -0.02em;
+}
+
+.barra {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 7px;
+}
+
+.barraPreenchimento {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s;
+}
+
+/* ------------------------------------------------------------------ abas */
+
+.abas {
+  display: flex;
+  gap: 3px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.aba {
+  padding: 9px 14px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 0.87rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.aba:hover {
+  color: var(--text);
+}
+
+.abaAtiva {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- tabela */
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela th {
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.tabela td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.tabela tr:last-child td {
+  border-bottom: none;
+}
+
+.direita {
+  text-align: right;
+}
+
+.valor {
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  word-break: break-word;
+}
+
+.observacao {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------------ tags */
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.tagOk {
+  background: color-mix(in srgb, var(--ok) 20%, transparent);
+  color: var(--ok);
+}
+
+.tagErr {
+  background: color-mix(in srgb, var(--err) 20%, transparent);
+  color: var(--err);
+}
+
+.tagWarn {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+}
+
+/* -------------------------------------------------------------- mensagens */
+
+.secao {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 700;
+  margin: 18px 0 9px;
+}
+
+.secao:first-child {
+  margin-top: 0;
+}
+
+.mensagens {
+  list-style: none;
+  margin-bottom: 14px;
+}
+
+.mensagens li {
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  margin-bottom: 7px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--border);
+}
+
+.msgErro {
+  border-left-color: var(--err) !important;
+}
+
+.msgAviso {
+  border-left-color: var(--warn) !important;
+}
+
+.msgSugestao {
+  border-left-color: var(--accent) !important;
+}
+
+/* ------------------------------------------------------------------ blocos */
+
+.pre {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 14px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  max-height: 520px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.downloads {
+  display: flex;
+  gap: 9px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.downloads a {
+  padding: 7px 13px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.downloads a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.linhas {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.linha {
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 11px;
+}
+
+.linhaConfianca {
+  color: var(--muted);
+  flex: 0 0 46px;
+  text-align: right;
+}
+
+.caixaErro {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  border: 1px solid var(--err);
+  border-radius: 9px;
+  padding: 14px;
+  font-size: 0.88rem;
+}
+
+.vazio {
+  color: var(--muted);
+  text-align: center;
+  padding: 52px 20px;
+  font-size: 0.92rem;
+}
