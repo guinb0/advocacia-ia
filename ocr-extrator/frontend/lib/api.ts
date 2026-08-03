@@ -1,4 +1,12 @@
-import type { Documento, TipoDocumento } from "./types";
+import type {
+  Caso,
+  Categoria,
+  Documento,
+  Pedido,
+  RespostaEnvio,
+  SituacaoCaso,
+  TipoDocumento,
+} from "./types";
 
 /**
  * O navegador fala direto com o FastAPI, sem passar pelo rewrite do Next.
@@ -63,4 +71,70 @@ export async function baixarTexto(caminho: string): Promise<string> {
   const r = await fetch(urlApi(caminho));
   if (!r.ok) throw new ApiError(`Erro ${r.status}`);
   return r.text();
+}
+
+// ------------------------------------------------------------- categorias
+
+export async function listarCategorias(): Promise<Categoria[]> {
+  const dados = await comoJson<{ categorias: Categoria[] }>(
+    await fetch(urlApi("/api/categorias")),
+  );
+  return dados.categorias;
+}
+
+// ------------------------------------------------------------------ casos
+
+export async function listarCasos(): Promise<Caso[]> {
+  const dados = await comoJson<{ casos: Caso[] }>(await fetch(urlApi("/api/casos")));
+  return dados.casos;
+}
+
+export async function criarCaso(
+  cliente: string,
+  categoria: string,
+  observacao = "",
+): Promise<Caso> {
+  const form = new FormData();
+  form.append("cliente", cliente);
+  form.append("categoria", categoria);
+  form.append("observacao", observacao);
+  return comoJson<Caso>(await fetch(urlApi("/api/casos"), { method: "POST", body: form }));
+}
+
+export async function obterCaso(casoId: string): Promise<SituacaoCaso> {
+  return comoJson<SituacaoCaso>(await fetch(urlApi(`/api/casos/${casoId}`)));
+}
+
+export async function excluirCaso(casoId: string): Promise<void> {
+  await comoJson(await fetch(urlApi(`/api/casos/${casoId}`), { method: "DELETE" }));
+}
+
+export async function obterPedido(casoId: string, incluirOpcionais: boolean): Promise<Pedido> {
+  const query = incluirOpcionais ? "?incluir_opcionais=true" : "";
+  return comoJson<Pedido>(await fetch(urlApi(`/api/casos/${casoId}/pedido${query}`)));
+}
+
+// --------------------------------------------------------------- entregas
+
+export async function enviarDocumento(
+  casoId: string,
+  itemCodigo: string,
+  arquivo: File,
+  idioma = "pt",
+): Promise<RespostaEnvio> {
+  const form = new FormData();
+  form.append("item", itemCodigo);
+  form.append("arquivo", arquivo);
+  form.append("idioma", idioma);
+  return comoJson<RespostaEnvio>(
+    await fetch(urlApi(`/api/casos/${casoId}/documentos`), { method: "POST", body: form }),
+  );
+}
+
+export async function excluirEntrega(entregaId: string): Promise<void> {
+  await comoJson(await fetch(urlApi(`/api/entregas/${entregaId}`), { method: "DELETE" }));
+}
+
+export function urlArquivoEntrega(entregaId: string): string {
+  return urlApi(`/api/entregas/${entregaId}/arquivo`);
 }

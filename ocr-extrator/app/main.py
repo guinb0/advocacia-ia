@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import categorias, pipeline
+from . import armazenamento, casos, categorias, pipeline
 from .extractors import ROTULOS_TIPO
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,9 +32,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+armazenamento.inicializar()
 
 
 @app.get("/")
@@ -84,12 +87,8 @@ def aquecer():
         raise HTTPException(status_code=500, detail=f"Falha ao carregar o modelo: {exc}") from exc
 
 
-@app.post("/api/extrair")
-async def extrair(
-    arquivo: UploadFile = File(...),
-    idioma: str = Form("pt"),
-    tipo: str | None = Form(None),
-):
+async def _ler_upload(arquivo: UploadFile) -> bytes:
+    """Valida extensão e tamanho, devolvendo os bytes do arquivo enviado."""
     ext = Path(arquivo.filename or "").suffix.lower()
     if ext and ext not in EXTENSOES:
         raise HTTPException(400, f"Extensão '{ext}' não suportada. Use: {', '.join(sorted(EXTENSOES))}")
@@ -99,22 +98,149 @@ async def extrair(
         raise HTTPException(400, "Arquivo vazio.")
     if len(conteudo) > MAX_BYTES:
         raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
+    return conteudo
 
-    tipo_forcado = tipo if tipo and tipo not in ("auto", "", "None") else None
 
+async def _processar(conteudo: bytes, nome: str, idioma: str, tipo_forcado: str | None) -> dict:
     try:
         # O OCR leva segundos e é puro CPU: fora do event loop, senão o servidor
         # para de responder (inclusive ao /api/saude) enquanto processa.
-        resultado = await run_in_threadpool(
-            pipeline.processar, conteudo, arquivo.filename or "sem-nome", idioma, tipo_forcado
-        )
+        return await run_in_threadpool(pipeline.processar, conteudo, nome, idioma, tipo_forcado)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
-        log.exception("Erro ao processar %s", arquivo.filename)
+        log.exception("Erro ao processar %s", nome)
         raise HTTPException(500, f"Erro ao processar a imagem: {exc}") from exc
 
+
+@app.post("/api/extrair")
+async def extrair(
+    arquivo: UploadFile = File(...),
+    idioma: str = Form("pt"),
+    tipo: str | None = Form(None),
+):
+    conteudo = await _ler_upload(arquivo)
+    tipo_forcado = tipo if tipo and tipo not in ("auto", "", "None") else None
+    resultado = await _processar(conteudo, arquivo.filename or "sem-nome", idioma, tipo_forcado)
     return JSONResponse(resultado)
+
+
+# ------------------------------------------------------------------- casos
+
+
+@app.post("/api/casos", status_code=201)
+def criar_caso(cliente: str = Form(...), categoria: str = Form(...), observacao: str = Form("")):
+    if not cliente.strip():
+        raise HTTPException(400, "Informe o nome do cliente.")
+    if categorias.obter(categoria) is None:
+        raise HTTPException(400, f"Categoria '{categoria}' não existe.")
+    return armazenamento.criar_caso(cliente, categoria, observacao)
+
+
+@app.get("/api/casos")
+def listar_casos():
+    return {"casos": armazenamento.listar_casos()}
+
+
+@app.get("/api/casos/{caso_id}")
+def obter_caso(caso_id: str):
+    situacao = casos.montar_situacao(caso_id)
+    if situacao is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return situacao
+
+
+@app.patch("/api/casos/{caso_id}")
+def atualizar_caso(caso_id: str, cliente: str | None = Form(None), observacao: str | None = Form(None)):
+    if not armazenamento.atualizar_caso(caso_id, cliente, observacao):
+        raise HTTPException(404, "Caso não encontrado ou nada para atualizar.")
+    return armazenamento.obter_caso(caso_id)
+
+
+@app.delete("/api/casos/{caso_id}")
+def excluir_caso(caso_id: str):
+    if not armazenamento.excluir_caso(caso_id):
+        raise HTTPException(404, "Caso não encontrado.")
+    return {"removido": True}
+
+
+@app.get("/api/casos/{caso_id}/pedido")
+def pedido_do_caso(caso_id: str, incluir_opcionais: bool = False):
+    """Texto pronto para o advogado mandar ao cliente com o que ainda falta."""
+    pedido = casos.montar_pedido(caso_id, incluir_opcionais)
+    if pedido is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return pedido
+
+
+@app.post("/api/casos/{caso_id}/documentos", status_code=201)
+async def enviar_documento(
+    caso_id: str,
+    item: str = Form(...),
+    arquivo: UploadFile = File(...),
+    idioma: str = Form("pt"),
+):
+    """Recebe um documento, roda o OCR e marca o item do checklist."""
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
+
+    item_checklist = next((i for i in categoria.itens if i.codigo == item), None)
+    if item_checklist is None:
+        raise HTTPException(400, f"Item '{item}' não pertence ao checklist de {categoria.nome}.")
+
+    conteudo = await _ler_upload(arquivo)
+    nome = arquivo.filename or "sem-nome"
+
+    # Passar o tipo esperado orienta a extração dos campos, mas o classificador
+    # continua opinando por conta própria — é a opinião dele que revela se veio o
+    # arquivo trocado.
+    resultado = await _processar(conteudo, nome, idioma, item_checklist.tipo_ocr)
+
+    detectado = resultado.get("tipo", {}).get("detectado")
+    confere = casos.tipo_confere(item_checklist, detectado)
+
+    destino = armazenamento.DIR_ARQUIVOS / caso_id
+    destino.mkdir(parents=True, exist_ok=True)
+    caminho = destino / f"{item}_{resultado['id']}{Path(nome).suffix.lower()}"
+    caminho.write_bytes(conteudo)
+
+    entrega = armazenamento.registrar_entrega(
+        caso_id, item, nome, caminho, resultado, confere
+    )
+    return {"entrega": entrega, "extracao": resultado}
+
+
+@app.get("/api/entregas/{entrega_id}")
+def obter_entrega(entrega_id: str):
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+    entrega.pop("caminho", None)  # caminho no disco não interessa ao cliente HTTP
+    return entrega
+
+
+@app.get("/api/entregas/{entrega_id}/arquivo")
+def baixar_arquivo_entrega(entrega_id: str):
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+
+    caminho = Path(entrega["caminho"]).resolve()
+    if armazenamento.DIR_ARQUIVOS.resolve() not in caminho.parents or not caminho.is_file():
+        raise HTTPException(404, "Arquivo não encontrado no disco.")
+    return FileResponse(caminho, filename=entrega["arquivo"])
+
+
+@app.delete("/api/entregas/{entrega_id}")
+def excluir_entrega(entrega_id: str):
+    if not armazenamento.excluir_entrega(entrega_id):
+        raise HTTPException(404, "Entrega não encontrada.")
+    return {"removido": True}
 
 
 @app.get("/api/temp/{nome}")

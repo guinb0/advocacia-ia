@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 tmp/
 tests/amostras/
+
+# Documentos de clientes e o banco dos casos: nunca vão para o repositório.
+dados/

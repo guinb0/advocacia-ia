@@ -66,8 +66,12 @@ export interface Documento {
     tamanho_bytes: number;
   };
   tipo: {
+    /** Tipo usado na extração — igual a `detectado` quando ninguém força. */
     codigo: string;
     descricao: string;
+    /** O que o classificador leu sozinho; é o que revela arquivo trocado. */
+    detectado: string;
+    descricao_detectado: string;
     confianca_classificacao: number;
     pontuacoes: Record<string, number>;
     forcado_pelo_usuario: boolean;
@@ -94,4 +98,92 @@ export interface Documento {
 export interface TipoDocumento {
   codigo: string;
   descricao: string;
+}
+
+// ------------------------------------------------ categorias e checklists
+
+export interface ItemChecklist {
+  codigo: string;
+  numero: number;
+  nome: string;
+  obrigatorio: boolean;
+  /** Código do classificador de OCR, quando o sistema sabe conferir o tipo. */
+  tipo_ocr: string | null;
+  observacao: string;
+}
+
+export interface Categoria {
+  codigo: string;
+  nome: string;
+  descricao: string;
+  total_documentos: number;
+  total_obrigatorios: number;
+  itens: ItemChecklist[];
+}
+
+// ------------------------------------------------------ casos e entregas
+
+export type StatusItem = "pendente" | "conferir" | "entregue";
+
+export interface Caso {
+  id: string;
+  cliente: string;
+  categoria: string;
+  observacao: string;
+  criado_em: string;
+  atualizado_em: string;
+  total_entregas?: number;
+}
+
+export interface Entrega {
+  id: string;
+  caso_id: string;
+  item_codigo: string;
+  arquivo: string;
+  tipo_detectado: string | null;
+  /** `null` quando não há classificador para o item ou o OCR não reconheceu. */
+  tipo_confere: boolean | null;
+  veredito: Veredito | null;
+  dados_utilizaveis: boolean;
+  score_legibilidade: number | null;
+  criado_em: string;
+  /** Mensagens para o advogado — não são o texto que vai ao cliente. */
+  alertas: string[];
+}
+
+export interface ItemSituacao extends ItemChecklist {
+  status: StatusItem;
+  entregas: Entrega[];
+}
+
+export interface Progresso {
+  obrigatorios_total: number;
+  obrigatorios_entregues: number;
+  obrigatorios_pendentes: number;
+  opcionais_total: number;
+  opcionais_entregues: number;
+  itens_a_conferir: number;
+  percentual_obrigatorios: number;
+  pronto: boolean;
+}
+
+export interface SituacaoCaso {
+  caso: Caso;
+  categoria: { codigo: string; nome: string; descricao: string } | null;
+  itens: ItemSituacao[];
+  progresso: Progresso;
+  erro?: string;
+}
+
+export interface Pedido {
+  texto: string;
+  faltando_obrigatorios: string[];
+  faltando_opcionais: string[];
+  reenviar: string[];
+  progresso: Progresso;
+}
+
+export interface RespostaEnvio {
+  entrega: Entrega;
+  extracao: Documento;
 }
