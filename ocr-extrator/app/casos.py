@@ -1,0 +1,202 @@
+"""Regras do caso: status de cada item do checklist e o pedido para o cliente.
+
+A tela do advogado responde três perguntas: o que já chegou, o que falta e o que
+chegou com problema. Tudo aqui é derivado das entregas — nada de status guardado
+à mão, que sairia do lugar assim que alguém apagasse uma entrega.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from . import armazenamento, categorias
+from .categorias import ItemChecklist
+from .extractors import ROTULOS_TIPO
+
+# Status possíveis de um item do checklist.
+PENDENTE = "pendente"          # nada foi enviado
+CONFERIR = "conferir"          # chegou, mas com ressalva (ilegível ou tipo trocado)
+ENTREGUE = "entregue"          # chegou e passou na validação
+
+
+def _status_do_item(entregas: list[dict[str, Any]]) -> str:
+    if not entregas:
+        return PENDENTE
+    # Basta uma entrega boa: "atestados médicos" pode ter 5 arquivos e 1 ruim.
+    if any(e["dados_utilizaveis"] and e["tipo_confere"] is not False for e in entregas):
+        return ENTREGUE
+    return CONFERIR
+
+
+def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[str]:
+    alertas: list[str] = []
+
+    if entrega["tipo_confere"] is False:
+        codigo = entrega.get("tipo_detectado")
+        # ROTULOS_TIPO traduz "cnh" -> "CNH (Carteira Nacional de Habilitação)".
+        legivel = ROTULOS_TIPO.get(codigo, codigo) if codigo else "algo não identificado"
+        alertas.append(
+            f"Enviado como '{item.nome}', mas o documento parece ser {legivel}. "
+            "Confira se não houve troca de arquivo."
+        )
+    if not entrega["dados_utilizaveis"]:
+        score = entrega.get("score_legibilidade")
+        sufixo = f" (legibilidade {score}%)" if score is not None else ""
+        alertas.append(f"Não foi possível extrair os dados com segurança{sufixo}.")
+
+    return alertas
+
+
+def montar_situacao(caso_id: str) -> dict[str, Any] | None:
+    """Caso + checklist com o status de cada item + contagens de progresso."""
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        return None
+
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        # A categoria saiu do código mas o caso continua no banco.
+        return {
+            "caso": caso,
+            "categoria": None,
+            "erro": f"Categoria '{caso['categoria']}' não existe mais no sistema.",
+            "itens": [],
+        }
+
+    entregas = armazenamento.listar_entregas(caso_id)
+    por_item: dict[str, list[dict[str, Any]]] = {}
+    for entrega in entregas:
+        por_item.setdefault(entrega["item_codigo"], []).append(entrega)
+
+    itens = []
+    for item in categoria.itens:
+        do_item = por_item.get(item.codigo, [])
+        status = _status_do_item(do_item)
+        itens.append(
+            {
+                **item.to_dict(),
+                "status": status,
+                "entregas": [
+                    {**e, "alertas": _alertas_da_entrega(e, item)} for e in do_item
+                ],
+            }
+        )
+
+    obrigatorios = [i for i in itens if i["obrigatorio"]]
+    entregues_obrig = [i for i in obrigatorios if i["status"] == ENTREGUE]
+    pendentes_obrig = [i for i in obrigatorios if i["status"] == PENDENTE]
+    conferir = [i for i in itens if i["status"] == CONFERIR]
+
+    return {
+        "caso": caso,
+        "categoria": {
+            "codigo": categoria.codigo,
+            "nome": categoria.nome,
+            "descricao": categoria.descricao,
+        },
+        "itens": itens,
+        "progresso": {
+            "obrigatorios_total": len(obrigatorios),
+            "obrigatorios_entregues": len(entregues_obrig),
+            "obrigatorios_pendentes": len(pendentes_obrig),
+            "opcionais_total": len(itens) - len(obrigatorios),
+            "opcionais_entregues": sum(
+                1 for i in itens if not i["obrigatorio"] and i["status"] == ENTREGUE
+            ),
+            "itens_a_conferir": len(conferir),
+            "percentual_obrigatorios": (
+                round(len(entregues_obrig) / len(obrigatorios) * 100) if obrigatorios else 100
+            ),
+            "pronto": not pendentes_obrig and not conferir,
+        },
+    }
+
+
+def tipo_confere(item: ItemChecklist, tipo_detectado: str | None) -> bool | None:
+    """O arquivo enviado é mesmo o documento pedido?
+
+    `None` quando não dá para afirmar: ou o item não tem classificador, ou o OCR
+    não reconheceu o tipo. Só devolve False quando o classificador reconheceu com
+    confiança um tipo diferente do esperado — aí houve troca de arquivo mesmo.
+    """
+    if item.tipo_ocr is None:
+        return None
+    if not tipo_detectado or tipo_detectado == "desconhecido":
+        return None
+    return tipo_detectado == item.tipo_ocr
+
+
+# ------------------------------------------------------- pedido ao cliente
+
+
+def _linha_do_item(item: dict[str, Any]) -> str:
+    return f"- {item['nome']}"
+
+
+def _motivo_para_o_cliente(item: dict[str, Any]) -> str:
+    """Por que reenviar, em linguagem de cliente.
+
+    Os alertas de `_alertas_da_entrega` são para a tela do advogado e citam nome
+    de classificador ("o sistema leu como 'cpf'"). Isso não vai numa mensagem de
+    WhatsApp para o cliente.
+    """
+    entregas = item["entregas"]
+
+    if any(e["tipo_confere"] is False for e in entregas):
+        return "o arquivo enviado parece ser de outro documento"
+    if any(not e["dados_utilizaveis"] for e in entregas):
+        return "a foto não ficou legível o suficiente"
+    return "precisamos de uma nova cópia"
+
+
+def montar_pedido(caso_id: str, incluir_opcionais: bool = False) -> dict[str, Any] | None:
+    """Texto pronto para o advogado mandar ao cliente com o que ainda falta."""
+    situacao = montar_situacao(caso_id)
+    if situacao is None or situacao.get("categoria") is None:
+        return None
+
+    itens = situacao["itens"]
+    faltando_obrig = [i for i in itens if i["obrigatorio"] and i["status"] == PENDENTE]
+    faltando_opc = [i for i in itens if not i["obrigatorio"] and i["status"] == PENDENTE]
+    reenviar = [i for i in itens if i["status"] == CONFERIR]
+
+    cliente = situacao["caso"]["cliente"]
+    partes = [f"Olá, {cliente}!", ""]
+
+    if not faltando_obrig and not reenviar:
+        partes.append(
+            "Recebemos todos os documentos obrigatórios do seu processo. Obrigado!"
+        )
+    else:
+        partes.append(
+            "Para dar andamento ao seu processo, precisamos dos documentos abaixo."
+        )
+
+    if faltando_obrig:
+        partes += ["", "DOCUMENTOS OBRIGATÓRIOS QUE AINDA FALTAM:"]
+        partes += [_linha_do_item(i) for i in faltando_obrig]
+
+    if reenviar:
+        partes += ["", "DOCUMENTOS QUE PRECISAM SER REENVIADOS:"]
+        partes += [f"- {i['nome']} — {_motivo_para_o_cliente(i)}" for i in reenviar]
+
+    if incluir_opcionais and faltando_opc:
+        partes += ["", "SE VOCÊ TIVER, ENVIE TAMBÉM (opcionais, mas ajudam no processo):"]
+        partes += [_linha_do_item(i) for i in faltando_opc]
+
+    partes += [
+        "",
+        "Dicas para a foto sair legível:",
+        "- Coloque o documento sobre uma superfície de cor contrastante;",
+        "- Fotografe em local bem iluminado, sem sombra e sem flash;",
+        "- Enquadre o documento inteiro, preenchendo a maior parte da tela;",
+        "- Confira se dá para ler todos os números antes de enviar.",
+    ]
+
+    return {
+        "texto": "\n".join(partes),
+        "faltando_obrigatorios": [i["nome"] for i in faltando_obrig],
+        "faltando_opcionais": [i["nome"] for i in faltando_opc],
+        "reenviar": [i["nome"] for i in reenviar],
+        "progresso": situacao["progresso"],
+    }

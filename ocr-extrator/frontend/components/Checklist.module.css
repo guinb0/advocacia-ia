@@ -1,0 +1,275 @@
+.cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.voltar {
+  padding: 8px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.voltar:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.cliente {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Progresso à esquerda, pedido ao cliente à direita. */
+.paineis {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 860px) {
+  .paineis {
+    grid-template-columns: 1fr;
+  }
+}
+
+.numeroGrande {
+  font-size: 2.6rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.numeroTotal {
+  font-size: 1.4rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.resumo {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.resumo strong {
+  color: var(--text);
+}
+
+.completo {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border-left: 3px solid var(--ok);
+}
+
+/* ------------------------------------------------------ pedido ao cliente */
+
+.acoesPedido {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.botaoCopiar {
+  padding: 8px 14px;
+  border-radius: 9px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.botaoCopiar:hover {
+  background: var(--accent-2);
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.textoPedido {
+  width: 100%;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* --------------------------------------------------------------- checklist */
+
+.lista {
+  list-style: none;
+}
+
+.item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 9px;
+  background: var(--surface);
+}
+
+.entregue {
+  border-left-color: var(--ok);
+}
+
+.conferir {
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 6%, var(--surface));
+}
+
+.pendente {
+  border-left-color: var(--border);
+}
+
+.cabecalhoItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.marcador {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex: none;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.entregue .marcador {
+  background: color-mix(in srgb, var(--ok) 22%, transparent);
+  color: var(--ok);
+}
+
+.conferir .marcador {
+  background: color-mix(in srgb, var(--warn) 25%, transparent);
+  color: var(--warn);
+}
+
+.identificacao {
+  flex: 1;
+  min-width: 0;
+}
+
+.nome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.92rem;
+  flex-wrap: wrap;
+}
+
+.botaoEnviar {
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.botaoEnviar:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.botaoEnviar:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------- entregas */
+
+.entregas {
+  list-style: none;
+  margin: 10px 0 0 36px;
+}
+
+.entrega {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+.arquivo {
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+  flex: 1;
+  min-width: 120px;
+}
+
+.arquivo:hover {
+  text-decoration: underline;
+}
+
+.remover {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.remover:hover {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
+.alertas {
+  flex-basis: 100%;
+  list-style: none;
+  margin-top: 4px;
+}
+
+.alertas li {
+  font-size: 0.78rem;
+  color: var(--warn);
+  padding: 3px 0;
+}

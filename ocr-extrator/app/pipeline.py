@@ -247,10 +247,14 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
     qual = quality.avaliar(original, conf_media, len(linhas), qtd_caracteres)
 
     texto_norm = "\n".join(normalizar(t) for t in textos)
-    if tipo_forcado and tipo_forcado in ROTULOS_TIPO:
-        tipo, pontos, todos = tipo_forcado, 100, {}
-    else:
-        tipo, pontos, todos = classificar(texto_norm)
+
+    # A classificação roda SEMPRE, mesmo com tipo forçado. Forçar melhora a extração
+    # (diz quais campos procurar), mas se substituísse o palpite do classificador não
+    # sobraria como detectar que veio o arquivo errado — e é justamente disso que o
+    # checklist depende para acusar troca de documento.
+    tipo_detectado, pontos, todos = classificar(texto_norm)
+    forcado = bool(tipo_forcado and tipo_forcado in ROTULOS_TIPO)
+    tipo = tipo_forcado if forcado else tipo_detectado
 
     from .extractors import extrair_campos
 
@@ -269,11 +273,15 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
             "tamanho_bytes": len(conteudo),
         },
         "tipo": {
+            # `codigo` é o tipo usado na extração; `detectado` é o que o classificador
+            # leu sozinho. Iguais quando ninguém força o tipo.
             "codigo": tipo,
             "descricao": ROTULOS_TIPO.get(tipo, tipo),
+            "detectado": tipo_detectado,
+            "descricao_detectado": ROTULOS_TIPO.get(tipo_detectado, tipo_detectado),
             "confianca_classificacao": pontos,
             "pontuacoes": todos,
-            "forcado_pelo_usuario": bool(tipo_forcado),
+            "forcado_pelo_usuario": forcado,
         },
         "campos": [c.to_dict() for c in campos],
         "validacao": validacao,

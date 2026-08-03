@@ -1,11 +1,24 @@
-# Extrator de Documentos — PaddleOCR
+# Documentos do Cliente
 
-Lê fotos de documentos brasileiros, extrai os campos, gera **JSON e XML temporários**
-e **valida** se a extração é confiável e se a foto é legível.
+Ajuda o advogado a **cobrar documentos do cliente**: escolhe a categoria da ação, o
+sistema mostra o checklist, marca o que já chegou, confere a legibilidade de cada foto
+e gera a mensagem pronta com o que ainda falta.
 
 Roda 100% na sua máquina — nenhuma imagem sai do computador.
 
-**Stack:** FastAPI + PaddleOCR no backend, Next.js 16 + React 19 no frontend.
+**Stack:** FastAPI + PaddleOCR no backend, Next.js 16 + React 19 no frontend, SQLite.
+
+## O fluxo
+
+1. **Criar o caso** — nome do cliente + categoria (ex.: Acidente do Trabalho / Correios).
+2. **Copiar o pedido** e mandar no WhatsApp: a lista dos 14 obrigatórios, com dicas de
+   como tirar a foto.
+3. **Enviar cada documento** que o cliente responder, no item correspondente. O OCR lê,
+   valida os dígitos verificadores e mede a legibilidade.
+4. **O checklist se atualiza sozinho.** Se a foto veio ilegível ou o cliente mandou o
+   arquivo errado, o item fica em "conferir" e entra no próximo pedido, com o motivo.
+
+Nada de status marcado à mão: tudo é derivado dos arquivos entregues.
 
 ---
 
@@ -128,11 +141,81 @@ e apagados automaticamente após 30 minutos.
 
 ---
 
+## Status de cada item
+
+| Status | Quando | O que acontece |
+|---|---|---|
+| `pendente` | nenhum arquivo enviado | entra no pedido ao cliente |
+| `conferir` | chegou, mas ilegível ou com o tipo trocado | entra no pedido como "reenviar", com o motivo |
+| `entregue` | chegou e passou na validação | sai do pedido |
+
+Um item aceita **vários arquivos** (Atestados médicos costuma ter cinco) e basta um bom
+para dar o item por entregue.
+
+### Como o sistema pega arquivo trocado
+
+Quando o item tem `tipo_ocr`, o classificador roda **por conta própria**, mesmo o
+advogado tendo dito qual documento é aquele — se ele apenas confirmasse o palpite do
+usuário, jamais acusaria uma CNH enviada no lugar do RG. O tipo informado orienta a
+extração dos campos; o tipo detectado é o que vale para a conferência.
+
+Por isso o JSON traz os dois: `tipo.codigo` (usado na extração) e `tipo.detectado`
+(a leitura independente).
+
+## Onde ficam os dados
+
+| Caminho | O quê |
+|---|---|
+| `dados/casos.db` | SQLite com os casos e as entregas |
+| `dados/casos/<id>/` | os arquivos que o cliente mandou |
+
+`dados/` está no `.gitignore` — **documento de cliente nunca vai para o repositório**.
+Backup é copiar essa pasta; apagar um caso pela interface apaga os arquivos junto.
+
+## Categorias e checklists
+
+Cada tipo de ação tem um checklist de documentos a cobrar do cliente. Eles ficam em
+[`app/categorias.py`](app/categorias.py), transcritos dos documentos que o escritório
+manda em `.docx` (guardados em [`docs/`](docs/)).
+
+Implementada até agora:
+
+| Categoria | Documentos | Obrigatórios |
+|---|---|---|
+| Acidente do Trabalho (Correios) | 33 | 14 |
+
+No `.docx` original os obrigatórios estão **em vermelho**; na transcrição isso virou o
+campo `obrigatorio`. O campo `tipo_ocr` liga o item ao classificador de documentos —
+quando preenchido (RG, CPF, comprovante de residência, CTPS), o sistema confere sozinho
+se o arquivo enviado é mesmo o documento pedido.
+
+### Transcrever um checklist novo
+
+```powershell
+.\.venv\Scripts\python.exe -m tests.ler_checklist_docx "docs\CHECK LIST ....docx"
+```
+
+Ele imprime cada linha marcando `[X]` para os itens em vermelho. Transcreva o resultado
+para uma nova `Categoria` em `app/categorias.py` e rode `tests.test_categorias`, que
+compara a lista do código com o `.docx` item a item — nome, numeração e obrigatoriedade.
+
 ## API
 
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/` | interface web |
+| `GET` | `/api/categorias` | categorias com seus checklists |
+| `GET` | `/api/categorias/{codigo}` | uma categoria |
+| `POST` | `/api/casos` | cria o caso (`cliente`, `categoria`) |
+| `GET` | `/api/casos` | lista os casos |
+| `GET` | `/api/casos/{id}` | checklist com o status de cada item e o progresso |
+| `PATCH` | `/api/casos/{id}` | renomeia o cliente / muda a observação |
+| `DELETE` | `/api/casos/{id}` | apaga o caso e **todos** os arquivos dele |
+| `GET` | `/api/casos/{id}/pedido` | texto pronto para mandar ao cliente |
+| `POST` | `/api/casos/{id}/documentos` | envia um documento para um item (`item`, `arquivo`) |
+| `GET` | `/api/entregas/{id}` | uma entrega, com a extração completa |
+| `GET` | `/api/entregas/{id}/arquivo` | baixa o arquivo enviado |
+| `DELETE` | `/api/entregas/{id}` | remove a entrega e o arquivo |
 | `POST` | `/api/extrair` | multipart: `arquivo`, `idioma` (`pt`), `tipo` (`auto` ou código) |
 | `GET` | `/api/tipos` | tipos de documento suportados |
 | `GET` | `/api/saude` | status do modelo |
@@ -184,6 +267,8 @@ apontar para outro host, defina `NEXT_PUBLIC_OCR_API`.
 
 ```powershell
 .\.venv\Scripts\python.exe -m tests.test_validators     # dígitos verificadores
+.\.venv\Scripts\python.exe -m tests.test_categorias     # checklist do código vs. o .docx
+.\.venv\Scripts\python.exe -m tests.test_casos          # fluxo do caso (banco temporário)
 .\.venv\Scripts\python.exe -m tests.test_pipeline       # end-to-end com documentos sintéticos
 .\.venv\Scripts\python.exe -m tests.test_concorrencia   # 3 OCRs simultâneos
 .\.venv\Scripts\python.exe -m tests.bench               # custo do classificador de orientação
@@ -208,17 +293,26 @@ da mãe vindo contaminado com a categoria da coluna vizinha, e o nº de registro
 ```
 app/                     backend
   main.py                API FastAPI e rotas
+  categorias.py          categorias de processo e seus checklists de documentos
+  armazenamento.py       SQLite: casos, entregas e os arquivos em disco
+  casos.py               status de cada item e o texto do pedido ao cliente
   pipeline.py            orquestra OCR -> campos -> validação -> JSON/XML
   ocr_engine.py          wrapper do PaddleOCR, thread dedicada, colunas -> linhas
   extractors.py          classificação do tipo, geometria da página e extração
   validators.py          dígitos verificadores dos documentos brasileiros
   quality.py             métricas de legibilidade e pré-processamento
 frontend/                Next.js 16 (App Router) + React 19
-  app/page.tsx           página única, orquestra os componentes
-  components/            painéis do resultado (campos, validação, qualidade, JSON/XML)
+  app/page.tsx           alterna entre a lista de casos, o checklist e a análise avulsa
+  components/
+    ListaCasos.tsx       criar caso e escolher qual abrir
+    Checklist.tsx        progresso, filtros e a lista de itens
+    ItemChecklistLinha   um item: status, envio e as entregas já feitas
+    PedidoCliente.tsx    o texto para mandar ao cliente, com botão de copiar
+    Resultado.tsx        painéis da análise avulsa (campos, qualidade, JSON/XML)
   lib/api.ts             cliente HTTP do backend
-  lib/types.ts           espelho tipado do JSON de /api/extrair
-  lib/useExtracao.ts     estado do upload, do modelo e dos tipos
+  lib/types.ts           espelho tipado do JSON da API
+  lib/useCasos.ts        estado dos casos, do checklist e dos envios
+  lib/useExtracao.ts     estado da análise avulsa
 static/index.html        mesma UI em HTML puro, servida pelo FastAPI (plano B sem Node)
 tests/                   validadores, end-to-end, concorrência e benchmark
 tmp/                     JSON/XML temporários (TTL 30 min)

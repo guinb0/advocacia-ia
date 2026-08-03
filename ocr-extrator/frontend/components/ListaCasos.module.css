@@ -1,0 +1,124 @@
+.colunas {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rotulo {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 14px 0 5px;
+  font-weight: 600;
+}
+
+.rotulo:first-of-type {
+  margin-top: 0;
+}
+
+.campo {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.botaoPrimario {
+  width: 100%;
+  margin-top: 16px;
+  padding: 11px 14px;
+  border-radius: 9px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.botaoPrimario:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+
+.botaoPrimario:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lista {
+  list-style: none;
+}
+
+.itemCaso {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.itemCaso:last-child {
+  border-bottom: none;
+}
+
+.abrir {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.abrir:hover {
+  background: var(--surface-2);
+}
+
+.botaoDiscreto,
+.perigo {
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.botaoDiscreto:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.perigo {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.perigo:hover {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
+.confirmar {
+  display: flex;
+  gap: 6px;
+}
