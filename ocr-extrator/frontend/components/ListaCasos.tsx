@@ -31,6 +31,7 @@ export default function ListaCasos({
   const [confirmando, setConfirmando] = useState<string | null>(null);
 
   const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
+  const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
 
   async function criar(evento: React.FormEvent) {
     evento.preventDefault();
@@ -70,16 +71,32 @@ export default function ListaCasos({
           </label>
           <select
             id="categoria"
-            className={estilos.campo}
+            className={`${estilos.campo} ${estilos.seletorCategoria}`}
             value={categoriaSelecionada}
             onChange={(e) => setCategoria(e.target.value)}
+            aria-describedby={categoriaEscolhida ? "resumo-categoria" : undefined}
           >
             {categorias.map((c) => (
               <option key={c.codigo} value={c.codigo}>
-                {c.nome} — {c.total_obrigatorios} obrigatórios
+                {c.nome}
               </option>
             ))}
           </select>
+
+          {categoriaEscolhida && (
+            <div id="resumo-categoria" className={estilos.resumoCategoria}>
+              <strong>{categoriaEscolhida.nome}</strong>
+              <p>{categoriaEscolhida.descricao}</p>
+              <div className={estilos.numerosCategoria}>
+                <span>
+                  <b>{categoriaEscolhida.total_obrigatorios}</b> obrigatórios
+                </span>
+                <span>
+                  <b>{categoriaEscolhida.total_documentos}</b> documentos no total
+                </span>
+              </div>
+            </div>
+          )}
 
           <button
             type="submit"

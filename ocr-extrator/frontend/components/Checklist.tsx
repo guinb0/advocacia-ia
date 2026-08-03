@@ -16,8 +16,9 @@ interface Props {
   enviando: string | null;
   erro: string | null;
   onVoltar: () => void;
-  onEnviar: (itemCodigo: string, arquivo: File) => void;
+  onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
+  onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
 }
 
 export default function Checklist({
@@ -27,6 +28,7 @@ export default function Checklist({
   onVoltar,
   onEnviar,
   onRemover,
+  onVincularIdentidade,
 }: Props) {
   const [filtro, setFiltro] = useState<Filtro>("obrigatorios");
   const { caso, categoria, progresso, itens } = situacao;
@@ -128,6 +130,7 @@ export default function Checklist({
               enviando={enviando === item.codigo}
               onEnviar={onEnviar}
               onRemover={onRemover}
+              onVincularIdentidade={onVincularIdentidade}
             />
           ))}
         </ul>

@@ -23,7 +23,11 @@ def _status_do_item(entregas: list[dict[str, Any]]) -> str:
     if not entregas:
         return PENDENTE
     # Basta uma entrega boa: "atestados médicos" pode ter 5 arquivos e 1 ruim.
-    if any(e["dados_utilizaveis"] and e["tipo_confere"] is not False for e in entregas):
+    if any(
+        (e["dados_utilizaveis"] or e.get("confirmado_manual", False))
+        and e["tipo_confere"] is not False
+        for e in entregas
+    ):
         return ENTREGUE
     return CONFERIR
 
@@ -39,7 +43,9 @@ def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[st
             f"Enviado como '{item.nome}', mas o documento parece ser {legivel}. "
             "Confira se não houve troca de arquivo."
         )
-    if not entrega["dados_utilizaveis"]:
+    if entrega.get("confirmado_manual"):
+        alertas.append("Identidade unificada confirmada manualmente para RG e CPF.")
+    elif not entrega["dados_utilizaveis"]:
         score = entrega.get("score_legibilidade")
         sufixo = f" (legibilidade {score}%)" if score is not None else ""
         alertas.append(f"Não foi possível extrair os dados com segurança{sufixo}.")
@@ -66,7 +72,9 @@ def montar_situacao(caso_id: str) -> dict[str, Any] | None:
     entregas = armazenamento.listar_entregas(caso_id)
     por_item: dict[str, list[dict[str, Any]]] = {}
     for entrega in entregas:
-        por_item.setdefault(entrega["item_codigo"], []).append(entrega)
+        # Uma CIN pode ter sido marcada para atender RG e CPF com o mesmo arquivo.
+        for item_codigo in entrega["itens_atendidos"]:
+            por_item.setdefault(item_codigo, []).append(entrega)
 
     itens = []
     for item in categoria.itens:
@@ -112,7 +120,11 @@ def montar_situacao(caso_id: str) -> dict[str, Any] | None:
     }
 
 
-def tipo_confere(item: ItemChecklist, tipo_detectado: str | None) -> bool | None:
+def tipo_confere(
+    item: ItemChecklist,
+    tipo_detectado: str | None,
+    identidade_unificada: bool = False,
+) -> bool | None:
     """O arquivo enviado é mesmo o documento pedido?
 
     `None` quando não dá para afirmar: ou o item não tem classificador, ou o OCR
@@ -123,7 +135,24 @@ def tipo_confere(item: ItemChecklist, tipo_detectado: str | None) -> bool | None
         return None
     if not tipo_detectado or tipo_detectado == "desconhecido":
         return None
+    if identidade_unificada and item.tipo_ocr in {"rg", "cpf"}:
+        return tipo_detectado == "cin"
     return tipo_detectado == item.tipo_ocr
+
+
+def itens_para_identidade_unificada(categoria: categorias.Categoria, item: ItemChecklist) -> list[str]:
+    """Itens atendidos por uma CIN: RG e CPF, uma única vez cada.
+
+    A opção é deliberada: fora dela RG e CPF continuam documentos independentes,
+    como nos documentos antigos.
+    """
+    if item.tipo_ocr not in {"rg", "cpf"}:
+        raise ValueError("A identidade unificada só pode ser usada nos itens RG ou CPF.")
+
+    itens = [i.codigo for i in categoria.itens if i.tipo_ocr in {"rg", "cpf"}]
+    if len(itens) != 2:
+        raise ValueError("Este checklist não possui os itens RG e CPF para vincular.")
+    return itens
 
 
 # ------------------------------------------------------- pedido ao cliente

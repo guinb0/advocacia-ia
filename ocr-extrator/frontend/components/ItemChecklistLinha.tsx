@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { urlArquivoEntrega } from "@/lib/api";
 import type { ItemSituacao } from "@/lib/types";
@@ -17,13 +17,22 @@ const APARENCIA = {
 interface Props {
   item: ItemSituacao;
   enviando: boolean;
-  onEnviar: (itemCodigo: string, arquivo: File) => void;
+  onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
+  onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
 }
 
-export default function ItemChecklistLinha({ item, enviando, onEnviar, onRemover }: Props) {
+export default function ItemChecklistLinha({
+  item,
+  enviando,
+  onEnviar,
+  onRemover,
+  onVincularIdentidade,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
   const aparencia = APARENCIA[item.status];
+  const podeUsarParaAmbos = item.tipo_ocr === "rg" || item.tipo_ocr === "cpf";
 
   return (
     <li className={`${estilos.item} ${aparencia.classe}`}>
@@ -59,12 +68,25 @@ export default function ItemChecklistLinha({ item, enviando, onEnviar, onRemover
           hidden
           onChange={(e) => {
             const arquivo = e.target.files?.[0];
-            if (arquivo) onEnviar(item.codigo, arquivo);
+            if (arquivo) onEnviar(item.codigo, arquivo, usarParaRgECpf);
             // Zera para permitir reenviar o mesmo arquivo depois de corrigi-lo.
             e.target.value = "";
+            setUsarParaRgECpf(false);
           }}
         />
       </div>
+
+      {podeUsarParaAmbos && (
+        <label className={estilos.opcaoCIN}>
+          <input
+            type="checkbox"
+            checked={usarParaRgECpf}
+            onChange={(e) => setUsarParaRgECpf(e.target.checked)}
+            disabled={enviando}
+          />
+          Esta Ã© uma CIN (identidade unificada): usar este arquivo para RG e CPF.
+        </label>
+      )}
 
       {item.entregas.length > 0 && (
         <ul className={estilos.entregas}>
@@ -83,10 +105,26 @@ export default function ItemChecklistLinha({ item, enviando, onEnviar, onRemover
                 <span className={ui.observacao}>legibilidade {entrega.score_legibilidade}%</span>
               )}
 
-              {entrega.dados_utilizaveis && entrega.tipo_confere !== false ? (
-                <Tag tom="ok">ok</Tag>
+              {entrega.dados_utilizaveis || entrega.confirmado_manual ? (
+                <Tag tom="ok">{entrega.confirmado_manual ? "confirmado" : "ok"}</Tag>
               ) : (
                 <Tag tom="warn">revisar</Tag>
+              )}
+
+              {(entrega.itens_atendidos?.length ?? 1) > 1 && (
+                <Tag tom="ok">vale para RG e CPF</Tag>
+              )}
+
+              {podeUsarParaAmbos && (entrega.itens_atendidos?.length ?? 1) === 1 && (
+                <button
+                  type="button"
+                  className={estilos.vincularCIN}
+                  onClick={() => onVincularIdentidade(entrega.id, item.codigo)}
+                  disabled={enviando}
+                  title="Confirme somente se este for um documento de identidade unificado"
+                >
+                  Usar também como {item.tipo_ocr === "rg" ? "CPF" : "RG"}
+                </button>
               )}
 
               <button

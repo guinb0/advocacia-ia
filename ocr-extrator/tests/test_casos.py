@@ -67,6 +67,17 @@ def main() -> int:
     armazenamento.inicializar()
     print(f"banco temporário: {armazenamento.CAMINHO_BANCO}\n")
 
+    # -------------------------------------- categoria de acidente geral (DOCX)
+    geral = categorias.obter("acidente_trabalho_geral")
+    checar(geral is not None, "categoria de acidente do trabalho geral está disponível")
+    checar(len(geral.itens) == 35, "categoria geral contém os 35 documentos do checklist")
+    obrigatorios_geral = [i.numero for i in geral.itens if i.obrigatorio]
+    checar(
+        obrigatorios_geral == [*range(1, 11), *range(12, 18), *range(20, 26)],
+        "obrigatórios da categoria geral respeitam os itens em vermelho do DOCX",
+        str(obrigatorios_geral),
+    )
+
     # ------------------------------------------------------------ criar caso
     print("1. Criar caso")
     caso = armazenamento.criar_caso("Maria Aparecida", "acidente_trabalho_correios")
@@ -181,8 +192,60 @@ def main() -> int:
     checar(item_rg["status"] == casos.PENDENTE, "DOC.03 volta a pendente", item_rg["status"])
     checar(not caminho_no_disco.exists(), "o arquivo sai do disco junto")
 
+    # --------------------------------------------- identidade unificada (CIN)
+    print("\n9. Uma CIN pode atender RG e CPF, mas só com a opção explícita")
+    caso_cin = armazenamento.criar_caso("João da CIN", "acidente_trabalho_correios")
+    categoria = categorias.ACIDENTE_TRABALHO_CORREIOS
+    rg = next(i for i in categoria.itens if i.codigo == "DOC.03")
+    checar(casos.tipo_confere(rg, "cin") is False, "sem a opção, CIN não substitui RG")
+
+    extracao = extracao_falsa("cin")
+    destino = armazenamento.DIR_ARQUIVOS / caso_cin["id"]
+    destino.mkdir(parents=True, exist_ok=True)
+    caminho = destino / "cin.png"
+    caminho.write_bytes(b"cin-de-mentira")
+    entrega_cin = armazenamento.registrar_entrega(
+        caso_cin["id"],
+        "DOC.03",
+        "cin.png",
+        caminho,
+        extracao,
+        casos.tipo_confere(rg, "cin", identidade_unificada=True),
+        casos.itens_para_identidade_unificada(categoria, rg),
+    )
+    situacao_cin = casos.montar_situacao(caso_cin["id"])
+    rg_cin = next(i for i in situacao_cin["itens"] if i["codigo"] == "DOC.03")
+    cpf_cin = next(i for i in situacao_cin["itens"] if i["codigo"] == "DOC.04")
+    checar(rg_cin["status"] == casos.ENTREGUE, "CIN atende o RG")
+    checar(cpf_cin["status"] == casos.ENTREGUE, "CIN atende o CPF")
+    checar(entrega_cin["itens_atendidos"] == ["DOC.03", "DOC.04"], "uma entrega referencia ambos")
+
+    # O botão da tela também precisa consertar uma CIN que já havia sido enviada
+    # somente no RG, sem exigir outro upload.
+    caso_retroativo = armazenamento.criar_caso("Ana da CIN", "acidente_trabalho_correios")
+    destino = armazenamento.DIR_ARQUIVOS / caso_retroativo["id"]
+    destino.mkdir(parents=True, exist_ok=True)
+    caminho = destino / "identidade-ja-enviada.png"
+    caminho.write_bytes(b"cin-ja-enviada")
+    entrega_antiga = armazenamento.registrar_entrega(
+        caso_retroativo["id"], "DOC.03", "identidade-ja-enviada.png", caminho,
+        extracao_falsa("rg"), False,
+    )
+    armazenamento.atualizar_para_identidade_unificada(
+        entrega_antiga["id"], extracao_falsa("cin", utilizaveis=False),
+        casos.itens_para_identidade_unificada(categoria, rg),
+    )
+    situacao_retroativa = casos.montar_situacao(caso_retroativo["id"])
+    checar(
+        all(next(i for i in situacao_retroativa["itens"] if i["codigo"] == codigo)["status"] == casos.ENTREGUE
+            for codigo in ("DOC.03", "DOC.04")),
+        "vinculação posterior conclui RG e CPF sem novo arquivo",
+    )
+    entrega_confirmada = armazenamento.obter_entrega(entrega_antiga["id"])
+    checar(entrega_confirmada["confirmado_manual"], "vinculação fica identificada como manual")
+
     # ------------------------------------------------------ apagar tudo no fim
-    print("\n9. Excluir o caso")
+    print("\n10. Excluir o caso")
     pasta = armazenamento.DIR_ARQUIVOS / caso_id
     checar(armazenamento.excluir_caso(caso_id), "o caso é removido")
     checar(armazenamento.obter_caso(caso_id) is None, "some da listagem")

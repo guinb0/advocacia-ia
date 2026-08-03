@@ -145,7 +145,11 @@ export interface Entrega {
   tipo_confere: boolean | null;
   veredito: Veredito | null;
   dados_utilizaveis: boolean;
+  /** Confirmação explícita de que uma CIN deve atender RG e CPF. */
+  confirmado_manual: boolean;
   score_legibilidade: number | null;
+  /** Itens do checklist atendidos pelo mesmo arquivo; CIN pode atender RG e CPF. */
+  itens_atendidos: string[];
   criado_em: string;
   /** Mensagens para o advogado — não são o texto que vai ao cliente. */
   alertas: string[];
