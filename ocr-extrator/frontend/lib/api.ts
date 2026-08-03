@@ -121,13 +121,29 @@ export async function enviarDocumento(
   itemCodigo: string,
   arquivo: File,
   idioma = "pt",
+  usarParaRgECpf = false,
 ): Promise<RespostaEnvio> {
   const form = new FormData();
   form.append("item", itemCodigo);
   form.append("arquivo", arquivo);
   form.append("idioma", idioma);
+  form.append("usar_para_rg_e_cpf", String(usarParaRgECpf));
   return comoJson<RespostaEnvio>(
     await fetch(urlApi(`/api/casos/${casoId}/documentos`), { method: "POST", body: form }),
+  );
+}
+
+export async function vincularIdentidadeUnificada(
+  casoId: string,
+  entregaId: string,
+): Promise<RespostaEnvio> {
+  const form = new FormData();
+  form.append("entrega_id", entregaId);
+  return comoJson<RespostaEnvio>(
+    await fetch(urlApi(`/api/casos/${casoId}/identidade-unificada`), {
+      method: "POST",
+      body: form,
+    }),
   );
 }
 

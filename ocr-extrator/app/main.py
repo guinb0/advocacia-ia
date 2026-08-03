@@ -179,6 +179,7 @@ async def enviar_documento(
     item: str = Form(...),
     arquivo: UploadFile = File(...),
     idioma: str = Form("pt"),
+    usar_para_rg_e_cpf: bool = Form(False),
 ):
     """Recebe um documento, roda o OCR e marca o item do checklist."""
     caso = armazenamento.obter_caso(caso_id)
@@ -193,16 +194,28 @@ async def enviar_documento(
     if item_checklist is None:
         raise HTTPException(400, f"Item '{item}' não pertence ao checklist de {categoria.nome}.")
 
+    try:
+        itens_atendidos = (
+            casos.itens_para_identidade_unificada(categoria, item_checklist)
+            if usar_para_rg_e_cpf
+            else [item_checklist.codigo]
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
     conteudo = await _ler_upload(arquivo)
     nome = arquivo.filename or "sem-nome"
 
     # Passar o tipo esperado orienta a extração dos campos, mas o classificador
     # continua opinando por conta própria — é a opinião dele que revela se veio o
     # arquivo trocado.
-    resultado = await _processar(conteudo, nome, idioma, item_checklist.tipo_ocr)
+    # Na opção unificada, a extração precisa seguir o layout da CIN, não o de um
+    # RG antigo nem o de um cartão CPF.
+    tipo_extracao = "cin" if usar_para_rg_e_cpf else item_checklist.tipo_ocr
+    resultado = await _processar(conteudo, nome, idioma, tipo_extracao)
 
     detectado = resultado.get("tipo", {}).get("detectado")
-    confere = casos.tipo_confere(item_checklist, detectado)
+    confere = casos.tipo_confere(item_checklist, detectado, usar_para_rg_e_cpf)
 
     destino = armazenamento.DIR_ARQUIVOS / caso_id
     destino.mkdir(parents=True, exist_ok=True)
@@ -210,9 +223,46 @@ async def enviar_documento(
     caminho.write_bytes(conteudo)
 
     entrega = armazenamento.registrar_entrega(
-        caso_id, item, nome, caminho, resultado, confere
+        caso_id, item, nome, caminho, resultado, confere, itens_atendidos
     )
     return {"entrega": entrega, "extracao": resultado}
+
+
+@app.post("/api/casos/{caso_id}/identidade-unificada")
+async def vincular_identidade_unificada(caso_id: str, entrega_id: str = Form(...)):
+    """Faz uma entrega de RG/CPF existente valer para os dois itens quando for CIN."""
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None or entrega["caso_id"] != caso_id:
+        raise HTTPException(404, "Entrega não encontrada neste caso.")
+
+    categoria = categorias.obter(caso["categoria"])
+    item = next((i for i in categoria.itens if i.codigo == entrega["item_codigo"]), None) if categoria else None
+    if item is None:
+        raise HTTPException(400, "Esta entrega não pertence a um item de checklist válido.")
+    try:
+        itens_atendidos = casos.itens_para_identidade_unificada(categoria, item)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    caminho = Path(entrega["caminho"]).resolve()
+    if armazenamento.DIR_ARQUIVOS.resolve() not in caminho.parents or not caminho.is_file():
+        raise HTTPException(404, "Arquivo original não encontrado.")
+
+    # O botão é a confirmação expressa de que se trata de identidade unificada.
+    # Reprocessamos no layout da CIN para extrair e validar o CPF sem depender de
+    # o classificador conseguir nomear corretamente todas as versões do documento.
+    resultado = await _processar(caminho.read_bytes(), entrega["arquivo"], "pt", "cin")
+
+    atualizada = armazenamento.atualizar_para_identidade_unificada(
+        entrega_id, resultado, itens_atendidos
+    )
+    if atualizada is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+    return {"entrega": atualizada, "extracao": resultado}
 
 
 @app.get("/api/entregas/{entrega_id}")

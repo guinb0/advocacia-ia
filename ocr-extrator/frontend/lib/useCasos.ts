@@ -96,12 +96,12 @@ export function useSituacao(casoId: string | null) {
   }, [recarregar]);
 
   const enviar = useCallback(
-    async (itemCodigo: string, arquivo: File) => {
+    async (itemCodigo: string, arquivo: File, usarParaRgECpf = false) => {
       if (!casoId) return;
       setEnviando(itemCodigo);
       setErro(null);
       try {
-        await api.enviarDocumento(casoId, itemCodigo, arquivo);
+        await api.enviarDocumento(casoId, itemCodigo, arquivo, "pt", usarParaRgECpf);
         await recarregar();
       } catch (e) {
         setErro(e instanceof Error ? e.message : "Falha ao enviar o documento.");
@@ -124,5 +124,31 @@ export function useSituacao(casoId: string | null) {
     [recarregar],
   );
 
-  return { situacao, carregando, erro, enviando, recarregar, enviar, removerEntrega };
+  const vincularIdentidade = useCallback(
+    async (entregaId: string, itemCodigo: string) => {
+      if (!casoId) return;
+      setEnviando(itemCodigo);
+      setErro(null);
+      try {
+        await api.vincularIdentidadeUnificada(casoId, entregaId);
+        await recarregar();
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : "Não foi possível vincular RG e CPF.");
+      } finally {
+        setEnviando(null);
+      }
+    },
+    [casoId, recarregar],
+  );
+
+  return {
+    situacao,
+    carregando,
+    erro,
+    enviando,
+    recarregar,
+    enviar,
+    removerEntrega,
+    vincularIdentidade,
+  };
 }

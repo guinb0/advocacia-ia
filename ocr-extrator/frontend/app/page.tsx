@@ -87,6 +87,7 @@ export default function Home() {
           }}
           onEnviar={situacaoCaso.enviar}
           onRemover={situacaoCaso.removerEntrega}
+          onVincularIdentidade={situacaoCaso.vincularIdentidade}
         />
       ) : casoAberto ? (
         <div className={ui.card}>

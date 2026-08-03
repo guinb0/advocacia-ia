@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS entregas (
     tipo_confere       INTEGER,
     veredito           TEXT,
     dados_utilizaveis  INTEGER NOT NULL DEFAULT 0,
+    confirmado_manual  INTEGER NOT NULL DEFAULT 0,
     score_legibilidade INTEGER,
+    itens_atendidos    TEXT NOT NULL DEFAULT '[]',
     extracao_json      TEXT,
     criado_em          TEXT NOT NULL
 );
@@ -78,6 +80,12 @@ def conectar() -> Iterator[sqlite3.Connection]:
 def inicializar() -> None:
     with conectar() as con:
         con.executescript(ESQUEMA)
+        # Bancos criados antes da identidade unificada ainda não têm esta coluna.
+        colunas = {linha["name"] for linha in con.execute("PRAGMA table_info(entregas)")}
+        if "itens_atendidos" not in colunas:
+            con.execute("ALTER TABLE entregas ADD COLUMN itens_atendidos TEXT NOT NULL DEFAULT '[]'")
+        if "confirmado_manual" not in colunas:
+            con.execute("ALTER TABLE entregas ADD COLUMN confirmado_manual INTEGER NOT NULL DEFAULT 0")
     DIR_ARQUIVOS.mkdir(parents=True, exist_ok=True)
 
 
@@ -168,9 +176,19 @@ def _normalizar_entrega(linha: sqlite3.Row) -> dict[str, Any]:
     registro = dict(linha)
     if "dados_utilizaveis" in registro:
         registro["dados_utilizaveis"] = bool(registro["dados_utilizaveis"])
+    if "confirmado_manual" in registro:
+        registro["confirmado_manual"] = bool(registro["confirmado_manual"])
     if "tipo_confere" in registro:
         valor = registro["tipo_confere"]
         registro["tipo_confere"] = None if valor is None else bool(valor)
+    itens_atendidos = registro.get("itens_atendidos")
+    if isinstance(itens_atendidos, str):
+        try:
+            itens_atendidos = json.loads(itens_atendidos)
+        except json.JSONDecodeError:
+            itens_atendidos = []
+    # Entregas antigas atendem apenas ao item em que foram enviadas.
+    registro["itens_atendidos"] = itens_atendidos or [registro["item_codigo"]]
     return registro
 
 
@@ -184,9 +202,14 @@ def registrar_entrega(
     caminho: Path,
     extracao: dict[str, Any],
     tipo_confere: bool | None,
+    itens_atendidos: list[str] | None = None,
 ) -> dict[str, Any]:
     entrega_id = str(uuid.uuid4())
     validacao = extracao.get("validacao", {})
+
+    itens = list(dict.fromkeys(itens_atendidos or [item_codigo]))
+    if item_codigo not in itens:
+        itens.insert(0, item_codigo)
 
     registro = {
         "id": entrega_id,
@@ -201,7 +224,9 @@ def registrar_entrega(
         "tipo_confere": None if tipo_confere is None else int(tipo_confere),
         "veredito": validacao.get("veredito"),
         "dados_utilizaveis": int(bool(validacao.get("dados_utilizaveis"))),
+        "confirmado_manual": 0,
         "score_legibilidade": validacao.get("score_legibilidade"),
+        "itens_atendidos": json.dumps(itens),
         "extracao_json": json.dumps(extracao, ensure_ascii=False),
         "criado_em": agora(),
     }
@@ -210,11 +235,11 @@ def registrar_entrega(
         con.execute(
             """
             INSERT INTO entregas (id, caso_id, item_codigo, arquivo, caminho, tipo_detectado,
-                                  tipo_confere, veredito, dados_utilizaveis, score_legibilidade,
-                                  extracao_json, criado_em)
+                                  tipo_confere, veredito, dados_utilizaveis, confirmado_manual,
+                                  score_legibilidade, itens_atendidos, extracao_json, criado_em)
             VALUES (:id, :caso_id, :item_codigo, :arquivo, :caminho, :tipo_detectado,
-                    :tipo_confere, :veredito, :dados_utilizaveis, :score_legibilidade,
-                    :extracao_json, :criado_em)
+                    :tipo_confere, :veredito, :dados_utilizaveis, :confirmado_manual,
+                    :score_legibilidade, :itens_atendidos, :extracao_json, :criado_em)
             """,
             registro,
         )
@@ -223,7 +248,9 @@ def registrar_entrega(
     registro.pop("extracao_json")
     # Devolve bool/None, como quem lê do banco recebe.
     registro["dados_utilizaveis"] = bool(registro["dados_utilizaveis"])
+    registro["confirmado_manual"] = False
     registro["tipo_confere"] = tipo_confere
+    registro["itens_atendidos"] = itens
     return registro
 
 
@@ -233,7 +260,8 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
         linhas = con.execute(
             """
             SELECT id, caso_id, item_codigo, arquivo, tipo_detectado, tipo_confere,
-                   veredito, dados_utilizaveis, score_legibilidade, criado_em
+                   veredito, dados_utilizaveis, confirmado_manual, score_legibilidade,
+                   itens_atendidos, criado_em
               FROM entregas
              WHERE caso_id = ?
              ORDER BY criado_em
@@ -241,6 +269,45 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
             (caso_id,),
         ).fetchall()
     return [_normalizar_entrega(l) for l in linhas]
+
+
+def atualizar_para_identidade_unificada(
+    entrega_id: str,
+    extracao: dict[str, Any],
+    itens_atendidos: list[str],
+) -> dict[str, Any] | None:
+    """Vincula uma entrega existente aos dois itens após confirmar que é uma CIN."""
+    validacao = extracao.get("validacao", {})
+    itens = list(dict.fromkeys(itens_atendidos))
+    with conectar() as con:
+        linha = con.execute("SELECT * FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+        if not linha:
+            return None
+
+        con.execute(
+            """
+            UPDATE entregas
+               SET tipo_detectado = ?, tipo_confere = 1, veredito = ?,
+                   dados_utilizaveis = ?, confirmado_manual = 1, score_legibilidade = ?,
+                   itens_atendidos = ?, extracao_json = ?
+             WHERE id = ?
+            """,
+            (
+                extracao.get("tipo", {}).get("detectado") or extracao.get("tipo", {}).get("codigo"),
+                validacao.get("veredito"),
+                int(bool(validacao.get("dados_utilizaveis"))),
+                validacao.get("score_legibilidade"),
+                json.dumps(itens),
+                json.dumps(extracao, ensure_ascii=False),
+                entrega_id,
+            ),
+        )
+        _tocar_caso(con, linha["caso_id"])
+        atualizada = con.execute("SELECT * FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+
+    registro = _normalizar_entrega(atualizada)
+    registro.pop("extracao_json", None)
+    return registro
 
 
 def obter_entrega(entrega_id: str) -> dict[str, Any] | None:
