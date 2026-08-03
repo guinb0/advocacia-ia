@@ -128,11 +128,40 @@ e apagados automaticamente após 30 minutos.
 
 ---
 
+## Categorias e checklists
+
+Cada tipo de ação tem um checklist de documentos a cobrar do cliente. Eles ficam em
+[`app/categorias.py`](app/categorias.py), transcritos dos documentos que o escritório
+manda em `.docx` (guardados em [`docs/`](docs/)).
+
+Implementada até agora:
+
+| Categoria | Documentos | Obrigatórios |
+|---|---|---|
+| Acidente do Trabalho (Correios) | 33 | 14 |
+
+No `.docx` original os obrigatórios estão **em vermelho**; na transcrição isso virou o
+campo `obrigatorio`. O campo `tipo_ocr` liga o item ao classificador de documentos —
+quando preenchido (RG, CPF, comprovante de residência, CTPS), o sistema confere sozinho
+se o arquivo enviado é mesmo o documento pedido.
+
+### Transcrever um checklist novo
+
+```powershell
+.\.venv\Scripts\python.exe -m tests.ler_checklist_docx "docs\CHECK LIST ....docx"
+```
+
+Ele imprime cada linha marcando `[X]` para os itens em vermelho. Transcreva o resultado
+para uma nova `Categoria` em `app/categorias.py` e rode `tests.test_categorias`, que
+compara a lista do código com o `.docx` item a item — nome, numeração e obrigatoriedade.
+
 ## API
 
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/` | interface web |
+| `GET` | `/api/categorias` | categorias com seus checklists |
+| `GET` | `/api/categorias/{codigo}` | uma categoria |
 | `POST` | `/api/extrair` | multipart: `arquivo`, `idioma` (`pt`), `tipo` (`auto` ou código) |
 | `GET` | `/api/tipos` | tipos de documento suportados |
 | `GET` | `/api/saude` | status do modelo |
@@ -184,6 +213,7 @@ apontar para outro host, defina `NEXT_PUBLIC_OCR_API`.
 
 ```powershell
 .\.venv\Scripts\python.exe -m tests.test_validators     # dígitos verificadores
+.\.venv\Scripts\python.exe -m tests.test_categorias     # checklist do código vs. o .docx
 .\.venv\Scripts\python.exe -m tests.test_pipeline       # end-to-end com documentos sintéticos
 .\.venv\Scripts\python.exe -m tests.test_concorrencia   # 3 OCRs simultâneos
 .\.venv\Scripts\python.exe -m tests.bench               # custo do classificador de orientação
@@ -208,6 +238,7 @@ da mãe vindo contaminado com a categoria da coluna vizinha, e o nº de registro
 ```
 app/                     backend
   main.py                API FastAPI e rotas
+  categorias.py          categorias de processo e seus checklists de documentos
   pipeline.py            orquestra OCR -> campos -> validação -> JSON/XML
   ocr_engine.py          wrapper do PaddleOCR, thread dedicada, colunas -> linhas
   extractors.py          classificação do tipo, geometria da página e extração

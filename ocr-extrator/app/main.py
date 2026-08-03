@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import pipeline
+from . import categorias, pipeline
 from .extractors import ROTULOS_TIPO
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -45,6 +45,20 @@ def index():
 @app.get("/api/tipos")
 def tipos():
     return {"tipos": [{"codigo": k, "descricao": v} for k, v in ROTULOS_TIPO.items()]}
+
+
+@app.get("/api/categorias")
+def listar_categorias():
+    """Categorias de processo, cada uma com seu checklist de documentos."""
+    return {"categorias": [c.to_dict() for c in categorias.listar()]}
+
+
+@app.get("/api/categorias/{codigo}")
+def obter_categoria(codigo: str):
+    categoria = categorias.obter(codigo)
+    if categoria is None:
+        raise HTTPException(404, f"Categoria '{codigo}' não encontrada.")
+    return categoria.to_dict()
 
 
 @app.get("/api/saude")
