@@ -350,7 +350,8 @@ corretamente, então compensa. A primeira chamada do processo carrega os modelos
 
 ## Limitações conhecidas
 
-- **Somente imagens** — PDF não é aceito (converta para JPG/PNG antes).
+- **PDFs de até 10 páginas** são aceitos e renderizados localmente para OCR (limite de 20MB por arquivo).
+  PDFs protegidos por senha, corrompidos ou grandes demais para conversão precisam ser divididos ou exportados como imagem.
 - **Nome, RG e endereço** saem por heurística de layout; a taxa de acerto cai em
   documentos com fundo estampado ou fonte estilizada.
 - A **CNH digital e o CIN têm QR Code / MRZ** com os dados assinados digitalmente —

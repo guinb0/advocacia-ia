@@ -5,4 +5,5 @@ uvicorn[standard]
 python-multipart
 opencv-python-headless
 pillow
+pypdfium2>=5.12,<6
 numpy<2.3

@@ -32,6 +32,7 @@ export default function PainelEnvio({
   const [idioma, setIdioma] = useState("pt");
   const [arrastando, setArrastando] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pdfSelecionado = arquivo?.type === "application/pdf" || arquivo?.name.toLowerCase().endsWith(".pdf");
 
   // Colar print da tela (Ctrl+V) é o caminho mais rápido para testar.
   useEffect(() => {
@@ -74,19 +75,19 @@ export default function PainelEnvio({
         }}
         role="button"
         tabIndex={0}
-        aria-label="Selecionar imagem do documento"
+        aria-label="Selecionar imagem ou PDF do documento"
       >
         <div className={estilos.icone}>📤</div>
-        <p className={estilos.chamada}>Arraste a imagem aqui</p>
+        <p className={estilos.chamada}>Arraste a imagem ou PDF aqui</p>
         <small className={estilos.dica}>
-          ou clique para escolher · cole com Ctrl+V · JPG, PNG, WEBP, TIFF · até 20MB
+          ou clique para escolher · cole com Ctrl+V · JPG, PNG, WEBP, TIFF ou PDF · até 20MB
         </small>
       </div>
 
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,application/pdf,.pdf"
         hidden
         onChange={(e) => onEscolher(e.target.files?.[0] ?? null)}
       />
@@ -97,6 +98,10 @@ export default function PainelEnvio({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={previewUrl} alt="Pré-visualização do documento enviado" />
         </div>
+      )}
+
+      {arquivo && pdfSelecionado && (
+        <div className={estilos.previewPdf}>PDF selecionado — as páginas serão convertidas para OCR.</div>
       )}
 
       {arquivo && (

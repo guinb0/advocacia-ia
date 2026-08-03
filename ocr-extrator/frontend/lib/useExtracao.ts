@@ -7,6 +7,10 @@ import type { Documento, TipoDocumento } from "./types";
 
 export const TAMANHO_MAXIMO = 20 * 1024 * 1024;
 
+function ehPdf(arquivo: File): boolean {
+  return arquivo.type === "application/pdf" || arquivo.name.toLowerCase().endsWith(".pdf");
+}
+
 export type EstadoModelo = "verificando" | "carregando" | "pronto" | "indisponivel";
 
 /** Estado do painel de status do modelo, no topo da página. */
@@ -79,17 +83,17 @@ export function useExtracao() {
     setResultado(null);
 
     if (!novo) return;
-    if (!novo.type.startsWith("image/")) {
-      setErro("O arquivo precisa ser uma imagem.");
+    if (!novo.type.startsWith("image/") && !ehPdf(novo)) {
+      setErro("O arquivo precisa ser uma imagem ou PDF.");
       return;
     }
     if (novo.size > TAMANHO_MAXIMO) {
-      setErro("A imagem passa de 20MB.");
+      setErro("O arquivo passa de 20MB.");
       return;
     }
 
     if (urlAnterior.current) URL.revokeObjectURL(urlAnterior.current);
-    const url = URL.createObjectURL(novo);
+    const url = ehPdf(novo) ? null : URL.createObjectURL(novo);
     urlAnterior.current = url;
 
     setArquivo(novo);

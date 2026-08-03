@@ -41,6 +41,17 @@
   display: block;
 }
 
+.previewPdf {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
 .infoArquivo {
   font-size: 0.78rem;
   color: var(--muted);

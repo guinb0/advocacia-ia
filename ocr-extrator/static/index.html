@@ -139,10 +139,10 @@
 
       <div id="drop">
         <div class="icon">📤</div>
-        <p>Arraste a imagem aqui</p>
-        <small>ou clique para escolher · JPG, PNG, WEBP, TIFF · até 20MB</small>
+        <p>Arraste a imagem ou PDF aqui</p>
+        <small>ou clique para escolher · JPG, PNG, WEBP, TIFF ou PDF · até 20MB</small>
       </div>
-      <input type="file" id="file" accept="image/*" hidden>
+      <input type="file" id="file" accept="image/*,application/pdf,.pdf" hidden>
 
       <div id="preview"><img id="img" alt="Pré-visualização do documento"></div>
       <div id="fileinfo"></div>
@@ -193,11 +193,16 @@ window.addEventListener('paste', e => {
 
 function receber(f){
   if (!f) return;
-  if (!f.type.startsWith('image/')) return alerta('O arquivo precisa ser uma imagem.');
-  if (f.size > 20 * 1024 * 1024) return alerta('A imagem passa de 20MB.');
+  const pdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+  if (!f.type.startsWith('image/') && !pdf) return alerta('O arquivo precisa ser uma imagem ou PDF.');
+  if (f.size > 20 * 1024 * 1024) return alerta('O arquivo passa de 20MB.');
   arquivo = f;
-  $('#img').src = URL.createObjectURL(f);
-  $('#preview').style.display = 'block';
+  if (pdf) {
+    $('#preview').style.display = 'none';
+  } else {
+    $('#img').src = URL.createObjectURL(f);
+    $('#preview').style.display = 'block';
+  }
   $('#fileinfo').textContent = `${f.name} · ${(f.size/1024/1024).toFixed(2)} MB`;
   $('#go').disabled = false;
 }

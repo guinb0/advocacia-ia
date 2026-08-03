@@ -28,6 +28,11 @@ TTL_SEGUNDOS = 30 * 60  # arquivos temporários expiram em 30 min
 
 
 def decodificar(conteudo: bytes) -> np.ndarray:
+    if conteudo.lstrip().startswith(b"%PDF-"):
+        from .pdf import pdf_para_imagem
+
+        return pdf_para_imagem(conteudo)
+
     arr = np.frombuffer(conteudo, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:

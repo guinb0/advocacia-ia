@@ -20,7 +20,7 @@ BASE = Path(__file__).resolve().parent.parent
 STATIC = BASE / "static"
 
 MAX_BYTES = 20 * 1024 * 1024
-EXTENSOES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+EXTENSOES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".pdf"}
 
 app = FastAPI(title="Extrator de Documentos — PaddleOCR", version="1.0.0")
 
