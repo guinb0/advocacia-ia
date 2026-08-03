@@ -84,7 +84,7 @@ export default function ItemChecklistLinha({
             onChange={(e) => setUsarParaRgECpf(e.target.checked)}
             disabled={enviando}
           />
-          Esta Ã© uma CIN (identidade unificada): usar este arquivo para RG e CPF.
+          Esta é uma CIN (identidade unificada): usar este arquivo para RG e CPF.
         </label>
       )}
 
