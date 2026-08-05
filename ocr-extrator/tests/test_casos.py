@@ -78,6 +78,84 @@ def main() -> int:
         str(obrigatorios_geral),
     )
 
+    # ------------------------------------------ categoria de doença ocupacional
+    doenca = categorias.obter("doenca_ocupacional")
+    checar(doenca is not None, "categoria de doença ocupacional está disponível")
+    checar(len(doenca.itens) == 37, "doença ocupacional contém os 37 documentos")
+    obrigatorios_doenca = [i.numero for i in doenca.obrigatorios]
+    checar(
+        obrigatorios_doenca
+        == [*range(1, 10), 15, 16, 17, 19, 21, 22, 23, 24, 26, 27, 29, 30, 31, 32],
+        "obrigatórios de doença ocupacional respeitam os itens em vermelho do DOCX",
+        str(obrigatorios_doenca),
+    )
+    caso_doenca = armazenamento.criar_caso("José da Silva", "doenca_ocupacional")
+    situacao_doenca = casos.montar_situacao(caso_doenca["id"])
+    checar(
+        situacao_doenca["progresso"]["obrigatorios_total"] == 23,
+        "caso de doença ocupacional inicia com 23 obrigatórios pendentes",
+    )
+    armazenamento.excluir_caso(caso_doenca["id"])
+
+    # ------------------------------------------------ categoria assalto a carteiro
+    assalto = categorias.obter("assalto_carteiro")
+    checar(assalto is not None, "categoria de assalto a carteiro está disponível")
+    checar(len(assalto.itens) == 19, "assalto a carteiro contém os 19 documentos")
+    numeros_assalto = [i.numero for i in assalto.itens]
+    checar(
+        numeros_assalto == [*range(1, 17), 18, 19, 20],
+        "assalto preserva o salto do DOC.16 para o DOC.18 existente no checklist",
+        str(numeros_assalto),
+    )
+    obrigatorios_assalto = [i.numero for i in assalto.obrigatorios]
+    checar(
+        obrigatorios_assalto == [*range(1, 10), 12, 14],
+        "obrigatórios de assalto respeitam os itens em vermelho do DOCX",
+        str(obrigatorios_assalto),
+    )
+    caso_assalto = armazenamento.criar_caso("João Carteiro", "assalto_carteiro")
+    situacao_assalto = casos.montar_situacao(caso_assalto["id"])
+    checar(
+        situacao_assalto["progresso"]["obrigatorios_total"] == 11,
+        "caso de assalto inicia com 11 obrigatórios pendentes",
+    )
+    armazenamento.excluir_caso(caso_assalto["id"])
+
+    # ---------------------------------------------------- categoria auxílio-acidente
+    auxilio = categorias.obter("auxilio_acidente")
+    checar(auxilio is not None, "categoria de auxílio-acidente está disponível")
+    checar(len(auxilio.itens) == 11, "auxílio-acidente contém os 11 grupos informados")
+    obrigatorios_auxilio = [i.numero for i in auxilio.obrigatorios]
+    checar(
+        obrigatorios_auxilio == [1, 2, 4, 5, 10],
+        "auxílio-acidente possui 5 grupos essenciais",
+        str(obrigatorios_auxilio),
+    )
+    caso_auxilio = armazenamento.criar_caso("Maria Segurada", "auxilio_acidente")
+    situacao_auxilio = casos.montar_situacao(caso_auxilio["id"])
+    checar(
+        situacao_auxilio["progresso"]["obrigatorios_total"] == 5,
+        "caso de auxílio-acidente inicia com 5 obrigatórios pendentes",
+    )
+    pedido_auxilio = casos.montar_pedido(caso_auxilio["id"])
+    checar(
+        "últimos 90 dias" in pedido_auxilio["texto"]
+        and "Extrato de Contribuição (CNIS)" in pedido_auxilio["texto"],
+        "pedido obrigatório inclui as orientações detalhadas ao cliente",
+    )
+    checar(
+        "Último contracheque" not in pedido_auxilio["texto"],
+        "pedido padrão não cobra documento condicional",
+    )
+    pedido_auxilio_completo = casos.montar_pedido(
+        caso_auxilio["id"], incluir_opcionais=True
+    )
+    checar(
+        "Último contracheque" in pedido_auxilio_completo["texto"],
+        "pedido com opcionais inclui documento condicional",
+    )
+    armazenamento.excluir_caso(caso_auxilio["id"])
+
     # ------------------------------------------------------------ criar caso
     print("1. Criar caso")
     caso = armazenamento.criar_caso("Maria Aparecida", "acidente_trabalho_correios")

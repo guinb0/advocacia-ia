@@ -159,7 +159,9 @@ def itens_para_identidade_unificada(categoria: categorias.Categoria, item: ItemC
 
 
 def _linha_do_item(item: dict[str, Any]) -> str:
-    return f"- {item['nome']}"
+    observacao = item.get("observacao", "").strip()
+    complemento = f" — {observacao}" if observacao else ""
+    return f"- {item['nome']}{complemento}"
 
 
 def _motivo_para_o_cliente(item: dict[str, Any]) -> str:

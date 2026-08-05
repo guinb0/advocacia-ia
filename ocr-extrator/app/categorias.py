@@ -1,8 +1,9 @@
 """Categorias de processo e o checklist de documentos de cada uma.
 
-Fonte: `docs/CHECK LIST ACIDENTE DO TRABALHO 31.07.26.docx`, fornecido pelo
-escritório. No documento original os obrigatórios estão em vermelho (#EE0000);
-aqui isso virou o campo `obrigatorio`.
+Fontes: os arquivos de checklist em `docs/`, fornecidos pelo escritório, e os
+checklists textuais recebidos para categorias sem `.docx`. Nos documentos
+originais os obrigatórios estão em vermelho (#EE0000); aqui isso virou o campo
+`obrigatorio`.
 
 `tipo_ocr` liga o item do checklist ao classificador de `extractors.py`: quando
 preenchido, o sistema consegue conferir sozinho se o arquivo enviado é mesmo o
@@ -143,9 +144,378 @@ ACIDENTE_TRABALHO_GERAL = Categoria(
 )
 
 
+DOENCA_OCUPACIONAL = Categoria(
+    codigo="doenca_ocupacional",
+    nome="Doença Ocupacional",
+    descricao=(
+        "Ação relacionada a doença causada ou agravada pelas condições de trabalho. "
+        "Os documentos destacados como imprescindíveis no checklist do escritório "
+        "são obrigatórios; os demais complementam a prova do vínculo, do nexo causal "
+        "e dos danos sofridos."
+    ),
+    itens=(
+        ItemChecklist("DOC.01", 1, "Procuração", True),
+        ItemChecklist("DOC.02", 2, "Declaração de hipossuficiência", True),
+        ItemChecklist("DOC.03", 3, "RG", True, tipo_ocr="rg"),
+        ItemChecklist("DOC.04", 4, "CPF", True, tipo_ocr="cpf"),
+        ItemChecklist(
+            "DOC.05",
+            5,
+            "Comprovante de residência atualizado (conta de água, luz ou telefone)",
+            True,
+            tipo_ocr="comprovante_residencia",
+        ),
+        ItemChecklist(
+            "DOC.06",
+            6,
+            "Carteira de Trabalho e Previdência Social – CTPS (física ou digital) e PIS",
+            True,
+            tipo_ocr="ctps",
+        ),
+        ItemChecklist(
+            "DOC.07",
+            7,
+            "Contracheques (holerites) – último mês trabalhado e, se possível, os 3 a 6 meses anteriores",
+            True,
+        ),
+        ItemChecklist("DOC.08", 8, "CNIS", True),
+        ItemChecklist("DOC.09", 9, "CAT – Comunicação de Acidente de Trabalho", True),
+        ItemChecklist("DOC.10", 10, "Contrato de trabalho e aditivos (se houver)", False),
+        ItemChecklist(
+            "DOC.11",
+            11,
+            "Ficha de registro, ficha funcional, alterações de cargo, função e salário",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.12",
+            12,
+            "Termo de Rescisão do Contrato de Trabalho – TRCT e comprovantes de pagamento das verbas rescisórias (se aplicável)",
+            False,
+        ),
+        ItemChecklist("DOC.13", 13, "Extrato do FGTS e chave de conectividade", False),
+        ItemChecklist(
+            "DOC.14",
+            14,
+            "Relatórios médicos de acompanhamento e evolução clínica",
+            False,
+        ),
+        ItemChecklist("DOC.15", 15, "Atestados médicos", True),
+        ItemChecklist(
+            "DOC.16",
+            16,
+            "Exames de imagem (raio X, tomografia, ressonância magnética, ultrassom), laboratoriais",
+            True,
+        ),
+        ItemChecklist("DOC.17", 17, "Laudos dos exames de imagem e laboratoriais", True),
+        ItemChecklist(
+            "DOC.18",
+            18,
+            "Receituários médicos – comprovantes de medicamentos prescritos",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.19",
+            19,
+            "Laudo médico detalhado, indicando o diagnóstico da doença com o Código Internacional de Doenças – CID e, se possível, a relação com as atividades laborais",
+            True,
+        ),
+        ItemChecklist(
+            "DOC.20",
+            20,
+            "Comprovantes de tratamento – fisioterapia, terapia ocupacional, psicologia, psiquiatria, fonoaudiologia, entre outros",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.21",
+            21,
+            "Prontuários médicos – cópia do prontuário hospitalar ou da clínica onde realizou tratamentos, detalhando a evolução do quadro clínico e os procedimentos realizados",
+            True,
+        ),
+        ItemChecklist("DOC.22", 22, "Laudo pericial particular atualizado", True),
+        ItemChecklist("DOC.23", 23, "Comunicação de decisão do INSS", True),
+        ItemChecklist("DOC.24", 24, "Carta de concessão com memória de cálculo", True),
+        ItemChecklist(
+            "DOC.25",
+            25,
+            "Prorrogação ou cessação de benefício do INSS",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.26",
+            26,
+            "Histórico de benefícios e extratos previdenciários",
+            True,
+        ),
+        ItemChecklist(
+            "DOC.27",
+            27,
+            "Laudos periciais do INSS, inclusive laudos SABI",
+            True,
+        ),
+        ItemChecklist("DOC.28", 28, "Processo administrativo integral do INSS", False),
+        ItemChecklist(
+            "DOC.29",
+            29,
+            "PPP – Perfil Profissiográfico Previdenciário",
+            True,
+        ),
+        ItemChecklist(
+            "DOC.30",
+            30,
+            "ASOs – admissional, periódico, mudança de função, retorno ao trabalho e demissional",
+            True,
+        ),
+        ItemChecklist(
+            "DOC.31",
+            31,
+            "PCMSO – Programa de Controle Médico de Saúde Ocupacional, incluindo relatórios anuais",
+            True,
+        ),
+        ItemChecklist("DOC.32", 32, "PGR/LTCAT/PPRA", True),
+        ItemChecklist(
+            "DOC.33",
+            33,
+            "Controle de ponto, escalas de trabalho e registros de horas extras",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.34",
+            34,
+            "Documentos que comprovem acúmulo de funções, sobrecarga, metas abusivas",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.35",
+            35,
+            "Fotos e vídeos do posto de trabalho, máquinas, ferramentas ou ambiente, demonstrando condições inadequadas ou ausência de proteção",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.36",
+            36,
+            "Nomes completos, telefones e endereços de testemunhas que presenciaram as condições de trabalho ou a evolução do quadro de saúde do reclamante",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.37",
+            37,
+            "Recibos e notas fiscais – comprovantes de gastos com medicamentos, fisioterapia, consultas, exames e outros tratamentos relacionados à doença, para fins de reembolso ou dano material",
+            False,
+        ),
+    ),
+)
+
+
+ASSALTO_CARTEIRO = Categoria(
+    codigo="assalto_carteiro",
+    nome="Assalto a Carteiro",
+    descricao=(
+        "Ação relacionada a assalto sofrido por carteiro durante o trabalho. "
+        "Os documentos destacados como imprescindíveis no checklist do escritório "
+        "são obrigatórios; os demais complementam a prova do fato, dos danos à saúde "
+        "e dos reflexos previdenciários."
+    ),
+    itens=(
+        ItemChecklist("DOC.01", 1, "Procuração", True),
+        ItemChecklist("DOC.02", 2, "Declaração de hipossuficiência", True),
+        ItemChecklist("DOC.03", 3, "RG", True, tipo_ocr="rg"),
+        ItemChecklist("DOC.04", 4, "CPF", True, tipo_ocr="cpf"),
+        ItemChecklist(
+            "DOC.05",
+            5,
+            "Comprovante de residência",
+            True,
+            tipo_ocr="comprovante_residencia",
+        ),
+        ItemChecklist("DOC.06", 6, "Contracheque atual", True),
+        ItemChecklist(
+            "DOC.07",
+            7,
+            "Carteira de Trabalho (CTPS) e PIS",
+            True,
+            tipo_ocr="ctps",
+        ),
+        ItemChecklist(
+            "DOC.08",
+            8,
+            "CAT – Comunicação de Acidente de Trabalho, caso tenha sido emitida",
+            True,
+        ),
+        ItemChecklist("DOC.09", 9, "Boletim de ocorrência", True),
+        ItemChecklist("DOC.10", 10, "Atestados médicos", False),
+        ItemChecklist(
+            "DOC.11",
+            11,
+            "Prontuário hospitalar/internação, caso tenha havido",
+            False,
+        ),
+        ItemChecklist("DOC.12", 12, "Laudos médicos", True),
+        ItemChecklist("DOC.13", 13, "Receitas médicas", False),
+        ItemChecklist(
+            "DOC.14",
+            14,
+            "Carta de concessão de benefício do INSS",
+            True,
+        ),
+        ItemChecklist(
+            "DOC.15",
+            15,
+            "Perícias médicas do INSS, caso tenha realizado mais de uma",
+            False,
+        ),
+        ItemChecklist(
+            "DOC.16",
+            16,
+            "Resultado das perícias médicas do INSS",
+            False,
+        ),
+        # O checklist original não possui DOC.17; a numeração salta para DOC.18.
+        ItemChecklist(
+            "DOC.18",
+            18,
+            "Notas fiscais de medicamentos, tratamentos e demais despesas relacionadas",
+            False,
+        ),
+        ItemChecklist("DOC.19", 19, "Extrato CNIS (histórico previdenciário)", False),
+        ItemChecklist("DOC.20", 20, "Manual da empresa", False),
+    ),
+)
+
+
+AUXILIO_ACIDENTE = Categoria(
+    codigo="auxilio_acidente",
+    nome="Auxílio-Acidente",
+    descricao=(
+        "Pedido de auxílio-acidente. Documentos condicionais, como contracheque, "
+        "prontuário e decisões ou perícias do INSS, devem ser enviados quando "
+        "existirem no caso concreto."
+    ),
+    itens=(
+        ItemChecklist(
+            "DOC.01",
+            1,
+            "Documento de identificação (RG ou CNH; CPF, se necessário)",
+            True,
+            observacao=(
+                "Envie RG ou CNH. Se o CPF não constar na CNH, envie também o CPF."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.02",
+            2,
+            "Comprovante de residência atualizado",
+            True,
+            tipo_ocr="comprovante_residencia",
+            observacao=(
+                "Preferencialmente dos últimos 90 dias: conta de água, energia, "
+                "internet ou telefone, boleto de condomínio ou outro documento que "
+                "comprove o endereço."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.03",
+            3,
+            "Último contracheque (se estiver trabalhando)",
+            False,
+            observacao="Caso esteja empregado, envie o contracheque mais recente.",
+        ),
+        ItemChecklist(
+            "DOC.04",
+            4,
+            "Laudos e exames médicos relacionados à doença ou lesão",
+            True,
+            observacao=(
+                "Envie todos os exames disponíveis, como radiografias (raio X), "
+                "ressonância magnética, tomografia, ultrassonografia, "
+                "eletroneuromiografia, exames laboratoriais e outros que comprovem "
+                "a condição de saúde."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.05",
+            5,
+            "Atestados e relatórios médicos",
+            True,
+            observacao=(
+                "Envie todos os documentos médicos, especialmente os que informem "
+                "diagnóstico e CID, início da doença, limitações, tratamentos, "
+                "necessidade de afastamento, incapacidade profissional e tempo "
+                "estimado de recuperação."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.06",
+            6,
+            "Receitas médicas",
+            False,
+            observacao=(
+                "Envie todas as receitas dos medicamentos utilizados, principalmente "
+                "as mais recentes."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.07",
+            7,
+            "Prontuário médico completo",
+            False,
+            observacao=(
+                "Se houve atendimento em hospital, UPA, posto de saúde ou clínica, "
+                "solicite ao local uma cópia completa do histórico de atendimentos."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.08",
+            8,
+            "Processo administrativo completo do INSS",
+            False,
+            observacao=(
+                "Se já houve pedido de benefício, acesse o benefício ou requerimento "
+                "no Meu INSS e baixe todos os documentos disponíveis em PDF. Se não "
+                "localizar, solicite uma cópia completa diretamente ao INSS."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.09",
+            9,
+            "Carta de indeferimento do INSS (se o benefício foi negado)",
+            False,
+            observacao=(
+                "Envie a carta que informa o motivo da negativa; ela pode ser baixada "
+                "pelo Meu INSS."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.10",
+            10,
+            "Extrato do CNIS",
+            True,
+            observacao=(
+                "No Meu INSS, acesse “Extrato de Contribuição (CNIS)” e baixe o PDF "
+                "com o histórico de vínculos, contribuições e remunerações."
+            ),
+        ),
+        ItemChecklist(
+            "DOC.11",
+            11,
+            "Laudo da perícia do INSS (se houver)",
+            False,
+            observacao=(
+                "No Meu INSS, acesse o benefício ou requerimento, procure “Resultado "
+                "da Perícia” ou “Documentos” e baixe o laudo. Se não encontrar, "
+                "solicite uma cópia diretamente ao INSS."
+            ),
+        ),
+    ),
+)
+
+
 CATEGORIAS: dict[str, Categoria] = {
     ACIDENTE_TRABALHO_CORREIOS.codigo: ACIDENTE_TRABALHO_CORREIOS,
     ACIDENTE_TRABALHO_GERAL.codigo: ACIDENTE_TRABALHO_GERAL,
+    DOENCA_OCUPACIONAL.codigo: DOENCA_OCUPACIONAL,
+    ASSALTO_CARTEIRO.codigo: ASSALTO_CARTEIRO,
+    AUXILIO_ACIDENTE.codigo: AUXILIO_ACIDENTE,
 }
 
 
