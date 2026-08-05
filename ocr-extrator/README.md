@@ -178,11 +178,15 @@ Cada tipo de ação tem um checklist de documentos a cobrar do cliente. Eles fic
 [`app/categorias.py`](app/categorias.py), transcritos dos documentos que o escritório
 manda em `.docx` (guardados em [`docs/`](docs/)).
 
-Implementada até agora:
+Implementadas até agora:
 
 | Categoria | Documentos | Obrigatórios |
 |---|---|---|
 | Acidente do Trabalho (Correios) | 33 | 14 |
+| Ações de Acidente de Trabalho Geral | 35 | 22 |
+| Doença Ocupacional | 37 | 23 |
+| Assalto a Carteiro | 19 | 11 |
+| Auxílio-Acidente | 11 | 5 |
 
 No `.docx` original os obrigatórios estão **em vermelho**; na transcrição isso virou o
 campo `obrigatorio`. O campo `tipo_ocr` liga o item ao classificador de documentos —
