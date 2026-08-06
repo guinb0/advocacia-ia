@@ -1,8 +1,12 @@
 import type {
   Caso,
+  CasoCriado,
   Categoria,
   Documento,
+  EntregaDetalhe,
   Pedido,
+  PortalEstado,
+  PortalGerado,
   RespostaEnvio,
   SituacaoCaso,
   TipoDocumento,
@@ -25,6 +29,25 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {}
 
+/* O token vive aqui, não em localStorage: um XSS que lesse o storage levaria a
+ * sessão inteira. Quem mantém isto atualizado é o ProvedorAuth (lib/auth.tsx),
+ * inclusive nas renovações. */
+let tokenAtual: string | null = null;
+
+export function definirTokenAtual(token: string | null): void {
+  tokenAtual = token;
+}
+
+function cabecalhos(extra?: HeadersInit): HeadersInit | undefined {
+  if (!tokenAtual) return extra;
+  return { ...(extra ?? {}), Authorization: `Bearer ${tokenAtual}` };
+}
+
+/** fetch com o Bearer anexado — todo acesso à API passa por aqui. */
+async function buscar(caminho: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(urlApi(caminho), { ...init, headers: cabecalhos(init.headers) });
+}
+
 async function comoJson<T>(resposta: Response): Promise<T> {
   const corpo = await resposta.json().catch(() => null);
   if (!resposta.ok) {
@@ -38,19 +61,19 @@ async function comoJson<T>(resposta: Response): Promise<T> {
 }
 
 export async function listarTipos(): Promise<TipoDocumento[]> {
-  const dados = await comoJson<{ tipos: TipoDocumento[] }>(await fetch(urlApi("/api/tipos")));
+  const dados = await comoJson<{ tipos: TipoDocumento[] }>(await buscar("/api/tipos"));
   return dados.tipos;
 }
 
 export async function verificarSaude(): Promise<boolean> {
   const dados = await comoJson<{ modelo_carregado: boolean }>(
-    await fetch(urlApi("/api/saude")),
+    await buscar("/api/saude"),
   );
   return dados.modelo_carregado;
 }
 
 export async function aquecerModelo(): Promise<void> {
-  await comoJson(await fetch(urlApi("/api/aquecer"), { method: "POST" }));
+  await comoJson(await buscar("/api/aquecer", { method: "POST" }));
 }
 
 export async function extrair(
@@ -63,12 +86,12 @@ export async function extrair(
   form.append("idioma", idioma);
   form.append("tipo", tipo);
   return comoJson<Documento>(
-    await fetch(urlApi("/api/extrair"), { method: "POST", body: form }),
+    await buscar("/api/extrair", { method: "POST", body: form }),
   );
 }
 
 export async function baixarTexto(caminho: string): Promise<string> {
-  const r = await fetch(urlApi(caminho));
+  const r = await buscar(caminho);
   if (!r.ok) throw new ApiError(`Erro ${r.status}`);
   return r.text();
 }
@@ -77,7 +100,7 @@ export async function baixarTexto(caminho: string): Promise<string> {
 
 export async function listarCategorias(): Promise<Categoria[]> {
   const dados = await comoJson<{ categorias: Categoria[] }>(
-    await fetch(urlApi("/api/categorias")),
+    await buscar("/api/categorias"),
   );
   return dados.categorias;
 }
@@ -85,7 +108,7 @@ export async function listarCategorias(): Promise<Categoria[]> {
 // ------------------------------------------------------------------ casos
 
 export async function listarCasos(): Promise<Caso[]> {
-  const dados = await comoJson<{ casos: Caso[] }>(await fetch(urlApi("/api/casos")));
+  const dados = await comoJson<{ casos: Caso[] }>(await buscar("/api/casos"));
   return dados.casos;
 }
 
@@ -93,25 +116,38 @@ export async function criarCaso(
   cliente: string,
   categoria: string,
   observacao = "",
-): Promise<Caso> {
+): Promise<CasoCriado> {
   const form = new FormData();
   form.append("cliente", cliente);
   form.append("categoria", categoria);
   form.append("observacao", observacao);
-  return comoJson<Caso>(await fetch(urlApi("/api/casos"), { method: "POST", body: form }));
+  return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
 }
 
 export async function obterCaso(casoId: string): Promise<SituacaoCaso> {
-  return comoJson<SituacaoCaso>(await fetch(urlApi(`/api/casos/${casoId}`)));
+  return comoJson<SituacaoCaso>(await buscar(`/api/casos/${casoId}`));
 }
 
 export async function excluirCaso(casoId: string): Promise<void> {
-  await comoJson(await fetch(urlApi(`/api/casos/${casoId}`), { method: "DELETE" }));
+  await comoJson(await buscar(`/api/casos/${casoId}`, { method: "DELETE" }));
 }
 
 export async function obterPedido(casoId: string, incluirOpcionais: boolean): Promise<Pedido> {
   const query = incluirOpcionais ? "?incluir_opcionais=true" : "";
-  return comoJson<Pedido>(await fetch(urlApi(`/api/casos/${casoId}/pedido${query}`)));
+  return comoJson<Pedido>(await buscar(`/api/casos/${casoId}/pedido${query}`));
+}
+
+// -------------------------------------------------------- portal do cliente
+
+/** Gera (ou troca) o link e a senha. A senha volta só nesta resposta. */
+export async function gerarPortal(casoId: string): Promise<PortalGerado> {
+  return comoJson<PortalGerado>(
+    await buscar(`/api/casos/${casoId}/portal`, { method: "POST" }),
+  );
+}
+
+export async function consultarPortal(casoId: string): Promise<PortalEstado> {
+  return comoJson<PortalEstado>(await buscar(`/api/casos/${casoId}/portal`));
 }
 
 // --------------------------------------------------------------- entregas
@@ -129,7 +165,7 @@ export async function enviarDocumento(
   form.append("idioma", idioma);
   form.append("usar_para_rg_e_cpf", String(usarParaRgECpf));
   return comoJson<RespostaEnvio>(
-    await fetch(urlApi(`/api/casos/${casoId}/documentos`), { method: "POST", body: form }),
+    await buscar(`/api/casos/${casoId}/documentos`, { method: "POST", body: form }),
   );
 }
 
@@ -140,7 +176,7 @@ export async function vincularIdentidadeUnificada(
   const form = new FormData();
   form.append("entrega_id", entregaId);
   return comoJson<RespostaEnvio>(
-    await fetch(urlApi(`/api/casos/${casoId}/identidade-unificada`), {
+    await buscar(`/api/casos/${casoId}/identidade-unificada`, {
       method: "POST",
       body: form,
     }),
@@ -148,9 +184,25 @@ export async function vincularIdentidadeUnificada(
 }
 
 export async function excluirEntrega(entregaId: string): Promise<void> {
-  await comoJson(await fetch(urlApi(`/api/entregas/${entregaId}`), { method: "DELETE" }));
+  await comoJson(await buscar(`/api/entregas/${entregaId}`, { method: "DELETE" }));
 }
 
-export function urlArquivoEntrega(entregaId: string): string {
-  return urlApi(`/api/entregas/${entregaId}/arquivo`);
+/** A entrega com a extração completa — os campos que o visor mostra. */
+export async function obterEntrega(entregaId: string): Promise<EntregaDetalhe> {
+  return comoJson<EntregaDetalhe>(await buscar(`/api/entregas/${entregaId}`));
+}
+
+/** URL absoluta do arquivo. Serve para abrir em nova aba quando não há
+ * autenticação; com token ligado use `baixarArquivoEntrega`, porque `<img>` e
+ * `<iframe>` não enviam o header Authorization e levariam 401. */
+export function urlArquivoEntrega(entregaId: string, download = false): string {
+  return urlApi(`/api/entregas/${entregaId}/arquivo${download ? "?download=1" : ""}`);
+}
+
+/** Busca o arquivo COM o Bearer e devolve o blob — a origem do object URL que
+ * a pré-visualização usa em `src`. */
+export async function baixarArquivoEntrega(entregaId: string): Promise<Blob> {
+  const r = await buscar(`/api/entregas/${entregaId}/arquivo`);
+  if (!r.ok) throw new ApiError(r.status === 401 ? "Sessão expirada." : `Erro ${r.status}`);
+  return r.blob();
 }

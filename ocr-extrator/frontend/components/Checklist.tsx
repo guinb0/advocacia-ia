@@ -3,9 +3,9 @@
 import { useState } from "react";
 
 import type { SituacaoCaso } from "@/lib/types";
-import { Barra } from "./Basicos";
 import estilos from "./Checklist.module.css";
 import ItemChecklistLinha from "./ItemChecklistLinha";
+import PainelPortal from "./PainelPortal";
 import PedidoCliente from "./PedidoCliente";
 import ui from "./ui.module.css";
 
@@ -19,6 +19,17 @@ interface Props {
   onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
   onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
+}
+
+/** "há 2 h", "há 3 dias" — a mesma leitura do cabeçalho no desenho. */
+function desde(iso: string): string {
+  const minutos = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (!Number.isFinite(minutos) || minutos < 1) return "agora";
+  if (minutos < 60) return `há ${minutos} min`;
+  const horas = Math.floor(minutos / 60);
+  if (horas < 24) return `há ${horas} h`;
+  const dias = Math.floor(horas / 24);
+  return dias === 1 ? "há 1 dia" : `há ${dias} dias`;
 }
 
 export default function Checklist({
@@ -35,14 +46,16 @@ export default function Checklist({
 
   if (!categoria) {
     return (
-      <div className={ui.card}>
+      <>
         <button type="button" className={estilos.voltar} onClick={onVoltar}>
-          ← Voltar
+          ← Carteira
         </button>
         <div className={ui.caixaErro}>{situacao.erro ?? "Categoria indisponível."}</div>
-      </div>
+      </>
     );
   }
+
+  const naoResolvidos = itens.filter((i) => i.status !== "entregue").length;
 
   const visiveis = itens.filter((item) => {
     if (filtro === "obrigatorios") return item.obrigatorio;
@@ -52,66 +65,73 @@ export default function Checklist({
 
   const filtros: { id: Filtro; nome: string }[] = [
     { id: "obrigatorios", nome: `Obrigatórios (${progresso.obrigatorios_total})` },
-    { id: "falta", nome: `Falta resolver (${itens.filter((i) => i.status !== "entregue").length})` },
+    { id: "falta", nome: `Falta resolver (${naoResolvidos})` },
     { id: "todos", nome: `Todos (${itens.length})` },
   ];
 
   return (
     <>
-      <div className={estilos.cabecalho}>
-        <button type="button" className={estilos.voltar} onClick={onVoltar}>
-          ← Casos
-        </button>
+      <button type="button" className={estilos.voltar} onClick={onVoltar}>
+        ← Carteira
+      </button>
+
+      <div className={estilos.faixaCaso}>
+        <span className={estilos.faixaRotulo}>CASO · {categoria.nome.toUpperCase()}</span>
+        <span className={estilos.faixaMeta}>
+          atualizado {desde(caso.atualizado_em || caso.criado_em)}
+        </span>
+      </div>
+      <div className={estilos.filete} />
+
+      <div className={estilos.identificacaoCaso}>
         <div>
           <h2 className={estilos.cliente}>{caso.cliente}</h2>
-          <span className={ui.observacao}>{categoria.nome}</span>
+          <p className={estilos.descricao}>{categoria.descricao}</p>
         </div>
-      </div>
-
-      <div className={estilos.paineis}>
-        <div className={ui.card}>
-          <h3 className={ui.tituloCard}>Progresso</h3>
-
-          <div className={estilos.numeroGrande}>
+        <div>
+          <span className={estilos.numeroGrande}>
             {progresso.obrigatorios_entregues}
             <span className={estilos.numeroTotal}>/{progresso.obrigatorios_total}</span>
-          </div>
-          <div className={ui.observacao}>documentos obrigatórios entregues</div>
-          <Barra score={progresso.percentual_obrigatorios} />
-
-          <div className={estilos.resumo}>
-            <div>
-              <strong>{progresso.obrigatorios_pendentes}</strong> obrigatórios sem arquivo
-            </div>
-            <div>
-              <strong>{progresso.itens_a_conferir}</strong> a conferir
-            </div>
-            <div>
-              <strong>{progresso.opcionais_entregues}</strong> opcionais de{" "}
-              {progresso.opcionais_total}
-            </div>
-          </div>
-
-          {progresso.pronto && (
-            <div className={estilos.completo}>
-              ✓ Todos os documentos obrigatórios foram entregues e validados.
-            </div>
-          )}
+          </span>
+          <div className={estilos.numeroRotulo}>obrigatórios entregues</div>
         </div>
-
-        <PedidoCliente casoId={caso.id} progresso={progresso} />
       </div>
+
+      <div className={estilos.barra}>
+        <i
+          className={estilos.barraPreenchimento}
+          style={{ width: `${Math.max(0, Math.min(100, progresso.percentual_obrigatorios))}%` }}
+        />
+      </div>
+
+      <div className={estilos.contadores}>
+        <span className={estilos.semArquivo}>
+          <strong>{progresso.obrigatorios_pendentes}</strong> sem arquivo
+        </span>
+        <span className={estilos.aConferir}>
+          <strong>{progresso.itens_a_conferir}</strong> a conferir
+        </span>
+        <span>
+          <strong>{progresso.opcionais_entregues}</strong> opcionais de {progresso.opcionais_total}
+        </span>
+      </div>
+
+      {progresso.pronto && (
+        <div className={estilos.completo}>
+          ✓ Todos os documentos obrigatórios foram entregues e validados.
+        </div>
+      )}
 
       {erro && <div className={ui.caixaErro}>{erro}</div>}
 
-      <div className={ui.abas} role="tablist">
+      <div className={estilos.abas} role="tablist">
         {filtros.map((f) => (
           <button
             key={f.id}
             type="button"
             role="tab"
             aria-selected={filtro === f.id}
-            className={`${ui.aba} ${filtro === f.id ? ui.abaAtiva : ""}`}
+            className={`${estilos.aba} ${filtro === f.id ? estilos.abaAtiva : ""}`}
             onClick={() => setFiltro(f.id)}
           >
             {f.nome}
@@ -120,7 +140,7 @@ export default function Checklist({
       </div>
 
       {visiveis.length === 0 ? (
-        <div className={ui.vazio}>Nada aqui — tudo resolvido neste filtro.</div>
+        <p className={ui.vazio}>Nada aqui — tudo resolvido neste filtro.</p>
       ) : (
         <ul className={estilos.lista}>
           {visiveis.map((item) => (
@@ -135,6 +155,19 @@ export default function Checklist({
           ))}
         </ul>
       )}
+
+      <div className={estilos.rodapePedido}>
+        <span className={estilos.resumoPedido}>
+          {naoResolvidos} {naoResolvidos === 1 ? "item pendente vira" : "itens pendentes viram"}{" "}
+          texto pronto para o cliente
+        </span>
+      </div>
+
+      <PainelPortal casoId={caso.id} />
+
+      <div className={estilos.blocoPedido}>
+        <PedidoCliente casoId={caso.id} progresso={progresso} />
+      </div>
     </>
   );
 }

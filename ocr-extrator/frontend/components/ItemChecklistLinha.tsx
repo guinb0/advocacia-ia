@@ -2,16 +2,22 @@
 
 import { useRef, useState } from "react";
 
-import { urlArquivoEntrega } from "@/lib/api";
 import type { ItemSituacao } from "@/lib/types";
-import { Tag } from "./Basicos";
+import { useModelo } from "@/lib/useExtracao";
 import estilos from "./Checklist.module.css";
-import ui from "./ui.module.css";
+import ProgressoOcr from "./ProgressoOcr";
+import VisorEntrega from "./VisorEntrega";
+
+/* A lista não pré-visualiza nada: cada entrega aparece só como enviada, e o
+ * arquivo abre no visor ao clique. Além de deixar o checklist limpo, isso evita
+ * baixar a imagem inteira de toda entrega só para desenhar um quadrado de 46px —
+ * um caso com 20 documentos puxava os 20 arquivos ao abrir. */
 
 const APARENCIA = {
-  entregue: { classe: estilos.entregue, icone: "✓", texto: "entregue" },
-  conferir: { classe: estilos.conferir, icone: "!", texto: "conferir" },
-  pendente: { classe: estilos.pendente, icone: "○", texto: "falta" },
+  entregue: { classe: estilos.entregue, texto: "ENTREGUE" },
+  processando: { classe: estilos.conferir, texto: "LENDO" },
+  conferir: { classe: estilos.conferir, texto: "CONFERIR" },
+  pendente: { classe: estilos.pendente, texto: "FALTA" },
 } as const;
 
 interface Props {
@@ -31,26 +37,46 @@ export default function ItemChecklistLinha({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
+  /** Entrega aberta no visor (arquivo + campos extraídos). */
+  const [visor, setVisor] = useState<{ id: string; arquivo: string } | null>(null);
+  const estadoModelo = useModelo();
   const aparencia = APARENCIA[item.status];
   const podeUsarParaAmbos = item.tipo_ocr === "rg" || item.tipo_ocr === "cpf";
+
+  // A legibilidade que interessa é a da entrega que resolveu o item.
+  const melhorScore = item.entregas.reduce<number | null>(
+    (melhor, e) =>
+      e.score_legibilidade === null
+        ? melhor
+        : melhor === null
+          ? e.score_legibilidade
+          : Math.max(melhor, e.score_legibilidade),
+    null,
+  );
 
   return (
     <li className={`${estilos.item} ${aparencia.classe}`}>
       <div className={estilos.cabecalhoItem}>
-        <span className={estilos.marcador} aria-hidden>
-          {enviando ? "…" : aparencia.icone}
+        <span className={estilos.marcador} aria-hidden />
+
+        <span className={estilos.codigo}>{item.codigo}</span>
+
+        <span className={estilos.nome}>
+          {item.nome}
+          {item.obrigatorio && <span className={estilos.obrigatorio}>OBRIGATÓRIO</span>}
         </span>
 
-        <div className={estilos.identificacao}>
-          <div className={estilos.nome}>
-            {item.nome}
-            {item.obrigatorio && <Tag tom="err">obrigatório</Tag>}
-          </div>
-          <div className={ui.observacao}>
-            {item.codigo}
-            {item.tipo_ocr && " · o sistema confere o tipo automaticamente"}
-          </div>
-        </div>
+        {melhorScore !== null && (
+          <span className={estilos.legibilidade}>legib. {melhorScore}%</span>
+        )}
+
+        <span
+          className={
+            item.status === "conferir" ? estilos.carimboConferir : estilos.situacaoItem
+          }
+        >
+          {enviando ? "LENDO…" : aparencia.texto}
+        </span>
 
         <button
           type="button"
@@ -58,7 +84,7 @@ export default function ItemChecklistLinha({
           onClick={() => inputRef.current?.click()}
           disabled={enviando}
         >
-          {enviando ? "Lendo…" : item.entregas.length ? "Enviar outro" : "Enviar"}
+          {item.entregas.length ? "Enviar outro" : "Enviar"}
         </button>
 
         <input
@@ -76,6 +102,10 @@ export default function ItemChecklistLinha({
         />
       </div>
 
+      {(enviando || item.status === "processando") && (
+        <ProgressoOcr modeloPronto={estadoModelo === "pronto"} />
+      )}
+
       {podeUsarParaAmbos && (
         <label className={estilos.opcaoCIN}>
           <input
@@ -84,7 +114,8 @@ export default function ItemChecklistLinha({
             onChange={(e) => setUsarParaRgECpf(e.target.checked)}
             disabled={enviando}
           />
-          Esta é uma CIN (identidade unificada): usar este arquivo para RG e CPF.
+          Forçar identidade unificada (RG e CPF no mesmo arquivo). CNH e CIN já são
+          reconhecidas sozinhas — marque só se a leitura não tiver identificado.
         </label>
       )}
 
@@ -92,27 +123,29 @@ export default function ItemChecklistLinha({
         <ul className={estilos.entregas}>
           {item.entregas.map((entrega) => (
             <li key={entrega.id} className={estilos.entrega}>
-              <a
-                href={urlArquivoEntrega(entrega.id)}
-                target="_blank"
-                rel="noreferrer"
+              <span className={estilos.selo} aria-hidden>
+                ENVIADO
+              </span>
+
+              <button
+                type="button"
                 className={estilos.arquivo}
+                onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
+                title="Abrir o documento e os dados extraídos"
               >
                 {entrega.arquivo}
-              </a>
+              </button>
 
-              {entrega.score_legibilidade !== null && (
-                <span className={ui.observacao}>legibilidade {entrega.score_legibilidade}%</span>
-              )}
-
-              {entrega.dados_utilizaveis || entrega.confirmado_manual ? (
-                <Tag tom="ok">{entrega.confirmado_manual ? "confirmado" : "ok"}</Tag>
-              ) : (
-                <Tag tom="warn">revisar</Tag>
-              )}
+              <button
+                type="button"
+                className={estilos.botaoDados}
+                onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
+              >
+                Ver informações extraídas
+              </button>
 
               {(entrega.itens_atendidos?.length ?? 1) > 1 && (
-                <Tag tom="ok">vale para RG e CPF</Tag>
+                <span className={estilos.obrigatorio}>CIN · VALE PARA RG E CPF</span>
               )}
 
               {podeUsarParaAmbos && (entrega.itens_atendidos?.length ?? 1) === 1 && (
@@ -146,6 +179,14 @@ export default function ItemChecklistLinha({
             </li>
           ))}
         </ul>
+      )}
+
+      {visor && (
+        <VisorEntrega
+          entregaId={visor.id}
+          arquivo={visor.arquivo}
+          onFechar={() => setVisor(null)}
+        />
       )}
     </li>
   );

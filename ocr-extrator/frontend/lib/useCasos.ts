@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import * as api from "./api";
-import type { Caso, Categoria, SituacaoCaso } from "./types";
+import type { Caso, CasoCriado, Categoria, SituacaoCaso } from "./types";
 
 export function useCategorias() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -48,7 +48,7 @@ export function useCasos() {
   }, [recarregar]);
 
   const criar = useCallback(
-    async (cliente: string, categoria: string, observacao = "") => {
+    async (cliente: string, categoria: string, observacao = ""): Promise<CasoCriado> => {
       const caso = await api.criarCaso(cliente, categoria, observacao);
       await recarregar();
       return caso;
@@ -101,6 +101,8 @@ export function useSituacao(casoId: string | null) {
       setEnviando(itemCodigo);
       setErro(null);
       try {
+        // Volta assim que o arquivo é aceito; a leitura segue no servidor e o
+        // efeito de polling abaixo atualiza a tela quando terminar.
         await api.enviarDocumento(casoId, itemCodigo, arquivo, "pt", usarParaRgECpf);
         await recarregar();
       } catch (e) {
@@ -111,6 +113,16 @@ export function useSituacao(casoId: string | null) {
     },
     [casoId, recarregar],
   );
+
+  /* Enquanto algum item estiver sendo lido, recarrega sozinho. Para de checar
+   * assim que nada mais está em processamento — sem timer eterno rodando. */
+  const processando = situacao?.itens.some((i) => i.status === "processando") ?? false;
+
+  useEffect(() => {
+    if (!processando) return;
+    const id = setInterval(() => void recarregar(), 3000);
+    return () => clearInterval(id);
+  }, [processando, recarregar]);
 
   const removerEntrega = useCallback(
     async (entregaId: string) => {

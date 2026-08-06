@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import type { Caso, Categoria } from "@/lib/types";
+import type { Caso, CasoCriado, Categoria } from "@/lib/types";
+import CredenciaisPortal from "./CredenciaisPortal";
 import estilos from "./ListaCasos.module.css";
 import ui from "./ui.module.css";
 
@@ -12,7 +13,7 @@ interface Props {
   carregando: boolean;
   erro: string | null;
   onAbrir: (casoId: string) => void;
-  onCriar: (cliente: string, categoria: string) => Promise<unknown>;
+  onCriar: (cliente: string, categoria: string) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
 }
 
@@ -29,6 +30,9 @@ export default function ListaCasos({
   const [categoria, setCategoria] = useState("");
   const [criando, setCriando] = useState(false);
   const [confirmando, setConfirmando] = useState<string | null>(null);
+  /* Credenciais do caso recém-criado. Ficam só em memória: a senha existe em
+   * texto claro apenas nesta resposta, e some ao sair da tela. */
+  const [novoPortal, setNovoPortal] = useState<CasoCriado | null>(null);
 
   const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
@@ -38,7 +42,7 @@ export default function ListaCasos({
     if (!cliente.trim() || !categoriaSelecionada) return;
     setCriando(true);
     try {
-      await onCriar(cliente.trim(), categoriaSelecionada);
+      setNovoPortal(await onCriar(cliente.trim(), categoriaSelecionada));
       setCliente("");
     } finally {
       setCriando(false);
@@ -111,6 +115,15 @@ export default function ListaCasos({
           <p className={ui.observacao} style={{ marginTop: 12 }}>
             Nenhuma categoria disponível — verifique se o backend está no ar.
           </p>
+        )}
+
+        {novoPortal && (
+          <CredenciaisPortal
+            cliente={novoPortal.cliente}
+            portal={novoPortal.portal}
+            onAbrirCaso={() => onAbrir(novoPortal.id)}
+            onFechar={() => setNovoPortal(null)}
+          />
         )}
       </div>
 

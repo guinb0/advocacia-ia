@@ -1,0 +1,114 @@
+.bloco {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 3px double var(--border-strong);
+}
+
+.rotulo {
+  display: block;
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.texto {
+  margin: 0 0 12px;
+  font: 400 12.5px/1.6 var(--font-ui);
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+.linha {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.valor {
+  flex: 1;
+  min-width: 200px;
+  font: 400 12px/1.5 var(--font-mono);
+  word-break: break-all;
+  user-select: all;
+}
+
+/* A senha é o que protege os documentos: ganha destaque e espaçamento de
+ * caractere, porque muitas vezes é ditada por telefone. */
+.senha {
+  font: 600 18px/1.3 var(--font-mono);
+  letter-spacing: 0.18em;
+  color: var(--warn);
+}
+
+.botao {
+  padding: 10px 14px;
+  border: 1.5px solid var(--ink);
+  background: none;
+  color: var(--ink);
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.botao:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.acao {
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--ink);
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+.acao:hover {
+  background: var(--surface-2);
+}
+
+.trocar {
+  display: block;
+  margin-top: 12px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: 400 11.5px/1 var(--font-ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.trocar:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.aviso {
+  margin: 8px 0 0;
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--warn);
+}
+
+.erro {
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  padding: 10px;
+  font: 400 12px/1.5 var(--font-ui);
+  margin-bottom: 10px;
+}
+
+.botao:disabled,
+.trocar:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

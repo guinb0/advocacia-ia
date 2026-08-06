@@ -1,0 +1,260 @@
+/* Portal do cliente. Mesma direção AUTOS, porém mais respirado: quem usa é
+ * leigo, no celular, muitas vezes com pressa. */
+
+.tela {
+  min-height: 100vh;
+  background: var(--surface);
+  padding: 24px 16px 48px;
+}
+
+.centro {
+  width: min(720px, 100%);
+  margin: 0 auto;
+}
+
+.marca {
+  font: 700 14px/1 var(--font-display);
+  letter-spacing: 0.02em;
+}
+
+.filete {
+  margin: 12px 0 22px;
+  border-top: 3px double var(--border-strong);
+}
+
+/* ---------------------------------------------------------------- senha */
+
+.cartao {
+  border: 1px solid var(--border-strong);
+  padding: 26px;
+}
+
+.titulo {
+  margin: 0;
+  font: 600 24px/1.15 var(--font-display);
+}
+
+.texto {
+  margin: 8px 0 0;
+  font: 400 13px/1.6 var(--font-ui);
+  color: var(--muted);
+}
+
+.campo {
+  width: 100%;
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: 500 17px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.botao {
+  margin-top: 14px;
+  width: 100%;
+  padding: 13px 16px;
+  border: 1.5px solid var(--ink);
+  background: none;
+  color: var(--ink);
+  font: 600 12px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.botao:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.botao:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.erro {
+  margin-top: 16px;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  padding: 12px;
+  font: 400 12.5px/1.5 var(--font-ui);
+}
+
+/* ------------------------------------------------------------ checklist */
+
+.cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cliente {
+  margin: 0;
+  font: 600 24px/1.15 var(--font-display);
+}
+
+.categoria {
+  margin: 4px 0 0;
+  font: italic 400 13px/1.4 var(--font-display);
+  color: var(--muted);
+}
+
+.contagem {
+  font: 600 26px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.contagemTotal {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.barra {
+  margin-top: 14px;
+  height: 5px;
+  border: 1px solid var(--border-strong);
+  padding: 1px;
+}
+
+.preenchimento {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+}
+
+.completo {
+  margin-top: 16px;
+  border: 1.5px solid var(--ok);
+  color: var(--ok);
+  padding: 12px;
+  font: 400 13px/1.5 var(--font-ui);
+}
+
+.secao {
+  margin: 26px 0 0;
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.lista {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border-top: 3px double var(--border-strong);
+}
+
+.item {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.marcador {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  transform: translateY(1px);
+}
+
+.entregue .marcador {
+  background: var(--ok);
+}
+.processando .marcador {
+  border: 1.5px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.conferir .marcador {
+  border: 1.5px solid var(--warn);
+}
+.pendente .marcador {
+  border: 1.5px solid var(--accent);
+}
+
+/* Aviso de que o arquivo chegou e a leitura continua sem o cliente esperando. */
+.lendo {
+  flex-basis: 100%;
+  margin-left: 21px;
+  font: 400 12px/1.5 var(--font-ui);
+  color: var(--warn);
+}
+
+.nome {
+  flex: 1;
+  min-width: 160px;
+  font: 400 14.5px/1.4 var(--font-ui);
+}
+
+.observacao {
+  display: block;
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.motivo {
+  flex-basis: 100%;
+  margin-left: 21px;
+  font: 400 12px/1.5 var(--font-ui);
+  color: var(--warn);
+}
+
+.selo {
+  flex: none;
+  font: 600 9.5px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  border: 1px solid currentColor;
+  padding: 4px 7px;
+}
+
+.entregue .selo {
+  color: var(--ok);
+}
+.processando .selo {
+  color: var(--warn);
+}
+.conferir .selo {
+  color: var(--warn);
+}
+.pendente .selo {
+  color: var(--accent);
+}
+
+.enviar {
+  flex: none;
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--ink);
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.enviar:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.enviar:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rodape {
+  margin-top: 26px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font: 400 11.5px/1.6 var(--font-ui);
+  color: var(--muted);
+}

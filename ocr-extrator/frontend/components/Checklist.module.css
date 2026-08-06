@@ -1,84 +1,428 @@
-.cabecalho {
+/* Checklist do caso — "caderno de autos" (direção AUTOS, turno 2a).
+ * Papel creme, filetes duplos entre seções, carimbos nas ressalvas. */
+
+/* ------------------------------------------------------ cabeçalho do caso */
+
+.faixaCaso {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 18px;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-strong);
+  flex-wrap: wrap;
+}
+
+.faixaRotulo {
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+}
+
+.faixaMeta {
+  font: 500 11px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.filete {
+  height: 2px;
+  border-top: 1px solid var(--border-strong);
+  margin-top: 1px;
 }
 
 .voltar {
-  padding: 8px 13px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: transparent;
+  display: inline-block;
+  margin-bottom: 16px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--ink);
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.voltar:hover {
+  background: var(--surface-2);
+}
+
+.identificacaoCaso {
+  padding-top: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.cliente {
+  margin: 0;
+  font: 600 24px/1.15 var(--font-display);
+}
+
+.descricao {
+  margin: 4px 0 0;
+  font: italic 400 13px/1.4 var(--font-display);
   color: var(--muted);
-  font-size: 0.85rem;
+  max-width: 60ch;
+}
+
+.numeroGrande {
+  font: 600 30px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.numeroTotal {
+  font-size: 17px;
+  color: var(--muted);
+}
+
+.numeroRotulo {
+  font: 400 10.5px/1.3 var(--font-ui);
+  color: var(--muted);
+}
+
+/* Barra da direção: caixa com borda e preenchimento sólido em tinta — sem
+ * raio, sem gradiente, sem transição de cor por faixa. */
+.barra {
+  margin-top: 12px;
+  height: 5px;
+  border: 1px solid var(--border-strong);
+  padding: 1px;
+}
+
+.barraPreenchimento {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+}
+
+.contadores {
+  margin-top: 6px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font: 400 11.5px/1.4 var(--font-ui);
+  color: var(--muted);
+}
+
+.contadores strong {
   font-weight: 600;
+}
+
+.semArquivo {
+  color: var(--accent);
+}
+.aConferir {
+  color: var(--warn-texto);
+}
+
+.completo {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1.5px solid var(--ok);
+  color: var(--ok);
+  font: 400 12.5px/1.4 var(--font-ui);
+}
+
+/* ------------------------------------------------------------------ abas */
+
+.abas {
+  display: flex;
+  gap: 20px;
+  margin: 18px 0 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.aba {
+  padding: 0 0 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: 600 11.5px/1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.aba:hover {
+  color: var(--ink);
+}
+
+.abaAtiva {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+/* -------------------------------------------------------------- checklist */
+
+.lista {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  border-top: 3px double var(--border-strong);
+}
+
+.item {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.conferir {
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+}
+
+.cabecalhoItem {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+/* Marcador quadrado de 9px: cheio = entregue, vazado = pendência. */
+.marcador {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  transform: translateY(1px);
+}
+
+.entregue .marcador {
+  background: var(--ok);
+}
+
+.conferir .marcador {
+  border: 1.5px solid var(--warn);
+}
+
+.pendente .marcador {
+  border: 1.5px solid var(--accent);
+}
+
+.codigo {
+  flex: none;
+  font: 500 11px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.nome {
+  flex: 1;
+  min-width: 0;
+  font: 400 14px/1.35 var(--font-ui);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.legibilidade {
+  flex: none;
+  font: 500 10.5px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.situacaoItem {
+  flex: none;
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.12em;
+}
+
+.entregue .situacaoItem {
+  color: var(--ok);
+}
+
+.pendente .situacaoItem {
+  color: var(--accent);
+}
+
+/* Carimbo de ressalva: borda 1.5px e a leve rotação da direção. */
+.carimboConferir {
+  color: var(--warn-texto);
+  border: 1.5px solid var(--warn);
+  padding: 4px 7px;
+  transform: rotate(-1.5deg);
+}
+
+/* Etiqueta "OBRIGATÓRIO" inline, no tom de carimbo. */
+.obrigatorio {
+  font: 600 9.5px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 2px 5px;
+}
+
+.dica {
+  font: 400 11px/1.4 var(--font-ui);
+  color: var(--muted);
+}
+
+.botaoEnviar {
+  flex: none;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--ink);
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.voltar:hover {
-  color: var(--text);
-  border-color: var(--muted);
+.botaoEnviar:hover:not(:disabled) {
+  background: var(--surface-2);
 }
 
-.cliente {
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.botaoEnviar:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-/* Progresso à esquerda, pedido ao cliente à direita. */
-.paineis {
-  display: grid;
-  grid-template-columns: minmax(260px, 340px) 1fr;
-  gap: 20px;
-  align-items: start;
-  margin-bottom: 20px;
-}
-
-@media (max-width: 860px) {
-  .paineis {
-    grid-template-columns: 1fr;
-  }
-}
-
-.numeroGrande {
-  font-size: 2.6rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1;
-}
-
-.numeroTotal {
-  font-size: 1.4rem;
-  color: var(--muted);
-  font-weight: 600;
-}
-
-.resumo {
-  margin-top: 16px;
+.opcaoCIN {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: 0.85rem;
+  align-items: center;
+  gap: 7px;
+  margin: 9px 0 0 21px;
+  color: var(--muted);
+  font: 400 11.5px/1.4 var(--font-ui);
+  cursor: pointer;
+}
+
+.vincularCIN {
+  border: 1px solid var(--accent);
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.08em;
+  padding: 4px 7px;
+}
+
+.vincularCIN:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* --------------------------------------------------------------- entregas */
+
+.entregas {
+  list-style: none;
+  margin: 8px 0 0 21px;
+  padding: 0;
+}
+
+.entrega {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font: 400 11.5px/1.5 var(--font-ui);
+}
+
+/* É um <button> (abre o visor), com aparência de link. */
+.arquivo {
+  flex: 1;
+  min-width: 140px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  word-break: break-all;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.arquivo:hover {
+  color: var(--warn);
+}
+
+/* A entrega se anuncia por um selo, não por miniatura: a lista fica legível e o
+ * arquivo só é buscado quando alguém abre o visor. */
+.selo {
+  flex: none;
+  font: 600 9px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  color: var(--ok);
+  border: 1px solid var(--ok);
+  padding: 3px 6px;
+}
+
+.botaoDados {
+  flex: none;
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--ink);
+  font: 600 9.5px/1 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.botaoDados:hover {
+  background: var(--surface-2);
+  border-color: var(--warn);
+}
+
+.remover {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.remover:hover {
+  color: var(--accent);
+}
+
+/* Alerta do OCR: sub-linha indentada, em mono, no tom de carimbo. É o texto
+ * do backend verbatim — não reescrever aqui. */
+.alertas {
+  flex-basis: 100%;
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+.alertas li {
+  font: 400 11px/1.5 var(--font-mono);
+  color: var(--accent);
+  padding: 2px 0;
+}
+
+/* --------------------------------------------------- pedido ao cliente --- */
+
+.rodapePedido {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-strong);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.resumoPedido {
+  font: 400 12px/1.4 var(--font-ui);
   color: var(--muted);
 }
-
-.resumo strong {
-  color: var(--text);
-}
-
-.completo {
-  margin-top: 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-  border-left: 3px solid var(--ok);
-}
-
-/* ------------------------------------------------------ pedido ao cliente */
 
 .acoesPedido {
   display: flex;
@@ -90,212 +434,42 @@
 
 .botaoCopiar {
   padding: 8px 14px;
-  border-radius: 9px;
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  font-size: 0.85rem;
-  font-weight: 600;
+  border: 1.5px solid var(--ink);
+  background: none;
+  color: var(--ink);
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
 .botaoCopiar:hover {
-  background: var(--accent-2);
+  background: var(--ink);
+  color: var(--surface);
 }
 
 .checkbox {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.82rem;
+  font: 400 11.5px/1 var(--font-ui);
   color: var(--muted);
   cursor: pointer;
 }
 
 .textoPedido {
   width: 100%;
-  border-radius: 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--ink);
   padding: 12px;
-  font-family: var(--mono);
-  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
   line-height: 1.6;
   resize: vertical;
 }
 
-/* --------------------------------------------------------------- checklist */
-
-.lista {
-  list-style: none;
-}
-
-.item {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 9px;
-  background: var(--surface);
-}
-
-.entregue {
-  border-left-color: var(--ok);
-}
-
-.conferir {
-  border-left-color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 6%, var(--surface));
-}
-
-.pendente {
-  border-left-color: var(--border);
-}
-
-.cabecalhoItem {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.marcador {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 0.8rem;
-  font-weight: 700;
-  flex: none;
-  background: var(--surface-2);
-  color: var(--muted);
-}
-
-.entregue .marcador {
-  background: color-mix(in srgb, var(--ok) 22%, transparent);
-  color: var(--ok);
-}
-
-.conferir .marcador {
-  background: color-mix(in srgb, var(--warn) 25%, transparent);
-  color: var(--warn);
-}
-
-.identificacao {
-  flex: 1;
-  min-width: 0;
-}
-
-.nome {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  font-size: 0.92rem;
-  flex-wrap: wrap;
-}
-
-.botaoEnviar {
-  padding: 7px 13px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.botaoEnviar:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.botaoEnviar:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.opcaoCIN {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 10px 0 0 36px;
-  color: var(--muted);
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-.vincularCIN {
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 4px 7px;
-}
-
-.vincularCIN:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-/* --------------------------------------------------------------- entregas */
-
-.entregas {
-  list-style: none;
-  margin: 10px 0 0 36px;
-}
-
-.entrega {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
-  padding: 6px 0;
-  border-top: 1px solid var(--border);
-  font-size: 0.82rem;
-}
-
-.arquivo {
-  color: var(--accent);
-  text-decoration: none;
-  word-break: break-all;
-  flex: 1;
-  min-width: 120px;
-}
-
-.arquivo:hover {
-  text-decoration: underline;
-}
-
-.remover {
-  border: none;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 0.9rem;
-  padding: 2px 6px;
-  border-radius: 6px;
-}
-
-.remover:hover {
-  color: var(--err);
-  background: color-mix(in srgb, var(--err) 12%, transparent);
-}
-
-.alertas {
-  flex-basis: 100%;
-  list-style: none;
-  margin-top: 4px;
-}
-
-.alertas li {
-  font-size: 0.78rem;
-  color: var(--warn);
-  padding: 3px 0;
+/* O pedido fecha a página, logo abaixo do resumo do que ainda falta. */
+.blocoPedido {
+  margin-top: 12px;
 }

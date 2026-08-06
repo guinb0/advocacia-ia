@@ -1,0 +1,33 @@
+# Keycloak para o login do Acervo.
+#
+#   docker compose up -d keycloak      -> sobe em http://localhost:8180
+#   console admin: http://localhost:8180  (admin / admin)
+#
+# `start-dev` usa banco em memória: o realm é reimportado do JSON a cada subida,
+# então qualquer usuário criado pelo console some no próximo `up`. É o que se
+# quer em desenvolvimento (o estado fica versionado no JSON, não no volume); para
+# valer em produção, trocar por `start` + Postgres e remover o --import-realm.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    container_name: acervo-keycloak
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8180:8180"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      # A partir da 25 a imagem não tem curl; o Keycloak expõe /health no 9000.
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"UP\"' <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s

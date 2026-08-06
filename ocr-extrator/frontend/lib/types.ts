@@ -123,7 +123,7 @@ export interface Categoria {
 
 // ------------------------------------------------------ casos e entregas
 
-export type StatusItem = "pendente" | "conferir" | "entregue";
+export type StatusItem = "pendente" | "processando" | "conferir" | "entregue";
 
 export interface Caso {
   id: string;
@@ -133,10 +133,20 @@ export interface Caso {
   criado_em: string;
   atualizado_em: string;
   total_entregas?: number;
+  /** Verdadeiro quando o caso já tem link de portal. */
+  portal_ativo?: boolean;
+}
+
+/** `POST /api/casos` devolve o caso já com o portal recém-criado. */
+export interface CasoCriado extends Caso {
+  portal: PortalGerado;
 }
 
 export interface Entrega {
   id: string;
+  /** 'processando' enquanto o OCR não terminou; 'erro' se a leitura falhou. */
+  status_proc?: "processando" | "pronto" | "erro";
+  erro_proc?: string | null;
   caso_id: string;
   item_codigo: string;
   arquivo: string;
@@ -153,6 +163,12 @@ export interface Entrega {
   criado_em: string;
   /** Mensagens para o advogado — não são o texto que vai ao cliente. */
   alertas: string[];
+}
+
+/** `GET /api/entregas/{id}` devolve a entrega com a extração completa anexada
+ * (a coluna `extracao_json`), que é de onde saem os campos exibidos no visor. */
+export interface EntregaDetalhe extends Entrega {
+  extracao?: Documento;
 }
 
 export interface ItemSituacao extends ItemChecklist {
@@ -177,6 +193,20 @@ export interface SituacaoCaso {
   itens: ItemSituacao[];
   progresso: Progresso;
   erro?: string;
+}
+
+/** Resposta de `POST /api/casos/{id}/portal`. A senha vem só aqui. */
+export interface PortalGerado {
+  url: string;
+  token: string;
+  senha: string;
+  aviso: string;
+}
+
+export interface PortalEstado {
+  ativo: boolean;
+  url: string | null;
+  criado_em: string | null;
 }
 
 export interface Pedido {

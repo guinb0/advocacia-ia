@@ -15,25 +15,52 @@ from .extractors import ROTULOS_TIPO
 
 # Status possíveis de um item do checklist.
 PENDENTE = "pendente"          # nada foi enviado
+PROCESSANDO = "processando"    # chegou e está sendo lido pelo OCR
 CONFERIR = "conferir"          # chegou, mas com ressalva (ilegível ou tipo trocado)
 ENTREGUE = "entregue"          # chegou e passou na validação
+
+
+def _esta_pronta(entrega: dict[str, Any]) -> bool:
+    return entrega.get("status_proc", "pronto") == "pronto"
 
 
 def _status_do_item(entregas: list[dict[str, Any]]) -> str:
     if not entregas:
         return PENDENTE
+
+    prontas = [e for e in entregas if _esta_pronta(e)]
+
     # Basta uma entrega boa: "atestados médicos" pode ter 5 arquivos e 1 ruim.
     if any(
         (e["dados_utilizaveis"] or e.get("confirmado_manual", False))
         and e["tipo_confere"] is not False
-        for e in entregas
+        for e in prontas
     ):
         return ENTREGUE
+
+    # Nenhuma boa ainda, mas há leitura em curso: não é pendência nem ressalva.
+    if any(e.get("status_proc") == "processando" for e in entregas):
+        return PROCESSANDO
+
+    # Sobrou o que chegou e não presta: lido com ressalva ou falho na leitura.
+    # Em ambos o arquivo existe, então é "conferir" — nunca "pendente", que
+    # significaria que o cliente não mandou nada.
     return CONFERIR
 
 
 def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[str]:
     alertas: list[str] = []
+
+    # Ainda sem leitura: os campos de validação estão vazios, e lê-los produziria
+    # o alerta de "não foi possível extrair" para um arquivo que só está na fila.
+    estado = entrega.get("status_proc", "pronto")
+    if estado == "processando":
+        return ["Documento recebido. A leitura está em andamento."]
+    if estado == "erro":
+        return [
+            "Não foi possível ler este arquivo: "
+            + (entrega.get("erro_proc") or "falha no processamento.")
+        ]
 
     if entrega["tipo_confere"] is False:
         codigo = entrega.get("tipo_detectado")
@@ -42,6 +69,12 @@ def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[st
         alertas.append(
             f"Enviado como '{item.nome}', mas o documento parece ser {legivel}. "
             "Confira se não houve troca de arquivo."
+        )
+    if len(entrega.get("itens_atendidos") or []) > 1 and not entrega.get("confirmado_manual"):
+        rotulo = ROTULOS_TIPO.get(entrega.get("tipo_detectado"), entrega.get("tipo_detectado"))
+        alertas.append(
+            f"Este arquivo foi reconhecido como {rotulo} e traz RG e CPF, "
+            "então vale para os dois itens do checklist."
         )
     if entrega.get("confirmado_manual"):
         alertas.append("Identidade unificada confirmada manualmente para RG e CPF.")
@@ -120,6 +153,35 @@ def montar_situacao(caso_id: str) -> dict[str, Any] | None:
     }
 
 
+# Documentos que provam identidade e CPF no mesmo arquivo. A CIN traz o CPF como
+# número principal e substitui o RG por lei; a CNH imprime os dois. Um cartão de
+# CPF NÃO entra aqui: ele não carrega RG nenhum, e aceitá-lo marcaria a
+# identidade como entregue sem que exista documento de identidade no caso.
+TIPOS_IDENTIDADE_UNIFICADA = {"cin", "cnh"}
+
+
+def _campo_valido(extracao: dict[str, Any], nome: str) -> bool:
+    campo = next((c for c in extracao.get("campos", []) if c["nome"] == nome), None)
+    return bool(
+        campo and str(campo.get("valor", "")).strip() and campo.get("valido") is not False
+    )
+
+
+def cobre_rg_e_cpf(extracao: dict[str, Any]) -> bool:
+    """O arquivo comprova identidade E CPF de uma vez?
+
+    Decidido pelos dados extraídos, não só pelo tipo: uma CNH ilegível em que o
+    CPF não saiu não pode dar o item CPF por entregue.
+    """
+    tipo = extracao.get("tipo", {}).get("detectado")
+    if tipo not in TIPOS_IDENTIDADE_UNIFICADA:
+        return False
+    if not _campo_valido(extracao, "cpf"):
+        return False
+    # Na CIN não há número de RG a conferir — o próprio documento é a identidade.
+    return True if tipo == "cin" else _campo_valido(extracao, "rg")
+
+
 def tipo_confere(
     item: ItemChecklist,
     tipo_detectado: str | None,
@@ -136,14 +198,15 @@ def tipo_confere(
     if not tipo_detectado or tipo_detectado == "desconhecido":
         return None
     if identidade_unificada and item.tipo_ocr in {"rg", "cpf"}:
-        return tipo_detectado == "cin"
+        # Antes só a CIN valia; a CNH entrou porque imprime RG e CPF juntos.
+        return tipo_detectado in TIPOS_IDENTIDADE_UNIFICADA
     return tipo_detectado == item.tipo_ocr
 
 
 def itens_para_identidade_unificada(categoria: categorias.Categoria, item: ItemChecklist) -> list[str]:
-    """Itens atendidos por uma CIN: RG e CPF, uma única vez cada.
+    """Itens atendidos por uma CIN ou CNH: RG e CPF, uma única vez cada.
 
-    A opção é deliberada: fora dela RG e CPF continuam documentos independentes,
+    Fora dos documentos que trazem os dois, RG e CPF continuam independentes,
     como nos documentos antigos.
     """
     if item.tipo_ocr not in {"rg", "cpf"}:
@@ -178,6 +241,49 @@ def _motivo_para_o_cliente(item: dict[str, Any]) -> str:
     if any(not e["dados_utilizaveis"] for e in entregas):
         return "a foto não ficou legível o suficiente"
     return "precisamos de uma nova cópia"
+
+
+def visao_do_cliente(situacao: dict[str, Any]) -> dict[str, Any]:
+    """O checklist como o cliente deve vê-lo, no portal.
+
+    Recorte deliberado. Fica de fora:
+      - os alertas de `_alertas_da_entrega`, escritos para o advogado e cheios de
+        termo de classificador ("o sistema leu como 'cpf'");
+      - a extração (CPF, RG, nome lidos), que é dado pessoal que o cliente já
+        tem e que não precisa trafegar de volta;
+      - o caminho dos arquivos e os identificadores internos das entregas.
+
+    Fica o que o cliente precisa para agir: o que já chegou, o que falta e, para
+    o que precisa refazer, o motivo em português de gente.
+    """
+    itens = []
+    for item in situacao["itens"]:
+        entregas = item["entregas"]
+        precisa_refazer = item["status"] == CONFERIR
+        itens.append(
+            {
+                "codigo": item["codigo"],
+                "nome": item["nome"],
+                "observacao": item.get("observacao", ""),
+                "obrigatorio": item["obrigatorio"],
+                "status": item["status"],
+                "enviados": len(entregas),
+                "motivo": _motivo_para_o_cliente(item) if precisa_refazer else "",
+            }
+        )
+
+    progresso = situacao["progresso"]
+    return {
+        "cliente": situacao["caso"]["cliente"],
+        "categoria": (situacao.get("categoria") or {}).get("nome", ""),
+        "itens": itens,
+        "progresso": {
+            "obrigatorios_total": progresso["obrigatorios_total"],
+            "obrigatorios_entregues": progresso["obrigatorios_entregues"],
+            "percentual": progresso["percentual_obrigatorios"],
+            "pronto": progresso["pronto"],
+        },
+    }
 
 
 def montar_pedido(caso_id: str, incluir_opcionais: bool = False) -> dict[str, Any] | None:

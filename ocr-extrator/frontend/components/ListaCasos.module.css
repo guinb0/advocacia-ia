@@ -88,7 +88,9 @@
   border-radius: 9px;
   border: none;
   background: var(--accent);
-  color: #fff;
+  /* Texto escuro sobre o preenchimento claro: no tema escuro o branco sobre o
+   * acento dava 3.4:1 e reprovava em AA. */
+  color: var(--surface);
   font-size: 0.92rem;
   font-weight: 600;
   cursor: pointer;

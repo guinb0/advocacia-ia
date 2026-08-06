@@ -1,37 +1,57 @@
+/* Mistura A+B (ver GUIA-LAYOUT.md): a estrutura e a tipografia editorial da
+ * direção AUTOS sobre a superfície escura e a semântica vermelho/amarelo/verde
+ * da direção PLANTÃO.
+ *
+ * Os nomes de token seguem os de AUTOS para não reescrever cada componente.
+ * Atenção a um deles: `--ink` era "tinta sobre papel" e agora é o inverso — a
+ * cor clara do texto sobre o fundo escuro. Onde ele preenche algo (a barra de
+ * progresso, o hover do botão de copiar) o resultado continua correto, porque
+ * o par --ink/--surface segue sendo o contraste máximo do sistema.
+ *
+ * Contraste medido sobre --surface (#12140f), alvo AA 4.5:1 em texto:
+ *   --ink 14.7:1 · --muted 6.2:1 · --accent 5.5:1 · --warn 8.2:1 · --ok 6.7:1
+ */
+
 :root {
-  --bg: #f4f6fa;
-  --surface: #ffffff;
-  --surface-2: #f0f3f8;
-  --border: #dde2ec;
-  --text: #12151c;
-  --muted: #5d6779;
-  --accent: #4c8dff;
-  --accent-2: #3a6fd8;
-  --ok: #1ea55c;
-  --warn: #c07c0a;
-  --err: #d93a30;
+  /* ---------------------------------------------------------- superfícies */
+  --surface: #12140f;
+  --surface-2: #191c15;
+  --ink: #e6e4d5;
 
-  --radius: 12px;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --border-strong: rgba(230, 228, 213, 0.32);
+  --border: rgba(230, 228, 213, 0.14);
 
-  color-scheme: light;
-}
+  /* ------------------------------------------------------------ semântica */
+  --accent: #e0654a; /* vermelho: crítico, obrigatório, falta */
+  --warn: #d9a23b; /* amarelo: conferir, atenção */
+  --ok: #7fa65a; /* verde: entregue, pronto */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1115;
-    --surface: #171a21;
-    --surface-2: #1e222b;
-    --border: #2a2f3a;
-    --text: #e6e9ef;
-    --muted: #98a1b3;
-    --ok: #37c978;
-    --warn: #f5b544;
-    --err: #f2544b;
+  /* No claro o amarelo especificado reprovava como texto pequeno e precisava
+   * de um tom fechado. Sobre o escuro ele já dá 8.2:1, então o token existe só
+   * para não mexer nos componentes que o consomem. */
+  --warn-texto: var(--warn);
 
-    color-scheme: dark;
-  }
+  /* ----------------------------------------------------------- tipografia */
+  --font-display: var(--fonte-serif), Georgia, "Times New Roman", serif;
+  --font-ui: var(--fonte-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--fonte-mono), ui-monospace, Menlo, Consolas, monospace;
+
+  --radius: 0;
+
+  /* --------------------------------------------------- apelidos herdados --
+   * Telas ainda não migradas (PainelEnvio, Resultado, painéis de validação)
+   * leem estes nomes e herdam a direção sem reescrita. */
+  --bg: var(--surface);
+  --text: var(--ink);
+  --muted: rgba(230, 228, 213, 0.62);
+  /* Hover do acento. No tema claro escurecia; no escuro precisa clarear, senão
+   * o texto escuro por cima cai para 3.9:1. Assim fica 6.7:1. */
+  --accent-2: #ea7a61;
+  --err: var(--accent);
+  --sans: var(--font-ui);
+  --mono: var(--font-mono);
+
+  color-scheme: dark;
 }
 
 * {
@@ -47,11 +67,18 @@ body {
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-ui);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Números, códigos e datas em mono com largura fixa — sem isso as colunas
+ * numéricas das listas dançam a cada atualização. */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 a {
@@ -60,11 +87,14 @@ a {
 
 button,
 select,
-input {
+input,
+textarea {
   font-family: inherit;
 }
 
+/* Amarelo em vez do vermelho de acento: sobre o escuro ele é o mais visível
+ * dos três e não se confunde com estado de erro. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--warn);
   outline-offset: 2px;
 }

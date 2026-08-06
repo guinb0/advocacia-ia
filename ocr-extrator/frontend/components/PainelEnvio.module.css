@@ -106,7 +106,8 @@
 .primario {
   flex: 1;
   background: var(--accent);
-  color: #fff;
+  /* Ver ListaCasos: branco sobre o acento reprova em AA no tema escuro. */
+  color: var(--surface);
 }
 
 .primario:hover:not(:disabled) {
