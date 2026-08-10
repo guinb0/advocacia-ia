@@ -195,6 +195,33 @@ export interface SituacaoCaso {
   erro?: string;
 }
 
+// ----------------------------------------------------- triagem da entrevista
+
+export interface SugestaoCategoria {
+  codigo: string;
+  nome: string;
+  pontos: number;
+  /** Fração do total de pontos — serve para ordenar, não é probabilidade. */
+  confianca: number;
+  /** Trechos do relato que sustentaram a pontuação. */
+  evidencias: string[];
+}
+
+export interface Triagem {
+  sugestoes: SugestaoCategoria[];
+  /** `false` quando o sinal é fraco ou duas categorias ficaram próximas. */
+  confiante: boolean;
+  motivo: string;
+  dados: { cliente?: string; cpf?: string };
+  caracteres: number;
+  /** 'llm' = o modelo leu e interpretou; 'pistas' = casamento local de termos. */
+  metodo?: "llm" | "pistas";
+  /** As duas leituras (modelo e termos) apontaram categorias diferentes. */
+  divergiu?: boolean;
+  /** O relato traz doença crônica E acidente súbito — podem ser duas ações. */
+  concorrentes?: boolean;
+}
+
 /** Resposta de `POST /api/casos/{id}/portal`. A senha vem só aqui. */
 export interface PortalGerado {
   url: string;

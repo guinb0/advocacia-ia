@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import armazenamento, auth, casos, categorias, pipeline, portal
+from . import armazenamento, auth, casos, categorias, pipeline, portal, triagem
 from .extractors import ROTULOS_TIPO
 
 # Onde o frontend atende — é o que monta o link enviado ao cliente.
@@ -229,6 +229,44 @@ def _criar_portal(caso_id: str) -> dict[str, Any]:
         "senha": senha,
         "aviso": "Anote a senha agora: ela não pode ser consultada depois, só trocada.",
     }
+
+
+@app.post("/api/triagem")
+async def triar_entrevista(
+    texto: str = Form(""),
+    arquivo: UploadFile | None = File(None),
+):
+    """Lê a entrevista e sugere a categoria do caso — sem criar nada.
+
+    Devolve um ranking com a evidência de cada categoria. Quem decide é o
+    advogado: errar a categoria é errar o checklist inteiro, e o sistema passaria
+    a cobrar documentos que a ação não usa.
+    """
+    conteudo = texto or ""
+
+    if arquivo is not None and arquivo.filename:
+        if not arquivo.filename.lower().endswith((".txt", ".md")):
+            raise HTTPException(400, "Envie a entrevista em .txt (ou cole o texto).")
+        bruto = await arquivo.read()
+        if len(bruto) > 2 * 1024 * 1024:
+            raise HTTPException(400, "Arquivo grande demais para uma entrevista (máx. 2 MB).")
+        # Entrevista digitada no Word e salva como txt costuma vir em latin-1.
+        for cod in ("utf-8", "utf-8-sig", "latin-1"):
+            try:
+                conteudo = bruto.decode(cod)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise HTTPException(400, "Não foi possível ler o texto do arquivo.")
+
+    if not conteudo.strip():
+        raise HTTPException(400, "Cole a entrevista ou envie um arquivo .txt.")
+
+    resultado = triagem.triar(conteudo)
+    resultado["dados"] = triagem.extrair_dados_do_cliente(conteudo)
+    resultado["caracteres"] = len(conteudo)
+    return resultado
 
 
 @app.post("/api/casos", status_code=201)

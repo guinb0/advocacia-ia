@@ -10,6 +10,7 @@ import type {
   RespostaEnvio,
   SituacaoCaso,
   TipoDocumento,
+  Triagem as TriagemResposta,
 } from "./types";
 
 /**
@@ -135,6 +136,18 @@ export async function excluirCaso(casoId: string): Promise<void> {
 export async function obterPedido(casoId: string, incluirOpcionais: boolean): Promise<Pedido> {
   const query = incluirOpcionais ? "?incluir_opcionais=true" : "";
   return comoJson<Pedido>(await buscar(`/api/casos/${casoId}/pedido${query}`));
+}
+
+// ----------------------------------------------------- triagem da entrevista
+
+/** Classifica o relato e sugere a categoria. NÃO cria caso — só sugere. */
+export async function triarEntrevista(texto: string, arquivo?: File): Promise<TriagemResposta> {
+  const form = new FormData();
+  form.append("texto", texto);
+  if (arquivo) form.append("arquivo", arquivo);
+  return comoJson<TriagemResposta>(
+    await buscar("/api/triagem", { method: "POST", body: form }),
+  );
 }
 
 // -------------------------------------------------------- portal do cliente

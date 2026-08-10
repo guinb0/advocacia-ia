@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import CredenciaisPortal from "./CredenciaisPortal";
 import estilos from "./ListaCasos.module.css";
+import TriagemEntrevista from "./TriagemEntrevista";
 import ui from "./ui.module.css";
 
 interface Props {
@@ -56,6 +57,15 @@ export default function ListaCasos({
     <div className={estilos.colunas}>
       <div className={ui.card}>
         <h2 className={ui.tituloCard}>Novo caso</h2>
+
+        <TriagemEntrevista
+          onEscolher={(cat, nome) => {
+            if (cat) setCategoria(cat);
+            // A entrevista costuma trazer o nome no cabeçalho; não sobrescreve
+            // o que o usuário já tiver digitado.
+            if (nome && !cliente.trim()) setCliente(nome);
+          }}
+        />
 
         <form onSubmit={criar}>
           <label className={estilos.rotulo} htmlFor="cliente">

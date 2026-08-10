@@ -1,0 +1,198 @@
+/* Triagem: lê o relato e sugere a categoria antes de criar o caso. */
+
+.bloco {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 3px double var(--border-strong);
+}
+
+.rotulo {
+  display: block;
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.texto {
+  margin: 0 0 10px;
+  font: 400 12px/1.6 var(--font-ui);
+  color: var(--muted);
+  max-width: 64ch;
+}
+
+.campo {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+  padding: 12px;
+  font: 400 12.5px/1.6 var(--font-ui);
+  resize: vertical;
+}
+
+.campo::placeholder {
+  color: var(--muted);
+}
+
+.acoes {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.botao {
+  border: 1.5px solid var(--ink);
+  background: none;
+  color: var(--ink);
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.botao:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.botao:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.arquivo {
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--ink);
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+.arquivo:hover {
+  background: var(--surface-2);
+}
+
+.contador {
+  font: 400 11px/1 var(--font-mono);
+  color: var(--muted);
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------------ resultado -- */
+
+.resultado {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.veredito {
+  border: 1.5px solid;
+  padding: 10px 12px;
+  font: 400 12.5px/1.5 var(--font-ui);
+  margin-bottom: 12px;
+}
+
+.confiante {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.conferir {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.opcao {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 11px 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid transparent;
+  background: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.opcao:hover {
+  background: var(--surface-2);
+}
+
+.escolhida {
+  border-left-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+
+.posicao {
+  flex: none;
+  width: 22px;
+  font: 600 11px/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.miolo {
+  flex: 1;
+  min-width: 0;
+}
+
+.nome {
+  font: 500 14px/1.3 var(--font-display);
+}
+
+.evidencia {
+  display: block;
+  font: 400 11px/1.5 var(--font-mono);
+  color: var(--muted);
+  margin-top: 3px;
+  word-break: break-word;
+}
+
+.pontos {
+  flex: none;
+  font: 500 11px/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.erro {
+  margin-top: 12px;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  padding: 10px;
+  font: 400 12px/1.5 var(--font-ui);
+}
+
+.vazio {
+  font: 400 12.5px/1.6 var(--font-ui);
+  color: var(--muted);
+  padding: 12px 0;
+}
+
+/* Avisa quando a classificação caiu no método local, que erra mais. */
+.metodo {
+  display: block;
+  margin-top: 6px;
+  font: 400 11px/1.4 var(--font-ui);
+  opacity: 0.85;
+}

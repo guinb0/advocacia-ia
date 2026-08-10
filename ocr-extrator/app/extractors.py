@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from statistics import median
 
 from . import validators as V
@@ -389,6 +389,29 @@ def _rotulo_proximo(linhas: list[Linha], valor: str, rotulos: list[str]) -> bool
     return False
 
 
+def _sem_marcador_de_campo(m: re.Match, origem: str) -> str:
+    """Descarta o número do campo da CNH que veio grudado no valor.
+
+    A CNH numera os campos no próprio impresso ("4a", "4b", "4c", "5", "9"), e o
+    OCR devolve tudo numa linha só:
+
+        "3935705 4c DOC IDENTIDADE SESP DF /ORG EMISSOR/UF"
+
+    O RG ali é 3935705, mas a regex aceita espaço interno e levava o "4" do
+    "4c" junto. O sinal de que aquele dígito é marcador, e não parte do número,
+    é a letra colada logo depois dele.
+    """
+    bruto = m.group(0).strip()
+    resto = origem[m.end():]
+    letra_colada = bool(re.match(r"[a-zA-Z]", resto))
+    if letra_colada:
+        sem_ultimo = re.sub(r"[\s.]*\d\s*$", "", bruto).strip()
+        # Só vale se ainda sobrar número suficiente para ser um RG.
+        if len(V.only_digits(sem_ultimo)) >= 5:
+            return sem_ultimo
+    return bruto
+
+
 def extrair_datas(linhas: list[Linha], texto_norm: str) -> dict[str, Campo]:
     """Associa cada data encontrada ao rótulo mais próximo."""
     rotulos_data = {
@@ -399,8 +422,20 @@ def extrair_datas(linhas: list[Linha], texto_norm: str) -> dict[str, Campo]:
         "data_primeira_habilitacao": (["1 HABILITACAO", "PRIMEIRA HABILITACAO", "1A HABILITACAO"], "1ª habilitação"),
     }
 
-    campos: dict[str, Campo] = {}
+    # Cada data candidata vira (chave_do_rotulo, distancia, ...). A distancia é o
+    # que resolve o caso da CNH, onde uma linha só carrega dois pares:
+    #   "4a 27/12/2022 DATA EMISSAO 4b 10/08/2023 VALIDADE"
+    # Casar por "existe o rótulo no contexto" pegava VALIDADE para a primeira
+    # data e trocava emissão com validade. Aqui vence o rótulo mais perto, e
+    # rótulo na mesma linha ganha de rótulo em linha vizinha.
+    PESO_OUTRA_LINHA = 10_000
+
+    candidatos: list[tuple[int, str, str, str, float, str]] = []
+
     for i, ln in enumerate(linhas):
+        norm_linha = ln.norm
+        contexto = None  # só calculado se precisar — é caro
+
         for m in RE_DATA.finditer(ln.texto):
             dia, mes, ano = m.groups()
             if len(ano) == 2:
@@ -409,25 +444,87 @@ def extrair_datas(linhas: list[Linha], texto_norm: str) -> dict[str, Campo]:
             if not V.validar_data_generica(texto_data):
                 continue
 
-            contexto = contexto_de(linhas, i)
-
             for nome, (rots, rotulo) in rotulos_data.items():
-                if nome in campos:
-                    continue
-                if any(r in contexto for r in rots):
-                    validador = V.VALIDADORES.get(nome, V.validar_data_generica)
-                    campos[nome] = Campo(
-                        nome=nome,
-                        rotulo=rotulo,
-                        valor=texto_data,
-                        valor_bruto=m.group(0),
-                        confianca=ln.confianca,
-                        valido=validador(texto_data),
-                        origem=ln.texto,
-                    )
-                    break
+                melhor = None
 
+                # 1) rótulo na própria linha: distância em caracteres.
+                for r in rots:
+                    pos = norm_linha.find(r)
+                    while pos != -1:
+                        d = min(abs(pos - m.start()), abs(pos - m.end()))
+                        melhor = d if melhor is None else min(melhor, d)
+                        pos = norm_linha.find(r, pos + 1)
+
+                # 2) só se não houver na linha, aceita o contexto ao redor.
+                if melhor is None:
+                    if contexto is None:
+                        contexto = contexto_de(linhas, i)
+                    if any(r in contexto for r in rots):
+                        melhor = PESO_OUTRA_LINHA
+
+                if melhor is not None:
+                    candidatos.append((melhor, nome, rotulo, texto_data, ln.confianca, ln.texto))
+
+    # Menor distância primeiro: cada data fica com o rótulo mais próximo, e cada
+    # rótulo é preenchido uma vez só.
+    campos: dict[str, Campo] = {}
+    datas_usadas: set[str] = set()
+
+    for _, nome, rotulo, texto_data, conf, origem in sorted(candidatos, key=lambda c: c[0]):
+        if nome in campos or texto_data in datas_usadas:
+            continue
+        validador = V.VALIDADORES.get(nome, V.validar_data_generica)
+        campos[nome] = Campo(
+            nome=nome,
+            rotulo=rotulo,
+            valor=texto_data,
+            valor_bruto=texto_data,
+            confianca=conf,
+            valido=validador(texto_data),
+            origem=origem,
+        )
+        datas_usadas.add(texto_data)
+
+    _conferir_coerencia_das_datas(campos)
     return campos
+
+
+def _conferir_coerencia_das_datas(campos: dict[str, Campo]) -> None:
+    """Uma data pode ser válida sozinha e impossível junto das outras.
+
+    Uma CNH com validade anterior à emissão, ou emitida antes de o titular
+    nascer, denuncia que os rótulos foram trocados na leitura. Sem esta
+    conferência, os três campos saíam marcados como VÁLIDO.
+    """
+    from datetime import datetime
+
+    def data(nome: str):
+        campo = campos.get(nome)
+        if campo is None:
+            return None
+        try:
+            return datetime.strptime(campo.valor, "%d/%m/%Y")
+        except ValueError:
+            return None
+
+    nasc, emis, val = data("data_nascimento"), data("data_emissao"), data("data_validade")
+
+    def reprovar(nome: str, motivo: str) -> None:
+        campo = campos.get(nome)
+        if campo is None:
+            return
+        campos[nome] = replace(campo, valido=False, observacao=motivo)
+
+    if emis and val and val < emis:
+        reprovar("data_validade", "Validade anterior à emissão — datas provavelmente trocadas.")
+        reprovar("data_emissao", "Emissão posterior à validade — datas provavelmente trocadas.")
+
+    if nasc and emis and emis < nasc:
+        reprovar("data_nascimento", "Nascimento posterior à emissão do documento.")
+        reprovar("data_emissao", "Emissão anterior ao nascimento do titular.")
+
+    if nasc and val and val < nasc:
+        reprovar("data_validade", "Validade anterior ao nascimento do titular.")
 
 
 # ------------------------------------------------------------ extração geral
@@ -547,7 +644,7 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
                     alvo = linhas[j].texto
                     break
             if m:
-                bruto = m.group(0).strip()
+                bruto = _sem_marcador_de_campo(m, alvo)
                 d = V.only_digits(bruto)
                 if V.validar_rg(d) and d != cpf_digitos and not V.validar_cpf(d):
                     campos["rg"] = Campo("rg", "RG / Registro Geral", bruto, bruto, ln.confianca, True,
@@ -557,8 +654,14 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
 
         m = re.search(r"\b(SSP|SESP|SDS|PC|IFP|IIRGD|DETRAN|MTE)[\s/\-]*([A-Z]{2})\b", texto_norm)
         if m:
+            # A busca é no texto inteiro e perdia a linha de origem, então a
+            # confiança saía 0.0 — e a tela ainda assim exibia "VÁLIDO", que é
+            # afirmar certeza sobre uma leitura sem nenhuma. Recupera a linha.
+            conf = next((ln.confianca for ln in linhas if m.group(0) in ln.norm), 0.0)
             campos["orgao_emissor"] = Campo("orgao_emissor", "Órgão emissor", f"{m.group(1)}/{m.group(2)}",
-                                            m.group(0), 0.0, True, origem=m.group(0))
+                                            m.group(0), conf, True if conf > 0 else None,
+                                            "" if conf > 0 else "Não foi possível medir a confiança desta leitura.",
+                                            origem=m.group(0))
 
     # --- CTPS --------------------------------------------------------------
     if tipo == "ctps":
@@ -614,20 +717,31 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
     achado_mae = buscar_nome(linhas, ["NOME DA MAE", "MAE"], usados)
     achado_pai = buscar_nome(linhas, ["NOME DO PAI", "PAI"], usados)
 
-    # "FILIAÇÃO" costuma ser seguido por duas linhas: mãe e pai (ordem varia).
+    # "FILIAÇÃO" é seguido por dois nomes, mas o documento não diz qual é qual e
+    # a ordem varia entre emissores. Antes o primeiro virava "mãe" e o segundo
+    # "pai" — numa CNH real isso saiu invertido, com nome masculino no campo da
+    # mãe. Agora os dois viram "Filiação", numerados, com a ressalva de que o
+    # papel não foi identificado. Melhor um rótulo neutro que um fato errado.
+    filiacao: list[tuple[str, float, str, int]] = []
     if achado_mae is None and achado_pai is None:
         for i, ln in enumerate(linhas):
             if "FILIACAO" not in ln.norm:
                 continue
             seguintes = [(j, linhas[j]) for j in indices_abaixo(linhas, i, fator_y=4.5)
                          if j not in usados and parece_nome(linhas[j].texto)]
-            if len(seguintes) >= 1:
-                j, l1 = seguintes[0]
-                achado_mae = (limpar_nome(l1.texto), l1.confianca, l1.texto, j)
-            if len(seguintes) >= 2:
-                j, l2 = seguintes[1]
-                achado_pai = (limpar_nome(l2.texto), l2.confianca, l2.texto, j)
+            for j, l in seguintes[:2]:
+                filiacao.append((limpar_nome(l.texto), l.confianca, l.texto, j))
             break
+
+    for n, (valor, conf, origem, idx) in enumerate(filiacao, start=1):
+        if idx in usados:
+            continue
+        usados.add(idx)
+        campos[f"filiacao_{n}"] = Campo(
+            f"filiacao_{n}", f"Filiação {n}", valor, origem, conf, None,
+            "O documento não identifica se é mãe ou pai — confira antes de usar.",
+            origem,
+        )
 
     for chave, rot, achado_f in (("nome_mae", "Nome da mãe", achado_mae), ("nome_pai", "Nome do pai", achado_pai)):
         if achado_f:
@@ -661,5 +775,6 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
     ordem = ["nome", "cpf", "rg", "orgao_emissor", "cnh", "categoria_cnh", "pis", "numero_ctps", "serie_ctps",
              "titulo_eleitor", "zona", "secao", "cns", "cnpj", "data_nascimento", "data_emissao",
              "data_validade", "data_admissao", "data_primeira_habilitacao", "nome_mae", "nome_pai",
+             "filiacao_1", "filiacao_2",
              "naturalidade", "sexo", "endereco", "cep"]
     return [campos[k] for k in ordem if k in campos] + [v for k, v in campos.items() if k not in ordem]
