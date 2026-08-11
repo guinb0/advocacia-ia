@@ -6,6 +6,7 @@ tests/amostras/
 .paddlex/
 run.stdout.log
 run.stderr.log
+rag-sincronizacao.log
 
 # Documentos de clientes e o banco dos casos: nunca vão para o repositório.
 dados/

@@ -2,8 +2,8 @@
 
 import { useRef, useState } from "react";
 
-import { triarEntrevista } from "@/lib/api";
-import type { Triagem } from "@/lib/types";
+import { analisarEstrategia, triarEntrevista } from "@/lib/api";
+import type { Estrategia, Triagem } from "@/lib/types";
 import estilos from "./TriagemEntrevista.module.css";
 
 /* Lê a entrevista e sugere a categoria — mas quem escolhe é o advogado.
@@ -22,14 +22,29 @@ export default function TriagemEntrevista({
   const [resultado, setResultado] = useState<Triagem | null>(null);
   const [escolhida, setEscolhida] = useState<string | null>(null);
   const [analisando, setAnalisando] = useState(false);
+  const [analisandoEstrategia, setAnalisandoEstrategia] = useState(false);
+  const [estrategia, setEstrategia] = useState<Estrategia | null>(null);
+  const [erroEstrategia, setErroEstrategia] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function analisar(arquivo?: File) {
     if (!arquivo && !texto.trim()) return;
+    const relato = arquivo ? await arquivo.text() : texto;
     setAnalisando(true);
+    setAnalisandoEstrategia(true);
     setErro(null);
+    setErroEstrategia(null);
+    setEstrategia(null);
     setEscolhida(null);
+    void analisarEstrategia(relato)
+      .then(setEstrategia)
+      .catch((e: unknown) =>
+        setErroEstrategia(
+          e instanceof Error ? e.message : "Não foi possível consultar os processos semelhantes.",
+        ),
+      )
+      .finally(() => setAnalisandoEstrategia(false));
     try {
       const r = await triarEntrevista(texto, arquivo);
       setResultado(r);
@@ -153,6 +168,77 @@ export default function TriagemEntrevista({
             </ul>
           )}
         </div>
+      )}
+
+      {(analisandoEstrategia || estrategia || erroEstrategia) && (
+        <section className={estilos.insights} aria-live="polite">
+          <div className={estilos.insightsCabecalho}>
+            <span className={estilos.rotulo}>INSIGHTS DOS PROCESSOS</span>
+            {analisandoEstrategia && <span className={estilos.carregando}>Buscando semelhantes…</span>}
+          </div>
+
+          {erroEstrategia && !analisandoEstrategia && (
+            <p className={estilos.avisoInsights}>{erroEstrategia}</p>
+          )}
+
+          {estrategia && (
+            <>
+              <p className={estilos.resumoInsights}>{estrategia.resumo}</p>
+
+              <div className={estilos.metricas}>
+                <div>
+                  <strong>{estrategia.estatisticas.processos_analisados}</strong>
+                  <span>processos semelhantes</span>
+                </div>
+                <div>
+                  <strong>{estrategia.estatisticas.desfechos_favoraveis_amplos.percentual}%</strong>
+                  <span>procedente, parcial ou acordo na amostra</span>
+                </div>
+              </div>
+
+              {estrategia.estatisticas.resultados.length > 0 && (
+                <div className={estilos.faixaDados}>
+                  <h4>Desfechos na amostra</h4>
+                  <p>{estrategia.estatisticas.resultados.map((i) => `${i.nome}: ${i.quantidade} (${i.percentual}%)`).join(" · ")}</p>
+                </div>
+              )}
+
+              {estrategia.estatisticas.varas.length > 0 && (
+                <div className={estilos.faixaDados}>
+                  <h4>Varas mais presentes</h4>
+                  <p>{estrategia.estatisticas.varas.slice(0, 4).map((i) => `${i.nome} (${i.quantidade})`).join(" · ")}</p>
+                </div>
+              )}
+
+              {estrategia.estatisticas.magistrados.length > 0 && (
+                <div className={estilos.faixaDados}>
+                  <h4>Magistrados identificados nos documentos</h4>
+                  <p>{estrategia.estatisticas.magistrados.slice(0, 4).map((i) => `${i.nome} (${i.quantidade})`).join(" · ")}</p>
+                </div>
+              )}
+
+              <div className={estilos.colunasInsights}>
+                <div>
+                  <h4>Próximas ações sugeridas</h4>
+                  <ul>{estrategia.acoes.map((item, i) => <li key={i}><strong>{item.acao}</strong><span>{item.porque} {item.precedentes.join(", ")}</span></li>)}</ul>
+                </div>
+                <div>
+                  <h4>Riscos e pontos a confirmar</h4>
+                  <ul>
+                    {estrategia.riscos.map((item, i) => <li key={`r-${i}`}>{item.risco} {item.precedentes.join(", ")}</li>)}
+                    {estrategia.lacunas.map((item, i) => <li key={`l-${i}`}>{item}</li>)}
+                  </ul>
+                </div>
+              </div>
+
+              <details className={estilos.precedentes}>
+                <summary>Ver processos usados como referência</summary>
+                <ul>{estrategia.precedentes.map((p) => <li key={p.indice}><strong>{p.indice}</strong> {p.processo || "processo não informado"} · {p.resultado || "sem desfecho"}{p.vara ? ` · ${p.vara}` : ""}</li>)}</ul>
+              </details>
+              <p className={estilos.notaEstatistica}>{estrategia.estatisticas.aviso}</p>
+            </>
+          )}
+        </section>
       )}
     </div>
   );

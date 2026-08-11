@@ -4,6 +4,7 @@ import type {
   Categoria,
   Documento,
   EntregaDetalhe,
+  Estrategia,
   Pedido,
   PortalEstado,
   PortalGerado,
@@ -147,6 +148,17 @@ export async function triarEntrevista(texto: string, arquivo?: File): Promise<Tr
   if (arquivo) form.append("arquivo", arquivo);
   return comoJson<TriagemResposta>(
     await buscar("/api/triagem", { method: "POST", body: form }),
+  );
+}
+
+/** Recupera processos semelhantes e gera apoio estratégico fundamentado. */
+export async function analisarEstrategia(relato: string): Promise<Estrategia> {
+  return comoJson<Estrategia>(
+    await buscar("/api/estrategia", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ relato, limite_precedentes: 8 }),
+    }),
   );
 }
 

@@ -222,6 +222,47 @@ export interface Triagem {
   concorrentes?: boolean;
 }
 
+export interface ItemEstatistico {
+  nome: string;
+  quantidade: number;
+  percentual: number;
+}
+
+export interface PrecedenteEstrategia {
+  indice: string;
+  processo?: string;
+  resultado?: string;
+  vara?: string;
+  relator?: string;
+  magistrados?: string[];
+  fonte?: string;
+  tipo_documento?: string;
+  similaridade: number;
+  url?: string;
+}
+
+export interface Estrategia {
+  resumo: string;
+  acoes: Array<{ acao: string; porque: string; precedentes: string[] }>;
+  riscos: Array<{ risco: string; precedentes: string[] }>;
+  lacunas: string[];
+  aviso: string;
+  metodologia: string;
+  precedentes: PrecedenteEstrategia[];
+  estatisticas: {
+    processos_analisados: number;
+    resultados: ItemEstatistico[];
+    varas: ItemEstatistico[];
+    magistrados: ItemEstatistico[];
+    desfechos_favoraveis_amplos: {
+      quantidade: number;
+      percentual: number;
+      criterio: string;
+    };
+    aviso: string;
+  };
+}
+
 /** Resposta de `POST /api/casos/{id}/portal`. A senha vem só aqui. */
 export interface PortalGerado {
   url: string;

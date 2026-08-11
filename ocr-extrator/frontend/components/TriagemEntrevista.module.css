@@ -196,3 +196,33 @@
   font: 400 11px/1.4 var(--font-ui);
   opacity: 0.85;
 }
+
+.insights {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 3px double var(--border-strong);
+}
+
+.insightsCabecalho { display: flex; justify-content: space-between; gap: 12px; }
+.carregando, .notaEstatistica, .avisoInsights { font: 400 11px/1.5 var(--font-ui); color: var(--muted); }
+.resumoInsights { margin: 4px 0 14px; font: 500 14px/1.55 var(--font-display); }
+.metricas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--border-strong); }
+.metricas > div { padding: 12px; border-right: 1px solid var(--border); }
+.metricas > div:last-child { border-right: 0; }
+.metricas strong { display: block; font: 600 22px/1 var(--font-mono); }
+.metricas span { display: block; margin-top: 5px; font: 400 10px/1.4 var(--font-ui); color: var(--muted); }
+.faixaDados { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.faixaDados h4, .colunasInsights h4 { margin: 0 0 5px; font: 600 10px/1.3 var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
+.faixaDados p { margin: 0; font: 400 11px/1.5 var(--font-mono); color: var(--muted); }
+.colunasInsights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 16px; }
+.colunasInsights ul, .precedentes ul { margin: 0; padding-left: 18px; }
+.colunasInsights li, .precedentes li { margin-bottom: 7px; font: 400 11.5px/1.5 var(--font-ui); }
+.colunasInsights li span { display: block; color: var(--muted); }
+.precedentes { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.precedentes summary { cursor: pointer; font: 600 11px/1.4 var(--font-ui); }
+.notaEstatistica { margin: 12px 0 0; }
+
+@media (max-width: 700px) {
+  .metricas, .colunasInsights { grid-template-columns: 1fr; }
+  .metricas > div { border-right: 0; border-bottom: 1px solid var(--border); }
+}

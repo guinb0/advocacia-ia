@@ -13,9 +13,10 @@ from typing import Any
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import armazenamento, auth, casos, categorias, pipeline, portal, triagem
+from . import armazenamento, auth, casos, categorias, pipeline, portal, rag, triagem
 from .extractors import ROTULOS_TIPO
 
 # Onde o frontend atende — é o que monta o link enviado ao cliente.
@@ -267,6 +268,29 @@ async def triar_entrevista(
     resultado["dados"] = triagem.extrair_dados_do_cliente(conteudo)
     resultado["caracteres"] = len(conteudo)
     return resultado
+
+
+class PedidoEstrategia(BaseModel):
+    relato: str = Field(min_length=30, max_length=50_000)
+    limite_precedentes: int = Field(default=8, ge=3, le=15)
+
+
+@app.post("/api/estrategia")
+async def estrategia(pedido: PedidoEstrategia):
+    """Sugere próximos atos com precedentes recuperados antes da geração.
+
+    Esta rota não é pública: passa pelo Keycloak. A resposta é apoio à decisão
+    e inclui número, fonte, resultado e similaridade de cada precedente usado.
+    """
+    try:
+        return await run_in_threadpool(
+            rag.sugerir_acoes, pedido.relato, limite=pedido.limite_precedentes
+        )
+    except rag.ErroRAG as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Falha na análise estratégica")
+        raise HTTPException(status_code=503, detail="Base estratégica indisponível.") from exc
 
 
 @app.post("/api/casos", status_code=201)
