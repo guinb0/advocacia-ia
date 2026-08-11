@@ -1,5 +1,27 @@
 # Acervo — onde o projeto está
 
+## Checkpoint da vetorização — pausada em 11/08/2026
+
+A vetorização foi pausada manualmente por instabilidade da internet/banco remoto.
+A tarefa `AdvocaciaIA-SincronizarRAG` está **desabilitada** e não voltará a rodar
+sozinha até ser reativada.
+
+- textos ingeridos: **5.824 documentos / 52.926 chunks / 1.745 processos**;
+- embeddings gravados: **32.967 (62,29%)**;
+- pendentes: **19.959**;
+- fonte em andamento: `trt8_juris`;
+- DJEN, TST e DEJT ainda aguardam vetorização;
+- a carga é idempotente e retoma pelos chunks cujo `embedding IS NULL`.
+
+Quando a conexão estiver estável, retomar com:
+
+```powershell
+Enable-ScheduledTask -TaskName 'AdvocaciaIA-SincronizarRAG'
+Start-ScheduledTask -TaskName 'AdvocaciaIA-SincronizarRAG'
+```
+
+Não é necessário apagar nem reingerir dados antes da retomada.
+
 Documento de passagem de bastão. Descreve o que existe, o que foi decidido e
 por quê, e o que ficou pela metade. Atualizado em 10/08/2026.
 
