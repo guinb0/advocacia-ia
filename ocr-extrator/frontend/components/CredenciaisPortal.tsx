@@ -39,14 +39,24 @@ export default function CredenciaisPortal({
   }
 
   return (
-    <div className={estilos.bloco}>
-      <span className={estilos.rotulo}>CASO CRIADO · LINK DO CLIENTE</span>
+    <div className={estilos.bloco} role="status">
+      <span className={estilos.rotulo}>
+        <span className={estilos.simbolo} aria-hidden>
+          !
+        </span>
+        Caso criado — copie a senha agora
+      </span>
+      <p className={estilos.texto}>{portal.aviso}</p>
 
       <div className={estilos.campo}>
         <span className={estilos.chave}>Link</span>
         <span className={estilos.valor}>{portal.url}</span>
-        <button type="button" className={estilos.copiar} onClick={() => copiar(portal.url, "url")}>
-          {copiado === "url" ? "✓" : "Copiar"}
+        <button
+          type="button"
+          className="botao botao--secundario botao--pequeno"
+          onClick={() => copiar(portal.url, "url")}
+        >
+          {copiado === "url" ? "✓ Copiado" : "Copiar"}
         </button>
       </div>
 
@@ -55,27 +65,25 @@ export default function CredenciaisPortal({
         <span className={`${estilos.valor} ${estilos.senha}`}>{portal.senha}</span>
         <button
           type="button"
-          className={estilos.copiar}
+          className="botao botao--secundario botao--pequeno"
           onClick={() => copiar(portal.senha, "senha")}
         >
-          {copiado === "senha" ? "✓" : "Copiar"}
+          {copiado === "senha" ? "✓ Copiado" : "Copiar"}
         </button>
       </div>
-
-      <p className={estilos.aviso}>{portal.aviso}</p>
 
       <div className={estilos.acoes}>
         <button
           type="button"
-          className={estilos.principal}
+          className="botao botao--primario"
           onClick={() => copiar(mensagem, "msg")}
         >
-          {copiado === "msg" ? "✓ Mensagem copiada" : "Copiar mensagem para o cliente"}
+          {copiado === "msg" ? "✓ Mensagem copiada" : "Copiar a mensagem para o cliente"}
         </button>
-        <button type="button" className={estilos.secundario} onClick={onAbrirCaso}>
+        <button type="button" className="botao botao--secundario" onClick={onAbrirCaso}>
           Abrir o caso
         </button>
-        <button type="button" className={estilos.discreto} onClick={onFechar}>
+        <button type="button" className="botao botao--discreto" onClick={onFechar}>
           Fechar
         </button>
       </div>

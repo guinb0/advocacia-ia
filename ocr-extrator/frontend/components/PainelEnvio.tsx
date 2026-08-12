@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { tamanhoLegivel } from "@/lib/formato";
 import type { TipoDocumento } from "@/lib/types";
+import { Aviso } from "./Basicos";
 import estilos from "./PainelEnvio.module.css";
-import ui from "./ui.module.css";
 
 interface Props {
   arquivo: File | null;
@@ -51,8 +51,12 @@ export default function PainelEnvio({
   }
 
   return (
-    <div className={ui.card}>
-      <h2 className={ui.tituloCard}>Documento</h2>
+    <div className="cartao">
+      <h2 className="tituloCartao">1. Escolha o documento</h2>
+      <p className="subtituloCartao">
+        Uma foto ou um PDF do documento. Nada aqui fica vinculado a um caso — é só para ler e
+        conferir os dados.
+      </p>
 
       <div
         className={`${estilos.zona} ${arrastando ? estilos.zonaAtiva : ""}`}
@@ -77,10 +81,13 @@ export default function PainelEnvio({
         tabIndex={0}
         aria-label="Selecionar imagem ou PDF do documento"
       >
-        <div className={estilos.icone}>📤</div>
-        <p className={estilos.chamada}>Arraste a imagem ou PDF aqui</p>
+        <div className={estilos.icone} aria-hidden>
+          📄
+        </div>
+        <p className={estilos.chamada}>Clique aqui para escolher o arquivo</p>
         <small className={estilos.dica}>
-          ou clique para escolher · cole com Ctrl+V · JPG, PNG, WEBP, TIFF ou PDF · até 20MB
+          Também é possível arrastar o arquivo até aqui ou colar uma imagem com Ctrl+V. Aceita JPG,
+          PNG, WEBP, TIFF e PDF, até 20 MB.
         </small>
       </div>
 
@@ -101,7 +108,9 @@ export default function PainelEnvio({
       )}
 
       {arquivo && pdfSelecionado && (
-        <div className={estilos.previewPdf}>PDF selecionado — as páginas serão convertidas para OCR.</div>
+        <div className={estilos.previewPdf}>
+          PDF selecionado — as páginas serão convertidas antes da leitura.
+        </div>
       )}
 
       {arquivo && (
@@ -110,51 +119,64 @@ export default function PainelEnvio({
         </div>
       )}
 
-      {erro && <div className={estilos.erro}>{erro}</div>}
+      {erro && (
+        <div style={{ marginTop: 14 }}>
+          <Aviso tom="critico" titulo="Não foi possível usar este arquivo">
+            {erro}
+          </Aviso>
+        </div>
+      )}
 
-      <label className={estilos.rotulo} htmlFor="tipo">
-        Tipo do documento
-      </label>
-      <select
-        id="tipo"
-        className={estilos.select}
-        value={tipo}
-        onChange={(e) => setTipo(e.target.value)}
-      >
-        <option value="auto">Detectar automaticamente</option>
-        {tipos.map((t) => (
-          <option key={t.codigo} value={t.codigo}>
-            {t.descricao}
-          </option>
-        ))}
-      </select>
+      <div className={estilos.grupoCampo}>
+        <label className="rotuloCampo" htmlFor="tipo">
+          Tipo do documento
+        </label>
+        <select
+          id="tipo"
+          className="campo campo--seletor"
+          value={tipo}
+          onChange={(e) => setTipo(e.target.value)}
+        >
+          <option value="auto">Descobrir automaticamente (recomendado)</option>
+          {tipos.map((t) => (
+            <option key={t.codigo} value={t.codigo}>
+              {t.descricao}
+            </option>
+          ))}
+        </select>
+        <p className="ajudaCampo">
+          Só escolha o tipo à mão se a leitura automática estiver identificando errado.
+        </p>
+      </div>
 
-      <label className={estilos.rotulo} htmlFor="idioma">
-        Idioma do OCR
-      </label>
-      <select
-        id="idioma"
-        className={estilos.select}
-        value={idioma}
-        onChange={(e) => setIdioma(e.target.value)}
-      >
-        <option value="pt">Português</option>
-        <option value="latin">Latin (genérico)</option>
-        <option value="en">Inglês</option>
-      </select>
+      <div className={estilos.grupoCampo}>
+        <label className="rotuloCampo" htmlFor="idioma">
+          Idioma do documento
+        </label>
+        <select
+          id="idioma"
+          className="campo campo--seletor"
+          value={idioma}
+          onChange={(e) => setIdioma(e.target.value)}
+        >
+          <option value="pt">Português</option>
+          <option value="latin">Outro idioma com alfabeto latino</option>
+          <option value="en">Inglês</option>
+        </select>
+      </div>
 
       <div className={estilos.botoes}>
         <button
           type="button"
-          className={estilos.primario}
+          className="botao botao--primario"
           disabled={!arquivo || processando}
           onClick={() => onExtrair(idioma, tipo)}
         >
-          {processando ? "Processando…" : "Extrair dados"}
+          {processando ? "Lendo o documento…" : "2. Ler o documento"}
         </button>
         <button
           type="button"
-          className={estilos.secundario}
+          className="botao botao--discreto"
           onClick={onLimpar}
           disabled={processando}
         >

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 
 import { analisarEstrategia, triarEntrevista } from "@/lib/api";
 import type { Estrategia, Triagem } from "@/lib/types";
+import { Aviso, Selo } from "./Basicos";
 import estilos from "./TriagemEntrevista.module.css";
 
 /* Lê a entrevista e sugere a categoria — mas quem escolhe é o advogado.
@@ -65,39 +66,42 @@ export default function TriagemEntrevista({
 
   return (
     <div className={estilos.bloco}>
-      <span className={estilos.rotulo}>TRIAGEM PELA ENTREVISTA</span>
+      <span className={estilos.rotulo}>Sugerir o tipo de ação pela entrevista</span>
       <p className={estilos.texto}>
-        Cole o relato da entrevista ou envie um <code>.txt</code>. O sistema sugere a
-        categoria e mostra o que no texto levou a ela — a escolha final é sua.
+        Opcional. Cole o relato da entrevista (ou envie um arquivo de texto) e o sistema sugere o
+        tipo de ação, mostrando o trecho que levou até ela. A escolha final é sempre sua.
       </p>
 
+      <label className="rotuloCampo" htmlFor="relato-entrevista">
+        Relato da entrevista
+      </label>
       <textarea
-        className={estilos.campo}
+        id="relato-entrevista"
+        className={`campo campo--area ${estilos.campo}`}
         value={texto}
         onChange={(e) => setTexto(e.target.value)}
         placeholder={
           "Ex.: O cliente é carteiro dos Correios há 8 anos. Durante a entrega foi abordado por dois homens armados…"
         }
-        aria-label="Texto da entrevista"
       />
 
       <div className={estilos.acoes}>
         <button
           type="button"
-          className={estilos.botao}
+          className="botao botao--secundario"
           onClick={() => void analisar()}
           disabled={analisando || !texto.trim()}
         >
-          {analisando ? "Analisando…" : "Analisar entrevista"}
+          {analisando ? "Analisando…" : "Analisar o relato"}
         </button>
 
         <button
           type="button"
-          className={estilos.arquivo}
+          className="botao botao--discreto botao--pequeno"
           onClick={() => inputRef.current?.click()}
           disabled={analisando}
         >
-          Enviar .txt
+          Enviar um arquivo .txt
         </button>
 
         <input
@@ -115,30 +119,42 @@ export default function TriagemEntrevista({
         {texto.trim() && <span className={estilos.contador}>{texto.trim().length} caracteres</span>}
       </div>
 
-      {erro && <div className={estilos.erro}>{erro}</div>}
+      {erro && (
+        <div style={{ marginTop: 12 }}>
+          <Aviso tom="critico" titulo="Não foi possível analisar">
+            {erro}
+          </Aviso>
+        </div>
+      )}
 
       {resultado && (
         <div className={estilos.resultado}>
-          <div
-            className={`${estilos.veredito} ${resultado.confiante ? estilos.confiante : estilos.conferir}`}
+          <Aviso
+            tom={resultado.confiante ? "ok" : "atencao"}
+            titulo={
+              resultado.confiante
+                ? "Sugestão com boa margem de acerto"
+                : "Sugestão incerta — confira antes de aceitar"
+            }
           >
             {resultado.motivo}
             {resultado.concorrentes && (
-              <span className={estilos.metodo}>
-                Atenção: há um quadro crônico e um acidente no mesmo relato. Pode ser
-                mais de uma ação — vale abrir os dois casos.
+              <span className={estilos.nota}>
+                O relato traz um quadro crônico e um acidente ao mesmo tempo. Pode ser mais de uma
+                ação — vale abrir os dois casos.
               </span>
             )}
             {resultado.metodo === "pistas" && (
-              <span className={estilos.metodo}>
-                Classificado por termos locais — o modelo de leitura não respondeu.
+              <span className={estilos.nota}>
+                A classificação saiu de termos encontrados no texto, sem a leitura por
+                inteligência artificial, e por isso erra mais.
               </span>
             )}
-          </div>
+          </Aviso>
 
           {resultado.sugestoes.length === 0 ? (
             <p className={estilos.vazio}>
-              Escolha a categoria manualmente no campo abaixo.
+              Nenhuma sugestão. Escolha o tipo de ação no campo abaixo.
             </p>
           ) : (
             <ul className={estilos.lista}>
@@ -151,17 +167,27 @@ export default function TriagemEntrevista({
                       setEscolhida(s.codigo);
                       onEscolher(s.codigo, resultado.dados.cliente);
                     }}
+                    aria-pressed={escolhida === s.codigo}
                   >
                     <span className={estilos.posicao}>{i + 1}º</span>
                     <span className={estilos.miolo}>
-                      <span className={estilos.nome}>{s.nome}</span>
+                      <span className={estilos.nome}>
+                        {s.nome}
+                        {escolhida === s.codigo && (
+                          <Selo tom="ok" simbolo="✓">
+                            escolhida
+                          </Selo>
+                        )}
+                      </span>
                       {s.evidencias.slice(0, 2).map((ev, k) => (
                         <span key={k} className={estilos.evidencia}>
                           {ev}
                         </span>
                       ))}
                     </span>
-                    <span className={estilos.pontos}>{s.pontos} pts</span>
+                    <span className={estilos.pontos}>
+                      {s.pontos} {s.pontos === 1 ? "ponto" : "pontos"}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -173,8 +199,10 @@ export default function TriagemEntrevista({
       {(analisandoEstrategia || estrategia || erroEstrategia) && (
         <section className={estilos.insights} aria-live="polite">
           <div className={estilos.insightsCabecalho}>
-            <span className={estilos.rotulo}>INSIGHTS DOS PROCESSOS</span>
-            {analisandoEstrategia && <span className={estilos.carregando}>Buscando semelhantes…</span>}
+            <span className={estilos.rotulo}>O que dizem processos semelhantes</span>
+            {analisandoEstrategia && (
+              <span className={estilos.carregando}>Buscando semelhantes…</span>
+            )}
           </div>
 
           {erroEstrategia && !analisandoEstrategia && (

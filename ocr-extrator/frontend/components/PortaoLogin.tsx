@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { useSessao } from "@/lib/auth";
+import { Aviso } from "./Basicos";
 import estilos from "./PortaoLogin.module.css";
 
 /** Só deixa passar quem tem sessão. Com a autenticação desligada
@@ -27,26 +28,33 @@ export default function PortaoLogin({ children }: { children: ReactNode }) {
   return (
     <div className={estilos.tela}>
       <div className={estilos.cartao}>
-        <span className={estilos.marca}>ACERVO</span>
-        <div className={estilos.filete} />
+        <span className={estilos.marca}>Acervo</span>
+        <span className={estilos.marcaAjuda}>Documentos e casos do escritório</span>
+        <hr className={estilos.divisor} />
 
-        <h1 className={estilos.titulo}>Entrar</h1>
+        <h1 className={estilos.titulo}>Entrar no sistema</h1>
         <p className={estilos.texto}>
-          A carteira de casos e os documentos dos clientes exigem identificação. Você será
-          levado ao Keycloak e volta para cá autenticado.
+          A carteira de casos e os documentos dos clientes exigem identificação. Ao continuar, você
+          passa pela tela de acesso do escritório e volta para cá já identificado.
         </p>
 
         {erro && (
-          <div className={estilos.erro}>
-            {erro}
-            <br />
-            Verifique se o Keycloak está no ar: <code>docker compose up -d keycloak</code>
+          <div style={{ marginTop: 18 }}>
+            <Aviso tom="critico" titulo="Não foi possível verificar o acesso">
+              {erro}
+              <span className={estilos.dica}>
+                Se o problema continuar, avise o suporte técnico: o serviço de acesso pode estar
+                fora do ar (<code>docker compose up -d keycloak</code>).
+              </span>
+            </Aviso>
           </div>
         )}
 
-        <button type="button" className={estilos.botao} onClick={entrar}>
-          Entrar com o Keycloak
-        </button>
+        <div className={estilos.acao}>
+          <button type="button" className="botao botao--primario botao--bloco" onClick={entrar}>
+            Entrar
+          </button>
+        </div>
       </div>
     </div>
   );

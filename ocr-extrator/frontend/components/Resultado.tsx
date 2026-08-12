@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { ESTILO_VEREDITO, porcentagem, semUnderscore } from "@/lib/formato";
+import { ESTILO_VEREDITO, porcentagem } from "@/lib/formato";
 import type { Documento } from "@/lib/types";
 import { Stat } from "./Basicos";
 import { PainelJson, PainelXml } from "./PainelDados";
@@ -19,24 +19,33 @@ export default function Resultado({ doc }: { doc: Documento }) {
   const v = doc.validacao;
   const estilo = ESTILO_VEREDITO[v.veredito];
 
+  /* Os nomes das abas dizem o que a pessoa vai encontrar, não o nome interno da
+     estrutura: "Conferência" em vez de "Validação", "Qualidade da imagem" em
+     vez de "Qualidade". JSON e XML ficam por último, com o rótulo do que são
+     — quem não sabe o que é JSON não precisa entrar ali. */
   const abas: { id: Aba; nome: string }[] = [
-    { id: "campos", nome: `Campos (${doc.campos.length})` },
-    { id: "validacao", nome: "Validação" },
-    { id: "qualidade", nome: "Qualidade" },
+    { id: "campos", nome: `Dados lidos (${doc.campos.length})` },
+    { id: "validacao", nome: "Conferência" },
+    { id: "qualidade", nome: "Qualidade da imagem" },
     { id: "texto", nome: `Texto bruto (${doc.texto_linhas.length})` },
-    { id: "json", nome: "JSON" },
-    { id: "xml", nome: "XML" },
+    { id: "json", nome: "Exportar JSON" },
+    { id: "xml", nome: "Exportar XML" },
   ];
 
   const confiancaOcr = doc.ocr.confianca_media;
 
   return (
     <>
-      <div className={`${ui.banner} ${ui[estilo.classe]}`}>
-        <div className={ui.bannerIcone}>{estilo.icone}</div>
+      {/* Veredito da leitura: é a primeira coisa que a tela precisa dizer, e
+          diz com símbolo + frase, não com um texto vermelho solto. */}
+      <div className={`aviso ${estilo.classe}`} role="status">
+        <span className="avisoSimbolo" aria-hidden>
+          {estilo.icone}
+        </span>
         <div>
-          <strong>{semUnderscore(v.veredito)}</strong>
-          <span>{v.resumo}</span>
+          <strong>{estilo.rotulo}</strong>
+          <br />
+          {v.resumo}
         </div>
       </div>
 
@@ -47,22 +56,25 @@ export default function Resultado({ doc }: { doc: Documento }) {
           titulo={doc.tipo.descricao}
         />
         <Stat
-          chave="Legibilidade"
+          chave="Nitidez da imagem"
           valor={`${v.score_legibilidade}%`}
           score={v.score_legibilidade}
+          titulo="Quanto a foto está legível para a leitura automática"
         />
         <Stat
-          chave="Completude"
+          chave="Dados encontrados"
           valor={`${v.completude_percentual}%`}
           score={v.completude_percentual}
+          titulo="Quanto dos campos esperados para este tipo de documento foi encontrado"
         />
         <Stat
-          chave="Confiança OCR"
+          chave="Certeza da leitura"
           valor={porcentagem(confiancaOcr)}
           score={confiancaOcr === null ? null : confiancaOcr * 100}
+          titulo="Confiança média que o OCR atribuiu ao que leu"
         />
-        <Stat chave="Campos" valor={String(doc.campos.length)} />
-        <Stat chave="Tempo" valor={`${doc.tempo_processamento_s}s`} />
+        <Stat chave="Campos extraídos" valor={String(doc.campos.length)} />
+        <Stat chave="Tempo de leitura" valor={`${doc.tempo_processamento_s}s`} />
       </div>
 
       <div className={ui.abas} role="tablist">

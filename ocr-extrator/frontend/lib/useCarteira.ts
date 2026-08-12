@@ -20,6 +20,8 @@ const DIAS_PARA_COBRAR = 7;
 export interface AcaoCaso {
   rotulo: string;
   severidade: Severidade;
+  /** Símbolo do selo, para que o estado não dependa só da cor. */
+  simbolo: string;
 }
 
 export interface LinhaCarteira {
@@ -95,19 +97,31 @@ function frasePara(situacao: SituacaoCaso, dias: number): string {
   return partes.join(" · ");
 }
 
+/* O rótulo é a próxima providência, escrita como se fosse dita em voz alta.
+ * Antes vinha em caixa alta ("COBRAR CLIENTE", "CONFERIR 3"): lido como
+ * carimbo, e caixa alta em bloco atrasa a leitura de quem tem menos prática
+ * com a tela. O símbolo acompanha o rótulo para que o selo não informe só pela
+ * cor. */
 function acaoPara(situacao: SituacaoCaso, dias: number): AcaoCaso {
   const { progresso } = situacao;
-  if (progresso.pronto) return { rotulo: "PRONTO ✓", severidade: "pronto" };
+  if (progresso.pronto) {
+    return { rotulo: "Pronto para a inicial", severidade: "pronto", simbolo: "✓" };
+  }
   if (progresso.obrigatorios_pendentes > 0 && dias >= DIAS_PARA_COBRAR) {
-    return { rotulo: "COBRAR CLIENTE", severidade: "critico" };
+    return { rotulo: "Cobrar o cliente", severidade: "critico", simbolo: "✕" };
   }
   if (progresso.itens_a_conferir > 0) {
-    return { rotulo: `CONFERIR ${progresso.itens_a_conferir}`, severidade: "atencao" };
+    const quantos = progresso.itens_a_conferir;
+    return {
+      rotulo: `Conferir ${quantos} ${quantos === 1 ? "documento" : "documentos"}`,
+      severidade: "atencao",
+      simbolo: "!",
+    };
   }
   if (progresso.obrigatorios_pendentes > 0) {
-    return { rotulo: "ENVIAR PEDIDO", severidade: "neutro" };
+    return { rotulo: "Enviar o pedido", severidade: "neutro", simbolo: "→" };
   }
-  return { rotulo: "AGUARDANDO", severidade: "neutro" };
+  return { rotulo: "Aguardando o cliente", severidade: "neutro", simbolo: "•" };
 }
 
 function montarLinha(situacao: SituacaoCaso): LinhaCarteira {
@@ -141,18 +155,18 @@ function montarLinha(situacao: SituacaoCaso): LinhaCarteira {
 
 function estagioDaEntrega(entrega: Entrega): { estagio: string; severidade: Severidade } {
   if (entrega.tipo_confere === false) {
-    return { estagio: "tipo divergente · confira o arquivo", severidade: "atencao" };
+    return { estagio: "Tipo diferente do esperado", severidade: "atencao" };
   }
   if (entrega.dados_utilizaveis || entrega.confirmado_manual) {
     const score = entrega.score_legibilidade;
     return {
-      estagio: `classificado ✓${score !== null ? ` · legibilidade ${score}%` : ""} · entregue`,
+      estagio: score !== null ? `Lido — nitidez ${score}%` : "Lido e aceito",
       severidade: "pronto",
     };
   }
   const score = entrega.score_legibilidade;
   return {
-    estagio: score !== null ? `ilegível ${score}% · reenvio pedido` : "não foi possível ler",
+    estagio: score !== null ? `Ilegível (${score}%) — pedir de novo` : "Não foi possível ler",
     severidade: "critico",
   };
 }

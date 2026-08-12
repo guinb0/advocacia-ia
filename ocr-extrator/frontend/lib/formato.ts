@@ -3,8 +3,17 @@
 /** Verde acima de 75, âmbar acima de 50, vermelho abaixo disso. */
 export function corDoScore(score: number): string {
   if (score >= 75) return "var(--ok)";
-  if (score >= 50) return "var(--warn)";
-  return "var(--err)";
+  // O âmbar de texto é fechado demais para preencher barra; a variante -marca
+  // é a que se vê num traço de 6px e ainda passa dos 3:1 exigidos.
+  if (score >= 50) return "var(--atencao-marca)";
+  return "var(--critico)";
+}
+
+/** Palavra + símbolo do score, para que a barra não informe só pela cor. */
+export function leituraDoScore(score: number): { texto: string; simbolo: string } {
+  if (score >= 75) return { texto: "bom", simbolo: "✓" };
+  if (score >= 50) return { texto: "regular", simbolo: "!" };
+  return { texto: "ruim", simbolo: "✕" };
 }
 
 export function porcentagem(fracao: number | null | undefined): string {
@@ -21,8 +30,35 @@ export function semUnderscore(texto: string): string {
   return texto.replace(/_/g, " ");
 }
 
+/* Veredito da validação. `classe` é o modificador da faixa de aviso global
+ * (ver globals.css) e `rotulo` é a leitura em português corrente: "APROVADO_COM_
+ * RESSALVAS" com o underscore trocado por espaço não era uma frase que alguém
+ * de fora leria sem tropeçar. */
 export const ESTILO_VEREDITO = {
-  APROVADO: { classe: "ok", icone: "✓" },
-  APROVADO_COM_RESSALVAS: { classe: "warn", icone: "!" },
-  REPROVADO: { classe: "err", icone: "✕" },
+  APROVADO: {
+    classe: "aviso--ok",
+    icone: "✓",
+    rotulo: "Documento aprovado",
+  },
+  APROVADO_COM_RESSALVAS: {
+    classe: "aviso--atencao",
+    icone: "!",
+    rotulo: "Aprovado, mas confira",
+  },
+  REPROVADO: {
+    classe: "aviso--critico",
+    icone: "✕",
+    rotulo: "Documento reprovado",
+  },
 } as const;
+
+/** Tom do selo de estado, no vocabulário dos primitivos globais. */
+export const SELO_TOM = {
+  ok: "selo--ok",
+  atencao: "selo--atencao",
+  critico: "selo--critico",
+  info: "selo--info",
+  neutro: "selo--neutro",
+} as const;
+
+export type TomSelo = keyof typeof SELO_TOM;

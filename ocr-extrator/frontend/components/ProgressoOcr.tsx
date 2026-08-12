@@ -59,12 +59,12 @@ export default function ProgressoOcr({ modeloPronto = true, naFila = false }: Pr
       <div className={estilos.legenda}>
         <span className={demorando ? estilos.demorando : undefined}>
           {naFila
-            ? "Na fila — o OCR lê um documento por vez"
+            ? "Na fila — o sistema lê um documento por vez"
             : demorando
-              ? "Demorando mais que o normal…"
+              ? "Está demorando mais que o normal, mas continua lendo…"
               : modeloPronto
                 ? "Lendo o documento…"
-                : "Carregando o modelo e lendo…"}
+                : "Preparando a leitura e lendo (a primeira demora mais)…"}
         </span>
         <span className={estilos.tempo}>{segundos.toFixed(0)}s</span>
       </div>

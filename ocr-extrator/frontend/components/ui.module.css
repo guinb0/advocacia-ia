@@ -1,170 +1,170 @@
-/* Primitivos visuais compartilhados. Direção AUTOS: cantos retos, elevação
- * por borda (nunca por sombra), números em mono tabular.
- * Os nomes de classe são os mesmos de antes — as telas ainda não migradas
- * (Resultado, painéis de validação e qualidade) herdam a direção sem reescrita. */
+/* Estruturas compartilhadas pelas telas de documento (análise avulsa, abas de
+ * resultado, tabelas de campo).
+ *
+ * O que é botão, campo, selo de estado, cartão e faixa de aviso NÃO mora aqui:
+ * mora em app/globals.css, numa definição só para toda a aplicação. Aqui ficam
+ * apenas as estruturas que não se repetem fora deste conjunto de telas. */
+
+/* ---------------------------------------------------------------- cartão --
+ * Mantido como apelido do primitivo global, porque várias telas ainda pedem
+ * `ui.card`. Novas telas devem usar a classe global `cartao`. */
 
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 0;
-  padding: 18px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+  box-shadow: var(--sombra-1);
+  padding: 20px;
 }
 
 .tituloCard {
-  font: 600 11px/1 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--muted);
-  margin-bottom: 14px;
-}
-
-/* ---------------------------------------------------------------- banner */
-
-.banner {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  padding: 14px;
   margin-bottom: 16px;
-  border: 1.5px solid;
+  color: var(--tinta);
+  font-family: var(--fonte-titulo);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  line-height: 1.25;
 }
 
-.banner strong {
-  display: block;
-  font: 500 15px/1.3 var(--font-display);
-  margin-bottom: 2px;
-}
-
-.banner span {
-  font-size: 0.87rem;
-  color: var(--muted);
-}
-
-.bannerIcone {
-  font-size: 22px;
-  line-height: 1;
-}
-
-.ok {
-  border-color: var(--ok);
-  color: var(--ok);
-}
-
-.warn {
-  border-color: var(--warn);
-  color: var(--warn-texto);
-}
-
-.err {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ----------------------------------------------------------------- stats */
+/* ----------------------------------------------------------------- stats --
+ * Painel de medições da leitura. Voltaram a ser cartõezinhos em grade: como
+ * faixa contínua separada por filete, os números encostavam uns nos outros e
+ * ninguém sabia qual rótulo pertencia a qual valor. */
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0;
-  margin-bottom: 18px;
-  border-top: 3px double var(--border-strong);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
 }
 
-/* Não são cards: separador é borda vertical, como na faixa de triagem. */
 .stat {
-  padding: 11px 14px;
-  border-left: 1px solid var(--border);
-}
-
-.stat:first-child {
-  border-left: none;
-  padding-left: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel-2);
 }
 
 .statChave {
-  font: 600 10px/1.3 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  font-weight: 600;
 }
 
 .statValor {
-  font: 600 22px/1 var(--font-display);
+  margin-top: 3px;
+  color: var(--tinta);
+  font-family: var(--fonte-titulo);
+  font-size: var(--t-lg);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  margin-top: 4px;
+  line-height: 1.15;
 }
 
 .barra {
-  height: 5px;
-  border: 1px solid var(--border-strong);
-  padding: 1px;
-  margin-top: 7px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: var(--raio-pill);
+  background: var(--papel-3);
+  overflow: hidden;
 }
 
 .barraPreenchimento {
   display: block;
   height: 100%;
+  border-radius: var(--raio-pill);
 }
 
-/* ------------------------------------------------------------------ abas */
+/* ------------------------------------------------------------------ abas --
+ * Aba selecionada com fundo tingido, e não apenas com um filete embaixo: o
+ * filete sozinho passava despercebido por quem não sabia que ali havia abas. */
 
 .abas {
   display: flex;
-  gap: 20px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 18px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel-2);
   overflow-x: auto;
 }
 
 .aba {
-  padding: 0 0 8px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--muted);
-  font: 600 11.5px/1 var(--font-ui);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
-  white-space: nowrap;
   flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 13px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--transicao),
+    color var(--transicao);
 }
 
 .aba:hover {
-  color: var(--ink);
+  background: var(--papel-3);
+  color: var(--tinta);
 }
 
-.abaAtiva {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
+.abaAtiva,
+.abaAtiva:hover {
+  background: var(--papel);
+  border-color: var(--acao-borda);
+  color: var(--acao);
+  box-shadow: var(--sombra-1);
 }
 
-/* ---------------------------------------------------------------- tabela */
+/* ---------------------------------------------------------------- tabela -- */
 
 .tabela {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.88rem;
+  font-size: var(--t-sm);
 }
 
 .tabela th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--borda-forte);
+  background: var(--papel-2);
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  font-weight: 700;
   text-align: left;
-  font: 600 10px/1 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  padding: 9px 10px;
-  border-bottom: 1.5px solid var(--border-strong);
+}
+
+.tabela th:first-child {
+  border-top-left-radius: var(--raio-sm);
+}
+
+.tabela th:last-child {
+  border-top-right-radius: var(--raio-sm);
 }
 
 .tabela td {
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--borda);
+  color: var(--tinta-2);
   vertical-align: top;
 }
 
-.tabela tr:last-child td {
+.tabela td strong {
+  color: var(--tinta);
+}
+
+.tabela tbody tr:last-child td {
   border-bottom: none;
+}
+
+/* Faixa alternada: com muitas linhas, é o que evita ler o valor da linha
+ * errada — e faz isso sem acrescentar divisória. */
+.tabela tbody tr:nth-child(even) {
+  background: var(--papel-2);
 }
 
 .direita {
@@ -172,51 +172,27 @@
 }
 
 .valor {
-  font-family: var(--font-mono);
+  font-family: var(--fonte-codigo);
   font-variant-numeric: tabular-nums;
-  font-size: 0.86rem;
+  font-size: var(--t-sm);
+  color: var(--tinta);
   word-break: break-word;
 }
 
 .observacao {
-  font: 400 11px/1.4 var(--font-ui);
-  color: var(--muted);
   margin-top: 4px;
-}
-
-/* ------------------------------------------------------------------ tags */
-
-.tag {
-  display: inline-block;
-  padding: 3px 7px;
-  border: 1px solid currentColor;
-  font: 600 9.5px/1 var(--font-ui);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.tagOk {
-  color: var(--ok);
-}
-
-.tagErr {
-  color: var(--accent);
-}
-
-.tagWarn {
-  color: var(--warn-texto);
-  border-color: var(--warn);
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  line-height: 1.5;
 }
 
 /* -------------------------------------------------------------- mensagens */
 
 .secao {
-  font: 700 11px/1 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--muted);
-  margin: 18px 0 9px;
+  margin: 22px 0 10px;
+  color: var(--tinta);
+  font-size: var(--t-sm);
+  font-weight: 700;
 }
 
 .secao:first-child {
@@ -225,95 +201,120 @@
 
 .mensagens {
   list-style: none;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .mensagens li {
-  padding: 8px 12px;
-  font: 400 12.5px/1.5 var(--font-ui);
-  margin-bottom: 6px;
-  border-left: 3px solid var(--border);
+  display: flex;
+  gap: 9px;
+  padding: 10px 13px;
+  margin-bottom: 7px;
+  border: 1px solid var(--borda);
+  border-left-width: 4px;
+  border-radius: var(--raio-sm);
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+}
+
+/* O símbolo vem do CSS porque o texto da mensagem chega do backend verbatim e
+ * não deve ser remontado no front. */
+.mensagens li::before {
+  flex: none;
+  font-weight: 700;
 }
 
 .msgErro {
-  border-left-color: var(--accent);
+  border-color: var(--critico-borda);
+  background: var(--critico-claro);
+}
+
+.msgErro::before {
+  content: "✕";
+  color: var(--critico);
 }
 
 .msgAviso {
-  border-left-color: var(--warn);
+  border-color: var(--atencao-borda);
+  background: var(--atencao-claro);
+}
+
+.msgAviso::before {
+  content: "!";
+  color: var(--atencao);
 }
 
 .msgSugestao {
-  border-left-color: var(--border-strong);
+  border-color: var(--acao-borda);
+  background: var(--acao-clara);
+}
+
+.msgSugestao::before {
+  content: "→";
+  color: var(--acao);
 }
 
 /* ------------------------------------------------------------------ blocos */
 
 .pre {
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
   padding: 14px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel-2);
+  color: var(--tinta-2);
+  font-family: var(--fonte-codigo);
+  font-size: 0.8125rem;
+  line-height: 1.6;
   max-height: 520px;
-  line-height: 1.55;
+  overflow: auto;
   white-space: pre;
 }
 
 .downloads {
   display: flex;
-  gap: 9px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
   align-items: center;
 }
 
-.downloads a {
-  padding: 6px 12px;
-  border: 1px solid var(--border-strong);
-  color: var(--ink);
-  text-decoration: none;
-  font: 600 10.5px/1 var(--font-ui);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.downloads a:hover {
-  background: var(--surface-2);
-}
-
 .linhas {
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  font-family: var(--fonte-codigo);
+  font-size: 0.8125rem;
   max-height: 520px;
   overflow: auto;
 }
 
 .linha {
-  padding: 5px 9px;
-  border-bottom: 1px solid var(--border);
   display: flex;
-  gap: 11px;
+  gap: 12px;
+  padding: 7px 11px;
+  border-bottom: 1px solid var(--borda);
+  color: var(--tinta-2);
+}
+
+.linha:last-child {
+  border-bottom: none;
 }
 
 .linhaConfianca {
-  color: var(--muted);
   flex: 0 0 46px;
-  text-align: right;
+  color: var(--tinta-3);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
-.caixaErro {
-  border: 1.5px solid var(--accent);
-  color: var(--accent);
-  padding: 14px;
-  font: 400 12.5px/1.5 var(--font-ui);
-  margin: 14px 0;
-}
+/* -------------------------------------------------------------- estados -- */
 
 .vazio {
-  color: var(--muted);
-  padding: 40px 0;
-  font: 400 13px/1.6 var(--font-ui);
+  padding: 32px 20px;
+  border: 1px dashed var(--borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--papel-2);
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  text-align: center;
 }

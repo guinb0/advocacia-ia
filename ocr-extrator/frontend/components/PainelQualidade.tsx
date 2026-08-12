@@ -1,6 +1,6 @@
 import { semUnderscore } from "@/lib/formato";
 import type { QualidadeImagem } from "@/lib/types";
-import { Barra, Tag } from "./Basicos";
+import { Barra, Selo } from "./Basicos";
 import ui from "./ui.module.css";
 
 export default function PainelQualidade({ qualidade }: { qualidade: QualidadeImagem }) {
@@ -11,7 +11,7 @@ export default function PainelQualidade({ qualidade }: { qualidade: QualidadeIma
           <th>Métrica</th>
           <th>Medição</th>
           <th style={{ width: 130 }}>Score</th>
-          <th>Status</th>
+          <th>Situação</th>
         </tr>
       </thead>
       <tbody>
@@ -24,11 +24,19 @@ export default function PainelQualidade({ qualidade }: { qualidade: QualidadeIma
               {m.mensagem}
             </td>
             <td>
-              {m.score}%
+              <span className={ui.valor}>{m.score}%</span>
               <Barra score={m.score} />
             </td>
             <td>
-              <Tag tom={m.ok ? "ok" : "err"}>{m.ok ? "ok" : "ruim"}</Tag>
+              {m.ok ? (
+                <Selo tom="ok" simbolo="✓">
+                  boa
+                </Selo>
+              ) : (
+                <Selo tom="critico" simbolo="✕">
+                  ruim
+                </Selo>
+              )}
             </td>
           </tr>
         ))}

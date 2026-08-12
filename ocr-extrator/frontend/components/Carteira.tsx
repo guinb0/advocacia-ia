@@ -3,33 +3,45 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
+import { SELO_TOM } from "@/lib/formato";
 import type { LinhaCarteira, Severidade } from "@/lib/useCarteira";
 import { useCarteira } from "@/lib/useCarteira";
 import type { EstadoModelo } from "@/lib/useExtracao";
 import { useModelo } from "@/lib/useExtracao";
 import estilos from "./Carteira.module.css";
 
-const TEXTO_MODELO: Record<EstadoModelo, string> = {
-  verificando: "verificando modelo",
-  carregando: "carregando modelo",
-  pronto: "modelo pronto",
-  indisponivel: "modelo carrega no 1º envio",
+/* Estado da leitura automática, em português de quem usa. "modelo pronto" e
+ * "modelo carrega no 1º envio" diziam respeito ao PaddleOCR, não ao trabalho. */
+const TEXTO_LEITURA: Record<EstadoModelo, { texto: string; classe: string }> = {
+  verificando: { texto: "Verificando a leitura automática", classe: estilos.estadoOcupado },
+  carregando: { texto: "Preparando a leitura automática", classe: estilos.estadoOcupado },
+  pronto: { texto: "Leitura automática pronta", classe: estilos.estadoPronto },
+  indisponivel: { texto: "Leitura inicia no primeiro envio", classe: "" },
 };
 
 type Filtro = "todos" | "critico" | "atencao" | "pedido" | "pronto";
 
-const CLASSE_SEVERIDADE: Record<Severidade, string> = {
+/** Frase que explica, na faixa acima da lista, o filtro que está aplicado. */
+const DESCRICAO_FILTRO: Record<Exclude<Filtro, "todos">, string> = {
+  critico: "casos travados esperando uma decisão sua",
+  atencao: "casos com documento a conferir",
+  pedido: "casos com pedido pronto para enviar ao cliente",
+  pronto: "casos com a instrução completa",
+};
+
+/** Tom do selo por gravidade — o mesmo vocabulário dos primitivos globais. */
+const TOM_POR_SEVERIDADE: Record<Severidade, keyof typeof SELO_TOM> = {
+  critico: "critico",
+  atencao: "atencao",
+  pronto: "ok",
+  neutro: "info",
+};
+
+const CLASSE_TRIAGEM: Record<Severidade, string> = {
   critico: estilos.critico,
   atencao: estilos.atencao,
   pronto: estilos.pronto,
   neutro: estilos.neutro,
-};
-
-const CLASSE_CARIMBO: Record<Severidade, string> = {
-  critico: estilos.carimboCritico,
-  atencao: estilos.carimboAtencao,
-  pronto: estilos.carimboPronto,
-  neutro: estilos.carimboNeutro,
 };
 
 const CLASSE_LINHA: Partial<Record<Severidade, string>> = {
@@ -38,9 +50,9 @@ const CLASSE_LINHA: Partial<Record<Severidade, string>> = {
 };
 
 const HOJE_FORMATO = new Intl.DateTimeFormat("pt-BR", {
-  weekday: "short",
+  weekday: "long",
   day: "numeric",
-  month: "short",
+  month: "long",
   year: "numeric",
 });
 
@@ -103,6 +115,8 @@ export default function Carteira({ onAbrir, onNovoCaso, onAnalisarAvulso }: Prop
         if (emControle || !atual) return;
         evento.preventDefault();
         onAbrir(atual.caso.id);
+      } else if (evento.key === "Escape") {
+        setFiltro("todos");
       } else if (evento.key.toLowerCase() === "c") {
         alternarFiltro("atencao");
       } else if (evento.key.toLowerCase() === "p") {
@@ -122,135 +136,193 @@ export default function Carteira({ onAbrir, onNovoCaso, onAnalisarAvulso }: Prop
     item?.scrollIntoView({ block: "nearest" });
   }, [selecionado]);
 
+  const leitura = TEXTO_LEITURA[estadoModelo];
+
   return (
     <div className={estilos.pagina}>
       <header className={estilos.topbar}>
         <div className={estilos.marcaGrupo}>
-          <span className={estilos.marca}>ACERVO</span>
-          <nav className={estilos.nav}>
+          <span className={estilos.marca}>Acervo</span>
+          {/* Módulos. Cada item troca de tela — nenhum deles filtra a lista. */}
+          <nav className={estilos.nav} aria-label="Módulos do sistema">
             <button
               type="button"
-              className={`${estilos.navItem} ${filtro !== "pedido" ? estilos.navAtivo : ""}`}
-              onClick={() => setFiltro("todos")}
+              className={`${estilos.navItem} ${estilos.navAtivo}`}
+              aria-current="page"
             >
-              CARTEIRA
+              Carteira
             </button>
             <button type="button" className={estilos.navItem} onClick={onNovoCaso}>
-              CASOS
+              Casos
             </button>
             <button type="button" className={estilos.navItem} onClick={onAnalisarAvulso}>
-              DOCUMENTOS
-            </button>
-            <button
-              type="button"
-              className={`${estilos.navItem} ${filtro === "pedido" ? estilos.navAtivo : ""}`}
-              onClick={() => alternarFiltro("pedido")}
-            >
-              PEDIDOS
+              Ler um documento
             </button>
           </nav>
         </div>
+
         <div className={estilos.topbarDireita}>
-          <button type="button" className={estilos.busca}>
-            buscar · ⌘K
-          </button>
           <span
-            className={`${estilos.modelo} ${estadoModelo === "pronto" ? estilos.pronto : ""}`}
-            title="Estado do modelo de OCR que lê os documentos enviados"
+            className={`${estilos.estadoLeitura} ${leitura.classe}`}
+            title="Situação do programa que lê os documentos enviados"
           >
-            {TEXTO_MODELO[estadoModelo]}
+            <span className={estilos.pontoEstado} aria-hidden />
+            {leitura.texto}
           </span>
-          <span className={estilos.data}>{hoje}</span>
+          {hoje && <span className={estilos.data}>{hoje}</span>}
           {AUTH_ATIVA && (
             <button
               type="button"
-              className={estilos.sair}
+              className="botao botao--discreto botao--pequeno"
               onClick={sessao.sair}
-              title={`Sessão de ${sessao.nome || sessao.usuario}`}
             >
-              {sessao.usuario} · sair
+              Sair ({sessao.nome || sessao.usuario})
             </button>
           )}
         </div>
       </header>
-      <div className={estilos.filete} />
 
       <div className={estilos.cabecalho}>
         <div>
           <h1 className={estilos.titulo}>Mesa do dia</h1>
           <p className={estilos.linhaFina}>
             {triagem.travados > 0
-              ? `${triagem.travados} ${triagem.travados === 1 ? "caso exige" : "casos exigem"} decisão sua hoje. O resto anda sozinho.`
-              : "Nenhum caso travado hoje. O resto anda sozinho."}
+              ? `${triagem.travados} ${triagem.travados === 1 ? "caso exige" : "casos exigem"} uma decisão sua hoje. Os demais seguem andando sozinhos.`
+              : "Nenhum caso travado hoje. Os casos seguem andando sozinhos."}
           </p>
         </div>
 
-        <div className={estilos.triagem}>
-          <Triagem
-            numero={triagem.travados}
-            rotulo="casos travados esperando decisão sua"
-            severidade="critico"
-            ativo={filtro === "critico"}
-            onClick={() => alternarFiltro("critico")}
-          />
-          <Triagem
-            numero={triagem.aConferir}
-            rotulo="documentos a conferir (ilegível ou trocado)"
-            severidade="atencao"
-            ativo={filtro === "atencao"}
-            onClick={() => alternarFiltro("atencao")}
-          />
-          <Triagem
-            numero={triagem.pedidosProntos}
-            rotulo="pedidos ao cliente prontos para enviar"
-            severidade="pronto"
-            ativo={filtro === "pedido"}
-            onClick={() => alternarFiltro("pedido")}
-          />
-          <Triagem
-            numero={triagem.completos}
-            rotulo="instrução completa — pronto para a inicial"
-            severidade="neutro"
-            ativo={filtro === "pronto"}
-            onClick={() => alternarFiltro("pronto")}
-          />
-        </div>
+        {/* A ação principal da tela, em botão sólido. Antes era um item de menu
+            em caixa alta, indistinguível dos outros. */}
+        <button type="button" className="botao botao--primario" onClick={onNovoCaso}>
+          + Novo caso
+        </button>
+      </div>
+
+      <div className={estilos.triagem}>
+        <CartaoTriagem
+          numero={triagem.travados}
+          rotulo="Travados"
+          ajuda="Esperando uma decisão sua"
+          simbolo="✕"
+          severidade="critico"
+          ativo={filtro === "critico"}
+          onClick={() => alternarFiltro("critico")}
+        />
+        <CartaoTriagem
+          numero={triagem.aConferir}
+          rotulo="A conferir"
+          ajuda="Documento ilegível ou trocado"
+          simbolo="!"
+          severidade="atencao"
+          ativo={filtro === "atencao"}
+          onClick={() => alternarFiltro("atencao")}
+        />
+        <CartaoTriagem
+          numero={triagem.pedidosProntos}
+          rotulo="Pedidos prontos"
+          ajuda="Para enviar ao cliente"
+          simbolo="→"
+          severidade="neutro"
+          ativo={filtro === "pedido"}
+          onClick={() => alternarFiltro("pedido")}
+        />
+        <CartaoTriagem
+          numero={triagem.completos}
+          rotulo="Completos"
+          ajuda="Prontos para a inicial"
+          simbolo="✓"
+          severidade="pronto"
+          ativo={filtro === "pronto"}
+          onClick={() => alternarFiltro("pronto")}
+        />
       </div>
 
       <div className={estilos.corpo}>
-        <section>
-          <div className={estilos.duplo}>
-            <div className={estilos.secaoTitulo}>
-              <span className={estilos.rotuloSecao}>FILA POR GRAVIDADE</span>
-              <span className={estilos.contagemSecao}>
-                {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · ordenado
-                por risco de travar
-              </span>
-            </div>
+        <section className={estilos.painel} aria-label="Fila de casos">
+          <div className={estilos.painelCabecalho}>
+            <h2 className={estilos.painelTitulo}>Fila de casos</h2>
+            <span className={estilos.painelAjuda}>
+              {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · o que pode
+              travar aparece primeiro
+            </span>
           </div>
 
-          {erro && <div className={estilos.erro}>{erro}</div>}
+          {/* Filtro aplicado dito em palavras, com o desfazer ao lado. */}
+          {filtro !== "todos" && (
+            <div className={estilos.faixaFiltro}>
+              <span>
+                Mostrando {visiveis.length} de {linhas.length} — {DESCRICAO_FILTRO[filtro]}
+              </span>
+              <button
+                type="button"
+                className="botao botao--secundario botao--pequeno"
+                onClick={() => setFiltro("todos")}
+              >
+                Ver todos os casos
+              </button>
+            </div>
+          )}
+
+          {erro && (
+            <div className={estilos.caixaMensagem}>
+              <div className="aviso aviso--critico" role="alert">
+                <span className="avisoSimbolo" aria-hidden>
+                  ✕
+                </span>
+                <div>
+                  <strong>Não foi possível carregar a carteira</strong>
+                  <br />
+                  {erro}
+                </div>
+              </div>
+            </div>
+          )}
 
           {carregando && linhas.length === 0 ? (
             <div aria-live="polite">
-              <span className={estilos.mensagem}>Carregando a carteira…</span>
+              <p className={estilos.mensagem}>Carregando os casos…</p>
               <div className={estilos.esqueleto} />
               <div className={estilos.esqueleto} />
               <div className={estilos.esqueleto} />
             </div>
           ) : visiveis.length === 0 ? (
-            <p className={estilos.mensagem}>
-              {linhas.length === 0
-                ? "Nenhum caso ainda. Crie o primeiro para começar a cobrar documentos."
-                : "Nenhum caso neste filtro. Clique no número de novo para ver todos."}
-            </p>
+            <div className={estilos.mensagemVazia}>
+              {linhas.length === 0 ? (
+                <>
+                  <h3 className={estilos.mensagemVaziaTitulo}>Nenhum caso cadastrado</h3>
+                  <p className={estilos.mensagemVaziaTexto}>
+                    Crie o primeiro caso para montar o checklist de documentos e começar a
+                    cobrá-los do cliente.
+                  </p>
+                  <button type="button" className="botao botao--primario" onClick={onNovoCaso}>
+                    Criar o primeiro caso
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h3 className={estilos.mensagemVaziaTitulo}>Nada neste filtro</h3>
+                  <p className={estilos.mensagemVaziaTexto}>
+                    {filtro === "todos"
+                      ? "Nenhum caso a mostrar."
+                      : `Nenhum caso se encaixa em: ${DESCRICAO_FILTRO[filtro]}.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="botao botao--secundario"
+                    onClick={() => setFiltro("todos")}
+                  >
+                    Ver todos os casos
+                  </button>
+                </>
+              )}
+            </div>
           ) : (
             <ul className={estilos.fila} ref={listaRef}>
               {visiveis.map((linha, indice) => (
                 <li key={linha.caso.id}>
                   <LinhaCaso
                     linha={linha}
-                    indice={indice}
                     selecionada={indice === selecionado}
                     onAbrir={() => onAbrir(linha.caso.id)}
                     onFocar={() => setSelecionado(indice)}
@@ -262,8 +334,10 @@ export default function Carteira({ onAbrir, onNovoCaso, onAnalisarAvulso }: Prop
         </section>
 
         <aside className={estilos.lateral}>
-          <div className={estilos.bloco}>
-            <span className={estilos.rotuloSecao}>PEDIDOS PRONTOS PARA ENVIAR</span>
+          <section className={estilos.painel} aria-label="Pedidos prontos para enviar">
+            <div className={estilos.painelCabecalho}>
+              <h2 className={estilos.painelTitulo}>Pedidos a enviar</h2>
+            </div>
             {pedidos.length === 0 ? (
               <p className={estilos.mensagem}>Nada a cobrar no momento.</p>
             ) : (
@@ -278,73 +352,90 @@ export default function Carteira({ onAbrir, onNovoCaso, onAnalisarAvulso }: Prop
                     >
                       <span className={estilos.pedidoCliente}>{pedido.cliente}</span>
                       <span className={estilos.pedidoContagem}>
-                        {pedido.faltantes} faltantes
-                        {pedido.reenvios > 0 && ` · ${pedido.reenvios} reenvios`}
+                        {pedido.faltantes} {pedido.faltantes === 1 ? "falta" : "faltam"}
+                        {pedido.reenvios > 0 &&
+                          ` · ${pedido.reenvios} a conferir`}
                       </span>
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  className={estilos.acaoLote}
-                  onClick={() => pedidos[0] && onAbrir(pedidos[0].casoId)}
-                >
-                  Revisar e enviar os {pedidos.length} →
-                </button>
+                <div className={estilos.rodapeBloco}>
+                  <button
+                    type="button"
+                    className="botao botao--secundario botao--bloco botao--pequeno"
+                    onClick={() => pedidos[0] && onAbrir(pedidos[0].casoId)}
+                  >
+                    Abrir o primeiro e revisar
+                  </button>
+                </div>
               </>
             )}
-          </div>
+          </section>
 
-          <div className={estilos.bloco}>
-            <span className={estilos.rotuloSecao}>CHEGANDO AGORA</span>
+          <section className={estilos.painel} aria-label="Documentos que chegaram agora">
+            <div className={estilos.painelCabecalho}>
+              <h2 className={estilos.painelTitulo}>Chegando agora</h2>
+            </div>
             {chegandoAgora.length === 0 ? (
               <p className={estilos.mensagem}>Nenhum arquivo recebido ainda.</p>
             ) : (
               <div className={estilos.feed} aria-live="polite">
                 {chegandoAgora.map(({ entrega, estagio, severidade }) => (
                   <div key={entrega.id} className={estilos.feedItem}>
-                    <span className={estilos.feedArquivo}>{entrega.arquivo}</span>
-                    <span className={`${estilos.feedEstagio} ${CLASSE_SEVERIDADE[severidade]}`}>
+                    <span className={estilos.feedArquivo} title={entrega.arquivo}>
+                      {entrega.arquivo}
+                    </span>
+                    <span className={`selo ${SELO_TOM[TOM_POR_SEVERIDADE[severidade]]}`}>
                       {estagio}
                     </span>
                   </div>
                 ))}
               </div>
             )}
-          </div>
+          </section>
         </aside>
       </div>
 
+      {/* Atalhos: apoio para quem trabalha rápido, não requisito de uso. Toda
+          ação daqui também existe como botão na tela. */}
       <footer className={estilos.atalhos}>
+        <span className={estilos.atalhosRotulo}>Atalhos do teclado (opcionais):</span>
         <span>
           <span className={estilos.tecla}>↑↓</span> navegar
         </span>
         <span>
-          <span className={estilos.tecla}>⏎</span> abrir caso
+          <span className={estilos.tecla}>⏎</span> abrir o caso
         </span>
         <span>
-          <span className={estilos.tecla}>C</span> conferir
+          <span className={estilos.tecla}>C</span> filtrar “a conferir”
         </span>
         <span>
-          <span className={estilos.tecla}>P</span> pedido
+          <span className={estilos.tecla}>P</span> filtrar “pedidos”
         </span>
         <span>
           <span className={estilos.tecla}>N</span> novo caso
+        </span>
+        <span>
+          <span className={estilos.tecla}>Esc</span> limpar o filtro
         </span>
       </footer>
     </div>
   );
 }
 
-function Triagem({
+function CartaoTriagem({
   numero,
   rotulo,
+  ajuda,
+  simbolo,
   severidade,
   ativo,
   onClick,
 }: {
   numero: number;
   rotulo: string;
+  ajuda: string;
+  simbolo: string;
   severidade: Severidade;
   ativo: boolean;
   onClick: () => void;
@@ -352,30 +443,43 @@ function Triagem({
   return (
     <button
       type="button"
-      className={`${estilos.triagemItem} ${ativo ? estilos.triagemAtivo : ""}`}
+      className={`${estilos.triagemItem} ${CLASSE_TRIAGEM[severidade]} ${
+        ativo ? estilos.triagemAtivo : ""
+      }`}
       onClick={onClick}
       aria-pressed={ativo}
     >
-      <span className={`${estilos.triagemNumero} ${CLASSE_SEVERIDADE[severidade]}`}>{numero}</span>
-      <span className={estilos.triagemRotulo}>{rotulo}</span>
+      <span className={estilos.triagemSimbolo} aria-hidden>
+        {simbolo}
+      </span>
+      <span>
+        <span className={estilos.triagemNumero}>{numero}</span>
+        <span className={estilos.triagemRotulo}>{rotulo}</span>
+        <span className={estilos.triagemAjuda}>{ajuda}</span>
+        <span className="somenteLeitor">
+          {ativo ? " — filtro aplicado. Clique para ver todos." : " — clique para filtrar a lista."}
+        </span>
+      </span>
     </button>
   );
 }
 
 function LinhaCaso({
   linha,
-  indice,
   selecionada,
   onAbrir,
   onFocar,
 }: {
   linha: LinhaCarteira;
-  indice: number;
   selecionada: boolean;
   onAbrir: () => void;
   onFocar: () => void;
 }) {
   const { progresso } = linha.situacao;
+  const pct = Math.max(
+    0,
+    Math.min(100, Math.round((progresso.obrigatorios_entregues / (progresso.obrigatorios_total || 1)) * 100)),
+  );
 
   return (
     <button
@@ -390,29 +494,27 @@ function LinhaCaso({
       onClick={onAbrir}
       onFocus={onFocar}
     >
-      <span className={`${estilos.indice} ${CLASSE_SEVERIDADE[linha.severidade]}`}>
-        {String(indice + 1).padStart(2, "0")}
-      </span>
-
       <span className={estilos.miolo}>
         <span className={estilos.cliente}>
-          {linha.caso.cliente} <span className={estilos.categoria}>— {linha.categoriaNome}</span>
+          {linha.caso.cliente} <span className={estilos.categoria}>· {linha.categoriaNome}</span>
         </span>
-        <span className={`${estilos.situacao} ${CLASSE_SEVERIDADE[linha.severidade]}`}>
-          {linha.frase}
-        </span>
+        <span className={estilos.situacao}>{linha.frase}</span>
       </span>
 
-      <span className={estilos.progresso}>
-        {progresso.obrigatorios_entregues}/{progresso.obrigatorios_total}
-      </span>
+      <span className={estilos.direita}>
+        <span className={estilos.progresso}>
+          <span className={estilos.progressoTexto}>
+            {progresso.obrigatorios_entregues} de {progresso.obrigatorios_total} obrigatórios
+          </span>
+          <span className={estilos.progressoBarra}>
+            <i className={estilos.progressoValor} style={{ width: `${pct}%` }} />
+          </span>
+        </span>
 
-      <span
-        className={`${estilos.carimbo} ${CLASSE_CARIMBO[linha.severidade]} ${
-          CLASSE_SEVERIDADE[linha.severidade]
-        }`}
-      >
-        {linha.acao.rotulo}
+        <span className={`selo ${SELO_TOM[TOM_POR_SEVERIDADE[linha.severidade]]}`}>
+          <span aria-hidden>{linha.acao.simbolo}</span>
+          {linha.acao.rotulo}
+        </span>
       </span>
     </button>
   );

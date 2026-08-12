@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 
 import type { ItemSituacao } from "@/lib/types";
 import { useModelo } from "@/lib/useExtracao";
+import { Selo } from "./Basicos";
 import estilos from "./Checklist.module.css";
 import ProgressoOcr from "./ProgressoOcr";
 import VisorEntrega from "./VisorEntrega";
@@ -13,11 +14,38 @@ import VisorEntrega from "./VisorEntrega";
  * baixar a imagem inteira de toda entrega só para desenhar um quadrado de 46px —
  * um caso com 20 documentos puxava os 20 arquivos ao abrir. */
 
+/* Cada estado carrega símbolo, palavra e tom. Antes eram só palavras em caixa
+ * alta ("FALTA", "CONFERIR") coloridas: quem não distingue vermelho de âmbar
+ * lia dois avisos idênticos, e "CONFERIR" não dizia o que fazer. */
 const APARENCIA = {
-  entregue: { classe: estilos.entregue, texto: "ENTREGUE" },
-  processando: { classe: estilos.conferir, texto: "LENDO" },
-  conferir: { classe: estilos.conferir, texto: "CONFERIR" },
-  pendente: { classe: estilos.pendente, texto: "FALTA" },
+  entregue: {
+    classe: estilos.entregue,
+    texto: "Entregue",
+    simbolo: "✓",
+    tom: "ok",
+    dica: null,
+  },
+  processando: {
+    classe: estilos.processando,
+    texto: "Lendo",
+    simbolo: "◌",
+    tom: "info",
+    dica: "O arquivo chegou e está sendo lido. Pode continuar em outra coisa.",
+  },
+  conferir: {
+    classe: estilos.conferir,
+    texto: "Confira",
+    simbolo: "!",
+    tom: "atencao",
+    dica: "O arquivo chegou, mas a leitura encontrou um problema. Veja abaixo o motivo.",
+  },
+  pendente: {
+    classe: estilos.pendente,
+    texto: "Falta enviar",
+    simbolo: "✕",
+    tom: "critico",
+    dica: null,
+  },
 } as const;
 
 interface Props {
@@ -57,34 +85,33 @@ export default function ItemChecklistLinha({
   return (
     <li className={`${estilos.item} ${aparencia.classe}`}>
       <div className={estilos.cabecalhoItem}>
-        <span className={estilos.marcador} aria-hidden />
-
-        <span className={estilos.codigo}>{item.codigo}</span>
+        <span className={estilos.marcador} aria-hidden>
+          {aparencia.simbolo}
+        </span>
 
         <span className={estilos.nome}>
           {item.nome}
-          {item.obrigatorio && <span className={estilos.obrigatorio}>OBRIGATÓRIO</span>}
+          {item.obrigatorio && <Selo tom="neutro">Obrigatório</Selo>}
+          <span className={estilos.codigo}>{item.codigo}</span>
         </span>
 
         {melhorScore !== null && (
-          <span className={estilos.legibilidade}>legib. {melhorScore}%</span>
+          <span className={estilos.legibilidade} title="Nitidez medida na leitura do arquivo">
+            nitidez {melhorScore}%
+          </span>
         )}
 
-        <span
-          className={
-            item.status === "conferir" ? estilos.carimboConferir : estilos.situacaoItem
-          }
-        >
-          {enviando ? "LENDO…" : aparencia.texto}
-        </span>
+        <Selo tom={enviando ? "info" : aparencia.tom} simbolo={enviando ? "◌" : aparencia.simbolo}>
+          {enviando ? "Lendo…" : aparencia.texto}
+        </Selo>
 
         <button
           type="button"
-          className={estilos.botaoEnviar}
+          className={`botao ${item.entregas.length ? "botao--secundario" : "botao--primario"} botao--pequeno`}
           onClick={() => inputRef.current?.click()}
           disabled={enviando}
         >
-          {item.entregas.length ? "Enviar outro" : "Enviar"}
+          {item.entregas.length ? "Enviar outro arquivo" : "Enviar arquivo"}
         </button>
 
         <input
@@ -100,6 +127,8 @@ export default function ItemChecklistLinha({
             setUsarParaRgECpf(false);
           }}
         />
+
+        {aparencia.dica && !enviando && <span className={estilos.dica}>{aparencia.dica}</span>}
       </div>
 
       {(enviando || item.status === "processando") && (
@@ -107,15 +136,18 @@ export default function ItemChecklistLinha({
       )}
 
       {podeUsarParaAmbos && (
-        <label className={estilos.opcaoCIN}>
+        <label className={`marcacao ${estilos.opcaoCIN}`}>
           <input
             type="checkbox"
             checked={usarParaRgECpf}
             onChange={(e) => setUsarParaRgECpf(e.target.checked)}
             disabled={enviando}
           />
-          Forçar identidade unificada (RG e CPF no mesmo arquivo). CNH e CIN já são
-          reconhecidas sozinhas — marque só se a leitura não tiver identificado.
+          <span>
+            Este arquivo vale como RG <strong>e</strong> CPF (documento de identidade
+            unificado). A CNH e a CIN já são reconhecidas sozinhas — marque só se a leitura não
+            tiver identificado.
+          </span>
         </label>
       )}
 
@@ -123,9 +155,9 @@ export default function ItemChecklistLinha({
         <ul className={estilos.entregas}>
           {item.entregas.map((entrega) => (
             <li key={entrega.id} className={estilos.entrega}>
-              <span className={estilos.selo} aria-hidden>
-                ENVIADO
-              </span>
+              <Selo tom="ok" simbolo="✓">
+                Recebido
+              </Selo>
 
               <button
                 type="button"
@@ -136,22 +168,22 @@ export default function ItemChecklistLinha({
                 {entrega.arquivo}
               </button>
 
+              {(entrega.itens_atendidos?.length ?? 1) > 1 && (
+                <Selo tom="info">Vale para RG e CPF</Selo>
+              )}
+
               <button
                 type="button"
-                className={estilos.botaoDados}
+                className="botao botao--secundario botao--pequeno"
                 onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
               >
-                Ver informações extraídas
+                Ver o que foi lido
               </button>
-
-              {(entrega.itens_atendidos?.length ?? 1) > 1 && (
-                <span className={estilos.obrigatorio}>CIN · VALE PARA RG E CPF</span>
-              )}
 
               {podeUsarParaAmbos && (entrega.itens_atendidos?.length ?? 1) === 1 && (
                 <button
                   type="button"
-                  className={estilos.vincularCIN}
+                  className="botao botao--discreto botao--pequeno"
                   onClick={() => onVincularIdentidade(entrega.id, item.codigo)}
                   disabled={enviando}
                   title="Confirme somente se este for um documento de identidade unificado"
@@ -162,11 +194,10 @@ export default function ItemChecklistLinha({
 
               <button
                 type="button"
-                className={estilos.remover}
+                className="botao botao--perigo botao--pequeno"
                 onClick={() => onRemover(entrega.id)}
-                title="Remover este arquivo"
               >
-                ✕
+                Remover
               </button>
 
               {entrega.alertas.length > 0 && (

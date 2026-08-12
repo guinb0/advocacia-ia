@@ -1,39 +1,34 @@
-/* Triagem: lê o relato e sugere a categoria antes de criar o caso. */
+/* Triagem: lê o relato e sugere o tipo de ação antes de criar o caso.
+ * Fica dentro do cartão "Novo caso", separado dele por um bloco rebaixado —
+ * antes era uma faixa costurada por filete duplo, e ninguém percebia onde a
+ * triagem terminava e o formulário começava. */
 
 .bloco {
+  padding: 16px;
   margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 3px double var(--border-strong);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel-2);
 }
 
 .rotulo {
   display: block;
-  font: 600 11px/1 var(--font-ui);
-  letter-spacing: 0.14em;
-  color: var(--muted);
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+  color: var(--tinta);
+  font-size: var(--t-sm);
+  font-weight: 700;
 }
 
 .texto {
-  margin: 0 0 10px;
-  font: 400 12px/1.6 var(--font-ui);
-  color: var(--muted);
+  margin: 0 0 12px;
   max-width: 64ch;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  line-height: 1.55;
 }
 
 .campo {
-  width: 100%;
-  min-height: 120px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface-2);
-  color: var(--ink);
-  padding: 12px;
-  font: 400 12.5px/1.6 var(--font-ui);
-  resize: vertical;
-}
-
-.campo::placeholder {
-  color: var(--muted);
+  background: var(--papel);
 }
 
 .acoes {
@@ -41,113 +36,76 @@
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.botao {
-  border: 1.5px solid var(--ink);
-  background: none;
-  color: var(--ink);
-  font: 600 11px/1 var(--font-ui);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 10px 14px;
-  cursor: pointer;
-}
-
-.botao:hover:not(:disabled) {
-  background: var(--ink);
-  color: var(--surface);
-}
-
-.botao:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.arquivo {
-  border: 1px solid var(--border-strong);
-  background: none;
-  color: var(--ink);
-  font: 600 10px/1 var(--font-ui);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 9px 12px;
-  cursor: pointer;
-}
-
-.arquivo:hover {
-  background: var(--surface-2);
+  margin-top: 12px;
 }
 
 .contador {
-  font: 400 11px/1 var(--font-mono);
-  color: var(--muted);
   margin-left: auto;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ------------------------------------------------------------ resultado -- */
 
 .resultado {
   margin-top: 16px;
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
-.veredito {
-  border: 1.5px solid;
-  padding: 10px 12px;
-  font: 400 12.5px/1.5 var(--font-ui);
-  margin-bottom: 12px;
-}
-
-.confiante {
-  border-color: var(--ok);
-  color: var(--ok);
-}
-
-.conferir {
-  border-color: var(--warn);
-  color: var(--warn);
+  padding-top: 14px;
+  border-top: 1px solid var(--borda);
 }
 
 .lista {
   list-style: none;
-  margin: 0;
+  margin: 12px 0 0;
   padding: 0;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+  overflow: hidden;
 }
 
+/* Cada sugestão é um botão de escolha. A escolhida ganha marca de seleção
+ * explícita ("✓ escolhida"), porque um fundo verde sozinho não dizia se aquilo
+ * era um estado do sistema ou uma escolha do usuário. */
 .opcao {
   display: flex;
   gap: 12px;
   align-items: flex-start;
   width: 100%;
-  padding: 11px 0;
+  padding: 12px 14px;
   border: none;
-  border-bottom: 1px solid var(--border);
-  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--borda);
+  border-left: 4px solid transparent;
   background: none;
-  text-align: left;
   color: inherit;
-  cursor: pointer;
   font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transicao);
+}
+
+.lista > li:last-child .opcao {
+  border-bottom: none;
 }
 
 .opcao:hover {
-  background: var(--surface-2);
+  background: var(--papel-3);
 }
 
-.escolhida {
+.escolhida,
+.escolhida:hover {
   border-left-color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 8%, transparent);
+  background: var(--ok-claro);
 }
 
 .posicao {
   flex: none;
-  width: 22px;
-  font: 600 11px/1.4 var(--font-mono);
+  width: 24px;
+  color: var(--tinta-3);
+  font-family: var(--fonte-codigo);
+  font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
+  padding-top: 3px;
 }
 
 .miolo {
@@ -156,73 +114,191 @@
 }
 
 .nome {
-  font: 500 14px/1.3 var(--font-display);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--tinta);
+  font-size: var(--t-base);
+  font-weight: 600;
 }
 
+/* O trecho do relato que sustentou a sugestão. É citação: entra em itálico
+ * entre aspas, e não em mono, que fazia parecer código. */
 .evidencia {
   display: block;
-  font: 400 11px/1.5 var(--font-mono);
-  color: var(--muted);
-  margin-top: 3px;
-  word-break: break-word;
+  margin-top: 4px;
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  font-style: italic;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.evidencia::before {
+  content: "“";
+}
+
+.evidencia::after {
+  content: "”";
 }
 
 .pontos {
   flex: none;
-  font: 500 11px/1.4 var(--font-mono);
+  padding-top: 3px;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
   white-space: nowrap;
 }
 
-.erro {
-  margin-top: 12px;
-  border: 1.5px solid var(--accent);
-  color: var(--accent);
-  padding: 10px;
-  font: 400 12px/1.5 var(--font-ui);
-}
-
 .vazio {
-  font: 400 12.5px/1.6 var(--font-ui);
-  color: var(--muted);
   padding: 12px 0;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  line-height: 1.6;
 }
 
-/* Avisa quando a classificação caiu no método local, que erra mais. */
-.metodo {
+.nota {
   display: block;
   margin-top: 6px;
-  font: 400 11px/1.4 var(--font-ui);
-  opacity: 0.85;
+  font-size: var(--t-xs);
+  line-height: 1.5;
 }
+
+/* --------------------------------------------- insights dos processos ---- */
 
 .insights {
   margin-top: 18px;
   padding-top: 16px;
-  border-top: 3px double var(--border-strong);
+  border-top: 1px solid var(--borda);
 }
 
-.insightsCabecalho { display: flex; justify-content: space-between; gap: 12px; }
-.carregando, .notaEstatistica, .avisoInsights { font: 400 11px/1.5 var(--font-ui); color: var(--muted); }
-.resumoInsights { margin: 4px 0 14px; font: 500 14px/1.55 var(--font-display); }
-.metricas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--border-strong); }
-.metricas > div { padding: 12px; border-right: 1px solid var(--border); }
-.metricas > div:last-child { border-right: 0; }
-.metricas strong { display: block; font: 600 22px/1 var(--font-mono); }
-.metricas span { display: block; margin-top: 5px; font: 400 10px/1.4 var(--font-ui); color: var(--muted); }
-.faixaDados { padding: 10px 0; border-bottom: 1px solid var(--border); }
-.faixaDados h4, .colunasInsights h4 { margin: 0 0 5px; font: 600 10px/1.3 var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
-.faixaDados p { margin: 0; font: 400 11px/1.5 var(--font-mono); color: var(--muted); }
-.colunasInsights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 16px; }
-.colunasInsights ul, .precedentes ul { margin: 0; padding-left: 18px; }
-.colunasInsights li, .precedentes li { margin-bottom: 7px; font: 400 11.5px/1.5 var(--font-ui); }
-.colunasInsights li span { display: block; color: var(--muted); }
-.precedentes { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
-.precedentes summary { cursor: pointer; font: 600 11px/1.4 var(--font-ui); }
-.notaEstatistica { margin: 12px 0 0; }
+.insightsCabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.carregando,
+.notaEstatistica,
+.avisoInsights {
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  line-height: 1.55;
+}
+
+.resumoInsights {
+  margin: 6px 0 14px;
+  color: var(--tinta);
+  font-family: var(--fonte-titulo);
+  font-size: var(--t-md);
+  line-height: 1.5;
+}
+
+.metricas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metricas > div {
+  padding: 12px 14px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+}
+
+.metricas strong {
+  display: block;
+  color: var(--tinta);
+  font-family: var(--fonte-titulo);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.metricas span {
+  display: block;
+  margin-top: 3px;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}
+
+.faixaDados {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--borda);
+}
+
+.faixaDados h4,
+.colunasInsights h4 {
+  margin: 0 0 5px;
+  color: var(--tinta);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-xs);
+  font-weight: 700;
+}
+
+.faixaDados p {
+  margin: 0;
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  line-height: 1.55;
+}
+
+.colunasInsights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 16px;
+}
+
+.colunasInsights ul,
+.precedentes ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.colunasInsights li,
+.precedentes li {
+  margin-bottom: 8px;
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  line-height: 1.55;
+}
+
+.colunasInsights li strong {
+  color: var(--tinta);
+}
+
+.colunasInsights li span {
+  display: block;
+  color: var(--tinta-3);
+}
+
+.precedentes {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--borda);
+}
+
+.precedentes summary {
+  color: var(--acao);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notaEstatistica {
+  margin: 12px 0 0;
+}
 
 @media (max-width: 700px) {
-  .metricas, .colunasInsights { grid-template-columns: 1fr; }
-  .metricas > div { border-right: 0; border-bottom: 1px solid var(--border); }
+  .metricas,
+  .colunasInsights {
+    grid-template-columns: 1fr;
+  }
 }
