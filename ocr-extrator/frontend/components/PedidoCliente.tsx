@@ -11,10 +11,13 @@ import ui from "./ui.module.css";
 export default function PedidoCliente({
   casoId,
   progresso,
+  naoResolvidos,
 }: {
   casoId: string;
   /** Só serve para refazer o pedido quando algo muda no checklist. */
   progresso: Progresso;
+  /** Quantos itens do checklist ainda entram no texto do pedido. */
+  naoResolvidos: number;
 }) {
   const [pedido, setPedido] = useState<Pedido | null>(null);
   const [incluirOpcionais, setIncluirOpcionais] = useState(false);
@@ -50,32 +53,46 @@ export default function PedidoCliente({
   }, [pedido]);
 
   return (
-    <div className={ui.card}>
-      <h3 className={ui.tituloCard}>Pedido para o cliente</h3>
+    <div className="cartao">
+      <h3 className="tituloCartao">Pedido para o cliente</h3>
+      <p className="subtituloCartao">
+        {naoResolvidos === 0
+          ? "Nada pendente — o texto abaixo só confirma o que já foi recebido."
+          : `${naoResolvidos} ${naoResolvidos === 1 ? "item pendente virou" : "itens pendentes viraram"} a mensagem abaixo. Cole no WhatsApp ou no e-mail do cliente.`}
+      </p>
 
       {pedido === null ? (
         <div className={ui.vazio}>Montando o pedido…</div>
       ) : (
         <>
           <div className={estilos.acoesPedido}>
-            <button type="button" className={estilos.botaoCopiar} onClick={copiar}>
-              {copiado ? "✓ Copiado" : "Copiar mensagem"}
+            {/* A ação principal do bloco é copiar: é para isso que o bloco existe. */}
+            <button type="button" className="botao botao--primario" onClick={copiar}>
+              {copiado ? "✓ Mensagem copiada" : "Copiar a mensagem"}
             </button>
-            <label className={estilos.checkbox}>
+            <label className="marcacao">
               <input
                 type="checkbox"
                 checked={incluirOpcionais}
                 onChange={(e) => setIncluirOpcionais(e.target.checked)}
               />
-              incluir opcionais
+              <span>Incluir também os documentos opcionais</span>
             </label>
           </div>
 
-          <textarea className={estilos.textoPedido} value={pedido.texto} readOnly rows={12} />
+          <label className="rotuloCampo" htmlFor="texto-pedido">
+            Mensagem gerada
+          </label>
+          <textarea
+            id="texto-pedido"
+            className={estilos.textoPedido}
+            value={pedido.texto}
+            readOnly
+            rows={12}
+          />
 
-          <p className={ui.observacao}>
-            Cole no WhatsApp ou no e-mail do cliente. O texto se refaz sozinho conforme os
-            documentos chegam.
+          <p className="ajudaCampo">
+            O texto se refaz sozinho conforme os documentos chegam — não precisa editar aqui.
           </p>
         </>
       )}

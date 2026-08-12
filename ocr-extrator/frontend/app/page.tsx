@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { Aviso, Selo } from "@/components/Basicos";
 import Carteira from "@/components/Carteira";
 import Checklist from "@/components/Checklist";
 import ListaCasos from "@/components/ListaCasos";
@@ -15,6 +16,21 @@ import estilos from "./page.module.css";
 
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
 type Tela = "carteira" | "caso" | "casos" | "avulso";
+
+/* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
+ * que responde "onde eu estou" sem depender de memória. */
+const CABECALHO: Record<"casos" | "avulso", { titulo: string; subtitulo: string }> = {
+  casos: {
+    titulo: "Casos",
+    subtitulo:
+      "Cadastre um caso para montar o checklist de documentos do cliente, ou abra um caso existente.",
+  },
+  avulso: {
+    titulo: "Ler um documento",
+    subtitulo:
+      "Leitura solta, para conferir os dados de um documento na hora. Nada aqui é guardado em nenhum caso.",
+  },
+};
 
 export default function Home() {
   const [tela, setTela] = useState<Tela>("carteira");
@@ -58,24 +74,44 @@ export default function Home() {
             onRemover={situacaoCaso.removerEntrega}
             onVincularIdentidade={situacaoCaso.vincularIdentidade}
           />
+        ) : situacaoCaso.erro ? (
+          <>
+            <button
+              type="button"
+              className="botao botao--secundario"
+              onClick={voltarParaCarteira}
+              style={{ marginBottom: 16 }}
+            >
+              ← Voltar para a carteira
+            </button>
+            <Aviso tom="critico" titulo="Não foi possível abrir o caso">
+              {situacaoCaso.erro}
+            </Aviso>
+          </>
         ) : (
-          <div className={ui.vazio}>
-            {situacaoCaso.erro ? (
-              <span style={{ color: "var(--accent)" }}>{situacaoCaso.erro}</span>
-            ) : (
-              "Carregando o caso…"
-            )}
-          </div>
+          <div className={ui.vazio}>Carregando o caso…</div>
         )}
       </div>
     );
   }
 
+  const cabecalho = CABECALHO[tela];
+
   return (
     <div className={estilos.container}>
-      <button type="button" className={estilos.voltar} onClick={voltarParaCarteira}>
-        ← Carteira
-      </button>
+      <div className={estilos.cabecalho}>
+        <div>
+          <button
+            type="button"
+            className="botao botao--secundario botao--pequeno"
+            onClick={voltarParaCarteira}
+          >
+            ← Voltar para a carteira
+          </button>
+          <h1 className={estilos.titulo}>{cabecalho.titulo}</h1>
+          <p className={estilos.subtitulo}>{cabecalho.subtitulo}</p>
+        </div>
+      </div>
 
       {tela === "casos" ? (
         <ListaCasos
@@ -114,8 +150,8 @@ function AnaliseAvulsa() {
         onLimpar={limpar}
       />
 
-      <div className={ui.card}>
-        <h2 className={ui.tituloCard}>Resultado</h2>
+      <div className="cartao">
+        <h2 className="tituloCartao">Dados lidos</h2>
 
         {processando ? (
           <ProgressoOcr modeloPronto={estadoModelo === "pronto"} />
@@ -123,12 +159,16 @@ function AnaliseAvulsa() {
           <Resultado doc={resultado} />
         ) : (
           <div className={ui.vazio}>
-            Envie a foto de um documento para começar.
-            <br />
-            <small>
-              CPF · RG · CIN · CNH · CTPS · Título de eleitor · Cartão SUS · Comprovante de
-              residência
-            </small>
+            Escolha um documento ao lado para começar.
+            <div className={estilos.tiposAceitos}>
+              {["CPF", "RG", "CIN", "CNH", "CTPS", "Título de eleitor", "Cartão SUS", "Comprovante de residência"].map(
+                (tipo) => (
+                  <Selo key={tipo} tom="neutro">
+                    {tipo}
+                  </Selo>
+                ),
+              )}
+            </div>
           </div>
         )}
       </div>

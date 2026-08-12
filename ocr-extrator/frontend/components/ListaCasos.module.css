@@ -1,174 +1,125 @@
+/* Tela de casos: criar à esquerda, lista à direita.
+ *
+ * Campos e botões saíram daqui e passaram a vir dos primitivos globais — esta
+ * era a tela que ainda usava a geração antiga (cantos de 9px, botão vermelho
+ * como ação principal) e destoava de todas as outras. */
+
 .colunas {
   display: grid;
-  grid-template-columns: minmax(300px, 380px) 1fr;
+  grid-template-columns: minmax(320px, 420px) 1fr;
   gap: 20px;
   align-items: start;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .colunas {
     grid-template-columns: 1fr;
   }
 }
 
-.rotulo {
-  display: block;
-  font-size: 0.78rem;
-  color: var(--muted);
-  margin: 14px 0 5px;
-  font-weight: 600;
+.grupoCampo {
+  margin-bottom: 16px;
 }
 
-.rotulo:first-of-type {
-  margin-top: 0;
-}
-
-.campo {
-  width: 100%;
-  padding: 9px 11px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: 0.9rem;
-}
-
-.seletorCategoria {
-  appearance: none;
-  padding-right: 38px;
-  font-weight: 600;
-  cursor: pointer;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%235d6779' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-}
-
-.seletorCategoria:hover {
-  border-color: var(--accent);
-}
-
+/* Resumo da categoria escolhida: confirma, antes de criar o caso, qual
+ * checklist vai ser montado. */
 .resumoCategoria {
-  margin-top: 8px;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  margin-top: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--acao-borda);
+  border-radius: var(--raio-sm);
+  background: var(--acao-clara);
 }
 
 .resumoCategoria strong {
   display: block;
-  font-size: 0.87rem;
+  color: var(--tinta);
+  font-size: var(--t-sm);
 }
 
 .resumoCategoria p {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.45;
+  margin-top: 4px;
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  line-height: 1.5;
 }
 
 .numerosCategoria {
   display: flex;
+  gap: 8px;
+  margin-top: 10px;
   flex-wrap: wrap;
-  gap: 6px 14px;
-  margin-top: 9px;
-  color: var(--muted);
-  font-size: 0.76rem;
 }
 
-.numerosCategoria b {
-  color: var(--text);
-  font-size: 0.85rem;
-}
-
-.botaoPrimario {
-  width: 100%;
-  margin-top: 16px;
-  padding: 11px 14px;
-  border-radius: 9px;
-  border: none;
-  background: var(--accent);
-  /* Texto escuro sobre o preenchimento claro: no tema escuro o branco sobre o
-   * acento dava 3.4:1 e reprovava em AA. */
-  color: var(--surface);
-  font-size: 0.92rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.botaoPrimario:hover:not(:disabled) {
-  background: var(--accent-2);
-}
-
-.botaoPrimario:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* ---------------------------------------------------------------- lista -- */
 
 .lista {
   list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .itemCaso {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--borda);
+  flex-wrap: wrap;
 }
 
-.itemCaso:last-child {
+.lista > .itemCaso:last-child {
   border-bottom: none;
 }
 
 .abrir {
   flex: 1;
+  min-width: 180px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  background: none;
+  padding: 8px 10px;
   border: none;
-  color: var(--text);
-  cursor: pointer;
+  border-radius: var(--raio-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
   text-align: left;
-  padding: 4px 6px;
-  border-radius: 8px;
-  font-size: 0.92rem;
+  cursor: pointer;
+  transition: background var(--transicao);
 }
 
 .abrir:hover {
-  background: var(--surface-2);
+  background: var(--papel-3);
 }
 
-.botaoDiscreto,
-.perigo {
-  padding: 6px 11px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.78rem;
+.abrirCliente {
+  color: var(--tinta);
+  font-size: var(--t-base);
   font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
 }
 
-.botaoDiscreto:hover {
-  color: var(--text);
-  border-color: var(--muted);
+.abrirMeta {
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
 }
 
-.perigo {
-  border-color: var(--err);
-  color: var(--err);
-}
-
-.perigo:hover {
-  background: color-mix(in srgb, var(--err) 12%, transparent);
-}
-
+/* Confirmação de exclusão inline, com a frase do que vai acontecer. Um
+ * "Apagar tudo" ao lado de "Cancelar", sem contexto, era fácil de errar. */
 .confirmar {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--critico-borda);
+  border-radius: var(--raio-sm);
+  background: var(--critico-claro);
+  flex-wrap: wrap;
+}
+
+.confirmarTexto {
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  max-width: 30ch;
 }

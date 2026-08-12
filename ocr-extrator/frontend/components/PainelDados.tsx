@@ -13,14 +13,19 @@ export function PainelJson({ doc }: { doc: Documento }) {
   return (
     <>
       <div className={ui.downloads}>
-        <a href={urlApi(temp.json)} download>
-          ⬇ Baixar JSON
+        <a className="botao botao--secundario botao--pequeno" href={urlApi(temp.json)} download>
+          Baixar JSON
         </a>
-        <a href={urlApi(temp.json)} target="_blank" rel="noreferrer">
-          Abrir
+        <a
+          className="botao botao--discreto botao--pequeno"
+          href={urlApi(temp.json)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Abrir em nova aba
         </a>
         <span className={ui.observacao}>
-          temporário · expira em {temp.expira_em_segundos / 60} min
+          Arquivo temporário — expira em {temp.expira_em_segundos / 60} min
         </span>
       </div>
       <pre className={ui.pre}>{JSON.stringify(doc, null, 2)}</pre>
@@ -50,11 +55,16 @@ export function PainelXml({ doc }: { doc: Documento }) {
   return (
     <>
       <div className={ui.downloads}>
-        <a href={urlApi(temp.xml)} download>
-          ⬇ Baixar XML
+        <a className="botao botao--secundario botao--pequeno" href={urlApi(temp.xml)} download>
+          Baixar XML
         </a>
-        <a href={urlApi(temp.xml)} target="_blank" rel="noreferrer">
-          Abrir
+        <a
+          className="botao botao--discreto botao--pequeno"
+          href={urlApi(temp.xml)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Abrir em nova aba
         </a>
       </div>
       <pre className={ui.pre}>{xml}</pre>

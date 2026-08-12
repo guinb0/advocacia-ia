@@ -1,234 +1,323 @@
-/* Carteira — página principal na direção AUTOS.
- * Zonas conforme GUIA-LAYOUT.md: topbar · faixa de triagem · corpo 1fr/320px. */
+/* Carteira — a tela de entrada.
+ *
+ * Zonas, de cima para baixo: barra do sistema · cabeçalho com a ação principal ·
+ * quatro cartões de triagem que também são filtros · fila de casos + coluna de
+ * apoio · rodapé de atalhos.
+ *
+ * O desenho anterior comunicava tudo por filete e por número solto: os quatro
+ * indicadores de triagem não pareciam clicáveis, o filtro aplicado não aparecia
+ * em lugar nenhum e a única ação de criar caso era um item de navegação em
+ * caixa alta. Cada um desses três pontos virou uma correção explícita aqui. */
 
 .pagina {
   min-height: 100vh;
-  background: var(--surface);
+  background: var(--fundo);
 }
 
-/* ---------------------------------------------------------------- topbar */
+/* --------------------------------------------------------- barra do sistema */
 
 .topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 24px;
-  padding: 12px 32px;
-  border-bottom: 1px solid var(--border-strong);
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--borda);
+  background: var(--papel);
   flex-wrap: wrap;
-}
-
-/* O filete duplo da direção: a segunda linha fina logo abaixo da topbar. */
-.filete {
-  height: 2px;
-  border-top: 1px solid var(--border-strong);
-  margin-top: 1px;
 }
 
 .marcaGrupo {
   display: flex;
-  align-items: baseline;
-  gap: 24px;
+  align-items: center;
+  gap: 28px;
   flex-wrap: wrap;
 }
 
 .marca {
-  font: 700 15px/1 var(--font-display);
-  letter-spacing: 0.02em;
+  color: var(--tinta);
+  font-family: var(--fonte-titulo);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
+/* Navegação = módulos, e só módulos. O filtro "Pedidos" que morava aqui virou
+ * cartão de triagem: um item de menu que filtrava a lista em vez de trocar de
+ * tela era a origem da confusão sobre "onde eu estou". */
 .nav {
   display: flex;
-  gap: 18px;
+  gap: 4px;
 }
 
 .navItem {
-  font: 600 11px/1 var(--font-ui);
-  letter-spacing: 0.12em;
-  color: var(--muted);
+  min-height: 36px;
+  padding: 7px 13px;
+  border: 1px solid transparent;
+  border-radius: var(--raio-sm);
   background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 0 0 3px;
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  font-weight: 600;
   cursor: pointer;
+  transition:
+    background var(--transicao),
+    color var(--transicao);
 }
 
 .navItem:hover {
-  color: var(--ink);
+  background: var(--papel-3);
+  color: var(--tinta);
 }
 
-.navAtivo {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
+.navAtivo,
+.navAtivo:hover {
+  background: var(--acao-clara);
+  border-color: var(--acao-borda);
+  color: var(--acao);
 }
 
 .topbarDireita {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
-.busca {
-  font: 400 11px/1 var(--font-mono);
-  color: var(--muted);
-  border: 1px solid var(--border-strong);
-  background: none;
-  padding: 6px 10px;
-  cursor: pointer;
+/* Estado da leitura automática. Antes dizia "modelo pronto" — vocabulário de
+ * quem construiu o sistema, não de quem o usa. */
+.estadoLeitura {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
 }
 
-.busca:hover {
-  color: var(--ink);
+.pontoEstado {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tinta-3);
+}
+
+.estadoPronto .pontoEstado {
+  background: var(--ok);
+}
+
+.estadoOcupado .pontoEstado {
+  background: var(--atencao-marca);
 }
 
 .data {
-  font: 500 11px/1 var(--font-mono);
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
 }
 
-.modelo {
-  font: 400 11px/1 var(--font-mono);
-  color: var(--muted);
-}
-
-.sair {
-  font: 500 11px/1 var(--font-mono);
-  color: var(--muted);
-  border: 1px solid var(--border-strong);
-  background: none;
-  padding: 6px 10px;
-  cursor: pointer;
-}
-
-.sair:hover {
-  color: var(--ink);
-  border-color: var(--warn);
-}
-
-/* ------------------------------------------------------------ cabeçalho */
+/* ------------------------------------------------------------- cabeçalho -- */
 
 .cabecalho {
-  padding: 24px 32px 0;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
   gap: 24px;
+  max-width: 1440px;
+  padding: 28px 28px 0;
   flex-wrap: wrap;
 }
 
 .titulo {
   margin: 0;
-  font: 600 32px/1.1 var(--font-display);
+  font-size: var(--t-xl);
   letter-spacing: -0.01em;
 }
 
 .linhaFina {
   margin: 6px 0 0;
-  font: 400 13.5px/1.5 var(--font-ui);
-  color: var(--muted);
+  max-width: 62ch;
+  color: var(--tinta-2);
+  font-size: var(--t-base);
 }
 
-/* ------------------------------------------------- faixa de triagem ---- *
- * Números grandes com rótulo em frase, separados por borda vertical. Não são
- * cards: sem fundo, sem sombra, sem raio. */
+/* ------------------------------------------------------------- triagem --- *
+ * Quatro cartões que são, ao mesmo tempo, indicador e filtro. Como cartão com
+ * contorno e hover, a possibilidade de clicar fica evidente; o número solto do
+ * desenho anterior não sugeria nada. */
 
 .triagem {
-  display: flex;
-  gap: 28px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(212px, 1fr));
+  gap: 12px;
+  max-width: 1440px;
+  padding: 18px 28px 0;
 }
 
 .triagemItem {
-  background: none;
-  border: none;
-  border-left: 1px solid var(--border);
-  padding: 0 0 0 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--borda-forte);
+  border-left: 4px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+  box-shadow: var(--sombra-1);
   text-align: left;
   cursor: pointer;
-  font: inherit;
-  color: inherit;
-  min-width: 108px;
+  transition:
+    box-shadow var(--transicao),
+    border-color var(--transicao),
+    background var(--transicao);
 }
 
-.triagemItem:first-child {
-  border-left: none;
-  padding-left: 0;
+.triagemItem:hover {
+  box-shadow: var(--sombra-2);
 }
 
-.triagemItem:hover .triagemNumero,
-.triagemAtivo .triagemNumero {
-  text-decoration: underline;
-  text-underline-offset: 4px;
+/* Filtro aplicado: fundo tingido na própria cor do estado + contorno de ação.
+ * Um sublinhado no número, como era antes, não dizia "isto está ligado". */
+.triagemAtivo {
+  border-color: var(--acao);
+  border-left-color: var(--acao);
+  background: var(--acao-clara);
+  box-shadow: var(--sombra-2);
+}
+
+.triagemSimbolo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: var(--t-sm);
+  font-weight: 700;
 }
 
 .triagemNumero {
   display: block;
-  font: 600 26px/1 var(--font-display);
+  color: var(--tinta);
+  font-family: var(--fonte-titulo);
+  font-size: 1.75rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  line-height: 1.05;
 }
 
 .triagemRotulo {
   display: block;
-  font: 400 10.5px/1.3 var(--font-ui);
-  color: var(--muted);
-  margin-top: 2px;
+  margin-top: 1px;
+  color: var(--tinta);
+  font-size: var(--t-sm);
+  font-weight: 600;
 }
 
+.triagemAjuda {
+  display: block;
+  margin-top: 2px;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}
+
+/* Cada gravidade pinta apenas a faixa lateral e o disco do símbolo — nunca o
+ * texto inteiro, que precisa continuar em tinta legível. */
 .critico {
-  color: var(--accent);
+  border-left-color: var(--critico);
 }
+.critico .triagemSimbolo {
+  background: var(--critico-claro);
+  color: var(--critico);
+}
+
 .atencao {
-  color: var(--warn-texto);
+  border-left-color: var(--atencao-marca);
 }
+.atencao .triagemSimbolo {
+  background: var(--atencao-claro);
+  color: var(--atencao);
+}
+
 .pronto {
+  border-left-color: var(--ok);
+}
+.pronto .triagemSimbolo {
+  background: var(--ok-claro);
   color: var(--ok);
 }
+
 .neutro {
-  color: var(--ink);
+  border-left-color: var(--acao);
+}
+.neutro .triagemSimbolo {
+  background: var(--acao-clara);
+  color: var(--acao);
 }
 
-/* ------------------------------------------------------------- corpo --- */
+/* --------------------------------------------------------------- corpo --- */
 
 .corpo {
   display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 32px;
-  padding: 20px 32px 40px;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 24px;
   max-width: 1440px;
+  padding: 22px 28px 40px;
+  align-items: start;
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 1040px) {
   .corpo {
     grid-template-columns: 1fr;
   }
 }
 
-.secaoTitulo {
+.painel {
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+  box-shadow: var(--sombra-1);
+  overflow: hidden;
+}
+
+.painelCabecalho {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding: 12px 0 4px;
   gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--borda);
+  flex-wrap: wrap;
 }
 
-.rotuloSecao {
-  font: 600 11px/1 var(--font-ui);
-  letter-spacing: 0.14em;
-  color: var(--muted);
+.painelTitulo {
+  margin: 0;
+  font-size: var(--t-lg);
 }
 
-.contagemSecao {
-  font: 400 11px/1 var(--font-ui);
-  color: var(--muted);
+.painelAjuda {
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
 }
 
-/* Filete duplo: a assinatura de separação da direção. */
-.duplo {
-  border-top: 3px double var(--border-strong);
+/* Faixa que diz, em palavras, que a lista está filtrada — com o botão de
+ * desfazer ao lado. Sem ela, clicar num número escondia casos sem explicação. */
+.faixaFiltro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--acao-borda);
+  background: var(--acao-clara);
+  color: var(--acao);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  flex-wrap: wrap;
 }
 
-/* -------------------------------------------------------------- fila --- */
+/* ---------------------------------------------------------------- fila --- */
 
 .fila {
   list-style: none;
@@ -237,57 +326,47 @@
 }
 
 .linha {
-  display: flex;
-  gap: 14px;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 16px;
+  align-items: center;
   width: 100%;
-  padding: 13px 8px 13px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 18px;
+  border: none;
+  border-bottom: 1px solid var(--borda);
+  border-left: 4px solid transparent;
   background: none;
-  border-left: 2px solid transparent;
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
+  transition: background var(--transicao);
 }
 
 .linha:hover {
-  background: var(--surface-2);
+  background: var(--papel-3);
 }
 
-/* Seleção por teclado: barra à esquerda + tint, nunca sombra. */
+.fila li:last-child .linha {
+  border-bottom: none;
+}
+
+/* Cursor do teclado. Barra de ação à esquerda + fundo: a mesma marca que a
+ * gravidade usa, mas na cor de ação, para não se confundir com estado. */
 .linhaSelecionada {
-  border-left-color: var(--accent);
-  background: var(--surface-2);
+  border-left-color: var(--acao);
+  background: var(--acao-clara);
 }
 
 .linhaCritica {
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-}
-
-.linhaCritica:hover,
-.linhaCritica.linhaSelecionada {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left-color: var(--critico);
 }
 
 .linhaAtencao {
-  background: color-mix(in srgb, var(--warn) 8%, transparent);
-}
-
-.linhaAtencao:hover,
-.linhaAtencao.linhaSelecionada {
-  background: color-mix(in srgb, var(--warn) 13%, transparent);
-}
-
-.indice {
-  flex: none;
-  width: 26px;
-  font: 600 11px/1 var(--font-mono);
-  font-variant-numeric: tabular-nums;
+  border-left-color: var(--atencao-marca);
 }
 
 .miolo {
-  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -295,174 +374,234 @@
 }
 
 .cliente {
-  font: 500 16px/1.3 var(--font-display);
+  color: var(--tinta);
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .categoria {
-  font: italic 400 13px/1 var(--font-display);
-  color: var(--muted);
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  font-weight: 400;
 }
 
 .situacao {
-  font: 400 12px/1.4 var(--font-ui);
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  line-height: 1.45;
 }
 
+.direita {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-self: end;
+}
+
+/* Progresso da instrução: número por extenso + barra. "3/7" sozinho exigia
+ * adivinhar o que era numerador e o que era denominador. */
 .progresso {
-  flex: none;
-  font: 500 12px/1 var(--font-mono);
+  min-width: 132px;
+  text-align: right;
+}
+
+.progressoTexto {
+  display: block;
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
 }
 
-/* Carimbo: borda 1.5px, caixa alta e a leve rotação da direção. */
-.carimbo {
-  flex: none;
-  font: 600 10px/1 var(--font-ui);
-  letter-spacing: 0.12em;
-  border: 1.5px solid currentColor;
-  padding: 5px 8px;
-  white-space: nowrap;
+.progressoBarra {
+  height: 6px;
+  margin-top: 5px;
+  border-radius: var(--raio-pill);
+  background: var(--papel-3);
+  overflow: hidden;
 }
 
-.carimboCritico {
-  transform: rotate(-1.5deg);
-}
-.carimboAtencao {
-  transform: rotate(1deg);
-}
-.carimboPronto {
-  transform: rotate(-1deg);
-}
-/* Ação neutra não é carimbo — é só um rótulo com borda discreta. */
-.carimboNeutro {
-  border-color: var(--border-strong);
+.progressoValor {
+  display: block;
+  height: 100%;
+  border-radius: var(--raio-pill);
+  background: var(--acao);
 }
 
-/* ------------------------------------------------------------ lateral -- */
+@media (max-width: 620px) {
+  .linha {
+    grid-template-columns: 1fr;
+  }
+
+  .direita {
+    justify-self: start;
+    flex-wrap: wrap;
+  }
+
+  .progresso {
+    text-align: left;
+  }
+}
+
+/* -------------------------------------------------------------- lateral -- */
 
 .lateral {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-}
-
-.bloco {
-  border-top: 3px double var(--border-strong);
-  padding-top: 12px;
+  gap: 18px;
 }
 
 .blocoLista {
   display: flex;
   flex-direction: column;
-  margin-top: 8px;
 }
 
 .pedido {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 18px;
+  border: none;
+  border-bottom: 1px solid var(--borda);
   background: none;
-  border-left: none;
-  border-right: none;
-  border-top: none;
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
+  transition: background var(--transicao);
 }
 
-.pedido:last-child {
-  border-bottom: none;
-}
-
-.pedido:hover .pedidoCliente {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.pedido:hover {
+  background: var(--papel-3);
 }
 
 .pedidoCliente {
-  font: 400 13px/1.4 var(--font-ui);
+  color: var(--tinta);
+  font-size: var(--t-sm);
+  font-weight: 600;
 }
 
 .pedidoContagem {
-  font: 500 11px/1.4 var(--font-mono);
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
   white-space: nowrap;
 }
 
-.acaoLote {
-  display: inline-block;
-  margin-top: 10px;
-  font: 600 12px/1 var(--font-ui);
-  border: none;
-  background: none;
-  border-bottom: 2px solid var(--ink);
-  padding: 0 0 2px;
-  cursor: pointer;
-  color: inherit;
+.rodapeBloco {
+  padding: 14px 18px;
+  border-top: 1px solid var(--borda);
+  background: var(--papel-2);
 }
 
 .feed {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
 }
 
 .feedItem {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.feedItem:last-child {
+  border-bottom: none;
 }
 
 .feedArquivo {
-  font: 500 11.5px/1.4 var(--font-mono);
-  word-break: break-all;
+  min-width: 0;
+  color: var(--tinta-2);
+  font-family: var(--fonte-codigo);
+  font-size: var(--t-xs);
+  overflow-wrap: anywhere;
 }
 
-.feedEstagio {
-  font: 400 11px/1.4 var(--font-ui);
-}
-
-/* ------------------------------------------------------------- rodapé -- */
+/* --------------------------------------------------------------- rodapé -- */
 
 .atalhos {
   display: flex;
   gap: 18px;
   flex-wrap: wrap;
-  padding: 10px 32px;
-  border-top: 1px solid var(--border-strong);
-  font: 400 11px/1 var(--font-ui);
-  color: var(--muted);
+  align-items: center;
+  padding: 14px 28px 28px;
+  max-width: 1440px;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+}
+
+.atalhosRotulo {
+  font-weight: 600;
 }
 
 .tecla {
-  font-family: var(--font-mono);
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  margin-right: 5px;
+  border: 1px solid var(--borda-forte);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--papel);
+  color: var(--tinta-2);
+  font-family: var(--fonte-codigo);
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--ink);
+  text-align: center;
 }
 
-/* -------------------------------------------------------------- estados */
+/* -------------------------------------------------------------- estados -- */
 
 .mensagem {
-  padding: 40px 0;
-  font: 400 13px/1.6 var(--font-ui);
-  color: var(--muted);
+  padding: 32px 18px;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  text-align: center;
 }
 
-.erro {
-  border: 1.5px solid var(--accent);
-  color: var(--accent);
-  padding: 14px;
-  font: 400 13px/1.5 var(--font-ui);
-  margin-bottom: 16px;
+.mensagemVazia {
+  padding: 44px 18px;
+  text-align: center;
 }
 
+.mensagemVaziaTitulo {
+  margin: 0 0 6px;
+  color: var(--tinta);
+  font-size: var(--t-lg);
+}
+
+.mensagemVaziaTexto {
+  margin: 0 auto 18px;
+  max-width: 46ch;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+}
+
+.caixaMensagem {
+  padding: 16px 18px;
+}
+
+/* Esqueleto de carregamento. A animação respeita prefers-reduced-motion pela
+ * regra global de globals.css. */
 .esqueleto {
-  height: 58px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
+  height: 62px;
+  border-bottom: 1px solid var(--borda);
+  background: linear-gradient(90deg, var(--papel-2), var(--papel-3), var(--papel-2));
+  background-size: 200% 100%;
+  animation: brilho 1.4s ease-in-out infinite;
+}
+
+@keyframes brilho {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }

@@ -1,73 +1,74 @@
-/* Credenciais do caso recém-criado. Tom de carimbo: é o aviso mais importante
- * da tela, e some para sempre se ninguém copiar. */
+/* Credenciais do caso recém-criado. É o aviso mais importante da tela: a senha
+ * some para sempre se ninguém copiar. Fica em faixa de atenção, com a senha
+ * destacada — mas o texto de apoio em tinta legível, e não tudo em âmbar. */
 
 .bloco {
   margin-top: 18px;
-  border: 1.5px solid var(--warn);
   padding: 16px;
+  border: 1px solid var(--atencao-borda);
+  border-left: 4px solid var(--atencao-marca);
+  border-radius: var(--raio-sm);
+  background: var(--atencao-claro);
 }
 
 .rotulo {
-  display: block;
-  font: 600 10.5px/1 var(--font-ui);
-  letter-spacing: 0.14em;
-  color: var(--warn);
-  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--tinta);
+  font-size: var(--t-base);
+  font-weight: 700;
+}
+
+.simbolo {
+  color: var(--atencao);
+}
+
+.texto {
+  margin: 0 0 14px;
+  max-width: 56ch;
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  line-height: 1.55;
 }
 
 .campo {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
   flex-wrap: wrap;
 }
 
 .chave {
   flex: none;
-  width: 44px;
-  font: 600 10px/1 var(--font-ui);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
+  width: 52px;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  font-weight: 600;
 }
 
 .valor {
   flex: 1;
-  min-width: 180px;
-  font: 400 12px/1.5 var(--font-mono);
-  word-break: break-all;
+  min-width: 170px;
+  color: var(--tinta);
+  font-family: var(--fonte-codigo);
+  font-size: var(--t-xs);
+  overflow-wrap: anywhere;
   user-select: all;
 }
 
 /* A senha costuma ser ditada por telefone — daí o corpo e o espaçamento. */
 .senha {
-  font: 600 19px/1.3 var(--font-mono);
-  letter-spacing: 0.2em;
-  color: var(--warn);
-}
-
-.copiar {
-  flex: none;
-  border: 1px solid var(--border-strong);
-  background: none;
-  color: var(--ink);
-  font: 600 10px/1 var(--font-ui);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 6px 10px;
-  cursor: pointer;
-}
-
-.copiar:hover {
-  background: var(--surface-2);
-}
-
-.aviso {
-  margin: 12px 0 0;
-  font: 400 11.5px/1.5 var(--font-ui);
-  color: var(--warn);
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  line-height: 1.3;
 }
 
 .acoes {
@@ -76,50 +77,4 @@
   flex-wrap: wrap;
   align-items: center;
   margin-top: 14px;
-}
-
-.principal {
-  border: 1.5px solid var(--ink);
-  background: none;
-  color: var(--ink);
-  font: 600 11px/1 var(--font-ui);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 10px 13px;
-  cursor: pointer;
-}
-
-.principal:hover {
-  background: var(--ink);
-  color: var(--surface);
-}
-
-.secundario {
-  border: 1px solid var(--border-strong);
-  background: none;
-  color: var(--ink);
-  font: 600 10px/1 var(--font-ui);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 9px 12px;
-  cursor: pointer;
-}
-
-.secundario:hover {
-  background: var(--surface-2);
-}
-
-.discreto {
-  border: none;
-  background: none;
-  color: var(--muted);
-  font: 400 11.5px/1 var(--font-ui);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-  padding: 0;
-}
-
-.discreto:hover {
-  color: var(--ink);
 }

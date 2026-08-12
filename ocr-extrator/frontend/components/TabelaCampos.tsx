@@ -1,14 +1,14 @@
 import type { Campo } from "@/lib/types";
-import { Tag } from "./Basicos";
+import { Aviso, Selo } from "./Basicos";
 import ui from "./ui.module.css";
 
 export default function TabelaCampos({ campos }: { campos: Campo[] }) {
   if (campos.length === 0) {
     return (
-      <div className={ui.caixaErro}>
-        Nenhum campo estruturado foi extraído. Veja a aba &quot;Texto bruto&quot; para conferir o
-        que o OCR conseguiu ler.
-      </div>
+      <Aviso tom="atencao" titulo="Nenhum campo foi identificado">
+        A leitura não encontrou dados estruturados neste documento. Abra a aba &quot;Texto
+        bruto&quot; para ver o que o OCR conseguiu ler.
+      </Aviso>
     );
   }
 
@@ -17,9 +17,9 @@ export default function TabelaCampos({ campos }: { campos: Campo[] }) {
       <thead>
         <tr>
           <th>Campo</th>
-          <th>Valor</th>
+          <th>Valor lido</th>
           <th>Confiança</th>
-          <th>Validação</th>
+          <th>Conferência</th>
         </tr>
       </thead>
       <tbody>
@@ -34,14 +34,22 @@ export default function TabelaCampos({ campos }: { campos: Campo[] }) {
               {campo.observacao && <div className={ui.observacao}>{campo.observacao}</div>}
             </td>
             {/* Confiança 0 significa "não medida" (campo veio de regex, não de uma caixa do OCR). */}
-            <td>{campo.confianca ? `${Math.round(campo.confianca * 100)}%` : "—"}</td>
+            <td className={ui.valor}>
+              {campo.confianca ? `${Math.round(campo.confianca * 100)}%` : "—"}
+            </td>
             <td>
               {campo.valido === true ? (
-                <Tag tom="ok">válido</Tag>
+                <Selo tom="ok" simbolo="✓">
+                  válido
+                </Selo>
               ) : campo.valido === false ? (
-                <Tag tom="err">inválido</Tag>
+                <Selo tom="critico" simbolo="✕">
+                  inválido
+                </Selo>
               ) : (
-                <Tag tom="warn">não verificável</Tag>
+                <Selo tom="neutro" simbolo="–">
+                  não verificável
+                </Selo>
               )}
             </td>
           </tr>

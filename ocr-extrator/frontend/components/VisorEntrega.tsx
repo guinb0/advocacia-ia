@@ -3,15 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { obterEntrega } from "@/lib/api";
+import { ESTILO_VEREDITO } from "@/lib/formato";
 import type { EntregaDetalhe } from "@/lib/types";
 import { useArquivoEntrega } from "@/lib/useArquivo";
+import { Aviso, Selo } from "./Basicos";
 import estilos from "./VisorEntrega.module.css";
-
-const CLASSE_VEREDITO = {
-  APROVADO: estilos.ok,
-  APROVADO_COM_RESSALVAS: estilos.warn,
-  REPROVADO: estilos.err,
-} as const;
 
 function ehPdf(nome: string): boolean {
   return nome.toLowerCase().endsWith(".pdf");
@@ -60,6 +56,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
   const extracao = detalhe?.extracao;
   const validacao = extracao?.validacao;
   const campos = extracao?.campos ?? [];
+  const veredito = validacao ? ESTILO_VEREDITO[validacao.veredito] : null;
 
   return (
     <div
@@ -74,11 +71,16 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
       <div className={estilos.painel}>
         <div className={estilos.cabecalho}>
           <div>
-            <span className={estilos.titulo}>DOCUMENTO ENVIADO</span>
+            <h2 className={estilos.titulo}>Documento enviado</h2>
             <div className={estilos.arquivo}>{arquivo}</div>
           </div>
-          <button ref={fecharRef} type="button" className={estilos.fechar} onClick={onFechar}>
-            FECHAR ✕
+          <button
+            ref={fecharRef}
+            type="button"
+            className="botao botao--secundario botao--pequeno"
+            onClick={onFechar}
+          >
+            Fechar ✕
           </button>
         </div>
 
@@ -103,40 +105,55 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
 
           <div className={estilos.dados}>
             {erro ? (
-              <div className={`${estilos.resumo} ${estilos.err}`}>{erro}</div>
+              <Aviso tom="critico" titulo="Falha ao carregar os dados">
+                {erro}
+              </Aviso>
             ) : !detalhe ? (
               <p className={estilos.vazio}>Carregando os dados extraídos…</p>
             ) : !extracao ? (
-              <p className={estilos.vazio}>
+              <Aviso tom="atencao" titulo="Sem leitura guardada">
                 Esta entrega foi registrada sem extração guardada. Reenvie o arquivo para
                 extrair os campos.
-              </p>
+              </Aviso>
             ) : (
               <>
-                {validacao && (
-                  <div
-                    className={`${estilos.resumo} ${CLASSE_VEREDITO[validacao.veredito] ?? ""}`}
-                  >
-                    {validacao.resumo}
+                {validacao && veredito && (
+                  <div className={`aviso ${veredito.classe}`} role="status">
+                    <span className="avisoSimbolo" aria-hidden>
+                      {veredito.icone}
+                    </span>
+                    <div>
+                      <strong>{veredito.rotulo}</strong>
+                      <br />
+                      {validacao.resumo}
+                    </div>
                   </div>
                 )}
 
                 <div className={estilos.meta}>
-                  <span>
-                    tipo lido <strong>{extracao.tipo.descricao_detectado}</strong>
-                  </span>
-                  <span>
-                    legibilidade <strong>{extracao.qualidade_imagem.score_legibilidade}%</strong>
-                  </span>
-                  <span>
-                    completude <strong>{validacao?.completude_percentual ?? 0}%</strong>
-                  </span>
-                  <span>
-                    leitura <strong>{extracao.tempo_processamento_s}s</strong>
-                  </span>
+                  <div className={estilos.metaItem}>
+                    <span className={estilos.metaChave}>Tipo lido</span>
+                    <span className={estilos.metaValor}>{extracao.tipo.descricao_detectado}</span>
+                  </div>
+                  <div className={estilos.metaItem}>
+                    <span className={estilos.metaChave}>Nitidez</span>
+                    <span className={estilos.metaValor}>
+                      {extracao.qualidade_imagem.score_legibilidade}%
+                    </span>
+                  </div>
+                  <div className={estilos.metaItem}>
+                    <span className={estilos.metaChave}>Dados encontrados</span>
+                    <span className={estilos.metaValor}>
+                      {validacao?.completude_percentual ?? 0}%
+                    </span>
+                  </div>
+                  <div className={estilos.metaItem}>
+                    <span className={estilos.metaChave}>Tempo de leitura</span>
+                    <span className={estilos.metaValor}>{extracao.tempo_processamento_s}s</span>
+                  </div>
                 </div>
 
-                <span className={estilos.rotuloSecao}>CAMPOS EXTRAÍDOS ({campos.length})</span>
+                <span className={estilos.rotuloSecao}>Dados lidos ({campos.length})</span>
 
                 {campos.length === 0 ? (
                   <p className={estilos.vazio}>
@@ -147,9 +164,9 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                     <thead>
                       <tr>
                         <th>Campo</th>
-                        <th>Valor</th>
-                        <th style={{ textAlign: "right" }}>Conf.</th>
-                        <th />
+                        <th>Valor lido</th>
+                        <th style={{ textAlign: "right" }}>Certeza</th>
+                        <th>Conferência</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -167,9 +184,13 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                           </td>
                           <td>
                             {campo.valido === null ? null : campo.valido ? (
-                              <span className={`${estilos.selo} ${estilos.ok}`}>VÁLIDO</span>
+                              <Selo tom="ok" simbolo="✓">
+                                válido
+                              </Selo>
                             ) : (
-                              <span className={`${estilos.selo} ${estilos.err}`}>INVÁLIDO</span>
+                              <Selo tom="critico" simbolo="✕">
+                                inválido
+                              </Selo>
                             )}
                           </td>
                         </tr>
@@ -180,8 +201,8 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
 
                 {validacao && validacao.erros.length > 0 && (
                   <>
-                    <span className={estilos.rotuloSecao} style={{ marginTop: 18 }}>
-                      PROBLEMAS ({validacao.erros.length})
+                    <span className={estilos.rotuloSecao}>
+                      Problemas encontrados ({validacao.erros.length})
                     </span>
                     <ul className={estilos.listaMsg}>
                       {validacao.erros.map((e, i) => (
@@ -199,7 +220,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
             download disparam GET sem o Authorization e tomariam 401. */}
         <div className={estilos.rodape}>
           <a
-            className={estilos.acao}
+            className="botao botao--secundario botao--pequeno"
             href={urlArquivo ?? undefined}
             target="_blank"
             rel="noreferrer"
@@ -207,8 +228,13 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
           >
             Abrir em nova aba
           </a>
-          <a className={estilos.acao} href={urlArquivo ?? undefined} download={arquivo}>
-            Baixar arquivo
+          <a
+            className="botao botao--secundario botao--pequeno"
+            href={urlArquivo ?? undefined}
+            download={arquivo}
+            aria-disabled={!urlArquivo}
+          >
+            Baixar o arquivo
           </a>
         </div>
       </div>
