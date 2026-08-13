@@ -344,3 +344,111 @@ export interface RespostaEnvio {
   entrega: Entrega;
   extracao: Documento;
 }
+
+// ------------------------------------------- assinatura eletrônica (ZapSign)
+
+/** Como cada signatário está no documento mandado assinar. */
+export type EstadoSignatario =
+  | "pendente"
+  | "abriu"
+  | "assinou"
+  | "recusou"
+  | "expirou"
+  | "cancelado";
+
+export type EstadoAssinatura = "pendente" | "assinado" | "recusado";
+
+export interface Signatario {
+  token: string;
+  nome: string;
+  email: string;
+  telefone: string;
+  /** "cliente" ou "escritório" — rótulo nosso, a ZapSign não o guarda. */
+  papel: string;
+  estado: EstadoSignatario;
+  /** O estado por extenso, como o backend o escreve ("abriu, não assinou"). */
+  rotulo: string;
+  assinou_em: string | null;
+  visualizado_em: string | null;
+  vezes_visto: number;
+  /** Link individual, para reenviar à mão quando o e-mail cai em spam. */
+  url_assinatura: string;
+}
+
+/** Um contrato mandado para assinatura. Sem o token da ZapSign: ele é do servidor. */
+export interface Assinatura {
+  id: string;
+  nome: string;
+  cliente: string;
+  caso_id: string | null;
+  estado: EstadoAssinatura;
+  signatarios: Signatario[];
+  assinaram: number;
+  total: number;
+  /** Nomes de quem ainda não assinou. */
+  faltam: string[];
+  /** Se o PDF assinado já está guardado em disco no escritório. */
+  arquivo_local: boolean;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+/** Resposta de `POST /api/contrato/assinatura`. */
+export interface AssinaturaCriada {
+  assinatura: Assinatura;
+  /** Campos do modelo que a entrevista não respondeu — saem entre colchetes. */
+  faltando: string[];
+}
+
+/** Resposta de `GET /api/assinaturas/{id}`, já consultada na ZapSign. */
+export interface AssinaturaConsultada {
+  assinatura: Assinatura;
+  /** `false` quando a ZapSign não respondeu e o estado é o último conhecido. */
+  atualizado: boolean;
+  aviso?: string;
+  tem_assinado?: boolean;
+}
+
+/** O que `GET /api/assinatura/config` diz antes de a tela oferecer o botão. */
+export interface ConfigAssinatura {
+  ativa: boolean;
+  auth_mode: string;
+  whatsapp: boolean;
+  signatario_escritorio: { nome: string; email: string; papel: string } | null;
+}
+
+// ------------------------------- conferência da resposta durante a entrevista
+
+/** Uma lacuna apontada na resposta, com os precedentes que a sustentam. */
+export interface LacunaResposta {
+  item: string;
+  /** Índices "P1", "P2"… que casam com `AnaliseResposta.precedentes`. */
+  precedentes: string[];
+}
+
+export interface PrecedenteAnalise {
+  indice: string;
+  processo: string | null;
+  resultado: string | null;
+  vara: string | null;
+  url: string | null;
+  similaridade: number;
+}
+
+/** Resposta de `POST /api/entrevista/analise`. Curta de propósito: é lida
+ *  entre uma pergunta e a seguinte, com o cliente na frente. */
+export interface AnaliseResposta {
+  /** Nada a acrescentar neste ponto. */
+  suficiente: boolean;
+  /** No máximo 3. */
+  faltam: LacunaResposta[];
+  /** No máximo 3, prontas para ler em voz alta ao cliente. */
+  perguntar: string[];
+  observacao: string;
+  /** `false` quando o banco de precedentes não respondeu — a análise passa a
+   *  ser a leitura do modelo sobre o texto, e a tela precisa dizer isso. */
+  com_precedentes: boolean;
+  precedentes: PrecedenteAnalise[];
+  aviso: string;
+  do_cache: boolean;
+}

@@ -11,11 +11,18 @@ import {
 import type { Ref } from "react";
 
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { consultarCep, obterRoteiro } from "@/lib/api";
+import { analisarResposta, consultarCep, obterRoteiro } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
-import type { Bloco, EnderecoCep, Pergunta, RoteiroCompleto } from "@/lib/types";
+import type {
+  AnaliseResposta,
+  Bloco,
+  EnderecoCep,
+  Pergunta,
+  RoteiroCompleto,
+} from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
+import ConferenciaResposta from "./ConferenciaResposta";
 import estilos from "./Roteiro.module.css";
 import transcricaoEstilos from "./EntrevistaAoVivo.module.css";
 
@@ -47,6 +54,18 @@ export interface ManipuladorRoteiro {
 /** De onde vem o áudio que está sendo transcrito. */
 type Fonte = "nenhuma" | "microfone" | "chamada";
 
+/** A conferência de UMA resposta narrativa. */
+interface EstadoConferencia {
+  carregando: boolean;
+  analise: AnaliseResposta | null;
+  erro: string | null;
+}
+
+/* Abaixo disto a resposta ainda está sendo dada e não há o que conferir. É o
+ * mesmo piso do backend (`analise_resposta.MINIMO_CARACTERES`); repetido aqui
+ * para não gastar uma ida à API só para ouvir "curta demais". */
+const MINIMO_PARA_CONFERIR = 40;
+
 interface Props {
   codigo?: string;
   onConcluir?: (respostas: Respostas, relatoUnificado: string) => void;
@@ -67,14 +86,96 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const fonteAtual = useRef<Fonte>("nenhuma");
   fonteAtual.current = fonte;
 
+  const [conferencias, setConferencias] = useState<Record<string, EstadoConferencia>>({});
+
   const captura = useRef<CapturaEntrevista | null>(null);
   // A pergunta em gravação, lida dentro dos callbacks da captura — que são
   // fixados na construção e não enxergariam o estado do React.
   const emGravacao = useRef<string | null>(null);
+  // Espelhos para os mesmos callbacks: eles precisam do texto já respondido e do
+  // enunciado da pergunta, e nenhum dos dois chega até lá pelo estado.
+  const respostasRef = useRef<Respostas>({});
+  respostasRef.current = respostas;
+  const roteiroRef = useRef<RoteiroCompleto | null>(null);
+  roteiroRef.current = roteiro;
+  /* Último texto já conferido, por pergunta. Sem isto, sair e voltar à caixa de
+   * texto dispararia uma conferência a cada clique — e cada uma é uma chamada
+   * ao modelo, numa tela em que o entrevistador clica o tempo todo. */
+  const conferido = useRef<Record<string, string>>({});
 
   useEffect(() => {
     obterRoteiro(codigo).then(setRoteiro).catch((e) => setErro(String(e)));
   }, [codigo]);
+
+  /* O que já se sabe do caso, resumido para a conferência.
+   *
+   * Só respostas curtas — rastreio, escolhas, dados. Os relatos ficam de fora de
+   * propósito: eles são o volume da entrevista, e mandá-los inteiros a cada
+   * pergunta encareceria a conferência sem dizer mais nada do que o formato do
+   * caso, que é o que evita a análise pedir o que outra pergunta já respondeu. */
+  const contextoDoCaso = useCallback((exceto: string): string => {
+    const atual = roteiroRef.current;
+    if (!atual) return "";
+    const partes: string[] = [];
+    for (const bloco of atual.blocos) {
+      for (const p of bloco.perguntas) {
+        if (p.id === exceto || p.transcrever) continue;
+        const v = respostasRef.current[p.id];
+        const texto = Array.isArray(v) ? v.join(", ") : (v ?? "");
+        if (texto && texto.length <= 120) partes.push(`${p.texto}: ${texto}`);
+      }
+    }
+    return partes.join("\n").slice(0, 1500);
+  }, []);
+
+  const conferir = useCallback(
+    (perguntaId: string, texto: string, forcar = false) => {
+      const atual = roteiroRef.current;
+      if (!atual) return;
+      const pergunta = atual.blocos
+        .flatMap((b) => b.perguntas)
+        .find((p) => p.id === perguntaId);
+      // Só as narrativas graváveis: conferir um CPF contra precedentes não diz
+      // nada, e gastaria uma chamada por campo digitado.
+      if (!pergunta?.transcrever) return;
+
+      const limpo = texto.trim();
+      if (limpo.length < MINIMO_PARA_CONFERIR) return;
+      if (!forcar && conferido.current[perguntaId] === limpo) return;
+      conferido.current[perguntaId] = limpo;
+
+      setConferencias((c) => ({
+        ...c,
+        [perguntaId]: { carregando: true, analise: c[perguntaId]?.analise ?? null, erro: null },
+      }));
+
+      void analisarResposta(perguntaId, pergunta.texto, limpo, contextoDoCaso(perguntaId))
+        .then((analise) =>
+          setConferencias((c) => ({
+            ...c,
+            [perguntaId]: { carregando: false, analise, erro: null },
+          })),
+        )
+        .catch((e) => {
+          // A conferência falhando não pode parar a entrevista: o erro fica
+          // discreto embaixo da pergunta e o roteiro segue.
+          conferido.current[perguntaId] = "";
+          setConferencias((c) => ({
+            ...c,
+            [perguntaId]: {
+              carregando: false,
+              analise: null,
+              erro: e instanceof Error ? e.message : "Não foi possível conferir a resposta.",
+            },
+          }));
+        });
+    },
+    [contextoDoCaso],
+  );
+
+  // Lido dentro dos callbacks da captura, que são fixados na construção.
+  const conferirRef = useRef(conferir);
+  conferirRef.current = conferir;
 
   if (captura.current === null && typeof window !== "undefined") {
     captura.current = new CapturaEntrevista({
@@ -87,12 +188,16 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
       onFinal: (texto) => {
         const id = emGravacao.current;
         if (id) {
-          setRespostas((r) => ({
-            // Reenviar acrescenta em vez de substituir: o cliente costuma
-            // completar a resposta depois de uma pausa.
-            ...r,
-            [id]: [String(r[id] ?? ""), texto].filter(Boolean).join(" "),
-          }));
+          // Acrescenta em vez de substituir: é o que faz "adicionar complemento"
+          // funcionar — o cliente completa a resposta depois de uma pausa, e o
+          // trecho novo entra no fim do que já havia.
+          const novo = [String(respostasRef.current[id] ?? ""), texto]
+            .filter(Boolean)
+            .join(" ");
+          setRespostas((r) => ({ ...r, [id]: novo }));
+          // A conferência roda sobre a resposta INTEIRA, não só o trecho novo:
+          // o complemento costuma justamente preencher a lacuna apontada antes.
+          conferirRef.current(id, novo);
         }
         emGravacao.current = null;
         setGravandoId(null);
@@ -141,11 +246,13 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     }
   }, []);
 
-  const alternarGravacao = useCallback(async (perguntaId: string) => {
-    if (emGravacao.current === perguntaId) {
-      captura.current?.finalizarResposta();
-      return;
-    }
+  /* Começa a gravar — ou volta a gravar por cima de uma resposta que já existe.
+   *
+   * São a mesma operação: o `onFinal` acrescenta ao que já havia. O que muda é
+   * só o rótulo do botão, e é a diferença entre "gravar a resposta" e
+   * "complementar o que ele já disse" — que é o que se faz depois de ler a
+   * conferência e descobrir que faltou perguntar da CAT. */
+  const gravar = useCallback(async (perguntaId: string) => {
     setErro(null);
     setParcial("");
     try {
@@ -158,6 +265,10 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
       setErro(e instanceof Error ? e.message : "Não foi possível iniciar.");
     }
   }, []);
+
+  const pausar = useCallback(() => captura.current?.pausar(), []);
+  const retomar = useCallback(() => captura.current?.retomar(), []);
+  const finalizar = useCallback(() => captura.current?.finalizarResposta(), []);
 
   const responder = useCallback((id: string, valor: string | string[]) => {
     setRespostas((r) => ({ ...r, [id]: valor }));
@@ -266,9 +377,15 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           respostas={respostas}
           onResponder={responder}
           gravandoId={gravandoId}
+          pausado={estadoMic === "pausado"}
           parcial={parcial}
           temMic={temMic}
-          onGravar={alternarGravacao}
+          onGravar={gravar}
+          onPausar={pausar}
+          onRetomar={retomar}
+          onFinalizar={finalizar}
+          conferencias={conferencias}
+          onConferir={conferir}
         />
       ))}
 
@@ -307,17 +424,29 @@ function BlocoRoteiro({
   respostas,
   onResponder,
   gravandoId,
+  pausado,
   parcial,
   temMic,
   onGravar,
+  onPausar,
+  onRetomar,
+  onFinalizar,
+  conferencias,
+  onConferir,
 }: {
   bloco: Bloco;
   respostas: Respostas;
   onResponder: (id: string, valor: string | string[]) => void;
   gravandoId: string | null;
+  pausado: boolean;
   parcial: string;
   temMic: boolean;
   onGravar: (id: string) => void;
+  onPausar: () => void;
+  onRetomar: () => void;
+  onFinalizar: () => void;
+  conferencias: Record<string, EstadoConferencia>;
+  onConferir: (id: string, texto: string, forcar?: boolean) => void;
 }) {
   return (
     <section className={estilos.bloco}>
@@ -348,11 +477,31 @@ function BlocoRoteiro({
                 valorAlvo={p.preenche ? respostas[p.preenche] : undefined}
                 onResponder={onResponder}
                 gravando={gravandoId === p.id}
+                pausado={gravandoId === p.id && pausado}
                 parcial={gravandoId === p.id ? parcial : ""}
                 temMic={temMic}
+                ocupado={gravandoId !== null && gravandoId !== p.id}
                 onGravar={onGravar}
+                onPausar={onPausar}
+                onRetomar={onRetomar}
+                onFinalizar={onFinalizar}
+                onConferir={onConferir}
               />
             </div>
+
+            {/* A conferência mora embaixo da pergunta que a gerou: lida em
+              * qualquer outro lugar, ela obrigaria a procurar de qual resposta
+              * está falando — e o cliente está esperando. */}
+            {p.transcrever && conferencias[p.id] && (
+              <ConferenciaResposta
+                analise={conferencias[p.id].analise}
+                carregando={conferencias[p.id].carregando}
+                erro={conferencias[p.id].erro}
+                onRefazer={() =>
+                  onConferir(p.id, String(respostas[p.id] ?? ""), true)
+                }
+              />
+            )}
           </li>
         ))}
       </ul>
@@ -473,9 +622,15 @@ function CampoResposta({
   valorAlvo,
   onResponder,
   gravando,
+  pausado,
   parcial,
   temMic,
+  ocupado,
   onGravar,
+  onPausar,
+  onRetomar,
+  onFinalizar,
+  onConferir,
 }: {
   pergunta: Pergunta;
   valor?: string | string[];
@@ -483,9 +638,16 @@ function CampoResposta({
   valorAlvo?: string | string[];
   onResponder: (id: string, valor: string | string[]) => void;
   gravando: boolean;
+  pausado: boolean;
   parcial: string;
   temMic: boolean;
+  /** Outra pergunta está gravando — o microfone é um só para a entrevista. */
+  ocupado: boolean;
   onGravar: (id: string) => void;
+  onPausar: () => void;
+  onRetomar: () => void;
+  onFinalizar: () => void;
+  onConferir: (id: string, texto: string, forcar?: boolean) => void;
 }) {
   const texto = typeof valor === "string" ? valor : "";
 
@@ -628,19 +790,60 @@ function CampoResposta({
   }
 
   // relato — com gravador quando marcado, sempre editável por teclado.
+  const emCurso = gravando || pausado;
+
   return (
     <>
       {pergunta.transcrever && (
         <div className={estilos.opcoes} style={{ marginBottom: 8 }}>
-          <button
-            type="button"
-            className={`${transcricaoEstilos.botao} ${gravando ? transcricaoEstilos.gravando : ""}`}
-            onClick={() => onGravar(pergunta.id)}
-            disabled={!temMic}
-            title={temMic ? "" : "Ligue o microfone no topo da tela"}
-          >
-            {gravando ? "Finalizar resposta" : "Gravar resposta"}
-          </button>
+          {!emCurso && (
+            <button
+              type="button"
+              className={transcricaoEstilos.botao}
+              onClick={() => onGravar(pergunta.id)}
+              disabled={!temMic || ocupado}
+              title={
+                !temMic
+                  ? "Ligue o microfone no topo da tela"
+                  : ocupado
+                    ? "Outra pergunta está gravando — finalize aquela antes"
+                    : ""
+              }
+            >
+              {/* O rótulo muda porque a operação é a mesma mas a intenção não:
+                * complementar é o que se faz depois de ler a conferência e
+                * descobrir o que faltou perguntar. O trecho novo entra no fim
+                * do que já estava escrito, sem apagar nada. */}
+              {texto.trim() ? "Adicionar complemento" : "Gravar resposta"}
+            </button>
+          )}
+
+          {emCurso && (
+            <>
+              <button
+                type="button"
+                className={transcricaoEstilos.secundario}
+                onClick={pausado ? onRetomar : onPausar}
+              >
+                {pausado ? "Retomar" : "Pausar"}
+              </button>
+              <button
+                type="button"
+                className={`${transcricaoEstilos.botao} ${
+                  gravando ? transcricaoEstilos.gravando : ""
+                }`}
+                onClick={onFinalizar}
+              >
+                Finalizar resposta
+              </button>
+            </>
+          )}
+
+          {pausado && (
+            <span className={estilos.pausa}>
+              pausado — o que for dito agora não entra na resposta
+            </span>
+          )}
         </div>
       )}
 
@@ -648,6 +851,12 @@ function CampoResposta({
         className={estilos.area}
         value={gravando && parcial ? `${texto}${texto ? " " : ""}${parcial}` : texto}
         onChange={(e) => onResponder(pergunta.id, e.target.value)}
+        /* Conferir ao sair do campo é o equivalente digitado de "finalizar
+         * resposta". Fazê-lo a cada tecla custaria uma chamada ao modelo por
+         * letra; num botão à parte, ninguém clicaria no meio da entrevista. */
+        onBlur={(e) => {
+          if (pergunta.transcrever && !emCurso) onConferir(pergunta.id, e.target.value);
+        }}
         placeholder={
           pergunta.transcrever ? "Grave pelo microfone ou digite aqui." : "Digite a resposta."
         }

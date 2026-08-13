@@ -1,7 +1,12 @@
 import type {
+  AnaliseResposta,
+  Assinatura,
+  AssinaturaConsultada,
+  AssinaturaCriada,
   Caso,
   CasoCriado,
   Categoria,
+  ConfigAssinatura,
   Documento,
   EnderecoCep,
   EntregaDetalhe,
@@ -196,8 +201,83 @@ export async function gerarContrato(
   return { arquivo: await r.blob(), nome: nomeDoAnexo(r), faltando };
 }
 
+// --------------------------------------------- assinatura eletrônica do contrato
+
+/** Se o envio para assinatura está ligado — sem a chave no `.env` ele não existe. */
+export async function configAssinatura(): Promise<ConfigAssinatura> {
+  return comoJson<ConfigAssinatura>(await buscar("/api/assinatura/config"));
+}
+
+/** Gera o contrato e o manda assinar. O .docx é o mesmo de `gerarContrato`. */
+export async function enviarParaAssinatura(
+  respostas: Record<string, string | string[]>,
+  signatarios: { nome: string; email?: string; telefone?: string; papel?: string }[] = [],
+  municipio = "",
+  casoId?: string,
+): Promise<AssinaturaCriada> {
+  return comoJson<AssinaturaCriada>(
+    await buscar("/api/contrato/assinatura", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        respostas,
+        municipio,
+        signatarios,
+        caso_id: casoId ?? null,
+      }),
+    }),
+  );
+}
+
+/** Os contratos já mandados assinar, com o último estado conhecido. */
+export async function listarAssinaturas(filtro: {
+  casoId?: string;
+  cliente?: string;
+} = {}): Promise<Assinatura[]> {
+  const query = new URLSearchParams();
+  if (filtro.casoId) query.set("caso_id", filtro.casoId);
+  if (filtro.cliente) query.set("cliente", filtro.cliente);
+  const sufixo = query.size > 0 ? `?${query}` : "";
+  const dados = await comoJson<{ assinaturas: Assinatura[] }>(
+    await buscar(`/api/assinaturas${sufixo}`),
+  );
+  return dados.assinaturas;
+}
+
+/** Quem já assinou e quem falta, consultado na ZapSign agora. */
+export async function obterAssinatura(id: string): Promise<AssinaturaConsultada> {
+  return comoJson<AssinaturaConsultada>(await buscar(`/api/assinaturas/${id}`));
+}
+
+export async function vincularAssinaturaAoCaso(id: string, casoId: string): Promise<void> {
+  const form = new FormData();
+  form.append("caso_id", casoId);
+  await comoJson(await buscar(`/api/assinaturas/${id}/caso`, { method: "POST", body: form }));
+}
+
+/** Tira o contrato da lista local. Na ZapSign ele continua, com a auditoria. */
+export async function excluirAssinatura(id: string): Promise<void> {
+  await comoJson(await buscar(`/api/assinaturas/${id}`, { method: "DELETE" }));
+}
+
+/** O PDF assinado, com a trilha de auditoria. Vem pelo backend, que o guarda. */
+export async function baixarContratoAssinado(
+  id: string,
+): Promise<{ arquivo: Blob; nome: string }> {
+  const r = await buscar(`/api/assinaturas/${id}/arquivo`);
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+  return { arquivo: await r.blob(), nome: nomeDoAnexo(r, "contrato-assinado.pdf") };
+}
+
 /** Nome do arquivo vindo do Content-Disposition, preferindo a forma UTF-8. */
-function nomeDoAnexo(r: Response): string {
+function nomeDoAnexo(r: Response, padrao = "contrato.docx"): string {
   const cabecalho = r.headers.get("Content-Disposition") ?? "";
   const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(cabecalho);
   if (utf8) {
@@ -207,7 +287,7 @@ function nomeDoAnexo(r: Response): string {
       /* nome malformado: cai no genérico abaixo */
     }
   }
-  return /filename="([^"]+)"/i.exec(cabecalho)?.[1] ?? "contrato.docx";
+  return /filename="([^"]+)"/i.exec(cabecalho)?.[1] ?? padrao;
 }
 
 // ------------------------------------------------------- consultas públicas
@@ -226,6 +306,30 @@ export async function triarEntrevista(texto: string, arquivo?: File): Promise<Tr
   if (arquivo) form.append("arquivo", arquivo);
   return comoJson<TriagemResposta>(
     await buscar("/api/triagem", { method: "POST", body: form }),
+  );
+}
+
+/** Confere UMA resposta narrativa e diz o que ela não trouxe.
+ *
+ * É a irmã curta de `analisarEstrategia`: aquela produz um parecer por caso,
+ * esta roda uma vez por pergunta, durante a entrevista, e cabe em três itens. */
+export async function analisarResposta(
+  perguntaId: string,
+  pergunta: string,
+  resposta: string,
+  contexto = "",
+): Promise<AnaliseResposta> {
+  return comoJson<AnaliseResposta>(
+    await buscar("/api/entrevista/analise", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pergunta_id: perguntaId,
+        pergunta,
+        resposta,
+        contexto,
+      }),
+    }),
   );
 }
 

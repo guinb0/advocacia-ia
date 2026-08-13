@@ -40,11 +40,16 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
     capturaRef.current = new CapturaEntrevista({
       onParcial: setParcial,
       onFinal: (texto, dur) => {
-        setFinal(texto);
+        // Acrescenta ao que já havia: é o que sustenta "adicionar complemento".
+        // Substituir apagaria a primeira metade da resposta do cliente.
+        setFinal((anterior) => {
+          const inteiro = [anterior, texto].filter(Boolean).join(" ");
+          onRespostaRef.current?.(perguntaId, inteiro, dur);
+          return inteiro;
+        });
         setParcial("");
         setDuracao(dur);
         setOcupado(false);
-        onRespostaRef.current?.(perguntaId, texto, dur);
       },
       onEstado: setEstado,
       onErro: (m) => {
@@ -77,7 +82,8 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
   const iniciar = useCallback(async () => {
     setErro(null);
     setParcial("");
-    setFinal("");
+    // `final` NÃO é zerado: reiniciar aqui é complementar a mesma resposta. Quem
+    // troca de pergunta troca o `perguntaId`, e aí o componente inteiro é outro.
     setDuracao(0);
     try {
       await capturaRef.current?.iniciarResposta(perguntaId);
@@ -92,13 +98,18 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
   }, []);
 
   const gravando = estado === "gravando";
+  const pausado = estado === "pausado";
+  const emCurso = gravando || pausado;
   const temAudio = estado !== "sem-audio";
 
-  const pontos = {
+  const pontos: [string, string] = {
     "sem-audio": [estilos.pontoOcioso, "microfone desligado"],
     capturando: [estilos.pontoPronto, "microfone aberto"],
     gravando: [estilos.pontoGravando, "gravando resposta"],
-  }[estado];
+    // Pausado ainda é uma resposta aberta: o ponto não pode voltar a "microfone
+    // aberto", que é o estado de entre perguntas.
+    pausado: [estilos.pontoPronto, "pausado — a resposta continua aberta"],
+  }[estado] as [string, string];
 
   return (
     <div className={estilos.bloco}>
@@ -113,28 +124,39 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
           type="button"
           className={estilos.secundario}
           onClick={selecionar}
-          disabled={gravando}
+          disabled={emCurso}
         >
           {temAudio ? "Trocar microfone" : "Ligar microfone"}
         </button>
 
-        {!gravando ? (
+        {!emCurso ? (
           <button
             type="button"
             className={estilos.botao}
             onClick={iniciar}
             disabled={!temAudio || ocupado}
           >
-            {ocupado ? "Transcrevendo…" : "Iniciar resposta"}
+            {ocupado ? "Transcrevendo…" : final ? "Adicionar complemento" : "Iniciar resposta"}
           </button>
         ) : (
-          <button
-            type="button"
-            className={`${estilos.botao} ${estilos.gravando}`}
-            onClick={finalizar}
-          >
-            Finalizar resposta
-          </button>
+          <>
+            <button
+              type="button"
+              className={estilos.secundario}
+              onClick={() =>
+                pausado ? capturaRef.current?.retomar() : capturaRef.current?.pausar()
+              }
+            >
+              {pausado ? "Retomar" : "Pausar"}
+            </button>
+            <button
+              type="button"
+              className={`${estilos.botao} ${gravando ? estilos.gravando : ""}`}
+              onClick={finalizar}
+            >
+              Finalizar resposta
+            </button>
+          </>
         )}
 
         {temAudio && (
@@ -142,7 +164,7 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
             type="button"
             className={estilos.secundario}
             onClick={() => capturaRef.current?.encerrar()}
-            disabled={gravando}
+            disabled={emCurso}
           >
             Encerrar captura
           </button>
@@ -153,7 +175,7 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
             className={estilos.seletor}
             value={micEscolhido}
             onChange={(e) => setMicEscolhido(e.target.value)}
-            disabled={gravando}
+            disabled={emCurso}
             aria-label="Microfone"
           >
             <option value="">Microfone padrão</option>

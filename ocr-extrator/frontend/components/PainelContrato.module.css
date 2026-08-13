@@ -98,3 +98,149 @@
   font: 400 12px/1.6 var(--font-ui);
   color: var(--muted);
 }
+
+/* ------------------------------------------------- assinatura eletrônica */
+
+.assinatura {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.botaoSecundario {
+  composes: botao;
+  border-width: 1px;
+  border-color: var(--border-strong);
+  color: var(--muted);
+}
+
+.desligado {
+  margin: 0;
+  font: 400 12px/1.6 var(--font-ui);
+  color: var(--muted);
+  max-width: 64ch;
+}
+
+.assinatura code {
+  font: 400 11.5px/1 var(--font-mono);
+  color: var(--ink);
+}
+
+/* Para quem o convite vai — conferido antes de enviar, porque contrato mandado
+ * ao endereço errado não se recolhe. */
+.destinos {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.destinos li {
+  border-left: 2px solid var(--border-strong);
+  padding: 4px 0 4px 10px;
+  font: 400 12.5px/1.5 var(--font-ui);
+}
+
+.papel {
+  display: inline-block;
+  margin-left: 6px;
+  font: 600 9.5px/1 var(--font-ui);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  padding: 3px 5px;
+  vertical-align: middle;
+}
+
+.semContato {
+  color: var(--warn);
+}
+
+.acompanhamento {
+  margin-top: 14px;
+}
+
+.situacao {
+  margin: 0 0 10px;
+  font: 400 12.5px/1.5 var(--font-ui);
+}
+
+.signatarios {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.signatario {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font: 400 12.5px/1.4 var(--font-ui);
+}
+
+/* A marca é o que se lê de relance na lista; a cor sozinha não bastaria para
+ * quem não distingue verde de vermelho, por isso ✓ / ✕ / ○ e o texto ao lado. */
+.marca {
+  font: 400 13px/1 var(--font-mono);
+  color: var(--muted);
+  width: 1ch;
+}
+
+.signatario[data-estado="assinou"] .marca {
+  color: var(--ok);
+}
+
+.signatario[data-estado="recusou"] .marca,
+.signatario[data-estado="expirou"] .marca,
+.signatario[data-estado="cancelado"] .marca {
+  color: var(--accent);
+}
+
+.nomeSignatario {
+  flex: 1 1 auto;
+}
+
+.estadoSignatario {
+  font: 400 11.5px/1.4 var(--font-ui);
+  color: var(--muted);
+}
+
+.signatario[data-estado="assinou"] .estadoSignatario {
+  color: var(--ok);
+}
+
+.signatario[data-estado="recusou"] .estadoSignatario {
+  color: var(--accent);
+}
+
+.copiar {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  font: 400 11px/1.4 var(--font-ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.copiar:hover {
+  color: var(--ink);
+}
+
+/* A ZapSign não respondeu: o que está na tela vale, mas pode ter envelhecido. */
+.desatualizado {
+  margin: 0 0 12px;
+  border-left: 3px solid var(--warn);
+  padding: 8px 10px;
+  background: var(--surface-2);
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--muted);
+}

@@ -29,7 +29,9 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import (
+    analise_resposta,
     armazenamento,
+    assinatura,
     auth,
     casos,
     categorias,
@@ -220,6 +222,263 @@ def campos_do_contrato():
             m for m in marcadores if m not in {contrato._chave(f"[{k}]") for k in preenchiveis}
         ],
     }
+
+
+class PedidoAnaliseResposta(BaseModel):
+    """Uma resposta narrativa recém-dada, para conferência imediata."""
+
+    pergunta_id: str = Field(max_length=120)
+    pergunta: str = Field(max_length=1_000)
+    resposta: str = Field(max_length=20_000)
+    #: O pouco que já se sabe do caso — a categoria triada, tipicamente. Evita
+    #: que a análise peça o que outra pergunta do roteiro já respondeu.
+    contexto: str = Field(default="", max_length=4_000)
+
+
+@app.post("/api/entrevista/analise")
+async def analisar_resposta(pedido: PedidoAnaliseResposta):
+    """O que esta resposta ainda não trouxe — em três itens, durante a entrevista.
+
+    Roda uma vez por pergunta narrativa, então é deliberadamente mais curta que
+    o `/api/estrategia`: o que não cabe entre uma pergunta e a seguinte não é
+    lido (ver `app/analise_resposta.py`).
+
+    Sai com `com_precedentes: false` quando o banco de precedentes não responde.
+    A análise ainda vale, mas passa a ser a leitura do modelo sobre o texto — e
+    não o que os processos semelhantes mostram. A tela precisa separar as duas.
+    """
+    try:
+        # `analisar` é síncrona de ponta a ponta (psycopg e httpx bloqueantes);
+        # rodá-la no laço de eventos travaria a transcrição ao vivo das outras
+        # perguntas, que compartilha este processo.
+        return await run_in_threadpool(
+            analise_resposta.analisar,
+            pedido.pergunta_id,
+            pedido.pergunta,
+            pedido.resposta,
+            pedido.contexto,
+        )
+    except analise_resposta.ErroAnalise as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+# ------------------------------------------- contrato → assinatura eletrônica
+#
+# O contrato é gerado, conferido pelo advogado e só então mandado assinar. O
+# fluxo é o mesmo de sempre, com um passo a menos de trabalho manual: em vez de
+# baixar o .docx, subir no painel da ZapSign e digitar os contatos, o servidor
+# faz o upload e dispara os convites com o que a entrevista já respondeu.
+#
+# O que NÃO muda: o documento continua sendo o modelo do escritório palavra por
+# palavra (`app/contrato.py`), e quem escolhe mandar assinar é o advogado.
+
+
+class Signatario(BaseModel):
+    """Alguém a mais na assinatura — testemunha, segundo contratante, sócio."""
+
+    nome: str
+    email: str = ""
+    telefone: str = ""
+    papel: str = ""
+
+
+class PedidoAssinatura(PedidoContrato):
+    """As respostas do roteiro, mais quem assina além do cliente."""
+
+    #: Somados ao cliente (da entrevista) e ao escritório (do `.env`).
+    signatarios: list[Signatario] = Field(default_factory=list)
+    #: Vincula o contrato a um caso já aberto. Em geral vem vazio: na ordem do
+    #: escritório o contrato é assinado antes de o caso existir.
+    caso_id: str | None = None
+
+
+def _resposta_assinatura(registro: dict[str, Any]) -> dict[str, Any]:
+    """O registro local sem o token da ZapSign.
+
+    O token identifica o documento na conta do escritório e serve para consultar
+    e excluir pela API deles. Quem precisa dele é o servidor; a tela trabalha
+    com o `id` local, que não vale nada fora daqui.
+    """
+    limpo = dict(registro)
+    limpo.pop("doc_token", None)
+    return limpo
+
+
+@app.get("/api/assinatura/config")
+def config_assinatura():
+    """Se dá para mandar assinar, e com que modo de autenticação.
+
+    A tela pergunta antes de oferecer o botão: sem a chave no `.env` o envio não
+    existe, e é melhor dizer isso do que deixar o advogado clicar e tomar erro.
+    """
+    return assinatura.configuracao()
+
+
+@app.post("/api/contrato/assinatura", status_code=201)
+async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
+    """Gera o contrato e o manda para assinatura eletrônica.
+
+    O .docx sobe como está — a ZapSign converte para PDF e é esse PDF que o
+    cliente assina. Campo que a entrevista não respondeu continua entre colchetes
+    e volta em `faltando`: contrato incompleto assinado não se desfaz, então o
+    aviso vai junto da resposta de sucesso, à vista.
+    """
+    if not assinatura.ativa():
+        raise HTTPException(
+            503,
+            "Assinatura eletrônica desligada: falta ZAPSIGN_API_TOKEN no .env. "
+            "O contrato continua podendo ser gerado e assinado à mão.",
+        )
+
+    try:
+        docx, faltando = contrato.gerar(pedido.respostas, pedido.municipio)
+    except contrato.ErroContrato as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+    cliente = str(pedido.respostas.get("nome", "") or "").strip()
+    if not cliente:
+        raise HTTPException(400, "A entrevista não trouxe o nome do cliente.")
+
+    nome_documento = f"Contrato de honorários — {cliente}"
+    extras = [s.model_dump() for s in pedido.signatarios]
+
+    # Montar a lista falha por dado que o usuário pode consertar — cliente sem
+    # e-mail e sem telefone. É 400, e não 502: culpar a ZapSign por uma entrevista
+    # incompleta manda o advogado procurar o problema no lugar errado.
+    try:
+        signatarios = assinatura.signatarios_do_contrato(pedido.respostas, extras)
+    except assinatura.ErroAssinatura as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    try:
+        resposta = await assinatura.enviar(nome_documento, docx, signatarios)
+    except assinatura.ErroAssinatura as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    resumo = assinatura.resumir(resposta, assinatura.casar_com_enviados(signatarios, resposta))
+
+    if not resumo["doc_token"]:
+        raise HTTPException(502, "A ZapSign aceitou o documento mas não devolveu o token dele.")
+
+    registro = armazenamento.registrar_assinatura(
+        doc_token=resumo["doc_token"],
+        nome=nome_documento,
+        cliente=cliente,
+        signatarios=resumo["signatarios"],
+        estado=resumo["estado"],
+        caso_id=pedido.caso_id,
+    )
+
+    log.info(
+        "Contrato de %s enviado para assinatura (%d signatário(s)).",
+        cliente,
+        resumo["total"],
+    )
+    return {"assinatura": _resposta_assinatura(registro), "faltando": faltando}
+
+
+@app.get("/api/assinaturas")
+def listar_assinaturas(caso_id: str | None = None, cliente: str | None = None):
+    """Os contratos já mandados assinar, do mais novo para o mais antigo.
+
+    Devolve o último estado conhecido, sem consultar a ZapSign: a lista abre
+    instantânea e uma consulta por contrato estouraria o limite de requisições
+    deles numa carteira grande. Quem atualiza é o `GET` de um contrato só.
+    """
+    return {
+        "assinaturas": [
+            _resposta_assinatura(a)
+            for a in armazenamento.listar_assinaturas(caso_id, cliente)
+        ]
+    }
+
+
+@app.get("/api/assinaturas/{assinatura_id}")
+async def obter_assinatura(assinatura_id: str):
+    """Quem já assinou e quem falta — consultado na ZapSign agora.
+
+    Se a consulta falhar, devolve o último estado conhecido com `atualizado:
+    false`. Some da tela é pior que estar desatualizado: o advogado precisa ver
+    que o contrato existe mesmo quando a ZapSign está fora do ar.
+    """
+    registro = armazenamento.obter_assinatura(assinatura_id)
+    if registro is None:
+        raise HTTPException(404, "Contrato não encontrado.")
+
+    try:
+        documento = await assinatura.consultar(registro["doc_token"])
+    except assinatura.ErroAssinatura as exc:
+        return {
+            "assinatura": _resposta_assinatura(registro),
+            "atualizado": False,
+            "aviso": str(exc),
+        }
+
+    # O que já se sabia de cada signatário: o papel e o link de assinatura, que a
+    # consulta de detalhe não repete (ver `assinatura.resumir`).
+    anteriores = {s.get("token", ""): s for s in registro["signatarios"]}
+    resumo = assinatura.resumir(documento, anteriores)
+    atualizado = armazenamento.atualizar_assinatura(
+        assinatura_id, resumo["estado"], resumo["signatarios"]
+    )
+    return {
+        "assinatura": _resposta_assinatura(atualizado or registro),
+        "atualizado": True,
+        "tem_assinado": resumo["tem_assinado"],
+    }
+
+
+@app.get("/api/assinaturas/{assinatura_id}/arquivo")
+async def baixar_contrato_assinado(assinatura_id: str):
+    """O PDF assinado, com a página de trilha de auditoria da ZapSign.
+
+    Na primeira vez o arquivo é puxado de lá e guardado em `dados/contratos/`;
+    depois sai do disco. Não é cache por velocidade: os links da ZapSign expiram
+    em 60 minutos, e o escritório precisa da via assinada mesmo anos depois, com
+    ou sem a conta ativa.
+    """
+    registro = armazenamento.obter_assinatura(assinatura_id)
+    if registro is None:
+        raise HTTPException(404, "Contrato não encontrado.")
+
+    nome_arquivo = f"{registro['nome']}.pdf".replace("/", "-").replace("\\", "-")
+
+    guardado = armazenamento.caminho_do_assinado(assinatura_id)
+    if guardado is not None:
+        return FileResponse(guardado, media_type="application/pdf", filename=nome_arquivo)
+
+    try:
+        url = await assinatura.url_do_assinado(registro["doc_token"])
+        pdf = await assinatura.baixar(url)
+    except assinatura.ErroAssinatura as exc:
+        # 409: o pedido está correto, o documento é que ainda não foi assinado
+        # por todos. 502 faria a tela culpar a rede por uma assinatura pendente.
+        raise HTTPException(409, str(exc)) from exc
+
+    destino = armazenamento.DIR_CONTRATOS / f"{assinatura_id}.pdf"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_bytes(pdf)
+    armazenamento.definir_arquivo_assinatura(assinatura_id, destino)
+
+    return FileResponse(destino, media_type="application/pdf", filename=nome_arquivo)
+
+
+@app.post("/api/assinaturas/{assinatura_id}/caso")
+def vincular_assinatura(assinatura_id: str, caso_id: str = Form(...)):
+    """Liga o contrato ao caso aberto depois dele — a ordem do escritório."""
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    if not armazenamento.vincular_assinatura_ao_caso(assinatura_id, caso_id):
+        raise HTTPException(404, "Contrato não encontrado.")
+    return {"vinculado": True}
+
+
+@app.delete("/api/assinaturas/{assinatura_id}")
+def excluir_assinatura(assinatura_id: str):
+    """Tira o contrato da lista local. Na ZapSign ele continua, com a auditoria."""
+    if not armazenamento.excluir_assinatura(assinatura_id):
+        raise HTTPException(404, "Contrato não encontrado.")
+    return {"removido": True}
 
 
 @app.get("/api/cep/{cep}")

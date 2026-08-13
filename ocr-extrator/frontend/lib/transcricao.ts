@@ -26,7 +26,7 @@ const BASE_TRANSCRICAO =
  *   transcrever o entrevistador, e sem diarização.
  */
 
-export type EstadoCaptura = "sem-audio" | "capturando" | "gravando";
+export type EstadoCaptura = "sem-audio" | "capturando" | "gravando" | "pausado";
 
 export interface Microfone {
   id: string;
@@ -53,6 +53,14 @@ export class CapturaEntrevista {
   private no: AudioWorkletNode | null = null;
   private ws: WebSocket | null = null;
   private gravando = false;
+  /* Pausa: a sessão continua aberta no servidor, só o áudio para de subir.
+   *
+   * Não existe "pause" no protocolo porque não precisa existir — o servidor
+   * acumula o PCM que chega e transcreve o acumulado no `stop`. Deixar de
+   * mandar bytes é, para ele, um trecho de silêncio que nunca aconteceu. Quem
+   * fala durante a pausa não entra na resposta, que é o ponto: a pausa serve
+   * para o advogado conversar sem que aquilo vire transcrição. */
+  private pausado = false;
   private sessaoAtual: string | null = null;
 
   constructor(private eventos: EventosTranscricao = {}) {}
@@ -63,6 +71,10 @@ export class CapturaEntrevista {
 
   get estaGravando(): boolean {
     return this.gravando;
+  }
+
+  get estaPausado(): boolean {
+    return this.gravando && this.pausado;
   }
 
   /** Lista os microfones. Só traz nome depois da primeira permissão concedida. */
@@ -124,8 +136,9 @@ export class CapturaEntrevista {
 
     no.port.onmessage = (e: MessageEvent<Float32Array>) => {
       // O worklet entrega sempre; o filtro de gravação é aqui, e é o que
-      // mantém a captura aberta sem transmitir nada entre perguntas.
-      if (!this.gravando || this.ws?.readyState !== WebSocket.OPEN) return;
+      // mantém a captura aberta sem transmitir nada entre perguntas — e o que
+      // faz a pausa funcionar sem mexer no protocolo.
+      if (!this.gravando || this.pausado || this.ws?.readyState !== WebSocket.OPEN) return;
       this.ws.send(e.data.buffer as ArrayBuffer);
     };
 
@@ -182,6 +195,24 @@ export class CapturaEntrevista {
       JSON.stringify({ type: "start", sessionId: this.sessaoAtual, questionId: perguntaId }),
     );
     this.gravando = true;
+    this.pausado = false;
+    this.eventos.onEstado?.("gravando");
+  }
+
+  /** Segura o envio sem fechar a resposta.
+   *
+   * Para quando o entrevistador precisa falar sem entrar na transcrição —
+   * explicar um termo, atender o telefone, ler a análise na tela. O que for dito
+   * enquanto pausado não existe para o Whisper. */
+  pausar(): void {
+    if (!this.gravando || this.pausado) return;
+    this.pausado = true;
+    this.eventos.onEstado?.("pausado");
+  }
+
+  retomar(): void {
+    if (!this.gravando || !this.pausado) return;
+    this.pausado = false;
     this.eventos.onEstado?.("gravando");
   }
 
@@ -189,6 +220,7 @@ export class CapturaEntrevista {
   finalizarResposta(): void {
     if (!this.gravando) return;
     this.gravando = false; // para o envio ANTES de avisar o servidor
+    this.pausado = false;
     this.ws?.send(JSON.stringify({ type: "stop", sessionId: this.sessaoAtual }));
     this.sessaoAtual = null;
     this.eventos.onEstado?.("capturando");
@@ -197,6 +229,7 @@ export class CapturaEntrevista {
   /** Fim da entrevista: solta a captura e a conexão. */
   encerrar(): void {
     this.gravando = false;
+    this.pausado = false;
     this.sessaoAtual = null;
     this.ws?.close();
     this.ws = null;

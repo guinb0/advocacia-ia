@@ -47,7 +47,13 @@ def vetor_literal(vetor: list[float]) -> str:
     return "[" + ",".join(f"{valor:.9g}" for valor in vetor) + "]"
 
 
-def gerar_embeddings(textos: list[str]) -> list[list[float]]:
+def gerar_embeddings(textos: list[str], *, timeout: float = 120) -> list[list[float]]:
+    """`timeout` é parâmetro porque há dois usos com prazos opostos.
+
+    A ingestão em lote pode esperar dois minutos — ninguém está olhando. Já a
+    análise de uma resposta acontece com o cliente na frente, entre uma pergunta
+    e a seguinte: lá, esperar mais que alguns segundos é pior que não analisar.
+    """
     if not textos:
         return []
     dimensoes = int(os.getenv("EMBEDDINGS_DIMENSIONS", "1536"))
@@ -59,7 +65,7 @@ def gerar_embeddings(textos: list[str]) -> list[list[float]]:
             "input": textos,
             "dimensions": dimensoes,
         },
-        timeout=120,
+        timeout=timeout,
     )
     resposta.raise_for_status()
     dados = sorted(resposta.json()["data"], key=lambda item: item["index"])
@@ -94,10 +100,19 @@ class TrechoSimilar:
         }
 
 
-def buscar_similares(consulta: str, *, limite: int = 8) -> list[TrechoSimilar]:
+def buscar_similares(
+    consulta: str, *, limite: int = 8, timeout: float = 120, connect_timeout: int = 10
+) -> list[TrechoSimilar]:
+    """`timeout`/`connect_timeout` curtos para quem chama durante a entrevista.
+
+    O servidor pgvector é remoto e compartilhado, e já ficou fora do ar (ver
+    CONTEXTO.md). Com os prazos longos da ingestão, cada resposta analisada
+    pagaria 10s parada antes de descobrir que o banco não responde — com o
+    cliente esperando do outro lado da mesa.
+    """
     if not consulta.strip():
         return []
-    embedding = vetor_literal(gerar_embeddings([consulta[:12000]])[0])
+    embedding = vetor_literal(gerar_embeddings([consulta[:12000]], timeout=timeout)[0])
     sql = """
         SELECT k.texto, 1 - (k.embedding <=> %s::vector) AS similaridade,
                f.titulo, f.identificador, f.url, k.metadados
@@ -109,7 +124,7 @@ def buscar_similares(consulta: str, *, limite: int = 8) -> list[TrechoSimilar]:
          LIMIT %s
     """
     with psycopg.connect(
-        _obrigatoria("DATABASE_URL"), connect_timeout=10, row_factory=dict_row
+        _obrigatoria("DATABASE_URL"), connect_timeout=connect_timeout, row_factory=dict_row
     ) as conexao:
         linhas = conexao.execute(sql, (embedding, embedding, limite * 12)).fetchall()
     candidatos = [

@@ -286,3 +286,12 @@
   font: italic 400 12px/1.5 var(--font-display);
   color: var(--muted);
 }
+
+/* Pausa da gravação. O aviso é explícito porque a consequência é invisível:
+ * quem esquece que pausou fala a resposta inteira para um microfone que não
+ * está mandando nada, e só descobre ao finalizar. */
+.pausa {
+  font: 400 11.5px/1.4 var(--font-ui);
+  color: var(--warn);
+  align-self: center;
+}

@@ -20,6 +20,10 @@ from typing import Any, Iterator
 BASE = Path(__file__).resolve().parent.parent
 DIR_DADOS = BASE / "dados"
 DIR_ARQUIVOS = DIR_DADOS / "casos"
+#: Contratos assinados baixados da ZapSign. Ficam fora de `casos/` porque o
+#: contrato existe antes do caso: ele é assinado na entrevista, e o caso só é
+#: aberto depois. Apagar um caso não pode levar junto o contrato assinado.
+DIR_CONTRATOS = DIR_DADOS / "contratos"
 CAMINHO_BANCO = DIR_DADOS / "casos.db"
 
 ESQUEMA = """
@@ -51,6 +55,27 @@ CREATE TABLE IF NOT EXISTS entregas (
 
 CREATE INDEX IF NOT EXISTS idx_entregas_caso ON entregas(caso_id);
 CREATE INDEX IF NOT EXISTS idx_entregas_item ON entregas(caso_id, item_codigo);
+
+-- Contratos mandados para assinatura eletrônica. O que vale é o registro da
+-- ZapSign; esta tabela é o índice local — sem ela o escritório precisaria abrir
+-- o painel deles para saber qual contrato é de qual cliente.
+--
+-- `caso_id` fica solto (sem chave estrangeira) de propósito: o contrato é
+-- assinado ANTES de o caso existir, e o vínculo só é feito depois, se for feito.
+CREATE TABLE IF NOT EXISTS assinaturas (
+    id             TEXT PRIMARY KEY,
+    doc_token      TEXT NOT NULL UNIQUE,
+    nome           TEXT NOT NULL,
+    cliente        TEXT NOT NULL DEFAULT '',
+    caso_id        TEXT,
+    estado         TEXT NOT NULL DEFAULT 'pendente',
+    signatarios    TEXT NOT NULL DEFAULT '[]',
+    arquivo        TEXT,
+    criado_em      TEXT NOT NULL,
+    atualizado_em  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_assinaturas_caso ON assinaturas(caso_id);
 """
 
 
@@ -109,6 +134,7 @@ def inicializar() -> None:
                 "ON casos(portal_token) WHERE portal_token IS NOT NULL"
             )
     DIR_ARQUIVOS.mkdir(parents=True, exist_ok=True)
+    DIR_CONTRATOS.mkdir(parents=True, exist_ok=True)
 
 
 # ------------------------------------------------------------------- casos
@@ -475,4 +501,175 @@ def excluir_entrega(entrega_id: str) -> bool:
         _tocar_caso(con, linha["caso_id"])
 
     Path(linha["caminho"]).unlink(missing_ok=True)
+    return True
+
+
+# ------------------------------------------------------------- assinaturas
+
+
+def _normalizar_assinatura(linha: sqlite3.Row) -> dict[str, Any]:
+    registro = dict(linha)
+    bruto = registro.get("signatarios")
+    if isinstance(bruto, str):
+        try:
+            registro["signatarios"] = json.loads(bruto)
+        except json.JSONDecodeError:
+            registro["signatarios"] = []
+    registro["signatarios"] = registro.get("signatarios") or []
+
+    signatarios = registro["signatarios"]
+    registro["assinaram"] = sum(1 for s in signatarios if s.get("estado") == "assinou")
+    registro["total"] = len(signatarios)
+    registro["faltam"] = [
+        s.get("nome", "")
+        for s in signatarios
+        if s.get("estado") not in ("assinou", "recusou", "cancelado")
+    ]
+    # O caminho é de disco e não interessa ao navegador; o que ele precisa saber
+    # é se já existe cópia baixada.
+    registro["arquivo_local"] = bool(registro.pop("arquivo", None))
+    return registro
+
+
+def registrar_assinatura(
+    doc_token: str,
+    nome: str,
+    cliente: str,
+    signatarios: list[dict[str, Any]],
+    estado: str = "pendente",
+    caso_id: str | None = None,
+) -> dict[str, Any]:
+    """Guarda o contrato recém-enviado para assinatura.
+
+    `doc_token` é único: reenviar o mesmo documento cria outro token do lado da
+    ZapSign, então colisão aqui significaria registro duplicado do mesmo envio.
+    """
+    assinatura_id = str(uuid.uuid4())
+    instante = agora()
+    with conectar() as con:
+        con.execute(
+            """
+            INSERT INTO assinaturas (id, doc_token, nome, cliente, caso_id, estado,
+                                     signatarios, arquivo, criado_em, atualizado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                assinatura_id,
+                doc_token,
+                nome.strip(),
+                cliente.strip(),
+                caso_id,
+                estado,
+                json.dumps(signatarios, ensure_ascii=False),
+                instante,
+                instante,
+            ),
+        )
+    return obter_assinatura(assinatura_id) or {}
+
+
+def atualizar_assinatura(
+    assinatura_id: str, estado: str, signatarios: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Grava o que a última consulta à ZapSign devolveu."""
+    with conectar() as con:
+        con.execute(
+            """
+            UPDATE assinaturas
+               SET estado = ?, signatarios = ?, atualizado_em = ?
+             WHERE id = ?
+            """,
+            (estado, json.dumps(signatarios, ensure_ascii=False), agora(), assinatura_id),
+        )
+    return obter_assinatura(assinatura_id)
+
+
+def definir_arquivo_assinatura(assinatura_id: str, caminho: Path) -> None:
+    with conectar() as con:
+        con.execute(
+            "UPDATE assinaturas SET arquivo = ?, atualizado_em = ? WHERE id = ?",
+            (str(caminho), agora(), assinatura_id),
+        )
+
+
+def vincular_assinatura_ao_caso(assinatura_id: str, caso_id: str) -> bool:
+    with conectar() as con:
+        cur = con.execute(
+            "UPDATE assinaturas SET caso_id = ?, atualizado_em = ? WHERE id = ?",
+            (caso_id, agora(), assinatura_id),
+        )
+    return cur.rowcount > 0
+
+
+def listar_assinaturas(
+    caso_id: str | None = None, cliente: str | None = None
+) -> list[dict[str, Any]]:
+    """Do mais novo para o mais antigo, opcionalmente filtrado.
+
+    O filtro por `cliente` é comparação exata sem caixa: é o painel do contrato
+    reencontrando, depois de um F5, o documento que ele próprio mandou assinar —
+    e ele conhece o nome tal como a entrevista o gravou.
+    """
+    condicoes, parametros = [], []
+    if caso_id:
+        condicoes.append("caso_id = ?")
+        parametros.append(caso_id)
+    if cliente:
+        condicoes.append("cliente = ? COLLATE NOCASE")
+        parametros.append(cliente.strip())
+
+    consulta = "SELECT * FROM assinaturas"
+    if condicoes:
+        consulta += " WHERE " + " AND ".join(condicoes)
+    consulta += " ORDER BY criado_em DESC"
+
+    with conectar() as con:
+        linhas = con.execute(consulta, parametros).fetchall()
+    return [_normalizar_assinatura(l) for l in linhas]
+
+
+def obter_assinatura(assinatura_id: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM assinaturas WHERE id = ?", (assinatura_id,)
+        ).fetchone()
+    return _normalizar_assinatura(linha) if linha else None
+
+
+def caminho_do_assinado(assinatura_id: str) -> Path | None:
+    """O PDF assinado guardado em disco, se já foi baixado uma vez."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT arquivo FROM assinaturas WHERE id = ?", (assinatura_id,)
+        ).fetchone()
+    if not linha or not linha["arquivo"]:
+        return None
+    caminho = Path(linha["arquivo"])
+    return caminho if caminho.exists() else None
+
+
+def token_da_assinatura(assinatura_id: str) -> str | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT doc_token FROM assinaturas WHERE id = ?", (assinatura_id,)
+        ).fetchone()
+    return linha["doc_token"] if linha else None
+
+
+def excluir_assinatura(assinatura_id: str) -> bool:
+    """Tira o contrato da lista local. O documento na ZapSign continua lá.
+
+    De propósito: o contrato assinado é prova, e o painel deles é o registro com
+    trilha de auditoria. Apagar daqui só limpa o índice do escritório.
+    """
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT arquivo FROM assinaturas WHERE id = ?", (assinatura_id,)
+        ).fetchone()
+        if not linha:
+            return False
+        con.execute("DELETE FROM assinaturas WHERE id = ?", (assinatura_id,))
+
+    if linha["arquivo"]:
+        Path(linha["arquivo"]).unlink(missing_ok=True)
     return True
