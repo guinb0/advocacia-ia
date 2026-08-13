@@ -4,17 +4,24 @@ Cobre a rota de análise avulsa e as duas ações do checklist (Enviar e Enviar
 outro), usando um processador falso para testar só o transporte multipart e o
 registro da entrega, sem carregar o modelo OCR.
 
+O falso entra em `pipeline.processar`, e não em `main._processar`, porque os dois
+caminhos deixaram de ser o mesmo: `/api/extrair` ainda passa pelo `_processar`,
+mas o envio pelo checklist grava a entrega como pendente e joga o OCR numa
+thread de fundo (`_ler_documento`), que chama o pipeline direto. Trocar só o
+`_processar` deixaria o checklist lendo o PDF de mentira com o Paddle de verdade.
+
 Rodar: .venv\\Scripts\\python.exe -m tests.test_uploads_api
 """
 
 from __future__ import annotations
 
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app import armazenamento, main
+from app import armazenamento, main, pipeline
 
 
 def resultado_falso(nome: str, tipo_forcado: str | None) -> dict:
@@ -34,7 +41,7 @@ def resultado_falso(nome: str, tipo_forcado: str | None) -> dict:
 CHAMADAS: list[tuple[str, str | None]] = []
 
 
-async def processar_falso(conteudo: bytes, nome: str, idioma: str, tipo_forcado: str | None) -> dict:
+def processar_falso(conteudo: bytes, nome: str, idioma: str, tipo_forcado: str | None) -> dict:
     assert conteudo
     assert idioma == "pt"
     CHAMADAS.append((nome, tipo_forcado))
@@ -46,6 +53,30 @@ def checar(condicao: bool, descricao: str) -> bool:
     return condicao
 
 
+def esperar_leitura(cliente: TestClient, caso_id: str, limite_s: float = 20.0) -> dict:
+    """Devolve a situação do caso já com todas as leituras terminadas.
+
+    O upload responde ANTES do OCR: a rota grava a entrega como 'processando' e
+    devolve 201 em milissegundos. Sem esperar aqui, o teste conferiria o status
+    do item antes de existir resultado — e passaria ou falharia conforme a
+    máquina estivesse mais ou menos ocupada, que é o pior tipo de teste.
+    """
+    limite = time.monotonic() + limite_s
+    while True:
+        situacao = cliente.get(f"/api/casos/{caso_id}").json()
+        lendo = [
+            entrega
+            for item in situacao["itens"]
+            for entrega in item["entregas"]
+            if entrega.get("status_proc") == "processando"
+        ]
+        if not lendo:
+            return situacao
+        if time.monotonic() > limite:
+            raise AssertionError(f"{len(lendo)} entrega(s) ainda em leitura após {limite_s}s")
+        time.sleep(0.05)
+
+
 def main_teste() -> int:
     temporario = Path(tempfile.mkdtemp(prefix="ocr-upload-api-"))
     armazenamento.DIR_DADOS = temporario
@@ -53,8 +84,8 @@ def main_teste() -> int:
     armazenamento.CAMINHO_BANCO = temporario / "casos.db"
     armazenamento.inicializar()
 
-    processador_original = main._processar
-    main._processar = processar_falso
+    processador_original = pipeline.processar
+    pipeline.processar = processar_falso
     falhas = 0
     try:
         with TestClient(main.app) as cliente:
@@ -81,16 +112,25 @@ def main_teste() -> int:
                 )
                 falhas += not checar(resposta.status_code == 201, f"{nome} chega à rota de checklist")
 
-            situacao = cliente.get(f"/api/casos/{caso_id}").json()
+            situacao = esperar_leitura(cliente, caso_id)
             rg = next(item for item in situacao["itens"] if item["codigo"] == "DOC.03")
             falhas += not checar(len(rg["entregas"]) == 2, "os dois envios ficam registrados no RG")
-            falhas += not checar(rg["status"] == "entregue", "o item enviado fica concluído")
             falhas += not checar(
-                CHAMADAS == [("documento.pdf", None), ("rg-frente.pdf", "rg"), ("rg-verso.pdf", "rg")],
-                "nomes e tipo esperado chegam ao processador",
+                all(e["status_proc"] == "pronto" for e in rg["entregas"]),
+                "as duas leituras terminam sem erro",
+            )
+            falhas += not checar(rg["status"] == "entregue", "o item enviado fica concluído")
+
+            # Os arquivos de RG e CPF vão ao pipeline SEM tipo forçado (`None`) de
+            # propósito: é o classificador solto que revela o arquivo trocado.
+            # Forçar "rg" faria a extração assumir o que deveria conferir.
+            falhas += not checar(
+                CHAMADAS
+                == [("documento.pdf", None), ("rg-frente.pdf", None), ("rg-verso.pdf", None)],
+                "nome e tipo esperado chegam ao processador",
             )
     finally:
-        main._processar = processador_original
+        pipeline.processar = processador_original
 
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     return 1 if falhas else 0

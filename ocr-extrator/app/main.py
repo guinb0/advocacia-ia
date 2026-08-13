@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -9,14 +10,38 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import armazenamento, auth, casos, categorias, pipeline, portal, rag, triagem
+from . import (
+    armazenamento,
+    auth,
+    casos,
+    categorias,
+    chamada,
+    consultas,
+    contrato,
+    pipeline,
+    portal,
+    rag,
+    roteiros,
+    triagem,
+)
 from .extractors import ROTULOS_TIPO
 
 # Onde o frontend atende — é o que monta o link enviado ao cliente.
@@ -62,11 +87,26 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    # Sem declarar aqui, o navegador esconde estes dois do JavaScript mesmo com
+    # a resposta chegando inteira: é o nome do arquivo do contrato e o aviso de
+    # campo que a entrevista não respondeu.
+    expose_headers=["Content-Disposition", "X-Campos-Faltando"],
 )
 
 # Rotas que respondem sem token. Tudo que não estiver aqui exige autenticação —
 # a lista é de exceções justamente para que uma rota nova nasça protegida.
-PUBLICAS = {"/", "/api/saude", "/api/config", "/docs", "/openapi.json", "/redoc"}
+# `/api/chamada/config` entra aqui porque quem mais precisa dela é o cliente, que
+# não tem conta no Keycloak. Não há segredo na resposta: é a lista de STUN
+# públicos, a mesma que qualquer navegador do mundo usa.
+PUBLICAS = {
+    "/",
+    "/api/saude",
+    "/api/config",
+    "/api/chamada/config",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+}
 
 # O portal do cliente não passa pelo Keycloak: o cliente não tem conta. Quem o
 # protege é a senha do caso, conferida dentro de cada rota `/api/portal/...`
@@ -107,6 +147,104 @@ def index():
 @app.get("/api/tipos")
 def tipos():
     return {"tipos": [{"codigo": k, "descricao": v} for k, v in ROTULOS_TIPO.items()]}
+
+
+@app.get("/api/roteiros")
+def listar_roteiros():
+    """Roteiros de entrevista disponíveis, sem as perguntas."""
+    return {
+        "roteiros": [
+            {"codigo": r.codigo, "nome": r.nome, "descricao": r.descricao} for r in roteiros.listar()
+        ]
+    }
+
+
+class PedidoContrato(BaseModel):
+    """As respostas do roteiro, como a tela as tem em mãos."""
+
+    respostas: dict[str, Any]
+    #: Onde o contrato é assinado. Vazio: tenta deduzir do endereço.
+    municipio: str = ""
+
+
+@app.post("/api/contrato")
+def gerar_contrato(pedido: PedidoContrato):
+    """Preenche o modelo oficial do escritório com os dados da entrevista.
+
+    Devolve o .docx para conferência e assinatura — nada é gerado por modelo de
+    linguagem aqui: as cláusulas, os percentuais e as inscrições na OAB saem do
+    arquivo em `docs/`, palavra por palavra (ver `app/contrato.py`).
+
+    Os campos que a entrevista não respondeu voltam no cabeçalho
+    `X-Campos-Faltando`, e continuam visíveis entre colchetes no documento.
+    """
+    try:
+        docx, faltando = contrato.gerar(pedido.respostas, pedido.municipio)
+    except contrato.ErroContrato as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+    nome_cliente = str(pedido.respostas.get("nome", "") or "cliente").strip()
+    arquivo = f"Contrato - {nome_cliente}.docx".replace("/", "-").replace("\\", "-")
+
+    return Response(
+        content=docx,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        headers={
+            # `filename*` em UTF-8 porque nome de cliente tem acento, e o
+            # `filename` sem aspas quebraria no primeiro espaço.
+            "Content-Disposition": (
+                f'attachment; filename="contrato.docx"; '
+                f"filename*=UTF-8''{quote(arquivo)}"
+            ),
+            "X-Campos-Faltando": ", ".join(faltando),
+        },
+    )
+
+
+@app.get("/api/contrato/campos")
+def campos_do_contrato():
+    """Marcadores que o modelo pede — para conferir o mapeamento da entrevista."""
+    try:
+        marcadores = contrato.marcadores_do_modelo()
+    except contrato.ErroContrato as exc:
+        raise HTTPException(503, str(exc)) from exc
+    preenchiveis = set(contrato.valores_da_entrevista({}))
+    return {
+        "modelo": contrato.caminho_modelo().name,
+        "marcadores": marcadores,
+        # O que o modelo pede e a entrevista não sabe responder: some daqui e
+        # vira colchete no contrato assinado.
+        "sem_origem": [
+            m for m in marcadores if m not in {contrato._chave(f"[{k}]") for k in preenchiveis}
+        ],
+    }
+
+
+@app.get("/api/cep/{cep}")
+async def consultar_cep(cep: str):
+    """Endereço a partir do CEP, para adiantar o preenchimento da entrevista.
+
+    Sai daqui apenas o CEP: nenhum dado do cliente acompanha a consulta. Ver
+    `app/consultas.py` para o que as bases públicas resolvem — e o que não
+    resolvem, que é praticamente tudo o mais.
+    """
+    try:
+        return await consultas.buscar_cep(cep)
+    except consultas.ErroConsulta as exc:
+        # 422: o CEP é sintaticamente válido mas não existe, ou a base caiu. Não
+        # é 404 da nossa rota — ela existe e respondeu.
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/roteiros/{codigo}")
+def obter_roteiro(codigo: str):
+    """Roteiro completo: blocos, perguntas e quais delas abrem o gravador."""
+    roteiro = roteiros.obter(codigo)
+    if roteiro is None:
+        raise HTTPException(404, f"Roteiro '{codigo}' não encontrado.")
+    return {**roteiro.to_dict(), "mapa_rastreio": roteiros.MAPA_RASTREIO}
 
 
 @app.get("/api/categorias")
@@ -270,6 +408,80 @@ async def triar_entrevista(
     return resultado
 
 
+# --------------------------------------------------- chamada de voz (WebRTC)
+
+_salas = chamada.Salas()
+
+
+@app.get("/api/chamada/config")
+def config_chamada():
+    """Servidores ICE para o navegador montar a conexão. Público e sem segredo."""
+    return {"iceServers": chamada.SERVIDORES_ICE}
+
+
+@app.post("/api/chamada/sala", status_code=201)
+def criar_sala():
+    """Sorteia uma sala de chamada e devolve o link para mandar ao entrevistado.
+
+    A entrevista acontece ANTES de o caso existir — é ela que decide a categoria
+    —, então a sala não pode depender de caso nem de portal. O nome da sala é o
+    segredo: 256 bits sorteados, do mesmo gerador que assina o portal. Quem tem
+    o link entra; quem não tem não adivinha.
+
+    Sala é efêmera e não é gravada em lugar nenhum: existe enquanto houver
+    alguém dentro (ver `app/chamada.py`).
+    """
+    sala = chamada.gerar_sala()
+    return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}"}
+
+
+@app.websocket("/ws/chamada/{sala_id}")
+async def ws_chamada(ws: WebSocket, sala_id: str, papel: str = "cliente"):
+    """Sinalização: repassa SDP e ICE entre os dois lados da chamada.
+
+    O servidor não vê nem toca o áudio — ele só apresenta os dois navegadores.
+    A `sala_id` é o token do portal do caso, que o cliente já tem e que não é
+    adivinhável (256 bits).
+
+    Protocolo:
+        → {"type":"offer"|"answer"|"ice", ...}   repassado ao outro lado
+        ← {"type":"pronto"}                      o outro lado entrou
+        ← {"type":"saiu"}                        o outro lado caiu
+    """
+    if papel not in ("advogado", "cliente"):
+        await ws.close(code=4001)
+        return
+
+    await ws.accept()
+    papel_tipado: chamada.Papel = papel  # type: ignore[assignment]
+    _, tem_outro = await _salas.entrar(sala_id, papel_tipado, ws)
+
+    # Quem chega por último sabe que pode ofertar; quem já estava é avisado.
+    await ws.send_json({"type": "entrou", "papel": papel, "outroPresente": tem_outro})
+    if tem_outro:
+        await _salas.repassar(sala_id, papel_tipado, {"type": "pronto", "papel": papel})
+
+    try:
+        while True:
+            msg = await ws.receive_json()
+            tipo = msg.get("type")
+            if tipo in ("offer", "answer", "ice", "encerrar"):
+                entregue = await _salas.repassar(sala_id, papel_tipado, msg)
+                if not entregue:
+                    await ws.send_json({"type": "ausente"})
+            elif tipo == "ping":
+                await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        log.exception("Erro na sinalização da chamada")
+    finally:
+        # Só avisa a saída se esta conexão ainda era a dona da vaga: uma aba que
+        # recarregou já foi substituída, e o "saiu" derrubaria a chamada nova.
+        if await _salas.sair(sala_id, papel_tipado, ws):
+            await _salas.repassar(sala_id, papel_tipado, {"type": "saiu", "papel": papel})
+
+
 class PedidoEstrategia(BaseModel):
     relato: str = Field(min_length=30, max_length=50_000)
     limite_precedentes: int = Field(default=8, ge=3, le=15)
@@ -360,6 +572,9 @@ def consultar_portal(caso_id: str):
     return {
         "ativo": bool(token),
         "url": f"{URL_PORTAL}/portal/{token}" if token else None,
+        # O token já vai no `url`; sai em campo próprio porque é ele que nomeia
+        # a sala da chamada, e recortar a URL na tela seria pior.
+        "token": token,
         "criado_em": caso.get("portal_criado_em"),
     }
 

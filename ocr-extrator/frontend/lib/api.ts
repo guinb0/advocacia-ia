@@ -3,12 +3,14 @@ import type {
   CasoCriado,
   Categoria,
   Documento,
+  EnderecoCep,
   EntregaDetalhe,
   Estrategia,
   Pedido,
   PortalEstado,
   PortalGerado,
   RespostaEnvio,
+  RoteiroCompleto,
   SituacaoCaso,
   TipoDocumento,
   Triagem as TriagemResposta,
@@ -137,6 +139,82 @@ export async function excluirCaso(casoId: string): Promise<void> {
 export async function obterPedido(casoId: string, incluirOpcionais: boolean): Promise<Pedido> {
   const query = incluirOpcionais ? "?incluir_opcionais=true" : "";
   return comoJson<Pedido>(await buscar(`/api/casos/${casoId}/pedido${query}`));
+}
+
+// ------------------------------------------------------ roteiro de entrevista
+
+export async function obterRoteiro(codigo: string): Promise<RoteiroCompleto> {
+  return comoJson<RoteiroCompleto>(await buscar(`/api/roteiros/${codigo}`));
+}
+
+// ----------------------------------------------------------------- chamada
+
+/** Sorteia uma sala e devolve o link para mandar ao entrevistado. */
+export async function criarSalaChamada(): Promise<{ sala: string; url: string }> {
+  return comoJson<{ sala: string; url: string }>(
+    await buscar("/api/chamada/sala", { method: "POST" }),
+  );
+}
+
+// ---------------------------------------------------------------- contrato
+
+export interface ContratoGerado {
+  arquivo: Blob;
+  nome: string;
+  /** Campos do modelo que a entrevista não respondeu — saem entre colchetes. */
+  faltando: string[];
+}
+
+/** Preenche o modelo oficial do escritório com as respostas da entrevista.
+ *
+ * Volta um .docx para conferir e assinar. As cláusulas vêm do arquivo em
+ * `docs/`, palavra por palavra — nada aqui é redigido por modelo de linguagem. */
+export async function gerarContrato(
+  respostas: Record<string, string | string[]>,
+  municipio = "",
+): Promise<ContratoGerado> {
+  const r = await buscar("/api/contrato", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ respostas, municipio }),
+  });
+
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+
+  const faltando = (r.headers.get("X-Campos-Faltando") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return { arquivo: await r.blob(), nome: nomeDoAnexo(r), faltando };
+}
+
+/** Nome do arquivo vindo do Content-Disposition, preferindo a forma UTF-8. */
+function nomeDoAnexo(r: Response): string {
+  const cabecalho = r.headers.get("Content-Disposition") ?? "";
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(cabecalho);
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8[1]);
+    } catch {
+      /* nome malformado: cai no genérico abaixo */
+    }
+  }
+  return /filename="([^"]+)"/i.exec(cabecalho)?.[1] ?? "contrato.docx";
+}
+
+// ------------------------------------------------------- consultas públicas
+
+/** Endereço a partir do CEP. Só o CEP sai daqui — nenhum dado do cliente. */
+export async function consultarCep(cep: string): Promise<EnderecoCep> {
+  return comoJson<EnderecoCep>(await buscar(`/api/cep/${cep.replace(/\D/g, "")}`));
 }
 
 // ----------------------------------------------------- triagem da entrevista

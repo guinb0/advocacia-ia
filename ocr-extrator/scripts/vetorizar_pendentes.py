@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 
 import psycopg
 
@@ -49,7 +50,19 @@ def main() -> None:
     parser.add_argument("--lote", type=int, default=32)
     parser.add_argument("--limite", type=int)
     args = parser.parse_args()
-    print(vetorizar(lote=args.lote, limite=args.limite))
+    tentativa = 0
+    while True:
+        try:
+            print(vetorizar(lote=args.lote, limite=args.limite))
+            return
+        except Exception as exc:
+            tentativa += 1
+            print(
+                f"\nFalha transitória ({type(exc).__name__}); "
+                f"retentativa {tentativa} em 60s.",
+                flush=True,
+            )
+            time.sleep(60)
 
 
 if __name__ == "__main__":

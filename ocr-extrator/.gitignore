@@ -16,3 +16,12 @@ dados/
 .env
 .env.*
 !.env.example
+
+# Modelo de contrato do escritorio: fica fora do repositorio publico porque traz
+# tabela de honorarios, CNPJ e as inscricoes na OAB. Para gerar contrato, ponha
+# o .docx oficial em docs/ — o codigo pega qualquer CONTRATO*.docx, o mais
+# recente primeiro (ver app/contrato.py).
+docs/CONTRATO*.docx
+
+# Saida do script de vetorizacao: barulho de execucao, nao codigo.
+vetorizacao-*.log

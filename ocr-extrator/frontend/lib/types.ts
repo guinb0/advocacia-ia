@@ -195,6 +195,59 @@ export interface SituacaoCaso {
   erro?: string;
 }
 
+// ------------------------------------------------------ roteiro de entrevista
+
+/** `escolha` é fileira de botões; `lista` é seletor, para muitas opções. */
+export type TipoResposta =
+  | "dado" | "data" | "sim_nao" | "escolha" | "lista" | "documentos" | "relato";
+
+export interface Pergunta {
+  id: string;
+  texto: string;
+  tipo: TipoResposta;
+  /** Só as narrativas abrem o gravador; dado é digitado. */
+  transcrever: boolean;
+  opcoes: string[];
+  dica: string;
+  obrigatoria: boolean;
+  /** Documento a conferir enquanto se digita. Vazio = campo livre. */
+  validacao: "" | "cpf";
+  /** Base pública que preenche o campo sozinha. Vazio = digitado à mão. */
+  busca: "" | "cep";
+  /** Id da pergunta que recebe o resultado da busca. */
+  preenche: string;
+}
+
+export interface EnderecoCep {
+  cep: string;
+  logradouro: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
+  /** Pronto para o campo de endereço, com o número marcado como pendente. */
+  endereco_formatado: string;
+  /** Qual base respondeu — aparece na tela, para saber de onde veio o dado. */
+  fonte: string;
+}
+
+export interface Bloco {
+  id: string;
+  titulo: string;
+  perguntas: Pergunta[];
+  /** `null` = sempre visível; senão, só com o rastreio positivo. */
+  modulo: string | null;
+  objetivo: string;
+}
+
+export interface RoteiroCompleto {
+  codigo: string;
+  nome: string;
+  descricao: string;
+  blocos: Bloco[];
+  /** id da pergunta de rastreio -> módulo que ela libera. */
+  mapa_rastreio: Record<string, string>;
+}
+
 // ----------------------------------------------------- triagem da entrevista
 
 export interface SugestaoCategoria {
@@ -274,6 +327,8 @@ export interface PortalGerado {
 export interface PortalEstado {
   ativo: boolean;
   url: string | null;
+  /** Nomeia a sala da chamada de voz. Nunca some da URL — só do que é exibido. */
+  token: string | null;
   criado_em: string | null;
 }
 

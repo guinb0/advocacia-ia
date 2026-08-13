@@ -144,6 +144,39 @@
   color: var(--muted);
 }
 
+/* ------------------------------------------------------------- chamada */
+
+.chamada {
+  margin-top: 22px;
+  border: 1px solid var(--border-strong);
+  padding: 16px 18px 18px;
+}
+
+.chamada .secao {
+  margin: 0;
+}
+
+/* Em chamada: verde e maior que o texto de apoio. É o estado que o cliente
+ * precisa confirmar de relance, muitas vezes com o telefone longe do rosto. */
+.chamadaEstado {
+  margin: 10px 0 0;
+  font: 500 14.5px/1.5 var(--font-ui);
+  color: var(--ok);
+}
+
+.chamadaAcoes {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.chamadaNota {
+  margin: 12px 0 0;
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--muted);
+}
+
 .lista {
   list-style: none;
   margin: 10px 0 0;

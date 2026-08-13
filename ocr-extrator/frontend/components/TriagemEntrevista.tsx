@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 
 import { analisarEstrategia, triarEntrevista } from "@/lib/api";
 import type { Estrategia, Triagem } from "@/lib/types";
+import EntrevistaComChamada from "./EntrevistaComChamada";
+import PainelContrato from "./PainelContrato";
 import estilos from "./TriagemEntrevista.module.css";
 
 /* Lê a entrevista e sugere a categoria — mas quem escolhe é o advogado.
@@ -19,6 +21,12 @@ export default function TriagemEntrevista({
   onEscolher: (categoria: string, cliente?: string) => void;
 }) {
   const [texto, setTexto] = useState("");
+  const [mostrarRoteiro, setMostrarRoteiro] = useState(false);
+  /* A qualificação fica guardada depois que a entrevista fecha: é ela que
+   * preenche o contrato, e o relato corrido já não a tem em campos separados. */
+  const [qualificacao, setQualificacao] = useState<Record<string, string | string[]> | null>(
+    null,
+  );
   const [resultado, setResultado] = useState<Triagem | null>(null);
   const [escolhida, setEscolhida] = useState<string | null>(null);
   const [analisando, setAnalisando] = useState(false);
@@ -65,6 +73,29 @@ export default function TriagemEntrevista({
 
   return (
     <div className={estilos.bloco}>
+      {mostrarRoteiro ? (
+        <EntrevistaComChamada
+          onConcluir={(respostas, relato) => {
+            setTexto(relato);
+            setQualificacao(respostas);
+            setMostrarRoteiro(false);
+          }}
+          onFechar={() => setMostrarRoteiro(false)}
+        />
+      ) : (
+        <button
+          type="button"
+          className={estilos.arquivo}
+          onClick={() => setMostrarRoteiro(true)}
+          style={{ marginBottom: 14 }}
+        >
+          {qualificacao ? "Voltar ao roteiro" : "Conduzir entrevista guiada"}
+        </button>
+      )}
+
+      {/* Entrevista, contrato, documentos — nesta ordem, que é a do escritório. */}
+      {qualificacao && !mostrarRoteiro && <PainelContrato respostas={qualificacao} />}
+
       <span className={estilos.rotulo}>TRIAGEM PELA ENTREVISTA</span>
       <p className={estilos.texto}>
         Cole o relato da entrevista ou envie um <code>.txt</code>. O sistema sugere a

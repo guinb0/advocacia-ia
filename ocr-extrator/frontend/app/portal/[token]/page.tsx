@@ -4,6 +4,8 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import * as portal from "@/lib/apiPortal";
 import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
+import { ChamadaJitsi } from "@/lib/chamadaJitsi";
+import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import estilos from "./portal.module.css";
 
 const SELO = {
@@ -208,6 +210,8 @@ function Checklist({
           </div>
         )}
 
+        <Chamada token={token} />
+
         {erro && <div className={estilos.erro}>{erro}</div>}
 
         {faltam.length > 0 && (
@@ -255,6 +259,110 @@ function Checklist({
           </button>
         </p>
       </div>
+    </div>
+  );
+}
+
+/* A entrevista por voz, do lado de quem é leigo.
+ *
+ * O cliente já provou quem é ao digitar a senha, então não há segunda barreira:
+ * o token deste link é o nome da sala, e o escritório espera do outro lado. A
+ * voz sobe pelo Jitsi e chega separada no navegador do advogado.
+ *
+ * Duas coisas ficam ditas na tela, e não por gentileza: que a conversa é
+ * transcrita, e que sem microfone liberado não há chamada. Um aviso genérico de
+ * erro do navegador não diria nem uma nem outra. */
+function Chamada({ token }: { token: string }) {
+  const [estado, setEstado] = useState<EstadoChamada>("fora");
+  const [entrando, setEntrando] = useState(false);
+  const [mudo, setMudo] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const chamada = useRef<ChamadaJitsi | null>(null);
+  if (chamada.current === null && typeof window !== "undefined") {
+    chamada.current = new ChamadaJitsi("cliente", { onEstado: setEstado, onErro: setErro });
+  }
+
+  // Fechar a aba sem soltar deixaria o microfone aceso e a sala ocupada.
+  useEffect(() => () => chamada.current?.desligar(), []);
+
+  async function entrar() {
+    setErro(null);
+    setEntrando(true);
+    try {
+      await chamada.current?.entrar(token);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
+      setErro(
+        /NotAllowedError|denied/i.test(m)
+          ? "Você precisa permitir o uso do microfone para conversar por aqui."
+          : m,
+      );
+    } finally {
+      setEntrando(false);
+    }
+  }
+
+  const naChamada = estado !== "fora";
+
+  return (
+    <div className={estilos.chamada}>
+      <span className={estilos.secao}>CONVERSAR COM O ESCRITÓRIO</span>
+
+      {!naChamada ? (
+        <>
+          <p className={estilos.texto}>
+            Se o escritório combinou uma conversa por voz, toque abaixo. Você vai falar
+            pelo próprio celular, sem instalar nada.
+          </p>
+          <button
+            type="button"
+            className={estilos.botao}
+            onClick={entrar}
+            disabled={entrando}
+          >
+            {entrando ? "Abrindo…" : "Entrar na chamada"}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className={estilos.chamadaEstado}>
+            {estado === "falando"
+              ? "Você está na chamada. Pode falar."
+              : estado === "encerrada"
+                ? "A chamada foi encerrada."
+                : estado === "conectando"
+                  ? "Conectando…"
+                  : "Esperando o escritório entrar. Deixe esta tela aberta."}
+          </p>
+
+          <div className={estilos.chamadaAcoes}>
+            <button
+              type="button"
+              className={estilos.enviar}
+              onClick={() => setMudo(chamada.current?.alternarMudo() ?? false)}
+            >
+              {mudo ? "Voltar a falar" : "Desligar meu microfone"}
+            </button>
+            <button
+              type="button"
+              className={estilos.enviar}
+              onClick={() => {
+                chamada.current?.desligar();
+                setMudo(false);
+              }}
+            >
+              Sair da chamada
+            </button>
+          </div>
+
+          <p className={estilos.chamadaNota}>
+            A conversa é transcrita pelo escritório para virar o registro do seu caso.
+          </p>
+        </>
+      )}
+
+      {erro && <div className={estilos.erro}>{erro}</div>}
     </div>
   );
 }

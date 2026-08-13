@@ -222,6 +222,11 @@ compara a lista do código com o `.docx` item a item — nome, numeração e obr
 | `DELETE` | `/api/entregas/{id}` | remove a entrega e o arquivo |
 | `POST` | `/api/extrair` | multipart: `arquivo`, `idioma` (`pt`), `tipo` (`auto` ou código) |
 | `GET` | `/api/tipos` | tipos de documento suportados |
+| `POST` | `/api/contrato` | preenche o modelo oficial com a entrevista e devolve o .docx |
+| `GET` | `/api/contrato/campos` | marcadores que o modelo pede, e quais a entrevista não responde |
+| `GET` | `/api/cep/{cep}` | endereço a partir do CEP (BrasilAPI, com ViaCEP de reserva) |
+| `GET` | `/api/chamada/config` | servidores ICE da chamada de voz (público) |
+| `WS` | `/ws/chamada/{sala}?papel=` | sinalização WebRTC; `sala` é o token do portal |
 | `GET` | `/api/saude` | status do modelo |
 | `POST` | `/api/aquecer` | pré-carrega os modelos |
 | `GET` | `/api/temp/{id}.json\|.xml` | baixa o arquivo temporário |
@@ -273,6 +278,11 @@ apontar para outro host, defina `NEXT_PUBLIC_OCR_API`.
 .\.venv\Scripts\python.exe -m tests.test_validators     # dígitos verificadores
 .\.venv\Scripts\python.exe -m tests.test_categorias     # checklist do código vs. o .docx
 .\.venv\Scripts\python.exe -m tests.test_casos          # fluxo do caso (banco temporário)
+.\.venv\Scripts\python.exe -m tests.test_chamada        # sinalização da chamada de voz
+.\.venv\Scripts\python.exe -m tests.test_transcricao    # janela do texto ao vivo (sem Whisper)
+.\.venv\Scripts\python.exe -m tests.test_consultas      # CEP -> endereço (sem rede)
+.\.venv\Scripts\python.exe -m tests.test_roteiros       # roteiro como a tela o recebe
+.\.venv\Scripts\python.exe -m tests.test_contrato       # contrato: cláusulas intactas, .docx válido
 .\.venv\Scripts\python.exe -m tests.test_pipeline       # end-to-end com documentos sintéticos
 .\.venv\Scripts\python.exe -m tests.test_concorrencia   # 3 OCRs simultâneos
 .\.venv\Scripts\python.exe -m tests.bench               # custo do classificador de orientação
@@ -305,6 +315,11 @@ app/                     backend
   extractors.py          classificação do tipo, geometria da página e extração
   validators.py          dígitos verificadores dos documentos brasileiros
   quality.py             métricas de legibilidade e pré-processamento
+  chamada.py             salas da chamada de voz: repassa SDP/ICE, não toca no áudio
+  consultas.py           bases públicas que adiantam a entrevista (CEP)
+  contrato.py            preenche o .docx de honorários do escritório
+docs/                    modelos do escritório: checklists e o contrato oficial
+  transcricao.py         janela do texto ao vivo e o Whisper (processo à parte)
 frontend/                Next.js 16 (App Router) + React 19
   app/page.tsx           alterna entre a lista de casos, o checklist e a análise avulsa
   components/
@@ -313,7 +328,10 @@ frontend/                Next.js 16 (App Router) + React 19
     ItemChecklistLinha   um item: status, envio e as entregas já feitas
     PedidoCliente.tsx    o texto para mandar ao cliente, com botão de copiar
     Resultado.tsx        painéis da análise avulsa (campos, qualidade, JSON/XML)
+    ChamadaAoVivo.tsx    chamada com o cliente e a transcrição da voz dele
   lib/api.ts             cliente HTTP do backend
+  lib/chamadaJitsi.ts    chamada sobre lib-jitsi-meet e a faixa do entrevistado
+  lib/transcricao.ts     captura de áudio e streaming para o Whisper
   lib/types.ts           espelho tipado do JSON da API
   lib/useCasos.ts        estado dos casos, do checklist e dos envios
   lib/useExtracao.ts     estado da análise avulsa
@@ -353,6 +371,37 @@ corretamente, então compensa. A primeira chamada do processo carrega os modelos
 (~3s a mais) — use `POST /api/aquecer` para tirar isso do caminho do primeiro upload.
 
 ## Limitações conhecidas
+
+- **O contrato é preenchido, não redigido.** As cláusulas, percentuais, foro e as
+  inscrições na OAB saem do `docs/CONTRATO*.docx` palavra por palavra — nenhum
+  modelo de linguagem escreve nada ali. Trocar de versão é soltar o arquivo novo
+  em `docs/`; o mais recente vence. Campo que a entrevista não respondeu sai
+  entre colchetes, à vista, em vez de em branco.
+- **O modelo do contrato não está no repositório.** Este repo é público, e o
+  arquivo traz a tabela de honorários, o CNPJ e as inscrições na OAB do
+  escritório. Para gerar contratos, copie o `.docx` oficial para `docs/` — sem
+  ele, a rota `/api/contrato` responde 503 com a explicação e o
+  `tests.test_contrato` pula a parte que depende do arquivo.
+
+- **Só o CEP é preenchido por base pública.** CPF não vira nome: a consulta
+  oficial é da Receita Federal, exige certificado digital e convênio, e os sites
+  que prometem isso de graça vendem base vazada — usar um deles põe o escritório
+  do lado errado da LGPD. Com o CPF dá para conferir o dígito verificador, o que
+  já pega o erro de digitação. PIS/NIT também não: o CNIS é do INSS e pede o
+  gov.br do próprio cliente.
+- **O texto ao vivo é aproximação.** O parcial transcreve só a cauda da fala, com
+  menos contexto que o texto final — que é refeito sobre o áudio inteiro quando a
+  resposta fecha. Divergências entre o que apareceu enquanto se falava e o texto
+  final são esperadas; o registro é o final.
+
+- **A chamada depende do stack do Jitsi no ar.** São quatro contêineres (web,
+  prosody, jicofo, videobridge) que ficam de pé entre execuções, como o Keycloak.
+  Sem eles, a tela avisa e a entrevista presencial (microfone da máquina) continua
+  funcionando. Subir: `cd docker-jitsi-meet; docker compose up -d`.
+- **O cliente precisa de HTTPS** para o navegador liberar o microfone. Em `localhost`
+  funciona; num IP de rede local sem TLS, o `getUserMedia` nem existe. Publicar o
+  portal por trás de um certificado é pré-requisito da chamada, não detalhe de
+  produção.
 
 - **PDFs de até 10 páginas** são aceitos e renderizados localmente para OCR (limite de 20MB por arquivo).
   PDFs protegidos por senha, corrompidos ou grandes demais para conversão precisam ser divididos ou exportados como imagem.

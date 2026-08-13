@@ -1,0 +1,362 @@
+"""Gera o contrato de honorários a partir do modelo do escritório.
+
+O modelo é o .docx oficial (`docs/CONTRATO oficial.docx`), com o timbre, as
+cláusulas, os percentuais e as inscrições na OAB já escritos. Aqui só se
+preenchem os campos entre colchetes com o que a entrevista respondeu:
+
+    [nome da pessoa], [nacionalidade], [estado civil], [profissão], inscrito(a)
+    no CPF sob o nº [CPF], portador(a) do RG nº [RG – número], ...
+
+POR QUE NÃO SE GERA O DOCUMENTO DO ZERO
+
+Um contrato de honorários é peça jurídica: percentual, foro eleito, cláusula de
+rescisão e as OAB do sócio têm efeito legal. Reescrever esse texto — ainda que
+com um modelo de linguagem — é assumir responsabilidade por redação que o
+escritório revisou e adotou. O programa preenche lacunas; ele não redige
+cláusula, não reordena, não resume. O que sai é o modelo, palavra por palavra,
+com os dados do cliente nos lugares marcados.
+
+COMO O PREENCHIMENTO PRESERVA A FORMATAÇÃO
+
+Um .docx é um zip com XML dentro. O texto de um parágrafo vive espalhado em
+vários `<w:t>`, e o Word os reparte por qualquer motivo — uma correção
+ortográfica no meio de "[CPF]" basta para virar "[CP" + "F]". Por isso a troca é
+feita por intervalo de caracteres sobre o parágrafo inteiro, e não por
+`str.replace` em cada nó: acha-se o marcador no texto concatenado e reescrevem-se
+só os nós que ele atravessa. O resto do parágrafo — negrito, fonte, tabulação —
+não é tocado.
+
+CAMPO SEM RESPOSTA CONTINUA APARECENDO
+
+Se a entrevista não trouxe o e-mail, o contrato sai com `[e-mail]` à vista. É
+proposital: um espaço em branco no meio da qualificação passa despercebido na
+revisão e vira contrato assinado com dado faltando. O colchete não passa.
+"""
+
+from __future__ import annotations
+
+import io
+import re
+import unicodedata
+import zipfile
+from datetime import date
+from pathlib import Path
+from typing import Any
+from xml.etree import ElementTree as ET
+
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+BASE = Path(__file__).resolve().parent.parent
+DIR_DOCS = BASE / "docs"
+
+MESES = (
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+)
+
+
+class ErroContrato(Exception):
+    """Falha que o usuário precisa ver — modelo ausente ou ilegível."""
+
+
+# ------------------------------------------------------------------ modelo
+
+
+def caminho_modelo() -> Path:
+    """O .docx oficial. Trocar de versão é soltar o arquivo novo em `docs/`.
+
+    O nome não é fixo de propósito: o escritório versiona o contrato pela data
+    no próprio nome do arquivo, como já faz com os checklists.
+    """
+    candidatos = sorted(DIR_DOCS.glob("CONTRATO*.docx"))
+    if not candidatos:
+        raise ErroContrato(
+            "Modelo de contrato não encontrado em docs/ (esperado um CONTRATO*.docx)."
+        )
+    # O mais recente vence, para a versão nova entrar sem mexer no código.
+    return max(candidatos, key=lambda p: p.stat().st_mtime)
+
+
+# -------------------------------------------------------------- marcadores
+
+
+def _chave(marcador: str) -> str:
+    """Normaliza "[RG – órgão + UF]" em "rg orgao uf".
+
+    Assim o preenchimento sobrevive ao modelo ser reeditado no Word, que troca
+    hífen por travessão, duplica espaço e alterna maiúsculas sem avisar.
+    """
+    s = marcador.strip("[]").strip().lower()
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+_MARCADOR = re.compile(r"\[[^\[\]\n]{1,60}\]")
+
+#: Rótulos que o modelo deixa em branco para completar à mão, sem colchete.
+#:
+#: No bloco de assinatura o cliente aparece como "[Nome do Contratante]" seguido
+#: de "CPF:" — o nome tem marcador, o CPF não. Preenchendo só os colchetes, o
+#: contrato sai com o CPF na qualificação e um "CPF:" vazio embaixo da linha de
+#: assinatura, que é justamente onde o cartório e a parte contrária olham.
+#:
+#: A expressão exige que o rótulo esteja no FIM do parágrafo (aceitando um
+#: tracejado de preenchimento). É o que o separa do "inscrito(a) no CPF sob o nº"
+#: da qualificação, que não leva dois-pontos e não termina o parágrafo.
+ROTULOS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"CPF:\s*_*\s*$"), "CPF"),
+)
+
+
+def _definir_texto(no: ET.Element, texto: str) -> None:
+    no.text = texto
+    # Sem isto o Word come espaço no começo e no fim do nó, e a qualificação
+    # sai com as palavras grudadas.
+    no.set(XML_SPACE, "preserve")
+
+
+def _reescrever(nos: list[ET.Element], partes: list[str], ini: int, fim: int, valor: str) -> None:
+    """Substitui o intervalo [ini, fim) do texto do parágrafo por `valor`.
+
+    Os deslocamentos são sobre o texto CONCATENADO; aqui eles voltam a ser
+    posições dentro de cada nó, e só os nós atravessados pelo intervalo são
+    tocados. É isso que preserva negrito, fonte e tabulação em volta.
+    """
+    primeiro = ultimo = 0
+    desloc_ini = desloc_fim = 0
+    acumulado = 0
+    for i, parte in enumerate(partes):
+        comeco, termino = acumulado, acumulado + len(parte)
+        if comeco <= ini < termino:
+            primeiro, desloc_ini = i, ini - comeco
+        if comeco < fim <= termino:
+            ultimo, desloc_fim = i, fim - comeco
+        acumulado = termino
+
+    if primeiro == ultimo:
+        _definir_texto(
+            nos[primeiro], partes[primeiro][:desloc_ini] + valor + partes[primeiro][desloc_fim:]
+        )
+        return
+
+    # O valor herda a formatação do nó onde o trecho COMEÇA — que é a do próprio
+    # marcador, e portanto a que o escritório desenhou.
+    _definir_texto(nos[primeiro], partes[primeiro][:desloc_ini] + valor)
+    for k in range(primeiro + 1, ultimo):
+        _definir_texto(nos[k], "")
+    _definir_texto(nos[ultimo], partes[ultimo][desloc_fim:])
+
+
+def _preencher_paragrafo(nos: list[ET.Element], valores: dict[str, str]) -> tuple[int, set[str]]:
+    """Troca os marcadores de um parágrafo. Devolve (trocas, não preenchidos)."""
+    trocas = 0
+    faltando: set[str] = set()
+    protegidos = 0  # marcadores já examinados e deixados como estão
+
+    while True:
+        partes = [n.text or "" for n in nos]
+        inteiro = "".join(partes)
+
+        achado = None
+        for m in list(_MARCADOR.finditer(inteiro))[protegidos:]:
+            chave = _chave(m.group(0))
+            valor = valores.get(chave, "").strip()
+            if valor:
+                achado = (m.start(), m.end(), valor)
+                break
+            if chave:
+                faltando.add(chave)
+            protegidos += 1
+
+        if achado is None:
+            trocas += _preencher_rotulos(nos, valores)
+            return trocas, faltando
+
+        _reescrever(nos, partes, *achado)
+        trocas += 1
+
+
+def _preencher_rotulos(nos: list[ET.Element], valores: dict[str, str]) -> int:
+    """Completa rótulo sem colchete — hoje, o "CPF:" da linha de assinatura."""
+    trocas = 0
+    for expressao, campo in ROTULOS:
+        valor = valores.get(_chave(f"[{campo}]"), "").strip()
+        if not valor:
+            continue
+        partes = [n.text or "" for n in nos]
+        m = expressao.search("".join(partes))
+        if m is None:
+            continue
+        _reescrever(nos, partes, m.start(), m.end(), f"{campo}: {valor}")
+        trocas += 1
+    return trocas
+
+
+#: Cabeçalho que o Word espera. O `standalone="yes"` e o CRLF são os que ele
+#: próprio escreve; o ElementTree não sabe emitir nenhum dos dois.
+DECLARACAO = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+
+
+def _registrar_prefixos(xml: bytes) -> None:
+    """Mantém os prefixos originais (w, mc, wp14…) na hora de reserializar.
+
+    Sem isto o ElementTree renomeia tudo para ns0, ns1, ns2 — e aí o atributo
+    `mc:Ignorable="w14 wp14"`, que cita prefixos pelo NOME, passa a apontar para
+    prefixos que não existem mais. O arquivo continua sendo XML válido, mas o
+    Word o recusa como corrompido, e a mensagem não diz por quê.
+    """
+    for _, (prefixo, uri) in ET.iterparse(io.BytesIO(xml), events=["start-ns"]):
+        ET.register_namespace(prefixo, uri)
+
+
+def _serializar(raiz: ET.Element) -> bytes:
+    return DECLARACAO + ET.tostring(raiz, encoding="utf-8", xml_declaration=False)
+
+
+def _partes_com_texto(zf: zipfile.ZipFile) -> list[str]:
+    """Documento, cabeçalhos e rodapés — o timbre também tem marcador."""
+    return [
+        n
+        for n in zf.namelist()
+        if re.fullmatch(r"word/(document|header\d*|footer\d*)\.xml", n)
+    ]
+
+
+def preencher(valores: dict[str, str], modelo: Path | None = None) -> tuple[bytes, list[str]]:
+    """Devolve (docx preenchido, marcadores que ficaram sem resposta)."""
+    caminho = modelo or caminho_modelo()
+    try:
+        origem = zipfile.ZipFile(caminho)
+    except Exception as exc:
+        raise ErroContrato(f"Não foi possível abrir o modelo: {exc}") from exc
+
+    normalizados = {_chave(f"[{k}]"): v for k, v in valores.items()}
+    faltando: set[str] = set()
+
+    with origem:
+        editados: dict[str, bytes] = {}
+        for nome in _partes_com_texto(origem):
+            bruto = origem.read(nome)
+            _registrar_prefixos(bruto)
+            raiz = ET.fromstring(bruto)
+            mudou = 0
+            # `iter` alcança também os parágrafos dentro de caixas de texto, que
+            # é onde mora o cabeçalho deste modelo — um percurso só pelos filhos
+            # diretos deixaria o nome do contratante sem preencher.
+            for paragrafo in raiz.iter(W + "p"):
+                nos = paragrafo.findall(f".//{W}t")
+                if not nos:
+                    continue
+                trocas, ausentes = _preencher_paragrafo(nos, normalizados)
+                mudou += trocas
+                faltando |= ausentes
+            if mudou:
+                editados[nome] = _serializar(raiz)
+
+        destino = io.BytesIO()
+        # Reescreve o zip inteiro preservando o que não foi tocado: estilos,
+        # fontes embutidas, imagens do timbre.
+        with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as saida:
+            for item in origem.infolist():
+                saida.writestr(item, editados.get(item.filename) or origem.read(item.filename))
+
+    return destino.getvalue(), sorted(faltando)
+
+
+def marcadores_do_modelo(modelo: Path | None = None) -> list[str]:
+    """Todos os campos que o modelo pede. Serve para conferir o mapeamento."""
+    caminho = modelo or caminho_modelo()
+    achados: set[str] = set()
+    with zipfile.ZipFile(caminho) as zf:
+        for nome in _partes_com_texto(zf):
+            raiz = ET.fromstring(zf.read(nome))
+            for paragrafo in raiz.iter(W + "p"):
+                texto = "".join(t.text or "" for t in paragrafo.iter(W + "t"))
+                achados.update(_chave(m.group(0)) for m in _MARCADOR.finditer(texto))
+    return sorted(c for c in achados if c)
+
+
+# ------------------------------------------------- entrevista -> contrato
+
+
+def _partir_rg(bruto: str) -> tuple[str, str]:
+    """Separa "1234567 SSP/PA" em número e órgão expedidor.
+
+    Rede de segurança para quando o número vier com o órgão colado no mesmo
+    campo — o roteiro pergunta as duas coisas separadas, mas nada impede alguém
+    de digitar tudo junto. Não dando para separar com segurança, o número leva
+    tudo e o órgão fica em branco: melhor o colchete aparecendo no contrato do
+    que um órgão expedidor deduzido de um palpite de regex.
+    """
+    texto = (bruto or "").strip()
+    if not texto:
+        return "", ""
+    m = re.match(r"^\s*([\d][\d.\-\s]*[\dxX]?)\s*(.*)$", texto)
+    if not m:
+        return texto, ""
+    numero = m.group(1).strip(" -")
+    resto = m.group(2).strip(" -–,")
+    return numero, resto
+
+
+def _municipio_do_endereco(endereco: str) -> str:
+    """Tira "Belém/PA" de um endereço completo — é onde o contrato é assinado.
+
+    Casa com o formato que a consulta de CEP monta (ver `consultas.py`). Não
+    achando, devolve vazio e o campo fica visível para preencher à mão.
+    """
+    m = re.search(r"([A-Za-zÀ-ÿ'.\s]{2,40})/([A-Z]{2})\b", endereco or "")
+    return f"{m.group(1).strip()}/{m.group(2)}" if m else ""
+
+
+def por_extenso(dia: date) -> str:
+    return f"{dia.day} de {MESES[dia.month - 1]} de {dia.year}"
+
+
+def valores_da_entrevista(
+    respostas: dict[str, Any], municipio: str = "", quando: date | None = None
+) -> dict[str, str]:
+    """Traduz as respostas do roteiro para os campos do modelo."""
+    def r(chave: str) -> str:
+        valor = respostas.get(chave, "")
+        if isinstance(valor, list):
+            valor = ", ".join(str(v) for v in valor)
+        return str(valor or "").strip()
+
+    endereco = r("endereco")
+
+    # O roteiro pergunta número, órgão e UF em campos próprios. Se o órgão vier
+    # vazio, ainda se tenta separar do número — entrevista feita às pressas põe
+    # "1234567 SSP/PA" tudo na primeira caixa.
+    numero_rg = r("rg")
+    orgao_rg = "/".join(p for p in (r("rg_orgao"), r("rg_uf")) if p)
+    if not orgao_rg:
+        numero_rg, orgao_rg = _partir_rg(numero_rg)
+
+    return {
+        "nome da pessoa": r("nome"),
+        "nacionalidade": r("nacionalidade"),
+        # O roteiro oferece "Casado(a)" com maiúscula, que é como se lê num
+        # botão; no meio da qualificação ("brasileira, casado(a), carteira") a
+        # maiúscula destoa. A forma "(a)" fica: é a mesma do modelo, que já
+        # escreve "inscrito(a)" e "residente e domiciliado(a)" — e não temos o
+        # gênero do cliente para flexionar sem chutar.
+        "estado civil": r("estado_civil").lower(),
+        "profissão": r("profissao"),
+        "CPF": r("cpf"),
+        "RG – número": numero_rg,
+        "RG – órgão + UF": orgao_rg,
+        "endereço completo": endereco,
+        "telefone": r("telefone"),
+        "e-mail": r("email"),
+        "Município": municipio.strip() or _municipio_do_endereco(endereco),
+        "data": por_extenso(quando or date.today()),
+        "Nome do Contratante": r("nome"),
+    }
+
+
+def gerar(
+    respostas: dict[str, Any], municipio: str = "", quando: date | None = None
+) -> tuple[bytes, list[str]]:
+    return preencher(valores_da_entrevista(respostas, municipio, quando))

@@ -4,11 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 
 import { consultarPortal, gerarPortal } from "@/lib/api";
 import type { PortalGerado } from "@/lib/types";
+import ChamadaAoVivo from "./ChamadaAoVivo";
 import estilos from "./PainelPortal.module.css";
 
 /** Link e senha que o cliente usa para enviar documentos sozinho. */
 export default function PainelPortal({ casoId }: { casoId: string }) {
   const [url, setUrl] = useState<string | null>(null);
+  /* O mesmo token que abre o portal nomeia a sala da chamada — o cliente já o
+   * tem no link, e são 256 bits: ninguém entra na sala por adivinhação. */
+  const [token, setToken] = useState<string | null>(null);
   const [ativo, setAtivo] = useState(false);
   /* A senha só existe em memória, e só logo após a geração: o backend guarda
    * apenas o hash. Sair da tela a perde de vez — por isso o aviso. */
@@ -24,6 +28,7 @@ export default function PainelPortal({ casoId }: { casoId: string }) {
         if (cancelado) return;
         setAtivo(p.ativo);
         setUrl(p.url);
+        setToken(p.token);
       })
       .catch(() => {
         /* a tela mostra o botão de gerar */
@@ -40,6 +45,7 @@ export default function PainelPortal({ casoId }: { casoId: string }) {
       const p = await gerarPortal(casoId);
       setRecemGerado(p);
       setUrl(p.url);
+      setToken(p.token);
       setAtivo(true);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível gerar o link.");
@@ -60,78 +66,84 @@ export default function PainelPortal({ casoId }: { casoId: string }) {
   }
 
   return (
-    <div className={estilos.bloco}>
-      <span className={estilos.rotulo}>PORTAL DO CLIENTE</span>
+    <>
+      <div className={estilos.bloco}>
+        <span className={estilos.rotulo}>PORTAL DO CLIENTE</span>
 
-      {erro && <div className={estilos.erro}>{erro}</div>}
+        {erro && <div className={estilos.erro}>{erro}</div>}
 
-      {!ativo ? (
-        <>
-          <p className={estilos.texto}>
-            Gere um link com senha para o cliente enviar os documentos sozinho e acompanhar
-            o que ainda falta.
-          </p>
-          <button type="button" className={estilos.botao} onClick={gerar} disabled={gerando}>
-            {gerando ? "Gerando…" : "Gerar link e senha"}
-          </button>
-        </>
-      ) : (
-        <>
-          <div className={estilos.linha}>
-            <span className={estilos.valor}>{url}</span>
-            <button
-              type="button"
-              className={estilos.acao}
-              onClick={() => url && copiar(url, "url")}
-            >
-              {copiado === "url" ? "✓" : "Copiar"}
+        {!ativo ? (
+          <>
+            <p className={estilos.texto}>
+              Gere um link com senha para o cliente enviar os documentos sozinho e acompanhar
+              o que ainda falta.
+            </p>
+            <button type="button" className={estilos.botao} onClick={gerar} disabled={gerando}>
+              {gerando ? "Gerando…" : "Gerar link e senha"}
             </button>
-          </div>
-
-          {recemGerado ? (
-            <>
-              <div className={estilos.linha}>
-                <span className={`${estilos.valor} ${estilos.senha}`}>{recemGerado.senha}</span>
-                <button
-                  type="button"
-                  className={estilos.acao}
-                  onClick={() => copiar(recemGerado.senha, "senha")}
-                >
-                  {copiado === "senha" ? "✓" : "Copiar"}
-                </button>
-              </div>
-              <p className={estilos.aviso}>{recemGerado.aviso}</p>
+          </>
+        ) : (
+          <>
+            <div className={estilos.linha}>
+              <span className={estilos.valor}>{url}</span>
               <button
                 type="button"
                 className={estilos.acao}
-                onClick={() =>
-                  copiar(
-                    `Olá! Envie seus documentos por aqui: ${recemGerado.url}\nSenha: ${recemGerado.senha}`,
-                    "msg",
-                  )
-                }
+                onClick={() => url && copiar(url, "url")}
               >
-                {copiado === "msg" ? "✓ Mensagem copiada" : "Copiar mensagem pronta"}
+                {copiado === "url" ? "✓" : "Copiar"}
               </button>
-            </>
-          ) : (
-            <p className={estilos.texto}>
-              A senha foi mostrada só na geração e não pode ser consultada. Se o cliente
-              perdeu, gere outra — a anterior deixa de valer.
-            </p>
-          )}
+            </div>
 
-          <button
-            type="button"
-            className={estilos.trocar}
-            onClick={gerar}
-            disabled={gerando}
-            title="A senha e o link anteriores param de funcionar"
-          >
-            {gerando ? "Gerando…" : "Gerar nova senha"}
-          </button>
-        </>
-      )}
-    </div>
+            {recemGerado ? (
+              <>
+                <div className={estilos.linha}>
+                  <span className={`${estilos.valor} ${estilos.senha}`}>{recemGerado.senha}</span>
+                  <button
+                    type="button"
+                    className={estilos.acao}
+                    onClick={() => copiar(recemGerado.senha, "senha")}
+                  >
+                    {copiado === "senha" ? "✓" : "Copiar"}
+                  </button>
+                </div>
+                <p className={estilos.aviso}>{recemGerado.aviso}</p>
+                <button
+                  type="button"
+                  className={estilos.acao}
+                  onClick={() =>
+                    copiar(
+                      `Olá! Envie seus documentos por aqui: ${recemGerado.url}\nSenha: ${recemGerado.senha}`,
+                      "msg",
+                    )
+                  }
+                >
+                  {copiado === "msg" ? "✓ Mensagem copiada" : "Copiar mensagem pronta"}
+                </button>
+              </>
+            ) : (
+              <p className={estilos.texto}>
+                A senha foi mostrada só na geração e não pode ser consultada. Se o cliente
+                perdeu, gere outra — a anterior deixa de valer.
+              </p>
+            )}
+
+            <button
+              type="button"
+              className={estilos.trocar}
+              onClick={gerar}
+              disabled={gerando}
+              title="A senha e o link anteriores param de funcionar"
+            >
+              {gerando ? "Gerando…" : "Gerar nova senha"}
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Trocar a senha troca a sala: a chave remonta a chamada em vez de deixá-la
+          apontando para uma sala que o cliente não alcança mais. */}
+      {ativo && token && <ChamadaAoVivo key={token} sala={token} />}
+    </>
   );
 }

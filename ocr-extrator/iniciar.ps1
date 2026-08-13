@@ -17,7 +17,12 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $PortaBackend = 8100
+$PortaTranscricao = 8200
 $UrlKeycloak  = "http://localhost:8180"
+# Servidor de chamadas (Jitsi). Sobe com:
+#   cd ..\..\docker-jitsi-meet; docker compose up -d
+# A porta e 8081 e nao a 8000 do padrao porque a 8000 ja estava ocupada aqui.
+$UrlJitsi = "http://localhost:8081"
 
 # ---------------------------------------------------------------- keycloak
 # O backend so exige token quando KEYCLOAK_URL esta definida (ver app/auth.py):
@@ -55,6 +60,18 @@ $env:NEXT_PUBLIC_KEYCLOAK_REALM     = "advocacia"
 $env:NEXT_PUBLIC_KEYCLOAK_CLIENT_ID = "acervo-frontend"
 $env:ORIGENS_PERMITIDAS             = "http://localhost:$Porta,http://127.0.0.1:$Porta"
 $env:URL_PORTAL                     = "http://localhost:$Porta"
+$env:NEXT_PUBLIC_JITSI_URL          = $UrlJitsi
+
+# O Jitsi nao sobe junto: e um stack proprio (Prosody, Jicofo, Videobridge) que
+# fica de pe entre execucoes, como o Keycloak. Aviso em vez de derrubar tudo --
+# entrevista presencial, pelo microfone da maquina, funciona sem ele.
+try {
+    Invoke-WebRequest "$UrlJitsi/libs/lib-jitsi-meet.min.js" -Method Head -UseBasicParsing -TimeoutSec 3 | Out-Null
+    Write-Host "Chamadas  : $UrlJitsi (Jitsi no ar)" -ForegroundColor Green
+} catch {
+    Write-Host "AVISO: servidor de chamadas fora do ar em $UrlJitsi." -ForegroundColor Yellow
+    Write-Host "       Suba com: cd ..\..\docker-jitsi-meet; docker compose up -d" -ForegroundColor DarkGray
+}
 
 # Segredo que assina as sessoes do portal do cliente. Sorteado uma vez e guardado
 # em dados/ (que o .gitignore ja cobre), para as sessoes sobreviverem a um
@@ -92,6 +109,7 @@ if ($Prod -and -not (Test-Path ".\frontend\.next\BUILD_ID")) {
 
 Write-Host "`nBackend  : http://127.0.0.1:$PortaBackend  (docs interativos em /docs)" -ForegroundColor Cyan
 Write-Host "Frontend : http://localhost:$Porta" -ForegroundColor Cyan
+Write-Host "Transcricao : http://127.0.0.1:$PortaTranscricao  (Whisper, processo separado)" -ForegroundColor Cyan
 if (-not $SemAuth) {
     Write-Host "Keycloak : $UrlKeycloak  (admin/admin) -- login do app: guinb / 123" -ForegroundColor Cyan
 }
@@ -100,6 +118,21 @@ Write-Host "Ctrl+C encerra o backend e o frontend (o Keycloak segue no container
 # --timeout-keep-alive 65: o padrao do uvicorn e 5s, curto demais para o pool de
 # conexoes de um cliente HTTP moderno, que reusaria um socket ja fechado do lado
 # do servidor e quebraria a requisicao com "socket hang up" (ECONNRESET).
+# Transcricao em processo proprio: o Whisper e o PaddleOCR disputavam CPU no
+# mesmo processo (11s de audio levavam 227s) e as DLLs de MKL/OpenMP dos dois
+# conflitavam no Windows.
+$env:NEXT_PUBLIC_TRANSCRICAO_API = "http://127.0.0.1:$PortaTranscricao"
+$transcricao = Start-Process -PassThru -NoNewWindow `
+    -FilePath ".\.venv\Scripts\python.exe" `
+    -ArgumentList "-m", "uvicorn", "app.servico_transcricao:app", "--host", "127.0.0.1",
+                  "--port", "$PortaTranscricao",
+                  # Ping desligado: a inferencia do Whisper segura o GIL o
+                  # bastante para o loop nao responder ao ping a tempo, e a
+                  # conexao morria no meio da gravacao. Em 127.0.0.1 o ping nao
+                  # agrega liveness. Se um dia isto for para a rede, mover a
+                  # inferencia para um ProcessPoolExecutor em vez de religar.
+                  "--ws-ping-interval", "0", "--ws-ping-timeout", "0"
+
 $backend = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
@@ -120,8 +153,10 @@ try {
     if ($Prod) { npm run start -- -p $Porta } else { npm run dev -- -p $Porta }
 } finally {
     Pop-Location -ErrorAction SilentlyContinue
-    if ($backend -and -not $backend.HasExited) {
-        Write-Host "`nEncerrando o backend..." -ForegroundColor DarkGray
-        Stop-Process -Id $backend.Id -Force -ErrorAction SilentlyContinue
+    foreach ($p in @($backend, $transcricao)) {
+        if ($p -and -not $p.HasExited) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        }
     }
+    Write-Host "`nBackend e transcricao encerrados." -ForegroundColor DarkGray
 }
