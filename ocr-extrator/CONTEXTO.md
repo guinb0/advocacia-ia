@@ -1,29 +1,170 @@
 # Acervo — onde o projeto está
 
-## Checkpoint da vetorização — pausada em 11/08/2026
+## Checkpoint da vetorização — medido em 13/08/2026, 14h
 
-A vetorização foi pausada manualmente por instabilidade da internet/banco remoto.
-A tarefa `AdvocaciaIA-SincronizarRAG` está **desabilitada** e não voltará a rodar
-sozinha até ser reativada.
-
-- textos ingeridos: **5.824 documentos / 52.926 chunks / 1.745 processos**;
-- embeddings gravados: **32.967 (62,29%)**;
-- pendentes: **19.959**;
-- fonte em andamento: `trt8_juris`;
-- DJEN, TST e DEJT ainda aguardam vetorização;
-- a carga é idempotente e retoma pelos chunks cujo `embedding IS NULL`.
-
-Quando a conexão estiver estável, retomar com:
+Confira sozinho, a qualquer momento, em vez de confiar nos números abaixo:
 
 ```powershell
-Enable-ScheduledTask -TaskName 'AdvocaciaIA-SincronizarRAG'
+.venv\Scripts\python.exe -m scripts.estado_rag
+.venv\Scripts\python.exe -m scripts.estado_rag --busca "acidente com o dedo na máquina"
+```
+
+O `--busca` prova o caminho inteiro (texto → embedding → HNSW → processo) e é o
+único que gasta uma chamada de embeddings.
+
+**Estado:** 5.824 documentos / 52.926 chunks / 1.745 processos.
+**42.490 embeddings (80,28%)**, 10.436 pendentes.
+
+| origem | vetorizados |
+|---|---|
+| `trt8_juris` | 42.490 / 43.106 (98,57%) |
+| `tst` | 0 / 5.122 |
+| `djen` | 0 / 4.660 |
+| `dejt` | 0 / 38 |
+
+O TRT8 está praticamente pronto; o que falta é inteiro das outras três fontes,
+que ainda não começaram. A busca por similaridade já funciona — a conferência da
+entrevista cita processos —, só não alcança precedente do TST.
+
+**A tarefa NÃO está desabilitada**, ao contrário do que este documento dizia
+até 13/08. `AdvocaciaIA-SincronizarRAG` está `Ready`, com execução agendada, e
+rodou em 13/08 às 09:27 (terminada: `LastTaskResult` 0x41306). Ela volta a rodar
+sozinha.
+
+### A retomada que travava em silêncio — corrigida em 13/08/2026
+
+Medido antes da correção: um `scripts.vetorizar_pendentes --lote 64` iniciado às
+13:46:53 seguia vivo 25 minutos depois com **1,1s de CPU acumulada, zero bytes de
+log e a contagem parada** em 42.490, com a conexão `Established` desde 13:46:54.
+Ele conectou e ficou pendurado esperando uma resposta que nunca veio.
+
+Eram dois defeitos somados, e cada um sozinho já bastava:
+
+1. **Nada tinha prazo depois da conexão aberta.** O `connect_timeout` cobre só o
+   aperto de mão; uma leitura que não retorna bloqueia para sempre. Agora a
+   conexão leva `keepalives` (o sistema derruba a conexão morta em ~1 min) e
+   `statement_timeout=180s` (o servidor aborta a consulta que se arrasta).
+2. **O `while True` do `main()` impedia o processo de sair** — e o
+   `sincronizar-rag.ps1`, que tem 30 retentativas com log timestampado, só age
+   quando o Python termina com código diferente de zero. Duas camadas de
+   retentativa, e a de dentro anulando a de fora. Agora são `--tentativas 5`
+   (configurável) e `sys.exit(1)` ao desistir.
+
+Também: cada lote imprime com data e hora. É o que separa "está devagar" de
+"está pendurado desde as 13h46" ao ler o log depois.
+
+### A causa que estava embaixo de tudo: transações órfãs
+
+Medido em 13/08, às 14h47, em `pg_stat_activity`: **oito** sessões `active` com
+`UPDATE knowledge_chunks`, transação aberta há até **1h56**, quase todas em
+`wait_event = Client/ClientRead` — o servidor terminou e espera um cliente que
+morreu. Cinco delas usavam `SET embedding=$1 WHERE id=$2`, uma linha por vez:
+forma de uma versão do script anterior ao UPDATE em lote, ou seja, de execuções
+bem antigas.
+
+Elas travavam umas às outras em cadeia e travavam qualquer coisa nova na tabela.
+A prova: o `CREATE INDEX` ficou 5 minutos esperando e, encerradas as órfãs,
+completou em **0,06s**. Não era lentidão do servidor — era lock.
+
+Por que se acumulam: matar o cliente não encerra a transação no servidor. Sem
+keepalive do lado de lá, o backend fica em `ClientRead` para sempre. Toda vez
+que uma vetorização for morta à força, convém conferir:
+
+```sql
+SELECT pid, now()-xact_start AS idade, wait_event_type, wait_event, query
+  FROM pg_stat_activity
+ WHERE datname = current_database() AND query ILIKE '%UPDATE knowledge_chunks%'
+   AND xact_start < now() - interval '10 minutes';
+-- e então, para cada pid:  SELECT pg_terminate_backend(<pid>);
+```
+
+Encerrá-las é seguro: o trabalho volta atrás, os chunks voltam a
+`embedding IS NULL` e o vetorizador os refaz. É para isso que a carga é
+idempotente.
+
+**`idle_in_transaction_session_timeout` NÃO resolve isto** — e vale registrar por
+quê, porque é a primeira ideia que ocorre a qualquer um:
+
+- o servidor **já** o tem em **30s**, vindo da linha de comando do Postgres
+  (`pg_settings.source = 'command line'`), valendo para todos os papéis;
+- e mesmo assim as órfãs sobreviveram duas horas, porque ele só alcança sessões
+  em estado `idle in transaction`. As nossas apareciam como `active` esperando em
+  `Client/ClientRead` — o servidor as considera ocupadas, não ociosas.
+
+Em 13/08 chegou-se a aplicar, no papel do `PGVECTOR_USER`, um
+`ALTER ROLE … SET idle_in_transaction_session_timeout = '10min'`, e foi
+**revertido na hora**: como o padrão do servidor já era 30s, aquilo afrouxava a
+proteção existente em vez de criar uma. Hoje `pg_roles.rolconfig` está nulo para
+todos os papéis, e é assim que deve ficar.
+
+Os `keepalives` que o script passou a usar (acima) atacam o lado do cliente e são
+a defesa que de fato existe. Do lado do servidor, o que restaria seria
+`tcp_keepalives_idle` no `postgresql.conf` — que é global e não é só nosso.
+
+### E a razão de o SELECT ser caro — `sql/003_indice_pendentes.sql`
+
+Os dois defeitos acima explicavam por que a falha era **silenciosa**; não
+explicavam por que ela acontecia. O plano do `SELECT` que pede o próximo lote
+era percorrer a chave primária em ordem de id filtrando `embedding IS NULL`:
+
+```
+Index Scan using knowledge_chunks_pkey   Filter: (embedding IS NULL)
+```
+
+Os pendentes ocupavam os ids **42497 a 52932** — todos no fim da tabela. Cada
+lote de 64 varria os ~42.490 já prontos antes de achar o primeiro pendente, e o
+custo **cresce com o progresso**: quanto mais vetorizado, mais linhas pular. Com
+a tabela em cache isso levava 0,48s; com cache frio ou o servidor sob carga,
+passava dos 180s e a vetorização parava sozinha.
+
+O índice parcial `ix_chunks_pendentes (id) WHERE embedding IS NULL` inverte a
+curva: ele encolhe conforme a vetorização avança, e some quando ela termina.
+Aplicado **só no `advocacia_ia`** — o servidor é compartilhado, e o arquivo em
+`sql/` começa mandando conferir `current_database()`.
+
+Sem `CONCURRENTLY` de propósito: com esta conexão, um `CONCURRENTLY` interrompido
+deixa índice INVÁLIDO para trás. O `CREATE INDEX` comum é atômico — caindo a
+conexão, não sobra nada.
+
+Como reconhecer o sintoma, se voltar: processo vivo, log parado, CPU que não
+cresce, contagem congelada.
+
+```powershell
+Get-Process -Id <pid> | Select-Object CPU        # não cresce
+Get-NetTCPConnection -OwningProcess <pid>        # Established e velha
+```
+
+### Retomar
+
+```powershell
+Get-Process python | Where-Object { $_.CPU -lt 5 }   # confira travados antes
 Start-ScheduledTask -TaskName 'AdvocaciaIA-SincronizarRAG'
 ```
 
-Não é necessário apagar nem reingerir dados antes da retomada.
+Ou só a vetorização, sem reingerir:
+
+```powershell
+.venv\Scripts\python.exe -m scripts.vetorizar_pendentes --lote 64 --tentativas 20
+```
+
+A carga é idempotente e retoma pelos chunks cujo `embedding IS NULL`; não é
+necessário apagar nem reingerir nada.
+
+### Sobre a "instabilidade"
+
+O servidor é remoto e compartilhado. Medido em 13/08: sondagens TCP seguidas
+respondendo em 0,06s, e no meio delas conexões levando **7,09s** ou estourando
+por completo. **Não é queda — é latência que varia uma ordem de grandeza**, e é
+por isso que a conexão costuma dar certo na segunda tentativa.
+
+Foi essa medição que calibrou o disjuntor de `app/analise_resposta.py`: 3s de
+prazo e abertura na primeira falha descartavam precedente por causa de um pico,
+com o banco vivo. Passou a 6s, abrindo só na **segunda falha seguida**, com 90s
+de descanso em vez de 300 — um sucesso no meio zera a contagem. Ver a seção da
+conferência mais abaixo.
 
 Documento de passagem de bastão. Descreve o que existe, o que foi decidido e
-por quê, e o que ficou pela metade. Atualizado em 10/08/2026.
+por quê, e o que ficou pela metade. Atualizado em 13/08/2026.
 
 ---
 
@@ -51,6 +192,8 @@ Login: `guinb` / `123`.
 ```
 app/
   main.py         rotas; middleware de auth por allowlist
+  contrato.py     preenche o modelo .docx do escritório (não redige cláusula)
+  assinatura.py   manda assinar na ZapSign e acompanha quem já assinou
   triagem.py      classifica a entrevista (LLM + fallback local)
   casos.py        status derivado do checklist; visão do cliente
   extractors.py   extração de campos dos documentos
@@ -171,8 +314,11 @@ depois obriga a recriar as colunas e reindexar.**
 
 **Pendente**
 - **Credenciais a rotacionar**: o banco de produção `Visarj` (SES-RJ), o
-  `JWT_SECRET` do vig-agent, as chaves DeepSeek e OpenRouter, e a senha do
-  PGVector. Todas passaram por chat.
+  `JWT_SECRET` do vig-agent, as chaves DeepSeek e OpenRouter, a senha do
+  PGVector e o **token da ZapSign** (`ZAPSIGN_API_TOKEN`, posto em 13/08/2026).
+  Todas passaram por chat. O da ZapSign é o mais sensível da lista: com ele se
+  cria e se lê **qualquer** documento da conta do escritório — contrato de
+  cliente, com CPF e qualificação — e se gasta o plano de assinaturas.
 - **Senhas de desenvolvimento estão no repositório público**: `guinb/123` no
   `keycloak/realm-advocacia.json` e `admin/admin` no `docker-compose.yml`.
   Decisão consciente do dono, mas o repo `guinb0/advocacia-ia` é público.
@@ -215,6 +361,111 @@ cd frontend; npm run typecheck; npm run build
 
 **Repositórios:** GitLab `ia/advocacia-ia` (origin) e GitHub `guinb0/advocacia-ia`
 (github, **público**). `git push origin main` e `git push github main`.
+
+---
+
+## Conferência da resposta durante a entrevista — 13/08/2026
+
+`app/analise_resposta.py` + `POST /api/entrevista/analise`. Ao fechar uma
+resposta **narrativa** (as marcadas `transcrever` no roteiro), a tela mostra
+embaixo da própria pergunta o que ela não trouxe: até 3 lacunas e até 3 perguntas
+**prontas para ler em voz alta** ao cliente.
+
+Dispara em dois momentos: ao finalizar a gravação e ao sair da caixa de texto
+(o equivalente digitado de "finalizar"). Nunca a cada tecla — seria uma chamada
+ao modelo por letra.
+
+**Por que não é o `/api/estrategia`.** Aquele produz um parecer por caso, lido com
+calma. Este roda uma vez por PERGUNTA, várias por entrevista. O que cabe entre
+uma pergunta e a seguinte são três itens; mais que isso não é lido, e o que não é
+lido não é conferido. Daí `max_tokens: 500`, 4 precedentes e listas cortadas em 3.
+
+**O banco de precedentes é instável, não morto** (ver o checkpoint no topo).
+Duas defesas, calibradas pela medição de 13/08:
+
+1. **Prazo que cabe no pico** — 6s para conectar e para o embedding, contra os
+   120s/10s da ingestão. `rag.buscar_similares` e `gerar_embeddings` ganharam
+   esses parâmetros; o padrão continua o de antes. Foram 3s até se medir que o
+   servidor às vezes leva 7,09s **e responde**.
+2. **Disjuntor que distingue pico de queda** — abre na 2ª falha **seguida** e
+   descansa 90s; um sucesso no meio zera a contagem. Sem ele, cada pergunta da
+   entrevista pagaria o timeout de novo. Abrindo na primeira, um engasgo custava
+   os precedentes do resto da entrevista.
+
+Sem precedentes a conferência ainda sai, e sai **marcada** (`com_precedentes:
+false`, selo "sem precedentes" na tela). Análise sem precedente é a leitura do
+modelo sobre o texto — não "o que os processos semelhantes mostram", e as duas
+não podem parecer a mesma coisa.
+
+Cuidados que os testes fixam: índice de precedente citado mas inexistente é
+descartado (alucinação de referência); `faltam` chegando como string vira objeto;
+e o modelo dizendo `suficiente: true` **com** lacunas listadas perde para a lista.
+
+Falta: o disjuntor é por processo, não compartilhado — dois workers do uvicorn
+tentariam o banco uma vez cada.
+
+---
+
+## Gravação com pausa e complemento — 13/08/2026
+
+Os botões da pergunta narrativa deixaram de ser um só. Agora: **Gravar resposta**
+(vira **Adicionar complemento** quando já há texto), **Pausar/Retomar** e
+**Finalizar resposta**.
+
+- **Pausar não mexeu no protocolo.** O servidor acumula o PCM da sessão e
+  transcreve o acumulado no `stop`; parar de mandar bytes é, para ele, silêncio
+  que nunca existiu. Serve para o entrevistador falar sem entrar na transcrição.
+- **Complemento acrescenta, não substitui.** É o caminho natural depois de ler a
+  conferência: ela aponta que faltou perguntar da CAT, você grava só isso e o
+  trecho entra no fim da resposta. A conferência então roda sobre o texto
+  INTEIRO, não só sobre o complemento.
+
+---
+
+## Assinatura eletrônica do contrato — implementada em 13/08/2026
+
+`app/assinatura.py` manda o contrato de honorários para a **ZapSign** e acompanha
+quem assinou. O .docx que sobe é o mesmo que `app/contrato.py` gera — modelo do
+escritório com os colchetes preenchidos, palavra por palavra. A conversão para
+PDF é do lado deles; não há conversor na máquina (o LibreOffice não é dependência
+do projeto), por isso vai `base64_docx` e não `base64_pdf`.
+
+| rota | para quê |
+|---|---|
+| `GET /api/assinatura/config` | se o envio está ligado; a tela pergunta antes de oferecer o botão |
+| `POST /api/contrato/assinatura` | gera o contrato e dispara os convites |
+| `GET /api/assinaturas` | índice local, sem bater na ZapSign (filtra por `caso_id` ou `cliente`) |
+| `GET /api/assinaturas/{id}` | quem assinou e quem falta, consultado na hora |
+| `GET /api/assinaturas/{id}/arquivo` | o PDF assinado com a trilha de auditoria |
+
+**Decisões que não são óbvias no código:**
+
+- **O botão de baixar o .docx continua ali.** O envio depende de chave, de
+  internet e de o cliente ter e-mail ou WhatsApp — nada disso é garantido numa
+  entrevista. Sem a chave, a tela explica e o atendimento não para.
+- **Estado desconhecido vira `pendente`, nunca `assinou`.** A API responde o
+  estado do signatário ora em inglês (`new`, `link-opened`, `signed`), ora em
+  português (`nao_abriu`, `abriu`, `assinou`), conforme o endpoint. Valor novo
+  que eles inventem cai no lado seguro: errar para "ainda falta" faz conferir;
+  errar para "já assinou" faz protocolar ação com contrato em branco.
+- **Papel casado por e-mail/telefone, não por posição.** "Cliente" e "escritório"
+  são rótulo nosso — a ZapSign não os guarda. A lista volta na ordem em que foi
+  mandada, mas apoiar-se nisso troca os papéis no dia em que eles mudarem.
+- **`sign_url` só vem na criação.** A consulta de detalhe não o repete, então o
+  link individual é preservado a cada refresh. É ele que o escritório reenvia por
+  WhatsApp quando o convite cai no spam do cliente.
+- **Os links da ZapSign expiram em 60 minutos.** Por isso o download passa pelo
+  backend e o PDF fica em `dados/contratos/` — a via assinada é do escritório e
+  precisa existir anos depois, com ou sem a conta ativa.
+- **Excluir daqui não exclui lá.** A tabela `assinaturas` é índice local; o
+  registro com trilha de auditoria é o da ZapSign, e ele é prova.
+- **A tela recarrega sozinha a cada 20s**, não a cada 3s como o polling do OCR:
+  cada volta é uma requisição à conta deles e contrato assinado leva horas.
+
+Falta: **webhook**. Hoje o estado só anda quando alguém abre a tela. A ZapSign
+manda evento de assinatura concluída; ligar isso tiraria o polling e avisaria o
+escritório sem ninguém olhando — mas exige a API alcançável de fora, o que hoje
+não é o caso (ver "HTTP puro" em Segurança).
 
 ---
 
