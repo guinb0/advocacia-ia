@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { SituacaoCaso } from "@/lib/types";
+import { Aviso, Selo } from "./Basicos";
 import estilos from "./Checklist.module.css";
 import ItemChecklistLinha from "./ItemChecklistLinha";
 import PainelPortal from "./PainelPortal";
@@ -47,10 +48,16 @@ export default function Checklist({
   if (!categoria) {
     return (
       <>
-        <button type="button" className={estilos.voltar} onClick={onVoltar}>
-          ← Carteira
+        <button
+          type="button"
+          className={`botao botao--secundario ${estilos.voltar}`}
+          onClick={onVoltar}
+        >
+          ← Voltar para a carteira
         </button>
-        <div className={ui.caixaErro}>{situacao.erro ?? "Categoria indisponível."}</div>
+        <Aviso tom="critico" titulo="Categoria indisponível">
+          {situacao.erro ?? "O tipo de ação deste caso não pôde ser carregado."}
+        </Aviso>
       </>
     );
   }
@@ -66,65 +73,89 @@ export default function Checklist({
   const filtros: { id: Filtro; nome: string }[] = [
     { id: "obrigatorios", nome: `Obrigatórios (${progresso.obrigatorios_total})` },
     { id: "falta", nome: `Falta resolver (${naoResolvidos})` },
-    { id: "todos", nome: `Todos (${itens.length})` },
+    { id: "todos", nome: `Todos os documentos (${itens.length})` },
   ];
+
+  const pct = Math.max(0, Math.min(100, progresso.percentual_obrigatorios));
 
   return (
     <>
-      <button type="button" className={estilos.voltar} onClick={onVoltar}>
-        ← Carteira
+      <button
+        type="button"
+        className={`botao botao--secundario ${estilos.voltar}`}
+        onClick={onVoltar}
+      >
+        ← Voltar para a carteira
       </button>
 
-      <div className={estilos.faixaCaso}>
-        <span className={estilos.faixaRotulo}>CASO · {categoria.nome.toUpperCase()}</span>
-        <span className={estilos.faixaMeta}>
-          atualizado {desde(caso.atualizado_em || caso.criado_em)}
-        </span>
-      </div>
-      <div className={estilos.filete} />
-
-      <div className={estilos.identificacaoCaso}>
-        <div>
-          <h2 className={estilos.cliente}>{caso.cliente}</h2>
-          <p className={estilos.descricao}>{categoria.descricao}</p>
-        </div>
-        <div>
-          <span className={estilos.numeroGrande}>
-            {progresso.obrigatorios_entregues}
-            <span className={estilos.numeroTotal}>/{progresso.obrigatorios_total}</span>
+      <div className={estilos.cartaoCaso}>
+        <div className={estilos.faixaCaso}>
+          <Selo tom="info">{categoria.nome}</Selo>
+          <span className={estilos.faixaMeta}>
+            atualizado {desde(caso.atualizado_em || caso.criado_em)}
           </span>
-          <div className={estilos.numeroRotulo}>obrigatórios entregues</div>
         </div>
+
+        <div className={estilos.identificacaoCaso}>
+          <div>
+            <h2 className={estilos.cliente}>{caso.cliente}</h2>
+            <p className={estilos.descricao}>{categoria.descricao}</p>
+          </div>
+          <div className={estilos.numeros}>
+            <span className={estilos.numeroGrande}>
+              {progresso.obrigatorios_entregues}
+              <span className={estilos.numeroTotal}>/{progresso.obrigatorios_total}</span>
+            </span>
+            <div className={estilos.numeroRotulo}>documentos obrigatórios entregues</div>
+          </div>
+        </div>
+
+        <div
+          className={estilos.barra}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct}
+          aria-label="Documentos obrigatórios entregues"
+        >
+          <i className={estilos.barraPreenchimento} style={{ width: `${pct}%` }} />
+        </div>
+
+        <div className={estilos.contadores}>
+          {progresso.obrigatorios_pendentes > 0 && (
+            <Selo tom="critico" simbolo="✕">
+              {progresso.obrigatorios_pendentes} sem arquivo
+            </Selo>
+          )}
+          {progresso.itens_a_conferir > 0 && (
+            <Selo tom="atencao" simbolo="!">
+              {progresso.itens_a_conferir} a conferir
+            </Selo>
+          )}
+          <Selo tom="neutro">
+            {progresso.opcionais_entregues} de {progresso.opcionais_total} opcionais
+          </Selo>
+        </div>
+
+        {progresso.pronto && (
+          <div style={{ marginTop: 16 }}>
+            <Aviso tom="ok" titulo="Instrução completa">
+              Todos os documentos obrigatórios foram entregues e conferidos. O caso está pronto
+              para a inicial.
+            </Aviso>
+          </div>
+        )}
       </div>
 
-      <div className={estilos.barra}>
-        <i
-          className={estilos.barraPreenchimento}
-          style={{ width: `${Math.max(0, Math.min(100, progresso.percentual_obrigatorios))}%` }}
-        />
-      </div>
-
-      <div className={estilos.contadores}>
-        <span className={estilos.semArquivo}>
-          <strong>{progresso.obrigatorios_pendentes}</strong> sem arquivo
-        </span>
-        <span className={estilos.aConferir}>
-          <strong>{progresso.itens_a_conferir}</strong> a conferir
-        </span>
-        <span>
-          <strong>{progresso.opcionais_entregues}</strong> opcionais de {progresso.opcionais_total}
-        </span>
-      </div>
-
-      {progresso.pronto && (
-        <div className={estilos.completo}>
-          ✓ Todos os documentos obrigatórios foram entregues e validados.
+      {erro && (
+        <div style={{ marginBottom: 16 }}>
+          <Aviso tom="critico" titulo="Não foi possível concluir a ação">
+            {erro}
+          </Aviso>
         </div>
       )}
 
-      {erro && <div className={ui.caixaErro}>{erro}</div>}
-
-      <div className={estilos.abas} role="tablist">
+      <div className={estilos.abas} role="tablist" aria-label="Filtrar os documentos">
         {filtros.map((f) => (
           <button
             key={f.id}
@@ -140,33 +171,29 @@ export default function Checklist({
       </div>
 
       {visiveis.length === 0 ? (
-        <p className={ui.vazio}>Nada aqui — tudo resolvido neste filtro.</p>
+        <div style={{ marginTop: 16 }}>
+          <div className={ui.vazio}>Nada aqui — tudo resolvido neste filtro.</div>
+        </div>
       ) : (
-        <ul className={estilos.lista}>
-          {visiveis.map((item) => (
-            <ItemChecklistLinha
-              key={item.codigo}
-              item={item}
-              enviando={enviando === item.codigo}
-              onEnviar={onEnviar}
-              onRemover={onRemover}
-              onVincularIdentidade={onVincularIdentidade}
-            />
-          ))}
-        </ul>
+        <div className={estilos.painelLista}>
+          <ul className={estilos.lista}>
+            {visiveis.map((item) => (
+              <ItemChecklistLinha
+                key={item.codigo}
+                item={item}
+                enviando={enviando === item.codigo}
+                onEnviar={onEnviar}
+                onRemover={onRemover}
+                onVincularIdentidade={onVincularIdentidade}
+              />
+            ))}
+          </ul>
+        </div>
       )}
 
-      <div className={estilos.rodapePedido}>
-        <span className={estilos.resumoPedido}>
-          {naoResolvidos} {naoResolvidos === 1 ? "item pendente vira" : "itens pendentes viram"}{" "}
-          texto pronto para o cliente
-        </span>
-      </div>
-
-      <PainelPortal casoId={caso.id} />
-
-      <div className={estilos.blocoPedido}>
-        <PedidoCliente casoId={caso.id} progresso={progresso} />
+      <div className={estilos.blocoFinal}>
+        <PainelPortal casoId={caso.id} />
+        <PedidoCliente casoId={caso.id} progresso={progresso} naoResolvidos={naoResolvidos} />
       </div>
     </>
   );

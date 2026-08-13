@@ -1,23 +1,26 @@
-/* Progresso da leitura. Barra da direção AUTOS: caixa com borda e preenchimento
- * sólido em tinta — sem raio, sem shimmer arredondado. */
+/* Progresso da leitura. Barra arredondada na cor de ação: azul quer dizer
+ * "trabalhando", e não âmbar, que agora significa "confira isto". */
 
 .bloco {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin: 9px 0 2px 21px;
+  gap: 6px;
+  margin: 10px 0 4px 36px;
+  max-width: 460px;
 }
 
 .barra {
-  height: 5px;
-  border: 1px solid var(--border-strong);
-  padding: 1px;
+  height: 8px;
+  border-radius: var(--raio-pill);
+  background: var(--papel-3);
+  overflow: hidden;
 }
 
 .preenchimento {
   display: block;
   height: 100%;
-  background: var(--warn);
+  border-radius: var(--raio-pill);
+  background: var(--acao);
   /* Acompanha o passo do timer (200ms) para a barra andar sem pular. */
   transition: width 0.2s linear;
 }
@@ -26,16 +29,19 @@
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font: 400 11px/1.4 var(--font-ui);
-  color: var(--muted);
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
 }
 
 .tempo {
-  font-family: var(--font-mono);
+  color: var(--tinta-3);
+  font-family: var(--fonte-codigo);
   font-variant-numeric: tabular-nums;
-  color: var(--warn);
 }
 
+/* Demorando mais que o normal: aí sim o âmbar entra, porque passou a ser algo
+ * a acompanhar. */
 .demorando {
-  color: var(--warn);
+  color: var(--atencao);
+  font-weight: 600;
 }

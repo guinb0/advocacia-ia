@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
+import { Aviso, Selo } from "./Basicos";
 import CredenciaisPortal from "./CredenciaisPortal";
 import estilos from "./ListaCasos.module.css";
 import TriagemEntrevista from "./TriagemEntrevista";
@@ -55,8 +56,11 @@ export default function ListaCasos({
 
   return (
     <div className={estilos.colunas}>
-      <div className={ui.card}>
-        <h2 className={ui.tituloCard}>Novo caso</h2>
+      <div className="cartao">
+        <h2 className="tituloCartao">Novo caso</h2>
+        <p className="subtituloCartao">
+          Escolher o tipo de ação é o que monta o checklist de documentos do cliente.
+        </p>
 
         <TriagemEntrevista
           onEscolher={(cat, nome) => {
@@ -68,63 +72,66 @@ export default function ListaCasos({
         />
 
         <form onSubmit={criar}>
-          <label className={estilos.rotulo} htmlFor="cliente">
-            Nome do cliente
-          </label>
-          <input
-            id="cliente"
-            className={estilos.campo}
-            value={cliente}
-            onChange={(e) => setCliente(e.target.value)}
-            placeholder="Ex.: Maria Aparecida da Silva"
-            autoComplete="off"
-          />
+          <div className={estilos.grupoCampo}>
+            <label className="rotuloCampo" htmlFor="cliente">
+              Nome do cliente
+            </label>
+            <input
+              id="cliente"
+              className="campo"
+              value={cliente}
+              onChange={(e) => setCliente(e.target.value)}
+              placeholder="Ex.: Maria Aparecida da Silva"
+              autoComplete="off"
+            />
+          </div>
 
-          <label className={estilos.rotulo} htmlFor="categoria">
-            Categoria
-          </label>
-          <select
-            id="categoria"
-            className={`${estilos.campo} ${estilos.seletorCategoria}`}
-            value={categoriaSelecionada}
-            onChange={(e) => setCategoria(e.target.value)}
-            aria-describedby={categoriaEscolhida ? "resumo-categoria" : undefined}
-          >
-            {categorias.map((c) => (
-              <option key={c.codigo} value={c.codigo}>
-                {c.nome}
-              </option>
-            ))}
-          </select>
+          <div className={estilos.grupoCampo}>
+            <label className="rotuloCampo" htmlFor="categoria">
+              Tipo de ação
+            </label>
+            <select
+              id="categoria"
+              className="campo campo--seletor"
+              value={categoriaSelecionada}
+              onChange={(e) => setCategoria(e.target.value)}
+              aria-describedby={categoriaEscolhida ? "resumo-categoria" : undefined}
+            >
+              {categorias.map((c) => (
+                <option key={c.codigo} value={c.codigo}>
+                  {c.nome}
+                </option>
+              ))}
+            </select>
 
-          {categoriaEscolhida && (
-            <div id="resumo-categoria" className={estilos.resumoCategoria}>
-              <strong>{categoriaEscolhida.nome}</strong>
-              <p>{categoriaEscolhida.descricao}</p>
-              <div className={estilos.numerosCategoria}>
-                <span>
-                  <b>{categoriaEscolhida.total_obrigatorios}</b> obrigatórios
-                </span>
-                <span>
-                  <b>{categoriaEscolhida.total_documentos}</b> documentos no total
-                </span>
+            {categoriaEscolhida && (
+              <div id="resumo-categoria" className={estilos.resumoCategoria}>
+                <strong>{categoriaEscolhida.nome}</strong>
+                <p>{categoriaEscolhida.descricao}</p>
+                <div className={estilos.numerosCategoria}>
+                  <Selo tom="info">{categoriaEscolhida.total_obrigatorios} obrigatórios</Selo>
+                  <Selo tom="neutro">{categoriaEscolhida.total_documentos} no total</Selo>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           <button
             type="submit"
-            className={estilos.botaoPrimario}
+            className="botao botao--primario botao--bloco"
             disabled={!cliente.trim() || !categoriaSelecionada || criando}
           >
-            {criando ? "Criando…" : "Criar caso"}
+            {criando ? "Criando…" : "Criar o caso"}
           </button>
         </form>
 
         {categorias.length === 0 && (
-          <p className={ui.observacao} style={{ marginTop: 12 }}>
-            Nenhuma categoria disponível — verifique se o backend está no ar.
-          </p>
+          <div style={{ marginTop: 14 }}>
+            <Aviso tom="critico" titulo="Nenhum tipo de ação disponível">
+              Verifique se o servidor do sistema está no ar — sem os tipos de ação não é possível
+              criar um caso.
+            </Aviso>
+          </div>
         )}
 
         {novoPortal && (
@@ -137,45 +144,58 @@ export default function ListaCasos({
         )}
       </div>
 
-      <div className={ui.card}>
-        <h2 className={ui.tituloCard}>Casos ({casos.length})</h2>
+      <div className="cartao">
+        <h2 className="tituloCartao">Casos cadastrados</h2>
+        <p className="subtituloCartao">
+          {casos.length === 0
+            ? "Nenhum caso ainda."
+            : `${casos.length} ${casos.length === 1 ? "caso" : "casos"} — clique em um para abrir o checklist.`}
+        </p>
 
-        {erro && <div className={ui.caixaErro}>{erro}</div>}
+        {erro && (
+          <div style={{ marginBottom: 14 }}>
+            <Aviso tom="critico" titulo="Não foi possível carregar os casos">
+              {erro}
+            </Aviso>
+          </div>
+        )}
 
         {carregando && casos.length === 0 ? (
           <div className={ui.vazio}>Carregando…</div>
         ) : casos.length === 0 ? (
           <div className={ui.vazio}>
-            Nenhum caso ainda.
-            <br />
-            <small>Crie o primeiro ao lado para começar a cobrar os documentos.</small>
+            Crie o primeiro caso ao lado para começar a cobrar os documentos do cliente.
           </div>
         ) : (
           <ul className={estilos.lista}>
             {casos.map((caso) => (
               <li key={caso.id} className={estilos.itemCaso}>
                 <button type="button" className={estilos.abrir} onClick={() => onAbrir(caso.id)}>
-                  <strong>{caso.cliente}</strong>
-                  <span className={ui.observacao}>
-                    {nomeCategoria(caso.categoria)} · {caso.total_entregas ?? 0} arquivo(s)
+                  <span className={estilos.abrirCliente}>{caso.cliente}</span>
+                  <span className={estilos.abrirMeta}>
+                    {nomeCategoria(caso.categoria)} · {caso.total_entregas ?? 0}{" "}
+                    {(caso.total_entregas ?? 0) === 1 ? "arquivo recebido" : "arquivos recebidos"}
                   </span>
                 </button>
 
                 {confirmando === caso.id ? (
                   <span className={estilos.confirmar}>
+                    <span className={estilos.confirmarTexto}>
+                      Apagar o caso e todos os arquivos enviados? Não há como desfazer.
+                    </span>
                     <button
                       type="button"
-                      className={estilos.perigo}
+                      className="botao botao--perigo botao--pequeno"
                       onClick={async () => {
                         await onExcluir(caso.id);
                         setConfirmando(null);
                       }}
                     >
-                      Apagar tudo
+                      Apagar
                     </button>
                     <button
                       type="button"
-                      className={estilos.botaoDiscreto}
+                      className="botao botao--discreto botao--pequeno"
                       onClick={() => setConfirmando(null)}
                     >
                       Cancelar
@@ -184,9 +204,8 @@ export default function ListaCasos({
                 ) : (
                   <button
                     type="button"
-                    className={estilos.botaoDiscreto}
+                    className="botao botao--discreto botao--pequeno"
                     onClick={() => setConfirmando(caso.id)}
-                    title="Excluir o caso e todos os arquivos enviados"
                   >
                     Excluir
                   </button>

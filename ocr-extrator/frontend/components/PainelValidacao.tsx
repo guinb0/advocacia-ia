@@ -1,6 +1,19 @@
 import type { Documento } from "@/lib/types";
-import { ListaMensagens, Tag } from "./Basicos";
+import { ListaMensagens, Selo } from "./Basicos";
 import ui from "./ui.module.css";
+
+/** Resposta de sim/não como selo: símbolo + palavra, nunca só a cor. */
+function SimNao({ valor, tomDoNao = "critico" }: { valor: boolean; tomDoNao?: "critico" | "atencao" }) {
+  return valor ? (
+    <Selo tom="ok" simbolo="✓">
+      sim
+    </Selo>
+  ) : (
+    <Selo tom={tomDoNao} simbolo={tomDoNao === "critico" ? "✕" : "!"}>
+      não
+    </Selo>
+  );
+}
 
 export default function PainelValidacao({ doc }: { doc: Documento }) {
   const v = doc.validacao;
@@ -12,27 +25,29 @@ export default function PainelValidacao({ doc }: { doc: Documento }) {
         <tbody>
           <tr>
             <td>
-              Dados utilizáveis
+              <strong>Dados utilizáveis</strong>
               <div className={ui.observacao}>
                 legível, nada faltando e nada reprovado no dígito verificador
               </div>
             </td>
             <td className={ui.direita}>
-              <Tag tom={v.dados_utilizaveis ? "ok" : "err"}>
-                {v.dados_utilizaveis ? "sim" : "não"}
-              </Tag>
+              <SimNao valor={v.dados_utilizaveis} />
             </td>
           </tr>
           <tr>
-            <td>Imagem legível</td>
+            <td>
+              <strong>Imagem legível</strong>
+            </td>
             <td className={ui.direita}>
-              <Tag tom={v.imagem_legivel ? "ok" : "err"}>{v.imagem_legivel ? "sim" : "não"}</Tag>
+              <SimNao valor={v.imagem_legivel} />
             </td>
           </tr>
           <tr>
-            <td>Sem ressalvas de qualidade</td>
+            <td>
+              <strong>Sem ressalvas de qualidade</strong>
+            </td>
             <td className={ui.direita}>
-              <Tag tom={v.aprovado ? "ok" : "warn"}>{v.aprovado ? "sim" : "não"}</Tag>
+              <SimNao valor={v.aprovado} tomDoNao="atencao" />
             </td>
           </tr>
         </tbody>
@@ -53,9 +68,15 @@ export default function PainelValidacao({ doc }: { doc: Documento }) {
                   <tr key={campo}>
                     <td className={ui.valor}>{campo}</td>
                     <td className={ui.direita}>
-                      <Tag tom={extraido ? "ok" : "err"}>
-                        {extraido ? "extraído" : "faltando"}
-                      </Tag>
+                      {extraido ? (
+                        <Selo tom="ok" simbolo="✓">
+                          extraído
+                        </Selo>
+                      ) : (
+                        <Selo tom="critico" simbolo="✕">
+                          faltando
+                        </Selo>
+                      )}
                     </td>
                   </tr>
                 );
