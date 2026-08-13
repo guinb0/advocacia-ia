@@ -1,6 +1,6 @@
 # Acervo — onde o projeto está
 
-## Checkpoint da vetorização — medido em 13/08/2026, 14h
+## Vetorização CONCLUÍDA — 13/08/2026, 17h06
 
 Confira sozinho, a qualquer momento, em vez de confiar nos números abaixo:
 
@@ -12,24 +12,28 @@ Confira sozinho, a qualquer momento, em vez de confiar nos números abaixo:
 O `--busca` prova o caminho inteiro (texto → embedding → HNSW → processo) e é o
 único que gasta uma chamada de embeddings.
 
-**Estado:** 5.824 documentos / 52.926 chunks / 1.745 processos.
-**42.490 embeddings (80,28%)**, 10.436 pendentes.
+**5.824 documentos / 52.926 chunks / 1.745 processos — 100% vetorizado.**
 
 | origem | vetorizados |
 |---|---|
-| `trt8_juris` | 42.490 / 43.106 (98,57%) |
-| `tst` | 0 / 5.122 |
-| `djen` | 0 / 4.660 |
-| `dejt` | 0 / 38 |
+| `trt8_juris` | 43.106 / 43.106 |
+| `tst` | 5.122 / 5.122 |
+| `djen` | 4.660 / 4.660 |
+| `dejt` | 38 / 38 |
 
-O TRT8 está praticamente pronto; o que falta é inteiro das outras três fontes,
-que ainda não começaram. A busca por similaridade já funciona — a conferência da
-entrevista cita processos —, só não alcança precedente do TST.
+Aferido de ponta a ponta: uma busca por "acidente de trabalho com o dedo na
+máquina, empresa não emitiu CAT" devolveu em **1,88s** cinco processos entre
+0,776 e 0,809 de similaridade, de varas do Pará e do Amapá. A conferência da
+entrevista e o `/api/estrategia` citam precedente de verdade.
+
+A última corrida gravou 10.180 chunks em ~2h, com **27 quedas de conexão** pelo
+caminho — nenhuma delas fatal, porque o orçamento de retentativas só conta falha
+estéril (ver abaixo).
 
 **A tarefa NÃO está desabilitada**, ao contrário do que este documento dizia
 até 13/08. `AdvocaciaIA-SincronizarRAG` está `Ready`, com execução agendada, e
 rodou em 13/08 às 09:27 (terminada: `LastTaskResult` 0x41306). Ela volta a rodar
-sozinha.
+sozinha — e agora o que ela vetoriza é só o que a ingestão trouxer de novo.
 
 ### A retomada que travava em silêncio — corrigida em 13/08/2026
 
