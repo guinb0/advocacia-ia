@@ -47,11 +47,30 @@ export type EstadoChamada =
   /** Caiu ou o outro desligou. */
   | "encerrada";
 
+/** Quem está na sala, para desenhar os retratos. */
+export interface Participante {
+  id: string;
+  nome: string;
+  /** `null` enquanto a câmera estiver desligada — aí vale a inicial do nome. */
+  video: MediaStreamTrack | null;
+  /** Este é o retrato de quem está usando a tela. */
+  souEu: boolean;
+}
+
 export interface EventosChamada {
   onEstado?: (estado: EstadoChamada) => void;
   /** A voz do outro lado. No advogado, é o que alimenta o Whisper. */
   onFaixaRemota?: (trilha: MediaStreamTrack) => void;
+  /** A sala inteira mudou: alguém entrou, saiu, ligou câmera ou trocou de nome. */
+  onParticipantes?: (lista: Participante[]) => void;
   onErro?: (mensagem: string) => void;
+}
+
+export interface OpcoesEntrada {
+  /** Nome exibido aos outros. Sem login: é o que a pessoa digitar. */
+  nome?: string;
+  /** Entrar já com a câmera ligada. */
+  camera?: boolean;
 }
 
 /* A lib-jitsi-meet não publica tipos. Em vez de arrastar um pacote de tipos da
@@ -69,9 +88,17 @@ interface FaixaJitsi {
   dispose(): Promise<void>;
 }
 
+interface ParticipanteJitsi {
+  getId(): string;
+  getDisplayName(): string | undefined;
+}
+
 interface ConferenciaJitsi {
   on(evento: string, ouvinte: (...args: unknown[]) => void): void;
   addTrack(faixa: FaixaJitsi): Promise<void>;
+  removeTrack(faixa: FaixaJitsi): Promise<void>;
+  setDisplayName(nome: string): void;
+  getParticipants(): ParticipanteJitsi[];
   join(senha?: string): void;
   leave(): Promise<void>;
   getParticipantCount(): number;
@@ -150,7 +177,11 @@ export class ChamadaJitsi {
   private conexao: ConexaoJitsi | null = null;
   private sala: ConferenciaJitsi | null = null;
   private minhaFaixa: FaixaJitsi | null = null;
+  private minhaCamera: FaixaJitsi | null = null;
   private remotas = new Map<FaixaJitsi, HTMLAudioElement>();
+  /** Vídeo de cada participante, por id. Áudio não entra aqui: ele é ouvido. */
+  private videos = new Map<string, MediaStreamTrack>();
+  private meuNome = "";
   private estadoAtual: EstadoChamada = "fora";
   private desligando = false;
   private mudoAtual = false;
@@ -168,10 +199,15 @@ export class ChamadaJitsi {
     return this.mudoAtual;
   }
 
-  /** Abre o microfone e entra na sala. */
-  async entrar(sala: string): Promise<void> {
+  get temCamera(): boolean {
+    return this.minhaCamera !== null;
+  }
+
+  /** Abre o microfone (e a câmera, se pedida) e entra na sala. */
+  async entrar(sala: string, opcoes: OpcoesEntrada = {}): Promise<void> {
     if (this.sala) return;
     this.desligando = false;
+    this.meuNome = (opcoes.nome ?? "").trim();
     this.mudarEstado("conectando");
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -189,7 +225,45 @@ export class ChamadaJitsi {
     this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
     if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
 
+    // A câmera é pedida depois e em separado: negá-la não pode derrubar a
+    // entrevista, que funciona inteira só com voz.
+    if (opcoes.camera) {
+      try {
+        await this.abrirCamera(api);
+      } catch {
+        this.eventos.onErro?.("Não foi possível abrir a câmera. A chamada segue só com voz.");
+      }
+    }
+
     await this.conectar(api, sala);
+  }
+
+  private async abrirCamera(api: ApiJitsi): Promise<void> {
+    const faixas = await api.createLocalTracks({ devices: ["video"] });
+    this.minhaCamera = faixas.find((f) => f.getType() === "video") ?? null;
+    if (this.minhaCamera) this.videos.set("eu", this.minhaCamera.getTrack());
+  }
+
+  /** Liga ou desliga a câmera no meio da chamada. Devolve se ficou ligada. */
+  async alternarCamera(): Promise<boolean> {
+    if (!this.api) return false;
+
+    if (this.minhaCamera) {
+      const faixa = this.minhaCamera;
+      this.minhaCamera = null;
+      this.videos.delete("eu");
+      // Solta o dispositivo, e não só para de enviar: com a câmera apenas
+      // silenciada, a luz do notebook fica acesa e ninguém confia nisso.
+      await this.sala?.removeTrack(faixa).catch(() => {});
+      await faixa.dispose().catch(() => {});
+      this.anunciarParticipantes();
+      return false;
+    }
+
+    await this.abrirCamera(this.api);
+    if (this.minhaCamera && this.sala) await this.sala.addTrack(this.minhaCamera);
+    this.anunciarParticipantes();
+    return this.minhaCamera !== null;
   }
 
   private conectar(api: ApiJitsi, sala: string): Promise<void> {
@@ -230,22 +304,50 @@ export class ChamadaJitsi {
     this.sala = sala;
 
     sala.on(ev.CONFERENCE_JOINED, () => {
+      // O nome vai antes das faixas: quem já está na sala recebe o "entrou"
+      // junto do nome, em vez de ver um "participante" anônimo por um segundo.
+      if (this.meuNome) sala.setDisplayName(this.meuNome);
       if (this.minhaFaixa) void sala.addTrack(this.minhaFaixa);
+      if (this.minhaCamera) void sala.addTrack(this.minhaCamera);
       this.mudarEstado(sala.getParticipantCount() > 0 ? "conectando" : "aguardando");
+      this.anunciarParticipantes();
     });
 
     sala.on(ev.TRACK_ADDED, (...args: unknown[]) => {
       const faixa = args[0] as FaixaJitsi;
-      if (faixa.isLocal() || faixa.getType() !== "audio") return;
+      if (faixa.isLocal()) return;
+
+      if (faixa.getType() === "video") {
+        const de = faixa.getParticipantId?.();
+        if (de) {
+          this.videos.set(de, faixa.getTrack());
+          this.anunciarParticipantes();
+        }
+        return;
+      }
       this.receberFaixa(faixa);
     });
 
     sala.on(ev.TRACK_REMOVED, (...args: unknown[]) => {
-      this.soltarFaixa(args[0] as FaixaJitsi);
+      const faixa = args[0] as FaixaJitsi;
+      if (faixa.getType() === "video") {
+        const de = faixa.getParticipantId?.();
+        if (de) {
+          this.videos.delete(de);
+          this.anunciarParticipantes();
+        }
+        return;
+      }
+      this.soltarFaixa(faixa);
     });
 
-    sala.on(ev.USER_LEFT, () => {
+    sala.on(ev.USER_JOINED, () => this.anunciarParticipantes());
+    sala.on(ev.DISPLAY_NAME_CHANGED, () => this.anunciarParticipantes());
+
+    sala.on(ev.USER_LEFT, (...args: unknown[]) => {
+      this.videos.delete(String(args[0]));
       if (sala.getParticipantCount() === 0) this.mudarEstado("aguardando");
+      this.anunciarParticipantes();
     });
 
     sala.on(ev.CONFERENCE_FAILED, (...args: unknown[]) => {
@@ -254,6 +356,34 @@ export class ChamadaJitsi {
     });
 
     sala.join();
+  }
+
+  /** Monta a lista de retratos: eu primeiro, depois quem chegou. */
+  private anunciarParticipantes(): void {
+    if (!this.eventos.onParticipantes) return;
+
+    const lista: Participante[] = [
+      {
+        id: "eu",
+        nome: this.meuNome || "Você",
+        video: this.videos.get("eu") ?? null,
+        souEu: true,
+      },
+    ];
+
+    for (const p of this.sala?.getParticipants() ?? []) {
+      const id = p.getId();
+      lista.push({
+        id,
+        // Sem nome digitado, "Convidado" — melhor que o id aleatório do XMPP,
+        // que não diz nada a ninguém.
+        nome: (p.getDisplayName() || "").trim() || "Convidado",
+        video: this.videos.get(id) ?? null,
+        souEu: false,
+      });
+    }
+
+    this.eventos.onParticipantes(lista);
   }
 
   private receberFaixa(faixa: FaixaJitsi): void {
@@ -299,6 +429,10 @@ export class ChamadaJitsi {
 
     void this.minhaFaixa?.dispose().catch(() => {});
     this.minhaFaixa = null;
+    void this.minhaCamera?.dispose().catch(() => {});
+    this.minhaCamera = null;
+    this.videos.clear();
+    this.eventos.onParticipantes?.([]);
 
     void this.sala?.leave().catch(() => {});
     this.sala = null;

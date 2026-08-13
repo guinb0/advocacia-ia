@@ -48,9 +48,14 @@
 /* Roteiro à esquerda, chamada à direita. A da chamada é estreita e fixa: mostra
  * estado e um link, nada que cresça. O roteiro fica com o resto, porque é ele
  * que tem texto longo, campos e transcrição correndo. */
+/* 460px, subindo de 380 (que já tinha subido de 320): a coluna mostra o rosto do
+ * entrevistado, e se lê expressão melhor quanto maior for. O que segura o número
+ * é o roteiro ao lado, que é onde se digita — daí o teto se mover junto com o
+ * ponto de quebra abaixo, para o roteiro nunca ficar mais estreito do que já
+ * ficava a 380px. */
 .colunas {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 460px;
   gap: 24px;
   align-items: start;
   max-width: 1500px;
@@ -61,19 +66,43 @@
   min-width: 0; /* sem isto o grid não deixa o texto quebrar e a coluna estoura */
 }
 
+/* A chamada acompanha a rolagem do roteiro.
+ *
+ * O `sticky` precisa estar AQUI, na coluna, e não no painel lá dentro: o painel
+ * gruda em relação ao pai, e o pai tinha exatamente a altura dele — sem folga
+ * para percorrer, o que fazia as webcams sumirem na primeira rolagem. A coluna,
+ * sim, ocupa a altura da linha inteira do grid, que é a altura do roteiro.
+ *
+ * O teto de altura com rolagem própria é para o caso de o painel ficar mais
+ * alto que a janela (link, retratos, botões e avisos somados): sem ele, o fim
+ * do painel ficaria inalcançável, incluindo o botão de desligar. */
 .direita {
   min-width: 0;
+  position: sticky;
+  top: 18px;
+  align-self: start;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
 }
 
 /* Tela estreita: a chamada sobe para o topo. É a primeira coisa a resolver —
  * sem áudio não há entrevista, e o roteiro pode ser respondido rolando depois. */
-@media (max-width: 1000px) {
+/* 1080px e não 1000: a coluna da chamada engordou 80px, e o ponto de quebra
+ * andou o mesmo tanto. Sem isso, a janela entre 1000 e 1080px de largura daria
+ * ao roteiro 80px a menos do que ele já tinha no pior caso — e é nele que se
+ * digita durante a entrevista. */
+@media (max-width: 1080px) {
   .colunas {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Numa coluna só, a chamada vai para cima e para de grudar: presa no topo,
+     ela tomaria metade da tela do celular e o roteiro rolaria numa fresta. */
   .direita {
     order: -1;
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .tela {

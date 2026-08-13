@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { criarSalaChamada } from "@/lib/api";
 import { ChamadaJitsi } from "@/lib/chamadaJitsi";
-import type { EstadoChamada } from "@/lib/chamadaJitsi";
+import type { EstadoChamada, Participante } from "@/lib/chamadaJitsi";
 import estilos from "./PainelChamada.module.css";
+import Retratos from "./Retratos";
 
 /* A chamada ao lado do roteiro — a coluna da direita da entrevista.
  *
@@ -38,6 +39,8 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
   const [estado, setEstado] = useState<EstadoChamada>("fora");
   const [abrindo, setAbrindo] = useState(false);
   const [mudo, setMudo] = useState(false);
+  const [camera, setCamera] = useState(false);
+  const [participantes, setParticipantes] = useState<Participante[]>([]);
   const [copiado, setCopiado] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -56,6 +59,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
         if (e === "aguardando" || e === "encerrada" || e === "fora") aoPerder.current?.();
       },
       onFaixaRemota: (trilha) => aoReceber.current(trilha),
+      onParticipantes: setParticipantes,
       onErro: setErro,
     });
   }
@@ -68,7 +72,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
     try {
       const nova = sala ?? (await criarSalaChamada());
       setSala(nova);
-      await chamada.current?.entrar(nova.sala);
+      await chamada.current?.entrar(nova.sala, { nome: "Escritório" });
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível abrir a chamada.";
       setErro(
@@ -164,7 +168,16 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
             </p>
           )}
 
+          <Retratos participantes={participantes} tamanho="coluna" />
+
           <div className={estilos.acoes}>
+            <button
+              type="button"
+              className={estilos.secundario}
+              onClick={async () => setCamera(await (chamada.current?.alternarCamera() ?? false))}
+            >
+              {camera ? "Desligar câmera" : "Ligar câmera"}
+            </button>
             <button
               type="button"
               className={estilos.secundario}
@@ -178,6 +191,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
               onClick={() => {
                 chamada.current?.desligar();
                 setMudo(false);
+                setCamera(false);
               }}
             >
               Desligar

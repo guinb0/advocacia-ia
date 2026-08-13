@@ -1,9 +1,9 @@
 /* Coluna da direita da entrevista: a chamada. Fica grudada no topo enquanto o
  * roteiro rola, porque o estado da chamada precisa estar sempre à vista. */
 
+/* Quem gruda na rolagem é a coluna (ver EntrevistaComChamada.module.css); aqui
+ * o sticky não teria folga para percorrer e não faria nada. */
 .painel {
-  position: sticky;
-  top: 16px;
   border: 1px solid var(--border-strong);
   padding: 14px 16px 16px;
   background: var(--surface);

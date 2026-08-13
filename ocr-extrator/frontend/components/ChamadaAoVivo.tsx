@@ -119,7 +119,7 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
     setErro(null);
     setEntrando(true);
     try {
-      await chamadaRef.current?.entrar(sala);
+      await chamadaRef.current?.entrar(sala, { nome: "Escritório" });
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
