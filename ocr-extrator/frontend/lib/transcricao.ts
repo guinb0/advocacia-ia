@@ -36,6 +36,15 @@ export interface Microfone {
 export interface EventosTranscricao {
   /** Texto provisório, reescrito enquanto a pessoa fala. */
   onParcial?: (texto: string) => void;
+  /** Um trecho que PAROU de mudar. É o que alimenta o preenchimento do
+   *  roteiro: o parcial ainda se reescreve, o trecho não. */
+  onTrecho?: (texto: string) => void;
+  /** Volume do que está entrando (RMS, 0 a 1), umas duas vezes por segundo.
+   *
+   *  Existe por um motivo específico: microfone mudo é indistinguível de
+   *  conversa em silêncio olhando só a transcrição — nos dois casos não aparece
+   *  texto. Já custou uma entrevista inteira gravada como nada. */
+  onNivel?: (rms: number) => void;
   onFinal?: (texto: string, duracaoS: number) => void;
   onEstado?: (estado: EstadoCaptura) => void;
   /** Situação passageira que não é erro — hoje, o Whisper carregando. */
@@ -62,6 +71,8 @@ export class CapturaEntrevista {
    * para o advogado conversar sem que aquilo vire transcrição. */
   private pausado = false;
   private sessaoAtual: string | null = null;
+  /** Contador para medir o nível a cada dois blocos, não a cada um. */
+  private blocosDesdeNivel = 0;
 
   constructor(private eventos: EventosTranscricao = {}) {}
 
@@ -135,9 +146,24 @@ export class CapturaEntrevista {
     const no = new AudioWorkletNode(ctx, "encaminhador-pcm");
 
     no.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      // O worklet entrega sempre; o filtro de gravação é aqui, e é o que
-      // mantém a captura aberta sem transmitir nada entre perguntas — e o que
-      // faz a pausa funcionar sem mexer no protocolo.
+      /* O nível é medido ANTES do filtro de gravação, e de propósito: quem
+       * acabou de ligar o microfone precisa ver se ele capta som antes de
+       * começar a entrevista, não depois de perder vinte minutos de conversa.
+       *
+       * O worklet entrega 4096 amostras (256ms); medir uma a cada duas dá
+       * ~2 leituras por segundo, o bastante para um indicador e barato o
+       * suficiente para não disputar a thread com o envio. */
+      this.blocosDesdeNivel += 1;
+      if (this.eventos.onNivel && this.blocosDesdeNivel >= 2) {
+        this.blocosDesdeNivel = 0;
+        let soma = 0;
+        for (let i = 0; i < e.data.length; i++) soma += e.data[i] * e.data[i];
+        this.eventos.onNivel(Math.sqrt(soma / e.data.length));
+      }
+
+      // O filtro de gravação é aqui, e é o que mantém a captura aberta sem
+      // transmitir nada entre perguntas — e o que faz a pausa funcionar sem
+      // mexer no protocolo.
       if (!this.gravando || this.pausado || this.ws?.readyState !== WebSocket.OPEN) return;
       this.ws.send(e.data.buffer as ArrayBuffer);
     };
@@ -168,6 +194,8 @@ export class CapturaEntrevista {
         // ainda estava rodando quando a resposta fechou. Mostrá-lo faria a
         // transcrição voltar atrás na tela.
         if (this.gravando) this.eventos.onParcial?.(m.text);
+      } else if (m.type === "trecho") {
+        if (this.gravando) this.eventos.onTrecho?.(m.text);
       } else if (m.type === "final") this.eventos.onFinal?.(m.text, m.duracao_s ?? 0);
       else if (m.type === "aquecendo") {
         this.eventos.onAviso?.(
@@ -205,6 +233,20 @@ export class CapturaEntrevista {
 
     this.ws = ws;
     return ws;
+  }
+
+  /** Abre a escuta da entrevista INTEIRA, do "podemos começar?" ao fim.
+   *
+   * Uma sessão só, que não fecha entre perguntas. É o que substitui os 86
+   * ciclos de gravar/finalizar: o texto sai por `onTrecho` conforme a conversa
+   * anda, e quem decide a qual pergunta ele pertence é o servidor, não o
+   * entrevistador apertando um botão antes de cada uma.
+   *
+   * O `finalizarResposta` continua servindo para fechar — e é ele que devolve
+   * a transcrição do áudio inteiro, com o melhor contexto.
+   */
+  async iniciarEntrevista(): Promise<void> {
+    return this.iniciarResposta("entrevista");
   }
 
   /** Começa a transcrever a resposta desta pergunta. */

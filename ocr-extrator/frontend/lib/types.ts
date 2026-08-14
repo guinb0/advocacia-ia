@@ -216,6 +216,11 @@ export interface Pergunta {
   busca: "" | "cep";
   /** Id da pergunta que recebe o resultado da busca. */
   preenche: string;
+  /** Texto que a atendente LÊ em voz alta conforme a resposta. Chave "sim"/"não"
+   *  nas de rastreio, "*" para qualquer uma. Vem do roteiro do escritório. */
+  fala: Record<string, string>;
+  /** Resposta que IMPEDE o prosseguimento. Hoje só a ação anterior não recebida. */
+  impedimento: string;
 }
 
 export interface EnderecoCep {
@@ -237,6 +242,12 @@ export interface Bloco {
   /** `null` = sempre visível; senão, só com o rastreio positivo. */
   modulo: string | null;
   objetivo: string;
+  /** Lido em voz alta ao entrar no bloco. */
+  abertura: string;
+  /** Orientação à atendente. NÃO é lida ao cliente. */
+  instrucao: string;
+  /** O bloco saiu da entrevista e é de outra equipe. Hoje, a qualificação. */
+  delegado_a: string;
 }
 
 export interface RoteiroCompleto {
@@ -244,6 +255,10 @@ export interface RoteiroCompleto {
   nome: string;
   descricao: string;
   blocos: Bloco[];
+  /** Os parágrafos de abertura, para ler antes da primeira pergunta. */
+  saudacao: string[];
+  /** Os de encerramento, depois da última. */
+  encerramento: string[];
   /** id da pergunta de rastreio -> módulo que ela libera. */
   mapa_rastreio: Record<string, string>;
 }
@@ -451,4 +466,40 @@ export interface AnaliseResposta {
   precedentes: PrecedenteAnalise[];
   aviso: string;
   do_cache: boolean;
+}
+
+// ------------------------------------- escuta contínua durante a entrevista
+
+/** Um campo que a fala preencheu, com o pedaço da conversa que o sustenta. */
+export interface CampoOuvido {
+  pergunta_id: string;
+  pergunta: string;
+  valor: string;
+  /** Citação literal do que foi dito. É por ela que se confere de relance. */
+  trecho: string;
+}
+
+/** Algo que ficou pela metade, já escrito para ser lido em voz alta. */
+export interface Lembrete {
+  pergunta_id: string;
+  pergunte: string;
+}
+
+export interface PerguntaPendente {
+  pergunta_id: string;
+  pergunta: string;
+  obrigatoria: boolean;
+}
+
+/** Resposta de `POST /api/entrevista/escuta`. */
+export interface Escuta {
+  /** Entrou direto no campo — relatos, sim/não, escolhas. */
+  preenchidas: CampoOuvido[];
+  /** Nome e CPF: precisam de um clique para aceitar. Ver `app/escuta.py`. */
+  sugestoes: CampoOuvido[];
+  lembretes: Lembrete[];
+  /** O que o roteiro ainda pede e ninguém falou. */
+  faltando: PerguntaPendente[];
+  /** `false` quando o trecho era curto demais para valer uma chamada. */
+  analisado: boolean;
 }

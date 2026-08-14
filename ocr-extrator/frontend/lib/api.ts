@@ -10,6 +10,7 @@ import type {
   Documento,
   EnderecoCep,
   EntregaDetalhe,
+  Escuta,
   Estrategia,
   Pedido,
   PortalEstado,
@@ -306,6 +307,25 @@ export async function triarEntrevista(texto: string, arquivo?: File): Promise<Tr
   if (arquivo) form.append("arquivo", arquivo);
   return comoJson<TriagemResposta>(
     await buscar("/api/triagem", { method: "POST", body: form }),
+  );
+}
+
+/** Manda um trecho da conversa e recebe o que ele respondeu do roteiro.
+ *
+ * É o que sustenta a entrevista de microfone aberto: em vez de a atendente
+ * apertar gravar a cada uma das 86 perguntas, a conversa corre e o roteiro se
+ * preenche atrás dela. */
+export async function escutarTrecho(
+  trecho: string,
+  respostas: Record<string, string | string[]>,
+  roteiro = "empregado_publico",
+): Promise<Escuta> {
+  return comoJson<Escuta>(
+    await buscar("/api/entrevista/escuta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trecho, respostas, roteiro }),
+    }),
   );
 }
 

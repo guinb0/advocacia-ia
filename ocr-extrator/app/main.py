@@ -38,11 +38,13 @@ from . import (
     chamada,
     consultas,
     contrato,
+    escuta,
     pipeline,
     portal,
     rag,
     roteiros,
     triagem,
+    valor_documento,
 )
 from .extractors import ROTULOS_TIPO
 
@@ -222,6 +224,34 @@ def campos_do_contrato():
             m for m in marcadores if m not in {contrato._chave(f"[{k}]") for k in preenchiveis}
         ],
     }
+
+
+class PedidoEscuta(BaseModel):
+    """Um trecho de fala recém-transcrito, com o estado atual da entrevista."""
+
+    trecho: str = Field(max_length=8_000)
+    respostas: dict[str, Any] = Field(default_factory=dict)
+    roteiro: str = Field(default="empregado_publico", max_length=60)
+
+
+@app.post("/api/entrevista/escuta")
+async def escutar_entrevista(pedido: PedidoEscuta):
+    """O que este trecho de fala respondeu do roteiro, e o que ainda falta.
+
+    É o que sustenta a entrevista de microfone aberto: em vez de o entrevistador
+    apertar gravar a cada uma das 86 perguntas, a conversa corre e o roteiro se
+    preenche atrás dela (ver `app/escuta.py`).
+
+    Devolve os três de uma vez — o que entrou, o que ficou pela metade e o que
+    ninguém falou. Separados não servem: saber o que falta sem ver o que já
+    entrou faz repetir pergunta, que é do que o escritório reclamou.
+    """
+    try:
+        return await run_in_threadpool(
+            escuta.escutar, pedido.trecho, pedido.respostas, pedido.roteiro
+        )
+    except escuta.ErroEscuta as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 class PedidoAnaliseResposta(BaseModel):
@@ -1081,6 +1111,48 @@ def obter_entrega(entrega_id: str):
         raise HTTPException(404, "Entrega não encontrada.")
     entrega.pop("caminho", None)  # caminho no disco não interessa ao cliente HTTP
     return entrega
+
+
+@app.post("/api/entregas/{entrega_id}/leitura")
+async def ler_documento(entrega_id: str):
+    """Interpreta o texto que o OCR extraiu: para que este documento serve.
+
+    Existe porque o classificador do OCR conhece documento de IDENTIDADE, e os
+    que decidem a ação — CAT, laudo, boletim, CNIS, contracheque — caem em
+    "desconhecido" com o texto lido e ninguém para lê-lo (ver
+    `app/valor_documento.py`).
+
+    Não decide item do checklist: o status continua vindo do arquivo entregue,
+    não de opinião de modelo. O que sai daqui é leitura, rotulada como tal.
+    """
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+    if not entrega.get("extracao"):
+        raise HTTPException(409, "O documento ainda está sendo lido pelo OCR.")
+
+    # Só os itens em aberto: mandar os doze faria o modelo "resolver" o que já
+    # foi entregue, e o prompt cresceria sem ganho.
+    situacao = casos.montar_situacao(entrega["caso_id"])
+    pendencias: list[dict[str, str]] = []
+    categoria_nome = ""
+    if situacao:
+        categoria = situacao.get("categoria") or {}
+        categoria_nome = str(
+            (categoria.get("nome") if isinstance(categoria, dict) else categoria) or ""
+        )
+        pendencias = [
+            {"codigo": str(i.get("codigo", "")), "nome": str(i.get("nome", ""))}
+            for i in situacao.get("itens", [])
+            if i.get("status") == "pendente"
+        ]
+
+    try:
+        return await run_in_threadpool(
+            valor_documento.ler, entrega["extracao"], pendencias, categoria_nome
+        )
+    except valor_documento.ErroValor as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.get("/api/entregas/{entrega_id}/arquivo")

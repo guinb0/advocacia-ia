@@ -191,6 +191,8 @@ class AnswerSession:
     _inicio_cauda: int = 0
     #: Relógio da primeira amostra, para medir se o áudio chega em tempo real.
     _t0: float = 0.0
+    #: Quanto do prefixo já foi ENTREGUE ao cliente como trecho confirmado.
+    _prefixo_entregue: int = 0
 
     def acrescentar(self, pcm: np.ndarray) -> None:
         if self.amostras >= LIMITE_SESSAO_S * TAXA:
@@ -234,6 +236,21 @@ class AnswerSession:
     def texto_em_construcao(self) -> str:
         """O que a tela mostra enquanto a pessoa fala: congelado + janela atual."""
         return " ".join(p for p in (self.prefixo_parcial, self.texto_parcial) if p).strip()
+
+    def trecho_confirmado(self) -> str:
+        """O que foi congelado desde a última vez que alguém perguntou.
+
+        É o que sustenta a entrevista de microfone aberto: em vez de esperar o
+        fim da resposta para ter texto, o cliente recebe cada trecho assim que
+        ele para de mudar, e o manda para a escuta preencher o roteiro.
+
+        Só sai do PREFIXO, nunca da cauda: o prefixo é o que já passou de uma
+        pausa e não muda mais. Entregar a cauda faria o roteiro ser preenchido
+        com texto que a frase seguinte ainda vai corrigir.
+        """
+        novo = self.prefixo_parcial[self._prefixo_entregue :].strip()
+        self._prefixo_entregue = len(self.prefixo_parcial)
+        return novo
 
     def _juntar(self) -> np.ndarray:
         if not self.audio:

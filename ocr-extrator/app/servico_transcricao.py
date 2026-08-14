@@ -95,6 +95,15 @@ async def _enviar_parcial(ws: WebSocket, sessao: transcricao.AnswerSession) -> N
             await ws.send_json(
                 {"type": "partial", "sessionId": sessao.sessao_id, "text": texto}
             )
+
+            # E, separado do parcial, o que acabou de CONGELAR. O parcial é
+            # aproximação que se reescreve; o trecho não muda mais, e é por isso
+            # que ele — e só ele — pode alimentar o preenchimento do roteiro.
+            trecho = sessao.trecho_confirmado()
+            if trecho:
+                await ws.send_json(
+                    {"type": "trecho", "sessionId": sessao.sessao_id, "text": trecho}
+                )
     except Exception:
         # Parcial é descartável: o próximo já vem com o texto acumulado, e o
         # final é transcrito do áudio inteiro de qualquer jeito.
