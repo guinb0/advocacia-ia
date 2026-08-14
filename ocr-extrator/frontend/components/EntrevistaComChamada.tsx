@@ -40,8 +40,20 @@ export default function EntrevistaComChamada({ onConcluir, onFechar }: Props) {
         </div>
 
         <div className={estilos.direita}>
+          {/* A faixa da chamada NÃO alimenta mais a transcrição.
+           *
+           * Ela chegava, mas chegava muda: com o serviço de pé e recebendo
+           * dados, o detector de voz descartava o áudio inteiro —
+           *
+           *     Processing audio with duration 00:04.608
+           *     VAD filter removed 00:04.608 of audio
+           *
+           * Enquanto isso não for diagnosticado, quem transcreve é o microfone
+           * desta máquina (o botão do topo do roteiro). Religar é trocar este
+           * no-op de volta por `roteiro.current?.usarFaixaDaChamada(trilha)` —
+           * o resto da fiação continua no lugar. */}
           <PainelChamada
-            onFaixaRemota={(trilha) => void roteiro.current?.usarFaixaDaChamada(trilha)}
+            onFaixaRemota={() => {}}
             onFimDaFaixa={() => roteiro.current?.aoPerderChamada()}
           />
         </div>

@@ -177,6 +177,27 @@ export class CapturaEntrevista {
     };
     ws.onerror = () => this.eventos.onErro?.("Conexão de transcrição caiu.");
 
+    /* Fechamento LIMPO também precisa avisar.
+     *
+     * `onerror` não dispara quando o servidor encerra de forma ordenada — o que
+     * acontece toda vez que o serviço de transcrição reinicia com a página
+     * aberta. Sem este aviso, a resposta em curso ficava presa: a tela seguia
+     * mostrando "Pausar"/"Finalizar" esperando um texto final que nunca viria,
+     * e clicar nos botões não fazia nada. */
+    ws.onclose = () => {
+      const gravava = this.gravando;
+      this.gravando = false;
+      this.pausado = false;
+      this.sessaoAtual = null;
+      this.ws = null;
+      if (gravava) {
+        this.eventos.onErro?.(
+          "A conexão de transcrição caiu no meio da resposta. O trecho não gravado " +
+            "se perdeu — grave de novo ou digite.",
+        );
+      }
+    };
+
     await new Promise<void>((ok, falhou) => {
       ws.onopen = () => ok();
       setTimeout(() => falhou(new Error("O servidor de transcrição não respondeu.")), 10_000);
@@ -221,9 +242,26 @@ export class CapturaEntrevista {
     if (!this.gravando) return;
     this.gravando = false; // para o envio ANTES de avisar o servidor
     this.pausado = false;
-    this.ws?.send(JSON.stringify({ type: "stop", sessionId: this.sessaoAtual }));
+    const sessao = this.sessaoAtual;
     this.sessaoAtual = null;
     this.eventos.onEstado?.("capturando");
+
+    /* `send` em socket fechado LEVANTA exceção, e essa exceção subia até o
+     * onClick do botão. A tela já tinha entrado em "Transcrevendo…" e ficava
+     * lá para sempre, porque o `final` nunca chegaria de um socket morto.
+     * Avisar é o que devolve a pergunta ao usuário. */
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      this.eventos.onErro?.(
+        "A conexão de transcrição não estava aberta. A resposta não foi transcrita — " +
+          "grave de novo ou digite.",
+      );
+      return;
+    }
+    try {
+      this.ws.send(JSON.stringify({ type: "stop", sessionId: sessao }));
+    } catch {
+      this.eventos.onErro?.("Não foi possível fechar a resposta. Grave de novo ou digite.");
+    }
   }
 
   /** Fim da entrevista: solta a captura e a conexão. */

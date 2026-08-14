@@ -79,6 +79,14 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
 
   const [estadoMic, setEstadoMic] = useState<EstadoCaptura>("sem-audio");
   const [gravandoId, setGravandoId] = useState<string | null>(null);
+  /* Entre clicar em "Finalizar" e o texto voltar do servidor.
+   *
+   * A captura para no clique, mas o texto final é transcrito do áudio INTEIRO —
+   * numa resposta de três minutos são vários segundos. Nesse intervalo a
+   * pergunta continuava mostrando "Pausar" e "Finalizar", e os dois não faziam
+   * nada: a captura já tinha parado, e os métodos saem calados quando não há
+   * gravação. Era o "clico e não acontece nada". */
+  const [finalizando, setFinalizando] = useState(false);
   const [parcial, setParcial] = useState("");
   const [aviso, setAviso] = useState<string | null>(null);
   const [fonte, setFonte] = useState<Fonte>("nenhuma");
@@ -201,6 +209,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         }
         emGravacao.current = null;
         setGravandoId(null);
+        setFinalizando(false);
         setParcial("");
       },
       onEstado: (e) => {
@@ -209,7 +218,19 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         // botão de gravar não pode continuar oferecendo o que não existe.
         if (e === "sem-audio") setFonte("nenhuma");
       },
-      onErro: setErro,
+      onErro: (m) => {
+        setErro(m);
+        /* Destrava a pergunta.
+         *
+         * Sem isto, um erro na transcrição deixava `gravandoId` preso para
+         * sempre: a pergunta continuava mostrando "Pausar" e "Finalizar", os
+         * dois clicavam em nada (a captura já não estava gravando) e a única
+         * saída era recarregar a página perdendo a entrevista. */
+        emGravacao.current = null;
+        setGravandoId(null);
+        setFinalizando(false);
+        setParcial("");
+      },
     });
   }
 
@@ -268,7 +289,13 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
 
   const pausar = useCallback(() => captura.current?.pausar(), []);
   const retomar = useCallback(() => captura.current?.retomar(), []);
-  const finalizar = useCallback(() => captura.current?.finalizarResposta(), []);
+  const finalizar = useCallback(() => {
+    // Marca ANTES de mandar parar: o servidor pode levar segundos para devolver
+    // o texto, e é essa marca que troca os botões por "Transcrevendo…" em vez
+    // de deixar dois botões inertes na tela.
+    setFinalizando(true);
+    captura.current?.finalizarResposta();
+  }, []);
 
   const responder = useCallback((id: string, valor: string | string[]) => {
     setRespostas((r) => ({ ...r, [id]: valor }));
@@ -378,6 +405,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           onResponder={responder}
           gravandoId={gravandoId}
           pausado={estadoMic === "pausado"}
+          finalizando={finalizando}
           parcial={parcial}
           temMic={temMic}
           onGravar={gravar}
@@ -425,6 +453,7 @@ function BlocoRoteiro({
   onResponder,
   gravandoId,
   pausado,
+  finalizando,
   parcial,
   temMic,
   onGravar,
@@ -439,6 +468,7 @@ function BlocoRoteiro({
   onResponder: (id: string, valor: string | string[]) => void;
   gravandoId: string | null;
   pausado: boolean;
+  finalizando: boolean;
   parcial: string;
   temMic: boolean;
   onGravar: (id: string) => void;
@@ -478,6 +508,7 @@ function BlocoRoteiro({
                 onResponder={onResponder}
                 gravando={gravandoId === p.id}
                 pausado={gravandoId === p.id && pausado}
+                finalizando={gravandoId === p.id && finalizando}
                 parcial={gravandoId === p.id ? parcial : ""}
                 temMic={temMic}
                 ocupado={gravandoId !== null && gravandoId !== p.id}
@@ -623,6 +654,7 @@ function CampoResposta({
   onResponder,
   gravando,
   pausado,
+  finalizando,
   parcial,
   temMic,
   ocupado,
@@ -639,6 +671,8 @@ function CampoResposta({
   onResponder: (id: string, valor: string | string[]) => void;
   gravando: boolean;
   pausado: boolean;
+  /** Esperando o texto final voltar do servidor. */
+  finalizando: boolean;
   parcial: string;
   temMic: boolean;
   /** Outra pergunta está gravando — o microfone é um só para a entrevista. */
@@ -824,24 +858,34 @@ function CampoResposta({
                 type="button"
                 className={transcricaoEstilos.secundario}
                 onClick={pausado ? onRetomar : onPausar}
+                // Depois de finalizar não há o que pausar: a captura já parou.
+                // Desabilitar é o que faz o botão parar de mentir.
+                disabled={finalizando}
               >
                 {pausado ? "Retomar" : "Pausar"}
               </button>
               <button
                 type="button"
                 className={`${transcricaoEstilos.botao} ${
-                  gravando ? transcricaoEstilos.gravando : ""
+                  gravando && !finalizando ? transcricaoEstilos.gravando : ""
                 }`}
                 onClick={onFinalizar}
+                disabled={finalizando}
               >
-                Finalizar resposta
+                {finalizando ? "Transcrevendo…" : "Finalizar resposta"}
               </button>
             </>
           )}
 
-          {pausado && (
+          {pausado && !finalizando && (
             <span className={estilos.pausa}>
               pausado — o que for dito agora não entra na resposta
+            </span>
+          )}
+
+          {finalizando && (
+            <span className={estilos.pausa}>
+              transcrevendo a resposta inteira — o texto aparece em instantes
             </span>
           )}
         </div>
