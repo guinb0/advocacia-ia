@@ -189,12 +189,26 @@ class AnswerSession:
     parcial_em_curso: bool = False
     _amostras_ultima_parcial: int = 0
     _inicio_cauda: int = 0
+    #: Relógio da primeira amostra, para medir se o áudio chega em tempo real.
+    _t0: float = 0.0
 
     def acrescentar(self, pcm: np.ndarray) -> None:
         if self.amostras >= LIMITE_SESSAO_S * TAXA:
             return
+        if self._t0 == 0.0:
+            self._t0 = time.monotonic()
         self.audio.append(pcm)
         self.amostras += len(pcm)
+
+    def fator_chegada(self) -> float:
+        """Quantos segundos de áudio chegam por segundo de relógio.
+
+        1,0 é tempo real. Abaixo disso a transcrição não tem como acompanhar a
+        fala — não adianta acelerar o modelo se o áudio não chega. Acima de 1,0
+        é gravação sendo despejada de uma vez, não entrevista ao vivo.
+        """
+        decorrido = time.monotonic() - self._t0
+        return (self.amostras / TAXA) / decorrido if decorrido > 0.1 else 0.0
 
     @property
     def duracao_s(self) -> float:
@@ -241,10 +255,24 @@ class AnswerSession:
 
         if not _trava_inferencia.acquire(blocking=False):
             return self.texto_em_construcao()
+        inicio = time.perf_counter()
         try:
             trechos = _segmentos_sem_trava(cauda)
         finally:
             _trava_inferencia.release()
+
+        # Uma linha por parcial, com os quatro números que separam as causas de
+        # "está demorando": inferência lenta, áudio chegando devagar, microfone
+        # mudo, ou cauda que não congela. Sem isto o diagnóstico vira palpite.
+        nivel = float(np.sqrt(np.mean(np.square(cauda)))) if len(cauda) else 0.0
+        log.info(
+            "parcial: cauda=%.1fs inferencia=%dms nivel=%.4f chegada=%.2fx segmentos=%d",
+            len(cauda) / TAXA,
+            int((time.perf_counter() - inicio) * 1000),
+            nivel,
+            self.fator_chegada(),
+            len(trechos),
+        )
 
         self.texto_parcial = " ".join(t.texto for t in trechos).strip()
         self._congelar(trechos, len(cauda) / TAXA)

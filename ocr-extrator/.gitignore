@@ -25,3 +25,9 @@ docs/CONTRATO*.docx
 
 # Saida do script de vetorizacao: barulho de execucao, nao codigo.
 vetorizacao-*.log
+
+# Saida dos servicos quando sobem soltos (fora do iniciar.ps1). O da transcricao
+# e o mais serio: ele registra o nivel do audio e, em caso de erro, trecho do que
+# foi dito pelo cliente. Isso e dado de atendimento, nao log de build.
+backend.*.log
+transcricao.*.log

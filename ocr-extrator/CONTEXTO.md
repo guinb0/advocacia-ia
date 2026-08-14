@@ -410,6 +410,22 @@ tentariam o banco uma vez cada.
 
 ---
 
+## Chamada da entrevista — guia em `docs/CHAMADA.md`
+
+Como o pessoal roda: subir o Jitsi à parte (`docker compose up -d` em
+`docker-jitsi-meet`, porta 8081), abrir a chamada na coluna direita da entrevista
+e mandar o link sorteado ao entrevistado.
+
+**A chamada não alimenta a transcrição** — quem transcreve é o microfone da
+máquina. Ver a seção da conferência acima e o cabeçalho de `Roteiro.tsx`.
+
+**Hoje só funciona na própria máquina.** O link é `localhost:3000/chamada/…`, e
+trocar por IP não resolve: navegador não libera microfone fora de contexto seguro.
+Cliente à distância exige HTTPS — mesmo bloqueio do portal, que hoje manda senha
+em claro. Detalhes e diagnóstico de falha no guia.
+
+---
+
 ## Gravação com pausa e complemento — 13/08/2026
 
 Os botões da pergunta narrativa deixaram de ser um só. Agora: **Gravar resposta**
