@@ -19,6 +19,7 @@ quais módulos aparecem. Quem não sofreu assalto não vê o módulo de assalto.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -56,6 +57,17 @@ class Pergunta:
     busca: Busca = ""
     #: Id da pergunta que recebe o resultado da busca. Vazio = preenche a si.
     preenche: str = ""
+    #: Texto que a atendente LÊ EM VOZ ALTA, palavra por palavra, quando esta
+    #: resposta cai num certo valor. É diferente de `dica`, que é orientação
+    #: interna e nunca é lida ao cliente.
+    #:
+    #: Chave "sim"/"não" para as de rastreio; "*" para qualquer resposta. Vem do
+    #: roteiro do escritório — ver `docs/ENTREVISTA*.docx`.
+    fala: dict[str, str] = field(default_factory=dict)
+    #: Resposta que IMPEDE o prosseguimento, com o motivo. O roteiro tem um caso:
+    #: quem já ganhou ação sobre o mesmo fato e ainda não recebeu não pode entrar
+    #: com outra. Ver `ALERTAS` no fim do módulo.
+    impedimento: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,6 +81,15 @@ class Bloco:
     #: `None` = sempre exibido. Caso contrário, só quando o rastreio deu positivo.
     modulo: str | None = None
     objetivo: str = ""
+    #: Lido em voz alta ao ENTRAR no bloco. O roteiro do escritório abre vários
+    #: blocos com uma transição ("Agora vou lhe fazer algumas perguntas sobre…"),
+    #: e o escritório pediu que ele fosse seguido estritamente.
+    abertura: str = ""
+    #: Instrução de conduta para a atendente. NÃO é lida ao cliente.
+    instrucao: str = ""
+    #: O bloco sai da entrevista e passa para outra equipe. Hoje só a
+    #: qualificação: o roteiro reserva um Departamento de Documentação para ela.
+    delegado_a: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -82,12 +103,18 @@ class Roteiro:
     nome: str
     descricao: str
     blocos: list[Bloco]
+    #: Os parágrafos de abertura, na ordem, lidos antes da primeira pergunta.
+    saudacao: list[str] = field(default_factory=list)
+    #: Os de encerramento, depois da última.
+    encerramento: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "codigo": self.codigo,
             "nome": self.nome,
             "descricao": self.descricao,
+            "saudacao": self.saudacao,
+            "encerramento": self.encerramento,
             "blocos": [b.to_dict() for b in self.blocos],
         }
 
@@ -95,12 +122,37 @@ class Roteiro:
 # --------------------------------------------------------------- blocos
 
 
-IDENTIFICACAO = Bloco(
-    id="identificacao",
-    titulo="Identificação e qualificação",
-    objetivo="Dados cadastrais do cliente. Tudo digitado — número ditado se perde.",
+# A entrevista abre com dois campos, e só dois.
+#
+# O escritório tirou a qualificação do começo: perguntar nacionalidade, filiação
+# e órgão expedidor antes de ouvir a história é o que fazia a conversa começar
+# como um formulário. Nome e CPF ficam porque sem eles não se identifica o
+# atendimento nem se gera o contrato ao final.
+#
+# Os dois são digitados. A escuta automática pode SUGERI-los a partir da fala,
+# nunca preenchê-los sozinha — ver `app/escuta.py`.
+ABERTURA = Bloco(
+    id="abertura",
+    titulo="Identificação",
+    objetivo="O mínimo para abrir o atendimento. O resto da qualificação vem depois.",
     perguntas=[
         Pergunta("nome", "Nome completo", "dado", obrigatoria=True),
+        Pergunta("cpf", "CPF", "dado", obrigatoria=True, validacao="cpf"),
+    ],
+)
+
+
+IDENTIFICACAO = Bloco(
+    id="identificacao",
+    titulo="Qualificação completa",
+    objetivo="Dados cadastrais do cliente. Tudo digitado — número ditado se perde.",
+    delegado_a="Departamento de Documentação",
+    instrucao=(
+        "NÃO percorrer durante a entrevista. O roteiro entrega esta etapa ao "
+        "Departamento de Documentação, que a conduz na mesma videoconferência, "
+        "depois do encerramento. Os campos ficam aqui para quem for colhê-los."
+    ),
+    perguntas=[
         Pergunta("nacionalidade", "Nacionalidade", "dado"),
         Pergunta("nascimento", "Data de nascimento", "data"),
         # Escolha, não campo livre: estado civil digitado vira "casado",
@@ -122,7 +174,6 @@ IDENTIFICACAO = Bloco(
             ],
         ),
         Pergunta("profissao", "Profissão", "dado"),
-        Pergunta("cpf", "CPF", "dado", obrigatoria=True, validacao="cpf"),
         # Três campos, não um: o contrato pede o número num lugar e o órgão
         # noutro ("portador(a) do RG nº ___, expedido por ___"). Perguntando
         # tudo junto, alguém teria de adivinhar onde termina o número — e o
@@ -196,6 +247,10 @@ RASTREIO = Bloco(
             "Já entrou com ação judicial contra os Correios sobre esses assuntos?",
             "sim_nao",
             obrigatoria=True,
+            dica=(
+                "Se sim: descobrir se já transitou em julgado e se JÁ RECEBEU. "
+                "Não tendo recebido, não é possível entrar com nova ação."
+            ),
         ),
         Pergunta("r_acao_quais", "Se sim, quais?", "relato", transcrever=True),
     ],
@@ -235,6 +290,20 @@ ASSALTO = Bloco(
             "relato",
             transcrever=True,
             dica="ATENÇÃO: se ainda não recebeu, não é possível entrar com nova ação.",
+        ),
+        # O único impedimento explícito do roteiro (§62 do .docx, em caixa alta):
+        # "SE AINDA NÃO RECEBEU, NÃO É POSSÍVEL ENTRAR". Fica como pergunta
+        # própria, e não como dica, porque a resposta precisa ser registrada — é
+        # ela que decide se o atendimento segue para contrato ou para.
+        Pergunta(
+            "as_recebeu",
+            "Já recebeu as indenizações dessa ação anterior?",
+            "sim_nao",
+            impedimento="não",
+            dica=(
+                "Se NÃO recebeu: não é possível entrar com nova ação sobre o mesmo "
+                "fato. Informar o cliente e não seguir para o contrato."
+            ),
         ),
         Pergunta("as_testemunhas", "Existem testemunhas que presenciaram o assalto?", "sim_nao"),
         Pergunta(
@@ -444,6 +513,99 @@ ENCERRAMENTO = Bloco(
 )
 
 
+# ------------------------------------------------- abertura e encerramento
+#
+# Transcritos de `ENTREVISTA Empregado Publico Atualizada 11082026.docx`,
+# parágrafo por parágrafo, sem reescrita.
+#
+# Por que copiado e não resumido: é o que a atendente LÊ ao cliente. O texto
+# promete sigilo, explica a finalidade do tratamento dos dados e diz o que será
+# feito com eles — resumir isso é alterar o que o escritório declara a quem está
+# do outro lado. `[Nome]` e `[Nome da Atendente]` continuam entre colchetes pelo
+# mesmo motivo do contrato: lacuna visível não passa despercebida.
+
+SAUDACAO = [
+    "Bom dia/boa tarde, Sr.(a) [Nome]. Tudo bem? Seja muito bem-vindo(a).",
+    "Meu nome é [Nome da Atendente] e faço parte da equipe de acolhimento ao "
+    "cliente da Lara & Melo Advogados Associados.",
+    "Antes de iniciarmos, gostaríamos de agradecer pela confiança depositada em "
+    "nosso escritório.",
+    "A Lara & Melo Advogados Associados atua em todo o território nacional e é "
+    "especializada na defesa dos direitos dos trabalhadores, com forte atuação nas "
+    "ações envolvendo acidentes do trabalho, doenças ocupacionais, assaltos "
+    "sofridos durante a atividade profissional e benefícios previdenciários, como "
+    "o auxílio-acidente.",
+    "Esta entrevista integra o nosso protocolo interno de atendimento e tem como "
+    "finalidade compreender, de forma detalhada, toda a sua história. Nosso "
+    "objetivo é identificar todos os direitos que o(a) senhor(a) eventualmente "
+    "possa possuir e fornecer à nossa equipe jurídica todas as informações "
+    "necessárias para uma análise técnica completa e personalizada.",
+    "Por esse motivo, durante nossa conversa, farei algumas perguntas bastante "
+    "específicas. Elas são essenciais para que nenhuma informação relevante deixe "
+    "de ser considerada pela equipe jurídica.",
+    "Fique tranquilo(a), pois esta conversa é totalmente sigilosa e costuma durar "
+    "entre 20 e 30 minutos, dependendo da complexidade do caso.",
+    "Ao final da entrevista, todas as informações serão encaminhadas para análise "
+    "da equipe jurídica LARA & MELO ADVOGADOS ASSOCIADOS, que avaliarão "
+    "cuidadosamente a viabilidade das medidas cabíveis e, se necessário, entrarão "
+    "em contato para solicitar alguma informação complementar.",
+    "Se, durante a entrevista, surgir qualquer dúvida, fique à vontade para me "
+    "interromper. Será um prazer esclarecer tudo o que for necessário.",
+    "Podemos começar?",
+]
+
+FECHAMENTO = [
+    "Sr.(a) [Nome], concluímos a nossa entrevista. Primeiramente gostaria de "
+    "agradecer, em nome do Dr. Gustavo Lara e de toda a equipe da Lara & Melo "
+    "Advogados Associados, pela confiança em compartilhar conosco a sua história.",
+    "Pode ter certeza de que todas as informações prestadas hoje serão analisadas "
+    "com muita atenção.",
+    "Antes de encerrarmos, posso lhe fazer apenas uma última pergunta?",
+    "Como foi a sua experiência durante este atendimento? O(a) senhor(a) gostou da "
+    "forma como foi atendido(a)? Existe alguma sugestão ou algo que poderíamos "
+    "melhorar?",
+    "(Aguardar a resposta do cliente.)",
+    "Fico muito feliz em ouvir isso. Trabalhamos diariamente para oferecer um "
+    "atendimento de excelência para todos os trabalhadores que confiam no nosso "
+    "escritório.",
+    "Se o(a) senhor(a) permitir, gostaria de lhe encaminhar um link de avaliação. "
+    "A sua opinião é extremamente importante para nós, pois nos ajuda a "
+    "aperfeiçoar continuamente nossos atendimentos e também auxilia outras pessoas "
+    "a conhecerem o trabalho desenvolvido pela nossa equipe.",
+    "Posso lhe enviar esse link agora?",
+    "(Se o cliente responder “sim”:) Perfeito! Acabei de encaminhar o link.",
+    "Se o atendimento correspondeu às suas expectativas e o(a) senhor(a) acredita "
+    "que fiz um bom trabalho, peço, por gentileza, que nos avalie com cinco "
+    "estrelas. Essa avaliação é muito importante para o nosso escritório e também "
+    "para mim, pois ela faz parte da avaliação do meu desempenho profissional e "
+    "contribui para o meu crescimento dentro da equipe.",
+    "Se o(a) senhor(a) se sentir à vontade, ficaremos muito felizes se puder "
+    "deixar também um breve comentário relatando como foi a sua experiência "
+    "durante esta entrevista. Seu depoimento é muito valioso para nós.",
+    "Se não houver problema, peço apenas que realize a avaliação agora. Eu "
+    "permanecerei na videoconferência aguardando para confirmar que deu tudo certo "
+    "e, caso tenha qualquer dificuldade durante o preenchimento, terei o maior "
+    "prazer em ajudá-lo(a).",
+    "(Aguardar a conclusão da avaliação.)",
+    "Muito obrigada pela sua avaliação e, principalmente, pela confiança "
+    "depositada em nossa Equipe.",
+    "Sr.(a) [Nome], concluímos a nossa entrevista e, a partir de agora, o seu "
+    "atendimento passará a ser acompanhado pelo Departamento de Documentação da "
+    "Lara & Melo Advogados Associados.",
+    "A responsável pelo seu atendimento, Cristielen, dará continuidade ao "
+    "acompanhamento e alinhará com o(a) senhor(a), ainda nesta mesma "
+    "videoconferência, toda a documentação necessária para darmos prosseguimento "
+    "ao seu atendimento.",
+    "Ela irá explicar detalhadamente quais documentos serão necessários, como "
+    "deverão ser encaminhados e esclarecerá qualquer dúvida que o(a) senhor(a) "
+    "possa ter.",
+    "Fique tranquilo(a), pois estaremos acompanhando cada etapa e permanecemos à "
+    "disposição para auxiliá-lo(a) no que for necessário.",
+    "Foi um prazer atendê-lo. Em nome da Lara & Melo Advogados Associados, desejo "
+    "um ótimo dia.",
+]
+
+
 EMPREGADO_PUBLICO = Roteiro(
     codigo="empregado_publico",
     nome="Empregado Público (Correios)",
@@ -451,11 +613,18 @@ EMPREGADO_PUBLICO = Roteiro(
         "Roteiro de acolhimento da Lara & Melo para empregado dos Correios. "
         "As cinco perguntas de rastreio definem quais módulos são percorridos."
     ),
+    saudacao=SAUDACAO,
+    encerramento=FECHAMENTO,
+    # A ordem é a do documento, e ela mudou: a qualificação deixou de abrir a
+    # entrevista. O roteiro reserva um DEPARTAMENTO DE DOCUMENTAÇÃO para colhê-la
+    # depois, com atendente e script próprios — o que a entrevista precisa saber
+    # de imediato é só nome e CPF, e o resto é conversa.
     blocos=[
-        IDENTIFICACAO, VINCULO, RASTREIO,
+        ABERTURA, VINCULO, RASTREIO,
         ASSALTO, ACIDENTE, DOENCA,
         HISTORICO, SAUDE, SEQUELAS,
         ENCERRAMENTO,
+        IDENTIFICACAO,
     ],
 )
 
@@ -468,6 +637,52 @@ MAPA_RASTREIO = {
     "r_doenca": "doenca",
     "r_sequela": "sequela",
 }
+
+
+def impedimentos(codigo: str, respostas: dict[str, Any]) -> list[dict[str, str]]:
+    """As respostas que barram o prosseguimento, com o motivo.
+
+    Hoje há um caso, e ele vem em caixa alta no roteiro do escritório: quem já
+    tem ação sobre o mesmo fato e AINDA NÃO RECEBEU não pode entrar com outra.
+
+    Isto é consultado antes de oferecer o contrato. Não é conselho jurídico
+    automatizado — é o próprio roteiro, escrito pelo escritório, aplicado onde
+    ele mandou aplicar. Quem decide continua sendo o advogado; o sistema só
+    deixa de esconder a regra no meio de 86 perguntas.
+    """
+    roteiro = obter(codigo)
+    if roteiro is None:
+        return []
+
+    def igual(a: str, b: str) -> bool:
+        """"não" e "nao" são a mesma resposta.
+
+        A tela grava com acento (os botões são "sim"/"não"), mas a escuta
+        automática e o preenchimento por API podem chegar sem. Uma regra que
+        barra o ajuizamento não pode depender de cedilha.
+        """
+        def limpar(s: str) -> str:
+            s = unicodedata.normalize("NFKD", s.strip().lower())
+            return s.encode("ascii", "ignore").decode()
+
+        return limpar(a) == limpar(b)
+
+    achados = []
+    for bloco in roteiro.blocos:
+        for pergunta in bloco.perguntas:
+            if not pergunta.impedimento:
+                continue
+            valor = str(respostas.get(pergunta.id, "")).strip().lower()
+            if valor and igual(valor, pergunta.impedimento):
+                achados.append(
+                    {
+                        "pergunta_id": pergunta.id,
+                        "pergunta": pergunta.texto,
+                        "resposta": valor,
+                        "motivo": pergunta.dica,
+                    }
+                )
+    return achados
 
 
 def listar() -> list[Roteiro]:

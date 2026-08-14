@@ -10,9 +10,18 @@ Rodar: .venv\\Scripts\\python.exe -m tests.test_roteiros
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+import os
 
-from app import main, roteiros, validators
+# A rota do roteiro é protegida, e este teste não tem token do Keycloak. Sem
+# desligar a autenticação AQUI — antes de importar `app.main`, que lê a variável
+# na importação — a suíte parava no primeiro 401 e nenhuma das conferências de
+# estrutura chegava a rodar. O `carregar_env` só preenche variável AUSENTE, então
+# defini-la vazia aqui vence o que está no `.env`.
+os.environ["KEYCLOAK_URL"] = ""
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app import main, roteiros, validators  # noqa: E402
 
 #: Tudo o que a tela sabe conferir hoje (ver frontend/lib/documentos.ts).
 VALIDACOES_CONHECIDAS = {"", "cpf"}
@@ -112,6 +121,73 @@ def main_teste() -> int:
         roteiros.obter("nao_existe") is None,
         "roteiro inexistente devolve None em vez de estourar",
     )
+
+    # --- o roteiro é o do escritório, não uma paráfrase --------------------
+    # O escritório pediu que o documento fosse seguido estritamente. Estas
+    # asserções travam o que uma reescrita bem-intencionada apagaria primeiro.
+    corpo = resposta.json()
+    saudacao, encerramento = corpo["saudacao"], corpo["encerramento"]
+
+    falhas += not checar(
+        len(saudacao) == 10 and saudacao[-1] == "Podemos começar?",
+        f"a saudação tem os 10 parágrafos e termina no convite ({len(saudacao)})",
+    )
+    falhas += not checar(
+        "totalmente sigilosa" in " ".join(saudacao),
+        "a promessa de sigilo continua na abertura, palavra por palavra",
+    )
+    falhas += not checar(
+        any("Departamento de Documentação" in p for p in encerramento),
+        "o encerramento passa o atendimento para a Documentação",
+    )
+
+    # --- a ordem que o escritório pediu ------------------------------------
+    ordem = [b["id"] for b in corpo["blocos"]]
+    falhas += not checar(
+        ordem[0] == "abertura",
+        f"a entrevista abre pela identificação mínima ({ordem[0]})",
+    )
+    abertura = next(b for b in corpo["blocos"] if b["id"] == "abertura")
+    falhas += not checar(
+        [p["id"] for p in abertura["perguntas"]] == ["nome", "cpf"],
+        "e ela pede só nome e CPF",
+    )
+    falhas += not checar(
+        ordem[-1] == "identificacao" and ordem.index("rastreio") < ordem.index("identificacao"),
+        "a qualificação completa foi para o fim, depois do rastreio",
+    )
+    qualificacao = next(b for b in corpo["blocos"] if b["id"] == "identificacao")
+    falhas += not checar(
+        qualificacao["delegado_a"] == "Departamento de Documentação",
+        "e está marcada como de outra equipe",
+    )
+    falhas += not checar(
+        not any(p["id"] in ("nome", "cpf") for p in qualificacao["perguntas"]),
+        "nome e CPF não ficaram duplicados nos dois blocos",
+    )
+
+    # --- ids únicos --------------------------------------------------------
+    # Mover pergunta entre blocos é onde se duplica id sem perceber, e id
+    # duplicado faz uma resposta sobrescrever a outra em silêncio.
+    todos = [p["id"] for b in corpo["blocos"] for p in b["perguntas"]]
+    duplicados = {i for i in todos if todos.count(i) > 1}
+    falhas += not checar(not duplicados, f"nenhum id de pergunta duplicado ({duplicados})")
+
+    # --- o impedimento do §62 ---------------------------------------------
+    falhas += not checar(
+        roteiros.impedimentos("empregado_publico", {}) == [],
+        "sem resposta, nada impede o prosseguimento",
+    )
+    falhas += not checar(
+        len(roteiros.impedimentos("empregado_publico", {"as_recebeu": "sim"})) == 0,
+        "quem já recebeu a ação anterior pode seguir",
+    )
+    for grafia in ("não", "nao", "NÃO"):
+        barrado = roteiros.impedimentos("empregado_publico", {"as_recebeu": grafia})
+        falhas += not checar(
+            len(barrado) == 1 and barrado[0]["motivo"],
+            f"quem NÃO recebeu é barrado, com motivo — grafia {grafia!r}",
+        )
 
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     return 1 if falhas else 0
