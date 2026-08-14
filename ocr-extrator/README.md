@@ -24,23 +24,34 @@ Nada de status marcado à mão: tudo é derivado dos arquivos entregues.
 
 ## Como rodar
 
+**Primeira vez no projeto?** O passo a passo completo — pré-requisitos,
+configuração e o que fazer quando não sobe — está em
+[`docs/COMECANDO.md`](docs/COMECANDO.md).
+
 ```powershell
 cd ocr-extrator
-.\iniciar.ps1          # desenvolvimento
-.\iniciar.ps1 -Prod    # usa o build de produção do Next
+.\iniciar.ps1            # desenvolvimento
+.\iniciar.ps1 -SemAuth   # sem login, dispensa o Docker
+.\iniciar.ps1 -Prod      # usa o build de produção do Next
 ```
 
-Abra <http://localhost:3100>.
+Abra <http://localhost:3000>.
 
-São **dois processos**:
+São **três processos**:
 
 | | porta | o que é |
 |---|---|---|
 | API | `8100` | FastAPI + PaddleOCR (docs interativos em `/docs`) |
-| Web | `3100` | Next.js |
+| Web | `3000` | Next.js |
+| Transcrição | `8200` | Whisper, em processo próprio |
 
-Portas 8100/3100 em vez das óbvias 8000/3000 porque estas costumam já estar
-ocupadas na máquina (WSL, outros projetos Next).
+A API fica na 8100 em vez da óbvia 8000 porque esta costuma já estar ocupada na
+máquina (WSL, outros projetos). A web usa a 3000, que é a padrão do Next — então
+ela colide com qualquer outro projeto Next aberto; `-Porta 3100` troca sem
+editar nada.
+
+A transcrição roda separada do OCR de propósito: os dois modelos disputavam CPU
+e o mesmo áudio que leva 3s isolado levava 227s dividindo processo.
 
 Na primeira execução o PaddleOCR baixa os modelos (~100MB) para `~/.paddlex/official_models`.
 A barra de status no topo da página mostra quando o modelo está pronto.
