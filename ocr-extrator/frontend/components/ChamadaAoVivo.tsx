@@ -2,23 +2,24 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ChamadaJitsi } from "@/lib/chamadaJitsi";
+import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import estilos from "./ChamadaAoVivo.module.css";
 
-/* Entrevista por chamada de voz, do lado do advogado.
+/* Entrevista por chamada de voz, do lado do advogado — na tela do checklist.
  *
- * A peça que faz isto valer a pena é a ligação entre os dois módulos: a
- * `ChamadaJitsi` entrega a faixa remota — a voz do CLIENTE, isolada — e ela vai
- * direto para a `CapturaEntrevista`. O microfone do advogado não entra na
- * transcrição: ele vai para a chamada e para.
+ * A chamada em si é a MESMA que roda no resto do app: ela vive no
+ * `ProvedorChamada` e PERMANECE ao vir da entrevista para cá. Se o atendente já
+ * estava na chamada com o cliente, ela continua aqui; senão, dá para abrir uma
+ * na sala do caso. Assim o escritório acompanha o cliente enquanto ele envia os
+ * documentos, sem largar a conversa.
  *
- * Por isso o que aparece aqui é só o que o cliente falou, sem diarização e sem
- * o entrevistador no meio do texto. */
+ * A faixa remota — a voz do cliente, isolada — alimenta a transcrição, e o que
+ * aparece é só o que ele falou, sem o entrevistador no meio. */
 
 interface Props {
-  /** Token do portal do caso. É o nome da sala — o cliente já o tem no link. */
+  /** Token do portal do caso. Nomeia a sala, caso ainda não haja chamada. */
   sala: string;
   /** Cada fala fechada, já transcrita. */
   onFala?: (texto: string) => void;
@@ -38,11 +39,10 @@ const LEGENDA: Record<EstadoChamada, string> = {
 };
 
 export default function ChamadaAoVivo({ sala, onFala }: Props) {
-  const [estado, setEstado] = useState<EstadoChamada>("fora");
+  const chamada = useChamada();
   const [temFaixa, setTemFaixa] = useState(false);
   const [gravando, setGravando] = useState(false);
   const [transcrevendo, setTranscrevendo] = useState(false);
-  const [mudo, setMudo] = useState(false);
   const [entrando, setEntrando] = useState(false);
   const [parcial, setParcial] = useState("");
   const [falas, setFalas] = useState<Fala[]>([]);
@@ -50,10 +50,7 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
 
-  const chamadaRef = useRef<ChamadaJitsi | null>(null);
   const capturaRef = useRef<CapturaEntrevista | null>(null);
-  // Numera as falas para o servidor de transcrição. Os callbacks são fixados na
-  // construção e não enxergariam um estado do React.
   const contador = useRef(0);
   const onFalaRef = useRef(onFala);
   onFalaRef.current = onFala;
@@ -79,17 +76,17 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
         setGravando(false);
       },
     });
+  }
 
-    chamadaRef.current = new ChamadaJitsi("advogado", {
-      onEstado: (e) => {
-        setEstado(e);
-        // A faixa remota morre junto com o par: se o cliente saiu, não há mais
-        // voz para transcrever, e deixar o botão ativo prometeria o impossível.
-        if (e === "aguardando" || e === "encerrada" || e === "fora") setTemFaixa(false);
-      },
-      onFaixaRemota: (trilha) => {
-        // É aqui que a voz do cliente vira texto: a faixa que chegou pela
-        // chamada substitui o microfone como fonte da transcrição.
+  // Enquanto o checklist está na tela, o painel flutuante se recolhe: a chamada
+  // já está aqui. `registrarPainel` é estável, então roda uma vez.
+  useEffect(() => chamada.registrarPainel(), [chamada.registrarPainel]);
+
+  // A voz do cliente, quando chega, vira a fonte da transcrição. Assina uma vez
+  // (`aoReceberFaixa` é estável) — re-assinar remontaria o áudio a cada render.
+  useEffect(
+    () =>
+      chamada.aoReceberFaixa((trilha) => {
         void capturaRef.current
           ?.usarTrilha(trilha)
           .then(() => {
@@ -99,27 +96,25 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
           .catch(() =>
             setErro("A chamada conectou, mas a transcrição não pôde ler o áudio."),
           );
-      },
-      onErro: setErro,
-    });
-  }
-
-  /* A chamada segura o microfone e a captura segura um AudioContext: sair da
-   * tela sem soltar deixaria o indicador de gravação do navegador aceso e a
-   * sala ocupada por um fantasma. */
-  useEffect(
-    () => () => {
-      chamadaRef.current?.desligar();
-      capturaRef.current?.encerrar();
-    },
-    [],
+      }),
+    [chamada.aoReceberFaixa],
   );
+
+  // Cliente saiu: não há mais voz para transcrever.
+  useEffect(() => {
+    if (chamada.estado !== "falando") setTemFaixa(false);
+  }, [chamada.estado]);
+
+  /* Sair do checklist NÃO desliga a chamada (ela permanece no painel flutuante).
+   * Só encerra a captura desta tela — a transcrição para, a conversa não. A
+   * captura solta o AudioContext, mas não para a faixa remota, que é do outro. */
+  useEffect(() => () => capturaRef.current?.encerrar(), []);
 
   const chamar = useCallback(async () => {
     setErro(null);
     setEntrando(true);
     try {
-      await chamadaRef.current?.entrar(sala, { nome: "Escritório" });
+      await chamada.entrar(sala, "advogado", { nome: "Escritório" });
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
@@ -130,16 +125,16 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
     } finally {
       setEntrando(false);
     }
-  }, [sala]);
+  }, [sala, chamada]);
 
   const desligar = useCallback(() => {
-    chamadaRef.current?.desligar();
+    chamada.desligar();
     capturaRef.current?.encerrar();
     setTemFaixa(false);
     setGravando(false);
     setTranscrevendo(false);
     setParcial("");
-  }, []);
+  }, [chamada]);
 
   const alternarTranscricao = useCallback(async () => {
     setErro(null);
@@ -166,15 +161,15 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
       setTimeout(() => setCopiado(false), 2000);
     } catch {
       // Sem permissão de área de transferência: o texto está na tela para
-      // seleção manual, não vale interromper a entrevista com um erro.
+      // seleção manual, não vale interromper o atendimento com um erro.
     }
   }
 
-  const naChamada = estado !== "fora";
+  const naChamada = chamada.ativa;
   const ponto =
-    estado === "falando"
+    chamada.estado === "falando"
       ? estilos.pontoAtivo
-      : estado === "aguardando" || estado === "conectando"
+      : chamada.estado === "aguardando" || chamada.estado === "conectando"
         ? estilos.pontoEsperando
         : estilos.pontoOcioso;
 
@@ -215,9 +210,9 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
             <button
               type="button"
               className={estilos.secundario}
-              onClick={() => setMudo(chamadaRef.current?.alternarMudo() ?? false)}
+              onClick={chamada.alternarMudo}
             >
-              {mudo ? "Reativar meu microfone" : "Ficar mudo"}
+              {chamada.mudo ? "Reativar meu microfone" : "Ficar mudo"}
             </button>
 
             <button type="button" className={estilos.secundario} onClick={desligar}>
@@ -228,11 +223,11 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
 
         <span className={estilos.estado}>
           <i className={`${estilos.ponto} ${ponto}`} />
-          {LEGENDA[estado]}
+          {LEGENDA[chamada.estado]}
         </span>
       </div>
 
-      {erro && <div className={estilos.erro}>{erro}</div>}
+      {(erro || chamada.erro) && <div className={estilos.erro}>{erro ?? chamada.erro}</div>}
 
       {aviso && (
         <p className={estilos.aviso} aria-live="polite">
@@ -240,7 +235,7 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
         </p>
       )}
 
-      {estado === "aguardando" && (
+      {chamada.estado === "aguardando" && (
         <p className={estilos.espera}>
           Avise o cliente para abrir o link do portal e tocar em “Entrar na chamada”. Assim
           que ele entrar, o áudio conecta sozinho.

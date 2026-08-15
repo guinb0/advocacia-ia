@@ -229,16 +229,18 @@ def testar_disjuntor() -> int:
     for i in range(5):
         analise_resposta.analisar("en_x", f"Pergunta {i}", RESPOSTA + f" variação {i}")
 
-    # Duas falhas até abrir; da terceira pergunta em diante nem tenta.
+    # A 1ª pergunta gasta as duas tentativas internas e abre o disjuntor; da 2ª
+    # em diante nem tenta.
     falhas += not checar(
-        tentativas["n"] == analise_resposta.FALHAS_PARA_ABRIR,
-        f"o disjuntor abre na {analise_resposta.FALHAS_PARA_ABRIR}ª falha seguida "
-        f"e as perguntas seguintes nem tentam ({tentativas['n']} tentativas)",
+        tentativas["n"] == analise_resposta.TENTATIVAS_RAG,
+        f"a 1ª pergunta tenta {analise_resposta.TENTATIVAS_RAG}x e as seguintes nem "
+        f"tentam ({tentativas['n']} tentativas ao todo)",
     )
 
-    # --- uma falha isolada NÃO pode abrir ---------------------------------
-    # É o caso medido em 13/08: o servidor engasga uma vez e volta. Abrindo aí,
-    # o resto da entrevista sairia sem precedente com o banco vivo.
+    # --- o pico isolado é absorvido pela retentativa INTERNA ---------------
+    # É o padrão medido em 13-14/08 contra este servidor: a 1ª conexão estoura,
+    # a 2ª conecta. Antes isso custava um "sem precedentes"; agora a própria
+    # busca tenta de novo e a pergunta sai COM processos citados.
     analise_resposta.religar_precedentes()
     analise_resposta.limpar_cache()
     chamadas = {"n": 0}
@@ -246,46 +248,22 @@ def testar_disjuntor() -> int:
     def instavel(consulta, **kwargs):
         chamadas["n"] += 1
         if chamadas["n"] == 1:
-            raise TimeoutError("pico de latência")
+            raise TimeoutError("pico de latência na primeira conexão")
         return [precedente("0007")]
 
     rag.buscar_similares = instavel  # type: ignore[assignment]
     analise_resposta.rag.buscar_similares = instavel  # type: ignore[assignment]
 
     a = analise_resposta.analisar("en_a", "Primeira", RESPOSTA + " um")
+    falhas += not checar(
+        a["com_precedentes"] is True,
+        "o pico da 1ª conexão não custa mais os precedentes — a busca retenta",
+    )
+    falhas += not checar(chamadas["n"] == 2, f"foram 2 tentativas ({chamadas['n']})")
+
     b = analise_resposta.analisar("en_b", "Segunda", RESPOSTA + " dois")
-    c = analise_resposta.analisar("en_c", "Terceira", RESPOSTA + " três")
-
     falhas += not checar(
-        a["com_precedentes"] is False,
-        "a pergunta que pegou o pico sai sem precedentes",
-    )
-    falhas += not checar(
-        b["com_precedentes"] and c["com_precedentes"],
-        "mas as seguintes voltam a citar processos — o pico não fechou o banco",
-    )
-    falhas += not checar(chamadas["n"] == 3, f"as três tentaram ({chamadas['n']})")
-
-    # --- e o sucesso apaga o histórico ------------------------------------
-    # Sem isto, duas falhas espalhadas por uma entrevista longa abririam o
-    # disjuntor como se fossem seguidas.
-    analise_resposta.limpar_cache()
-    alternado = {"n": 0}
-
-    def alterna(consulta, **kwargs):
-        alternado["n"] += 1
-        if alternado["n"] % 2 == 1:
-            raise TimeoutError("pico")
-        return [precedente("0008")]
-
-    analise_resposta.religar_precedentes()
-    rag.buscar_similares = alterna  # type: ignore[assignment]
-    analise_resposta.rag.buscar_similares = alterna  # type: ignore[assignment]
-    for i in range(6):
-        analise_resposta.analisar("en_z", f"P{i}", RESPOSTA + f" alt {i}")
-    falhas += not checar(
-        alternado["n"] == 6,
-        f"falha alternada com sucesso nunca abre o disjuntor ({alternado['n']} de 6 tentativas)",
+        b["com_precedentes"] is True, "e o disjuntor segue fechado para as seguintes"
     )
     return falhas
 

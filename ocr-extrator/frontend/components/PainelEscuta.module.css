@@ -1,0 +1,289 @@
+/* O painel da escuta, ao lado do roteiro.
+ *
+ * Ele é lido DURANTE a conversa, de relance, enquanto o entrevistador olha o
+ * cliente. Por isso: tipografia pequena mas de alto contraste, seções curtas, e
+ * nada que pisque ou se mova sozinho — movimento na periferia da visão rouba a
+ * atenção de quem deveria estar ouvindo. */
+
+.painel {
+  border: 1px solid var(--border-strong);
+  padding: 14px;
+  position: sticky;
+  top: 18px;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+}
+
+.topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rotulo {
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.ouvindo {
+  font: 400 10.5px/1 var(--font-ui);
+  color: var(--ok);
+}
+
+.ocioso {
+  font: 400 10.5px/1 var(--font-ui);
+  color: var(--muted);
+}
+
+.pausado {
+  font: 400 10.5px/1 var(--font-ui);
+  color: var(--warn);
+}
+
+/* Faz tempo que nada é reconhecido. Amarelo, não vermelho: pode ser só uma
+ * pausa longa na conversa — mas se alguém está falando, é microfone mudo. */
+.silencio {
+  font: 400 10.5px/1 var(--font-ui);
+  color: var(--warn);
+}
+
+/* Microfone mudo: vermelho, porque aqui a entrevista ESTA sendo perdida
+ * enquanto se conversa. E o unico estado do painel que exige acao imediata. */
+.mudo {
+  font: 600 10.5px/1 var(--font-ui);
+  color: var(--accent);
+}
+
+.alertaMudo {
+  margin-bottom: 12px;
+  border: 1.5px solid var(--accent);
+  padding: 10px 11px;
+  font: 400 12px/1.55 var(--font-ui);
+}
+
+.alertaMudo strong {
+  color: var(--accent);
+}
+
+.erro {
+  margin: 0 0 12px;
+  border-left: 3px solid var(--warn);
+  padding: 8px 10px;
+  background: var(--surface-2);
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--muted);
+}
+
+.secao {
+  margin-bottom: 18px;
+}
+
+.secao:last-child {
+  margin-bottom: 0;
+}
+
+.tituloSecao {
+  display: block;
+  margin-bottom: 7px;
+  font: 600 9.5px/1.4 var(--font-ui);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.obrigatorias {
+  margin-left: 6px;
+  font: italic 400 9.5px/1 var(--font-ui);
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* --- pergunte agora ------------------------------------------------------ */
+/* Tipografia editorial: é texto para ser FALADO, não item de lista. */
+
+.perguntas {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.perguntas li {
+  margin-bottom: 7px;
+  border-left: 2px solid var(--ink);
+  padding-left: 9px;
+}
+
+.linkPergunta {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  color: var(--ink);
+  font: 400 13px/1.5 var(--font-display);
+  cursor: pointer;
+}
+
+.linkPergunta:disabled {
+  cursor: default;
+}
+
+.linkPergunta:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* --- confirme o que eu ouvi ---------------------------------------------- */
+
+.sugestao {
+  border: 1px solid var(--warn);
+  padding: 9px 10px;
+  margin-bottom: 8px;
+}
+
+.campoNome {
+  display: block;
+  font: 400 10.5px/1.4 var(--font-ui);
+  color: var(--muted);
+}
+
+.valorOuvido {
+  display: block;
+  margin: 2px 0 4px;
+  font: 600 14px/1.3 var(--font-mono);
+}
+
+.citacao {
+  display: block;
+  margin-bottom: 7px;
+  font: italic 400 11px/1.4 var(--font-display);
+  color: var(--muted);
+}
+
+.acoes {
+  display: flex;
+  gap: 8px;
+}
+
+.aceitar {
+  border: 1.5px solid var(--ink);
+  background: none;
+  color: var(--ink);
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.aceitar:hover {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.descartar {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  color: var(--muted);
+  font: 400 10.5px/1 var(--font-ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* --- falta perguntar ----------------------------------------------------- */
+
+.pendentes,
+.entraram {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pendentes li {
+  margin-bottom: 4px;
+}
+
+.pendente,
+.pendenteObrig {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font: 400 12px/1.45 var(--font-ui);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pendenteObrig {
+  color: var(--ink);
+}
+
+.pendenteObrig::before {
+  content: "* ";
+  color: var(--accent);
+}
+
+.pendente:hover,
+.pendenteObrig:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.resto {
+  font: italic 400 11px/1.4 var(--font-ui);
+  color: var(--muted);
+  padding-top: 2px;
+}
+
+.vazio {
+  margin: 0;
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--ok);
+}
+
+/* --- já entrou ----------------------------------------------------------- */
+
+.entraram li {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.entraram li:last-child {
+  border-bottom: none;
+}
+
+.linkCampo {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.valorEntrou {
+  display: block;
+  font: 400 12px/1.45 var(--font-ui);
+  color: var(--ink);
+}
+
+.linkCampo:hover .valorEntrou {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.aviso {
+  margin: 9px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font: 400 10.5px/1.5 var(--font-ui);
+  color: var(--muted);
+}

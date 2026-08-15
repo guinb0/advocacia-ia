@@ -1,46 +1,93 @@
-# Documentos do Cliente
+# Acervo
 
-Ajuda o advogado a **cobrar documentos do cliente**: escolhe a categoria da ação, o
-sistema mostra o checklist, marca o que já chegou, confere a legibilidade de cada foto
-e gera a mensagem pronta com o que ainda falta.
+Acompanha o atendimento de um escritório trabalhista **da entrevista até a
+papelada completa**: conduz o roteiro, transcreve a voz do cliente, sugere o tipo
+de ação, preenche o contrato de honorários, manda assinar, e então cobra e
+confere os documentos um a um.
 
-Roda 100% na sua máquina — nenhuma imagem sai do computador.
+Roda na máquina do advogado. Os arquivos do cliente ficam em `dados/` e não saem
+dali — o que sai para fora são só quatro coisas, todas opcionais: o texto da
+entrevista para o modelo de linguagem, o CEP para a base pública, o `.docx` para
+a assinatura eletrônica, e a consulta ao banco de precedentes.
 
-**Stack:** FastAPI + PaddleOCR no backend, Next.js 16 + React 19 no frontend, SQLite.
+**Stack:** FastAPI + PaddleOCR + faster-whisper no backend, Next.js 16 + React 19
+no frontend, SQLite local e um PostgreSQL com pgvector para os precedentes.
 
 ## O fluxo
 
-1. **Criar o caso** — nome do cliente + categoria (ex.: Acidente do Trabalho / Correios).
-2. **Copiar o pedido** e mandar no WhatsApp: a lista dos 14 obrigatórios, com dicas de
-   como tirar a foto.
-3. **Enviar cada documento** que o cliente responder, no item correspondente. O OCR lê,
-   valida os dígitos verificadores e mede a legibilidade.
-4. **O checklist se atualiza sozinho.** Se a foto veio ilegível ou o cliente mandou o
-   arquivo errado, o item fica em "conferir" e entra no próximo pedido, com o motivo.
+```
+entrevista → triagem → contrato → assinatura → caso → checklist
+    ↑            ↓                                        ↓
+ transcrição  conferência                          cliente envia
+ (Whisper)   (precedentes)                        pelo portal → OCR valida
+```
+
+1. **Entrevista guiada.** O roteiro pergunta na ordem do escritório; as narrativas
+   são ditadas e transcritas, os dados são digitados. Fechada cada resposta
+   narrativa, o sistema diz o que faltou perguntar, fundamentado em processos
+   semelhantes do TRT8.
+2. **Triagem.** O relato vira uma sugestão de categoria, com o trecho que a
+   sustenta. **Não cria caso** — quem confirma é o advogado.
+3. **Contrato.** O modelo `.docx` do escritório é preenchido com a qualificação e
+   pode seguir para assinatura eletrônica, ou ser baixado para assinar à mão.
+4. **Caso e checklist.** Aberto o caso, o checklist da categoria define o que
+   pedir. O portal dá ao cliente um link com senha para mandar as fotos.
+5. **Conferência automática.** Cada arquivo passa por OCR, tem os dígitos
+   verificadores validados e a legibilidade medida. O checklist se atualiza
+   sozinho: foto ilegível ou documento trocado volta para "conferir" e entra no
+   próximo pedido, com o motivo.
 
 Nada de status marcado à mão: tudo é derivado dos arquivos entregues.
 
 ---
 
+## Por onde começar
+
+| você quer | leia |
+|---|---|
+| rodar o projeto pela primeira vez | [`docs/COMECANDO.md`](docs/COMECANDO.md) |
+| entender o que foi decidido e por quê | [`CONTEXTO.md`](CONTEXTO.md) |
+| usar ou consertar a chamada por vídeo | [`docs/CHAMADA.md`](docs/CHAMADA.md) |
+| saber a direção visual da interface | [`docs/GUIA-VISUAL.md`](docs/GUIA-VISUAL.md) |
+| ver o que cada rota faz, interativo | <http://127.0.0.1:8100/docs> |
+
+O **`CONTEXTO.md`** é o mais importante dos quatro. Ele registra o estado real do
+projeto e as decisões que não dá para deduzir lendo o código — inclusive as
+alternativas que já foram testadas e descartadas por medição. Antes de "melhorar"
+alguma coisa que pareça estranha, procure lá: é provável que já tenha sido tentada.
+
+---
+
 ## Como rodar
+
+**Primeira vez no projeto?** O passo a passo completo — pré-requisitos,
+configuração e o que fazer quando não sobe — está em
+[`docs/COMECANDO.md`](docs/COMECANDO.md).
 
 ```powershell
 cd ocr-extrator
-.\iniciar.ps1          # desenvolvimento
-.\iniciar.ps1 -Prod    # usa o build de produção do Next
+.\iniciar.ps1            # desenvolvimento
+.\iniciar.ps1 -SemAuth   # sem login, dispensa o Docker
+.\iniciar.ps1 -Prod      # usa o build de produção do Next
 ```
 
-Abra <http://localhost:3100>.
+Abra <http://localhost:3000>.
 
-São **dois processos**:
+São **três processos**:
 
 | | porta | o que é |
 |---|---|---|
 | API | `8100` | FastAPI + PaddleOCR (docs interativos em `/docs`) |
-| Web | `3100` | Next.js |
+| Web | `3000` | Next.js |
+| Transcrição | `8200` | Whisper, em processo próprio |
 
-Portas 8100/3100 em vez das óbvias 8000/3000 porque estas costumam já estar
-ocupadas na máquina (WSL, outros projetos Next).
+A API fica na 8100 em vez da óbvia 8000 porque esta costuma já estar ocupada na
+máquina (WSL, outros projetos). A web usa a 3000, que é a padrão do Next — então
+ela colide com qualquer outro projeto Next aberto; `-Porta 3100` troca sem
+editar nada.
+
+A transcrição roda separada do OCR de propósito: os dois modelos disputavam CPU
+e o mesmo áudio que leva 3s isolado levava 227s dividindo processo.
 
 Na primeira execução o PaddleOCR baixa os modelos (~100MB) para `~/.paddlex/official_models`.
 A barra de status no topo da página mostra quando o modelo está pronto.
@@ -63,7 +110,11 @@ em <http://127.0.0.1:8100>. Serve de plano B quando só o Python está disponív
 
 ---
 
-## O que ele faz
+## Como o OCR decide
+
+A parte mais densa do sistema, e a que mais surpreende quem chega: o que o
+checklist mostra não é status marcado à mão, é consequência do que estas três
+etapas concluíram sobre cada arquivo.
 
 **1. Analisa a legibilidade da foto** (antes e depois do OCR)
 
@@ -166,11 +217,22 @@ Por isso o JSON traz os dois: `tipo.codigo` (usado na extração) e `tipo.detect
 
 | Caminho | O quê |
 |---|---|
-| `dados/casos.db` | SQLite com os casos e as entregas |
+| `dados/casos.db` | SQLite: casos, entregas e o índice das assinaturas |
 | `dados/casos/<id>/` | os arquivos que o cliente mandou |
+| `dados/contratos/<id>.pdf` | contratos assinados, baixados da ZapSign |
+| `dados/.portal-segredo` | assina as sessões do portal; sorteado no 1º boot |
+| `~/.paddlex/official_models` | modelos do OCR (~100 MB), fora do projeto |
 
 `dados/` está no `.gitignore` — **documento de cliente nunca vai para o repositório**.
 Backup é copiar essa pasta; apagar um caso pela interface apaga os arquivos junto.
+
+Os contratos assinados ficam **fora** de `dados/casos/` de propósito: o contrato é
+assinado na entrevista, antes de o caso existir, e apagar um caso não pode levar
+junto a via assinada.
+
+Fora da máquina existe só um lugar: o **PostgreSQL com pgvector** dos precedentes
+(52.926 trechos de processos públicos do TRT8, TST, DJEN e DEJT). Ele não guarda
+nada de cliente — é consultado, não alimentado.
 
 ## Categorias e checklists
 
@@ -205,33 +267,87 @@ compara a lista do código com o `.docx` item a item — nome, numeração e obr
 
 ## API
 
+Lista completa e interativa em <http://127.0.0.1:8100/docs>. O que segue é o mapa
+por assunto.
+
+**Tudo exige token do Keycloak**, exceto: `/`, `/api/saude`, `/api/config`,
+`/api/chamada/config`, e o prefixo `/api/portal/` — este protegido pela senha do
+caso, porque o cliente não tem conta. A lista é de exceções de propósito: rota
+nova nasce fechada (ver `PUBLICAS` em `main.py`).
+
+**Entrevista**
+
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/` | interface web |
-| `GET` | `/api/categorias` | categorias com seus checklists |
-| `GET` | `/api/categorias/{codigo}` | uma categoria |
-| `POST` | `/api/casos` | cria o caso (`cliente`, `categoria`) |
-| `GET` | `/api/casos` | lista os casos |
-| `GET` | `/api/casos/{id}` | checklist com o status de cada item e o progresso |
-| `PATCH` | `/api/casos/{id}` | renomeia o cliente / muda a observação |
-| `DELETE` | `/api/casos/{id}` | apaga o caso e **todos** os arquivos dele |
+| `GET` | `/api/roteiros` · `/api/roteiros/{codigo}` | as perguntas, na ordem do escritório |
+| `POST` | `/api/triagem` | sugere a categoria a partir do relato. Não cria caso |
+| `POST` | `/api/entrevista/analise` | o que ESTA resposta não trouxe, com precedentes |
+| `POST` | `/api/estrategia` | parecer do caso inteiro: ações, riscos e lacunas |
+| `GET` | `/api/cep/{cep}` | endereço a partir do CEP (BrasilAPI, ViaCEP de reserva) |
+
+**Contrato e assinatura**
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/api/contrato` | preenche o modelo oficial e devolve o `.docx` |
+| `GET` | `/api/contrato/campos` | marcadores do modelo e os que a entrevista não responde |
+| `GET` | `/api/assinatura/config` | se o envio para assinatura está ligado |
+| `POST` | `/api/contrato/assinatura` | gera e manda assinar (ZapSign) |
+| `GET` | `/api/assinaturas` · `/api/assinaturas/{id}` | quem assinou e quem falta |
+| `GET` | `/api/assinaturas/{id}/arquivo` | o PDF assinado, com trilha de auditoria |
+
+**Casos, checklist e documentos**
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/api/categorias` · `/api/categorias/{codigo}` | categorias e seus checklists |
+| `POST` `GET` | `/api/casos` | cria (`cliente`, `categoria`) e lista |
+| `GET` `PATCH` `DELETE` | `/api/casos/{id}` | checklist com status; renomear; apagar caso **e arquivos** |
 | `GET` | `/api/casos/{id}/pedido` | texto pronto para mandar ao cliente |
-| `POST` | `/api/casos/{id}/documentos` | envia um documento para um item (`item`, `arquivo`) |
-| `GET` | `/api/entregas/{id}` | uma entrega, com a extração completa |
+| `POST` | `/api/casos/{id}/documentos` | envia um documento para um item |
+| `POST` | `/api/casos/{id}/identidade-unificada` | uma CNH/CIN vale por RG **e** CPF |
+| `GET` `DELETE` | `/api/entregas/{id}` | a entrega com a extração; remover |
 | `GET` | `/api/entregas/{id}/arquivo` | baixa o arquivo enviado |
-| `DELETE` | `/api/entregas/{id}` | remove a entrega e o arquivo |
-| `POST` | `/api/extrair` | multipart: `arquivo`, `idioma` (`pt`), `tipo` (`auto` ou código) |
+| `POST` | `/api/extrair` | análise avulsa: `arquivo`, `idioma`, `tipo` |
 | `GET` | `/api/tipos` | tipos de documento suportados |
-| `POST` | `/api/contrato` | preenche o modelo oficial com a entrevista e devolve o .docx |
+
+**Agente jurídico** — só respondem com `AGENTE_API_URL` configurado (ver `app/agente/`)
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/api/agente/config` | se a ligação com o agente está ligada |
+| `GET` | `/api/agente/casos/{id}` | o dossiê: fatos, classificação, pendências, precedentes |
+| `POST` | `/api/agente/casos/{id}/sincronizar` | espelha caso, cliente e checklist no agente |
+| `POST` | `/api/agente/casos/{id}/entrevista/{entrevista}` | manda a entrevista virar fato com proveniência |
+| `POST` | `/api/agente/casos/{id}/analise` · `/pesquisa` · `/estrategia` · `/peticao` | dispara o trabalho (assíncrono, `202`) |
+| `GET` | `/api/agente/casos/{id}/pesquisa/{ref}` · `/peticao/{ref}` | busca o resultado quando fica pronto |
+| `GET` | `/api/agente/casos/{id}/peticao/{ref}/arquivo` | baixa a peça gerada |
+| `PATCH` | `/api/agente/casos/{id}/estrategia/{versao}` · `/hipoteses/{ref}` · `/peticao/{ref}` | o advogado aprova ou recusa |
+| `PATCH` | `/api/agente/casos/{id}/contradicoes/{ref}` | resolve uma divergência entre documentos |
 | `POST` | `/api/agente/casos/{id}/contrato` | gera o contrato relendo nome, CPF e fatos atuais do caso |
-| `GET` | `/api/contrato/campos` | marcadores que o modelo pede, e quais a entrevista não responde |
-| `GET` | `/api/cep/{cep}` | endereço a partir do CEP (BrasilAPI, com ViaCEP de reserva) |
-| `GET` | `/api/chamada/config` | servidores ICE da chamada de voz (público) |
+| `POST` | `/api/agente/casos/{id}/contrato/conferencia` | aponta onde o contrato diverge dos documentos |
+
+**Portal do cliente** — sem Keycloak; protegido pela senha do caso
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/api/casos/{id}/portal` | gera link e senha. A senha aparece **uma vez** |
+| `POST` | `/api/portal/{token}/entrar` | o cliente entra com a senha |
+| `GET` | `/api/portal/{token}/situacao` | o que ele vê: o que falta, sem os alertas internos |
+| `POST` | `/api/portal/{token}/documentos` | o cliente envia um arquivo |
+
+**Serviço**
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/api/saude` · `/api/config` · `/api/eu` | status do modelo, config do Keycloak, quem está autenticado |
+| `POST` | `/api/aquecer` | pré-carrega os modelos de OCR |
+| `POST` | `/api/chamada/sala` | sorteia uma sala de chamada e devolve o link |
 | `WS` | `/ws/chamada/{sala}?papel=` | sinalização WebRTC; `sala` é o token do portal |
-| `GET` | `/api/saude` | status do modelo |
-| `POST` | `/api/aquecer` | pré-carrega os modelos |
-| `GET` | `/api/temp/{id}.json\|.xml` | baixa o arquivo temporário |
-| `DELETE` | `/api/temp` | limpa os temporários expirados |
+| `GET` `DELETE` | `/api/temp/{nome}` · `/api/temp` | JSON/XML temporários da análise avulsa |
+
+A transcrição fica em **outro processo**, na porta 8200:
+`WS /ws/transcricao` recebe PCM e devolve o texto parcial e o final.
 
 ```powershell
 curl.exe -F "arquivo=@meu_rg.jpg" -F "tipo=auto" http://127.0.0.1:8100/api/extrair
@@ -275,22 +391,51 @@ apontar para outro host, defina `NEXT_PUBLIC_OCR_API`.
 
 ## Testes
 
+**Não há `pytest`.** Cada arquivo é um script que roda sozinho e imprime
+PASS/FALHA, com a explicação do que cada asserção protege.
+
 ```powershell
-.\.venv\Scripts\python.exe -m tests.test_validators     # dígitos verificadores
-.\.venv\Scripts\python.exe -m tests.test_categorias     # checklist do código vs. o .docx
-.\.venv\Scripts\python.exe -m tests.test_casos          # fluxo do caso (banco temporário)
-.\.venv\Scripts\python.exe -m tests.test_chamada        # sinalização da chamada de voz
-.\.venv\Scripts\python.exe -m tests.test_transcricao    # janela do texto ao vivo (sem Whisper)
-.\.venv\Scripts\python.exe -m tests.test_consultas      # CEP -> endereço (sem rede)
-.\.venv\Scripts\python.exe -m tests.test_roteiros       # roteiro como a tela o recebe
-.\.venv\Scripts\python.exe -m tests.test_contrato       # contrato: cláusulas intactas, .docx válido
-.\.venv\Scripts\python.exe -m tests.test_pipeline       # end-to-end com documentos sintéticos
-.\.venv\Scripts\python.exe -m tests.test_concorrencia   # 3 OCRs simultâneos
-.\.venv\Scripts\python.exe -m tests.bench               # custo do classificador de orientação
+$py = ".\.venv\Scripts\python.exe"
+& $py -m tests.test_validators       # dígitos verificadores
+& $py -m tests.test_categorias       # checklist do código vs. o .docx do escritório
+& $py -m tests.test_casos            # fluxo do caso (banco temporário)
+& $py -m tests.test_contrato         # cláusulas intactas, .docx que o Word abre
+& $py -m tests.test_assinatura       # ZapSign dublada: papéis, estados, download
+& $py -m tests.test_analise_resposta # conferência: formato, disjuntor, prazos
+& $py -m tests.test_transcricao      # janela do texto ao vivo (sem Whisper)
+& $py -m tests.test_roteiros         # roteiro como a tela o recebe
+& $py -m tests.test_consultas        # CEP -> endereço (sem rede)
+& $py -m tests.test_pdf              # PDF -> imagem
+& $py -m tests.test_uploads_api      # limites e recusas do upload
+& $py -m tests.test_rag              # recuperação de precedentes
+& $py -m tests.test_chamada          # sinalização WebRTC (ver ressalva abaixo)
+& $py -m tests.test_pipeline         # end-to-end com documentos sintéticos
+& $py -m tests.test_concorrencia     # 3 OCRs simultâneos
+```
+
+Nenhum toca serviço externo: DeepSeek, ZapSign e pgvector entram dublados. Rodam
+offline e não gastam crédito.
+
+Frontend: `cd frontend; npm run typecheck; npm run build`.
+
+Ferramentas, não testes:
+
+```powershell
+& $py -m tests.avaliar_triagem 4        # mede a triagem com relatos gerados por LLM
+& $py -m tests.ler_checklist_docx "docs\CHECK LIST ....docx"
+& $py -m tests.bench                    # custo do classificador de orientação
+& $py -m scripts.estado_rag             # estado do banco vetorial
 ```
 
 Rode os testes com o servidor **parado**: dois processos Paddle disputando os mesmos
 núcleos inflam os tempos em até 10× e confundem a leitura dos resultados.
+
+Duas ressalvas conhecidas, para não perder tempo achando que é o seu ambiente:
+
+- **`test_roteiros` falha com 401** quando o Keycloak está no ar — ele chama rota
+  protegida sem token.
+- **`test_chamada` cobre a sinalização WebRTC própria**, que o Jitsi substituiu.
+  O código continua lá e passa, mas nenhuma tela o usa mais.
 
 O teste de pipeline gera documentos falsos em `tests/amostras/` — CNH, CTPS, cartão CPF
 e título de eleitor, mais versões **deitada (90°), borrada, escura e ruído puro** — e
@@ -306,39 +451,60 @@ da mãe vindo contaminado com a categoria da coluna vizinha, e o nº de registro
 ## Estrutura
 
 ```
-app/                     backend
-  main.py                API FastAPI e rotas
-  categorias.py          categorias de processo e seus checklists de documentos
-  armazenamento.py       SQLite: casos, entregas e os arquivos em disco
+app/                     backend (FastAPI)
+  main.py                rotas; middleware de auth por allowlist
+  auth.py                valida o JWT do Keycloak. Vazio = autenticação desligada
+  ── entrevista
+  roteiros.py            as perguntas, os blocos e o roteamento por rastreio
+  transcricao.py         janela do texto ao vivo; sessões de resposta
+  servico_transcricao.py o Whisper num processo PRÓPRIO (porta 8200)
+  triagem.py             classifica o relato (LLM + fallback local por termos)
+  analise_resposta.py    o que cada resposta não trouxe, com precedentes
+  rag.py                 busca vetorial em pgvector e o parecer do caso
+  consultas.py           bases públicas que adiantam a entrevista (só CEP)
+  ── contrato
+  contrato.py            preenche o .docx do escritório. Não redige cláusula
+  assinatura.py          assinatura eletrônica (ZapSign) e quem já assinou
+  ── caso e documentos
+  categorias.py          categorias de processo e seus checklists
   casos.py               status de cada item e o texto do pedido ao cliente
+  armazenamento.py       SQLite: casos, entregas, assinaturas, arquivos em disco
+  portal.py              senha e sessão do portal do cliente
   pipeline.py            orquestra OCR -> campos -> validação -> JSON/XML
-  ocr_engine.py          wrapper do PaddleOCR, thread dedicada, colunas -> linhas
+  ocr_engine.py          wrapper do PaddleOCR, thread dedicada
   extractors.py          classificação do tipo, geometria da página e extração
   validators.py          dígitos verificadores dos documentos brasileiros
   quality.py             métricas de legibilidade e pré-processamento
-  chamada.py             salas da chamada de voz: repassa SDP/ICE, não toca no áudio
-  consultas.py           bases públicas que adiantam a entrevista (CEP)
-  contrato.py            preenche o .docx de honorários do escritório
-docs/                    modelos do escritório: checklists e o contrato oficial
-  transcricao.py         janela do texto ao vivo e o Whisper (processo à parte)
+  pdf.py                 renderiza PDF para imagem antes do OCR
+  chamada.py             sorteia a sala da chamada
+
 frontend/                Next.js 16 (App Router) + React 19
-  app/page.tsx           alterna entre a lista de casos, o checklist e a análise avulsa
+  app/page.tsx           Carteira · Checklist · análise avulsa
+  app/portal/[token]/    o que o cliente vê para mandar documentos
+  app/chamada/[sala]/    o que o cliente vê para entrar na chamada
   components/
-    ListaCasos.tsx       criar caso e escolher qual abrir
-    Checklist.tsx        progresso, filtros e a lista de itens
-    ItemChecklistLinha   um item: status, envio e as entregas já feitas
-    PedidoCliente.tsx    o texto para mandar ao cliente, com botão de copiar
-    Resultado.tsx        painéis da análise avulsa (campos, qualidade, JSON/XML)
-    ChamadaAoVivo.tsx    chamada com o cliente e a transcrição da voz dele
+    TriagemEntrevista    entrada da entrevista e da triagem
+    EntrevistaComChamada roteiro à esquerda, chamada à direita
+    Roteiro.tsx          conduz as perguntas, grava e transcreve
+    ConferenciaResposta  o que faltou nesta resposta
+    PainelContrato.tsx   gera o contrato e acompanha a assinatura
+    Carteira · Checklist · ItemChecklistLinha · PedidoCliente · Resultado
+    Retratos.tsx         os participantes da chamada
   lib/api.ts             cliente HTTP do backend
-  lib/chamadaJitsi.ts    chamada sobre lib-jitsi-meet e a faixa do entrevistado
   lib/transcricao.ts     captura de áudio e streaming para o Whisper
+  lib/chamadaJitsi.ts    a chamada sobre lib-jitsi-meet
   lib/types.ts           espelho tipado do JSON da API
-  lib/useCasos.ts        estado dos casos, do checklist e dos envios
-  lib/useExtracao.ts     estado da análise avulsa
-static/index.html        mesma UI em HTML puro, servida pelo FastAPI (plano B sem Node)
-tests/                   validadores, end-to-end, concorrência e benchmark
-tmp/                     JSON/XML temporários (TTL 30 min)
+
+scripts/                 rodados à mão, com `python -m scripts.<nome>`
+  estado_rag.py          diagnóstico do banco vetorial
+  ingerir_jurimetria.py  importa processos do TRT8/TST/DJEN/DEJT
+  vetorizar_pendentes.py preenche os embeddings em lotes retomáveis
+sql/                     migrações do pgvector, aplicadas em ordem
+docs/                    guias, checklists do escritório e o contrato oficial
+tests/                   cada arquivo roda sozinho e imprime PASS/FALHA
+dados/                   SQLite + arquivos dos clientes — FORA do git
+tmp/                     JSON/XML temporários da análise avulsa (TTL 30 min)
+static/index.html        mesma UI em HTML puro (plano B sem Node)
 ```
 
 ---
@@ -385,6 +551,22 @@ corretamente, então compensa. A primeira chamada do processo carrega os modelos
   ele, a rota `/api/contrato` responde 503 com a explicação e o
   `tests.test_contrato` pula a parte que depende do arquivo.
 
+- **A assinatura eletrônica gasta documento de verdade.** Não há sandbox
+  configurado: cada envio consome uma unidade do plano ZapSign e manda e-mail
+  real para o endereço que estiver na entrevista. Testando, use um e-mail seu.
+- **A conferência da resposta depende de um banco remoto e instável.** Quando ele
+  não responde, a análise ainda sai, mas **marcada** como "sem precedentes" — e aí
+  ela é a leitura do modelo sobre o texto, não o que os processos semelhantes
+  mostram. As duas coisas não podem ser lidas como iguais. `python -m
+  scripts.estado_rag` diz de qual das três causas se trata.
+- **A conferência é assistiva, e assistiva de um ponto só.** Ela olha UMA
+  resposta, não o caso; não conhece prazo, não faz juízo de mérito e não substitui
+  a leitura do advogado. Precedente citado é ponto de partida para conferir, não
+  fundamento pronto para petição.
+- **A transcrição sai do microfone da máquina**, que capta a sala inteira —
+  inclusive o entrevistador. Houve uma versão em que a voz do cliente vinha
+  isolada pela chamada; ela chegava muda e foi desligada. O porquê está no
+  cabeçalho de `Roteiro.tsx`.
 - **Só o CEP é preenchido por base pública.** CPF não vira nome: a consulta
   oficial é da Receita Federal, exige certificado digital e convênio, e os sites
   que prometem isso de graça vendem base vazada — usar um deles põe o escritório

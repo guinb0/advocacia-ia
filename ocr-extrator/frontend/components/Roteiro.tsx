@@ -11,18 +11,24 @@ import {
 import type { Ref } from "react";
 
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { analisarResposta, consultarCep, obterRoteiro } from "@/lib/api";
+import { analisarResposta, consultarCep, escutarTrecho, obterRoteiro } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
 import type {
   AnaliseResposta,
   Bloco,
+  CampoOuvido,
   EnderecoCep,
+  Lembrete,
   Pergunta,
+  PerguntaPendente,
   RoteiroCompleto,
 } from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
+import AudioDaEntrevista from "./AudioDaEntrevista";
 import ConferenciaResposta from "./ConferenciaResposta";
+import VideoDaEntrevista from "./VideoDaEntrevista";
+import PainelEscuta from "./PainelEscuta";
 import estilos from "./Roteiro.module.css";
 import transcricaoEstilos from "./EntrevistaAoVivo.module.css";
 
@@ -49,6 +55,8 @@ export interface ManipuladorRoteiro {
   usarFaixaDaChamada: (trilha: MediaStreamTrack) => Promise<void>;
   /** A chamada caiu: solta a fonte, para o gravador não prometer o que não tem. */
   aoPerderChamada: () => void;
+  /** Há vídeo gravado e não baixado — fechar a tela agora o destrói. */
+  temVideoPendente: () => boolean;
 }
 
 /** De onde vem o áudio que está sendo transcrito. */
@@ -68,7 +76,13 @@ const MINIMO_PARA_CONFERIR = 40;
 
 interface Props {
   codigo?: string;
-  onConcluir?: (respostas: Respostas, relatoUnificado: string) => void;
+  /** O `entrevistaId` sobe junto porque o áudio sobrevive a esta tela: quem
+   *  concluiu a entrevista precisa continuar podendo baixar o arquivo. */
+  onConcluir?: (
+    respostas: Respostas,
+    relatoUnificado: string,
+    entrevistaId: string,
+  ) => void;
   ref?: Ref<ManipuladorRoteiro>;
 }
 
@@ -79,6 +93,14 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
 
   const [estadoMic, setEstadoMic] = useState<EstadoCaptura>("sem-audio");
   const [gravandoId, setGravandoId] = useState<string | null>(null);
+  /* Entre clicar em "Finalizar" e o texto voltar do servidor.
+   *
+   * A captura para no clique, mas o texto final é transcrito do áudio INTEIRO —
+   * numa resposta de três minutos são vários segundos. Nesse intervalo a
+   * pergunta continuava mostrando "Pausar" e "Finalizar", e os dois não faziam
+   * nada: a captura já tinha parado, e os métodos saem calados quando não há
+   * gravação. Era o "clico e não acontece nada". */
+  const [finalizando, setFinalizando] = useState(false);
   const [parcial, setParcial] = useState("");
   const [aviso, setAviso] = useState<string | null>(null);
   const [fonte, setFonte] = useState<Fonte>("nenhuma");
@@ -87,6 +109,48 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   fonteAtual.current = fonte;
 
   const [conferencias, setConferencias] = useState<Record<string, EstadoConferencia>>({});
+
+  /* A escuta chegou ao fim e o áudio pode ser oferecido. Quem grava é o
+   * servidor, do mesmo PCM que alimenta a transcrição — ver `app/gravacao.py` e
+   * `AudioDaEntrevista`, que cuida da conversão e do download. */
+  const [escutaEncerrada, setEscutaEncerrada] = useState(false);
+  /* Vídeo gravado e ainda não baixado. Ao contrário do áudio, ele não está em
+   * lugar nenhum além desta aba — concluir a entrevista o destrói. */
+  const videoPendente = useRef(false);
+
+  /* ---------------------------------------------------- escuta contínua
+   *
+   * O microfone abre uma vez, no "podemos começar?", e não fecha mais. Cada
+   * trecho que o servidor CONFIRMA (não o parcial, que ainda se reescreve) vai
+   * para a escuta, que decide a que perguntas ele responde.
+   *
+   * `escutando` é o estado que substitui os 86 ciclos de gravar/finalizar. */
+  const [escutando, setEscutando] = useState(false);
+  const [ouvindo, setOuvindo] = useState(false);
+  const [sugestoes, setSugestoes] = useState<CampoOuvido[]>([]);
+  const [lembretes, setLembretes] = useState<Lembrete[]>([]);
+  const [faltando, setFaltando] = useState<PerguntaPendente[]>([]);
+  const [ouvidas, setOuvidas] = useState<CampoOuvido[]>([]);
+  const [erroEscuta, setErroEscuta] = useState<string | null>(null);
+  const [saudacaoLida, setSaudacaoLida] = useState(false);
+  /* Quando um trecho de fala foi reconhecido pela última vez.
+   *
+   * É o único sinal que distingue "conversa em silêncio" de "microfone mudo" —
+   * e o segundo é o que já custou uma entrevista inteira transcrita como nada. */
+  const [ultimaFala, setUltimaFala] = useState<number | null>(null);
+  /* Quando o microfone captou som pela última vez — som QUALQUER, não fala
+   * reconhecida. É o que separa "ninguém está falando" de "o microfone está
+   * mudo", e sem essa distinção a tela não tem como avisar do segundo. */
+  const [ultimoSom, setUltimoSom] = useState<number | null>(null);
+
+  /* A conversa não espera a resposta da escuta anterior.
+   *
+   * Trechos chegam a cada poucos segundos e cada chamada leva alguns; sem fila,
+   * duas rodadas simultâneas mandariam o mesmo `respostas` desatualizado e a
+   * segunda desfaria o preenchimento da primeira. A fila serializa, e o trecho
+   * que chega enquanto uma roda espera a vez. */
+  const filaTrechos = useRef<string[]>([]);
+  const escutaEmCurso = useRef(false);
 
   const captura = useRef<CapturaEntrevista | null>(null);
   // A pergunta em gravação, lida dentro dos callbacks da captura — que são
@@ -177,6 +241,69 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const conferirRef = useRef(conferir);
   conferirRef.current = conferir;
 
+  /* Consome a fila de trechos, um por vez.
+   *
+   * Cada volta manda o trecho e o estado ATUAL das respostas: é assim que a
+   * escuta sabe o que já foi respondido e não repete pergunta. Por isso a
+   * serialização importa — mandar duas em paralelo é mandar duas vezes o mesmo
+   * estado velho. */
+  const consumirFila = useCallback(async () => {
+    if (escutaEmCurso.current) return;
+    escutaEmCurso.current = true;
+    setOuvindo(true);
+    try {
+      while (filaTrechos.current.length > 0) {
+        // Junta o que se acumulou: se três trechos entraram enquanto a chamada
+        // anterior rodava, eles são uma frase só para quem vai interpretá-los.
+        const trecho = filaTrechos.current.join(" ").trim();
+        filaTrechos.current = [];
+        if (!trecho) continue;
+
+        const r = await escutarTrecho(trecho, respostasRef.current);
+        setErroEscuta(null);
+        setFaltando(r.faltando);
+        setLembretes(r.lembretes);
+        if (r.sugestoes.length) {
+          // Sugestão nova de um campo substitui a anterior daquele campo: o
+          // cliente que repete o CPF está corrigindo, não acrescentando.
+          setSugestoes((atuais) => [
+            ...atuais.filter((s) => !r.sugestoes.some((n) => n.pergunta_id === s.pergunta_id)),
+            ...r.sugestoes,
+          ]);
+        }
+        if (r.preenchidas.length) {
+          setRespostas((atuais) => {
+            const novo = { ...atuais };
+            for (const p of r.preenchidas) {
+              const anterior = String(novo[p.pergunta_id] ?? "").trim();
+              // Acrescenta em vez de substituir: o cliente volta ao assunto
+              // várias vezes numa conversa, e o segundo trecho complementa o
+              // primeiro em vez de apagá-lo.
+              novo[p.pergunta_id] = anterior ? `${anterior} ${p.valor}` : p.valor;
+            }
+            return novo;
+          });
+          setOuvidas((atuais) => [
+            ...atuais.filter((o) => !r.preenchidas.some((n) => n.pergunta_id === o.pergunta_id)),
+            ...r.preenchidas,
+          ]);
+        }
+      }
+    } catch (e) {
+      // A escuta falhando não pode parar a entrevista: a conversa continua e os
+      // campos seguem editáveis à mão.
+      setErroEscuta(
+        e instanceof Error ? e.message : "A escuta automática falhou. Digite à mão.",
+      );
+    } finally {
+      escutaEmCurso.current = false;
+      setOuvindo(false);
+    }
+  }, []);
+
+  const consumirFilaRef = useRef(consumirFila);
+  consumirFilaRef.current = consumirFila;
+
   if (captura.current === null && typeof window !== "undefined") {
     captura.current = new CapturaEntrevista({
       onParcial: (texto) => {
@@ -185,6 +312,21 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         setParcial(texto);
       },
       onAviso: setAviso,
+      /* Limiar medido nesta máquina: silêncio de microfone aberto fica em
+       * 0,0004–0,0005 (está nos logs do serviço); fala passa de 0,01. 0,002
+       * fica no meio, longe dos dois — não dispara com ruído de sala nem deixa
+       * de disparar com voz baixa. */
+      onNivel: (rms) => {
+        if (rms > 0.002) setUltimoSom(Date.now());
+      },
+      /* Um trecho parou de mudar. Vai para a fila, não direto para a API: dois
+       * trechos podem confirmar quase juntos, e a fila os junta numa chamada. */
+      onTrecho: (texto) => {
+        if (!texto.trim()) return;
+        setUltimaFala(Date.now());
+        filaTrechos.current.push(texto);
+        void consumirFilaRef.current();
+      },
       onFinal: (texto) => {
         const id = emGravacao.current;
         if (id) {
@@ -201,6 +343,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         }
         emGravacao.current = null;
         setGravandoId(null);
+        setFinalizando(false);
         setParcial("");
       },
       onEstado: (e) => {
@@ -209,11 +352,34 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         // botão de gravar não pode continuar oferecendo o que não existe.
         if (e === "sem-audio") setFonte("nenhuma");
       },
-      onErro: setErro,
+      onErro: (m) => {
+        setErro(m);
+        /* Destrava a pergunta.
+         *
+         * Sem isto, um erro na transcrição deixava `gravandoId` preso para
+         * sempre: a pergunta continuava mostrando "Pausar" e "Finalizar", os
+         * dois clicavam em nada (a captura já não estava gravando) e a única
+         * saída era recarregar a página perdendo a entrevista. */
+        emGravacao.current = null;
+        setGravandoId(null);
+        setFinalizando(false);
+        setParcial("");
+      },
     });
   }
 
-  useEffect(() => () => captura.current?.encerrar(), []);
+  useEffect(
+    () => () => {
+      /* Sair da tela também fecha a gravação. Sem isto, quem clicasse em
+       * "Fechar sem concluir" deixaria o áudio parado em WAV, sem MP4 e sem
+       * ninguém para pedi-lo. O POST vai solto de propósito: o componente está
+       * indo embora e não há mais tela para receber a resposta — o que importa
+       * é o arquivo ficar convertido no disco. */
+      void captura.current?.encerrarGravacao().catch(() => undefined);
+      captura.current?.encerrar();
+    },
+    [],
+  );
 
   useImperativeHandle(
     ref,
@@ -231,6 +397,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           setFonte("nenhuma");
         }
       },
+      temVideoPendente: () => videoPendente.current,
     }),
     [],
   );
@@ -255,6 +422,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const gravar = useCallback(async (perguntaId: string) => {
     setErro(null);
     setParcial("");
+    setEscutaEncerrada(false); // gravar de novo é gravação em curso, não fecho
     try {
       emGravacao.current = perguntaId;
       setGravandoId(perguntaId);
@@ -266,9 +434,73 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     }
   }, []);
 
+  /* Abre a escuta da entrevista inteira. É o "podemos começar?" do roteiro.
+   *
+   * Daqui em diante ninguém aperta gravar: a conversa corre e o roteiro se
+   * preenche atrás dela. */
+  const comecarEntrevista = useCallback(async () => {
+    setErro(null);
+    setErroEscuta(null);
+    /* Some com o painel do áudio ANTES de voltar a gravar.
+     *
+     * Ele fecha a gravação do id que recebe: deixado na tela durante uma
+     * entrevista nova, encerraria a conversa que acabou de começar. */
+    setEscutaEncerrada(false);
+    try {
+      if (estadoMic === "sem-audio") await captura.current?.selecionarAudio();
+      await captura.current?.iniciarEntrevista();
+      emGravacao.current = null;
+      setEscutando(true);
+      setFonte("microfone");
+      // Abre o painel com o que o roteiro pede, antes de alguém falar.
+      filaTrechos.current = [];
+      void escutarTrecho("", respostasRef.current)
+        .then((r) => setFaltando(r.faltando))
+        .catch(() => undefined);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "Não foi possível abrir o microfone.";
+      setErro(/NotAllowedError|denied/i.test(m) ? "Permissão de microfone negada." : m);
+    }
+  }, [estadoMic]);
+
+  const encerrarEscuta = useCallback(async () => {
+    // Fecha a resposta ANTES: é o que faz o navegador parar de mandar bytes.
+    captura.current?.finalizarResposta();
+    setEscutando(false);
+    /* E só então oferece o áudio. O `aguardarEnvio` é o que separa "a fala
+     * inteira está no arquivo" de "faltou o fim": o encerramento vai por HTTP,
+     * numa conexão diferente da que leva o PCM, e poderia chegar primeiro. */
+    await captura.current?.aguardarEnvio();
+    setEscutaEncerrada(true);
+  }, []);
+
+  const aceitarSugestao = useCallback((perguntaId: string, valor: string) => {
+    setRespostas((r) => ({ ...r, [perguntaId]: valor }));
+    setSugestoes((s) => s.filter((x) => x.pergunta_id !== perguntaId));
+  }, []);
+
+  const descartarSugestao = useCallback((perguntaId: string) => {
+    setSugestoes((s) => s.filter((x) => x.pergunta_id !== perguntaId));
+  }, []);
+
+  /** Rola até o campo e o destaca — o painel é índice, não só relatório. */
+  const irPara = useCallback((perguntaId: string) => {
+    const alvo = document.getElementById(`pergunta-${perguntaId}`);
+    if (!alvo) return;
+    alvo.scrollIntoView({ behavior: "smooth", block: "center" });
+    alvo.querySelector("textarea,input,select,button")?.setAttribute("data-realce", "1");
+    (alvo.querySelector("textarea,input") as HTMLElement | null)?.focus();
+  }, []);
+
   const pausar = useCallback(() => captura.current?.pausar(), []);
   const retomar = useCallback(() => captura.current?.retomar(), []);
-  const finalizar = useCallback(() => captura.current?.finalizarResposta(), []);
+  const finalizar = useCallback(() => {
+    // Marca ANTES de mandar parar: o servidor pode levar segundos para devolver
+    // o texto, e é essa marca que troca os botões por "Transcrevendo…" em vez
+    // de deixar dois botões inertes na tela.
+    setFinalizando(true);
+    captura.current?.finalizarResposta();
+  }, []);
 
   const responder = useCallback((id: string, valor: string | string[]) => {
     setRespostas((r) => ({ ...r, [id]: valor }));
@@ -307,11 +539,33 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           <h2 className={estilos.titulo}>{roteiro.nome}</h2>
         </div>
         <div className={transcricaoEstilos.acoes}>
+          {/* O botão que abre a entrevista inteira. Substitui os 86 ciclos de
+              gravar/finalizar: daqui em diante o microfone fica aberto e o
+              roteiro se preenche atrás da conversa. */}
+          {!escutando ? (
+            <button
+              type="button"
+              className={transcricaoEstilos.botao}
+              onClick={comecarEntrevista}
+              disabled={gravandoId !== null}
+            >
+              Começar a entrevista
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={transcricaoEstilos.secundario}
+              onClick={() => void encerrarEscuta()}
+            >
+              Encerrar escuta
+            </button>
+          )}
+
           {/* Com a chamada no ar, o microfone daqui não entra na transcrição —
               ele serve para o entrevistado ouvir o advogado, e quem cuida disso
               é o painel da chamada. Oferecer "ligar microfone" aqui convidaria a
               trocar a voz do cliente pela do entrevistador sem perceber. */}
-          {fonte !== "chamada" && (
+          {fonte !== "chamada" && !escutando && (
             <button
               type="button"
               className={transcricaoEstilos.secundario}
@@ -354,6 +608,15 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         />
       </div>
 
+      {/* O vídeo fica aqui em cima porque gravar em vídeo se decide no começo
+        * da conversa — e porque ele não é guardado em lugar nenhum, então quem
+        * quiser precisa ver a opção antes, não depois. */}
+      <VideoDaEntrevista
+        onPendente={(pendente) => {
+          videoPendente.current = pendente;
+        }}
+      />
+
       {erro && <div className={transcricaoEstilos.erro}>{erro}</div>}
 
       {aviso && (
@@ -362,39 +625,140 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         </p>
       )}
 
-      {!temMic && (
+      {!temMic && !escutando && (
         <p className={transcricaoEstilos.aviso}>
-          Abra a chamada ao lado para transcrever a voz do entrevistado, ou ligue este
-          microfone se a entrevista for presencial. Os campos de dados podem ser
-          preenchidos sem áudio nenhum.
+          Clique em <strong>Começar a entrevista</strong> para abrir o microfone. Daí em
+          diante a conversa é transcrita e o roteiro se preenche sozinho — você não
+          precisa gravar pergunta por pergunta.
         </p>
       )}
 
-      {blocosVisiveis.map((bloco) => (
-        <BlocoRoteiro
-          key={bloco.id}
-          bloco={bloco}
-          respostas={respostas}
-          onResponder={responder}
-          gravandoId={gravandoId}
-          pausado={estadoMic === "pausado"}
-          parcial={parcial}
-          temMic={temMic}
-          onGravar={gravar}
-          onPausar={pausar}
-          onRetomar={retomar}
-          onFinalizar={finalizar}
-          conferencias={conferencias}
-          onConferir={conferir}
-        />
-      ))}
+      {/* O áudio passou a ser GUARDADO, não só transcrito. A saudação do roteiro
+        * promete sigilo e não fala em gravação; enquanto ela não falar, quem
+        * avisa é o entrevistador — e o lembrete fica onde ele olha antes de
+        * abrir o microfone, não escondido num rodapé. */}
+      {escutando && (
+        <p className={transcricaoEstilos.aviso}>
+          A conversa está sendo <strong>gravada e transcrita</strong>, e o áudio fica
+          guardado nesta máquina. Avise o cliente — o roteiro promete sigilo, mas não
+          menciona gravação.
+        </p>
+      )}
+
+      {/* A saudação, palavra por palavra, para ser LIDA ao cliente.
+        *
+        * Fica recolhida depois de lida porque ela é longa e ocupa a tela que o
+        * roteiro precisa; mas não some, porque a atendente pode querer voltar a
+        * uma frase. Ver `roteiros.SAUDACAO`. */}
+      {roteiro.saudacao?.length > 0 && (
+        <section className={estilos.saudacao}>
+          <div className={estilos.saudacaoTopo}>
+            <span className={estilos.saudacaoRotulo}>LEIA AO CLIENTE</span>
+            <button
+              type="button"
+              className={estilos.saudacaoAlternar}
+              onClick={() => setSaudacaoLida((v) => !v)}
+            >
+              {saudacaoLida ? "mostrar de novo" : "já li"}
+            </button>
+          </div>
+          {!saudacaoLida &&
+            roteiro.saudacao.map((p, i) => (
+              <p key={i} className={estilos.saudacaoTexto}>
+                {p}
+              </p>
+            ))}
+        </section>
+      )}
+
+      <div className={escutando ? estilos.comPainel : undefined}>
+        <div>
+          {blocosVisiveis.map((bloco) => (
+            <BlocoRoteiro
+              key={bloco.id}
+              bloco={bloco}
+              respostas={respostas}
+              onResponder={responder}
+              gravandoId={gravandoId}
+              pausado={estadoMic === "pausado"}
+              finalizando={finalizando}
+              parcial={parcial}
+              temMic={temMic}
+              escutando={escutando}
+              onGravar={gravar}
+              onPausar={pausar}
+              onRetomar={retomar}
+              onFinalizar={finalizar}
+              conferencias={conferencias}
+              onConferir={conferir}
+            />
+          ))}
+        </div>
+
+        {escutando && (
+          <PainelEscuta
+            preenchidas={ouvidas}
+            sugestoes={sugestoes}
+            lembretes={lembretes}
+            faltando={faltando}
+            interpretando={ouvindo}
+            captando={escutando && estadoMic !== "sem-audio"}
+            pausado={estadoMic === "pausado"}
+            ultimaFala={ultimaFala}
+            ultimoSom={ultimoSom}
+            erro={erroEscuta}
+            onAceitar={aceitarSugestao}
+            onDescartar={descartarSugestao}
+            onIrPara={irPara}
+          />
+        )}
+      </div>
+
+      {/* O encerramento, também para ser lido. Só aparece quando há o que
+        * encerrar — no começo da entrevista ele seria ruído. */}
+      {roteiro.encerramento?.length > 0 && feitas > 0 && (
+        <details className={estilos.encerramento}>
+          <summary className={estilos.encerramentoTitulo}>
+            Encerramento — o que dizer ao final ({roteiro.encerramento.length} parágrafos)
+          </summary>
+          {roteiro.encerramento.map((p, i) => (
+            <p key={i} className={estilos.saudacaoTexto}>
+              {p}
+            </p>
+          ))}
+        </details>
+      )}
+
+      {/* O áudio, depois de encerrada a escuta. Antes disso não há arquivo, e um
+        * botão que não baixa nada é pior que botão nenhum. */}
+      {escutaEncerrada && (
+        <AudioDaEntrevista entrevistaId={captura.current?.entrevistaId ?? ""} />
+      )}
 
       {onConcluir && (
         <button
           type="button"
           className={transcricaoEstilos.botao}
           style={{ marginTop: 24 }}
-          onClick={() => onConcluir(respostas, montarRelato(blocosVisiveis, respostas))}
+          onClick={() => {
+            /* Concluir desmonta esta tela, e com ela o vídeo — que não existe
+             * em nenhum outro lugar. Perguntar é o mínimo; o `confirm` do
+             * navegador é o que ainda bloqueia a ação até alguém responder. */
+            if (
+              videoPendente.current &&
+              !window.confirm(
+                "O vídeo gravado ainda não foi baixado e será perdido ao concluir. " +
+                  "Concluir mesmo assim?",
+              )
+            ) {
+              return;
+            }
+            onConcluir(
+              respostas,
+              montarRelato(blocosVisiveis, respostas),
+              captura.current?.entrevistaId ?? "",
+            );
+          }}
         >
           Concluir entrevista
         </button>
@@ -425,8 +789,10 @@ function BlocoRoteiro({
   onResponder,
   gravandoId,
   pausado,
+  finalizando,
   parcial,
   temMic,
+  escutando,
   onGravar,
   onPausar,
   onRetomar,
@@ -439,8 +805,11 @@ function BlocoRoteiro({
   onResponder: (id: string, valor: string | string[]) => void;
   gravandoId: string | null;
   pausado: boolean;
+  finalizando: boolean;
   parcial: string;
   temMic: boolean;
+  /** A entrevista está com o microfone aberto: os botões por pergunta somem. */
+  escutando: boolean;
   onGravar: (id: string) => void;
   onPausar: () => void;
   onRetomar: () => void;
@@ -457,6 +826,8 @@ function BlocoRoteiro({
         {bloco.perguntas.map((p, i) => (
           <li
             key={p.id}
+            // A âncora que o painel usa para rolar até aqui.
+            id={`pergunta-${p.id}`}
             className={`${estilos.pergunta} ${respostas[p.id] ? estilos.respondida : ""}`}
           >
             <div className={estilos.enunciado}>
@@ -478,8 +849,10 @@ function BlocoRoteiro({
                 onResponder={onResponder}
                 gravando={gravandoId === p.id}
                 pausado={gravandoId === p.id && pausado}
+                finalizando={gravandoId === p.id && finalizando}
                 parcial={gravandoId === p.id ? parcial : ""}
                 temMic={temMic}
+                escutando={escutando}
                 ocupado={gravandoId !== null && gravandoId !== p.id}
                 onGravar={onGravar}
                 onPausar={onPausar}
@@ -623,8 +996,10 @@ function CampoResposta({
   onResponder,
   gravando,
   pausado,
+  finalizando,
   parcial,
   temMic,
+  escutando,
   ocupado,
   onGravar,
   onPausar,
@@ -639,8 +1014,12 @@ function CampoResposta({
   onResponder: (id: string, valor: string | string[]) => void;
   gravando: boolean;
   pausado: boolean;
+  /** Esperando o texto final voltar do servidor. */
+  finalizando: boolean;
   parcial: string;
   temMic: boolean;
+  /** A entrevista corre com o microfone aberto. */
+  escutando: boolean;
   /** Outra pergunta está gravando — o microfone é um só para a entrevista. */
   ocupado: boolean;
   onGravar: (id: string) => void;
@@ -794,7 +1173,13 @@ function CampoResposta({
 
   return (
     <>
-      {pergunta.transcrever && (
+      {/* Com o microfone aberto, os botões por pergunta somem.
+        *
+        * Era exatamente disso que o escritório reclamou: gravar/finalizar 86
+        * vezes fazia o entrevistador administrar botões em vez de conversar. A
+        * caixa de texto continua editável — o que a escuta preenche, a mão
+        * corrige. */}
+      {pergunta.transcrever && !escutando && (
         <div className={estilos.opcoes} style={{ marginBottom: 8 }}>
           {!emCurso && (
             <button
@@ -824,24 +1209,34 @@ function CampoResposta({
                 type="button"
                 className={transcricaoEstilos.secundario}
                 onClick={pausado ? onRetomar : onPausar}
+                // Depois de finalizar não há o que pausar: a captura já parou.
+                // Desabilitar é o que faz o botão parar de mentir.
+                disabled={finalizando}
               >
                 {pausado ? "Retomar" : "Pausar"}
               </button>
               <button
                 type="button"
                 className={`${transcricaoEstilos.botao} ${
-                  gravando ? transcricaoEstilos.gravando : ""
+                  gravando && !finalizando ? transcricaoEstilos.gravando : ""
                 }`}
                 onClick={onFinalizar}
+                disabled={finalizando}
               >
-                Finalizar resposta
+                {finalizando ? "Transcrevendo…" : "Finalizar resposta"}
               </button>
             </>
           )}
 
-          {pausado && (
+          {pausado && !finalizando && (
             <span className={estilos.pausa}>
               pausado — o que for dito agora não entra na resposta
+            </span>
+          )}
+
+          {finalizando && (
+            <span className={estilos.pausa}>
+              transcrevendo a resposta inteira — o texto aparece em instantes
             </span>
           )}
         </div>

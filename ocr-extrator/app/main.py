@@ -39,11 +39,14 @@ from . import (
     chamada,
     consultas,
     contrato,
+    escuta,
     pipeline,
     portal,
     rag,
+    relatorio,
     roteiros,
     triagem,
+    valor_documento,
 )
 from . import entrevista as entrevista_lib
 from .agente import dossie as dossie_agente
@@ -101,7 +104,12 @@ app.add_middleware(
     # Sem declarar aqui, o navegador esconde estes dois do JavaScript mesmo com
     # a resposta chegando inteira: é o nome do arquivo do contrato e o aviso de
     # campo que a entrevista não respondeu.
-    expose_headers=["Content-Disposition", "X-Campos-Faltando"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-Campos-Faltando",
+        "X-Pendencias",
+        "X-Impedimentos",
+    ],
 )
 
 # Rotas que respondem sem token. Tudo que não estiver aqui exige autenticação —
@@ -240,6 +248,118 @@ def campos_do_contrato():
             m for m in marcadores if m not in {contrato._chave(f"[{k}]") for k in preenchiveis}
         ],
     }
+
+
+class PedidoRelatorio(BaseModel):
+    """As respostas da entrevista concluída."""
+
+    respostas: dict[str, Any]
+    roteiro: str = Field(default="empregado_publico", max_length=60)
+    entrevistador: str = Field(default="", max_length=120)
+    #: O relato corrido da entrevista — é dele que sai a análise por precedentes.
+    #: A tela já o monta para a triagem; mandá-lo aqui evita reconstruí-lo.
+    relato: str = Field(default="", max_length=20_000)
+    #: Gerar a seção de análise (busca de precedentes + DeepSeek). Melhor-esforço:
+    #: base fora do ar não impede o relatório, só troca a seção por uma nota.
+    analisar: bool = True
+
+
+@app.post("/api/entrevista/relatorio")
+async def gerar_relatorio(pedido: PedidoRelatorio):
+    """O relatório ANALISADO da entrevista, em .docx, com o símbolo do escritório.
+
+    É a entrega que a saudação do roteiro promete ao cliente. Quem o recebe não
+    estava na conversa, então ele diz o que foi perguntado, o que foi respondido
+    e — principalmente — o que ficou sem resposta (ver `app/relatorio.py`).
+
+    Traz também uma análise assistida por precedentes (o mesmo motor do
+    `/api/estrategia`): síntese, ações sugeridas, riscos e lacunas, cada um
+    citando o precedente que o sustenta. É apoio à decisão, não conclusão — a
+    classificação jurídica continua sendo da equipe.
+    """
+    analise: dict[str, Any] | None = None
+    if pedido.analisar and pedido.relato.strip():
+        try:
+            analise = await run_in_threadpool(rag.sugerir_acoes, pedido.relato)
+        except Exception:
+            # Base instável é o caso esperado, não a exceção (ver CONTEXTO.md). O
+            # relatório sai com a nota em vez de esperar ou falhar por causa dela.
+            log.warning("Análise do relatório indisponível", exc_info=True)
+            analise = {
+                "indisponivel": (
+                    "A base de precedentes não respondeu a tempo. O relatório "
+                    "organiza as respostas; a análise por precedentes pode ser "
+                    "gerada depois, na triagem do caso."
+                )
+            }
+
+    try:
+        docx, dados = await run_in_threadpool(
+            relatorio.gerar_docx,
+            pedido.respostas,
+            pedido.roteiro,
+            pedido.entrevistador,
+            analise,
+        )
+    except relatorio.ErroRelatorio as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    arquivo = (
+        f"Relatório de entrevista - {dados['cliente']}.docx"
+        .replace("/", "-")
+        .replace("\\", "-")
+    )
+    return Response(
+        content=docx,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="entrevista.docx"; '
+                f"filename*=UTF-8''{quote(arquivo)}"
+            ),
+            # A tela precisa saber o que ficou pendente sem abrir o arquivo.
+            "X-Pendencias": str(len(dados["faltando_obrigatorias"])),
+            "X-Impedimentos": str(len(dados["impedimentos"])),
+            # E se a análise entrou, para a tela poder avisar.
+            "X-Analise": (
+                "indisponivel"
+                if analise and analise.get("indisponivel")
+                else "sim"
+                if analise
+                else "nao"
+            ),
+        },
+    )
+
+
+class PedidoEscuta(BaseModel):
+    """Um trecho de fala recém-transcrito, com o estado atual da entrevista."""
+
+    trecho: str = Field(max_length=8_000)
+    respostas: dict[str, Any] = Field(default_factory=dict)
+    roteiro: str = Field(default="empregado_publico", max_length=60)
+
+
+@app.post("/api/entrevista/escuta")
+async def escutar_entrevista(pedido: PedidoEscuta):
+    """O que este trecho de fala respondeu do roteiro, e o que ainda falta.
+
+    É o que sustenta a entrevista de microfone aberto: em vez de o entrevistador
+    apertar gravar a cada uma das 86 perguntas, a conversa corre e o roteiro se
+    preenche atrás dela (ver `app/escuta.py`).
+
+    Devolve os três de uma vez — o que entrou, o que ficou pela metade e o que
+    ninguém falou. Separados não servem: saber o que falta sem ver o que já
+    entrou faz repetir pergunta, que é do que o escritório reclamou.
+    """
+    try:
+        return await run_in_threadpool(
+            escuta.escutar, pedido.trecho, pedido.respostas, pedido.roteiro
+        )
+    except escuta.ErroEscuta as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 class PedidoAnaliseResposta(BaseModel):
@@ -1263,6 +1383,48 @@ def obter_entrega(entrega_id: str):
         raise HTTPException(404, "Entrega não encontrada.")
     entrega.pop("caminho", None)  # caminho no disco não interessa ao cliente HTTP
     return entrega
+
+
+@app.post("/api/entregas/{entrega_id}/leitura")
+async def ler_documento(entrega_id: str):
+    """Interpreta o texto que o OCR extraiu: para que este documento serve.
+
+    Existe porque o classificador do OCR conhece documento de IDENTIDADE, e os
+    que decidem a ação — CAT, laudo, boletim, CNIS, contracheque — caem em
+    "desconhecido" com o texto lido e ninguém para lê-lo (ver
+    `app/valor_documento.py`).
+
+    Não decide item do checklist: o status continua vindo do arquivo entregue,
+    não de opinião de modelo. O que sai daqui é leitura, rotulada como tal.
+    """
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+    if not entrega.get("extracao"):
+        raise HTTPException(409, "O documento ainda está sendo lido pelo OCR.")
+
+    # Só os itens em aberto: mandar os doze faria o modelo "resolver" o que já
+    # foi entregue, e o prompt cresceria sem ganho.
+    situacao = casos.montar_situacao(entrega["caso_id"])
+    pendencias: list[dict[str, str]] = []
+    categoria_nome = ""
+    if situacao:
+        categoria = situacao.get("categoria") or {}
+        categoria_nome = str(
+            (categoria.get("nome") if isinstance(categoria, dict) else categoria) or ""
+        )
+        pendencias = [
+            {"codigo": str(i.get("codigo", "")), "nome": str(i.get("nome", ""))}
+            for i in situacao.get("itens", [])
+            if i.get("status") == "pendente"
+        ]
+
+    try:
+        return await run_in_threadpool(
+            valor_documento.ler, entrega["extracao"], pendencias, categoria_nome
+        )
+    except valor_documento.ErroValor as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.get("/api/entregas/{entrega_id}/arquivo")

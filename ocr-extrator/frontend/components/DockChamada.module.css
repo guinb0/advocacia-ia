@@ -1,0 +1,142 @@
+/* O painel flutuante da chamada. Canto inferior direito, acima de tudo. */
+
+.dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 900;
+  width: 260px;
+  max-width: calc(100vw - 40px);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border-strong, #c8d3e0);
+  border-top: 3px solid var(--ink, #14202e);
+  padding: 12px 14px 14px;
+  box-shadow: 0 8px 30px rgba(20, 32, 46, 0.18);
+}
+
+.topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.rotulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.recolher {
+  border: 1px solid var(--border-strong, #c8d3e0);
+  background: none;
+  color: var(--ink, #14202e);
+  font: 600 14px/1 var(--font-ui);
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.recolher:hover {
+  background: var(--ink, #14202e);
+  color: var(--surface, #fff);
+}
+
+/* Recolhido: uma pílula discreta, o mínimo para lembrar que a chamada segue. */
+.pilula {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 900;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--ink, #14202e);
+  color: var(--surface, #fff);
+  border: none;
+  padding: 10px 14px;
+  font: 600 10.5px/1 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 8px 30px rgba(20, 32, 46, 0.22);
+}
+
+.ponto {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pontoAtivo {
+  background: #3fa46a;
+  box-shadow: 0 0 0 3px rgba(63, 164, 106, 0.2);
+}
+
+.pontoEsperando {
+  background: var(--atencao, #8a5300);
+  animation: pulsar 1.6s ease-in-out infinite;
+}
+
+.pontoOcioso {
+  background: var(--muted, #5a6b80);
+}
+
+@keyframes pulsar {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pontoEsperando {
+    animation: none;
+  }
+}
+
+.acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.secundario,
+.desligar {
+  border: 1.5px solid var(--border-campo, #7a8b9f);
+  background: none;
+  color: var(--ink, #14202e);
+  font: 600 10.5px/1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.secundario:hover {
+  border-color: var(--ink, #14202e);
+  background: var(--ink, #14202e);
+  color: var(--surface, #fff);
+}
+
+.desligar {
+  border-color: var(--critico, #b3261e);
+  color: var(--critico, #b3261e);
+}
+
+.desligar:hover {
+  background: var(--critico, #b3261e);
+  color: var(--surface, #fff);
+}
+
+.erro {
+  margin: 8px 0 0;
+  font: 400 11.5px/1.4 var(--font-ui);
+  color: var(--critico, #b3261e);
+}

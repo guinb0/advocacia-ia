@@ -295,3 +295,87 @@
   color: var(--warn);
   align-self: center;
 }
+
+/* ------------------------------------- entrevista de microfone aberto */
+
+/* Roteiro à esquerda, painel da escuta à direita. Só existe enquanto a escuta
+ * corre — fora dela o roteiro ocupa a largura inteira, como sempre ocupou. */
+.comPainel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .comPainel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A saudação do escritório, para ser LIDA ao cliente. Tipografia editorial
+ * porque é texto falado, não interface. */
+.saudacao {
+  border-left: 3px solid var(--ink);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  background: var(--surface-2);
+}
+
+.saudacaoTopo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.saudacaoRotulo {
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.saudacaoAlternar {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  font: 400 11px/1 var(--font-ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.saudacaoAlternar:hover {
+  color: var(--ink);
+}
+
+.saudacaoTexto {
+  margin: 10px 0 0;
+  font: 400 14px/1.65 var(--font-display);
+  max-width: 74ch;
+}
+
+.encerramento {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.encerramentoTitulo {
+  font: 600 11px/1.4 var(--font-ui);
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* O campo para onde o painel acabou de levar. É uma dica de "é aqui", não um
+ * estado.
+ *
+ * Ancorado em `.pergunta` porque CSS Modules recusa seletor "puro" — um
+ * `[data-realce]` solto vazaria para fora deste componente, e o build falha
+ * antes de deixar isso acontecer. */
+.pergunta [data-realce="1"] {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+}

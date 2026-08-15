@@ -68,13 +68,16 @@ PRECEDENTES = 4
 #: respondida. Abaixo disto o pedido é recusado sem gastar chamada nenhuma.
 MINIMO_CARACTERES = 40
 
-#: Quantas falhas SEGUIDAS abrem o disjuntor.
+#: Quantas falhas abrem o disjuntor.
 #:
-#: Duas, e não uma: com latência instável, uma falha isolada é um pico, não um
-#: banco fora do ar. Abrindo na primeira, um engasgo de sete segundos custava
-#: precedentes nas perguntas seguintes de uma entrevista inteira. Uma falha
-#: bem-sucedida no meio zera a contagem.
-FALHAS_PARA_ABRIR = 2
+#: UMA — porque quem absorve o pico agora é o `TENTATIVAS_RAG` lá embaixo. Uma
+#: falha aqui já significa duas tentativas seguidas malsucedidas, e isso é
+#: evidência bastante de que o banco não está respondendo.
+#:
+#: Antes eram duas, quando a busca tentava uma vez só e uma falha podia ser
+#: engasgo. Com a retentativa interna, exigir duas falhas custaria ~40s de
+#: espera acumulada antes de o disjuntor agir — com o cliente na frente.
+FALHAS_PARA_ABRIR = 1
 
 #: Depois de abrir, o banco de precedentes fica de molho por este tempo.
 #:
@@ -156,22 +159,48 @@ def limpar_cache() -> None:
 # --------------------------------------------------------------- precedentes
 
 
+#: Tentativas por consulta. DUAS, e é o número que faz a diferença entre a
+#: conferência citar processo e nunca citar.
+#:
+#: Medido ao longo de 13-14/08, em toda ferramenta que fala com este servidor: a
+#: PRIMEIRA conexão estoura e a segunda conecta em décimos de segundo. Aparece
+#: igual no `estado_rag`, no diagnóstico de plano, na contagem de pendentes —
+#: todos retentam e todos passam na segunda. A conferência tentava uma vez só, e
+#: por isso saía "sem precedentes" com o banco 100% vetorizado e respondendo.
+TENTATIVAS_RAG = 2
+
+
 def _buscar_precedentes(consulta: str) -> list[rag.TrechoSimilar]:
     """Processos parecidos, ou lista vazia se o banco não estiver de pé."""
     if not _rag_disponivel():
         return []
-    try:
-        achados = rag.buscar_similares(
-            consulta,
-            limite=PRECEDENTES,
-            timeout=TEMPO_EMBEDDING_S,
-            connect_timeout=TEMPO_CONEXAO_S,
-        )
-    except Exception as exc:
-        _marcar_falha(f"{type(exc).__name__}: {exc}")
-        return []
-    _marcar_sucesso()
-    return achados
+
+    ultimo: Exception | None = None
+    for tentativa in range(1, TENTATIVAS_RAG + 1):
+        try:
+            achados = rag.buscar_similares(
+                consulta,
+                limite=PRECEDENTES,
+                timeout=TEMPO_EMBEDDING_S,
+                connect_timeout=TEMPO_CONEXAO_S,
+            )
+        except Exception as exc:
+            ultimo = exc
+            if tentativa < TENTATIVAS_RAG:
+                # Sem pausa entre as duas: o que trava é o aperto de mão, e a
+                # segunda tentativa costuma conectar na hora. Dormir aqui só
+                # somaria espera com o cliente na frente.
+                log.info(
+                    "Precedentes: tentativa %d falhou (%s), tentando de novo.",
+                    tentativa,
+                    type(exc).__name__,
+                )
+            continue
+        _marcar_sucesso()
+        return achados
+
+    _marcar_falha(f"{type(ultimo).__name__}: {ultimo}")
+    return []
 
 
 # ------------------------------------------------------------------ o modelo
@@ -187,12 +216,26 @@ REGRAS
   segunda pessoa ("O senhor chegou a...?"). Nada de "verificar se o cliente...".
 - Só aponte o que a resposta NÃO trouxe. Se ela já respondeu, não repita.
 - Não invente fato, não sugira o que responder, não prometa resultado.
-- Se a resposta já está completa para este ponto, devolva suficiente=true com
-  listas vazias.
 - Havendo PRECEDENTES, use-os para saber o que costuma ser exigido em casos assim
   e cite o índice em `precedentes` do item. Sem precedentes, deixe a lista vazia.
 - Ignore o que pertence a outra pergunta do roteiro (CPF, endereço, RG): aqui só
   interessa o assunto desta resposta.
+
+SEJA EXIGENTE. `suficiente=true` é EXCEÇÃO, não o padrão.
+- Pergunta composta respondida pela metade é INCOMPLETA. "Ainda trabalha na
+  empresa? Se não, quando saiu e como foi o desligamento?" respondida com
+  "ainda trabalho lá" ainda deixa em aberto desde quando, em que função e se o
+  problema relatado continua acontecendo.
+- Resposta de uma frase quase nunca basta. Pergunte-se o que um advogado
+  trabalhista precisaria saber a mais sobre ESTE ponto para peticionar: datas,
+  nomes, valores, documentos, testemunhas, periodicidade.
+- Se a resposta contiver trecho ININTELIGÍVEL, repetição sem sentido, teste de
+  microfone ou conversa paralela ("alô alô", "testando", "não sei o que dizer"),
+  diga isso em `observacao`, trate a resposta como incompleta e pergunte de novo
+  o que ficou perdido. O texto vem de transcrição de voz: o que estiver
+  truncado ou embolado precisa ser confirmado, não presumido.
+- Só devolva `suficiente=true` quando a resposta cobrir o ponto com datas e
+  detalhes suficientes para constar de uma petição sem nova ligação ao cliente.
 
 Responda APENAS JSON:
 {"suficiente":true|false,

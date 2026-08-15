@@ -6,7 +6,7 @@ import { Aviso } from "@/components/Basicos";
 import * as portal from "@/lib/apiPortal";
 import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
 import { SELO_TOM } from "@/lib/formato";
-import { ChamadaJitsi } from "@/lib/chamadaJitsi";
+import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import estilos from "./portal.module.css";
 
@@ -324,28 +324,27 @@ function Checklist({
  * O cliente já provou quem é ao digitar a senha, então não há segunda barreira:
  * o token deste link é o nome da sala, e o escritório espera do outro lado.
  *
+ * A chamada vive no `ProvedorChamada`, na raiz: se o cliente veio da página da
+ * chamada (mesma sala, que é este token), a ligação JÁ está de pé aqui — e
+ * continua enquanto ele envia os documentos, que é o ponto. Fechar a página não
+ * derruba de propósito; quem encerra é o botão de sair, ou fechar a aba.
+ *
  * Duas coisas ficam ditas na tela, e não por gentileza: que a conversa é
- * transcrita, e que sem microfone liberado não há chamada. Um aviso genérico de
- * erro do navegador não diria nem uma nem outra. */
+ * transcrita, e que sem microfone liberado não há chamada. */
 function Chamada({ token }: { token: string }) {
-  const [estado, setEstado] = useState<EstadoChamada>("fora");
+  const chamada = useChamada();
   const [entrando, setEntrando] = useState(false);
-  const [mudo, setMudo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  const chamada = useRef<ChamadaJitsi | null>(null);
-  if (chamada.current === null && typeof window !== "undefined") {
-    chamada.current = new ChamadaJitsi("cliente", { onEstado: setEstado, onErro: setErro });
-  }
-
-  // Fechar a aba sem soltar deixaria o microfone aceso e a sala ocupada.
-  useEffect(() => () => chamada.current?.desligar(), []);
+  // Esta seção mostra a chamada por inteiro: enquanto está na tela, o painel
+  // flutuante se recolhe. `registrarPainel` é estável, então roda uma vez.
+  useEffect(() => chamada.registrarPainel(), [chamada.registrarPainel]);
 
   async function entrar() {
     setErro(null);
     setEntrando(true);
     try {
-      await chamada.current?.entrar(token);
+      await chamada.entrar(token, "cliente");
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
@@ -358,7 +357,7 @@ function Chamada({ token }: { token: string }) {
     }
   }
 
-  const naChamada = estado !== "fora";
+  const naChamada = chamada.ativa;
   const situacao: Record<EstadoChamada, string> = {
     fora: "",
     aguardando: "Esperando o escritório entrar. Deixe esta tela aberta.",
@@ -390,24 +389,21 @@ function Chamada({ token }: { token: string }) {
       ) : (
         <>
           <p className={estilos.chamadaEstado} aria-live="polite">
-            {situacao[estado]}
+            {situacao[chamada.estado]}
           </p>
 
           <div className={estilos.chamadaAcoes}>
             <button
               type="button"
               className="botao botao--secundario"
-              onClick={() => setMudo(chamada.current?.alternarMudo() ?? false)}
+              onClick={chamada.alternarMudo}
             >
-              {mudo ? "Voltar a falar" : "Desligar meu microfone"}
+              {chamada.mudo ? "Voltar a falar" : "Desligar meu microfone"}
             </button>
             <button
               type="button"
               className="botao botao--secundario"
-              onClick={() => {
-                chamada.current?.desligar();
-                setMudo(false);
-              }}
+              onClick={chamada.desligar}
             >
               Sair da chamada
             </button>
@@ -417,12 +413,13 @@ function Chamada({ token }: { token: string }) {
 
       <p className={estilos.chamadaNota}>
         A conversa é transcrita pelo escritório para virar o registro do seu atendimento.
+        Ela continua enquanto você envia os documentos.
       </p>
 
-      {erro && (
+      {(erro || chamada.erro) && (
         <div style={{ marginTop: 14 }}>
           <Aviso tom="critico" titulo="A chamada não abriu">
-            {erro}
+            {erro ?? chamada.erro}
           </Aviso>
         </div>
       )}

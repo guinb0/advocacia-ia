@@ -1,6 +1,6 @@
 # Acervo — onde o projeto está
 
-## Checkpoint da vetorização — medido em 13/08/2026, 14h
+## Vetorização CONCLUÍDA — 13/08/2026, 17h06
 
 Confira sozinho, a qualquer momento, em vez de confiar nos números abaixo:
 
@@ -12,24 +12,28 @@ Confira sozinho, a qualquer momento, em vez de confiar nos números abaixo:
 O `--busca` prova o caminho inteiro (texto → embedding → HNSW → processo) e é o
 único que gasta uma chamada de embeddings.
 
-**Estado:** 5.824 documentos / 52.926 chunks / 1.745 processos.
-**42.490 embeddings (80,28%)**, 10.436 pendentes.
+**5.824 documentos / 52.926 chunks / 1.745 processos — 100% vetorizado.**
 
 | origem | vetorizados |
 |---|---|
-| `trt8_juris` | 42.490 / 43.106 (98,57%) |
-| `tst` | 0 / 5.122 |
-| `djen` | 0 / 4.660 |
-| `dejt` | 0 / 38 |
+| `trt8_juris` | 43.106 / 43.106 |
+| `tst` | 5.122 / 5.122 |
+| `djen` | 4.660 / 4.660 |
+| `dejt` | 38 / 38 |
 
-O TRT8 está praticamente pronto; o que falta é inteiro das outras três fontes,
-que ainda não começaram. A busca por similaridade já funciona — a conferência da
-entrevista cita processos —, só não alcança precedente do TST.
+Aferido de ponta a ponta: uma busca por "acidente de trabalho com o dedo na
+máquina, empresa não emitiu CAT" devolveu em **1,88s** cinco processos entre
+0,776 e 0,809 de similaridade, de varas do Pará e do Amapá. A conferência da
+entrevista e o `/api/estrategia` citam precedente de verdade.
+
+A última corrida gravou 10.180 chunks em ~2h, com **27 quedas de conexão** pelo
+caminho — nenhuma delas fatal, porque o orçamento de retentativas só conta falha
+estéril (ver abaixo).
 
 **A tarefa NÃO está desabilitada**, ao contrário do que este documento dizia
 até 13/08. `AdvocaciaIA-SincronizarRAG` está `Ready`, com execução agendada, e
 rodou em 13/08 às 09:27 (terminada: `LastTaskResult` 0x41306). Ela volta a rodar
-sozinha.
+sozinha — e agora o que ela vetoriza é só o que a ingestão trouxer de novo.
 
 ### A retomada que travava em silêncio — corrigida em 13/08/2026
 
@@ -200,6 +204,7 @@ app/
   pipeline.py     OCR → campos → validação
   quality.py      legibilidade da foto
   portal.py       senha/sessão do portal do cliente
+  gravacao.py     guarda o áudio da entrevista e o converte em .mp4
   armazenamento.py  SQLite
 frontend/
   app/page.tsx              Carteira · Checklist · análise avulsa
@@ -327,6 +332,10 @@ depois obriga a recriar as colunas e reindexar.**
 - **Servidor pgvector é compartilhado** com `visadf`, `vigdigital_agent`,
   `portos_prod` e outros. Relato de entrevista tem CPF e dado de saúde — decidir
   retenção e base legal na LGPD antes de popular a tabela `entrevistas`.
+- **O áudio das entrevistas fica em claro em `dados/entrevistas/`**, sem prazo de
+  descarte, e as rotas que o servem não têm autenticação — o que as protege hoje
+  é o serviço só escutar em `127.0.0.1`. É a mesma decisão de retenção acima, com
+  um agravante: voz é dado biométrico, e o arquivo é a conversa inteira.
 
 ---
 
@@ -406,6 +415,83 @@ tentariam o banco uma vez cada.
 
 ---
 
+## Chamada da entrevista — guia em `docs/CHAMADA.md`
+
+Como o pessoal roda: subir o Jitsi à parte (`docker compose up -d` em
+`docker-jitsi-meet`, porta 8081), abrir a chamada na coluna direita da entrevista
+e mandar o link sorteado ao entrevistado.
+
+**A voz da chamada alimenta a transcrição** — 14/08/2026. Quando o cliente entra,
+a faixa remota do WebRTC (a voz DELE, isolada da do entrevistador) vira a fonte
+da transcrição, no lugar do microfone. `PainelChamada.onFaixaRemota` chama
+`Roteiro.usarFaixaDaChamada` → `CapturaEntrevista.usarTrilha`, que troca a fonte
+sem fechar a conexão de transcrição. O microfone da máquina fica de reserva para
+a entrevista presencial.
+
+Isto esteve **desligado** por um tempo: a faixa remota chegava muda e o VAD do
+Whisper descartava a resposta inteira. A causa era o `AudioContext` forçado a
+16 kHz recebendo a faixa do WebRTC a 48 kHz — nesse descompasso o
+`MediaStreamAudioSourceNode` de faixa remota devolve silêncio, e o microfone
+escondia o defeito porque o `getUserMedia` capta já na taxa do contexto. Corrigido
+rodando o contexto na taxa nativa e reamostrando para 16 kHz **no worklet**
+(`frontend/public/worklet-pcm.js`, interpolação linear). Prova em
+`tests.test_worklet`: um Chrome real, senoide de 440 Hz num contexto a 48 kHz, e
+a saída volta não-silenciosa e ainda a 440 Hz — o que só fecha se a taxa de saída
+for mesmo 16 kHz. Não cobre a faixa remota em si (exigiria um segundo par na
+chamada); cobre a peça que estava quebrada.
+
+**Ainda só funciona na própria máquina.** O link é `localhost:3000/chamada/…`, e
+trocar por IP não resolve: navegador não libera microfone fora de contexto seguro.
+Cliente à distância exige HTTPS — mesmo bloqueio do portal, que hoje manda senha
+em claro. Detalhes e diagnóstico de falha no guia.
+
+### A chamada PERMANECE ao trocar de tela — 14/08/2026
+
+Antes, cada tela criava a sua `ChamadaJitsi` e a desligava ao sair: a ligação
+caía no instante em que o atendente ia da entrevista para o checklist, ou o
+cliente trocava de aba. O escritório pediu o contrário — a chamada permanece,
+para acompanhar o cliente pelo envio dos documentos sem largar a conversa.
+
+Agora a instância vive no **`ProvedorChamada`** (`lib/ChamadaContexto.tsx`),
+montado na raiz do app (`app/layout.tsx`), acima da troca de telas. As telas não
+a possuem mais: entram, controlam e mostram a chamada, mas quem a segura é o
+provedor, que não desmonta entre uma tela e a seguinte. Encerra só o botão de
+desligar, ou fechar a aba (`pagehide`). Um **painel flutuante** (`DockChamada`)
+aparece num canto quando há chamada e nenhuma tela a mostra por inteiro — é ele
+que faz a ligação "seguir" o usuário. Vale para os dois lados: o mesmo provedor
+está na raiz do escritório e na do cliente (portal e página da chamada são rotas
+do mesmo app).
+
+As quatro telas de chamada agora consomem o contexto: a coluna da entrevista
+(`PainelChamada`), a chamada do checklist (`ChamadaAoVivo`), a página do cliente
+(`app/chamada/[sala]`) e a seção do portal (`portal/[token]`). `new ChamadaJitsi`
+só existe dentro do provedor.
+
+**Cuidado que não é óbvio no código:** o objeto do contexto é recriado a cada
+render do provedor, mas as ações são `useCallback` estáveis. Os efeitos de
+assinatura (`registrarPainel`, `aoReceberFaixa`) dependem SÓ dessas funções
+estáveis, nunca do objeto inteiro — senão cada render re-assinaria e **remontaria
+o AudioContext da faixa remota**, picando a transcrição. Callbacks vindos de
+props inline entram por `ref` para a assinatura rodar uma vez.
+
+**O que ficou pela metade — sala da entrevista ≠ token do portal.** A entrevista
+abre uma sala sorteada (`criarSalaChamada`), antes de o caso existir; o portal usa
+o token do caso. São ids diferentes. A persistência mantém a sala que estiver
+ATIVA, e o portal do cliente, se já houver chamada de pé, **usa a que existe** em
+vez de forçar a sua — então quem faz a entrevista e segue conversando fica na
+mesma sala o tempo todo. O furo é só o cliente que começa a chamada DIRETO pelo
+portal (sala do token) enquanto o escritório está preso na sala da entrevista:
+aí ficam em salas diferentes. Fechar isso de vez pede unificar os dois ids
+(nascer o caso com a sala da entrevista como token), que é mudança de fluxo no
+backend — não feita.
+
+**Não testado ao vivo aqui.** Typecheck e build passam, e a lógica de troca de
+tela é determinística; mas a ligação em si precisa do Jitsi de pé e de dois pares.
+Conferir com duas abas: entrar na chamada pela entrevista, concluir, abrir o caso
+— a chamada tem de continuar no painel do canto, sem reconectar.
+
+---
+
 ## Gravação com pausa e complemento — 13/08/2026
 
 Os botões da pergunta narrativa deixaram de ser um só. Agora: **Gravar resposta**
@@ -419,6 +505,161 @@ Os botões da pergunta narrativa deixaram de ser um só. Agora: **Gravar respost
   conferência: ela aponta que faltou perguntar da CAT, você grava só isso e o
   trecho entra no fim da resposta. A conferência então roda sobre o texto
   INTEIRO, não só sobre o complemento.
+
+---
+
+## Relatório analisado da entrevista, com o símbolo do escritório — 14/08/2026
+
+`POST /api/entrevista/relatorio` agora sai **analisado** e com o **emblema de
+LARA & MELO** no cabeçalho. O botão "Gerar relatório analisado (.docx)" aparece
+quando a entrevista fecha (`RelatorioEntrevista.tsx`, na `TriagemEntrevista`).
+
+- **O emblema** é `app/marca.py`: um monograma e a razão social numa serifada
+  editorial (Georgia), gerados com PIL em alta resolução e embutidos no .docx
+  como imagem. Não havia logotipo no repositório; quando houver, `RELATORIO_LOGO`
+  aponta para o PNG/JPG real e o desenho é ignorado. O .docx é montado à mão
+  (zip + XML, sem python-docx), então embutir imagem exigiu as peças do OOXML:
+  `word/media/logo.png`, a relação `rIdLogo`, o `Default Extension="png"` e os
+  namespaces de DrawingML no elemento raiz.
+- **A análise** reusa o motor do `/api/estrategia` (`rag.sugerir_acoes`): síntese,
+  ações sugeridas, riscos e lacunas, cada item citando o precedente que o
+  sustenta. Vem ANTES das 86 respostas em detalhe — é a síntese que se lê
+  primeiro. É apoio à decisão, não conclusão: o rodapé e o aviso deixam explícito,
+  o mesmo contrato do `/api/estrategia`.
+- **Melhor-esforço, como o resto que depende do pgvector.** Base fora do ar não
+  impede o relatório: a seção vira uma nota ("não respondeu a tempo") e o
+  documento sai organizado. O cabeçalho `X-Analise` (`sim`/`indisponivel`/`nao`)
+  diz à tela o que entrou.
+- **Um clique, não download automático.** A análise busca precedentes e chama o
+  modelo (até ~1 min); baixar sozinho no meio disso pareceria travamento. O botão
+  deixa o tempo visível.
+- **Falhar no emblema não custa o relatório.** Se o PIL/​fonte falhar, o .docx sai
+  sem símbolo, com as respostas — a entrega é o que importa.
+
+Testes: `.venv\Scripts\python.exe -m tests.test_relatorio` — monta o .docx de
+verdade e confere zip íntegro, XML bem-formado em todas as partes, o PNG do
+emblema ligado por relação, a análise com as citações `[P1, P3]`, a degradação
+sem análise e com base fora do ar, e que campo torto do modelo não quebra a
+geração. Não abre o Word (não há), mas valida tudo que ele exige para abrir.
+
+---
+
+## Áudio da entrevista gravado e baixável — 14/08/2026
+
+`app/gravacao.py` + três rotas no serviço de transcrição (`:8200`). A entrevista
+já era transcrita; agora o áudio também fica guardado, e sai em **.mp4** pelo
+painel no fim do roteiro e na tela da triagem.
+
+| rota | para quê |
+|---|---|
+| `GET /entrevista/{id}/gravacao` | se há áudio, quanto dura, se o MP4 já saiu |
+| `POST /entrevista/{id}/encerrar` | fecha e converte; devolve o pronto se já houver |
+| `GET /entrevista/{id}/audio` | o arquivo, com `Content-Disposition: attachment` |
+
+**Quem grava é o servidor, do mesmo PCM que alimenta o Whisper.** É o que garante
+a única propriedade que importa num arquivo que pode virar prova: o áudio é
+exatamente o que foi transcrito. Um `MediaRecorder` no navegador seria uma
+segunda captura, com começo e fim próprios, e as duas divergiriam no dia em que
+uma falhasse — além de morrer junto com a aba.
+
+**O arquivo é mais curto que a entrevista, de propósito.** Só entra o que foi
+ENVIADO: durante a pausa o navegador para de mandar bytes (é para isso que a
+pausa existe), e entre perguntas também não vai nada. Emendar isso calado seria
+editar áudio sem dizer — por isso cada retomada vira um trecho no manifesto
+`dados/entrevistas/<id>.json`, com o instante de relógio em que aconteceu. A tela
+diz a mesma coisa em uma linha, embaixo do player.
+
+**WAV primeiro, MP4 só no fim.** O MP4 guarda o índice no fecho: processo que
+morre no meio deixa arquivo que nenhum player abre. O WAV cru sobrevive, e
+`_reparar_cabecalho` refaz os tamanhos a partir do tamanho do arquivo — coberto
+por teste que simula a queda. Um `entrevistaId` que reaparece **continua** o
+arquivo em vez de sobrescrevê-lo: é o F5 no meio da entrevista.
+
+**48 kbps, medido.** Convertendo 5 minutos de áudio 16 kHz mono nesta máquina:
+
+| bitrate | tamanho | tempo | |
+|---|---|---|---|
+| 32k | 1,23 MB | 2,91s | 103x o tempo real |
+| 48k | 1,82 MB | 3,12s | 96x o tempo real |
+| 64k | 1,87 MB | 14,96s | 20x o tempo real |
+
+O encoder AAC nativo satura perto dos 48 kbps nessa taxa: pedir 64 custa cinco
+vezes o tempo para entregar 3% mais bytes. Uma entrevista de 40 min vira ~17 MB
+e converte em ~25s — daí a conversão ser um POST à parte, com "preparando o
+arquivo" na tela, e não algo que aconteça dentro do download.
+
+**Sem dependência nova.** O PyAV já vinha com o faster-whisper e traz o FFmpeg
+embutido; não há `ffmpeg` no PATH desta máquina e continua não sendo preciso
+haver.
+
+**O que ainda não está resolvido:**
+
+- **Retenção e base legal.** Áudio de entrevista tem voz, CPF e dado de saúde, e
+  hoje ele fica em claro em `dados/entrevistas/`, sem prazo de descarte e sem
+  autenticação na rota (o serviço só escuta em `127.0.0.1`). Ver a ressalva da
+  tabela `entrevistas` na seção de Segurança — é a mesma decisão pendente.
+- **A saudação do roteiro não menciona gravação.** Ela promete sigilo. Enquanto
+  o texto do escritório não for atualizado, quem avisa é o entrevistador, e o
+  lembrete fica na tela durante a escuta.
+- **Nada apaga arquivo velho.** São ~22 MB por hora de conversa, para sempre.
+
+Testes: `.venv\Scripts\python.exe -m tests.test_gravacao` — cobre o ciclo PCM →
+MP4 (decodificando o resultado de volta), a queda no meio, o F5, dois cliques em
+encerrar, entrevista sem áudio, id com travessia de caminho e as três rotas de
+ponta a ponta. Não carrega o Whisper: manda menos de meio segundo por sessão e
+não manda `stop`.
+
+---
+
+## Vídeo da entrevista — grava no navegador, NÃO fica guardado — 14/08/2026
+
+`frontend/lib/gravacaoVideo.ts` + `components/VideoDaEntrevista.tsx`. Botão no
+alto do roteiro, ao lado de "Começar a entrevista". Não há rota, não há pasta e
+não há upload: **o vídeo existe só na aba**, e quem não baixar, perde.
+
+**A assimetria com o áudio é a decisão, não um passo que faltou.** Áudio o
+servidor guarda, porque ele é a memória do atendimento e é o que sustenta a
+transcrição. Vídeo é o dado mais pesado e mais sensível que este sistema toca —
+rosto, sala, documento na mão — e guardá-lo criaria um acervo de imagem com
+retenção indefinida, num sistema que ainda não decidiu retenção nem base legal
+nem para o áudio. Enquanto essa decisão não existir, o vídeo sai pela mão de
+quem gravou e não fica.
+
+Isso muda o que a TELA precisa fazer, e é aí que está o trabalho:
+
+- o botão de baixar fica **cheio e vermelho** enquanto o arquivo não foi salvo;
+- `beforeunload` segura o fechamento da aba;
+- **Concluir entrevista** e **Fechar sem concluir** perguntam antes (é o
+  `temVideoPendente` no `ManipuladorRoteiro`) — os dois desmontam a tela, e
+  desmontar a tela é destruir o arquivo.
+
+**Duas fontes, porque são duas entrevistas diferentes.** `câmera` é a
+presencial: câmera e microfone desta máquina, com `getUserMedia` próprio — o
+microfone da transcrição é da `CapturaEntrevista`, e pará-lo aqui emudeceria a
+entrevista inteira. `tela` é a por chamada: a janela do Jitsi por
+`getDisplayMedia`, com o microfone daqui **misturado** num grafo de áudio,
+senão a gravação teria a voz do cliente e nenhuma das perguntas — o
+`MediaRecorder` grava uma faixa de áudio só, e a segunda seria descartada em
+silêncio.
+
+**MP4 quando dá, WebM quando não dá**, e a extensão do arquivo segue o que foi
+realmente gravado: um `.mp4` que por dentro é WebM não abre no player de quem
+recebe. Medido no Chrome desta máquina — ele aceita
+`video/mp4;codecs="avc1.42E01E,mp4a.40.2"`, então sai MP4.
+
+1,2 Mbps de vídeo e fatias de 5s no `MediaRecorder`: são ~9 MB por minuto, e a
+fatia é o que faz o navegador mandar o blob para o disco em vez de segurar uma
+entrevista inteira na memória da aba.
+
+Teste: `.venv\Scripts\python.exe -m tests.test_video` — **abre um Chrome de
+verdade**, headless, com câmera e microfone falsos. É o único teste do projeto
+que sobe navegador, e o motivo é que o objeto testado é o `MediaRecorder`: um
+dublê provaria só que o dublê funciona, justamente na parte que muda de versão
+para versão. Ele compila o módulo com o `tsc` do projeto, serve a página em
+`127.0.0.1` (getUserMedia exige contexto seguro) e confere que saiu MP4 com
+faixa de vídeo e de áudio, que o player abre o arquivo, que ele vive em `blob:`
+e que `descartar` revoga o blob. Sem Chrome instalado, o teste se diz PULADO em
+vez de falhar.
 
 ---
 

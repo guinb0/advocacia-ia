@@ -4,8 +4,10 @@ import { useRef, useState } from "react";
 
 import { analisarEstrategia, triarEntrevista } from "@/lib/api";
 import type { Estrategia, Triagem } from "@/lib/types";
+import AudioDaEntrevista from "./AudioDaEntrevista";
 import { Aviso, Selo } from "./Basicos";
 import EntrevistaComChamada from "./EntrevistaComChamada";
+import RelatorioEntrevista from "./RelatorioEntrevista";
 import PainelContrato from "./PainelContrato";
 import estilos from "./TriagemEntrevista.module.css";
 
@@ -28,6 +30,10 @@ export default function TriagemEntrevista({
   const [qualificacao, setQualificacao] = useState<Record<string, string | string[]> | null>(
     null,
   );
+  /* O áudio sobrevive à tela em que foi gravado — pelo mesmo motivo da
+   * qualificação. Sem guardar o id aqui, o arquivo continuaria no disco e
+   * ninguém teria como pedi-lo: o nome dele é um uuid. */
+  const [audioEntrevista, setAudioEntrevista] = useState("");
   const [resultado, setResultado] = useState<Triagem | null>(null);
   const [escolhida, setEscolhida] = useState<string | null>(null);
   const [analisando, setAnalisando] = useState(false);
@@ -76,9 +82,10 @@ export default function TriagemEntrevista({
     <div className={estilos.bloco}>
       {mostrarRoteiro ? (
         <EntrevistaComChamada
-          onConcluir={(respostas, relato) => {
+          onConcluir={(respostas, relato, entrevistaId) => {
             setTexto(relato);
             setQualificacao(respostas);
+            setAudioEntrevista(entrevistaId);
             setMostrarRoteiro(false);
           }}
           onFechar={() => setMostrarRoteiro(false)}
@@ -92,6 +99,18 @@ export default function TriagemEntrevista({
         >
           {qualificacao ? "Voltar ao roteiro" : "Conduzir entrevista guiada"}
         </button>
+      )}
+
+      {/* O áudio do que acabou de ser conduzido, antes do contrato: quem sai da
+        * entrevista costuma querer conferir uma fala antes de seguir. */}
+      {!mostrarRoteiro && audioEntrevista && (
+        <AudioDaEntrevista entrevistaId={audioEntrevista} />
+      )}
+
+      {/* O relatório analisado, logo depois da entrevista: é a entrega que a
+        * saudação do roteiro promete à equipe jurídica. */}
+      {qualificacao && !mostrarRoteiro && (
+        <RelatorioEntrevista respostas={qualificacao} relato={texto} />
       )}
 
       {/* Entrevista, contrato, documentos — nesta ordem, que é a do escritório. */}
