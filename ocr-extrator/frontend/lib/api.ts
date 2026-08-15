@@ -202,6 +202,52 @@ export async function gerarContrato(
   return { arquivo: await r.blob(), nome: nomeDoAnexo(r), faltando };
 }
 
+export interface RelatorioGerado {
+  arquivo: Blob;
+  nome: string;
+  /** Pendências obrigatórias que a entrevista deixou em aberto. */
+  pendencias: number;
+  /** Impedimentos que o escritório mandou observar. */
+  impedimentos: number;
+  /** Se a análise por precedentes entrou no documento. */
+  analise: "sim" | "indisponivel" | "nao";
+}
+
+/** O relatório analisado da entrevista, em .docx, com o símbolo do escritório.
+ *
+ * Organiza as respostas na ordem do roteiro e, quando a base de precedentes
+ * responde, traz a análise assistida (síntese, ações, riscos, lacunas). O
+ * `relato` é o texto corrido da entrevista — é dele que sai a análise. */
+export async function gerarRelatorio(
+  respostas: Record<string, string | string[]>,
+  relato = "",
+  roteiro = "empregado_publico",
+): Promise<RelatorioGerado> {
+  const r = await buscar("/api/entrevista/relatorio", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ respostas, relato, roteiro }),
+  });
+
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+
+  const analise = (r.headers.get("X-Analise") ?? "nao") as RelatorioGerado["analise"];
+  return {
+    arquivo: await r.blob(),
+    nome: nomeDoAnexo(r, "relatorio-entrevista.docx"),
+    pendencias: Number(r.headers.get("X-Pendencias") ?? 0),
+    impedimentos: Number(r.headers.get("X-Impedimentos") ?? 0),
+    analise,
+  };
+}
+
 // --------------------------------------------- assinatura eletrônica do contrato
 
 /** Se o envio para assinatura está ligado — sem a chave no `.env` ele não existe. */

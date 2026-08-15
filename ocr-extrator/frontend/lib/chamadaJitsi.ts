@@ -395,6 +395,12 @@ export class ChamadaJitsi {
     alto.autoplay = true;
     faixa.attach(alto);
     document.body.appendChild(alto);
+    // `autoplay` sozinho pode ser barrado pela política do navegador, e um
+    // elemento barrado não reproduz — e faixa remota que não reproduz não
+    // alimenta o WebAudio (é o silêncio descrito acima). Como a entrevista só
+    // chega aqui depois de vários cliques, o gesto de usuário já existe; o
+    // `play()` explícito converte esse gesto em reprodução de fato.
+    void alto.play?.().catch(() => {});
     this.remotas.set(faixa, alto);
 
     this.mudarEstado("falando");

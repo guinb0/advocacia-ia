@@ -17,7 +17,13 @@ import type { ManipuladorRoteiro } from "./Roteiro";
  * (a voz do entrevistado, isolada) vira a fonte da transcrição do roteiro. */
 
 interface Props {
-  onConcluir: (respostas: Record<string, string | string[]>, relato: string) => void;
+  /** O `entrevistaId` vai junto: é por ele que se baixa o áudio depois que esta
+   *  tela fecha (ver `app/gravacao.py`). */
+  onConcluir: (
+    respostas: Record<string, string | string[]>,
+    relato: string,
+    entrevistaId: string,
+  ) => void;
   /** Sai da entrevista sem concluir — o que foi respondido se perde. */
   onFechar: () => void;
 }
@@ -29,7 +35,25 @@ export default function EntrevistaComChamada({ onConcluir, onFechar }: Props) {
     <div className={estilos.tela}>
       <div className={estilos.cabecalho}>
         <span className={estilos.marca}>ENTREVISTA EM ANDAMENTO</span>
-        <button type="button" className={estilos.fechar} onClick={onFechar}>
+        <button
+          type="button"
+          className={estilos.fechar}
+          onClick={() => {
+            /* Fechar já se sabe que perde as respostas — o rótulo diz. O que
+             * ele não diz é que leva junto o vídeo, que não está guardado em
+             * lugar nenhum além desta aba. */
+            if (
+              roteiro.current?.temVideoPendente() &&
+              !window.confirm(
+                "O vídeo gravado ainda não foi baixado e será perdido ao fechar. " +
+                  "Fechar mesmo assim?",
+              )
+            ) {
+              return;
+            }
+            onFechar();
+          }}
+        >
           Fechar sem concluir
         </button>
       </div>
@@ -40,20 +64,17 @@ export default function EntrevistaComChamada({ onConcluir, onFechar }: Props) {
         </div>
 
         <div className={estilos.direita}>
-          {/* A faixa da chamada NÃO alimenta mais a transcrição.
+          {/* A faixa da chamada alimenta a transcrição: quando o cliente entra,
+           * a voz DELE — isolada da do entrevistador — vira a fonte do roteiro,
+           * no lugar do microfone da máquina.
            *
-           * Ela chegava, mas chegava muda: com o serviço de pé e recebendo
-           * dados, o detector de voz descartava o áudio inteiro —
-           *
-           *     Processing audio with duration 00:04.608
-           *     VAD filter removed 00:04.608 of audio
-           *
-           * Enquanto isso não for diagnosticado, quem transcreve é o microfone
-           * desta máquina (o botão do topo do roteiro). Religar é trocar este
-           * no-op de volta por `roteiro.current?.usarFaixaDaChamada(trilha)` —
-           * o resto da fiação continua no lugar. */}
+           * Já esteve desligada por um tempo: a faixa remota chegava muda e o
+           * VAD do Whisper descartava a resposta inteira. A causa era o
+           * AudioContext forçado a 16 kHz recebendo a faixa do WebRTC a 48 kHz —
+           * corrigido reamostrando no worklet (ver `montar` em transcricao.ts e
+           * o cabeçalho de `worklet-pcm.js`). */}
           <PainelChamada
-            onFaixaRemota={() => {}}
+            onFaixaRemota={(trilha) => void roteiro.current?.usarFaixaDaChamada(trilha)}
             onFimDaFaixa={() => roteiro.current?.aoPerderChamada()}
           />
         </div>

@@ -42,6 +42,7 @@ from . import (
     pipeline,
     portal,
     rag,
+    relatorio,
     roteiros,
     triagem,
     valor_documento,
@@ -94,7 +95,12 @@ app.add_middleware(
     # Sem declarar aqui, o navegador esconde estes dois do JavaScript mesmo com
     # a resposta chegando inteira: é o nome do arquivo do contrato e o aviso de
     # campo que a entrevista não respondeu.
-    expose_headers=["Content-Disposition", "X-Campos-Faltando"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-Campos-Faltando",
+        "X-Pendencias",
+        "X-Impedimentos",
+    ],
 )
 
 # Rotas que respondem sem token. Tudo que não estiver aqui exige autenticação —
@@ -224,6 +230,90 @@ def campos_do_contrato():
             m for m in marcadores if m not in {contrato._chave(f"[{k}]") for k in preenchiveis}
         ],
     }
+
+
+class PedidoRelatorio(BaseModel):
+    """As respostas da entrevista concluída."""
+
+    respostas: dict[str, Any]
+    roteiro: str = Field(default="empregado_publico", max_length=60)
+    entrevistador: str = Field(default="", max_length=120)
+    #: O relato corrido da entrevista — é dele que sai a análise por precedentes.
+    #: A tela já o monta para a triagem; mandá-lo aqui evita reconstruí-lo.
+    relato: str = Field(default="", max_length=20_000)
+    #: Gerar a seção de análise (busca de precedentes + DeepSeek). Melhor-esforço:
+    #: base fora do ar não impede o relatório, só troca a seção por uma nota.
+    analisar: bool = True
+
+
+@app.post("/api/entrevista/relatorio")
+async def gerar_relatorio(pedido: PedidoRelatorio):
+    """O relatório ANALISADO da entrevista, em .docx, com o símbolo do escritório.
+
+    É a entrega que a saudação do roteiro promete ao cliente. Quem o recebe não
+    estava na conversa, então ele diz o que foi perguntado, o que foi respondido
+    e — principalmente — o que ficou sem resposta (ver `app/relatorio.py`).
+
+    Traz também uma análise assistida por precedentes (o mesmo motor do
+    `/api/estrategia`): síntese, ações sugeridas, riscos e lacunas, cada um
+    citando o precedente que o sustenta. É apoio à decisão, não conclusão — a
+    classificação jurídica continua sendo da equipe.
+    """
+    analise: dict[str, Any] | None = None
+    if pedido.analisar and pedido.relato.strip():
+        try:
+            analise = await run_in_threadpool(rag.sugerir_acoes, pedido.relato)
+        except Exception:
+            # Base instável é o caso esperado, não a exceção (ver CONTEXTO.md). O
+            # relatório sai com a nota em vez de esperar ou falhar por causa dela.
+            log.warning("Análise do relatório indisponível", exc_info=True)
+            analise = {
+                "indisponivel": (
+                    "A base de precedentes não respondeu a tempo. O relatório "
+                    "organiza as respostas; a análise por precedentes pode ser "
+                    "gerada depois, na triagem do caso."
+                )
+            }
+
+    try:
+        docx, dados = await run_in_threadpool(
+            relatorio.gerar_docx,
+            pedido.respostas,
+            pedido.roteiro,
+            pedido.entrevistador,
+            analise,
+        )
+    except relatorio.ErroRelatorio as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    arquivo = (
+        f"Relatório de entrevista - {dados['cliente']}.docx"
+        .replace("/", "-")
+        .replace("\\", "-")
+    )
+    return Response(
+        content=docx,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="entrevista.docx"; '
+                f"filename*=UTF-8''{quote(arquivo)}"
+            ),
+            # A tela precisa saber o que ficou pendente sem abrir o arquivo.
+            "X-Pendencias": str(len(dados["faltando_obrigatorias"])),
+            "X-Impedimentos": str(len(dados["impedimentos"])),
+            # E se a análise entrou, para a tela poder avisar.
+            "X-Analise": (
+                "indisponivel"
+                if analise and analise.get("indisponivel")
+                else "sim"
+                if analise
+                else "nao"
+            ),
+        },
+    )
 
 
 class PedidoEscuta(BaseModel):

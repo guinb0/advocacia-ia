@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Archivo, IBM_Plex_Mono, Newsreader } from "next/font/google";
 
+import DockChamada from "@/components/DockChamada";
 import PortaoLogin from "@/components/PortaoLogin";
 import { ProvedorAuth } from "@/lib/auth";
+import { ProvedorChamada } from "@/lib/ChamadaContexto";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -62,7 +64,13 @@ export default function RootLayout({
     >
       <body>
         <ProvedorAuth>
-          <PortaoLogin>{children}</PortaoLogin>
+          {/* A chamada vive aqui, na raiz, para sobreviver à troca de telas — e
+              o painel flutuante fica ao lado do gate, para seguir o usuário por
+              todas elas. Vale para o escritório e para o cliente. */}
+          <ProvedorChamada>
+            <PortaoLogin>{children}</PortaoLogin>
+            <DockChamada />
+          </ProvedorChamada>
         </ProvedorAuth>
       </body>
     </html>

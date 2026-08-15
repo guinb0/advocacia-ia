@@ -1,9 +1,9 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useState } from "react";
 
-import { ChamadaJitsi } from "@/lib/chamadaJitsi";
-import type { EstadoChamada, Participante } from "@/lib/chamadaJitsi";
+import { useChamada } from "@/lib/ChamadaContexto";
+import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/Retratos";
 import estilos from "./chamada.module.css";
 
@@ -13,41 +13,35 @@ import estilos from "./chamada.module.css";
  * celular, no meio de um dia ruim — não há login, não há senha, não há
  * instalação. O que protege a sala é o link, sorteado com 128 bits.
  *
- * A voz sobe pelo Jitsi e chega ao navegador do advogado numa faixa própria —
- * é ela que alimenta a transcrição do outro lado. Está escrito na tela: gravar a conversa de alguém
- * sem dizer não é coisa que se faça, ainda mais num escritório que promete
- * sigilo no acolhimento. */
+ * A voz sobe pelo Jitsi e chega ao navegador do advogado numa faixa própria — é
+ * ela que alimenta a transcrição do outro lado. Está escrito na tela: gravar a
+ * conversa de alguém sem dizer não é coisa que se faça, ainda mais num
+ * escritório que promete sigilo no acolhimento.
+ *
+ * A chamada vive no `ProvedorChamada`, na raiz — então se o cliente abrir o
+ * portal para enviar documentos (mesma sala, que é o token do caso), a ligação
+ * NÃO cai: ela segue no painel flutuante. */
 
 export default function PaginaChamada({ params }: { params: Promise<{ sala: string }> }) {
   const { sala } = use(params);
+  const chamada = useChamada();
 
-  const [estado, setEstado] = useState<EstadoChamada>("fora");
   const [entrando, setEntrando] = useState(false);
-  const [mudo, setMudo] = useState(false);
   const [camera, setCamera] = useState(false);
   /* Sem login: o nome é o que a pessoa digitar. Serve para o advogado saber
    * quem entrou — numa sala com link solto, "Convidado" não diz nada. */
   const [nome, setNome] = useState("");
-  const [participantes, setParticipantes] = useState<Participante[]>([]);
   const [erro, setErro] = useState<string | null>(null);
 
-  const chamada = useRef<ChamadaJitsi | null>(null);
-  if (chamada.current === null && typeof window !== "undefined") {
-    chamada.current = new ChamadaJitsi("cliente", {
-      onEstado: setEstado,
-      onParticipantes: setParticipantes,
-      onErro: setErro,
-    });
-  }
-
-  // Fechar a aba sem soltar deixaria o microfone aceso e a sala ocupada.
-  useEffect(() => () => chamada.current?.desligar(), []);
+  // Esta página é a própria chamada: enquanto está aberta, o painel flutuante
+  // se recolhe. `registrarPainel` é estável, então roda uma vez.
+  useEffect(() => chamada.registrarPainel(), [chamada.registrarPainel]);
 
   async function entrar() {
     setErro(null);
     setEntrando(true);
     try {
-      await chamada.current?.entrar(sala, { nome: nome.trim(), camera });
+      await chamada.entrar(sala, "cliente", { nome: nome.trim(), camera });
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
@@ -60,7 +54,7 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
     }
   }
 
-  const naChamada = estado !== "fora";
+  const naChamada = chamada.ativa;
 
   const situacao: Record<EstadoChamada, string> = {
     fora: "",
@@ -124,36 +118,33 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
           ) : (
             <>
               <p
-                className={estado === "falando" ? estilos.ativo : estilos.esperando}
+                className={chamada.estado === "falando" ? estilos.ativo : estilos.esperando}
                 aria-live="polite"
               >
-                {situacao[estado]}
+                {situacao[chamada.estado]}
               </p>
 
-              <Retratos participantes={participantes} tamanho="grande" />
+              <Retratos participantes={chamada.participantes} tamanho="grande" />
 
               <div className={estilos.acoes}>
                 <button
                   type="button"
                   className={estilos.secundario}
-                  onClick={async () => setCamera(await (chamada.current?.alternarCamera() ?? false))}
+                  onClick={() => void chamada.alternarCamera()}
                 >
-                  {camera ? "Desligar câmera" : "Ligar câmera"}
+                  {chamada.temCamera ? "Desligar câmera" : "Ligar câmera"}
                 </button>
                 <button
                   type="button"
                   className={estilos.secundario}
-                  onClick={() => setMudo(chamada.current?.alternarMudo() ?? false)}
+                  onClick={chamada.alternarMudo}
                 >
-                  {mudo ? "Voltar a falar" : "Desligar meu microfone"}
+                  {chamada.mudo ? "Voltar a falar" : "Desligar meu microfone"}
                 </button>
                 <button
                   type="button"
                   className={estilos.secundario}
-                  onClick={() => {
-                    chamada.current?.desligar();
-                    setMudo(false);
-                  }}
+                  onClick={chamada.desligar}
                 >
                   Sair da chamada
                 </button>
@@ -166,7 +157,7 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
             </>
           )}
 
-          {erro && <div className={estilos.erro}>{erro}</div>}
+          {(erro || chamada.erro) && <div className={estilos.erro}>{erro ?? chamada.erro}</div>}
         </div>
 
         <p className={estilos.rodape}>

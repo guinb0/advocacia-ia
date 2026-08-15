@@ -85,21 +85,35 @@ algum, a chamada abre e ninguém se ouve.
 A sala é efêmera: existe enquanto houver alguém dentro, e não é gravada em lugar
 nenhum. Fechada a chamada, o link não serve mais.
 
+**A chamada não cai ao trocar de tela.** Ao concluir a entrevista e abrir o caso
+para acompanhar os documentos, a ligação continua — ela encolhe para um **painel
+no canto da tela**, com os controles de mudo, câmera e desligar à mão. É o que
+permite guiar o cliente pelo envio dos documentos sem largar a conversa. Só o
+botão **Desligar** (no painel do canto) encerra; trocar de tela, não. O mesmo
+vale do lado do cliente: a chamada segue enquanto ele envia os documentos.
+
 ---
 
-## A transcrição NÃO sai da chamada
+## A voz da chamada alimenta a transcrição
 
-Isto costuma confundir, então vale explícito: **a chamada serve para conversar.
-Quem transcreve é o microfone da sua máquina.**
+Quando o cliente entra na chamada, a **voz dele — separada da sua** — vira a
+fonte da transcrição, no lugar do microfone da máquina. É o WebRTC que entrega a
+faixa do outro lado isolada, então o que sobe para o Whisper é só o entrevistado:
+sem a sua pergunta no meio da resposta, sem o eco do viva-voz.
 
-No topo do roteiro há **Ligar microfone** — é ele que alimenta o Whisper. Já
-houve uma versão em que a voz do entrevistado vinha pela chamada e ia direto
-para a transcrição; ela chegava muda e o recurso foi desligado (o porquê está no
-cabeçalho de `Roteiro.tsx`).
+Não é preciso fazer nada para ligar isso: assim que o retrato do cliente aparece
+(estado **em chamada**), a fonte troca sozinha. O aviso "a voz do entrevistado
+está chegando" confirma.
 
-Consequência prática: o microfone capta **a sala inteira**, inclusive você. Se o
-cliente está no viva-voz, a transcrição pega os dois — o que é bom, porque pega
-o cliente, e ruim, porque as perguntas entram junto na resposta.
+> Isto já esteve desligado por um tempo, porque a faixa chegava muda. Era um
+> descompasso de taxa de áudio (a chamada manda 48 kHz, e o código fixava o
+> processamento em 16 kHz); corrigido. Se algum dia a transcrição da chamada
+> voltar a sair vazia, é aqui que se olha — `worklet-pcm.js` e `CONTEXTO.md`.
+
+**Sem chamada, a transcrição sai do microfone da máquina** (o **Ligar microfone**
+no topo do roteiro), e aí ele capta a sala inteira, você inclusive — bom porque
+pega o cliente no viva-voz, ruim porque as perguntas entram junto. Com a chamada,
+esse problema não existe.
 
 Em cada pergunta marcada `VOZ`:
 

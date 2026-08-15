@@ -160,3 +160,11 @@
   font: 400 11px/1.5 var(--font-ui);
   color: var(--muted);
 }
+
+/* A chamada não cai ao sair da entrevista — ela encolhe para o painel flutuante
+ * e continua. Este aviso é o que conta isso a quem está conduzindo. */
+.permanece {
+  margin: 12px 0 0;
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--ok);
+}

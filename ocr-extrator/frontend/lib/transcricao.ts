@@ -33,6 +33,19 @@ export interface Microfone {
   nome: string;
 }
 
+/** O áudio da entrevista, depois de fechado e convertido. */
+export interface Gravacao {
+  entrevista_id: string;
+  /** O MP4 está no disco e pode ser baixado. */
+  pronto: boolean;
+  /** Há áudio guardado — mesmo que a conversão ainda não tenha rodado. */
+  existe: boolean;
+  /** Segundos de FALA, não de relógio: pausa e intervalo não entram. */
+  duracao_s: number;
+  bytes: number;
+  nome: string;
+}
+
 export interface EventosTranscricao {
   /** Texto provisório, reescrito enquanto a pessoa fala. */
   onParcial?: (texto: string) => void;
@@ -52,9 +65,58 @@ export interface EventosTranscricao {
   onErro?: (mensagem: string) => void;
 }
 
-const TAXA = 16_000;
+/* -------------------------------------------------- áudio da entrevista
+ *
+ * Funções de módulo, e não métodos da captura, porque quem baixa o áudio já não
+ * está mais gravando: a tela seguinte à entrevista tem o `entrevistaId` e não
+ * tem (nem deve ter) o microfone aberto. */
+
+/** Um id por entrevista. Vazio no servidor, onde não há `crypto` nem gravação. */
+function novoIdEntrevista(): string {
+  return typeof crypto !== "undefined" ? crypto.randomUUID() : "";
+}
+
+/** Onde baixar ou tocar o áudio já convertido. */
+export function urlDoAudio(entrevistaId: string): string {
+  return `${BASE_TRANSCRICAO}/entrevista/${entrevistaId}/audio`;
+}
+
+/** Se há áudio desta entrevista e se o MP4 já está pronto. */
+export async function consultarGravacao(entrevistaId: string): Promise<Gravacao | null> {
+  const resposta = await fetch(`${BASE_TRANSCRICAO}/entrevista/${entrevistaId}/gravacao`);
+  if (!resposta.ok) return null;
+  return (await resposta.json()) as Gravacao;
+}
+
+/** Fecha a gravação e converte para MP4. `null` quando não houve áudio.
+ *
+ * Demora o tempo da conversão — ~25s numa entrevista de 40 minutos, medido —
+ * então quem chama precisa mostrar que está preparando. Chamar duas vezes é
+ * seguro: o servidor devolve o arquivo pronto em vez de reconverter. */
+export async function encerrarGravacao(entrevistaId: string): Promise<Gravacao | null> {
+  const resposta = await fetch(`${BASE_TRANSCRICAO}/entrevista/${entrevistaId}/encerrar`, {
+    method: "POST",
+  });
+  // 404 é a entrevista que não gravou nada — microfone nunca aberto. Não é erro
+  // para mostrar ao entrevistador.
+  if (resposta.status === 404) return null;
+  if (!resposta.ok) throw new Error("Não foi possível fechar a gravação do áudio.");
+  return (await resposta.json()) as Gravacao;
+}
 
 export class CapturaEntrevista {
+  /* O áudio é gravado no servidor, do mesmo fluxo que alimenta o Whisper — o
+   * arquivo é exatamente o que foi transcrito. Este id costura tudo num arquivo
+   * só: a escuta contínua, cada resposta gravada à parte e os complementos são
+   * sessões diferentes da MESMA entrevista. Ver `app/gravacao.py`. */
+  private idEntrevista: string = novoIdEntrevista();
+  /** A gravação deste id já foi fechada e convertida. */
+  private gravacaoEncerrada = false;
+
+  get entrevistaId(): string {
+    return this.idEntrevista;
+  }
+
   /** Só quando o microfone é NOSSO — a faixa da chamada é de quem a criou. */
   private stream: MediaStream | null = null;
   private trilha: MediaStreamTrack | null = null;
@@ -140,10 +202,20 @@ export class CapturaEntrevista {
     trilha.addEventListener("ended", () => this.encerrar());
     this.trilha = trilha;
 
-    const ctx = new AudioContext({ sampleRate: TAXA });
+    /* Taxa NATIVA de propósito, e não 16 kHz forçado.
+     *
+     * A faixa remota da chamada chega do WebRTC fixa em 48 kHz; num contexto
+     * forçado a 16 kHz, o `MediaStreamAudioSourceNode` dela devolve SILÊNCIO no
+     * Chrome — e era por isso que transcrever a voz do entrevistado pela chamada
+     * saía vazio. O microfone escondia o defeito porque o `getUserMedia` capta
+     * já na taxa do contexto. Agora o contexto roda no que o hardware der e a
+     * conversão para 16 kHz é do worklet, que vale para qualquer fonte. */
+    const ctx = new AudioContext();
     await ctx.audioWorklet.addModule("/worklet-pcm.js");
     const origem = ctx.createMediaStreamSource(new MediaStream([trilha]));
-    const no = new AudioWorkletNode(ctx, "encaminhador-pcm");
+    const no = new AudioWorkletNode(ctx, "encaminhador-pcm", {
+      processorOptions: { taxaEntrada: ctx.sampleRate },
+    });
 
     no.port.onmessage = (e: MessageEvent<Float32Array>) => {
       /* O nível é medido ANTES do filtro de gravação, e de propósito: quem
@@ -252,10 +324,27 @@ export class CapturaEntrevista {
   /** Começa a transcrever a resposta desta pergunta. */
   async iniciarResposta(perguntaId: string): Promise<void> {
     if (!this.trilha) throw new Error("Ligue o microfone antes de iniciar.");
+
+    /* Gravar depois de encerrar é OUTRA entrevista, com outro arquivo.
+     *
+     * Reaproveitar o id faria a conversão seguinte passar por cima do .mp4 que
+     * acabou de ser gerado — o áudio da primeira parte sumiria sem aviso. Quem
+     * encerrou por engano e voltou a gravar fica com dois arquivos, que é o
+     * resultado ruim aceitável; um arquivo sobrescrito não é. */
+    if (this.gravacaoEncerrada) {
+      this.idEntrevista = novoIdEntrevista();
+      this.gravacaoEncerrada = false;
+    }
+
     const ws = await this.conectar();
     this.sessaoAtual = crypto.randomUUID();
     ws.send(
-      JSON.stringify({ type: "start", sessionId: this.sessaoAtual, questionId: perguntaId }),
+      JSON.stringify({
+        type: "start",
+        sessionId: this.sessaoAtual,
+        questionId: perguntaId,
+        entrevistaId: this.idEntrevista,
+      }),
     );
     this.gravando = true;
     this.pausado = false;
@@ -304,6 +393,41 @@ export class CapturaEntrevista {
     } catch {
       this.eventos.onErro?.("Não foi possível fechar a resposta. Grave de novo ou digite.");
     }
+  }
+
+  /** Espera o navegador entregar o áudio que ainda está na fila do socket.
+   *
+   * Quem vai encerrar a gravação chama isto ANTES: o encerramento vai por HTTP,
+   * e uma requisição nova pode chegar ao servidor antes dos últimos blocos que
+   * o WebSocket ainda não despachou — o arquivo fecharia sem os segundos finais
+   * da fala. `bufferedAmount` zerado é o navegador dizendo que entregou tudo ao
+   * sistema.
+   *
+   * O teto de 2s é para não prender a tela num socket entupido: perder o
+   * finalzinho é melhor que não entregar áudio nenhum. */
+  async aguardarEnvio(limiteMs = 2_000): Promise<void> {
+    const ate = Date.now() + limiteMs;
+    while (
+      this.ws?.readyState === WebSocket.OPEN &&
+      this.ws.bufferedAmount > 0 &&
+      Date.now() < ate
+    ) {
+      await new Promise((ok) => setTimeout(ok, 50));
+    }
+  }
+
+  /** Fecha a gravação desta entrevista, esperando o que ainda está na fila.
+   *
+   * O `finalizarResposta` deve vir ANTES: o último trecho de fala só entra na
+   * gravação depois que o navegador para de mandar bytes. */
+  async encerrarGravacao(): Promise<Gravacao | null> {
+    if (!this.idEntrevista) return null;
+    await this.aguardarEnvio();
+    const fechada = await encerrarGravacao(this.idEntrevista);
+    // Marca mesmo quando não havia áudio: o que este id pode ter no disco está
+    // fechado, e o que vier depois é entrevista nova.
+    this.gravacaoEncerrada = true;
+    return fechada;
   }
 
   /** Fim da entrevista: solta a captura e a conexão. */

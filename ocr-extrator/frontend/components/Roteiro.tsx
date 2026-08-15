@@ -25,7 +25,9 @@ import type {
 } from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
+import AudioDaEntrevista from "./AudioDaEntrevista";
 import ConferenciaResposta from "./ConferenciaResposta";
+import VideoDaEntrevista from "./VideoDaEntrevista";
 import PainelEscuta from "./PainelEscuta";
 import estilos from "./Roteiro.module.css";
 import transcricaoEstilos from "./EntrevistaAoVivo.module.css";
@@ -53,6 +55,8 @@ export interface ManipuladorRoteiro {
   usarFaixaDaChamada: (trilha: MediaStreamTrack) => Promise<void>;
   /** A chamada caiu: solta a fonte, para o gravador não prometer o que não tem. */
   aoPerderChamada: () => void;
+  /** Há vídeo gravado e não baixado — fechar a tela agora o destrói. */
+  temVideoPendente: () => boolean;
 }
 
 /** De onde vem o áudio que está sendo transcrito. */
@@ -72,7 +76,13 @@ const MINIMO_PARA_CONFERIR = 40;
 
 interface Props {
   codigo?: string;
-  onConcluir?: (respostas: Respostas, relatoUnificado: string) => void;
+  /** O `entrevistaId` sobe junto porque o áudio sobrevive a esta tela: quem
+   *  concluiu a entrevista precisa continuar podendo baixar o arquivo. */
+  onConcluir?: (
+    respostas: Respostas,
+    relatoUnificado: string,
+    entrevistaId: string,
+  ) => void;
   ref?: Ref<ManipuladorRoteiro>;
 }
 
@@ -99,6 +109,14 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   fonteAtual.current = fonte;
 
   const [conferencias, setConferencias] = useState<Record<string, EstadoConferencia>>({});
+
+  /* A escuta chegou ao fim e o áudio pode ser oferecido. Quem grava é o
+   * servidor, do mesmo PCM que alimenta a transcrição — ver `app/gravacao.py` e
+   * `AudioDaEntrevista`, que cuida da conversão e do download. */
+  const [escutaEncerrada, setEscutaEncerrada] = useState(false);
+  /* Vídeo gravado e ainda não baixado. Ao contrário do áudio, ele não está em
+   * lugar nenhum além desta aba — concluir a entrevista o destrói. */
+  const videoPendente = useRef(false);
 
   /* ---------------------------------------------------- escuta contínua
    *
@@ -350,7 +368,18 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     });
   }
 
-  useEffect(() => () => captura.current?.encerrar(), []);
+  useEffect(
+    () => () => {
+      /* Sair da tela também fecha a gravação. Sem isto, quem clicasse em
+       * "Fechar sem concluir" deixaria o áudio parado em WAV, sem MP4 e sem
+       * ninguém para pedi-lo. O POST vai solto de propósito: o componente está
+       * indo embora e não há mais tela para receber a resposta — o que importa
+       * é o arquivo ficar convertido no disco. */
+      void captura.current?.encerrarGravacao().catch(() => undefined);
+      captura.current?.encerrar();
+    },
+    [],
+  );
 
   useImperativeHandle(
     ref,
@@ -368,6 +397,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           setFonte("nenhuma");
         }
       },
+      temVideoPendente: () => videoPendente.current,
     }),
     [],
   );
@@ -392,6 +422,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const gravar = useCallback(async (perguntaId: string) => {
     setErro(null);
     setParcial("");
+    setEscutaEncerrada(false); // gravar de novo é gravação em curso, não fecho
     try {
       emGravacao.current = perguntaId;
       setGravandoId(perguntaId);
@@ -410,6 +441,11 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const comecarEntrevista = useCallback(async () => {
     setErro(null);
     setErroEscuta(null);
+    /* Some com o painel do áudio ANTES de voltar a gravar.
+     *
+     * Ele fecha a gravação do id que recebe: deixado na tela durante uma
+     * entrevista nova, encerraria a conversa que acabou de começar. */
+    setEscutaEncerrada(false);
     try {
       if (estadoMic === "sem-audio") await captura.current?.selecionarAudio();
       await captura.current?.iniciarEntrevista();
@@ -427,9 +463,15 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     }
   }, [estadoMic]);
 
-  const encerrarEscuta = useCallback(() => {
+  const encerrarEscuta = useCallback(async () => {
+    // Fecha a resposta ANTES: é o que faz o navegador parar de mandar bytes.
     captura.current?.finalizarResposta();
     setEscutando(false);
+    /* E só então oferece o áudio. O `aguardarEnvio` é o que separa "a fala
+     * inteira está no arquivo" de "faltou o fim": o encerramento vai por HTTP,
+     * numa conexão diferente da que leva o PCM, e poderia chegar primeiro. */
+    await captura.current?.aguardarEnvio();
+    setEscutaEncerrada(true);
   }, []);
 
   const aceitarSugestao = useCallback((perguntaId: string, valor: string) => {
@@ -513,7 +555,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
             <button
               type="button"
               className={transcricaoEstilos.secundario}
-              onClick={encerrarEscuta}
+              onClick={() => void encerrarEscuta()}
             >
               Encerrar escuta
             </button>
@@ -566,6 +608,15 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         />
       </div>
 
+      {/* O vídeo fica aqui em cima porque gravar em vídeo se decide no começo
+        * da conversa — e porque ele não é guardado em lugar nenhum, então quem
+        * quiser precisa ver a opção antes, não depois. */}
+      <VideoDaEntrevista
+        onPendente={(pendente) => {
+          videoPendente.current = pendente;
+        }}
+      />
+
       {erro && <div className={transcricaoEstilos.erro}>{erro}</div>}
 
       {aviso && (
@@ -579,6 +630,18 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           Clique em <strong>Começar a entrevista</strong> para abrir o microfone. Daí em
           diante a conversa é transcrita e o roteiro se preenche sozinho — você não
           precisa gravar pergunta por pergunta.
+        </p>
+      )}
+
+      {/* O áudio passou a ser GUARDADO, não só transcrito. A saudação do roteiro
+        * promete sigilo e não fala em gravação; enquanto ela não falar, quem
+        * avisa é o entrevistador — e o lembrete fica onde ele olha antes de
+        * abrir o microfone, não escondido num rodapé. */}
+      {escutando && (
+        <p className={transcricaoEstilos.aviso}>
+          A conversa está sendo <strong>gravada e transcrita</strong>, e o áudio fica
+          guardado nesta máquina. Avise o cliente — o roteiro promete sigilo, mas não
+          menciona gravação.
         </p>
       )}
 
@@ -666,12 +729,36 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         </details>
       )}
 
+      {/* O áudio, depois de encerrada a escuta. Antes disso não há arquivo, e um
+        * botão que não baixa nada é pior que botão nenhum. */}
+      {escutaEncerrada && (
+        <AudioDaEntrevista entrevistaId={captura.current?.entrevistaId ?? ""} />
+      )}
+
       {onConcluir && (
         <button
           type="button"
           className={transcricaoEstilos.botao}
           style={{ marginTop: 24 }}
-          onClick={() => onConcluir(respostas, montarRelato(blocosVisiveis, respostas))}
+          onClick={() => {
+            /* Concluir desmonta esta tela, e com ela o vídeo — que não existe
+             * em nenhum outro lugar. Perguntar é o mínimo; o `confirm` do
+             * navegador é o que ainda bloqueia a ação até alguém responder. */
+            if (
+              videoPendente.current &&
+              !window.confirm(
+                "O vídeo gravado ainda não foi baixado e será perdido ao concluir. " +
+                  "Concluir mesmo assim?",
+              )
+            ) {
+              return;
+            }
+            onConcluir(
+              respostas,
+              montarRelato(blocosVisiveis, respostas),
+              captura.current?.entrevistaId ?? "",
+            );
+          }}
         >
           Concluir entrevista
         </button>
