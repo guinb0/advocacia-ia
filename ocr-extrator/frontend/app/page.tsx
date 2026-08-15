@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Aviso, Selo } from "@/components/Basicos";
 import Carteira from "@/components/Carteira";
 import Checklist from "@/components/Checklist";
+import Dossie from "@/components/Dossie";
 import ListaCasos from "@/components/ListaCasos";
 import PainelEnvio from "@/components/PainelEnvio";
 import ProgressoOcr from "@/components/ProgressoOcr";
@@ -15,7 +16,7 @@ import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import estilos from "./page.module.css";
 
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
-type Tela = "carteira" | "caso" | "casos" | "avulso";
+type Tela = "carteira" | "caso" | "dossie" | "casos" | "avulso";
 
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
  * que responde "onde eu estou" sem depender de memória. */
@@ -61,9 +62,33 @@ export default function Home() {
     );
   }
 
+  if (tela === "dossie") {
+    // Sem caso aberto não há dossiê: voltar é mais honesto que renderizar vazio.
+    if (!casoAberto) {
+      voltarParaCarteira();
+      return null;
+    }
+    return <Dossie casoId={casoAberto} onVoltar={voltarParaCarteira} />;
+  }
+
   if (tela === "caso") {
     return (
       <div className={estilos.container}>
+        {/* O checklist responde "o que falta chegar"; o dossiê, "o que o caso já
+          * é". São perguntas diferentes e telas diferentes — juntá-las numa só
+          * faria a mais longa esconder a mais usada. */}
+        <div className={estilos.abasCaso}>
+          <button type="button" className="botao botao--secundario botao--pequeno" disabled>
+            Checklist de documentos
+          </button>
+          <button
+            type="button"
+            className="botao botao--texto botao--pequeno"
+            onClick={() => setTela("dossie")}
+          >
+            Dossiê do caso →
+          </button>
+        </div>
         {situacaoCaso.situacao ? (
           <Checklist
             situacao={situacaoCaso.situacao}

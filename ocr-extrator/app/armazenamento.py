@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS assinaturas (
     doc_token      TEXT NOT NULL UNIQUE,
     nome           TEXT NOT NULL,
     cliente        TEXT NOT NULL DEFAULT '',
+    cpf            TEXT NOT NULL DEFAULT '',
     caso_id        TEXT,
     estado         TEXT NOT NULL DEFAULT 'pendente',
     signatarios    TEXT NOT NULL DEFAULT '[]',
@@ -76,6 +78,49 @@ CREATE TABLE IF NOT EXISTS assinaturas (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assinaturas_caso ON assinaturas(caso_id);
+
+-- Vínculo com o agente jurídico, que é outro serviço e tem banco próprio. O que
+-- fica aqui é só o par de identificadores: o caso do OCR e o caso lá.
+--
+-- Guardar isto é o que permite reabrir o dossiê depois de um F5, e é o que impede
+-- que um segundo clique em "enviar ao agente" crie um segundo caso para o mesmo
+-- cliente — duplicata que só apareceria semanas depois, com metade dos documentos
+-- em cada um.
+--
+-- `ultimo_erro` existe porque a ligação depende de um serviço que pode estar fora:
+-- sem ele, a tela mostraria "não enviado" sem dizer por quê.
+CREATE TABLE IF NOT EXISTS vinculos_agente (
+    caso_id       TEXT PRIMARY KEY REFERENCES casos(id) ON DELETE CASCADE,
+    caso_ref      TEXT NOT NULL,
+    cliente_ref   TEXT NOT NULL DEFAULT '',
+    enviados      TEXT NOT NULL DEFAULT '[]',
+    ultimo_erro   TEXT,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+);
+
+-- Entrevista de atendimento: o arquivo que o advogado usou e o texto lido dele.
+--
+-- Guardar os dois, e não só o texto, é deliberado: o texto é o que a IA lê e o que
+-- a tela mostra, mas quem revisa o caso seis meses depois quer o arquivo original,
+-- com a formatação e as anotações de quem atendeu. `enviada_em` marca que o agente
+-- já leu — reenviar criaria uma segunda leva de fatos alegados idênticos.
+CREATE TABLE IF NOT EXISTS entrevistas (
+    id            TEXT PRIMARY KEY,
+    caso_id       TEXT NOT NULL REFERENCES casos(id) ON DELETE CASCADE,
+    arquivo       TEXT NOT NULL,
+    caminho       TEXT NOT NULL,
+    texto         TEXT NOT NULL DEFAULT '',
+    realizada_em  TEXT NOT NULL DEFAULT '',
+    entrevistador TEXT NOT NULL DEFAULT '',
+    resumo        TEXT NOT NULL DEFAULT '',
+    perguntas     TEXT NOT NULL DEFAULT '[]',
+    fatos_gerados INTEGER NOT NULL DEFAULT 0,
+    enviada_em    TEXT,
+    criado_em     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_entrevistas_caso ON entrevistas(caso_id);
 """
 
 
@@ -83,11 +128,26 @@ def agora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _normalizar_nome_cliente(cliente: object) -> str:
+    """Chave estável para reencontrar contratos criados antes do caso."""
+    return " ".join(str(cliente or "").split())
+
+
+def _normalizar_cpf(cpf: object) -> str:
+    texto = unicodedata.normalize("NFKC", str(cpf or ""))
+    return "".join(c for c in texto if "0" <= c <= "9")
+
+
 @contextmanager
 def conectar() -> Iterator[sqlite3.Connection]:
     DIR_DADOS.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(CAMINHO_BANCO, timeout=15)
     con.row_factory = sqlite3.Row
+    # Mantém legíveis também os registros antigos, salvos antes de o nome ser
+    # normalizado na escrita (por exemplo, "Maria   Silva").
+    con.create_function(
+        "normalizar_nome_cliente", 1, _normalizar_nome_cliente, deterministic=True
+    )
     # WAL deixa leitura e escrita coexistirem; sem ele o upload de um documento
     # travaria quem estivesse só consultando a lista de casos.
     con.execute("PRAGMA journal_mode=WAL")
@@ -133,6 +193,16 @@ def inicializar() -> None:
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_casos_portal_token "
                 "ON casos(portal_token) WHERE portal_token IS NOT NULL"
             )
+
+        colunas_assinaturas = {
+            linha["name"] for linha in con.execute("PRAGMA table_info(assinaturas)")
+        }
+        if "cpf" not in colunas_assinaturas:
+            con.execute("ALTER TABLE assinaturas ADD COLUMN cpf TEXT NOT NULL DEFAULT ''")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS ix_assinaturas_cliente_cpf "
+            "ON assinaturas(cliente, cpf)"
+        )
     DIR_ARQUIVOS.mkdir(parents=True, exist_ok=True)
     DIR_CONTRATOS.mkdir(parents=True, exist_ok=True)
 
@@ -536,6 +606,7 @@ def registrar_assinatura(
     nome: str,
     cliente: str,
     signatarios: list[dict[str, Any]],
+    cpf: str = "",
     estado: str = "pendente",
     caso_id: str | None = None,
 ) -> dict[str, Any]:
@@ -549,15 +620,16 @@ def registrar_assinatura(
     with conectar() as con:
         con.execute(
             """
-            INSERT INTO assinaturas (id, doc_token, nome, cliente, caso_id, estado,
+            INSERT INTO assinaturas (id, doc_token, nome, cliente, cpf, caso_id, estado,
                                      signatarios, arquivo, criado_em, atualizado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             """,
             (
                 assinatura_id,
                 doc_token,
                 nome.strip(),
-                cliente.strip(),
+                _normalizar_nome_cliente(cliente),
+                _normalizar_cpf(cpf),
                 caso_id,
                 estado,
                 json.dumps(signatarios, ensure_ascii=False),
@@ -602,21 +674,25 @@ def vincular_assinatura_ao_caso(assinatura_id: str, caso_id: str) -> bool:
 
 
 def listar_assinaturas(
-    caso_id: str | None = None, cliente: str | None = None
+    caso_id: str | None = None,
+    cliente: str | None = None,
+    cpf: str | None = None,
 ) -> list[dict[str, Any]]:
     """Do mais novo para o mais antigo, opcionalmente filtrado.
 
-    O filtro por `cliente` é comparação exata sem caixa: é o painel do contrato
-    reencontrando, depois de um F5, o documento que ele próprio mandou assinar —
-    e ele conhece o nome tal como a entrevista o gravou.
+    O painel combina nome normalizado e CPF canônico para retomar o documento
+    depois de um F5. Nome sozinho não identifica: dois clientes podem ser homônimos.
     """
     condicoes, parametros = [], []
     if caso_id:
         condicoes.append("caso_id = ?")
         parametros.append(caso_id)
     if cliente:
-        condicoes.append("cliente = ? COLLATE NOCASE")
-        parametros.append(cliente.strip())
+        condicoes.append("normalizar_nome_cliente(cliente) = ? COLLATE NOCASE")
+        parametros.append(_normalizar_nome_cliente(cliente))
+    if cpf:
+        condicoes.append("cpf = ?")
+        parametros.append(_normalizar_cpf(cpf))
 
     consulta = "SELECT * FROM assinaturas"
     if condicoes:
@@ -634,6 +710,191 @@ def obter_assinatura(assinatura_id: str) -> dict[str, Any] | None:
             "SELECT * FROM assinaturas WHERE id = ?", (assinatura_id,)
         ).fetchone()
     return _normalizar_assinatura(linha) if linha else None
+
+
+# --------------------------------------------------------- agente jurídico
+
+
+def vincular_agente(caso_id: str, caso_ref: str, cliente_ref: str) -> dict[str, Any]:
+    """Guarda (ou atualiza) o caso correspondente no agente.
+
+    `INSERT OR REPLACE` e não `INSERT`: revincular é operação legítima — o agente
+    pode ter sido recriado do zero em desenvolvimento —, e falhar aqui deixaria o
+    caso preso a um identificador que não existe mais do outro lado.
+    """
+    instante = agora()
+    with conectar() as con:
+        anterior = con.execute(
+            "SELECT caso_ref, enviados, criado_em FROM vinculos_agente WHERE caso_id = ?",
+            (caso_id,),
+        ).fetchone()
+        # Trocar de caso no agente zera a lista de entregas enviadas: o outro lado
+        # não conhece nenhuma delas, e manter a lista faria o sistema achar que já
+        # mandou o que nunca chegou lá.
+        enviados = anterior["enviados"] if anterior and anterior["caso_ref"] == caso_ref else "[]"
+        con.execute(
+            """
+            INSERT OR REPLACE INTO vinculos_agente
+                   (caso_id, caso_ref, cliente_ref, enviados, ultimo_erro, criado_em, atualizado_em)
+            VALUES (?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                caso_id,
+                caso_ref,
+                cliente_ref,
+                enviados,
+                anterior["criado_em"] if anterior else instante,
+                instante,
+            ),
+        )
+    return obter_vinculo_agente(caso_id) or {}
+
+
+def obter_vinculo_agente(caso_id: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM vinculos_agente WHERE caso_id = ?", (caso_id,)
+        ).fetchone()
+    if not linha:
+        return None
+    registro = dict(linha)
+    bruto = registro.get("enviados")
+    try:
+        registro["enviados"] = json.loads(bruto) if isinstance(bruto, str) else []
+    except json.JSONDecodeError:
+        registro["enviados"] = []
+    return registro
+
+
+def marcar_entrega_enviada(caso_id: str, entrega_id: str) -> None:
+    """Registra que esta entrega já foi entregue ao agente.
+
+    O agente também é idempotente pelo `external_event_id`, então isto não é a
+    garantia — é a economia: sem a lista, cada abertura do dossiê reenviaria todos
+    os documentos do caso.
+    """
+    vinculo = obter_vinculo_agente(caso_id)
+    if vinculo is None:
+        return
+    enviados = list(dict.fromkeys([*vinculo["enviados"], entrega_id]))
+    with conectar() as con:
+        con.execute(
+            "UPDATE vinculos_agente SET enviados = ?, ultimo_erro = NULL, atualizado_em = ?"
+            " WHERE caso_id = ?",
+            (json.dumps(enviados), agora(), caso_id),
+        )
+
+
+def registrar_erro_agente(caso_id: str, mensagem: str | None) -> None:
+    with conectar() as con:
+        con.execute(
+            "UPDATE vinculos_agente SET ultimo_erro = ?, atualizado_em = ? WHERE caso_id = ?",
+            (mensagem[:500] if mensagem else None, agora(), caso_id),
+        )
+
+
+# ------------------------------------------------------------------ entrevistas
+
+
+def _normalizar_entrevista(linha: sqlite3.Row) -> dict[str, Any]:
+    registro = dict(linha)
+    bruto = registro.get("perguntas")
+    try:
+        registro["perguntas"] = json.loads(bruto) if isinstance(bruto, str) else []
+    except json.JSONDecodeError:
+        registro["perguntas"] = []
+    registro["enviada"] = bool(registro.get("enviada_em"))
+    return registro
+
+
+def registrar_entrevista(
+    caso_id: str,
+    *,
+    arquivo: str,
+    caminho: Path,
+    texto: str,
+    realizada_em: str = "",
+    entrevistador: str = "",
+) -> dict[str, Any]:
+    """Guarda a entrevista do atendimento: o arquivo original e o texto lido dele."""
+    identificador = uuid.uuid4().hex
+    with conectar() as con:
+        con.execute(
+            """
+            INSERT INTO entrevistas
+                   (id, caso_id, arquivo, caminho, texto, realizada_em, entrevistador,
+                    resumo, perguntas, fatos_gerados, enviada_em, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '', '[]', 0, NULL, ?)
+            """,
+            (
+                identificador,
+                caso_id,
+                arquivo,
+                str(caminho),
+                texto,
+                realizada_em,
+                entrevistador,
+                agora(),
+            ),
+        )
+        _tocar_caso(con, caso_id)
+    return obter_entrevista(identificador) or {}
+
+
+def listar_entrevistas(caso_id: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT * FROM entrevistas WHERE caso_id = ? ORDER BY criado_em DESC",
+            (caso_id,),
+        ).fetchall()
+    return [_normalizar_entrevista(linha) for linha in linhas]
+
+
+def obter_entrevista(entrevista_id: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM entrevistas WHERE id = ?", (entrevista_id,)
+        ).fetchone()
+    return _normalizar_entrevista(linha) if linha else None
+
+
+def marcar_entrevista_lida(
+    entrevista_id: str,
+    *,
+    resumo: str,
+    perguntas: list[str],
+    fatos_gerados: int,
+) -> None:
+    """Registra o que o agente entendeu da entrevista, e que ela já foi lida.
+
+    Guardar o resumo aqui — e não só do lado do agente — é o que faz o dossiê continuar
+    explicando a entrevista quando o agente está fora do ar.
+    """
+    with conectar() as con:
+        con.execute(
+            "UPDATE entrevistas SET resumo = ?, perguntas = ?, fatos_gerados = ?,"
+            " enviada_em = ? WHERE id = ?",
+            (resumo[:4000], json.dumps(perguntas[:15]), fatos_gerados, agora(), entrevista_id),
+        )
+
+
+def excluir_entrevista(entrevista_id: str) -> bool:
+    """Tira a entrevista do caso, junto com o arquivo.
+
+    Os fatos que ela gerou **continuam** no agente: apagar o registro do atendimento não
+    apaga o que o cliente disse, e um fato órfão de origem é pior que um arquivo a menos.
+    """
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT caminho FROM entrevistas WHERE id = ?", (entrevista_id,)
+        ).fetchone()
+        if not linha:
+            return False
+        con.execute("DELETE FROM entrevistas WHERE id = ?", (entrevista_id,))
+    caminho = Path(linha["caminho"])
+    if caminho.exists():
+        caminho.unlink(missing_ok=True)
+    return True
 
 
 def caminho_do_assinado(assinatura_id: str) -> Path | None:

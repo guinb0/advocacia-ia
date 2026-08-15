@@ -1,0 +1,324 @@
+"""Rotas do módulo do agente jurídico.
+
+Todas sob `/api/agente` e protegidas pelo mesmo middleware das demais — o cliente do
+portal não passa por aqui, e nenhuma delas é pública.
+
+As de leitura respondem na hora com o que houver; as que **fazem** o agente trabalhar
+(análise e pesquisa) devolvem 202 e o identificador da execução, porque do outro lado
+elas rodam em worker (`AGENTS.md §14`). Prender a tela do advogado esperando um LLM é
+justamente o que o Fast Path proíbe.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+from urllib.parse import quote
+
+from fastapi import APIRouter, Body, HTTPException, status
+from fastapi.responses import Response
+
+from .. import armazenamento, contrato
+from . import dossie, espelho
+from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
+from .config import config
+
+log = logging.getLogger("agente")
+
+roteador = APIRouter(prefix="/api/agente", tags=["agente"])
+
+
+def _erro(erro: ErroDoAgente) -> HTTPException:
+    """Traduz a falha para o código que a tela sabe tratar.
+
+    `503` quando o agente não respondeu e `502` quando ele respondeu recusando: a
+    primeira o advogado resolve tentando de novo; a segunda, não.
+    """
+    if isinstance(erro, AgenteNaoConfigurado):
+        return HTTPException(status.HTTP_501_NOT_IMPLEMENTED, str(erro))
+    if isinstance(erro, AgenteIndisponivel):
+        return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(erro))
+    return HTTPException(status.HTTP_502_BAD_GATEWAY, str(erro))
+
+
+@roteador.get("/config")
+def configuracao() -> dict[str, Any]:
+    """A tela pergunta antes de oferecer o botão — como já faz com a ZapSign."""
+    cfg = config()
+    resposta: dict[str, Any] = {
+        "ligado": cfg.ligado,
+        "url": cfg.url,
+        "jurisdicao_padrao": espelho.jurisdicao_padrao(),
+        "disponivel": False,
+    }
+    if not cfg.ligado:
+        return resposta
+
+    try:
+        Cliente(cfg).saude()
+        resposta["disponivel"] = True
+    except ErroDoAgente as erro:
+        # Configurado e fora do ar é diferente de não configurado: a tela precisa
+        # dizer "não respondeu", não "não existe".
+        resposta["motivo"] = str(erro)
+    return resposta
+
+
+@roteador.get("/casos/{caso_id}")
+def dossie_do_caso(caso_id: str) -> dict[str, Any]:
+    """Tudo que o escritório sabe do caso, dos dois lados."""
+    montado = dossie.montar(caso_id)
+    if montado is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Caso não encontrado.")
+    return montado
+
+
+@roteador.post("/casos/{caso_id}/contrato")
+def gerar_contrato_do_caso(caso_id: str) -> Response:
+    """Gera usando o estado atual do caso, nunca um payload montado pelo navegador."""
+    montado = dossie.montar(caso_id)
+    if montado is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Caso não encontrado.")
+
+    respostas, motivos = dossie.dados_do_contrato(montado)
+    if motivos:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Contrato não gerado: " + " ".join(motivos),
+        )
+
+    try:
+        docx, faltando = contrato.gerar(respostas)
+    except contrato.DadosObrigatoriosContrato as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except contrato.ErroContrato as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+    cliente = str(respostas["nome"])
+    arquivo = f"Contrato - {cliente}.docx".replace("/", "-").replace("\\", "-")
+    return Response(
+        content=docx,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="contrato.docx"; '
+                f"filename*=UTF-8''{quote(arquivo)}"
+            ),
+            "X-Campos-Faltando": ", ".join(faltando),
+        },
+    )
+
+
+@roteador.post("/casos/{caso_id}/sincronizar", status_code=status.HTTP_201_CREATED)
+def sincronizar(caso_id: str, jurisdicao: str | None = Body(None, embed=True)) -> dict[str, Any]:
+    """Cria o caso no agente (se ainda não existe) e manda o que faltava.
+
+    Idempotente: chamar duas vezes reaproveita o mesmo caso do outro lado e só envia
+    documento que ainda não tinha ido.
+    """
+    try:
+        return espelho.sincronizar(caso_id, jurisdicao=jurisdicao)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/entrevista/{entrevista_id}")
+def enviar_entrevista(caso_id: str, entrevista_id: str) -> dict[str, Any]:
+    """Manda a entrevista guardada no Acervo para o agente ler.
+
+    Síncrona de propósito: é uma chamada de modelo, e quem clicou está olhando a tela
+    esperando os fatos aparecerem no dossiê.
+    """
+    try:
+        return espelho.enviar_entrevista(caso_id, entrevista_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/analise", status_code=status.HTTP_202_ACCEPTED)
+def analisar(caso_id: str) -> dict[str, Any]:
+    """Classifica o caso e recalcula as pendências do playbook."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().analisar(caso_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/pesquisa", status_code=status.HTTP_202_ACCEPTED)
+def pesquisar(caso_id: str) -> dict[str, Any]:
+    """Dispara a pesquisa de jurisprudência a partir das questões do caso."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().pesquisar(caso_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/pesquisa/{pesquisa_ref}")
+def pesquisa(caso_id: str, pesquisa_ref: str) -> dict[str, Any]:
+    """Precedentes recuperados, com aplicabilidade, trechos citados e filtros usados."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().pesquisa(caso_ref, pesquisa_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.patch("/casos/{caso_id}/contradicoes/{contradicao_ref}")
+def resolver_contradicao(
+    caso_id: str,
+    contradicao_ref: str,
+    estado: str = Body(..., embed=True),
+    resolucao: str = Body(..., embed=True),
+    justificativa: str = Body(..., embed=True),
+) -> dict[str, Any]:
+    """Decide uma divergência entre o que o cliente contou e o que o documento registra.
+
+    A justificativa é obrigatória do outro lado: daqui a seis meses ninguém lembra por que
+    aquela versão do caso foi a escolhida.
+    """
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().resolver_contradicao(
+            caso_ref,
+            contradicao_ref,
+            estado=estado,
+            resolucao=resolucao,
+            justificativa=justificativa,
+        )
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/estrategia", status_code=status.HTTP_202_ACCEPTED)
+def gerar_estrategia(caso_id: str) -> dict[str, Any]:
+    """Propõe as teses do caso, com o que sustenta e o que enfraquece cada uma."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().gerar_estrategia(caso_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.patch("/casos/{caso_id}/estrategia/{versao}")
+def decidir_estrategia(
+    caso_id: str,
+    versao: int,
+    aprovada: bool = Body(..., embed=True),
+    nota: str | None = Body(None, embed=True),
+) -> dict[str, Any]:
+    """Aprovar a estratégia é o que faz a petição parar de tirar pedidos do playbook."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().decidir_estrategia(caso_ref, versao, aprovada=aprovada, nota=nota)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.patch("/casos/{caso_id}/estrategia/hipoteses/{hipotese_ref}")
+def decidir_hipotese(
+    caso_id: str,
+    hipotese_ref: str,
+    aceita: bool = Body(..., embed=True),
+    enunciado: str | None = Body(None, embed=True),
+) -> dict[str, Any]:
+    """Aceitar, descartar ou reescrever uma tese. A tese é do advogado."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().decidir_hipotese(
+            caso_ref, hipotese_ref, aceita=aceita, enunciado=enunciado
+        )
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao", status_code=status.HTTP_202_ACCEPTED)
+def gerar_peticao(caso_id: str) -> dict[str, Any]:
+    """Dispara a minuta da petição inicial no agente.
+
+    Responde 202 e a peça aparece no dossiê quando ficar pronta: são várias chamadas de
+    modelo, uma por seção, e prender a tela do advogado nisso é o que o Fast Path proíbe.
+    """
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().gerar_peticao(caso_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/peticao/{peca_ref}")
+def peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
+    """A minuta com as seções, o readiness e o relatório de revisão."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().peticao(caso_ref, peca_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/peticao/{peca_ref}/arquivo")
+def baixar_peticao(caso_id: str, peca_ref: str) -> Response:
+    """O `.docx` da minuta, buscado no agente e repassado ao navegador."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        conteudo = Cliente().baixar_peticao(caso_ref, peca_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+    caso = armazenamento.obter_caso(caso_id) or {}
+    arquivo = f"Peticao inicial - {caso.get('cliente', 'caso')}.docx".replace("/", "-")
+    return Response(
+        content=conteudo,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="peticao.docx"; '
+                f"filename*=UTF-8''{quote(arquivo)}"
+            )
+        },
+    )
+
+
+@roteador.patch("/casos/{caso_id}/peticao/{peca_ref}")
+def decidir_peticao(
+    caso_id: str,
+    aprovada: bool = Body(..., embed=True),
+    peca_ref: str = "",
+    nota: str | None = Body(None, embed=True),
+) -> dict[str, Any]:
+    """A revisão humana (`§2.10`). O agente recusa aprovar peça com achado bloqueante."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().decidir_peticao(caso_ref, peca_ref, aprovada=aprovada, nota=nota)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/contrato/conferencia")
+def conferir_contrato(caso_id: str, campos: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Confere a qualificação do contrato contra os fatos apurados dos documentos.
+
+    Divergência de CPF entre o que o cliente falou na entrevista e o que a CTPS diz
+    custa uma conferência agora e um aditivo depois da assinatura.
+    """
+    try:
+        return espelho.conferir_contrato(caso_id, campos)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+def _caso_ref(caso_id: str) -> str:
+    """O caso correspondente no agente, criando-o se for a primeira vez.
+
+    Criar aqui é deliberado: o advogado que clica em "analisar" quer a análise, não
+    uma mensagem dizendo que precisa antes clicar em outro botão.
+    """
+    vinculo = armazenamento.obter_vinculo_agente(caso_id)
+    if vinculo:
+        return str(vinculo["caso_ref"])
+
+    try:
+        return str(espelho.sincronizar(caso_id)["caso_ref"])
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro

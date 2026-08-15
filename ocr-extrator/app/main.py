@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import (
+    agente,
     analise_resposta,
     armazenamento,
     assinatura,
@@ -47,6 +48,8 @@ from . import (
     triagem,
     valor_documento,
 )
+from . import entrevista as entrevista_lib
+from .agente import dossie as dossie_agente
 from .extractors import ROTULOS_TIPO
 
 # Onde o frontend atende — é o que monta o link enviado ao cliente.
@@ -78,10 +81,16 @@ app = FastAPI(title="Extrator de Documentos — PaddleOCR", version="1.0.0", lif
 # Com autenticação passou a existir credencial em jogo (o Bearer), então a lista
 # de origens deixou de ser `*` e virou explícita — um `*` permitiria que qualquer
 # página lesse as respostas se conseguisse um token.
+#: A porta do Next neste projeto é a **3100** (ver o README: 8100/3100 justamente porque
+#: 8000/3000 costumam estar ocupadas). O default listava só a 3000, e o sintoma era
+#: "Failed to fetch" na tela inteira — a API respondia 200, o navegador é que descartava.
+#: As duas ficam na lista porque quem sobe o front com `next dev` puro cai na 3000.
 ORIGENS = [
     o.strip()
     for o in os.getenv(
-        "ORIGENS_PERMITIDAS", "http://localhost:3000,http://127.0.0.1:3000"
+        "ORIGENS_PERMITIDAS",
+        "http://localhost:3100,http://127.0.0.1:3100,"
+        "http://localhost:3000,http://127.0.0.1:3000",
     ).split(",")
     if o.strip()
 ]
@@ -123,6 +132,11 @@ PUBLICAS = {
 # (ver `_caso_do_portal`). O prefixo é fechado de propósito — nenhuma outra
 # rota entra por aqui.
 PREFIXO_PORTAL = "/api/portal/"
+
+# Módulo do agente jurídico. Fica num APIRouter próprio porque é ponte para outro
+# serviço: se a ligação for desligada, some um bloco inteiro de rotas em vez de
+# restarem funções mortas espalhadas por este arquivo.
+app.include_router(agente.roteador)
 
 
 @app.middleware("http")
@@ -185,15 +199,19 @@ def gerar_contrato(pedido: PedidoContrato):
     linguagem aqui: as cláusulas, os percentuais e as inscrições na OAB saem do
     arquivo em `docs/`, palavra por palavra (ver `app/contrato.py`).
 
-    Os campos que a entrevista não respondeu voltam no cabeçalho
-    `X-Campos-Faltando`, e continuam visíveis entre colchetes no documento.
+    Nome completo e CPF válido são obrigatórios. Os demais campos que a
+    entrevista não respondeu voltam no cabeçalho `X-Campos-Faltando`, e
+    continuam visíveis entre colchetes no documento.
     """
     try:
-        docx, faltando = contrato.gerar(pedido.respostas, pedido.municipio)
+        respostas = contrato.normalizar_respostas(pedido.respostas)
+        docx, faltando = contrato.gerar(respostas, pedido.municipio)
+    except contrato.DadosObrigatoriosContrato as exc:
+        raise HTTPException(422, str(exc)) from exc
     except contrato.ErroContrato as exc:
         raise HTTPException(503, str(exc)) from exc
 
-    nome_cliente = str(pedido.respostas.get("nome", "") or "cliente").strip()
+    nome_cliente = str(respostas["nome"])
     arquivo = f"Contrato - {nome_cliente}.docx".replace("/", "-").replace("\\", "-")
 
     return Response(
@@ -412,6 +430,45 @@ class PedidoAssinatura(PedidoContrato):
     caso_id: str | None = None
 
 
+def _chave_nome_identidade(nome: object) -> str:
+    """Forma estável do nome usada somente para correlacionar contrato e caso."""
+    return " ".join(str(nome or "").split()).casefold()
+
+
+def _cpf_identidade(cpf: object) -> str:
+    """CPF canônico; as duas origens já passaram pela validação do contrato."""
+    return "".join(c for c in str(cpf or "") if "0" <= c <= "9")
+
+
+def _identidade_atual_do_caso(caso_id: str) -> tuple[str, str]:
+    """Relê a identidade inequívoca do Case State, sem confiar no navegador."""
+    montado = dossie_agente.montar(caso_id)
+    if montado is None:
+        raise HTTPException(404, "Caso não encontrado.")
+
+    respostas, motivos = dossie_agente.dados_do_contrato(montado)
+    if motivos:
+        # Os motivos podem conter contexto útil na tela do dossiê, mas esta rota
+        # só precisa declarar o conflito sem devolver nenhum dado de identificação.
+        raise HTTPException(
+            409,
+            "A identidade atual do caso não está válida e inequívoca para vincular o contrato.",
+        )
+    return str(respostas["nome"]), str(respostas["cpf"])
+
+
+def _exigir_identidade_do_caso(caso_id: str, nome: object, cpf: object) -> None:
+    nome_caso, cpf_caso = _identidade_atual_do_caso(caso_id)
+    if (
+        _chave_nome_identidade(nome) != _chave_nome_identidade(nome_caso)
+        or _cpf_identidade(cpf) != _cpf_identidade(cpf_caso)
+    ):
+        raise HTTPException(
+            409,
+            "A identificação do contrato não corresponde à identidade atual do caso.",
+        )
+
+
 def _resposta_assinatura(registro: dict[str, Any]) -> dict[str, Any]:
     """O registro local sem o token da ZapSign.
 
@@ -421,6 +478,7 @@ def _resposta_assinatura(registro: dict[str, Any]) -> dict[str, Any]:
     """
     limpo = dict(registro)
     limpo.pop("doc_token", None)
+    limpo.pop("cpf", None)
     return limpo
 
 
@@ -439,9 +497,8 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
     """Gera o contrato e o manda para assinatura eletrônica.
 
     O .docx sobe como está — a ZapSign converte para PDF e é esse PDF que o
-    cliente assina. Campo que a entrevista não respondeu continua entre colchetes
-    e volta em `faltando`: contrato incompleto assinado não se desfaz, então o
-    aviso vai junto da resposta de sucesso, à vista.
+    cliente assina. Nome completo e CPF válido são obrigatórios. Outro campo que
+    a entrevista não respondeu continua entre colchetes e volta em `faltando`.
     """
     if not assinatura.ativa():
         raise HTTPException(
@@ -451,13 +508,22 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
         )
 
     try:
-        docx, faltando = contrato.gerar(pedido.respostas, pedido.municipio)
+        respostas = contrato.normalizar_respostas(pedido.respostas)
+        cliente = str(respostas["nome"])
+        if pedido.caso_id:
+            await run_in_threadpool(
+                _exigir_identidade_do_caso,
+                pedido.caso_id,
+                cliente,
+                respostas["cpf"],
+            )
+        docx, faltando = await run_in_threadpool(
+            contrato.gerar, respostas, pedido.municipio
+        )
+    except contrato.DadosObrigatoriosContrato as exc:
+        raise HTTPException(422, str(exc)) from exc
     except contrato.ErroContrato as exc:
         raise HTTPException(503, str(exc)) from exc
-
-    cliente = str(pedido.respostas.get("nome", "") or "").strip()
-    if not cliente:
-        raise HTTPException(400, "A entrevista não trouxe o nome do cliente.")
 
     nome_documento = f"Contrato de honorários — {cliente}"
     extras = [s.model_dump() for s in pedido.signatarios]
@@ -466,7 +532,7 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
     # e-mail e sem telefone. É 400, e não 502: culpar a ZapSign por uma entrevista
     # incompleta manda o advogado procurar o problema no lugar errado.
     try:
-        signatarios = assinatura.signatarios_do_contrato(pedido.respostas, extras)
+        signatarios = assinatura.signatarios_do_contrato(respostas, extras)
     except assinatura.ErroAssinatura as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -484,6 +550,7 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
         doc_token=resumo["doc_token"],
         nome=nome_documento,
         cliente=cliente,
+        cpf=str(respostas["cpf"]),
         signatarios=resumo["signatarios"],
         estado=resumo["estado"],
         caso_id=pedido.caso_id,
@@ -498,17 +565,23 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
 
 
 @app.get("/api/assinaturas")
-def listar_assinaturas(caso_id: str | None = None, cliente: str | None = None):
+def listar_assinaturas(
+    caso_id: str | None = None,
+    cliente: str | None = None,
+    cpf: str | None = None,
+):
     """Os contratos já mandados assinar, do mais novo para o mais antigo.
 
     Devolve o último estado conhecido, sem consultar a ZapSign: a lista abre
     instantânea e uma consulta por contrato estouraria o limite de requisições
     deles numa carteira grande. Quem atualiza é o `GET` de um contrato só.
     """
+    if cliente and not cpf:
+        raise HTTPException(422, "Informe o CPF junto com o nome para evitar homônimos.")
     return {
         "assinaturas": [
             _resposta_assinatura(a)
-            for a in armazenamento.listar_assinaturas(caso_id, cliente)
+            for a in armazenamento.listar_assinaturas(caso_id=caso_id, cliente=cliente, cpf=cpf)
         ]
     }
 
@@ -586,8 +659,10 @@ async def baixar_contrato_assinado(assinatura_id: str):
 @app.post("/api/assinaturas/{assinatura_id}/caso")
 def vincular_assinatura(assinatura_id: str, caso_id: str = Form(...)):
     """Liga o contrato ao caso aberto depois dele — a ordem do escritório."""
-    if armazenamento.obter_caso(caso_id) is None:
-        raise HTTPException(404, "Caso não encontrado.")
+    registro = armazenamento.obter_assinatura(assinatura_id)
+    if registro is None:
+        raise HTTPException(404, "Contrato não encontrado.")
+    _exigir_identidade_do_caso(caso_id, registro.get("cliente"), registro.get("cpf"))
     if not armazenamento.vincular_assinatura_ao_caso(assinatura_id, caso_id):
         raise HTTPException(404, "Contrato não encontrado.")
     return {"vinculado": True}
@@ -823,9 +898,9 @@ async def ws_chamada(ws: WebSocket, sala_id: str, papel: str = "cliente"):
     adivinhável (256 bits).
 
     Protocolo:
-        → {"type":"offer"|"answer"|"ice", ...}   repassado ao outro lado
-        ← {"type":"pronto"}                      o outro lado entrou
-        ← {"type":"saiu"}                        o outro lado caiu
+        â†’ {"type":"offer"|"answer"|"ice", ...}   repassado ao outro lado
+        â† {"type":"pronto"}                      o outro lado entrou
+        â† {"type":"saiu"}                        o outro lado caiu
     """
     if papel not in ("advogado", "cliente"):
         await ws.close(code=4001)
@@ -1008,9 +1083,28 @@ def _ler_documento(
         detectado = resultado.get("tipo", {}).get("detectado")
         confere = casos.tipo_confere(item_checklist, detectado, unificar)
         armazenamento.concluir_entrega(entrega_id, resultado, confere, itens_atendidos)
+        _entregar_ao_agente(caso_id, entrega_id)
     except Exception as exc:
         log.exception("Falha ao ler o documento da entrega %s", entrega_id)
         armazenamento.falhar_entrega(entrega_id, str(exc))
+
+
+def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
+    """Empurra a extração recém-lida para o agente jurídico, se o caso estiver ligado.
+
+    Só para caso **já vinculado**: vincular sozinho criaria caso no agente para toda
+    foto que o cliente manda pelo portal, inclusive as de caso que ninguém abriu lá.
+
+    Falha aqui não pode escapar. Já estamos fora da requisição, o documento está
+    salvo e lido, e derrubar esta thread por indisponibilidade de outro serviço
+    deixaria a entrega marcada como erro de leitura — que não foi o que aconteceu.
+    """
+    try:
+        from .agente import espelho
+
+        espelho.enviar_entrega(caso_id, entrega_id)
+    except Exception:  # noqa: BLE001 - fronteira com serviço externo
+        log.warning("não foi possível entregar %s ao agente jurídico", entrega_id, exc_info=True)
 
 
 async def _registrar_documento(
@@ -1084,6 +1178,94 @@ async def enviar_documento(
     if caso is None:
         raise HTTPException(404, "Caso não encontrado.")
     return await _registrar_documento(caso, item, arquivo, idioma, usar_para_rg_e_cpf)
+
+
+# ---------------------------------------------------------------- entrevista
+#
+# A entrevista é do caso, não do agente: o arquivo do atendimento existe mesmo com a
+# integração desligada, e é aqui que ele fica. Quem manda o texto para o agente virar
+# fato é a ponte (`app/agente/rotas.py`), depois de o arquivo estar guardado.
+
+
+@app.post("/api/casos/{caso_id}/entrevista", status_code=201)
+async def enviar_entrevista(
+    caso_id: str,
+    arquivo: UploadFile = File(...),
+    realizada_em: str = Form(""),
+    entrevistador: str = Form(""),
+):
+    """Guarda o arquivo da entrevista e o texto lido dele."""
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > MAX_BYTES:
+        raise HTTPException(413, "Arquivo grande demais.")
+
+    nome = Path(arquivo.filename or "entrevista.txt").name
+    try:
+        texto = entrevista_lib.extrair_texto(nome, conteudo)
+    except entrevista_lib.ErroDeLeitura as erro:
+        raise HTTPException(400, str(erro)) from erro
+
+    destino = armazenamento.DIR_ARQUIVOS / caso_id / "entrevistas"
+    destino.mkdir(parents=True, exist_ok=True)
+    caminho = destino / f"{uuid.uuid4().hex[:8]}-{nome}"
+    caminho.write_bytes(conteudo)
+
+    return armazenamento.registrar_entrevista(
+        caso_id,
+        arquivo=nome,
+        caminho=caminho,
+        texto=texto,
+        realizada_em=realizada_em.strip(),
+        entrevistador=entrevistador.strip(),
+    )
+
+
+@app.get("/api/casos/{caso_id}/entrevistas")
+def listar_entrevistas(caso_id: str):
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return {"entrevistas": armazenamento.listar_entrevistas(caso_id)}
+
+
+@app.get("/api/casos/{caso_id}/entrevista/{entrevista_id}")
+def obter_entrevista(caso_id: str, entrevista_id: str):
+    """A entrevista com o texto inteiro — é o que o advogado abre para reler."""
+    return _entrevista_do_caso(caso_id, entrevista_id)
+
+
+@app.get("/api/casos/{caso_id}/entrevista/{entrevista_id}/arquivo")
+def baixar_entrevista(caso_id: str, entrevista_id: str):
+    """O arquivo original, como o advogado o enviou."""
+    registro = _entrevista_do_caso(caso_id, entrevista_id)
+    caminho = Path(registro["caminho"]).resolve()
+    if armazenamento.DIR_ARQUIVOS.resolve() not in caminho.parents or not caminho.is_file():
+        raise HTTPException(404, "Arquivo da entrevista não encontrado.")
+    return FileResponse(
+        caminho,
+        filename=registro["arquivo"],
+        media_type="application/octet-stream",
+    )
+
+
+@app.delete("/api/casos/{caso_id}/entrevista/{entrevista_id}")
+def excluir_entrevista(caso_id: str, entrevista_id: str):
+    """Remove a entrevista do caso. Os fatos que ela gerou continuam no agente."""
+    _entrevista_do_caso(caso_id, entrevista_id)
+    armazenamento.excluir_entrevista(entrevista_id)
+    return {"removido": True}
+
+
+def _entrevista_do_caso(caso_id: str, entrevista_id: str) -> dict[str, Any]:
+    registro = armazenamento.obter_entrevista(entrevista_id)
+    if registro is None or registro["caso_id"] != caso_id:
+        raise HTTPException(404, "Entrevista não encontrada neste caso.")
+    return registro
 
 
 @app.post("/api/casos/{caso_id}/identidade-unificada")

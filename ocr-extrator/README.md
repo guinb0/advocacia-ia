@@ -311,6 +311,22 @@ nova nasce fechada (ver `PUBLICAS` em `main.py`).
 | `POST` | `/api/extrair` | análise avulsa: `arquivo`, `idioma`, `tipo` |
 | `GET` | `/api/tipos` | tipos de documento suportados |
 
+**Agente jurídico** — só respondem com `AGENTE_API_URL` configurado (ver `app/agente/`)
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/api/agente/config` | se a ligação com o agente está ligada |
+| `GET` | `/api/agente/casos/{id}` | o dossiê: fatos, classificação, pendências, precedentes |
+| `POST` | `/api/agente/casos/{id}/sincronizar` | espelha caso, cliente e checklist no agente |
+| `POST` | `/api/agente/casos/{id}/entrevista/{entrevista}` | manda a entrevista virar fato com proveniência |
+| `POST` | `/api/agente/casos/{id}/analise` · `/pesquisa` · `/estrategia` · `/peticao` | dispara o trabalho (assíncrono, `202`) |
+| `GET` | `/api/agente/casos/{id}/pesquisa/{ref}` · `/peticao/{ref}` | busca o resultado quando fica pronto |
+| `GET` | `/api/agente/casos/{id}/peticao/{ref}/arquivo` | baixa a peça gerada |
+| `PATCH` | `/api/agente/casos/{id}/estrategia/{versao}` · `/hipoteses/{ref}` · `/peticao/{ref}` | o advogado aprova ou recusa |
+| `PATCH` | `/api/agente/casos/{id}/contradicoes/{ref}` | resolve uma divergência entre documentos |
+| `POST` | `/api/agente/casos/{id}/contrato` | gera o contrato relendo nome, CPF e fatos atuais do caso |
+| `POST` | `/api/agente/casos/{id}/contrato/conferencia` | aponta onde o contrato diverge dos documentos |
+
 **Portal do cliente** — sem Keycloak; protegido pela senha do caso
 
 | Método | Rota | Descrição |
@@ -327,6 +343,7 @@ nova nasce fechada (ver `PUBLICAS` em `main.py`).
 | `GET` | `/api/saude` · `/api/config` · `/api/eu` | status do modelo, config do Keycloak, quem está autenticado |
 | `POST` | `/api/aquecer` | pré-carrega os modelos de OCR |
 | `POST` | `/api/chamada/sala` | sorteia uma sala de chamada e devolve o link |
+| `WS` | `/ws/chamada/{sala}?papel=` | sinalização WebRTC; `sala` é o token do portal |
 | `GET` `DELETE` | `/api/temp/{nome}` · `/api/temp` | JSON/XML temporários da análise avulsa |
 
 A transcrição fica em **outro processo**, na porta 8200:
@@ -525,8 +542,9 @@ corretamente, então compensa. A primeira chamada do processo carrega os modelos
 - **O contrato é preenchido, não redigido.** As cláusulas, percentuais, foro e as
   inscrições na OAB saem do `docs/CONTRATO*.docx` palavra por palavra — nenhum
   modelo de linguagem escreve nada ali. Trocar de versão é soltar o arquivo novo
-  em `docs/`; o mais recente vence. Campo que a entrevista não respondeu sai
-  entre colchetes, à vista, em vez de em branco.
+  em `docs/`; o mais recente vence. Nome completo e CPF válido são obrigatórios:
+  sem qualquer um deles nenhum arquivo é criado. Outro campo que a entrevista
+  não respondeu sai entre colchetes, à vista, em vez de em branco.
 - **O modelo do contrato não está no repositório.** Este repo é público, e o
   arquivo traz a tabela de honorários, o CNPJ e as inscrições na OAB do
   escritório. Para gerar contratos, copie o `.docx` oficial para `docs/` — sem

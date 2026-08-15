@@ -9,6 +9,7 @@ import {
   gerarContrato,
   listarAssinaturas,
   obterAssinatura,
+  requisitosDoContrato,
 } from "@/lib/api";
 import type { Assinatura, ConfigAssinatura, Signatario } from "@/lib/types";
 import estilos from "./PainelContrato.module.css";
@@ -77,11 +78,19 @@ export default function PainelContrato({ respostas }: Props) {
    * valendo. Some o contrato da tela seria pior que mostrá-lo desatualizado. */
   const [desatualizado, setDesatualizado] = useState<string | null>(null);
 
-  const cliente = texto(respostas.nome);
+  // O backend também colapsa espaços antes de persistir. Usar exatamente a
+  // mesma chave evita que "Maria   Silva" suma da listagem após um F5.
+  const cliente = texto(respostas.nome).replace(/\s+/g, " ");
+  const cpf = texto(respostas.cpf).normalize("NFKC").replace(/[^0-9]/g, "");
   const email = texto(respostas.email);
   const telefone = texto(respostas.telefone);
+  const requisitosContrato = requisitosDoContrato(respostas);
 
   async function gerar() {
+    if (requisitosContrato.length > 0) {
+      setErro(`Contrato não gerado: informe ${requisitosContrato.join(" e ")}.`);
+      return;
+    }
     setGerando(true);
     setErro(null);
     try {
@@ -118,9 +127,9 @@ export default function PainelContrato({ respostas }: Props) {
    * página deixaria o contrato tramitando na ZapSign sem nada na tela — e o
    * advogado o mandaria assinar de novo, criando um segundo documento. */
   useEffect(() => {
-    if (!cliente) return;
+    if (!cliente || !cpf || requisitosContrato.length > 0) return;
     let vivo = true;
-    void listarAssinaturas({ cliente })
+    void listarAssinaturas({ cliente, cpf })
       .then(([maisRecente]) => {
         if (vivo && maisRecente) setAssinatura(maisRecente);
       })
@@ -128,7 +137,7 @@ export default function PainelContrato({ respostas }: Props) {
     return () => {
       vivo = false;
     };
-  }, [cliente]);
+  }, [cliente, cpf, requisitosContrato.length]);
 
   const atualizar = useCallback(async (id: string) => {
     try {
@@ -150,6 +159,10 @@ export default function PainelContrato({ respostas }: Props) {
   }, [pendente, assinaturaId, atualizar]);
 
   async function mandarAssinar() {
+    if (requisitosContrato.length > 0) {
+      setErroAssinatura(`Contrato não gerado: informe ${requisitosContrato.join(" e ")}.`);
+      return;
+    }
     setEnviando(true);
     setErroAssinatura(null);
     setDesatualizado(null);
@@ -190,7 +203,8 @@ export default function PainelContrato({ respostas }: Props) {
     return lista;
   }, [email, telefone, config?.whatsapp]);
 
-  const podeEnviar = Boolean(config?.ativa) && Boolean(cliente) && destinos.length > 0;
+  const podeEnviar =
+    Boolean(config?.ativa) && requisitosContrato.length === 0 && destinos.length > 0;
 
   return (
     <div className={estilos.bloco}>
@@ -202,8 +216,21 @@ export default function PainelContrato({ respostas }: Props) {
         modelo, sem alteração.
       </p>
 
+      {requisitosContrato.length > 0 && (
+        <div className={estilos.faltando}>
+          <strong>Contrato ainda não pode ser gerado.</strong>
+          <br />
+          Informe {requisitosContrato.join(" e ")}. Nenhum arquivo será criado antes disso.
+        </div>
+      )}
+
       <div className={estilos.acoes}>
-        <button type="button" className={estilos.botao} onClick={gerar} disabled={gerando}>
+        <button
+          type="button"
+          className={estilos.botao}
+          onClick={gerar}
+          disabled={gerando || requisitosContrato.length > 0}
+        >
           {gerando ? "Gerando…" : baixado ? "Gerar de novo" : "Gerar contrato"}
         </button>
         {cliente && <span className={estilos.cliente}>para {cliente}</span>}

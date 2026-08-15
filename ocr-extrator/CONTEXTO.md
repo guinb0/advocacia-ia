@@ -727,3 +727,77 @@ garantia de resultado.
 
 Ainda falta o RAG de legislação e súmulas; o RAG processual não substitui essa
 camada normativa.
+
+---
+
+## Módulo do agente jurídico — implementado em 13/08/2026
+
+`app/agente/` liga o Acervo ao serviço `ia-juridica`, que guarda o **Case State**:
+fato com proveniência, classificação, pendência de playbook e pesquisa de
+jurisprudência. A tela nova é o **Dossiê do caso** (`frontend/components/Dossie.tsx`),
+alcançada pela barra de abas dentro do caso.
+
+```
+OCR (este repositório)                  agente (ia-juridica, :8000)
+──────────────────────                  ──────────────────────────
+caso, cliente, checklist       ──push──▶ caso espelhado
+extração de cada documento     ──push──▶ fato com proveniência
+qualificação do contrato       ──confere▶ divergência com os documentos
+Dossiê do advogado             ◀──read── classificação, pendência, precedente
+```
+
+| rota | para quê |
+|---|---|
+| `GET /api/agente/config` | se a ligação está ligada **e** se o agente responde |
+| `POST /api/agente/casos/{id}/sincronizar` | cria o caso lá e manda os documentos que faltavam |
+| `GET /api/agente/casos/{id}` | o dossiê inteiro, dos dois lados, com a linha do processo |
+| `POST /api/agente/casos/{id}/analise` | classifica e recalcula pendências (202, roda em worker) |
+| `POST /api/agente/casos/{id}/pesquisa` | dispara a pesquisa de jurisprudência (202) |
+| `GET /api/agente/casos/{id}/pesquisa/{ref}` | precedentes, aplicabilidade, trechos e filtros usados |
+| `POST /api/agente/casos/{id}/contrato/conferencia` | confere a qualificação contra os fatos |
+
+**Decisões que não são óbvias no código:**
+
+- **Ponte, não cópia.** O agente continua sendo outro serviço, com banco e testes
+  próprios. Trazê-lo para dentro faria o PaddleOCR (que satura CPU) dividir processo
+  com o agente (que espera I/O de LLM), e traria 15 migrations para um repositório
+  que hoje sobe com `iniciar.ps1` numa máquina de escritório.
+- **O envio do documento é automático e silencioso.** Ao fim do OCR, se o caso já
+  estiver vinculado, a extração vai para o agente numa thread de fundo. Falha ali não
+  pode marcar a entrega como erro de leitura — o documento foi lido; quem não
+  respondeu foi outro serviço. O motivo fica em `vinculos_agente.ultimo_erro`.
+- **Só caso já vinculado recebe envio automático.** Vincular sozinho criaria caso no
+  agente para toda foto que chega pelo portal, inclusive de caso que ninguém abriu lá.
+- **A chave de idempotência é o id da entrega.** Reenviar não duplica documento do
+  outro lado, e o vínculo guarda o que já foi para não reenviar o caso inteiro a cada
+  abertura do dossiê.
+- **Agente fora do ar nunca vira caso vazio.** A etapa fica `indisponivel` com o
+  motivo, e a tela diz isso. "Não consegui olhar" e "não há nada" levam a decisões
+  opostas.
+- **A qualificação do contrato não vira fato.** Os documentos já produzem os mesmos
+  fatos com proveniência; registrar de novo pelo contrato criaria uma segunda versão
+  da mesma verdade, sem origem conferível. O que se faz é **conferir**: CPF digitado
+  na entrevista contra o CPF lido da CTPS. Divergência antes da assinatura custa uma
+  conferência; depois, um aditivo.
+
+**Medido em 13/08**, com os dois no ar: caso criado no Acervo, CTPS entregue, e o
+agente devolveu 3 fatos com origem rastreável (`ocr_document, página 1, campo pis`).
+A ficha do cliente do dossiê é montada a partir desses fatos, não de digitação.
+
+**Duas descobertas da validação, ambas de configuração:**
+
+1. **O worker do agente estava de pé mas não consumia a fila.** Cinco documentos
+   ficaram parados em `dramatiq:document_processing` sem erro visível; reiniciar o
+   worker drenou tudo. Vale um alarme de fila parada — o sintoma é "o dossiê não
+   mostra os fatos", e ninguém vai olhar a fila.
+2. **Os contêineres do agente subiam sem as chaves.** O `docker-compose.yml` de lá
+   não passava `.env`, então não havia provedor de IA nem corpus: a análise saía sem
+   classificação e a pesquisa falhava com `CORPUS_NOT_CONFIGURED`. Corrigido com
+   `env_file: .env` nos serviços `api` e `worker`.
+
+Configuração: `AGENTE_API_URL` (vazio desliga tudo), `AGENTE_TOKEN`,
+`AGENTE_JURISDICAO_PADRAO` (TRT8 — é ela que restringe quais precedentes valem).
+
+Migração para os bancos de verdade: **`docs/PLANO-BANCOS.md`**.
+
+Testes: `.venv\Scripts\python.exe -m tests.test_agente` (sem rede, com dublê).

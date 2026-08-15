@@ -44,6 +44,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
+from . import validators
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -58,6 +60,77 @@ MESES = (
 
 class ErroContrato(Exception):
     """Falha que o usuário precisa ver — modelo ausente ou ilegível."""
+
+
+class DadosObrigatoriosContrato(ErroContrato):
+    """O contrato foi bloqueado antes de ser criado por falta de identificação."""
+
+
+def _nome_completo(nome: str) -> bool:
+    """Exige prenome e sobrenome escritos, não apenas iniciais ou partículas."""
+    partes = " ".join(nome.split()).split(" ")
+    permitidos = {"'", "’", "-", "."}
+    if not all(
+        any(caractere.isalpha() for caractere in parte)
+        and all(caractere.isalpha() or caractere in permitidos for caractere in parte)
+        for parte in partes
+    ):
+        return False
+
+    particulas = {"da", "das", "de", "do", "dos", "e"}
+    substantivas = [parte for parte in partes if parte.casefold().rstrip(".") not in particulas]
+    return len(substantivas) >= 2 and all(
+        sum(caractere.isalpha() for caractere in parte) >= 2 for parte in substantivas
+    )
+
+
+def _normalizar_identificacao(nome: object, cpf: object) -> tuple[str, str]:
+    nome_limpo = " ".join(nome.split()) if isinstance(nome, str) else ""
+    cpf_texto = unicodedata.normalize("NFKC", cpf.strip()) if isinstance(cpf, str) else ""
+    cpf_permitido = bool(re.fullmatch(r"[0-9.\-\s]+", cpf_texto))
+    cpf_limpo = re.sub(r"[^0-9]", "", cpf_texto) if cpf_permitido else ""
+
+    problemas: list[str] = []
+    if not _nome_completo(nome_limpo):
+        problemas.append("o nome completo do cliente")
+    if not cpf_permitido or not validators.validar_cpf(cpf_limpo):
+        problemas.append("um CPF válido")
+
+    if problemas:
+        exigencias = " e ".join(problemas)
+        raise DadosObrigatoriosContrato(f"Contrato não gerado: informe {exigencias}.")
+
+    return nome_limpo, validators.formatar_cpf(cpf_limpo)
+
+
+def normalizar_respostas(respostas: dict[str, Any]) -> dict[str, Any]:
+    """Copia as respostas e uniformiza a identificação usada em todo o fluxo."""
+    nome, cpf = _normalizar_identificacao(respostas.get("nome"), respostas.get("cpf"))
+    resultado = dict(respostas)
+    resultado["nome"] = nome
+    resultado["cpf"] = cpf
+    return resultado
+
+
+def _validar_e_normalizar_obrigatorios(valores: dict[str, Any]) -> dict[str, str]:
+    """Valida os dois dados sem os quais nenhum contrato pode ser produzido.
+
+    Esta barreira mora abaixo das rotas e dos serviços de assinatura de propósito:
+    até uma chamada direta a :func:`preencher` precisa respeitá-la.
+    """
+    originais = {_chave(f"[{k}]"): v for k, v in valores.items()}
+    nome, cpf = _normalizar_identificacao(
+        originais.get("nome da pessoa"), originais.get("cpf")
+    )
+    normalizados = {k: str(v or "").strip() for k, v in originais.items()}
+
+    normalizados["nome da pessoa"] = nome
+    normalizados["cpf"] = cpf
+    # O modelo repete o nome no bloco de assinatura. Quando ele veio pela
+    # entrevista, ambos já existem; a atribuição também protege chamadas diretas.
+    if "nome do contratante" in normalizados:
+        normalizados["nome do contratante"] = nome
+    return normalizados
 
 
 # ------------------------------------------------------------------ modelo
@@ -152,29 +225,25 @@ def _preencher_paragrafo(nos: list[ET.Element], valores: dict[str, str]) -> tupl
     """Troca os marcadores de um parágrafo. Devolve (trocas, não preenchidos)."""
     trocas = 0
     faltando: set[str] = set()
-    protegidos = 0  # marcadores já examinados e deixados como estão
+    inteiro_original = "".join(n.text or "" for n in nos)
 
-    while True:
-        partes = [n.text or "" for n in nos]
-        inteiro = "".join(partes)
-
-        achado = None
-        for m in list(_MARCADOR.finditer(inteiro))[protegidos:]:
-            chave = _chave(m.group(0))
-            valor = valores.get(chave, "").strip()
-            if valor:
-                achado = (m.start(), m.end(), valor)
-                break
+    # Da direita para a esquerda, as posições originais dos marcadores que ainda
+    # faltam continuam válidas. Cada lacuna é visitada uma vez: se um usuário
+    # digitou literalmente "[e-mail]", esse texto vira valor, não um novo marcador
+    # a ser processado para sempre.
+    for marcador in reversed(list(_MARCADOR.finditer(inteiro_original))):
+        chave = _chave(marcador.group(0))
+        valor = valores.get(chave, "").strip()
+        if not valor:
             if chave:
                 faltando.add(chave)
-            protegidos += 1
-
-        if achado is None:
-            trocas += _preencher_rotulos(nos, valores)
-            return trocas, faltando
-
-        _reescrever(nos, partes, *achado)
+            continue
+        partes = [n.text or "" for n in nos]
+        _reescrever(nos, partes, marcador.start(), marcador.end(), valor)
         trocas += 1
+
+    trocas += _preencher_rotulos(nos, valores)
+    return trocas, faltando
 
 
 def _preencher_rotulos(nos: list[ET.Element], valores: dict[str, str]) -> int:
@@ -223,15 +292,15 @@ def _partes_com_texto(zf: zipfile.ZipFile) -> list[str]:
     ]
 
 
-def preencher(valores: dict[str, str], modelo: Path | None = None) -> tuple[bytes, list[str]]:
-    """Devolve (docx preenchido, marcadores que ficaram sem resposta)."""
+def preencher(valores: dict[str, Any], modelo: Path | None = None) -> tuple[bytes, list[str]]:
+    """Devolve o DOCX preenchido, somente com nome completo e CPF válido."""
+    normalizados = _validar_e_normalizar_obrigatorios(valores)
     caminho = modelo or caminho_modelo()
     try:
         origem = zipfile.ZipFile(caminho)
     except Exception as exc:
         raise ErroContrato(f"Não foi possível abrir o modelo: {exc}") from exc
 
-    normalizados = {_chave(f"[{k}]"): v for k, v in valores.items()}
     faltando: set[str] = set()
 
     with origem:
@@ -359,4 +428,5 @@ def valores_da_entrevista(
 def gerar(
     respostas: dict[str, Any], municipio: str = "", quando: date | None = None
 ) -> tuple[bytes, list[str]]:
-    return preencher(valores_da_entrevista(respostas, municipio, quando))
+    respostas_normalizadas = normalizar_respostas(respostas)
+    return preencher(valores_da_entrevista(respostas_normalizadas, municipio, quando))
