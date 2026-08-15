@@ -96,8 +96,52 @@ def main_teste() -> int:
     caminho_falso = tmp / "modelo-de-teste.docx"
     caminho_falso.write_bytes(modelo_falso())
 
+    # --- barreira de identificação --------------------------------------
+    # O bloqueio acontece antes de abrir/preencher o modelo. Assim não existe
+    # caminho alternativo (download, dossiê ou assinatura) que produza um DOCX
+    # sem os dois dados que identificam inequivocamente o contratante.
+    invalidos = (
+        ({"CPF": "111.444.777-35"}, "nome ausente"),
+        ({"nome da pessoa": "Maria", "CPF": "111.444.777-35"}, "nome incompleto"),
+        ({"nome da pessoa": "A B", "CPF": "111.444.777-35"}, "nome só com iniciais"),
+        ({"nome da pessoa": "M. S.", "CPF": "111.444.777-35"}, "iniciais pontuadas"),
+        ({"nome da pessoa": "Maria de", "CPF": "111.444.777-35"}, "nome sem sobrenome"),
+        ({"nome da pessoa": "Maria 123A", "CPF": "111.444.777-35"}, "nome com algarismos"),
+        ({"nome da pessoa": ["Maria", "Silva"], "CPF": "111.444.777-35"}, "nome em lista"),
+        ({"nome da pessoa": "Maria Aparecida"}, "CPF ausente"),
+        ({"nome da pessoa": "Maria Aparecida", "CPF": "111.111.111-11"}, "CPF inválido"),
+        ({"nome da pessoa": "Maria Aparecida", "CPF": "111x444x777x35"}, "CPF com letras"),
+        ({"nome da pessoa": "Maria Aparecida", "CPF": ["111444", "77735"]}, "CPF em lista"),
+    )
+    for valores_invalidos, descricao in invalidos:
+        try:
+            contrato.preencher(valores_invalidos, caminho_falso)
+        except contrato.DadosObrigatoriosContrato as exc:
+            falhas += not checar(
+                "Contrato não gerado" in str(exc),
+                f"{descricao} bloqueia a geração antes de criar o arquivo",
+            )
+        else:
+            falhas += not checar(False, f"{descricao} bloqueia a geração")
+
+    for nome_valido in ("Ana Li", "Maria da Silva", "Ana D'Ávila", "Maria Souza-Silva"):
+        try:
+            contrato.normalizar_respostas({"nome": nome_valido, "cpf": "11144477735"})
+        except contrato.DadosObrigatoriosContrato:
+            falhas += not checar(False, f"nome completo legítimo é aceito ({nome_valido})")
+        else:
+            falhas += not checar(True, f"nome completo legítimo é aceito ({nome_valido})")
+
+    cpf_largo = contrato.normalizar_respostas(
+        {"nome": "Maria da Silva", "cpf": "１１１４４４７７７３５"}
+    )["cpf"]
+    falhas += not checar(
+        cpf_largo == "111.444.777-35",
+        "dígitos de largura cheia são normalizados para o CPF ASCII canônico",
+    )
+
     docx, faltando = contrato.preencher(
-        {"nome da pessoa": "Maria Aparecida", "CPF": "111.444.777-35"}, caminho_falso
+        {"nome da pessoa": "  Maria   Aparecida  ", "CPF": "11144477735"}, caminho_falso
     )
     texto = texto_do_docx(docx)
 
@@ -110,6 +154,19 @@ def main_teste() -> int:
         "campo sem resposta continua à vista — em branco passaria despercebido",
     )
     falhas += not checar(faltando == ["e mail"], f"o que faltou é informado ({faltando})")
+
+    docx_literal, faltando_literal = contrato.preencher(
+        {
+            "nome da pessoa": "Maria Aparecida",
+            "CPF": "111.444.777-35",
+            "e-mail": "[e-mail]",
+        },
+        caminho_falso,
+    )
+    falhas += not checar(
+        texto_do_docx(docx_literal).count("[e-mail]") == 1 and not faltando_literal,
+        "texto parecido com marcador é inserido uma vez, sem reprocessamento",
+    )
 
     with zipfile.ZipFile(io.BytesIO(docx)) as zf:
         corpo = zf.read("word/document.xml").decode()

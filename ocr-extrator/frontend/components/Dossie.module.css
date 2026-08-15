@@ -1,0 +1,442 @@
+/* Dossiê do caso. Só grade, espaçamento e composição — cor, fonte, botão e selo
+ * vêm dos primitivos globais (`globals.css`), como manda o guia visual. */
+
+.pagina {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 28px 64px;
+  display: grid;
+  gap: 18px;
+}
+
+.cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.titulo {
+  margin: 8px 0 0;
+  font-size: var(--t-xl);
+  letter-spacing: -0.01em;
+}
+
+.subtitulo {
+  margin: 4px 0 0;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+}
+
+.acoes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------ linha do processo */
+
+.linha {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.etapa {
+  background: var(--papel);
+  border: 1px solid var(--borda);
+  /* A faixa da esquerda repete o estado que o símbolo já diz — reforço, nunca a
+   * única pista. */
+  border-left: 3px solid var(--borda-forte);
+  padding: 12px 14px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+
+.etapaTopo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.etapaSimbolo {
+  font-family: var(--fonte-codigo);
+  font-size: var(--t-base);
+}
+
+.etapaTitulo {
+  margin: 0;
+  font-family: var(--fonte-ui);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.etapaEstado {
+  margin: 0;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.etapaDetalhe {
+  margin: 2px 0 0;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  line-height: 1.45;
+}
+
+.pronto {
+  border-left-color: var(--ok);
+}
+.pronto .etapaSimbolo,
+.pronto .etapaEstado {
+  color: var(--ok);
+}
+
+.andamento {
+  border-left-color: var(--acao);
+}
+.andamento .etapaSimbolo,
+.andamento .etapaEstado {
+  color: var(--acao);
+}
+
+.atencao {
+  border-left-color: var(--atencao-marca);
+}
+.atencao .etapaSimbolo,
+.atencao .etapaEstado {
+  color: var(--atencao);
+}
+
+.pendente {
+  border-left-color: var(--borda-forte);
+}
+.pendente .etapaSimbolo,
+.pendente .etapaEstado {
+  color: var(--tinta-3);
+}
+
+.indisponivel {
+  border-left-color: var(--critico);
+}
+.indisponivel .etapaSimbolo,
+.indisponivel .etapaEstado {
+  color: var(--critico);
+}
+
+/* --------------------------------------------------------------- conteúdo */
+
+.grade {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(380px, 1.2fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .grade {
+    grid-template-columns: 1fr;
+  }
+}
+
+.coluna {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+.explicacao {
+  margin: -4px 0 12px;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  max-width: 62ch;
+}
+
+.vazio {
+  margin: 6px 0 0;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+}
+
+/* ------------------------------------------------------- ficha do cliente */
+
+.ficha {
+  margin: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--borda);
+  border: 1px solid var(--borda);
+}
+
+.fichaLinha {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 12px;
+  background: var(--papel);
+  padding: 9px 12px;
+}
+
+.fichaLinha dt {
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+}
+
+.fichaLinha dd {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+
+/* ------------------------------------------------------------ listas */
+
+.lista {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 12px;
+}
+
+.item {
+  border: 1px solid var(--borda);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  background: var(--papel);
+}
+
+.itemTopo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.valor {
+  font-family: var(--fonte-codigo);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-sm);
+  color: var(--tinta);
+}
+
+.origem {
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+}
+
+.razao {
+  margin: 2px 0 0;
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+}
+
+.questoes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.processo {
+  font-family: var(--fonte-codigo);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------- precedentes */
+
+.pontos {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+
+.favoravel span {
+  color: var(--ok);
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.contrario span {
+  color: var(--atencao);
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.trecho {
+  margin: 6px 0 0;
+  padding: 8px 12px;
+  background: var(--papel-2);
+  border-left: 3px solid var(--borda-forte);
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+}
+
+/* ------------------------------------------------------------ indicador */
+
+.indicador {
+  border: 1px solid var(--borda);
+  background: var(--papel-2);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.indicadorTopo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.barras {
+  display: grid;
+  gap: 6px;
+}
+
+.barraLinha {
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--t-xs);
+  color: var(--tinta-2);
+}
+
+.barraTrilho {
+  display: block;
+  height: 8px;
+  background: var(--papel-3);
+  border: 1px solid var(--borda);
+}
+
+.barraTrilho i {
+  display: block;
+  height: 100%;
+  background: var(--acao);
+}
+
+.barraValor {
+  font-family: var(--fonte-codigo);
+  font-variant-numeric: tabular-nums;
+}
+
+.ressalva {
+  margin: 0;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------ minuta */
+
+/* O texto da peça como ele é lido: coluna estreita, entrelinha alta e serifa. É o único
+ * bloco da tela em que se lê parágrafo corrido, e não dado. */
+.minuta {
+  margin-top: 14px;
+  padding: 16px 18px;
+  background: var(--papel-2);
+  border: 1px solid var(--borda);
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.secaoTitulo {
+  margin: 18px 0 6px;
+  font-family: var(--fonte-ui);
+  font-size: var(--t-sm);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--tinta);
+}
+
+.secaoTitulo:first-child {
+  margin-top: 0;
+}
+
+.paragrafo {
+  margin: 0 0 8px;
+  font-family: var(--fonte-titulo);
+  font-size: var(--t-base);
+  line-height: 1.7;
+  text-align: justify;
+  color: var(--tinta-2);
+  max-width: 72ch;
+}
+
+/* Formulário de decisão da divergência. A justificativa é obrigatória porque daqui a seis
+ * meses ninguém lembra por que aquela versão do caso foi a escolhida. */
+.decisao {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--borda);
+}
+
+
+/* --------------------------------------------------------------- entrevista */
+
+/* A transcricao inteira, mostrada sob demanda. Rolagem propria: sao paginas de texto,
+ * e deixar a pagina crescer empurraria a linha do processo para fora da tela. */
+.transcricao {
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--papel-2);
+  border-left: 3px solid var(--borda-forte);
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* Pontos que a entrevista deixou em aberto. Lista simples, sem marcador de estado:
+ * nao sao pendencias do playbook, sao perguntas para o proximo atendimento. */
+.listaSimples {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+}
+
+.formulario {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--borda);
+}
+
+.campo {
+  display: grid;
+  gap: 4px;
+  font-size: var(--t-sm);
+  color: var(--tinta-2);
+}
+
+.campo input {
+  padding: 7px 10px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--papel);
+  color: var(--tinta);
+  font: inherit;
+}
+
+.campo input[type="file"] {
+  padding: 6px;
+}

@@ -223,6 +223,7 @@ compara a lista do código com o `.docx` item a item — nome, numeração e obr
 | `POST` | `/api/extrair` | multipart: `arquivo`, `idioma` (`pt`), `tipo` (`auto` ou código) |
 | `GET` | `/api/tipos` | tipos de documento suportados |
 | `POST` | `/api/contrato` | preenche o modelo oficial com a entrevista e devolve o .docx |
+| `POST` | `/api/agente/casos/{id}/contrato` | gera o contrato relendo nome, CPF e fatos atuais do caso |
 | `GET` | `/api/contrato/campos` | marcadores que o modelo pede, e quais a entrevista não responde |
 | `GET` | `/api/cep/{cep}` | endereço a partir do CEP (BrasilAPI, com ViaCEP de reserva) |
 | `GET` | `/api/chamada/config` | servidores ICE da chamada de voz (público) |
@@ -375,8 +376,9 @@ corretamente, então compensa. A primeira chamada do processo carrega os modelos
 - **O contrato é preenchido, não redigido.** As cláusulas, percentuais, foro e as
   inscrições na OAB saem do `docs/CONTRATO*.docx` palavra por palavra — nenhum
   modelo de linguagem escreve nada ali. Trocar de versão é soltar o arquivo novo
-  em `docs/`; o mais recente vence. Campo que a entrevista não respondeu sai
-  entre colchetes, à vista, em vez de em branco.
+  em `docs/`; o mais recente vence. Nome completo e CPF válido são obrigatórios:
+  sem qualquer um deles nenhum arquivo é criado. Outro campo que a entrevista
+  não respondeu sai entre colchetes, à vista, em vez de em branco.
 - **O modelo do contrato não está no repositório.** Este repo é público, e o
   arquivo traz a tabela de honorários, o CNPJ e as inscrições na OAB do
   escritório. Para gerar contratos, copie o `.docx` oficial para `docs/` — sem
