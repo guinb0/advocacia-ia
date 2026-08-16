@@ -74,6 +74,81 @@
   background: color-mix(in srgb, var(--ok) 5%, transparent);
 }
 
+/* A pergunta da vez, aqui embaixo no formulário. A barra do topo já a mostra
+ * grande; esta marca só diz ONDE ela caiu, para o campo certo ser achado sem
+ * precisar ler os oitenta enunciados. */
+.daVez {
+  box-shadow: inset 3px 0 0 var(--ink);
+  padding-left: 10px;
+}
+
+.marcaDaVez {
+  flex: none;
+  align-self: center;
+  font: 600 9px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  color: var(--surface);
+  background: var(--ink);
+  padding: 4px 6px;
+}
+
+/* Ouvida, esperando o clique. Âmbar e não vermelho: não é erro nem urgência —
+ * é uma pendência de conferência que não pode ser esquecida antes do contrato,
+ * porque nome e CPF em branco atravessam procuração e petição. */
+.marcaConferir {
+  flex: none;
+  align-self: center;
+  font: 600 9px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  padding: 3px 5px;
+}
+
+/* O valor ouvido, embaixo do campo ainda vazio. Em mono porque o que se lê aqui
+ * é nome próprio e CPF, caractere a caractere. */
+.ouvido {
+  display: block;
+  margin-top: 6px;
+  font: 400 11.5px/1.5 var(--font-ui);
+  color: var(--muted);
+}
+
+.ouvido strong {
+  font: 600 12.5px/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--warn);
+}
+
+/* Saiu da vez sem resposta. Continua pendente e a condução a devolve — a marca
+ * existe para ninguém achar que ela foi respondida. */
+.marcaPulada {
+  flex: none;
+  align-self: center;
+  font: 600 9px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  padding: 3px 5px;
+}
+
+/* Bloco entregue a outra equipe: fica visível, mas dizendo que não é para agora. */
+.delegado {
+  margin: 8px 0 0;
+  border-left: 3px solid var(--warn);
+  padding: 8px 11px;
+  background: var(--surface-2);
+  font: 400 12px/1.55 var(--font-ui);
+  max-width: 74ch;
+}
+
+.delegadoNota {
+  display: block;
+  margin-top: 5px;
+  font: italic 400 11.5px/1.5 var(--font-display);
+  color: var(--muted);
+}
+
 .enunciado {
   display: flex;
   gap: 10px;

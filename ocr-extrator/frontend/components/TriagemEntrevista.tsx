@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { analisarEstrategia, triarEntrevista } from "@/lib/api";
 import type { Estrategia, Triagem } from "@/lib/types";
 import AudioDaEntrevista from "./AudioDaEntrevista";
+import AvaliacaoGoogle from "./AvaliacaoGoogle";
 import { Aviso, Selo } from "./Basicos";
 import EntrevistaComChamada from "./EntrevistaComChamada";
 import RelatorioEntrevista from "./RelatorioEntrevista";
@@ -34,6 +35,10 @@ export default function TriagemEntrevista({
    * qualificação. Sem guardar o id aqui, o arquivo continuaria no disco e
    * ninguém teria como pedi-lo: o nome dele é um uuid. */
   const [audioEntrevista, setAudioEntrevista] = useState("");
+  /* A etapa do Google Meu Negócio, marcada pelo atendente. Fica AQUI e não na
+   * caixa dela: voltar ao roteiro desmonta a caixa, e a marcação sumiria junto
+   * — dando a etapa por pendente depois de ela ter sido cumprida. */
+  const [avaliacaoConcluida, setAvaliacaoConcluida] = useState(false);
   const [resultado, setResultado] = useState<Triagem | null>(null);
   const [escolhida, setEscolhida] = useState<string | null>(null);
   const [analisando, setAnalisando] = useState(false);
@@ -105,6 +110,16 @@ export default function TriagemEntrevista({
         * entrevista costuma querer conferir uma fala antes de seguir. */}
       {!mostrarRoteiro && audioEntrevista && (
         <AudioDaEntrevista entrevistaId={audioEntrevista} />
+      )}
+
+      {/* Logo após concluir, o entrevistador entrega ao cliente o convite para
+        * avaliar o escritório — antes de seguir para os documentos internos, e
+        * com o cliente AINDA na chamada, como o roteiro manda. */}
+      {qualificacao && !mostrarRoteiro && (
+        <AvaliacaoGoogle
+          concluida={avaliacaoConcluida}
+          onConcluir={setAvaliacaoConcluida}
+        />
       )}
 
       {/* O relatório analisado, logo depois da entrevista: é a entrega que a
@@ -269,8 +284,8 @@ export default function TriagemEntrevista({
                   <span>processos semelhantes</span>
                 </div>
                 <div>
-                  <strong>{estrategia.estatisticas.desfechos_favoraveis_amplos.percentual}%</strong>
-                  <span>procedente, parcial ou acordo na amostra</span>
+                  <strong>{estrategia.estatisticas.desfechos_merito.percentual}%</strong>
+                  <span>procedente ou parcial entre casos julgados no mérito</span>
                 </div>
               </div>
 
@@ -298,22 +313,36 @@ export default function TriagemEntrevista({
               <div className={estilos.colunasInsights}>
                 <div>
                   <h4>Próximas ações sugeridas</h4>
-                  <ul>{estrategia.acoes.map((item, i) => <li key={i}><strong>{item.acao}</strong><span>{item.porque} {item.precedentes.join(", ")}</span></li>)}</ul>
+                  <ul>{estrategia.acoes.map((item, i) => <li key={i}><strong>{item.acao} {item.forca && `· força ${item.forca}`}</strong><span>{item.porque} {item.aplicabilidade && ` Aplicável porque: ${item.aplicabilidade}`} {item.contrapontos && ` Contraponto: ${item.contrapontos}`} {item.precedentes.join(", ")}</span></li>)}</ul>
                 </div>
                 <div>
                   <h4>Riscos e pontos a confirmar</h4>
                   <ul>
-                    {estrategia.riscos.map((item, i) => <li key={`r-${i}`}>{item.risco} {item.precedentes.join(", ")}</li>)}
+                    {estrategia.riscos.map((item, i) => <li key={`r-${i}`}><strong>{item.risco} {item.forca && `· força ${item.forca}`}</strong><span>{item.aplicabilidade && `Aplicável porque: ${item.aplicabilidade}. `}{item.contrapontos && `Contraponto: ${item.contrapontos}. `}{item.precedentes.join(", ")}</span></li>)}
                     {estrategia.lacunas.map((item, i) => <li key={`l-${i}`}>{item}</li>)}
                   </ul>
                 </div>
               </div>
 
+              {!!estrategia.divergencias?.length && (
+                <div className={estilos.faixaDados}>
+                  <h4>Divergências entre os processos</h4>
+                  <p>{estrategia.divergencias.map((d) => `${d.ponto} (favoráveis: ${d.precedentes_favoraveis.join(", ") || "—"}; contrários: ${d.precedentes_contrarios.join(", ") || "—"})`).join(" · ")}</p>
+                </div>
+              )}
+
+              {!!estrategia.perguntas_criticas?.length && (
+                <div className={estilos.faixaDados}>
+                  <h4>Perguntas críticas para a entrevista</h4>
+                  <p>{estrategia.perguntas_criticas.join(" · ")}</p>
+                </div>
+              )}
+
               <details className={estilos.precedentes}>
                 <summary>Ver processos usados como referência</summary>
                 <ul>{estrategia.precedentes.map((p) => <li key={p.indice}><strong>{p.indice}</strong> {p.processo || "processo não informado"} · {p.resultado || "sem desfecho"}{p.vara ? ` · ${p.vara}` : ""}</li>)}</ul>
               </details>
-              <p className={estilos.notaEstatistica}>{estrategia.estatisticas.aviso}</p>
+              <p className={estilos.notaEstatistica}>{estrategia.estatisticas.aviso} Similaridade mediana: {estrategia.estatisticas.similaridade_amostra.mediana}.</p>
             </>
           )}
         </section>

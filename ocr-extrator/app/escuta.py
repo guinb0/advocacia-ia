@@ -298,6 +298,31 @@ def _normalizar(
     return preenchidas, sugestoes, lembretes[:4]
 
 
+def _abertas_pelo_rastreio(
+    roteiro: roteiros.Roteiro,
+    respostas: dict[str, Any],
+    preenchidas: list[dict[str, Any]],
+    ja_oferecidas: list[roteiros.Pergunta],
+) -> list[roteiros.Pergunta]:
+    """As perguntas que NASCERAM por causa deste trecho.
+
+    Só um rastreio respondido "sim" abre módulo (ver `roteiros.MAPA_RASTREIO`),
+    então nada disto roda numa volta comum — é a diferença entre uma chamada por
+    trecho e duas só quando a entrevista muda de forma.
+    """
+    positivos = [
+        p
+        for p in preenchidas
+        if p["pergunta_id"] in roteiros.MAPA_RASTREIO and p["valor"] == "sim"
+    ]
+    if not positivos:
+        return []
+
+    depois = {**respostas, **{p["pergunta_id"]: p["valor"] for p in preenchidas}}
+    conhecidas = {p.id for p in ja_oferecidas}
+    return [p for p in _perguntas_abertas(roteiro, depois) if p.id not in conhecidas]
+
+
 # -------------------------------------------------------------------- ação
 
 
@@ -349,6 +374,47 @@ def escutar(
     preenchidas, sugestoes, lembretes = _normalizar(
         _chamar_modelo("\n\n".join(partes)), abertas
     )
+
+    # O trecho que ABRE um módulo costuma trazer o módulo inteiro junto.
+    #
+    # "Fui assaltado, tenho o BO e a CAT, e fiquei afastado pelo INSS" é uma
+    # frase só, e o cliente a diz muito antes de alguém perguntar. Quando ela
+    # chega, as perguntas do módulo de assalto ainda NÃO EXISTEM — o rastreio é
+    # que as abre — e o modelo não tinha onde pôr o resto: media-se isso, e a
+    # mesma frase preenchia 1 campo antes e 3 depois.
+    #
+    # Então, quando um rastreio dá positivo, o mesmo trecho é lido de novo
+    # contra as perguntas que acabaram de nascer. É uma chamada a mais, e ela
+    # acontece no máximo uma vez por módulo — quatro por entrevista, no pior
+    # caso — em troca de não perder a história que o cliente já contou.
+    novas = _abertas_pelo_rastreio(roteiro, respostas, preenchidas, abertas)
+    if novas:
+        extras, sug_extras, lem_extras = _normalizar(
+            _chamar_modelo(
+                "\n\n".join(
+                    [
+                        "PERGUNTAS EM ABERTO:\n"
+                        + "\n".join(f"- {_descrever(p)}" for p in novas),
+                        f"TRECHO RECÉM-FALADO:\n{trecho}",
+                    ]
+                )
+            ),
+            novas,
+        )
+        preenchidas += extras
+        sugestoes += sug_extras
+        # O mesmo trecho lido duas vezes gera o mesmo lembrete duas vezes, e
+        # duas linhas idênticas num painel lido de relance, no meio de uma
+        # conversa, é pior que ruído: parece que são dois assuntos.
+        vistos = {l["pergunte"].casefold() for l in lembretes}
+        lembretes = (
+            lembretes
+            + [l for l in lem_extras if l["pergunte"].casefold() not in vistos]
+        )[:4]
+        faltando += [
+            {"pergunta_id": p.id, "pergunta": p.texto, "obrigatoria": p.obrigatoria}
+            for p in novas
+        ]
 
     # O que este trecho acabou de responder sai da lista de pendências na mesma
     # volta — senão o painel mostraria como faltando algo que já está na tela.

@@ -124,13 +124,17 @@ export default function VideoDaEntrevista({ onPendente }: Props) {
             >
               Gravar pela câmera
             </button>
+            {/* "do sistema", e não "da chamada": a captura é presa nesta aba
+                (ver `ESTA_ABA` em `lib/gravacaoVideo.ts`). O rótulo antigo
+                prometia escolher uma janela, e escolher era justamente o que
+                fazia a entrevista ser gravada como outra aba qualquer. */}
             <button
               type="button"
               className={estilos.botao}
               onClick={() => void iniciar("tela")}
-              title="Grava a janela da chamada, com a voz dos dois lados"
+              title="Grava esta aba — roteiro e rosto do cliente — com a voz dos dois lados"
             >
-              Gravar a tela da chamada
+              Gravar a tela do sistema
             </button>
           </>
         ) : (

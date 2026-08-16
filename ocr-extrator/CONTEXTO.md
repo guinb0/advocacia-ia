@@ -352,6 +352,26 @@ depois obriga a recriar as colunas e reindexar.**
   tremida na entrada. Falta amostra de foto ruim para calibrar o limiar.
 - **`ProgressoOcr` aceita `naFila`** mas ninguém passa: o `useSituacao` envia um
   documento por vez e não expõe fila.
+- **A GPU é uma RTX 4050 Laptop de 6 GB, e ela é disputada.** PaddleOCR (backend),
+  Whisper (transcrição) e o navegador dividem a mesma placa. Depois de aquecido,
+  um trecho de fala sai em ~1s; sob disputa, os primeiros custaram 25s, 30s e um
+  de **135s**. Se a transcrição voltar a demorar, medir isto ANTES de mexer no
+  código: `nvidia-smi --query-compute-apps=pid,process_name --format=csv`.
+- **O `next dev` vaza memória e morre.** Duas vezes em 15/08, com
+  `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out
+  of memory`. Não é a máquina: havia 16,5 GB livres. É o heap do V8, e o
+  crescimento **não depende de tráfego** — o segundo processo morreu tendo
+  servido dois `GET /`, subindo sozinho até o teto de 4 GB que já era o dobro do
+  padrão. O suspeito é o watcher do Turbopack (Next 16.2.12).
+
+  Aumentar `--max-old-space-size` só adia: de 2 GB para 4 GB ele demorou mais e
+  morreu igual. Para uma sessão que não pode cair — demonstração, teste com o
+  escritório —, servir o **build de produção** (`.\iniciar.ps1 -Prod`, ou
+  `npm run build` + `npm run start`), que fica em **~130 MB somados** e não tem
+  watcher nem HMR. O custo é perder o hot reload: mudou código, rebuild.
+
+  E **não rodar `npm run build` com o `next dev` no ar** — são dois processos
+  Node pesados na mesma máquina, e foi o que precipitou a primeira queda.
 
 ---
 
@@ -510,12 +530,12 @@ Os botões da pergunta narrativa deixaram de ser um só. Agora: **Gravar respost
 
 ## Relatório analisado da entrevista, com o símbolo do escritório — 14/08/2026
 
-`POST /api/entrevista/relatorio` agora sai **analisado** e com o **emblema de
-LARA & MELO** no cabeçalho. O botão "Gerar relatório analisado (.docx)" aparece
+`POST /api/entrevista/relatorio` agora sai **analisado**, em **PDF**, e com o **emblema de
+LARA & MELO** no cabeçalho. O botão "Gerar relatório analisado (PDF)" aparece
 quando a entrevista fecha (`RelatorioEntrevista.tsx`, na `TriagemEntrevista`).
 
 - **O emblema** é `app/marca.py`: um monograma e a razão social numa serifada
-  editorial (Georgia), gerados com PIL em alta resolução e embutidos no .docx
+  editorial (Georgia), gerados com PIL em alta resolução e embutidos no PDF
   como imagem. Não havia logotipo no repositório; quando houver, `RELATORIO_LOGO`
   aponta para o PNG/JPG real e o desenho é ignorado. O .docx é montado à mão
   (zip + XML, sem python-docx), então embutir imagem exigiu as peças do OOXML:
@@ -541,6 +561,66 @@ verdade e confere zip íntegro, XML bem-formado em todas as partes, o PNG do
 emblema ligado por relação, a análise com as citações `[P1, P3]`, a degradação
 sem análise e com base fora do ar, e que campo torto do modelo não quebra a
 geração. Não abre o Word (não há), mas valida tudo que ele exige para abrir.
+
+---
+
+## O Whisper agora AQUECE no boot — 16/08/2026
+
+`transcricao.aquecer_modelo`, chamado pelo `lifespan` do serviço de transcrição.
+
+O sintoma: entrevista começada, cliente falando, e o painel parado em *"ouvindo
+— nada reconhecido ainda"*. Não era o microfone (o painel distingue os dois
+casos, e teria dito "microfone sem som"). Era o tempo de inferência no log:
+
+    inferencia=30036ms   para 2,3s de fala
+    inferencia=25791ms   para 34,6s
+    inferencia=135022ms  para 1,5s
+    ...
+    inferencia=1149ms    daí em diante
+
+Carregar os pesos não é estar pronto. A primeira `transcribe` de verdade compila
+kernels CUDA e aloca caches do cuDNN, e o `lifespan` só chamava
+`carregar_modelo()` — pagava a carga (5,6s) e deixava a inferência fria para o
+primeiro cliente. Agora ele roda **uma inferência de mentira** no boot: 6,5s
+nesta máquina, pagos antes de alguém falar.
+
+Dois detalhes que parecem irrelevantes e decidem se o aquecimento funciona:
+
+- **ruído baixo, não silêncio, e `vad_filter=False`.** Com o VAD ligado o
+  silêncio é cortado inteiro, nada chega ao decodificador, e metade dos kernels
+  continua fria — justamente a metade cara.
+- **`transcribe` devolve um gerador preguiçoso.** Sem `list(segmentos)` nada roda
+  e o aquecimento seria uma linha de log mentindo.
+
+Falha no aquecimento não derruba nada: loga e segue, porque é otimização — o
+caminho normal carrega o modelo de novo.
+
+---
+
+## O trecho que abre um módulo é lido duas vezes — 16/08/2026
+
+`escuta._abertas_pelo_rastreio`. O escritório notou que o sistema "parou de
+preencher as perguntas mais à frente". Medido contra a escuta real, com a MESMA
+frase — *"Fui assaltado sim. Tenho o boletim de ocorrência e a CAT, e fiquei
+afastado pelo INSS"*:
+
+| estado do roteiro | o que preenchia |
+|---|---|
+| rastreio ainda não respondido | só `r_assalto` |
+| `r_assalto` já positivo | `as_ocorrencias`, `as_cat`, `as_inss` |
+
+As perguntas do módulo **não existem** até o rastreio abri-lo, e o cliente conta
+a história inteira antes de alguém perguntar. O módulo nascia no mesmo instante
+em que o resto da frase era descartado, por não ter onde cair.
+
+Agora, quando um rastreio dá positivo, o mesmo trecho é lido de novo contra as
+perguntas recém-nascidas. É uma chamada a mais ao modelo, no máximo uma por
+módulo — quatro por entrevista no pior caso — e a mesma frase passou a preencher
+os quatro campos de uma vez.
+
+Detalhe que o teste pegou: ler o mesmo trecho duas vezes gera o **mesmo lembrete
+duas vezes**, e duas linhas idênticas num painel lido de relance parecem dois
+assuntos. Os lembretes são deduplicados por texto na junção.
 
 ---
 
@@ -636,11 +716,41 @@ Isso muda o que a TELA precisa fazer, e é aí que está o trabalho:
 **Duas fontes, porque são duas entrevistas diferentes.** `câmera` é a
 presencial: câmera e microfone desta máquina, com `getUserMedia` próprio — o
 microfone da transcrição é da `CapturaEntrevista`, e pará-lo aqui emudeceria a
-entrevista inteira. `tela` é a por chamada: a janela do Jitsi por
-`getDisplayMedia`, com o microfone daqui **misturado** num grafo de áudio,
-senão a gravação teria a voz do cliente e nenhuma das perguntas — o
-`MediaRecorder` grava uma faixa de áudio só, e a segunda seria descartada em
-silêncio.
+entrevista inteira. `tela` é a por chamada: **esta aba** por `getDisplayMedia`,
+com o microfone daqui **misturado** num grafo de áudio, senão a gravação teria a
+voz do cliente e nenhuma das perguntas — o `MediaRecorder` grava uma faixa de
+áudio só, e a segunda seria descartada em silêncio.
+
+### A tela gravada é a do sistema, e só ela — 15/08/2026
+
+O escritório reclamou de a gravação sair como "as abas do Chrome". Era o seletor
+padrão do `getDisplayMedia`: ele oferecia guia, janela e tela inteira, e a
+entrevista podia acabar gravada como o e-mail de outro cliente ou a área de
+trabalho da máquina — o que num vídeo que vai por WhatsApp é vazamento de dado
+de terceiro, não arquivo errado.
+
+Duas travas, porque a primeira é preferência e a segunda é regra:
+
+1. `ESTA_ABA` em `gravacaoVideo.ts` — `preferCurrentTab` prende a captura nesta
+   aba, `selfBrowserSurface: include` faz o Chrome parar de esconder a própria
+   aba da lista (o padrão dele é escondê-la) e `surfaceSwitching: exclude` tira o
+   botão de trocar de guia no meio da gravação. O Chrome ainda pede "compartilhar
+   esta guia?", e não há como evitar — dá para reduzir a um sim ou não, sem
+   escolha errada possível.
+2. **Conferência do que veio.** `preferCurrentTab` é do Chrome; Firefox e Safari
+   o ignoram e entregam o que a pessoa escolher. Se `displaySurface` voltar
+   diferente de `browser`, as trilhas são fechadas e a gravação não começa. Só
+   recusa quando o navegador DIZ o que entregou — `displaySurface` é opcional, e
+   tratar "não informou" como "é a tela inteira" tiraria a gravação de quem usa
+   um navegador mais calado.
+
+Conferido num Chrome de verdade, nos dois caminhos: com a aba atual a gravação
+sai e a superfície volta como `browser`; forçando "Entire screen" pelo
+`--auto-select-desktop-capture-source`, a trava recusa e o estado fica `parado`.
+Fica o registro de uma armadilha: `--use-fake-ui-for-media-stream` (a flag que o
+`tests/test_video.py` usa para a câmera) **atropela o seletor e devolve a tela
+inteira**, ignorando o `preferCurrentTab`. Um teste de captura de aba precisa
+subir o Chrome sem ela, com `--auto-accept-this-tab-capture`.
 
 **MP4 quando dá, WebM quando não dá**, e a extensão do arquivo segue o que foi
 realmente gravado: um `.mp4` que por dentro é WebM não abre no player de quem
@@ -660,6 +770,149 @@ para versão. Ele compila o módulo com o `tsc` do projeto, serve a página em
 faixa de vídeo e de áudio, que o player abre o arquivo, que ele vive em `blob:`
 e que `descartar` revoga o blob. Sem Chrome instalado, o teste se diz PULADO em
 vez de falhar.
+
+---
+
+## Condução da entrevista pelo roteiro — 15/08/2026
+
+`frontend/components/Conducao.tsx`. O escritório fechou a regra numa frase: "não
+é o que o cliente quer ou nós entendemos — tem que ser o que o advogado
+determina". A tela tinha escuta e painel, mas ninguém dizia qual era a **próxima
+pergunta**: o entrevistador escolhia entre 86 enunciados enquanto o cliente
+falava, e a conversa ia para o filho, a vizinha e a cirurgia que não é a do
+processo.
+
+Agora há uma barra grudada no alto da coluna do roteiro com **uma** pergunta: a
+primeira ainda em aberto, na ordem do documento. É a única coisa ali — o painel
+do lado continua listando o que falta e o que já entrou, mas isso é para
+conferir, não para escolher.
+
+**Os dez segundos.** Passado esse tempo sem a pergunta ATUAL respondida, a barra
+fica vermelha e abre uma faixa de **PARE** de ponta a ponta: *DIRECIONE A
+PERGUNTA — NÃO PERCA TEMPO*. É placa, não texto — o entrevistador está olhando o
+cliente, e o que ele capta pelo canto do olho tem de ser "corta e volta ao
+roteiro". Não pisca: movimento na periferia da visão sequestra a atenção de quem
+deveria estar ouvindo, e quem apaga o alarme é a resposta, não o entrevistador
+olhar para a tela. O relógio zera quando a pergunta muda, e ela só muda quando
+foi respondida ou deixada para depois.
+
+O cliente falar de outro assunto **não** zera o relógio, e isso é a regra, não um
+descuido — foi a pergunta que o escritório respondeu explicitamente: *"não importa
+o que ele esteja respondendo, o que importa é a sequência de perguntas"*. O que
+ele contar fora de ordem a escuta aproveita de qualquer jeito (`app/escuta.py`),
+e a pergunta correspondente some da sequência sozinha: é assim que uma entrevista
+de 86 perguntas fecha em poucos minutos sem ninguém perder o fio.
+
+**A frase do corte, escrita.** Só apontar o tempo não resolve: cortar um cliente
+que está desabafando é constrangedor, e por isso ninguém corta — a entrevista de
+20 minutos vira uma de 50 e as perguntas do fim ficam sem resposta. Junto da
+placa de PARE a tela mostra, em três peças e na ordem em que se fala:
+
+    LEIA AO CLIENTE   a retomada, que acaba em dois-pontos
+    (o enunciado)     em corpo grande, logo abaixo — a frase emenda nele
+    o fecho           "Aqui basta o(a) senhor(a) me dizer sim ou não."
+
+As retomadas estão em `roteiros.RETOMADAS`, junto da saudação e do encerramento,
+porque são palavra do escritório e é lá que ele mexe. **Elas não foram
+inventadas**: apoiam-se no que a saudação já prometeu ao cliente e ele aceitou —
+"farei algumas perguntas bastante específicas", "essenciais para que nenhuma
+informação relevante deixe de ser considerada", "costuma durar entre 20 e 30
+minutos". Cortar lembrando o combinado não é grosseria; é o combinado.
+
+**A ordem da lista é de firmeza**, e a tela sobe um degrau a cada vez que o
+cliente segue sem responder (10s, 25s, 45s, 70s — `DEGRAUS_S` no `Conducao.tsx`).
+É como um entrevistador experiente faz: não se sobe o tom de uma vez, e não se
+repete a mesma frase gentil enquanto a entrevista escorre. O `FECHOS_POR_TIPO`
+diz o TAMANHO da resposta esperada, e `relato` fica de fora de propósito — ali a
+resposta longa é o objetivo.
+
+O `tests/test_roteiros.py` trava as duas invariantes que uma reescrita
+bem-intencionada quebraria em silêncio: toda retomada termina em dois-pontos (sem
+isso a leitura em voz alta quebra no meio, com o cliente na linha) e todo fecho é
+de um tipo que o roteiro realmente usa.
+
+**A conferência de nome e CPF virou etapa do FIM.** Nome e CPF nunca entram
+sozinhos: a escuta os manda como sugestão e quem confirma é quem está ouvindo
+(`escuta.DADOS_PERMITIDOS` — número ditado a transcrição erra e ninguém confere
+dígito de ouvido). Isso não mudou. O que mudou foi **quando** se confere.
+
+A caixa "confirme o que eu ouvi" ficava no painel lateral, pedindo o clique no
+meio da conversa. Somada à condução, ela travava duas vezes por entrevista: como
+a barra aponta para "a primeira não respondida" e sugestão não é resposta, o
+roteiro parava nas duas primeiras perguntas até alguém achar o clique — com a
+placa de PARE mandando insistir numa pergunta que o cliente já tinha respondido.
+O escritório foi direto: *"a conferência desses campos só no final, para não
+travar o processo"*.
+
+Então:
+
+- a condução **pula** o que está esperando confirmação — "esperando clique" é
+  outra coisa que "o cliente não respondeu"; ele já falou o nome dele;
+- o painel lateral perdeu a caixa e os botões, e ficou só com a contagem
+  ("2 respostas ouvidas ficam para conferir no fim") — botão ali é convite a
+  parar a entrevista, que é o que se quis tirar;
+- a conferência inteira acontece na `Conducao`, no estado de **roteiro
+  percorrido**: valor em mono e corpo grande (proporcional embaralha 1, l e I
+  num CPF), a citação do que foi dito, e dois botões. **Descartar devolve a
+  pergunta à condução** — descartar significa perguntar de novo;
+- **Concluir entrevista** pergunta antes, se sobrou algo por conferir. Sem isso,
+  sair da tela descartaria em silêncio os dois campos que identificam o cliente,
+  e o contrato nasceria em branco neles.
+
+**A condução não atropela quem está respondendo.** O primeiro trecho que a
+escuta devolve já preenche o campo, e campo cheio fazia a barra pular para a
+pergunta seguinte **no meio da frase do cliente** — o entrevistador lia a
+próxima e cortava o raciocínio dele. Conduzir não é atropelar.
+
+Agora a barra SEGURA a pergunta enquanto trechos continuarem caindo nela
+(`SEGUNDOS_ANTES_DE_ANDAR`, 8s desde o último), e o relógio de 10s fica suspenso
+nesse tempo — o cabeçalho troca o cronômetro por *"respondendo — deixe
+terminar"*. Cair trecho em OUTRA pergunta não segura nada: resposta adiantada é
+o que encurta a entrevista, e falar de outro assunto não pausa a cobrança, que é
+a regra do escritório.
+
+Decisões que vão junto:
+
+- **"Deixar para depois" existe porque a cobrança não pode ser inescapável.** Uma
+  pergunta que o cliente não sabe responder travaria a sequência com o alarme
+  tocando sem saída. A pulada sai da vez, continua pendente no painel e volta ao
+  fim do roteiro — não é resposta, e a tela não a conta como uma.
+- **O bloco delegado saiu da sequência.** A qualificação é do Departamento de
+  Documentação, depois do encerramento (`roteiros.IDENTIFICACAO`). Ela segue na
+  tela, agora com o aviso de que não se percorre agora — antes nada dizia isso, e
+  quem não conhecia o roteiro datilografava catorze campos de cadastro com o
+  cliente esperando. O contador `feitas/total` passou a contar só o que a
+  entrevista percorre.
+- **A seção "pergunte agora" do painel virou "aprofundar depois desta".** Ela é o
+  que o modelo sugeriu aprofundar, e com aquele nome disputava com o roteiro a
+  pergunta seguinte. Quem manda na próxima pergunta é a barra.
+
+### Google Meu Negócio é etapa, não sugestão — 15/08/2026
+
+`components/AvaliacaoGoogle.tsx`, entre o fim da entrevista e o contrato. O
+roteiro não manda avaliar depois: manda avaliar **agora**, com o atendente na
+linha — está no `FECHAMENTO`, palavra por palavra ("peço apenas que realize a
+avaliação agora. Eu permanecerei na videoconferência aguardando para confirmar
+que deu tudo certo"). A tela passou a dizer isso: desligar a chamada antes é
+perder a avaliação, e não há segunda chance depois que o cliente sai.
+
+E ganhou a **marcação do atendente**, que é o que faltava para a etapa existir.
+O rótulo afirma o que aconteceu — "o cliente concluiu a avaliação e eu confirmei
+com ele na chamada" — e não um "concluído" genérico que cada atendente
+interpretaria do seu jeito; mandar o link não é avaliação feita. O selo ao lado
+do título fica em **pendente** até a marca.
+
+A marcação mora na `TriagemEntrevista`, não na caixa: "Voltar ao roteiro"
+desmonta a caixa, e a marca sumiria junto — dando por pendente uma etapa
+cumprida.
+
+Falta: **a marca não é persistida**. Ela vive na tela do atendimento; recarregar
+a página zera. Para virar registro de verdade precisa de coluna no caso e de uma
+rota — e aí também entra no relatório da entrevista, que hoje não sabe dela.
+
+Falta: a barra não fala com o backend. Se um dia a condução precisar valer entre
+abas ou entrar no relatório da entrevista ("quanto tempo em cada pergunta", "onde
+o entrevistador se perdeu"), o relógio tem de subir junto com a transcrição.
 
 ---
 

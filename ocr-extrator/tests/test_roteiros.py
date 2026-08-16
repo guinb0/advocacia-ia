@@ -166,6 +166,34 @@ def main_teste() -> int:
         "nome e CPF não ficaram duplicados nos dois blocos",
     )
 
+    # --- as retomadas ------------------------------------------------------
+    # Elas são LIDAS emendando no enunciado da pergunta, que a tela mostra logo
+    # abaixo. Uma frase que não termine em dois-pontos quebra a leitura em voz
+    # alta com o cliente na linha — e nada no código acusaria isso.
+    retomadas = corpo["retomadas"]
+    falhas += not checar(
+        len(retomadas) >= 2,
+        f"o roteiro traz frases de retomada ({len(retomadas)})",
+    )
+    sem_emenda = [r for r in retomadas if not r.rstrip().endswith(":")]
+    falhas += not checar(
+        not sem_emenda,
+        f"toda retomada emenda no enunciado, terminando em dois-pontos ({len(sem_emenda)} fora)",
+    )
+
+    # Fecho para tipo que não existe é frase que nunca aparece; e `relato` fica
+    # de fora de propósito — ali o que se quer é que o cliente conte.
+    fechos = corpo["fechos_por_tipo"]
+    tipos_no_roteiro = {p["tipo"] for b in corpo["blocos"] for p in b["perguntas"]}
+    falhas += not checar(
+        set(fechos) <= tipos_no_roteiro,
+        f"todo fecho é de um tipo que o roteiro usa (sobrando: {set(fechos) - tipos_no_roteiro})",
+    )
+    falhas += not checar(
+        "relato" not in fechos,
+        "relato não tem fecho — ali a resposta longa é o objetivo",
+    )
+
     # --- ids únicos --------------------------------------------------------
     # Mover pergunta entre blocos é onde se duplica id sem perceber, e id
     # duplicado faz uma resposta sobrescrever a outra em silêncio.

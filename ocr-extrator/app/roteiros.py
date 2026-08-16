@@ -107,6 +107,11 @@ class Roteiro:
     saudacao: list[str] = field(default_factory=list)
     #: Os de encerramento, depois da última.
     encerramento: list[str] = field(default_factory=list)
+    #: O que LER quando o cliente sai do assunto, da mais gentil à mais firme.
+    #: Ver `RETOMADAS`.
+    retomadas: list[str] = field(default_factory=list)
+    #: Complemento da retomada conforme o tipo da resposta. Ver `FECHOS_POR_TIPO`.
+    fechos_por_tipo: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +120,8 @@ class Roteiro:
             "descricao": self.descricao,
             "saudacao": self.saudacao,
             "encerramento": self.encerramento,
+            "retomadas": self.retomadas,
+            "fechos_por_tipo": self.fechos_por_tipo,
             "blocos": [b.to_dict() for b in self.blocos],
         }
 
@@ -606,6 +613,57 @@ FECHAMENTO = [
 ]
 
 
+# ------------------------------------------------------------- retomadas
+#
+# O que a atendente LÊ quando o cliente sai do assunto — e sai, sempre: fala do
+# filho, da vizinha, da cirurgia que não é a do processo. Sem uma frase pronta na
+# tela, cortar um cliente que está desabafando é constrangedor, e o resultado é
+# que ninguém corta: a entrevista de 20 minutos vira uma de 50 e as perguntas do
+# fim ficam sem resposta.
+#
+# O texto não foi inventado aqui. Ele se apoia no que a saudação JÁ prometeu ao
+# cliente, palavra por palavra:
+#
+#   "durante nossa conversa, farei algumas perguntas bastante específicas"
+#   "Elas são essenciais para que nenhuma informação relevante deixe de ser
+#    considerada pela equipe jurídica"
+#   "costuma durar entre 20 e 30 minutos"
+#
+# Cortar lembrando o que foi combinado no início não é grosseria — é o combinado.
+# Por isso cada retomada devolve o cliente ao que ele mesmo ouviu e aceitou.
+#
+# A ORDEM É DE FIRMEZA, e é assim que a tela as usa: a primeira aos dez
+# segundos, e a seguinte a cada vez que ele continua sem responder. É como um
+# entrevistador experiente faz — não se sobe o tom de uma vez, e não se fica
+# repetindo a mesma frase gentil enquanto a entrevista escorre.
+#
+# Todas terminam em dois-pontos: quem lê emenda com a pergunta, que está logo
+# abaixo na barra de condução, em corpo grande.
+RETOMADAS = [
+    "Sr.(a), me perdoe interromper. Como eu comentei no início, farei algumas "
+    "perguntas bastante específicas — e ainda preciso desta:",
+    "Esse ponto eu anotei, pode ficar tranquilo(a). Mas preciso fechar esta "
+    "pergunta antes de seguir, senão a equipe jurídica fica sem ela:",
+    "Sr.(a), nossa conversa costuma durar de 20 a 30 minutos e ainda temos "
+    "algumas perguntas pela frente. Vou pedir que me responda especificamente esta:",
+    "Vamos guardar esse assunto para o final do atendimento — está anotado aqui "
+    "comigo. Agora eu preciso da resposta desta pergunta para poder seguir:",
+]
+
+#: Fecho da retomada conforme o que a pergunta espera. Dito depois do enunciado,
+#: encurta a resposta de quem se perde porque não sabe o tamanho do que foi
+#: perguntado — o cliente que ouve "basta sim ou não" responde em dois segundos.
+#: Sem entrada para `relato`: ali o que se quer é justamente que ele conte.
+FECHOS_POR_TIPO = {
+    "sim_nao": "Aqui basta o(a) senhor(a) me dizer sim ou não.",
+    "escolha": "Posso ler as opções, se ajudar — é só escolher uma.",
+    "lista": "Posso ler as opções, se ajudar — é só escolher uma.",
+    "documentos": "Só preciso saber quais desses o(a) senhor(a) tem em mãos.",
+    "dado": "É só esse dado mesmo, bem rapidinho.",
+    "data": "Se não lembrar a data exata, o mês e o ano já me ajudam.",
+}
+
+
 EMPREGADO_PUBLICO = Roteiro(
     codigo="empregado_publico",
     nome="Empregado Público (Correios)",
@@ -615,6 +673,8 @@ EMPREGADO_PUBLICO = Roteiro(
     ),
     saudacao=SAUDACAO,
     encerramento=FECHAMENTO,
+    retomadas=RETOMADAS,
+    fechos_por_tipo=FECHOS_POR_TIPO,
     # A ordem é a do documento, e ela mudou: a qualificação deixou de abrir a
     # entrevista. O roteiro reserva um DEPARTAMENTO DE DOCUMENTAÇÃO para colhê-la
     # depois, com atendente e script próprios — o que a entrevista precisa saber

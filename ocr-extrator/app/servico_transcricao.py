@@ -49,11 +49,17 @@ ORIGENS = [
 
 @asynccontextmanager
 async def ciclo_de_vida(_: FastAPI):
-    """Carrega o Whisper no boot: são ~85s que ninguém quer pagar na 1ª pergunta."""
+    """Carrega e AQUECE o Whisper no boot.
+
+    Eram ~85s de carga que ninguém queria pagar na 1ª pergunta — e faltava a
+    outra metade: com os pesos já na GPU, a primeira inferência de verdade
+    ainda custava 30s (kernels CUDA e caches do cuDNN). Ver
+    `transcricao.aquecer_modelo`.
+    """
 
     def aquecer():
         try:
-            transcricao.carregar_modelo()
+            transcricao.aquecer_modelo()
             log.info("Whisper pronto.")
         except Exception:
             log.exception("Falha ao carregar o Whisper")
@@ -166,6 +172,15 @@ async def _enviar_parcial(ws: WebSocket, sessao: transcricao.AnswerSession) -> N
             # que ele — e só ele — pode alimentar o preenchimento do roteiro.
             trecho = sessao.trecho_confirmado()
             if trecho:
+                # A linha que faltava para fechar o diagnóstico.
+                #
+                # O log do parcial já dizia quantos segmentos saíram, mas não se
+                # algum chegou a CONGELAR — e é o congelado, só ele, que vira
+                # `trecho` e alimenta a escuta que preenche o roteiro. Sem isto,
+                # "não preenche nada" tinha duas causas indistinguíveis: o
+                # Whisper não reconhecendo, ou a cauda nunca fechando por falta
+                # de pausa (ver `_congelar` e MARGEM_CAUDA_S).
+                log.info("trecho confirmado (%d car.) -> escuta: %.60s", len(trecho), trecho)
                 await ws.send_json(
                     {"type": "trecho", "sessionId": sessao.sessao_id, "text": trecho}
                 )

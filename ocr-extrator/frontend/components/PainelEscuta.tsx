@@ -11,13 +11,25 @@ import estilos from "./PainelEscuta.module.css";
  * escritório pediu: "o entrevistador deve ver em tempo real tudo que foi
  * preenchido e tudo que necessita ser perguntado".
  *
- * A ordem das quatro seções não é arbitrária — é a ordem em que o entrevistador
+ * A ordem das três seções não é arbitrária — é a ordem em que o entrevistador
  * precisa delas enquanto o cliente fala:
  *
- *   1. PERGUNTE      o que dizer agora. Fica no topo porque é acionável.
- *   2. CONFIRME      nome e CPF ouvidos, esperando um clique.
- *   3. FALTA         o que o roteiro ainda pede.
- *   4. JÁ ENTROU     o que a conversa preencheu, para conferir de relance.
+ *   1. APROFUNDAR    o que ficou pela metade e volta DEPOIS da pergunta da vez.
+ *   2. FALTA         o que o roteiro ainda pede.
+ *   3. JÁ ENTROU     o que a conversa preencheu, para conferir de relance.
+ *
+ * A primeira seção já se chamou "pergunte agora", e o nome era o problema: ela
+ * é o que o MODELO sugeriu aprofundar, e disputava com a sequência do roteiro a
+ * pergunta seguinte. Quem manda na próxima pergunta é a barra de condução, no
+ * alto da tela (`Conducao.tsx`); estas são para encaixar depois.
+ *
+ * AQUI HAVIA UMA QUARTA: "confirme o que eu ouvi", com nome e CPF esperando um
+ * clique. Ela saiu por decisão do escritório, e a razão é a mesma que motivou a
+ * condução: parar a entrevista para conferir a grafia de um nome trava o
+ * processo com o cliente na linha. A conferência não sumiu — foi inteira para o
+ * fim do roteiro, na `Conducao`, quando ninguém está mais esperando a próxima
+ * pergunta. O que resta aqui é a contagem, sem botão, para o entrevistador
+ * saber que a escuta ouviu sem ser convidado a parar por causa disso.
  *
  * "Já entrou" fica por último de propósito: é a seção que dá confiança, não a
  * que exige ação. No começo da entrevista ela está vazia e ninguém sente falta;
@@ -25,7 +37,8 @@ import estilos from "./PainelEscuta.module.css";
 
 interface Props {
   preenchidas: CampoOuvido[];
-  sugestoes: CampoOuvido[];
+  /** Quantas esperam conferência no fim. Só o número: conferir é lá. */
+  aConferir: number;
   lembretes: Lembrete[];
   faltando: PerguntaPendente[];
   /** Uma chamada à escuta está em curso — o modelo interpretando um trecho. */
@@ -38,9 +51,6 @@ interface Props {
   /** `Date.now()` da última vez que o microfone captou SOM (não fala). */
   ultimoSom: number | null;
   erro: string | null;
-  /** Aceitar uma sugestão de nome/CPF. */
-  onAceitar: (perguntaId: string, valor: string) => void;
-  onDescartar: (perguntaId: string) => void;
   /** Levar o roteiro até a pergunta — o painel é índice, não só relatório. */
   onIrPara: (perguntaId: string) => void;
 }
@@ -128,7 +138,7 @@ function situacao(
 
 export default function PainelEscuta({
   preenchidas,
-  sugestoes,
+  aConferir,
   lembretes,
   faltando,
   interpretando,
@@ -137,8 +147,6 @@ export default function PainelEscuta({
   ultimaFala,
   ultimoSom,
   erro,
-  onAceitar,
-  onDescartar,
   onIrPara,
 }: Props) {
   const obrigatoriasFaltando = faltando.filter((f) => f.obrigatoria);
@@ -179,10 +187,10 @@ export default function PainelEscuta({
 
       {erro && <p className={estilos.erro}>{erro}</p>}
 
-      {/* 1. O que dizer agora. */}
+      {/* 1. O que aprofundar — depois da pergunta da vez, nunca no lugar dela. */}
       {lembretes.length > 0 && (
         <section className={estilos.secao}>
-          <span className={estilos.tituloSecao}>pergunte agora</span>
+          <span className={estilos.tituloSecao}>aprofundar depois desta</span>
           <ul className={estilos.perguntas}>
             {lembretes.map((l) => (
               <li key={l.pergunte}>
@@ -201,37 +209,16 @@ export default function PainelEscuta({
         </section>
       )}
 
-      {/* 2. O que precisa de confirmação humana antes de virar dado. */}
-      {sugestoes.length > 0 && (
-        <section className={estilos.secao}>
-          <span className={estilos.tituloSecao}>confirme o que eu ouvi</span>
-          {sugestoes.map((s) => (
-            <div key={s.pergunta_id} className={estilos.sugestao}>
-              <span className={estilos.campoNome}>{s.pergunta}</span>
-              <strong className={estilos.valorOuvido}>{s.valor}</strong>
-              {s.trecho && <em className={estilos.citacao}>“{s.trecho}”</em>}
-              <div className={estilos.acoes}>
-                <button
-                  type="button"
-                  className={estilos.aceitar}
-                  onClick={() => onAceitar(s.pergunta_id, s.valor)}
-                >
-                  Está certo
-                </button>
-                <button
-                  type="button"
-                  className={estilos.descartar}
-                  onClick={() => onDescartar(s.pergunta_id)}
-                >
-                  Descartar
-                </button>
-              </div>
-            </div>
-          ))}
-        </section>
+      {/* A contagem, sem botão. Um botão aqui é um convite a parar a entrevista
+        * no meio — que é exatamente o que o escritório mandou tirar. */}
+      {aConferir > 0 && (
+        <p className={estilos.aConferir}>
+          {aConferir} {aConferir === 1 ? "resposta ouvida fica" : "respostas ouvidas ficam"} para
+          conferir no fim do roteiro.
+        </p>
       )}
 
-      {/* 3. O que o roteiro ainda pede. */}
+      {/* 2. O que o roteiro ainda pede. */}
       <section className={estilos.secao}>
         <span className={estilos.tituloSecao}>
           falta perguntar ({faltando.length})
@@ -263,7 +250,7 @@ export default function PainelEscuta({
         )}
       </section>
 
-      {/* 4. O que já entrou, para conferir sem sair da conversa. */}
+      {/* 3. O que já entrou, para conferir sem sair da conversa. */}
       {preenchidas.length > 0 && (
         <section className={estilos.secao}>
           <span className={estilos.tituloSecao}>já entrou ({preenchidas.length})</span>

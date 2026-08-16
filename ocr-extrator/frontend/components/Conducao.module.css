@@ -1,0 +1,285 @@
+/* A barra de condução — a pergunta da vez, no alto da tela.
+ *
+ * Ela gruda no topo porque a entrevista rola: sem isso, o entrevistador que
+ * desceu até um relato longo perde de vista o que deveria estar perguntando, e
+ * é exatamente aí que a conversa escapa do roteiro. */
+
+.barra {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 16px 0 4px;
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--ink);
+  background: var(--surface);
+  padding: 12px 16px;
+}
+
+/* Dez segundos sem resposta. Vermelho na borda inteira, não num cantinho: quem
+ * conduz está olhando o cliente, e o aviso precisa ser visto pela periferia da
+ * visão. Sem piscar — piscar rouba a atenção de quem deveria estar ouvindo. */
+.cobrando {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+
+/* ------------------------------------------------------------- a placa -- */
+
+/* A faixa de PARE, colada nas bordas da barra.
+ *
+ * Os -12px/-16px cancelam o `padding` da barra: a faixa precisa ir de ponta a
+ * ponta, senão vira mais um aviso emoldurado igual aos outros — e o que se lê
+ * pelo canto do olho é a mancha vermelha, não o texto dentro dela. */
+.pare {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: -12px -16px 12px;
+  background: var(--accent);
+  padding: 11px 16px;
+  color: #fff;
+}
+
+/* Uma placa, não uma palavra: contorno branco e caixa alta, que é como se lê
+ * "pare" a três metros de distância. */
+.pareRotulo {
+  flex: none;
+  border: 2px solid #fff;
+  padding: 6px 11px;
+  font: 700 20px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+}
+
+.pareTexto {
+  font: 700 13px/1.3 var(--font-ui);
+  letter-spacing: 0.05em;
+}
+
+/* A explicação, em peso normal: ela é para quem já parou. O branco cai para 90%
+ * porque cheio demais ela competiria com a ordem em cima. */
+.pareTexto em {
+  display: block;
+  margin-top: 5px;
+  max-width: 62ch;
+  font: 400 12px/1.5 var(--font-ui);
+  font-style: normal;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+@media (max-width: 720px) {
+  .pare {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+}
+
+.topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rotulo {
+  font: 600 10px/1.4 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.bloco {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.relogio,
+.relogioEstourado {
+  flex: none;
+  font: 500 11px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.relogio {
+  color: var(--muted);
+}
+
+.relogioEstourado {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* O cliente está falando desta pergunta. Verde e sem número: aqui não há nada a
+ * cronometrar, e o único recado é "não corte". */
+.respondendo {
+  flex: none;
+  font: 600 10.5px/1 var(--font-ui);
+  color: var(--ok);
+}
+
+/* ---------------------------------------------------------- retomada -- */
+
+/* A frase do corte. Tipografia editorial, como a saudação e o encerramento:
+ * é texto FALADO, e o que se lê em voz alta se lê melhor em serifada. */
+.retomada {
+  margin: 10px 0 0;
+  border-left: 3px solid var(--accent);
+  padding: 8px 12px;
+  background: var(--surface-2);
+  max-width: 68ch;
+  font: 400 14px/1.6 var(--font-display);
+  color: var(--ink);
+}
+
+.leia {
+  display: block;
+  margin-bottom: 4px;
+  font: 600 9px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+
+/* O fecho, dito depois do enunciado. Menor que a retomada porque é uma frase
+ * curta, e recuado para casar com a pergunta que vem acima dele. */
+.fecho {
+  margin: 6px 0 0;
+  max-width: 62ch;
+  font: 400 13px/1.55 var(--font-display);
+  color: var(--text);
+}
+
+/* O enunciado é maior que o resto da tela de propósito: é a única linha aqui
+ * que se lê em voz alta, e quem lê está com o cliente na frente. */
+.pergunta {
+  margin: 8px 0 0;
+  max-width: 62ch;
+  font: 500 19px/1.35 var(--font-display);
+  color: var(--ink);
+}
+
+.dica {
+  margin: 6px 0 0;
+  max-width: 62ch;
+  font: italic 400 12px/1.5 var(--font-display);
+  color: var(--muted);
+}
+
+.acoes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.acao {
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--ink);
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+.acao:hover {
+  background: var(--surface-2);
+}
+
+.acaoDiscreta {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  font: 400 11px/1 var(--font-ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.acaoDiscreta:hover {
+  color: var(--ink);
+}
+
+.fim {
+  margin: 8px 0 0;
+  max-width: 62ch;
+  font: 400 13px/1.6 var(--font-ui);
+  color: var(--muted);
+}
+
+/* ------------------------------------------------- conferência final -- */
+
+.conferencia {
+  margin-top: 14px;
+  border-top: 3px double var(--border-strong);
+  padding-top: 12px;
+}
+
+.conferenciaTitulo {
+  font: 600 10px/1.4 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--warn);
+}
+
+.conferenciaNota {
+  margin: 6px 0 0;
+  max-width: 68ch;
+  font: italic 400 12px/1.55 var(--font-display);
+  color: var(--muted);
+}
+
+.item {
+  margin-top: 12px;
+  border-left: 3px solid var(--warn);
+  padding: 9px 12px;
+  background: var(--surface-2);
+}
+
+.itemCampo {
+  display: block;
+  font: 600 10px/1.4 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* O valor ouvido em mono e grande: é para conferir caractere a caractere, que
+ * é o que se faz com um CPF — e proporcional embaralha 1, l e I. */
+.itemValor {
+  display: block;
+  margin-top: 3px;
+  font: 600 16px/1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.itemTrecho {
+  display: block;
+  margin-top: 4px;
+  max-width: 62ch;
+  font: italic 400 12px/1.5 var(--font-display);
+  color: var(--muted);
+}
+
+.itemAcoes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.retomar {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--ink);
+  font: 400 13px/1.6 var(--font-ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}

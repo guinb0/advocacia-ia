@@ -1,0 +1,102 @@
+.bloco {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 18px;
+  margin: 18px 0;
+  padding: 18px 0;
+  border-top: 3px double var(--border-strong);
+  border-bottom: 1px solid var(--border);
+}
+
+.numero {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 7px;
+  font: 600 10px/1.4 var(--font-ui);
+  letter-spacing: .12em;
+  color: var(--muted);
+}
+
+.conteudo h3 {
+  margin: 0 0 6px;
+  font: 500 18px/1.25 var(--font-display);
+}
+
+.conteudo p {
+  margin: 0;
+  max-width: 65ch;
+  font: 400 12px/1.6 var(--font-ui);
+  color: var(--muted);
+}
+
+.acoes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 13px;
+}
+
+.primario,
+.secundario,
+.discreto {
+  border: 1px solid var(--ink);
+  padding: 9px 12px;
+  background: none;
+  color: var(--ink);
+  font: 600 10px/1 var(--font-ui);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primario {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.discreto {
+  border-color: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* A marcação da etapa. Emoldurada e com alvo grande porque é o registro de que
+ * a avaliação saiu — e porque se clica nela com o cliente na tela ao lado. */
+.marcacao {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  border: 1px solid var(--border-strong);
+  padding: 11px 13px;
+  font: 400 12.5px/1.5 var(--font-ui);
+  cursor: pointer;
+}
+
+.marcacao:hover {
+  background: var(--surface-2);
+}
+
+.marcacao input {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  cursor: pointer;
+}
+
+.pendente {
+  margin-top: 6px;
+  font: italic 400 11.5px/1.5 var(--font-display);
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .bloco { grid-template-columns: 1fr; gap: 7px; }
+  .acoes { align-items: stretch; flex-direction: column; }
+  .primario, .secundario, .discreto { text-align: center; }
+}

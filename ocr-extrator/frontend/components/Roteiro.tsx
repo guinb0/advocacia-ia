@@ -26,6 +26,7 @@ import type {
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
 import AudioDaEntrevista from "./AudioDaEntrevista";
+import Conducao from "./Conducao";
 import ConferenciaResposta from "./ConferenciaResposta";
 import VideoDaEntrevista from "./VideoDaEntrevista";
 import PainelEscuta from "./PainelEscuta";
@@ -74,6 +75,24 @@ interface EstadoConferencia {
  * para não gastar uma ida à API só para ouvir "curta demais". */
 const MINIMO_PARA_CONFERIR = 40;
 
+/* Quanto tempo a condução SEGURA uma pergunta que já foi respondida, enquanto
+ * o cliente continua falando dela.
+ *
+ * O primeiro trecho que a escuta devolve já preenche o campo — e campo cheio
+ * fazia a barra pular para a pergunta seguinte no meio da frase do cliente. O
+ * entrevistador lia a próxima e cortava o raciocínio dele, que é o oposto do
+ * que a condução existe para fazer: conduzir não é atropelar.
+ *
+ * A contagem reinicia a cada trecho novo que cai NESTA pergunta. Enquanto ele
+ * desenvolve, a barra não anda; parou de cair trecho aqui (ele terminou, ou
+ * mudou de assunto), ela anda. */
+const SEGUNDOS_ANTES_DE_ANDAR = 8;
+
+/** Tem valor? Mesmo critério de `escuta._respondida`, no backend. */
+function respondida(valor: string | string[] | undefined): boolean {
+  return Array.isArray(valor) ? valor.length > 0 : Boolean(String(valor ?? "").trim());
+}
+
 interface Props {
   codigo?: string;
   /** O `entrevistaId` sobe junto porque o áudio sobrevive a esta tela: quem
@@ -90,6 +109,19 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
   const [respostas, setRespostas] = useState<Respostas>({});
   const [erro, setErro] = useState<string | null>(null);
+  /* Perguntas que saíram da vez sem resposta — o cliente não sabia, não quis,
+   * ou o assunto não estava maduro. Não somem do roteiro: continuam pendentes
+   * na lista e voltam à condução com um clique. É o que impede a sequência de
+   * travar numa pergunta impossível com a cobrança tocando sem saída. */
+  const [puladas, setPuladas] = useState<string[]>([]);
+  /* A pergunta que ainda está recebendo resposta, e quando caiu o último
+   * trecho dela. É o que segura a condução enquanto o cliente desenvolve. */
+  const [respondendoAgora, setRespondendoAgora] = useState<{ id: string; em: number } | null>(
+    null,
+  );
+  // A pergunta da vez, lida dentro da fila da escuta — que é fixada na
+  // construção e não enxergaria o estado do React.
+  const atualRef = useRef<string>("");
 
   const [estadoMic, setEstadoMic] = useState<EstadoCaptura>("sem-audio");
   const [gravandoId, setGravandoId] = useState<string | null>(null);
@@ -272,6 +304,13 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           ]);
         }
         if (r.preenchidas.length) {
+          /* Caiu trecho NA pergunta da vez: ele está respondendo ESTA, e a
+           * condução espera ele terminar. Cair em outra pergunta não segura
+           * nada — é resposta adiantada, e adiantar é justamente o que faz a
+           * entrevista encurtar. */
+          if (r.preenchidas.some((p) => p.pergunta_id === atualRef.current)) {
+            setRespondendoAgora({ id: atualRef.current, em: Date.now() });
+          }
           setRespostas((atuais) => {
             const novo = { ...atuais };
             for (const p of r.preenchidas) {
@@ -492,6 +531,15 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     (alvo.querySelector("textarea,input") as HTMLElement | null)?.focus();
   }, []);
 
+  /* Tira a pergunta da vez sem respondê-la. Ela continua pendente: o painel a
+   * mostra em "falta perguntar" e a condução a devolve quando o roteiro acabar,
+   * ou antes, no "retomar". */
+  const pular = useCallback((perguntaId: string) => {
+    setPuladas((p) => (p.includes(perguntaId) ? p : [...p, perguntaId]));
+  }, []);
+
+  const retomarPuladas = useCallback(() => setPuladas([]), []);
+
   const pausar = useCallback(() => captura.current?.pausar(), []);
   const retomar = useCallback(() => captura.current?.retomar(), []);
   const finalizar = useCallback(() => {
@@ -518,14 +566,84 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     return roteiro.blocos.filter((b) => !b.modulo || positivos.has(b.modulo));
   }, [roteiro, respostas]);
 
+  /* A SEQUÊNCIA — a ordem em que as perguntas são feitas, que é a ordem do
+   * documento do escritório e nenhuma outra.
+   *
+   * Blocos delegados ficam de fora: a qualificação passou ao Departamento de
+   * Documentação, que a colhe depois do encerramento (ver `roteiros.py`). Ela
+   * segue na tela, para quem for colhê-la, mas arrastar o entrevistador por
+   * catorze campos de cadastro no meio da conversa é o formulário que o
+   * escritório mandou tirar do começo da entrevista. */
+  const sequencia = useMemo(
+    () =>
+      blocosVisiveis
+        .filter((b) => !b.delegado_a)
+        .flatMap((b) => b.perguntas.map((pergunta) => ({ pergunta, bloco: b.titulo }))),
+    [blocosVisiveis],
+  );
+
+  /* Pergunta que já tem sugestão esperando um clique NÃO é pergunta a fazer.
+   *
+   * Nome e CPF nunca entram sozinhos: a escuta os manda como sugestão, e quem
+   * confirma é quem está ouvindo (ver `escuta.DADOS_PERMITIDOS` — dígito
+   * transcrito ninguém confere de ouvido). Só que "esperando confirmação" é
+   * outra coisa que "o cliente não respondeu": ele já falou o nome dele.
+   *
+   * Sem esta linha a condução parava nas duas primeiras perguntas do roteiro
+   * até alguém achar o clique no painel ao lado — com a cobrança de PARE no ar
+   * o tempo todo, mandando insistir numa pergunta que o cliente já tinha
+   * respondido. A confirmação continua obrigatória; ela é que não trava mais a
+   * conversa, e a pergunta volta à vez sozinha se a sugestão for descartada. */
+  const aguardandoConfirmacao = useMemo(
+    () => new Map(sugestoes.map((s) => [s.pergunta_id, s.valor] as const)),
+    [sugestoes],
+  );
+
+  /* A pergunta da vez: a primeira ainda em aberto, na ordem.
+   *
+   * O que o cliente adiantar fora de ordem já entrou pela escuta e some daqui
+   * sozinho — é assim que a entrevista encurta sem que ninguém perca o fio.
+   * Quem escolhe a pergunta é o roteiro; o entrevistador só a lê. */
+  const posicaoNatural = useMemo(
+    () =>
+      sequencia.findIndex(
+        ({ pergunta }) =>
+          !respondida(respostas[pergunta.id]) &&
+          !puladas.includes(pergunta.id) &&
+          !aguardandoConfirmacao.has(pergunta.id),
+      ),
+    [sequencia, respostas, puladas, aguardandoConfirmacao],
+  );
+
+  /* O relógio de parede desta tela.
+   *
+   * Sem ele o "segurar" nunca expiraria sozinho: a barra só recalcularia na
+   * próxima resposta, e a pergunta respondida ficaria na tela até o cliente
+   * falar de novo — o defeito oposto ao que este código conserta. */
+  const [, tique] = useState(0);
+  useEffect(() => {
+    if (!escutando) return;
+    const t = setInterval(() => tique((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [escutando]);
+
+  /* A pergunta segurada: já respondida, mas ainda recebendo trecho. */
+  const posicaoSegurada =
+    respondendoAgora !== null &&
+    Date.now() - respondendoAgora.em < SEGUNDOS_ANTES_DE_ANDAR * 1000
+      ? sequencia.findIndex(({ pergunta }) => pergunta.id === respondendoAgora.id)
+      : -1;
+
+  const posicaoAtual = posicaoSegurada >= 0 ? posicaoSegurada : posicaoNatural;
+  const atual = posicaoAtual >= 0 ? sequencia[posicaoAtual] : null;
+  atualRef.current = atual?.pergunta.id ?? "";
+  /** O cliente está desenvolvendo a resposta desta pergunta agora mesmo. */
+  const respondendo = posicaoSegurada >= 0;
+
   const { total, feitas } = useMemo(() => {
-    const perguntas = blocosVisiveis.flatMap((b) => b.perguntas);
-    const resp = perguntas.filter((p) => {
-      const v = respostas[p.id];
-      return Array.isArray(v) ? v.length > 0 : Boolean(v);
-    });
-    return { total: perguntas.length, feitas: resp.length };
-  }, [blocosVisiveis, respostas]);
+    const resp = sequencia.filter(({ pergunta }) => respondida(respostas[pergunta.id]));
+    return { total: sequencia.length, feitas: resp.length };
+  }, [sequencia, respostas]);
 
   if (erro && !roteiro) return <p className={estilos.vazio}>{erro}</p>;
   if (!roteiro) return <p className={estilos.vazio}>Carregando o roteiro…</p>;
@@ -673,11 +791,42 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
 
       <div className={escutando ? estilos.comPainel : undefined}>
         <div>
+          {/* A pergunta da vez, grudada no alto da coluna do roteiro. Vem ANTES
+            * das perguntas todas porque é o que se lê ao cliente; o que está
+            * embaixo é o formulário que se preenche. Fica DENTRO da coluna, e
+            * não por cima do painel: os dois grudam ao rolar, e um passaria por
+            * cima do outro. Enquanto a escuta não abriu ela só aponta por onde
+            * começar — sem relógio, porque não há entrevista para cobrar ainda. */}
+          <Conducao
+            pergunta={atual?.pergunta ?? null}
+            bloco={atual?.bloco ?? ""}
+            posicao={posicaoAtual + 1}
+            total={total}
+            puladas={puladas.length}
+            sugestoes={sugestoes}
+            retomadas={roteiro.retomadas ?? []}
+            fechosPorTipo={roteiro.fechos_por_tipo ?? {}}
+            /* Com o cliente respondendo ESTA pergunta, o relógio não corre: a
+             * cobrança é para quem não responde, não para quem está no meio da
+             * resposta. Falar de OUTRA coisa não conta — o relógio segue, que é
+             * a regra do escritório. */
+            ativo={escutando && estadoMic !== "pausado" && !respondendo}
+            respondendo={respondendo}
+            onIrPara={irPara}
+            onPular={pular}
+            onRetomarPuladas={retomarPuladas}
+            onAceitar={aceitarSugestao}
+            onDescartar={descartarSugestao}
+          />
+
           {blocosVisiveis.map((bloco) => (
             <BlocoRoteiro
               key={bloco.id}
               bloco={bloco}
               respostas={respostas}
+              perguntaAtual={atual?.pergunta.id ?? ""}
+              puladas={puladas}
+              aguardando={aguardandoConfirmacao}
               onResponder={responder}
               gravandoId={gravandoId}
               pausado={estadoMic === "pausado"}
@@ -698,7 +847,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         {escutando && (
           <PainelEscuta
             preenchidas={ouvidas}
-            sugestoes={sugestoes}
+            aConferir={sugestoes.length}
             lembretes={lembretes}
             faltando={faltando}
             interpretando={ouvindo}
@@ -707,8 +856,6 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
             ultimaFala={ultimaFala}
             ultimoSom={ultimoSom}
             erro={erroEscuta}
-            onAceitar={aceitarSugestao}
-            onDescartar={descartarSugestao}
             onIrPara={irPara}
           />
         )}
@@ -753,6 +900,19 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
             ) {
               return;
             }
+            /* A conferência agora mora no fim do roteiro — e o fim do roteiro é
+             * aqui. Sem esta pergunta, sair da tela descartaria em silêncio o
+             * nome e o CPF que a escuta ouviu, e o contrato nasceria em branco
+             * justamente nos dois campos que o identificam. */
+            if (
+              sugestoes.length > 0 &&
+              !window.confirm(
+                `${sugestoes.length} resposta(s) que eu ouvi ainda não foram conferidas ` +
+                  "(nome e/ou CPF) e serão descartadas ao concluir. Concluir mesmo assim?",
+              )
+            ) {
+              return;
+            }
             onConcluir(
               respostas,
               montarRelato(blocosVisiveis, respostas),
@@ -786,6 +946,9 @@ function montarRelato(blocos: Bloco[], respostas: Respostas): string {
 function BlocoRoteiro({
   bloco,
   respostas,
+  perguntaAtual,
+  puladas,
+  aguardando,
   onResponder,
   gravandoId,
   pausado,
@@ -802,6 +965,13 @@ function BlocoRoteiro({
 }: {
   bloco: Bloco;
   respostas: Respostas;
+  /** A pergunta da vez na sequência — marcada na lista para o olho achar. */
+  perguntaAtual: string;
+  puladas: string[];
+  /** Ouvidas e esperando conferência, por id -> o que a escuta ouviu. Saíram da
+   *  vez, mas não estão respondidas — e o valor aparece para o entrevistador
+   *  VER que o sistema pegou, sem ter de parar a conversa para confirmar. */
+  aguardando: Map<string, string>;
   onResponder: (id: string, valor: string | string[]) => void;
   gravandoId: string | null;
   pausado: boolean;
@@ -822,13 +992,32 @@ function BlocoRoteiro({
       <span className={estilos.blocoTitulo}>{bloco.titulo.toUpperCase()}</span>
       {bloco.objetivo && <p className={estilos.objetivo}>{bloco.objetivo}</p>}
 
+      {/* O bloco que NÃO se percorre na entrevista.
+        *
+        * Ele ficava aqui igual aos outros, e nada na tela dizia que a condução
+        * pula estes campos de propósito — quem não conhecia o roteiro começava
+        * a datilografar a qualificação com o cliente esperando. */}
+      {bloco.delegado_a && (
+        <p className={estilos.delegado}>
+          <strong>Não percorrer nesta entrevista.</strong> Esta etapa é do{" "}
+          {bloco.delegado_a}, depois do encerramento.
+          {bloco.instrucao && <span className={estilos.delegadoNota}>{bloco.instrucao}</span>}
+        </p>
+      )}
+
       <ul className={estilos.lista}>
         {bloco.perguntas.map((p, i) => (
           <li
             key={p.id}
             // A âncora que o painel usa para rolar até aqui.
             id={`pergunta-${p.id}`}
-            className={`${estilos.pergunta} ${respostas[p.id] ? estilos.respondida : ""}`}
+            className={[
+              estilos.pergunta,
+              respostas[p.id] ? estilos.respondida : "",
+              p.id === perguntaAtual ? estilos.daVez : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             <div className={estilos.enunciado}>
               <span className={estilos.numero}>{String(i + 1).padStart(2, "0")}</span>
@@ -836,6 +1025,19 @@ function BlocoRoteiro({
                 {p.texto}
                 {p.obrigatoria && <span className={estilos.obrigatoria}>*</span>}
               </span>
+              {/* A mesma pergunta que está na barra do topo. Sem esta marca, o
+                * entrevistador que rolou a tela precisa reler a barra para
+                * saber onde ela caiu no formulário. */}
+              {p.id === perguntaAtual && <span className={estilos.marcaDaVez}>AGORA</span>}
+              {/* Ouvida, não confirmada. A condução seguiu em frente para não
+                * travar a conversa; a marca é o que impede a pergunta de passar
+                * por respondida quando ainda depende de um clique. */}
+              {aguardando.has(p.id) && (
+                <span className={estilos.marcaConferir}>OUVIDO · CONFIRA NO FIM</span>
+              )}
+              {puladas.includes(p.id) && (
+                <span className={estilos.marcaPulada}>DEIXADA PARA DEPOIS</span>
+              )}
               {p.transcrever && <span className={estilos.marcaGravavel}>VOZ</span>}
             </div>
 
@@ -860,6 +1062,19 @@ function BlocoRoteiro({
                 onFinalizar={onFinalizar}
                 onConferir={onConferir}
               />
+
+              {/* O que a escuta ouviu, à mostra no próprio campo.
+                *
+                * Sem isto o entrevistador fala o nome, o campo continua vazio e
+                * a conclusão óbvia é "não pegou nada" — foi exatamente o que
+                * aconteceu quando a caixa de confirmação saiu do painel. O
+                * valor fica visível; confirmar continua sendo no fim. */}
+              {aguardando.has(p.id) && (
+                <span className={estilos.ouvido}>
+                  ouvi <strong>“{aguardando.get(p.id)}”</strong> — entra no campo quando
+                  você confirmar, no fim do roteiro
+                </span>
+              )}
             </div>
 
             {/* A conferência mora embaixo da pergunta que a gerou: lida em

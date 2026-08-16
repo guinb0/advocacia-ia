@@ -18,9 +18,12 @@
  * DUAS FONTES, PORQUE SÃO DUAS ENTREVISTAS DIFERENTES
  *
  *   câmera  a entrevista presencial: a câmera desta máquina e o microfone.
- *   tela    a entrevista por chamada: a janela do Jitsi, com o rosto do cliente
- *           — e o microfone daqui MISTURADO, senão a gravação teria só a voz de
- *           quem está do outro lado e nenhuma das perguntas.
+ *   tela    a entrevista por chamada: a TELA DO SISTEMA — esta aba, com o
+ *           roteiro e o rosto do cliente — e o microfone daqui MISTURADO,
+ *           senão a gravação teria só a voz de quem está do outro lado e
+ *           nenhuma das perguntas.
+ *
+ * A tela é sempre ESTA ABA, e isso é escolha, não acaso: ver `daTelaComMicrofone`.
  *
  * FORMATO
  *
@@ -70,6 +73,39 @@ const BITS_AUDIO = 96_000;
  * manda blob grande para o disco em vez de segurá-lo na memória da aba — é o
  * que deixa uma entrevista de uma hora caber sem derrubar a página. */
 const FATIA_MS = 5_000;
+
+/* GRAVAR A TELA DO SISTEMA, E SÓ ELA
+ *
+ * Sem estas opções, `getDisplayMedia` abre o seletor do Chrome com as três
+ * abas — "Guia do Chrome", "Janela", "Tela inteira" — e a lista de tudo que
+ * está aberto na máquina. Aí a gravação da entrevista saía sendo qualquer
+ * coisa: outra aba, o e-mail de outro cliente, a área de trabalho inteira.
+ * Numa entrevista de atendimento isso não é só o arquivo errado; é vazamento
+ * de dado de terceiro dentro de um vídeo que vai por WhatsApp.
+ *
+ * `preferCurrentTab` prende a captura NESTA aba — o sistema, com o roteiro e o
+ * rosto do cliente. `selfBrowserSurface: include` é o que faz o Chrome parar de
+ * esconder a própria aba da lista (o padrão dele é escondê-la). E
+ * `surfaceSwitching: exclude` tira o botão de "compartilhar outra guia", que
+ * trocaria a fonte no meio da gravação sem ninguém perceber.
+ *
+ * O Chrome ainda pede uma confirmação ("compartilhar esta guia?"), e não há
+ * como evitar: é o navegador protegendo a tela de quem usa. O que dá para
+ * fazer é reduzi-la a um sim ou não, sem escolha errada possível. */
+const ESTA_ABA = {
+  preferCurrentTab: true,
+  selfBrowserSurface: "include",
+  surfaceSwitching: "exclude",
+} as const;
+
+/** `preferCurrentTab` é do Chrome e não está no `lib.dom` do TypeScript. O tipo
+ *  local existe para não precisar de um `as any`, que apagaria a checagem do
+ *  resto das opções. */
+interface OpcoesTela extends DisplayMediaStreamOptions {
+  preferCurrentTab?: boolean;
+  selfBrowserSurface?: "include" | "exclude";
+  surfaceSwitching?: "include" | "exclude";
+}
 
 function melhorFormato(): string | null {
   if (typeof MediaRecorder === "undefined") return null;
@@ -187,10 +223,29 @@ export class GravacaoVideo {
   private async daTelaComMicrofone(): Promise<MediaStream> {
     const tela = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 24 } },
-      // Áudio da aba: é por onde sai a voz de quem está na chamada. O navegador
-      // só entrega se a pessoa marcar a caixa ao escolher a janela.
+      // Áudio da aba: é por onde sai a voz de quem está na chamada.
       audio: true,
-    });
+      ...ESTA_ABA,
+    } as OpcoesTela);
+
+    /* `preferCurrentTab` é preferência, não garantia — e navegador que não a
+     * conhece (Firefox, Safari) devolve o que a pessoa escolher no seletor.
+     * Aqui a regra é dura: se veio janela ou tela inteira, a gravação não
+     * começa. Gravar a área de trabalho de um escritório de advocacia por
+     * quarenta minutos é vazar o caso de outro cliente dentro do vídeo deste.
+     *
+     * Só recusa quando o navegador DIZ o que entregou: `displaySurface` é
+     * opcional, e tratar "não informou" como "é tela inteira" tiraria a
+     * gravação de quem só usa um navegador mais calado. */
+    const superficie = tela.getVideoTracks()[0]?.getSettings().displaySurface;
+    if (superficie && superficie !== "browser") {
+      for (const trilha of tela.getTracks()) trilha.stop();
+      throw new Error(
+        "A gravação precisa ser desta aba, e não da tela inteira ou de outra " +
+          "janela. Clique de novo e escolha “Guia do Chrome” — a que está com o " +
+          "sistema aberto.",
+      );
+    }
 
     let microfone: MediaStream | null = null;
     try {

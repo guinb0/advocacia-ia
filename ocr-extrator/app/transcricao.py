@@ -151,6 +151,50 @@ def carregar_modelo():
         return _modelo
 
 
+def aquecer_modelo() -> None:
+    """Carrega os pesos E roda uma inferência de mentira.
+
+    Carregar não é estar pronto. A PRIMEIRA `transcribe` de verdade compila os
+    kernels CUDA e aloca os caches do cuDNN, e nesta máquina isso custou **30
+    segundos numa fala de 2,3s** — com o entrevistador olhando um painel que
+    dizia "ouvindo — nada reconhecido ainda" e o cliente esperando. Depois de
+    aquecido, o mesmo trecho sai em ~1s.
+
+    Duas decisões que parecem detalhe e não são:
+
+    - o áudio é ruído baixo, não silêncio, e o VAD sai DESLIGADO. Com o VAD
+      ligado o silêncio é cortado inteiro, nenhum segmento chega ao decodificador
+      e metade dos kernels continua fria — justamente a metade cara;
+    - o `transcribe` devolve um gerador preguiçoso. Sem consumir a lista, nada
+      roda de fato e o aquecimento seria uma linha de log mentindo.
+
+    Roda na trava de inferência como qualquer outra: se uma entrevista começar
+    no meio do aquecimento, ela espera este segundo em vez de disputar a GPU.
+    """
+    modelo = carregar_modelo()
+    inicio = time.perf_counter()
+    # 2s a 16 kHz, que é a taxa que o navegador manda. Amplitude baixa: é para
+    # exercitar o caminho, não para reconhecer nada.
+    ruido = (np.random.default_rng(0).standard_normal(16_000 * 2) * 0.01).astype(np.float32)
+    try:
+        with _trava_inferencia:
+            segmentos, _ = modelo.transcribe(
+                ruido,
+                language="pt",
+                beam_size=1,
+                vad_filter=False,
+                condition_on_previous_text=False,
+            )
+            list(segmentos)
+    except Exception as exc:
+        # Aquecimento é otimização: falhar aqui não pode impedir a entrevista,
+        # que vai carregar o modelo de novo pelo caminho normal.
+        log.warning("Aquecimento do Whisper falhou (%s); segue sem ele.", str(exc)[:120])
+        return
+    log.info("Whisper aquecido em %.1fs — a primeira fala já sai rápida.",
+             time.perf_counter() - inicio)
+
+
 def modelo_carregado() -> bool:
     return _modelo is not None
 

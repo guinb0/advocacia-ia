@@ -259,6 +259,11 @@ export interface RoteiroCompleto {
   saudacao: string[];
   /** Os de encerramento, depois da última. */
   encerramento: string[];
+  /** O que ler quando o cliente sai do assunto, da mais gentil à mais firme.
+   *  Todas terminam em dois-pontos: emendam com o enunciado da pergunta. */
+  retomadas: string[];
+  /** Complemento da retomada por tipo de resposta ("basta sim ou não"). */
+  fechos_por_tipo: Record<string, string>;
   /** id da pergunta de rastreio -> módulo que ela libera. */
   mapa_rastreio: Record<string, string>;
 }
@@ -311,9 +316,11 @@ export interface PrecedenteEstrategia {
 
 export interface Estrategia {
   resumo: string;
-  acoes: Array<{ acao: string; porque: string; precedentes: string[] }>;
-  riscos: Array<{ risco: string; precedentes: string[] }>;
+  acoes: Array<{ acao: string; porque: string; aplicabilidade?: string; contrapontos?: string; forca?: string; precedentes: string[] }>;
+  riscos: Array<{ risco: string; aplicabilidade?: string; contrapontos?: string; forca?: string; precedentes: string[] }>;
+  divergencias?: Array<{ ponto: string; precedentes_favoraveis: string[]; precedentes_contrarios: string[] }>;
   lacunas: string[];
+  perguntas_criticas?: string[];
   aviso: string;
   metodologia: string;
   precedentes: PrecedenteEstrategia[];
@@ -327,6 +334,8 @@ export interface Estrategia {
       percentual: number;
       criterio: string;
     };
+    desfechos_merito: { processos: number; favoraveis: number; percentual: number; criterio: string };
+    similaridade_amostra: { maxima: number; mediana: number; minima: number };
     aviso: string;
   };
 }
