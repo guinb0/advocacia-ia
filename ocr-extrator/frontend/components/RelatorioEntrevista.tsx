@@ -8,7 +8,7 @@ import estilos from "./RelatorioEntrevista.module.css";
 
 /* O relatório analisado da entrevista, para a equipe jurídica.
  *
- * Aparece quando a entrevista fecha. Sai em .docx com o símbolo do escritório,
+ * Aparece quando a entrevista fecha. Sai em PDF com o símbolo do escritório,
  * organiza as respostas na ordem do roteiro e — quando a base de precedentes
  * responde — traz a análise assistida (síntese, ações, riscos, lacunas).
  *
@@ -56,7 +56,7 @@ export default function RelatorioEntrevista({ respostas, relato }: Props) {
     <section className={estilos.bloco}>
       <span className={estilos.rotulo}>RELATÓRIO DA ENTREVISTA</span>
       <p className={estilos.texto}>
-        Documento .docx com o símbolo do escritório para a equipe jurídica: as
+        Documento PDF com o símbolo do escritório para a equipe jurídica: as
         respostas na ordem do roteiro, o que ficou sem responder e uma análise
         assistida por precedentes.
       </p>
@@ -72,7 +72,7 @@ export default function RelatorioEntrevista({ respostas, relato }: Props) {
             ? "Gerando…"
             : feito
               ? "Gerar de novo"
-              : "Gerar relatório analisado (.docx)"}
+              : "Gerar relatório analisado (PDF)"}
         </button>
 
         {gerando && (

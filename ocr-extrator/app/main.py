@@ -248,7 +248,7 @@ class PedidoRelatorio(BaseModel):
 
 @app.post("/api/entrevista/relatorio")
 async def gerar_relatorio(pedido: PedidoRelatorio):
-    """O relatório ANALISADO da entrevista, em .docx, com o símbolo do escritório.
+    """O relatório ANALISADO da entrevista, em PDF, com o símbolo do escritório.
 
     É a entrega que a saudação do roteiro promete ao cliente. Quem o recebe não
     estava na conversa, então ele diz o que foi perguntado, o que foi respondido
@@ -276,8 +276,8 @@ async def gerar_relatorio(pedido: PedidoRelatorio):
             }
 
     try:
-        docx, dados = await run_in_threadpool(
-            relatorio.gerar_docx,
+        pdf, dados = await run_in_threadpool(
+            relatorio.gerar_pdf,
             pedido.respostas,
             pedido.roteiro,
             pedido.entrevistador,
@@ -287,18 +287,16 @@ async def gerar_relatorio(pedido: PedidoRelatorio):
         raise HTTPException(400, str(exc)) from exc
 
     arquivo = (
-        f"Relatório de entrevista - {dados['cliente']}.docx"
+        f"Relatório de entrevista - {dados['cliente']}.pdf"
         .replace("/", "-")
         .replace("\\", "-")
     )
     return Response(
-        content=docx,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
+        content=pdf,
+        media_type="application/pdf",
         headers={
             "Content-Disposition": (
-                f'attachment; filename="entrevista.docx"; '
+                f'attachment; filename="entrevista.pdf"; '
                 f"filename*=UTF-8''{quote(arquivo)}"
             ),
             # A tela precisa saber o que ficou pendente sem abrir o arquivo.

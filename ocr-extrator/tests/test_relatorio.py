@@ -156,6 +156,26 @@ def testar_emblema_valido() -> int:
     return falhas
 
 
+def testar_pdf_analisado() -> int:
+    """A entrega final é PDF válido, paginado e com texto pesquisável."""
+    import pypdfium2 as pdfium
+
+    falhas = 0
+    data, dados = relatorio.gerar_pdf(
+        RESPOSTAS, "empregado_publico", "Dra. Ana", ANALISE
+    )
+    falhas += not checar(data.startswith(b"%PDF-"), "a entrega começa com o cabeçalho PDF")
+    documento = pdfium.PdfDocument(data)
+    falhas += not checar(len(documento) >= 1, "o PDF tem ao menos uma página")
+    texto = "\n".join(
+        documento[i].get_textpage().get_text_range() for i in range(len(documento))
+    )
+    falhas += not checar("RELATÓRIO DE ENTREVISTA" in texto, "o título é pesquisável")
+    falhas += not checar("Solicitar a CAT" in texto, "a análise entrou no PDF")
+    falhas += not checar(bool(dados["faltando_obrigatorias"]), "as pendências foram preservadas")
+    return falhas
+
+
 def main_teste() -> int:
     falhas = 0
     for titulo, teste in (
@@ -164,6 +184,7 @@ def main_teste() -> int:
         ("base de precedentes indisponível", testar_base_indisponivel),
         ("análise malformada não quebra", testar_analise_malformada),
         ("emblema é imagem válida", testar_emblema_valido),
+        ("relatório analisado em PDF", testar_pdf_analisado),
     ):
         print(f"\n{titulo}")
         falhas += teste()

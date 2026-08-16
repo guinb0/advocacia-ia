@@ -213,7 +213,7 @@ export interface RelatorioGerado {
   analise: "sim" | "indisponivel" | "nao";
 }
 
-/** O relatório analisado da entrevista, em .docx, com o símbolo do escritório.
+/** O relatório analisado da entrevista, em PDF, com o símbolo do escritório.
  *
  * Organiza as respostas na ordem do roteiro e, quando a base de precedentes
  * responde, traz a análise assistida (síntese, ações, riscos, lacunas). O
@@ -241,7 +241,7 @@ export async function gerarRelatorio(
   const analise = (r.headers.get("X-Analise") ?? "nao") as RelatorioGerado["analise"];
   return {
     arquivo: await r.blob(),
-    nome: nomeDoAnexo(r, "relatorio-entrevista.docx"),
+    nome: nomeDoAnexo(r, "relatorio-entrevista.pdf"),
     pendencias: Number(r.headers.get("X-Pendencias") ?? 0),
     impedimentos: Number(r.headers.get("X-Impedimentos") ?? 0),
     analise,

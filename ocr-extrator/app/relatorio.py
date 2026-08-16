@@ -25,15 +25,9 @@ rastreio abriu, as lacunas, e os impedimentos que o escritório mandou observar.
 Nada é reescrito — o texto do cliente vai como foi transcrito, porque a palavra
 que ele usou para descrever a dor é dado, não rascunho.
 
-POR QUE .docx E NÃO PDF OU TEXTO
-
-É o formato que o escritório usa: o relatório entra na pasta do caso, é anexado,
-comentado e recortado para a petição. PDF fecharia isso, e texto puro perderia a
-hierarquia que faz um documento de 86 respostas ser navegável.
-
-O arquivo é montado à mão, sem biblioteca: um .docx é um zip com XML dentro, e as
-quatro partes obrigatórias estão em `_PARTES`. `python-docx` resolveria o mesmo
-com uma dependência a mais num projeto que já carrega PaddleOCR e CTranslate2.
+O formato final entregue ao usuário é PDF, para preservar a apresentação e
+facilitar o arquivamento. A estrutura do relatório fica separada da renderização;
+o gerador DOCX legado permanece somente para compatibilidade e testes antigos.
 """
 
 from __future__ import annotations
@@ -42,6 +36,7 @@ import io
 import logging
 import zipfile
 from datetime import datetime
+from html import escape as escape_html
 from typing import Any
 from xml.sax.saxutils import escape
 
@@ -270,9 +265,14 @@ def _secao_analise(analise: dict[str, Any]) -> list[str]:
             acao = str(a.get("acao", "")).strip()
             if not acao:
                 continue
-            partes.append(_p(f"• {acao}{_precedentes(a.get('precedentes'))}", negrito=True))
+            forca = str(a.get("forca", "")).strip()
+            partes.append(_p(f"• {acao}{f' — força {forca}' if forca else ''}{_precedentes(a.get('precedentes'))}", negrito=True))
             if porque := str(a.get("porque", "")).strip():
                 partes.append(_p(porque))
+            if aplicabilidade := str(a.get("aplicabilidade", "")).strip():
+                partes.append(_p(f"Aplicabilidade: {aplicabilidade}"))
+            if contrapontos := str(a.get("contrapontos", "")).strip():
+                partes.append(_p(f"Contraponto: {contrapontos}"))
 
     riscos = [r for r in (analise.get("riscos") or []) if isinstance(r, dict)]
     if riscos:
@@ -280,7 +280,12 @@ def _secao_analise(analise: dict[str, Any]) -> list[str]:
         for r in riscos:
             risco = str(r.get("risco", "")).strip()
             if risco:
-                partes.append(_p(f"• {risco}{_precedentes(r.get('precedentes'))}"))
+                forca = str(r.get("forca", "")).strip()
+                partes.append(_p(f"• {risco}{f' — força {forca}' if forca else ''}{_precedentes(r.get('precedentes'))}"))
+                if aplicabilidade := str(r.get("aplicabilidade", "")).strip():
+                    partes.append(_p(f"Aplicabilidade: {aplicabilidade}"))
+                if contrapontos := str(r.get("contrapontos", "")).strip():
+                    partes.append(_p(f"Contraponto: {contrapontos}"))
 
     lacunas = [str(x).strip() for x in (analise.get("lacunas") or []) if str(x).strip()]
     if lacunas:
@@ -462,4 +467,152 @@ def gerar_docx(
             saida.writestr(nome, conteudo.encode("utf-8"))
         if emblema_png is not None:
             saida.writestr("word/media/logo.png", emblema_png)
+    return destino.getvalue(), dados
+
+
+# ----------------------------------------------------------------------- PDF
+
+
+def gerar_pdf(
+    respostas: dict[str, Any],
+    codigo_roteiro: str = "empregado_publico",
+    entrevistador: str = "",
+    analise: dict[str, Any] | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """Gera o relatório final em PDF, mantendo a mesma estrutura analisada."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer
+
+    dados = montar(respostas, codigo_roteiro, entrevistador)
+    dados["analise"] = analise
+    destino = io.BytesIO()
+    documento = SimpleDocTemplate(
+        destino,
+        pagesize=A4,
+        rightMargin=1.8 * cm,
+        leftMargin=1.8 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+        title=f"Relatório de entrevista - {dados['cliente']}",
+        author="LARA & MELO ADVOGADOS ASSOCIADOS",
+    )
+    base = getSampleStyleSheet()
+    corpo = ParagraphStyle("Corpo", parent=base["BodyText"], fontName="Helvetica", fontSize=9, leading=13, spaceAfter=5)
+    pergunta = ParagraphStyle("Pergunta", parent=corpo, fontName="Helvetica-Bold", spaceBefore=5, spaceAfter=2)
+    secao = ParagraphStyle("Secao", parent=base["Heading2"], fontName="Helvetica-Bold", fontSize=12, leading=15, textColor=colors.HexColor("#323232"), spaceBefore=14, spaceAfter=7)
+    titulo = ParagraphStyle("Titulo", parent=base["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, alignment=TA_CENTER, spaceAfter=6)
+    subtitulo = ParagraphStyle("Subtitulo", parent=corpo, alignment=TA_CENTER, textColor=colors.HexColor("#666666"), spaceAfter=12)
+    alerta = ParagraphStyle("Alerta", parent=corpo, borderColor=colors.HexColor("#9B2C2C"), borderWidth=1, borderPadding=7, textColor=colors.HexColor("#7A1F1F"), spaceAfter=8)
+
+    def texto(valor: Any) -> str:
+        return escape_html(str(valor or "")).replace("\n", "<br/>")
+
+    historia: list[Any] = []
+    try:
+        png = marca.emblema_png()
+        largura, altura = marca.dimensao_emblema()
+        imagem = Image(io.BytesIO(png), width=15 * cm, height=15 * cm * altura / largura)
+        imagem.hAlign = "CENTER"
+        historia += [imagem, Spacer(1, 0.25 * cm)]
+    except Exception:
+        log.warning("Não foi possível inserir o emblema no PDF.", exc_info=True)
+
+    historia += [
+        Paragraph("RELATÓRIO DE ENTREVISTA", titulo),
+        Paragraph(texto(dados["roteiro"]), subtitulo),
+        Paragraph(f"<b>Cliente:</b> {texto(dados['cliente'])}", corpo),
+    ]
+    if dados["cpf"]:
+        historia.append(Paragraph(f"<b>CPF:</b> {texto(dados['cpf'])}", corpo))
+    if dados["entrevistador"]:
+        historia.append(Paragraph(f"<b>Entrevistadora:</b> {texto(dados['entrevistador'])}", corpo))
+    progresso = dados["progresso"]
+    historia += [
+        Paragraph(f"<b>Gerado em:</b> {texto(dados['gerado_em'])}", corpo),
+        Paragraph(
+            f"Respondidas {progresso['respondidas']} de {progresso['total']} perguntas "
+            f"({progresso['percentual']}%).",
+            corpo,
+        ),
+    ]
+
+    if dados["impedimentos"]:
+        historia.append(Paragraph("ATENÇÃO — IMPEDIMENTOS", secao))
+        for item in dados["impedimentos"]:
+            historia.append(Paragraph(
+                f"<b>{texto(item['pergunta'])}</b><br/>Respondido: {texto(item['resposta'])}"
+                + (f"<br/>{texto(item['motivo'])}" if item["motivo"] else ""), alerta
+            ))
+
+    if dados["faltando_obrigatorias"]:
+        historia.append(Paragraph(
+            f"PENDÊNCIAS OBRIGATÓRIAS ({len(dados['faltando_obrigatorias'])})", secao
+        ))
+        for item in dados["faltando_obrigatorias"]:
+            historia.append(Paragraph(f"• {texto(item['pergunta'])}", corpo))
+
+    if analise:
+        historia.append(Paragraph("ANÁLISE ASSISTIDA POR PRECEDENTES", secao))
+        if analise.get("indisponivel"):
+            historia.append(Paragraph(texto(analise["indisponivel"]), alerta))
+        else:
+            if analise.get("resumo"):
+                historia.append(Paragraph(texto(analise["resumo"]), corpo))
+            for rotulo, chave, campo in (
+                ("Ações sugeridas", "acoes", "acao"),
+                ("Riscos observados", "riscos", "risco"),
+            ):
+                itens = [i for i in (analise.get(chave) or []) if isinstance(i, dict)]
+                if itens:
+                    historia.append(Paragraph(rotulo, pergunta))
+                    for item in itens:
+                        refs = _precedentes(item.get("precedentes"))
+                        principal = texto(item.get(campo, ""))
+                        porque = texto(item.get("porque", ""))
+                        forca = texto(item.get("forca", ""))
+                        aplicabilidade = texto(item.get("aplicabilidade", ""))
+                        contrapontos = texto(item.get("contrapontos", ""))
+                        historia.append(Paragraph(
+                            f"• <b>{principal}</b>{f' — força {forca}' if forca else ''}{texto(refs)}"
+                            + (f"<br/>{porque}" if porque else "")
+                            + (f"<br/><b>Aplicabilidade:</b> {aplicabilidade}" if aplicabilidade else "")
+                            + (f"<br/><b>Contraponto:</b> {contrapontos}" if contrapontos else ""), corpo
+                        ))
+            lacunas = [str(x).strip() for x in (analise.get("lacunas") or []) if str(x).strip()]
+            if lacunas:
+                historia.append(Paragraph("Lacunas a preencher", pergunta))
+                historia.extend(Paragraph(f"• {texto(item)}", corpo) for item in lacunas)
+            precedentes = [p for p in (analise.get("precedentes") or []) if isinstance(p, dict)]
+            if precedentes:
+                historia.append(Paragraph("Precedentes consultados", pergunta))
+                for p in precedentes:
+                    historia.append(Paragraph(
+                        f"{texto(p.get('indice'))} — processo {texto(p.get('processo', '?'))} · "
+                        f"{texto(p.get('resultado', '—'))} · {texto(p.get('fonte', '—'))}", corpo
+                    ))
+            historia.append(Paragraph(texto(analise.get("aviso") or "Análise assistiva; requer revisão do advogado."), corpo))
+
+    for bloco in dados["blocos"]:
+        historia.append(Paragraph(texto(bloco["titulo"]).upper(), secao))
+        if bloco["objetivo"]:
+            historia.append(Paragraph(texto(bloco["objetivo"]), corpo))
+        for item in bloco["itens"]:
+            resposta = texto(item["resposta"]) if item["respondida"] else (
+                "[não respondido — OBRIGATÓRIA]" if item["obrigatoria"] else "[não respondido]"
+            )
+            historia.append(KeepTogether([
+                Paragraph(texto(item["pergunta"]), pergunta),
+                Paragraph(resposta, corpo),
+            ]))
+
+    historia += [Spacer(1, 0.3 * cm), Paragraph(
+        "Relatório gerado automaticamente a partir das respostas da entrevista. "
+        "A análise assistida requer revisão da equipe jurídica e não prevê resultado.",
+        ParagraphStyle("Rodape", parent=corpo, fontSize=7.5, leading=10, textColor=colors.HexColor("#666666")),
+    )]
+    documento.build(historia)
     return destino.getvalue(), dados

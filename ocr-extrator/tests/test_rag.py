@@ -4,6 +4,7 @@ from scripts.ingerir_jurimetria import (
     magistrados_do_payload,
     texto_do_payload,
 )
+from app.rag import _estatisticas_amostra, _normalizar_resultado, TrechoSimilar
 
 
 def test_limpa_html_e_redige_dados_diretos() -> None:
@@ -31,3 +32,31 @@ def test_chunks_tem_sobreposicao() -> None:
 def test_extrai_magistrados_do_payload() -> None:
     payload = {"resultado": {"magistrado": ["ANA SILVA", "JOÃO SOUZA"]}}
     assert magistrados_do_payload(payload) == ["ANA SILVA", "JOÃO SOUZA"]
+
+
+def test_descarta_citacao_inventada_e_item_sem_fonte() -> None:
+    resultado = _normalizar_resultado(
+        {
+            "acoes": [
+                {"acao": "Obter CAT", "precedentes": ["P1", "P99"], "forca": "alta"},
+                {"acao": "Inventada", "precedentes": ["P77"]},
+            ],
+            "riscos": [],
+        },
+        {"P1", "P2"},
+    )
+    assert len(resultado["acoes"]) == 1
+    assert resultado["acoes"][0]["precedentes"] == ["P1"]
+    assert resultado["acoes"][0]["forca"] == "media"
+
+
+def test_estatistica_de_merito_exclui_acordo_e_extincao() -> None:
+    def trecho(rotulo: str, similaridade: float) -> TrechoSimilar:
+        return TrechoSimilar("x", similaridade, "t", None, None, {"rotulo": rotulo})
+
+    stats = _estatisticas_amostra([
+        trecho("PROCEDENTE", .8), trecho("PARCIAL", .7),
+        trecho("IMPROCEDENTE", .6), trecho("ACORDO", .5), trecho("EXTINTO", .4),
+    ])
+    assert stats["desfechos_merito"]["processos"] == 3
+    assert stats["desfechos_merito"]["percentual"] == 66.7
