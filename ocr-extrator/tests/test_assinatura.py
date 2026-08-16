@@ -480,10 +480,19 @@ def testar_persistencia() -> int:
     registro = armazenamento.registrar_assinatura(
         doc_token="doc-token-de-teste",
         nome="Contrato de honorários — Maria",
-        cliente="Maria",
+        cliente="  Maria   da Silva  ",
+        cpf="111.444.777-35",
         signatarios=signatarios,
     )
     falhas += not checar(bool(registro.get("id")), "a assinatura é registrada localmente")
+    falhas += not checar(
+        registro["cliente"] == "Maria da Silva",
+        "o nome do cliente é normalizado para reencontrar o contrato",
+    )
+    falhas += not checar(
+        registro["cpf"] == "11144477735",
+        "o CPF é guardado em forma canônica para separar homônimos",
+    )
     falhas += not checar(registro["faltam"] == ["Maria", "Bezerra"], "os dois constam faltando")
     falhas += not checar(
         registro["arquivo_local"] is False, "ainda não há cópia do assinado em disco"
@@ -496,6 +505,35 @@ def testar_persistencia() -> int:
 
     achado = [a for a in armazenamento.listar_assinaturas() if a["id"] == registro["id"]]
     falhas += not checar(len(achado) == 1, "a assinatura aparece na listagem")
+    por_cliente = armazenamento.listar_assinaturas(
+        cliente="Maria da Silva", cpf="11144477735"
+    )
+    falhas += not checar(
+        any(a["id"] == registro["id"] for a in por_cliente),
+        "a assinatura é reencontrada pelo nome normalizado",
+    )
+    homonimo = armazenamento.listar_assinaturas(
+        cliente="Maria da Silva", cpf="529.982.247-25"
+    )
+    falhas += not checar(
+        not any(a["id"] == registro["id"] for a in homonimo),
+        "o mesmo nome com outro CPF não recupera o contrato",
+    )
+
+    # Linha antiga, anterior à normalização na escrita: a função SQLite mantém
+    # a busca compatível sem exigir alteração destrutiva do histórico.
+    with armazenamento.conectar() as con:
+        con.execute(
+            "UPDATE assinaturas SET cliente = ? WHERE id = ?",
+            ("Maria    da Silva", registro["id"]),
+        )
+    legado = armazenamento.listar_assinaturas(
+        cliente="Maria da Silva", cpf="111.444.777-35"
+    )
+    falhas += not checar(
+        any(a["id"] == registro["id"] for a in legado),
+        "registro antigo com espaços internos continua localizável",
+    )
     falhas += not checar(
         "doc_token" in achado[0],
         "o doc_token fica disponível internamente (a rota é que o remove da resposta)",

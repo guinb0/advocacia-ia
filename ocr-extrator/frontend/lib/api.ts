@@ -48,7 +48,10 @@ export function definirTokenAtual(token: string | null): void {
   tokenAtual = token;
 }
 
-function cabecalhos(extra?: HeadersInit): HeadersInit | undefined {
+/* Exportado porque o módulo do agente (`lib/agente.ts`) tem o próprio cliente e o
+ * token é um só. Se ele guardasse uma cópia, a sessão valeria numa metade da
+ * aplicação e não na outra — falha que aparece como 401 numa aba só. */
+export function cabecalhos(extra?: HeadersInit): HeadersInit | undefined {
   if (!tokenAtual) return extra;
   return { ...(extra ?? {}), Authorization: `Bearer ${tokenAtual}` };
 }
@@ -164,6 +167,49 @@ export async function criarSalaChamada(): Promise<{ sala: string; url: string }>
 
 // ---------------------------------------------------------------- contrato
 
+function cpfValido(cpf: string): boolean {
+  const normalizado = cpf.normalize("NFKC");
+  if (!/^[0-9.\-\s]+$/.test(normalizado)) return false;
+  const digitos = normalizado.replace(/[^0-9]/g, "");
+  if (digitos.length !== 11 || /^(\d)\1{10}$/.test(digitos)) return false;
+
+  for (const posicao of [9, 10]) {
+    let soma = 0;
+    for (let indice = 0; indice < posicao; indice += 1) {
+      soma += Number(digitos[indice]) * (posicao + 1 - indice);
+    }
+    let verificador = (soma * 10) % 11;
+    if (verificador === 10) verificador = 0;
+    if (verificador !== Number(digitos[posicao])) return false;
+  }
+  return true;
+}
+
+/** Antecipação visual da barreira definitiva que também existe no servidor. */
+export function requisitosDoContrato(
+  respostas: Record<string, string | string[]>,
+): string[] {
+  const nome = typeof respostas.nome === "string" ? respostas.nome.trim() : "";
+  const cpf = typeof respostas.cpf === "string" ? respostas.cpf : "";
+  const partesDoNome = nome.split(/\s+/);
+  const particulas = new Set(["da", "das", "de", "do", "dos", "e"]);
+  const partesSubstantivas = partesDoNome.filter(
+    (parte) => !particulas.has(parte.toLocaleLowerCase("pt-BR").replace(/\.+$/, "")),
+  );
+  const nomeCompleto =
+    partesSubstantivas.length >= 2 &&
+    partesDoNome.every(
+      (parte) => /\p{L}/u.test(parte) && /^[\p{L}.'’-]+$/u.test(parte),
+    ) &&
+    partesSubstantivas.every(
+      (parte) => parte.replace(/[^\p{L}]/gu, "").length >= 2,
+    );
+  const requisitos: string[] = [];
+  if (!nomeCompleto) requisitos.push("nome completo do cliente");
+  if (!cpfValido(cpf)) requisitos.push("CPF válido");
+  return requisitos;
+}
+
 export interface ContratoGerado {
   arquivo: Blob;
   nome: string;
@@ -185,6 +231,18 @@ export async function gerarContrato(
     body: JSON.stringify({ respostas, municipio }),
   });
 
+  return interpretarContrato(r);
+}
+
+/** Gera a partir dos fatos atuais do caso; nenhum dado pessoal vem do navegador. */
+export async function gerarContratoDoCaso(casoId: string): Promise<ContratoGerado> {
+  const r = await buscar(`/api/agente/casos/${encodeURIComponent(casoId)}/contrato`, {
+    method: "POST",
+  });
+  return interpretarContrato(r);
+}
+
+async function interpretarContrato(r: Response): Promise<ContratoGerado> {
   if (!r.ok) {
     const corpo = await r.json().catch(() => null);
     throw new ApiError(
@@ -280,10 +338,12 @@ export async function enviarParaAssinatura(
 export async function listarAssinaturas(filtro: {
   casoId?: string;
   cliente?: string;
+  cpf?: string;
 } = {}): Promise<Assinatura[]> {
   const query = new URLSearchParams();
   if (filtro.casoId) query.set("caso_id", filtro.casoId);
   if (filtro.cliente) query.set("cliente", filtro.cliente);
+  if (filtro.cpf) query.set("cpf", filtro.cpf);
   const sufixo = query.size > 0 ? `?${query}` : "";
   const dados = await comoJson<{ assinaturas: Assinatura[] }>(
     await buscar(`/api/assinaturas${sufixo}`),
