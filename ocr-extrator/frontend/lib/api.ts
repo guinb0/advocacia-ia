@@ -525,6 +525,38 @@ export async function obterEntrega(entregaId: string): Promise<EntregaDetalhe> {
   return comoJson<EntregaDetalhe>(await buscar(`/api/entregas/${entregaId}`));
 }
 
+export interface PacoteDocumentos {
+  arquivo: Blob;
+  nome: string;
+  /** Quantos documentos entraram no pacote. */
+  arquivos: number;
+  /** Quantos constavam no caso mas não estavam mais no disco. */
+  faltando: number;
+}
+
+/** Tudo que o cliente enviou, num ZIP só, na ordem do checklist.
+ *
+ * Vai por `fetch` e não por `<a href download>` porque o link cru não manda o
+ * Bearer — desceria um 401 salvo em disco com nome de .zip, e o atendente só
+ * descobriria ao tentar abrir. Mesmo motivo de `baixarArquivoEntrega`. */
+export async function baixarDocumentosDoCaso(casoId: string): Promise<PacoteDocumentos> {
+  const r = await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos.zip`);
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+  return {
+    arquivo: await r.blob(),
+    nome: nomeDoAnexo(r, "documentos.zip"),
+    arquivos: Number(r.headers.get("X-Arquivos") ?? 0),
+    faltando: Number(r.headers.get("X-Faltando") ?? 0),
+  };
+}
+
 /** URL absoluta do arquivo. Serve para abrir em nova aba quando não há
  * autenticação; com token ligado use `baixarArquivoEntrega`, porque `<img>` e
  * `<iframe>` não enviam o header Authorization e levariam 401. */

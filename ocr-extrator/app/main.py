@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from . import (
@@ -109,6 +111,10 @@ app.add_middleware(
         "X-Campos-Faltando",
         "X-Pendencias",
         "X-Impedimentos",
+        # Quantos documentos entraram no ZIP e quantos não estavam mais no
+        # disco. Escondidos, o pacote incompleto desceria sem ninguém notar.
+        "X-Arquivos",
+        "X-Faltando",
     ],
 )
 
@@ -1443,6 +1449,46 @@ def baixar_arquivo_entrega(entrega_id: str, download: bool = False):
         caminho,
         filename=entrega["arquivo"],
         content_disposition_type="attachment" if download else "inline",
+    )
+
+
+@app.get("/api/casos/{caso_id}/documentos.zip")
+def baixar_documentos_do_caso(caso_id: str):
+    """Tudo que o cliente enviou, num pacote só.
+
+    Trinta documentos eram trinta cliques no checklist, um por linha, e a
+    certeza de esquecer um. O pacote sai na ordem do checklist, com o nome do
+    item em cada arquivo — do outro lado alguém confere contra a mesma lista.
+
+    O ZIP é montado a cada pedido, e não guardado: documento novo entra no
+    pacote seguinte sem ninguém precisar invalidar cache. Ele nasce em
+    `pipeline.TMP_DIR`, que já é a pasta dos temporários, e é apagado assim que
+    a resposta termina — arquivo de cliente não fica sobrando em disco.
+    """
+    destino = pipeline.TMP_DIR / f"documentos-{caso_id}-{uuid.uuid4().hex}.zip"
+    resumo = casos.montar_zip(caso_id, destino)
+    if resumo is None:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(404, "Caso não encontrado.")
+
+    if resumo["arquivos"] == 0:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(404, "Este caso ainda não tem documentos enviados.")
+
+    nome = re.sub(r"[^\w\- ]", "", resumo["cliente"]).strip() or caso_id[:8]
+    return FileResponse(
+        destino,
+        media_type="application/zip",
+        filename=f"Documentos - {nome}.zip",
+        # Sem isto o .zip fica em disco até alguém limpar a pasta, e é papelada
+        # de cliente. O `BackgroundTask` roda depois do último byte enviado.
+        background=BackgroundTask(destino.unlink, missing_ok=True),
+        headers={
+            # O que NÃO entrou, para a tela poder avisar em vez de deixar o
+            # atendente descobrir na hora de protocolar.
+            "X-Arquivos": str(resumo["arquivos"]),
+            "X-Faltando": str(len(resumo["faltando"])),
+        },
     )
 
 

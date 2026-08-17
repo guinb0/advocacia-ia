@@ -7,6 +7,8 @@ chegou com problema. Tudo aqui é derivado das entregas — nada de status guard
 
 from __future__ import annotations
 
+import zipfile
+from pathlib import Path
 from typing import Any
 
 from . import armazenamento, categorias
@@ -336,4 +338,87 @@ def montar_pedido(caso_id: str, incluir_opcionais: bool = False) -> dict[str, An
         "faltando_opcionais": [i["nome"] for i in faltando_opc],
         "reenviar": [i["nome"] for i in reenviar],
         "progresso": situacao["progresso"],
+    }
+
+
+# ------------------------------------------------- dossiê em ZIP
+
+
+#: Caracteres que o Windows recusa em nome de arquivo. Um documento chamado
+#: "RG (frente/verso).jpg" quebra o unzip do outro lado, e quem recebe o pacote
+#: é o escritório — não dá para pedir que renomeie na mão.
+_PROIBIDOS = str.maketrans({c: "-" for c in '\/:*?"<>|'})
+
+
+def _nome_no_pacote(indice: int, item_nome: str, arquivo: str) -> str:
+    """`03 - Laudos medicos - foto.jpg`.
+
+    O número vem primeiro porque o descompactador ordena por nome, e a ordem
+    que interessa é a do checklist — quem abre o pacote está conferindo contra
+    a lista de documentos, não procurando um arquivo específico.
+    """
+    limpo = str(item_nome or "Sem categoria").translate(_PROIBIDOS).strip()
+    return f"{indice:02d} - {limpo} - {Path(arquivo).name.translate(_PROIBIDOS)}"
+
+
+def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
+    """Junta num ZIP tudo que o cliente enviou. `None` se o caso não existe.
+
+    O escritório baixava documento por documento, clicando em cada linha do
+    checklist — trinta arquivos, trinta cliques, e a certeza de esquecer um.
+    O pacote sai na ordem do checklist e com o nome do item em cada arquivo,
+    porque do outro lado alguém vai conferir contra a mesma lista.
+
+    Escreve em disco em vez de montar na memória: são fotos e PDFs de
+    digitalização, e um caso instruído passa fácil de cem megabytes — segurar
+    isso em RAM por requisição derruba o servidor no dia em que dois
+    atendentes baixarem ao mesmo tempo.
+
+    O que não existir mais no disco é PULADO e contado, nunca inventado: um ZIP
+    silenciosamente incompleto é pior que um erro, porque ninguém confere o que
+    não sabe que faltou.
+    """
+    situacao = montar_situacao(caso_id)
+    if situacao is None:
+        return None
+
+    # A ordem é a do checklist, e cada entrega entra UMA vez — uma CIN que
+    # atende RG e CPF é um arquivo só, e duplicá-lo faria o conferente procurar
+    # diferença entre duas cópias idênticas.
+    incluidos: dict[str, tuple[int, str]] = {}
+    for item in situacao["itens"]:
+        for entrega in item["entregas"]:
+            incluidos.setdefault(entrega["id"], (item["numero"], item["nome"]))
+
+    guardados: list[str] = []
+    faltando: list[str] = []
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
+        usados: set[str] = set()
+        for entrega_id, (numero, item_nome) in incluidos.items():
+            entrega = armazenamento.obter_entrega(entrega_id)
+            if entrega is None:
+                continue
+            caminho = Path(entrega["caminho"])
+            if not caminho.is_file():
+                faltando.append(entrega["arquivo"])
+                continue
+
+            nome = _nome_no_pacote(numero, item_nome, entrega["arquivo"])
+            # Dois arquivos com o mesmo nome no mesmo item: o ZIP aceita e o
+            # descompactador sobrescreve um com o outro, calado.
+            if nome in usados:
+                base, ponto, ext = nome.rpartition(".")
+                nome = f"{base} ({len(usados)}){ponto}{ext}" if ponto else f"{nome} ({len(usados)})"
+            usados.add(nome)
+
+            pacote.write(caminho, arcname=nome)
+            guardados.append(nome)
+
+    return {
+        "arquivos": len(guardados),
+        "faltando": faltando,
+        "cliente": situacao["caso"]["cliente"],
+        "pronto": situacao["progresso"]["pronto"],
     }

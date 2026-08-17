@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { SituacaoCaso } from "@/lib/types";
+import BaixarDocumentos from "./BaixarDocumentos";
 import { Aviso, Selo } from "./Basicos";
 import estilos from "./Checklist.module.css";
 import ItemChecklistLinha from "./ItemChecklistLinha";
@@ -145,6 +146,17 @@ export default function Checklist({
             </Aviso>
           </div>
         )}
+
+        {/* O pacote fica logo abaixo do "instrução completa": é o passo
+          * seguinte a ele. Aparece antes disso também, porque baixar o que já
+          * chegou é útil no meio do caminho — mas só ganha o botão cheio
+          * quando o checklist fecha. A contagem é de ENTREGAS DISTINTAS: uma
+          * CIN que atende RG e CPF aparece em dois itens e é um arquivo só. */}
+        <BaixarDocumentos
+          casoId={caso.id}
+          total={new Set(itens.flatMap((i) => i.entregas.map((e) => e.id))).size}
+          pronto={progresso.pronto}
+        />
       </div>
 
       {erro && (

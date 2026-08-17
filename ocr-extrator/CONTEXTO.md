@@ -624,6 +624,38 @@ assuntos. Os lembretes são deduplicados por texto na junção.
 
 ---
 
+## Os documentos do caso num ZIP só — 16/08/2026
+
+`GET /api/casos/{id}/documentos.zip` (`casos.montar_zip`) e o botão no alto do
+checklist (`BaixarDocumentos.tsx`). O escritório baixava documento por
+documento, clicando linha por linha: trinta arquivos, trinta cliques, e a
+certeza de esquecer um.
+
+- **A ordem é a do checklist e o nome do item vai no arquivo** —
+  `03 - Laudos medicos - foto.jpg`. Quem abre o pacote está conferindo contra a
+  mesma lista, e o descompactador ordena por nome.
+- **Cada entrega entra uma vez.** Uma CIN que atende RG e CPF aparece em dois
+  itens e é um arquivo só; duplicá-la faria o conferente procurar diferença
+  entre duas cópias idênticas.
+- **Montado a cada pedido, apagado depois.** Nasce em `pipeline.TMP_DIR` e some
+  no `BackgroundTask` quando o último byte sai — papelada de cliente não fica
+  sobrando em disco, e documento novo entra no pacote seguinte sem cache para
+  invalidar. Vai para disco e não para a memória: um caso instruído passa fácil
+  de cem megabytes, e dois atendentes baixando ao mesmo tempo derrubariam o
+  servidor.
+- **O que sumiu do disco é contado, não inventado.** `X-Faltando` sobe no
+  cabeçalho e a tela avisa: ZIP silenciosamente incompleto é pior que erro,
+  porque ninguém confere o que não sabe que faltou.
+- **O download vai por `fetch`, não por `<a href>`**: link cru não manda o
+  Bearer, e o que desceria seria um 401 salvo em disco com nome de `.zip`.
+  Mesmo motivo de `baixarArquivoEntrega`.
+
+O botão aparece assim que houver um documento — baixar o que já chegou é útil no
+meio do caminho — mas só fica **cheio** quando o checklist fecha, que é quando
+ele deixa de ser conveniência e passa a ser o próximo passo.
+
+---
+
 ## Áudio da entrevista gravado e baixável — 14/08/2026
 
 `app/gravacao.py` + três rotas no serviço de transcrição (`:8200`). A entrevista
