@@ -45,6 +45,78 @@ Ele levanta, nesta ordem: Keycloak (container), transcrição (`:8200`), backend
 (`:8100`) e frontend (`:3000`). `Ctrl+C` derruba os três últimos; o Keycloak
 segue no container.
 
+### Primeira vez na sua máquina: montar o servidor de vídeo
+
+Pule esta seção se a pasta `docker-jitsi-meet` já existe e já tem `.env`. Ela é
+para quem clonou o projeto agora e o `docker compose up` não sobe, ou sobe e a
+chamada não conecta.
+
+O Jitsi **não faz parte deste repositório** — é um projeto à parte, que fica ao
+lado dele. Da pasta que contém o `advocacia-ia`:
+
+```powershell
+git clone https://github.com/jitsi/docker-jitsi-meet.git
+cd docker-jitsi-meet
+Copy-Item env.example .env
+```
+
+**1. Sorteie as senhas dos serviços.** São seis, e sem elas os contêineres sobem
+e não se falam — o sintoma é a chamada abrir e ninguém ouvir ninguém. O
+`gen-passwords.sh` do projeto precisa de bash; no PowerShell, isto faz o mesmo:
+
+```powershell
+$env:Path += ";C:\Program Files\Git\usr\bin"   # se tiver Git for Windows
+$linhas = Get-Content .env
+foreach ($k in "JICOFO_AUTH_PASSWORD","JVB_AUTH_PASSWORD","JIGASI_XMPP_PASSWORD",
+                "JIGASI_TRANSCRIBER_PASSWORD","JIBRI_RECORDER_PASSWORD","JIBRI_XMPP_PASSWORD") {
+    $b = New-Object byte[] 16
+    [System.Security.Cryptography.RNGCryptoServiceProvider]::new().GetBytes($b)
+    $senha = ($b | ForEach-Object { $_.ToString("x2") }) -join ""
+    $linhas = $linhas -replace "^$k=.*", "$k=$senha"
+}
+Set-Content .env $linhas -Encoding utf8
+```
+
+**2. Ajuste seis linhas do `.env`.** Estes são os valores desta instalação — o
+resto do arquivo fica como veio:
+
+```ini
+HTTP_PORT=8081                      # a 8000 do padrão costuma estar ocupada
+HTTPS_PORT=8444
+PUBLIC_URL=http://localhost:8081
+ENABLE_AUTH=0                       # o cliente entra sem conta
+ENABLE_GUESTS=1
+ENABLE_LETSENCRYPT=0                # não há domínio; é tudo local
+ENABLE_HTTP_REDIRECT=0              # sem isto o navegador é jogado para HTTPS
+BOSH_RELATIVE=true                  # o app embute a chamada, não abre o Jitsi
+STUN_HOST=stun.l.google.com
+STUN_PORT=19302
+JVB_ADVERTISE_IPS=127.0.0.1,SEU_IP_LOCAL
+```
+
+> `JVB_ADVERTISE_IPS` é o único que muda de máquina para máquina: ponha o IP da
+> sua (`ipconfig`, o IPv4 da rede em uso) depois do `127.0.0.1`. Ele é o
+> endereço que o servidor de mídia anuncia para o navegador; errado, a chamada
+> conecta e o áudio não passa.
+
+**3. Crie as pastas de configuração.** O compose as monta como volume e não as
+cria sozinho:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.jitsi-meet-cfg\web",
+  "$HOME\.jitsi-meet-cfg\transcripts", "$HOME\.jitsi-meet-cfg\prosody\config",
+  "$HOME\.jitsi-meet-cfg\prosody\prosody-plugins-custom",
+  "$HOME\.jitsi-meet-cfg\jicofo", "$HOME\.jitsi-meet-cfg\jvb",
+  "$HOME\.jitsi-meet-cfg\jigasi", "$HOME\.jitsi-meet-cfg\jibri" | Out-Null
+```
+
+**4. Suba.** A primeira vez baixa ~1 GB de imagens.
+
+Trocou alguma senha depois de já ter subido? Os contêineres guardaram a antiga:
+`docker compose down -v` e suba de novo, senão o `jicofo` fica reiniciando.
+
+---
+
 O servidor de vídeo é **separado** e não sobe com o `iniciar.ps1`:
 
 ```powershell
@@ -64,6 +136,21 @@ algum, a chamada abre e ninguém se ouve.
 
 > A porta é **8081**, e não a 8000 do padrão do Jitsi, porque a 8000 costuma
 > estar ocupada nesta máquina.
+
+### Quando não sobe
+
+| sintoma | causa provável | o que fazer |
+|---|---|---|
+| `docker compose up` erra em volume/mount | as pastas de `~/.jitsi-meet-cfg` não existem | passo 3 acima |
+| `jicofo` reiniciando em laço | senha trocada depois de o prosody já ter subido | `docker compose down -v` e subir de novo |
+| aparecem 4 contêineres, mas `localhost:8081` não responde | a 8081 está ocupada por outro projeto | `Get-NetTCPConnection -LocalPort 8081` e troque `HTTP_PORT` (e o `NEXT_PUBLIC_JITSI_URL` do app junto) |
+| entra na sala e ninguém se ouve | `JVB_ADVERTISE_IPS` sem o IP da máquina | passo 2, e `docker compose restart jvb` |
+| o navegador é jogado para `https://` e dá erro de certificado | `ENABLE_HTTP_REDIRECT=1` | ponha `0` e suba de novo |
+| a chamada abre a tela do Jitsi em vez de embutir | `BOSH_RELATIVE` diferente de `true` | corrija e `docker compose restart web` |
+
+O Docker Desktop também trava na volta de um reboot: o motor Linux responde
+`500 Internal Server Error` com a distro WSL rodando. Fechar e reabrir o Docker
+Desktop resolve — esperar, não.
 
 ---
 
