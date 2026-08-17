@@ -624,6 +624,61 @@ assuntos. Os lembretes são deduplicados por texto na junção.
 
 ---
 
+## A papelada são TRÊS documentos, não um — 17/08/2026
+
+`contrato.MODELOS` + `gerar_todos`. O escritório soltou em `docs/` a **procuração
+ad judicia** e a **declaração de hipossuficiência econômica**, e elas usam a
+mesma convenção de colchetes do contrato — a máquina de preenchimento que já
+existia serviu sem alteração. O que mudou foi o escopo: gerar só o contrato
+deixava o atendimento pela metade, porque **sem procuração o advogado não
+peticiona e sem declaração não há gratuidade**, e as duas seguiam sendo montadas
+à mão depois, fora do sistema, que é onde se perdem.
+
+Os três modelos pedem o mesmo dado com nomes diferentes — `[nome da pessoa]`,
+`[nome completo]`, `[nome do outorgante]`, `[nome do declarante]`; RG inteiro na
+procuração e partido no contrato. Um dicionário só serve aos três: `preencher`
+troca o que encontra e ignora o resto. E `_validar_e_normalizar_obrigatorios`
+força o nome **já validado** em todos os apelidos — sem isso o mesmo cliente
+sairia com duas grafias no mesmo maço.
+
+**Na tela, um botão por documento.** Eles formam uma papelada só, mas na mesa do
+escritório são três arquivos com três destinos, e quase sempre se quer um deles
+(a procuração para protocolar hoje, o contrato para reenviar). O aviso de campo
+em branco é **por documento**: o contrato pede telefone e e-mail, a procuração
+não, e somá-los sugeriria buraco onde não há.
+
+**Na assinatura, os três de uma vez.** A ZapSign trabalha com um envelope por
+documento — link, estado e trilha próprios —, então o cliente recebe três
+convites e a tela acompanha os três em separado. Um contador somado esconderia o
+que o escritório precisa saber: QUAL deles está parado.
+
+Se o segundo ou o terceiro for recusado depois de o primeiro já ter subido, a
+resposta traz o que já foi enviado e um aviso para mandar só o que faltou —
+reenviar tudo duplicaria convites que o cliente já recebeu.
+
+Os dois modelos novos trazem o corpo **duplicado** dentro do .docx (via do
+cliente e via do escritório, provavelmente). Não foi mexido: é documento do
+escritório, e o cliente assina o que está lá.
+
+---
+
+## A cobrança recolhe quando a entrevista flui — 17/08/2026
+
+Medido em uso: a placa de PARE ficou **62 segundos** no ar sobre "Nome completo"
+enquanto o cliente respondia — o rastreio de assalto entrou sozinho no mesmo
+período. Pela regra do escritório estava certo (não é a pergunta da vez), mas um
+alarme que fica minutos no ar vira paisagem, e aí não serve para o caso em que
+importa: o cliente falando do filho, da vizinha, sem nada entrando em campo
+nenhum.
+
+Agora, enquanto cair resposta em QUALQUER pergunta (janela de 20s), a placa
+recolhe para uma linha âmbar — *"62s sem responder esta. Ele está respondendo
+outras — encaixe esta quando ele terminar a frase"*. O relógio não para e a
+pergunta continua aberta; o que muda é o tom. Parou de entrar qualquer coisa, a
+placa volta inteira, com a frase de corte.
+
+---
+
 ## A tela do atendimento só mostra o atendimento — 17/08/2026
 
 `ListaCasos` + `ChamadaDoAtendimento.tsx`. Duas coisas atrapalhavam a tela em

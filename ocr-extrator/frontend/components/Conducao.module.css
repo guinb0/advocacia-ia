@@ -24,6 +24,25 @@
   background: color-mix(in srgb, var(--accent) 5%, var(--surface));
 }
 
+/* A cobrança recolhida: passou dos 10s, mas a entrevista está andando.
+ *
+ * Uma linha âmbar em vez da placa vermelha. O relógio não parou e a pergunta
+ * continua aberta — o que mudou é o tom, porque não há o que cortar enquanto o
+ * cliente responde. */
+.cobrancaLeve {
+  margin: 10px 0 0;
+  border-left: 3px solid var(--warn);
+  padding: 7px 11px;
+  background: var(--surface-2);
+  max-width: 68ch;
+  font: 400 12px/1.5 var(--font-ui);
+  color: var(--text);
+}
+
+.cobrancaLeve strong {
+  color: var(--warn);
+}
+
 /* ------------------------------------------------------------- a placa -- */
 
 /* A faixa de PARE, colada nas bordas da barra.

@@ -419,10 +419,18 @@ export interface Assinatura {
 
 /** Resposta de `POST /api/contrato/assinatura`. */
 export interface AssinaturaCriada {
-  assinatura: Assinatura;
+  /** Uma por documento da papelada: contrato, procuração e declaração.
+   *  Cada uma é um processo próprio na ZapSign, com link e trilha próprios. */
+  assinaturas: Assinatura[];
   /** Campos do modelo que a entrevista não respondeu — saem entre colchetes. */
   faltando: string[];
+  /** Preenchido quando um documento falhou DEPOIS de outros já terem subido:
+   *  reenviar tudo duplicaria os convites que o cliente já recebeu. */
+  parcial?: string;
 }
+
+/** Os documentos que o cliente assina. Os códigos vêm de `contrato.MODELOS`. */
+export type DocumentoDoCliente = "contrato" | "procuracao" | "hipossuficiencia";
 
 /** Resposta de `GET /api/assinaturas/{id}`, já consultada na ZapSign. */
 export interface AssinaturaConsultada {

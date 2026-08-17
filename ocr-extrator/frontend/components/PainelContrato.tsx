@@ -5,13 +5,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   baixarContratoAssinado,
   configAssinatura,
+  DOCUMENTOS_DO_CLIENTE,
   enviarParaAssinatura,
   gerarContrato,
   listarAssinaturas,
   obterAssinatura,
   requisitosDoContrato,
 } from "@/lib/api";
-import type { Assinatura, ConfigAssinatura, Signatario } from "@/lib/types";
+import type {
+  Assinatura,
+  ConfigAssinatura,
+  DocumentoDoCliente,
+  Signatario,
+} from "@/lib/types";
 import estilos from "./PainelContrato.module.css";
 
 /* Contrato de honorários, preenchido com o que a entrevista respondeu.
@@ -59,9 +65,12 @@ function texto(valor: string | string[] | undefined): string {
 const INTERVALO_MS = 20_000;
 
 export default function PainelContrato({ respostas }: Props) {
-  const [gerando, setGerando] = useState(false);
-  const [faltando, setFaltando] = useState<string[] | null>(null);
-  const [baixado, setBaixado] = useState<string | null>(null);
+  /** Qual documento está sendo gerado agora — só um botão fica ocupado. */
+  const [gerando, setGerando] = useState<DocumentoDoCliente | null>(null);
+  /** O que já foi baixado, por documento: nome do arquivo e campos em branco. */
+  const [porDocumento, setPorDocumento] = useState<
+    Partial<Record<DocumentoDoCliente, { nome: string; faltando: string[] }>>
+  >({});
   const [erro, setErro] = useState<string | null>(null);
 
   const [config, setConfig] = useState<ConfigAssinatura | null>(null);
@@ -70,7 +79,15 @@ export default function PainelContrato({ respostas }: Props) {
    * rótulo, sem botão e sem explicação, e não há como saber se a assinatura está
    * desligada, quebrada ou carregando. */
   const [configErro, setConfigErro] = useState<string | null>(null);
-  const [assinatura, setAssinatura] = useState<Assinatura | null>(null);
+  /* Uma assinatura POR DOCUMENTO: contrato, procuração e declaração.
+   *
+   * A ZapSign trabalha com um envelope por documento — cada um tem o seu link,
+   * o seu estado e a sua trilha de auditoria. Guardar só o contrato deixava as
+   * outras duas tramitando sem nada na tela, e o escritório as mandava de novo. */
+  const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
+  /* Um documento recusado DEPOIS de outros já terem subido. Não é erro comum:
+   * o que já foi enviado vale, e reenviar tudo duplicaria convites. */
+  const [parcial, setParcial] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [baixandoAssinado, setBaixandoAssinado] = useState(false);
   const [erroAssinatura, setErroAssinatura] = useState<string | null>(null);
@@ -86,22 +103,43 @@ export default function PainelContrato({ respostas }: Props) {
   const telefone = texto(respostas.telefone);
   const requisitosContrato = requisitosDoContrato(respostas);
 
-  async function gerar() {
+  /* Gera a papelada INTEIRA, na ordem em que o escritório a junta.
+   *
+   * Sem procuração o advogado não peticiona, e sem declaração de
+   * hipossuficiência não há gratuidade de justiça. Baixar um de cada vez
+   * convidava a esquecer os outros dois — e o esquecimento só aparecia na hora
+   * de protocolar, com o cliente já fora da chamada.
+   *
+   * Os campos que faltam são a UNIÃO dos três: cada modelo pede um conjunto
+   * diferente (o contrato quer telefone e e-mail; a procuração, não). */
+  /* Um documento de cada vez, com o seu próprio botão.
+   *
+   * Os três formam uma papelada só, mas na mesa do escritório eles são três
+   * arquivos com três destinos — e o atendente muitas vezes quer só um (a
+   * procuração para protocolar hoje, o contrato para reenviar ao cliente que
+   * apagou o e-mail). Um botão único obrigava a baixar os três para ter um.
+   *
+   * O `faltando` é POR documento porque cada modelo pede um conjunto diferente:
+   * o contrato quer telefone e e-mail, a procuração não. Somados, sugeririam
+   * buracos onde não há. */
+  async function gerar(codigo: DocumentoDoCliente) {
     if (requisitosContrato.length > 0) {
-      setErro(`Contrato não gerado: informe ${requisitosContrato.join(" e ")}.`);
+      setErro(`Documentos não gerados: informe ${requisitosContrato.join(" e ")}.`);
       return;
     }
-    setGerando(true);
+    setGerando(codigo);
     setErro(null);
     try {
-      const contrato = await gerarContrato(respostas);
-      setFaltando(contrato.faltando);
-      setBaixado(contrato.nome);
-      baixarBlob(contrato.arquivo, contrato.nome);
+      const gerado = await gerarContrato(respostas, "", codigo);
+      setPorDocumento((atuais) => ({
+        ...atuais,
+        [codigo]: { nome: gerado.nome, faltando: gerado.faltando },
+      }));
+      baixarBlob(gerado.arquivo, gerado.nome);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível gerar o contrato.");
+      setErro(e instanceof Error ? e.message : "Não foi possível gerar o documento.");
     } finally {
-      setGerando(false);
+      setGerando(null);
     }
   }
 
@@ -130,8 +168,10 @@ export default function PainelContrato({ respostas }: Props) {
     if (!cliente || !cpf || requisitosContrato.length > 0) return;
     let vivo = true;
     void listarAssinaturas({ cliente, cpf })
-      .then(([maisRecente]) => {
-        if (vivo && maisRecente) setAssinatura(maisRecente);
+      .then((achadas) => {
+        // Uma por documento: a listagem vem da mais recente para a mais antiga,
+        // e as três da mesma papelada saem juntas no topo.
+        if (vivo && achadas.length) setAssinaturas(achadas.slice(0, DOCUMENTOS_DO_CLIENTE.length));
       })
       .catch(() => undefined);
     return () => {
@@ -142,37 +182,48 @@ export default function PainelContrato({ respostas }: Props) {
   const atualizar = useCallback(async (id: string) => {
     try {
       const resposta = await obterAssinatura(id);
-      setAssinatura(resposta.assinatura);
+      setAssinaturas((atuais) =>
+        atuais.map((a) => (a.id === id ? resposta.assinatura : a)),
+      );
       setDesatualizado(resposta.atualizado ? null : (resposta.aviso ?? "Estado não confirmado."));
     } catch (e) {
       setDesatualizado(e instanceof Error ? e.message : "Falha ao consultar a ZapSign.");
     }
   }, []);
 
-  const pendente = assinatura !== null && assinatura.estado === "pendente";
-  const assinaturaId = assinatura?.id ?? null;
+  /* Só os pendentes voltam a ser consultados: documento assinado não muda mais,
+   * e três consultas de 20 em 20 segundos gastariam o triplo do limite da conta
+   * do escritório para reconfirmar o que já está fechado. */
+  const pendentes = assinaturas.filter((a) => a.estado === "pendente").map((a) => a.id);
+  const chavePendentes = pendentes.join(",");
 
   useEffect(() => {
-    if (!pendente || !assinaturaId) return;
-    const id = setInterval(() => void atualizar(assinaturaId), INTERVALO_MS);
+    if (!chavePendentes) return;
+    const ids = chavePendentes.split(",");
+    const id = setInterval(() => {
+      for (const cada of ids) void atualizar(cada);
+    }, INTERVALO_MS);
     return () => clearInterval(id);
-  }, [pendente, assinaturaId, atualizar]);
+  }, [chavePendentes, atualizar]);
 
   async function mandarAssinar() {
     if (requisitosContrato.length > 0) {
-      setErroAssinatura(`Contrato não gerado: informe ${requisitosContrato.join(" e ")}.`);
+      setErroAssinatura(`Documentos não gerados: informe ${requisitosContrato.join(" e ")}.`);
       return;
     }
     setEnviando(true);
     setErroAssinatura(null);
     setDesatualizado(null);
+    setParcial(null);
     try {
       const resposta = await enviarParaAssinatura(respostas);
-      setAssinatura(resposta.assinatura);
-      setFaltando(resposta.faltando);
+      setAssinaturas(resposta.assinaturas);
+      // O backend só manda `parcial` quando parte da papelada subiu e o resto
+      // não: é aviso, não erro — o que subiu já está com o cliente.
+      if (resposta.parcial) setParcial(resposta.parcial);
     } catch (e) {
       setErroAssinatura(
-        e instanceof Error ? e.message : "Não foi possível mandar o contrato para assinatura.",
+        e instanceof Error ? e.message : "Não foi possível mandar os documentos para assinatura.",
       );
     } finally {
       setEnviando(false);
@@ -208,59 +259,73 @@ export default function PainelContrato({ respostas }: Props) {
 
   return (
     <div className={estilos.bloco}>
-      <span className={estilos.rotulo}>CONTRATO DE HONORÁRIOS</span>
+      <span className={estilos.rotulo}>DOCUMENTOS PARA O CLIENTE ASSINAR</span>
 
       <p className={estilos.texto}>
-        Preenche o modelo do escritório com a qualificação que a entrevista trouxe — nome,
-        CPF, RG, endereço, telefone e e-mail. As cláusulas, os percentuais e o foro vêm do
-        modelo, sem alteração.
+        Preenche os <strong>três modelos do escritório</strong> — contrato de honorários,
+        procuração <em>ad judicia</em> e declaração de hipossuficiência — com a
+        qualificação que a entrevista trouxe: nome, CPF, RG, endereço, telefone e e-mail.
+        As cláusulas, os poderes, os percentuais e o foro vêm dos modelos, sem alteração.
       </p>
 
       {requisitosContrato.length > 0 && (
         <div className={estilos.faltando}>
-          <strong>Contrato ainda não pode ser gerado.</strong>
+          <strong>Os documentos ainda não podem ser gerados.</strong>
           <br />
           Informe {requisitosContrato.join(" e ")}. Nenhum arquivo será criado antes disso.
         </div>
       )}
 
-      <div className={estilos.acoes}>
-        <button
-          type="button"
-          className={estilos.botao}
-          onClick={gerar}
-          disabled={gerando || requisitosContrato.length > 0}
-        >
-          {gerando ? "Gerando…" : baixado ? "Gerar de novo" : "Gerar contrato"}
-        </button>
-        {cliente && <span className={estilos.cliente}>para {cliente}</span>}
-      </div>
+      {cliente && <p className={estilos.cliente}>para {cliente}</p>}
+
+      {/* Um botão por documento. Eles formam uma papelada só, mas na mesa do
+        * escritório são três arquivos com três destinos — e quase sempre se
+        * quer um deles, não os três. */}
+      <ul className={estilos.documentos}>
+        {DOCUMENTOS_DO_CLIENTE.map((doc) => {
+          const feito = porDocumento[doc.codigo];
+          return (
+            <li key={doc.codigo} className={estilos.documento}>
+              <div className={estilos.documentoLinha}>
+                <button
+                  type="button"
+                  className={estilos.botao}
+                  onClick={() => void gerar(doc.codigo)}
+                  disabled={gerando !== null || requisitosContrato.length > 0}
+                >
+                  {gerando === doc.codigo
+                    ? "Gerando…"
+                    : feito
+                      ? `Baixar ${doc.rotulo} de novo`
+                      : `Baixar ${doc.rotulo}`}
+                </button>
+                {feito && feito.faltando.length === 0 && (
+                  <span className={estilos.completo}>✓ sem campo em branco</span>
+                )}
+              </div>
+
+              {/* O que falta é DESTE modelo: o contrato pede telefone e e-mail,
+                * a procuração não. Somar os três sugeriria buraco onde não há. */}
+              {feito && feito.faltando.length > 0 && (
+                <div className={estilos.faltando}>
+                  <strong>
+                    A entrevista não respondeu {feito.faltando.length} campo(s) deste
+                    documento:
+                  </strong>{" "}
+                  {feito.faltando.map(legivel).join(", ")}.
+                  <span className={estilos.explicacao}>
+                    No arquivo eles continuam entre colchetes, à vista. Volte ao roteiro e
+                    complete, ou preencha à mão antes da assinatura — em branco passariam
+                    despercebidos na revisão.
+                  </span>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
 
       {erro && <div className={estilos.erro}>{erro}</div>}
-
-      {baixado && !erro && (
-        <p className={estilos.baixado}>
-          <strong>{baixado}</strong> foi baixado. Confira antes de mandar assinar.
-        </p>
-      )}
-
-      {faltando && faltando.length > 0 && (
-        <div className={estilos.faltando}>
-          <strong>A entrevista não respondeu {faltando.length} campo(s):</strong>{" "}
-          {faltando.map(legivel).join(", ")}.
-          <span className={estilos.explicacao}>
-            No documento eles continuam entre colchetes, à vista. Volte ao roteiro e
-            complete, ou preencha à mão antes da assinatura — em branco passariam
-            despercebidos na revisão.
-          </span>
-        </div>
-      )}
-
-      {faltando?.length === 0 && (
-        <p className={estilos.completo}>
-          ✓ Todos os campos do modelo foram preenchidos pela entrevista.
-        </p>
-      )}
 
       {/* ------------------------------------------------ assinatura eletrônica */}
       <div className={estilos.assinatura}>
@@ -290,11 +355,12 @@ export default function PainelContrato({ respostas }: Props) {
           </p>
         )}
 
-        {config?.ativa && !assinatura && (
+        {config?.ativa && assinaturas.length === 0 && (
           <>
             <p className={estilos.texto}>
-              Manda o mesmo documento para a ZapSign, que envia o link a cada signatário e
-              devolve o contrato assinado com a trilha de auditoria.
+              Manda os <strong>três documentos</strong> para a ZapSign, que envia um link
+              por documento a cada signatário e devolve cada um assinado com a trilha de
+              auditoria. O cliente recebe três convites.
             </p>
 
             <ul className={estilos.destinos}>
@@ -327,7 +393,7 @@ export default function PainelContrato({ respostas }: Props) {
                 onClick={mandarAssinar}
                 disabled={enviando || !podeEnviar}
               >
-                {enviando ? "Enviando…" : "Mandar assinar"}
+                {enviando ? "Enviando…" : "Mandar os três para assinatura"}
               </button>
             </div>
 
@@ -342,20 +408,29 @@ export default function PainelContrato({ respostas }: Props) {
 
         {erroAssinatura && <div className={estilos.erro}>{erroAssinatura}</div>}
 
-        {assinatura && (
-          <Acompanhamento
-            assinatura={assinatura}
-            desatualizado={desatualizado}
-            baixando={baixandoAssinado}
-            onAtualizar={() => void atualizar(assinatura.id)}
-            onBaixar={() => void baixarAssinado(assinatura.id)}
-          />
-        )}
+        {parcial && <div className={estilos.faltando}>{parcial}</div>}
+
+        {/* Um acompanhamento por documento: "1 de 2 assinaram" somado dos três
+          * esconderia justamente o que o escritório precisa saber — QUAL deles
+          * está parado. */}
+        {assinaturas.map((a) => (
+          <div key={a.id}>
+            <span className={estilos.rotulo}>{a.nome}</span>
+            <Acompanhamento
+              assinatura={a}
+              desatualizado={desatualizado}
+              baixando={baixandoAssinado}
+              onAtualizar={() => void atualizar(a.id)}
+              onBaixar={() => void baixarAssinado(a.id)}
+            />
+          </div>
+        ))}
       </div>
 
-      {(baixado || assinatura?.estado === "assinado") && (
+      {(Object.keys(porDocumento).length > 0 ||
+        assinaturas.some((a) => a.estado === "assinado")) && (
         <p className={estilos.proximo}>
-          Assinado o contrato, crie o caso abaixo: é ele que abre o checklist e o portal
+          Assinada a papelada, crie o caso abaixo: é ele que abre o checklist e o portal
           para o cliente enviar os documentos.
         </p>
       )}

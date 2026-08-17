@@ -88,6 +88,20 @@ const MINIMO_PARA_CONFERIR = 40;
  * mudou de assunto), ela anda. */
 const SEGUNDOS_ANTES_DE_ANDAR = 8;
 
+/* Por quanto tempo, depois do último campo preenchido, a entrevista conta como
+ * FLUINDO.
+ *
+ * Enquanto ela flui, a cobrança dos 10s recolhe: o relógio continua correndo e
+ * a linha continua na tela, mas a placa vermelha some. O cliente está
+ * respondendo o roteiro — fora de ordem, mas respondendo — e gritar PARE por
+ * cima disso é o alarme virar paisagem. Um alarme que fica no ar por minutos
+ * deixa de ser lido, e aí ele não serve para o caso em que importa: o cliente
+ * falando do filho, da vizinha, sem nada entrando em campo nenhum.
+ *
+ * 20s porque é o intervalo típico entre dois preenchimentos numa conversa
+ * corrida — abaixo disso a placa piscaria a cada pausa para respirar. */
+const SEGUNDOS_FLUINDO = 20;
+
 /** Tem valor? Mesmo critério de `escuta._respondida`, no backend. */
 function respondida(valor: string | string[] | undefined): boolean {
   return Array.isArray(valor) ? valor.length > 0 : Boolean(String(valor ?? "").trim());
@@ -119,6 +133,9 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const [respondendoAgora, setRespondendoAgora] = useState<{ id: string; em: number } | null>(
     null,
   );
+  /* Quando um campo QUALQUER foi preenchido pela última vez. É o sinal de que a
+   * entrevista está andando, mesmo que fora da ordem do roteiro. */
+  const [ultimoPreenchimento, setUltimoPreenchimento] = useState<number | null>(null);
   // A pergunta da vez, lida dentro da fila da escuta — que é fixada na
   // construção e não enxergaria o estado do React.
   const atualRef = useRef<string>("");
@@ -311,6 +328,9 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
           if (r.preenchidas.some((p) => p.pergunta_id === atualRef.current)) {
             setRespondendoAgora({ id: atualRef.current, em: Date.now() });
           }
+          // Caiu em qualquer pergunta: a entrevista está andando, e a cobrança
+          // recolhe enquanto isso durar.
+          setUltimoPreenchimento(Date.now());
           setRespostas((atuais) => {
             const novo = { ...atuais };
             for (const p of r.preenchidas) {
@@ -639,6 +659,10 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   atualRef.current = atual?.pergunta.id ?? "";
   /** O cliente está desenvolvendo a resposta desta pergunta agora mesmo. */
   const respondendo = posicaoSegurada >= 0;
+  /** A entrevista anda: caiu resposta em ALGUMA pergunta há pouco. */
+  const fluindo =
+    ultimoPreenchimento !== null &&
+    Date.now() - ultimoPreenchimento < SEGUNDOS_FLUINDO * 1000;
 
   const { total, feitas } = useMemo(() => {
     const resp = sequencia.filter(({ pergunta }) => respondida(respostas[pergunta.id]));
@@ -812,6 +836,7 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
              * a regra do escritório. */
             ativo={escutando && estadoMic !== "pausado" && !respondendo}
             respondendo={respondendo}
+            fluindo={fluindo}
             onIrPara={irPara}
             onPular={pular}
             onRetomarPuladas={retomarPuladas}

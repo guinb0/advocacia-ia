@@ -69,6 +69,9 @@ interface Props {
   /** O cliente está desenvolvendo a resposta DESTA pergunta agora. A barra não
    *  anda e o relógio não corre — cobrar quem está respondendo é atropelar. */
   respondendo: boolean;
+  /** Caiu resposta em ALGUMA pergunta há pouco: a entrevista anda, ainda que
+   *  fora de ordem. A cobrança continua, mas sem a placa — ver `pare`. */
+  fluindo: boolean;
   onIrPara: (perguntaId: string) => void;
   onPular: (perguntaId: string) => void;
   onRetomarPuladas: () => void;
@@ -85,6 +88,7 @@ export default function Conducao({
   fechosPorTipo,
   ativo,
   respondendo,
+  fluindo,
   onIrPara,
   onPular,
   onRetomarPuladas,
@@ -204,18 +208,29 @@ export default function Conducao({
         * Não pisca. Movimento na periferia da visão sequestra a atenção de quem
         * deveria estar ouvindo o cliente — e quem apaga o alarme é a resposta,
         * não o entrevistador olhar para cá. */}
-      {cobrando && (
-        <p className={estilos.pare} aria-live="polite">
-          <strong className={estilos.pareRotulo}>PARE</strong>
-          <span className={estilos.pareTexto}>
-            DIRECIONE A PERGUNTA — NÃO PERCA TEMPO
-            <em>
-              {segundos}s nesta pergunta. Corte com educação e traga o cliente de volta
-              ao roteiro — o que ele contar fora de ordem o sistema aproveita sozinho.
-            </em>
-          </span>
-        </p>
-      )}
+      {cobrando &&
+        (fluindo ? (
+          /* A entrevista está andando — o cliente respondeu OUTRA pergunta há
+           * pouco. A cobrança continua (o relógio não parou, a pergunta segue
+           * aberta), mas recolhida a uma linha: gritar PARE por cima de uma
+           * conversa produtiva faz o alarme virar paisagem, e aí ele não serve
+           * para o caso em que importa. */
+          <p className={estilos.cobrancaLeve} aria-live="polite">
+            <strong>{segundos}s sem responder esta.</strong> Ele está respondendo outras —
+            encaixe esta quando ele terminar a frase.
+          </p>
+        ) : (
+          <p className={estilos.pare} aria-live="polite">
+            <strong className={estilos.pareRotulo}>PARE</strong>
+            <span className={estilos.pareTexto}>
+              DIRECIONE A PERGUNTA — NÃO PERCA TEMPO
+              <em>
+                {segundos}s nesta pergunta e nada entrando em campo nenhum. Corte com
+                educação e traga o cliente de volta ao roteiro.
+              </em>
+            </span>
+          </p>
+        ))}
 
       <div className={estilos.topo}>
         <span className={estilos.rotulo}>
@@ -243,8 +258,9 @@ export default function Conducao({
 
       {/* A frase que traz o cliente de volta, logo ACIMA do enunciado: ela
         * acaba em dois-pontos e emenda nele, de cima para baixo, na ordem em
-        * que se fala. */}
-      {retomada && (
+        * que se fala. Não aparece enquanto a entrevista flui: ali não há o que
+        * cortar — ele está respondendo, só que outra pergunta. */}
+      {retomada && !fluindo && (
         <p className={estilos.retomada}>
           <span className={estilos.leia}>LEIA AO CLIENTE</span>
           {retomada}

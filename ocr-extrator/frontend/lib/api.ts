@@ -8,6 +8,7 @@ import type {
   Categoria,
   ConfigAssinatura,
   Documento,
+  DocumentoDoCliente,
   EnderecoCep,
   EntregaDetalhe,
   Escuta,
@@ -224,15 +225,24 @@ export interface ContratoGerado {
 export async function gerarContrato(
   respostas: Record<string, string | string[]>,
   municipio = "",
+  documento: DocumentoDoCliente = "contrato",
 ): Promise<ContratoGerado> {
   const r = await buscar("/api/contrato", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ respostas, municipio }),
+    body: JSON.stringify({ respostas, municipio, documento }),
   });
 
   return interpretarContrato(r);
 }
+
+/** Os três documentos que o cliente assina, na ordem em que o escritório os
+ *  junta. Os rótulos são os mesmos de `contrato.MODELOS`, no backend. */
+export const DOCUMENTOS_DO_CLIENTE: { codigo: DocumentoDoCliente; rotulo: string }[] = [
+  { codigo: "contrato", rotulo: "Contrato de honorários" },
+  { codigo: "procuracao", rotulo: "Procuração ad judicia" },
+  { codigo: "hipossuficiencia", rotulo: "Declaração de hipossuficiência" },
+];
 
 /** Gera a partir dos fatos atuais do caso; nenhum dado pessoal vem do navegador. */
 export async function gerarContratoDoCaso(casoId: string): Promise<ContratoGerado> {

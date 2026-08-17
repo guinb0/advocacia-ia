@@ -248,13 +248,29 @@ def testar_assinatura_valida() -> int:
 
     falhas = 0
     falhas += not checar(resposta.status_code == 201, "pedido válido cria a assinatura")
-    falhas += not checar(enviar.await_count == 1, "o DOCX válido é enviado uma única vez")
-    docx_enviado = enviar.await_args.args[1]
-    texto = texto_do_docx(docx_enviado)
+
+    # A papelada é uma só e são TRÊS documentos: contrato, procuração e
+    # declaração de hipossuficiência. Sem procuração o advogado não peticiona,
+    # e sem declaração não há gratuidade — mandar só o contrato deixava as
+    # outras duas assinaturas para alguém correr atrás depois, fora do sistema.
     falhas += not checar(
-        "Maria da Silva" in texto and "111.444.777-35" in texto,
-        "nome e CPF normalizados entram no DOCX enviado",
+        enviar.await_count == len(contrato.MODELOS),
+        f"a papelada inteira é enviada ({enviar.await_count} de {len(contrato.MODELOS)})",
     )
+    nomes = [c.args[0] for c in enviar.await_args_list]
+    falhas += not checar(
+        all(any(m["rotulo"] in n for n in nomes) for m in contrato.MODELOS),
+        f"cada documento vai com o seu nome ({nomes})",
+    )
+
+    # O nome e o CPF normalizados precisam entrar em TODOS, não só no primeiro:
+    # o cliente assinaria uma procuração com a grafia crua da entrevista.
+    for chamada in enviar.await_args_list:
+        texto = texto_do_docx(chamada.args[1])
+        falhas += not checar(
+            "Maria da Silva" in texto and "111.444.777-35" in texto,
+            f"nome e CPF normalizados entram em «{chamada.args[0]}»",
+        )
     falhas += not checar(
         registrar.call_args.kwargs["cliente"] == "Maria da Silva",
         "a chave local da assinatura usa o nome normalizado",
@@ -263,8 +279,13 @@ def testar_assinatura_valida() -> int:
         registrar.call_args.kwargs["caso_id"] == "caso-1",
         "a identidade correspondente pode ser vinculada ao caso",
     )
+    assinaturas = resposta.json().get("assinaturas", [])
     falhas += not checar(
-        not {"doc_token", "cpf"} & resposta.json().get("assinatura", {}).keys(),
+        len(assinaturas) == len(contrato.MODELOS),
+        f"a resposta traz uma assinatura por documento ({len(assinaturas)})",
+    )
+    falhas += not checar(
+        all(not {"doc_token", "cpf"} & a.keys() for a in assinaturas),
         "token da ZapSign e CPF de correlação não vazam na resposta",
     )
     return falhas

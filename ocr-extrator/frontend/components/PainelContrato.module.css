@@ -51,8 +51,34 @@
 }
 
 .cliente {
+  margin: 0 0 12px;
   font: italic 400 13px/1.4 var(--font-display);
   color: var(--muted);
+}
+
+/* Um documento por linha, cada um com o seu botão.
+ *
+ * Empilhados e não lado a lado: os rótulos têm comprimentos muito diferentes
+ * ("Contrato de honorários" contra "Declaração de hipossuficiência"), e em
+ * fileira eles quebravam em degraus — a lista deixa claro que são três coisas
+ * da mesma papelada, na ordem em que o escritório as junta. */
+.documentos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.documento + .documento {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.documentoLinha {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .baixado {

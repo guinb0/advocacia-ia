@@ -126,26 +126,92 @@ def _validar_e_normalizar_obrigatorios(valores: dict[str, Any]) -> dict[str, str
 
     normalizados["nome da pessoa"] = nome
     normalizados["cpf"] = cpf
-    # O modelo repete o nome no bloco de assinatura. Quando ele veio pela
-    # entrevista, ambos já existem; a atribuição também protege chamadas diretas.
-    if "nome do contratante" in normalizados:
-        normalizados["nome do contratante"] = nome
+    # Os modelos repetem o nome no bloco de assinatura, cada um com o seu
+    # rótulo: contratante no contrato, outorgante na procuração, declarante na
+    # declaração. Todos recebem o nome JÁ VALIDADO — se um deles ficasse com a
+    # cópia crua, o mesmo documento sairia com duas grafias do mesmo cliente.
+    for apelido in _APELIDOS_DO_NOME:
+        if apelido in normalizados:
+            normalizados[apelido] = nome
     return normalizados
+
+
+#: Como cada modelo chama o cliente. Ver `_validar_e_normalizar_obrigatorios`.
+_APELIDOS_DO_NOME = (
+    "nome completo",
+    "nome do contratante",
+    "nome do outorgante",
+    "nome do declarante",
+)
 
 
 # ------------------------------------------------------------------ modelo
 
 
-def caminho_modelo() -> Path:
+#: Os documentos que o cliente assina, na ordem em que o escritório os junta.
+#:
+#: São TRÊS e não um: sem procuração o advogado não peticiona, e sem declaração
+#: de hipossuficiência não há gratuidade de justiça. Gerar só o contrato deixava
+#: o atendimento pela metade — a papelada seguia sendo montada à mão depois,
+#: fora do sistema, que é onde ela se perde.
+#:
+#: `prefixo` é comparado sem acento e sem caixa contra o nome do arquivo em
+#: `docs/`: o escritório versiona pelo próprio nome ("CONTRATO oficial.docx") e
+#: renomeia sem avisar ninguém.
+MODELOS: tuple[dict[str, str], ...] = (
+    {
+        "codigo": "contrato",
+        "rotulo": "Contrato de honorários",
+        "prefixo": "contrato",
+        "arquivo": "Contrato",
+    },
+    {
+        "codigo": "procuracao",
+        "rotulo": "Procuração ad judicia",
+        "prefixo": "procuracao",
+        "arquivo": "Procuração",
+    },
+    {
+        "codigo": "hipossuficiencia",
+        "rotulo": "Declaração de hipossuficiência",
+        "prefixo": "declaracao",
+        "arquivo": "Declaração de hipossuficiência",
+    },
+)
+
+CODIGOS = tuple(m["codigo"] for m in MODELOS)
+
+
+def modelo(codigo: str) -> dict[str, str]:
+    for m in MODELOS:
+        if m["codigo"] == codigo:
+            return m
+    raise ErroContrato(f"Documento {codigo!r} não existe. Conhecidos: {', '.join(CODIGOS)}.")
+
+
+def _sem_acento(texto: str) -> str:
+    sem = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in sem if not unicodedata.combining(c)).casefold()
+
+
+def caminho_modelo(codigo: str = "contrato") -> Path:
     """O .docx oficial. Trocar de versão é soltar o arquivo novo em `docs/`.
 
-    O nome não é fixo de propósito: o escritório versiona o contrato pela data
-    no próprio nome do arquivo, como já faz com os checklists.
+    O nome não é fixo de propósito: o escritório versiona pela data no próprio
+    nome do arquivo, como já faz com os checklists. A comparação ignora acento e
+    caixa porque "Procuração.docx" e "PROCURACAO.docx" são o mesmo documento
+    para quem salvou, e um `glob` literal acharia só um dos dois.
     """
-    candidatos = sorted(DIR_DOCS.glob("CONTRATO*.docx"))
+    alvo = modelo(codigo)
+    candidatos = [
+        p
+        for p in DIR_DOCS.glob("*.docx")
+        if _sem_acento(p.name).startswith(alvo["prefixo"])
+    ]
     if not candidatos:
         raise ErroContrato(
-            "Modelo de contrato não encontrado em docs/ (esperado um CONTRATO*.docx)."
+            f"Modelo de {alvo['rotulo'].lower()} não encontrado em docs/ "
+            f"(esperado um arquivo começando por {alvo['prefixo'].upper()})."
         )
     # O mais recente vence, para a versão nova entrar sem mexer no código.
     return max(candidatos, key=lambda p: p.stat().st_mtime)
@@ -405,6 +471,17 @@ def valores_da_entrevista(
 
     return {
         "nome da pessoa": r("nome"),
+        # Os três modelos pedem o mesmo dado com nomes diferentes. Um dicionário
+        # só serve aos três: `preencher` troca o que encontra e ignora o resto,
+        # então a chave que sobra não custa nada — e evita três mapeamentos para
+        # manter em dia quando a entrevista mudar de campo.
+        "nome completo": r("nome"),
+        "nome do outorgante": r("nome"),
+        "nome do declarante": r("nome"),
+        # A procuração e a declaração pedem o RG num campo só; o contrato o
+        # separa em número e órgão. Vão os dois formatos.
+        "rg": numero_rg,
+        "órgão/UF": orgao_rg,
         "nacionalidade": r("nacionalidade"),
         # O roteiro oferece "Casado(a)" com maiúscula, que é como se lê num
         # botão; no meio da qualificação ("brasileira, casado(a), carteira") a
@@ -426,7 +503,45 @@ def valores_da_entrevista(
 
 
 def gerar(
-    respostas: dict[str, Any], municipio: str = "", quando: date | None = None
+    respostas: dict[str, Any],
+    municipio: str = "",
+    quando: date | None = None,
+    codigo: str = "contrato",
 ) -> tuple[bytes, list[str]]:
     respostas_normalizadas = normalizar_respostas(respostas)
-    return preencher(valores_da_entrevista(respostas_normalizadas, municipio, quando))
+    return preencher(
+        valores_da_entrevista(respostas_normalizadas, municipio, quando),
+        caminho_modelo(codigo),
+    )
+
+
+def gerar_todos(
+    respostas: dict[str, Any], municipio: str = "", quando: date | None = None
+) -> list[dict[str, Any]]:
+    """Os três documentos que o cliente assina, do mesmo conjunto de respostas.
+
+    Sai tudo de uma vez porque é assim que o escritório usa: contrato,
+    procuração e declaração de hipossuficiência formam UMA papelada, assinada na
+    mesma sessão. Gerar um de cada vez convidava a esquecer os outros dois — e
+    sem procuração não se peticiona.
+
+    Cada item traz o seu `faltando`: o que a entrevista não respondeu continua
+    entre colchetes no documento, e a lista é diferente por modelo (o contrato
+    pede telefone e e-mail; a procuração, não).
+    """
+    respostas_normalizadas = normalizar_respostas(respostas)
+    valores = valores_da_entrevista(respostas_normalizadas, municipio, quando)
+
+    documentos: list[dict[str, Any]] = []
+    for alvo in MODELOS:
+        docx, faltando = preencher(valores, caminho_modelo(alvo["codigo"]))
+        documentos.append(
+            {
+                "codigo": alvo["codigo"],
+                "rotulo": alvo["rotulo"],
+                "arquivo": alvo["arquivo"],
+                "docx": docx,
+                "faltando": faltando,
+            }
+        )
+    return documentos

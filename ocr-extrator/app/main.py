@@ -195,6 +195,8 @@ class PedidoContrato(BaseModel):
     respostas: dict[str, Any]
     #: Onde o contrato é assinado. Vazio: tenta deduzir do endereço.
     municipio: str = ""
+    #: Qual dos documentos da papelada. Ver `contrato.MODELOS`.
+    documento: str = "contrato"
 
 
 @app.post("/api/contrato")
@@ -209,16 +211,27 @@ def gerar_contrato(pedido: PedidoContrato):
     entrevista não respondeu voltam no cabeçalho `X-Campos-Faltando`, e
     continuam visíveis entre colchetes no documento.
     """
+    # Documento desconhecido é erro de quem chamou, não do serviço: sem esta
+    # barreira ele cairia no 503 lá embaixo, mandando procurar o problema no
+    # servidor em vez de na requisição.
+    if pedido.documento not in contrato.CODIGOS:
+        raise HTTPException(
+            422, f"Documento {pedido.documento!r} não existe. Conhecidos: {', '.join(contrato.CODIGOS)}."
+        )
+
     try:
+        alvo = contrato.modelo(pedido.documento)
         respostas = contrato.normalizar_respostas(pedido.respostas)
-        docx, faltando = contrato.gerar(respostas, pedido.municipio)
+        docx, faltando = contrato.gerar(
+            respostas, pedido.municipio, codigo=pedido.documento
+        )
     except contrato.DadosObrigatoriosContrato as exc:
         raise HTTPException(422, str(exc)) from exc
     except contrato.ErroContrato as exc:
         raise HTTPException(503, str(exc)) from exc
 
     nome_cliente = str(respostas["nome"])
-    arquivo = f"Contrato - {nome_cliente}.docx".replace("/", "-").replace("\\", "-")
+    arquivo = f"{alvo['arquivo']} - {nome_cliente}.docx".replace("/", "-").replace("\\", "-")
 
     return Response(
         content=docx,
@@ -229,7 +242,7 @@ def gerar_contrato(pedido: PedidoContrato):
             # `filename*` em UTF-8 porque nome de cliente tem acento, e o
             # `filename` sem aspas quebraria no primeiro espaço.
             "Content-Disposition": (
-                f'attachment; filename="contrato.docx"; '
+                f'attachment; filename="{pedido.documento}.docx"; '
                 f"filename*=UTF-8''{quote(arquivo)}"
             ),
             "X-Campos-Faltando": ", ".join(faltando),
@@ -498,7 +511,17 @@ def config_assinatura():
 
 @app.post("/api/contrato/assinatura", status_code=201)
 async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
-    """Gera o contrato e o manda para assinatura eletrônica.
+    """Gera a papelada INTEIRA e a manda para assinatura eletrônica.
+
+    São três documentos e não um: contrato de honorários, procuração e
+    declaração de hipossuficiência. Sem procuração o advogado não peticiona, e
+    sem declaração não há gratuidade — mandar só o contrato deixava o cliente
+    assinando uma vez e o escritório correndo atrás das outras duas assinaturas
+    depois, fora do sistema.
+
+    Cada documento vira um processo de assinatura próprio na ZapSign, porque é
+    assim que ela funciona: um envelope por documento, com o seu próprio link e
+    a sua própria trilha de auditoria. O cliente recebe três convites.
 
     O .docx sobe como está — a ZapSign converte para PDF e é esse PDF que o
     cliente assina. Nome completo e CPF válido são obrigatórios. Outro campo que
@@ -521,15 +544,14 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
                 cliente,
                 respostas["cpf"],
             )
-        docx, faltando = await run_in_threadpool(
-            contrato.gerar, respostas, pedido.municipio
+        documentos = await run_in_threadpool(
+            contrato.gerar_todos, respostas, pedido.municipio
         )
     except contrato.DadosObrigatoriosContrato as exc:
         raise HTTPException(422, str(exc)) from exc
     except contrato.ErroContrato as exc:
         raise HTTPException(503, str(exc)) from exc
 
-    nome_documento = f"Contrato de honorários — {cliente}"
     extras = [s.model_dump() for s in pedido.signatarios]
 
     # Montar a lista falha por dado que o usuário pode consertar — cliente sem
@@ -540,32 +562,59 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
     except assinatura.ErroAssinatura as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    try:
-        resposta = await assinatura.enviar(nome_documento, docx, signatarios)
-    except assinatura.ErroAssinatura as exc:
-        raise HTTPException(502, str(exc)) from exc
+    enviados: list[dict[str, Any]] = []
+    faltando: list[str] = []
+    for doc in documentos:
+        nome_documento = f"{doc['rotulo']} — {cliente}"
+        try:
+            resposta = await assinatura.enviar(nome_documento, doc["docx"], signatarios)
+        except assinatura.ErroAssinatura as exc:
+            # Um documento recusado no meio da fila deixa os anteriores JÁ
+            # enviados — e eles são válidos, o cliente vai recebê-los. Devolver
+            # 502 e calar sobre isso faria o escritório mandar tudo de novo,
+            # duplicando convites. Por isso o que já subiu vai na resposta.
+            if enviados:
+                log.warning(
+                    "%s falhou depois de %d documento(s) já enviado(s): %s",
+                    doc["rotulo"], len(enviados), exc,
+                )
+                return {
+                    "assinaturas": enviados,
+                    "faltando": sorted(set(faltando)),
+                    "parcial": (
+                        f"{doc['rotulo']} não foi aceita pela ZapSign ({exc}). "
+                        f"Os {len(enviados)} documento(s) anteriores já foram enviados — "
+                        "mande apenas o que faltou, para não duplicar convites."
+                    ),
+                }
+            raise HTTPException(502, str(exc)) from exc
 
-    resumo = assinatura.resumir(resposta, assinatura.casar_com_enviados(signatarios, resposta))
+        resumo = assinatura.resumir(
+            resposta, assinatura.casar_com_enviados(signatarios, resposta)
+        )
+        if not resumo["doc_token"]:
+            raise HTTPException(
+                502, f"A ZapSign aceitou {doc['rotulo'].lower()} mas não devolveu o token."
+            )
 
-    if not resumo["doc_token"]:
-        raise HTTPException(502, "A ZapSign aceitou o documento mas não devolveu o token dele.")
+        registro = armazenamento.registrar_assinatura(
+            doc_token=resumo["doc_token"],
+            nome=nome_documento,
+            cliente=cliente,
+            cpf=str(respostas["cpf"]),
+            signatarios=resumo["signatarios"],
+            estado=resumo["estado"],
+            caso_id=pedido.caso_id,
+        )
+        enviados.append(_resposta_assinatura(registro))
+        faltando += doc["faltando"]
 
-    registro = armazenamento.registrar_assinatura(
-        doc_token=resumo["doc_token"],
-        nome=nome_documento,
-        cliente=cliente,
-        cpf=str(respostas["cpf"]),
-        signatarios=resumo["signatarios"],
-        estado=resumo["estado"],
-        caso_id=pedido.caso_id,
-    )
+        log.info(
+            "%s de %s enviada para assinatura (%d signatário(s)).",
+            doc["rotulo"], cliente, resumo["total"],
+        )
 
-    log.info(
-        "Contrato de %s enviado para assinatura (%d signatário(s)).",
-        cliente,
-        resumo["total"],
-    )
-    return {"assinatura": _resposta_assinatura(registro), "faltando": faltando}
+    return {"assinaturas": enviados, "faltando": sorted(set(faltando))}
 
 
 @app.get("/api/assinaturas")
