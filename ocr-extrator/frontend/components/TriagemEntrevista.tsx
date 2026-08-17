@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { analisarEstrategia, triarEntrevista } from "@/lib/api";
 import type { Estrategia, Triagem } from "@/lib/types";
@@ -20,9 +20,16 @@ import estilos from "./TriagemEntrevista.module.css";
  * sustentou, e a lista inteira fica clicável, não só a primeira. */
 export default function TriagemEntrevista({
   onEscolher,
+  onAtendimento,
 }: {
   /** Aplica a categoria (e o nome do cliente, se a entrevista trouxer). */
   onEscolher: (categoria: string, cliente?: string) => void;
+  /** Em que ponto o atendimento está. A tela ao redor usa isto para tirar do
+   *  caminho o que não é deste cliente (a lista de casos antigos) e para saber
+   *  quando pode mostrar a chamada — durante a entrevista ela já está na
+   *  coluna da direita, e desenhá-la duas vezes decodificaria o mesmo vídeo em
+   *  dois lugares. */
+  onAtendimento?: (fase: "nenhum" | "entrevista" | "pos-entrevista") => void;
 }) {
   const [texto, setTexto] = useState("");
   const [mostrarRoteiro, setMostrarRoteiro] = useState(false);
@@ -47,6 +54,22 @@ export default function TriagemEntrevista({
   const [erroEstrategia, setErroEstrategia] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /* Avisa a tela de fora em que ponto este atendimento está.
+   *
+   * O pós-entrevista (avaliação, relatório, contrato) é a MESMA sessão da
+   * entrevista, com o cliente ainda na linha — por isso ele também conta como
+   * atendimento em curso, e não como "voltou para a tela de casos". */
+  const fase = mostrarRoteiro
+    ? "entrevista"
+    : qualificacao !== null
+      ? "pos-entrevista"
+      : "nenhum";
+  const avisar = useRef(onAtendimento);
+  avisar.current = onAtendimento;
+  useEffect(() => {
+    avisar.current?.(fase);
+  }, [fase]);
 
   async function analisar(arquivo?: File) {
     if (!arquivo && !texto.trim()) return;

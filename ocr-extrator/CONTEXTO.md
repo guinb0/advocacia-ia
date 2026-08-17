@@ -624,6 +624,32 @@ assuntos. Os lembretes são deduplicados por texto na junção.
 
 ---
 
+## A tela do atendimento só mostra o atendimento — 17/08/2026
+
+`ListaCasos` + `ChamadaDoAtendimento.tsx`. Duas coisas atrapalhavam a tela em
+que o caso nasce, logo depois da entrevista:
+
+**A lista de quinze casos antigos ao lado do atendimento em curso.** Ela é a
+porta de entrada de OUTRO trabalho — abrir o checklist de um cliente de semanas
+atrás — e quinze linhas clicáveis são quinze chances de sair do atendimento sem
+querer, com o cliente na linha. Some enquanto durar o atendimento e volta
+sozinha quando o caso é criado.
+
+**A chamada virava uma pílula num canto.** Ela já sobrevivia à saída da
+entrevista (vive no `ProvedorChamada`, na raiz), mas a etapa seguinte é a do
+Google Meu Negócio, que manda PERMANECER na videoconferência enquanto o cliente
+avalia. Instrução assim ao lado de um canto discreto é instrução que ninguém
+segue. Agora a chamada ocupa a coluna que a lista desocupou, com os retratos, o
+estado e o aviso de não desligar; o "desligar" fica discreto de propósito,
+porque nesta tela é quase sempre o botão errado.
+
+O aviso que a `TriagemEntrevista` manda para fora é uma FASE ("entrevista",
+"pos-entrevista", "nenhum"), não um sim/não: durante a entrevista a chamada já
+está na coluna da direita, e um booleano faria o mesmo vídeo ser decodificado em
+dois lugares ao mesmo tempo.
+
+---
+
 ## Os documentos do caso num ZIP só — 16/08/2026
 
 `GET /api/casos/{id}/documentos.zip` (`casos.montar_zip`) e o botão no alto do

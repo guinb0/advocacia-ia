@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Selo } from "./Basicos";
+import ChamadaDoAtendimento from "./ChamadaDoAtendimento";
 import CredenciaisPortal from "./CredenciaisPortal";
 import estilos from "./ListaCasos.module.css";
 import TriagemEntrevista from "./TriagemEntrevista";
@@ -35,6 +36,14 @@ export default function ListaCasos({
   /* Credenciais do caso recém-criado. Ficam só em memória: a senha existe em
    * texto claro apenas nesta resposta, e some ao sair da tela. */
   const [novoPortal, setNovoPortal] = useState<CasoCriado | null>(null);
+  /* Em que ponto está o atendimento deste cliente.
+   *
+   * Enquanto ele durar, a lista de casos antigos sai da tela. Ela é a porta de
+   * entrada de OUTRO trabalho — abrir o checklist de um cliente de semanas
+   * atrás — e quinze linhas clicáveis ao lado do atendimento em andamento são
+   * quinze chances de sair dele sem querer, com o cliente na linha. */
+  const [fase, setFase] = useState<"nenhum" | "entrevista" | "pos-entrevista">("nenhum");
+  const emAtendimento = fase !== "nenhum";
 
   const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
@@ -63,6 +72,7 @@ export default function ListaCasos({
         </p>
 
         <TriagemEntrevista
+          onAtendimento={setFase}
           onEscolher={(cat, nome) => {
             if (cat) setCategoria(cat);
             // A entrevista costuma trazer o nome no cabeçalho; não sobrescreve
@@ -144,6 +154,32 @@ export default function ListaCasos({
         )}
       </div>
 
+      {/* A lista some enquanto há atendimento em curso: nesta tela só existe o
+        * caso que está nascendo. Ela volta sozinha quando o caso é criado ou a
+        * entrevista é fechada. */}
+      {emAtendimento ? (
+        <div className="cartao">
+          <h2 className="tituloCartao">Atendimento em andamento</h2>
+          <p className="subtituloCartao">
+            Os casos já cadastrados ficam fora da tela enquanto este cliente está
+            sendo atendido — eles voltam quando o caso for criado. Para abrir outro
+            caso agora, volte para a carteira.
+          </p>
+
+          {/* A chamada ocupa a coluna que a lista desocupou.
+            *
+            * Ela já sobrevivia à saída da entrevista, mas como uma pílula num
+            * canto — e a etapa ao lado é a que manda PERMANECER na
+            * videoconferência enquanto o cliente avalia. Instrução assim, ao
+            * lado de um canto discreto, ninguém segue.
+            *
+            * Só no pós-entrevista: durante a entrevista a chamada já está na
+            * coluna da direita, e desenhá-la aqui também decodificaria o mesmo
+            * vídeo em dois lugares. Sem chamada de pé o painel não desenha
+            * nada — metade dos atendimentos é presencial. */}
+          {fase === "pos-entrevista" && <ChamadaDoAtendimento />}
+        </div>
+      ) : (
       <div className="cartao">
         <h2 className="tituloCartao">Casos cadastrados</h2>
         <p className="subtituloCartao">
@@ -215,6 +251,7 @@ export default function ListaCasos({
           </ul>
         )}
       </div>
+      )}
     </div>
   );
 }
