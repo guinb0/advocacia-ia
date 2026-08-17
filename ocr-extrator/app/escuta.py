@@ -56,7 +56,7 @@ from typing import Any
 
 import httpx
 
-from . import roteiros, validators
+from . import roteiros
 
 log = logging.getLogger("escuta")
 
@@ -73,11 +73,22 @@ MINIMO_CARACTERES = 25
 #: A ordem do roteiro é do escritório, então as primeiras abertas são as certas.
 MAXIMO_PERGUNTAS = 18
 
-#: Os dois únicos dados que a entrevista colhe, e mesmo assim como SUGESTÃO. Ver
-#: o cabeçalho sobre por que nome e CPF não se preenchem sozinhos a partir de
-#: fala. O resto da qualificação está num bloco marcado `delegado_a`, e blocos
-#: delegados não entram na escuta — quem os colhe é outra equipe, digitando.
-DADOS_PERMITIDOS = {"nome", "cpf"}
+#: Nome e CPF são DIGITADOS, e a escuta não encosta neles.
+#:
+#: Já foram sugestão — a fala virava um palpite que alguém confirmava com um
+#: clique. Medido no áudio real, não funcionava: o Whisper escrevia "Guilherme
+#: Inunes" no lugar de "Guilherme Nunes", e o modelo, corretamente, se recusava
+#: a preencher a partir de texto ilegível. O resultado na tela era um campo
+#: vazio sem explicação.
+#:
+#: A regra do escritório fechou a questão: os dois são digitados ANTES de a
+#: transcrição começar, e é o preenchimento deles que libera o microfone (ver
+#: `Roteiro.tsx`). Não há o que ouvir aqui — quando a escuta abre, eles já estão
+#: respondidos.
+#:
+#: A lista existe para o caso de o roteiro mudar de forma: campo destes nunca
+#: sai de fala, esteja no bloco que estiver.
+DADOS_DIGITADOS = {"nome", "cpf"}
 
 
 class ErroEscuta(Exception):
@@ -121,8 +132,9 @@ def _perguntas_abertas(
             if _respondida(respostas.get(pergunta.id)):
                 continue
             # Rede de segurança para quando o roteiro mudar de forma: campo com
-            # dígito verificador nunca sai de fala, esteja no bloco que estiver.
-            if pergunta.validacao and pergunta.id not in DADOS_PERMITIDOS:
+            # dígito verificador, e os que são digitados por regra, nunca saem
+            # de fala — esteja no bloco que estiver.
+            if pergunta.validacao or pergunta.id in DADOS_DIGITADOS:
                 continue
             abertas.append(pergunta)
     return abertas[:MAXIMO_PERGUNTAS]
@@ -226,6 +238,11 @@ def _normalizar(
     por_id = {p.id: p for p in abertas}
 
     preenchidas: list[dict[str, Any]] = []
+    #: Hoje sai sempre vazia: nome e CPF passaram a ser digitados antes de a
+    #: transcrição começar, e eram os únicos campos que viravam sugestão. A
+    #: chave fica no formato porque a tela e os testes a esperam — e porque o
+    #: dia em que um campo voltar a depender de confirmação humana, o caminho
+    #: já existe.
     sugestoes: list[dict[str, Any]] = []
     extras: list[dict[str, Any]] = []
 
@@ -241,11 +258,11 @@ def _normalizar(
         if not valor:
             continue
 
-        # `_perguntas_abertas` já não oferece campo de documento ao modelo. Esta
+        # `_perguntas_abertas` já não oferece estes campos ao modelo. Esta
         # segunda barreira existe porque prompt é melhor-esforço: se um dia a
         # lista mudar e um `cpf` escapar para cá, ele morre aqui também.
-        if pergunta.validacao and pergunta.id not in DADOS_PERMITIDOS:
-            log.info("Escuta tentou preencher campo com validação %r; descartado.", pergunta.id)
+        if pergunta.validacao or pergunta.id in DADOS_DIGITADOS:
+            log.info("Escuta tentou preencher campo digitado %r; descartado.", pergunta.id)
             continue
 
         if pergunta.tipo == "sim_nao":
@@ -262,27 +279,6 @@ def _normalizar(
             "valor": valor,
             "trecho": _texto(item.get("trecho"), 240),
         }
-
-        # Nome e CPF NÃO entram sozinhos: vão para `sugestoes`, que a tela mostra
-        # com um clique para aceitar. É a diferença entre errar uma palavra num
-        # relato — visível, corrigível — e errar um dígito que segue calado para
-        # o contrato, a procuração e a petição.
-        if pergunta.id in DADOS_PERMITIDOS:
-            if pergunta.id == "cpf":
-                digitos = re.sub(r"\D", "", valor)
-                if not validators.validar_cpf(digitos):
-                    # Ouvido errado é o caso comum, não a exceção. Vira pedido de
-                    # confirmação em vez de sugestão que não passa no dígito.
-                    extras.append(
-                        {
-                            "pergunta_id": pergunta.id,
-                            "pergunte": "Pode confirmar o CPF, por favor, número a número?",
-                        }
-                    )
-                    continue
-                registro["valor"] = validators.formatar_cpf(digitos)
-            sugestoes.append(registro)
-            continue
 
         preenchidas.append(registro)
 

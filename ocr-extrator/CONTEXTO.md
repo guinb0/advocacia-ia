@@ -624,6 +624,111 @@ assuntos. Os lembretes são deduplicados por texto na junção.
 
 ---
 
+## O atendimento inteiro numa rolagem só — 17/08/2026
+
+`EntrevistaComChamada` deixou de ser "a tela da entrevista" e passou a ser a tela
+do ATENDIMENTO. O escritório pediu "tudo numa paulada só", e o corte que existia
+— concluir a entrevista para então aparecer outra tela — era o problema: ele
+encerrava a gravação e a chamada **justamente quando o roteiro manda permanecer
+nelas**, para a avaliação do Google.
+
+A ordem, agora, rolando para baixo:
+
+    roteiro → Google Meu Negócio → relatório → os três documentos e a
+    assinatura → criar o caso → checklist recebendo documentos → encerrar
+
+**O roteiro não fecha mais nada.** Ele reporta as respostas conforme mudam
+(`onRespostas`) e as etapas seguintes leem isso ao vivo — o contrato pede nome e
+CPF, e eles chegam nas duas primeiras perguntas. O botão de encerrar saiu de
+dentro dele: com as etapas na mesma rolagem, ele caía no MEIO do atendimento.
+
+**O caso nasce aqui** (`CasoEDocumentos`), com o cliente na linha, e o checklist
+abre em seguida. O ganho é um só e é grande: o cliente envia o que já tem
+**agora**, com alguém do outro lado para dizer se a foto saiu legível — em vez de
+o escritório descobrir dias depois. O que ele não tiver, manda pelo mesmo link, e
+para isso existe o botão de encerrar a chamada sem encerrar o caso.
+
+**Criar o caso põe o advogado na sala dele.** Isto fecha a pendência anotada em
+13/08 ("sala da entrevista ≠ token do portal"): a entrevista abria uma sala
+sorteada antes de o caso existir, e o cliente que entrasse pelo portal ia parar
+noutra. Agora o advogado entra sozinho, sem senha — ele já está autenticado —, e
+a tela avisa se a conversa vinha de outra sala, porque **o cliente ficou lá** e
+precisa ser chamado.
+
+Duas armadilhas que isso destapou:
+
+- **A câmera não atravessava a troca de sala.** Entrar noutra sala fecha a
+  chamada e cria outra, que nasce sem câmera a menos que alguém peça. E o estado
+  `temCamera` só era escrito pelo `alternarCamera`, então a imagem ficava no ar
+  com o botão dizendo "Câmera" — o primeiro clique DESLIGAVA. Corrigido nos dois
+  lugares; o segundo defeito era anterior e valia para qualquer entrada com
+  câmera.
+- **O checklist embute o painel do portal, que abre uma chamada própria.** Dentro
+  do atendimento isso virava duas chamadas do mesmo lado, com câmera e tudo. O
+  `dentroDoAtendimento` corta a segunda. O link e a senha continuam à vista, com
+  a linha que faltava: **eles são do cliente** — quem está ali entrou pelo login
+  e já está na sala.
+
+**Encerrar são dois cliques, e a gravação corre até o primeiro.** O primeiro
+fecha a gravação e abre o fecho com os três arquivos: áudio (do servidor),
+**transcrição bruta** (.txt, a fala como saiu do Whisper, com hora de parede em
+cada trecho) e o vídeo, que continua no bloco lá em cima. Só então "Sair do
+atendimento". A transcrição bruta é coisa diferente do que está nos campos, e o
+cabeçalho do arquivo diz isso: o que está nos campos é o que o sistema
+interpretou; o arquivo é o que foi dito — inclusive o que a escuta descartou.
+
+Falha ao fechar a gravação não prende o atendimento: o fecho abre com o aviso, e
+vídeo e transcrição seguem valendo.
+
+---
+
+## Nome e CPF são digitados, e é o que libera o microfone — 17/08/2026
+
+Regra do escritório, e ela conserta um defeito medido. Nome e CPF já foram
+sugestão da escuta, com um clique para confirmar. No áudio real não funcionava:
+
+    Whisper small   "Meu nome é com o Patrã Guilherme, nome de Bezerra."
+                    "Eu não é um completo aglermino, não desbezerra..."
+
+O trecho chegava à escuta e o modelo — corretamente, seguindo a própria instrução
+("na dúvida sobre o que foi dito, NÃO preencha") — recusava-se a sugerir. Na tela
+isso era um campo vazio sem explicação, e o sintoma relatado foi "não preenche
+nem o nome".
+
+Agora `escuta.DADOS_DIGITADOS` tira os dois da escuta por completo: não são
+oferecidos ao modelo e são descartados se ele insistir. E o botão de abrir o
+microfone fica travado até os dois estarem preenchidos, com CPF válido pelo
+dígito verificador — o aviso diz o que falta e leva ao campo.
+
+Efeito colateral: **nada mais vira sugestão**, e a máquina de conferência
+(selo "OUVIDO · CONFIRA NO FIM", a conferência no fim do roteiro, a contagem no
+painel) ficou inerte. Não foi removida — está morta, não atrapalha, e o caminho
+serve se um dia outro campo depender de confirmação humana.
+
+---
+
+## Whisper `medium`, por medição — 17/08/2026
+
+O `small` destruía nome próprio, que é o dado que abre contrato, procuração e
+declaração. Mesmo arquivo de 96,8s, os dois modelos:
+
+| falado | `small` | `medium` |
+|---|---|---|
+| Guilherme Nunes | "Guilherme **Inunes**" | "Guilherme Nunes" |
+| auxiliar de manutenção industrial | "o **CIDA de Mando Tensão** Industrial" | "auxiliar de manutenção industrial" |
+| Metal Forge … LTDA | "**Metalford** … **LTA**" | "Metal Forge … LTDA" |
+| velocidade | 27,1x tempo real | **31,5x** |
+
+Mais certo e mais rápido. Custa VRAM: ~1,5 GB contra ~0,5 GB, e com ele o serviço
+ocupa **4.230 MiB dos 6.141** da RTX 4050 — cabe junto do PaddleOCR com folga de
+quase 2 GB. Faltando memória, `WHISPER_MODELO=small` no `.env` volta atrás sem
+tocar em código.
+
+O `large-v3` não chegou a ser medido: o download travou e foi abortado. Como o
+`medium` resolveu o caso que motivou a troca, não se insistiu.
+
+---
+
 ## A papelada são TRÊS documentos, não um — 17/08/2026
 
 `contrato.MODELOS` + `gerar_todos`. O escritório soltou em `docs/` a **procuração

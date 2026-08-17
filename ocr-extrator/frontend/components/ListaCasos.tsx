@@ -73,6 +73,12 @@ export default function ListaCasos({
 
         <TriagemEntrevista
           onAtendimento={setFase}
+          /* O caso passou a nascer DENTRO do atendimento, com o cliente na
+           * linha — por isso a criação e os tipos de ação descem para lá. O
+           * formulário abaixo continua existindo para quem abre um caso sem
+           * entrevista, que é o caminho de quem já atendeu por fora. */
+          categorias={categorias}
+          onCriarCaso={onCriar}
           onEscolher={(cat, nome) => {
             if (cat) setCategoria(cat);
             // A entrevista costuma trazer o nome no cabeçalho; não sobrescreve

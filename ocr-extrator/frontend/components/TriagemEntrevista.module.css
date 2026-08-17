@@ -302,3 +302,16 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* O fecho do atendimento. Não é alarme nem cartão: é a linha que diz o que
+ * acabou de acontecer e para onde ir — e o lugar onde a avaliação em aberto
+ * aparece, que é a única pendência que ainda dá para resolver com o cliente na
+ * linha. */
+.encerrado {
+  margin-top: 20px;
+  border-left: 3px solid var(--ok);
+  padding: 12px 14px;
+  background: var(--surface-2);
+  max-width: 74ch;
+  font: 400 12.5px/1.6 var(--font-ui);
+}

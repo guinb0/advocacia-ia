@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 
 import { analisarEstrategia, triarEntrevista } from "@/lib/api";
-import type { Estrategia, Triagem } from "@/lib/types";
+import type { CasoCriado, Categoria, Estrategia, Triagem } from "@/lib/types";
+import CasoEDocumentos from "./CasoEDocumentos";
+import { useChamada } from "@/lib/ChamadaContexto";
 import AudioDaEntrevista from "./AudioDaEntrevista";
 import AvaliacaoGoogle from "./AvaliacaoGoogle";
 import { Aviso, Selo } from "./Basicos";
@@ -21,7 +23,13 @@ import estilos from "./TriagemEntrevista.module.css";
 export default function TriagemEntrevista({
   onEscolher,
   onAtendimento,
+  categorias,
+  onCriarCaso,
 }: {
+  /** Tipos de ação, para criar o caso sem sair do atendimento. */
+  categorias: Categoria[];
+  /** Cria o caso e devolve o portal do cliente (link + senha). */
+  onCriarCaso: (cliente: string, categoria: string) => Promise<CasoCriado>;
   /** Aplica a categoria (e o nome do cliente, se a entrevista trouxer). */
   onEscolher: (categoria: string, cliente?: string) => void;
   /** Em que ponto o atendimento está. A tela ao redor usa isto para tirar do
@@ -46,6 +54,12 @@ export default function TriagemEntrevista({
    * caixa dela: voltar ao roteiro desmonta a caixa, e a marcação sumiria junto
    * — dando a etapa por pendente depois de ela ter sido cumprida. */
   const [avaliacaoConcluida, setAvaliacaoConcluida] = useState(false);
+  /* O atendimento foi ENCERRADO no botão do fim — diferente de "fechei a tela".
+   *
+   * Encerrado, as etapas não se repetem aqui embaixo: elas já foram feitas lá
+   * dentro, e vê-las de novo, zeradas, faz o atendente achar que perdeu tudo.
+   * O que fica é o resumo e o próximo passo, que é criar o caso. */
+  const [encerrado, setEncerrado] = useState(false);
   const [resultado, setResultado] = useState<Triagem | null>(null);
   const [escolhida, setEscolhida] = useState<string | null>(null);
   const [analisando, setAnalisando] = useState(false);
@@ -54,6 +68,9 @@ export default function TriagemEntrevista({
   const [erroEstrategia, setErroEstrategia] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // A chamada vive na raiz do app; aqui ela serve para a última etapa saber se
+  // ainda há cliente na linha, e para oferecer o desligar sem sair da tela.
+  const chamada = useChamada();
 
   /* Avisa a tela de fora em que ponto este atendimento está.
    *
@@ -106,23 +123,67 @@ export default function TriagemEntrevista({
     }
   }
 
+  /* As etapas que vêm DEPOIS das perguntas — avaliação, relatório, documentos.
+   *
+   * Elas são as mesmas dentro e fora da tela da entrevista, e é por isso que
+   * moram numa variável: o escritório pediu "tudo numa paulada só", então
+   * durante a entrevista elas ficam logo abaixo do roteiro, na mesma rolagem, e
+   * depois de fechada continuam aqui na tela de casos. Duplicar o bloco faria
+   * as duas cópias divergirem no primeiro ajuste. */
+  const etapasDoAtendimento = qualificacao && (
+    <>
+      <AvaliacaoGoogle
+        concluida={avaliacaoConcluida}
+        onConcluir={setAvaliacaoConcluida}
+      />
+      <RelatorioEntrevista respostas={qualificacao} relato={texto} />
+      <PainelContrato respostas={qualificacao} />
+
+      {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
+        * ainda na linha, e o checklist recebe o que ele já tem em mãos. */}
+      <CasoEDocumentos
+        cliente={String(qualificacao.nome ?? "")}
+        categorias={categorias}
+        sugerida={escolhida ?? undefined}
+        onCriar={onCriarCaso}
+        emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
+        onEncerrarChamada={chamada.desligar}
+      />
+    </>
+  );
+
   return (
     <div className={estilos.bloco}>
       {mostrarRoteiro ? (
         <EntrevistaComChamada
+          /* As respostas sobem a cada mudança: é o que deixa as etapas abaixo
+           * do roteiro prontas antes de a entrevista fechar. O relato e o id do
+           * áudio vêm junto, pelos mesmos motivos de sempre. */
+          onRespostas={(respostas, relato, entrevistaId) => {
+            setTexto(relato);
+            setQualificacao(respostas);
+            setAudioEntrevista(entrevistaId);
+          }}
           onConcluir={(respostas, relato, entrevistaId) => {
             setTexto(relato);
             setQualificacao(respostas);
             setAudioEntrevista(entrevistaId);
             setMostrarRoteiro(false);
+            setEncerrado(true);
           }}
           onFechar={() => setMostrarRoteiro(false)}
+          depois={etapasDoAtendimento}
         />
       ) : (
         <button
           type="button"
           className="botao botao--secundario"
-          onClick={() => setMostrarRoteiro(true)}
+          onClick={() => {
+            // Voltar é continuar: o atendimento deixa de estar encerrado e as
+            // etapas voltam a ficar à mão, dentro e fora da tela.
+            setEncerrado(false);
+            setMostrarRoteiro(true);
+          }}
           style={{ marginBottom: 14 }}
         >
           {qualificacao ? "Voltar ao roteiro" : "Conduzir entrevista guiada"}
@@ -135,24 +196,26 @@ export default function TriagemEntrevista({
         <AudioDaEntrevista entrevistaId={audioEntrevista} />
       )}
 
-      {/* Logo após concluir, o entrevistador entrega ao cliente o convite para
-        * avaliar o escritório — antes de seguir para os documentos internos, e
-        * com o cliente AINDA na chamada, como o roteiro manda. */}
-      {qualificacao && !mostrarRoteiro && (
-        <AvaliacaoGoogle
-          concluida={avaliacaoConcluida}
-          onConcluir={setAvaliacaoConcluida}
-        />
+      {/* Encerrado o atendimento, as etapas NÃO se repetem.
+        *
+        * Elas foram feitas lá dentro, na mesma rolagem da entrevista; mostrá-las
+        * de novo, zeradas, faz o atendente achar que perdeu o que já tinha feito
+        * — foi o que aconteceu. Fica o resumo e o próximo passo. */}
+      {encerrado && !mostrarRoteiro && (
+        <div className={estilos.encerrado}>
+          <strong>Atendimento encerrado.</strong> A gravação foi fechada e a chamada,
+          desligada.{" "}
+          {avaliacaoConcluida
+            ? "A avaliação no Google ficou marcada como concluída."
+            : "A avaliação no Google ficou EM ABERTO — se o cliente ainda está na linha, volte ao roteiro."}{" "}
+          Agora crie o caso abaixo: é ele que abre o checklist e o portal para o cliente
+          enviar os documentos.
+        </div>
       )}
 
-      {/* O relatório analisado, logo depois da entrevista: é a entrega que a
-        * saudação do roteiro promete à equipe jurídica. */}
-      {qualificacao && !mostrarRoteiro && (
-        <RelatorioEntrevista respostas={qualificacao} relato={texto} />
-      )}
-
-      {/* Entrevista, contrato, documentos — nesta ordem, que é a do escritório. */}
-      {qualificacao && !mostrarRoteiro && <PainelContrato respostas={qualificacao} />}
+      {/* Fechou a tela sem encerrar (ou voltou para continuar): as etapas seguem
+        * aqui, porque continuam por fazer. */}
+      {!encerrado && !mostrarRoteiro && etapasDoAtendimento}
 
       <span className={estilos.rotulo}>Sugerir o tipo de ação pela entrevista</span>
       <p className={estilos.texto}>

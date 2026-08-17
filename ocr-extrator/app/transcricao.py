@@ -113,7 +113,23 @@ def _preparar_cuda() -> bool:
 
 _TEM_GPU = _preparar_cuda()
 
-MODELO = os.getenv("WHISPER_MODELO", "small")
+#: `medium`, e não `small`, por medição no áudio real da entrevista.
+#:
+#: O `small` destruía nome próprio — e nome próprio é o dado que abre o
+#: contrato, a procuração e a declaração. Medido no mesmo arquivo de 96,8s:
+#:
+#:     small    "Guilherme Inunes"            "o CIDA de Mando Tensão Industrial"
+#:     medium   "Guilherme Nunes"             "auxiliar de manutenção industrial"
+#:
+#: A escuta then se recusava a sugerir o nome — corretamente, porque a instrução
+#: dela manda não preencher o que veio ilegível. O sintoma na tela era "não
+#: preenche nada", e a causa estava três camadas abaixo.
+#:
+#: E não custa tempo: 31,5x o tempo real contra 27,1x do `small` na mesma
+#: máquina (RTX 4050, float16). O que custa é VRAM — ~1,5 GB contra ~0,5 GB, num
+#: cartão de 6 GB dividido com o PaddleOCR. Se um dia faltar, `WHISPER_MODELO=small`
+#: no `.env` volta atrás sem tocar em código.
+MODELO = os.getenv("WHISPER_MODELO", "medium")
 # GPU quando houver: float16 na GPU é 6x mais rápido que int8 na CPU, com a
 # mesma saída. `WHISPER_DISPOSITIVO=cpu` força o contrário.
 DISPOSITIVO = os.getenv("WHISPER_DISPOSITIVO") or ("cuda" if _TEM_GPU else "cpu")

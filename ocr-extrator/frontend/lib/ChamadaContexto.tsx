@@ -122,6 +122,17 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
       setPapel(novoPapel);
       setErro(null);
       await instancia.entrar(novaSala, opcoes);
+      /* A câmera pedida na entrada precisa aparecer no ESTADO, não só no vídeo.
+       *
+       * `soltar` zera `temCamera`, e só `alternarCamera` voltava a escrevê-lo —
+       * então entrar numa sala já com câmera (o que acontece ao trocar de sala
+       * no meio da conversa) deixava a imagem no ar e o botão dizendo "Câmera",
+       * como se estivesse desligada. O primeiro clique então a DESLIGAVA,
+       * quando a intenção era ligar.
+       *
+       * `temCamera` do objeto, e não `opcoes.camera`: a câmera pode ter sido
+       * negada pelo navegador, e aí a chamada segue só com voz. */
+      setTemCamera(instancia.temCamera);
     },
     [soltar],
   );

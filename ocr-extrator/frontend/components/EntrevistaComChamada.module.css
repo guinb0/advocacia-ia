@@ -109,3 +109,82 @@
     padding: 14px 14px 32px;
   }
 }
+
+/* As etapas que continuam abaixo do roteiro.
+ *
+ * A mesma medida do `Roteiro` (860px), e é só por isso que ela existe: os
+ * painéis de avaliação, relatório e documentos nasceram no cartão estreito da
+ * tela de casos, onde a largura vinha do cartão. Trazidos para cá, sem limite
+ * próprio, esticavam até o fim da coluna — texto corrido largo demais para ler
+ * e um degrau visível onde as perguntas terminavam. */
+.continuacao {
+  max-width: 860px;
+}
+
+/* O encerramento, no fim de tudo.
+ *
+ * Antes ele era o "Concluir entrevista" dentro do roteiro, e com as etapas
+ * seguintes na mesma rolagem ele caía no MEIO do atendimento — acima da
+ * avaliação e dos documentos, que ainda estavam por fazer. Aqui embaixo ele é o
+ * que de fato é: o último ato. */
+.encerrar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  max-width: 860px;
+  margin: 28px 0 8px;
+  border-top: 3px double var(--border-strong);
+  padding-top: 18px;
+}
+
+.concluir {
+  border: 1.5px solid var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 12px 16px;
+  cursor: pointer;
+}
+
+.concluir:hover {
+  background: none;
+  color: var(--ink);
+}
+
+.encerrarNota {
+  max-width: 46ch;
+  font: italic 400 12px/1.5 var(--font-display);
+  color: var(--muted);
+}
+
+/* O fecho do atendimento: a gravação parou e os arquivos ficam à mão.
+ *
+ * Empilhado e com respiro entre os blocos porque aqui não se clica rápido —
+ * é a hora de conferir o que se leva antes de a tela sumir, e o vídeo não
+ * existe em nenhum outro lugar. */
+.fecho {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 860px;
+  margin: 28px 0 8px;
+  border-top: 3px double var(--border-strong);
+  padding-top: 18px;
+}
+
+.fechoRotulo {
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  color: var(--ok);
+}
+
+.arquivos {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}

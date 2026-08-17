@@ -1,9 +1,14 @@
 /* Contrato de honorários. Fica entre a entrevista e a criação do caso, que é a
  * ordem do escritório: entrevista, contrato assinado, documentos. */
 
+/* Divisória superior e rótulo espaçado, sem cartão — a mesma linguagem do
+ * relatório e do áudio da entrevista. Este painel era o único cercado por
+ * borda inteira, e empilhado com os outros dois no atendimento contínuo ele
+ * saltava como um cartão solto no meio de uma coluna de seções. */
 .bloco {
-  border: 1px solid var(--border-strong);
-  padding: 16px 18px;
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
   margin-bottom: 18px;
 }
 

@@ -126,12 +126,29 @@ def testar_recusa_documentos() -> int:
         "\n- rg:" not in prompt and "\n- nascimento:" not in prompt,
         "a qualificação nem é oferecida ao modelo",
     )
-    falhas += not checar("\n- nome:" in prompt, "nome e CPF continuam na entrevista")
+    # Nome e CPF passaram a ser DIGITADOS antes de a transcrição abrir, e por
+    # isso saem da lista também: medido no áudio real, a fala virava "Guilherme
+    # Inunes" e o modelo — certo — recusava-se a preencher a partir daquilo.
+    falhas += not checar(
+        "\n- nome:" not in prompt and "\n- cpf:" not in prompt,
+        "nome e CPF nem são oferecidos: são digitados antes de começar",
+    )
     return falhas
 
 
-def testar_nome_e_cpf_sao_sugestao() -> int:
-    """Os dois únicos dados da entrevista não entram sozinhos."""
+def testar_nome_e_cpf_sao_digitados() -> int:
+    """Nome e CPF NUNCA saem de fala — são digitados antes de a escuta abrir.
+
+    Já foram sugestão, com um clique para confirmar. Medido no áudio real da
+    entrevista, não funcionava: o Whisper escrevia "Guilherme Inunes" no lugar
+    de "Guilherme Nunes", e o modelo — corretamente — recusava-se a preencher a
+    partir de texto ilegível. O campo ficava vazio sem explicação, e o contrato,
+    a procuração e a declaração nasciam sem os dois dados que identificam o
+    cliente.
+
+    A regra do escritório fechou a questão: os dois são digitados, e é o
+    preenchimento deles que libera o microfone.
+    """
     falhas = 0
     instalar_modelo(
         {
@@ -146,42 +163,14 @@ def testar_nome_e_cpf_sao_sugestao() -> int:
     )
     r = escuta.escutar(FALA, {})
     preenchidos = {p["pergunta_id"] for p in r["preenchidas"]}
-    sugeridos = {s["pergunta_id"] for s in r["sugestoes"]}
 
     falhas += not checar(
-        preenchidos == {"tempo_casa"}, f"só o relato entra direto ({preenchidos})"
+        preenchidos == {"tempo_casa"}, f"só o relato entra ({preenchidos})"
     )
+    # Nem como sugestão: o modelo insistindo neles é descartado nas duas
+    # barreiras — a lista que ele recebe e a conferência do que ele devolveu.
     falhas += not checar(
-        sugeridos == {"nome", "cpf"}, f"nome e CPF viram sugestão ({sugeridos})"
-    )
-    cpf = next(s for s in r["sugestoes"] if s["pergunta_id"] == "cpf")
-    falhas += not checar(
-        cpf["valor"] == "111.444.777-35", f"o CPF sugerido vem formatado ({cpf['valor']})"
-    )
-
-    # Sugestão não confirmada continua pendente no painel.
-    faltando = {f["pergunta_id"] for f in r["faltando"]}
-    falhas += not checar(
-        {"nome", "cpf"} <= faltando,
-        "enquanto ninguém confirma, nome e CPF seguem em 'falta perguntar'",
-    )
-
-    # --- CPF que não passa no dígito verificador ---------------------------
-    # É o caso comum, não a exceção: o Whisper erra dígito. Vira pedido de
-    # confirmação em vez de sugestão que o entrevistador aceitaria sem olhar.
-    instalar_modelo(
-        {
-            "preenchidas": [
-                {"pergunta_id": "cpf", "valor": "111.444.777-99", "trecho": "..."},
-            ],
-            "lembretes": [],
-        }
-    )
-    r = escuta.escutar(FALA, {})
-    falhas += not checar(r["sugestoes"] == [], "CPF com DV errado não vira sugestão")
-    falhas += not checar(
-        any("confirmar o CPF" in l["pergunte"] for l in r["lembretes"]),
-        f"vira pedido de confirmação ({r['lembretes']})",
+        r["sugestoes"] == [], f"nada vira sugestão ({r['sugestoes']})"
     )
     return falhas
 
@@ -294,7 +283,7 @@ def main_teste() -> int:
     for titulo, teste in (
         ("preenchimento e lembretes", testar_preenchimento),
         ("fala NÃO vira número de documento", testar_recusa_documentos),
-        ("nome e CPF são sugestão, não preenchimento", testar_nome_e_cpf_sao_sugestao),
+        ("nome e CPF são digitados, nunca ouvidos", testar_nome_e_cpf_sao_digitados),
         ("alucinação do modelo", testar_alucinacao),
         ("módulos fechados pelo rastreio", testar_modulos_fechados),
         ("trecho curto demais", testar_trecho_curto),

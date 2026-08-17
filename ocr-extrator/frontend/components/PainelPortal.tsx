@@ -9,7 +9,19 @@ import ChamadaAoVivo from "./ChamadaAoVivo";
 import estilos from "./PainelPortal.module.css";
 
 /** Link e senha que o cliente usa para enviar documentos sozinho. */
-export default function PainelPortal({ casoId }: { casoId: string }) {
+export default function PainelPortal({
+  casoId,
+  semChamada = false,
+}: {
+  casoId: string;
+  /* Não desenhar a chamada aqui dentro.
+   *
+   * Vale quando este painel aparece DENTRO do atendimento: ali a chamada já
+   * está na tela, com o rosto do cliente, e o advogado já entrou na sala do
+   * caso ao criá-lo. Sem esta trava, a página dos documentos abria uma segunda
+   * chamada com câmera e tudo — duas do mesmo lado da conversa. */
+  semChamada?: boolean;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   /* O mesmo token que abre o portal nomeia a sala da chamada — o cliente já o
    * tem no link, e ninguém entra na sala por adivinhação. */
@@ -158,7 +170,7 @@ export default function PainelPortal({ casoId }: { casoId: string }) {
 
     {/* Trocar a senha troca a sala: a chave remonta a chamada em vez de
         deixá-la apontando para uma sala que o cliente não alcança mais. */}
-    {ativo && token && <ChamadaAoVivo key={token} sala={token} />}
+    {ativo && token && !semChamada && <ChamadaAoVivo key={token} sala={token} />}
     </>
   );
 }

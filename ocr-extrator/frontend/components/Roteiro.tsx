@@ -58,6 +58,26 @@ export interface ManipuladorRoteiro {
   aoPerderChamada: () => void;
   /** Há vídeo gravado e não baixado — fechar a tela agora o destrói. */
   temVideoPendente: () => boolean;
+  /** Quantas respostas ouvidas ainda esperam confirmação (nome e CPF).
+   *
+   * Quem encerra o atendimento é a tela de fora, mas o dado é daqui — e sair
+   * sem confirmar descarta em silêncio justamente os dois campos que
+   * identificam o cliente no contrato e na procuração. */
+  sugestoesPendentes: () => number;
+  /** Fecha a gravação e espera o áudio inteiro chegar ao disco.
+   *
+   * Só no FIM do atendimento: a gravação corre durante a avaliação, os
+   * documentos e o envio dos primeiros arquivos, que é justamente quando o
+   * cliente diz coisas que valem estar no áudio. Devolve o `entrevistaId`, que
+   * é por onde o arquivo é baixado depois. */
+  encerrarGravacao: () => Promise<string>;
+  /** Tudo que foi transcrito, na ordem, com o instante de cada trecho.
+   *
+   * É a transcrição BRUTA: a conversa como ela saiu do Whisper, sem passar
+   * pelo roteiro. O que está nos campos é o que a escuta interpretou; isto é o
+   * que foi dito — e é o que sobra para conferir uma interpretação duvidosa
+   * seis meses depois. */
+  transcricaoBruta: () => { quando: number; texto: string }[];
 }
 
 /** De onde vem o áudio que está sendo transcrito. */
@@ -109,9 +129,16 @@ function respondida(valor: string | string[] | undefined): boolean {
 
 interface Props {
   codigo?: string;
-  /** O `entrevistaId` sobe junto porque o áudio sobrevive a esta tela: quem
-   *  concluiu a entrevista precisa continuar podendo baixar o arquivo. */
-  onConcluir?: (
+  /** As respostas conforme mudam, sem esperar o fim.
+   *
+   * O `entrevistaId` sobe junto porque o áudio sobrevive a esta tela: quem
+   * encerra o atendimento precisa continuar podendo baixar o arquivo.
+   *
+   * As etapas seguintes do atendimento (avaliação, documentos, assinatura) ficam
+   * na mesma rolagem, logo abaixo do roteiro, e precisam do que já foi
+   * respondido enquanto a entrevista ainda corre — o contrato pede nome e CPF,
+   * e eles chegam nas duas primeiras perguntas. */
+  onRespostas?: (
     respostas: Respostas,
     relatoUnificado: string,
     entrevistaId: string,
@@ -119,7 +146,11 @@ interface Props {
   ref?: Ref<ManipuladorRoteiro>;
 }
 
-export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref }: Props) {
+export default function Roteiro({
+  codigo = "empregado_publico",
+  onRespostas,
+  ref,
+}: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
   const [respostas, setRespostas] = useState<Respostas>({});
   const [erro, setErro] = useState<string | null>(null);
@@ -177,6 +208,10 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
   const [escutando, setEscutando] = useState(false);
   const [ouvindo, setOuvindo] = useState(false);
   const [sugestoes, setSugestoes] = useState<CampoOuvido[]>([]);
+  // Lido pelo `useImperativeHandle`, que é fixado na montagem e não enxergaria
+  // o estado — é por ele que a tela de fora sabe o que falta conferir.
+  const sugestoesRef = useRef<CampoOuvido[]>([]);
+  sugestoesRef.current = sugestoes;
   const [lembretes, setLembretes] = useState<Lembrete[]>([]);
   const [faltando, setFaltando] = useState<PerguntaPendente[]>([]);
   const [ouvidas, setOuvidas] = useState<CampoOuvido[]>([]);
@@ -200,6 +235,12 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
    * que chega enquanto uma roda espera a vez. */
   const filaTrechos = useRef<string[]>([]);
   const escutaEmCurso = useRef(false);
+  /* A conversa inteira, como o Whisper a devolveu, na ordem.
+   *
+   * Num ref e não em estado: cresce a cada frase de uma conversa de trinta
+   * minutos, e nada na tela depende dela — ela é lida uma vez, no fim, para
+   * virar arquivo. Em estado, cada trecho redesenharia o roteiro inteiro. */
+  const transcricaoBruta = useRef<{ quando: number; texto: string }[]>([]);
 
   const captura = useRef<CapturaEntrevista | null>(null);
   // A pergunta em gravação, lida dentro dos callbacks da captura — que são
@@ -383,6 +424,9 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
       onTrecho: (texto) => {
         if (!texto.trim()) return;
         setUltimaFala(Date.now());
+        // Guardado ANTES de ir para a escuta: o arquivo bruto é o que foi dito,
+        // não o que o modelo entendeu — inclusive o que ele descartou.
+        transcricaoBruta.current.push({ quando: Date.now(), texto: texto.trim() });
         filaTrechos.current.push(texto);
         void consumirFilaRef.current();
       },
@@ -457,6 +501,12 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         }
       },
       temVideoPendente: () => videoPendente.current,
+      sugestoesPendentes: () => sugestoesRef.current.length,
+      encerrarGravacao: async () => {
+        await encerrarEscutaRef.current();
+        return captura.current?.entrevistaId ?? "";
+      },
+      transcricaoBruta: () => [...transcricaoBruta.current],
     }),
     [],
   );
@@ -532,6 +582,11 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     await captura.current?.aguardarEnvio();
     setEscutaEncerrada(true);
   }, []);
+
+  // Lido pelo `useImperativeHandle`, fixado na montagem: é assim que a tela de
+  // fora fecha a gravação no fim do atendimento, e não antes.
+  const encerrarEscutaRef = useRef(encerrarEscuta);
+  encerrarEscutaRef.current = encerrarEscuta;
 
   const aceitarSugestao = useCallback((perguntaId: string, valor: string) => {
     setRespostas((r) => ({ ...r, [perguntaId]: valor }));
@@ -664,10 +719,45 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
     ultimoPreenchimento !== null &&
     Date.now() - ultimoPreenchimento < SEGUNDOS_FLUINDO * 1000;
 
+  /* Nome e CPF são DIGITADOS, e são a condição para o microfone abrir.
+   *
+   * Regra do escritório, e ela resolve um problema medido: a escuta escrevia
+   * "Guilherme Inunes" no lugar de "Guilherme Nunes", e o modelo — certo —
+   * recusava-se a preencher a partir de texto ilegível. O campo ficava vazio
+   * sem explicação, e o contrato, a procuração e a declaração nasciam sem os
+   * dois dados que identificam o cliente.
+   *
+   * Digitados antes de começar, não há o que ouvir: quando a escuta abre, eles
+   * já estão respondidos, e a condução parte da terceira pergunta. */
+  const faltaParaComecar = useMemo(() => {
+    const pendentes: string[] = [];
+    if (!respondida(respostas["nome"])) pendentes.push("o nome completo");
+    if (conferirCpf(String(respostas["cpf"] ?? "")).valido !== true) {
+      pendentes.push("um CPF válido");
+    }
+    return pendentes;
+  }, [respostas]);
+
   const { total, feitas } = useMemo(() => {
     const resp = sequencia.filter(({ pergunta }) => respondida(respostas[pergunta.id]));
     return { total: sequencia.length, feitas: resp.length };
   }, [sequencia, respostas]);
+
+  /* Sobe o que já foi respondido, sem esperar o fim da entrevista.
+   *
+   * O ref é para o callback poder ser inline no pai (novo a cada render) sem
+   * disparar este efeito a cada volta — o que interessa é a mudança das
+   * RESPOSTAS. */
+  const aoMudar = useRef(onRespostas);
+  aoMudar.current = onRespostas;
+  useEffect(() => {
+    if (!aoMudar.current) return;
+    aoMudar.current(
+      respostas,
+      montarRelato(blocosVisiveis, respostas),
+      captura.current?.entrevistaId ?? "",
+    );
+  }, [respostas, blocosVisiveis]);
 
   if (erro && !roteiro) return <p className={estilos.vazio}>{erro}</p>;
   if (!roteiro) return <p className={estilos.vazio}>Carregando o roteiro…</p>;
@@ -689,7 +779,12 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
               type="button"
               className={transcricaoEstilos.botao}
               onClick={comecarEntrevista}
-              disabled={gravandoId !== null}
+              disabled={gravandoId !== null || faltaParaComecar.length > 0}
+              title={
+                faltaParaComecar.length > 0
+                  ? `Digite ${faltaParaComecar.join(" e ")} antes de abrir o microfone`
+                  : ""
+              }
             >
               Começar a entrevista
             </button>
@@ -767,7 +862,28 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         </p>
       )}
 
-      {!temMic && !escutando && (
+      {/* A porta de entrada: sem nome e CPF, o microfone não abre.
+        *
+        * O aviso diz o que falta e leva até o campo, em vez de deixar um botão
+        * cinza sem explicação — que é como o entrevistador descobriria a regra,
+        * com o cliente esperando. */}
+      {!escutando && faltaParaComecar.length > 0 && (
+        <p className={transcricaoEstilos.aviso}>
+          <strong>Digite {faltaParaComecar.join(" e ")} para começar.</strong> São os dois
+          dados que abrem o atendimento e que o contrato, a procuração e a declaração
+          exigem — e os únicos que não se colhem de ouvido, porque número e nome próprio
+          a transcrição erra.{" "}
+          <button
+            type="button"
+            className={estilos.saudacaoAlternar}
+            onClick={() => irPara(respondida(respostas["nome"]) ? "cpf" : "nome")}
+          >
+            ir ao campo
+          </button>
+        </p>
+      )}
+
+      {!temMic && !escutando && faltaParaComecar.length === 0 && (
         <p className={transcricaoEstilos.aviso}>
           Clique em <strong>Começar a entrevista</strong> para abrir o microfone. Daí em
           diante a conversa é transcrita e o roteiro se preenche sozinho — você não
@@ -907,47 +1023,13 @@ export default function Roteiro({ codigo = "empregado_publico", onConcluir, ref 
         <AudioDaEntrevista entrevistaId={captura.current?.entrevistaId ?? ""} />
       )}
 
-      {onConcluir && (
-        <button
-          type="button"
-          className={transcricaoEstilos.botao}
-          style={{ marginTop: 24 }}
-          onClick={() => {
-            /* Concluir desmonta esta tela, e com ela o vídeo — que não existe
-             * em nenhum outro lugar. Perguntar é o mínimo; o `confirm` do
-             * navegador é o que ainda bloqueia a ação até alguém responder. */
-            if (
-              videoPendente.current &&
-              !window.confirm(
-                "O vídeo gravado ainda não foi baixado e será perdido ao concluir. " +
-                  "Concluir mesmo assim?",
-              )
-            ) {
-              return;
-            }
-            /* A conferência agora mora no fim do roteiro — e o fim do roteiro é
-             * aqui. Sem esta pergunta, sair da tela descartaria em silêncio o
-             * nome e o CPF que a escuta ouviu, e o contrato nasceria em branco
-             * justamente nos dois campos que o identificam. */
-            if (
-              sugestoes.length > 0 &&
-              !window.confirm(
-                `${sugestoes.length} resposta(s) que eu ouvi ainda não foram conferidas ` +
-                  "(nome e/ou CPF) e serão descartadas ao concluir. Concluir mesmo assim?",
-              )
-            ) {
-              return;
-            }
-            onConcluir(
-              respostas,
-              montarRelato(blocosVisiveis, respostas),
-              captura.current?.entrevistaId ?? "",
-            );
-          }}
-        >
-          Concluir entrevista
-        </button>
-      )}
+      {/* Não há botão de concluir aqui.
+        *
+        * O atendimento não acaba no fim das perguntas: a avaliação, os
+        * documentos e a assinatura vêm logo abaixo, na mesma rolagem, e um
+        * "concluir entrevista" no meio disso encerraria a gravação e a chamada
+        * justamente quando o roteiro manda permanecer nelas. Quem encerra é a
+        * tela de fora (`EntrevistaComChamada`), no fim de tudo. */}
     </div>
   );
 }

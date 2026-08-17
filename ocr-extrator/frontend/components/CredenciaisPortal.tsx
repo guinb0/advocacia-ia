@@ -48,6 +48,17 @@ export default function CredenciaisPortal({
       </span>
       <p className={estilos.texto}>{portal.aviso}</p>
 
+      {/* De quem são estas credenciais.
+        *
+        * Elas abrem o portal do CLIENTE, e só ele precisa delas — quem está
+        * aqui já entrou no sistema pelo login e já está na sala do caso. Sem
+        * esta linha, o atendente tentava usar o link e a senha para "entrar no
+        * caso", que é o caminho errado e pede senha à toa. */}
+      <p className={estilos.texto}>
+        <strong>Link e senha são do cliente.</strong> Você não precisa deles: o caso já
+        está aberto aí embaixo e você já está na sala da chamada.
+      </p>
+
       <div className={estilos.campo}>
         <span className={estilos.chave}>Link</span>
         <span className={estilos.valor}>{portal.url}</span>

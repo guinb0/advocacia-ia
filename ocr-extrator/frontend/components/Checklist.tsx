@@ -21,6 +21,13 @@ interface Props {
   onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
   onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
+  /** O checklist está dentro do atendimento, não na tela do caso.
+   *
+   * Ali a chamada já está na tela e o advogado já entrou na sala do caso ao
+   * criá-lo: o painel do portal não pode abrir uma segunda, com câmera e tudo,
+   * no meio dos documentos. O link e a senha continuam à vista — eles são para
+   * MANDAR ao cliente, que é quem precisa deles. */
+  dentroDoAtendimento?: boolean;
 }
 
 /** "há 2 h", "há 3 dias" — a mesma leitura do cabeçalho no desenho. */
@@ -42,6 +49,7 @@ export default function Checklist({
   onEnviar,
   onRemover,
   onVincularIdentidade,
+  dentroDoAtendimento = false,
 }: Props) {
   const [filtro, setFiltro] = useState<Filtro>("obrigatorios");
   const { caso, categoria, progresso, itens } = situacao;
@@ -204,7 +212,9 @@ export default function Checklist({
       )}
 
       <div className={estilos.blocoFinal}>
-        <PainelPortal casoId={caso.id} />
+        {/* Dentro do atendimento a chamada já está na tela e o advogado já
+            entrou na sala do caso — o painel do portal não abre outra. */}
+        <PainelPortal casoId={caso.id} semChamada={dentroDoAtendimento} />
         <PedidoCliente casoId={caso.id} progresso={progresso} naoResolvidos={naoResolvidos} />
       </div>
     </>
