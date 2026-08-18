@@ -345,8 +345,95 @@ def _registrar_prefixos(xml: bytes) -> None:
         ET.register_namespace(prefixo, uri)
 
 
-def _serializar(raiz: ET.Element) -> bytes:
-    return DECLARACAO + ET.tostring(raiz, encoding="utf-8", xml_declaration=False)
+def _limites_da_raiz(xml: bytes) -> tuple[int, int]:
+    """Onde começa e termina a TAG DE ABERTURA do elemento raiz.
+
+    Varre respeitando aspas em vez de procurar o primeiro `>`: valor de atributo
+    pode conter `>` cru, que é legal em XML, e um `find` ingênuo cortaria a tag
+    no meio — trocando um arquivo corrompido por outro.
+    """
+    i, n = 0, len(xml)
+    while i < n:
+        i = xml.find(b"<", i)
+        if i < 0:
+            return -1, -1
+        if xml.startswith(b"<?", i) or xml.startswith(b"<!", i):
+            i += 1
+            continue
+        break
+    else:
+        return -1, -1
+
+    j, aspas = i, b""
+    while j < n:
+        c = xml[j : j + 1]
+        if aspas:
+            if c == aspas:
+                aspas = b""
+        elif c in (b'"', b"'"):
+            aspas = c
+        elif c == b">":
+            return i, j + 1
+        j += 1
+    return -1, -1
+
+
+def _declaracoes_de_namespace(xml: bytes) -> dict[str, str]:
+    """Os `xmlns:` da raiz, INCLUSIVE os que nenhum elemento usa.
+
+    O ElementTree só reemite a declaração de um namespace que ele viu em uso; as
+    demais somem na reserialização, e um .docx do Word declara várias que ficam
+    de reserva. Sozinho isso seria inofensivo — não fosse o `mc:Ignorable` (e o
+    `Requires` do `mc:AlternateContent`) citarem prefixos PELO NOME. Some a
+    declaração, sobra a citação, e o Word recusa o arquivo inteiro com "o arquivo
+    está aparentemente corrompido", sem dizer qual prefixo.
+
+    Medido nos modelos do escritório: `PROCURACAO.docx` declara 18 prefixos e
+    reserializava com 13 — `w15` e `w16se` caíam e continuavam citados no
+    `mc:Ignorable="w14 w15 w16se wp14"`. O contrato NÃO tem `mc:Ignorable`, e era
+    por isso que ele era o único dos três que abria.
+
+    Os valores voltam como estão no arquivo (já escapados); reescapar aqui
+    transformaria um `&amp;` legítimo em `&amp;amp;`.
+    """
+    inicio, fim = _limites_da_raiz(xml)
+    if inicio < 0:
+        return {}
+    return {
+        prefixo.decode(): uri.decode()
+        for prefixo, uri in re.findall(
+            rb'xmlns:([\w.-]+)\s*=\s*"([^"]*)"', xml[inicio:fim]
+        )
+    }
+
+
+def _restaurar_declaracoes(xml: bytes, originais: dict[str, str]) -> bytes:
+    """Devolve à raiz os `xmlns:` que a serialização descartou."""
+    if not originais:
+        return xml
+    inicio, fim = _limites_da_raiz(xml)
+    if inicio < 0:
+        return xml
+
+    tag = xml[inicio:fim]
+    presentes = {p.decode() for p in re.findall(rb"xmlns:([\w.-]+)\s*=", tag)}
+    faltando = [(p, u) for p, u in originais.items() if p not in presentes]
+    if not faltando:
+        return xml
+
+    extra = "".join(f' xmlns:{p}="{u}"' for p, u in faltando).encode()
+    corte = fim - 2 if tag.endswith(b"/>") else fim - 1
+    return xml[:corte] + extra + xml[corte:]
+
+
+def _serializar(raiz: ET.Element, bruto: bytes) -> bytes:
+    """Reserializa preservando as declarações de namespace do original.
+
+    O `bruto` é o XML de ONDE a árvore veio — sem ele não há como saber quais
+    declarações existiam antes de o ElementTree descartar as não usadas.
+    """
+    saida = DECLARACAO + ET.tostring(raiz, encoding="utf-8", xml_declaration=False)
+    return _restaurar_declaracoes(saida, _declaracoes_de_namespace(bruto))
 
 
 def _partes_com_texto(zf: zipfile.ZipFile) -> list[str]:
@@ -387,7 +474,7 @@ def preencher(valores: dict[str, Any], modelo: Path | None = None) -> tuple[byte
                 mudou += trocas
                 faltando |= ausentes
             if mudou:
-                editados[nome] = _serializar(raiz)
+                editados[nome] = _serializar(raiz, bruto)
 
         destino = io.BytesIO()
         # Reescreve o zip inteiro preservando o que não foi tocado: estilos,
