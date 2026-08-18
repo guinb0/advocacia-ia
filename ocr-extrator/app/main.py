@@ -69,13 +69,15 @@ STATIC = BASE / "static"
 
 MAX_BYTES = 20 * 1024 * 1024
 EXTENSOES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".pdf"}
+_ocr_aquecido = threading.Event()
+
 
 @asynccontextmanager
 async def ciclo_de_vida(_: FastAPI):
-    """Aquece o OCR no boot, tirando os ~25s de carga do 1º upload.
+    """Aquece o OCR em segundo plano durante a inicialização da API.
 
-    Vai para uma thread solta: o servidor precisa responder /api/saude de
-    imediato, senão o `iniciar.ps1` espera o modelo para liberar o frontend.
+    O servidor responde ao endpoint de saúde enquanto o inicializador aguarda o
+    sinal separado de que a primeira inferência terminou.
     """
     threading.Thread(target=_tentar_aquecer, name="aquecer-ocr", daemon=True).start()
     try:
@@ -790,9 +792,13 @@ def obter_categoria(codigo: str):
 
 @app.get("/api/saude")
 def saude():
-    from . import ocr_engine  # lê o atributo do módulo, não uma cópia do valor
+    from . import ocr_engine
 
-    return {"status": "ok", "modelo_carregado": ocr_engine._engine is not None}
+    return {
+        "status": "ok",
+        "modelo_carregado": ocr_engine.modelo_carregado(),
+        "modelo_aquecido": _ocr_aquecido.is_set(),
+    }
 
 
 @app.get("/api/config")
@@ -824,6 +830,7 @@ def _aquecer_modelo() -> None:
 def _tentar_aquecer() -> None:
     try:
         _aquecer_modelo()
+        _ocr_aquecido.set()
         log.info("Modelo de OCR aquecido e pronto.")
     except Exception:
         # Sem rede na primeira execução, por exemplo: o upload tenta de novo.
@@ -835,6 +842,7 @@ def aquecer():
     """Baixa e carrega os modelos do PaddleOCR antes do primeiro upload."""
     try:
         _aquecer_modelo()
+        _ocr_aquecido.set()
         return {"status": "pronto"}
     except Exception as exc:
         log.exception("Falha ao aquecer o modelo")

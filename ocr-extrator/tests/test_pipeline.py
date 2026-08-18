@@ -143,8 +143,8 @@ AMOSTRAS = [
       "cnh": "12345678900",
       "data_nascimento": "15/03/1990",
       "data_validade": "10/01/2030",
-      "nome_mae": "JOANA PEREIRA DA SILVA",      # não pode vir com o "AB" da coluna vizinha
-      "nome_pai": "ANTONIO CARLOS SANTOS",
+      "filiacao_1": "JOANA PEREIRA DA SILVA",    # não pode vir com o "AB" da coluna vizinha
+      "filiacao_2": "ANTONIO CARLOS SANTOS",
       "orgao_emissor": "SSP/MG",
       "categoria_cnh": "AB",
       "data_primeira_habilitacao": "20/06/2010"},

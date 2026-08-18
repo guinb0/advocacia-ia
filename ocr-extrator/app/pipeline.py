@@ -16,7 +16,7 @@ import numpy as np
 
 from . import quality
 from .extractors import CAMPOS_ESPERADOS, ROTULOS_TIPO, Campo, Linha, classificar, normalizar
-from .ocr_engine import rodar_ocr
+from .ocr_engine import rodar_ocr_com_tempo
 
 log = logging.getLogger("pipeline")
 
@@ -71,6 +71,14 @@ def _pontuar_linhas(linhas: list[Linha]) -> float:
 
 
 def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int, int]:
+    linhas, rotacao, _, passadas = ocr_com_rotacao_medido(img, lang)
+    return linhas, rotacao, passadas
+
+
+def ocr_com_rotacao_medido(
+    img: np.ndarray,
+    lang: str,
+) -> tuple[list[Linha], int, list[dict[str, float | int]], int]:
     """Roda o OCR na orientação original; se render pouco texto, testa 90/180/270.
 
     O PaddleOCR já endireita a página sozinho (`use_doc_orientation_classify`);
@@ -80,7 +88,8 @@ def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int, int]:
     foto que pontua mal custa **quatro** inferências, não uma, e é essa a
     diferença entre o caso bom e o caso ruim de tempo — não o tamanho da imagem.
     """
-    linhas = rodar_ocr(img, lang)
+    linhas, tempos = rodar_ocr_com_tempo(img, lang)
+    tentativas: list[dict[str, float | int]] = [{**tempos, "rotacao_graus": 0}]
     melhor, melhor_rot, melhor_pt = linhas, 0, _pontuar_linhas(linhas)
     passadas = 1
 
@@ -89,7 +98,8 @@ def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int, int]:
                           (180, cv2.ROTATE_180),
                           (270, cv2.ROTATE_90_COUNTERCLOCKWISE)):
             try:
-                cand = rodar_ocr(cv2.rotate(img, code), lang)
+                cand, tempos = rodar_ocr_com_tempo(cv2.rotate(img, code), lang)
+                tentativas.append({**tempos, "rotacao_graus": rot})
                 passadas += 1
             except Exception as exc:
                 log.warning("Falha no OCR com rotação %s: %s", rot, exc)
@@ -98,7 +108,7 @@ def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int, int]:
             if pt > melhor_pt:
                 melhor, melhor_rot, melhor_pt = cand, rot, pt
 
-    return melhor, melhor_rot, passadas
+    return melhor, melhor_rot, tentativas, passadas
 
 
 # ------------------------------------------------------------------ validação
@@ -278,7 +288,7 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
         preparada = quality.preparar_para_ocr(original)
 
     with crono.medir("ocr"):
-        linhas, rotacao, passadas = ocr_com_rotacao(preparada, lang)
+        linhas, rotacao, tentativas_ocr, passadas = ocr_com_rotacao_medido(preparada, lang)
 
     textos = [ln.texto for ln in linhas]
     confiancas = [ln.confianca for ln in linhas if ln.confianca > 0]
@@ -337,6 +347,10 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
             "blocos_detectados": len(linhas),
             "caracteres_detectados": qtd_caracteres,
             "passadas": passadas,
+            "tentativas": [
+                {k: round(v, 3) if isinstance(v, float) else v for k, v in tentativa.items()}
+                for tentativa in tentativas_ocr
+            ],
         },
         "texto_linhas": [{"texto": ln.texto, "confianca": round(ln.confianca, 4)} for ln in linhas],
         "texto_completo": "\n".join(textos),

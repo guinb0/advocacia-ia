@@ -18,6 +18,7 @@ from __future__ import annotations
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -88,7 +89,11 @@ def main_teste() -> int:
     pipeline.processar = processar_falso
     falhas = 0
     try:
-        with TestClient(main.app) as cliente:
+        with (
+            patch.object(main, "_tentar_aquecer"),
+            patch.object(main.auth, "ATIVA", False),
+            TestClient(main.app) as cliente,
+        ):
             # Botão "Extrair dados" do painel de análise avulsa.
             avulso = cliente.post(
                 "/api/extrair",

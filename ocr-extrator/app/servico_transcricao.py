@@ -45,6 +45,7 @@ ORIGENS = [
     ).split(",")
     if o.strip()
 ]
+_whisper_aquecido = threading.Event()
 
 
 @asynccontextmanager
@@ -60,6 +61,7 @@ async def ciclo_de_vida(_: FastAPI):
     def aquecer():
         try:
             transcricao.aquecer_modelo()
+            _whisper_aquecido.set()
             log.info("Whisper pronto.")
         except Exception:
             log.exception("Falha ao carregar o Whisper")
@@ -84,7 +86,11 @@ _gravacoes = gravacao.Gravacoes()
 
 @app.get("/saude")
 def saude():
-    return {"status": "ok", "modelo_carregado": transcricao.modelo_carregado()}
+    return {
+        "status": "ok",
+        "modelo_carregado": transcricao.modelo_carregado(),
+        "modelo_aquecido": _whisper_aquecido.is_set(),
+    }
 
 
 # ----------------------------------------------------------------- gravação

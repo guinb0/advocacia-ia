@@ -16,6 +16,29 @@ param([switch]$Prod, [int]$Porta = 3000, [switch]$SemAuth)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+function Wait-ModeloAquecido {
+    param(
+        [string]$Url,
+        [System.Diagnostics.Process]$Processo,
+        [int]$TimeoutSegundos
+    )
+
+    $limite = [DateTime]::UtcNow.AddSeconds($TimeoutSegundos)
+    while ([DateTime]::UtcNow -lt $limite) {
+        if ($Processo.HasExited) {
+            throw "O processo encerrou durante o aquecimento: $Url"
+        }
+        try {
+            $saude = Invoke-RestMethod $Url -TimeoutSec 2
+            if ($saude.modelo_aquecido) { return $true }
+        } catch {
+            # A porta ainda pode estar fechada durante o início do Uvicorn.
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
 $PortaBackend = 8100
 $PortaTranscricao = 8200
 $UrlKeycloak  = "http://localhost:8180"
@@ -132,20 +155,14 @@ Write-Host "Ctrl+C encerra o backend e o frontend (o Keycloak segue no container
 # --timeout-keep-alive 65: o padrao do uvicorn e 5s, curto demais para o pool de
 # conexoes de um cliente HTTP moderno, que reusaria um socket ja fechado do lado
 # do servidor e quebraria a requisicao com "socket hang up" (ECONNRESET).
-# Transcricao em processo proprio: o Whisper e o PaddleOCR disputavam CPU no
-# mesmo processo (11s de audio levavam 227s) e as DLLs de MKL/OpenMP dos dois
-# conflitavam no Windows.
+# Transcricao e OCR ficam em processos separados por usarem runtimes numericos
+# pesados e potencialmente incompativeis. O aquecimento sequencial evita que a
+# inicializacao dos dois concorra pelos mesmos recursos.
 $env:NEXT_PUBLIC_TRANSCRICAO_API = "http://127.0.0.1:$PortaTranscricao"
-$transcricao = Start-Process -PassThru -NoNewWindow `
-    -FilePath ".\.venv\Scripts\python.exe" `
-    -ArgumentList "-m", "uvicorn", "app.servico_transcricao:app", "--host", "127.0.0.1",
-                  "--port", "$PortaTranscricao",
-                  # Ping desligado: a inferencia do Whisper segura o GIL o
-                  # bastante para o loop nao responder ao ping a tempo, e a
-                  # conexao morria no meio da gravacao. Em 127.0.0.1 o ping nao
-                  # agrega liveness. Se um dia isto for para a rede, mover a
-                  # inferencia para um ProcessPoolExecutor em vez de religar.
-                  "--ws-ping-interval", "0", "--ws-ping-timeout", "0"
+$transcricao = $null
+
+# Mantem um limite unico para as bibliotecas numericas usadas pelo PaddleOCR.
+if (-not $env:OCR_CPU_THREADS) { $env:OCR_CPU_THREADS = "8" }
 
 $backend = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
@@ -167,13 +184,31 @@ $beat = Start-Process -PassThru -NoNewWindow `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "beat"
 
 try {
-    # Espera a API subir antes de seguir, senao a primeira tela do front ja da erro.
-    for ($i = 0; $i -lt 90; $i++) {
-        try {
-            Invoke-WebRequest "http://127.0.0.1:$PortaBackend/api/saude" -UseBasicParsing -TimeoutSec 2 | Out-Null
-            break
-        } catch { Start-Sleep -Milliseconds 500 }
+    Write-Host "Aquecendo PaddleOCR..." -ForegroundColor Yellow
+    $ocrPronto = Wait-ModeloAquecido `
+        -Url "http://127.0.0.1:$PortaBackend/api/saude" `
+        -Processo $backend `
+        -TimeoutSegundos 90
+    if (-not $ocrPronto) {
+        throw "PaddleOCR nao terminou o aquecimento em 90 segundos."
     }
+    Write-Host "PaddleOCR pronto." -ForegroundColor Green
+
+    Write-Host "Aquecendo Whisper..." -ForegroundColor Yellow
+    $transcricao = Start-Process -PassThru -NoNewWindow `
+        -FilePath ".\.venv\Scripts\python.exe" `
+        -ArgumentList "-m", "uvicorn", "app.servico_transcricao:app", "--host", "127.0.0.1",
+                      "--port", "$PortaTranscricao",
+                      "--ws-ping-interval", "0", "--ws-ping-timeout", "0"
+
+    $whisperPronto = Wait-ModeloAquecido `
+        -Url "http://127.0.0.1:$PortaTranscricao/saude" `
+        -Processo $transcricao `
+        -TimeoutSegundos 180
+    if (-not $whisperPronto) {
+        throw "Whisper nao terminou o aquecimento em 180 segundos."
+    }
+    Write-Host "Whisper pronto." -ForegroundColor Green
 
     Push-Location .\frontend
     # O "--" repassa a porta ao next, sobrepondo a que esta nos scripts do

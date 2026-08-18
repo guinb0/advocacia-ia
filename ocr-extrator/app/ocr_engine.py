@@ -18,6 +18,25 @@ log = logging.getLogger("ocr")
 os.environ.setdefault("GLOG_minloglevel", "2")
 os.environ.setdefault("FLAGS_call_stack_level", "0")
 
+
+def _inteiro_env(nome: str, padrao: int, minimo: int = 1) -> int:
+    try:
+        return max(minimo, int(os.getenv(nome, "").strip() or padrao))
+    except ValueError:
+        log.warning("%s inválido; usando %s.", nome, padrao)
+        return padrao
+
+
+_CPU_THREADS = min(_inteiro_env("OCR_CPU_THREADS", 8), os.cpu_count() or 8)
+_DET_LADO_MAXIMO = _inteiro_env("OCR_DET_LADO_MAXIMO", 1280, minimo=320)
+
+# O serviço de transcrição vive em outro processo, então estas bibliotecas
+# numéricas podem compartilhar um único limite explícito dentro do OCR.
+os.environ["OCR_CPU_THREADS"] = str(_CPU_THREADS)
+os.environ["OMP_NUM_THREADS"] = str(_CPU_THREADS)
+os.environ["MKL_NUM_THREADS"] = str(_CPU_THREADS)
+os.environ["FLAGS_cpu_threads"] = str(_CPU_THREADS)
+
 # ------------------------------------------------------------------ dispositivo
 #
 # A placa é de 6.141 MiB e o Whisper já mora nela com 4.230. O que sobra para o
@@ -73,6 +92,10 @@ def _construir(lang: str, dispositivo: str):
         use_doc_orientation_classify=True,
         use_doc_unwarping=False,   # correção de páginas onduladas: pesada e rara aqui
         use_textline_orientation=True,
+        # Reduz o custo da detecção sem reduzir os recortes usados pelo
+        # reconhecedor. O valor é configurável para permitir validação por tipo.
+        text_det_limit_type="max",
+        text_det_limit_side_len=_DET_LADO_MAXIMO,
         device=dispositivo,
         **extra,
     )
@@ -115,6 +138,10 @@ def get_engine(lang: str = "pt"):
                 _caiu_para_cpu = True
 
         raise RuntimeError("Não foi possível inicializar o PaddleOCR.")
+
+
+def modelo_carregado() -> bool:
+    return _engine is not None
 
 
 def _poligono_para_metrica(poly) -> tuple[float, float, float, float]:
@@ -259,25 +286,46 @@ def _inferir(img_bgr: np.ndarray, lang: str):
         return _predizer(get_engine(lang), img_bgr)
 
 
-def rodar_ocr(img_bgr: np.ndarray, lang: str = "pt") -> list[Linha]:
-    """Executa o OCR e devolve as linhas ordenadas de cima para baixo."""
-    t0 = time.perf_counter()
-    saida = _worker.submit(_inferir, img_bgr, lang).result()
-    t_inferencia = time.perf_counter() - t0
+def _inferir_medido(img_bgr: np.ndarray, lang: str, enviado_em: float):
+    inicio = time.perf_counter()
+    saida = _inferir(img_bgr, lang)
+    fim = time.perf_counter()
+    return saida, {
+        "fila_s": inicio - enviado_em,
+        "inferencia_s": fim - inicio,
+        "total_s": fim - enviado_em,
+    }
 
-    t0 = time.perf_counter()
+
+def rodar_ocr_com_tempo(img_bgr: np.ndarray, lang: str = "pt") -> tuple[list[Linha], dict[str, float]]:
+    """Executa o OCR e devolve linhas + tempos da fila/inferência."""
+    enviado_em = time.perf_counter()
+    saida, tempos = _worker.submit(_inferir_medido, img_bgr, lang, enviado_em).result()
+
+    inicio_pos = time.perf_counter()
     itens: list[Linha] = []
     for res in (saida or []):
         itens.extend(_extrair_resultado(res))
 
     linhas = _agrupar_em_linhas(itens)
-    t_pos = time.perf_counter() - t0
+    tempos["pos_processamento_s"] = time.perf_counter() - inicio_pos
+    tempos["total_s"] = time.perf_counter() - enviado_em
 
-    # Separado porque são custos de natureza diferente: a inferência é o modelo
-    # (e cresce com o tamanho da imagem), o pós é geometria em Python puro.
     h, w = img_bgr.shape[:2]
     log.info(
-        "ocr %dx%d: inferencia=%.2fs pos=%.3fs blocos=%d device=%s",
-        w, h, t_inferencia, t_pos, len(linhas), "cpu" if _caiu_para_cpu else DISPOSITIVO,
+        "ocr %dx%d: fila=%.2fs inferencia=%.2fs pos=%.3fs blocos=%d device=%s",
+        w,
+        h,
+        tempos["fila_s"],
+        tempos["inferencia_s"],
+        tempos["pos_processamento_s"],
+        len(linhas),
+        "cpu" if _caiu_para_cpu else DISPOSITIVO,
     )
+    return linhas, tempos
+
+
+def rodar_ocr(img_bgr: np.ndarray, lang: str = "pt") -> list[Linha]:
+    """Executa o OCR e devolve as linhas ordenadas de cima para baixo."""
+    linhas, _ = rodar_ocr_com_tempo(img_bgr, lang)
     return linhas
