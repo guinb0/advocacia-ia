@@ -58,6 +58,11 @@ export interface EventosTranscricao {
    *  conversa em silêncio olhando só a transcrição — nos dois casos não aparece
    *  texto. Já custou uma entrevista inteira gravada como nada. */
   onNivel?: (rms: number) => void;
+  /** Quantos segundos de áudio chegam por segundo de relógio, medido no
+   *  servidor. 1,0 é tempo real; abaixo disso a fala está se perdendo no
+   *  caminho, ANTES do reconhecimento — e quem olha a tela precisa saber que o
+   *  buraco no texto não é o modelo errando, é áudio que nunca chegou. */
+  onChegada?: (fator: number) => void;
   onFinal?: (texto: string, duracaoS: number) => void;
   onEstado?: (estado: EstadoCaptura) => void;
   /** Situação passageira que não é erro — hoje, o Whisper carregando. */
@@ -266,6 +271,10 @@ export class CapturaEntrevista {
         // ainda estava rodando quando a resposta fechou. Mostrá-lo faria a
         // transcrição voltar atrás na tela.
         if (this.gravando) this.eventos.onParcial?.(m.text);
+      } else if (m.type === "diagnostico") {
+        // Chega mesmo quando nada foi reconhecido — é o único caminho pelo qual
+        // a tela descobre que o áudio está se perdendo antes do modelo.
+        if (typeof m.chegada === "number") this.eventos.onChegada?.(m.chegada);
       } else if (m.type === "trecho") {
         if (this.gravando) this.eventos.onTrecho?.(m.text);
       } else if (m.type === "final") this.eventos.onFinal?.(m.text, m.duracao_s ?? 0);

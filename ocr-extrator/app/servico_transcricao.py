@@ -166,6 +166,22 @@ async def _enviar_parcial(ws: WebSocket, sessao: transcricao.AnswerSession) -> N
     """
     try:
         texto = await run_in_threadpool(sessao.transcrever_parcial)
+
+        # O diagnóstico sai SEMPRE, com texto ou sem.
+        #
+        # Prendê-lo ao parcial (que só é enviado quando há texto) o calaria
+        # justamente no caso em que ele importa: nada sendo reconhecido. Era esse
+        # silêncio que fazia "ouvindo — nada reconhecido ainda" parecer defeito
+        # do modelo, quando a causa estava no áudio que nunca chegou inteiro.
+        if sessao.estado is transcricao.Estado.LISTENING:
+            await ws.send_json(
+                {
+                    "type": "diagnostico",
+                    "sessionId": sessao.sessao_id,
+                    "chegada": round(sessao.fator_chegada(), 2),
+                }
+            )
+
         # A resposta pode ter sido finalizada enquanto o modelo rodava. Mandar o
         # parcial depois do final faria o texto voltar atrás na tela.
         if texto and sessao.estado is transcricao.Estado.LISTENING:

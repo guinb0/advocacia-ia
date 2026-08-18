@@ -108,6 +108,21 @@ const MINIMO_PARA_CONFERIR = 40;
  * mudou de assunto), ela anda. */
 const SEGUNDOS_ANTES_DE_ANDAR = 8;
 
+/* Teto do quanto uma pergunta pode ficar segurada, contado do PRIMEIRO trecho.
+ *
+ * Os 8s acima reiniciam a cada trecho que cai nesta pergunta — e essa reinício
+ * não tinha limite. Com áudio ruim os trechos pingam de cinco em cinco segundos
+ * (às vezes só um fragmento mal reconhecido), cada um empurra o relógio de novo,
+ * e a condução trava em "respondendo — deixe terminar" sem nunca liberar. Foi o
+ * que aconteceu no "Foi vítima de assalto durante o trabalho?", uma pergunta de
+ * sim ou não.
+ *
+ * 40s é generoso para quem está mesmo desenvolvendo uma resposta e curto o
+ * bastante para não travar as 42 perguntas. Passado o teto a barra anda; o
+ * cliente não é interrompido, porque a escuta continua atribuindo o que ele
+ * disser à pergunta certa mesmo depois de a tela ter avançado. */
+const MAXIMO_SEGURANDO_S = 40;
+
 /* Por quanto tempo, depois do último campo preenchido, a entrevista conta como
  * FLUINDO.
  *
@@ -161,9 +176,14 @@ export default function Roteiro({
   const [puladas, setPuladas] = useState<string[]>([]);
   /* A pergunta que ainda está recebendo resposta, e quando caiu o último
    * trecho dela. É o que segura a condução enquanto o cliente desenvolve. */
-  const [respondendoAgora, setRespondendoAgora] = useState<{ id: string; em: number } | null>(
-    null,
-  );
+  const [respondendoAgora, setRespondendoAgora] = useState<{
+    id: string;
+    /** Último trecho que caiu nesta pergunta — reinicia os 8s. */
+    em: number;
+    /** PRIMEIRO trecho desta pergunta — é o que o teto mede, e por isso não
+     *  pode ser reiniciado junto com `em`. */
+    desde: number;
+  } | null>(null);
   /* Quando um campo QUALQUER foi preenchido pela última vez. É o sinal de que a
    * entrevista está andando, mesmo que fora da ordem do roteiro. */
   const [ultimoPreenchimento, setUltimoPreenchimento] = useState<number | null>(null);
@@ -226,6 +246,14 @@ export default function Roteiro({
    * reconhecida. É o que separa "ninguém está falando" de "o microfone está
    * mudo", e sem essa distinção a tela não tem como avisar do segundo. */
   const [ultimoSom, setUltimoSom] = useState<number | null>(null);
+  /* Nível TÍPICO da fala e velocidade com que o áudio chega. Existem para a
+   * tela poder dizer POR QUE o texto não aparece, em vez de só mostrar que não
+   * apareceu — que é indistinguível de "ninguém falou". */
+  const [nivelTipico, setNivelTipico] = useState<number | null>(null);
+  const [chegada, setChegada] = useState<number | null>(null);
+  /* Em ref, e não em estado: chega ~2x por segundo e re-renderizar a cada
+   * amostra redesenharia o roteiro inteiro sem nada mudar na tela. */
+  const niveisComSom = useRef<number[]>([]);
 
   /* A conversa não espera a resposta da escuta anterior.
    *
@@ -367,7 +395,15 @@ export default function Roteiro({
            * nada — é resposta adiantada, e adiantar é justamente o que faz a
            * entrevista encurtar. */
           if (r.preenchidas.some((p) => p.pergunta_id === atualRef.current)) {
-            setRespondendoAgora({ id: atualRef.current, em: Date.now() });
+            setRespondendoAgora((anterior) => {
+              const agora = Date.now();
+              // Só preserva o `desde` se ainda for a MESMA pergunta; trocou de
+              // pergunta, o teto recomeça, senão a segunda herdaria o relógio
+              // gasto pela primeira e nem chegaria a segurar.
+              return anterior && anterior.id === atualRef.current
+                ? { ...anterior, em: agora }
+                : { id: atualRef.current, em: agora, desde: agora };
+            });
           }
           // Caiu em qualquer pergunta: a entrevista está andando, e a cobrança
           // recolhe enquanto isso durar.
@@ -417,8 +453,26 @@ export default function Roteiro({
        * fica no meio, longe dos dois — não dispara com ruído de sala nem deixa
        * de disparar com voz baixa. */
       onNivel: (rms) => {
-        if (rms > 0.002) setUltimoSom(Date.now());
+        if (rms <= 0.002) return;
+        setUltimoSom(Date.now());
+        /* MEDIANA dos blocos com som — não média, não pico. A média afunda com
+         * as pausas (a maior parte de uma entrevista é silêncio) e o pico sobe
+         * com um estalo de mesa. A mediana separou limpo os dois extremos
+         * medidos aqui: microfone baixo 0,023, microfone bom 0,061.
+         *
+         * Só os blocos COM som entram: incluir o silêncio mediria quanto a
+         * pessoa fala, não quão alto. */
+        const b = niveisComSom.current;
+        b.push(rms);
+        if (b.length > 40) b.shift(); // ~20s de fala
+        /* 20 blocos (~10s de fala) antes de opinar. Com 8 a mediana pulava a
+         * cada frase e o aviso piscava — e aviso que pisca ninguém lê. */
+        if (b.length >= 20) {
+          const ordenado = [...b].sort((x, y) => x - y);
+          setNivelTipico(ordenado[Math.floor(ordenado.length / 2)]);
+        }
       },
+      onChegada: setChegada,
       /* Um trecho parou de mudar. Vai para a fila, não direto para a API: dois
        * trechos podem confirmar quase juntos, e a fila os junta numa chamada. */
       onTrecho: (texto) => {
@@ -705,7 +759,8 @@ export default function Roteiro({
   /* A pergunta segurada: já respondida, mas ainda recebendo trecho. */
   const posicaoSegurada =
     respondendoAgora !== null &&
-    Date.now() - respondendoAgora.em < SEGUNDOS_ANTES_DE_ANDAR * 1000
+    Date.now() - respondendoAgora.em < SEGUNDOS_ANTES_DE_ANDAR * 1000 &&
+    Date.now() - respondendoAgora.desde < MAXIMO_SEGURANDO_S * 1000
       ? sequencia.findIndex(({ pergunta }) => pergunta.id === respondendoAgora.id)
       : -1;
 
@@ -996,6 +1051,8 @@ export default function Roteiro({
             pausado={estadoMic === "pausado"}
             ultimaFala={ultimaFala}
             ultimoSom={ultimoSom}
+            nivelTipico={nivelTipico}
+            chegada={chegada}
             erro={erroEscuta}
             onIrPara={irPara}
           />

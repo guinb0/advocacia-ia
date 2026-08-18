@@ -50,6 +50,12 @@ interface Props {
   ultimaFala: number | null;
   /** `Date.now()` da última vez que o microfone captou SOM (não fala). */
   ultimoSom: number | null;
+  /** Nível TÍPICO da fala: mediana dos blocos que têm som. `null` até haver
+   *  amostra suficiente. Separa "ninguém falou ainda" de "está falando, mas o
+   *  microfone está fraco demais para reconhecer direito". */
+  nivelTipico: number | null;
+  /** Segundos de áudio por segundo de relógio, medido no servidor. */
+  chegada: number | null;
   erro: string | null;
   /** Levar o roteiro até a pergunta — o painel é índice, não só relatório. */
   onIrPara: (perguntaId: string) => void;
@@ -68,13 +74,40 @@ interface Props {
 /** Silêncio absoluto por mais que isto, com o microfone aberto, é defeito. */
 const SEGUNDOS_SEM_SOM = 12;
 
+/* Microfone que capta, mas fraco demais.
+ *
+ * É o caso que "microfone sem som" NÃO pega: há som, então nada acusa, mas o
+ * reconhecimento sai truncado e parece o modelo errando.
+ *
+ * Três pontos medidos nesta casa, na mediana dos blocos com som:
+ *
+ *     0,023  microfone ruim   — corta frase, troca palavra
+ *     0,031  microfone atual  — sofrível, mas o entrevistador o considera normal
+ *     0,061  microfone bom    — reconhece limpo
+ *
+ * A primeira versão usou 0,035 e gritava em cima dos 0,031 do uso normal. Aviso
+ * que dispara no caso comum é aviso que se aprende a ignorar, e aí ele não serve
+ * para o dia em que o problema é real. 0,028 fica abaixo do uso normal e acima
+ * do ruim — margem estreita, porque os dois casos são mesmo próximos.
+ *
+ * Isto é AVISO, não filtro. Um limiar que erra aqui custa um alerta a mais; um
+ * limiar que FILTRA e erra apaga a fala do cliente — foi exatamente o que já
+ * aconteceu uma vez, e é a razão de este número nunca voltar a cortar áudio. */
+const NIVEL_BAIXO = 0.028;
+
+/** Abaixo disto o áudio chega mais devagar que a fala: some conteúdo no
+ *  caminho, ANTES do reconhecimento, e o buraco no texto não tem como ser
+ *  explicado por quem só olha a transcrição. */
+const CHEGADA_MINIMA = 0.9;
+
 function situacao(
   captando: boolean,
   pausado: boolean,
   interpretando: boolean,
   ultimaFala: number | null,
   ultimoSom: number | null,
-): { texto: string; classe: string; titulo: string; mudo?: boolean } {
+  nivelTipico: number | null,
+): { texto: string; classe: string; titulo: string; mudo?: boolean; baixo?: boolean } {
   /* O caso que motivou tudo isto vem PRIMEIRO, antes de qualquer outro estado.
    *
    * Microfone mudo e conversa em silêncio produzem a mesma tela — nenhuma das
@@ -91,6 +124,19 @@ function situacao(
           "O microfone está aberto mas não capta nada há mais de " +
           `${SEGUNDOS_SEM_SOM}s. Confira o dispositivo, o mudo do sistema e se ` +
           "outro programa tomou o microfone.",
+      };
+    }
+
+    /* Depois do mudo e ANTES de qualquer estado normal: enquanto o microfone
+     * estiver fraco, esta é a informação que muda o que o entrevistador faz. */
+    if (nivelTipico !== null && nivelTipico < NIVEL_BAIXO) {
+      return {
+        texto: "microfone muito baixo",
+        classe: estilos.mudo,
+        baixo: true,
+        titulo:
+          "Há som, mas fraco demais para reconhecer com segurança. Aumente o " +
+          "nível do microfone no Windows ou aproxime-o de quem fala.",
       };
     }
   }
@@ -146,6 +192,8 @@ export default function PainelEscuta({
   pausado,
   ultimaFala,
   ultimoSom,
+  nivelTipico,
+  chegada,
   erro,
   onIrPara,
 }: Props) {
@@ -162,7 +210,15 @@ export default function PainelEscuta({
     return () => clearInterval(id);
   }, [captando, pausado]);
 
-  const estado = situacao(captando, pausado, interpretando, ultimaFala, ultimoSom);
+  const estado = situacao(
+    captando,
+    pausado,
+    interpretando,
+    ultimaFala,
+    ultimoSom,
+    nivelTipico,
+  );
+  const atrasado = captando && !pausado && chegada !== null && chegada < CHEGADA_MINIMA;
 
   return (
     <aside className={estilos.painel}>
@@ -182,6 +238,32 @@ export default function PainelEscuta({
           chega som há mais de {SEGUNDOS_SEM_SOM} segundos. Confira se ele está mudo,
           se é o dispositivo certo e se outro programa o tomou — nada do que for dito
           agora será transcrito.
+        </div>
+      )}
+
+      {/* Mesmo motivo do alerta de mudo: quem conduz está olhando o cliente, e
+        * o custo de descobrir isto só na revisão é a entrevista inteira. */}
+      {estado.baixo && (
+        <div className={estilos.alertaMudo}>
+          <strong>O microfone está muito baixo.</strong> Chega som, mas fraco demais
+          para reconhecer com segurança — o texto vai sair truncado e com palavras
+          trocadas. Aumente o nível do microfone no Windows (Configurações → Som →
+          Entrada) ou aproxime-o de quem está falando.
+        </div>
+      )}
+
+      {/* Este não é sobre o microfone: é áudio que o navegador não conseguiu
+        * entregar. Some fala ANTES do reconhecimento, então nenhum ajuste no
+        * modelo recupera — e sem este aviso o buraco no texto não tem causa
+        * visível. */}
+      {atrasado && (
+        <div className={estilos.alertaMudo}>
+          <strong>Está chegando menos áudio que o tempo corrido.</strong>{" "}
+          {Math.round((chegada ?? 0) * 100)}% do relógio virou áudio transcrito. Parte
+          disso pode ser pausa entre perguntas, que é normal; o resto é áudio que o
+          navegador não deu conta de entregar. Se o número ficar baixo com a conversa
+          correndo solta, feche programas pesados (abas demais, Docker, streaming) e
+          não deixe esta aba em segundo plano.
         </div>
       )}
 
