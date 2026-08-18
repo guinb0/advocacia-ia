@@ -1,22 +1,25 @@
-"""Persistência dos casos e das entregas de documentos (SQLite).
+"""Persistência do Acervo, no SQL Server.
 
-SQLite e não um banco de verdade porque isto roda na máquina do advogado: os
-arquivos são de clientes e não devem sair dali. Sem servidor, sem dependência,
-o banco é um arquivo só — dá para levar num pendrive ou fazer backup copiando.
+Este módulo fala SQL e nada mais: a conexão, o schema e as diferenças de dialeto vivem
+em `banco.py`. É o que permitiu trocar o motor sem reescrever as 44 funções daqui.
 
-Os arquivos enviados ficam em `dados/casos/<id do caso>/`, fora do git.
+Antes o banco era um arquivo SQLite na máquina do advogado (`dados/casos.db`). Servia
+enquanto era uma pessoa só — mas não é alcançável de outro computador, não tem backup e
+recusa duas escritas ao mesmo tempo. Os arquivos enviados pelo cliente continuam em
+disco (`dados/casos/`); o que foi para o servidor é o registro, não o binário.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 import unicodedata
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+from . import banco
+from .banco import conectar
 
 BASE = Path(__file__).resolve().parent.parent
 DIR_DADOS = BASE / "dados"
@@ -27,101 +30,7 @@ DIR_ARQUIVOS = DIR_DADOS / "casos"
 DIR_CONTRATOS = DIR_DADOS / "contratos"
 CAMINHO_BANCO = DIR_DADOS / "casos.db"
 
-ESQUEMA = """
-CREATE TABLE IF NOT EXISTS casos (
-    id            TEXT PRIMARY KEY,
-    cliente       TEXT NOT NULL,
-    categoria     TEXT NOT NULL,
-    observacao    TEXT NOT NULL DEFAULT '',
-    criado_em     TEXT NOT NULL,
-    atualizado_em TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS entregas (
-    id                 TEXT PRIMARY KEY,
-    caso_id            TEXT NOT NULL REFERENCES casos(id) ON DELETE CASCADE,
-    item_codigo        TEXT NOT NULL,
-    arquivo            TEXT NOT NULL,
-    caminho            TEXT NOT NULL,
-    tipo_detectado     TEXT,
-    tipo_confere       INTEGER,
-    veredito           TEXT,
-    dados_utilizaveis  INTEGER NOT NULL DEFAULT 0,
-    confirmado_manual  INTEGER NOT NULL DEFAULT 0,
-    score_legibilidade INTEGER,
-    itens_atendidos    TEXT NOT NULL DEFAULT '[]',
-    extracao_json      TEXT,
-    criado_em          TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_entregas_caso ON entregas(caso_id);
-CREATE INDEX IF NOT EXISTS idx_entregas_item ON entregas(caso_id, item_codigo);
-
--- Contratos mandados para assinatura eletrônica. O que vale é o registro da
--- ZapSign; esta tabela é o índice local — sem ela o escritório precisaria abrir
--- o painel deles para saber qual contrato é de qual cliente.
---
--- `caso_id` fica solto (sem chave estrangeira) de propósito: o contrato é
--- assinado ANTES de o caso existir, e o vínculo só é feito depois, se for feito.
-CREATE TABLE IF NOT EXISTS assinaturas (
-    id             TEXT PRIMARY KEY,
-    doc_token      TEXT NOT NULL UNIQUE,
-    nome           TEXT NOT NULL,
-    cliente        TEXT NOT NULL DEFAULT '',
-    cpf            TEXT NOT NULL DEFAULT '',
-    caso_id        TEXT,
-    estado         TEXT NOT NULL DEFAULT 'pendente',
-    signatarios    TEXT NOT NULL DEFAULT '[]',
-    arquivo        TEXT,
-    criado_em      TEXT NOT NULL,
-    atualizado_em  TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_assinaturas_caso ON assinaturas(caso_id);
-
--- Vínculo com o agente jurídico, que é outro serviço e tem banco próprio. O que
--- fica aqui é só o par de identificadores: o caso do OCR e o caso lá.
---
--- Guardar isto é o que permite reabrir o dossiê depois de um F5, e é o que impede
--- que um segundo clique em "enviar ao agente" crie um segundo caso para o mesmo
--- cliente — duplicata que só apareceria semanas depois, com metade dos documentos
--- em cada um.
---
--- `ultimo_erro` existe porque a ligação depende de um serviço que pode estar fora:
--- sem ele, a tela mostraria "não enviado" sem dizer por quê.
-CREATE TABLE IF NOT EXISTS vinculos_agente (
-    caso_id       TEXT PRIMARY KEY REFERENCES casos(id) ON DELETE CASCADE,
-    caso_ref      TEXT NOT NULL,
-    cliente_ref   TEXT NOT NULL DEFAULT '',
-    enviados      TEXT NOT NULL DEFAULT '[]',
-    ultimo_erro   TEXT,
-    criado_em     TEXT NOT NULL,
-    atualizado_em TEXT NOT NULL
-);
-
--- Entrevista de atendimento: o arquivo que o advogado usou e o texto lido dele.
---
--- Guardar os dois, e não só o texto, é deliberado: o texto é o que a IA lê e o que
--- a tela mostra, mas quem revisa o caso seis meses depois quer o arquivo original,
--- com a formatação e as anotações de quem atendeu. `enviada_em` marca que o agente
--- já leu — reenviar criaria uma segunda leva de fatos alegados idênticos.
-CREATE TABLE IF NOT EXISTS entrevistas (
-    id            TEXT PRIMARY KEY,
-    caso_id       TEXT NOT NULL REFERENCES casos(id) ON DELETE CASCADE,
-    arquivo       TEXT NOT NULL,
-    caminho       TEXT NOT NULL,
-    texto         TEXT NOT NULL DEFAULT '',
-    realizada_em  TEXT NOT NULL DEFAULT '',
-    entrevistador TEXT NOT NULL DEFAULT '',
-    resumo        TEXT NOT NULL DEFAULT '',
-    perguntas     TEXT NOT NULL DEFAULT '[]',
-    fatos_gerados INTEGER NOT NULL DEFAULT 0,
-    enviada_em    TEXT,
-    criado_em     TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS ix_entrevistas_caso ON entrevistas(caso_id);
-"""
+# O schema mora em `banco.py`, em T-SQL.
 
 
 def agora() -> str:
@@ -138,71 +47,19 @@ def _normalizar_cpf(cpf: object) -> str:
     return "".join(c for c in texto if "0" <= c <= "9")
 
 
-@contextmanager
-def conectar() -> Iterator[sqlite3.Connection]:
-    DIR_DADOS.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(CAMINHO_BANCO, timeout=15)
-    con.row_factory = sqlite3.Row
-    # Mantém legíveis também os registros antigos, salvos antes de o nome ser
-    # normalizado na escrita (por exemplo, "Maria   Silva").
-    con.create_function(
-        "normalizar_nome_cliente", 1, _normalizar_nome_cliente, deterministic=True
-    )
-    # WAL deixa leitura e escrita coexistirem; sem ele o upload de um documento
-    # travaria quem estivesse só consultando a lista de casos.
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA foreign_keys=ON")
-    try:
-        yield con
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
+# A conexão vive em `banco.py`: é lá que o SQL Server entra, com a mesma interface que o
+# SQLite oferecia (`?` como marcador, linha acessível por nome de coluna). Este módulo
+# continua falando SQL e não sabe qual motor está do outro lado.
 
 
 def inicializar() -> None:
-    with conectar() as con:
-        con.executescript(ESQUEMA)
-        # Bancos criados antes da identidade unificada ainda não têm esta coluna.
-        colunas = {linha["name"] for linha in con.execute("PRAGMA table_info(entregas)")}
-        if "itens_atendidos" not in colunas:
-            con.execute("ALTER TABLE entregas ADD COLUMN itens_atendidos TEXT NOT NULL DEFAULT '[]'")
-        if "confirmado_manual" not in colunas:
-            con.execute("ALTER TABLE entregas ADD COLUMN confirmado_manual INTEGER NOT NULL DEFAULT 0")
+    """Garante o schema e as pastas de arquivo.
 
-        # Portal do cliente. Guardamos o hash da senha, nunca a senha: nem esta
-        # tabela nem a tela do advogado conseguem revelá-la depois de gerada.
-        # Upload assíncrono: a entrega existe antes do OCR terminar. Bancos
-        # antigos só têm entregas já processadas, daí o default 'pronto'.
-        if "status_proc" not in colunas:
-            con.execute(
-                "ALTER TABLE entregas ADD COLUMN status_proc TEXT NOT NULL DEFAULT 'pronto'"
-            )
-            con.execute("ALTER TABLE entregas ADD COLUMN erro_proc TEXT")
-
-        colunas_casos = {linha["name"] for linha in con.execute("PRAGMA table_info(casos)")}
-        if "portal_token" not in colunas_casos:
-            con.execute("ALTER TABLE casos ADD COLUMN portal_token TEXT")
-            con.execute("ALTER TABLE casos ADD COLUMN portal_senha_hash TEXT")
-            con.execute("ALTER TABLE casos ADD COLUMN portal_sal TEXT")
-            con.execute("ALTER TABLE casos ADD COLUMN portal_criado_em TEXT")
-            # Busca por token acontece a cada requisição do cliente.
-            con.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_casos_portal_token "
-                "ON casos(portal_token) WHERE portal_token IS NOT NULL"
-            )
-
-        colunas_assinaturas = {
-            linha["name"] for linha in con.execute("PRAGMA table_info(assinaturas)")
-        }
-        if "cpf" not in colunas_assinaturas:
-            con.execute("ALTER TABLE assinaturas ADD COLUMN cpf TEXT NOT NULL DEFAULT ''")
-        con.execute(
-            "CREATE INDEX IF NOT EXISTS ix_assinaturas_cliente_cpf "
-            "ON assinaturas(cliente, cpf)"
-        )
+    As migrações de coluna que existiam aqui eram para bancos SQLite criados antes de
+    campos como `status_proc` e `portal_token` — o schema do SQL Server já nasce com
+    todos eles, então não há nada a remendar.
+    """
+    banco.inicializar_schema()
     DIR_ARQUIVOS.mkdir(parents=True, exist_ok=True)
     DIR_CONTRATOS.mkdir(parents=True, exist_ok=True)
 
@@ -326,11 +183,11 @@ def excluir_caso(caso_id: str) -> bool:
     return removido
 
 
-def _tocar_caso(con: sqlite3.Connection, caso_id: str) -> None:
+def _tocar_caso(con: banco.Conexao, caso_id: str) -> None:
     con.execute("UPDATE casos SET atualizado_em = ? WHERE id = ?", (agora(), caso_id))
 
 
-def _normalizar_entrega(linha: sqlite3.Row) -> dict[str, Any]:
+def _normalizar_entrega(linha: banco.Linha) -> dict[str, Any]:
     """SQLite devolve booleano como inteiro; aqui volta a ser bool/None.
 
     Sem isto, `tipo_confere` chega como 0 e um `is False` lá em cima nunca casa
@@ -577,7 +434,7 @@ def excluir_entrega(entrega_id: str) -> bool:
 # ------------------------------------------------------------- assinaturas
 
 
-def _normalizar_assinatura(linha: sqlite3.Row) -> dict[str, Any]:
+def _normalizar_assinatura(linha: banco.Linha) -> dict[str, Any]:
     registro = dict(linha)
     bruto = registro.get("signatarios")
     if isinstance(bruto, str):
@@ -688,7 +545,11 @@ def listar_assinaturas(
         condicoes.append("caso_id = ?")
         parametros.append(caso_id)
     if cliente:
-        condicoes.append("normalizar_nome_cliente(cliente) = ? COLLATE NOCASE")
+        # O SQLite aceitava uma função Python registrada na conexão; o SQL Server não
+        # roda Python dentro da consulta. Como o nome já é gravado normalizado, comparar
+        # direto basta — e o collation do banco (`Latin1_General_CI_AS`) ignora
+        # maiúsculas, o que dispensa o antigo `COLLATE NOCASE`.
+        condicoes.append("cliente = ?")
         parametros.append(_normalizar_nome_cliente(cliente))
     if cpf:
         condicoes.append("cpf = ?")
@@ -718,7 +579,7 @@ def obter_assinatura(assinatura_id: str) -> dict[str, Any] | None:
 def vincular_agente(caso_id: str, caso_ref: str, cliente_ref: str) -> dict[str, Any]:
     """Guarda (ou atualiza) o caso correspondente no agente.
 
-    `INSERT OR REPLACE` e não `INSERT`: revincular é operação legítima — o agente
+    `MERGE` e não `INSERT`: revincular é operação legítima — o agente
     pode ter sido recriado do zero em desenvolvimento —, e falhar aqui deixaria o
     caso preso a um identificador que não existe mais do outro lado.
     """
@@ -734,9 +595,20 @@ def vincular_agente(caso_id: str, caso_ref: str, cliente_ref: str) -> dict[str, 
         enviados = anterior["enviados"] if anterior and anterior["caso_ref"] == caso_ref else "[]"
         con.execute(
             """
-            INSERT OR REPLACE INTO vinculos_agente
-                   (caso_id, caso_ref, cliente_ref, enviados, ultimo_erro, criado_em, atualizado_em)
-            VALUES (?, ?, ?, ?, NULL, ?, ?)
+            MERGE ocr.vinculos_agente AS alvo
+            USING (SELECT ? AS caso_id, ? AS caso_ref, ? AS cliente_ref, ? AS enviados,
+                          ? AS criado_em, ? AS atualizado_em) AS origem
+               ON alvo.caso_id = origem.caso_id
+             WHEN MATCHED THEN UPDATE SET caso_ref = origem.caso_ref,
+                                          cliente_ref = origem.cliente_ref,
+                                          enviados = origem.enviados,
+                                          ultimo_erro = NULL,
+                                          atualizado_em = origem.atualizado_em
+             WHEN NOT MATCHED THEN
+                  INSERT (caso_id, caso_ref, cliente_ref, enviados, ultimo_erro,
+                          criado_em, atualizado_em)
+                  VALUES (origem.caso_id, origem.caso_ref, origem.cliente_ref,
+                          origem.enviados, NULL, origem.criado_em, origem.atualizado_em);
             """,
             (
                 caso_id,
@@ -796,7 +668,7 @@ def registrar_erro_agente(caso_id: str, mensagem: str | None) -> None:
 # ------------------------------------------------------------------ entrevistas
 
 
-def _normalizar_entrevista(linha: sqlite3.Row) -> dict[str, Any]:
+def _normalizar_entrevista(linha: banco.Linha) -> dict[str, Any]:
     registro = dict(linha)
     bruto = registro.get("perguntas")
     try:

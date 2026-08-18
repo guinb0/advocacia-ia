@@ -1,0 +1,354 @@
+"""Conexão com o SQL Server, com a mesma interface que o SQLite oferecia.
+
+O Acervo nasceu em SQLite (`dados/casos.db`), um arquivo na máquina do advogado. Isso
+serve enquanto é uma pessoa só: o arquivo não é alcançável de outro computador, não tem
+backup e não aceita duas escritas ao mesmo tempo.
+
+Este módulo troca o motor sem reescrever as 44 funções de `armazenamento.py`. A interface
+é a que o código já usa — `conectar()` como gerenciador de contexto, `execute(sql, params)`
+com `?`, e linhas acessíveis por nome de coluna:
+
+    with conectar() as con:
+        linha = con.execute("SELECT * FROM casos WHERE id = ?", (caso_id,)).fetchone()
+        print(linha["cliente"])
+
+O que muda de verdade, e por que:
+
+- **`?` continua sendo o marcador**, porque o pyodbc usa o mesmo do sqlite3. Foi sorte, e é
+  o que permitiu manter as consultas como estavam;
+- **`INSERT OR REPLACE` não existe** no SQL Server. Vira `MERGE`, escrito nas duas funções
+  que o usavam;
+- **função Python registrada na conexão** (`normalizar_nome_cliente`) não tem equivalente:
+  o SQL Server não roda Python dentro da query. A normalização passou a ser feita antes,
+  em Python, com o valor já normalizado sendo gravado na coluna;
+- **`COLLATE NOCASE`** some: o banco usa `Latin1_General_CI_AS`, que já ignora maiúsculas.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import urllib.parse
+from pathlib import Path
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from typing import Any
+
+import pyodbc
+
+__all__ = ["ESQUEMA_SQLSERVER", "Conexao", "Linha", "conectar", "dsn", "inicializar_schema"]
+
+SCHEMA = "ocr"
+"""Schema próprio do Acervo no banco `advocacia`.
+
+Separado do `dbo`, onde vivem as tabelas do agente: cada sistema escreve no seu, e a
+permissão pode ser concedida por schema quando as credenciais forem separadas.
+"""
+
+DRIVER_PADRAO = "ODBC Driver 17 for SQL Server"
+
+
+_ENV = Path(__file__).resolve().parent.parent / ".env"
+
+
+def _carregar_env() -> None:
+    """Lê o `.env` do projeto, uma vez, sem sobrescrever o que já veio do ambiente.
+
+    O Acervo não tinha esse carregamento: as variáveis chegavam pelo `iniciar.ps1`, que
+    as exporta antes de subir o uvicorn. Isso bastava enquanto o banco era um arquivo —
+    agora não basta, porque um script (`scripts/migrar_sqlite_para_sqlserver.py`) ou um
+    teste rodam fora daquele caminho e ficariam sem credencial.
+
+    Variável já presente no ambiente **vence** o arquivo: é o que permite apontar para
+    outro banco numa execução pontual sem editar o `.env`.
+    """
+    if not _ENV.exists():
+        return
+    for linha in _ENV.read_text(encoding="utf-8").splitlines():
+        texto = linha.strip()
+        if not texto or texto.startswith("#") or "=" not in texto:
+            continue
+        chave, _, valor = texto.partition("=")
+        os.environ.setdefault(chave.strip(), valor.strip())
+
+
+def dsn() -> str:
+    """String de conexão ODBC, montada a partir do ambiente.
+
+    Segredo não mora em código. Sem `SQLSERVER_*` no ambiente nem no `.env`, falha aqui —
+    no boot — em vez de na primeira consulta, quando o advogado já está com o caso aberto
+    na tela.
+    """
+    _carregar_env()
+    servidor = os.getenv("SQLSERVER_HOST")
+    senha = os.getenv("SQLSERVER_PASSWORD")
+    if not servidor or not senha:
+        raise RuntimeError(
+            "Faltam SQLSERVER_HOST e SQLSERVER_PASSWORD no ambiente (.env do ocr-extrator)."
+        )
+    return (
+        f"DRIVER={{{os.getenv('SQLSERVER_DRIVER', DRIVER_PADRAO)}}};"
+        f"SERVER={servidor},{os.getenv('SQLSERVER_PORT', '1433')};"
+        f"DATABASE={os.getenv('SQLSERVER_DATABASE', 'advocacia')};"
+        f"UID={os.getenv('SQLSERVER_USER', 'advocacia')};"
+        f"PWD={senha};"
+        "TrustServerCertificate=yes;"
+    )
+
+
+def url_sqlalchemy() -> str:
+    """A mesma conexão em forma de URL, para quem precisa de SQLAlchemy."""
+    senha = urllib.parse.quote_plus(os.environ["SQLSERVER_PASSWORD"])
+    usuario = os.getenv("SQLSERVER_USER", "advocacia")
+    servidor = os.environ["SQLSERVER_HOST"]
+    porta = os.getenv("SQLSERVER_PORT", "1433")
+    banco = os.getenv("SQLSERVER_DATABASE", "advocacia")
+    driver = urllib.parse.quote_plus(os.getenv("SQLSERVER_DRIVER", DRIVER_PADRAO))
+    return f"mssql+pyodbc://{usuario}:{senha}@{servidor}:{porta}/{banco}?driver={driver}"
+
+
+class Linha:
+    """Linha acessível por nome de coluna, como a `sqlite3.Row` era.
+
+    O `pyodbc` devolve tuplas com atributos, e o código do Acervo lê `linha["campo"]` em
+    dezenas de lugares. Este envelope evita reescrever tudo isso.
+    """
+
+    __slots__ = ("_valores",)
+
+    def __init__(self, colunas: Sequence[str], valores: Sequence[Any]) -> None:
+        self._valores = dict(zip(colunas, valores, strict=True))
+
+    def __getitem__(self, chave: str | int) -> Any:
+        # Por índice também, como a `sqlite3.Row` permitia: `SELECT count(*)` não tem
+        # nome de coluna, e o código lê `linha[0]` nesses casos.
+        if isinstance(chave, int):
+            return list(self._valores.values())[chave]
+        return self._valores[chave]
+
+    def __contains__(self, chave: object) -> bool:
+        return chave in self._valores
+
+    def keys(self) -> Any:
+        return self._valores.keys()
+
+    def get(self, chave: str, padrao: Any = None) -> Any:
+        return self._valores.get(chave, padrao)
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._valores.values())
+
+    def __repr__(self) -> str:
+        return f"Linha({self._valores!r})"
+
+
+class _Resultado:
+    """O que `execute()` devolve: `fetchone`, `fetchall` e iteração, como antes."""
+
+    def __init__(self, cursor: Any) -> None:
+        self._cursor = cursor
+        self._colunas = (
+            [d[0] for d in cursor.description] if cursor.description is not None else []
+        )
+
+    def fetchone(self) -> Linha | None:
+        linha = self._cursor.fetchone()
+        return None if linha is None else Linha(self._colunas, linha)
+
+    def fetchall(self) -> list[Linha]:
+        return [Linha(self._colunas, linha) for linha in self._cursor.fetchall()]
+
+    def __iter__(self) -> Iterator[Linha]:
+        for linha in self._cursor:
+            yield Linha(self._colunas, linha)
+
+    @property
+    def rowcount(self) -> int:
+        return int(self._cursor.rowcount)
+
+
+class Conexao:
+    """Envelope fino sobre a conexão pyodbc, com a interface que o Acervo já usa."""
+
+    def __init__(self, bruta: pyodbc.Connection) -> None:
+        self._bruta = bruta
+
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> _Resultado:
+        cursor = self._bruta.cursor()
+        cursor.execute(_qualificar(sql), tuple(params))
+        return _Resultado(cursor)
+
+    def executemany(self, sql: str, seq: Sequence[Sequence[Any]]) -> None:
+        cursor = self._bruta.cursor()
+        cursor.executemany(_qualificar(sql), [tuple(p) for p in seq])
+
+    def commit(self) -> None:
+        self._bruta.commit()
+
+    def rollback(self) -> None:
+        self._bruta.rollback()
+
+    def close(self) -> None:
+        self._bruta.close()
+
+
+# Tabelas do Acervo. O SQL do módulo `armazenamento` as nomeia sem schema — é assim que
+# estavam no SQLite —, e qualificar aqui evita reescrever 58 consultas.
+TABELAS = (
+    "casos",
+    "entregas",
+    "entrevistas",
+    "assinaturas",
+    "vinculos_agente",
+)
+
+
+def _qualificar(sql: str) -> str:
+    """Prefixa as tabelas do Acervo com o schema, preservando o resto da consulta.
+
+    Idempotente: uma consulta que já venha escrita como `ocr.casos` passa intacta. Sem
+    isso, prefixar de novo produz `ocr.ocr.casos` — e o erro que aparece é "nome de
+    objeto inválido", que não diz que a culpa é do prefixo dobrado.
+    """
+    resultado = sql
+    for tabela in TABELAS:
+        # `(?<![\w.])` recusa o que já tem ponto antes (`ocr.casos`) e o que é sufixo de
+        # outra palavra; `(?![\w.])` recusa prefixo de nome maior (`casos_antigos`).
+        resultado = re.sub(
+            rf"(?<![\w.]){tabela}(?![\w.])",
+            f"{SCHEMA}.{tabela}",
+            resultado,
+        )
+    return resultado
+
+
+@contextmanager
+def conectar() -> Iterator[Conexao]:
+    """Abre transação, confirma no fim e desfaz em qualquer erro.
+
+    Mesmo contrato do `conectar()` que existia sobre o SQLite: quem chama não precisa
+    lembrar de `commit`.
+    """
+    bruta = pyodbc.connect(dsn(), timeout=15, autocommit=False)
+    conexao = Conexao(bruta)
+    try:
+        yield conexao
+        conexao.commit()
+    except Exception:
+        conexao.rollback()
+        raise
+    finally:
+        conexao.close()
+
+
+# ---------------------------------------------------------------------------- schema
+
+ESQUEMA_SQLSERVER = f"""
+IF SCHEMA_ID('{SCHEMA}') IS NULL EXEC('CREATE SCHEMA {SCHEMA}');
+
+IF OBJECT_ID('{SCHEMA}.casos') IS NULL
+CREATE TABLE {SCHEMA}.casos (
+    id                varchar(64)   NOT NULL CONSTRAINT pk_ocr_casos PRIMARY KEY,
+    cliente           nvarchar(200) NOT NULL,
+    categoria         varchar(80)   NOT NULL,
+    observacao        nvarchar(max) NOT NULL CONSTRAINT df_ocr_casos_obs DEFAULT N'',
+    criado_em         varchar(40)   NOT NULL,
+    atualizado_em     varchar(40)   NOT NULL,
+    portal_token      varchar(80)   NULL,
+    portal_senha_hash varchar(255)  NULL,
+    portal_sal        varchar(80)   NULL,
+    portal_criado_em  varchar(40)   NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.entregas') IS NULL
+CREATE TABLE {SCHEMA}.entregas (
+    id                 varchar(64)   NOT NULL CONSTRAINT pk_ocr_entregas PRIMARY KEY,
+    caso_id            varchar(64)   NOT NULL,
+    item_codigo        varchar(80)   NOT NULL,
+    arquivo            nvarchar(255) NOT NULL,
+    caminho            nvarchar(500) NOT NULL,
+    tipo_detectado     varchar(80)   NULL,
+    tipo_confere       int           NULL,
+    veredito           varchar(40)   NULL,
+    dados_utilizaveis  int           NOT NULL CONSTRAINT df_ocr_entregas_uteis DEFAULT 0,
+    confirmado_manual  int           NOT NULL CONSTRAINT df_ocr_entregas_conf DEFAULT 0,
+    score_legibilidade int           NULL,
+    itens_atendidos    nvarchar(max) NOT NULL CONSTRAINT df_ocr_entregas_itens DEFAULT N'[]',
+    extracao_json      nvarchar(max) NULL,
+    criado_em          varchar(40)   NOT NULL,
+    status_proc        varchar(40)   NOT NULL CONSTRAINT df_ocr_entregas_status DEFAULT 'pronto',
+    erro_proc          nvarchar(max) NULL,
+    CONSTRAINT fk_ocr_entregas_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.entrevistas') IS NULL
+CREATE TABLE {SCHEMA}.entrevistas (
+    id            varchar(64)   NOT NULL CONSTRAINT pk_ocr_entrevistas PRIMARY KEY,
+    caso_id       varchar(64)   NOT NULL,
+    arquivo       nvarchar(255) NOT NULL,
+    caminho       nvarchar(500) NOT NULL,
+    texto         nvarchar(max) NOT NULL CONSTRAINT df_ocr_entrev_texto DEFAULT N'',
+    realizada_em  varchar(40)   NOT NULL CONSTRAINT df_ocr_entrev_data DEFAULT '',
+    entrevistador nvarchar(200) NOT NULL CONSTRAINT df_ocr_entrev_quem DEFAULT N'',
+    resumo        nvarchar(max) NOT NULL CONSTRAINT df_ocr_entrev_resumo DEFAULT N'',
+    perguntas     nvarchar(max) NOT NULL CONSTRAINT df_ocr_entrev_perg DEFAULT N'[]',
+    fatos_gerados int           NOT NULL CONSTRAINT df_ocr_entrev_fatos DEFAULT 0,
+    enviada_em    varchar(40)   NULL,
+    criado_em     varchar(40)   NOT NULL,
+    CONSTRAINT fk_ocr_entrevistas_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.assinaturas') IS NULL
+CREATE TABLE {SCHEMA}.assinaturas (
+    id            varchar(64)   NOT NULL CONSTRAINT pk_ocr_assinaturas PRIMARY KEY,
+    doc_token     varchar(120)  NOT NULL CONSTRAINT uq_ocr_assinaturas_token UNIQUE,
+    nome          nvarchar(200) NOT NULL,
+    cliente       nvarchar(200) NOT NULL CONSTRAINT df_ocr_assin_cliente DEFAULT N'',
+    caso_id       varchar(64)   NULL,
+    estado        varchar(40)   NOT NULL CONSTRAINT df_ocr_assin_estado DEFAULT 'pendente',
+    signatarios   nvarchar(max) NOT NULL CONSTRAINT df_ocr_assin_signat DEFAULT N'[]',
+    arquivo       nvarchar(255) NULL,
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL,
+    cpf           varchar(20)   NOT NULL CONSTRAINT df_ocr_assin_cpf DEFAULT ''
+);
+
+IF OBJECT_ID('{SCHEMA}.vinculos_agente') IS NULL
+CREATE TABLE {SCHEMA}.vinculos_agente (
+    caso_id       varchar(64)   NOT NULL CONSTRAINT pk_ocr_vinculos PRIMARY KEY,
+    caso_ref      varchar(80)   NOT NULL,
+    cliente_ref   varchar(80)   NOT NULL CONSTRAINT df_ocr_vinc_cliente DEFAULT '',
+    enviados      nvarchar(max) NOT NULL CONSTRAINT df_ocr_vinc_enviados DEFAULT N'[]',
+    ultimo_erro   nvarchar(max) NULL,
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL,
+    CONSTRAINT fk_ocr_vinculos_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.casos (id) ON DELETE CASCADE
+);
+"""
+
+INDICES = (
+    f"CREATE INDEX idx_ocr_entregas_caso ON {SCHEMA}.entregas (caso_id)",
+    f"CREATE INDEX idx_ocr_entregas_item ON {SCHEMA}.entregas (caso_id, item_codigo)",
+    f"CREATE INDEX idx_ocr_entrevistas_caso ON {SCHEMA}.entrevistas (caso_id)",
+    f"CREATE INDEX idx_ocr_assinaturas_caso ON {SCHEMA}.assinaturas (caso_id)",
+)
+
+
+def inicializar_schema() -> None:
+    """Cria as tabelas do Acervo, se ainda não existirem. Idempotente."""
+    bruta = pyodbc.connect(dsn(), timeout=30, autocommit=True)
+    try:
+        cursor = bruta.cursor()
+        for lote in ESQUEMA_SQLSERVER.split(";\n"):
+            if lote.strip():
+                cursor.execute(lote)
+        for indice in INDICES:
+            nome = indice.split()[2]
+            cursor.execute(
+                f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '{nome}') {indice}"
+            )
+    finally:
+        bruta.close()
