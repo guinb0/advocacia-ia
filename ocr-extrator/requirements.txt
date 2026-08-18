@@ -1,3 +1,11 @@
+# CPU deliberadamente, e não por falta de placa. A wheel de GPU foi medida:
+# 17x mais rápida (0,25s contra 4,2s por documento) e cabe na VRAM que sobra do
+# Whisper — mas o caminho CUDA devolve caixas com geometria diferente, e a
+# extração de campos (que é geométrica) quebra: `tests/test_pipeline.py` sai de
+# 2 para 9 falhas, com nome de titular trocado pelo do pai. Ver `docs/SISTEMA.md`.
+#
+# Trocar exige reajustar `_agrupar_em_linhas` para a saída da GPU — projeto
+# próprio, não troca de wheel. Enquanto isso, CPU.
 paddlepaddle==3.0.0
 paddleocr>=3.0,<3.3
 fastapi

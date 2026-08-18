@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.dom import minidom
@@ -18,6 +19,30 @@ from .extractors import CAMPOS_ESPERADOS, ROTULOS_TIPO, Campo, Linha, classifica
 from .ocr_engine import rodar_ocr
 
 log = logging.getLogger("pipeline")
+
+
+class Cronometro:
+    """Acumula o tempo de cada etapa do pipeline num dicionário.
+
+    Existe porque "o OCR levou 200s" não é diagnóstico: sem separar decodificação,
+    preparo, inferência e extração não dá para saber se o custo está no modelo ou
+    numa passada extra de rotação. Ver `tempo_etapas_s` na saída de `processar`.
+    """
+
+    def __init__(self) -> None:
+        self.etapas: dict[str, float] = {}
+
+    @contextmanager
+    def medir(self, nome: str):
+        inicio = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.etapas[nome] = round(self.etapas.get(nome, 0.0) + time.perf_counter() - inicio, 3)
+
+    def resumo(self) -> str:
+        return " ".join(f"{nome}={valor:.2f}s" for nome, valor in self.etapas.items())
+
 
 TMP_DIR = Path(__file__).resolve().parent.parent / "tmp"
 TMP_DIR.mkdir(exist_ok=True)
@@ -45,14 +70,19 @@ def _pontuar_linhas(linhas: list[Linha]) -> float:
     return sum(len(ln.texto) * ln.confianca for ln in linhas)
 
 
-def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int]:
+def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int, int]:
     """Roda o OCR na orientação original; se render pouco texto, testa 90/180/270.
 
     O PaddleOCR já endireita a página sozinho (`use_doc_orientation_classify`);
     isto aqui é a rede de segurança para quando o classificador erra.
+
+    Devolve também quantas passadas de OCR foram gastas. O número importa: uma
+    foto que pontua mal custa **quatro** inferências, não uma, e é essa a
+    diferença entre o caso bom e o caso ruim de tempo — não o tamanho da imagem.
     """
     linhas = rodar_ocr(img, lang)
     melhor, melhor_rot, melhor_pt = linhas, 0, _pontuar_linhas(linhas)
+    passadas = 1
 
     if melhor_pt < 60:  # provavelmente a foto está deitada
         for rot, code in ((90, cv2.ROTATE_90_CLOCKWISE),
@@ -60,6 +90,7 @@ def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int]:
                           (270, cv2.ROTATE_90_COUNTERCLOCKWISE)):
             try:
                 cand = rodar_ocr(cv2.rotate(img, code), lang)
+                passadas += 1
             except Exception as exc:
                 log.warning("Falha no OCR com rotação %s: %s", rot, exc)
                 continue
@@ -67,7 +98,7 @@ def ocr_com_rotacao(img: np.ndarray, lang: str) -> tuple[list[Linha], int]:
             if pt > melhor_pt:
                 melhor, melhor_rot, melhor_pt = cand, rot, pt
 
-    return melhor, melhor_rot
+    return melhor, melhor_rot, passadas
 
 
 # ------------------------------------------------------------------ validação
@@ -237,19 +268,25 @@ def salvar_temporarios(doc: dict) -> dict:
 
 def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado: str | None = None) -> dict:
     inicio = time.perf_counter()
+    crono = Cronometro()
 
-    original = decodificar(conteudo)
+    with crono.medir("decodificar"):
+        original = decodificar(conteudo)
     h, w = original.shape[:2]
-    preparada = quality.preparar_para_ocr(original)
 
-    linhas, rotacao = ocr_com_rotacao(preparada, lang)
+    with crono.medir("preparar"):
+        preparada = quality.preparar_para_ocr(original)
+
+    with crono.medir("ocr"):
+        linhas, rotacao, passadas = ocr_com_rotacao(preparada, lang)
 
     textos = [ln.texto for ln in linhas]
     confiancas = [ln.confianca for ln in linhas if ln.confianca > 0]
     conf_media = float(np.mean(confiancas)) if confiancas else None
     qtd_caracteres = sum(len(t) for t in textos)
 
-    qual = quality.avaliar(original, conf_media, len(linhas), qtd_caracteres)
+    with crono.medir("qualidade"):
+        qual = quality.avaliar(original, conf_media, len(linhas), qtd_caracteres)
 
     texto_norm = "\n".join(normalizar(t) for t in textos)
 
@@ -257,14 +294,16 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
     # (diz quais campos procurar), mas se substituísse o palpite do classificador não
     # sobraria como detectar que veio o arquivo errado — e é justamente disso que o
     # checklist depende para acusar troca de documento.
-    tipo_detectado, pontos, todos = classificar(texto_norm)
+    with crono.medir("classificar"):
+        tipo_detectado, pontos, todos = classificar(texto_norm)
     forcado = bool(tipo_forcado and tipo_forcado in ROTULOS_TIPO)
     tipo = tipo_forcado if forcado else tipo_detectado
 
     from .extractors import extrair_campos
 
-    campos = extrair_campos(linhas, tipo)
-    validacao = montar_validacao(tipo, campos, qual)
+    with crono.medir("extrair"):
+        campos = extrair_campos(linhas, tipo)
+        validacao = montar_validacao(tipo, campos, qual)
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -297,10 +336,18 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
             "confianca_media": round(conf_media, 4) if conf_media is not None else None,
             "blocos_detectados": len(linhas),
             "caracteres_detectados": qtd_caracteres,
+            "passadas": passadas,
         },
         "texto_linhas": [{"texto": ln.texto, "confianca": round(ln.confianca, 4)} for ln in linhas],
         "texto_completo": "\n".join(textos),
     }
 
-    doc["arquivos_temporarios"] = salvar_temporarios(doc)
+    with crono.medir("salvar"):
+        doc["arquivos_temporarios"] = salvar_temporarios(doc)
+
+    doc["tempo_etapas_s"] = crono.etapas
+    log.info(
+        "processado %s: total=%.2fs passadas_ocr=%d entrada=%dx%d %s",
+        nome_arquivo, time.perf_counter() - inicio, passadas, w, h, crono.resumo(),
+    )
     return doc

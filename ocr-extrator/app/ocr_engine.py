@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -17,9 +18,36 @@ log = logging.getLogger("ocr")
 os.environ.setdefault("GLOG_minloglevel", "2")
 os.environ.setdefault("FLAGS_call_stack_level", "0")
 
+# ------------------------------------------------------------------ dispositivo
+#
+# A placa é de 6.141 MiB e o Whisper já mora nela com 4.230. O que sobra para o
+# OCR é ~1,7 GB, e o teto abaixo é o que impede o Paddle de tentar passar disso:
+# sem ele o alocador cresce até ~2,5 GB no detector `server` e derruba a GPU
+# inteira — a entrevista ao vivo junto. Medido; ver `docs/SISTEMA.md`.
+#
+# Precisa ser definido ANTES do primeiro `import paddle`, que só acontece dentro
+# de `_construir`. Por isso está no topo do módulo, e não perto do uso.
+LIMITE_VRAM_MB = os.getenv("OCR_LIMITE_VRAM_MB", "1200")
+os.environ.setdefault("FLAGS_gpu_memory_limit_mb", LIMITE_VRAM_MB)
+
+#: **CPU por medição, não por omissão.** Em GPU o OCR fica 17x mais rápido
+#: (0,25s contra 4,2s) e cabe na VRAM que sobra do Whisper — mas o caminho CUDA
+#: devolve caixas com geometria diferente e a extração de campos quebra:
+#: `tests/test_pipeline.py` vai de 2 para 9 falhas, com o nome do titular da CNH
+#: saindo como o do pai. Enquanto `_agrupar_em_linhas` não for reajustado para
+#: essa saída, `gpu` aqui é experimento — e exige a wheel `paddlepaddle-gpu`.
+DISPOSITIVO = os.getenv("OCR_DISPOSITIVO", "cpu").strip().lower()
+
+#: Só faz sentido em GPU, onde o detector `server` não cabe (2.490 MiB de pico
+#: contra 916 do `mobile`). Em CPU o padrão do PaddleOCR é mantido.
+DETECTOR = os.getenv("OCR_DETECTOR") or ("PP-OCRv5_mobile_det" if DISPOSITIVO == "gpu" else "")
+
 _lock = threading.Lock()
 _engine = None
 _lang_carregado: str | None = None
+#: Vira True quando a GPU falha e o motor é reconstruído em CPU. A partir daí
+#: nem se tenta de novo: se não coube uma vez, não vai caber na seguinte.
+_caiu_para_cpu = False
 
 # O predictor nativo do Paddle tem afinidade de thread: usá-lo a partir de threads
 # diferentes estoura "RuntimeError: Unknown exception" mesmo quando as chamadas são
@@ -30,8 +58,12 @@ _lang_carregado: str | None = None
 _worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle-ocr")
 
 
-def _construir(lang: str):
+def _construir(lang: str, dispositivo: str):
     from paddleocr import PaddleOCR
+
+    extra = {}
+    if dispositivo == "gpu" and DETECTOR:
+        extra["text_detection_model_name"] = DETECTOR
 
     return PaddleOCR(
         lang=lang,
@@ -41,25 +73,46 @@ def _construir(lang: str):
         use_doc_orientation_classify=True,
         use_doc_unwarping=False,   # correção de páginas onduladas: pesada e rara aqui
         use_textline_orientation=True,
+        device=dispositivo,
+        **extra,
     )
 
 
+def _e_falta_de_memoria(exc: BaseException) -> bool:
+    """O Paddle sinaliza VRAM cheia por texto, não por tipo de exceção."""
+    texto = f"{type(exc).__name__} {exc}".lower()
+    return any(m in texto for m in ("resourceexhausted", "out of memory", "memoryerror"))
+
+
 def get_engine(lang: str = "pt"):
-    """Carrega o PaddleOCR sob demanda (o download dos modelos ocorre na 1ª chamada)."""
-    global _engine, _lang_carregado
+    """Carrega o PaddleOCR sob demanda (o download dos modelos ocorre na 1ª chamada).
+
+    Tenta a GPU primeiro e cai para CPU se ela não responder — mesma política do
+    Whisper em `app/transcricao.py`. A diferença de velocidade é grande (0,25s
+    contra ~4s por documento), mas um upload que falha é pior que um lento.
+    """
+    global _engine, _lang_carregado, _caiu_para_cpu
     with _lock:
         if _engine is not None and _lang_carregado == lang:
             return _engine
 
-        for tentativa in (lang, "latin", "en"):
-            try:
-                log.info("Carregando PaddleOCR (lang=%s)...", tentativa)
-                _engine = _construir(tentativa)
-                _lang_carregado = lang
-                log.info("PaddleOCR pronto (lang=%s).", tentativa)
-                return _engine
-            except Exception as exc:  # modelo indisponível para o idioma
-                log.warning("Falha ao carregar lang=%s: %s", tentativa, exc)
+        alvo = "cpu" if _caiu_para_cpu else DISPOSITIVO
+        for dispositivo in (alvo, "cpu"):
+            for tentativa in (lang, "latin", "en"):
+                try:
+                    log.info("Carregando PaddleOCR (lang=%s, device=%s)...", tentativa, dispositivo)
+                    _engine = _construir(tentativa, dispositivo)
+                    _lang_carregado = lang
+                    log.info("PaddleOCR pronto (lang=%s, device=%s%s).", tentativa, dispositivo,
+                             f", det={DETECTOR}" if dispositivo == "gpu" and DETECTOR else "")
+                    return _engine
+                except Exception as exc:  # modelo indisponível para o idioma, ou GPU cheia
+                    log.warning("Falha ao carregar lang=%s device=%s: %s",
+                                tentativa, dispositivo, str(exc)[:160])
+
+            if dispositivo != "cpu":
+                log.warning("GPU indisponível para o OCR; caindo para CPU.")
+                _caiu_para_cpu = True
 
         raise RuntimeError("Não foi possível inicializar o PaddleOCR.")
 
@@ -180,20 +233,51 @@ def _extrair_resultado(res) -> list[Linha]:
     return itens
 
 
-def _inferir(img_bgr: np.ndarray, lang: str):
-    """Só é chamada de dentro da thread dedicada — ver `_worker`."""
-    engine = get_engine(lang)
+def _predizer(engine, img_bgr: np.ndarray):
     if hasattr(engine, "predict"):
         return engine.predict(input=img_bgr)
     return engine.ocr(img_bgr, cls=True)  # PaddleOCR 2.x
 
 
+def _inferir(img_bgr: np.ndarray, lang: str):
+    """Só é chamada de dentro da thread dedicada — ver `_worker`."""
+    global _engine, _caiu_para_cpu
+
+    engine = get_engine(lang)
+    try:
+        return _predizer(engine, img_bgr)
+    except Exception as exc:
+        # A GPU pode caber no boot e faltar depois: quem cresce é o Whisper, e o
+        # documento grande é que estoura. Cair para CPU aqui custa segundos; não
+        # cair custa o documento.
+        if not _e_falta_de_memoria(exc) or _caiu_para_cpu:
+            raise
+        log.warning("VRAM insuficiente durante o OCR (%s); refazendo em CPU.", str(exc)[:160])
+        with _lock:
+            _caiu_para_cpu = True
+            _engine = None
+        return _predizer(get_engine(lang), img_bgr)
+
+
 def rodar_ocr(img_bgr: np.ndarray, lang: str = "pt") -> list[Linha]:
     """Executa o OCR e devolve as linhas ordenadas de cima para baixo."""
+    t0 = time.perf_counter()
     saida = _worker.submit(_inferir, img_bgr, lang).result()
+    t_inferencia = time.perf_counter() - t0
 
+    t0 = time.perf_counter()
     itens: list[Linha] = []
     for res in (saida or []):
         itens.extend(_extrair_resultado(res))
 
-    return _agrupar_em_linhas(itens)
+    linhas = _agrupar_em_linhas(itens)
+    t_pos = time.perf_counter() - t0
+
+    # Separado porque são custos de natureza diferente: a inferência é o modelo
+    # (e cresce com o tamanho da imagem), o pós é geometria em Python puro.
+    h, w = img_bgr.shape[:2]
+    log.info(
+        "ocr %dx%d: inferencia=%.2fs pos=%.3fs blocos=%d device=%s",
+        w, h, t_inferencia, t_pos, len(linhas), "cpu" if _caiu_para_cpu else DISPOSITIVO,
+    )
+    return linhas
