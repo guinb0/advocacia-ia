@@ -54,6 +54,17 @@ if ($SemAuth) {
     Write-Host "Keycloak pronto (realm advocacia)." -ForegroundColor Green
 }
 
+# Broker durável e painéis. Redis usa AOF; Flower, Prometheus e Grafana ficam
+# disponíveis sem compartilhar processo com a API.
+Write-Host "Subindo Redis e observabilidade..." -ForegroundColor Yellow
+docker compose up -d --wait --wait-timeout 60 redis jobs-db flower prometheus grafana | Out-Null
+$env:REDIS_URL = "redis://localhost:6380/0"
+$env:CELERY_BROKER_URL = "redis://localhost:6380/0"
+$env:CELERY_RESULT_BACKEND = "redis://localhost:6380/1"
+if (-not $env:JOBS_DATABASE_URL) {
+    $env:JOBS_DATABASE_URL = "postgresql://advocacia:advocacia_local@localhost:5434/advocacia_jobs"
+}
+
 # O frontend le estas na hora do build/dev -- precisam do prefixo NEXT_PUBLIC_.
 $env:NEXT_PUBLIC_KEYCLOAK_URL       = $env:KEYCLOAK_URL
 $env:NEXT_PUBLIC_KEYCLOAK_REALM     = "advocacia"
@@ -94,8 +105,9 @@ $env:PORTAL_SEGREDO = (Get-Content -Raw $arquivoSegredo).Trim()
 if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     Write-Host "Criando o ambiente Python..." -ForegroundColor Yellow
     uv venv --python 3.11      # o paddlepaddle ainda nao publica wheels para 3.13+
-    uv pip install -r requirements.txt
 }
+# Sincroniza também ambientes já existentes; pulls podem adicionar dependências.
+uv pip install --python .\.venv\Scripts\python.exe -r requirements.txt | Out-Null
 
 # ---------------------------------------------------------------- frontend
 if (-not (Test-Path ".\frontend\node_modules")) {
@@ -110,6 +122,8 @@ if ($Prod -and -not (Test-Path ".\frontend\.next\BUILD_ID")) {
 Write-Host "`nBackend  : http://127.0.0.1:$PortaBackend  (docs interativos em /docs)" -ForegroundColor Cyan
 Write-Host "Frontend : http://localhost:$Porta" -ForegroundColor Cyan
 Write-Host "Transcricao : http://127.0.0.1:$PortaTranscricao  (Whisper, processo separado)" -ForegroundColor Cyan
+Write-Host "Flower    : http://localhost:5555" -ForegroundColor Cyan
+Write-Host "Grafana   : http://localhost:3001" -ForegroundColor Cyan
 if (-not $SemAuth) {
     Write-Host "Keycloak : $UrlKeycloak  (admin/admin) -- login do app: guinb / 123" -ForegroundColor Cyan
 }
@@ -138,6 +152,20 @@ $backend = Start-Process -PassThru -NoNewWindow `
     -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
                   "--port", "$PortaBackend", "--timeout-keep-alive", "65"
 
+# No Windows, pool=solo evita o prefork incompatível e garante uma inferência
+# por worker. As filas impedem OCR, IA e manutenção de se bloquearem no broker.
+$workerOcr = Start-Process -PassThru -NoNewWindow `
+    -FilePath ".\.venv\Scripts\python.exe" `
+    -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
+                  "--pool=solo", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h"
+$workerBackground = Start-Process -PassThru -NoNewWindow `
+    -FilePath ".\.venv\Scripts\python.exe" `
+    -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
+                  "--pool=solo", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@%h"
+$beat = Start-Process -PassThru -NoNewWindow `
+    -FilePath ".\.venv\Scripts\python.exe" `
+    -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "beat"
+
 try {
     # Espera a API subir antes de seguir, senao a primeira tela do front ja da erro.
     for ($i = 0; $i -lt 90; $i++) {
@@ -153,7 +181,7 @@ try {
     if ($Prod) { npm run start -- -p $Porta } else { npm run dev -- -p $Porta }
 } finally {
     Pop-Location -ErrorAction SilentlyContinue
-    foreach ($p in @($backend, $transcricao)) {
+    foreach ($p in @($backend, $transcricao, $workerOcr, $workerBackground, $beat)) {
         if ($p -and -not $p.HasExited) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         }

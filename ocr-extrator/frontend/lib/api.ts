@@ -99,9 +99,21 @@ export async function extrair(
   form.append("arquivo", arquivo);
   form.append("idioma", idioma);
   form.append("tipo", tipo);
-  return comoJson<Documento>(
-    await buscar("/api/extrair", { method: "POST", body: form }),
+  const criado = await comoJson<{ job_id: string }>(
+    await buscar("/api/extrair/jobs", { method: "POST", body: form }),
   );
+  const limite = Date.now() + 15 * 60_000;
+  while (Date.now() < limite) {
+    const job = await comoJson<{
+      status: "QUEUED" | "STARTED" | "PROCESSING" | "COMPLETED" | "FAILED";
+      erro?: string | null;
+      resultado?: Documento | null;
+    }>(await buscar(`/api/jobs/${criado.job_id}`));
+    if (job.status === "COMPLETED" && job.resultado) return job.resultado;
+    if (job.status === "FAILED") throw new ApiError(job.erro || "O processamento do documento falhou.");
+    await new Promise((resolver) => window.setTimeout(resolver, 1000));
+  }
+  throw new ApiError("O OCR continua na fila. Consulte o job novamente em instantes.");
 }
 
 export async function baixarTexto(caminho: string): Promise<string> {
@@ -291,29 +303,32 @@ export async function gerarRelatorio(
   relato = "",
   roteiro = "empregado_publico",
 ): Promise<RelatorioGerado> {
-  const r = await buscar("/api/entrevista/relatorio", {
+  const criado = await comoJson<{ job_id: string }>(await buscar("/api/entrevista/relatorio/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ respostas, relato, roteiro }),
-  });
+  }));
 
-  if (!r.ok) {
-    const corpo = await r.json().catch(() => null);
-    throw new ApiError(
-      corpo && typeof corpo === "object" && "detail" in corpo
-        ? String((corpo as { detail: unknown }).detail)
-        : `Erro ${r.status}`,
-    );
+  const limite = Date.now() + 15 * 60_000;
+  while (Date.now() < limite) {
+    const job = await comoJson<{
+      status: string;
+      erro?: string | null;
+      resultado?: { arquivo: string; pendencias: number; impedimentos: number; analise: RelatorioGerado["analise"] } | null;
+    }>(await buscar(`/api/jobs/${criado.job_id}`));
+    if (job.status === "FAILED") throw new ApiError(job.erro || "Falha ao gerar relatório.");
+    if (job.status === "COMPLETED" && job.resultado) {
+      const pdf = await buscar(job.resultado.arquivo);
+      if (!pdf.ok) throw new ApiError("O PDF foi gerado, mas não pôde ser baixado.");
+      return {
+        arquivo: await pdf.blob(), nome: "relatorio-entrevista.pdf",
+        pendencias: job.resultado.pendencias, impedimentos: job.resultado.impedimentos,
+        analise: job.resultado.analise,
+      };
+    }
+    await new Promise((resolver) => window.setTimeout(resolver, 1000));
   }
-
-  const analise = (r.headers.get("X-Analise") ?? "nao") as RelatorioGerado["analise"];
-  return {
-    arquivo: await r.blob(),
-    nome: nomeDoAnexo(r, "relatorio-entrevista.pdf"),
-    pendencias: Number(r.headers.get("X-Pendencias") ?? 0),
-    impedimentos: Number(r.headers.get("X-Impedimentos") ?? 0),
-    analise,
-  };
+  throw new ApiError("A geração do relatório excedeu o tempo de espera.");
 }
 
 // --------------------------------------------- assinatura eletrônica do contrato
@@ -471,13 +486,23 @@ export async function analisarResposta(
 
 /** Recupera processos semelhantes e gera apoio estratégico fundamentado. */
 export async function analisarEstrategia(relato: string): Promise<Estrategia> {
-  return comoJson<Estrategia>(
-    await buscar("/api/estrategia", {
+  const criado = await comoJson<{ job_id: string }>(
+    await buscar("/api/estrategia/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ relato, limite_precedentes: 8 }),
     }),
   );
+  const limite = Date.now() + 10 * 60_000;
+  while (Date.now() < limite) {
+    const job = await comoJson<{ status: string; erro?: string | null; resultado?: Estrategia | null }>(
+      await buscar(`/api/jobs/${criado.job_id}`),
+    );
+    if (job.status === "COMPLETED" && job.resultado) return job.resultado;
+    if (job.status === "FAILED") throw new ApiError(job.erro || "Falha na análise estratégica.");
+    await new Promise((resolver) => window.setTimeout(resolver, 1000));
+  }
+  throw new ApiError("A análise estratégica excedeu o tempo de espera.");
 }
 
 // -------------------------------------------------------- portal do cliente

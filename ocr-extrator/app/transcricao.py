@@ -334,7 +334,13 @@ class AnswerSession:
             return self.texto_em_construcao()
         inicio = time.perf_counter()
         try:
-            trechos = _segmentos_sem_trava(cauda)
+            from .gpu_lock import gpu_exclusiva
+            try:
+                with gpu_exclusiva(espera=1):
+                    trechos = _segmentos_sem_trava(cauda)
+            except TimeoutError:
+                # Parcial é descartável; o texto final espera a GPU sem perder áudio.
+                return self.texto_em_construcao()
         finally:
             _trava_inferencia.release()
 
@@ -403,8 +409,10 @@ class AnswerSession:
 
 def _transcrever(audio: np.ndarray) -> str:
     """Transcrição garantida — espera a vez. Usada no texto final."""
+    from .gpu_lock import gpu_exclusiva
     with _trava_inferencia:
-        return _transcrever_sem_trava(audio)
+        with gpu_exclusiva():
+            return _transcrever_sem_trava(audio)
 
 
 def _transcrever_sem_trava(audio: np.ndarray) -> str:

@@ -50,9 +50,13 @@ from . import (
     triagem,
     valor_documento,
 )
+from . import jobs, observabilidade
 from . import entrevista as entrevista_lib
 from .agente import dossie as dossie_agente
 from .extractors import ROTULOS_TIPO
+from .tasks.ocr import processar_documento
+from .tasks.documentos import gerar_relatorio as gerar_relatorio_job
+from .tasks.ia import gerar_estrategia as gerar_estrategia_job
 
 # Onde o frontend atende — é o que monta o link enviado ao cliente.
 URL_PORTAL = os.getenv("URL_PORTAL", "http://localhost:3000").rstrip("/")
@@ -74,10 +78,15 @@ async def ciclo_de_vida(_: FastAPI):
     imediato, senão o `iniciar.ps1` espera o modelo para liberar o frontend.
     """
     threading.Thread(target=_tentar_aquecer, name="aquecer-ocr", daemon=True).start()
+    try:
+        await run_in_threadpool(jobs.inicializar)
+    except Exception:
+        log.exception("Não foi possível inicializar a tabela de jobs")
     yield
 
 
 app = FastAPI(title="Extrator de Documentos — PaddleOCR", version="1.0.0", lifespan=ciclo_de_vida)
+observabilidade.configurar(app)
 
 # O frontend Next chama esta API direto do navegador, então precisa de CORS.
 # Com autenticação passou a existir credencial em jogo (o Bearer), então a lista
@@ -281,6 +290,17 @@ class PedidoRelatorio(BaseModel):
     #: Gerar a seção de análise (busca de precedentes + DeepSeek). Melhor-esforço:
     #: base fora do ar não impede o relatório, só troca a seção por uma nota.
     analisar: bool = True
+
+
+@app.post("/api/entrevista/relatorio/jobs", status_code=202)
+async def enfileirar_relatorio(pedido: PedidoRelatorio):
+    await run_in_threadpool(jobs.inicializar)
+    job_id = await run_in_threadpool(jobs.criar, "PDF")
+    tarefa = gerar_relatorio_job.apply_async(
+        args=(job_id, pedido.model_dump()), queue="documents", priority=4
+    )
+    await run_in_threadpool(jobs.vincular_tarefa, job_id, tarefa.id)
+    return {"job_id": job_id, "task_id": tarefa.id, "status": "QUEUED", "progresso": 0}
 
 
 @app.post("/api/entrevista/relatorio")
@@ -859,6 +879,47 @@ async def extrair(
     return JSONResponse(resultado)
 
 
+@app.post("/api/extrair/jobs", status_code=202)
+async def enfileirar_extracao(
+    arquivo: UploadFile = File(...),
+    idioma: str = Form("pt"),
+    tipo: str | None = Form(None),
+):
+    """Libera a conexão HTTP e executa o OCR no worker da fila GPU background."""
+    conteudo = await _ler_upload(arquivo)
+    tipo_forcado = tipo if tipo and tipo not in ("auto", "", "None") else None
+    pasta = BASE / "tmp" / "jobs"
+    pasta.mkdir(parents=True, exist_ok=True)
+    caminho = pasta / f"{uuid.uuid4().hex}.upload"
+    caminho.write_bytes(conteudo)
+    try:
+        await run_in_threadpool(jobs.inicializar)
+        job_id = await run_in_threadpool(jobs.criar, "OCR", arquivo=str(caminho))
+        tarefa = processar_documento.apply_async(
+            args=(job_id, str(caminho), arquivo.filename or "sem-nome", idioma, tipo_forcado),
+            queue="gpu_background",
+            priority=7,
+        )
+        await run_in_threadpool(jobs.vincular_tarefa, job_id, tarefa.id)
+        return {"job_id": job_id, "task_id": tarefa.id, "status": "QUEUED", "progresso": 0}
+    except Exception as exc:
+        caminho.unlink(missing_ok=True)
+        log.exception("Falha ao enfileirar OCR")
+        raise HTTPException(503, f"Fila de processamento indisponível: {exc}") from exc
+
+
+@app.get("/api/jobs/{job_id}")
+async def consultar_job(job_id: str):
+    try:
+        uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(400, "Identificador de job inválido") from exc
+    registro = await run_in_threadpool(jobs.obter, job_id)
+    if registro is None:
+        raise HTTPException(404, "Job não encontrado")
+    return registro
+
+
 # ------------------------------------------------------------------- casos
 
 
@@ -992,6 +1053,17 @@ async def ws_chamada(ws: WebSocket, sala_id: str, papel: str = "cliente"):
 class PedidoEstrategia(BaseModel):
     relato: str = Field(min_length=30, max_length=50_000)
     limite_precedentes: int = Field(default=8, ge=3, le=15)
+
+
+@app.post("/api/estrategia/jobs", status_code=202)
+async def enfileirar_estrategia(pedido: PedidoEstrategia):
+    await run_in_threadpool(jobs.inicializar)
+    job_id = await run_in_threadpool(jobs.criar, "AI")
+    tarefa = gerar_estrategia_job.apply_async(
+        args=(job_id, pedido.relato, pedido.limite_precedentes), queue="ai", priority=5
+    )
+    await run_in_threadpool(jobs.vincular_tarefa, job_id, tarefa.id)
+    return {"job_id": job_id, "task_id": tarefa.id, "status": "QUEUED", "progresso": 0}
 
 
 @app.post("/api/estrategia")
@@ -1550,15 +1622,19 @@ def excluir_entrega(entrega_id: str):
 
 @app.get("/api/temp/{nome}")
 def baixar_temp(nome: str):
-    """Serve o JSON/XML temporário gerado para um documento."""
-    if not nome.endswith((".json", ".xml")) or "/" in nome or "\\" in nome or ".." in nome:
+    """Serve JSON, XML e PDFs temporários produzidos por workers."""
+    if not nome.endswith((".json", ".xml", ".pdf")) or "/" in nome or "\\" in nome or ".." in nome:
         raise HTTPException(400, "Nome de arquivo inválido.")
 
     caminho = (pipeline.TMP_DIR / nome).resolve()
     if pipeline.TMP_DIR.resolve() not in caminho.parents or not caminho.is_file():
         raise HTTPException(404, "Arquivo temporário não encontrado ou já expirado.")
 
-    media = "application/json" if nome.endswith(".json") else "application/xml"
+    media = (
+        "application/json" if nome.endswith(".json")
+        else "application/pdf" if nome.endswith(".pdf")
+        else "application/xml"
+    )
     return FileResponse(caminho, media_type=media, filename=nome)
 
 
