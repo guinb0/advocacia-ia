@@ -3,10 +3,35 @@
 #   docker compose up -d keycloak      -> sobe em http://localhost:8180
 #   console admin: http://localhost:8180  (admin / admin)
 #
-# `start-dev` usa banco em memória: o realm é reimportado do JSON a cada subida,
-# então qualquer usuário criado pelo console some no próximo `up`. É o que se
-# quer em desenvolvimento (o estado fica versionado no JSON, não no volume); para
-# valer em produção, trocar por `start` + Postgres e remover o --import-realm.
+# O estado vive no SQL SERVER DO ESCRITÓRIO, não mais no banco em memória do
+# `start-dev`. Isso é o que faz o login ser o MESMO para todo mundo: quem for
+# cadastrado aqui entra da máquina de qualquer outro. Antes, cada `up` recriava
+# o realm a partir do JSON e o usuário criado pelo console sumia.
+#
+# As tabelas do Keycloak ficam no `dbo` do banco `advocacia`, ao lado das do
+# ia-juridica. Não é bonito, e não foi por escolha:
+#
+#   - `CREATE DATABASE keycloak` exige `dbcreator` no servidor, e o login
+#     `advocacia` só tem CONNECT SQL e VIEW ANY DATABASE;
+#   - um schema `keycloak` à parte também não serve: no MSSQL o Keycloak exige
+#     que o DEFAULT SCHEMA do usuário seja igual ao `KC_DB_SCHEMA` ("MSSQL does
+#     not support setting the default schema per session"), e trocar o default
+#     schema do login quebraria o ia-juridica e o ocr, que o compartilham.
+#
+# O caminho limpo depende de alguém com sysadmin: criar um banco `keycloak` (ou
+# um login próprio com default schema `keycloak`). Feito isso, é só trocar o
+# `databaseName` aqui e mover as tabelas — nada no app muda, porque o app só
+# fala com o Keycloak por HTTP, nunca com o banco dele.
+#
+# As credenciais saem do `.env` (que o .gitignore cobre) — as MESMAS variáveis
+# que o `app/banco.py` já usa. Nada de senha neste arquivo.
+#
+# `--import-realm` continua: com banco persistente ele só age quando o realm
+# AINDA NÃO existe, então serve de semente na primeira subida e não atropela o
+# que foi cadastrado depois.
+#
+# Continua `start-dev` (e não `start`) porque aqui é tudo localhost em HTTP:
+# `start` exigiria hostname e HTTPS configurados. O que mudou é o banco.
 services:
   jobs-db:
     image: postgres:16-alpine
@@ -84,6 +109,13 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_HEALTH_ENABLED: "true"
+      KC_DB: mssql
+      # encrypt=true;trustServerCertificate=true: o servidor exige TLS mas o
+      # certificado é auto-assinado — mesmo par que o `TrustServerCertificate=yes`
+      # do ODBC em app/banco.py.
+      KC_DB_URL: "jdbc:sqlserver://${SQLSERVER_HOST}:${SQLSERVER_PORT:-1433};databaseName=${SQLSERVER_DATABASE:-advocacia};encrypt=true;trustServerCertificate=true"
+      KC_DB_USERNAME: "${SQLSERVER_USER:-advocacia}"
+      KC_DB_PASSWORD: "${SQLSERVER_PASSWORD:?defina SQLSERVER_PASSWORD no .env}"
     ports:
       - "8180:8180"
     volumes:
@@ -98,7 +130,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 20s
+      start_period: 180s
 
 volumes:
   redis_data:
