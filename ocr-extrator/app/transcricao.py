@@ -56,6 +56,33 @@ MARGEM_CAUDA_S = 1.5             # o que ainda pode mudar com o que vem depois
 SOBREPOSICAO_PARCIAL_S = 1.0     # emenda quando o corte é forçado
 LIMITE_SESSAO_S = 60 * 30        # 30 min de resposta — trava contra vazamento
 
+#: Nível mínimo (RMS) para um segmento ser aceito como fala.
+#:
+#: O Whisper ALUCINA em cima de ruído de sala: numa entrevista real desta pasta,
+#: os 28s iniciais — sem ninguém falando — viraram "e tem outro fome e é o meu
+#: destino é mais ninguém quer viver aqui, eu vejo fumaça". Isso não é feio só na
+#: tela: o trecho CONGELA, vai para a escuta e preenche o roteiro que vira peça
+#: processual. Texto inventado com cara de depoimento é pior que texto faltando,
+#: porque o advogado não tem como desconfiar dele depois.
+#:
+#: Por que não os sinais do próprio modelo: `no_speech_prob`, `avg_logprob` e
+#: `compression_ratio` saem POR JANELA de 30s, não por segmento — medido no mesmo
+#: arquivo, todos os segmentos da janela de ruído tinham exatamente
+#: no_speech=0,443 / logprob=-0,433, e a janela de FALA pontuava PIOR
+#: (logprob=-0,483). Filtrar por eles cortaria a fala e deixaria a alucinação.
+#:
+#: Por que não só subir o limiar do VAD: testado em 0,6 / 0,7 / 0,8 — a alucinação
+#: resiste até em 0,8, que já é agressivo o bastante para comer fala baixa.
+#:
+#: O RMS por segmento separa limpo. No mesmo arquivo:
+#:
+#:     alucinação   0,00500  0,00832  0,00856  0,01718
+#:     fala real    0,02732  0,04074  0,04151  0,04816  0,05136 ...
+#:
+#: 0,02 fica na folga entre os dois, mais perto do ruído: errar para o lado de
+#: aceitar é melhor que emudecer um cliente que fala baixo no viva-voz.
+RMS_MINIMO = float(os.getenv("TRANSCRICAO_RMS_MINIMO", "0.02"))
+
 # O QUE MANTÉM O TEXTO COLADO NA FALA
 #
 # O custo de um parcial é proporcional ao áudio que ele transcreve. Medido nesta
@@ -437,7 +464,24 @@ def _segmentos_sem_trava(audio: np.ndarray) -> list[Trecho]:
         vad_parameters={"min_silence_duration_ms": 500},
         condition_on_previous_text=False,  # evita repetir frase da janela anterior
     )
-    return [Trecho(s.start, s.end, s.text.strip()) for s in segmentos if s.text.strip()]
+    return [
+        Trecho(s.start, s.end, s.text.strip())
+        for s in segmentos
+        if s.text.strip() and _tem_fala(audio, s.start, s.end)
+    ]
+
+
+def _tem_fala(audio: np.ndarray, inicio: float, fim: float) -> bool:
+    """O trecho que o segmento cobre tem energia de fala, ou é ruído alucinado?
+
+    Aqui, e não no chamador, porque este é o único ponto por onde TODO segmento
+    passa — o parcial da tela e o texto final da resposta. Filtrar num só lugar
+    é o que garante que o que congela e o que é gravado contem a mesma história.
+    """
+    janela = audio[int(inicio * TAXA) : int(fim * TAXA)]
+    if len(janela) == 0:
+        return False
+    return float(np.sqrt(np.mean(np.square(janela)))) >= RMS_MINIMO
 
 
 def pcm_de_bytes(dados: bytes) -> np.ndarray:
