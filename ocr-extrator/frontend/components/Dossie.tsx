@@ -206,7 +206,20 @@ function campoLegivel(campo: string): string {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
-export default function Dossie({ casoId, onVoltar }: { casoId: string; onVoltar: () => void }) {
+export default function Dossie({
+  casoId,
+  onVoltar,
+  onAbrirPainel,
+  onAbrirJurimetria,
+}: {
+  casoId: string;
+  onVoltar: () => void;
+  /** Abre o painel analítico do mesmo caso. Opcional: o dossiê continua de pé sozinho. */
+  onAbrirPainel?: () => void;
+  /** Opcional pelo mesmo motivo do painel: o dossiê é aberto de mais de um lugar, e
+   *  nem todos têm para onde navegar depois. */
+  onAbrirJurimetria?: () => void;
+}) {
   const [dados, setDados] = useState<DossieDados | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
@@ -349,6 +362,24 @@ export default function Dossie({ casoId, onVoltar }: { casoId: string; onVoltar:
           >
             ← Voltar para a carteira
           </button>
+          {onAbrirPainel && (
+            <button
+              type="button"
+              className="botao botao--texto botao--pequeno"
+              onClick={onAbrirPainel}
+            >
+              Painel analítico →
+            </button>
+          )}
+          {onAbrirJurimetria && (
+            <button
+              type="button"
+              className="botao botao--texto botao--pequeno"
+              onClick={onAbrirJurimetria}
+            >
+              Jurisprudência e jurimetria →
+            </button>
+          )}
           <h1 className={estilos.titulo}>Dossiê de {dados.caso.cliente}</h1>
           <p className={estilos.subtitulo}>
             {dados.checklist.categoria ?? dados.caso.categoria} · caso aberto em{" "}

@@ -367,6 +367,63 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
     return [_normalizar_entrega(l) for l in linhas]
 
 
+def marcos_por_caso(caso_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Entregas, entrevistas, assinaturas e vínculo de vários casos, em quatro consultas.
+
+    O painel mede as etapas de cada caso anterior da categoria para ter uma mediana de
+    referência. Lendo caso a caso, isso eram seis idas ao banco por caso da amostra —
+    trezentas e sessenta viagens de rede para calcular cinco medianas. Aqui a amostra
+    inteira sai em quatro consultas, e o agrupamento é feito em memória.
+
+    Devolve uma entrada por caso pedido, inclusive para o caso sem nada — quem chama
+    precisa distinguir "não tem entrega" de "não perguntei por ele".
+    """
+    reunido: dict[str, dict[str, Any]] = {
+        caso_id: {"entregas": [], "entrevistas": [], "assinaturas": [], "vinculo": None}
+        for caso_id in caso_ids
+    }
+    if not caso_ids:
+        return reunido
+
+    # `IN` com lista variável: o pyodbc não expande sequência num parâmetro só, então
+    # os marcadores são montados aqui — a partir da contagem, nunca do conteúdo.
+    marcadores = ",".join("?" for _ in caso_ids)
+
+    with conectar() as con:
+        for linha in con.execute(
+            f"""
+            SELECT id, caso_id, item_codigo, arquivo, tipo_detectado, tipo_confere,
+                   veredito, dados_utilizaveis, confirmado_manual, score_legibilidade,
+                   itens_atendidos, status_proc, erro_proc, criado_em
+              FROM entregas
+             WHERE caso_id IN ({marcadores})
+             ORDER BY criado_em
+            """,
+            caso_ids,
+        ).fetchall():
+            reunido[linha["caso_id"]]["entregas"].append(_normalizar_entrega(linha))
+
+        for linha in con.execute(
+            f"SELECT * FROM entrevistas WHERE caso_id IN ({marcadores}) ORDER BY criado_em DESC",
+            caso_ids,
+        ).fetchall():
+            reunido[linha["caso_id"]]["entrevistas"].append(_normalizar_entrevista(linha))
+
+        for linha in con.execute(
+            f"SELECT * FROM assinaturas WHERE caso_id IN ({marcadores}) ORDER BY criado_em DESC",
+            caso_ids,
+        ).fetchall():
+            reunido[linha["caso_id"]]["assinaturas"].append(_normalizar_assinatura(linha))
+
+        for linha in con.execute(
+            f"SELECT * FROM vinculos_agente WHERE caso_id IN ({marcadores})",
+            caso_ids,
+        ).fetchall():
+            reunido[linha["caso_id"]]["vinculo"] = _normalizar_vinculo(linha)
+
+    return reunido
+
+
 def atualizar_para_identidade_unificada(
     entrega_id: str,
     extracao: dict[str, Any],
@@ -592,10 +649,19 @@ def vincular_agente(caso_id: str, caso_ref: str, cliente_ref: str) -> dict[str, 
         # Trocar de caso no agente zera a lista de entregas enviadas: o outro lado
         # não conhece nenhuma delas, e manter a lista faria o sistema achar que já
         # mandou o que nunca chegou lá.
-        enviados = anterior["enviados"] if anterior and anterior["caso_ref"] == caso_ref else "[]"
+        trocou = bool(anterior) and anterior["caso_ref"] != caso_ref
+        enviados = anterior["enviados"] if anterior and not trocou else "[]"
+        if trocou:
+            # Pela mesma razão, a entrevista volta a contar como não enviada. Ela é a
+            # origem dos fatos que o cliente relatou — sem isto, o caso recriado herda os
+            # documentos e perde justamente o que o advogado ouviu no atendimento.
+            con.execute(
+                "UPDATE dbo.acervo_entrevistas SET enviada_em = NULL WHERE caso_id = ?",
+                (caso_id,),
+            )
         con.execute(
             """
-            MERGE ocr.vinculos_agente AS alvo
+            MERGE dbo.acervo_vinculos_agente AS alvo
             USING (SELECT ? AS caso_id, ? AS caso_ref, ? AS cliente_ref, ? AS enviados,
                           ? AS criado_em, ? AS atualizado_em) AS origem
                ON alvo.caso_id = origem.caso_id
@@ -622,13 +688,7 @@ def vincular_agente(caso_id: str, caso_ref: str, cliente_ref: str) -> dict[str, 
     return obter_vinculo_agente(caso_id) or {}
 
 
-def obter_vinculo_agente(caso_id: str) -> dict[str, Any] | None:
-    with conectar() as con:
-        linha = con.execute(
-            "SELECT * FROM vinculos_agente WHERE caso_id = ?", (caso_id,)
-        ).fetchone()
-    if not linha:
-        return None
+def _normalizar_vinculo(linha: Any) -> dict[str, Any]:
     registro = dict(linha)
     bruto = registro.get("enviados")
     try:
@@ -636,6 +696,14 @@ def obter_vinculo_agente(caso_id: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         registro["enviados"] = []
     return registro
+
+
+def obter_vinculo_agente(caso_id: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM vinculos_agente WHERE caso_id = ?", (caso_id,)
+        ).fetchone()
+    return _normalizar_vinculo(linha) if linha else None
 
 
 def marcar_entrega_enviada(caso_id: str, entrega_id: str) -> None:

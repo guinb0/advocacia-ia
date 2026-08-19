@@ -16,7 +16,10 @@ Duas regras que ele existe para garantir:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -28,8 +31,84 @@ log = logging.getLogger("agente")
 __all__ = ["AgenteIndisponivel", "AgenteNaoConfigurado", "ErroDoAgente", "Cliente"]
 
 
+#: Pool de conexões compartilhado por todas as chamadas ao agente.
+#:
+#: `httpx.request()` solto abre e derruba uma conexão TCP a cada leitura, e o dossiê faz
+#: sete delas para montar uma tela. O pool guarda a conexão aberta entre as chamadas —
+#: o mesmo motivo pelo qual um navegador não reabre a conexão a cada imagem da página.
+#:
+#: Só o transporte é compartilhado: endereço, token e prazo continuam vindo de `Config`
+#: a cada chamada, senão trocar `.env` exigiria reiniciar o processo.
+_pool: httpx.Client | None = None
+_pool_mu = threading.Lock()
+
+
+def _cliente_http() -> httpx.Client:
+    global _pool
+    if _pool is None:
+        with _pool_mu:
+            if _pool is None:
+                _pool = httpx.Client(
+                    limits=httpx.Limits(
+                        max_keepalive_connections=10, max_connections=20
+                    )
+                )
+    return _pool
+
+
+#: Memória curta de "o agente não respondeu".
+#:
+#: Uma tela do dossiê faz seis leituras. Com o agente fora do ar e sem esta memória, as
+#: seis esperam o prazo inteiro cada uma para chegar à mesma conclusão — o advogado fica
+#: minutos olhando um carregamento para ler "agente indisponível". Aqui a primeira falha
+#: responde pelas seguintes durante `pausa_apos_falha`, e qualquer resposta boa apaga a
+#: marca na hora.
+#:
+#: Só as **leituras** consultam esta memória. Envio de documento e disparo de análise
+#: passam direto: são operações do fluxo de trabalho, não da tela, e desistir delas
+#: porque uma consulta falhou há dez segundos perderia trabalho de verdade.
+_falha_ate: float = 0.0
+_falha_motivo: str = ""
+_falha_mu = threading.Lock()
+
+
+def _em_pausa() -> str | None:
+    """O motivo registrado, enquanto a pausa durar. `None` quando é para tentar."""
+    with _falha_mu:
+        if _falha_ate and time.monotonic() < _falha_ate:
+            return _falha_motivo
+    return None
+
+
+def _marcar_falha(motivo: str, pausa: float) -> None:
+    global _falha_ate, _falha_motivo
+    with _falha_mu:
+        _falha_ate = time.monotonic() + pausa
+        _falha_motivo = motivo
+
+
+def _marcar_resposta() -> None:
+    """O agente respondeu — a pausa morre aqui, sem esperar o relógio."""
+    global _falha_ate, _falha_motivo
+    if not _falha_ate:
+        return
+    with _falha_mu:
+        _falha_ate = 0.0
+        _falha_motivo = ""
+
+
 class ErroDoAgente(RuntimeError):
-    """Falha que o advogado precisa ver, com o texto que o agente devolveu."""
+    """Falha que o advogado precisa ver, com o texto que o agente devolveu.
+
+    `status` é o código HTTP quando houve resposta, e `None` quando o erro nasceu antes
+    dela (rede, configuração). Ele existe para distinguir *o caso não existe* de *o agente
+    recusou o pedido* sem depender do texto da mensagem — comparação de frase quebra na
+    primeira vez que alguém melhora a redação do erro.
+    """
+
+    def __init__(self, mensagem: str, *, status: int | None = None) -> None:
+        super().__init__(mensagem)
+        self.status = status
 
 
 class AgenteNaoConfigurado(ErroDoAgente):
@@ -55,6 +134,16 @@ class Cliente:
             return {}
         return {"Authorization": f"Bearer {self._cfg.token}"}
 
+    def _ler(self, caminho: str) -> Any:
+        """Consulta que monta tela: prazo curto e sujeita à pausa após falha.
+
+        `timeout` fica `None` aqui de propósito — quem resolve o valor default é
+        `_chamar`, não este método. Um dublê de teste que sobrescreve `_chamar` sem
+        montar `self._cfg` (há um assim em `test_agente.py`) quebraria se `_ler`
+        lesse `self._cfg` antes de chamar o método que ele substitui.
+        """
+        return self._chamar("GET", caminho, de_tela=True)
+
     def _chamar(
         self,
         metodo: str,
@@ -62,27 +151,39 @@ class Cliente:
         *,
         json: Any = None,
         timeout: float | None = None,
+        de_tela: bool = False,
     ) -> Any:
         url = f"{self._cfg.url}{caminho}"
+
+        if de_tela:
+            motivo = _em_pausa()
+            if motivo is not None:
+                raise AgenteIndisponivel(motivo)
+
         try:
-            resposta = httpx.request(
+            resposta = _cliente_http().request(
                 metodo,
                 url,
                 json=json,
                 headers=self._cabecalhos(),
-                timeout=timeout or self._cfg.timeout,
+                timeout=timeout or (self._cfg.timeout_leitura if de_tela else self._cfg.timeout),
             )
         except httpx.HTTPError as erro:
             # Rede, DNS, prazo. O agente pode estar subindo, o banco dele pode estar
             # fora — de todo jeito, não olhamos o caso.
             log.warning("agente indisponível em %s: %s", url, erro)
-            raise AgenteIndisponivel(
+            recado = (
                 "O agente jurídico não respondeu. O caso continua no OCR; "
                 "a análise fica pendente até ele voltar."
-            ) from erro
+            )
+            _marcar_falha(recado, self._cfg.pausa_apos_falha)
+            raise AgenteIndisponivel(recado) from erro
+
+        # Respondeu — inclusive com 4xx, que é o agente vivo recusando o pedido.
+        _marcar_resposta()
 
         if resposta.status_code >= 400:
-            raise ErroDoAgente(_detalhe(resposta))
+            raise ErroDoAgente(_detalhe(resposta), status=resposta.status_code)
         if resposta.status_code == 204 or not resposta.content:
             return None
         return resposta.json()
@@ -120,6 +221,24 @@ class Cliente:
     def caso(self, caso_ref: str) -> dict[str, Any]:
         return self._chamar("GET", f"/api/v1/cases/{caso_ref}")
 
+    def caso_existe(self, caso_ref: str) -> bool:
+        """O caso ainda está lá?
+
+        Só o 404 vira `False`. Agente fora do ar continua subindo `AgenteIndisponivel`, e
+        é isso que se quer: quem chama usa esta resposta para decidir recriar o caso, e
+        tratar indisponibilidade como ausência criaria um caso novo — com metade dos
+        documentos — a cada oscilação de rede.
+        """
+        try:
+            self.caso(caso_ref)
+        except AgenteIndisponivel:
+            raise
+        except ErroDoAgente as erro:
+            if erro.status == 404:
+                return False
+            raise
+        return True
+
     def qualificar_parte(
         self, caso_ref: str, parte_ref: str, *, documento: str
     ) -> dict[str, Any]:
@@ -155,9 +274,7 @@ class Cliente:
         paginas_vistas: set[tuple[str, ...]] = set()
 
         while True:
-            pagina = self._chamar(
-                "GET", f"{caminho}?limit={limite}&offset={offset}"
-            )
+            pagina = self._ler(f"{caminho}?limit={limite}&offset={offset}")
             if not isinstance(pagina, dict) or not isinstance(pagina.get("items"), list):
                 raise ErroDoAgente("O agente devolveu uma lista paginada inválida.")
 
@@ -269,7 +386,7 @@ class Cliente:
         )
 
     def documentos(self, caso_ref: str) -> dict[str, Any]:
-        return self._chamar("GET", f"/api/v1/cases/{caso_ref}/documents")
+        return self._ler(f"/api/v1/cases/{caso_ref}/documents")
 
     # ------------------------------------------------------------- análise
 
@@ -278,7 +395,7 @@ class Cliente:
         return self._chamar("POST", f"/api/v1/cases/{caso_ref}/analysis")
 
     def analise(self, caso_ref: str) -> dict[str, Any]:
-        return self._chamar("GET", f"/api/v1/cases/{caso_ref}/analysis")
+        return self._ler(f"/api/v1/cases/{caso_ref}/analysis")
 
     # ------------------------------------------------------------- pesquisa
 
@@ -286,10 +403,38 @@ class Cliente:
         return self._chamar("POST", f"/api/v1/cases/{caso_ref}/research")
 
     def pesquisas(self, caso_ref: str) -> dict[str, Any]:
-        return self._chamar("GET", f"/api/v1/cases/{caso_ref}/research")
+        return self._ler(f"/api/v1/cases/{caso_ref}/research")
 
     def pesquisa(self, caso_ref: str, pesquisa_ref: str) -> dict[str, Any]:
         return self._chamar("GET", f"/api/v1/cases/{caso_ref}/research/{pesquisa_ref}")
+
+    # ----------------------------------------------------------- jurimetria
+
+    def jurimetria(self, caso_ref: str, *, orgao: str | None = None) -> dict[str, Any]:
+        """Como o foro decide a matéria deste caso, e onde o caso cai dentro disso.
+
+        Leitura direta: do outro lado são agregações no acervo, sem chamada de modelo.
+        Prender a tela num 202 aqui seria burocracia sem ganho.
+
+        O `orgao` é opcional porque o Acervo não guarda a vara em campo próprio. Quando o
+        advogado informa, a comparação deixa de ser com a jurisdição inteira e passa a ser
+        com quem vai julgar.
+        """
+        caminho = f"/api/v1/cases/{caso_ref}/jurimetrics"
+        if orgao:
+            caminho += f"?judging_body={quote(orgao)}"
+        return self._chamar("GET", caminho)
+
+    def jurimetria_do_acervo(self, filtros: dict[str, Any] | None = None) -> dict[str, Any]:
+        """O mesmo painel sem caso: o retrato do acervo por recorte livre."""
+        parametros: list[str] = []
+        for chave, valor in (filtros or {}).items():
+            if valor in (None, "", [], ()):
+                continue
+            for item in valor if isinstance(valor, list | tuple) else [valor]:
+                parametros.append(f"{chave}={quote(str(item))}")
+        sufixo = "?" + "&".join(parametros) if parametros else ""
+        return self._chamar("GET", f"/api/v1/jurimetrics/panel{sufixo}")
 
     def resolver_contradicao(
         self,
@@ -333,7 +478,7 @@ class Cliente:
         alguém a pede. Tratar 404 como falha faria a tela mostrar erro para um caso novo.
         """
         try:
-            return self._chamar("GET", f"/api/v1/cases/{caso_ref}/strategy")
+            return self._ler(f"/api/v1/cases/{caso_ref}/strategy")
         except ErroDoAgente as erro:
             if "não encontrada" in str(erro) or "Nenhuma estratégia" in str(erro):
                 return None
@@ -377,7 +522,7 @@ class Cliente:
         )
 
     def peticoes(self, caso_ref: str) -> dict[str, Any]:
-        return self._chamar("GET", f"/api/v1/cases/{caso_ref}/generations")
+        return self._ler(f"/api/v1/cases/{caso_ref}/generations")
 
     def peticao(self, caso_ref: str, peca_ref: str) -> dict[str, Any]:
         return self._chamar("GET", f"/api/v1/cases/{caso_ref}/generations/{peca_ref}")
@@ -391,7 +536,7 @@ class Cliente:
         """
         url = f"{self._cfg.url}/api/v1/cases/{caso_ref}/generations/{peca_ref}/file"
         try:
-            resposta = httpx.get(
+            resposta = _cliente_http().get(
                 url, headers=self._cabecalhos(), timeout=self._cfg.timeout_envio
             )
         except httpx.HTTPError as erro:
@@ -401,7 +546,7 @@ class Cliente:
             ) from erro
 
         if resposta.status_code >= 400:
-            raise ErroDoAgente(_detalhe(resposta))
+            raise ErroDoAgente(_detalhe(resposta), status=resposta.status_code)
         return resposta.content
 
     def decidir_peticao(

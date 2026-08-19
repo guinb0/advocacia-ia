@@ -1,0 +1,325 @@
+/* =========================================================================
+ * GRÁFICOS — primitivos em SVG, sem biblioteca.
+ *
+ * As cores de série NÃO são as cores de estado do sistema. `--ok`, `--atencao` e
+ * `--critico` continuam significando pronto/conferir/problema em toda a aplicação;
+ * se uma delas pintasse "série 2" de um gráfico, a cor deixaria de informar.
+ *
+ * A paleta abaixo foi validada para daltonismo contra o fundo branco do cartão
+ * (deutan/protan/tritan, ΔE ≥ 8 entre vizinhas; pior par aqua↔laranja 9,2). O aqua
+ * fica abaixo de 3:1 de contraste com o branco: por isso todo gráfico que o usa traz
+ * rótulo direto ou a tabela equivalente — a cor nunca carrega o dado sozinha.
+ *
+ * Marcas finas de propósito: linha de 2px, coluna de no máximo 24px, grade em fio de
+ * 1px sólido (nunca tracejada), respiro em vez de moldura.
+ * ========================================================================= */
+
+.figura {
+  --serie-1: #2a78d6;
+  --serie-2: #eb6834;
+  --serie-3: #1baf7a;
+  --serie-4: #4a3aa7;
+
+  /* Rampa sequencial de um matiz só, claro -> escuro. Usada no mapa de calor. */
+  --rampa-0: #eef4fc;
+  --rampa-1: #cde2fb;
+  --rampa-2: #9ec5f4;
+  --rampa-3: #5598e7;
+  --rampa-4: #2a78d6;
+  --rampa-5: #1c5cab;
+
+  --grade: var(--borda);
+  --eixo: var(--borda-forte);
+  --rotulo: var(--tinta-3);
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cabecalho {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.titulo {
+  font-family: var(--fonte-ui);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--tinta);
+  letter-spacing: 0.01em;
+}
+
+.descricao {
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+  max-width: 62ch;
+}
+
+.acoes {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.botaoTabela {
+  border: 1px solid var(--borda-campo);
+  background: var(--papel);
+  color: var(--tinta-2);
+  border-radius: var(--raio-sm);
+  padding: 3px 9px;
+  font-size: var(--t-xs);
+  font-family: var(--fonte-ui);
+  cursor: pointer;
+  transition: background var(--transicao);
+}
+
+.botaoTabela:hover {
+  background: var(--papel-3);
+}
+
+.botaoTabela:focus-visible {
+  outline: 2px solid var(--foco);
+  outline-offset: 2px;
+}
+
+.legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: var(--t-xs);
+  color: var(--tinta-2);
+}
+
+.itemLegenda {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.marcaLegenda {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.marcaLegendaLinha {
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.area {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.svg {
+  display: block;
+  overflow: visible;
+}
+
+.rotuloEixo {
+  font-family: var(--fonte-ui);
+  font-size: 11px;
+  fill: var(--rotulo);
+  font-variant-numeric: tabular-nums;
+}
+
+.rotuloDireto {
+  font-family: var(--fonte-ui);
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--tinta-2);
+}
+
+.linhaGrade {
+  stroke: var(--grade);
+  stroke-width: 1;
+}
+
+.linhaEixo {
+  stroke: var(--eixo);
+  stroke-width: 1;
+}
+
+.alvo {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+/* ------------------------------------------------------------------ tooltip */
+
+.tooltip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: var(--papel);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-sm);
+  box-shadow: var(--sombra-2);
+  padding: 8px 10px;
+  font-size: var(--t-xs);
+  color: var(--tinta-2);
+  min-width: 140px;
+  max-width: 260px;
+}
+
+.tooltipTitulo {
+  font-weight: 600;
+  color: var(--tinta);
+  margin-bottom: 4px;
+}
+
+.tooltipLinha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tooltipValor {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.tooltipRotulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tooltipBase {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--borda);
+  color: var(--tinta-3);
+}
+
+/* -------------------------------------------------------------- tabela-par */
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-xs);
+}
+
+.tabela th,
+.tabela td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--borda);
+  color: var(--tinta-2);
+}
+
+.tabela th {
+  color: var(--tinta-3);
+  font-weight: 600;
+}
+
+.tabela td:not(:first-child),
+.tabela th:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rolagemTabela {
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* ---------------------------------------------------------------- vazio */
+
+.vazio {
+  border: 1px dashed var(--borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--papel-2);
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.vazioSimbolo {
+  font-size: var(--t-md);
+  color: var(--tinta-3);
+}
+
+.vazioMotivo {
+  font-size: var(--t-xs);
+  max-width: 52ch;
+}
+
+/* ---------------------------------------------------------------- medidor */
+
+.medidor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.medidorTrilho {
+  position: relative;
+  height: 10px;
+  border-radius: var(--raio-pill);
+  background: var(--rampa-1);
+  overflow: hidden;
+}
+
+.medidorPreenchimento {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--raio-pill);
+  transition: width var(--transicao);
+}
+
+.medidorMarca {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--tinta-2);
+}
+
+.medidorLegenda {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------------------- mapa de calor */
+
+.escala {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+.escalaCaixas {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.escalaCaixa {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+}

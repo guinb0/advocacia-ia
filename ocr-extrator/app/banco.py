@@ -32,17 +32,35 @@ import urllib.parse
 from pathlib import Path
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import pyodbc
 
-__all__ = ["ESQUEMA_SQLSERVER", "Conexao", "Linha", "conectar", "dsn", "inicializar_schema"]
+__all__ = [
+    "ESQUEMA_SQLSERVER",
+    "Conexao",
+    "Linha",
+    "conectar",
+    "dsn",
+    "inicializar_schema",
+    "sessao",
+]
 
-SCHEMA = "ocr"
-"""Schema próprio do Acervo no banco `advocacia`.
+SCHEMA = "dbo"
+"""Schema único do banco `advocacia` — o mesmo do agente jurídico.
 
-Separado do `dbo`, onde vivem as tabelas do agente: cada sistema escreve no seu, e a
-permissão pode ser concedida por schema quando as credenciais forem separadas.
+O Acervo teve schema próprio (`ocr`) por um tempo. Voltou para o `dbo` porque quatro
+schemas com nome parecido, três deles vazios, custavam mais em confusão do que rendiam em
+separação. Quem precisa distinguir os dois sistemas lê o prefixo da tabela.
+"""
+
+PREFIXO = "acervo_"
+"""Prefixo das tabelas do Acervo dentro do `dbo`.
+
+Sem ele, `casos` (Acervo) ficaria ao lado de `cases` (agente) guardando coisas diferentes,
+e `entregas` ao lado de `documents`, que são o mesmo documento visto por cada lado. O
+prefixo é o que substitui o schema separado na hora de saber de quem é cada tabela.
 """
 
 DRIVER_PADRAO = "ODBC Driver 17 for SQL Server"
@@ -204,22 +222,32 @@ TABELAS = (
 
 
 def _qualificar(sql: str) -> str:
-    """Prefixa as tabelas do Acervo com o schema, preservando o resto da consulta.
+    """Traduz o nome curto da tabela para o nome real no banco.
 
-    Idempotente: uma consulta que já venha escrita como `ocr.casos` passa intacta. Sem
-    isso, prefixar de novo produz `ocr.ocr.casos` — e o erro que aparece é "nome de
-    objeto inválido", que não diz que a culpa é do prefixo dobrado.
+    O SQL de `armazenamento.py` fala `casos`, `entregas` — os nomes que as tabelas tinham
+    no SQLite. No banco elas se chamam `dbo.acervo_casos`, `dbo.acervo_entregas`. A
+    tradução acontece aqui para que as 58 consultas continuem legíveis e não precisem
+    repetir schema e prefixo em cada linha.
+
+    Idempotente: consulta que já venha com o nome real passa intacta. Sem isso, prefixar
+    de novo produz `acervo_acervo_casos` — e o erro que aparece é "nome de objeto
+    inválido", que não denuncia o prefixo dobrado.
     """
     resultado = sql
     for tabela in TABELAS:
-        # `(?<![\w.])` recusa o que já tem ponto antes (`ocr.casos`) e o que é sufixo de
-        # outra palavra; `(?![\w.])` recusa prefixo de nome maior (`casos_antigos`).
+        # `(?<![\w.])` recusa o que já tem ponto ou letra antes — ou seja, o que já foi
+        # qualificado e o que é sufixo de outra palavra; `(?![\w.])` recusa prefixo de
+        # nome maior (`casos_antigos`).
         resultado = re.sub(
             rf"(?<![\w.]){tabela}(?![\w.])",
-            f"{SCHEMA}.{tabela}",
+            f"{SCHEMA}.{PREFIXO}{tabela}",
             resultado,
         )
     return resultado
+
+
+#: Conexão emprestada pelo escopo em curso, quando há um (ver `sessao`).
+_emprestada: ContextVar[Conexao | None] = ContextVar("conexao_emprestada", default=None)
 
 
 @contextmanager
@@ -228,7 +256,15 @@ def conectar() -> Iterator[Conexao]:
 
     Mesmo contrato do `conectar()` que existia sobre o SQLite: quem chama não precisa
     lembrar de `commit`.
+
+    Dentro de uma `sessao()`, reaproveita a conexão dela em vez de abrir outra — e aí
+    não confirma nem fecha, porque quem abriu é que encerra.
     """
+    ja_aberta = _emprestada.get()
+    if ja_aberta is not None:
+        yield ja_aberta
+        return
+
     bruta = pyodbc.connect(dsn(), timeout=15, autocommit=False)
     conexao = Conexao(bruta)
     try:
@@ -241,13 +277,42 @@ def conectar() -> Iterator[Conexao]:
         conexao.close()
 
 
+@contextmanager
+def sessao() -> Iterator[Conexao]:
+    """Uma conexão só para tudo que rodar dentro deste bloco.
+
+    O banco é remoto: cada `pyodbc.connect` custa a viagem de rede do handshake e do
+    login, medida em ~135 ms daqui. Telas como o painel do caso chamavam trinta e três
+    funções de leitura independentes e pagavam essa viagem trinta e três vezes — cinco
+    segundos gastos abrindo conexão para consultas que somadas não leem 100 kB.
+
+    Vale para leitura. Escrita dentro do bloco passa a compartilhar a transação de quem
+    o abriu, o que muda o momento do commit — por isso o escopo é explícito, e não algo
+    que `conectar()` faça sozinho por toda a aplicação.
+
+    Não atravessa thread: `ContextVar` não é herdada por thread de `ThreadPoolExecutor`,
+    então cada uma abre a sua. É o que se quer — conexão pyodbc não é para ser
+    compartilhada entre threads.
+    """
+    with conectar() as con:
+        if _emprestada.get() is not None:
+            # Já estamos dentro de uma sessão: o bloco de fora é que manda.
+            yield con
+            return
+        marca = _emprestada.set(con)
+        try:
+            yield con
+        finally:
+            _emprestada.reset(marca)
+
+
 # ---------------------------------------------------------------------------- schema
 
 ESQUEMA_SQLSERVER = f"""
 IF SCHEMA_ID('{SCHEMA}') IS NULL EXEC('CREATE SCHEMA {SCHEMA}');
 
-IF OBJECT_ID('{SCHEMA}.casos') IS NULL
-CREATE TABLE {SCHEMA}.casos (
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}casos') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}casos (
     id                varchar(64)   NOT NULL CONSTRAINT pk_ocr_casos PRIMARY KEY,
     cliente           nvarchar(200) NOT NULL,
     categoria         varchar(80)   NOT NULL,
@@ -260,8 +325,8 @@ CREATE TABLE {SCHEMA}.casos (
     portal_criado_em  varchar(40)   NULL
 );
 
-IF OBJECT_ID('{SCHEMA}.entregas') IS NULL
-CREATE TABLE {SCHEMA}.entregas (
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}entregas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     id                 varchar(64)   NOT NULL CONSTRAINT pk_ocr_entregas PRIMARY KEY,
     caso_id            varchar(64)   NOT NULL,
     item_codigo        varchar(80)   NOT NULL,
@@ -279,11 +344,11 @@ CREATE TABLE {SCHEMA}.entregas (
     status_proc        varchar(40)   NOT NULL CONSTRAINT df_ocr_entregas_status DEFAULT 'pronto',
     erro_proc          nvarchar(max) NULL,
     CONSTRAINT fk_ocr_entregas_caso FOREIGN KEY (caso_id)
-        REFERENCES {SCHEMA}.casos (id) ON DELETE CASCADE
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
-IF OBJECT_ID('{SCHEMA}.entrevistas') IS NULL
-CREATE TABLE {SCHEMA}.entrevistas (
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}entrevistas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}entrevistas (
     id            varchar(64)   NOT NULL CONSTRAINT pk_ocr_entrevistas PRIMARY KEY,
     caso_id       varchar(64)   NOT NULL,
     arquivo       nvarchar(255) NOT NULL,
@@ -297,11 +362,11 @@ CREATE TABLE {SCHEMA}.entrevistas (
     enviada_em    varchar(40)   NULL,
     criado_em     varchar(40)   NOT NULL,
     CONSTRAINT fk_ocr_entrevistas_caso FOREIGN KEY (caso_id)
-        REFERENCES {SCHEMA}.casos (id) ON DELETE CASCADE
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
-IF OBJECT_ID('{SCHEMA}.assinaturas') IS NULL
-CREATE TABLE {SCHEMA}.assinaturas (
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}assinaturas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}assinaturas (
     id            varchar(64)   NOT NULL CONSTRAINT pk_ocr_assinaturas PRIMARY KEY,
     doc_token     varchar(120)  NOT NULL CONSTRAINT uq_ocr_assinaturas_token UNIQUE,
     nome          nvarchar(200) NOT NULL,
@@ -315,8 +380,8 @@ CREATE TABLE {SCHEMA}.assinaturas (
     cpf           varchar(20)   NOT NULL CONSTRAINT df_ocr_assin_cpf DEFAULT ''
 );
 
-IF OBJECT_ID('{SCHEMA}.vinculos_agente') IS NULL
-CREATE TABLE {SCHEMA}.vinculos_agente (
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}vinculos_agente') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}vinculos_agente (
     caso_id       varchar(64)   NOT NULL CONSTRAINT pk_ocr_vinculos PRIMARY KEY,
     caso_ref      varchar(80)   NOT NULL,
     cliente_ref   varchar(80)   NOT NULL CONSTRAINT df_ocr_vinc_cliente DEFAULT '',
@@ -325,15 +390,18 @@ CREATE TABLE {SCHEMA}.vinculos_agente (
     criado_em     varchar(40)   NOT NULL,
     atualizado_em varchar(40)   NOT NULL,
     CONSTRAINT fk_ocr_vinculos_caso FOREIGN KEY (caso_id)
-        REFERENCES {SCHEMA}.casos (id) ON DELETE CASCADE
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 """
 
+# As constraints criadas antes da faxina mantêm o nome `pk_ocr_*` / `fk_ocr_*`. Renomear
+# constraint exige `sp_rename` em cada uma e não muda comportamento nenhum — o custo do
+# risco não compensa a estética. Tabela nova criada por este DDL nasce com o nome novo.
 INDICES = (
-    f"CREATE INDEX idx_ocr_entregas_caso ON {SCHEMA}.entregas (caso_id)",
-    f"CREATE INDEX idx_ocr_entregas_item ON {SCHEMA}.entregas (caso_id, item_codigo)",
-    f"CREATE INDEX idx_ocr_entrevistas_caso ON {SCHEMA}.entrevistas (caso_id)",
-    f"CREATE INDEX idx_ocr_assinaturas_caso ON {SCHEMA}.assinaturas (caso_id)",
+    f"CREATE INDEX idx_acervo_entregas_caso ON {SCHEMA}.{PREFIXO}entregas (caso_id)",
+    f"CREATE INDEX idx_acervo_entregas_item ON {SCHEMA}.{PREFIXO}entregas (caso_id, item_codigo)",
+    f"CREATE INDEX idx_acervo_entrevistas_caso ON {SCHEMA}.{PREFIXO}entrevistas (caso_id)",
+    f"CREATE INDEX idx_acervo_assinaturas_caso ON {SCHEMA}.{PREFIXO}assinaturas (caso_id)",
 )
 
 

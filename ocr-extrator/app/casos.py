@@ -93,7 +93,16 @@ def montar_situacao(caso_id: str) -> dict[str, Any] | None:
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         return None
+    return situacao_de(caso, armazenamento.listar_entregas(caso_id))
 
+
+def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[str, Any]:
+    """A mesma situação, a partir de dados já em mãos — sem tocar no banco.
+
+    Existe para quem já leu caso e entregas em lote. O painel compara o caso aberto
+    com os anteriores da categoria, e buscar as entregas de cada um deles de novo,
+    um por um, custava uma ida ao banco por caso da amostra.
+    """
     categoria = categorias.obter(caso["categoria"])
     if categoria is None:
         # A categoria saiu do código mas o caso continua no banco.
@@ -104,7 +113,6 @@ def montar_situacao(caso_id: str) -> dict[str, Any] | None:
             "itens": [],
         }
 
-    entregas = armazenamento.listar_entregas(caso_id)
     por_item: dict[str, list[dict[str, Any]]] = {}
     for entrega in entregas:
         # Uma CIN pode ter sido marcada para atender RG e CPF com o mesmo arquivo.

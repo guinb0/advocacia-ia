@@ -1,7 +1,9 @@
 # Acervo no SQL Server
 
 O Acervo saiu do SQLite (`dados/casos.db`) e passou a gravar no **SQL Server**, no mesmo
-banco `advocacia` onde o agente já vive — em schema próprio, `ocr`.
+banco `advocacia` e no mesmo schema `dbo` onde o agente já vive. As tabelas levam o
+prefixo `acervo_`, que é o que distingue os dois sistemas — sem ele, `casos` ficaria ao
+lado de `cases` guardando coisa diferente.
 
 Os **arquivos enviados pelo cliente continuam em disco** (`dados/casos/`). O que foi para
 o servidor é o registro, não o binário: guardar o arquivo duas vezes seria dois lugares
@@ -11,8 +13,8 @@ para vazar o mesmo dado e duas políticas de retenção para conciliar.
 
 | | |
 |---|---|
-| Banco | `advocacia` em `177.131.142.42`, schema `ocr` |
-| Tabelas | `casos`, `entregas`, `entrevistas`, `assinaturas`, `vinculos_agente` |
+| Banco | `advocacia` em `177.131.142.42`, schema `dbo` |
+| Tabelas | `acervo_casos`, `acervo_entregas`, `acervo_entrevistas`, `acervo_assinaturas`, `acervo_vinculos_agente` |
 | Driver | `pyodbc` + ODBC Driver 17 for SQL Server |
 | Configuração | `SQLSERVER_*` no `.env` |
 
@@ -69,3 +71,23 @@ from .banco import conectar      # SQL Server
 ```
 
 O arquivo `dados/casos.db` continua íntegro, com os dados até a data da virada.
+
+
+## A faxina de 18/08/2026
+
+Por um tempo o Acervo teve schema próprio (`ocr`), e o banco chegou a ter cinco schemas —
+três deles (`agente`, `core`, `adm`) eram sobra de um redesenho de domínio que foi
+discutido e não seguido, com 20 tabelas sem uma linha de dado.
+
+Tudo foi consolidado em `dbo`:
+
+- as 5 tabelas do Acervo mudaram de schema com `ALTER SCHEMA TRANSFER`, levando os dados
+  junto, e ganharam o prefixo `acervo_`;
+- os schemas `ocr`, `agente`, `core` e `adm` foram removidos, com 20 tabelas vazias, 1
+  procedure e 1 view;
+- o conteúdo de `adm.schema_versao` — a única coisa com dado em tudo que saiu — está
+  guardado em `../../ia-juridica/migrations/sqlserver/HISTORICO-schema_versao.json`.
+
+O banco passou de 5 schemas e 50 tabelas para **1 schema e 32 tabelas**. As constraints
+criadas antes mantêm o nome `pk_ocr_*` / `fk_ocr_*`: renomeá-las exigiria `sp_rename` em
+cada uma, sem mudar comportamento nenhum.

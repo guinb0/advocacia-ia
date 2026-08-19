@@ -47,6 +47,7 @@ from . import (
     dados,
     contrato,
     escuta,
+    painel as painel_do_caso,
     pipeline,
     portal,
     rag,
@@ -1215,6 +1216,20 @@ def obter_caso(caso_id: str):
     if situacao is None:
         raise HTTPException(404, "Caso não encontrado.")
     return situacao
+
+
+@app.get("/api/casos/{caso_id}/painel")
+def painel_do_caso_analitico(caso_id: str):
+    """Painel analítico do caso: histórico medido, comparação e riscos.
+
+    Leitura pesada de propósito — passa pelo dossiê (que consulta o agente) e pelos casos
+    anteriores da mesma categoria para montar a referência. É uma tela que se abre para
+    estudar o caso, não um polling: quem quer só o estado atual usa `/api/casos/{id}`.
+    """
+    montado = painel_do_caso.montar(caso_id)
+    if montado is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return montado
 
 
 @app.patch("/api/casos/{caso_id}")

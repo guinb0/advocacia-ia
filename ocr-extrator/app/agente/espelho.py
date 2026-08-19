@@ -55,22 +55,38 @@ def jurisdicao_padrao() -> str:
 
 
 def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
-    """Devolve o vínculo com o agente, criando cliente e caso na primeira vez.
+    """Devolve o vínculo com o agente, criando cliente e caso quando preciso.
 
-    Idempotente pelo vínculo guardado no SQLite: um segundo clique em "enviar ao
-    agente" reaproveita o caso existente. Sem isso, o mesmo cliente teria dois casos
-    no agente, cada um com metade dos documentos — e ninguém perceberia até a
-    pesquisa jurídica sair pela metade.
+    Idempotente pelo vínculo guardado aqui: um segundo clique em "enviar ao agente"
+    reaproveita o caso existente. Sem isso, o mesmo cliente teria dois casos no agente,
+    cada um com metade dos documentos — e ninguém perceberia até a pesquisa jurídica
+    sair pela metade.
+
+    O vínculo sozinho não basta como prova: ele diz que o caso **foi** criado, não que
+    ele ainda está lá. Por isso a existência é conferida do outro lado antes de ser
+    reaproveitada.
     """
+    cliente = Cliente()
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
-    if vinculo:
+    if vinculo and cliente.caso_existe(vinculo["caso_ref"]):
         return vinculo
+
+    if vinculo:
+        # Vínculo órfão: o caso existiu e não existe mais. Aconteceu de verdade na
+        # migração do agente para o SQL Server — os casos ficaram no banco antigo e o
+        # dossiê passou a abrir vazio, sem que nada aqui estivesse errado. Recriar do
+        # lado de lá é o único caminho: `vincular_agente` troca o `caso_ref` e zera as
+        # entregas enviadas, e o material volta a subir na próxima sincronização.
+        log.warning(
+            "vínculo órfão do caso %s: %s não existe mais no agente; recriando",
+            caso_id,
+            vinculo["caso_ref"],
+        )
 
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         raise ErroDoAgente("Caso não encontrado.")
 
-    cliente = Cliente()
     criado = cliente.criar_cliente(caso["cliente"])
     caso_criado = cliente.criar_caso(
         cliente_ref=criado["id"],
@@ -149,6 +165,21 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
         else:
             falhas += 1
 
+    # Entrevista ainda não lida do outro lado também sobe aqui. É o que devolve os fatos
+    # relatados ao caso recriado: o revínculo as reabre, e sem este laço elas ficariam
+    # marcadas como pendentes para sempre, porque nada mais as reenvia sozinho.
+    entrevistas = 0
+    for entrevista in armazenamento.listar_entrevistas(caso_id):
+        if entrevista.get("enviada"):
+            continue
+        try:
+            enviar_entrevista(caso_id, entrevista["id"])
+            entrevistas += 1
+        except ErroDoAgente as erro:
+            # Uma entrevista que não sobe não derruba a sincronização: os documentos já
+            # foram, e a tela precisa abrir com o que existe.
+            log.warning("entrevista %s não foi enviada: %s", entrevista["id"], erro)
+
     atual = armazenamento.obter_vinculo_agente(caso_id) or vinculo
     declarados = declarar_itens_entregues(caso_id, atual["caso_ref"])
     qualificar_reclamante(atual["caso_ref"])
@@ -157,6 +188,7 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
         "cliente_ref": atual["cliente_ref"],
         "documentos_enviados": enviados,
         "documentos_com_falha": falhas,
+        "entrevistas_enviadas": entrevistas,
         "itens_declarados": declarados,
         "ultimo_erro": atual.get("ultimo_erro"),
     }

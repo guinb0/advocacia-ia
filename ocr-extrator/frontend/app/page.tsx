@@ -7,8 +7,13 @@ import Carteira from "@/components/Carteira";
 import Checklist from "@/components/Checklist";
 import Dados from "@/components/Dados";
 import Dossie from "@/components/Dossie";
+<<<<<<< Updated upstream
 import Investigacao from "@/components/Investigacao";
+=======
+import Jurimetria from "@/components/Jurimetria";
+>>>>>>> Stashed changes
 import ListaCasos from "@/components/ListaCasos";
+import PainelCaso from "@/components/PainelCaso";
 import PainelEnvio from "@/components/PainelEnvio";
 import ProgressoOcr from "@/components/ProgressoOcr";
 import ChamadaDoAtendimento from "@/components/ChamadaDoAtendimento";
@@ -22,6 +27,7 @@ import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import estilos from "./page.module.css";
 
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
+<<<<<<< Updated upstream
 type Tela =
   | "carteira"
   | "caso"
@@ -33,6 +39,9 @@ type Tela =
   | "entrevista"
   | "supervisao"
   | "dados";
+=======
+type Tela = "carteira" | "caso" | "dossie" | "painel" | "jurimetria" | "casos" | "avulso";
+>>>>>>> Stashed changes
 
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
  * que responde "onde eu estou" sem depender de memória. */
@@ -101,7 +110,47 @@ export default function Home() {
       voltarParaCarteira();
       return null;
     }
-    return <Dossie casoId={casoAberto} onVoltar={voltarParaCarteira} />;
+    return (
+      <Dossie
+        casoId={casoAberto}
+        onVoltar={voltarParaCarteira}
+        onAbrirPainel={() => setTela("painel")}
+        onAbrirJurimetria={() => setTela("jurimetria")}
+      />
+    );
+  }
+
+  if (tela === "jurimetria") {
+    // Mesma regra das demais: sem caso aberto não há recorte comparável.
+    if (!casoAberto) {
+      voltarParaCarteira();
+      return null;
+    }
+    return (
+      <Jurimetria
+        casoId={casoAberto}
+        onVoltar={voltarParaCarteira}
+        onAbrirDossie={() => setTela("dossie")}
+        onAbrirPainel={() => setTela("painel")}
+      />
+    );
+  }
+
+  if (tela === "painel") {
+    // Mesma regra do dossiê: painel sem caso aberto não existe.
+    if (!casoAberto) {
+      voltarParaCarteira();
+      return null;
+    }
+    return (
+      <PainelCaso
+        casoId={casoAberto}
+        onVoltar={voltarParaCarteira}
+        onAbrirChecklist={() => setTela("caso")}
+        onAbrirDossie={() => setTela("dossie")}
+        onAbrirJurimetria={() => setTela("jurimetria")}
+      />
+    );
   }
 
   if (tela === "investigacao") {
@@ -136,6 +185,24 @@ export default function Home() {
             onClick={() => setTela("dossie")}
           >
             Dossiê do caso →
+          </button>
+          {/* O painel é a leitura no tempo: quanto cada etapa levou, como o caso se
+            * compara com os anteriores e há quantos dias nada acontece. */}
+          <button
+            type="button"
+            className="botao botao--texto botao--pequeno"
+            onClick={() => setTela("painel")}
+          >
+            Painel analítico →
+          </button>
+          {/* A jurimetria é a única leitura que olha para fora do escritório: como o
+            * foro decidiu casos comparáveis, e onde este cai dentro disso. */}
+          <button
+            type="button"
+            className="botao botao--texto botao--pequeno"
+            onClick={() => setTela("jurimetria")}
+          >
+            Jurisprudência e jurimetria →
           </button>
         </div>
         {situacaoCaso.situacao ? (
