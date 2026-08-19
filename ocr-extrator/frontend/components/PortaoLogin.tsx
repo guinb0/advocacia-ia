@@ -42,9 +42,19 @@ export default function PortaoLogin({ children }: { children: ReactNode }) {
           <div style={{ marginTop: 18 }}>
             <Aviso tom="critico" titulo="Não foi possível verificar o acesso">
               {erro}
+              {/* Sem comando de terminal aqui: quem lê esta tela é o advogado
+                * tentando entrar, não quem administra o servidor. O comando de
+                * subir o serviço de acesso vive na documentação, que é onde o
+                * suporte procura; nesta tela ele só assusta e não ajuda.
+                *
+                * "Entre novamente" vem primeiro porque é a causa comum e tem
+                * conserto imediato — sessão vencida, ou conta cuja sessão
+                * antiga deixou de valer. Avisar o suporte é o passo seguinte,
+                * não o primeiro. */}
               <span className={estilos.dica}>
-                Se o problema continuar, avise o suporte técnico: o serviço de acesso pode estar
-                fora do ar (<code>docker compose up -d keycloak</code>).
+                Tente entrar de novo: quase sempre é a sessão anterior que venceu. Se
+                continuar, avise o suporte técnico — o serviço de acesso do escritório
+                pode estar fora do ar.
               </span>
             </Aviso>
           </div>
