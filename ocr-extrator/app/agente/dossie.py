@@ -19,15 +19,16 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from .. import armazenamento, casos as casos_ocr, contrato
+from .. import armazenamento, banco, casos as casos_ocr, contrato
 from .cliente import Cliente, ErroDoAgente
 from .config import config
 
 log = logging.getLogger("agente")
 
-__all__ = ["dados_do_contrato", "montar"]
+__all__ = ["dados_do_contrato", "montar", "origens_do_fato"]
 
 PENDENTE = "pendente"
 ANDAMENTO = "andamento"
@@ -38,16 +39,29 @@ INDISPONIVEL = "indisponivel"
 
 def montar(caso_id: str) -> dict[str, Any] | None:
     """O dossiê inteiro. `None` quando o caso não existe no OCR."""
-    caso = armazenamento.obter_caso(caso_id)
-    if caso is None:
-        return None
+    # Uma conexão para todas as leituras desta montagem; ver `banco.sessao`.
+    #
+    # A ida ao agente fica **fora** do escopo de propósito: são alguns segundos de
+    # rede, e segurar a conexão aberta durante eles ocuparia o banco sem consultar
+    # nada — do jeito que se esgota um servidor com dois advogados usando a tela.
+    with banco.sessao():
+        caso = armazenamento.obter_caso(caso_id)
+        if caso is None:
+            return None
+        situacao = casos_ocr.montar_situacao(caso_id) or {}
+        vinculo = armazenamento.obter_vinculo_agente(caso_id)
 
-    situacao = casos_ocr.montar_situacao(caso_id) or {}
-    vinculo = armazenamento.obter_vinculo_agente(caso_id)
-    agente = _do_agente(vinculo)
-    entrevistas = [_entrevista_resumida(item) for item in armazenamento.listar_entrevistas(caso_id)]
-    cliente = _cliente(caso, situacao, agente)
-    assinaturas = armazenamento.listar_assinaturas(caso_id=caso_id) or _por_cliente(cliente)
+    agente = _do_agente(vinculo, caso_id)
+
+    with banco.sessao():
+        entrevistas = [
+            _entrevista_resumida(item)
+            for item in armazenamento.listar_entrevistas(caso_id)
+        ]
+        cliente = _cliente(caso, situacao, agente)
+        assinaturas = armazenamento.listar_assinaturas(caso_id=caso_id) or _por_cliente(
+            cliente
+        )
 
     categoria = situacao.get("categoria") or {}
     return {
@@ -164,7 +178,7 @@ def _cliente(
                 "valor": valor,
                 "confianca": fato.get("confidence"),
                 "status": fato.get("status"),
-                "fontes": _origens(fato),
+                "fontes": origens_do_fato(fato),
             }
         )
 
@@ -174,7 +188,7 @@ def _cliente(
     return ficha
 
 
-def _origens(fato: dict[str, Any]) -> list[str]:
+def origens_do_fato(fato: dict[str, Any]) -> list[str]:
     """De onde o fato saiu, em uma linha por origem.
 
     "documento, página 2, campo pis" é o que o advogado precisa para conferir sem
@@ -304,7 +318,31 @@ def dados_do_contrato(montado: dict[str, Any]) -> tuple[dict[str, Any], list[str
     return respostas, list(dict.fromkeys(motivos))
 
 
-def _do_agente(vinculo: dict[str, Any] | None) -> dict[str, Any]:
+def _recuperar_vinculo(erro: ErroDoAgente, caso_id: str | None) -> str | None:
+    """Refaz o caso no agente quando ele sumiu. Devolve o novo `caso_ref`, ou `None`.
+
+    Só o 404 dispara a recuperação: qualquer outra falha (agente fora do ar, recusa)
+    precisa continuar chegando à tela como está. Recriar o caso por engano espalharia
+    casos vazios pelo agente a cada oscilação de rede.
+
+    `sincronizar` e não `garantir_caso`: o caso novo nasce vazio, e reenviar as entregas
+    é o que devolve documentos e fatos à tela. Sem isso o dossiê abriria sem erro e sem
+    conteúdo, que é pior — parece um caso sem nada, e não um caso que precisa subir de novo.
+    """
+    if erro.status != 404 or caso_id is None:
+        return None
+
+    from . import espelho
+
+    log.warning("dossiê: caso %s não existe mais no agente; recriando", caso_id)
+    try:
+        return str(espelho.sincronizar(caso_id)["caso_ref"])
+    except ErroDoAgente as falha:
+        log.warning("dossiê: não foi possível recriar o caso %s — %s", caso_id, falha)
+        return None
+
+
+def _do_agente(vinculo: dict[str, Any] | None, caso_id: str | None = None) -> dict[str, Any]:
     """Lê o agente. Cada falha vira estado declarado, nunca lista vazia."""
     cfg = config()
     bloco: dict[str, Any] = {
@@ -338,29 +376,58 @@ def _do_agente(vinculo: dict[str, Any] | None) -> dict[str, Any]:
         # nascer sem configuração, e essa falha precisa virar motivo na tela como
         # qualquer outra — não estourar o dossiê inteiro.
         cliente = Cliente(cfg)
-        analise = cliente.analise(caso_ref)
+        try:
+            analise = cliente.analise(caso_ref)
+        except ErroDoAgente as erro:
+            # 404 aqui é o vínculo órfão: o caso existiu no agente e não existe mais
+            # (banco recriado, migração). Sem esta recuperação a tela repete "caso não
+            # encontrado" para sempre, porque o vínculo continua apontando para o
+            # mesmo identificador morto e nada nesta rota o corrige.
+            caso_ref = _recuperar_vinculo(erro, caso_id)
+            if caso_ref is None:
+                raise
+            bloco["caso_ref"] = caso_ref
+            bloco["recuperado"] = True
+            analise = cliente.analise(caso_ref)
         bloco["classificacoes"] = analise.get("classifications", [])
         bloco["pendencias"] = analise.get("missing_information", [])
-        bloco["fatos"] = cliente.fatos(caso_ref).get("items", [])
         bloco["disponivel"] = True
     except ErroDoAgente as erro:
         bloco["motivo"] = str(erro)
         return bloco
 
-    # As leituras seguintes são complementares: uma falha aqui não invalida o que já
-    # foi lido, então cada uma degrada sozinha em vez de derrubar o dossiê.
-    for chave, leitura in (
-        ("contradicoes", lambda: cliente.contradicoes(caso_ref).get("items", [])),
-        ("documentos", lambda: cliente.documentos(caso_ref).get("items", [])),
-        ("pesquisas", lambda: cliente.pesquisas(caso_ref).get("items", [])),
-        ("peticoes", lambda: cliente.peticoes(caso_ref).get("items", [])),
-        ("estrategia", lambda: cliente.estrategia(caso_ref)),
-    ):
-        try:
-            bloco[chave] = leitura()
-        except ErroDoAgente as erro:
-            log.warning("dossiê: %s indisponível — %s", chave, erro)
-            bloco.setdefault("parciais", []).append({"bloco": chave, "motivo": str(erro)})
+    # As leituras seguintes são independentes entre si — nenhuma usa o resultado da
+    # outra —, e feitas em fila somavam sete idas ao agente para desenhar uma tela.
+    # Vão juntas: o tempo passa a ser o da mais lenta, não o da soma.
+    #
+    # `fatos` está aqui com as demais, mas continua sendo a única obrigatória: sem os
+    # fatos o dossiê não tem o que mostrar, então a falha dela derruba o bloco em vez
+    # de virar seção vazia — "não há fato" e "não consegui ler os fatos" levam o
+    # advogado a decisões opostas.
+    leituras: dict[str, Any] = {
+        "fatos": lambda: cliente.fatos(caso_ref).get("items", []),
+        "contradicoes": lambda: cliente.contradicoes(caso_ref).get("items", []),
+        "documentos": lambda: cliente.documentos(caso_ref).get("items", []),
+        "pesquisas": lambda: cliente.pesquisas(caso_ref).get("items", []),
+        "peticoes": lambda: cliente.peticoes(caso_ref).get("items", []),
+        "estrategia": lambda: cliente.estrategia(caso_ref),
+    }
+    with ThreadPoolExecutor(max_workers=len(leituras)) as piscina:
+        pendentes = {
+            chave: piscina.submit(leitura) for chave, leitura in leituras.items()
+        }
+        for chave, tarefa in pendentes.items():
+            try:
+                bloco[chave] = tarefa.result()
+            except ErroDoAgente as erro:
+                if chave == "fatos":
+                    bloco["disponivel"] = False
+                    bloco["motivo"] = str(erro)
+                    return bloco
+                log.warning("dossiê: %s indisponível — %s", chave, erro)
+                bloco.setdefault("parciais", []).append(
+                    {"bloco": chave, "motivo": str(erro)}
+                )
 
     return bloco
 

@@ -15,7 +15,7 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, HTTPException, status
+from fastapi import APIRouter, Body, HTTPException, Query, status
 from fastapi.responses import Response
 
 from .. import armazenamento, contrato
@@ -28,16 +28,36 @@ log = logging.getLogger("agente")
 roteador = APIRouter(prefix="/api/agente", tags=["agente"])
 
 
+#: Recusas do agente que descrevem o **estado do caso**, e não uma falha da integração.
+#:
+#: São repassadas com o código e a mensagem originais porque cada uma diz ao advogado o que
+#: fazer: `404` que o caso não existe mais do outro lado, `409` que falta um passo anterior
+#: (pesquisa jurídica antes da jurimetria, por exemplo), `422` que os dados não sustentam a
+#: operação. Achatá-las em `502 Bad Gateway` — como acontecia — trocava todas essas frases
+#: por "erro no gateway", que não sugere ação nenhuma e ainda parece defeito de infra.
+_REPASSADOS = frozenset(
+    {
+        status.HTTP_404_NOT_FOUND,
+        status.HTTP_409_CONFLICT,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+    }
+)
+
+
 def _erro(erro: ErroDoAgente) -> HTTPException:
     """Traduz a falha para o código que a tela sabe tratar.
 
-    `503` quando o agente não respondeu e `502` quando ele respondeu recusando: a
-    primeira o advogado resolve tentando de novo; a segunda, não.
+    `503` quando o agente não respondeu e `502` quando ele respondeu recusando por um
+    motivo que o advogado não resolve: a primeira ele resolve tentando de novo; a segunda,
+    não. As recusas de `_REPASSADOS` são a terceira categoria — ele resolve, mas mexendo no
+    caso, e por isso precisam chegar inteiras à tela.
     """
     if isinstance(erro, AgenteNaoConfigurado):
         return HTTPException(status.HTTP_501_NOT_IMPLEMENTED, str(erro))
     if isinstance(erro, AgenteIndisponivel):
         return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(erro))
+    if erro.status is not None and erro.status in _REPASSADOS:
+        return HTTPException(erro.status, str(erro))
     return HTTPException(status.HTTP_502_BAD_GATEWAY, str(erro))
 
 
@@ -161,6 +181,58 @@ def pesquisa(caso_id: str, pesquisa_ref: str) -> dict[str, Any]:
     caso_ref = _caso_ref(caso_id)
     try:
         return Cliente().pesquisa(caso_ref, pesquisa_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/jurimetria")
+def jurimetria(caso_id: str, orgao: str | None = None) -> dict[str, Any]:
+    """Como o foro decide a matéria deste caso, e onde o caso cai dentro disso.
+
+    Síncrona: do outro lado são contagens no acervo, não chamada de modelo. É a leitura
+    que o dossiê não dá — ele responde "em que pé está o caso", e esta responde "o que
+    esperar do mérito".
+    """
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().jurimetria(caso_ref, orgao=orgao)
+    except ErroDoAgente as erro:
+        if erro.status == status.HTTP_404_NOT_FOUND:
+            # `404` aqui é ambíguo e as duas causas levam a ações opostas: ou o caso sumiu
+            # do agente, ou o agente em execução é anterior a este módulo e a rota nem
+            # existe lá. Dizer as duas é mais útil que escolher uma e errar.
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "O agente não reconheceu esta consulta. Ou o caso não existe mais nele, ou "
+                "a versão em execução do agente é anterior ao módulo de jurimetria — neste "
+                "caso, reiniciar o serviço resolve.",
+            ) from erro
+        raise _erro(erro) from erro
+
+
+@roteador.get("/jurimetria")
+def jurimetria_do_acervo(
+    assunto: list[str] = Query(default=[]),
+    orgao: list[str] = Query(default=[]),
+    magistrado: list[str] = Query(default=[]),
+    de: str | None = None,
+    ate: str | None = None,
+) -> dict[str, Any]:
+    """O mesmo painel sem caso nenhum: o retrato do acervo por recorte livre.
+
+    Existe porque a pergunta "como esta vara decide isto?" é anterior ao caso — ela
+    aparece na conversa de captação, antes de haver processo para comparar.
+    """
+    try:
+        return Cliente().jurimetria_do_acervo(
+            {
+                "subject": assunto,
+                "judging_body": orgao,
+                "judge": magistrado,
+                "decided_from": de,
+                "decided_to": ate,
+            }
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -313,12 +385,21 @@ def _caso_ref(caso_id: str) -> str:
 
     Criar aqui é deliberado: o advogado que clica em "analisar" quer a análise, não
     uma mensagem dizendo que precisa antes clicar em outro botão.
-    """
-    vinculo = armazenamento.obter_vinculo_agente(caso_id)
-    if vinculo:
-        return str(vinculo["caso_ref"])
 
+    O vínculo guardado **não** serve como atalho: ele diz que o caso foi criado, não que
+    ele ainda existe. Confiar nele fazia toda ação — analisar, pesquisar, gerar peça —
+    apontar para um caso morto depois de o agente trocar de banco, e o advogado recebia
+    "caso não encontrado" sem nada que pudesse fazer na tela.
+
+    `garantir_caso` custa uma leitura e resolve o caso comum. A sincronização completa,
+    que reenvia documentos e requalifica a parte, só roda quando o caso teve mesmo de ser
+    recriado — do contrário cada clique em "analisar" pagaria por ela.
+    """
+    anterior = armazenamento.obter_vinculo_agente(caso_id)
     try:
-        return str(espelho.sincronizar(caso_id)["caso_ref"])
+        vinculo = espelho.garantir_caso(caso_id)
+        if anterior is None or anterior["caso_ref"] != vinculo["caso_ref"]:
+            return str(espelho.sincronizar(caso_id)["caso_ref"])
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
+    return str(vinculo["caso_ref"])

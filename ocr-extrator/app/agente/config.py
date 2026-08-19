@@ -26,6 +26,19 @@ class Config:
     timeout: float
     #: Prazo do envio de documento, que roda em segundo plano e pode esperar mais.
     timeout_envio: float
+    #: Prazo das **leituras** que montam dossiê e painel.
+    #:
+    #: Separado de `timeout` porque as duas coisas não têm o mesmo dono: disparar uma
+    #: análise ou gerar uma estratégia aciona LLM e legitimamente demora, enquanto ler
+    #: o que já está guardado tem que responder rápido ou não responde mais. Com um
+    #: prazo só, uma tela de consulta ficava vinte segundos parada esperando um agente
+    #: que já estava fora do ar.
+    timeout_leitura: float
+    #: Quanto tempo lembrar que o agente não respondeu, antes de tentar de novo.
+    #:
+    #: Sem isto, cada uma das leituras da tela paga o prazo inteiro por conta própria e
+    #: o advogado espera o mesmo timeout várias vezes para ver o mesmo aviso.
+    pausa_apos_falha: float
 
     @property
     def ligado(self) -> bool:
@@ -49,4 +62,6 @@ def config() -> Config:
         organizacao=os.getenv("AGENTE_ORGANIZACAO", "").strip(),
         timeout=float(os.getenv("AGENTE_TIMEOUT", "20")),
         timeout_envio=float(os.getenv("AGENTE_TIMEOUT_ENVIO", "60")),
+        timeout_leitura=float(os.getenv("AGENTE_TIMEOUT_LEITURA", "6")),
+        pausa_apos_falha=float(os.getenv("AGENTE_PAUSA_APOS_FALHA", "15")),
     )

@@ -46,10 +46,21 @@ class ClienteFalso:
     casos_criados: int = 0
     fatos_devolvidos: list[dict] = []
     erro: Exception | None = None
+    casos_apagados: set[str] = set()
+    """Casos que o agente diz não conhecer — como um banco recriado do zero."""
 
     def __init__(self, *_args, **_kwargs) -> None:
         if ClienteFalso.erro is not None:
             raise ClienteFalso.erro
+
+    def caso_existe(self, caso_ref):
+        return caso_ref not in ClienteFalso.casos_apagados
+
+    def caso(self, _caso_ref):
+        # Quem sincroniza qualifica a parte reclamante em seguida, e para isso lê o caso.
+        # Sem parte alguma, a qualificação desiste em silêncio — as seções que provam a
+        # qualificação trazem o próprio dublê, com partes de verdade.
+        return {"parties": []}
 
     def criar_cliente(self, nome, **_):
         return {"id": "client_TESTE", "full_name": nome}
@@ -95,6 +106,24 @@ def main() -> int:
         ClienteFalso.casos_criados == 1,
         "chamar de novo reaproveita o caso — não cria um segundo para o mesmo cliente",
     )
+
+    # Vínculo órfão, num caso à parte para não mexer no que as seções seguintes usam: o
+    # caso existiu e sumiu do outro lado (banco recriado, migração). Sem a conferência, o
+    # vínculo continuaria apontando para o nada e o dossiê abriria vazio para sempre — foi
+    # o que aconteceu na migração do agente para o SQL Server.
+    orfao = armazenamento.criar_caso("Jose Orfao", "acidente_trabalho_geral")["id"]
+    antes = espelho.garantir_caso(orfao)
+    ClienteFalso.casos_apagados.add(antes["caso_ref"])
+    depois = espelho.garantir_caso(orfao)
+    checar(
+        depois["caso_ref"] != antes["caso_ref"],
+        "caso que sumiu do agente é recriado, e o vínculo passa a apontar para o novo",
+    )
+    checar(
+        depois["enviados"] == [],
+        "o revínculo zera as entregas enviadas — o caso novo não conhece nenhuma",
+    )
+    ClienteFalso.casos_apagados.clear()
 
     print("\n2. Envio da extração")
     caminho = armazenamento.DIR_ARQUIVOS / caso_id / "ctps.png"
@@ -241,6 +270,34 @@ def main() -> int:
         "2 achado" in etapas["peticao"]["detalhe"],
         "a etapa diz quantos achados retiveram a peça",
     )
+
+    # Vínculo órfão visto pela tela: o dossiê é a porta de entrada, e era ali que o
+    # advogado batia de novo e de novo em "caso não encontrado". Recriar tem de acontecer
+    # sem ele pedir — não existe botão para isso.
+    class ClienteSumido(ClienteCompleto):
+        primeira: bool = True
+
+        def analise(self, ref):
+            if ClienteSumido.primeira:
+                ClienteSumido.primeira = False
+                raise ErroDoAgente("Caso não encontrado.", status=404)
+            return super().analise(ref)
+
+    orfao_na_tela = armazenamento.criar_caso("Tela Orfa", "acidente_trabalho_geral")["id"]
+    espelho.garantir_caso(orfao_na_tela)
+    dossie.Cliente = ClienteSumido  # type: ignore[assignment]
+    espelho.Cliente = ClienteSumido  # type: ignore[assignment]
+    recuperado = dossie.montar(orfao_na_tela)
+    checar(
+        recuperado["agente"]["disponivel"],
+        "caso que sumiu do agente é recriado ao abrir o dossiê, em vez de repetir o erro",
+    )
+    checar(
+        recuperado["agente"].get("recuperado") is True,
+        "a recuperação fica declarada no dossiê, não acontece escondida",
+    )
+    dossie.Cliente = ClienteCompleto  # type: ignore[assignment]
+    espelho.Cliente = ClienteFalso  # type: ignore[assignment]
 
     print("\n6. Paginação completa dos fatos")
 
