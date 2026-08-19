@@ -18,6 +18,7 @@ import type {
   PortalGerado,
   RespostaEnvio,
   RoteiroCompleto,
+  RecomendacaoEntrevista,
   SituacaoCaso,
   TipoDocumento,
   Triagem as TriagemResposta,
@@ -40,6 +41,24 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {}
 
+export interface EvidenciaInvestigativa {
+  identificador: string;
+  categoria: string;
+  titulo: string;
+  url: string;
+  fonte: string;
+  confianca: string;
+  metadados: Record<string, unknown>;
+}
+
+export interface ResultadoInvestigativo {
+  texto: string;
+  similaridade: number;
+  metadados: Record<string, unknown>;
+  titulo: string;
+  url: string;
+}
+
 /* O token vive aqui, não em localStorage: um XSS que lesse o storage levaria a
  * sessão inteira. Quem mantém isto atualizado é o ProvedorAuth (lib/auth.tsx),
  * inclusive nas renovações. */
@@ -59,7 +78,13 @@ export function cabecalhos(extra?: HeadersInit): HeadersInit | undefined {
 
 /** fetch com o Bearer anexado — todo acesso à API passa por aqui. */
 async function buscar(caminho: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(urlApi(caminho), { ...init, headers: cabecalhos(init.headers) });
+  const resposta = await fetch(urlApi(caminho), { ...init, headers: cabecalhos(init.headers) });
+  if (resposta.status === 401 && typeof window !== "undefined") {
+    // A sessão pode vencer ou perder o token durante HMR. A carteira não deve
+    // fingir que é falha de dados: devolve o usuário ao portão de login.
+    window.dispatchEvent(new Event("acervo:sessao-expirada"));
+  }
+  return resposta;
 }
 
 async function comoJson<T>(resposta: Response): Promise<T> {
@@ -102,7 +127,9 @@ export async function extrair(
   const criado = await comoJson<{ job_id: string }>(
     await buscar("/api/extrair/jobs", { method: "POST", body: form }),
   );
-  const limite = Date.now() + 15 * 60_000;
+  // O backend trata precedentes como enriquecimento de melhor esforço. Se o
+  // worker desaparecer, não deixamos o botão preso por quinze minutos.
+  const limite = Date.now() + 90_000;
   while (Date.now() < limite) {
     const job = await comoJson<{
       status: "QUEUED" | "STARTED" | "PROCESSING" | "COMPLETED" | "FAILED";
@@ -114,6 +141,48 @@ export async function extrair(
     await new Promise((resolver) => window.setTimeout(resolver, 1000));
   }
   throw new ApiError("O OCR continua na fila. Consulte o job novamente em instantes.");
+}
+
+export async function coletarInvestigacao(alvo: {
+  cnpj?: string;
+  numero_processo?: string;
+  tribunal: string;
+}): Promise<{ fontes: number; chunks: number; evidencias: EvidenciaInvestigativa[]; avisos: string[] }> {
+  return comoJson(await buscar("/api/investigacao/coletar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(alvo),
+  }));
+}
+
+export async function buscarInvestigacao(filtro: {
+  consulta: string;
+  cnpj?: string;
+  numero_processo?: string;
+}): Promise<{ resultados: ResultadoInvestigativo[]; aviso: string }> {
+  const params = new URLSearchParams({ consulta: filtro.consulta });
+  if (filtro.cnpj) params.set("cnpj", filtro.cnpj);
+  if (filtro.numero_processo) params.set("numero_processo", filtro.numero_processo);
+  return comoJson(await buscar(`/api/investigacao/buscar?${params.toString()}`));
+}
+
+export interface AnaliseInvestigativa {
+  resumo: string;
+  insights: Array<{ achado: string; tipo: string; impacto: string; confianca: string; evidencias: string[]; como_verificar: string }>;
+  contradicoes: Array<{ ponto: string; evidencias: string[]; pergunta: string }>;
+  provas_a_buscar: string[];
+  perguntas_entrevista: string[];
+  alertas: string[];
+  fontes: Array<{ indice: string; titulo: string; url: string; similaridade: number }>;
+  aviso: string;
+}
+
+export async function analisarInvestigacao(alvo: {
+  relato: string; cnpj?: string; numero_processo?: string; tribunal: string;
+}): Promise<AnaliseInvestigativa> {
+  return comoJson(await buscar("/api/investigacao/analisar", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(alvo),
+  }));
 }
 
 export async function baixarTexto(caminho: string): Promise<string> {
@@ -328,7 +397,7 @@ export async function gerarRelatorio(
     }
     await new Promise((resolver) => window.setTimeout(resolver, 1000));
   }
-  throw new ApiError("A geração do relatório excedeu o tempo de espera.");
+  throw new ApiError("O relatório não respondeu em 90 segundos. Tente novamente; respostas e entrevista permanecem salvas.");
 }
 
 // --------------------------------------------- assinatura eletrônica do contrato
@@ -484,6 +553,24 @@ export async function analisarResposta(
   );
 }
 
+/** Recomenda se vale ABRIR o caso para análise; nunca estima chance de vitória. */
+export async function recomendarEntrevista(
+  relato: string,
+  lacunasObrigatorias: string[],
+): Promise<RecomendacaoEntrevista> {
+  return comoJson<RecomendacaoEntrevista>(
+    await buscar("/api/entrevista/recomendacao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        relato,
+        lacunas_obrigatorias: lacunasObrigatorias,
+        limite_precedentes: 12,
+      }),
+    }),
+  );
+}
+
 /** Recupera processos semelhantes e gera apoio estratégico fundamentado. */
 export async function analisarEstrategia(relato: string): Promise<Estrategia> {
   const criado = await comoJson<{ job_id: string }>(
@@ -605,4 +692,51 @@ export async function baixarArquivoEntrega(entregaId: string): Promise<Blob> {
   const r = await buscar(`/api/entregas/${entregaId}/arquivo`);
   if (!r.ok) throw new ApiError(r.status === 401 ? "Sessão expirada." : `Erro ${r.status}`);
   return r.blob();
+}
+
+// ------------------------------------------------------- usuários e perfis
+//
+// O cadastro vive no Keycloak, não numa tabela do Acervo (ver `app/usuarios.py`).
+// Daqui isso não aparece: a tela fala com a API, e a API fala com o Keycloak.
+
+export interface Perfil {
+  codigo: "advogado" | "cliente";
+  rotulo: string;
+  descricao: string;
+}
+
+export interface UsuarioCadastrado {
+  id: string;
+  usuario: string;
+  nome: string;
+  email: string | null;
+  ativo: boolean;
+  perfis: string[];
+}
+
+/** Os perfis que o cadastro oferece. Vêm do servidor para a tela não manter uma
+ *  segunda lista que envelhece sozinha quando um perfil for criado ou renomeado. */
+export async function listarPerfis(): Promise<Perfil[]> {
+  const r = await comoJson<{ perfis: Perfil[] }>(await buscar("/api/usuarios/perfis"));
+  return r.perfis;
+}
+
+export async function listarUsuarios(): Promise<UsuarioCadastrado[]> {
+  const r = await comoJson<{ itens: UsuarioCadastrado[] }>(await buscar("/api/usuarios"));
+  return r.itens;
+}
+
+export async function criarUsuario(dados: {
+  nome: string;
+  email: string;
+  perfil: string;
+  senha: string;
+}): Promise<UsuarioCadastrado> {
+  return comoJson<UsuarioCadastrado>(
+    await buscar("/api/usuarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
 }

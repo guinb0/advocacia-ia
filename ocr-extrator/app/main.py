@@ -32,6 +32,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (
     agente,
+    advbox,
     analise_resposta,
     armazenamento,
     assinatura,
@@ -40,11 +41,14 @@ from . import (
     categorias,
     chamada,
     consultas,
+    investigacao,
+    usuarios,
     contrato,
     escuta,
     pipeline,
     portal,
     rag,
+    recomendacao,
     relatorio,
     roteiros,
     triagem,
@@ -74,12 +78,14 @@ _ocr_aquecido = threading.Event()
 
 @asynccontextmanager
 async def ciclo_de_vida(_: FastAPI):
-    """Aquece o OCR em segundo plano durante a inicialização da API.
+    """Inicializa a API sem duplicar o Paddle que pertence ao worker Celery.
 
-    O servidor responde ao endpoint de saúde enquanto o inicializador aguarda o
-    sinal separado de que a primeira inferência terminou.
+    A tela envia arquivos a `/api/extrair/jobs`; quem os lê é o worker `ocr@`,
+    aquecido em `tasks/ocr.py`. Carregar outro modelo aqui gastava memória e CPU
+    sem reduzir a latência real. O opt-in preserva o endpoint síncrono legado.
     """
-    threading.Thread(target=_tentar_aquecer, name="aquecer-ocr", daemon=True).start()
+    if os.getenv("OCR_AQUECER_API", "0") == "1":
+        threading.Thread(target=_tentar_aquecer, name="aquecer-ocr", daemon=True).start()
     try:
         await run_in_threadpool(jobs.inicializar)
     except Exception:
@@ -108,27 +114,6 @@ ORIGENS = [
     if o.strip()
 ]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ORIGENS,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    # Sem declarar aqui, o navegador esconde estes dois do JavaScript mesmo com
-    # a resposta chegando inteira: é o nome do arquivo do contrato e o aviso de
-    # campo que a entrevista não respondeu.
-    expose_headers=[
-        "Content-Disposition",
-        "X-Campos-Faltando",
-        "X-Pendencias",
-        "X-Impedimentos",
-        # Quantos documentos entraram no ZIP e quantos não estavam mais no
-        # disco. Escondidos, o pacote incompleto desceria sem ninguém notar.
-        "X-Arquivos",
-        "X-Faltando",
-    ],
-)
-
 # Rotas que respondem sem token. Tudo que não estiver aqui exige autenticação —
 # a lista é de exceções justamente para que uma rota nova nasça protegida.
 # `/api/chamada/config` entra aqui porque quem mais precisa dela é o cliente, que
@@ -150,10 +135,32 @@ PUBLICAS = {
 # rota entra por aqui.
 PREFIXO_PORTAL = "/api/portal/"
 
+# O QUE ALGUÉM SEM O PAPEL `advogado` ALCANÇA — e por que a lista é esta.
+#
+# Até aqui `exigir_papel` não era usado em rota nenhuma: bastava estar
+# autenticado para chegar em tudo, o que funcionava porque só advogado tinha
+# conta. Com o cadastro de usuários (`app/usuarios.py`) passou a existir o perfil
+# `cliente`, e sem esta barreira uma conta dessas leria o acervo INTEIRO — todos
+# os casos, documentos e entrevistas do escritório.
+#
+# A lista é fechada e curta de propósito: nega por padrão. Rota nova nasce
+# fechada para quem não é advogado, que é o lado seguro de errar — o contrário
+# vazaria acervo sem ninguém notar.
+#
+# Isto não fecha porta do cliente: ele nunca entrou por aqui. O caminho dele é o
+# `/api/portal/...`, protegido pela senha do caso (ver o comentário acima).
+LIVRES_SEM_ADVOGADO = {
+    "/api/eu",                # saber quem se é
+    "/api/usuarios/perfis",   # vocabulário dos perfis, não dado de ninguém
+}
+
 # Módulo do agente jurídico. Fica num APIRouter próprio porque é ponte para outro
 # serviço: se a ligação for desligada, some um bloco inteiro de rotas em vez de
 # restarem funções mortas espalhadas por este arquivo.
 app.include_router(agente.roteador)
+app.include_router(advbox.roteador)
+app.include_router(investigacao.roteador)
+app.include_router(usuarios.roteador)
 
 
 @app.middleware("http")
@@ -171,10 +178,40 @@ async def exigir_autenticacao(request: Request, call_next):
             request.state.usuario = auth.usuario_atual(request)
         except HTTPException as exc:
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+        # Autenticado não basta: sem `advogado`, só o que estiver na lista.
+        if (
+            not request.state.usuario.tem_papel("advogado")
+            and caminho not in LIVRES_SEM_ADVOGADO
+        ):
+            return JSONResponse(
+                {"detail": "Esta área é restrita ao perfil Advogado."},
+                status_code=403,
+            )
     else:
         request.state.usuario = auth.USUARIO_ABERTO
 
     return await call_next(request)
+
+
+# Registrado depois da autenticação para ficar na camada externa do Starlette.
+# Assim até um 401 recebe CORS; antes o navegador escondia a resposta e exibia
+# apenas o enganoso "Failed to fetch".
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ORIGENS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-Campos-Faltando",
+        "X-Pendencias",
+        "X-Impedimentos",
+        "X-Arquivos",
+        "X-Faltando",
+    ],
+)
 
 
 armazenamento.inicializar()
@@ -412,6 +449,14 @@ class PedidoAnaliseResposta(BaseModel):
     contexto: str = Field(default="", max_length=4_000)
 
 
+class PedidoRecomendacao(BaseModel):
+    """Estado consolidado da entrevista, nunca fragmento provisório do Whisper."""
+
+    relato: str = Field(min_length=40, max_length=40_000)
+    lacunas_obrigatorias: list[str] = Field(default_factory=list, max_length=120)
+    limite_precedentes: int = Field(default=12, ge=4, le=30)
+
+
 @app.post("/api/entrevista/analise")
 async def analisar_resposta(pedido: PedidoAnaliseResposta):
     """O que esta resposta ainda não trouxe — em três itens, durante a entrevista.
@@ -437,6 +482,33 @@ async def analisar_resposta(pedido: PedidoAnaliseResposta):
         )
     except analise_resposta.ErroAnalise as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/entrevista/recomendacao")
+async def recomendar_entrevista(pedido: PedidoRecomendacao):
+    """Diz se vale abrir o caso, apoiado na amostra semelhante do pgvector.
+
+    É uma decisão de triagem reversível, não previsão de êxito. A rota recebe
+    somente respostas já consolidadas e roda fora do event loop para não
+    interromper a transcrição ao vivo enquanto consulta banco e embeddings.
+    """
+    lacunas = [str(item).strip()[:500] for item in pedido.lacunas_obrigatorias if str(item).strip()]
+    try:
+        return await run_in_threadpool(
+            recomendacao.recomendar,
+            pedido.relato,
+            lacunas_obrigatorias=lacunas,
+            limite=pedido.limite_precedentes,
+            connect_timeout=6,
+            detalhar=True,
+        )
+    except recomendacao.ErroRecomendacao as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        log.exception("Recomendação da entrevista indisponível")
+        raise HTTPException(
+            503, "A recomendação por processos semelhantes está temporariamente indisponível."
+        ) from exc
 
 
 # ------------------------------------------- contrato → assinatura eletrônica

@@ -60,9 +60,17 @@ interface Props {
   onAbrir: (casoId: string) => void;
   onNovoCaso: () => void;
   onAnalisarAvulso: () => void;
+  onInvestigar: () => void;
+  onUsuarios: () => void;
 }
 
-export default function Carteira({ onAbrir, onNovoCaso, onAnalisarAvulso }: Props) {
+export default function Carteira({
+  onAbrir,
+  onNovoCaso,
+  onAnalisarAvulso,
+  onInvestigar,
+  onUsuarios,
+}: Props) {
   const { linhas, triagem, chegandoAgora, pedidos, carregando, erro } = useCarteira();
   const estadoModelo = useModelo();
   const sessao = useSessao();
@@ -158,6 +166,16 @@ export default function Carteira({ onAbrir, onNovoCaso, onAnalisarAvulso }: Prop
             <button type="button" className={estilos.navItem} onClick={onAnalisarAvulso}>
               Ler um documento
             </button>
+            <button type="button" className={estilos.navItem} onClick={onInvestigar}>
+              Investigar
+            </button>
+            {/* Só para advogado: o backend recusa o cadastro a quem não tem o
+              * papel, e um item de menu que só dá 403 é pior que item nenhum. */}
+            {sessao.papeis.includes("advogado") && (
+              <button type="button" className={estilos.navItem} onClick={onUsuarios}>
+                Usuários
+              </button>
+            )}
           </nav>
         </div>
 

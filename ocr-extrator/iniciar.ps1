@@ -52,8 +52,10 @@ $UrlJitsi = "http://localhost:8081"
 # deixa-la vazia e o que desliga a autenticacao.
 if ($SemAuth) {
     $env:KEYCLOAK_URL = ""
+    $env:AUTH_DESATIVADA = "1"
     Write-Host "AUTENTICACAO DESLIGADA -- a API responde sem token." -ForegroundColor Yellow
 } else {
+    $env:AUTH_DESATIVADA = "0"
     Write-Host "Subindo o Keycloak..." -ForegroundColor Yellow
     docker compose up -d keycloak | Out-Null
 
@@ -74,6 +76,10 @@ if ($SemAuth) {
     $env:KEYCLOAK_URL       = $UrlKeycloak
     $env:KEYCLOAK_REALM     = "advocacia"
     $env:KEYCLOAK_CLIENT_ID = "acervo-frontend"
+    # Credencial de servico do realm: e com ela que o cadastro de usuarios
+    # (app/usuarios.py) cria conta no Keycloak. Mesma do console.
+    $env:KEYCLOAK_ADMIN_USER     = "admin"
+    $env:KEYCLOAK_ADMIN_PASSWORD = "admin"
     Write-Host "Keycloak pronto (realm advocacia)." -ForegroundColor Green
 }
 
@@ -156,13 +162,10 @@ Write-Host "Ctrl+C encerra o backend e o frontend (o Keycloak segue no container
 # conexoes de um cliente HTTP moderno, que reusaria um socket ja fechado do lado
 # do servidor e quebraria a requisicao com "socket hang up" (ECONNRESET).
 # Transcricao e OCR ficam em processos separados por usarem runtimes numericos
-# pesados e potencialmente incompativeis. O aquecimento sequencial evita que a
-# inicializacao dos dois concorra pelos mesmos recursos.
+# pesados e potencialmente incompativeis. O Paddle é aquecido pelo worker `ocr@`,
+# que é quem recebe `/api/extrair/jobs`; a API não carrega uma segunda cópia.
 $env:NEXT_PUBLIC_TRANSCRICAO_API = "http://127.0.0.1:$PortaTranscricao"
 $transcricao = $null
-
-# Mantem um limite unico para as bibliotecas numericas usadas pelo PaddleOCR.
-if (-not $env:OCR_CPU_THREADS) { $env:OCR_CPU_THREADS = "8" }
 
 $backend = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
@@ -184,15 +187,15 @@ $beat = Start-Process -PassThru -NoNewWindow `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "beat"
 
 try {
-    Write-Host "Aquecendo PaddleOCR..." -ForegroundColor Yellow
-    $ocrPronto = Wait-ModeloAquecido `
-        -Url "http://127.0.0.1:$PortaBackend/api/saude" `
-        -Processo $backend `
-        -TimeoutSegundos 90
-    if (-not $ocrPronto) {
-        throw "PaddleOCR nao terminou o aquecimento em 90 segundos."
+    # Espera apenas a API responder. O worker OCR aquece seu próprio modelo e
+    # só então passa a consumir a fila; um upload antecipado fica enfileirado.
+    for ($i = 0; $i -lt 90; $i++) {
+        if ($backend.HasExited) { throw "O backend encerrou durante a inicializacao." }
+        try {
+            Invoke-WebRequest "http://127.0.0.1:$PortaBackend/api/saude" -UseBasicParsing -TimeoutSec 2 | Out-Null
+            break
+        } catch { Start-Sleep -Milliseconds 500 }
     }
-    Write-Host "PaddleOCR pronto." -ForegroundColor Green
 
     Write-Host "Aquecendo Whisper..." -ForegroundColor Yellow
     $transcricao = Start-Process -PassThru -NoNewWindow `

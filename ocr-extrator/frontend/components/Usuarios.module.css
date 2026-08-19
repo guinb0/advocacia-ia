@@ -1,0 +1,170 @@
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+.cabecalho {
+  margin: 20px 0 24px;
+}
+
+.cabecalho h1 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+}
+
+.cabecalho p {
+  margin: 0;
+  color: var(--texto-suave, #667);
+  max-width: 62ch;
+  line-height: 1.5;
+}
+
+/* Formulário e lista lado a lado: a pergunta que antecede "cadastrar" quase
+ * sempre é "ele já não está aí?". Numa tela estreita a lista desce, e aí a
+ * ordem importa — o formulário vem primeiro porque é o que se veio fazer. */
+.colunas {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) 1fr;
+  gap: 28px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.formulario,
+.lista {
+  border: 1px solid var(--borda, #e2e5ee);
+  border-radius: 10px;
+  padding: 18px;
+  background: var(--fundo-cartao, #fff);
+}
+
+.formulario h2,
+.lista h2 {
+  margin: 0 0 16px;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--texto-suave, #667);
+}
+
+.lista h2 span {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.campo {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.campo > span {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.campo input,
+.campo select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--borda, #cbd2e0);
+  border-radius: 7px;
+  font: inherit;
+  background: var(--fundo, #fff);
+}
+
+.campo input:focus,
+.campo select:focus {
+  outline: 2px solid var(--foco, #2f6fd0);
+  outline-offset: 1px;
+}
+
+.campo small {
+  display: block;
+  margin-top: 5px;
+  color: var(--texto-suave, #778);
+  line-height: 1.4;
+}
+
+.feito {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--sucesso-fundo, #e8f6ec);
+  color: var(--sucesso-texto, #1d6b33);
+}
+
+.lista ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lista li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--borda-suave, #eef0f5);
+}
+
+.lista li:last-child {
+  border-bottom: 0;
+}
+
+.pessoa {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.login {
+  color: var(--texto-suave, #778);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.marcadores {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.perfil,
+.semPerfil,
+.inativo {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.perfil {
+  background: var(--selo-fundo, #eaf0fb);
+  color: var(--selo-texto, #2b5aa8);
+}
+
+/* Conta sem perfil entra e não alcança nada. Marcar em vermelho porque ela
+ * parece pronta na lista e não é. */
+.semPerfil {
+  background: #fdeaea;
+  color: #a12b2b;
+}
+
+.inativo {
+  background: #f1f2f5;
+  color: #667;
+}
+
+.vazio {
+  margin: 0;
+  color: var(--texto-suave, #778);
+}

@@ -6,9 +6,11 @@ import { Aviso, Selo } from "@/components/Basicos";
 import Carteira from "@/components/Carteira";
 import Checklist from "@/components/Checklist";
 import Dossie from "@/components/Dossie";
+import Investigacao from "@/components/Investigacao";
 import ListaCasos from "@/components/ListaCasos";
 import PainelEnvio from "@/components/PainelEnvio";
 import ProgressoOcr from "@/components/ProgressoOcr";
+import Usuarios from "@/components/Usuarios";
 import Resultado from "@/components/Resultado";
 import ui from "@/components/ui.module.css";
 import { useCasos, useCategorias, useSituacao } from "@/lib/useCasos";
@@ -16,7 +18,14 @@ import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import estilos from "./page.module.css";
 
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
-type Tela = "carteira" | "caso" | "dossie" | "casos" | "avulso";
+type Tela =
+  | "carteira"
+  | "caso"
+  | "dossie"
+  | "casos"
+  | "avulso"
+  | "investigacao"
+  | "usuarios";
 
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
  * que responde "onde eu estou" sem depender de memória. */
@@ -58,6 +67,8 @@ export default function Home() {
         onAbrir={abrirCaso}
         onNovoCaso={() => setTela("casos")}
         onAnalisarAvulso={() => setTela("avulso")}
+        onInvestigar={() => setTela("investigacao")}
+        onUsuarios={() => setTela("usuarios")}
       />
     );
   }
@@ -69,6 +80,14 @@ export default function Home() {
       return null;
     }
     return <Dossie casoId={casoAberto} onVoltar={voltarParaCarteira} />;
+  }
+
+  if (tela === "investigacao") {
+    return <Investigacao onVoltar={voltarParaCarteira} />;
+  }
+
+  if (tela === "usuarios") {
+    return <Usuarios onVoltar={voltarParaCarteira} />;
   }
 
   if (tela === "caso") {
