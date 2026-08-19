@@ -253,7 +253,7 @@ def testar_estados() -> int:
 
 def testar_envio() -> int:
     falhas = 0
-    os.environ["ZAPSIGN_API_TOKEN"] = "token-de-teste"
+    os.environ["ZAPSIGN_TEST_API_TOKEN"] = "token-de-teste"
     os.environ["ZAPSIGN_SIGNATARIO_NOME"] = "Bezerra Advogados"
     os.environ["ZAPSIGN_SIGNATARIO_EMAIL"] = "contato@escritorio.com"
 
@@ -354,7 +354,7 @@ def testar_envio() -> int:
 
 def testar_download() -> int:
     falhas = 0
-    os.environ["ZAPSIGN_API_TOKEN"] = "token-de-teste"
+    os.environ["ZAPSIGN_TEST_API_TOKEN"] = "token-de-teste"
 
     # --- ainda falta alguém: o erro precisa dizer QUEM ---------------------
     enviado["detalhe"] = DETALHE_PARCIAL
@@ -406,17 +406,17 @@ def testar_erros() -> int:
     falhas = 0
 
     # Sem chave, o módulo diz o que fazer em vez de estourar um KeyError.
-    os.environ["ZAPSIGN_API_TOKEN"] = ""
+    os.environ["ZAPSIGN_TEST_API_TOKEN"] = ""
     falhas += not checar(not assinatura.ativa(), "sem token, a assinatura está desligada")
     try:
         asyncio.run(assinatura.consultar("qualquer"))
         falhas += not checar(False, "sem token, a chamada falha explicando")
     except assinatura.ErroAssinatura as exc:
         falhas += not checar(
-            "ZAPSIGN_API_TOKEN" in str(exc), f"o erro diz qual variável falta ({exc})"
+            "ZAPSIGN_TEST_API_TOKEN" in str(exc), f"o erro diz qual variável falta ({exc})"
         )
 
-    os.environ["ZAPSIGN_API_TOKEN"] = "token-de-teste"
+    os.environ["ZAPSIGN_TEST_API_TOKEN"] = "token-de-teste"
 
     # A mensagem específica da ZapSign vale mais na tela que "Erro 400".
     def recusando(_: httpx.Request) -> httpx.Response:
@@ -447,7 +447,7 @@ def testar_erros() -> int:
         falhas += not checar(False, "401 vira ErroAssinatura")
     except assinatura.ErroAssinatura as exc:
         falhas += not checar(
-            "ZAPSIGN_API_TOKEN" in str(exc), "401 manda conferir a chave no .env"
+            "ZAPSIGN_TEST_API_TOKEN" in str(exc), "401 manda conferir a chave no .env"
         )
 
     # Documento sem signatário ficaria parado para sempre, sem ninguém a avisar.
@@ -553,6 +553,7 @@ def main_teste() -> int:
         chave: os.environ.get(chave)
         for chave in (
             "ZAPSIGN_API_TOKEN",
+            "ZAPSIGN_TEST_API_TOKEN",
             "ZAPSIGN_AUTH_MODE",
             "ZAPSIGN_SIGNATARIO_NOME",
             "ZAPSIGN_SIGNATARIO_EMAIL",

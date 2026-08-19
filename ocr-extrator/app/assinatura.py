@@ -68,7 +68,18 @@ def _env(nome: str, padrao: str = "") -> str:
 
 
 def token() -> str:
+    # O token da producao nunca pode ser enviado ao host de testes. Alem de
+    # tornar o ambiente explicito, isso faz uma configuracao incompleta desligar
+    # o envio em vez de criar documentos juridicamente validos por engano.
+    if "sandbox.api.zapsign.com.br" in base_url().lower():
+        return _env("ZAPSIGN_TEST_API_TOKEN")
     return _env("ZAPSIGN_API_TOKEN")
+
+
+def nome_variavel_token() -> str:
+    if "sandbox.api.zapsign.com.br" in base_url().lower():
+        return "ZAPSIGN_TEST_API_TOKEN"
+    return "ZAPSIGN_API_TOKEN"
 
 
 def base_url() -> str:
@@ -414,7 +425,7 @@ def _cabecalhos() -> dict[str, str]:
     chave = token()
     if not chave:
         raise ErroAssinatura(
-            "Assinatura eletrônica desligada: falta ZAPSIGN_API_TOKEN no .env. "
+            f"Assinatura eletrônica desligada: falta {nome_variavel_token()} no .env. "
             "O contrato continua podendo ser baixado e assinado à mão."
         )
     return {"Authorization": f"Bearer {chave}", "Content-Type": "application/json"}
@@ -475,7 +486,9 @@ async def _pedir(
         raise ErroAssinatura("A ZapSign não respondeu. Tente de novo em instantes.") from exc
 
     if resposta.status_code == 401 or resposta.status_code == 403:
-        raise ErroAssinatura("A ZapSign recusou o token. Confira ZAPSIGN_API_TOKEN no .env.")
+        raise ErroAssinatura(
+            f"A ZapSign recusou o token. Confira {nome_variavel_token()} no .env."
+        )
     if resposta.status_code == 404:
         raise ErroAssinatura("Documento não encontrado na ZapSign — pode ter sido excluído lá.")
     if resposta.status_code >= 400:

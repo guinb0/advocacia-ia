@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import time
 from dataclasses import dataclass
 from collections import Counter
 from statistics import median
@@ -35,6 +37,50 @@ carregar_env()
 
 class ErroRAG(RuntimeError):
     pass
+
+
+def _consultar_pgvector(
+    sql: str,
+    parametros: tuple[Any, ...],
+    *,
+    connect_timeout: int,
+    tentativas_maximas: int | None = None,
+) -> list[dict[str, Any]]:
+    """Executa uma consulta curta, recriando a sessao se a VPN oscilar.
+
+    O pgvector fica atras da VPN 10.200/16. Uma sessao TCP pode morrer mesmo
+    quando a rota e a porta ja voltaram; por isso nunca reaproveitamos uma
+    conexao quebrada e repetimos apenas esta operacao de leitura, que e segura.
+    """
+    tentativas = max(
+        1,
+        tentativas_maximas
+        if tentativas_maximas is not None
+        else int(os.getenv("PGVECTOR_CONNECT_RETRIES", "4")),
+    )
+    atraso_base = max(0.05, float(os.getenv("PGVECTOR_RETRY_DELAY", "0.35")))
+    ultimo_erro: Exception | None = None
+    for tentativa in range(1, tentativas + 1):
+        try:
+            with psycopg.connect(
+                _obrigatoria("DATABASE_URL"),
+                connect_timeout=connect_timeout,
+                row_factory=dict_row,
+                keepalives=1,
+                keepalives_idle=15,
+                keepalives_interval=5,
+                keepalives_count=3,
+                tcp_user_timeout=30_000,
+            ) as conexao:
+                return list(conexao.execute(sql, parametros).fetchall())
+        except psycopg.OperationalError as exc:
+            ultimo_erro = exc
+            if tentativa == tentativas:
+                break
+            time.sleep(atraso_base * (2 ** (tentativa - 1)) + random.uniform(0, 0.15))
+    raise ErroRAG(
+        f"pgvector indisponivel depois de {tentativas} tentativas"
+    ) from ultimo_erro
 
 
 def _obrigatoria(nome: str) -> str:
@@ -102,7 +148,8 @@ class TrechoSimilar:
 
 
 def buscar_similares(
-    consulta: str, *, limite: int = 8, timeout: float = 120, connect_timeout: int = 10
+    consulta: str, *, limite: int = 8, timeout: float = 120,
+    connect_timeout: int = 10, connect_retries: int | None = None,
 ) -> list[TrechoSimilar]:
     """`timeout`/`connect_timeout` curtos para quem chama durante a entrevista.
 
@@ -124,10 +171,10 @@ def buscar_similares(
          ORDER BY k.embedding <=> %s::vector
          LIMIT %s
     """
-    with psycopg.connect(
-        _obrigatoria("DATABASE_URL"), connect_timeout=connect_timeout, row_factory=dict_row
-    ) as conexao:
-        linhas = conexao.execute(sql, (embedding, embedding, limite * 24)).fetchall()
+    linhas = _consultar_pgvector(
+        sql, (embedding, embedding, limite * 24), connect_timeout=connect_timeout,
+        tentativas_maximas=connect_retries,
+    )
     candidatos = [
         TrechoSimilar(
             texto=linha["texto"],
@@ -288,10 +335,24 @@ def _normalizar_resultado(resultado: dict[str, Any], validos: set[str]) -> dict[
     return resultado
 
 
-def sugerir_acoes(relato: str, *, limite: int = 8) -> dict[str, Any]:
+def sugerir_acoes(
+    relato: str,
+    *,
+    limite: int = 8,
+    embedding_timeout: float = 120,
+    connect_timeout: int = 10,
+    connect_retries: int | None = None,
+    model_timeout: float = 120,
+) -> dict[str, Any]:
     # Uma amostra maior sustenta os padrões descritivos. Apenas os precedentes
     # mais próximos entram no contexto do modelo para limitar custo e ruído.
-    similares = buscar_similares(relato, limite=max(limite, 30))
+    similares = buscar_similares(
+        relato,
+        limite=max(limite, 30),
+        timeout=embedding_timeout,
+        connect_timeout=connect_timeout,
+        connect_retries=connect_retries,
+    )
     if not similares:
         raise ErroRAG("nenhum precedente vetorizado foi localizado")
     contexto_modelo = similares[:limite]
@@ -319,7 +380,7 @@ def sugerir_acoes(relato: str, *, limite: int = 8) -> dict[str, Any]:
                 },
             ],
         },
-        timeout=120,
+        timeout=model_timeout,
     )
     resposta.raise_for_status()
     resultado = json.loads(resposta.json()["choices"][0]["message"]["content"])

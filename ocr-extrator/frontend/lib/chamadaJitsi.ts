@@ -206,6 +206,13 @@ export class ChamadaJitsi {
   /** Abre o microfone (e a câmera, se pedida) e entra na sala. */
   async entrar(sala: string, opcoes: OpcoesEntrada = {}): Promise<void> {
     if (this.sala) return;
+    // Tokens do portal usam base64url e podem conter maiúsculas. O Prosody/Jitsi
+    // transforma o nome da MUC em minúsculas e rejeita a conferência quando o
+    // cliente envia o original misturado ("Invalid conference name"). As duas
+    // pontas passam por esta classe, portanto convergem para a mesma sala. O
+    // WebSocket de sinalização continua usando o token original, separadamente.
+    const salaJitsi = sala.trim().toLowerCase();
+    if (!salaJitsi) throw new Error("Identificador da sala vazio.");
     this.desligando = false;
     this.meuNome = (opcoes.nome ?? "").trim();
     this.mudarEstado("conectando");
@@ -235,7 +242,7 @@ export class ChamadaJitsi {
       }
     }
 
-    await this.conectar(api, sala);
+    await this.conectar(api, salaJitsi);
   }
 
   private async abrirCamera(api: ApiJitsi): Promise<void> {
