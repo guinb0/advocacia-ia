@@ -19,18 +19,38 @@ O Acervo **empurra** o que apurou e **lê** o que o agente concluiu
 
 ## Subir tudo
 
-```powershell
-cd ocr-extrator
-.\iniciar.ps1 -Prod      # sem -Prod roda o Next em modo dev
+Antes da primeira subida, coloque os dois arquivos recebidos pelo canal seguro
+(nunca Git, chat ou ticket público):
+
+```text
+ocr-extrator/.env
+ia-juridica/.env
 ```
 
-Ele levanta, nesta ordem: Keycloak, Redis + observabilidade, transcrição (:8200),
-API (:8100), workers Celery e o frontend (:3000). `Ctrl+C` derruba o que ele
-subiu; os contêineres seguem.
+Se as duas aplicações usam as mesmas credenciais de SQL/IA desta instalação, o
+segundo arquivo pode ser derivado sem copiar segredo à mão:
 
-O **agente** é um projeto à parte e sobe sozinho — ver o `EXECUTAR-LOCAL.md`
-dele. Sem o agente no ar, o Acervo continua funcionando: entrevista, OCR,
-contrato e assinatura não dependem dele.
+```powershell
+.\scripts\gerar_env_agente.ps1 -Force
+```
+
+O gerador não imprime valores e grava num caminho coberto pelo `.gitignore`.
+
+Depois:
+
+```powershell
+cd ocr-extrator
+.\iniciar.ps1 -Prod
+```
+
+Ele carrega `ocr-extrator/.env` sozinho e levanta: Keycloak, Redis,
+observabilidade, agente jurídico (:8011 + worker Dramatiq), transcrição (:8200),
+API (:8100), workers Celery e frontend (:3000). Se o agente já estiver em :8011,
+reutiliza o processo; `-SemAgente` não o sobe. Sem agente, o restante continua.
+
+O agente lê **somente** `ia-juridica/.env`. Em especial, não herda a
+`DATABASE_URL` do Acervo, que aponta para o corpus pgvector e seria o banco
+errado para o Case State.
 
 ## Dependências externas
 
@@ -60,10 +80,18 @@ advogado nem secretário — rota nova nasce fechada.
 ## Armadilhas conhecidas
 
 **Build velho servindo tela antiga.** `-Prod` serve o build de `.next`. O script
-já recompila quando o fonte é mais novo **e** quando o build não tem a URL do
-Keycloak — este segundo caso é o que acontece se alguém rodar `npm run build` à
-mão, sem as `NEXT_PUBLIC_*`: o front nasce achando que não há autenticação, não
-manda token, e a tela entra em laço de "sua sessão expirou".
+já recompila quando o fonte é mais novo e grava a assinatura de todas as
+`NEXT_PUBLIC_*`. Mudou URL, porta ou modo `-SemAuth`, recompila. Isso cobre o
+caso de `npm run build` manual sem variáveis e o laço de "sessão expirou".
+
+**Segredo em script.** Não coloque senha em `iniciar.ps1`, `iniciar-local.ps1`,
+README ou compose. Os scripts agora recusam iniciar sem `.env`; `.gitignore`
+cobre os dois arquivos reais e só os `.env.example` entram no repositório.
+
+**Variável global com nome genérico.** Já houve `DEBUG=release` herdado do
+Windows; o agente espera booleano e não subia. O orquestrador agora limpa do
+filho as chaves declaradas em `ia-juridica/.env`, e o script local faz o arquivo
+do projeto vencer o ambiente herdado.
 
 **Derrubar o frontend derruba o resto.** O `iniciar.ps1` roda o Next em primeiro
 plano e mata os filhos ao sair. Matar o processo da :3000 encerra API, transcrição

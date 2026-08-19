@@ -11,10 +11,36 @@
 # O login usa um Keycloak em container (docker compose up -d keycloak). Sem ele
 # no ar, `-SemAuth` deixa a API aberta como era antes -- util para depurar o OCR
 # sem depender do Docker.
-param([switch]$Prod, [int]$Porta = 3000, [switch]$SemAuth)
+param([switch]$Prod, [int]$Porta = 3000, [switch]$SemAuth, [switch]$SemAgente)
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+# A máquina da infra não deve depender de variáveis deixadas por outro shell.
+# Variável já definida pelo ambiente vence o arquivo (útil em CI/produção).
+function Importar-Env([string]$Caminho) {
+    if (-not (Test-Path $Caminho)) {
+        throw "Arquivo de ambiente ausente: $Caminho. Copie .env.example para .env e preencha os segredos."
+    }
+    foreach ($linha in Get-Content $Caminho -Encoding UTF8) {
+        $texto = $linha.Trim()
+        if (-not $texto -or $texto.StartsWith("#") -or -not $texto.Contains("=")) { continue }
+        $nome, $valor = $texto.Split("=", 2)
+        $nome = $nome.Trim(); $valor = $valor.Trim().Trim('"').Trim("'")
+        if (-not [Environment]::GetEnvironmentVariable($nome, "Process")) {
+            [Environment]::SetEnvironmentVariable($nome, $valor, "Process")
+        }
+    }
+}
+
+Importar-Env ".\.env"
+
+function Testar-Http([string]$Url, [int]$Timeout = 3) {
+    try {
+        $r = Invoke-WebRequest $Url -UseBasicParsing -TimeoutSec $Timeout
+        return $r.StatusCode -eq 200
+    } catch { return $false }
+}
 
 function Wait-ModeloAquecido {
     param(
@@ -76,10 +102,9 @@ if ($SemAuth) {
     $env:KEYCLOAK_URL       = $UrlKeycloak
     $env:KEYCLOAK_REALM     = "advocacia"
     $env:KEYCLOAK_CLIENT_ID = "acervo-frontend"
-    # Credencial de servico do realm: e com ela que o cadastro de usuarios
-    # (app/usuarios.py) cria conta no Keycloak. Mesma do console.
-    $env:KEYCLOAK_ADMIN_USER     = "admin"
-    $env:KEYCLOAK_ADMIN_PASSWORD = "admin"
+    if (-not $env:KEYCLOAK_ADMIN_USER -or -not $env:KEYCLOAK_ADMIN_PASSWORD) {
+        Write-Host "AVISO: cadastro de usuarios desligado; faltam KEYCLOAK_ADMIN_* na .env." -ForegroundColor Yellow
+    }
     Write-Host "Keycloak pronto (realm advocacia)." -ForegroundColor Green
 }
 
@@ -98,6 +123,8 @@ if (-not $env:JOBS_DATABASE_URL) {
 $env:NEXT_PUBLIC_KEYCLOAK_URL       = $env:KEYCLOAK_URL
 $env:NEXT_PUBLIC_KEYCLOAK_REALM     = "advocacia"
 $env:NEXT_PUBLIC_KEYCLOAK_CLIENT_ID = "acervo-frontend"
+$env:NEXT_PUBLIC_OCR_API             = "http://127.0.0.1:$PortaBackend"
+$env:NEXT_PUBLIC_TRANSCRICAO_API     = "http://127.0.0.1:$PortaTranscricao"
 $env:ORIGENS_PERMITIDAS             = "http://localhost:$Porta,http://127.0.0.1:$Porta"
 $env:URL_PORTAL                     = "http://localhost:$Porta"
 $env:NEXT_PUBLIC_JITSI_URL          = $UrlJitsi
@@ -170,23 +197,83 @@ if ($Prod) {
             $precisa = $true
         }
     }
-    # Carimbo de data nao basta: o Next injeta as NEXT_PUBLIC_* no momento do
-    # BUILD, entao um `npm run build` rodado a mao, num shell sem elas, produz
-    # um bundle recente e ERRADO -- o front nasce achando que a autenticacao
-    # esta desligada, nao manda token, e o backend responde 401 em tudo. Na tela
-    # isso vira "sua sessao expirou" em laco, que nao lembra em nada a causa.
-    # Por isso conferimos o conteudo, e nao so a idade.
-    if (-not $precisa -and $env:NEXT_PUBLIC_KEYCLOAK_URL) {
-        $temUrl = Select-String -Path ".\frontend\.next\static\chunks\*.js" `
-            -SimpleMatch $env:NEXT_PUBLIC_KEYCLOAK_URL -List -ErrorAction SilentlyContinue
-        if (-not $temUrl) {
-            Write-Host "Build do frontend nao tem a URL do Keycloak; recompilando." -ForegroundColor Yellow
+    # O Next congela NEXT_PUBLIC_* no build. Um carimbo explícito detecta tanto
+    # URL ausente quanto build feito em -SemAuth e depois servido com auth (e o
+    # inverso), sem procurar strings minificadas nos chunks.
+    $publicEnv = [ordered]@{
+        NEXT_PUBLIC_OCR_API = $env:NEXT_PUBLIC_OCR_API
+        NEXT_PUBLIC_TRANSCRICAO_API = $env:NEXT_PUBLIC_TRANSCRICAO_API
+        NEXT_PUBLIC_KEYCLOAK_URL = $env:NEXT_PUBLIC_KEYCLOAK_URL
+        NEXT_PUBLIC_KEYCLOAK_REALM = $env:NEXT_PUBLIC_KEYCLOAK_REALM
+        NEXT_PUBLIC_KEYCLOAK_CLIENT_ID = $env:NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
+        NEXT_PUBLIC_JITSI_URL = $env:NEXT_PUBLIC_JITSI_URL
+    }
+    $assinaturaPublica = $publicEnv | ConvertTo-Json -Compress
+    $arquivoPublico = ".\frontend\.next\.public-env.json"
+    if (-not $precisa) {
+        $anterior = if (Test-Path $arquivoPublico) { (Get-Content -Raw $arquivoPublico).Trim() } else { "" }
+        if ($anterior -ne $assinaturaPublica) {
+            Write-Host "NEXT_PUBLIC_* mudou desde o ultimo build; recompilando." -ForegroundColor Yellow
             $precisa = $true
         }
     }
     if ($precisa) {
         Write-Host "Compilando o frontend..." -ForegroundColor Yellow
         Push-Location .\frontend; npm run build; Pop-Location
+        $assinaturaPublica | Set-Content -NoNewline -Encoding UTF8 $arquivoPublico
+    }
+}
+
+# ---------------------------------------------------------- agente juridico
+# A ponte continua de mão única; isto só orquestra os dois processos. O agente
+# lê a PRÓPRIA .env e nunca recebe DATABASE_URL do corpus do Acervo.
+$agenteApi = $null
+$agenteWorker = $null
+if (-not $SemAgente -and $env:AGENTE_API_URL) {
+    $urlAgente = $env:AGENTE_API_URL.TrimEnd("/")
+    if (Testar-Http "$urlAgente/health") {
+        Write-Host "Agente juridico ja estava no ar: $urlAgente" -ForegroundColor Green
+    } else {
+        $raizAgente = Resolve-Path (Join-Path $PSScriptRoot "..\..\ia-juridica") -ErrorAction SilentlyContinue
+        if (-not $raizAgente -or -not (Test-Path (Join-Path $raizAgente ".env"))) {
+            Write-Host "AVISO: agente fora do ar; falta ia-juridica/.env ou o repositorio vizinho." -ForegroundColor Yellow
+        } elseif (-not (Test-Path (Join-Path $raizAgente ".venv\Scripts\python.exe"))) {
+            Write-Host "AVISO: agente fora do ar; ambiente ia-juridica/.venv ausente." -ForegroundColor Yellow
+        } else {
+            $portaAgente = ([uri]$urlAgente).Port
+            $salvas = @{}
+            # Qualquer variável com o mesmo nome vence a .env no Pydantic. A
+            # máquina já teve DEBUG=release global, suficiente para impedir o
+            # boot. Limpa exatamente as chaves declaradas pelo agente, inicia
+            # os filhos e restaura o ambiente do Acervo em seguida.
+            $nomesAgente = Get-Content (Join-Path $raizAgente ".env") -Encoding UTF8 |
+                ForEach-Object { if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') { $Matches[1] } }
+            foreach ($nome in @($nomesAgente) + @("PYTHONPATH")) {
+                $salvas[$nome] = [Environment]::GetEnvironmentVariable($nome, "Process")
+                [Environment]::SetEnvironmentVariable($nome, $null, "Process")
+            }
+            $env:PYTHONPATH = "src"
+            try {
+                $pythonAgente = Join-Path $raizAgente ".venv\Scripts\python.exe"
+                $agenteApi = Start-Process -PassThru -NoNewWindow -WorkingDirectory $raizAgente `
+                    -FilePath $pythonAgente `
+                    -ArgumentList "-m", "uvicorn", "legal_agent.main:app", "--host", "127.0.0.1", "--port", "$portaAgente"
+                $agenteWorker = Start-Process -PassThru -NoNewWindow -WorkingDirectory $raizAgente `
+                    -FilePath $pythonAgente -ArgumentList "-m", "dramatiq", "legal_agent.workers", "--processes", "1", "--threads", "4"
+            } finally {
+                foreach ($nome in $salvas.Keys) {
+                    [Environment]::SetEnvironmentVariable($nome, $salvas[$nome], "Process")
+                }
+            }
+            for ($i = 0; $i -lt 30 -and -not (Testar-Http "$urlAgente/health"); $i++) {
+                Start-Sleep -Seconds 1
+            }
+            if (Testar-Http "$urlAgente/health") {
+                Write-Host "Agente juridico pronto: $urlAgente" -ForegroundColor Green
+            } else {
+                Write-Host "AVISO: agente nao respondeu; o Acervo seguira sem a ponte." -ForegroundColor Yellow
+            }
+        }
     }
 }
 
@@ -195,9 +282,7 @@ Write-Host "Frontend : http://localhost:$Porta" -ForegroundColor Cyan
 Write-Host "Transcricao : http://127.0.0.1:$PortaTranscricao  (Whisper, processo separado)" -ForegroundColor Cyan
 Write-Host "Flower    : http://localhost:5555" -ForegroundColor Cyan
 Write-Host "Grafana   : http://localhost:3001" -ForegroundColor Cyan
-if (-not $SemAuth) {
-    Write-Host "Keycloak : $UrlKeycloak  (admin/admin) -- login do app: guinb / 123" -ForegroundColor Cyan
-}
+if (-not $SemAuth) { Write-Host "Keycloak : $UrlKeycloak" -ForegroundColor Cyan }
 Write-Host "Ctrl+C encerra o backend e o frontend (o Keycloak segue no container).`n" -ForegroundColor DarkGray
 
 # --timeout-keep-alive 65: o padrao do uvicorn e 5s, curto demais para o pool de
@@ -206,7 +291,6 @@ Write-Host "Ctrl+C encerra o backend e o frontend (o Keycloak segue no container
 # Transcricao e OCR ficam em processos separados por usarem runtimes numericos
 # pesados e potencialmente incompativeis. O Paddle é aquecido pelo worker `ocr@`,
 # que é quem recebe `/api/extrair/jobs`; a API não carrega uma segunda cópia.
-$env:NEXT_PUBLIC_TRANSCRICAO_API = "http://127.0.0.1:$PortaTranscricao"
 $transcricao = $null
 
 $backend = Start-Process -PassThru -NoNewWindow `
@@ -261,7 +345,7 @@ try {
     if ($Prod) { npm run start -- -p $Porta } else { npm run dev -- -p $Porta }
 } finally {
     Pop-Location -ErrorAction SilentlyContinue
-    foreach ($p in @($backend, $transcricao, $workerOcr, $workerBackground, $beat)) {
+    foreach ($p in @($backend, $transcricao, $workerOcr, $workerBackground, $beat, $agenteApi, $agenteWorker)) {
         if ($p -and -not $p.HasExited) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         }
