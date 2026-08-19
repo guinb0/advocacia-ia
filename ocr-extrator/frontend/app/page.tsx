@@ -7,11 +7,8 @@ import Carteira from "@/components/Carteira";
 import Checklist from "@/components/Checklist";
 import Dados from "@/components/Dados";
 import Dossie from "@/components/Dossie";
-<<<<<<< Updated upstream
 import Investigacao from "@/components/Investigacao";
-=======
 import Jurimetria from "@/components/Jurimetria";
->>>>>>> Stashed changes
 import ListaCasos from "@/components/ListaCasos";
 import PainelCaso from "@/components/PainelCaso";
 import PainelEnvio from "@/components/PainelEnvio";
@@ -27,11 +24,12 @@ import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import estilos from "./page.module.css";
 
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
-<<<<<<< Updated upstream
 type Tela =
   | "carteira"
   | "caso"
   | "dossie"
+  | "painel"
+  | "jurimetria"
   | "casos"
   | "avulso"
   | "investigacao"
@@ -39,9 +37,6 @@ type Tela =
   | "entrevista"
   | "supervisao"
   | "dados";
-=======
-type Tela = "carteira" | "caso" | "dossie" | "painel" | "jurimetria" | "casos" | "avulso";
->>>>>>> Stashed changes
 
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
  * que responde "onde eu estou" sem depender de memória. */

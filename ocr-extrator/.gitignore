@@ -35,3 +35,8 @@ transcricao.*.log
 # Build do Next: gerado, nao versionado.
 .next/
 frontend/.next/
+
+# Estado local do agendador Celery Beat. Estes arquivos mudam enquanto o
+# processo roda e nunca devem fazer parte de commit ou merge.
+celerybeat-schedule
+celerybeat-schedule.*
