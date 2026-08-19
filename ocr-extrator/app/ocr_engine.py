@@ -27,15 +27,7 @@ def _inteiro_env(nome: str, padrao: int, minimo: int = 1) -> int:
         return padrao
 
 
-_CPU_THREADS = min(_inteiro_env("OCR_CPU_THREADS", 8), os.cpu_count() or 8)
-_DET_LADO_MAXIMO = _inteiro_env("OCR_DET_LADO_MAXIMO", 1280, minimo=320)
-
-# O serviço de transcrição vive em outro processo, então estas bibliotecas
-# numéricas podem compartilhar um único limite explícito dentro do OCR.
-os.environ["OCR_CPU_THREADS"] = str(_CPU_THREADS)
-os.environ["OMP_NUM_THREADS"] = str(_CPU_THREADS)
-os.environ["MKL_NUM_THREADS"] = str(_CPU_THREADS)
-os.environ["FLAGS_cpu_threads"] = str(_CPU_THREADS)
+_DET_LADO_MAXIMO = os.getenv("OCR_DET_LADO_MAXIMO", "").strip()
 
 # ------------------------------------------------------------------ dispositivo
 #
@@ -83,6 +75,14 @@ def _construir(lang: str, dispositivo: str):
     extra = {}
     if dispositivo == "gpu" and DETECTOR:
         extra["text_detection_model_name"] = DETECTOR
+    # Reduzir a imagem foi descartado nas medições dos documentos reais porque
+    # piorava a detecção e acionava até três rotações extras. Só habilita quando
+    # alguém define explicitamente a variável para um novo benchmark.
+    if _DET_LADO_MAXIMO:
+        extra["text_det_limit_type"] = "max"
+        extra["text_det_limit_side_len"] = _inteiro_env(
+            "OCR_DET_LADO_MAXIMO", 1280, minimo=320
+        )
 
     return PaddleOCR(
         lang=lang,
@@ -92,10 +92,6 @@ def _construir(lang: str, dispositivo: str):
         use_doc_orientation_classify=True,
         use_doc_unwarping=False,   # correção de páginas onduladas: pesada e rara aqui
         use_textline_orientation=True,
-        # Reduz o custo da detecção sem reduzir os recortes usados pelo
-        # reconhecedor. O valor é configurável para permitir validação por tipo.
-        text_det_limit_type="max",
-        text_det_limit_side_len=_DET_LADO_MAXIMO,
         device=dispositivo,
         **extra,
     )

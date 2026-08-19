@@ -1,7 +1,11 @@
 /* Condução da entrevista, pergunta a pergunta. */
 
+/* `container-type: inline-size` para o painel de escuta poder decidir pela
+ * largura QUE ELE TEM, e não pela largura da janela. Ver `.comPainel`. */
 .tela {
   max-width: 860px;
+  container-type: inline-size;
+  container-name: roteiro;
 }
 
 .cabecalho {
@@ -375,16 +379,34 @@
 
 /* Roteiro à esquerda, painel da escuta à direita. Só existe enquanto a escuta
  * corre — fora dela o roteiro ocupa a largura inteira, como sempre ocupou. */
+/* Duas colunas SÓ quando a coluna do roteiro comporta as duas.
+ *
+ * Isto era `@media (max-width: 1180px)`, e media query mede a JANELA — mas a
+ * largura que sobra aqui depende de a chamada estar aberta, porque ela leva
+ * 460px na coluna ao lado (ver EntrevistaComChamada.module.css). Numa janela de
+ * 1200px com a chamada aberta o roteiro fica com ~716px, e a media query, olhando
+ * só os 1200, mandava dividir assim mesmo: 340px de painel e ~356px para o
+ * formulário onde se digita durante a entrevista. O painel de 340px é fixo, então
+ * o que não cabia empurrava a página e nascia a rolagem horizontal — com a coluna
+ * da chamada cortada na borda.
+ *
+ * `@container` pergunta a largura real desta coluna, que é a informação certa: a
+ * janela pode ser larga e o espaço aqui não ser. 700px é o piso para caber 340 de
+ * painel + ~340 de formulário; abaixo disso o painel desce e ocupa a largura toda,
+ * que é melhor que os dois espremidos.
+ *
+ * Fora de um contêiner nomeado a regra simplesmente não se aplica, e o padrão
+ * (uma coluna) é o lado seguro: nunca estoura. */
 .comPainel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
 
-@media (max-width: 1180px) {
+@container roteiro (min-width: 700px) {
   .comPainel {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 340px;
   }
 }
 
@@ -443,6 +465,26 @@
   color: var(--muted);
   cursor: pointer;
 }
+
+.recomendacao { margin: 16px 0 20px; padding: 16px; border: 1px solid var(--border); border-left: 4px solid var(--ink); background: var(--surface-2); font: 400 13px/1.55 var(--font-ui); }
+.recomendacaoTopo { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); }
+.recomendacaoTopo strong { color: var(--ink); font-size: 14px; }
+.veredito { display: inline-block; margin-top: 12px; padding: 5px 9px; border-radius: 3px; font-weight: 700; letter-spacing: .03em; }
+.veredito_sim { background: var(--ok-claro); color: var(--ok); }
+.veredito_com_ressalva { background: var(--atencao-claro); color: var(--atencao); }
+.veredito_atencao { background: var(--critico-claro); color: var(--critico); }
+.veredito_indefinido { background: var(--surface); color: var(--muted); }
+.recomendacao summary { cursor: pointer; font-weight: 600; }
+.recomendacao a { color: inherit; text-decoration: underline; }
+.recomendacao small { display: block; margin-top: 10px; color: var(--muted); }
+.recomendacaoErro { color: var(--warn); }
+.comparativa { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.comparativa h4 { margin: 0 0 6px; font-size: 15px; }
+.comparativa details { margin-top: 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); }
+.comparativa details[open] summary { margin-bottom: 8px; }
+.comparativa ul, .comparativa ol { margin: 0; padding-left: 20px; }
+.comparativa li + li { margin-top: 8px; }
+.comparativa li small { margin-top: 2px; }
 
 /* O campo para onde o painel acabou de levar. É uma dica de "é aqui", não um
  * estado.

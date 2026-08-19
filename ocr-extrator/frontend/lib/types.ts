@@ -485,6 +485,31 @@ export interface AnaliseResposta {
   do_cache: boolean;
 }
 
+export interface RecomendacaoEntrevista {
+  recomendado: "sim" | "com_ressalva" | "atencao" | "indefinido";
+  motivo: string;
+  lacunas_obrigatorias: string[];
+  estatistica: {
+    processos_analisados?: number;
+    desfechos_merito?: { processos: number; favoraveis: number; percentual: number; criterio: string };
+    similaridade_amostra?: { maxima: number; mediana: number; minima: number };
+  };
+  precedentes: Array<{
+    processo: string | null; resultado: string | null; vara: string | null;
+    relator?: string | null; url: string | null; similaridade: number;
+  }>;
+  com_precedentes: boolean;
+  analise_comparativa: null | {
+    sintese: string;
+    pontos_comuns: Array<{ ponto: string; impacto: string; forca: string; precedentes: string[] }>;
+    diferencas_decisivas: Array<{ ponto: string; por_que_importa: string; precedentes_favoraveis: string[]; precedentes_contrarios: string[] }>;
+    provas_prioritarias: Array<{ prova: string; motivo: string; precedentes: string[] }>;
+    perguntas_criticas: string[];
+    referencias: Record<string, { processo: string | null; resultado: string | null; url: string | null }>;
+  };
+  aviso: string;
+}
+
 // ------------------------------------- escuta contínua durante a entrevista
 
 /** Um campo que a fala preencheu, com o pedaço da conversa que o sustenta. */

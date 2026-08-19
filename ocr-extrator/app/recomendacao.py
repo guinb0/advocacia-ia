@@ -23,8 +23,14 @@ não concluir.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import json
+import os
+import threading
 from typing import Any
+
+import httpx
 
 from . import rag
 
@@ -48,7 +54,50 @@ FAVORAVEL_DUVIDOSO = 30.0
 
 
 class ErroRecomendacao(RuntimeError):
-    pass
+    """Falta base NA ENTREVISTA para recomendar — o texto já diz o que falta."""
+
+
+class BaseIndisponivel(RuntimeError):
+    """O banco de precedentes não respondeu.
+
+    Separado de `ErroRecomendacao` porque o conserto é outro: aqui não falta dado
+    da entrevista, falta a VPN ou o servidor. A rota traduz cada um num status
+    diferente, e a tela passa a dizer o que fazer em vez de "indisponível".
+    """
+
+
+# CACHE DO RELATO
+#
+# A tela refaz a consulta a cada mudança do relato consolidado, e cada uma custa
+# ~30s: gera embedding e busca no pgvector atrás da VPN. Durante a entrevista o
+# mesmo texto reaparece várias vezes — o entrevistador corrige um campo, o relato
+# consolidado não muda, e a consulta ia de novo assim mesmo.
+#
+# A chave inclui as lacunas porque elas mudam o veredito: com obrigatória em
+# aberto, `sim` é rebaixado para `com_ressalva`.
+_trava = threading.Lock()
+_cache: dict[str, dict[str, Any]] = {}
+#: Teto pequeno: uma entrevista gera poucas variações do relato, e o processo
+#: fica dias no ar.
+LIMITE_CACHE = 200
+
+#: Separador da chave de cache. Não pode ser vazio: sem ele, relato "ab" com
+#: lacuna "c" daria a mesma chave que relato "a" com lacuna "bc", e uma
+#: entrevista herdaria o veredito de outra.
+SEP_CHAVE = "␟"
+
+
+def _chave_cache(relato: str, lacunas: list[str]) -> str:
+    # Separador explícito: sem ele, relato "ab" + lacuna "c" daria a mesma chave
+    # que relato "a" + lacuna "bc", e uma entrevista herdaria o veredito de outra.
+    partes = [relato.strip(), *sorted(lacunas)]
+    cru = SEP_CHAVE.join(partes)
+    return hashlib.sha256(cru.encode("utf-8")).hexdigest()
+
+
+def limpar_cache() -> None:
+    with _trava:
+        _cache.clear()
 
 
 def recomendar(
@@ -57,6 +106,7 @@ def recomendar(
     lacunas_obrigatorias: list[str] | None = None,
     limite: int = 12,
     connect_timeout: int = 10,
+    detalhar: bool = False,
 ) -> dict[str, Any]:
     """Lê o relato da entrevista e diz se vale abrir o caso.
 
@@ -69,9 +119,23 @@ def recomendar(
     if not relato.strip():
         raise ErroRecomendacao("Sem relato não há o que recomendar.")
 
-    similares = rag.buscar_similares(
-        relato, limite=limite, connect_timeout=connect_timeout
-    )
+    chave = _chave_cache(relato, lacunas)
+    with _trava:
+        em_cache = _cache.get(chave)
+    if em_cache is not None:
+        # ~30s economizados. Durante a entrevista o mesmo relato consolidado
+        # reaparece a cada correção de campo que não muda o texto.
+        return {**em_cache, "do_cache": True}
+
+    try:
+        similares = rag.buscar_similares(
+            relato, limite=limite, connect_timeout=connect_timeout
+        )
+    except rag.ErroRAG as exc:
+        # Distinto de `ErroRecomendacao`: aqui não falta dado da entrevista, o
+        # banco é que não respondeu. A rota devolve 503 com esta causa, em vez de
+        # um "indisponível" que não diz se é esperar ou checar a VPN.
+        raise BaseIndisponivel(str(exc)) from exc
     if not similares:
         # Sem banco não se cala: a entrevista continua, e a tela precisa saber
         # que o que falta é a base, não o caso.
@@ -127,18 +191,102 @@ def recomendar(
             f"{len(lacunas)} item(ns) obrigatório(s)."
         )
 
-    return {
+    detalhes = _analisar_pontos(relato, similares) if detalhar else None
+    resultado = {
         "recomendado": veredito,
         "motivo": motivo,
         "lacunas_obrigatorias": lacunas,
         "estatistica": estatistica,
         "precedentes": [t.referencia() for t in similares],
         "com_precedentes": True,
+        "analise_comparativa": detalhes,
         "aviso": (
             "Descritivo da amostra semelhante, não previsão de êxito. A recomendação "
             "é sobre ABRIR o caso para análise; o mérito é decisão do advogado."
         ),
     }
+
+    # Só o resultado BOM entra no cache. `indefinido` por falta de amostra pode
+    # virar recomendação de verdade quando o relato crescer — guardá-lo
+    # congelaria o veredito pelo resto da entrevista.
+    with _trava:
+        if len(_cache) >= LIMITE_CACHE:
+            _cache.clear()
+        _cache[chave] = resultado
+    return {**resultado, "do_cache": False}
+
+
+def _analisar_pontos(relato: str, similares: list[Any]) -> dict[str, Any] | None:
+    """Compara fatos e provas sem transformar correlação em causa ou prognóstico."""
+    chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not chave:
+        return None
+    usados = similares[:8]
+    contexto = []
+    validos: set[str] = set()
+    for indice, trecho in enumerate(usados, 1):
+        ref = f"P{indice}"
+        validos.add(ref)
+        dados = trecho.referencia()
+        contexto.append(
+            f"[{ref}] processo={dados.get('processo')} resultado={dados.get('resultado')} "
+            f"vara={dados.get('vara')} similaridade={dados.get('similaridade')}\n"
+            f"{trecho.texto[:2600]}"
+        )
+    instrucao = """Você auxilia um advogado trabalhista durante a entrevista.
+Compare o relato SOMENTE com os precedentes fornecidos. Identifique fatos e provas
+realmente coincidentes, não simples palavras iguais. O rótulo do resultado pertence
+ao processo inteiro: não invente causalidade se o trecho não explicar a decisão.
+Contraste favoráveis e improcedentes. Toda afirmação deve citar P1, P2 etc.; descarte
+o ponto se não houver apoio textual. Seja concreto e útil para mudar a condução da
+entrevista. Não estime chance de vitória.
+
+Responda somente JSON:
+{"sintese":"...","pontos_comuns":[{"ponto":"...","impacto":"...","forca":"alta|media|baixa","precedentes":["P1"]}],"diferencas_decisivas":[{"ponto":"...","por_que_importa":"...","precedentes_favoraveis":["P1"],"precedentes_contrarios":["P2"]}],"provas_prioritarias":[{"prova":"...","motivo":"...","precedentes":["P1"]}],"perguntas_criticas":["..."]}
+"""
+    try:
+        resposta = httpx.post(
+            os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+            + "/chat/completions",
+            headers={"Authorization": f"Bearer {chave}"},
+            json={
+                "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": instrucao},
+                    {"role": "user", "content": f"RELATO:\n{relato[:10000]}\n\nPRECEDENTES:\n" + "\n\n".join(contexto)},
+                ],
+            },
+            timeout=35,
+        )
+        resposta.raise_for_status()
+        dados = json.loads(resposta.json()["choices"][0]["message"]["content"])
+        for chave_lista in ("pontos_comuns", "provas_prioritarias"):
+            limpos = []
+            for item in dados.get(chave_lista) or []:
+                if not isinstance(item, dict):
+                    continue
+                refs = [str(ref) for ref in item.get("precedentes", []) if str(ref) in validos]
+                if refs:
+                    item["precedentes"] = refs
+                    limpos.append(item)
+            dados[chave_lista] = limpos[:5]
+        diferencas = []
+        for item in dados.get("diferencas_decisivas") or []:
+            if not isinstance(item, dict):
+                continue
+            item["precedentes_favoraveis"] = [str(r) for r in item.get("precedentes_favoraveis", []) if str(r) in validos]
+            item["precedentes_contrarios"] = [str(r) for r in item.get("precedentes_contrarios", []) if str(r) in validos]
+            if item["precedentes_favoraveis"] or item["precedentes_contrarios"]:
+                diferencas.append(item)
+        dados["diferencas_decisivas"] = diferencas[:5]
+        dados["perguntas_criticas"] = [str(x).strip() for x in dados.get("perguntas_criticas", []) if str(x).strip()][:6]
+        dados["referencias"] = {f"P{i}": trecho.referencia() for i, trecho in enumerate(usados, 1)}
+        return dados
+    except Exception:
+        log.warning("Análise comparativa da recomendação indisponível", exc_info=True)
+        return None
 
 
 def _sem_base(
@@ -160,6 +308,7 @@ def _sem_base(
         "estatistica": estatistica or {},
         "precedentes": [t.referencia() for t in (similares or [])],
         "com_precedentes": bool(similares),
+        "analise_comparativa": None,
         "aviso": (
             "Sem base comparável suficiente. A entrevista segue valendo; o que falta "
             "é precedente parecido, não caso."

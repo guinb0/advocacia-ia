@@ -159,10 +159,15 @@ function carregarJitsi(): Promise<ApiJitsi> {
     };
     script.onerror = () => {
       carregando = null;
+      // Sem comando de terminal: quem lê isto é quem está tentando abrir a
+      // chamada com o cliente esperando, não quem administra o servidor. O
+      // comando de subir o Jitsi está no docs/CHAMADA.md, que é onde o suporte
+      // procura. Aqui o que importa é dizer que dá para seguir sem a chamada.
       falhou(
         new Error(
           `Servidor de chamadas fora do ar (${BASE_JITSI}). ` +
-            "Suba o stack do Jitsi: docker compose up -d em docker-jitsi-meet.",
+            "Avise o suporte técnico. A entrevista pode seguir pelo microfone " +
+            "da máquina, com o cliente no viva-voz.",
         ),
       );
     };

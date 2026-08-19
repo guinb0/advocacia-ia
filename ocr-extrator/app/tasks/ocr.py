@@ -4,10 +4,31 @@ from datetime import datetime, timezone
 from contextlib import nullcontext
 import os
 from pathlib import Path
+import logging
+
+from celery.signals import worker_ready
 
 from .. import jobs, pipeline
 from ..celery_app import celery_app
 from ..gpu_lock import gpu_exclusiva
+
+log = logging.getLogger("ocr-worker")
+
+
+@worker_ready.connect
+def aquecer_worker_ocr(sender=None, **_kwargs):
+    """Aquece o modelo no processo que realmente executa `/extrair/jobs`."""
+    hostname = str(getattr(sender, "hostname", ""))
+    if not hostname.lower().startswith("ocr@"):
+        return
+    try:
+        from ..ocr_engine import get_engine
+        get_engine()
+        log.info("PaddleOCR aquecido no worker %s.", hostname)
+    except Exception:
+        # O primeiro job tenta novamente; worker vivo é melhor que abortar toda
+        # a fila por uma falha transitória de modelo no boot.
+        log.exception("Falha ao aquecer PaddleOCR no worker %s.", hostname)
 
 
 @celery_app.task(

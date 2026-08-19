@@ -11,7 +11,7 @@ import {
 import type { Ref } from "react";
 
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { analisarResposta, consultarCep, escutarTrecho, obterRoteiro } from "@/lib/api";
+import { analisarResposta, consultarCep, escutarTrecho, obterRoteiro, recomendarEntrevista } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
 import type {
   AnaliseResposta,
@@ -21,6 +21,7 @@ import type {
   Lembrete,
   Pergunta,
   PerguntaPendente,
+  RecomendacaoEntrevista,
   RoteiroCompleto,
 } from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
@@ -44,11 +45,6 @@ import transcricaoEstilos from "./EntrevistaAoVivo.module.css";
  * número ditado o Whisper erra, e ninguém confere dígito lido de ouvido. */
 
 type Respostas = Record<string, string | string[]>;
-
-/* O Next substitui esta comparação por `false` ao compilar para produção, e o
- * empacotador remove tudo que depende dela. O botão de teste não fica escondido
- * no pacote do escritório: ele não é compilado. */
-const EM_DESENVOLVIMENTO = process.env.NODE_ENV === "development";
 
 /** O que a chamada, na coluna ao lado, precisa poder fazer com o roteiro. */
 export interface ManipuladorRoteiro {
@@ -106,11 +102,13 @@ const MINIMO_PARA_CONFERIR = 40;
  * A contagem reinicia a cada trecho novo que cai NESTA pergunta. Enquanto ele
  * desenvolve, a barra não anda; parou de cair trecho aqui (ele terminou, ou
  * mudou de assunto), ela anda. */
-const SEGUNDOS_ANTES_DE_ANDAR = 8;
+const SEGUNDOS_RESPOSTA_OBJETIVA = 1.5;
+const SEGUNDOS_RESPOSTA_CURTA = 2.5;
+const SEGUNDOS_RESPOSTA_LONGA = 5;
 
 /* Teto do quanto uma pergunta pode ficar segurada, contado do PRIMEIRO trecho.
  *
- * Os 8s acima reiniciam a cada trecho que cai nesta pergunta — e essa reinício
+ * A espera acima reinicia a cada trecho que cai nesta pergunta — e esse reinício
  * não tinha limite. Com áudio ruim os trechos pingam de cinco em cinco segundos
  * (às vezes só um fragmento mal reconhecido), cada um empurra o relógio de novo,
  * e a condução trava em "respondendo — deixe terminar" sem nunca liberar. Foi o
@@ -178,7 +176,7 @@ export default function Roteiro({
    * trecho dela. É o que segura a condução enquanto o cliente desenvolve. */
   const [respondendoAgora, setRespondendoAgora] = useState<{
     id: string;
-    /** Último trecho que caiu nesta pergunta — reinicia os 8s. */
+    /** Último trecho que caiu nesta pergunta — reinicia a espera adaptativa. */
     em: number;
     /** PRIMEIRO trecho desta pergunta — é o que o teto mede, e por isso não
      *  pode ser reiniciado junto com `em`. */
@@ -209,6 +207,10 @@ export default function Roteiro({
   fonteAtual.current = fonte;
 
   const [conferencias, setConferencias] = useState<Record<string, EstadoConferencia>>({});
+  const [recomendacaoCaso, setRecomendacaoCaso] = useState<RecomendacaoEntrevista | null>(null);
+  const [erroRecomendacao, setErroRecomendacao] = useState<string | null>(null);
+  const [atualizandoRecomendacao, setAtualizandoRecomendacao] = useState(false);
+  const ultimoRelatoRecomendado = useRef("");
 
   /* A escuta chegou ao fim e o áudio pode ser oferecido. Quem grava é o
    * servidor, do mesmo PCM que alimenta a transcrição — ver `app/gravacao.py` e
@@ -756,12 +758,30 @@ export default function Roteiro({
     return () => clearInterval(t);
   }, [escutando]);
 
-  /* A pergunta segurada: já respondida, mas ainda recebendo trecho. */
+  /* A pergunta segurada: já respondida, mas ainda recebendo trecho.
+   *
+   * Uma escolha/sim-não anda quase imediatamente. Relato curto (como "ainda
+   * trabalho lá") ganha só 2,5s; narrativa longa ganha 5s para não cortar o
+   * cliente. O antigo valor fixo de 8s fazia respostas objetivas parecerem
+   * travadas mesmo depois de o texto já estar preenchido. */
+  const indiceRespondendo = respondendoAgora === null
+    ? -1
+    : sequencia.findIndex(({ pergunta }) => pergunta.id === respondendoAgora.id);
+  const perguntaRespondendo = indiceRespondendo >= 0 ? sequencia[indiceRespondendo].pergunta : null;
+  const valorRespondendo = perguntaRespondendo ? respostas[perguntaRespondendo.id] : undefined;
+  const tamanhoRespondendo = Array.isArray(valorRespondendo)
+    ? valorRespondendo.join(" ").length
+    : String(valorRespondendo ?? "").trim().length;
+  const segundosParaAndar = perguntaRespondendo?.tipo !== "relato"
+    ? SEGUNDOS_RESPOSTA_OBJETIVA
+    : tamanhoRespondendo < 160
+      ? SEGUNDOS_RESPOSTA_CURTA
+      : SEGUNDOS_RESPOSTA_LONGA;
   const posicaoSegurada =
     respondendoAgora !== null &&
-    Date.now() - respondendoAgora.em < SEGUNDOS_ANTES_DE_ANDAR * 1000 &&
+    Date.now() - respondendoAgora.em < segundosParaAndar * 1000 &&
     Date.now() - respondendoAgora.desde < MAXIMO_SEGURANDO_S * 1000
-      ? sequencia.findIndex(({ pergunta }) => pergunta.id === respondendoAgora.id)
+      ? indiceRespondendo
       : -1;
 
   const posicaoAtual = posicaoSegurada >= 0 ? posicaoSegurada : posicaoNatural;
@@ -797,6 +817,42 @@ export default function Roteiro({
     const resp = sequencia.filter(({ pergunta }) => respondida(respostas[pergunta.id]));
     return { total: sequencia.length, feitas: resp.length };
   }, [sequencia, respostas]);
+
+  const relatoConsolidado = useMemo(
+    () => montarRelato(blocosVisiveis, respostas),
+    [blocosVisiveis, respostas],
+  );
+  const lacunasObrigatorias = useMemo(
+    () =>
+      sequencia
+        .filter(({ pergunta }) => pergunta.obrigatoria && !respondida(respostas[pergunta.id]))
+        .map(({ pergunta }) => pergunta.texto),
+    [sequencia, respostas],
+  );
+
+  /* Espera a fala virar resposta consolidada. Trechos provisórios do Whisper não
+   * mudam `respostas`; e o debounce evita uma consulta por campo quando a escuta
+   * preenche vários de uma vez. A última leitura boa permanece visível em falha. */
+  useEffect(() => {
+    if (relatoConsolidado.length < 160 || feitas < 3) return;
+    if (relatoConsolidado === ultimoRelatoRecomendado.current) return;
+    const timer = window.setTimeout(() => {
+      setAtualizandoRecomendacao(true);
+      recomendarEntrevista(relatoConsolidado, lacunasObrigatorias)
+        .then((resultado) => {
+          setRecomendacaoCaso(resultado);
+          setErroRecomendacao(null);
+          ultimoRelatoRecomendado.current = relatoConsolidado;
+        })
+        .catch((falha) =>
+          setErroRecomendacao(
+            falha instanceof Error ? falha.message : "Recomendação temporariamente indisponível.",
+          ),
+        )
+        .finally(() => setAtualizandoRecomendacao(false));
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [relatoConsolidado, lacunasObrigatorias, feitas]);
 
   /* Sobe o que já foi respondido, sem esperar o fim da entrevista.
    *
@@ -876,16 +932,27 @@ export default function Roteiro({
                 : "sem áudio"}
           </span>
 
-          {EM_DESENVOLVIMENTO && (
-            <button
-              type="button"
-              className={estilos.teste}
-              onClick={() => setRespostas(entrevistaDeTeste(roteiro.blocos))}
-              title="Só em desenvolvimento: preenche a entrevista com dados falsos"
-            >
-              Preencher para teste
-            </button>
-          )}
+          <button
+            type="button"
+            className={estilos.teste}
+            onClick={() => {
+              const amostra = entrevistaDeTeste(roteiro.blocos);
+              // Completa o que falta sem apagar respostas que já foram
+              // digitadas ou transcritas pelo cliente.
+              setRespostas((atuais) => {
+                const preenchidas = { ...amostra };
+                for (const [id, valor] of Object.entries(atuais)) {
+                  if (respondida(valor)) preenchidas[id] = valor;
+                }
+                return preenchidas;
+              });
+              setPuladas([]);
+              setAviso("Campos vazios preenchidos automaticamente com dados fictícios para teste.");
+            }}
+            title="Completa os campos vazios com uma entrevista fictícia; não substitui respostas existentes"
+          >
+            Preencher automaticamente
+          </button>
 
           <span className={estilos.progresso}>
             {feitas}/{total}
@@ -981,6 +1048,61 @@ export default function Roteiro({
                 {p}
               </p>
             ))}
+        </section>
+      )}
+
+      {(recomendacaoCaso || atualizandoRecomendacao || erroRecomendacao) && (
+        <section className={estilos.recomendacao} aria-live="polite">
+          <div className={estilos.recomendacaoTopo}>
+            <strong>Vale abrir este caso?</strong>
+            {atualizandoRecomendacao && <span>atualizando com as respostas…</span>}
+          </div>
+          {recomendacaoCaso && (
+            <>
+              <div className={`${estilos.veredito} ${estilos[`veredito_${recomendacaoCaso.recomendado}`]}`}>
+                {recomendacaoCaso.recomendado === "sim" ? "SIM — levar para análise" :
+                  recomendacaoCaso.recomendado === "com_ressalva" ? "COM RESSALVAS" :
+                  recomendacaoCaso.recomendado === "atencao" ? "ATENÇÃO ANTES DE ABRIR" :
+                  "AMOSTRA INSUFICIENTE"}
+              </div>
+              <p>{recomendacaoCaso.motivo}</p>
+              {recomendacaoCaso.analise_comparativa && (() => {
+                const analise = recomendacaoCaso.analise_comparativa;
+                const refs = (indices: string[]) => indices.map((indice) => {
+                  const ref = analise.referencias[indice];
+                  if (!ref) return indice;
+                  const rotulo = `${indice}: ${ref.processo ?? "processo sem número"}`;
+                  return ref.url ? <a key={indice} href={ref.url} target="_blank" rel="noreferrer">{rotulo}</a> : <span key={indice}>{rotulo}</span>;
+                }).reduce<React.ReactNode[]>((todos, item, i) => i ? [...todos, ", ", item] : [item], []);
+                return (
+                  <div className={estilos.comparativa}>
+                    <h4>O que os processos semelhantes indicam</h4>
+                    <p>{analise.sintese}</p>
+                    {analise.pontos_comuns.length > 0 && (
+                      <details open><summary>Pontos realmente em comum</summary><ul>{analise.pontos_comuns.map((item, i) => <li key={i}><strong>{item.ponto}</strong> — {item.impacto} <small>Força {item.forca}: {refs(item.precedentes)}</small></li>)}</ul></details>
+                    )}
+                    {analise.diferencas_decisivas.length > 0 && (
+                      <details open><summary>O que separou resultados favoráveis e improcedentes</summary><ul>{analise.diferencas_decisivas.map((item, i) => <li key={i}><strong>{item.ponto}</strong> — {item.por_que_importa}<small>Favoráveis: {refs(item.precedentes_favoraveis)} · Contrários: {refs(item.precedentes_contrarios)}</small></li>)}</ul></details>
+                    )}
+                    {analise.provas_prioritarias.length > 0 && (
+                      <details open><summary>Provas para buscar agora</summary><ul>{analise.provas_prioritarias.map((item, i) => <li key={i}><strong>{item.prova}</strong> — {item.motivo}<small>{refs(item.precedentes)}</small></li>)}</ul></details>
+                    )}
+                    {analise.perguntas_criticas.length > 0 && (
+                      <details open><summary>Perguntas que podem mudar a avaliação</summary><ol>{analise.perguntas_criticas.map((item) => <li key={item}>{item}</li>)}</ol></details>
+                    )}
+                  </div>
+                );
+              })()}
+              {recomendacaoCaso.lacunas_obrigatorias.length > 0 && (
+                <details><summary>{recomendacaoCaso.lacunas_obrigatorias.length} pontos obrigatórios ainda faltam</summary><ul>{recomendacaoCaso.lacunas_obrigatorias.slice(0, 8).map((item) => <li key={item}>{item}</li>)}</ul></details>
+              )}
+              {recomendacaoCaso.precedentes.length > 0 && (
+                <details><summary>{recomendacaoCaso.precedentes.length} processos semelhantes consultados</summary><ul>{recomendacaoCaso.precedentes.slice(0, 8).map((p, i) => <li key={`${p.processo}-${i}`}>{p.url ? <a href={p.url} target="_blank" rel="noreferrer">{p.processo || `Precedente ${i + 1}`}</a> : (p.processo || `Precedente ${i + 1}`)} — {p.resultado || "resultado não classificado"} · {(p.similaridade * 100).toFixed(0)}%</li>)}</ul></details>
+              )}
+              <small>{recomendacaoCaso.aviso}</small>
+            </>
+          )}
+          {erroRecomendacao && <p className={estilos.recomendacaoErro}>{erroRecomendacao} A entrevista continua normalmente.</p>}
         </section>
       )}
 

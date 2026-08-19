@@ -104,6 +104,16 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
       .finally(() => setCarregando(false));
   }, []);
 
+  useEffect(() => {
+    const expirar = () => {
+      definirTokenAtual(null);
+      setAutenticado(false);
+      setErro("Sua sessão expirou. Entre novamente para continuar.");
+    };
+    window.addEventListener("acervo:sessao-expirada", expirar);
+    return () => window.removeEventListener("acervo:sessao-expirada", expirar);
+  }, []);
+
   const entrar = useCallback(() => {
     void kcRef.current?.login({ redirectUri: window.location.origin + "/" });
   }, []);

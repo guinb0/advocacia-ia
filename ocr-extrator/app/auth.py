@@ -23,13 +23,14 @@ from fastapi import Depends, HTTPException, Request
 log = logging.getLogger("auth")
 
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "").rstrip("/")
+AUTH_DESATIVADA = os.getenv("AUTH_DESATIVADA", "0").strip() == "1"
 REALM = os.getenv("KEYCLOAK_REALM", "advocacia")
 CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "acervo-frontend")
 # O access token traz `aud` do mapper do realm; aceitar também o próprio client
 # cobre configurações em que o mapper de audience não foi aplicado.
 AUDIENCIAS = {a for a in (os.getenv("KEYCLOAK_AUDIENCE", "acervo-api"), CLIENT_ID, "account") if a}
 
-ATIVA = bool(KEYCLOAK_URL)
+ATIVA = bool(KEYCLOAK_URL) and not AUTH_DESATIVADA
 
 _lock = threading.Lock()
 _jwks: dict[str, Any] | None = None
@@ -138,6 +139,23 @@ def exigir_papel(papel: str):
     def verificar(usuario: Usuario = Depends(usuario_atual)) -> Usuario:
         if ATIVA and not usuario.tem_papel(papel):
             raise HTTPException(403, f"Requer o papel '{papel}'.")
+        return usuario
+
+    return verificar
+
+
+def exigir_qualquer_papel(*papeis: str):
+    """Dependência para rotas que aceitam MAIS DE UM papel.
+
+    Existe porque administrar conta tem dois donos legítimos: o advogado que
+    cadastra o colega na hora e o secretário, cuja função é essa. Com só o
+    `exigir_papel` seria preciso escolher um e deixar o outro de fora, ou repetir
+    a checagem dentro de cada rota — que é onde ela é esquecida.
+    """
+
+    def verificar(usuario: Usuario = Depends(usuario_atual)) -> Usuario:
+        if ATIVA and not any(usuario.tem_papel(p) for p in papeis):
+            raise HTTPException(403, f"Requer um destes papéis: {', '.join(papeis)}.")
         return usuario
 
     return verificar

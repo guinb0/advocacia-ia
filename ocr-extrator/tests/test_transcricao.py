@@ -164,14 +164,45 @@ def main_teste() -> int:
             sessao.estado is T.Estado.COMPLETED, "a sessão termina marcada como concluída"
         )
 
-        # --- trava de tamanho -------------------------------------------
-        curta = T.AnswerSession(sessao_id="s2", pergunta_id="p2")
-        falar(curta, T.LIMITE_SESSAO_S + 60)
-        antes_do_limite = curta.amostras
-        falar(curta, 5)
+        # --- entrevista longa: aceita sempre, e solta o que já virou texto ---
+        #
+        # Aqui havia o teste oposto: "passado o limite de 30 min, o áudio para de
+        # crescer". Isso ERA o defeito. A escuta contínua abre uma sessão só para
+        # a entrevista inteira, então o teto silenciava a transcrição no meio do
+        # atendimento — o roteiro parava de preencher e a tela dizia que não
+        # estava ouvindo. O que a memória precisa é soltar o congelado, não
+        # recusar o que chega.
+        T._segmentos_sem_trava = falante_com_pausa
+        longa = T.AnswerSession(sessao_id="s4", pergunta_id="p4")
+        longa.estado = T.Estado.LISTENING
+
+        # Passa bem do teto de memória, senão o descarte nem chega a rodar.
+        rodadas = int((T.MEMORIA_MAXIMA_S * 2) / 6)
+        for _ in range(rodadas):
+            falar(longa, 6.0)
+            longa.iniciar_parcial()
+            longa.transcrever_parcial()
+            longa.parcial_em_curso = False
+
+        antes = longa.amostras
+        falar(longa, 5)
         falhas += not checar(
-            curta.amostras == antes_do_limite,
-            "passado o limite de 30 min, o áudio para de crescer na memória",
+            longa.amostras > antes,
+            "entrevista longa continua aceitando fala nova — sem teto que emudece",
+        )
+
+        # O que importa é a memória parar de acompanhar o TOTAL. O número exato
+        # depende de quanto o congelamento avança, e isto aqui roda com um
+        # transcritor falso — cravar segundos mediria o falso, não o código.
+        segurado = sum(len(b) for b in longa.audio)
+        falhas += not checar(
+            longa._base > 0 and segurado < longa.amostras,
+            f"a memória solta o que já virou texto ({segurado / T.TAXA:.0f}s de "
+            f"{longa.amostras / T.TAXA:.0f}s)",
+        )
+        falhas += not checar(
+            longa.prefixo_parcial != "",
+            "o que saiu da memória já tinha virado texto no prefixo",
         )
     finally:
         T._segmentos_sem_trava = original

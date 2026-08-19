@@ -5,11 +5,15 @@ import { useState } from "react";
 import { Aviso, Selo } from "@/components/Basicos";
 import Carteira from "@/components/Carteira";
 import Checklist from "@/components/Checklist";
+import Dados from "@/components/Dados";
 import Dossie from "@/components/Dossie";
 import Investigacao from "@/components/Investigacao";
 import ListaCasos from "@/components/ListaCasos";
 import PainelEnvio from "@/components/PainelEnvio";
 import ProgressoOcr from "@/components/ProgressoOcr";
+import ChamadaDoAtendimento from "@/components/ChamadaDoAtendimento";
+import TriagemEntrevista from "@/components/TriagemEntrevista";
+import Supervisao from "@/components/Supervisao";
 import Usuarios from "@/components/Usuarios";
 import Resultado from "@/components/Resultado";
 import ui from "@/components/ui.module.css";
@@ -25,15 +29,30 @@ type Tela =
   | "casos"
   | "avulso"
   | "investigacao"
-  | "usuarios";
+  | "usuarios"
+  | "entrevista"
+  | "supervisao"
+  | "dados";
 
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
  * que responde "onde eu estou" sem depender de memória. */
-const CABECALHO: Record<"casos" | "avulso", { titulo: string; subtitulo: string }> = {
+const CABECALHO: Record<
+  "casos" | "avulso" | "entrevista",
+  { titulo: string; subtitulo: string }
+> = {
   casos: {
     titulo: "Casos",
     subtitulo:
       "Cadastre um caso para montar o checklist de documentos do cliente, ou abra um caso existente.",
+  },
+  /* A entrevista saiu de dentro de "Casos" e virou aba própria: são dois
+   * trabalhos diferentes. Um é conduzir a conversa com o cliente na linha; o
+   * outro é abrir ou reabrir caso — e cada clique na lista, durante um
+   * atendimento, era uma chance de sair dele sem querer. */
+  entrevista: {
+    titulo: "Entrevista guiada",
+    subtitulo:
+      "Conduza o atendimento pelo roteiro, com a conversa sendo transcrita. O caso nasce daqui, já com o tipo de ação escolhido.",
   },
   avulso: {
     titulo: "Ler um documento",
@@ -69,6 +88,9 @@ export default function Home() {
         onAnalisarAvulso={() => setTela("avulso")}
         onInvestigar={() => setTela("investigacao")}
         onUsuarios={() => setTela("usuarios")}
+        onEntrevista={() => setTela("entrevista")}
+        onSupervisao={() => setTela("supervisao")}
+        onDados={() => setTela("dados")}
       />
     );
   }
@@ -88,6 +110,14 @@ export default function Home() {
 
   if (tela === "usuarios") {
     return <Usuarios onVoltar={voltarParaCarteira} />;
+  }
+
+  if (tela === "supervisao") {
+    return <Supervisao onVoltar={voltarParaCarteira} />;
+  }
+
+  if (tela === "dados") {
+    return <Dados onVoltar={voltarParaCarteira} />;
   }
 
   if (tela === "caso") {
@@ -110,6 +140,7 @@ export default function Home() {
         </div>
         {situacaoCaso.situacao ? (
           <Checklist
+          mostrarPrazos
             situacao={situacaoCaso.situacao}
             enviando={situacaoCaso.enviando}
             erro={situacaoCaso.erro}
@@ -167,10 +198,44 @@ export default function Home() {
           onCriar={listaCasos.criar}
           onExcluir={listaCasos.excluir}
         />
+      ) : tela === "entrevista" ? (
+        <EntrevistaGuiada categorias={categorias} onCriar={listaCasos.criar} />
       ) : (
         <AnaliseAvulsa />
       )}
     </div>
+  );
+}
+
+/* A entrevista na aba dela.
+ *
+ * Numa aba própria não há lista para esconder nem formulário ao lado para
+ * preencher — os dois só existiam por ela morar dentro de "Casos". O que veio
+ * junto foi a CHAMADA do pós-entrevista: a etapa seguinte manda permanecer na
+ * videoconferência enquanto o cliente avalia, e sem este painel a instrução
+ * ficaria sem o vídeo ao lado. */
+function EntrevistaGuiada({
+  categorias,
+  onCriar,
+}: {
+  categorias: ReturnType<typeof useCategorias>;
+  onCriar: ReturnType<typeof useCasos>["criar"];
+}) {
+  const [fase, setFase] = useState<"nenhum" | "entrevista" | "pos-entrevista">("nenhum");
+  return (
+    <>
+      <TriagemEntrevista
+        categorias={categorias}
+        onCriarCaso={onCriar}
+        onAtendimento={setFase}
+        onEscolher={() => {}}
+      />
+      {/* Só no pós-entrevista: durante a entrevista a chamada já está na coluna
+        * da direita, e desenhá-la aqui também decodificaria o mesmo vídeo em
+        * dois lugares. Sem chamada de pé o painel não desenha nada — metade dos
+        * atendimentos é presencial. */}
+      {fase === "pos-entrevista" && <ChamadaDoAtendimento />}
+    </>
   );
 }
 

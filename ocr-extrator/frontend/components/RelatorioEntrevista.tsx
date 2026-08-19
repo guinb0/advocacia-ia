@@ -77,7 +77,7 @@ export default function RelatorioEntrevista({ respostas, relato }: Props) {
 
         {gerando && (
           <span className={estilos.meta}>
-            buscando precedentes e analisando — pode levar até um minuto
+            buscando precedentes e montando o PDF — limite de 90 segundos
           </span>
         )}
       </div>

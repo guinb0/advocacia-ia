@@ -143,9 +143,51 @@ if (-not (Test-Path ".\frontend\node_modules")) {
     Write-Host "Instalando as dependencias do frontend..." -ForegroundColor Yellow
     Push-Location .\frontend; npm install; Pop-Location
 }
-if ($Prod -and -not (Test-Path ".\frontend\.next\BUILD_ID")) {
-    Write-Host "Compilando o frontend..." -ForegroundColor Yellow
-    Push-Location .\frontend; npm run build; Pop-Location
+# Recompila quando o build esta VELHO, e nao so quando falta.
+#
+# Antes bastava existir um BUILD_ID para o script pular a compilacao -- e ai o
+# `-Prod` servia o build antigo para sempre. O sintoma nao parece build velho: a
+# alteracao simplesmente nao aparece na tela, e quem ve isso vai procurar defeito
+# no codigo que acabou de escrever. Ja custou uma caca a um erro de login que
+# estava consertado havia commits.
+if ($Prod) {
+    $buildId = ".\frontend\.next\BUILD_ID"
+    $precisa = -not (Test-Path $buildId)
+    if (-not $precisa) {
+        $carimbo = (Get-Item $buildId).LastWriteTime
+        # Varre as pastas de FONTE, uma a uma, em vez de `.\frontend` inteiro.
+        # Dois motivos: `-Include` com `-Recurse` nao filtra como parece (devolve
+        # vazio, e a checagem passaria batido sem erro nenhum), e varrer a raiz
+        # entraria em node_modules, que sozinho tem dezenas de milhares de
+        # arquivos e faria cada subida parecer travada.
+        $fontes = @(".\frontend\app", ".\frontend\components", ".\frontend\lib",
+                    ".\frontend\public") | Where-Object { Test-Path $_ }
+        $maisNovo = Get-ChildItem $fontes -Recurse -File |
+            Where-Object { $_.Extension -in ".ts", ".tsx", ".css", ".json", ".js" } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($maisNovo -and $maisNovo.LastWriteTime -gt $carimbo) {
+            Write-Host "Build do frontend esta atras de $($maisNovo.Name); recompilando." -ForegroundColor Yellow
+            $precisa = $true
+        }
+    }
+    # Carimbo de data nao basta: o Next injeta as NEXT_PUBLIC_* no momento do
+    # BUILD, entao um `npm run build` rodado a mao, num shell sem elas, produz
+    # um bundle recente e ERRADO -- o front nasce achando que a autenticacao
+    # esta desligada, nao manda token, e o backend responde 401 em tudo. Na tela
+    # isso vira "sua sessao expirou" em laco, que nao lembra em nada a causa.
+    # Por isso conferimos o conteudo, e nao so a idade.
+    if (-not $precisa -and $env:NEXT_PUBLIC_KEYCLOAK_URL) {
+        $temUrl = Select-String -Path ".\frontend\.next\static\chunks\*.js" `
+            -SimpleMatch $env:NEXT_PUBLIC_KEYCLOAK_URL -List -ErrorAction SilentlyContinue
+        if (-not $temUrl) {
+            Write-Host "Build do frontend nao tem a URL do Keycloak; recompilando." -ForegroundColor Yellow
+            $precisa = $true
+        }
+    }
+    if ($precisa) {
+        Write-Host "Compilando o frontend..." -ForegroundColor Yellow
+        Push-Location .\frontend; npm run build; Pop-Location
+    }
 }
 
 Write-Host "`nBackend  : http://127.0.0.1:$PortaBackend  (docs interativos em /docs)" -ForegroundColor Cyan

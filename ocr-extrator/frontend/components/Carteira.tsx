@@ -62,6 +62,9 @@ interface Props {
   onAnalisarAvulso: () => void;
   onInvestigar: () => void;
   onUsuarios: () => void;
+  onEntrevista: () => void;
+  onSupervisao: () => void;
+  onDados: () => void;
 }
 
 export default function Carteira({
@@ -70,6 +73,9 @@ export default function Carteira({
   onAnalisarAvulso,
   onInvestigar,
   onUsuarios,
+  onEntrevista,
+  onSupervisao,
+  onDados,
 }: Props) {
   const { linhas, triagem, chegandoAgora, pedidos, carregando, erro } = useCarteira();
   const estadoModelo = useModelo();
@@ -160,6 +166,11 @@ export default function Carteira({
             >
               Carteira
             </button>
+            {/* Antes da lista de casos: conduzir a entrevista é o trabalho do
+              * dia, e abrir caso antigo é a exceção. */}
+            <button type="button" className={estilos.navItem} onClick={onEntrevista}>
+              Entrevista guiada
+            </button>
             <button type="button" className={estilos.navItem} onClick={onNovoCaso}>
               Casos
             </button>
@@ -171,6 +182,18 @@ export default function Carteira({
             </button>
             {/* Só para advogado: o backend recusa o cadastro a quem não tem o
               * papel, e um item de menu que só dá 403 é pior que item nenhum. */}
+            {/* Advogado e secretário: quem lê a recomendação precisa poder
+              * conferir de onde ela veio. */}
+            <button type="button" className={estilos.navItem} onClick={onDados}>
+              Dados
+            </button>
+            {/* Só o secretário: a supervisão atravessa as entrevistas de todo o
+              * escritório, e o backend recusa quem não tem o papel. */}
+            {sessao.papeis.includes("secretario") && (
+              <button type="button" className={estilos.navItem} onClick={onSupervisao}>
+                Supervisão
+              </button>
+            )}
             {sessao.papeis.includes("advogado") && (
               <button type="button" className={estilos.navItem} onClick={onUsuarios}>
                 Usuários

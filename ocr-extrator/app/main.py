@@ -43,6 +43,8 @@ from . import (
     consultas,
     investigacao,
     usuarios,
+    supervisao,
+    dados,
     contrato,
     escuta,
     pipeline,
@@ -149,6 +151,10 @@ PREFIXO_PORTAL = "/api/portal/"
 #
 # Isto não fecha porta do cliente: ele nunca entrou por aqui. O caminho dele é o
 # `/api/portal/...`, protegido pela senha do caso (ver o comentário acima).
+#: Quem é "de dentro". O cliente não está aqui de propósito: o caminho dele é o
+#: portal do caso, não esta API.
+PAPEIS_INTERNOS = ("advogado", "secretario")
+
 LIVRES_SEM_ADVOGADO = {
     "/api/eu",                # saber quem se é
     "/api/usuarios/perfis",   # vocabulário dos perfis, não dado de ninguém
@@ -161,6 +167,8 @@ app.include_router(agente.roteador)
 app.include_router(advbox.roteador)
 app.include_router(investigacao.roteador)
 app.include_router(usuarios.roteador)
+app.include_router(supervisao.roteador)
+app.include_router(dados.roteador)
 
 
 @app.middleware("http")
@@ -181,7 +189,7 @@ async def exigir_autenticacao(request: Request, call_next):
 
         # Autenticado não basta: sem `advogado`, só o que estiver na lista.
         if (
-            not request.state.usuario.tem_papel("advogado")
+            not any(request.state.usuario.tem_papel(p) for p in PAPEIS_INTERNOS)
             and caminho not in LIVRES_SEM_ADVOGADO
         ):
             return JSONResponse(
@@ -499,15 +507,30 @@ async def recomendar_entrevista(pedido: PedidoRecomendacao):
             pedido.relato,
             lacunas_obrigatorias=lacunas,
             limite=pedido.limite_precedentes,
-            connect_timeout=6,
+            # 6s era apertado: o pgvector fica atrás da VPN, com ~80ms de
+            # latência e servidor compartilhado. Uma oscilação dentro desses 6
+            # segundos virava "indisponível" numa consulta que costuma completar.
+            connect_timeout=20,
             detalhar=True,
         )
     except recomendacao.ErroRecomendacao as exc:
         raise HTTPException(422, str(exc)) from exc
-    except Exception as exc:
-        log.exception("Recomendação da entrevista indisponível")
+    except recomendacao.BaseIndisponivel as exc:
+        # Causa dita, e não "indisponível": os dois consertos são diferentes —
+        # este é checar a VPN e o servidor, não esperar nem refazer a entrevista.
+        log.warning("Banco de precedentes fora: %s", str(exc)[:200])
         raise HTTPException(
-            503, "A recomendação por processos semelhantes está temporariamente indisponível."
+            503,
+            "O banco de precedentes não respondeu (ele fica atrás da VPN). "
+            "A entrevista continua normalmente; a recomendação volta sozinha "
+            "quando a conexão voltar.",
+        ) from exc
+    except Exception as exc:
+        log.exception("Recomendação da entrevista falhou")
+        raise HTTPException(
+            503,
+            "A recomendação falhou por um erro inesperado — está no log do "
+            "servidor. A entrevista continua normalmente.",
         ) from exc
 
 
@@ -1394,12 +1417,25 @@ async def enviar_documento(
 
 @app.post("/api/casos/{caso_id}/entrevista", status_code=201)
 async def enviar_entrevista(
+    request: Request,
     caso_id: str,
     arquivo: UploadFile = File(...),
     realizada_em: str = Form(""),
     entrevistador: str = Form(""),
 ):
-    """Guarda o arquivo da entrevista e o texto lido dele."""
+    """Guarda o arquivo da entrevista e o texto lido dele.
+
+    Sem `entrevistador` no formulário, assume QUEM ESTÁ LOGADO. O campo era texto
+    livre e ficava vazio: de sete entrevistas gravadas, seis não diziam quem as
+    fez, e a única preenchida trazia um nome digitado à mão. Assim não havia como
+    responder "quantas cada um fez" — que é justamente o que a supervisão precisa
+    (ver `app/supervisao.py`).
+
+    O campo continua aceito, e continua vencendo quando vem preenchido: quem
+    digita ali está registrando que OUTRA pessoa conduziu — uma entrevista antiga
+    sendo cadastrada depois, por exemplo. Sobrescrever isso com o usuário da
+    sessão trocaria um dado certo por um palpite.
+    """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         raise HTTPException(404, "Caso não encontrado.")
@@ -1427,8 +1463,22 @@ async def enviar_entrevista(
         caminho=caminho,
         texto=texto,
         realizada_em=realizada_em.strip(),
-        entrevistador=entrevistador.strip(),
+        entrevistador=entrevistador.strip() or _quem_conduziu(request),
     )
+
+
+def _quem_conduziu(request: Request) -> str:
+    """Nome de quem está logado, para atribuir a entrevista.
+
+    Grava o NOME e não o `sub` porque é o que a supervisão mostra na tela e o que
+    a coluna `entrevistador` já guardava — trocar para identificador tornaria
+    ilegíveis as linhas antigas sem ganhar nada. Com `-SemAuth` volta vazio, que
+    é honesto: sem autenticação não há quem atribuir.
+    """
+    usuario = getattr(request.state, "usuario", None)
+    if usuario is None or usuario is auth.USUARIO_ABERTO:
+        return ""
+    return (usuario.nome or usuario.usuario or "").strip()[:120]
 
 
 @app.get("/api/casos/{caso_id}/entrevistas")

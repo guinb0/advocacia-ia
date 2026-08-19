@@ -54,7 +54,11 @@
   margin-top: 24px;
 }
 
+/* `display: block` porque isto é um <span>, e elemento inline ignora
+ * margin-top: a dica saía colada no fim da mensagem de erro, virando uma frase
+ * só ("...para continuar.Tente entrar de novo"). */
 .dica {
+  display: block;
   margin-top: 18px;
   color: var(--tinta-3);
   font-size: var(--t-xs);

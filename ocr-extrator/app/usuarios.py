@@ -18,11 +18,15 @@ nenhuma das duas.
 O e-mail é o nome de usuário. Ter os dois separados obrigaria a inventar um
 apelido na hora, que é justamente a decisão que trava quem está cadastrando.
 
-OS DOIS PERFIS
+OS PERFIS
 
-`advogado` conduz entrevista, gera documento e cadastra gente. `cliente` só
-acompanha o próprio caso e envia documento. Quem cadastra precisa ser advogado —
-um cliente que pudesse criar contas criaria acesso ao acervo do escritório.
+`advogado` conduz entrevista, gera documento e cadastra gente. `secretario`
+gerencia as contas e acompanha as entrevistas de toda a equipe (ver
+`app/supervisao.py`). `cliente` só acompanha o próprio caso e envia documento.
+
+Cadastrar exige `advogado` ou `secretario` — nunca `cliente`, que criaria acesso
+ao acervo do escritório. A lista de perfis é fechada: papel novo no Keycloak sem
+código que o entenda vira acesso que ninguém sabe explicar.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from .auth import exigir_papel
+from .auth import exigir_qualquer_papel
 
 log = logging.getLogger("usuarios")
 
@@ -52,6 +56,11 @@ PERFIS: tuple[dict[str, str], ...] = (
         "descricao": "Conduz entrevistas, gera documentos e cadastra usuários.",
     },
     {
+        "codigo": "secretario",
+        "rotulo": "Secretário",
+        "descricao": "Gerencia os usuários e acompanha as entrevistas de toda a equipe.",
+    },
+    {
         "codigo": "cliente",
         "rotulo": "Cliente",
         "descricao": "Acompanha o próprio caso e envia documentos.",
@@ -59,7 +68,12 @@ PERFIS: tuple[dict[str, str], ...] = (
 )
 CODIGOS = tuple(p["codigo"] for p in PERFIS)
 
-SoAdvogado = Depends(exigir_papel("advogado"))
+#: Quem administra contas. São dois porque o escritório tem dois caminhos reais:
+#: o advogado que cadastra o colega na hora, e o secretário, cuja função É essa.
+#: Cliente nunca — um cliente que criasse contas criaria acesso ao acervo.
+PODEM_GERIR = ("advogado", "secretario")
+
+PodeGerir = Depends(exigir_qualquer_papel(*PODEM_GERIR))
 
 
 def _env(nome: str, padrao: str = "") -> str:
@@ -125,7 +139,7 @@ class NovoUsuario(BaseModel):
     email: Annotated[
         str, Field(min_length=5, max_length=160, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
     ]
-    perfil: Annotated[str, Field(pattern="^(advogado|cliente)$")]
+    perfil: Annotated[str, Field(pattern="^(advogado|secretario|cliente)$")]
     #: 8 é o mínimo que não é teatro. Trocar depois é pelo próprio Keycloak.
     senha: Annotated[str, Field(min_length=8, max_length=128)]
 
@@ -136,7 +150,7 @@ def listar_perfis() -> dict[str, Any]:
     return {"perfis": list(PERFIS)}
 
 
-@roteador.get("", dependencies=[SoAdvogado])
+@roteador.get("", dependencies=[PodeGerir])
 async def listar_usuarios() -> dict[str, Any]:
     """Quem já existe, com o perfil de cada um."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as http:
@@ -175,7 +189,7 @@ async def listar_usuarios() -> dict[str, Any]:
     return {"itens": itens, "total": len(itens)}
 
 
-@roteador.post("", status_code=201, dependencies=[SoAdvogado])
+@roteador.post("", status_code=201, dependencies=[PodeGerir])
 async def criar_usuario(pedido: NovoUsuario) -> dict[str, Any]:
     """Cria a conta e já deixa entrar — sem etapa de ativação.
 

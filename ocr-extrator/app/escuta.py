@@ -64,8 +64,8 @@ log = logging.getLogger("escuta")
 #: uma frase e a seguinte. Passar disto, o trecho já não é mais o assunto.
 TEMPO_MODELO_S = 20.0
 
-#: Trecho curto demais é "sim", "aham", "deixa eu ver" — não roteia nada e não
-#: vale uma chamada ao modelo.
+#: Trecho curto demais não vale uma chamada ao modelo. "sim" e "não" explícitos
+#: têm um caminho determinístico próprio; interjeições ambíguas continuam fora.
 MINIMO_CARACTERES = 25
 
 #: Teto de perguntas mandadas por vez. Um roteiro de 86 perguntas com tudo em
@@ -89,6 +89,38 @@ MAXIMO_PERGUNTAS = 18
 #: A lista existe para o caso de o roteiro mudar de forma: campo destes nunca
 #: sai de fala, esteja no bloco que estiver.
 DADOS_DIGITADOS = {"nome", "cpf"}
+
+
+def _binaria_curta(trecho: str, abertas: list[roteiros.Pergunta]) -> dict[str, Any] | None:
+    """Aplica um `sim`/`não` explícito à pergunta que está na vez.
+
+    O frontend e `_perguntas_abertas` seguem a mesma ordem do roteiro, portanto
+    a primeira aberta é a pergunta mostrada. Não aceitamos "aham", "acho" ou
+    outras formas ambíguas: velocidade não pode virar preenchimento falso.
+    """
+    palavras = re.findall(r"[a-záàâãéêíóôõúç]+", trecho.casefold())
+    if not palavras or not abertas:
+        return None
+    if all(p == "sim" for p in palavras):
+        valor = "sim"
+    elif all(p in {"não", "nao"} for p in palavras):
+        valor = "não"
+    else:
+        return None
+
+    pergunta = abertas[0]
+    inicio = pergunta.texto.casefold().lstrip()
+    parece_binaria = pergunta.tipo == "sim_nao" or inicio.startswith(
+        ("ainda ", "já ", "houve ", "teve ", "foi ", "ficou ", "recebeu ", "procurou ")
+    )
+    if not parece_binaria:
+        return None
+    return {
+        "pergunta_id": pergunta.id,
+        "pergunta": pergunta.texto,
+        "valor": valor,
+        "trecho": trecho,
+    }
 
 
 class ErroEscuta(Exception):
@@ -342,6 +374,16 @@ def escutar(
         {"pergunta_id": p.id, "pergunta": p.texto, "obrigatoria": p.obrigatoria}
         for p in abertas
     ]
+
+    binaria = _binaria_curta(trecho, abertas)
+    if binaria is not None:
+        return {
+            "preenchidas": [binaria],
+            "sugestoes": [],
+            "lembretes": [],
+            "faltando": [f for f in faltando if f["pergunta_id"] != binaria["pergunta_id"]],
+            "analisado": True,
+        }
 
     # Sem trecho útil, ainda assim devolve o que falta: é o painel abrindo no
     # começo da entrevista, antes de alguém falar qualquer coisa.

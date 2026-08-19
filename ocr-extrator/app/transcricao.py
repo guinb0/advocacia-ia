@@ -54,7 +54,16 @@ SEGUNDOS_ENTRE_PARCIAIS = 0.5    # cadência do texto provisório na tela
 LIMITE_CAUDA_S = 8.0             # cauda máxima antes de cortar à força
 MARGEM_CAUDA_S = 1.5             # o que ainda pode mudar com o que vem depois
 SOBREPOSICAO_PARCIAL_S = 1.0     # emenda quando o corte é forçado
-LIMITE_SESSAO_S = 60 * 30        # 30 min de resposta — trava contra vazamento
+
+#: A partir de quanto áudio a sessão passa a soltar o que já virou texto.
+#:
+#: Abaixo disto nada é descartado, e o texto final continua saindo de
+#: retranscrever a resposta inteira. Dez minutos cobre com folga uma resposta de
+#: pergunta única; o que passa disso é entrevista contínua, onde segurar tudo
+#: custava 115 MB e fazia cada parcial concatenar a entrevista inteira só para
+#: recortar os últimos segundos (4,6 ms com 1 min, 78,6 ms com 30 — duas vezes
+#: por segundo).
+MEMORIA_MAXIMA_S = 60 * 10
 
 # O QUE MANTÉM O TEXTO COLADO NA FALA
 #
@@ -253,14 +262,66 @@ class AnswerSession:
     _t0: float = 0.0
     #: Quanto do prefixo já foi ENTREGUE ao cliente como trecho confirmado.
     _prefixo_entregue: int = 0
+    #: Amostras já DESCARTADAS do início do buffer. `audio` guarda só o que vem
+    #: depois disto, então índice absoluto menos `_base` dá o índice na lista.
+    _base: int = 0
 
     def acrescentar(self, pcm: np.ndarray) -> None:
-        if self.amostras >= LIMITE_SESSAO_S * TAXA:
-            return
+        """Recebe áudio. Nunca recusa — ver `_descartar_congelado` para o teto.
+
+        Antes havia aqui um teto de 30 minutos que RECUSAVA áudio, e ele era o
+        defeito: a escuta contínua abre UMA sessão para a entrevista inteira
+        (`iniciarEntrevista` chama `iniciarResposta("entrevista")`), então passados
+        30 minutos toda fala nova era jogada fora EM SILÊNCIO. O roteiro parava de
+        preencher e o painel dizia que não estava ouvindo — numa entrevista de 28 a
+        42 perguntas isso acontece no meio do atendimento.
+
+        O teto existia para a memória não crescer sem fim, e essa preocupação
+        continua válida. Só que a resposta certa é soltar o que já foi congelado,
+        não recusar o que está chegando: o que passou da cauda já virou texto e
+        nunca mais é retranscrito.
+        """
         if self._t0 == 0.0:
             self._t0 = time.monotonic()
         self.audio.append(pcm)
         self.amostras += len(pcm)
+
+    def _descartar_congelado(self) -> None:
+        """Solta os blocos que ficaram para trás da cauda.
+
+        A cauda anda para frente a cada congelamento, e o que fica atrás dela não
+        é lido de novo por nenhum parcial. Segurar isso custava duas coisas: 115 MB
+        de RAM aos 30 minutos, e — pior — o `_juntar` concatenava a entrevista
+        INTEIRA a cada parcial só para recortar os últimos segundos. Medido: 4,6 ms
+        de cauda com 1 minuto de entrevista, 78,6 ms com 30 — duas vezes por
+        segundo, numa máquina que já disputa CPU com o OCR.
+
+        Só age depois de `MEMORIA_MAXIMA_S`, e isso é essencial: numa RESPOSTA
+        (o "Gravar / Finalizar" pergunta a pergunta) o texto definitivo vem de
+        retranscrever o áudio inteiro de uma vez, que é o de melhor contexto.
+        Soltar áudio de uma resposta de dois minutos trocaria esse texto por uma
+        emenda de parciais, sem necessidade nenhuma — a memória ali é pequena.
+        Quem precisa do descarte é a entrevista contínua, que roda por horas.
+
+        Guarda uma folga antes da cauda porque `_congelar` pode recuar o início
+        quando corta à força (ver SOBREPOSICAO_PARCIAL_S).
+        """
+        if self.amostras < MEMORIA_MAXIMA_S * TAXA:
+            return
+        folga = int(2 * SOBREPOSICAO_PARCIAL_S * TAXA)
+        alvo = self._inicio_cauda - folga
+        if alvo <= self._base:
+            return
+        soltar = 0
+        consumido = self._base
+        for bloco in self.audio:
+            if consumido + len(bloco) > alvo:
+                break
+            consumido += len(bloco)
+            soltar += 1
+        if soltar:
+            del self.audio[:soltar]
+            self._base = consumido
 
     def fator_chegada(self) -> float:
         """Quantos segundos de áudio chegam por segundo de relógio.
@@ -313,9 +374,29 @@ class AnswerSession:
         return novo
 
     def _juntar(self) -> np.ndarray:
+        """O áudio AINDA EM MEMÓRIA. Começa em `_base`, não no zero da sessão."""
         if not self.audio:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(self.audio)
+
+    def _desde(self, inicio_absoluto: int) -> np.ndarray:
+        """Recorta a partir de um índice absoluto, concatenando só o necessário.
+
+        Concatenar tudo para depois fatiar era o que ficava caro conforme a
+        entrevista andava. Aqui os blocos anteriores ao corte são pulados, então o
+        custo acompanha o TAMANHO DA CAUDA e não o da entrevista.
+        """
+        alvo = max(inicio_absoluto, self._base)
+        pedacos: list[np.ndarray] = []
+        posicao = self._base
+        for bloco in self.audio:
+            fim = posicao + len(bloco)
+            if fim > alvo:
+                pedacos.append(bloco[max(0, alvo - posicao) :] if posicao < alvo else bloco)
+            posicao = fim
+        if not pedacos:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(pedacos)
 
     def transcrever_parcial(self) -> str:
         """Texto provisório da cauda, congelando o que já passou de uma pausa.
@@ -326,7 +407,7 @@ class AnswerSession:
         keepalive. Parcial é aproximação para a tela — perder um não custa
         nada, porque o próximo já traz o texto acumulado.
         """
-        cauda = self._juntar()[self._inicio_cauda :]
+        cauda = self._desde(self._inicio_cauda)
         if len(cauda) < TAXA * 0.5:  # menos de meio segundo não vale rodar
             return self.texto_em_construcao()
 
@@ -359,6 +440,9 @@ class AnswerSession:
 
         self.texto_parcial = " ".join(t.texto for t in trechos).strip()
         self._congelar(trechos, len(cauda) / TAXA)
+        # Logo depois de congelar, e não em `acrescentar`: é aqui que a cauda
+        # anda, e é o que ficou atrás dela que pode ser solto.
+        self._descartar_congelado()
         return self.texto_em_construcao()
 
     def _congelar(self, trechos: list[Trecho], duracao_cauda: float) -> None:
@@ -390,10 +474,35 @@ class AnswerSession:
             self._inicio_cauda = max(0, self.amostras - int(SOBREPOSICAO_PARCIAL_S * TAXA))
 
     def transcrever_final(self) -> str:
-        """Texto definitivo: o áudio inteiro de uma vez, que é o de melhor contexto."""
+        """Texto definitivo do que ainda está em memória, emendado ao congelado.
+
+        Numa resposta curta — o caso do "Gravar / Finalizar" pergunta a pergunta —
+        nada foi descartado, `_base` é zero, e isto continua sendo exatamente o que
+        era: o áudio inteiro transcrito de uma vez, que é o de melhor contexto.
+
+        Numa sessão longa, parte do áudio já foi solta da memória depois de virar
+        texto. Aí o definitivo é o congelado + o que sobrou. Vale notar que
+        retranscrever trinta minutos de uma vez nunca foi viável de verdade: a
+        entrevista contínua se sustenta nos TRECHOS, que é o que alimenta o
+        roteiro enquanto a conversa acontece.
+        """
         self.estado = Estado.FINISHING
-        completo = self._juntar()
-        self.texto_final = _transcrever(completo) if len(completo) >= TAXA * 0.3 else ""
+        if self._base == 0:
+            # Nada foi solto: transcreve tudo de uma vez, como sempre foi.
+            completo = self._desde(0)
+            self.texto_final = (
+                _transcrever(completo) if len(completo) >= TAXA * 0.3 else ""
+            )
+        else:
+            # Parte já virou texto e saiu da memória. Transcreve da CAUDA, e não
+            # de `_base`: entre os dois há a folga que `_descartar_congelado`
+            # deixa de propósito, e ela já está contada no prefixo — recomeçar
+            # dali repetiria as últimas palavras no texto final.
+            cauda = self._desde(self._inicio_cauda)
+            texto_cauda = _transcrever(cauda) if len(cauda) >= TAXA * 0.3 else ""
+            self.texto_final = " ".join(
+                p for p in (self.prefixo_parcial, texto_cauda) if p
+            ).strip()
         self.estado = Estado.COMPLETED
         return self.texto_final
 

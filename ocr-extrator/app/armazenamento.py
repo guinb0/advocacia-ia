@@ -722,6 +722,20 @@ def listar_entrevistas(caso_id: str) -> list[dict[str, Any]]:
     return [_normalizar_entrevista(linha) for linha in linhas]
 
 
+def listar_todas_entrevistas() -> list[dict[str, Any]]:
+    """Todas as entrevistas, de todos os casos — a visão da supervisão.
+
+    Separada da `listar_entrevistas` de propósito: aquela é por caso e é a que
+    todo advogado usa; esta atravessa o escritório inteiro e só a supervisão
+    chama (ver `app/supervisao.py`).
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT * FROM entrevistas ORDER BY criado_em DESC"
+        ).fetchall()
+    return [_normalizar_entrevista(linha) for linha in linhas]
+
+
 def obter_entrevista(entrevista_id: str) -> dict[str, Any] | None:
     with conectar() as con:
         linha = con.execute(

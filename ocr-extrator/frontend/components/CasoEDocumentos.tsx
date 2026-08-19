@@ -235,6 +235,7 @@ export default function CasoEDocumentos({
 
       {situacao.situacao ? (
         <Checklist
+          mostrarPrazos
           situacao={situacao.situacao}
           enviando={situacao.enviando}
           erro={situacao.erro}

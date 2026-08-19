@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from contextlib import contextmanager
@@ -88,6 +89,7 @@ def ocr_com_rotacao_medido(
     foto que pontua mal custa **quatro** inferências, não uma, e é essa a
     diferença entre o caso bom e o caso ruim de tempo — não o tamanho da imagem.
     """
+    inicio_rotacoes = time.perf_counter()
     linhas, tempos = rodar_ocr_com_tempo(img, lang)
     tentativas: list[dict[str, float | int]] = [{**tempos, "rotacao_graus": 0}]
     melhor, melhor_rot, melhor_pt = linhas, 0, _pontuar_linhas(linhas)
@@ -97,6 +99,18 @@ def ocr_com_rotacao_medido(
         for rot, code in ((90, cv2.ROTATE_90_CLOCKWISE),
                           (180, cv2.ROTATE_180),
                           (270, cv2.ROTATE_90_COUNTERCLOCKWISE)):
+            # O Paddle já classifica a orientação. Esta segunda defesa não pode
+            # transformar uma foto ruim em quatro inferências de ~50 segundos.
+            # Zero desliga o teto para benchmarks específicos.
+            limite_s = float(os.getenv("OCR_ORIENTATION_FALLBACK_BUDGET_S", "45"))
+            decorrido_s = time.perf_counter() - inicio_rotacoes
+            if limite_s > 0 and decorrido_s >= limite_s:
+                log.warning(
+                    "Interrompendo rotações extras após %.1fs (limite %.1fs).",
+                    decorrido_s,
+                    limite_s,
+                )
+                break
             try:
                 cand, tempos = rodar_ocr_com_tempo(cv2.rotate(img, code), lang)
                 tentativas.append({**tempos, "rotacao_graus": rot})

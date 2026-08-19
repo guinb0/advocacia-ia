@@ -1,0 +1,236 @@
+.container {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+.cabecalho {
+  margin: 20px 0 20px;
+}
+
+.cabecalho h1 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+}
+
+.cabecalho p {
+  margin: 0;
+  color: var(--texto-suave, #667);
+  max-width: 66ch;
+  line-height: 1.5;
+}
+
+.totais {
+  margin-top: 10px !important;
+}
+
+.pendencia {
+  color: #a16207;
+}
+
+/* Lista à esquerda, entrevista aberta à direita. `minmax(0, 1fr)` na direita
+ * para a transcrição poder quebrar em vez de esticar a coluna. */
+.colunas {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  margin-top: 20px;
+}
+
+@media (max-width: 900px) {
+  .colunas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.lista,
+.detalhe {
+  border: 1px solid var(--borda, #e2e5ee);
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--fundo-cartao, #fff);
+}
+
+.pessoa + .pessoa {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--borda-suave, #eef0f5);
+}
+
+.pessoa h2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 0.98rem;
+}
+
+.contagem {
+  font-weight: 400;
+  font-size: 0.8rem;
+  color: var(--texto-suave, #778);
+  white-space: nowrap;
+}
+
+.lista ul,
+.perguntas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--fundo-hover, #f2f5fb);
+}
+
+.itemAberto {
+  background: var(--selo-fundo, #eaf0fb);
+  font-weight: 600;
+}
+
+.meta {
+  color: var(--texto-suave, #889);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.acoes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.detalhe h3 {
+  margin: 18px 0 8px;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--texto-suave, #667);
+}
+
+.relatorio {
+  border: 1px solid var(--borda, #e2e5ee);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--fundo, #fbfcfe);
+}
+
+.relatorio h3 {
+  margin-top: 0;
+}
+
+.resumo {
+  margin: 0 0 12px;
+  line-height: 1.55;
+}
+
+.placar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.ok,
+.falta,
+.incerta {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+}
+
+.ok {
+  background: #e8f6ec;
+  color: #1d6b33;
+}
+
+/* Âmbar, e não vermelho: pergunta que não aparece pode ter deixado de ser feita
+ * por bom motivo. Vermelho leria como erro, e o relatório não afirma isso. */
+.falta {
+  background: #fdf3e2;
+  color: #92620a;
+}
+
+.incerta {
+  background: #f1f2f5;
+  color: #556;
+}
+
+.bloco {
+  margin-top: 14px;
+}
+
+.bloco h4 {
+  margin: 0 0 6px;
+  font-size: 0.88rem;
+}
+
+.perguntas li {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--borda-suave, #eef0f5);
+  line-height: 1.5;
+}
+
+.perguntas li:last-child {
+  border-bottom: 0;
+}
+
+.aviso {
+  margin: 14px 0 0;
+  color: var(--texto-suave, #778);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+/* A transcrição vem de reconhecimento de voz: sem quebra própria, uma fala
+ * longa sem pontuação esticaria a coluna inteira. */
+.transcricao {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 460px;
+  overflow-y: auto;
+  border: 1px solid var(--borda, #e2e5ee);
+  border-radius: 8px;
+  background: var(--fundo, #fbfcfe);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.vazio {
+  margin: 0;
+  color: var(--texto-suave, #778);
+}
+
+.parte + .parte {
+  margin-top: 10px;
+}
+
+.parteTitulo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.88rem;
+}

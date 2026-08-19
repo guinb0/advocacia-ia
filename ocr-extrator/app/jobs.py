@@ -98,10 +98,20 @@ def obter(job_id: str) -> dict[str, Any] | None:
 def recuperar_abandonados(minutos: int = 30) -> int:
     limite = datetime.now(timezone.utc) - timedelta(minutes=minutos)
     with _conectar() as con:
-        cursor = con.execute(
+        iniciados = con.execute(
             """UPDATE jobs SET status='FAILED', erro='Worker interrompido ou tempo limite excedido',
                       finalizado_em=now(), atualizado_em=now()
                  WHERE status IN ('STARTED','PROCESSING') AND atualizado_em < %s""",
             (limite,),
         )
-        return cursor.rowcount
+        # QUEUED não recebe `atualizado_em` até um worker pegá-lo. Se a mensagem
+        # sumir numa reinicialização do Redis/worker, antes ficava pendente para
+        # sempre porque a recuperação olhava apenas jobs já iniciados.
+        limite_fila = datetime.now(timezone.utc) - timedelta(minutes=10)
+        enfileirados = con.execute(
+            """UPDATE jobs SET status='FAILED', erro='Tarefa não foi recebida pelo worker',
+                      finalizado_em=now(), atualizado_em=now()
+                 WHERE status='QUEUED' AND atualizado_em < %s""",
+            (limite_fila,),
+        )
+        return iniciados.rowcount + enfileirados.rowcount

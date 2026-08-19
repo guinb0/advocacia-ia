@@ -29,7 +29,16 @@ def gerar_relatorio(self, job_id: str, pedido: dict):
         if pedido.get("analisar", True) and str(pedido.get("relato", "")).strip():
             jobs.atualizar(job_id, status="PROCESSING", progresso=25)
             try:
-                analise = rag.sugerir_acoes(pedido["relato"])
+                # O PDF é a entrega principal. Precedentes são enriquecimento e
+                # têm orçamento curto: rede ou modelo lentos não podem deixar a
+                # equipe olhando "Gerando" por vários minutos.
+                analise = rag.sugerir_acoes(
+                    pedido["relato"],
+                    embedding_timeout=15,
+                    connect_timeout=4,
+                    connect_retries=1,
+                    model_timeout=35,
+                )
             except Exception:
                 analise = {"indisponivel": "A análise por precedentes poderá ser gerada depois."}
         jobs.atualizar(job_id, status="PROCESSING", progresso=70)

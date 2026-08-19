@@ -31,3 +31,7 @@ vetorizacao-*.log
 # foi dito pelo cliente. Isso e dado de atendimento, nao log de build.
 backend.*.log
 transcricao.*.log
+
+# Build do Next: gerado, nao versionado.
+.next/
+frontend/.next/

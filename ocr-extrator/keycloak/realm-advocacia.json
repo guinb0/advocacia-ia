@@ -22,6 +22,10 @@
       {
         "name": "cliente",
         "description": "Acompanha o próprio caso e envia documentos."
+      },
+      {
+        "name": "secretario",
+        "description": "Gerencia os usuarios e acompanha as entrevistas de toda a equipe."
       }
     ]
   },

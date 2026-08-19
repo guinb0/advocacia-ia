@@ -253,6 +253,23 @@ def testar_trecho_curto() -> int:
     return falhas
 
 
+def testar_sim_nao_curto() -> int:
+    falhas = 0
+    roteiro = escuta.roteiros.obter("empregado_publico")
+    assert roteiro is not None
+    perguntas = [p for b in roteiro.blocos for p in b.perguntas]
+    objetiva = next(p for p in perguntas if p.tipo == "sim_nao")
+    composta = next(p for p in perguntas if p.id == "desligamento")
+
+    sim = escuta._binaria_curta("Sim.", [objetiva])
+    nao = escuta._binaria_curta("não", [composta])
+    ambigua = escuta._binaria_curta("aham", [objetiva])
+    falhas += not checar(sim is not None and sim["valor"] == "sim", "'sim' preenche pergunta objetiva")
+    falhas += not checar(nao is not None and nao["valor"] == "não", "'não' preenche pergunta composta binária")
+    falhas += not checar(ambigua is None, "'aham' continua ambíguo e não preenche")
+    return falhas
+
+
 def testar_sem_chave() -> int:
     falhas = 0
     guardada = os.environ.get("DEEPSEEK_API_KEY")
@@ -287,6 +304,7 @@ def main_teste() -> int:
         ("alucinação do modelo", testar_alucinacao),
         ("módulos fechados pelo rastreio", testar_modulos_fechados),
         ("trecho curto demais", testar_trecho_curto),
+        ("sim/não curto", testar_sim_nao_curto),
         ("sem chave", testar_sem_chave),
     ):
         print(f"\n{titulo}")
