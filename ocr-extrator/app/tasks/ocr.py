@@ -92,7 +92,15 @@ def processar_entrega(
             "cin" if usar_para_rg_e_cpf and item.tipo_ocr in {"rg", "cpf"}
             else item.tipo_ocr
         )
-        resultado = pipeline.processar(conteudo, nome, idioma, tipo_extracao)
+        # O checklist persiste o JSON no banco e conserva o original em `dados`.
+        # Gravar ainda outro JSON e XML em `tmp` era I/O sem consumidor.
+        resultado = pipeline.processar(
+            conteudo,
+            nome,
+            idioma,
+            tipo_extracao,
+            gerar_arquivos_temporarios=False,
+        )
 
         unificar = usar_para_rg_e_cpf
         if not unificar and item.tipo_ocr in {"rg", "cpf"}:

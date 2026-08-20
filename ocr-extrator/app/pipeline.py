@@ -290,7 +290,14 @@ def salvar_temporarios(doc: dict) -> dict:
 # -------------------------------------------------------------- pipeline
 
 
-def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado: str | None = None) -> dict:
+def processar(
+    conteudo: bytes,
+    nome_arquivo: str,
+    lang: str = "pt",
+    tipo_forcado: str | None = None,
+    *,
+    gerar_arquivos_temporarios: bool = True,
+) -> dict:
     inicio = time.perf_counter()
     crono = Cronometro()
 
@@ -370,8 +377,9 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
         "texto_completo": "\n".join(textos),
     }
 
-    with crono.medir("salvar"):
-        doc["arquivos_temporarios"] = salvar_temporarios(doc)
+    if gerar_arquivos_temporarios:
+        with crono.medir("salvar"):
+            doc["arquivos_temporarios"] = salvar_temporarios(doc)
 
     doc["tempo_etapas_s"] = crono.etapas
     log.info(

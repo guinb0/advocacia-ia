@@ -7,6 +7,7 @@ Cada métrica vira um score 0-100 e um veredito textual em português.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 
 import cv2
 import numpy as np
@@ -212,6 +213,49 @@ def avaliar(
 # ------------------------------------------------------- pré-processamento
 
 
+def _ordenar_vertices(pontos: np.ndarray) -> np.ndarray:
+    pontos = pontos.reshape(4, 2).astype(np.float32)
+    soma = pontos.sum(axis=1)
+    diferenca = np.diff(pontos, axis=1).reshape(-1)
+    return np.array([
+        pontos[np.argmin(soma)], pontos[np.argmin(diferenca)],
+        pontos[np.argmax(soma)], pontos[np.argmax(diferenca)],
+    ], dtype=np.float32)
+
+
+def recortar_documento(img_bgr: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Recorta por perspectiva somente quando há um quadrilátero inequívoco."""
+    h, w = img_bgr.shape[:2]
+    if min(h, w) < 500:
+        return img_bgr, False
+    escala = min(1.0, 1000.0 / max(h, w))
+    pequena = cv2.resize(img_bgr, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA)
+    cinza = cv2.cvtColor(pequena, cv2.COLOR_BGR2GRAY)
+    cinza = cv2.GaussianBlur(cinza, (5, 5), 0)
+    bordas = cv2.Canny(cinza, 45, 135)
+    bordas = cv2.morphologyEx(bordas, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=2)
+    area_imagem = pequena.shape[0] * pequena.shape[1]
+    contornos, _ = cv2.findContours(bordas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contorno in sorted(contornos, key=cv2.contourArea, reverse=True)[:8]:
+        area = cv2.contourArea(contorno)
+        proporcao = area / area_imagem
+        if not 0.35 <= proporcao <= 0.97:
+            continue
+        aproximado = cv2.approxPolyDP(contorno, 0.02 * cv2.arcLength(contorno, True), True)
+        if len(aproximado) != 4 or not cv2.isContourConvex(aproximado):
+            continue
+        pontos = _ordenar_vertices(aproximado / escala)
+        tl, tr, br, bl = pontos
+        largura = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
+        altura = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
+        if largura < 500 or altura < 300:
+            continue
+        destino = np.array([[0, 0], [largura - 1, 0], [largura - 1, altura - 1], [0, altura - 1]], dtype=np.float32)
+        matriz = cv2.getPerspectiveTransform(pontos, destino)
+        return cv2.warpPerspective(img_bgr, matriz, (largura, altura)), True
+    return img_bgr, False
+
+
 def preparar_para_ocr(img_bgr: np.ndarray, lado_maximo: int = 2000) -> np.ndarray:
     """Prepara foto de celular com OpenCV sem criar uma segunda passada de OCR.
 
@@ -224,6 +268,11 @@ def preparar_para_ocr(img_bgr: np.ndarray, lado_maximo: int = 2000) -> np.ndarra
         raise ValueError("Imagem vazia para pré-processamento.")
     if img_bgr.dtype != np.uint8:
         img_bgr = np.clip(img_bgr, 0, 255).astype(np.uint8)
+
+    # Opt-in: fotos sem margem podem ter bordas internas parecidas com o papel.
+    # O benchmark deve validar o acervo real antes de habilitar globalmente.
+    if os.getenv("OCR_CROPS_DOCUMENTO", "0").strip().lower() not in {"0", "false"}:
+        img_bgr, _ = recortar_documento(img_bgr)
 
     h, w = img_bgr.shape[:2]
     maior = max(h, w)
