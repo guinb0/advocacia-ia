@@ -29,7 +29,10 @@ def configurar(app: FastAPI) -> None:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        provider = TracerProvider(resource=Resource.create({"service.name": "advocacia-api"}))
+        provider = TracerProvider(resource=Resource.create({
+            "service.name": os.getenv("OTEL_SERVICE_NAME", "advocacia-api"),
+            "service.version": os.getenv("OTEL_SERVICE_VERSION", "dev"),
+        }))
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp)))
         trace.set_tracer_provider(provider)
         FastAPIInstrumentor.instrument_app(app)

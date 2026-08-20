@@ -106,9 +106,11 @@ services:
     container_name: acervo-keycloak
     command: ["start-dev", "--import-realm", "--http-port=8180"]
     environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN_USER:-admin}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?defina KEYCLOAK_ADMIN_PASSWORD no .env}"
       KC_HEALTH_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME: "${KEYCLOAK_PUBLIC_URL:-http://localhost:8180}"
       KC_DB: mssql
       # encrypt=true;trustServerCertificate=true: o servidor exige TLS mas o
       # certificado é auto-assinado — mesmo par que o `TrustServerCertificate=yes`

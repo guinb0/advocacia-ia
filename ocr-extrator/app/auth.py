@@ -23,6 +23,8 @@ from fastapi import Depends, HTTPException, Request
 log = logging.getLogger("auth")
 
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "").rstrip("/")
+KEYCLOAK_PUBLIC_URL = os.getenv("KEYCLOAK_PUBLIC_URL", KEYCLOAK_URL).rstrip("/")
+KEYCLOAK_INTERNAL_URL = os.getenv("KEYCLOAK_INTERNAL_URL", KEYCLOAK_URL).rstrip("/")
 AUTH_DESATIVADA = os.getenv("AUTH_DESATIVADA", "0").strip() == "1"
 REALM = os.getenv("KEYCLOAK_REALM", "advocacia")
 CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "acervo-frontend")
@@ -37,11 +39,11 @@ _jwks: dict[str, Any] | None = None
 
 
 def _url_jwks() -> str:
-    return f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/certs"
+    return f"{KEYCLOAK_INTERNAL_URL}/realms/{REALM}/protocol/openid-connect/certs"
 
 
 def emissor() -> str:
-    return f"{KEYCLOAK_URL}/realms/{REALM}"
+    return f"{KEYCLOAK_PUBLIC_URL}/realms/{REALM}"
 
 
 def _buscar_jwks(forcar: bool = False) -> dict[str, Any]:
@@ -165,7 +167,7 @@ def configuracao_publica() -> dict[str, Any]:
     """O que o frontend precisa para iniciar o fluxo — nada secreto aqui."""
     return {
         "ativa": ATIVA,
-        "url": KEYCLOAK_URL,
+        "url": KEYCLOAK_PUBLIC_URL,
         "realm": REALM,
         "client_id": CLIENT_ID,
     }

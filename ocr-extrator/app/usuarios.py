@@ -81,7 +81,7 @@ def _env(nome: str, padrao: str = "") -> str:
 
 
 def _base() -> str:
-    url = _env("KEYCLOAK_URL")
+    url = _env("KEYCLOAK_INTERNAL_URL") or _env("KEYCLOAK_URL")
     if not url:
         raise HTTPException(
             503,
