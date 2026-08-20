@@ -213,14 +213,45 @@ def avaliar(
 
 
 def preparar_para_ocr(img_bgr: np.ndarray, lado_maximo: int = 2000) -> np.ndarray:
-    """Redimensiona imagens gigantes e reforça o contraste local (CLAHE)."""
+    """Prepara foto de celular com OpenCV sem criar uma segunda passada de OCR.
+
+    O tratamento é adaptativo: ilumina foto escura, contém fundo estourado,
+    reforça contraste local e aplica máscara de nitidez apenas quando a imagem
+    está realmente suave. Documento já bom recebe intervenção pequena, evitando
+    halos que confundem ``O/0`` e ``I/1``.
+    """
+    if img_bgr is None or img_bgr.size == 0:
+        raise ValueError("Imagem vazia para pré-processamento.")
+    if img_bgr.dtype != np.uint8:
+        img_bgr = np.clip(img_bgr, 0, 255).astype(np.uint8)
+
     h, w = img_bgr.shape[:2]
     maior = max(h, w)
     if maior > lado_maximo:
         escala = lado_maximo / maior
         img_bgr = cv2.resize(img_bgr, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA)
 
+    # Gamma corrige iluminação global preservando as cores e as bordas. CLAHE
+    # sozinho melhora o contraste local, mas não recupera uma foto inteira
+    # subexposta ou um papel lavado pelo flash.
+    luminancia = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    media = float(luminancia.mean())
+    gamma = 0.72 if media < 85 else 0.86 if media < 120 else 1.18 if media > 220 else 1.0
+    if gamma != 1.0:
+        tabela = np.array([((i / 255.0) ** gamma) * 255 for i in range(256)], dtype=np.uint8)
+        img_bgr = cv2.LUT(img_bgr, tabela)
+
     lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    l = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
-    return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+    contraste = float(l.std())
+    clip = 2.6 if contraste < 32 else 2.0 if contraste < 50 else 1.35
+    l = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8)).apply(l)
+    preparada = cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+
+    # Unsharp mask moderada somente em imagem suave. Acima do limiar, reforçar
+    # criaria borda dupla em letras que já estão nítidas.
+    nitidez = float(cv2.Laplacian(cv2.cvtColor(preparada, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+    if nitidez < 140:
+        suave = cv2.GaussianBlur(preparada, (0, 0), 1.0)
+        preparada = cv2.addWeighted(preparada, 1.35, suave, -0.35, 0)
+    return preparada
