@@ -22,8 +22,8 @@ def aquecer_worker_ocr(sender=None, **_kwargs):
     if not hostname.lower().startswith("ocr@"):
         return
     try:
-        from ..ocr_engine import get_engine
-        get_engine()
+        from ..ocr_engine import aquecer
+        aquecer()
         log.info("PaddleOCR aquecido no worker %s.", hostname)
     except Exception:
         # O primeiro job tenta novamente; worker vivo é melhor que abortar toda

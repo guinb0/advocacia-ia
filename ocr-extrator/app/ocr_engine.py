@@ -136,6 +136,16 @@ def get_engine(lang: str = "pt"):
         raise RuntimeError("Não foi possível inicializar o PaddleOCR.")
 
 
+def aquecer(lang: str = "pt") -> None:
+    """Constrói o motor na mesma thread que fará todas as inferências.
+
+    Paddle mantém estado ligado à thread criadora. Aquecer chamando
+    ``get_engine`` diretamente fazia o boot parecer concluído, mas o primeiro
+    documento reconstruía todo o modelo ao entrar em ``_worker``.
+    """
+    _worker.submit(get_engine, lang).result()
+
+
 def modelo_carregado() -> bool:
     return _engine is not None
 
