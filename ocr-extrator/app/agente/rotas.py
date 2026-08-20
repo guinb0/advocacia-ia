@@ -84,6 +84,22 @@ def configuracao() -> dict[str, Any]:
     return resposta
 
 
+@roteador.get("/saude")
+def saude_do_agente() -> dict[str, Any]:
+    """Latência dos dois bancos do agente e o desempenho de cada agente de IA nas
+    últimas 24h — o `/health/inspection` de lá, repassado para a tela não precisar
+    falar HTTP com outro serviço nem conhecer o token dele.
+    """
+    if not config().ligado:
+        return {"ligado": False}
+    try:
+        dados = Cliente().inspecao()
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+    dados["ligado"] = True
+    return dados
+
+
 @roteador.get("/casos/{caso_id}")
 def dossie_do_caso(caso_id: str) -> dict[str, Any]:
     """Tudo que o escritório sabe do caso, dos dois lados."""
@@ -233,6 +249,52 @@ def jurimetria_do_acervo(
                 "decided_to": ate,
             }
         )
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post(
+    "/casos/{caso_id}/jurimetria/linhas-argumentativas", status_code=status.HTTP_202_ACCEPTED
+)
+def disparar_linhas_argumentativas(caso_id: str) -> dict[str, Any]:
+    """Dispara a leitura das razões de decidir do recorte comparável deste caso."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().linhas_argumentativas(caso_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/jurimetria/linhas-argumentativas")
+def linhas_argumentativas(caso_id: str) -> dict[str, Any] | None:
+    """A leitura mais recente, ou `None` quando ainda não foi pedida."""
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().linhas_argumentativas_resultado(caso_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/jurimetria/contra-tese", status_code=status.HTTP_202_ACCEPTED)
+def disparar_contra_tese(
+    caso_id: str, hipotese_id: str = Body(..., embed=True)
+) -> dict[str, Any]:
+    """Dispara o argumento provável do outro lado contra a hipótese indicada.
+
+    A tese a atacar é escolha do advogado — mesma régua da aprovação de estratégia.
+    """
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().contra_tese(caso_ref, hipotese_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/jurimetria/contra-tese")
+def contra_tese(caso_id: str) -> dict[str, Any] | None:
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().contra_tese_resultado(caso_ref)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 

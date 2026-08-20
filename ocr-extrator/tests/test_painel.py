@@ -262,10 +262,30 @@ def main() -> int:
     print("\n== nada é inventado ==")
     campos_ausentes = {a["campo"] for a in payload["ausencias"]}
     checar(
-        {"Prioridade", "Prazo e SLA contratado", "Responsável pelo caso"} <= campos_ausentes,
-        "prioridade, prazo/SLA e responsável saem declarados como ausentes",
+        {"Prioridade", "Prazo contratado", "Responsável pelo caso"} <= campos_ausentes,
+        "prioridade, prazo e responsável saem declarados como ausentes",
         str(campos_ausentes),
     )
+    # A tela é lida por advogado: nenhum estado interno do agente nem jargão de sistema
+    # pode aparecer em texto visível. Este teste é a rede de segurança dessa regra —
+    # sem ele, o próximo campo novo do agente volta a vazar cru para a tela.
+    visivel = " ".join(
+        str(v)
+        for chave in ("insights", "indicadores", "radar", "eventos", "ocorrencias")
+        for item in (
+            payload[chave]["itens"] if isinstance(payload[chave], dict) else payload[chave]
+        )
+        for k, v in item.items()
+        if isinstance(v, str) and k not in ("codigo", "tipo", "tom", "estado", "gravidade")
+    )
+    visivel += " ".join(c["base"] + c["rotulo"] for c in payload["saude"]["componentes"])
+    visivel += " ".join(a["campo"] + a["motivo"] for a in payload["ausencias"])
+    jargao = [
+        p
+        for p in ("playbook", "SLA", "BLOCKING", "ALLEGED", "OCR_DOCUMENT", "APPROVED", "§47")
+        if p.lower() in visivel.lower()
+    ]
+    checar(not jargao, "nenhum jargão de sistema vaza para o texto da tela", str(jargao))
     linhas = {c["codigo"]: c for c in payload["comparacao_historica"]["linhas"]}
     checar(
         all(linha["previsto_horas"] is None and linha["motivo"] for linha in linhas.values()),
@@ -450,6 +470,164 @@ def main() -> int:
     checar(
         any("Checklist obrigatório completo" in i["texto"] for i in completo["insights"]),
         "checklist completo também produz insight — a seção não fica só com o que deu errado",
+    )
+
+    print("\n== números que precisam bater entre si ==")
+    indicador_fatos = next(i for i in com_agente["indicadores"] if i["codigo"] == "fatos")
+    checar(
+        indicador_fatos["valor"] == com_agente["fatos"]["vigentes"] == 3,
+        "o cartão de fatos conta os vigentes, o mesmo número da tabela logo abaixo",
+        f"cartão={indicador_fatos['valor']} tabela={com_agente['fatos']['vigentes']}",
+    )
+    origem = next(e for e in com_agente["radar"] if e["eixo"] == "Fatos com origem")
+    checar(
+        origem["valor"] == round(2 / 3 * 100, 1),
+        "o eixo de origem olha só os fatos em vigor — o substituído não pesa",
+        str(origem),
+    )
+    aberto = compor(
+        referencia=referencia,
+        caso={**caso_base(), "criado_em": iso(AGORA - timedelta(days=30))},
+        entregas=[entrega("DOC.00", -700)],
+    )
+    cartao = next(i for i in aberto["indicadores"] if i["codigo"] == "tempo_em_aberto")
+    ciclo_aberto = next(
+        c for c in aberto["comparacao_historica"]["linhas"] if c["codigo"] == "ciclo"
+    )
+    checar(
+        cartao["comparacao"]["desvio_percentual"] != ciclo_aberto["desvio_percentual"],
+        "num caso parado, o desvio do cartão é o do próprio número, não o do ciclo",
+        f"cartão={cartao['comparacao']} ciclo={ciclo_aberto['desvio_percentual']}",
+    )
+
+    print("\n== contrato ==")
+    assinado = compor(
+        assinaturas=[
+            {
+                "nome": "Honorários",
+                "estado": "assinado",
+                "total": 1,
+                "criado_em": iso(ABERTURA + timedelta(hours=10)),
+                # Tocado hoje por uma sincronização de rotina: não pode virar marco.
+                "atualizado_em": iso(AGORA),
+                "signatarios": [
+                    {
+                        "nome": "Maria da Silva",
+                        "assinou_em": iso(ABERTURA + timedelta(hours=20)),
+                        "visualizado_em": iso(ABERTURA + timedelta(hours=12)),
+                    }
+                ],
+            }
+        ]
+    )
+    etapa_contrato = next(
+        e for e in assinado["etapas_medidas"] if e["codigo"] == "contrato"
+    )
+    checar(
+        etapa_contrato["horas"] == 10.0 and not etapa_contrato["em_curso"],
+        "a etapa do contrato mede até a assinatura, não até a última sincronização",
+        str(etapa_contrato),
+    )
+    checar(
+        assinado["resumo"]["dias_sem_movimentacao"] > 1,
+        "sincronizar o contrato não faz um caso parado parecer movimentado hoje",
+        str(assinado["resumo"]["ultima_movimentacao"]),
+    )
+    recusado = compor(
+        assinaturas=[
+            {
+                "nome": "Honorários",
+                "estado": "recusado",
+                "total": 1,
+                "criado_em": iso(ABERTURA + timedelta(hours=10)),
+                "atualizado_em": iso(ABERTURA + timedelta(hours=11)),
+                "signatarios": [{"nome": "Maria da Silva", "assinou_em": None}],
+            }
+        ]
+    )
+    etapa_recusada = next(
+        e for e in recusado["etapas_medidas"] if e["codigo"] == "contrato"
+    )
+    checar(
+        not etapa_recusada["em_curso"],
+        "contrato recusado não fica em curso para sempre com o relógio correndo",
+        str(etapa_recusada),
+    )
+
+    print("\n== divergências entre fatos ==")
+    com_divergencia = compor(
+        agente=agente_no_ar(
+            contradicoes=[
+                {
+                    "id": "c1",
+                    "type": "EMPLOYMENT.ADMISSION_DATE_MISMATCH",
+                    "severity": "HIGH",
+                    "status": "UNDER_REVIEW",
+                    "possible_resolution": "A CTPS diz 03/02/2015 e a entrevista, 03/02/2016.",
+                    "facts": [
+                        {"id": "fato-2", "type": "EMPLOYMENT.ADMISSION_DATE", "status": "CONTRADICTED"}
+                    ],
+                    "created_at": iso(ABERTURA + timedelta(hours=8)),
+                }
+            ]
+        )
+    )
+    divergencia = next(
+        o for o in com_divergencia["ocorrencias"]["itens"] if o["tipo"] == "contradicao"
+    )
+    checar(
+        "CTPS" in divergencia["detalhe"],
+        "a divergência chega à tela com a frase que o agente escreveu, não vazia",
+        str(divergencia),
+    )
+    checar(
+        divergencia["estado"] == "aberta" and divergencia["gravidade"] == "critico",
+        "divergência em análise continua aberta, e a severidade alta vira tom crítico",
+        str(divergencia),
+    )
+    consistencia = next(
+        c for c in com_divergencia["saude"]["componentes"] if c["codigo"] == "consistencia"
+    )
+    checar(
+        consistencia["valor"] == 0.0,
+        "a saúde conta os fatos atingidos pela divergência, como a fórmula promete",
+        str(consistencia),
+    )
+
+    print("\n== o que falta para a petição ==")
+    prontidao = com_divergencia["prontidao"]
+    codigos = {b["codigo"] for b in prontidao["bloqueios"]}
+    checar(
+        prontidao["avaliavel"] and not prontidao["pronto"],
+        "com documento faltando e divergência aberta, o caso não está pronto",
+        str(prontidao["resumo"]),
+    )
+    checar(
+        {"documentos", "requisitos", "divergencias", "fatos_sem_origem"} <= codigos,
+        "cada bloqueio aparece uma vez, com o dono da ação",
+        str(codigos),
+    )
+    checar(
+        all(b["de_quem"] in ("cliente", "escritório", "advogado") for b in prontidao["bloqueios"]),
+        "todo bloqueio diz de quem é a próxima ação",
+        str([(b["codigo"], b["de_quem"]) for b in prontidao["bloqueios"]]),
+    )
+    checar(
+        payload["prontidao"]["avaliavel"] is False,
+        "sem o agente, a prontidão se declara não avaliável em vez de dizer 'pronto'",
+        str(payload["prontidao"]),
+    )
+
+    print("\n== previsão pela mediana ==")
+    previsao = comparado["comparacao_historica"]["previsao"]
+    checar(
+        previsao["disponivel"] and previsao["dias_restantes"] is not None and previsao["base"],
+        "a previsão sai da mesma mediana já exibida, com a conta escrita",
+        str(previsao),
+    )
+    checar(
+        payload["comparacao_historica"]["previsao"]["disponivel"] is False,
+        "sem base histórica, a previsão não é inventada",
     )
 
     print("\n== distribuição do tempo ==")

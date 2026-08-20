@@ -436,6 +436,46 @@ class Cliente:
         sufixo = "?" + "&".join(parametros) if parametros else ""
         return self._chamar("GET", f"/api/v1/jurimetrics/panel{sufixo}")
 
+    def linhas_argumentativas(self, caso_ref: str) -> dict[str, Any]:
+        """Dispara a leitura das razões de decidir do recorte comparável deste caso.
+
+        A jurimetria conta; esta leitura diz com que fundamento — cada linha vem ancorada
+        nos processos que a sustentam. Roda por pedido explícito, como estratégia e
+        pesquisa: chama modelo do outro lado.
+        """
+        return self._chamar("POST", f"/api/v1/cases/{caso_ref}/jurimetrics/argument-lines")
+
+    def linhas_argumentativas_resultado(self, caso_ref: str) -> dict[str, Any] | None:
+        """A leitura mais recente, ou `None` quando ainda não foi pedida.
+
+        Ausência aqui é estado normal do caso, não erro — mesma régua de `estrategia()`.
+        """
+        try:
+            return self._ler(f"/api/v1/cases/{caso_ref}/jurimetrics/argument-lines")
+        except ErroDoAgente as erro:
+            if erro.status == 404:
+                return None
+            raise
+
+    def contra_tese(self, caso_ref: str, hipotese_ref: str) -> dict[str, Any]:
+        """Dispara o argumento provável do outro lado contra a hipótese indicada.
+
+        Exige uma hipótese aceita na Estratégia — a tese a atacar é escolha do advogado.
+        """
+        return self._chamar(
+            "POST",
+            f"/api/v1/cases/{caso_ref}/jurimetrics/adversarial",
+            json={"hypothesis_id": hipotese_ref},
+        )
+
+    def contra_tese_resultado(self, caso_ref: str) -> dict[str, Any] | None:
+        try:
+            return self._ler(f"/api/v1/cases/{caso_ref}/jurimetrics/adversarial")
+        except ErroDoAgente as erro:
+            if erro.status == 404:
+                return None
+            raise
+
     def resolver_contradicao(
         self,
         caso_ref: str,
@@ -563,6 +603,15 @@ class Cliente:
 
     def saude(self) -> dict[str, Any]:
         return self._chamar("GET", "/health", timeout=5)
+
+    def inspecao(self) -> dict[str, Any]:
+        """Latência dos dois bancos do agente e o desempenho de cada agente de IA.
+
+        `/health/inspection`, do lado de lá, é mais lento que `/health` (mede o corpus de
+        jurisprudência e agrega `agent_runs`) e exige papel interno — por isso um método
+        à parte, com prazo próprio, em vez de reaproveitar `saude()`.
+        """
+        return self._chamar("GET", "/health/inspection", timeout=15)
 
 
 def _detalhe(resposta: httpx.Response) -> str:

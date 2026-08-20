@@ -9,15 +9,22 @@
  *   dossiê    → "o que este caso já é?"
  *   painel    → "como este caso se comportou no tempo, e onde ele está travando?"
  *
- * Tudo o que aparece aqui vem de instante gravado no banco. O sistema não guarda
- * prioridade, prazo, SLA contratado nem responsável formal: em vez de deduzir esses
- * campos, a seção 4 mostra a **referência histórica** (mediana dos casos anteriores da
- * mesma categoria, com o tamanho da amostra) e a seção final lista, por escrito, o que o
+ * Tudo o que aparece aqui vem de data e hora registradas no banco. O sistema não guarda
+ * prioridade, prazo contratado nem responsável formal: em vez de deduzir esses campos, a
+ * seção 5 mostra a **referência histórica** (mediana dos casos anteriores da mesma
+ * categoria, com quantos casos a sustentam) e a seção final lista, por escrito, o que o
  * sistema não sabe. Ausência declarada é informação; ausência preenchida por estimativa
  * vira compromisso na cabeça de quem lê.
  *
- * Nove seções, na ordem em que se lê um caso: resumo, indicadores, evolução, prazos,
- * tempo por etapa, comparação, ocorrências, riscos e histórico.
+ * Quem lê é advogado, não desenvolvedor: nenhum estado interno do agente (`APPROVED`,
+ * `BLOCKING`, `ALLEGED`) nem nome de artefato de sistema (*playbook*, *SLA*, *score*)
+ * aparece em texto visível. `rotuloLegivel` e `tipoDoRequisito` cuidam do que chega em
+ * código; o backend traduz o resto na origem.
+ *
+ * Dez seções, na ordem em que se lê um caso: resumo, o que falta para a petição,
+ * indicadores, evolução, prazos, tempo por etapa, comparação, ocorrências, riscos e
+ * histórico. A segunda é a resposta que o advogado veio buscar — as outras nove são o
+ * porquê dela.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -51,7 +58,7 @@ import {
   ESTADO_DO_FATO,
   origemLegivel,
   valorDoFato,
-  ROTULO_DA_PENDENCIA,
+  tipoDoRequisito,
   rotuloLegivel,
   ROTULO_DO_TIPO,
   serieDiaria,
@@ -261,11 +268,36 @@ export default function PainelCaso({
   );
 
   const serie = useMemo(
-    () => (dados ? serieDiaria(eventosFiltrados, periodo, dados.caso.aberto_em) : []),
+    () =>
+      dados
+        ? serieDiaria(eventosFiltrados, periodo, dados.caso.aberto_em, dados.eventos)
+        : [],
     [dados, eventosFiltrados, periodo],
   );
 
   const distribuicaoPorTipo = useMemo(() => porTipo(eventosFiltrados), [eventosFiltrados]);
+
+  /* A rosca divide pelo total de movimentações, e o desenho mostrava só as quatro
+   * maiores fatias: com os seis tipos que a linha do tempo produz, sobrava um pedaço
+   * cinza do anel que não estava em legenda nenhuma — o gráfico não fechava e não dizia
+   * por quê. As sobras viram uma fatia "outras origens", que é o que elas são. */
+  const fatiasPorTipo = useMemo(() => {
+    const principais = distribuicaoPorTipo.slice(0, 4).map((item, indice) => ({
+      rotulo: ROTULO_DO_TIPO[item.tipo] ?? item.tipo,
+      valor: item.quantidade,
+      cor: CORES_DE_SERIE[indice % CORES_DE_SERIE.length],
+    }));
+    const resto = distribuicaoPorTipo.slice(4);
+    if (resto.length === 0) return principais;
+    return [
+      ...principais,
+      {
+        rotulo: `Outras origens (${resto.length})`,
+        valor: resto.reduce((soma, item) => soma + item.quantidade, 0),
+        cor: "var(--tinta-3)",
+      },
+    ];
+  }, [distribuicaoPorTipo]);
   const mapa = useMemo(() => mapaDeAtividade(eventosFiltrados), [eventosFiltrados]);
 
   if (carregando && !dados) {
@@ -307,6 +339,29 @@ export default function PainelCaso({
   const { caso, resumo, indicadores, saude, comparacao_historica: comparacao } = dados;
   const progresso = resumo.progresso;
   const referencia = comparacao.referencia;
+
+  /* Bloco que a API pode não ter: um backend numa versão anterior devolve o painel sem
+   * `prontidao` e sem `previsao`, e ler `.avaliavel` de `undefined` derrubava a tela
+   * inteira — a tela toda apagada por causa de uma seção. Ausência de bloco é o mesmo
+   * caso de ausência de dado, que este painel já sabe desenhar: diz o que não sabe e
+   * mostra o resto. */
+  const prontidao = dados.prontidao ?? {
+    avaliavel: false,
+    pronto: false,
+    motivo:
+      "Esta seção veio de uma versão do servidor que ainda não a calcula. As demais " +
+      "seções desta tela continuam válidas.",
+    bloqueios: [],
+    ressalvas: [],
+    resumo: "",
+  };
+  const previsao = comparacao.previsao ?? {
+    disponivel: false,
+    motivo: null,
+    dias_restantes: null,
+    ja_ultrapassou: false,
+    base: null,
+  };
   const ciclo = comparacao.linhas.find((linha) => linha.codigo === "ciclo");
   const responsavel = resumo.responsaveis[resumo.responsaveis.length - 1];
   const ausencia = (campo: string) => dados.ausencias.find((a) => a.campo === campo)?.motivo;
@@ -322,22 +377,26 @@ export default function PainelCaso({
           <button type="button" className="botao botao--secundario botao--pequeno" onClick={onVoltar}>
             ← Voltar para a carteira
           </button>
-          <button type="button" className="botao botao--texto botao--pequeno" onClick={onAbrirChecklist}>
-            Checklist de documentos
+        </div>
+        <div className="abas-modulo">
+          <button type="button" className="aba-modulo" onClick={onAbrirChecklist}>
+            <span className="aba-modulo__titulo">Checklist de documentos →</span>
+            <span className="aba-modulo__detalhe">O que já chegou e o que ainda falta</span>
           </button>
-          <button type="button" className="botao botao--texto botao--pequeno" onClick={onAbrirDossie}>
-            Dossiê do caso
+          <button type="button" className="aba-modulo" onClick={onAbrirDossie}>
+            <span className="aba-modulo__titulo">Dossiê do caso →</span>
+            <span className="aba-modulo__detalhe">Fatos, pendências e peças do agente</span>
           </button>
-          <button type="button" className="botao botao--secundario botao--pequeno" disabled>
-            Painel analítico
+          <button type="button" className="aba-modulo" disabled>
+            <span className="aba-modulo__titulo">Painel analítico</span>
+            <span className="aba-modulo__detalhe">Tempo de cada etapa e comparação com outros casos</span>
           </button>
           {onAbrirJurimetria && (
-            <button
-              type="button"
-              className="botao botao--texto botao--pequeno"
-              onClick={onAbrirJurimetria}
-            >
-              Jurisprudência e jurimetria →
+            <button type="button" className="aba-modulo" onClick={onAbrirJurimetria}>
+              <span className="aba-modulo__titulo">Jurisprudência e jurimetria →</span>
+              <span className="aba-modulo__detalhe">
+                Como o foro decide casos parecidos com este
+              </span>
             </button>
           )}
         </div>
@@ -387,7 +446,11 @@ export default function PainelCaso({
           <span className={estilos.rotuloFiltro} style={{ marginLeft: 12 }}>
             Tipo
           </span>
-          {["documento", "entrevista", "contrato", "agente"].map((tipo) => (
+          {/* Todos os tipos que a linha do tempo produz. Faltavam "caso" e
+            * "ocorrencia": ligar qualquer filtro fazia a abertura do caso e as
+            * divergências entre fatos sumirem da tela sem que ninguém pudesse trazê-las
+            * de volta — e sem que a tela dissesse que elas existiam. */}
+          {["caso", "documento", "entrevista", "contrato", "agente", "ocorrencia"].map((tipo) => (
             <button
               key={tipo}
               type="button"
@@ -425,7 +488,7 @@ export default function PainelCaso({
         <div className={estilos.cartao}>
           <div className={estilos.fichaResumo}>
             <Campo rotulo="Cliente" valor={caso.cliente} />
-            <Campo rotulo="Categoria (produto)" valor={caso.categoria} ausente={undefined} />
+            <Campo rotulo="Categoria" valor={caso.categoria} />
             <Campo rotulo="Etapa atual" valor={resumo.etapa_atual?.titulo ?? "—"} />
             <Campo
               rotulo="Quem conduziu"
@@ -433,7 +496,7 @@ export default function PainelCaso({
               ausente={responsavel?.informado ? undefined : ausencia("Responsável pelo caso")}
             />
             <Campo rotulo="Prioridade" valor="—" ausente={ausencia("Prioridade")} />
-            <Campo rotulo="Prazo / SLA" valor="—" ausente={ausencia("Prazo e SLA contratado")} />
+            <Campo rotulo="Prazo contratado" valor="—" ausente={ausencia("Prazo contratado")} />
             <Campo rotulo="Aberto em" valor={dataHora(caso.aberto_em)} />
             <Campo rotulo="Última movimentação" valor={dataHora(resumo.ultima_movimentacao)} />
             <Campo rotulo="Tempo em aberto" valor={duracao(resumo.tempo_em_aberto_horas)} />
@@ -443,7 +506,7 @@ export default function PainelCaso({
             />
             <Campo rotulo="Ocorrências abertas" valor={String(dados.ocorrencias.abertas)} />
             <Campo
-              rotulo="Pendências do playbook"
+              rotulo="Requisitos da tese em aberto"
               valor={dados.pendencias.disponivel ? String(dados.pendencias.abertas) : "—"}
               ausente={dados.pendencias.disponivel ? undefined : dados.pendencias.motivo ?? undefined}
             />
@@ -611,9 +674,89 @@ export default function PainelCaso({
         </div>
       </Secao>
 
-      {/* --------------------------------------------- 2. indicadores gerais */}
+      {/* ------------------------------------------ 2. o que falta para peticionar */}
       <Secao
         numero={2}
+        titulo="O que falta para a petição"
+        explicacao="A soma dos travamentos que já aparecem espalhados por esta tela, com o dono da próxima ação em cada um. Documento se cobra do cliente; requisito da tese se resolve no agente; divergência entre fatos se decide aqui dentro."
+      >
+        <div className={estilos.cartao}>
+          {!prontidao.avaliavel ? (
+            <SemDado titulo="Não dá para dizer se o caso está pronto" motivo={prontidao.motivo ?? undefined} />
+          ) : (
+            <div className={estilos.blocoProntidao}>
+              <div className={estilos.veredito}>
+                <Selo
+                  tom={prontidao.pronto ? "ok" : "atencao"}
+                  simbolo={prontidao.pronto ? "✓" : "!"}
+                >
+                  {prontidao.pronto ? "Nada impede a petição" : prontidao.resumo}
+                </Selo>
+                {prontidao.pronto && prontidao.ressalvas.length > 0 && (
+                  <span className={estilos.detalheIndicador}>
+                    Com {prontidao.ressalvas.length} ressalva(s) abaixo.
+                  </span>
+                )}
+              </div>
+
+              {prontidao.bloqueios.length === 0 && prontidao.ressalvas.length === 0 ? (
+                <p className={estilos.detalheIndicador}>
+                  Documentos obrigatórios entregues, requisitos da tese atendidos, fatos
+                  com origem e estratégia aprovada.
+                </p>
+              ) : (
+                <div className={estilos.listaProntidao}>
+                  {[
+                    ...prontidao.bloqueios.map((item) => ({ item, impede: true })),
+                    ...prontidao.ressalvas.map((item) => ({ item, impede: false })),
+                  ].map(({ item, impede }) => (
+                    <div
+                      key={item.codigo}
+                      className={estilos.itemProntidao}
+                      style={{
+                        borderColor: BORDA_DO_TOM[impede ? "critico" : "atencao"],
+                        background: FUNDO_DO_TOM[impede ? "critico" : "atencao"],
+                      }}
+                    >
+                      <span
+                        className={estilos.insightSimbolo}
+                        style={{
+                          color: COR_DO_TOM[impede ? "critico" : "atencao"],
+                          borderColor: BORDA_DO_TOM[impede ? "critico" : "atencao"],
+                          background: "var(--papel)",
+                        }}
+                        aria-hidden
+                      >
+                        {impede ? "✕" : "!"}
+                      </span>
+                      <div>
+                        <div className={estilos.insightTexto}>{item.titulo}</div>
+                        <div className={estilos.insightBase}>
+                          {item.itens && item.itens.length > 0
+                            ? item.itens.map(rotuloLegivel).join(", ")
+                            : item.detalhe}
+                        </div>
+                        <div className={estilos.donoDaAcao}>
+                          <Selo tom={impede ? "critico" : "atencao"} simbolo="→">
+                            {impede ? "impede a petição" : "ressalva"}
+                          </Selo>
+                          <span>
+                            com o {item.de_quem} · {item.onde}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Secao>
+
+      {/* --------------------------------------------- 3. indicadores gerais */}
+      <Secao
+        numero={3}
         titulo="Indicadores principais"
         explicacao="Cada número traz o que ele é e de onde saiu. Indicador que depende do agente aparece vazio, e não zerado, quando ele não responde."
       >
@@ -629,7 +772,7 @@ export default function PainelCaso({
               </Selo>
             </span>
             <span className={estilos.detalheIndicador} title={saude.base}>
-              {saude.base} Peso medido: {saude.peso_medido} de 100.
+              {saude.base} Medido com {saude.peso_medido}% dos critérios.
             </span>
             <div className={estilos.componentesSaude}>
               {saude.componentes.map((componente) => (
@@ -682,7 +825,7 @@ export default function PainelCaso({
 
       {/* ------------------------------------------------ 3. evolução no tempo */}
       <Secao
-        numero={3}
+        numero={4}
         titulo="Evolução temporal"
         explicacao="Como o caso andou dentro do período escolhido. Dia sem movimentação aparece na série — sem ele, três documentos em três semanas pareceriam um ritmo constante."
       >
@@ -728,7 +871,7 @@ export default function PainelCaso({
           <div className={estilos.cartao}>
             <Figura
               titulo="Movimentações por dia"
-              descricao="Todo evento com instante gravado: documento, entrevista, contrato e trabalho do agente."
+              descricao="Todo evento com data e hora registradas: documento, entrevista, contrato e trabalho do agente."
               tabela={{
                 colunas: [
                   { chave: "dia", rotulo: "Dia" },
@@ -803,11 +946,7 @@ export default function PainelCaso({
                 <Rosca
                   total={eventosFiltrados.length}
                   rotuloDoCentro="movimentações"
-                  fatias={distribuicaoPorTipo.slice(0, 4).map((item, indice) => ({
-                    rotulo: ROTULO_DO_TIPO[item.tipo] ?? item.tipo,
-                    valor: item.quantidade,
-                    cor: CORES_DE_SERIE[indice % CORES_DE_SERIE.length],
-                  }))}
+                  fatias={fatiasPorTipo}
                 />
               )}
             </Figura>
@@ -817,9 +956,9 @@ export default function PainelCaso({
 
       {/* ----------------------------------------------- 4. prazos e atrasos */}
       <Secao
-        numero={4}
+        numero={5}
         titulo="Prazos, referência e atrasos"
-        explicacao="Não há SLA contratado no sistema. A referência abaixo é a mediana dos casos anteriores da mesma categoria — medida, não arbitrada — e vem com o tamanho da amostra."
+        explicacao="O sistema não guarda prazo combinado com o cliente. A referência abaixo é o tempo que o escritório costuma levar em casos como este — a mediana dos anteriores da mesma categoria, medida e não arbitrada, com o número de casos que a sustentam."
       >
         <div className={estilos.gradeLarga}>
           <div className={estilos.cartao}>
@@ -874,6 +1013,29 @@ export default function PainelCaso({
                           }.`
                         : `${duracao(Math.abs(ciclo.desvio_horas))} abaixo da mediana.`}
                   </div>
+                  {/* A mesma mediana lida do outro lado: é a pergunta que o cliente faz
+                    * ao telefone, e ela já estava respondida — faltava a subtração. */}
+                  {previsao.disponivel && (
+                    <div
+                      className={estilos.previsao}
+                      style={{
+                        borderColor: BORDA_DO_TOM[previsao.ja_ultrapassou ? "atencao" : "info"],
+                        background: FUNDO_DO_TOM[previsao.ja_ultrapassou ? "atencao" : "info"],
+                      }}
+                      title={previsao.base ?? undefined}
+                    >
+                      <strong>
+                        {previsao.ja_ultrapassou
+                          ? `${numero(previsao.dias_restantes)} dia(s) além do usual`
+                          : `Restariam cerca de ${numero(previsao.dias_restantes)} dia(s)`}
+                      </strong>
+                      <span className={estilos.insightBase}>
+                        {previsao.ja_ultrapassou
+                          ? "O caso já passou do tempo que a categoria costuma levar."
+                          : "No ritmo dos casos anteriores desta categoria. É referência histórica, não prazo assumido com o cliente."}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </Figura>
@@ -918,7 +1080,7 @@ export default function PainelCaso({
 
       {/* ---------------------------------------------- 5. tempo por etapa */}
       <Secao
-        numero={5}
+        numero={6}
         titulo="Tempo por etapa"
         explicacao="Duração medida entre dois instantes gravados. Etapa ainda em curso conta até agora e vem marcada; etapa que nunca começou não aparece como zero."
       >
@@ -1004,18 +1166,18 @@ export default function PainelCaso({
 
       {/* ------------------------------------------- 6. comparação histórica */}
       <Secao
-        numero={6}
+        numero={7}
         titulo="Comparação histórica"
         explicacao={`Este caso contra os anteriores da mesma categoria. ${
           referencia.suficiente
-            ? `Amostra: ${referencia.amostra} caso(s).`
+            ? `Baseado em ${referencia.amostra} caso(s) anteriores.`
             : referencia.motivo ?? ""
         }`}
       >
         <div className={estilos.cartao}>
           <Figura
-            titulo="Previsto x realizado, por etapa"
-            descricao="“Previsto” é a mediana da categoria; etapa cuja amostra própria é pequena fica sem barra de referência, com o motivo no tooltip."
+            titulo="Este caso x os anteriores, etapa a etapa"
+            descricao="A referência é a mediana das etapas que os casos anteriores CONCLUÍRAM. Etapa deste caso que ainda corre vem marcada “em curso”: dela só se pode dizer que já passou da mediana — nunca que ficou abaixo, porque ela ainda não acabou."
             legenda={[
               { rotulo: "Realizado neste caso", cor: CORES_DE_SERIE[0] },
               { rotulo: "Mediana da categoria", cor: CORES_DE_SERIE[1] },
@@ -1023,22 +1185,24 @@ export default function PainelCaso({
             tabela={{
               colunas: [
                 { chave: "etapa", rotulo: "Etapa" },
-                { chave: "realizado", rotulo: "Realizado" },
+                { chave: "realizado", rotulo: "Neste caso" },
                 { chave: "previsto", rotulo: "Mediana" },
-                { chave: "amostra", rotulo: "Amostra" },
-                { chave: "desvio", rotulo: "Desvio" },
+                { chave: "amostra", rotulo: "Casos anteriores" },
+                { chave: "desvio", rotulo: "Diferença" },
               ],
               linhas: comparacao.linhas.map((linha) => ({
-                etapa: linha.titulo,
+                etapa: linha.titulo + (linha.em_curso ? " (em curso)" : ""),
                 realizado: duracao(linha.realizado_horas),
                 previsto: linha.previsto_horas === null ? "—" : duracao(linha.previsto_horas),
                 amostra: linha.amostra,
                 desvio:
                   linha.desvio_horas === null
                     ? "—"
-                    : `${linha.desvio_horas > 0 ? "+" : ""}${duracao(Math.abs(linha.desvio_horas))}${
-                        linha.desvio_percentual !== null ? ` (${linha.desvio_percentual}%)` : ""
-                      }`,
+                    : linha.leitura_parcial && linha.desvio_horas < 0
+                      ? "ainda em curso"
+                      : `${linha.desvio_horas > 0 ? "+" : ""}${duracao(Math.abs(linha.desvio_horas))}${
+                          linha.desvio_percentual !== null ? ` (${linha.desvio_percentual}%)` : ""
+                        }`,
               })),
             }}
           >
@@ -1052,18 +1216,20 @@ export default function PainelCaso({
                 unidade=" h"
                 alturaDaLinha={42}
                 itens={comparaveis.map((linha) => ({
-                  rotulo: linha.titulo,
+                  rotulo: linha.titulo + (linha.em_curso ? " (em curso)" : ""),
                   valores: [
-                    { nome: "Realizado", valor: linha.realizado_horas, cor: CORES_DE_SERIE[0] },
+                    { nome: "Neste caso", valor: linha.realizado_horas, cor: CORES_DE_SERIE[0] },
                     { nome: "Mediana da categoria", valor: linha.previsto_horas, cor: CORES_DE_SERIE[1] },
                   ],
                   nota:
                     linha.motivo ??
-                    `Amostra de ${linha.amostra} caso(s) anteriores${
-                      linha.desvio_percentual !== null
-                        ? `; desvio de ${linha.desvio_percentual}%`
-                        : ""
-                    }.`,
+                    (linha.leitura_parcial
+                      ? `Etapa ainda em curso: a barra só cresce daqui para frente. Mediana de ${linha.amostra} caso(s) anteriores que a concluíram.`
+                      : `${linha.amostra} caso(s) anteriores concluíram esta etapa${
+                          linha.desvio_percentual !== null
+                            ? `; diferença de ${linha.desvio_percentual}%`
+                            : ""
+                        }.`),
                 }))}
               />
             )}
@@ -1073,7 +1239,7 @@ export default function PainelCaso({
 
       {/* ----------------------------------------------------- 7. ocorrências */}
       <Secao
-        numero={7}
+        numero={8}
         titulo="Ocorrências e pendências"
         explicacao="Tudo que já deu errado no caso, com estado de aberto ou resolvido — documento ilegível que depois foi substituído continua no histórico, porque custou tempo."
       >
@@ -1129,26 +1295,26 @@ export default function PainelCaso({
             <Figura
               titulo={
                 dados.pendencias.disponivel
-                  ? `Pendências do playbook (${dados.pendencias.abertas} em aberto)`
-                  : "Pendências do playbook"
+                  ? `Requisitos da tese (${dados.pendencias.abertas} em aberto)`
+                  : "Requisitos da tese"
               }
-              descricao="A lista é do agente jurídico, derivada do playbook da classificação — não é uma releitura do checklist."
+              descricao="O que a tese classificada para este caso exige. Vem do agente jurídico, não é uma releitura do checklist: o checklist cobra papel, isto cobra o que a tese precisa provar."
             >
               {!dados.pendencias.disponivel ? (
                 <SemDado titulo="Sem resposta do agente jurídico" motivo={dados.pendencias.motivo ?? undefined} />
               ) : dados.pendencias.itens.length === 0 ? (
                 <SemDado
                   titulo="Nenhuma pendência listada"
-                  motivo="O agente ainda não classificou o caso, ou o playbook não exige nada além do que já existe."
+                  motivo="O agente ainda não classificou o caso, ou a tese não exige nada além do que já existe."
                 />
               ) : (
                 <div className={estilos.rolagem}>
                   <table className={estilos.tabela}>
                     <thead>
                       <tr>
-                        <th>Item</th>
-                        <th>Tipo</th>
-                        <th>Severidade</th>
+                        <th>O que a tese exige</th>
+                        <th>Natureza</th>
+                        <th>Peso</th>
                         <th>Estado</th>
                       </tr>
                     </thead>
@@ -1161,26 +1327,26 @@ export default function PainelCaso({
                               <div className={estilos.detalheIndicador}>{pendencia.pergunta}</div>
                             )}
                           </td>
-                          <td>{ROTULO_DA_PENDENCIA[pendencia.tipo] ?? pendencia.tipo}</td>
+                          <td>{tipoDoRequisito(pendencia.tipo)}</td>
                           <td>
                             {pendencia.severidade === "BLOCKING" ? (
                               <Selo tom="critico" simbolo="✕">
-                                bloqueante
+                                impede a petição
                               </Selo>
                             ) : (
                               <Selo tom="info" simbolo="→">
-                                recomendada
+                                reforça a tese
                               </Selo>
                             )}
                           </td>
                           <td>
                             {pendencia.estado === "OPEN" ? (
                               <Selo tom="atencao" simbolo="!">
-                                em aberto
+                                falta
                               </Selo>
                             ) : (
                               <Selo tom="ok" simbolo="✓">
-                                atendida
+                                atendido
                               </Selo>
                             )}
                           </td>
@@ -1197,8 +1363,8 @@ export default function PainelCaso({
 
       {/* ------------------------------------------------ 8. riscos e insights */}
       <Secao
-        numero={8}
-        titulo="Riscos e insights"
+        numero={9}
+        titulo="Riscos e pontos de atenção"
         explicacao="Cada frase é gerada a partir de um número que está nesta tela, e carrega embaixo a conta que a produziu. Sem dado, sem frase."
       >
         <div className={estilos.gradeLarga}>
@@ -1262,14 +1428,14 @@ export default function PainelCaso({
 
       {/* --------------------------------------------------- 9. histórico */}
       <Secao
-        numero={9}
+        numero={10}
         titulo="Histórico completo"
-        explicacao="Todo evento com instante gravado, dos dois lados: Acervo (caso, portal, documentos, entrevista, contrato) e agente jurídico (fatos, classificação, pesquisa, estratégia, petição)."
+        explicacao="Todo evento com data e hora registradas, dos dois lados: Acervo (caso, portal, documentos, entrevista, contrato) e agente jurídico (fatos, classificação, pesquisa, estratégia, petição)."
       >
         <div className={estilos.cartao}>
           <Figura
             titulo={`${eventosFiltrados.length} movimentação(ões) no período`}
-            descricao="Ordem cronológica. Evento sem instante gravado não é reconstruído aqui — ele apareceria fora de lugar na linha."
+            descricao="Ordem cronológica. Evento sem data e hora registradas não é reconstruído aqui — ele apareceria fora de lugar na linha."
             tabela={{
               colunas: [
                 { chave: "quando", rotulo: "Quando" },

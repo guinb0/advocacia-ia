@@ -307,25 +307,16 @@ def registrar_entrega(
     if item_codigo not in itens:
         itens.insert(0, item_codigo)
 
-    registro = {
-        "id": entrega_id,
-        "caso_id": caso_id,
-        "item_codigo": item_codigo,
-        "arquivo": arquivo,
-        "caminho": str(caminho),
-        # O que o classificador leu sozinho — não o tipo que a extração usou, que
-        # pode ter sido forçado pelo item do checklist. É este que denuncia a troca.
-        "tipo_detectado": extracao.get("tipo", {}).get("detectado")
-        or extracao.get("tipo", {}).get("codigo"),
-        "tipo_confere": None if tipo_confere is None else int(tipo_confere),
-        "veredito": validacao.get("veredito"),
-        "dados_utilizaveis": int(bool(validacao.get("dados_utilizaveis"))),
-        "confirmado_manual": 0,
-        "score_legibilidade": validacao.get("score_legibilidade"),
-        "itens_atendidos": json.dumps(itens),
-        "extracao_json": json.dumps(extracao, ensure_ascii=False),
-        "criado_em": agora(),
-    }
+    # O que o classificador leu sozinho — não o tipo que a extração usou, que pode
+    # ter sido forçado pelo item do checklist. É este que denuncia a troca.
+    tipo_detectado = extracao.get("tipo", {}).get("detectado") or extracao.get("tipo", {}).get("codigo")
+    tipo_confere_db = None if tipo_confere is None else int(tipo_confere)
+    veredito = validacao.get("veredito")
+    dados_utilizaveis = int(bool(validacao.get("dados_utilizaveis")))
+    score_legibilidade = validacao.get("score_legibilidade")
+    itens_json = json.dumps(itens)
+    extracao_json = json.dumps(extracao, ensure_ascii=False)
+    criado_em = agora()
 
     with conectar() as con:
         con.execute(
@@ -333,21 +324,31 @@ def registrar_entrega(
             INSERT INTO entregas (id, caso_id, item_codigo, arquivo, caminho, tipo_detectado,
                                   tipo_confere, veredito, dados_utilizaveis, confirmado_manual,
                                   score_legibilidade, itens_atendidos, extracao_json, criado_em)
-            VALUES (:id, :caso_id, :item_codigo, :arquivo, :caminho, :tipo_detectado,
-                    :tipo_confere, :veredito, :dados_utilizaveis, :confirmado_manual,
-                    :score_legibilidade, :itens_atendidos, :extracao_json, :criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
             """,
-            registro,
+            (
+                entrega_id, caso_id, item_codigo, arquivo, str(caminho), tipo_detectado,
+                tipo_confere_db, veredito, dados_utilizaveis,
+                score_legibilidade, itens_json, extracao_json, criado_em,
+            ),
         )
         _tocar_caso(con, caso_id)
 
-    registro.pop("extracao_json")
-    # Devolve bool/None, como quem lê do banco recebe.
-    registro["dados_utilizaveis"] = bool(registro["dados_utilizaveis"])
-    registro["confirmado_manual"] = False
-    registro["tipo_confere"] = tipo_confere
-    registro["itens_atendidos"] = itens
-    return registro
+    return {
+        "id": entrega_id,
+        "caso_id": caso_id,
+        "item_codigo": item_codigo,
+        "arquivo": arquivo,
+        "caminho": str(caminho),
+        "tipo_detectado": tipo_detectado,
+        "tipo_confere": tipo_confere,
+        "veredito": veredito,
+        "dados_utilizaveis": bool(dados_utilizaveis),
+        "confirmado_manual": False,
+        "score_legibilidade": score_legibilidade,
+        "itens_atendidos": itens,
+        "criado_em": criado_em,
+    }
 
 
 def listar_entregas(caso_id: str) -> list[dict[str, Any]]:

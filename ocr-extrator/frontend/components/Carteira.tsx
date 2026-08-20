@@ -65,6 +65,8 @@ interface Props {
   onEntrevista: () => void;
   onSupervisao: () => void;
   onDados: () => void;
+  onPanorama: () => void;
+  onSaudeAgente: () => void;
 }
 
 export default function Carteira({
@@ -76,6 +78,8 @@ export default function Carteira({
   onEntrevista,
   onSupervisao,
   onDados,
+  onPanorama,
+  onSaudeAgente,
 }: Props) {
   const { linhas, triagem, chegandoAgora, pedidos, carregando, erro } = useCarteira();
   const estadoModelo = useModelo();
@@ -187,6 +191,12 @@ export default function Carteira({
             <button type="button" className={estilos.navItem} onClick={onDados}>
               Dados
             </button>
+            {/* O escritório inteiro medido: quantos casos, em que estágio, o que está
+              * parado. Mora fora da carteira porque responde a outra pergunta — a
+              * carteira diz o que fazer agora, o panorama diz como o escritório vai. */}
+            <button type="button" className={estilos.navItem} onClick={onPanorama}>
+              Panorama
+            </button>
             {/* Só o secretário: a supervisão atravessa as entrevistas de todo o
               * escritório, e o backend recusa quem não tem o papel. */}
             {sessao.papeis.includes("secretario") && (
@@ -197,6 +207,13 @@ export default function Carteira({
             {sessao.papeis.includes("advogado") && (
               <button type="button" className={estilos.navItem} onClick={onUsuarios}>
                 Usuários
+              </button>
+            )}
+            {/* Só advogado: é volume e desempenho de uso do agente, não dado de
+              * caso — mas ainda assim uma leitura operacional, não de cliente. */}
+            {sessao.papeis.includes("advogado") && (
+              <button type="button" className={estilos.navItem} onClick={onSaudeAgente}>
+                Saúde do agente
               </button>
             )}
           </nav>

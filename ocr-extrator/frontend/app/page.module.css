@@ -54,13 +54,7 @@
   margin-top: 12px;
 }
 
-/* Abas do caso: checklist (o que falta chegar) e dossiê (o que o caso já é).
- * São perguntas diferentes, então são telas diferentes — a barra existe para
- * deixar claro que a segunda existe, sem escondê-la num menu. */
-.abasCaso {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
+/* As abas do caso (checklist, dossiê, painel, jurimetria) usam a classe global
+ * `.abas-modulo` (`globals.css`) direto no JSX — são reaproveitadas nas
+ * próprias telas de destino (Dossiê, Painel e Jurimetria se cruzam entre si),
+ * e por isso não moram só aqui. */

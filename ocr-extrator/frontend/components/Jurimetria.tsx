@@ -32,17 +32,43 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Aviso, Selo } from "@/components/Basicos";
 import { CORES_DE_SERIE, Figura, GraficoDeBarras, GraficoDeLinha, SemDado } from "@/components/graficos";
+import { buscarDossie, type Hipotese } from "@/lib/agente";
 import {
+  buscarContraTese,
   buscarJurimetria,
+  buscarLinhasArgumentativas,
+  dispararContraTese,
+  dispararLinhasArgumentativas,
   leituraDaComparacao,
   percentual,
   pontos,
   rotuloDoDesfecho,
+  type ContraArgumento,
   type Jurimetria as Dados,
+  type LeituraContraTese,
+  type LeituraLinhasArgumentativas,
+  type LinhaArgumentativa,
+  type PrecedenteCitado,
   type Proporcao,
   type Ranking,
 } from "@/lib/jurimetria";
 import estilos from "./Jurimetria.module.css";
+
+/* Faixa qualitativa em vez de percentual cru como leitura principal — o número exato
+ * continua disponível no `title`, mesma régua de `comparacao.basis` mais abaixo. Um "72% de
+ * confiança" solto soa a métrica de calibração de modelo; "relevância moderada" é frase que
+ * um advogado já usa. */
+function relevancia(fracao: number): { texto: string; tom: "ok" | "atencao" | "neutro" } {
+  if (fracao >= 0.75) return { texto: "alta relevância", tom: "ok" };
+  if (fracao >= 0.5) return { texto: "relevância moderada", tom: "atencao" };
+  return { texto: "relevância baixa", tom: "neutro" };
+}
+
+const GRAVIDADE_CONTRA_ARGUMENTO: Record<string, { texto: string; tom: "ok" | "atencao" | "critico"; simbolo: string }> = {
+  HIGH: { texto: "ameaça alta", tom: "critico", simbolo: "✕" },
+  MEDIUM: { texto: "ameaça média", tom: "atencao", simbolo: "!" },
+  LOW: { texto: "ameaça baixa", tom: "ok", simbolo: "•" },
+};
 
 /* Cor por desfecho, fixa: a mesma fatia precisa ter a mesma cor no gráfico de rosca, na
  * série anual e em cada ranking. Cor que muda de significado entre seções é pior que
@@ -74,12 +100,34 @@ export default function Jurimetria({
   const [dados, setDados] = useState<Dados | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const [linhas, setLinhas] = useState<LeituraLinhasArgumentativas | null>(null);
+  const [contraTese, setContraTese] = useState<LeituraContraTese | null>(null);
+  const [hipoteses, setHipoteses] = useState<Hipotese[]>([]);
+  const [ocupado, setOcupado] = useState<string | null>(null);
+  const [avisoAcao, setAvisoAcao] = useState<string | null>(null);
+
+  const carregarLeituras = useCallback(async () => {
+    const [linhasResp, contraTeseResp] = await Promise.all([
+      buscarLinhasArgumentativas(casoId).catch(() => null),
+      buscarContraTese(casoId).catch(() => null),
+    ]);
+    setLinhas(linhasResp);
+    setContraTese(contraTeseResp);
+  }, [casoId]);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
     setErro(null);
     try {
       setDados(await buscarJurimetria(casoId));
+      await carregarLeituras();
+      // A tese a atacar vem da estratégia do caso, não desta tela: aqui só a hipótese já
+      // aceita pelo advogado é oferecida — atacar uma proposta ainda não decidida
+      // confundiria "o sistema sugeriu" com "o escritório escolheu".
+      const dossie = await buscarDossie(casoId).catch(() => null);
+      setHipoteses(
+        dossie?.agente.estrategia?.hypotheses.filter((item) => item.status === "ACCEPTED") ?? [],
+      );
     } catch (falha) {
       // A mensagem do backend distingue "sem pesquisa ainda" de "o acervo não respondeu",
       // e essas duas levam o advogado a ações opostas. Por isso ela é exibida crua.
@@ -88,11 +136,46 @@ export default function Jurimetria({
     } finally {
       setCarregando(false);
     }
-  }, [casoId]);
+  }, [casoId, carregarLeituras]);
 
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  /* As duas leituras chamam modelo do outro lado (Slow Path): enquanto uma delas estiver
+   * `RUNNING`, a tela se atualiza sozinha, mesmo padrão do dossiê para pesquisa e estratégia. */
+  const emAndamento = linhas?.status === "RUNNING" || contraTese?.status === "RUNNING";
+  useEffect(() => {
+    if (!emAndamento) return;
+    const timer = setInterval(() => void carregarLeituras(), 5000);
+    return () => clearInterval(timer);
+  }, [emAndamento, carregarLeituras]);
+
+  async function gerarLinhas() {
+    setOcupado("linhas");
+    setAvisoAcao(null);
+    try {
+      await dispararLinhasArgumentativas(casoId);
+      await carregarLeituras();
+    } catch (falha) {
+      setAvisoAcao(falha instanceof Error ? falha.message : "Não foi possível iniciar a leitura.");
+    } finally {
+      setOcupado(null);
+    }
+  }
+
+  async function gerarContraTese(hipoteseId: string) {
+    setOcupado("contra-tese");
+    setAvisoAcao(null);
+    try {
+      await dispararContraTese(casoId, hipoteseId);
+      await carregarLeituras();
+    } catch (falha) {
+      setAvisoAcao(falha instanceof Error ? falha.message : "Não foi possível iniciar a leitura.");
+    } finally {
+      setOcupado(null);
+    }
+  }
 
   return (
     <div className={estilos.pagina}>
@@ -101,11 +184,17 @@ export default function Jurimetria({
           <button type="button" className="botao botao--secundario botao--pequeno" onClick={onVoltar}>
             ← Voltar para a carteira
           </button>
-          <button type="button" className="botao botao--texto botao--pequeno" onClick={onAbrirDossie}>
-            Dossiê do caso →
+        </div>
+        <div className="abas-modulo">
+          <button type="button" className="aba-modulo" onClick={onAbrirDossie}>
+            <span className="aba-modulo__titulo">Dossiê do caso →</span>
+            <span className="aba-modulo__detalhe">Fatos, pendências e peças do agente</span>
           </button>
-          <button type="button" className="botao botao--texto botao--pequeno" onClick={onAbrirPainel}>
-            Painel analítico →
+          <button type="button" className="aba-modulo" onClick={onAbrirPainel}>
+            <span className="aba-modulo__titulo">Painel analítico →</span>
+            <span className="aba-modulo__detalhe">
+              Tempo de cada etapa e comparação com outros casos
+            </span>
           </button>
         </div>
         <h1 className={estilos.titulo}>Jurisprudência e jurimetria</h1>
@@ -128,12 +217,41 @@ export default function Jurimetria({
         </Aviso>
       )}
 
-      {dados && !carregando && <Painel dados={dados} />}
+      {dados && !carregando && (
+        <Painel
+          dados={dados}
+          linhas={linhas}
+          contraTese={contraTese}
+          hipoteses={hipoteses}
+          ocupado={ocupado}
+          avisoAcao={avisoAcao}
+          onGerarLinhas={gerarLinhas}
+          onGerarContraTese={gerarContraTese}
+        />
+      )}
     </div>
   );
 }
 
-function Painel({ dados }: { dados: Dados }) {
+function Painel({
+  dados,
+  linhas,
+  contraTese,
+  hipoteses,
+  ocupado,
+  avisoAcao,
+  onGerarLinhas,
+  onGerarContraTese,
+}: {
+  dados: Dados;
+  linhas: LeituraLinhasArgumentativas | null;
+  contraTese: LeituraContraTese | null;
+  hipoteses: Hipotese[];
+  ocupado: string | null;
+  avisoAcao: string | null;
+  onGerarLinhas: () => void;
+  onGerarContraTese: (hipoteseId: string) => void;
+}) {
   const referencia = dados.reference;
 
   return (
@@ -153,8 +271,35 @@ function Painel({ dados }: { dados: Dados }) {
         </Aviso>
       ))}
 
+      {avisoAcao && (
+        <Aviso tom="critico" titulo="A leitura não pôde ser iniciada">
+          {avisoAcao}
+        </Aviso>
+      )}
+
       <Secao
         numero={1}
+        titulo="O que sustenta ganhar aqui"
+        explicacao="Fundamento recorrente nas decisões do recorte, favoráveis e desfavoráveis, ancorado nos processos que o sustentam — não é o assunto do CNJ, é a razão de decidir."
+      >
+        <BlocoLinhasArgumentativas leitura={linhas} ocupado={ocupado} onGerar={onGerarLinhas} />
+      </Secao>
+
+      <Secao
+        numero={2}
+        titulo="O que a outra parte vai alegar"
+        explicacao="Hipótese sobre o argumento contrário, construída sobre os julgados que rejeitaram pedido semelhante, com o que pode afastar o caso concreto daquele precedente."
+      >
+        <BlocoContraTese
+          leitura={contraTese}
+          hipoteses={hipoteses}
+          ocupado={ocupado}
+          onGerar={onGerarContraTese}
+        />
+      </Secao>
+
+      <Secao
+        numero={3}
         titulo="Como esses casos terminaram"
         explicacao={
           referencia
@@ -166,7 +311,7 @@ function Painel({ dados }: { dados: Dados }) {
       </Secao>
 
       <Secao
-        numero={2}
+        numero={4}
         titulo="Isso está mudando?"
         explicacao="Desfechos por ano da decisão. Ano incompleto sai marcado, e a tendência só é afirmada quando a amostra a sustenta."
       >
@@ -176,7 +321,7 @@ function Painel({ dados }: { dados: Dados }) {
       {dados.rankings.map((ranking, indice) => (
         <Secao
           key={ranking.dimension}
-          numero={3 + indice}
+          numero={5 + indice}
           titulo={`Por ${ranking.label}`}
           explicacao={`Ordenado por volume, nunca por taxa de êxito. ${
             ranking.counts_processes_once
@@ -190,7 +335,7 @@ function Painel({ dados }: { dados: Dados }) {
 
       {dados.appellate && (
         <Secao
-          numero={3 + dados.rankings.length}
+          numero={5 + dados.rankings.length}
           titulo="Chegaram a instância superior"
           explicacao={dados.appellate.meaning}
         >
@@ -205,7 +350,7 @@ function Painel({ dados }: { dados: Dados }) {
       )}
 
       <Secao
-        numero={4 + dados.rankings.length}
+        numero={6 + dados.rankings.length}
         titulo="O que este painel não responde"
         explicacao="Perguntas frequentes que o acervo não sustenta. Estão aqui porque a ausência de um gráfico é lida como ausência do fato."
       >
@@ -221,6 +366,207 @@ function Painel({ dados }: { dados: Dados }) {
 
       <p className={estilos.natureza}>{dados.nature}</p>
     </>
+  );
+}
+
+/* -------------------------------------------------- leituras de agente */
+
+function BlocoLinhasArgumentativas({
+  leitura,
+  ocupado,
+  onGerar,
+}: {
+  leitura: LeituraLinhasArgumentativas | null;
+  ocupado: string | null;
+  onGerar: () => void;
+}) {
+  if (!leitura) {
+    return (
+      <div className={estilos.acaoGerar}>
+        <p className={estilos.explicacaoSecao}>
+          Ainda não pedida. A leitura lê os julgados favoráveis e desfavoráveis do recorte e
+          separa o fundamento que se repete em cada lado.
+        </p>
+        <button
+          type="button"
+          className="botao botao--primario botao--pequeno"
+          disabled={ocupado === "linhas"}
+          onClick={onGerar}
+        >
+          {ocupado === "linhas" ? "Iniciando…" : "Ler fundamentos do recorte"}
+        </button>
+      </div>
+    );
+  }
+
+  if (leitura.status === "RUNNING") {
+    return <Aviso tom="info">Lendo os julgados do recorte…</Aviso>;
+  }
+
+  if (leitura.status === "FAILED") {
+    return (
+      <Aviso tom="atencao" titulo="A leitura não encontrou o que ler">
+        {leitura.failure_reason === "NO_PRECEDENTS_IN_SCOPE"
+          ? "Não há julgado de mérito no recorte deste caso — sem um lado favorável ou desfavorável, não há fundamento a extrair."
+          : leitura.failure_reason === "AI_PROVIDER_UNAVAILABLE"
+            ? "O modelo de leitura não respondeu. Tente novamente em instantes."
+            : (leitura.failure_reason ?? "A leitura não pôde ser concluída.")}
+      </Aviso>
+    );
+  }
+
+  if (leitura.lines.length === 0) {
+    return <SemDado titulo="Nenhum fundamento recorrente identificado no recorte" />;
+  }
+
+  return (
+    <ul className={estilos.leituras}>
+      {leitura.lines.map((linha, indice) => (
+        <CartaoLinha key={indice} linha={linha} />
+      ))}
+    </ul>
+  );
+}
+
+function CartaoLinha({ linha }: { linha: LinhaArgumentativa }) {
+  const nivel = relevancia(linha.confidence);
+  return (
+    <li className={estilos.leitura}>
+      <div className={estilos.leituraTopo}>
+        <p className={estilos.tese}>{linha.thesis}</p>
+        <span title={`${percentual(linha.confidence)} — leitura do conjunto recuperado, não probabilidade de êxito`}>
+          <Selo tom={linha.side === "GRANTING" ? "ok" : "atencao"}>
+            {linha.side === "GRANTING" ? "favorece o pedido" : "favorece a defesa"} · {nivel.texto}
+          </Selo>
+        </span>
+      </div>
+      <ProcessosCitados precedentes={linha.precedents} />
+      {linha.counter_consideration && (
+        <p className={estilos.ressalva}>O que enfraquece: {linha.counter_consideration}</p>
+      )}
+    </li>
+  );
+}
+
+function BlocoContraTese({
+  leitura,
+  hipoteses,
+  ocupado,
+  onGerar,
+}: {
+  leitura: LeituraContraTese | null;
+  hipoteses: Hipotese[];
+  ocupado: string | null;
+  onGerar: (hipoteseId: string) => void;
+}) {
+  const [escolhida, setEscolhida] = useState(hipoteses[0]?.id ?? "");
+
+  if (hipoteses.length === 0 && !leitura) {
+    return (
+      <p className={estilos.explicacaoSecao}>
+        Requer uma tese aceita na Estratégia — sem ela não há o que a contra-tese ataque. Aceite
+        uma hipótese no Dossiê e volte aqui.
+      </p>
+    );
+  }
+
+  if (!leitura) {
+    return (
+      <div className={estilos.acaoGerar}>
+        <p className={estilos.explicacaoSecao}>
+          Ainda não pedida. Escolha a tese aceita a atacar — a leitura busca de propósito os
+          julgados desfavoráveis do recorte e constrói o argumento provável da outra parte.
+        </p>
+        {hipoteses.length > 1 && (
+          <select
+            className="campo"
+            value={escolhida}
+            onChange={(evento) => setEscolhida(evento.target.value)}
+          >
+            {hipoteses.map((hipotese) => (
+              <option key={hipotese.id} value={hipotese.id}>
+                {hipotese.statement}
+              </option>
+            ))}
+          </select>
+        )}
+        <button
+          type="button"
+          className="botao botao--primario botao--pequeno"
+          disabled={ocupado === "contra-tese" || !escolhida}
+          onClick={() => onGerar(escolhida)}
+        >
+          {ocupado === "contra-tese" ? "Iniciando…" : "Ler o argumento contrário"}
+        </button>
+      </div>
+    );
+  }
+
+  if (leitura.status === "RUNNING") {
+    return <Aviso tom="info">Lendo os julgados desfavoráveis do recorte…</Aviso>;
+  }
+
+  if (leitura.status === "FAILED") {
+    return (
+      <Aviso tom="atencao" titulo="A leitura não encontrou o que ler">
+        {leitura.failure_reason === "NO_ADVERSE_PRECEDENTS"
+          ? "Não há julgado desfavorável no recorte deste caso — sem um lado que rejeitou pedido semelhante, não há o que a outra parte cite daqui."
+          : leitura.failure_reason === "AI_PROVIDER_UNAVAILABLE"
+            ? "O modelo de leitura não respondeu. Tente novamente em instantes."
+            : (leitura.failure_reason ?? "A leitura não pôde ser concluída.")}
+      </Aviso>
+    );
+  }
+
+  if (leitura.counters.length === 0) {
+    return <SemDado titulo="Nenhum argumento contrário recorrente identificado" />;
+  }
+
+  return (
+    <>
+      <p className={estilos.explicacaoSecao}>contra: {leitura.thesis}</p>
+      <ul className={estilos.leituras}>
+        {leitura.counters.map((contra, indice) => (
+          <CartaoContraArgumento key={indice} contra={contra} />
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function CartaoContraArgumento({ contra }: { contra: ContraArgumento }) {
+  const gravidade = GRAVIDADE_CONTRA_ARGUMENTO[contra.severity] ?? GRAVIDADE_CONTRA_ARGUMENTO.LOW;
+  return (
+    <li className={estilos.leitura}>
+      <div className={estilos.leituraTopo}>
+        <p className={estilos.tese}>{contra.argument}</p>
+        <Selo tom={gravidade.tom} simbolo={gravidade.simbolo}>
+          {gravidade.texto}
+        </Selo>
+      </div>
+      <ProcessosCitados precedentes={contra.precedents} />
+      {contra.distinguishing ? (
+        <p className={estilos.distinguishing}>Como afastar: {contra.distinguishing}</p>
+      ) : (
+        <p className={estilos.ressalva}>
+          Sem distinção visível entre este caso e os precedentes citados.
+        </p>
+      )}
+    </li>
+  );
+}
+
+/** Os processos por extenso — nunca o identificador técnico do acervo. */
+function ProcessosCitados({ precedentes }: { precedentes: PrecedenteCitado[] }) {
+  if (precedentes.length === 0) return null;
+  return (
+    <div className={estilos.processos}>
+      {precedentes.map((item) => (
+        <span key={item.corpus_id} title={[item.court, item.judging_body].filter(Boolean).join(" · ")}>
+          {item.process_number}
+        </span>
+      ))}
+    </div>
   );
 }
 

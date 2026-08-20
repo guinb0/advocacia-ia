@@ -62,7 +62,39 @@ export interface LinhaComparacao {
   em_curso: boolean;
   desvio_horas: number | null;
   desvio_percentual: number | null;
+  /** A etapa ainda corre: "já passou da mediana" vale, "está abaixo" ainda não. */
+  leitura_parcial: boolean;
   motivo: string | null;
+}
+
+/** Quanto faltaria para o caso alcançar a duração usual da categoria. */
+export interface PrevisaoPelaMediana {
+  disponivel: boolean;
+  motivo: string | null;
+  dias_restantes: number | null;
+  ja_ultrapassou: boolean;
+  base: string | null;
+}
+
+/** Um ponto que impede (ou ressalva) a petição, já com o dono da próxima ação. */
+export interface BloqueioDaPeticao {
+  codigo: string;
+  titulo: string;
+  detalhe: string;
+  /** Códigos crus, quando existem: a tabela de rótulos em português mora aqui na tela. */
+  itens?: string[];
+  de_quem: "cliente" | "escritório" | "advogado";
+  onde: string;
+}
+
+export interface Prontidao {
+  /** `false` quando o agente não respondeu: aí não se afirma nem pronto, nem travado. */
+  avaliavel: boolean;
+  pronto: boolean;
+  motivo: string | null;
+  bloqueios: BloqueioDaPeticao[];
+  ressalvas: BloqueioDaPeticao[];
+  resumo: string;
 }
 
 export interface ReferenciaHistorica {
@@ -91,7 +123,10 @@ export interface Ocorrencia {
   referencia: string;
 }
 
-export interface PendenciaDoPlaybook {
+/** Um requisito que a tese classificada para o caso exige. O agente chama de
+ * "playbook item"; na tela e aqui é requisito da tese, para o código e o que o
+ * advogado lê não divergirem. */
+export interface RequisitoDaTese {
   codigo: string;
   rotulo: string;
   tipo: string;
@@ -175,7 +210,11 @@ export interface Painel {
     percentual: number | null;
     em_curso: boolean;
   }[];
-  comparacao_historica: { referencia: ReferenciaHistorica; linhas: LinhaComparacao[] };
+  comparacao_historica: {
+    referencia: ReferenciaHistorica;
+    linhas: LinhaComparacao[];
+    previsao: PrevisaoPelaMediana;
+  };
   ocorrencias: {
     itens: Ocorrencia[];
     abertas: number;
@@ -185,7 +224,7 @@ export interface Painel {
   pendencias: {
     disponivel: boolean;
     motivo: string | null;
-    itens: PendenciaDoPlaybook[];
+    itens: RequisitoDaTese[];
     abertas: number;
     bloqueantes: number;
   };
@@ -209,6 +248,7 @@ export interface Painel {
     sem_origem: number;
     apenas_relatados: number;
   };
+  prontidao: Prontidao;
   radar: { eixo: string; valor: number | null; base: string }[];
   insights: { texto: string; tom: Tom; base: string }[];
   ausencias: { campo: string; motivo: string }[];
@@ -249,15 +289,25 @@ export function filtrarPorPeriodo(eventos: EventoDoCaso[], dias: Periodo): Event
   return eventos.filter((evento) => new Date(evento.quando).getTime() >= corte);
 }
 
+/** O dia a que o evento pertence **no fuso de quem lê**, não em UTC.
+ *
+ * `toISOString()` devolve o dia UTC: um documento recebido às 21h30 de terça, em
+ * Brasília, cai em quarta-feira. A linha do tempo logo abaixo do gráfico imprime a mesma
+ * hora com `toLocaleString("pt-BR")` e diz "terça" — as duas metades da mesma tela
+ * discordavam sobre em que dia o documento chegou. E o mapa de atividade, que sempre usou
+ * `getDay()`, já falava a língua certa: era o gráfico de barras que estava sozinho.
+ */
 function diaISO(data: Date): string {
-  return data.toISOString().slice(0, 10);
+  const mes = `${data.getMonth() + 1}`.padStart(2, "0");
+  const dia = `${data.getDate()}`.padStart(2, "0");
+  return `${data.getFullYear()}-${mes}-${dia}`;
 }
 
 export interface PontoDoDia {
   dia: string;
   movimentacoes: number;
   documentos: number;
-  /** Documentos recebidos até este dia, inclusive — a curva de progresso real. */
+  /** Documentos recebidos até este dia, inclusive — contando os anteriores à janela. */
   documentosAcumulados: number;
 }
 
@@ -271,6 +321,8 @@ export function serieDiaria(
   eventos: EventoDoCaso[],
   dias: Periodo,
   aberturaISO: string,
+  /** O caso inteiro, para o acumulado saber o que já havia antes da janela. */
+  todosOsEventos: EventoDoCaso[] = eventos,
 ): PontoDoDia[] {
   if (eventos.length === 0) return [];
 
@@ -291,15 +343,23 @@ export function serieDiaria(
   }
 
   const pontos: PontoDoDia[] = [];
-  let acumulado = 0;
-  const cursor = new Date(Date.UTC(comeco.getUTCFullYear(), comeco.getUTCMonth(), comeco.getUTCDate()));
+  // O acumulado começa no que o caso já tinha antes da janela. Sem isso, um caso com
+  // dez documentos recebidos em junho e um nesta semana desenhava, sob o título
+  // "documentos recebidos, acumulado", uma curva que sobe até 1 — o filtro de período
+  // recortava a janela e zerava a memória junto.
+  const primeiroDiaDaJanela = diaISO(comeco);
+  let acumulado = todosOsEventos.filter(
+    (evento) => evento.tipo === "documento" && diaISO(new Date(evento.quando)) < primeiroDiaDaJanela,
+  ).length;
+
+  const cursor = new Date(comeco.getFullYear(), comeco.getMonth(), comeco.getDate());
   // Teto de segurança: uma data corrompida no banco não pode virar laço infinito.
   for (let passo = 0; passo < 400 && cursor <= fim; passo += 1) {
     const chave = diaISO(cursor);
     const linha = porDia.get(chave) ?? { movimentacoes: 0, documentos: 0 };
     acumulado += linha.documentos;
     pontos.push({ dia: chave, ...linha, documentosAcumulados: acumulado });
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    cursor.setDate(cursor.getDate() + 1);
   }
   return pontos;
 }
@@ -403,36 +463,69 @@ export const ROTULO_DO_TIPO: Record<string, string> = {
   contradicao: "Contradições",
 };
 
-/** Tipo da pendência no vocabulário de quem lê, não no do banco. */
+/** Tipo do requisito no vocabulário de quem lê, não no do banco. */
 export const ROTULO_DA_PENDENCIA: Record<string, string> = {
   FACT: "fato",
   DOCUMENT: "documento",
   EVIDENCE: "prova",
+  TESTIMONY: "testemunha",
+  EXPERT: "perícia",
 };
+
+/** "EMPLOYMENT.WORK_SCHEDULE" -> "Employment · work schedule".
+ *
+ * Último recurso para código sem tradução. Não fica bonito, mas tira a CAIXA_ALTA do
+ * meio de uma tabela em português — que é o que faz o advogado parar de ler a tabela.
+ * Espelha `_humanizar_codigo` do backend, para os dois lados falarem igual. */
+function humanizarCodigo(codigo: string): string {
+  const partes = codigo
+    .split(".")
+    .map((parte) => parte.replace(/_/g, " ").trim().toLowerCase())
+    .filter(Boolean);
+  if (partes.length === 0) return codigo;
+  partes[0] = partes[0].charAt(0).toUpperCase() + partes[0].slice(1);
+  return partes.join(" · ");
+}
+
+/** Tipo do requisito, traduzido; código desconhecido ao menos sai legível. */
+export function tipoDoRequisito(tipo: string): string {
+  return ROTULO_DA_PENDENCIA[tipo] ?? humanizarCodigo(tipo);
+}
 
 /** Código de fato do agente ("EMPLOYMENT.WORK_SCHEDULE") em português corrente.
  *
- * O agente devolve `label` igual ao `code` quando o playbook não traz rótulo próprio, e
- * uma tabela cheia de CONSTANTE_EM_CAIXA_ALTA é ilegível para quem só quer saber o que
- * falta. Código desconhecido passa intacto — inventar tradução seria pior. */
+ * O agente devolve `label` igual ao `code` quando a tese não traz rótulo próprio, e uma
+ * tabela cheia de CONSTANTE_EM_CAIXA_ALTA é ilegível para quem só quer saber o que
+ * falta. Código sem tradução cai em `humanizarCodigo` — não se inventa o significado,
+ * mas também não se despeja o identificador do banco na tela. */
 const ROTULO_DO_CODIGO: Record<string, string> = {
   "PERSON.NAME": "Nome",
   "PERSON.CPF": "CPF",
   "PERSON.RG": "RG",
   "PERSON.PIS": "PIS/PASEP",
+  "PERSON.CTPS": "CTPS",
   "PERSON.BIRTH_DATE": "Data de nascimento",
   "PERSON.ADDRESS": "Endereço",
+  "PERSON.MARITAL_STATUS": "Estado civil",
   "EMPLOYMENT.RELATIONSHIP": "Vínculo de emprego",
+  "EMPLOYMENT.EMPLOYER": "Empregador",
+  "EMPLOYMENT.ROLE": "Função exercida",
   "EMPLOYMENT.ADMISSION_DATE": "Data de admissão",
   "EMPLOYMENT.TERMINATION_DATE": "Data de saída",
+  "EMPLOYMENT.TERMINATION_REASON": "Motivo da saída",
   "EMPLOYMENT.MONTHLY_SALARY": "Salário mensal",
   "EMPLOYMENT.WORK_SCHEDULE": "Jornada de trabalho",
+  "EMPLOYMENT.OVERTIME": "Horas extras",
   "EMPLOYMENT.LEAVE": "Afastamento",
   "SOCIAL_SECURITY.INSS_BENEFIT": "Benefício do INSS",
+  "SOCIAL_SECURITY.CONTRIBUTION": "Contribuição previdenciária",
+  "HEALTH.OCCUPATIONAL_DISEASE": "Doença ocupacional",
+  "HEALTH.WORK_ACCIDENT": "Acidente de trabalho",
+  "DOC.CAT": "CAT (comunicação de acidente de trabalho)",
 };
 
 export function rotuloLegivel(codigo: string): string {
-  return ROTULO_DO_CODIGO[codigo] ?? codigo;
+  return ROTULO_DO_CODIGO[codigo] ?? humanizarCodigo(codigo);
 }
 
 // -------------------------------------------------------------------- fatos
@@ -453,7 +546,7 @@ export const ESTADO_DO_FATO: Record<string, { palavra: string; simbolo: string; 
     palavra: "extraído",
     simbolo: "✓",
     tom: "ok",
-    explicacao: "Lido de um documento do caso pelo OCR.",
+    explicacao: "Lido de um documento juntado ao caso. Tem prova documental por trás.",
   },
   CONFIRMED: {
     palavra: "confirmado",

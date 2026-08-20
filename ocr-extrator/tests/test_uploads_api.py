@@ -6,15 +6,23 @@ registro da entrega, sem carregar o modelo OCR.
 
 O falso entra em `pipeline.processar`, e não em `main._processar`, porque os dois
 caminhos deixaram de ser o mesmo: `/api/extrair` ainda passa pelo `_processar`,
-mas o envio pelo checklist grava a entrega como pendente e joga o OCR numa
-thread de fundo (`_ler_documento`), que chama o pipeline direto. Trocar só o
+mas o envio pelo checklist grava a entrega como pendente e delega o OCR à task
+`tasks.ocr.processar_entrega`, que chama o pipeline direto. Trocar só o
 `_processar` deixaria o checklist lendo o PDF de mentira com o Paddle de verdade.
+
+O checklist deixou de ler o documento numa thread da API: hoje ele enfileira no
+Celery, e quem lê é o worker que mantém o Paddle aquecido. Por isso o teste liga
+`task_always_eager` — sem worker vivo a entrega ficaria "processando" para
+sempre, e o teste mediria a ausência de infraestrutura em vez do código. Em eager
+o `apply_async` roda a task no próprio processo, então o caminho exercitado
+continua sendo o de produção (`processar_entrega` de verdade), só que síncrono.
 
 Rodar: .venv\\Scripts\\python.exe -m tests.test_uploads_api
 """
 
 from __future__ import annotations
 
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -23,6 +31,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app import armazenamento, main, pipeline
+from app.celery_app import celery_app
 
 
 def resultado_falso(nome: str, tipo_forcado: str | None) -> dict:
@@ -87,6 +96,16 @@ def main_teste() -> int:
 
     processador_original = pipeline.processar
     pipeline.processar = processar_falso
+
+    # `task_eager_propagates` fica FALSO de propósito: `processar_entrega` já
+    # registra a falha com `falhar_entrega` e relança, e propagar aqui faria a
+    # exceção subir pelo `apply_async` até a rota — que devolveria 503 e esconderia
+    # o estado da entrega, justamente o que estes testes conferem.
+    eager_original = celery_app.conf.task_always_eager
+    propaga_original = celery_app.conf.task_eager_propagates
+    celery_app.conf.task_always_eager = True
+    celery_app.conf.task_eager_propagates = False
+
     falhas = 0
     try:
         with (
@@ -126,16 +145,43 @@ def main_teste() -> int:
             )
             falhas += not checar(rg["status"] == "entregue", "o item enviado fica concluído")
 
-            # Os arquivos de RG e CPF vão ao pipeline SEM tipo forçado (`None`) de
-            # propósito: é o classificador solto que revela o arquivo trocado.
-            # Forçar "rg" faria a extração assumir o que deveria conferir.
+            # O item do checklist manda o tipo esperado ("rg") para orientar QUAIS
+            # campos extrair. Isso não cega a conferência de arquivo trocado: o
+            # `pipeline.processar` roda o classificador SEMPRE, mesmo com tipo
+            # forçado, e guarda o palpite dele em `tipo.detectado` — que é o campo
+            # lido por `casos.tipo_confere`. Já a análise avulsa vai com `tipo=auto`,
+            # e por isso chega como `None`.
             falhas += not checar(
                 CHAMADAS
-                == [("documento.pdf", None), ("rg-frente.pdf", None), ("rg-verso.pdf", None)],
+                == [("documento.pdf", None), ("rg-frente.pdf", "rg"), ("rg-verso.pdf", "rg")],
                 "nome e tipo esperado chegam ao processador",
             )
+
+            # Rota de dados de teste: desligada por padrão, liga só com a env var.
+            sem_flag = cliente.post(
+                f"/api/casos/{caso_id}/documentos/teste", data={"item": "DOC.04"}
+            )
+            falhas += not checar(sem_flag.status_code == 404, "sem a flag, a rota de teste não responde")
+
+            os.environ["PERMITIR_DADOS_TESTE"] = "true"
+            try:
+                com_flag = cliente.post(
+                    f"/api/casos/{caso_id}/documentos/teste", data={"item": "DOC.04"}
+                )
+                falhas += not checar(com_flag.status_code == 201, "com a flag, cria a entrega falsa")
+
+                situacao = cliente.get(f"/api/casos/{caso_id}").json()
+                cpf = next(item for item in situacao["itens"] if item["codigo"] == "DOC.04")
+                falhas += not checar(
+                    cpf["status"] == "entregue" and cpf["entregas"][0]["status_proc"] == "pronto",
+                    "o item de teste fica entregue sem passar pelo OCR",
+                )
+            finally:
+                del os.environ["PERMITIR_DADOS_TESTE"]
     finally:
         pipeline.processar = processador_original
+        celery_app.conf.task_always_eager = eager_original
+        celery_app.conf.task_eager_propagates = propaga_original
 
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     return 1 if falhas else 0

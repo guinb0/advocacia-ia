@@ -203,6 +203,12 @@ def declarar_itens_entregues(caso_id: str, caso_ref: str) -> int:
     indispensáveis abertas para sempre e a petição jamais era liberada.
 
     Declarar não é ler: nenhum fato nasce daqui. O que muda é o checklist.
+
+    `origem` é **de propósito** igual ao de `enviar_extracao`: o agente deduplica documento
+    pelo `source_reference`, e uma entrega que já foi extraída (RG, CPF, CTPS...) não pode
+    virar um segundo registro só porque também tem `document_kind` no vocabulário — usar uma
+    chave diferente aqui criava dois "documentos" para o mesmo arquivo físico, um por
+    extração e outro por declaração, e o advogado via o dobro do que o escritório recebeu.
     """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
@@ -223,8 +229,9 @@ def declarar_itens_entregues(caso_id: str, caso_ref: str) -> int:
                 caso_ref,
                 kind=kind,
                 arquivo=str(entrega.get("arquivo") or kind),
-                # A entrega é a chave de idempotência do outro lado.
-                origem=f"ocr://entregas/{entrega['id']}",
+                # Mesma chave que `enviar_entrega` usa para a extração — é o que faz o
+                # agente reconhecer "já tenho este arquivo" em vez de duplicar.
+                origem=f"ocr://entregas/{entrega['id']}/{entrega.get('arquivo', '')}",
             )
         except ErroDoAgente as erro:
             log.warning("não foi possível declarar %s: %s", kind, erro)

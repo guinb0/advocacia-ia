@@ -666,3 +666,57 @@
   font-size: var(--t-xs);
   color: var(--tinta-2);
 }
+
+/* ------------------------------------------------- o que falta para a petição */
+
+.blocoProntidao {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* O veredito vem primeiro e sozinho na linha: é a resposta, não mais um cartão. */
+.veredito {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.listaProntidao {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.itemProntidao {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--raio);
+  border: 1px solid var(--borda);
+  align-items: flex-start;
+}
+
+/* Quem age vem embaixo do problema: sem isso o painel diz o que está errado e
+   deixa o advogado adivinhar se a bola está com ele ou com o cliente. */
+.donoDaAcao {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+.previsao {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--raio);
+  border: 1px solid var(--borda);
+  font-size: var(--t-sm);
+  color: var(--tinta);
+}
