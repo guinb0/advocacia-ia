@@ -51,9 +51,11 @@ os.environ.setdefault("FLAGS_gpu_memory_limit_mb", LIMITE_VRAM_MB)
 #: essa saída, `gpu` aqui é experimento — e exige a wheel `paddlepaddle-gpu`.
 DISPOSITIVO = os.getenv("OCR_DISPOSITIVO", "cpu").strip().lower()
 
-#: Na GPU o mobile reduz VRAM. Em CPU ele só é usado por configuração explícita:
-#: no benchmark local ficou quatro vezes mais lento e perdeu campos.
+#: Na GPU o mobile reduz VRAM. Em CPU ele só é usado por configuração explícita;
+#: a dupla detector+reconhecedor mobile preservou campos, mas não venceu o server
+#: limitado a 1280 neste equipamento.
 DETECTOR = os.getenv("OCR_DETECTOR") or ("PP-OCRv5_mobile_det" if DISPOSITIVO == "gpu" else "")
+RECONHECEDOR = os.getenv("OCR_RECONHECEDOR", "").strip()
 MKLDNN = os.getenv("OCR_ENABLE_MKLDNN", "1").strip().lower() not in {"0", "false", "nao", "não"}
 CPU_THREADS = _inteiro_env("OCR_CPU_THREADS", 10, minimo=1)
 MKLDNN_CACHE = _inteiro_env("OCR_MKLDNN_CACHE_CAPACITY", 10, minimo=1)
@@ -82,6 +84,8 @@ def _construir(lang: str, dispositivo: str):
     extra = {}
     if DETECTOR:
         extra["text_detection_model_name"] = DETECTOR
+    if RECONHECEDOR:
+        extra["text_recognition_model_name"] = RECONHECEDOR
     # Reduzir a imagem foi descartado nas medições dos documentos reais porque
     # piorava a detecção e acionava até três rotações extras. Só habilita quando
     # alguém define explicitamente a variável para um novo benchmark.

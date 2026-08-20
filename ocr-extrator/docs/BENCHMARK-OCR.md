@@ -20,15 +20,17 @@ Git). O teste realizado em 20/08/2026, nesta máquina, produziu:
 | 16 threads | 75,9 s | 24/24 | 0,9958 | ganho, mas inferior a 1280 |
 | sem MKL-DNN | 174,3 s | 24/24 | 0,9958 | descartado |
 | sem orientação | 210,5 s | 24/24 | 0,9958 | descartado |
-| detector mobile | 444,6 s | 21/24 | 0,9880 | descartado |
+| detector + reconhecedor mobile | 66,9 s | 24/24 | 0,9980 | inferior ao perfil adotado |
 | recorte de perspectiva | 210,6 s | 24/24 | 0,9958 | disponível, desligado por padrão |
 
 ## Decisões
 
 - O modelo continua persistente e aquecido no processo; não é recriado por arquivo.
 - MKL-DNN, orientação da página e orientação das linhas continuam ligados.
-- O detector `server` continua sendo usado. O modelo mobile foi mais lento e perdeu
-  três valores, portanto não é alternativa nesta instalação.
+- O detector `server` continua sendo usado. A combinação mobile correta manteve
+  24/24 campos, mas foi mais lenta que o server limitado a 1280. Configurar apenas
+  o detector mobile fazia o Paddle selecionar um reconhecedor server implicitamente
+  e não constitui uma comparação válida.
 - O limite do detector em 1280 foi adotado como padrão por
   `OCR_DET_LADO_MAXIMO`. Defina a variável vazia para comparar um documento
   excepcional em resolução integral.
