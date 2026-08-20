@@ -42,6 +42,23 @@
   background: var(--ink);
 }
 
+.inicioEntrevista {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+.inicioEntrevista span {
+  max-width: 48ch;
+  font: 400 11.5px/1.45 var(--font-ui);
+  color: var(--muted);
+}
+
 /* ------------------------------------------------------------- blocos -- */
 
 .bloco {

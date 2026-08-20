@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Ref } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
 import { analisarResposta, consultarCep, escutarTrecho, obterRoteiro, recomendarEntrevista } from "@/lib/api";
@@ -612,8 +612,11 @@ export default function Roteiro({
      * entrevista nova, encerraria a conversa que acabou de começar. */
     setEscutaEncerrada(false);
     try {
-      if (estadoMic === "sem-audio") await captura.current?.selecionarAudio();
-      await captura.current?.iniciarEntrevista();
+      if (!captura.current) throw new Error("A gravação ainda não está pronta.");
+      if (estadoMic === "sem-audio") await captura.current.selecionarAudio();
+      // O mesmo clique que abre a entrevista abre a sessão contínua no servidor:
+      // não existe estado de entrevista em andamento sem gravação de áudio.
+      await captura.current.iniciarEntrevista();
       emGravacao.current = null;
       setEscutando(true);
       setFonte("microfone");
@@ -885,21 +888,7 @@ export default function Roteiro({
           {/* O botão que abre a entrevista inteira. Substitui os 86 ciclos de
               gravar/finalizar: daqui em diante o microfone fica aberto e o
               roteiro se preenche atrás da conversa. */}
-          {!escutando ? (
-            <button
-              type="button"
-              className={transcricaoEstilos.botao}
-              onClick={comecarEntrevista}
-              disabled={gravandoId !== null || faltaParaComecar.length > 0}
-              title={
-                faltaParaComecar.length > 0
-                  ? `Digite ${faltaParaComecar.join(" e ")} antes de abrir o microfone`
-                  : ""
-              }
-            >
-              Começar a entrevista
-            </button>
-          ) : (
+          {escutando && (
             <button
               type="button"
               className={transcricaoEstilos.secundario}
@@ -1158,6 +1147,31 @@ export default function Roteiro({
               onFinalizar={finalizar}
               conferencias={conferencias}
               onConferir={conferir}
+              rodape={
+                !escutando &&
+                bloco.perguntas.some((p) => p.id === "nome") &&
+                bloco.perguntas.some((p) => p.id === "cpf") ? (
+                  <div className={estilos.inicioEntrevista}>
+                    <button
+                      type="button"
+                      className={transcricaoEstilos.botao}
+                      onClick={comecarEntrevista}
+                      disabled={gravandoId !== null || faltaParaComecar.length > 0}
+                      title={
+                        faltaParaComecar.length > 0
+                          ? `Digite ${faltaParaComecar.join(" e ")} antes de começar`
+                          : "Começa a entrevista, a gravação e a transcrição"
+                      }
+                    >
+                      Começar e gravar entrevista
+                    </button>
+                    <span>
+                      Ao clicar, o microfone abre e o áudio começa a ser gravado e
+                      transcrito automaticamente.
+                    </span>
+                  </div>
+                ) : undefined
+              }
             />
           ))}
         </div>
@@ -1248,6 +1262,7 @@ function BlocoRoteiro({
   onFinalizar,
   conferencias,
   onConferir,
+  rodape,
 }: {
   bloco: Bloco;
   respostas: Respostas;
@@ -1272,6 +1287,8 @@ function BlocoRoteiro({
   onFinalizar: () => void;
   conferencias: Record<string, EstadoConferencia>;
   onConferir: (id: string, texto: string, forcar?: boolean) => void;
+  /** Ação contextual depois do bloco de identificação (nome e CPF). */
+  rodape?: ReactNode;
 }) {
   return (
     <section className={estilos.bloco}>
@@ -1379,6 +1396,7 @@ function BlocoRoteiro({
           </li>
         ))}
       </ul>
+      {rodape}
     </section>
   );
 }
