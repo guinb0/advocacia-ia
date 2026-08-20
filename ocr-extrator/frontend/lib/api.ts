@@ -519,12 +519,13 @@ export async function escutarTrecho(
   trecho: string,
   respostas: Record<string, string | string[]>,
   roteiro = "empregado_publico",
+  perguntaAtual = "",
 ): Promise<Escuta> {
   return comoJson<Escuta>(
     await buscar("/api/entrevista/escuta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trecho, respostas, roteiro }),
+      body: JSON.stringify({ trecho, respostas, roteiro, pergunta_atual: perguntaAtual }),
     }),
   );
 }

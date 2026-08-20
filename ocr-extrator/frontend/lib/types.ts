@@ -519,6 +519,12 @@ export interface CampoOuvido {
   valor: string;
   /** Citação literal do que foi dito. É por ela que se confere de relance. */
   trecho: string;
+  /** O campo já tinha resposta e esta fala ACRESCENTOU a ela.
+   *
+   * O cliente volta ao assunto e traz o que faltou — "8 vezes" vira "8 vezes,
+   * em 2022, 2023 e 2024". `valor` é só o acréscimo, nunca a resposta inteira,
+   * porque a tela soma ao que já está no campo (ver `app/escuta.py`). */
+  complemento?: boolean;
 }
 
 /** Algo que ficou pela metade, já escrito para ser lido em voz alta. */
@@ -544,4 +550,10 @@ export interface Escuta {
   faltando: PerguntaPendente[];
   /** `false` quando o trecho era curto demais para valer uma chamada. */
   analisado: boolean;
+  /** Id da pergunta que o trecho estava apenas LENDO em voz alta.
+   *
+   * Presente quando a escuta reconheceu o entrevistador fazendo a pergunta, e
+   * não o cliente respondendo — o trecho fecha na pausa dele, antes de a
+   * resposta existir. Nada foi preenchido: a resposta vem no trecho seguinte. */
+  enunciado?: string;
 }

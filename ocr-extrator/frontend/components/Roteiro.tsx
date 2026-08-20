@@ -209,6 +209,19 @@ export default function Roteiro({
   const [conferencias, setConferencias] = useState<Record<string, EstadoConferencia>>({});
   const [recomendacaoCaso, setRecomendacaoCaso] = useState<RecomendacaoEntrevista | null>(null);
   const [erroRecomendacao, setErroRecomendacao] = useState<string | null>(null);
+  /* Sessão vencida no meio da entrevista.
+   *
+   * Aconteceu de verdade: o token dura 30 minutos, a entrevista de 42 perguntas
+   * dura mais, e a partir dali cada trecho transcrito ia para a escuta e voltava
+   * 401. A transcrição seguia funcionando, o painel seguia dizendo "ouvindo", e
+   * NADA era preenchido — o entrevistador falou vários minutos sem saber que
+   * estava sendo descartado. Falhar calado aqui custa a entrevista inteira. */
+  const [sessaoCaiu, setSessaoCaiu] = useState(false);
+  useEffect(() => {
+    const caiu = () => setSessaoCaiu(true);
+    window.addEventListener("acervo:sessao-expirada", caiu);
+    return () => window.removeEventListener("acervo:sessao-expirada", caiu);
+  }, []);
   const [atualizandoRecomendacao, setAtualizandoRecomendacao] = useState(false);
   const ultimoRelatoRecomendado = useRef("");
 
@@ -379,7 +392,7 @@ export default function Roteiro({
         filaTrechos.current = [];
         if (!trecho) continue;
 
-        const r = await escutarTrecho(trecho, respostasRef.current);
+        const r = await escutarTrecho(trecho, respostasRef.current, "empregado_publico", atualRef.current);
         setErroEscuta(null);
         setFaltando(r.faltando);
         setLembretes(r.lembretes);
@@ -880,6 +893,16 @@ export default function Roteiro({
 
   return (
     <div className={estilos.tela}>
+      {/* No TOPO e sem poder ser fechado: enquanto isto estiver na tela, o que
+        * for falado não vira campo preenchido. É a única coisa que importa. */}
+      {sessaoCaiu && (
+        <div className={estilos.sessaoCaiu} role="alert">
+          <strong>Sua sessão expirou — o que está sendo dito NÃO está sendo salvo.</strong>{" "}
+          A transcrição continua na tela, mas o roteiro parou de ser preenchido.
+          Recarregue a página (F5) para voltar a gravar; o que já foi preenchido
+          está guardado.
+        </div>
+      )}
       <div className={estilos.cabecalho}>
         <div>
           <h2 className={estilos.titulo}>{roteiro.nome}</h2>

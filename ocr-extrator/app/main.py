@@ -425,6 +425,9 @@ class PedidoEscuta(BaseModel):
     trecho: str = Field(max_length=8_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
     roteiro: str = Field(default="empregado_publico", max_length=60)
+    #: Qual pergunta está na vez NA TELA. Sem ela o backend adivinha "a primeira
+    #: em aberto", e erra sempre que a condução pula adiante — que é o normal.
+    pergunta_atual: str = Field(default="", max_length=80)
 
 
 @app.post("/api/entrevista/escuta")
@@ -441,7 +444,8 @@ async def escutar_entrevista(pedido: PedidoEscuta):
     """
     try:
         return await run_in_threadpool(
-            escuta.escutar, pedido.trecho, pedido.respostas, pedido.roteiro
+            escuta.escutar, pedido.trecho, pedido.respostas, pedido.roteiro,
+            pedido.pergunta_atual
         )
     except escuta.ErroEscuta as exc:
         raise HTTPException(503, str(exc)) from exc

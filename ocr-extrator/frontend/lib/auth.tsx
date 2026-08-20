@@ -48,6 +48,7 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
   const [erro, setErro] = useState<string | null>(null);
   const [perfil, setPerfil] = useState({ usuario: "", nome: "", papeis: [] as string[] });
   const kcRef = useRef<Keycloak | null>(null);
+  const intervaloRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!AUTH_ATIVA) {
@@ -69,6 +70,25 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
       });
     };
     kc.onAuthRefreshSuccess = () => definirTokenAtual(kc.token ?? null);
+
+    /* Renova ANTES de vencer, e não quando vence.
+     *
+     * O `onTokenExpired` acima só dispara depois que o token já morreu — e aí a
+     * requisição que estava em voo leva 401. Numa entrevista isso é caro: a
+     * transcrição continua, o trecho é enviado, a escuta responde 401 e o campo
+     * nunca é preenchido. Aconteceu de verdade, no meio de um atendimento de 42
+     * perguntas: o token dura 30 minutos e a entrevista dura mais.
+     *
+     * `updateToken(margem)` só faz viagem quando falta menos que a margem, então
+     * este relógio é barato: na maior parte das vezes ele não faz nada. */
+    const relogio = window.setInterval(() => {
+      void kc.updateToken(MARGEM_RENOVACAO_S).catch(() => {
+        // Refresh token venceu de vez: aí sim é reautenticar.
+        definirTokenAtual(null);
+        setAutenticado(false);
+      });
+    }, 30_000);
+    intervaloRef.current = relogio;
 
     kc.init({
       onLoad: "check-sso",
@@ -102,6 +122,10 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
         );
       })
       .finally(() => setCarregando(false));
+
+    return () => {
+      if (intervaloRef.current !== null) window.clearInterval(intervaloRef.current);
+    };
   }, []);
 
   useEffect(() => {

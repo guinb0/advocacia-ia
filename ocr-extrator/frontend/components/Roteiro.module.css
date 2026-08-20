@@ -513,3 +513,13 @@
   outline: 2px solid var(--warn);
   outline-offset: 2px;
 }
+
+/* Sessão vencida. Vermelho e no topo porque, enquanto durar, a entrevista está
+ * sendo perdida — não é aviso de apoio, é interrupção de trabalho. */
+.sessaoCaiu {
+  margin-bottom: 14px;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 12px 14px;
+  font: 400 13px/1.55 var(--font-ui);
+}
