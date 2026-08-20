@@ -115,9 +115,9 @@ services:
       # encrypt=true;trustServerCertificate=true: o servidor exige TLS mas o
       # certificado é auto-assinado — mesmo par que o `TrustServerCertificate=yes`
       # do ODBC em app/banco.py.
-      KC_DB_URL: "jdbc:sqlserver://${SQLSERVER_HOST}:${SQLSERVER_PORT:-1433};databaseName=${SQLSERVER_DATABASE:-advocacia};encrypt=true;trustServerCertificate=true"
-      KC_DB_USERNAME: "${SQLSERVER_USER:-advocacia}"
-      KC_DB_PASSWORD: "${SQLSERVER_PASSWORD:?defina SQLSERVER_PASSWORD no .env}"
+      KC_DB_URL: "jdbc:sqlserver://${KEYCLOAK_DB_HOST}:${KEYCLOAK_DB_PORT:-1433};databaseName=${KEYCLOAK_DB_NAME:-keycloak};encrypt=true;trustServerCertificate=true"
+      KC_DB_USERNAME: "${KEYCLOAK_DB_USER:?defina KEYCLOAK_DB_USER no .env}"
+      KC_DB_PASSWORD: "${KEYCLOAK_DB_PASSWORD:?defina KEYCLOAK_DB_PASSWORD no .env}"
     ports:
       - "8180:8180"
     volumes:

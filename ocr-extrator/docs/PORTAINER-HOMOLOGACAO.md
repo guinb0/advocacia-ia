@@ -33,7 +33,29 @@ KC_HTTP_RELATIVE_PATH=/auth
 KC_PROXY_HEADERS=xforwarded
 KC_HOSTNAME=https://advocacia.levelhom.com.br/auth
 KC_HEALTH_ENABLED=true
+KEYCLOAK_DB_HOST=internal.level33lab.cloud
+KEYCLOAK_DB_PORT=1433
+KEYCLOAK_DB_NAME=keycloak
+KEYCLOAK_DB_USER=keycloak_service-user
+KEYCLOAK_DB_PASSWORD=<segredo-do-Portainer>
 ```
+
+O compose traduz essas variáveis para `KC_DB_URL`, `KC_DB_USERNAME` e
+`KC_DB_PASSWORD`. Não reutilizar `SQLSERVER_*`: autenticação e aplicação têm
+credenciais e bancos independentes.
+
+O Keycloak é o dono do schema do banco `keycloak`. Na primeira conexão ele cria
+e migra suas tabelas oficiais, inclusive `USER_ENTITY`, cujo `ID` é o
+identificador Keycloak. Não criar coluna ou tabela manual dentro desse schema.
+
+O espelho de usuário da aplicação já persiste esse identificador sem guardar
+senha: `users.subject` no agente e `adm.usuarios.subject` no schema SQL Server.
+Nesses dois modelos, `subject` significa exatamente o claim `sub` do JWT — isto
+é, o `keycloak_id` — e possui unicidade por organização.
+
+Antes do primeiro deploy, a máquina/overlay do Portainer precisa alcançar
+`internal.level33lab.cloud:1433`. Timeout TCP impede o Keycloak de iniciar antes
+mesmo de validar usuário ou senha.
 
 Variáveis da API:
 
