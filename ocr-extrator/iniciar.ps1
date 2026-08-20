@@ -41,6 +41,26 @@ function Importar-Env([string]$Caminho) {
 
 Importar-Env ".\.env"
 
+# Uma janela fechada à força deixa os filhos do `uv` vivos no Windows. Dois
+# workers com o mesmo nome consomem a mesma fila de forma invisível e um upload
+# pode cair no processo antigo, sem o modelo aquecido. Antes de criar a nova
+# topologia, encerra somente processos Celery desta instalação do projeto.
+$pythonProjeto = (Resolve-Path ".\.venv\Scripts\python.exe").Path
+$processosAtuais = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+$celeryAntigos = $processosAtuais | Where-Object {
+    $_.CommandLine -and
+    $_.CommandLine.Contains($pythonProjeto) -and
+    $_.CommandLine -match "-m\s+celery\s+-A\s+app\.celery_app:celery_app"
+}
+foreach ($processoAntigo in $celeryAntigos) {
+    $filhos = $processosAtuais | Where-Object { $_.ParentProcessId -eq $processoAntigo.ProcessId }
+    foreach ($filho in $filhos) {
+        Stop-Process -Id $filho.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Stop-Process -Id $processoAntigo.ProcessId -Force -ErrorAction SilentlyContinue
+}
+if ($celeryAntigos) { Start-Sleep -Milliseconds 500 }
+
 foreach ($comando in @("docker", "uv", "npm")) {
     if (-not (Get-Command $comando -ErrorAction SilentlyContinue)) {
         throw "Dependencia ausente: '$comando' nao foi encontrado no PATH. Instale-o e execute iniciar.ps1 novamente."
@@ -360,14 +380,15 @@ $backend = Start-Process -PassThru -NoNewWindow `
 
 # No Windows, pool=solo evita o prefork incompatível e garante uma inferência
 # por worker. As filas impedem OCR, IA e manutenção de se bloquearem no broker.
+$instanciaCelery = ([Guid]::NewGuid().ToString("N")).Substring(0, 8)
 $workerOcr = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
-                  "--pool=solo", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h"
+                  "--pool=solo", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h-$instanciaCelery"
 $workerBackground = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
-                  "--pool=solo", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@%h"
+                  "--pool=solo", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@%h-$instanciaCelery"
 $beat = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "beat"

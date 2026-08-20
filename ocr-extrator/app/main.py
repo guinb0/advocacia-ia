@@ -61,7 +61,7 @@ from . import jobs, observabilidade
 from . import entrevista as entrevista_lib
 from .agente import dossie as dossie_agente
 from .extractors import ROTULOS_TIPO
-from .tasks.ocr import processar_documento
+from .tasks.ocr import processar_documento, processar_entrega
 from .tasks.documentos import gerar_relatorio as gerar_relatorio_job
 from .tasks.ia import gerar_estrategia as gerar_estrategia_job
 
@@ -1396,18 +1396,21 @@ async def _registrar_documento(
 
     entrega = armazenamento.registrar_entrega_pendente(caso_id, item, nome, caminho)
 
-    # Passar o tipo esperado orienta a extração dos campos, mas o classificador
-    # continua opinando por conta própria — é a opinião dele que revela se veio o
-    # arquivo trocado. A decisão fica em `_ler_documento`, junto do OCR.
-    threading.Thread(
-        target=_ler_documento,
-        args=(
-            entrega["id"], caso_id, conteudo, nome,
-            item_checklist, categoria, idioma, usar_para_rg_e_cpf,
-        ),
-        name=f"ocr-{entrega['id'][:8]}",
-        daemon=True,
-    ).start()
+    # O checklist antes abria uma thread na API e carregava outra cópia do
+    # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
+    # único dono do modelo; a requisição continua voltando imediatamente.
+    try:
+        processar_entrega.apply_async(
+            args=(
+                entrega["id"], caso_id, str(caminho), nome, item_checklist.codigo,
+                categoria.codigo, idioma, usar_para_rg_e_cpf,
+            ),
+            queue="gpu_background",
+            priority=7,
+        )
+    except Exception as exc:
+        armazenamento.falhar_entrega(entrega["id"], f"Fila OCR indisponível: {exc}")
+        raise HTTPException(503, "Fila de leitura indisponível. Tente novamente.") from exc
 
     return {"entrega": entrega, "processando": True}
 

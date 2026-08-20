@@ -8,7 +8,7 @@ import logging
 
 from celery.signals import worker_ready
 
-from .. import jobs, pipeline
+from .. import armazenamento, casos, categorias, jobs, pipeline
 from ..celery_app import celery_app
 from ..gpu_lock import gpu_exclusiva
 
@@ -64,4 +64,58 @@ def processar_documento(self, job_id: str, caminho: str, nome: str, idioma: str,
     except Exception as exc:
         # Se houver retry, a próxima execução volta o estado para STARTED.
         jobs.atualizar(job_id, status="FAILED", erro=str(exc), finalizado_em=datetime.now(timezone.utc))
+        raise
+
+
+@celery_app.task(name="app.tasks.ocr.processar_entrega")
+def processar_entrega(
+    entrega_id: str,
+    caso_id: str,
+    caminho: str,
+    nome: str,
+    item_codigo: str,
+    categoria_codigo: str,
+    idioma: str,
+    usar_para_rg_e_cpf: bool,
+):
+    """Lê documento do checklist no worker que já mantém o Paddle aquecido."""
+    try:
+        categoria = categorias.obter(categoria_codigo)
+        if categoria is None:
+            raise ValueError(f"Categoria {categoria_codigo!r} não existe mais.")
+        item = next((i for i in categoria.itens if i.codigo == item_codigo), None)
+        if item is None:
+            raise ValueError(f"Item {item_codigo!r} não pertence ao checklist.")
+
+        conteudo = Path(caminho).read_bytes()
+        tipo_extracao = (
+            "cin" if usar_para_rg_e_cpf and item.tipo_ocr in {"rg", "cpf"}
+            else item.tipo_ocr
+        )
+        resultado = pipeline.processar(conteudo, nome, idioma, tipo_extracao)
+
+        unificar = usar_para_rg_e_cpf
+        if not unificar and item.tipo_ocr in {"rg", "cpf"}:
+            unificar = casos.cobre_rg_e_cpf(resultado)
+        try:
+            itens_atendidos = (
+                casos.itens_para_identidade_unificada(categoria, item)
+                if unificar else [item.codigo]
+            )
+        except ValueError:
+            itens_atendidos = [item.codigo]
+            unificar = False
+
+        detectado = resultado.get("tipo", {}).get("detectado")
+        confere = casos.tipo_confere(item, detectado, unificar)
+        armazenamento.concluir_entrega(entrega_id, resultado, confere, itens_atendidos)
+        try:
+            from ..agente import espelho
+            espelho.enviar_entrega(caso_id, entrega_id)
+        except Exception:
+            log.warning("Não foi possível entregar %s ao agente jurídico.", entrega_id, exc_info=True)
+        return {"entrega_id": entrega_id, "concluida": True}
+    except Exception as exc:
+        log.exception("Falha ao ler o documento da entrega %s", entrega_id)
+        armazenamento.falhar_entrega(entrega_id, str(exc))
         raise
