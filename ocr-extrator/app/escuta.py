@@ -329,6 +329,41 @@ def _e_o_enunciado(
     return None
 
 
+def _binaria_apos_enunciado(
+    trecho: str, pergunta: roteiros.Pergunta | None
+) -> dict[str, Any] | None:
+    """Captura ``pergunta inteira + sim/não`` no mesmo trecho do Whisper.
+
+    O cliente frequentemente responde antes de o corte de áudio fechar. Nesse
+    caso o filtro de enunciado não pode descartar o ``sim`` junto com a leitura
+    do advogado. Só aceitamos a última palavra explícita e exigimos que tudo
+    antes dela seja reconhecido como o enunciado da pergunta atual.
+    """
+    if pergunta is None or pergunta.tipo != "sim_nao":
+        return None
+    palavras = re.findall(r"[a-záàâãéêíóôõúç]+", trecho.casefold())
+    cortesias = {"senhor", "senhora", "doutor", "doutora", "dr", "dra"}
+    while palavras and palavras[-1] in cortesias:
+        palavras.pop()
+    if len(palavras) < 2 or palavras[-1] not in {"sim", "não", "nao"}:
+        return None
+    cauda = set(palavras[-3:])
+    if "sim" in cauda and ({"não", "nao"} & cauda):
+        # É o advogado lendo "sim ou não", não uma resposta do cliente.
+        return None
+    resposta = palavras[-1]
+    prefixo = " ".join(palavras[:-1])
+    if _e_o_enunciado(prefixo, [pergunta]) is None:
+        return None
+    valor = "não" if resposta in {"não", "nao"} else "sim"
+    return {
+        "pergunta_id": pergunta.id,
+        "pergunta": pergunta.texto,
+        "valor": valor,
+        "trecho": trecho,
+    }
+
+
 def _mesma_palavra(palavra: str, escritas: list[str]) -> bool:
     """A palavra está no enunciado, contando flexão como a mesma palavra."""
     if palavra in escritas:
@@ -858,6 +893,21 @@ def escutar(
         ),
         None,
     )
+
+    # Quando o cliente responde antes de o mesmo corte de áudio fechar, preserve
+    # o sim/não final antes de testar se o restante era apenas o enunciado.
+    binaria_mista = _binaria_apos_enunciado(trecho, atual_na_tela)
+    if binaria_mista is not None:
+        return {
+            "preenchidas": [binaria_mista],
+            "sugestoes": [],
+            "lembretes": [],
+            "faltando": [
+                f for f in faltando
+                if f["pergunta_id"] != binaria_mista["pergunta_id"]
+            ],
+            "analisado": True,
+        }
 
     # A pergunta sendo LIDA não responde nada — e é o que mais chega aqui, porque
     # o trecho fecha na pausa e a primeira pausa é a do entrevistador terminando

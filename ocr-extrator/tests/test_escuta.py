@@ -277,6 +277,23 @@ def cenario_sim_nao_curto() -> int:
     falhas += not checar(sim is not None and sim["valor"] == "sim", "'sim' preenche pergunta objetiva")
     falhas += not checar(nao is not None and nao["valor"] == "não", "'não' preenche pergunta composta binária")
     falhas += not checar(ambigua is None, "'aham' continua ambíguo e não preenche")
+
+    acao = next(p for p in perguntas if p.id == "r_acao")
+    misto = escuta._binaria_apos_enunciado(
+        "Já entrou com ação judicial contra os Correios sobre esses assuntos? Sim.",
+        acao,
+    )
+    falhas += not checar(
+        misto is not None and misto["pergunta_id"] == "r_acao" and misto["valor"] == "sim",
+        "resposta dada no mesmo trecho da pergunta não é descartada como enunciado",
+    )
+    falhas += not checar(
+        escuta._binaria_apos_enunciado(
+            "Já entrou com ação judicial contra os Correios sobre esses assuntos? sim ou não",
+            acao,
+        ) is None,
+        "advogado lendo as opções sim ou não não responde pelo cliente",
+    )
     return falhas
 
 

@@ -259,7 +259,13 @@ RASTREIO = Bloco(
                 "Não tendo recebido, não é possível entrar com nova ação."
             ),
         ),
-        Pergunta("r_acao_quais", "Se sim, quais?", "relato", transcrever=True),
+        Pergunta(
+            "r_acao_quais",
+            "Qual ação foi ajuizada, qual é o número do processo, já transitou em julgado e já recebeu os valores?",
+            "relato",
+            transcrever=True,
+            dica="Registrar separadamente o assunto, o processo, o trânsito em julgado e o recebimento.",
+        ),
     ],
 )
 
