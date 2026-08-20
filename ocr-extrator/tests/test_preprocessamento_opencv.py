@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.quality import preparar_para_ocr
+from app.quality import preparar_para_ocr, recortar_documento
 
 
 def test_limita_foto_de_celular_sem_deformar() -> None:
@@ -28,3 +28,22 @@ def test_imagem_vazia_falha_com_mensagem_clara() -> None:
         assert "vazia" in str(exc).lower()
     else:
         raise AssertionError("imagem vazia deveria ser recusada")
+
+
+def test_crop_remove_fundo_somente_com_quatro_bordas_claras() -> None:
+    foto = np.zeros((1200, 1600, 3), dtype=np.uint8)
+    pontos = np.array([[220, 180], [1410, 240], [1320, 980], [170, 910]], dtype=np.int32)
+    cv2.fillConvexPoly(foto, pontos, (235, 235, 235))
+    cv2.putText(foto, "DOCUMENTO", (420, 590), cv2.FONT_HERSHEY_SIMPLEX, 2, (20, 20, 20), 5)
+    recorte, aplicado = recortar_documento(foto)
+    assert aplicado is True
+    assert recorte.shape[0] < foto.shape[0]
+    assert recorte.shape[1] < foto.shape[1]
+
+
+def test_crop_nao_inventa_borda_em_foto_sem_documento() -> None:
+    gradiente = np.tile(np.arange(1000, dtype=np.uint8), (700, 1))
+    foto = cv2.cvtColor(gradiente, cv2.COLOR_GRAY2BGR)
+    recorte, aplicado = recortar_documento(foto)
+    assert aplicado is False
+    assert recorte.shape == foto.shape

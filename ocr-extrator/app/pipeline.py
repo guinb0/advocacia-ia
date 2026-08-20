@@ -290,7 +290,14 @@ def salvar_temporarios(doc: dict) -> dict:
 # -------------------------------------------------------------- pipeline
 
 
-def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado: str | None = None) -> dict:
+def processar(
+    conteudo: bytes,
+    nome_arquivo: str,
+    lang: str = "pt",
+    tipo_forcado: str | None = None,
+    *,
+    gerar_arquivos_temporarios: bool = True,
+) -> dict:
     inicio = time.perf_counter()
     crono = Cronometro()
 
@@ -299,7 +306,18 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
     h, w = original.shape[:2]
 
     with crono.medir("preparar"):
-        preparada = quality.preparar_para_ocr(original)
+        para_ocr = original
+        # Nome, endereço, CEP e datas ficam no cabeçalho das contas. A parte
+        # inferior traz tabelas e QR code que não alimentam o checklist, mas
+        # custam reconhecimento. Mantém a imagem original para avaliar qualidade.
+        if tipo_forcado == "comprovante_residencia":
+            try:
+                proporcao = float(os.getenv("OCR_COMPROVANTE_ALTURA", "0.55"))
+            except ValueError:
+                proporcao = 1.0
+            if 0.4 <= proporcao < 1.0:
+                para_ocr = original[: max(1, int(original.shape[0] * proporcao)), :]
+        preparada = quality.preparar_para_ocr(para_ocr)
 
     with crono.medir("ocr"):
         linhas, rotacao, tentativas_ocr, passadas = ocr_com_rotacao_medido(preparada, lang)
@@ -370,8 +388,9 @@ def processar(conteudo: bytes, nome_arquivo: str, lang: str = "pt", tipo_forcado
         "texto_completo": "\n".join(textos),
     }
 
-    with crono.medir("salvar"):
-        doc["arquivos_temporarios"] = salvar_temporarios(doc)
+    if gerar_arquivos_temporarios:
+        with crono.medir("salvar"):
+            doc["arquivos_temporarios"] = salvar_temporarios(doc)
 
     doc["tempo_etapas_s"] = crono.etapas
     log.info(

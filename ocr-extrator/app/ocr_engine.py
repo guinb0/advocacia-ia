@@ -27,7 +27,9 @@ def _inteiro_env(nome: str, padrao: int, minimo: int = 1) -> int:
         return padrao
 
 
-_DET_LADO_MAXIMO = os.getenv("OCR_DET_LADO_MAXIMO", "").strip()
+# 1280 foi 45% mais rápido com 24/24 campos no benchmark. Pode ser zerado na
+# configuração para investigar algum documento excepcional em resolução integral.
+_DET_LADO_MAXIMO = os.getenv("OCR_DET_LADO_MAXIMO", "1280").strip()
 
 # ------------------------------------------------------------------ dispositivo
 #
@@ -49,9 +51,16 @@ os.environ.setdefault("FLAGS_gpu_memory_limit_mb", LIMITE_VRAM_MB)
 #: essa saída, `gpu` aqui é experimento — e exige a wheel `paddlepaddle-gpu`.
 DISPOSITIVO = os.getenv("OCR_DISPOSITIVO", "cpu").strip().lower()
 
-#: Só faz sentido em GPU, onde o detector `server` não cabe (2.490 MiB de pico
-#: contra 916 do `mobile`). Em CPU o padrão do PaddleOCR é mantido.
+#: Na GPU o mobile reduz VRAM. Em CPU ele só é usado por configuração explícita;
+#: a dupla detector+reconhecedor mobile preservou campos, mas não venceu o server
+#: limitado a 1280 neste equipamento.
 DETECTOR = os.getenv("OCR_DETECTOR") or ("PP-OCRv5_mobile_det" if DISPOSITIVO == "gpu" else "")
+RECONHECEDOR = os.getenv("OCR_RECONHECEDOR", "").strip()
+MKLDNN = os.getenv("OCR_ENABLE_MKLDNN", "1").strip().lower() not in {"0", "false", "nao", "não"}
+CPU_THREADS = _inteiro_env("OCR_CPU_THREADS", 10, minimo=1)
+MKLDNN_CACHE = _inteiro_env("OCR_MKLDNN_CACHE_CAPACITY", 10, minimo=1)
+ORIENTAR_DOCUMENTO = os.getenv("OCR_DOC_ORIENTATION", "1").strip().lower() not in {"0", "false"}
+ORIENTAR_LINHAS = os.getenv("OCR_TEXTLINE_ORIENTATION", "1").strip().lower() not in {"0", "false"}
 
 _lock = threading.Lock()
 _engine = None
@@ -73,8 +82,10 @@ def _construir(lang: str, dispositivo: str):
     from paddleocr import PaddleOCR
 
     extra = {}
-    if dispositivo == "gpu" and DETECTOR:
+    if DETECTOR:
         extra["text_detection_model_name"] = DETECTOR
+    if RECONHECEDOR:
+        extra["text_recognition_model_name"] = RECONHECEDOR
     # Reduzir a imagem foi descartado nas medições dos documentos reais porque
     # piorava a detecção e acionava até três rotações extras. Só habilita quando
     # alguém define explicitamente a variável para um novo benchmark.
@@ -89,9 +100,12 @@ def _construir(lang: str, dispositivo: str):
         # Endireita a página inteira antes de detectar. Sem isso uma foto deitada
         # até é lida, mas as caixas saem transpostas e a associação rótulo->valor
         # (que é geométrica) troca os campos de lugar.
-        use_doc_orientation_classify=True,
+        use_doc_orientation_classify=ORIENTAR_DOCUMENTO,
         use_doc_unwarping=False,   # correção de páginas onduladas: pesada e rara aqui
-        use_textline_orientation=True,
+        use_textline_orientation=ORIENTAR_LINHAS,
+        enable_mkldnn=MKLDNN,
+        mkldnn_cache_capacity=MKLDNN_CACHE,
+        cpu_threads=CPU_THREADS,
         device=dispositivo,
         **extra,
     )
