@@ -27,7 +27,9 @@ def _inteiro_env(nome: str, padrao: int, minimo: int = 1) -> int:
         return padrao
 
 
-_DET_LADO_MAXIMO = os.getenv("OCR_DET_LADO_MAXIMO", "").strip()
+# 1280 foi 45% mais rápido com 24/24 campos no benchmark. Pode ser zerado na
+# configuração para investigar algum documento excepcional em resolução integral.
+_DET_LADO_MAXIMO = os.getenv("OCR_DET_LADO_MAXIMO", "1280").strip()
 
 # ------------------------------------------------------------------ dispositivo
 #

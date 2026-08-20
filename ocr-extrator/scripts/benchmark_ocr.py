@@ -23,7 +23,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 SAIDA_PADRAO = RAIZ / "tmp" / "benchmark-ocr.json"
 
 PERFIS: dict[str, dict[str, str]] = {
-    "baseline": {"OCR_CROPS_DOCUMENTO": "0"},
+    "baseline": {"OCR_CROPS_DOCUMENTO": "0", "OCR_DET_LADO_MAXIMO": ""},
     "sem_mkldnn": {"OCR_ENABLE_MKLDNN": "0"},
     "detector_1280": {"OCR_DET_LADO_MAXIMO": "1280"},
     "mobile": {"OCR_DETECTOR": "PP-OCRv5_mobile_det"},

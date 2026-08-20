@@ -16,7 +16,7 @@ Git). O teste realizado em 20/08/2026, nesta máquina, produziu:
 | Perfil | Tempo total | Campos exatos | Confiança média | Decisão |
 |---|---:|---:|---:|---|
 | base | 112,5 s | 24/24 | 0,9958 | referência |
-| detector limitado a 1280 | 62,3 s | 24/24 | 0,9958 | melhor candidato |
+| detector limitado a 1280 | 62,3 s | 24/24 | 0,9958 | configuração adotada |
 | 16 threads | 75,9 s | 24/24 | 0,9958 | ganho, mas inferior a 1280 |
 | sem MKL-DNN | 174,3 s | 24/24 | 0,9958 | descartado |
 | sem orientação | 210,5 s | 24/24 | 0,9958 | descartado |
@@ -29,8 +29,9 @@ Git). O teste realizado em 20/08/2026, nesta máquina, produziu:
 - MKL-DNN, orientação da página e orientação das linhas continuam ligados.
 - O detector `server` continua sendo usado. O modelo mobile foi mais lento e perdeu
   três valores, portanto não é alternativa nesta instalação.
-- O limite do detector em 1280 é configurável por `OCR_DET_LADO_MAXIMO` e só deve
-  ser promovido para todos os ambientes após passar também no acervo real.
+- O limite do detector em 1280 foi adotado como padrão por
+  `OCR_DET_LADO_MAXIMO`. Defina a variável vazia para comparar um documento
+  excepcional em resolução integral.
 - O recorte de perspectiva por OpenCV existe atrás de `OCR_CROPS_DOCUMENTO=1`.
   Ele é conservador e opt-in porque uma borda interna confundida com o documento
   pode apagar conteúdo.
