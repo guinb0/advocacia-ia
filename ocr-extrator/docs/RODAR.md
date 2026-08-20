@@ -44,9 +44,20 @@ cd ocr-extrator
 ```
 
 Ele carrega `ocr-extrator/.env` sozinho e levanta: Keycloak, Redis,
-observabilidade, agente jurídico (:8011 + worker Dramatiq), transcrição (:8200),
-API (:8100), workers Celery e frontend (:3000). Se o agente já estiver em :8011,
-reutiliza o processo; `-SemAgente` não o sobe. Sem agente, o restante continua.
+observabilidade, Jitsi (:8081), agente jurídico (:8011 + worker Dramatiq),
+transcrição/Whisper (:8200), API (:8100), workers Celery e frontend (:3000). Se
+o agente já estiver em :8011, reutiliza o processo; `-SemAgente` não o sobe.
+`-SemJitsi` pula somente as chamadas remotas.
+
+Na primeira execução, o script também instala as dependências Python e Node. Se
+`docker-jitsi-meet` ainda não existir ao lado dos repositórios, ele clona o
+projeto oficial, cria a `.env` local com senhas aleatórias, prepara os volumes e
+sobe web, Prosody, Jicofo e JVB. As imagens usam a tag oficial `stable`, nunca o
+fallback `unstable` do Compose.
+
+Antes de alterar qualquer coisa, o bootstrap verifica `docker`, `uv` e `npm` e
+confirma que o Docker Desktop responde. Assim a inicialização para na causa, em
+vez de deixar metade dos serviços no ar e falhar muitos minutos depois.
 
 O agente lê **somente** `ia-juridica/.env`. Em especial, não herda a
 `DATABASE_URL` do Acervo, que aponta para o corpus pgvector e seria o banco
@@ -61,7 +72,7 @@ errado para o Case State.
 | pgvector | 10.200.1.1:5432, **atrás da VPN** | some recomendação, análise por precedentes e a aba Dados |
 | Redis | contêiner, :6380 | fila e lock de GPU param |
 | Postgres de jobs | contêiner, :5434 | histórico de jobs |
-| Jitsi | projeto `docker-jitsi-meet`, :8081 | entrevista só presencial |
+| Jitsi | criado/subido automaticamente, :8081 | entrevista só presencial |
 | DeepSeek | API externa | some a escuta, a análise e a auditoria |
 
 **A VPN é a dependência que mais derruba coisa.** O pgvector só é alcançável por
@@ -111,6 +122,7 @@ curl http://localhost:3000                # tela
 curl http://127.0.0.1:8100/api/saude      # API
 curl http://127.0.0.1:8200/saude          # transcrição (modelo_carregado: true)
 curl http://localhost:8180/realms/advocacia/.well-known/openid-configuration
+curl http://localhost:8081/libs/lib-jitsi-meet.min.js
 curl $env:AGENTE_API_URL/ready            # a ponte com o agente
 ```
 

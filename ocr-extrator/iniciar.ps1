@@ -11,7 +11,13 @@
 # O login usa um Keycloak em container (docker compose up -d keycloak). Sem ele
 # no ar, `-SemAuth` deixa a API aberta como era antes -- util para depurar o OCR
 # sem depender do Docker.
-param([switch]$Prod, [int]$Porta = 3000, [switch]$SemAuth, [switch]$SemAgente)
+param(
+    [switch]$Prod,
+    [int]$Porta = 3000,
+    [switch]$SemAuth,
+    [switch]$SemAgente,
+    [switch]$SemJitsi
+)
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -34,6 +40,16 @@ function Importar-Env([string]$Caminho) {
 }
 
 Importar-Env ".\.env"
+
+foreach ($comando in @("docker", "uv", "npm")) {
+    if (-not (Get-Command $comando -ErrorAction SilentlyContinue)) {
+        throw "Dependencia ausente: '$comando' nao foi encontrado no PATH. Instale-o e execute iniciar.ps1 novamente."
+    }
+}
+docker info *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker nao esta respondendo. Abra o Docker Desktop e execute iniciar.ps1 novamente."
+}
 
 function Testar-Http([string]$Url, [int]$Timeout = 3) {
     try {
@@ -129,15 +145,24 @@ $env:ORIGENS_PERMITIDAS             = "http://localhost:$Porta,http://127.0.0.1:
 $env:URL_PORTAL                     = "http://localhost:$Porta"
 $env:NEXT_PUBLIC_JITSI_URL          = $UrlJitsi
 
-# O Jitsi nao sobe junto: e um stack proprio (Prosody, Jicofo, Videobridge) que
-# fica de pe entre execucoes, como o Keycloak. Aviso em vez de derrubar tudo --
-# entrevista presencial, pelo microfone da maquina, funciona sem ele.
-try {
-    Invoke-WebRequest "$UrlJitsi/libs/lib-jitsi-meet.min.js" -Method Head -UseBasicParsing -TimeoutSec 3 | Out-Null
-    Write-Host "Chamadas  : $UrlJitsi (Jitsi no ar)" -ForegroundColor Green
-} catch {
-    Write-Host "AVISO: servidor de chamadas fora do ar em $UrlJitsi." -ForegroundColor Yellow
-    Write-Host "       Suba com: cd ..\..\docker-jitsi-meet; docker compose up -d" -ForegroundColor DarkGray
+# O stack oficial do Jitsi vive fora deste repositorio. Na primeira subida o
+# bootstrap clona, cria uma .env com segredos locais e levanta web, Prosody,
+# Jicofo e Videobridge. Nas seguintes apenas reconcilia os containers.
+if (-not $SemJitsi) {
+    if (-not (Testar-Http "$UrlJitsi/libs/lib-jitsi-meet.min.js")) {
+        Write-Host "Preparando o servidor de chamadas Jitsi..." -ForegroundColor Yellow
+        & ".\scripts\preparar_jitsi.ps1" `
+            -Versao $(if ($env:JITSI_IMAGE_VERSION) { $env:JITSI_IMAGE_VERSION } else { "stable" })
+    }
+    $jitsiPronto = $false
+    for ($i = 0; $i -lt 120; $i++) {
+        if (Testar-Http "$UrlJitsi/libs/lib-jitsi-meet.min.js") { $jitsiPronto = $true; break }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $jitsiPronto) { throw "Jitsi nao respondeu em $UrlJitsi depois de 120 segundos." }
+    Write-Host "Chamadas  : $UrlJitsi (Jitsi pronto)" -ForegroundColor Green
+} else {
+    Write-Host "Jitsi nao iniciado (-SemJitsi); chamadas remotas ficarao indisponiveis." -ForegroundColor Yellow
 }
 
 # Segredo que assina as sessoes do portal do cliente. Sorteado uma vez e guardado
