@@ -1272,3 +1272,34 @@ Configuração: `AGENTE_API_URL` (vazio desliga tudo), `AGENTE_TOKEN`,
 Migração para os bancos de verdade: **`docs/PLANO-BANCOS.md`**.
 
 Testes: `.venv\Scripts\python.exe -m tests.test_agente` (sem rede, com dublê).
+
+---
+
+## PENDENTE — diarização pós-entrevista com pyannote
+
+Adicionar `pyannote.audio` com o pipeline local
+`pyannote/speaker-diarization-community-1`, usando `num_speakers=2` e, de
+preferência, `exclusive_speaker_diarization` para alinhar os intervalos com os
+segmentos temporais do Faster-Whisper.
+
+**Decisão arquitetural:** não colocar pyannote no preenchimento ao vivo. O
+pipeline oficial não é streaming, acrescenta latência e VRAM e devolve rótulos
+anônimos (`SPEAKER_00`/`SPEAKER_01`). Durante chamadas, a faixa remota do Jitsi
+já identifica a voz do cliente; manter o filtro textual de enunciado na escuta
+ao vivo. A diarização entra como tarefa assíncrona depois que o áudio completo
+for fechado, especialmente para entrevistas presenciais com microfone único.
+
+Saída pretendida:
+
+- cruzar os intervalos do pyannote com os timestamps do Whisper;
+- identificar o advogado pelo locutor que lê os enunciados conhecidos;
+- rotular o outro locutor como cliente, guardando também os ids originais;
+- produzir transcrição final `Advogado:`/`Cliente:` para auditoria e PDF;
+- nunca substituir a transcrição bruta nem apagar trechos de baixa confiança;
+- executar em fila própria ou sob a trava de GPU, sem concorrer com OCR e
+  Whisper durante a entrevista.
+
+Pré-requisitos externos: aceitar os termos do modelo no Hugging Face, criar
+`HUGGINGFACE_TOKEN`, garantir FFmpeg e medir tempo/VRAM nesta máquina antes de
+ativar por padrão. Não usar o pipeline legado `speaker-diarization-3.1` em
+implementação nova.
