@@ -427,6 +427,25 @@ def cenario_complemento() -> int:
         all(p.id != binaria.id for p, _ in completaveis),
         "pergunta de sim ou não não é oferecida para complemento",
     )
+
+    # Informação importante pode voltar muito depois. Nenhuma resposta narrativa
+    # pode desaparecer por estar longe da pergunta atual ou por já ser longa.
+    narrativas = [
+        p
+        for bloco in roteiro.blocos
+        for p in bloco.perguntas
+        if p.tipo not in escuta.TIPOS_FECHADOS
+        and not p.opcoes
+        and not p.validacao
+        and p.id not in escuta.DADOS_DIGITADOS
+    ]
+    respostas_largas = {p.id: "relato " * 100 for p in narrativas}
+    todos = escuta._completaveis(roteiro, respostas_largas, narrativas[-1].id)
+    ids_completaveis = {p.id for p, _ in todos}
+    falhas += not checar(
+        ids_completaveis == {p.id for p in narrativas},
+        "todas as narrativas respondidas, inclusive distantes e longas, podem receber complemento",
+    )
     return falhas
 
 

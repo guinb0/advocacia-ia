@@ -142,15 +142,12 @@ MAXIMO_PERGUNTAS = 18
 #: fica ruim": não é o modelo piorando, é a janela deslizando para trás.
 VAGAS_ATRASADAS = 6
 
-#: Quantas já respondidas voltam ao prompt para poderem ser completadas, e o
-#: tamanho máximo do que já está no campo para ela caber na lista.
-#:
-#: Doze porque o cliente completa o que acabou de falar, não o que disse há meia
-#: hora — e porque cada uma custa duas linhas de prompt em toda volta da escuta.
-#: 200 caracteres corta os relatos: relato longo não se completa com um aposto,
-#: se reescreve, e reescrever é trabalho de quem revisa depois.
-MAXIMO_COMPLETAVEIS = 12
-TAMANHO_COMPLETAVEL = 200
+#: Toda pergunta narrativa já respondida volta ao prompt. Uma informação dita
+#: agora pode alterar um assunto do começo da entrevista; proximidade no roteiro
+#: não é evidência de pertinência. O valor é truncado apenas para controlar a
+#: latência, mas o campo não deixa de ser oferecido por já conter um relato longo.
+MAXIMO_COMPLETAVEIS = 64
+TAMANHO_COMPLETAVEL = 400
 
 #: Teto de complementos aceitos por trecho, igual ao que a instrução pede.
 MAXIMO_COMPLEMENTOS = 3
@@ -457,8 +454,6 @@ def _completaveis(
             continue
         if pergunta.tipo in TIPOS_FECHADOS or pergunta.opcoes:
             continue
-        if len(_texto(bruto, TAMANHO_COMPLETAVEL + 1)) > TAMANHO_COMPLETAVEL:
-            continue
         respondidas.append(pergunta)
 
     respondidas.sort(key=lambda p: abs(posicao[p.id] - daqui))
@@ -629,6 +624,8 @@ pergunta era "quantas vezes e em que anos?", no campo está "8 vezes", e agora e
 diz "foi em 2022, 2023 e 2024". A data pertence àquele campo, não a este trecho.
 
 - Trecho que traz dado NOVO para uma dessas perguntas vai em `complementos`.
+- Compare o trecho com TODAS as JÁ RESPONDIDAS, independentemente da pergunta
+  que está na tela. Uma única fala pode complementar mais de um campo antigo.
 - Em `valor` vai SÓ O QUE FALTAVA, nunca a resposta inteira: o que você mandar é
   ACRESCENTADO ao que já está no campo. No exemplo o valor é "2022, 2023 e 2024";
   mandar "8 vezes em 2022, 2023 e 2024" escreveria "8 vezes" duas vezes no campo.

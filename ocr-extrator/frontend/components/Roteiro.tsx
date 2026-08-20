@@ -377,6 +377,10 @@ export default function Roteiro({
               // primeiro em vez de apagá-lo.
               novo[p.pergunta_id] = anterior ? `${anterior} ${p.valor}` : p.valor;
             }
+            // A fila pode começar a interpretar o próximo trecho antes de o
+            // React renderizar novamente. Atualizar o espelho aqui garante que
+            // esse trecho já veja todos os complementos recém-aplicados.
+            respostasRef.current = novo;
             return novo;
           });
           setOuvidas((atuais) => [
