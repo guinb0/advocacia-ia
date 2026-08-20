@@ -46,3 +46,19 @@ Git). O teste realizado em 20/08/2026, nesta máquina, produziu:
 As variáveis e seus valores documentados ficam em `.env.example`. Para testar uma
 combinação nova, acrescente um perfil em `scripts/benchmark_ocr.py`; não altere a
 configuração de produção somente com base no tempo.
+
+## Validação no JPG real do acervo
+
+No comprovante Neoenergia `DOC.05_7e5fc012...jpg`, o perfil geral levou 73,2 s.
+Limitar a região do comprovante aos 55% superiores reduziu para 39,0 s, mantendo
+nome, data de emissão e CEP. O vencimento da conta deixou de ser publicado
+indevidamente como `data_validade`. Um recorte de 65% levou 55,3 s e perdeu o CEP;
+por isso o padrão específico de `comprovante_residencia` é 0,55. O arquivo original
+continua preservado e usado na avaliação de qualidade; somente a entrada do OCR é
+recortada. Outros tipos documentais não recebem esse recorte.
+
+O teste reproduzível para um arquivo real é:
+
+```powershell
+.venv\Scripts\python.exe scripts\benchmark_ocr_arquivo.py CAMINHO_DO_JPG
+```
