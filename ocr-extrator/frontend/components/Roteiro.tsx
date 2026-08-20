@@ -91,36 +91,6 @@ interface EstadoConferencia {
  * para não gastar uma ida à API só para ouvir "curta demais". */
 const MINIMO_PARA_CONFERIR = 40;
 
-/* Quanto tempo a condução SEGURA uma pergunta que já foi respondida, enquanto
- * o cliente continua falando dela.
- *
- * O primeiro trecho que a escuta devolve já preenche o campo — e campo cheio
- * fazia a barra pular para a pergunta seguinte no meio da frase do cliente. O
- * entrevistador lia a próxima e cortava o raciocínio dele, que é o oposto do
- * que a condução existe para fazer: conduzir não é atropelar.
- *
- * A contagem reinicia a cada trecho novo que cai NESTA pergunta. Enquanto ele
- * desenvolve, a barra não anda; parou de cair trecho aqui (ele terminou, ou
- * mudou de assunto), ela anda. */
-const SEGUNDOS_RESPOSTA_OBJETIVA = 1.5;
-const SEGUNDOS_RESPOSTA_CURTA = 2.5;
-const SEGUNDOS_RESPOSTA_LONGA = 5;
-
-/* Teto do quanto uma pergunta pode ficar segurada, contado do PRIMEIRO trecho.
- *
- * A espera acima reinicia a cada trecho que cai nesta pergunta — e esse reinício
- * não tinha limite. Com áudio ruim os trechos pingam de cinco em cinco segundos
- * (às vezes só um fragmento mal reconhecido), cada um empurra o relógio de novo,
- * e a condução trava em "respondendo — deixe terminar" sem nunca liberar. Foi o
- * que aconteceu no "Foi vítima de assalto durante o trabalho?", uma pergunta de
- * sim ou não.
- *
- * 40s é generoso para quem está mesmo desenvolvendo uma resposta e curto o
- * bastante para não travar as 42 perguntas. Passado o teto a barra anda; o
- * cliente não é interrompido, porque a escuta continua atribuindo o que ele
- * disser à pergunta certa mesmo depois de a tela ter avançado. */
-const MAXIMO_SEGURANDO_S = 40;
-
 /* Por quanto tempo, depois do último campo preenchido, a entrevista conta como
  * FLUINDO.
  *
@@ -172,16 +142,6 @@ export default function Roteiro({
    * na lista e voltam à condução com um clique. É o que impede a sequência de
    * travar numa pergunta impossível com a cobrança tocando sem saída. */
   const [puladas, setPuladas] = useState<string[]>([]);
-  /* A pergunta que ainda está recebendo resposta, e quando caiu o último
-   * trecho dela. É o que segura a condução enquanto o cliente desenvolve. */
-  const [respondendoAgora, setRespondendoAgora] = useState<{
-    id: string;
-    /** Último trecho que caiu nesta pergunta — reinicia a espera adaptativa. */
-    em: number;
-    /** PRIMEIRO trecho desta pergunta — é o que o teto mede, e por isso não
-     *  pode ser reiniciado junto com `em`. */
-    desde: number;
-  } | null>(null);
   /* Quando um campo QUALQUER foi preenchido pela última vez. É o sinal de que a
    * entrevista está andando, mesmo que fora da ordem do roteiro. */
   const [ultimoPreenchimento, setUltimoPreenchimento] = useState<number | null>(null);
@@ -405,21 +365,6 @@ export default function Roteiro({
           ]);
         }
         if (r.preenchidas.length) {
-          /* Caiu trecho NA pergunta da vez: ele está respondendo ESTA, e a
-           * condução espera ele terminar. Cair em outra pergunta não segura
-           * nada — é resposta adiantada, e adiantar é justamente o que faz a
-           * entrevista encurtar. */
-          if (r.preenchidas.some((p) => p.pergunta_id === atualRef.current)) {
-            setRespondendoAgora((anterior) => {
-              const agora = Date.now();
-              // Só preserva o `desde` se ainda for a MESMA pergunta; trocou de
-              // pergunta, o teto recomeça, senão a segunda herdaria o relógio
-              // gasto pela primeira e nem chegaria a segurar.
-              return anterior && anterior.id === atualRef.current
-                ? { ...anterior, em: agora }
-                : { id: atualRef.current, em: agora, desde: agora };
-            });
-          }
           // Caiu em qualquer pergunta: a entrevista está andando, e a cobrança
           // recolhe enquanto isso durar.
           setUltimoPreenchimento(Date.now());
@@ -762,49 +707,12 @@ export default function Roteiro({
     [sequencia, respostas, puladas, aguardandoConfirmacao],
   );
 
-  /* O relógio de parede desta tela.
-   *
-   * Sem ele o "segurar" nunca expiraria sozinho: a barra só recalcularia na
-   * próxima resposta, e a pergunta respondida ficaria na tela até o cliente
-   * falar de novo — o defeito oposto ao que este código conserta. */
-  const [, tique] = useState(0);
-  useEffect(() => {
-    if (!escutando) return;
-    const t = setInterval(() => tique((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [escutando]);
-
-  /* A pergunta segurada: já respondida, mas ainda recebendo trecho.
-   *
-   * Uma escolha/sim-não anda quase imediatamente. Relato curto (como "ainda
-   * trabalho lá") ganha só 2,5s; narrativa longa ganha 5s para não cortar o
-   * cliente. O antigo valor fixo de 8s fazia respostas objetivas parecerem
-   * travadas mesmo depois de o texto já estar preenchido. */
-  const indiceRespondendo = respondendoAgora === null
-    ? -1
-    : sequencia.findIndex(({ pergunta }) => pergunta.id === respondendoAgora.id);
-  const perguntaRespondendo = indiceRespondendo >= 0 ? sequencia[indiceRespondendo].pergunta : null;
-  const valorRespondendo = perguntaRespondendo ? respostas[perguntaRespondendo.id] : undefined;
-  const tamanhoRespondendo = Array.isArray(valorRespondendo)
-    ? valorRespondendo.join(" ").length
-    : String(valorRespondendo ?? "").trim().length;
-  const segundosParaAndar = perguntaRespondendo?.tipo !== "relato"
-    ? SEGUNDOS_RESPOSTA_OBJETIVA
-    : tamanhoRespondendo < 160
-      ? SEGUNDOS_RESPOSTA_CURTA
-      : SEGUNDOS_RESPOSTA_LONGA;
-  const posicaoSegurada =
-    respondendoAgora !== null &&
-    Date.now() - respondendoAgora.em < segundosParaAndar * 1000 &&
-    Date.now() - respondendoAgora.desde < MAXIMO_SEGURANDO_S * 1000
-      ? indiceRespondendo
-      : -1;
-
-  const posicaoAtual = posicaoSegurada >= 0 ? posicaoSegurada : posicaoNatural;
+  /* Resposta aceita libera a próxima pergunta no mesmo render. A captura e a
+   * fila de interpretação continuam independentes da pergunta visível, então
+   * uma fala posterior ainda pode complementar qualquer resposta anterior. */
+  const posicaoAtual = posicaoNatural;
   const atual = posicaoAtual >= 0 ? sequencia[posicaoAtual] : null;
   atualRef.current = atual?.pergunta.id ?? "";
-  /** O cliente está desenvolvendo a resposta desta pergunta agora mesmo. */
-  const respondendo = posicaoSegurada >= 0;
   /** A entrevista anda: caiu resposta em ALGUMA pergunta há pouco. */
   const fluindo =
     ultimoPreenchimento !== null &&
@@ -1135,12 +1043,8 @@ export default function Roteiro({
             sugestoes={sugestoes}
             retomadas={roteiro.retomadas ?? []}
             fechosPorTipo={roteiro.fechos_por_tipo ?? {}}
-            /* Com o cliente respondendo ESTA pergunta, o relógio não corre: a
-             * cobrança é para quem não responde, não para quem está no meio da
-             * resposta. Falar de OUTRA coisa não conta — o relógio segue, que é
-             * a regra do escritório. */
-            ativo={escutando && estadoMic !== "pausado" && !respondendo}
-            respondendo={respondendo}
+            ativo={escutando && estadoMic !== "pausado"}
+            respondendo={false}
             fluindo={fluindo}
             onIrPara={irPara}
             onPular={pular}

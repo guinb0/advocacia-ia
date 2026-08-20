@@ -157,9 +157,11 @@ function situacao(
   }
   if (interpretando) {
     return {
-      texto: "interpretando…",
+      texto: "ouvindo · interpretando em paralelo…",
       classe: estilos.ouvindo,
-      titulo: "Um trecho da conversa está sendo lido contra o roteiro.",
+      titulo:
+        "Um trecho está sendo interpretado, mas o microfone continua aberto e " +
+        "novas falas continuam entrando na fila.",
     };
   }
   if (ultimaFala === null) {
