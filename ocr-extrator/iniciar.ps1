@@ -83,11 +83,15 @@ function Wait-ModeloAquecido {
 
 $PortaBackend = 8100
 $PortaTranscricao = 8200
-$UrlKeycloak  = "http://localhost:8180"
+$HostEscuta = if ($env:APP_BIND_HOST) { $env:APP_BIND_HOST } else { "0.0.0.0" }
+$UrlFrontend = if ($env:APP_PUBLIC_URL) { $env:APP_PUBLIC_URL.TrimEnd("/") } else { "http://localhost:$Porta" }
+$UrlApi = if ($env:OCR_API_PUBLIC_URL) { $env:OCR_API_PUBLIC_URL.TrimEnd("/") } else { "http://127.0.0.1:$PortaBackend" }
+$UrlTranscricao = if ($env:TRANSCRICAO_PUBLIC_URL) { $env:TRANSCRICAO_PUBLIC_URL.TrimEnd("/") } else { "http://127.0.0.1:$PortaTranscricao" }
+$UrlKeycloak = if ($env:KEYCLOAK_PUBLIC_URL) { $env:KEYCLOAK_PUBLIC_URL.TrimEnd("/") } else { "http://localhost:8180" }
 # Servidor de chamadas (Jitsi). Sobe com:
 #   cd ..\..\docker-jitsi-meet; docker compose up -d
 # A porta e 8081 e nao a 8000 do padrao porque a 8000 ja estava ocupada aqui.
-$UrlJitsi = "http://localhost:8081"
+$UrlJitsi = if ($env:JITSI_PUBLIC_URL) { $env:JITSI_PUBLIC_URL.TrimEnd("/") } else { "http://localhost:8081" }
 
 # ---------------------------------------------------------------- keycloak
 # O backend so exige token quando KEYCLOAK_URL esta definida (ver app/auth.py):
@@ -120,6 +124,33 @@ if ($SemAuth) {
     $env:KEYCLOAK_CLIENT_ID = "acervo-frontend"
     if (-not $env:KEYCLOAK_ADMIN_USER -or -not $env:KEYCLOAK_ADMIN_PASSWORD) {
         Write-Host "AVISO: cadastro de usuarios desligado; faltam KEYCLOAK_ADMIN_* na .env." -ForegroundColor Yellow
+    } else {
+        # O realm importado nasce aceitando localhost. Acrescenta a URL deste
+        # ambiente para o login funcionar também por IP, homologação ou produção.
+        try {
+            $token = Invoke-RestMethod "$UrlKeycloak/realms/master/protocol/openid-connect/token" `
+                -Method Post -ContentType "application/x-www-form-urlencoded" -Body @{
+                    grant_type = "password"; client_id = "admin-cli"
+                    username = $env:KEYCLOAK_ADMIN_USER; password = $env:KEYCLOAK_ADMIN_PASSWORD
+                }
+            $cabecalhos = @{ Authorization = "Bearer $($token.access_token)" }
+            $clientes = Invoke-RestMethod "$UrlKeycloak/admin/realms/advocacia/clients?clientId=acervo-frontend" `
+                -Headers $cabecalhos
+            if ($clientes.Count -gt 0) {
+                $cliente = Invoke-RestMethod "$UrlKeycloak/admin/realms/advocacia/clients/$($clientes[0].id)" `
+                    -Headers $cabecalhos
+                $redirect = "$UrlFrontend/*"
+                $cliente.redirectUris = @($cliente.redirectUris + $redirect | Select-Object -Unique)
+                $cliente.webOrigins = @($cliente.webOrigins + $UrlFrontend | Select-Object -Unique)
+                $cliente.rootUrl = $UrlFrontend
+                $cliente.attributes.'post.logout.redirect.uris' = ($cliente.redirectUris -join "##")
+                Invoke-RestMethod "$UrlKeycloak/admin/realms/advocacia/clients/$($clientes[0].id)" `
+                    -Method Put -Headers $cabecalhos -ContentType "application/json" `
+                    -Body ($cliente | ConvertTo-Json -Depth 20) | Out-Null
+            }
+        } catch {
+            throw "Keycloak subiu, mas nao foi possivel liberar $UrlFrontend no cliente acervo-frontend: $($_.Exception.Message)"
+        }
     }
     Write-Host "Keycloak pronto (realm advocacia)." -ForegroundColor Green
 }
@@ -139,10 +170,12 @@ if (-not $env:JOBS_DATABASE_URL) {
 $env:NEXT_PUBLIC_KEYCLOAK_URL       = $env:KEYCLOAK_URL
 $env:NEXT_PUBLIC_KEYCLOAK_REALM     = "advocacia"
 $env:NEXT_PUBLIC_KEYCLOAK_CLIENT_ID = "acervo-frontend"
-$env:NEXT_PUBLIC_OCR_API             = "http://127.0.0.1:$PortaBackend"
-$env:NEXT_PUBLIC_TRANSCRICAO_API     = "http://127.0.0.1:$PortaTranscricao"
-$env:ORIGENS_PERMITIDAS             = "http://localhost:$Porta,http://127.0.0.1:$Porta"
-$env:URL_PORTAL                     = "http://localhost:$Porta"
+$env:NEXT_PUBLIC_OCR_API             = $UrlApi
+$env:NEXT_PUBLIC_TRANSCRICAO_API     = $UrlTranscricao
+$origens = @("http://localhost:$Porta", "http://127.0.0.1:$Porta", $UrlFrontend)
+if ($env:ORIGENS_PERMITIDAS) { $origens += $env:ORIGENS_PERMITIDAS.Split(",") }
+$env:ORIGENS_PERMITIDAS             = ($origens | ForEach-Object { $_.Trim().TrimEnd("/") } | Where-Object { $_ } | Select-Object -Unique) -join ","
+$env:URL_PORTAL                     = $UrlFrontend
 $env:NEXT_PUBLIC_JITSI_URL          = $UrlJitsi
 
 # O stack oficial do Jitsi vive fora deste repositorio. Na primeira subida o
@@ -152,7 +185,9 @@ if (-not $SemJitsi) {
     if (-not (Testar-Http "$UrlJitsi/libs/lib-jitsi-meet.min.js")) {
         Write-Host "Preparando o servidor de chamadas Jitsi..." -ForegroundColor Yellow
         & ".\scripts\preparar_jitsi.ps1" `
-            -Versao $(if ($env:JITSI_IMAGE_VERSION) { $env:JITSI_IMAGE_VERSION } else { "stable" })
+            -Versao $(if ($env:JITSI_IMAGE_VERSION) { $env:JITSI_IMAGE_VERSION } else { "stable" }) `
+            -UrlPublica $UrlJitsi `
+            -IpsAnunciados $(if ($env:JITSI_ADVERTISE_IPS) { $env:JITSI_ADVERTISE_IPS } else { "127.0.0.1" })
     }
     $jitsiPronto = $false
     for ($i = 0; $i -lt 120; $i++) {
@@ -282,7 +317,7 @@ if (-not $SemAgente -and $env:AGENTE_API_URL) {
                 $pythonAgente = Join-Path $raizAgente ".venv\Scripts\python.exe"
                 $agenteApi = Start-Process -PassThru -NoNewWindow -WorkingDirectory $raizAgente `
                     -FilePath $pythonAgente `
-                    -ArgumentList "-m", "uvicorn", "legal_agent.main:app", "--host", "127.0.0.1", "--port", "$portaAgente"
+                    -ArgumentList "-m", "uvicorn", "legal_agent.main:app", "--host", "$HostEscuta", "--port", "$portaAgente"
                 $agenteWorker = Start-Process -PassThru -NoNewWindow -WorkingDirectory $raizAgente `
                     -FilePath $pythonAgente -ArgumentList "-m", "dramatiq", "legal_agent.workers", "--processes", "1", "--threads", "4"
             } finally {
@@ -302,9 +337,9 @@ if (-not $SemAgente -and $env:AGENTE_API_URL) {
     }
 }
 
-Write-Host "`nBackend  : http://127.0.0.1:$PortaBackend  (docs interativos em /docs)" -ForegroundColor Cyan
-Write-Host "Frontend : http://localhost:$Porta" -ForegroundColor Cyan
-Write-Host "Transcricao : http://127.0.0.1:$PortaTranscricao  (Whisper, processo separado)" -ForegroundColor Cyan
+Write-Host "`nBackend  : $UrlApi  (docs interativos em /docs)" -ForegroundColor Cyan
+Write-Host "Frontend : $UrlFrontend" -ForegroundColor Cyan
+Write-Host "Transcricao : $UrlTranscricao  (Whisper, processo separado)" -ForegroundColor Cyan
 Write-Host "Flower    : http://localhost:5555" -ForegroundColor Cyan
 Write-Host "Grafana   : http://localhost:3001" -ForegroundColor Cyan
 if (-not $SemAuth) { Write-Host "Keycloak : $UrlKeycloak" -ForegroundColor Cyan }
@@ -320,7 +355,7 @@ $transcricao = $null
 
 $backend = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
-    -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
+    -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "$HostEscuta",
                   "--port", "$PortaBackend", "--timeout-keep-alive", "65"
 
 # No Windows, pool=solo evita o prefork incompatível e garante uma inferência
@@ -351,7 +386,7 @@ try {
     Write-Host "Aquecendo Whisper..." -ForegroundColor Yellow
     $transcricao = Start-Process -PassThru -NoNewWindow `
         -FilePath ".\.venv\Scripts\python.exe" `
-        -ArgumentList "-m", "uvicorn", "app.servico_transcricao:app", "--host", "127.0.0.1",
+        -ArgumentList "-m", "uvicorn", "app.servico_transcricao:app", "--host", "$HostEscuta",
                       "--port", "$PortaTranscricao",
                       "--ws-ping-interval", "0", "--ws-ping-timeout", "0"
 
@@ -367,7 +402,7 @@ try {
     Push-Location .\frontend
     # O "--" repassa a porta ao next, sobrepondo a que esta nos scripts do
     # package.json -- assim `-Porta 3100` volta ao arranjo antigo sem editar nada.
-    if ($Prod) { npm run start -- -p $Porta } else { npm run dev -- -p $Porta }
+    if ($Prod) { npm run start -- -H $HostEscuta -p $Porta } else { npm run dev -- -H $HostEscuta -p $Porta }
 } finally {
     Pop-Location -ErrorAction SilentlyContinue
     foreach ($p in @($backend, $transcricao, $workerOcr, $workerBackground, $beat, $agenteApi, $agenteWorker)) {

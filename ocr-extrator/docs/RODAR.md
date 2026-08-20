@@ -63,6 +63,29 @@ O agente lê **somente** `ia-juridica/.env`. Em especial, não herda a
 `DATABASE_URL` do Acervo, que aponta para o corpus pgvector e seria o banco
 errado para o Case State.
 
+## Endereços por ambiente
+
+Nenhuma URL pública precisa ficar presa a `localhost`. Configure na `.env`:
+
+```env
+APP_BIND_HOST=0.0.0.0
+APP_PUBLIC_URL=https://app.hom.exemplo.com
+OCR_API_PUBLIC_URL=https://api.hom.exemplo.com
+TRANSCRICAO_PUBLIC_URL=https://transcricao.hom.exemplo.com
+KEYCLOAK_PUBLIC_URL=https://login.hom.exemplo.com
+JITSI_PUBLIC_URL=https://meet.hom.exemplo.com
+JITSI_ADVERTISE_IPS=203.0.113.10
+```
+
+Para teste em outro aparelho na mesma rede, troque os domínios pelo IPv4 da
+máquina que executa o projeto. API, Whisper, agente e Next escutam em `0.0.0.0`.
+O navegador, porém, só libera microfone, câmera e compartilhamento de tela em
+HTTPS ou `localhost`; homologação e produção precisam de HTTPS válido.
+
+O bootstrap inclui `APP_PUBLIC_URL` no CORS e no cliente `acervo-frontend` do
+Keycloak. O Jitsi recebe `JITSI_PUBLIC_URL` e `JITSI_ADVERTISE_IPS` na própria
+`.env`, portanto o endereço que o navegador usa é também o que o JVB anuncia.
+
 ## Dependências externas
 
 | O quê | Onde | Sem ele |
