@@ -130,6 +130,23 @@ async function buscar<T>(caminho: string): Promise<T> {
   return corpo as T;
 }
 
+async function enviar<T>(caminho: string, corpoEnvio?: Record<string, unknown>): Promise<T> {
+  const resposta = await fetch(urlApi(caminho), {
+    method: "POST",
+    headers: cabecalhos(corpoEnvio ? { "Content-Type": "application/json" } : undefined),
+    body: corpoEnvio ? JSON.stringify(corpoEnvio) : undefined,
+  });
+  const corpo = await resposta.json().catch(() => null);
+  if (!resposta.ok) {
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${resposta.status}`,
+    );
+  }
+  return corpo as T;
+}
+
 /** O painel do recorte comparável deste caso. */
 export async function buscarJurimetria(casoId: string, orgao?: string): Promise<Jurimetria> {
   const sufixo = orgao ? `?orgao=${encodeURIComponent(orgao)}` : "";
@@ -197,4 +214,87 @@ export const ROTULO_DO_DESFECHO: Record<string, string> = {
 
 export function rotuloDoDesfecho(codigo: string): string {
   return ROTULO_DO_DESFECHO[codigo] ?? codigo;
+}
+
+// ------------------------------------------------- leituras de agente
+
+/** O processo por extenso ao lado de cada citação — nunca o `corpus_id` cru. */
+export interface PrecedenteCitado {
+  corpus_id: string;
+  process_number: string;
+  court: string;
+  judging_body: string | null;
+  decided_at: string | null;
+  outcome: string | null;
+}
+
+/** Uma razão de decidir recorrente no recorte, ancorada nos processos que a sustentam. */
+export interface LinhaArgumentativa {
+  thesis: string;
+  side: "GRANTING" | "DENYING";
+  precedents: PrecedenteCitado[];
+  cited_excerpts: string[];
+  counter_consideration: string;
+  /** Fração de 0 a 1 — não é probabilidade de êxito, é quanto o conjunto lido sustenta a linha. */
+  confidence: number;
+}
+
+export interface LeituraLinhasArgumentativas {
+  status: "RUNNING" | "COMPLETED" | "FAILED";
+  lines: LinhaArgumentativa[];
+  sample: { granting: number; denying: number };
+  failure_reason: string | null;
+  nature: string;
+}
+
+/** O argumento provável do outro lado, com o precedente que o sustenta. */
+export interface ContraArgumento {
+  argument: string;
+  precedents: PrecedenteCitado[];
+  cited_excerpts: string[];
+  /** Por que o caso concreto pode se afastar daquele precedente. Vazio é resposta legítima. */
+  distinguishing: string;
+  severity: "HIGH" | "MEDIUM" | "LOW";
+}
+
+export interface LeituraContraTese {
+  status: "RUNNING" | "COMPLETED" | "FAILED";
+  thesis: string;
+  counters: ContraArgumento[];
+  sample: number;
+  failure_reason: string | null;
+  nature: string;
+}
+
+/** Dispara a leitura. Fica em fila do outro lado — chama modelo sobre os precedentes já
+ * recuperados do recorte deste caso. */
+export async function dispararLinhasArgumentativas(
+  casoId: string,
+): Promise<{ run_id: string; status: string }> {
+  return enviar(
+    `/api/agente/casos/${encodeURIComponent(casoId)}/jurimetria/linhas-argumentativas`,
+  );
+}
+
+/** A leitura mais recente, ou `null` quando ainda não foi pedida — estado normal, não erro. */
+export async function buscarLinhasArgumentativas(
+  casoId: string,
+): Promise<LeituraLinhasArgumentativas | null> {
+  return buscar(
+    `/api/agente/casos/${encodeURIComponent(casoId)}/jurimetria/linhas-argumentativas`,
+  );
+}
+
+/** Dispara a contra-tese contra a hipótese aceita indicada. */
+export async function dispararContraTese(
+  casoId: string,
+  hipoteseId: string,
+): Promise<{ run_id: string; status: string }> {
+  return enviar(`/api/agente/casos/${encodeURIComponent(casoId)}/jurimetria/contra-tese`, {
+    hipotese_id: hipoteseId,
+  });
+}
+
+export async function buscarContraTese(casoId: string): Promise<LeituraContraTese | null> {
+  return buscar(`/api/agente/casos/${encodeURIComponent(casoId)}/jurimetria/contra-tese`);
 }

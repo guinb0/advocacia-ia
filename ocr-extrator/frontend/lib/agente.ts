@@ -298,6 +298,48 @@ export interface ConfigAgente {
   motivo?: string;
 }
 
+/** Uma dependência do agente — banco de aplicação, corpus de jurisprudência ou cache. */
+export interface DependenciaAgente {
+  status: "ok" | "not_configured" | "error";
+  latency_ms: number;
+  detail?: string;
+}
+
+/** Tempo de raciocínio puro: latência de cada chamada ao modelo, sem contar retentativa. */
+export interface RaciocinioAgente {
+  calls: number;
+  avg_call_latency_ms: number;
+  min_call_latency_ms: number;
+  max_call_latency_ms: number;
+}
+
+/** Quanto um agente (estratégia, pesquisa, redação...) demorou e acertou nas últimas 24h. */
+export interface DesempenhoAgente {
+  agent_name: string;
+  task: string;
+  runs: number;
+  avg_duration_ms: number;
+  max_duration_ms: number;
+  success_rate: number;
+  last_run_at: string | null;
+  /** `null` quando o agente rodou sem chegar a chamar o modelo. */
+  reasoning: RaciocinioAgente | null;
+}
+
+export interface SaudeAgente {
+  ligado: boolean;
+  status?: "ok" | "unavailable";
+  dependencies?: {
+    database: DependenciaAgente;
+    cache: DependenciaAgente;
+    jurisprudence: DependenciaAgente;
+  };
+  agents?: {
+    window_hours: number;
+    by_agent: DesempenhoAgente[];
+  };
+}
+
 async function chamar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
   const resposta = await fetch(urlApi(caminho), {
     ...init,
@@ -321,6 +363,10 @@ async function chamar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
 
 export function configDoAgente(): Promise<ConfigAgente> {
   return chamar<ConfigAgente>("/api/agente/config");
+}
+
+export function saudeDoAgente(): Promise<SaudeAgente> {
+  return chamar<SaudeAgente>("/api/agente/saude");
 }
 
 export function buscarDossie(casoId: string): Promise<Dossie> {

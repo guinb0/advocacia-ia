@@ -311,6 +311,13 @@ nova nasce fechada (ver `PUBLICAS` em `main.py`).
 | `POST` | `/api/extrair` | análise avulsa: `arquivo`, `idioma`, `tipo` |
 | `GET` | `/api/tipos` | tipos de documento suportados |
 
+**Leitura analítica** — tudo medido de instante gravado; o que o sistema não guarda sai em `ausencias`
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/api/casos/{id}/painel` | o painel do caso: tempo de cada etapa, comparação com os casos anteriores da categoria, riscos |
+| `GET` | `/api/panorama` | o painel de **todos** os casos (módulo Panorama): em que estágio estão, onde o tempo é gasto, o que está parado |
+
 **Agente jurídico** — só respondem com `AGENTE_API_URL` configurado (ver `app/agente/`)
 
 | Método | Rota | Descrição |
@@ -468,6 +475,8 @@ app/                     backend (FastAPI)
   ── caso e documentos
   categorias.py          categorias de processo e seus checklists
   casos.py               status de cada item e o texto do pedido ao cliente
+  painel.py              o caso medido no tempo: etapas, comparação, riscos
+  panorama.py            o escritório inteiro, com a MESMA medição do painel
   armazenamento.py       SQLite: casos, entregas, assinaturas, arquivos em disco
   portal.py              senha e sessão do portal do cliente
   pipeline.py            orquestra OCR -> campos -> validação -> JSON/XML
@@ -488,6 +497,7 @@ frontend/                Next.js 16 (App Router) + React 19
     Roteiro.tsx          conduz as perguntas, grava e transcreve
     ConferenciaResposta  o que faltou nesta resposta
     PainelContrato.tsx   gera o contrato e acompanha a assinatura
+    Panorama.tsx         o escritório inteiro — módulo próprio, aberto pela navegação
     Carteira · Checklist · ItemChecklistLinha · PedidoCliente · Resultado
     Retratos.tsx         os participantes da chamada
   lib/api.ts             cliente HTTP do backend

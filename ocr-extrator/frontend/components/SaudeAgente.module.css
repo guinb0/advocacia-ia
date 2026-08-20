@@ -1,0 +1,99 @@
+.container {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+.cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 20px 0 8px;
+}
+
+.cabecalho h1 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+}
+
+.cabecalho p {
+  margin: 0;
+  color: var(--texto-suave, #667);
+  max-width: 66ch;
+  line-height: 1.5;
+}
+
+.meta {
+  color: var(--texto-suave, #889);
+  font-size: 0.82rem;
+}
+
+.vazio {
+  margin: 0;
+  color: var(--texto-suave, #778);
+}
+
+.secao {
+  margin-top: 28px;
+}
+
+.secao h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.cartaoDependencia {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--borda, #e2e5ee);
+  border-radius: 10px;
+  background: var(--fundo-cartao, #fff);
+}
+
+.nomeDependencia {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.tabelaScroll {
+  overflow-x: auto;
+  border: 1px solid var(--borda, #e2e5ee);
+  border-radius: 10px;
+}
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela th,
+.tabela td {
+  padding: 10px 14px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tabela thead th {
+  background: var(--fundo, #fbfcfe);
+  color: var(--texto-suave, #667);
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--borda, #e2e5ee);
+}
+
+.tabela tbody tr + tr td {
+  border-top: 1px solid var(--borda-suave, #eef0f5);
+}

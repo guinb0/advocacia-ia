@@ -48,6 +48,7 @@ from . import (
     contrato,
     escuta,
     painel as painel_do_caso,
+    panorama,
     pipeline,
     portal,
     rag,
@@ -130,6 +131,7 @@ PUBLICAS = {
     "/docs",
     "/openapi.json",
     "/redoc",
+    "/metrics",  # raspado pelo Prometheus, que não manda Authorization
 }
 
 # O portal do cliente não passa pelo Keycloak: o cliente não tem conta. Quem o
@@ -1236,6 +1238,25 @@ def painel_do_caso_analitico(caso_id: str):
     return montado
 
 
+@app.get("/api/panorama")
+def panorama_do_escritorio():
+    """Painel analítico de todos os casos: o mesmo tipo de leitura, uma escala acima.
+
+    Existe para que o gestor responda "como o escritório está andando" sem abrir caso
+    por caso. Mede com as mesmas funções do painel do caso (`app/panorama.py` importa
+    `painel.marcos_do_caso` e `painel.medir_etapas`), então os números das duas telas
+    fecham entre si.
+
+    Cinco consultas independentemente do tamanho da carteira, e nenhuma chamada ao
+    agente jurídico — o que dependeria dele está declarado em `ausencias`.
+
+    Não leva `exigir_papel`: o middleware `exigir_autenticacao` já fecha toda rota que
+    não esteja em `LIVRES_SEM_ADVOGADO` para quem não é advogado ou secretário, e esta
+    atravessa o acervo inteiro.
+    """
+    return panorama.montar()
+
+
 @app.patch("/api/casos/{caso_id}")
 def atualizar_caso(caso_id: str, cliente: str | None = Form(None), observacao: str | None = Form(None)):
     if not armazenamento.atualizar_caso(caso_id, cliente, observacao):
@@ -1289,51 +1310,29 @@ def pedido_do_caso(caso_id: str, incluir_opcionais: bool = False):
     return pedido
 
 
-def _ler_documento(
-    entrega_id: str,
-    caso_id: str,
-    conteudo: bytes,
-    nome: str,
-    item_checklist,
-    categoria,
-    idioma: str,
-    usar_para_rg_e_cpf: bool,
-) -> None:
-    """O OCR propriamente dito, já fora do ciclo da requisição.
+# O antigo `_ler_documento` (OCR do checklist numa thread da API) saiu daqui: quem
+# lê o documento agora é `tasks.ocr.processar_entrega`, no worker que já mantém o
+# Paddle aquecido. A ponte com o agente jurídico foi junto — a task chama
+# `espelho.enviar_entrega` por conta própria, e não este `_entregar_ao_agente`.
 
-    Roda numa thread de fundo: a requisição do upload não espera por isto. O
-    PaddleOCR continua serializado na thread dele (ver `ocr_engine`), então
-    vários envios simplesmente entram na fila em vez de brigar por CPU.
+
+def _ler_entrevista_no_agente(caso_id: str, entrevista_id: str) -> None:
+    """Manda a entrevista recém-guardada para o agente virar fato, sem espera humana.
+
+    Roda numa thread de fundo, fora do ciclo da requisição: quem anexou a entrevista
+    não precisa mais clicar em "Ler no agente" depois — o fim da entrevista já é o
+    gatilho. `espelho.enviar_entrevista` é idempotente (`enviada_em`), então um
+    reenvio manual pela tela de sincronização não duplica fato.
+
+    Falha aqui não pode escapar: a entrevista já está salva localmente, e derrubar
+    esta thread por indisponibilidade do agente não desfaz esse registro.
     """
     try:
-        if item_checklist.tipo_ocr in {"rg", "cpf"}:
-            tipo_extracao = "cin" if usar_para_rg_e_cpf else None
-        else:
-            tipo_extracao = item_checklist.tipo_ocr
+        from .agente import espelho
 
-        resultado = pipeline.processar(conteudo, nome, idioma, tipo_extracao)
-
-        unificar = usar_para_rg_e_cpf
-        if not unificar and item_checklist.tipo_ocr in {"rg", "cpf"}:
-            unificar = casos.cobre_rg_e_cpf(resultado)
-
-        try:
-            itens_atendidos = (
-                casos.itens_para_identidade_unificada(categoria, item_checklist)
-                if unificar
-                else [item_checklist.codigo]
-            )
-        except ValueError:
-            itens_atendidos = [item_checklist.codigo]
-            unificar = False
-
-        detectado = resultado.get("tipo", {}).get("detectado")
-        confere = casos.tipo_confere(item_checklist, detectado, unificar)
-        armazenamento.concluir_entrega(entrega_id, resultado, confere, itens_atendidos)
-        _entregar_ao_agente(caso_id, entrega_id)
-    except Exception as exc:
-        log.exception("Falha ao ler o documento da entrega %s", entrega_id)
-        armazenamento.falhar_entrega(entrega_id, str(exc))
+        espelho.enviar_entrevista(caso_id, entrevista_id)
+    except Exception:  # noqa: BLE001 - fronteira com serviço externo
+        log.warning("não foi possível ler a entrevista %s no agente", entrevista_id, exc_info=True)
 
 
 def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
@@ -1430,11 +1429,76 @@ async def enviar_documento(
     return await _registrar_documento(caso, item, arquivo, idioma, usar_para_rg_e_cpf)
 
 
+@app.post("/api/casos/{caso_id}/documentos/teste", status_code=201)
+async def enviar_documento_de_teste(
+    caso_id: str, item: str = Form(...), texto: str = Form("")
+):
+    """Marca um item do checklist como entregue com dados falsos, sem OCR nem arquivo real.
+
+    Existe só para agilizar teste manual e automatizado do dossiê e da ponte com o
+    agente: preenche a validação e a extração com um resultado plausível e fixo, sem
+    passar pelo PaddleOCR nem exigir que alguém suba um documento de verdade a cada
+    rodada. `texto`, opcional, entra como `texto_completo` da extração — é o que o
+    agente de documento do outro lado lê para propor fato (`fields`/`text` no prompt);
+    sem ele o documento chega "existe, mas está em branco" e nenhum fato nasce dele.
+    Desligado por padrão — só responde com `PERMITIR_DADOS_TESTE=true` no
+    ambiente, para não virar um jeito de "entregar" documento em produção sem
+    documento nenhum.
+    """
+    if os.getenv("PERMITIR_DADOS_TESTE", "").strip().lower() != "true":
+        raise HTTPException(404, "Rota de dados de teste desativada.")
+
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
+
+    item_checklist = next((i for i in categoria.itens if i.codigo == item), None)
+    if item_checklist is None:
+        raise HTTPException(400, f"Item '{item}' não pertence ao checklist de {categoria.nome}.")
+
+    # `None` quando o item não tem classificador (procuração, CAT, laudos...) — como
+    # o Paddle de verdade nunca teria opinião sobre esses, inventar um tipo aqui
+    # ("documento") mandaria ao agente um valor que ele não reconhece e que o
+    # classificador real jamais produziria.
+    tipo = item_checklist.tipo_ocr
+    nome = f"teste-{item}.pdf"
+    destino = armazenamento.DIR_ARQUIVOS / caso_id
+    destino.mkdir(parents=True, exist_ok=True)
+    caminho = destino / f"{item}_{uuid.uuid4()}.pdf"
+    caminho.write_bytes(b"%PDF-1.7 dado de teste, sem documento real por tras")
+
+    extracao = {
+        "tipo": {"codigo": tipo, "detectado": tipo, "descricao": item_checklist.nome},
+        "validacao": {"veredito": "APROVADO", "dados_utilizaveis": True, "score_legibilidade": 100},
+        "campos": [],
+        "texto_completo": texto,
+    }
+    tipo_confere = True if tipo else None
+
+    entrega = armazenamento.registrar_entrega(caso_id, item, nome, caminho, extracao, tipo_confere)
+
+    threading.Thread(
+        target=_entregar_ao_agente,
+        args=(caso_id, entrega["id"]),
+        name=f"agente-teste-{entrega['id'][:8]}",
+        daemon=True,
+    ).start()
+
+    return entrega
+
+
 # ---------------------------------------------------------------- entrevista
 #
 # A entrevista é do caso, não do agente: o arquivo do atendimento existe mesmo com a
-# integração desligada, e é aqui que ele fica. Quem manda o texto para o agente virar
-# fato é a ponte (`app/agente/rotas.py`), depois de o arquivo estar guardado.
+# integração desligada, e é aqui que ele fica. Assim que o arquivo é guardado, uma
+# thread de fundo (`_ler_entrevista_no_agente`) já manda o texto para o agente virar
+# fato — a rota `POST /api/agente/casos/{caso_id}/entrevista/{entrevista_id}` em
+# `app/agente/rotas.py` continua existindo só para reenvio manual (ex.: agente estava
+# fora do ar no momento do envio automático).
 
 
 @app.post("/api/casos/{caso_id}/entrevista", status_code=201)
@@ -1479,7 +1543,7 @@ async def enviar_entrevista(
     caminho = destino / f"{uuid.uuid4().hex[:8]}-{nome}"
     caminho.write_bytes(conteudo)
 
-    return armazenamento.registrar_entrevista(
+    entrevista = armazenamento.registrar_entrevista(
         caso_id,
         arquivo=nome,
         caminho=caminho,
@@ -1487,6 +1551,15 @@ async def enviar_entrevista(
         realizada_em=realizada_em.strip(),
         entrevistador=entrevistador.strip() or _quem_conduziu(request),
     )
+
+    threading.Thread(
+        target=_ler_entrevista_no_agente,
+        args=(caso_id, entrevista["id"]),
+        name=f"agente-entrevista-{entrevista['id'][:8]}",
+        daemon=True,
+    ).start()
+
+    return entrevista
 
 
 def _quem_conduziu(request: Request) -> str:

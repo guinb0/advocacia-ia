@@ -10,7 +10,7 @@ Três decisões sustentam tudo o que sai daqui:
 - **nada é estimado.** Cada número vem de um instante gravado no banco — abertura do
   caso, chegada de cada documento, leitura da entrevista, envio ao agente, assinatura.
   Onde o instante não existe, o campo sai `None` com o motivo ao lado, e a tela desenha
-  estado vazio. O sistema não guarda prazo, SLA contratual, prioridade nem responsável
+  estado vazio. O sistema não guarda prazo contratado, prioridade nem responsável
   formal: esses campos saem em `ausencias`, nunca preenchidos por dedução;
 - **referência é medida, não arbitrada.** "Previsto" aqui é a **mediana dos casos
   anteriores da mesma categoria** — e vem sempre acompanhada do tamanho da amostra, que
@@ -24,6 +24,13 @@ Três decisões sustentam tudo o que sai daqui:
 O agente jurídico entra como bloco opcional: quando ele não responde, os indicadores que
 dependem dele saem como `indisponivel` com o motivo — nunca como zero, que se pareceria
 com "não há pendência nenhuma".
+
+Uma última regra, esta sobre a língua: **quem lê esta tela é advogado**. Estado interno
+do agente (`APPROVED`, `BLOCKING`, `ALLEGED`, `OCR_DOCUMENT`) e nome de artefato de
+sistema (*playbook*, *SLA*, *score*) não saem daqui em texto visível. O que sai é o que a
+coisa significa no trabalho: "aprovada", "impede a petição", "veio do relato", "requisito
+da tese", "prazo", "nota". Código sem tradução conhecida passa por `_humanizar_codigo`,
+que ao menos o tira da CAIXA_ALTA.
 """
 
 from __future__ import annotations
@@ -66,6 +73,72 @@ _DIAS_PARADO = 5
 
 #: Dias sem movimentação em que o componente de ritmo da saúde chega a zero.
 _DIAS_RITMO_ZERO = 14
+
+#: Estados de contradição que ainda pesam sobre o caso. `UNDER_REVIEW` é divergência que
+#: alguém começou a analisar e não terminou — tratá-la como resolvida (o painel fazia
+#: isso, comparando só com `OPEN`) escondia da tela justamente a que está na mesa de
+#: alguém. Decidida mesmo, no agente, é só `RESOLVED` ou `DISMISSED`.
+_CONTRADICAO_PENDENTE = {"OPEN", "UNDER_REVIEW"}
+
+#: Severidade da contradição no tom da tela. O agente grava LOW/MEDIUM/HIGH/CRITICAL e o
+#: painel tratava todas como "atenção" — uma divergência de data de admissão e uma de
+#: centavos apareciam com o mesmo peso.
+_TOM_DA_SEVERIDADE = {
+    "CRITICAL": CRITICO,
+    "HIGH": CRITICO,
+    "MEDIUM": ATENCAO,
+    "LOW": ATENCAO,
+}
+
+
+#: Decisão do advogado sobre uma estratégia ou uma minuta, em português. O agente grava
+#: DRAFT/IN_REVIEW/APPROVED/REJECTED, e a linha do tempo os imprimia crus — "Versão 2 ·
+#: APPROVED" no meio de uma tela inteira em português.
+_DECISAO_DO_ADVOGADO = {
+    "DRAFT": "retida pelo revisor, ainda não foi para a mesa",
+    "IN_REVIEW": "aguardando a leitura do advogado",
+    "APPROVED": "aprovada",
+    "REJECTED": "reprovada",
+}
+
+
+def _humanizar_codigo(codigo: str) -> str:
+    """"EMPLOYMENT.ADMISSION_DATE" -> "Employment · admission date".
+
+    Último recurso para código que não tem tradução na tabela da tela. Não é bonito, mas
+    é legível — e uma linha em CAIXA_ALTA_COM_PONTO no meio de uma tabela em português
+    faz o advogado parar de ler a tabela.
+    """
+    partes = [p.replace("_", " ").strip().lower() for p in str(codigo).split(".") if p]
+    if not partes:
+        return str(codigo)
+    partes[0] = partes[0][:1].upper() + partes[0][1:]
+    return " · ".join(partes)
+
+
+def _texto_da_contradicao(contradicao: dict[str, Any]) -> str:
+    """A divergência em uma frase, como o agente a escreveu.
+
+    O painel lia `description`/`kind`, que **não existem** na resposta do agente: o campo
+    com a frase para o advogado é `possible_resolution`, e o identificador da regra é
+    `type`. O resultado é que toda contradição chegava à tela com o detalhe vazio — a
+    linha dizia "Contradição entre fatos" e nada mais, que é o mesmo que não dizer.
+    """
+    texto = str(contradicao.get("possible_resolution") or "").strip()
+    if texto:
+        return texto
+    tipo = contradicao.get("type") or contradicao.get("kind")
+    if tipo:
+        return f"Divergência detectada pela regra {_humanizar_codigo(str(tipo))}."
+    return "O agente não descreveu a divergência."
+
+
+def _contradicoes_pendentes(agente: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        c
+        for c in agente.get("contradicoes") or []
+        if str(c.get("status") or "").upper() in _CONTRADICAO_PENDENTE
+    ]
 
 
 # --------------------------------------------------------------------------- tempo
@@ -111,7 +184,14 @@ def _mediana(valores: list[float]) -> float | None:
 
 
 def _limitar(valor: float, minimo: float = 0.0, maximo: float = 100.0) -> float:
-    return max(minimo, min(maximo, valor))
+    """Nota presa à faixa e arredondada.
+
+    O arredondamento não é cosmético: sem ele, `100 - 1/3*100*3` sai como
+    `1.42e-14` e viaja assim no JSON. A tela arredonda ao desenhar, mas quem lê a API
+    (ou o tooltip com a fórmula) via um número em notação científica onde deveria ler
+    zero.
+    """
+    return round(max(minimo, min(maximo, valor)), 1)
 
 
 # ------------------------------------------------------------------------- marcos
@@ -155,8 +235,20 @@ def marcos_do_caso(
     anexos = [i for i in anexos if i]
     envios = [_instante(a.get("criado_em")) for a in assinaturas]
     envios = [i for i in envios if i]
+    # O instante da assinatura é o do signatário (`assinou_em`, o `signed_at` da ZapSign),
+    # não o `atualizado_em` do nosso registro: essa coluna é tocada a cada sincronização
+    # com a ZapSign, a cada vinculação de caso e a cada gravação do PDF final. Usá-la
+    # como marco fazia a etapa "Contrato de honorários" crescer sozinha toda vez que
+    # alguém abria a tela do contrato — e, pior, como `ultima_movimentacao` é o maior
+    # marco conhecido, uma sincronização de rotina zerava o "sem movimentações há N dias"
+    # de um caso genuinamente parado.
+    # Só documento com todas as assinaturas fecha a etapa: num contrato de dois
+    # signatários, a primeira assinatura não é o fim do contrato — é metade dele.
     assinados = [
-        _instante(a.get("atualizado_em")) for a in assinaturas if a.get("estado") == "assinado"
+        _instante(s.get("assinou_em"))
+        for a in assinaturas
+        if a.get("estado") == "assinado"
+        for s in (a.get("signatarios") or [])
     ]
     assinados = [i for i in assinados if i]
 
@@ -219,13 +311,25 @@ ETAPAS = (
     },
     {
         "codigo": "ciclo",
-        "titulo": "Ciclo total do caso",
+        "titulo": "Duração total do caso",
         "inicio": "abertura",
         "fim": "ultima_movimentacao",
         "comparavel": True,
         "descricao": "Da abertura até a movimentação mais recente registrada.",
     },
 )
+
+
+def contrato_encerrado(assinaturas: list[dict[str, Any]]) -> bool:
+    """O contrato saiu de cena sem assinatura (recusa ou cancelamento)?
+
+    Sem isso a etapa "Contrato de honorários" de um contrato recusado ficava marcada
+    como *em curso* para sempre, com o relógio correndo até hoje — e um contrato que o
+    cliente recusou há seis meses aparecia como a etapa mais demorada do caso.
+    """
+    if not assinaturas:
+        return False
+    return all(a.get("estado") in ("recusado", "cancelado") for a in assinaturas)
 
 
 def _etapa_em_curso(codigo: str, situacao: dict[str, Any]) -> bool:
@@ -243,13 +347,21 @@ def medir_etapas(
     marcos: dict[str, datetime | None],
     situacao: dict[str, Any],
     agora: datetime,
+    contrato_morto: bool = False,
 ) -> list[dict[str, Any]]:
     """Duração de cada etapa, em horas. Etapa sem início sai como não iniciada."""
     medidas = []
     for etapa in ETAPAS:
         inicio = marcos.get(etapa["inicio"])
         fim = marcos.get(etapa["fim"])
-        em_curso = inicio is not None and (fim is None or _etapa_em_curso(etapa["codigo"], situacao))
+        if etapa["codigo"] == "contrato" and contrato_morto and fim is None:
+            # Recusado ou cancelado: a etapa terminou, só que sem assinatura. Medir até
+            # agora seria contar como espera um tempo em que ninguém espera mais nada.
+            em_curso = False
+        else:
+            em_curso = inicio is not None and (
+                fim is None or _etapa_em_curso(etapa["codigo"], situacao)
+            )
         # Etapa em curso mede até agora, e o payload diz que mediu — sem isso, um caso
         # parado há um mês na coleta apareceria com a duração do dia em que o último
         # documento chegou, que é a leitura mais otimista possível do mesmo dado.
@@ -297,6 +409,10 @@ def referencia_historica(
             "categoria": categoria,
         }
 
+    # `listar_casos` devolve por `atualizado_em DESC`: a amostra é a dos casos da
+    # categoria mexidos mais recentemente, não um sorteio do histórico inteiro. É a
+    # escolha certa (a prática de hoje do escritório é a régua útil), mas está escrita
+    # aqui porque muda o que a palavra "mediana" significa nesta tela.
     comparaveis = [
         c for c in todos if c.get("categoria") == categoria and c.get("id") != caso_atual
     ][:_TETO_HISTORICO]
@@ -328,7 +444,9 @@ def referencia_historica(
             dados["vinculo"],
         )
         considerados += 1
-        for medida in medir_etapas(marcos, situacao, agora):
+        for medida in medir_etapas(
+            marcos, situacao, agora, contrato_encerrado(dados["assinaturas"])
+        ):
             # Etapa em curso não entra na mediana: ela mede "quanto já levou", e
             # misturá-la com etapas concluídas puxaria a referência para baixo
             # exatamente nos casos que estão demorando.
@@ -394,14 +512,58 @@ def comparar(
                 "em_curso": medida["em_curso"],
                 "desvio_horas": desvio,
                 "desvio_percentual": desvio_percentual,
+                # A mediana é de etapas **concluídas**. Uma etapa ainda em curso comparada
+                # com ela só sustenta leitura em um sentido: "já passou do tempo" é fato,
+                # "está abaixo" é só ainda-não-acabou. A tela precisa saber a diferença.
+                "leitura_parcial": bool(medida["em_curso"] and mediana is not None),
                 "motivo": (
                     None
                     if mediana is not None
-                    else f"Sem amostra suficiente ({amostra_etapa} caso(s) concluíram esta etapa)."
+                    else (
+                        f"Só {amostra_etapa} caso(s) anterior(es) concluíram esta etapa — "
+                        f"a mediana passa a valer a partir de {_AMOSTRA_MINIMA}."
+                    )
                 ),
             }
         )
     return linhas
+
+
+def previsao_pela_mediana(
+    comparacoes: list[dict[str, Any]], referencia: dict[str, Any]
+) -> dict[str, Any]:
+    """Quanto faltaria para o caso alcançar a duração mediana da categoria.
+
+    Não é prazo nem promessa — é a mesma mediana já exibida, lida do outro lado: em vez
+    de "você está a 40% dela", "no ritmo dos casos anteriores restariam cerca de X dias".
+    É a pergunta que o cliente faz ao telefone, e ela já estava respondida no payload sem
+    ninguém ter feito a subtração.
+    """
+    ciclo = next((c for c in comparacoes if c["codigo"] == "ciclo"), None)
+    if not ciclo or not ciclo.get("previsto_horas") or ciclo.get("realizado_horas") is None:
+        return {
+            "disponivel": False,
+            "motivo": (
+                referencia.get("motivo")
+                or "Sem mediana de duração total para esta categoria."
+            ),
+            "dias_restantes": None,
+            "ja_ultrapassou": False,
+            "base": None,
+        }
+    restam_horas = ciclo["previsto_horas"] - ciclo["realizado_horas"]
+    return {
+        "disponivel": True,
+        "motivo": None,
+        "dias_restantes": round(abs(restam_horas) / 24, 1),
+        "ja_ultrapassou": restam_horas < 0,
+        "base": (
+            f"Mediana de {round(ciclo['previsto_horas'] / 24, 1)} dia(s) em "
+            f"{ciclo['amostra']} caso(s) anteriores, menos os "
+            f"{round(ciclo['realizado_horas'] / 24, 1)} dia(s) já decorridos. "
+            "É referência histórica, não prazo assumido com o cliente."
+        ),
+    }
 
 
 # --------------------------------------------------------------------- eventos
@@ -604,20 +766,23 @@ def _eventos_do_agente(agente: dict[str, Any]) -> list[dict[str, Any] | None]:
         )
 
     for contradicao in agente.get("contradicoes") or []:
-        aberta = contradicao.get("status") == "OPEN"
+        pendente = str(contradicao.get("status") or "").upper() in _CONTRADICAO_PENDENTE
         eventos.append(
             _evento(
                 _instante(contradicao.get("created_at")),
                 "ocorrencia",
-                "Contradição entre fatos",
-                str(contradicao.get("description") or contradicao.get("kind") or "")
-                + ("" if aberta else " — resolvida."),
-                ATENCAO if aberta else OK,
+                "Divergência entre fatos do caso",
+                _texto_da_contradicao(contradicao) + ("" if pendente else " Já decidida."),
+                _TOM_DA_SEVERIDADE.get(
+                    str(contradicao.get("severity") or "").upper(), ATENCAO
+                )
+                if pendente
+                else OK,
             )
         )
 
     for pesquisa in agente.get("pesquisas") or []:
-        estado = pesquisa.get("status")
+        estado = str(pesquisa.get("status") or "").upper()
         eventos.append(
             _evento(
                 _instante(pesquisa.get("created_at")),
@@ -626,9 +791,13 @@ def _eventos_do_agente(agente: dict[str, Any]) -> list[dict[str, Any] | None]:
                 {
                     "COMPLETED": "Pesquisa concluída.",
                     "RUNNING": "Pesquisa em andamento.",
-                    "FAILED": f"Pesquisa falhou: {pesquisa.get('failure_reason')}",
-                }.get(str(estado), f"Estado {estado}."),
-                {"COMPLETED": OK, "RUNNING": INFO}.get(str(estado), CRITICO),
+                    "PENDING": "Pesquisa na fila, ainda não começou.",
+                    "FAILED": (
+                        "A pesquisa não concluiu: "
+                        f"{pesquisa.get('failure_reason') or 'motivo não informado'}."
+                    ),
+                }.get(estado, "A pesquisa está em um estado que a tela não sabe traduzir."),
+                {"COMPLETED": OK, "RUNNING": INFO, "PENDING": INFO}.get(estado, CRITICO),
             )
         )
 
@@ -644,13 +813,18 @@ def _eventos_do_agente(agente: dict[str, Any]) -> list[dict[str, Any] | None]:
                 INFO,
             )
         )
+        aprovada = estrategia.get("status") == "APPROVED"
         eventos.append(
             _evento(
                 _instante(estrategia.get("reviewed_at")),
                 "agente",
-                f"Estratégia {'aprovada' if estrategia.get('status') == 'APPROVED' else 'decidida'}",
-                f"Versão {estrategia.get('version')} · {estrategia.get('status')}.",
-                OK if estrategia.get("status") == "APPROVED" else ATENCAO,
+                f"Estratégia {'aprovada' if aprovada else 'devolvida pelo advogado'}",
+                f"Versão {estrategia.get('version')} · "
+                + _DECISAO_DO_ADVOGADO.get(
+                    str(estrategia.get("status") or "").upper(), "decisão registrada"
+                )
+                + ".",
+                OK if aprovada else ATENCAO,
             )
         )
 
@@ -662,17 +836,26 @@ def _eventos_do_agente(agente: dict[str, Any]) -> list[dict[str, Any] | None]:
                 "agente",
                 "Minuta de petição gerada",
                 f"Versão {peticao.get('version')}"
-                + (f" · {bloqueantes} achado(s) bloqueante(s)." if bloqueantes else "."),
+                + (
+                    f" · {bloqueantes} ponto(s) que impedem o envio."
+                    if bloqueantes
+                    else "."
+                ),
                 ATENCAO if bloqueantes else INFO,
             )
         )
+        aprovada = peticao.get("status") == "APPROVED"
         eventos.append(
             _evento(
                 _instante(peticao.get("reviewed_at")),
                 "agente",
                 "Minuta revisada pelo advogado",
-                f"Versão {peticao.get('version')} · {peticao.get('status')}.",
-                OK if peticao.get("status") == "APPROVED" else ATENCAO,
+                f"Versão {peticao.get('version')} · "
+                + _DECISAO_DO_ADVOGADO.get(
+                    str(peticao.get("status") or "").upper(), "decisão registrada"
+                )
+                + ".",
+                OK if aprovada else ATENCAO,
             )
         )
 
@@ -745,15 +928,30 @@ def montar_ocorrencias(
         )
 
     for contradicao in agente.get("contradicoes") or []:
-        aberta = contradicao.get("status") == "OPEN"
+        pendente = str(contradicao.get("status") or "").upper() in _CONTRADICAO_PENDENTE
+        envolvidos = [
+            _humanizar_codigo(str(f.get("type") or ""))
+            for f in contradicao.get("facts") or []
+            if f.get("type")
+        ]
         ocorrencias.append(
             {
                 "quando": contradicao.get("created_at"),
                 "tipo": "contradicao",
-                "titulo": "Contradição entre fatos",
-                "detalhe": str(contradicao.get("description") or contradicao.get("kind") or ""),
-                "gravidade": ATENCAO if aberta else OK,
-                "estado": "aberta" if aberta else "resolvida",
+                "titulo": (
+                    "Divergência entre " + " e ".join(envolvidos)
+                    if envolvidos
+                    else "Divergência entre fatos do caso"
+                ),
+                "detalhe": _texto_da_contradicao(contradicao),
+                "gravidade": (
+                    _TOM_DA_SEVERIDADE.get(
+                        str(contradicao.get("severity") or "").upper(), ATENCAO
+                    )
+                    if pendente
+                    else OK
+                ),
+                "estado": "aberta" if pendente else "resolvida",
                 "referencia": str(contradicao.get("id") or ""),
             }
         )
@@ -899,9 +1097,9 @@ def montar_pendencias(agente: dict[str, Any]) -> dict[str, Any]:
 
 
 def _legibilidade(entregas: list[dict[str, Any]]) -> tuple[float | None, int]:
-    """Média dos scores de legibilidade e quantas leituras entraram nela.
+    """Média das notas de legibilidade e quantas leituras entraram nela.
 
-    Entrega sem score não vira zero: ela sai da média. Um PDF nativo (sem foto para
+    Entrega sem nota não vira zero: ela sai da média. Um PDF nativo (sem foto para
     avaliar) rebaixaria a leitura do caso inteiro por não ter nota nenhuma.
     """
     scores = [
@@ -923,6 +1121,7 @@ def montar_indicadores(
     ocorrencias: dict[str, Any],
     pendencias: dict[str, Any],
     agente: dict[str, Any],
+    fatos: dict[str, Any],
     comparacoes: list[dict[str, Any]],
     agora: datetime,
 ) -> list[dict[str, Any]]:
@@ -936,6 +1135,19 @@ def montar_indicadores(
     dias_aberto = _horas(abertura, agora)
     dias_parado = _horas(ultima, agora)
 
+    # O desvio do cartão precisa ser o desvio DESTE número. "Tempo em aberto" mede
+    # abertura → agora; o ciclo mede abertura → última movimentação. Num caso parado há
+    # um mês são grandezas diferentes, e o cartão mostrava 60 dias ao lado de um "+50%"
+    # calculado sobre os 30 do ciclo — número e percentual falando de coisas distintas.
+    mediana_ciclo = ciclo.get("previsto_horas") if ciclo else None
+    comparacao_aberto = None
+    if mediana_ciclo and dias_aberto is not None:
+        comparacao_aberto = {
+            "rotulo": "mediana da categoria",
+            "valor": round(mediana_ciclo / 24, 1),
+            "desvio_percentual": round((dias_aberto - mediana_ciclo) / mediana_ciclo * 100),
+        }
+
     indicadores: list[dict[str, Any]] = [
         {
             "codigo": "tempo_em_aberto",
@@ -946,15 +1158,7 @@ def montar_indicadores(
                 f"Desde {abertura.strftime('%d/%m/%Y %H:%M')}." if abertura else "Sem data de abertura."
             ),
             "tom": NEUTRO,
-            "comparacao": (
-                {
-                    "rotulo": "mediana da categoria",
-                    "valor": round((ciclo["previsto_horas"] or 0) / 24, 1),
-                    "desvio_percentual": ciclo["desvio_percentual"],
-                }
-                if ciclo and ciclo.get("previsto_horas") is not None
-                else None
-            ),
+            "comparacao": comparacao_aberto,
         },
         {
             "codigo": "sem_movimentacao",
@@ -998,11 +1202,11 @@ def montar_indicadores(
         },
         {
             "codigo": "pendencias",
-            "rotulo": "Pendências do playbook",
+            "rotulo": "Requisitos da tese em aberto",
             "valor": pendencias["abertas"] if pendencias["disponivel"] else None,
             "unidade": "",
             "detalhe": (
-                f"{pendencias['bloqueantes']} bloqueante(s)."
+                f"{pendencias['bloqueantes']} impede(m) a petição."
                 if pendencias["disponivel"]
                 else str(pendencias["motivo"])
             ),
@@ -1031,16 +1235,26 @@ def montar_indicadores(
             "comparacao": None,
         },
         {
+            # Vigentes, não o total bruto: o cartão dizia "12" contando fato rejeitado e
+            # fato substituído, enquanto a tabela logo abaixo dizia "9 vigentes de 12".
+            # Dois números para a mesma coisa na mesma tela — e o maior era o errado.
             "codigo": "fatos",
             "rotulo": "Fatos apurados",
-            "valor": len(agente.get("fatos") or []) if agente.get("disponivel") else None,
+            "valor": fatos["vigentes"] if fatos["disponivel"] else None,
             "unidade": "",
             "detalhe": (
-                "Fatos com origem registrada no agente."
-                if agente.get("disponivel")
+                (
+                    f"{fatos['vigentes']} em vigor de {fatos['total']} apurados"
+                    + (
+                        f"; {fatos['sem_origem']} sem origem registrada."
+                        if fatos["sem_origem"]
+                        else "."
+                    )
+                )
+                if fatos["disponivel"]
                 else str(agente.get("motivo") or "Agente jurídico indisponível.")
             ),
-            "tom": NEUTRO,
+            "tom": CRITICO if fatos["disponivel"] and fatos["sem_origem"] else NEUTRO,
             "comparacao": None,
         },
         {
@@ -1077,6 +1291,7 @@ def montar_saude(
     ocorrencias: dict[str, Any],
     pendencias: dict[str, Any],
     agente: dict[str, Any],
+    fatos: dict[str, Any],
     marcos: dict[str, datetime | None],
     agora: datetime,
 ) -> dict[str, Any]:
@@ -1103,17 +1318,32 @@ def montar_saude(
     )
 
     total_itens = len(situacao.get("itens") or [])
-    abertas = ocorrencias["abertas"]
+    # A conta tinha de bater com a frase: o numerador era a contagem de ocorrências de
+    # QUALQUER natureza (inclusive falha de rede com o agente e pesquisa que não
+    # concluiu) sobre o número de ITENS do checklist. Três arquivos ruins do mesmo
+    # documento contavam três vezes, e uma queda de infraestrutura derrubava a saúde do
+    # caso. Agora conta o que a frase diz: itens do checklist distintos afetados.
+    itens_afetados = {
+        codigo
+        for ocorrencia in ocorrencias["itens"]
+        if ocorrencia["estado"] == "aberta" and ocorrencia["tipo"] in ("documento", "checklist")
+        for codigo in str(ocorrencia["referencia"]).split(", ")
+        if codigo
+    }
     componentes.append(
         {
             "codigo": "ocorrencias",
-            "rotulo": "Ausência de ocorrências",
+            "rotulo": "Documentos sem problema",
             "peso": 20,
             "valor": (
-                _limitar(100 - (abertas / total_itens * 100) * 2) if total_itens else None
+                _limitar(100 - (len(itens_afetados) / total_itens * 100) * 2)
+                if total_itens
+                else None
             ),
             "base": (
-                "100 menos o dobro do percentual de itens do checklist com ocorrência aberta."
+                f"100 menos o dobro do percentual de itens do checklist com problema em "
+                f"aberto ({len(itens_afetados)} de {total_itens}). Falha de sistema não "
+                "entra: ela não diz nada sobre o caso."
             ),
         }
     )
@@ -1124,15 +1354,15 @@ def montar_saude(
             100 - (pendencias["abertas"] / total_pend * 100) - pendencias["bloqueantes"] * 10
         )
         base_pend = (
-            "100 menos o percentual de pendências do playbook em aberto, menos 10 por "
-            "pendência bloqueante."
+            "100 menos o percentual de requisitos da tese em aberto, menos 10 por "
+            "requisito que impede a petição."
         )
     else:
         valor_pend, base_pend = None, str(pendencias["motivo"])
     componentes.append(
         {
             "codigo": "playbook",
-            "rotulo": "Playbook atendido",
+            "rotulo": "Requisitos da tese atendidos",
             "peso": 20,
             "valor": valor_pend,
             "base": base_pend,
@@ -1140,16 +1370,23 @@ def montar_saude(
     )
 
     if agente.get("disponivel"):
-        fatos = agente.get("fatos") or []
-        contradicoes_abertas = sum(
-            1 for c in agente.get("contradicoes") or [] if c.get("status") == "OPEN"
-        )
+        # A fórmula dizia "percentual de fatos envolvidos em contradição" e a conta
+        # dividia o número de CONTRADIÇÕES pelo total de fatos — grandezas diferentes,
+        # e o denominador ainda incluía fato rejeitado e substituído. Agora conta os
+        # fatos que a divergência de fato atinge, sobre os fatos que valem.
+        envolvidos = set()
+        for contradicao in _contradicoes_pendentes(agente):
+            envolvidos.update(
+                str(f.get("id")) for f in contradicao.get("facts") or [] if f.get("id")
+            )
+        vigentes = fatos["vigentes"]
         valor_cons = (
-            _limitar(100 - contradicoes_abertas / len(fatos) * 100 * 3) if fatos else None
+            _limitar(100 - len(envolvidos) / vigentes * 100 * 3) if vigentes else None
         )
         base_cons = (
-            "100 menos o triplo do percentual de fatos envolvidos em contradição aberta."
-            if fatos
+            f"100 menos o triplo do percentual de fatos em divergência não decidida "
+            f"({len(envolvidos)} de {vigentes} fatos em vigor)."
+            if vigentes
             else "Nenhum fato apurado ainda."
         )
     else:
@@ -1158,7 +1395,7 @@ def montar_saude(
     componentes.append(
         {
             "codigo": "consistencia",
-            "rotulo": "Consistência dos fatos",
+            "rotulo": "Fatos sem divergência",
             "peso": 15,
             "valor": valor_cons,
             "base": base_cons,
@@ -1217,14 +1454,17 @@ def montar_radar(
     entregas: list[dict[str, Any]],
     agente: dict[str, Any],
     pendencias: dict[str, Any],
+    fatos: dict[str, Any],
     comparacoes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Cinco eixos de 0 a 100. Eixo sem dado sai nulo — e a tela desenha o vazio."""
     progresso = situacao.get("progresso") or {}
     media_score, quantas = _legibilidade(entregas)
 
-    fatos = agente.get("fatos") or []
-    com_origem = sum(1 for f in fatos if f.get("sources"))
+    # Sobre os fatos em vigor: um fato rejeitado sem fonte puxava o eixo para baixo,
+    # e ele já foi descartado justamente por não valer como fato do caso.
+    vigentes = fatos["vigentes"]
+    com_origem = vigentes - fatos["sem_origem"] if fatos["disponivel"] else 0
     ciclo = next((c for c in comparacoes if c["codigo"] == "ciclo"), None)
 
     ritmo = None
@@ -1253,29 +1493,29 @@ def montar_radar(
             "eixo": "Qualidade da leitura",
             "valor": media_score,
             "base": (
-                f"Média do score de legibilidade de {quantas} leitura(s)."
+                f"Média da nota de legibilidade de {quantas} leitura(s)."
                 if quantas
                 else "Nenhuma leitura com nota de legibilidade."
             ),
         },
         {
             "eixo": "Fatos com origem",
-            "valor": round(com_origem / len(fatos) * 100, 1) if fatos else None,
+            "valor": round(com_origem / vigentes * 100, 1) if vigentes else None,
             "base": (
-                f"{com_origem} de {len(fatos)} fatos trazem documento de origem."
-                if fatos
+                f"{com_origem} de {vigentes} fatos em vigor trazem a fonte de onde saíram."
+                if vigentes
                 else str(agente.get("motivo") or "Nenhum fato apurado ainda.")
             ),
         },
         {
-            "eixo": "Playbook",
+            "eixo": "Requisitos da tese",
             "valor": (
                 _limitar(100 - pendencias["abertas"] / (len(pendencias["itens"]) or 1) * 100)
                 if pendencias["disponivel"] and pendencias["itens"]
                 else None
             ),
             "base": (
-                "Pendências do playbook já satisfeitas sobre o total exigido."
+                "Requisitos da tese já atendidos sobre o total que ela exige."
                 if pendencias["disponivel"]
                 else str(pendencias["motivo"])
             ),
@@ -1335,13 +1575,16 @@ def montar_insights(
             insights.append(
                 {
                     "texto": (
-                        f"A etapa “{comparacao['titulo']}” está {round(dias, 1)} dia(s) acima "
-                        f"do esperado para a categoria."
+                        f"A etapa “{comparacao['titulo']}” "
+                        + ("já passou " if comparacao["em_curso"] else "ficou ")
+                        + f"{round(dias, 1)} dia(s) do tempo usual da categoria"
+                        + (" e ainda não terminou." if comparacao["em_curso"] else ".")
                     ),
                     "tom": ATENCAO,
                     "base": (
                         f"{comparacao['realizado_horas']}h contra mediana de "
-                        f"{comparacao['previsto_horas']}h em {comparacao['amostra']} caso(s)."
+                        f"{comparacao['previsto_horas']}h em {comparacao['amostra']} caso(s) "
+                        "anteriores que concluíram esta etapa."
                     ),
                 }
             )
@@ -1419,10 +1662,13 @@ def montar_insights(
         insights.append(
             {
                 "texto": (
-                    f"{pendencias['bloqueantes']} pendência(s) bloqueante(s) impedem a petição."
+                    f"{pendencias['bloqueantes']} requisito(s) da tese impedem a petição."
                 ),
                 "tom": CRITICO,
-                "base": "Itens marcados como BLOCKING pelo playbook da classificação.",
+                "base": (
+                    "Itens que a tese classificada para este caso exige e que o caso "
+                    "ainda não tem. Sem eles a peça não é gerada."
+                ),
             }
         )
 
@@ -1435,8 +1681,9 @@ def montar_insights(
                 ),
                 "tom": ATENCAO,
                 "base": (
-                    "Fatos com estado ALLEGED e nenhuma fonte do tipo OCR_DOCUMENT. "
-                    "Relatado e comprovado entram na petição de formas diferentes."
+                    "Fatos que saíram da entrevista e que nenhum documento lido confirma. "
+                    "Relatado e comprovado entram na petição de formas diferentes: é esta "
+                    "a lista de provas a produzir."
                 ),
             }
         )
@@ -1447,9 +1694,22 @@ def montar_insights(
                 "texto": f"{fatos['sem_origem']} fato(s) sem origem registrada.",
                 "tom": CRITICO,
                 "base": (
-                    "Fato sem fonte não deveria existir no agente (é a regra do §47); "
-                    "confira antes de usar qualquer um deles numa peça."
+                    "Todo fato deveria dizer de que documento ou de que trecho da "
+                    "entrevista saiu. Confira estes antes de usá-los em qualquer peça."
                 ),
+            }
+        )
+
+    divergentes = _contradicoes_pendentes(agente)
+    if divergentes:
+        insights.append(
+            {
+                "texto": (
+                    f"{len(divergentes)} divergência(s) entre fatos do caso ainda sem decisão."
+                ),
+                "tom": ATENCAO,
+                "base": _texto_da_contradicao(divergentes[0])
+                + (f" (e mais {len(divergentes) - 1}.)" if len(divergentes) > 1 else ""),
             }
         )
 
@@ -1457,9 +1717,12 @@ def montar_insights(
     if media_score is not None and media_score < 75:
         insights.append(
             {
-                "texto": f"Legibilidade média das leituras em {media_score}%.",
+                "texto": f"Legibilidade média dos arquivos em {media_score}%.",
                 "tom": ATENCAO,
-                "base": f"Média de {quantas} leitura(s) com nota; abaixo de 75% o campo sai incerto.",
+                "base": (
+                    f"Média de {quantas} leitura(s) com nota; abaixo de 75% o dado lido "
+                    "sai marcado como incerto e precisa de conferência."
+                ),
             }
         )
 
@@ -1484,6 +1747,178 @@ def montar_insights(
     return insights
 
 
+# ------------------------------------------------------------------ prontidão
+
+
+def montar_prontidao(
+    situacao: dict[str, Any],
+    pendencias: dict[str, Any],
+    fatos: dict[str, Any],
+    agente: dict[str, Any],
+) -> dict[str, Any]:
+    """O que ainda falta para este caso virar petição — e de quem é cada coisa.
+
+    O painel respondia bem "como este caso se comportou no tempo" e deixava o advogado
+    montar de cabeça, juntando cinco seções, a única pergunta que ele faz ao abrir a
+    tela: *dá para peticionar?*. Todos os dados já estavam no payload; faltava a soma.
+
+    Cada bloqueio traz o **responsável**, porque a ação é diferente: documento que falta
+    se cobra do cliente, requisito da tese se resolve no agente, divergência entre fatos
+    se decide no escritório. Nada aqui é opinião — todo item aponta para um número que
+    está em outra seção desta mesma tela.
+    """
+    bloqueios: list[dict[str, Any]] = []
+    ressalvas: list[dict[str, Any]] = []
+
+    faltando = [
+        item["nome"]
+        for item in situacao.get("itens", [])
+        if item.get("obrigatorio") and item.get("status") == "pendente"
+    ]
+    if faltando:
+        bloqueios.append(
+            {
+                "codigo": "documentos",
+                "titulo": f"{len(faltando)} documento(s) obrigatório(s) não chegaram",
+                "detalhe": ", ".join(faltando[:5]) + ("…" if len(faltando) > 5 else ""),
+                "de_quem": "cliente",
+                "onde": "Checklist de documentos",
+            }
+        )
+
+    a_conferir = [
+        item["nome"] for item in situacao.get("itens", []) if item.get("status") == "conferir"
+    ]
+    if a_conferir:
+        bloqueios.append(
+            {
+                "codigo": "conferir",
+                "titulo": f"{len(a_conferir)} documento(s) precisam ser reenviados",
+                "detalhe": (
+                    "Chegou arquivo, mas nenhum passou na conferência: "
+                    + ", ".join(a_conferir[:5])
+                    + ("…" if len(a_conferir) > 5 else "")
+                ),
+                "de_quem": "cliente",
+                "onde": "Checklist de documentos",
+            }
+        )
+
+    if pendencias["disponivel"] and pendencias["bloqueantes"]:
+        # Os códigos viajam crus em `itens` porque a tabela de rótulos em português mora
+        # na tela (`rotuloLegivel`), e ela conhece traduções que o backend não tem —
+        # "DOC.CAT" vira "CAT (comunicação de acidente de trabalho)" lá, e viraria só
+        # "Doc · cat" aqui. `detalhe` fica como texto de reserva.
+        nomes = [
+            str(i["rotulo"] or i["codigo"])
+            for i in pendencias["itens"]
+            if i["estado"] == "OPEN" and i["severidade"] == "BLOCKING"
+        ]
+        bloqueios.append(
+            {
+                "codigo": "requisitos",
+                "titulo": f"{pendencias['bloqueantes']} requisito(s) da tese em falta",
+                "detalhe": ", ".join(_humanizar_codigo(n) for n in nomes[:5])
+                + ("…" if len(nomes) > 5 else ""),
+                "itens": nomes[:5],
+                "de_quem": "escritório",
+                "onde": "Requisitos da tese, nesta tela",
+            }
+        )
+
+    divergentes = _contradicoes_pendentes(agente)
+    if divergentes:
+        bloqueios.append(
+            {
+                "codigo": "divergencias",
+                "titulo": f"{len(divergentes)} divergência(s) entre fatos sem decisão",
+                "detalhe": _texto_da_contradicao(divergentes[0]),
+                "de_quem": "advogado",
+                "onde": "Ocorrências, nesta tela",
+            }
+        )
+
+    if fatos["disponivel"] and fatos["sem_origem"]:
+        bloqueios.append(
+            {
+                "codigo": "fatos_sem_origem",
+                "titulo": f"{fatos['sem_origem']} fato(s) sem origem registrada",
+                "detalhe": (
+                    "Fato que não diz de onde saiu não pode sustentar afirmação na peça."
+                ),
+                "de_quem": "advogado",
+                "onde": "Fatos apurados, nesta tela",
+            }
+        )
+
+    if fatos["disponivel"] and fatos["apenas_relatados"]:
+        ressalvas.append(
+            {
+                "codigo": "prova_a_produzir",
+                "titulo": (
+                    f"{fatos['apenas_relatados']} fato(s) só do relato, sem documento"
+                ),
+                "detalhe": (
+                    "A peça pode ser escrita, mas estes pontos entram como alegação e "
+                    "precisam de prova a produzir."
+                ),
+                "de_quem": "advogado",
+                "onde": "Fatos apurados, nesta tela",
+            }
+        )
+
+    estrategia = agente.get("estrategia") or {}
+    if agente.get("disponivel"):
+        if not estrategia:
+            bloqueios.append(
+                {
+                    "codigo": "estrategia",
+                    "titulo": "Estratégia do caso ainda não foi proposta",
+                    "detalhe": "A petição é escrita a partir das teses aprovadas.",
+                    "de_quem": "escritório",
+                    "onde": "Dossiê do caso",
+                }
+            )
+        elif estrategia.get("status") != "APPROVED":
+            bloqueios.append(
+                {
+                    "codigo": "estrategia",
+                    "titulo": "Estratégia proposta e ainda não aprovada",
+                    "detalhe": (
+                        f"Versão {estrategia.get('version')} aguardando a decisão do advogado."
+                    ),
+                    "de_quem": "advogado",
+                    "onde": "Dossiê do caso",
+                }
+            )
+
+    if not agente.get("disponivel"):
+        return {
+            "avaliavel": False,
+            "pronto": False,
+            "motivo": str(agente.get("motivo") or "Agente jurídico indisponível."),
+            "bloqueios": bloqueios,
+            "ressalvas": ressalvas,
+            "resumo": (
+                "Sem o agente jurídico não dá para dizer se o caso está pronto: os "
+                "requisitos da tese e os fatos vêm de lá."
+            ),
+        }
+
+    return {
+        "avaliavel": True,
+        "pronto": not bloqueios,
+        "motivo": None,
+        "bloqueios": bloqueios,
+        "ressalvas": ressalvas,
+        "resumo": (
+            "Nada impede a petição."
+            if not bloqueios
+            else f"{len(bloqueios)} ponto(s) precisam ser resolvidos antes da petição."
+        ),
+    }
+
+
 # ------------------------------------------------------------------ ausências
 
 
@@ -1496,10 +1931,11 @@ AUSENCIAS = (
         "motivo": "O cadastro do caso não tem campo de prioridade.",
     },
     {
-        "campo": "Prazo e SLA contratado",
+        "campo": "Prazo contratado",
         "motivo": (
-            "Nenhum prazo é contratado no sistema. A referência usada no painel é a "
-            "mediana dos casos anteriores da mesma categoria, não um SLA."
+            "Nenhum prazo é combinado dentro do sistema. A referência usada no painel é "
+            "a mediana dos casos anteriores da mesma categoria — é o que o escritório "
+            "costuma levar, não um prazo assumido com o cliente."
         ),
     },
     {
@@ -1510,8 +1946,12 @@ AUSENCIAS = (
         ),
     },
     {
-        "campo": "Produto",
-        "motivo": "O equivalente no sistema é a categoria do checklist, exibida no resumo.",
+        "campo": "Prazo de prescrição",
+        "motivo": (
+            "O painel não calcula prescrição. As datas que ela dependeria (saída, "
+            "ciência do fato) estão nos fatos apurados, mas qual prazo se aplica é "
+            "decisão jurídica — e errá-la por conta do sistema seria grave."
+        ),
     },
     {
         "campo": "Valor da causa",
@@ -1576,7 +2016,7 @@ def compor(
     regra que precisa ser exercitada com caso vazio, caso sem agente e caso completo.
     """
     marcos = marcos_do_caso(caso, entregas, entrevistas, assinaturas, vinculo)
-    medidas = medir_etapas(marcos, situacao, agora)
+    medidas = medir_etapas(marcos, situacao, agora, contrato_encerrado(assinaturas))
     comparacoes = comparar(medidas, referencia)
     eventos = montar_eventos(caso, entregas, entrevistas, assinaturas, vinculo, agente)
     ocorrencias = montar_ocorrencias(entregas, situacao, vinculo, agente)
@@ -1585,7 +2025,7 @@ def compor(
 
     indicadores = montar_indicadores(
         caso, situacao, entregas, entrevistas, marcos, ocorrencias, pendencias, agente,
-        comparacoes, agora,
+        fatos, comparacoes, agora,
     )
     for indicador in indicadores:
         if indicador["codigo"] == "movimentacoes":
@@ -1640,12 +2080,14 @@ def compor(
         "comparacao_historica": {
             "referencia": referencia,
             "linhas": comparacoes,
+            "previsao": previsao_pela_mediana(comparacoes, referencia),
         },
         "ocorrencias": ocorrencias,
         "pendencias": pendencias,
         "fatos": fatos,
-        "saude": montar_saude(situacao, ocorrencias, pendencias, agente, marcos, agora),
-        "radar": montar_radar(situacao, entregas, agente, pendencias, comparacoes),
+        "prontidao": montar_prontidao(situacao, pendencias, fatos, agente),
+        "saude": montar_saude(situacao, ocorrencias, pendencias, agente, fatos, marcos, agora),
+        "radar": montar_radar(situacao, entregas, agente, pendencias, fatos, comparacoes),
         "insights": montar_insights(
             situacao, comparacoes, referencia, medidas, ocorrencias, pendencias, entregas,
             agente, marcos, eventos, fatos, agora,

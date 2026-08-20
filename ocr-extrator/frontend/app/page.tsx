@@ -11,11 +11,13 @@ import Investigacao from "@/components/Investigacao";
 import Jurimetria from "@/components/Jurimetria";
 import ListaCasos from "@/components/ListaCasos";
 import PainelCaso from "@/components/PainelCaso";
+import Panorama from "@/components/Panorama";
 import PainelEnvio from "@/components/PainelEnvio";
 import ProgressoOcr from "@/components/ProgressoOcr";
 import ChamadaDoAtendimento from "@/components/ChamadaDoAtendimento";
 import TriagemEntrevista from "@/components/TriagemEntrevista";
 import Supervisao from "@/components/Supervisao";
+import SaudeAgente from "@/components/SaudeAgente";
 import Usuarios from "@/components/Usuarios";
 import Resultado from "@/components/Resultado";
 import ui from "@/components/ui.module.css";
@@ -34,9 +36,11 @@ type Tela =
   | "avulso"
   | "investigacao"
   | "usuarios"
+  | "panorama"
   | "entrevista"
   | "supervisao"
-  | "dados";
+  | "dados"
+  | "saudeAgente";
 
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
  * que responde "onde eu estou" sem depender de memória. */
@@ -95,6 +99,8 @@ export default function Home() {
         onEntrevista={() => setTela("entrevista")}
         onSupervisao={() => setTela("supervisao")}
         onDados={() => setTela("dados")}
+        onPanorama={() => setTela("panorama")}
+        onSaudeAgente={() => setTela("saudeAgente")}
       />
     );
   }
@@ -160,6 +166,16 @@ export default function Home() {
     return <Supervisao onVoltar={voltarParaCarteira} />;
   }
 
+  /* O panorama não pede caso aberto — é justamente a tela de quem não quer abrir
+   * caso nenhum. Da lista de parados ele salta direto para o caso citado. */
+  if (tela === "panorama") {
+    return <Panorama onVoltar={voltarParaCarteira} onAbrirCaso={abrirCaso} />;
+  }
+
+  if (tela === "saudeAgente") {
+    return <SaudeAgente onVoltar={voltarParaCarteira} />;
+  }
+
   if (tela === "dados") {
     return <Dados onVoltar={voltarParaCarteira} />;
   }
@@ -170,34 +186,28 @@ export default function Home() {
         {/* O checklist responde "o que falta chegar"; o dossiê, "o que o caso já
           * é". São perguntas diferentes e telas diferentes — juntá-las numa só
           * faria a mais longa esconder a mais usada. */}
-        <div className={estilos.abasCaso}>
-          <button type="button" className="botao botao--secundario botao--pequeno" disabled>
-            Checklist de documentos
+        <div className={`abas-modulo ${estilos.abasCaso}`}>
+          <button type="button" className="aba-modulo" disabled>
+            <span className="aba-modulo__titulo">Checklist de documentos</span>
+            <span className="aba-modulo__detalhe">O que já chegou e o que ainda falta</span>
           </button>
-          <button
-            type="button"
-            className="botao botao--texto botao--pequeno"
-            onClick={() => setTela("dossie")}
-          >
-            Dossiê do caso →
+          <button type="button" className="aba-modulo" onClick={() => setTela("dossie")}>
+            <span className="aba-modulo__titulo">Dossiê do caso →</span>
+            <span className="aba-modulo__detalhe">Fatos, pendências e peças do agente</span>
           </button>
           {/* O painel é a leitura no tempo: quanto cada etapa levou, como o caso se
             * compara com os anteriores e há quantos dias nada acontece. */}
-          <button
-            type="button"
-            className="botao botao--texto botao--pequeno"
-            onClick={() => setTela("painel")}
-          >
-            Painel analítico →
+          <button type="button" className="aba-modulo" onClick={() => setTela("painel")}>
+            <span className="aba-modulo__titulo">Painel analítico →</span>
+            <span className="aba-modulo__detalhe">
+              Tempo de cada etapa e comparação com outros casos
+            </span>
           </button>
           {/* A jurimetria é a única leitura que olha para fora do escritório: como o
             * foro decidiu casos comparáveis, e onde este cai dentro disso. */}
-          <button
-            type="button"
-            className="botao botao--texto botao--pequeno"
-            onClick={() => setTela("jurimetria")}
-          >
-            Jurisprudência e jurimetria →
+          <button type="button" className="aba-modulo" onClick={() => setTela("jurimetria")}>
+            <span className="aba-modulo__titulo">Jurisprudência e jurimetria →</span>
+            <span className="aba-modulo__detalhe">Como o foro decide casos parecidos com este</span>
           </button>
         </div>
         {situacaoCaso.situacao ? (

@@ -10,7 +10,7 @@ Duas decisões que sustentam a tela:
   estado da consulta; quando falha, a etapa fica `indisponivel` com o motivo, nunca
   `pendente` — "não consegui olhar" e "não há nada" levam a decisões opostas;
 - **a montagem é uma leitura, não um cálculo.** Nada aqui deriva conclusão jurídica:
-  a classificação é a do agente, a pendência é a do playbook dele, o precedente é o
+  a classificação é a do agente, o requisito é o da tese dele, o precedente é o
   que a pesquisa recuperou. Esta camada só arruma na ordem em que se lê.
 """
 
@@ -494,7 +494,7 @@ def _etapas(
             for codigo, titulo in (
                 ("fatos", "Fatos apurados"),
                 ("classificacao", "Classificação jurídica"),
-                ("pendencias", "Pendências do playbook"),
+                ("pendencias", "Requisitos da tese"),
                 ("pesquisa", "Jurisprudência"),
                 ("estrategia", "Estratégia do caso"),
                 ("peticao", "Petição inicial"),
@@ -626,23 +626,23 @@ def _etapa_pendencias(agente: dict[str, Any]) -> dict[str, Any]:
     if not agente["classificacoes"]:
         return {
             "codigo": "pendencias",
-            "titulo": "Pendências do playbook",
+            "titulo": "Requisitos da tese",
             "estado": PENDENTE,
-            "detalhe": "A lista de pendências só existe depois da classificação.",
+            "detalhe": "O que a tese exige só se sabe depois de classificar o caso.",
         }
     if bloqueantes:
         return {
             "codigo": "pendencias",
-            "titulo": "Pendências do playbook",
+            "titulo": "Requisitos da tese",
             "estado": ATENCAO,
             "detalhe": f"{len(bloqueantes)} itens indispensáveis ainda faltam.",
         }
     return {
         "codigo": "pendencias",
-        "titulo": "Pendências do playbook",
+        "titulo": "Requisitos da tese",
         "estado": PRONTO if not abertas else ANDAMENTO,
         "detalhe": (
-            "Nada pendente no playbook."
+            "A tese não exige nada além do que já existe."
             if not abertas
             else f"{len(abertas)} itens recomendados em aberto."
         ),

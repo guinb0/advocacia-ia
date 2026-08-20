@@ -51,6 +51,43 @@ _MAPA: dict[str, dict[str, str]] = {
         "DOC.31": "DOCUMENT.OCCUPATIONAL_PROGRAM",
         "DOC.32": "DOCUMENT.OCCUPATIONAL_PROGRAM",
     },
+    # Espelha `legal/checklists/labor/acidente_trabalho_correios.yaml` do agente (o
+    # `document_kind` de cada item), tirando DOC.01 e DOC.02 pela mesma razão das
+    # outras duas categorias: o playbook (`legal/playbooks/labor/acidente_trabalho_
+    # correios.yaml`, `required_documents`) não exige procuração nem declaração de
+    # hipossuficiência — são documentos do escritório, não exigência da peça.
+    "acidente_trabalho_correios": {
+        "DOC.03": "DOCUMENT.ID",
+        "DOC.04": "DOCUMENT.CPF",
+        "DOC.05": "DOCUMENT.PROOF_OF_ADDRESS",
+        "DOC.06": "DOCUMENT.CTPS",
+        "DOC.07": "DOCUMENT.PAYSLIP",
+        "DOC.08": "DOCUMENT.CNIS",
+        "DOC.09": "DOCUMENT.PERSONNEL_RECORD",
+        "DOC.10": "DOCUMENT.CAT",
+        "DOC.11": "DOCUMENT.POLICE_REPORT",
+        "DOC.12": "DOCUMENT.EMERGENCY_CARE_RECORD",
+        "DOC.13": "DOCUMENT.MEDICAL_CERTIFICATE",
+        "DOC.14": "DOCUMENT.MEDICAL_REPORT",
+        "DOC.15": "DOCUMENT.MEDICAL_FOLLOW_UP",
+        "DOC.16": "DOCUMENT.IMAGING_EXAM",
+        "DOC.17": "DOCUMENT.IMAGING_REPORT",
+        "DOC.18": "DOCUMENT.IMAGING_EXAM",
+        "DOC.19": "DOCUMENT.IMAGING_REPORT",
+        "DOC.20": "DOCUMENT.PRESCRIPTION",
+        "DOC.21": "DOCUMENT.TREATMENT_RECORD",
+        "DOC.22": "DOCUMENT.TREATMENT_RECORD",
+        "DOC.23": "DOCUMENT.INSS_DECISION",
+        "DOC.24": "DOCUMENT.INSS_GRANT_LETTER",
+        "DOC.25": "DOCUMENT.INSS_BENEFIT_EXTENSION",
+        "DOC.26": "DOCUMENT.INSS_EXPERT_REPORT",
+        "DOC.27": "DOCUMENT.INSS_ADMINISTRATIVE_FILE",
+        "DOC.28": "DOCUMENT.ASO",
+        "DOC.29": "DOCUMENT.PRIVATE_EXPERT_REPORT",
+        "DOC.30": "DOCUMENT.ACCIDENT_SCENE_MEDIA",
+        "DOC.32": "DOCUMENT.PPP",
+        "DOC.33": "DOCUMENT.OCCUPATIONAL_PROGRAM",
+    },
     "acidente_trabalho_geral": {
         "DOC.03": "DOCUMENT.ID",
         "DOC.04": "DOCUMENT.CPF",

@@ -305,3 +305,75 @@
   max-width: 82ch;
   margin: 0;
 }
+
+/* ------------------------------------------------------ leituras de agente */
+/* As duas seções acionáveis: o que sustenta ganhar e o que a outra parte vai
+ * alegar. Cartão por leitura, nunca tabela — cada uma carrega texto corrido
+ * (a tese, a ressalva, o distinguishing) que uma linha de tabela cortaria. */
+
+.acaoGerar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.leituras {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.leitura {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--papel-2);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+}
+
+.leituraTopo {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.tese {
+  color: var(--tinta);
+  font-size: var(--t-md);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.processos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ressalva {
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  border-left: 2px solid var(--borda-forte);
+  padding-left: 10px;
+  margin: 0;
+}
+
+.distinguishing {
+  color: var(--tinta);
+  font-size: var(--t-sm);
+  background: var(--papel);
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0;
+}

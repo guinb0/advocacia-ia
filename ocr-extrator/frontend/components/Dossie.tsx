@@ -353,33 +353,38 @@ export default function Dossie({
 
   return (
     <div className={estilos.pagina}>
-      <header className={estilos.cabecalho}>
-        <div>
-          <button
-            type="button"
-            className="botao botao--secundario botao--pequeno"
-            onClick={onVoltar}
-          >
-            ← Voltar para a carteira
-          </button>
+      <button
+        type="button"
+        className="botao botao--secundario botao--pequeno"
+        onClick={onVoltar}
+        style={{ marginBottom: 12 }}
+      >
+        ← Voltar para a carteira
+      </button>
+
+      {(onAbrirPainel || onAbrirJurimetria) && (
+        <div className="abas-modulo" style={{ marginBottom: 16 }}>
           {onAbrirPainel && (
-            <button
-              type="button"
-              className="botao botao--texto botao--pequeno"
-              onClick={onAbrirPainel}
-            >
-              Painel analítico →
+            <button type="button" className="aba-modulo" onClick={onAbrirPainel}>
+              <span className="aba-modulo__titulo">Painel analítico →</span>
+              <span className="aba-modulo__detalhe">
+                Tempo de cada etapa e comparação com outros casos
+              </span>
             </button>
           )}
           {onAbrirJurimetria && (
-            <button
-              type="button"
-              className="botao botao--texto botao--pequeno"
-              onClick={onAbrirJurimetria}
-            >
-              Jurisprudência e jurimetria →
+            <button type="button" className="aba-modulo" onClick={onAbrirJurimetria}>
+              <span className="aba-modulo__titulo">Jurisprudência e jurimetria →</span>
+              <span className="aba-modulo__detalhe">
+                Como o foro decide casos parecidos com este
+              </span>
             </button>
           )}
+        </div>
+      )}
+
+      <header className={estilos.cabecalho}>
+        <div>
           <h1 className={estilos.titulo}>Dossiê de {dados.caso.cliente}</h1>
           <p className={estilos.subtitulo}>
             {dados.checklist.categoria ?? dados.caso.categoria} · caso aberto em{" "}
@@ -558,7 +563,7 @@ export default function Dossie({
               executar(
                 "entrevista",
                 () => anexarEntrevista(casoId, arquivo, data, quem),
-                "Entrevista anexada ao caso. Use “Ler no agente” para virar fato.",
+                "Entrevista anexada ao caso e enviada ao agente. Se o agente estiver fora do ar, use “Ler no agente” para reenviar.",
               )
             }
             onLer={(entrevistaId) =>
@@ -847,14 +852,14 @@ function PainelJurisprudencia({
       {resumo?.status === "COMPLETED" && (
         <>
           <p className={estilos.explicacao}>
-            Filtrada por jurisdição e matéria antes da busca por similaridade. Cada citação
-            aponta um precedente realmente recuperado.
+            Filtrada por jurisdição e matéria antes de comparar o texto do caso com decisões já
+            publicadas. Cada citação aponta um precedente realmente recuperado.
           </p>
 
           {resumo.corpus_coverage && !resumo.corpus_coverage.complete && (
-            <Aviso tom="atencao" titulo="O acervo não está inteiramente indexado">
-              {Math.round(resumo.corpus_coverage.ratio * 100)}% dos trechos estão vetorizados —
-              a busca alcançou essa fatia.
+            <Aviso tom="atencao" titulo="Parte do acervo ainda não foi organizada pelo sistema">
+              A busca alcançou {Math.round(resumo.corpus_coverage.ratio * 100)}% do acervo —
+              o restante ainda está sendo processado e pode trazer precedentes a mais.
             </Aviso>
           )}
 
@@ -948,10 +953,6 @@ function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
         </>
       ) : (
         <p className={estilos.razao}>{precedente.excerpt.slice(0, 320)}…</p>
-      )}
-
-      {precedente.rank_reason && (
-        <div className={estilos.origem}>por que apareceu: {precedente.rank_reason}</div>
       )}
     </li>
   );
