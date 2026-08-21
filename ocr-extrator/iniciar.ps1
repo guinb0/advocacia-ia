@@ -41,6 +41,38 @@ function Importar-Env([string]$Caminho) {
 
 Importar-Env ".\.env"
 
+function Configurar-BancoKeycloak {
+    $vendor = if ($env:KEYCLOAK_DB_VENDOR) { $env:KEYCLOAK_DB_VENDOR.Trim() } else { "" }
+    $temMssqlCompleto = $env:KEYCLOAK_DB_HOST -and $env:KEYCLOAK_DB_USER -and $env:KEYCLOAK_DB_PASSWORD
+
+    if (-not $vendor) {
+        $vendor = if ($temMssqlCompleto) { "mssql" } else { "postgres" }
+        $env:KEYCLOAK_DB_VENDOR = $vendor
+    }
+
+    if ($vendor -eq "mssql") {
+        foreach ($nome in @("KEYCLOAK_DB_HOST", "KEYCLOAK_DB_USER", "KEYCLOAK_DB_PASSWORD")) {
+            if (-not [Environment]::GetEnvironmentVariable($nome, "Process")) {
+                throw "Keycloak configurado para SQL Server, mas falta $nome no .env."
+            }
+        }
+        if (-not $env:KEYCLOAK_DB_PORT) { $env:KEYCLOAK_DB_PORT = "1433" }
+        if (-not $env:KEYCLOAK_DB_NAME) { $env:KEYCLOAK_DB_NAME = "keycloak" }
+        if (-not $env:KEYCLOAK_DB_URL_PROPERTIES) {
+            $env:KEYCLOAK_DB_URL_PROPERTIES = ";encrypt=true;trustServerCertificate=true"
+        }
+        return
+    }
+
+    if (-not $env:KEYCLOAK_DB_HOST) { $env:KEYCLOAK_DB_HOST = "keycloak-db" }
+    if (-not $env:KEYCLOAK_DB_PORT) { $env:KEYCLOAK_DB_PORT = "5432" }
+    if (-not $env:KEYCLOAK_DB_NAME) { $env:KEYCLOAK_DB_NAME = "keycloak" }
+    if (-not $env:KEYCLOAK_DB_USER) { $env:KEYCLOAK_DB_USER = "keycloak" }
+    if (-not $env:KEYCLOAK_DB_PASSWORD) { $env:KEYCLOAK_DB_PASSWORD = "keycloak_local" }
+}
+
+Configurar-BancoKeycloak
+
 # Uma janela fechada à força deixa os filhos do `uv` vivos no Windows. Dois
 # workers com o mesmo nome consomem a mesma fila de forma invisível e um upload
 # pode cair no processo antigo, sem o modelo aquecido. Antes de criar a nova
@@ -143,6 +175,9 @@ if ($SemAuth) {
 } else {
     $env:AUTH_DESATIVADA = "0"
     Write-Host "Subindo o Keycloak..." -ForegroundColor Yellow
+    if ($env:KEYCLOAK_DB_VENDOR -eq "postgres" -and $env:KEYCLOAK_DB_HOST -eq "keycloak-db") {
+        docker compose up -d --wait --wait-timeout 60 keycloak-db | Out-Null
+    }
     docker compose up -d keycloak | Out-Null
 
     # Esperar o realm, nao so o container: o import leva alguns segundos e um

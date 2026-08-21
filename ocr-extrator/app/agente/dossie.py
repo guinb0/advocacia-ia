@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from .. import armazenamento, banco, casos as casos_ocr, contrato
-from .cliente import Cliente, ErroDoAgente
+from .cliente import Cliente, ErroDoAgente, caso_ref_valido
 from .config import config
 
 log = logging.getLogger("agente")
@@ -329,7 +329,8 @@ def _recuperar_vinculo(erro: ErroDoAgente, caso_id: str | None) -> str | None:
     é o que devolve documentos e fatos à tela. Sem isso o dossiê abriria sem erro e sem
     conteúdo, que é pior — parece um caso sem nada, e não um caso que precisa subir de novo.
     """
-    if erro.status != 404 or caso_id is None:
+    identificador_invalido = "Identificador inválido" in str(erro)
+    if caso_id is None or (erro.status != 404 and not identificador_invalido):
         return None
 
     from . import espelho
@@ -370,6 +371,16 @@ def _do_agente(vinculo: dict[str, Any] | None, caso_id: str | None = None) -> di
         return bloco
 
     caso_ref = vinculo["caso_ref"]
+    if not caso_ref_valido(str(caso_ref)):
+        caso_ref = _recuperar_vinculo(
+            ErroDoAgente("Identificador inválido no vínculo local."),
+            caso_id,
+        )
+        if caso_ref is None:
+            bloco["motivo"] = "O vínculo local do agente está inválido."
+            return bloco
+        bloco["caso_ref"] = caso_ref
+        bloco["recuperado"] = True
 
     try:
         # A construção entra no `try` porque ela também falha: o cliente recusa

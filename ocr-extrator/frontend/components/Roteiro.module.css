@@ -59,6 +59,114 @@
   color: var(--muted);
 }
 
+.etapaEntrevista {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+.campoPreparacao {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  max-width: 520px;
+  font: 600 11px/1.3 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.estadoEntrevista {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-strong);
+  font: 600 12px/1 var(--font-ui);
+}
+
+.estadoEntrevista span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.estadoEntrevista strong {
+  font: 600 16px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.indicadorGravando {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulsoGravacao 1.4s ease-in-out infinite;
+}
+
+@keyframes pulsoGravacao {
+  50% { opacity: 0.3; }
+}
+
+.transcricaoSessao,
+.guiaEntrevista {
+  margin: 16px 0;
+  font: 400 12px/1.5 var(--font-ui);
+}
+
+.transcricaoSessao summary,
+.guiaEntrevista summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.guiaEntrevista section {
+  margin-top: 14px;
+}
+
+.guiaEntrevista li {
+  margin-top: 6px;
+}
+
+.processando {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 18px;
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+.processando p,
+.revisaoTopo p {
+  margin: 6px 0 0;
+  font: 400 12px/1.55 var(--font-ui);
+  color: var(--muted);
+}
+
+.processandoIndicador {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: girar 0.9s linear infinite;
+}
+
+@keyframes girar {
+  to { transform: rotate(360deg); }
+}
+
+.revisaoTopo {
+  margin-top: 18px;
+  padding: 16px;
+  border-left: 3px solid var(--ok);
+  background: var(--surface-2);
+}
+
 /* ------------------------------------------------------------- blocos -- */
 
 .bloco {

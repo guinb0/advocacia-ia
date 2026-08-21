@@ -551,6 +551,41 @@ def cenario_sem_chave() -> int:
     return falhas
 
 
+def cenario_processamento_consolidado() -> int:
+    """A entrevista inteira vira formulário numa chamada, sem sobrescrever dados."""
+    falhas = 0
+    instalar_modelo(
+        {
+            "respostas": [
+                {"pergunta_id": "nome", "valor": "Nome inventado", "trecho": "meu nome"},
+                {"pergunta_id": "tempo_casa", "valor": "oito anos", "trecho": "faz oito anos"},
+                {"pergunta_id": "r_assalto", "valor": "sim", "trecho": "fui assaltado"},
+                {"pergunta_id": "as_ocorrencias", "valor": "duas vezes no ano passado", "trecho": "duas vezes"},
+                {"pergunta_id": "r_doenca", "valor": "não", "trecho": "não tive doença"},
+                {"pergunta_id": "doenca", "valor": "campo inventado", "trecho": ""},
+            ],
+            "incertas": [
+                {"pergunta_id": "funcao", "motivo": "A função não ficou clara."},
+            ],
+        }
+    )
+
+    iniciais = {"nome": "Maria da Silva", "cpf": "529.982.247-25"}
+    r = escuta.processar_entrevista(FALA, iniciais)
+    falhas += not checar(r["respostas"]["nome"] == "Maria da Silva", "nome digitado é preservado")
+    falhas += not checar(r["respostas"]["cpf"] == "529.982.247-25", "CPF digitado é preservado")
+    falhas += not checar(r["respostas"]["tempo_casa"] == "oito anos", "relato consolidado preenche o formulário")
+    falhas += not checar(r["respostas"]["as_ocorrencias"] == "duas vezes no ano passado", "rastreio positivo mantém o módulo")
+    falhas += not checar("doenca" not in r["respostas"], "campo de módulo fechado é descartado")
+    falhas += not checar(len(r["incertas"]) == 1, "informação insegura fica em aberto para revisão")
+    corpo = visto.get("corpo") or {}
+    falhas += not checar(
+        isinstance(corpo, dict) and corpo.get("max_tokens") == 8_000,
+        "a conversa completa usa uma única resposta estruturada",
+    )
+    return falhas
+
+
 def main_teste() -> int:
     guardada = os.environ.get("DEEPSEEK_API_KEY")
     if not guardada:
@@ -569,6 +604,7 @@ def main_teste() -> int:
         ("a pergunta da tela chega ao modelo", cenario_pergunta_da_tela),
         ("completar o que já foi respondido", cenario_complemento),
         ("a pergunta lida não é resposta", cenario_enunciado_lido),
+        ("processamento consolidado pós-entrevista", cenario_processamento_consolidado),
         ("sem chave", cenario_sem_chave),
     ):
         print(f"\n{titulo}")

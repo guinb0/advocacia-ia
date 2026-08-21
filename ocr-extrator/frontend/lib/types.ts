@@ -557,3 +557,12 @@ export interface Escuta {
    * resposta existir. Nada foi preenchido: a resposta vem no trecho seguinte. */
   enunciado?: string;
 }
+
+/** Resultado único produzido depois que a entrevista inteira termina. */
+export interface ProcessamentoEntrevista {
+  respostas: Record<string, string | string[]>;
+  preenchidas: CampoOuvido[];
+  faltando: PerguntaPendente[];
+  incertas: Array<{ pergunta_id: string; motivo: string }>;
+  transcricao_truncada: boolean;
+}

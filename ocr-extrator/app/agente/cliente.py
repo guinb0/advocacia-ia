@@ -16,6 +16,7 @@ Duas regras que ele existe para garantir:
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from typing import Any
@@ -28,7 +29,20 @@ from .config import Config, config
 
 log = logging.getLogger("agente")
 
-__all__ = ["AgenteIndisponivel", "AgenteNaoConfigurado", "ErroDoAgente", "Cliente"]
+_CASE_REF_RE = re.compile(r"^case_[0-9A-HJKMNP-TV-Z]{26}$", re.IGNORECASE)
+
+__all__ = [
+    "AgenteIndisponivel",
+    "AgenteNaoConfigurado",
+    "ErroDoAgente",
+    "Cliente",
+    "caso_ref_valido",
+]
+
+
+def caso_ref_valido(caso_ref: str) -> bool:
+    """Identificador público de caso aceito pelo agente."""
+    return bool(_CASE_REF_RE.fullmatch(caso_ref.strip()))
 
 
 #: Pool de conexões compartilhado por todas as chamadas ao agente.
@@ -229,12 +243,14 @@ class Cliente:
         tratar indisponibilidade como ausência criaria um caso novo — com metade dos
         documentos — a cada oscilação de rede.
         """
+        if not caso_ref_valido(caso_ref):
+            return False
         try:
             self.caso(caso_ref)
         except AgenteIndisponivel:
             raise
         except ErroDoAgente as erro:
-            if erro.status == 404:
+            if erro.status == 404 or "Identificador inválido" in str(erro):
                 return False
             raise
         return True

@@ -108,6 +108,12 @@ log = logging.getLogger("escuta")
 #: uma frase e a seguinte. Passar disto, o trecho já não é mais o assunto.
 TEMPO_MODELO_S = 20.0
 
+# O processamento consolidado acontece depois da entrevista, sem cliente
+# esperando uma resposta entre duas frases. Ele recebe a conversa inteira e
+# pode usar um prazo maior do que a escuta ao vivo.
+TEMPO_PROCESSAMENTO_S = 90.0
+LIMITE_TRANSCRICAO_COMPLETA = 60_000
+
 #: Piso para chamar o modelo. Era 25, e o custo estava do lado errado.
 #:
 #: Vinte e cinco caracteres derrubavam a resposta curta que não é sim/não —
@@ -677,6 +683,39 @@ Responda APENAS JSON:
  "lembretes":[{"pergunta_id":"...","pergunte":"..."}]}"""
 
 
+INSTRUCAO_PROCESSAMENTO = """Você organiza a transcrição COMPLETA de uma entrevista
+jurídica em um formulário já definido pelo escritório.
+
+REGRAS
+- Use somente informações explicitamente presentes na transcrição.
+- Não deduza datas, nomes, números, causas, consequências ou documentos.
+- Se uma informação estiver ambígua, contraditória ou pouco segura, deixe o
+  campo sem resposta e registre o motivo em `incertas`.
+- A transcrição mistura entrevistador e cliente. Perguntas, opções lidas e
+  hipóteses apresentadas pelo entrevistador NÃO são respostas do cliente.
+- Um único trecho pode conter várias sequências de PERGUNTA seguida de RESPOSTA.
+  Leia o trecho em ordem e associe cada resposta à pergunta imediatamente
+  anterior. Não descarte o trecho inteiro só porque ele começa com uma pergunta.
+- Primeira pessoa ("eu trabalho", "fui vítima", "nunca sofri") e respostas
+  diretas depois de uma pergunta ("sim", "não") indicam fala do cliente.
+- Respostas existentes foram digitadas por uma pessoa e são autoritativas: não
+  as altere nem as repita.
+- Nunca extraia CPF, RG, data de nascimento ou número de documento da fala.
+- Para `sim_nao`, use somente "sim" ou "não".
+- Para perguntas com opções, devolva exatamente uma das opções disponíveis.
+  É permitido normalizar uma expressão inequivocamente equivalente para o texto
+  da opção: por exemplo, "entregador motorizado" ou "carteiro de carro" vira
+  "Carteiro motorizado". Se mais de uma opção puder servir, deixe em aberto.
+- Para `documentos`, devolva uma lista apenas com opções que o cliente afirmou
+  possuir ou conseguir enviar.
+- `valor` deve conter a resposta limpa, sem repetir o enunciado ou muletas.
+- `trecho` deve ser uma citação curta da transcrição que sustenta o valor.
+
+Responda APENAS JSON:
+{"respostas":[{"pergunta_id":"...","valor":"...","trecho":"..."}],
+ "incertas":[{"pergunta_id":"...","motivo":"..."}]}"""
+
+
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
@@ -711,6 +750,45 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         return json.loads(resposta.json()["choices"][0]["message"]["content"])
     except Exception as exc:
         raise ErroEscuta("Resposta ilegível do modelo.") from exc
+
+
+def _chamar_modelo_consolidado(mensagem: str) -> dict[str, Any]:
+    """Uma única leitura da entrevista completa, executada após o encerramento."""
+    chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not chave:
+        raise ErroEscuta(
+            "Processamento da entrevista desligado: falta DEEPSEEK_API_KEY no .env. "
+            "A transcrição foi preservada e o formulário pode ser preenchido à mão."
+        )
+
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    try:
+        resposta = httpx.post(
+            base_url + "/chat/completions",
+            headers={"Authorization": f"Bearer {chave}"},
+            json={
+                "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "max_tokens": 8_000,
+                "messages": [
+                    {"role": "system", "content": INSTRUCAO_PROCESSAMENTO},
+                    {"role": "user", "content": mensagem},
+                ],
+            },
+            timeout=TEMPO_PROCESSAMENTO_S,
+        )
+        resposta.raise_for_status()
+    except httpx.HTTPError as exc:
+        log.warning("Processamento consolidado falhou: %s", str(exc)[:160])
+        raise ErroEscuta(
+            "Não foi possível organizar a entrevista agora. A transcrição foi preservada."
+        ) from exc
+
+    try:
+        return json.loads(resposta.json()["choices"][0]["message"]["content"])
+    except Exception as exc:
+        raise ErroEscuta("O processamento devolveu uma resposta ilegível.") from exc
 
 
 # ------------------------------------------------------------------ formato
@@ -858,6 +936,141 @@ def _abertas_pelo_rastreio(
 
 
 # -------------------------------------------------------------------- ação
+
+
+def processar_entrevista(
+    transcricao: str,
+    respostas_iniciais: dict[str, Any] | None = None,
+    codigo_roteiro: str = "empregado_publico",
+) -> dict[str, Any]:
+    """Transforma a conversa completa em respostas revisáveis, numa única leitura.
+
+    Diferente de :func:`escutar`, esta função não trabalha com janela, pergunta
+    atual ou fragmentos. Ela só roda depois do encerramento e nunca modifica a
+    transcrição recebida.
+    """
+    roteiro = roteiros.obter(codigo_roteiro)
+    if roteiro is None:
+        raise ErroEscuta(f"Roteiro {codigo_roteiro!r} não existe.")
+
+    transcricao_limpa = re.sub(r"[ \t]+", " ", str(transcricao or ""))
+    transcricao_limpa = re.sub(r"\n{3,}", "\n\n", transcricao_limpa).strip()
+    if not transcricao_limpa:
+        raise ErroEscuta("A entrevista terminou sem transcrição para processar.")
+    transcricao_truncada = len(transcricao_limpa) > LIMITE_TRANSCRICAO_COMPLETA
+    transcricao_limpa = transcricao_limpa[:LIMITE_TRANSCRICAO_COMPLETA]
+
+    respostas = dict(respostas_iniciais or {})
+    perguntas = [
+        pergunta
+        for bloco in roteiro.blocos
+        if not bloco.delegado_a
+        for pergunta in bloco.perguntas
+        if not _respondida(respostas.get(pergunta.id))
+        and not pergunta.validacao
+        and pergunta.id not in DADOS_DIGITADOS
+    ]
+
+    mensagem = "\n\n".join(
+        [
+            "RESPOSTAS JÁ DIGITADAS (não alterar):\n"
+            + json.dumps(respostas, ensure_ascii=False),
+            "FORMULÁRIO:\n" + "\n".join(f"- {_descrever(p)}" for p in perguntas),
+            "TRANSCRIÇÃO COMPLETA:\n" + transcricao_limpa,
+        ]
+    )
+    bruto = _chamar_modelo_consolidado(mensagem)
+    por_id = {p.id: p for p in perguntas}
+    extraidas: list[dict[str, Any]] = []
+
+    for item in bruto.get("respostas") or []:
+        if not isinstance(item, dict):
+            continue
+        pergunta = por_id.get(str(item.get("pergunta_id", "")))
+        if pergunta is None:
+            continue
+
+        valor_bruto = item.get("valor")
+        if pergunta.tipo == "documentos":
+            if not isinstance(valor_bruto, list):
+                continue
+            valor: str | list[str] = [
+                opcao for opcao in pergunta.opcoes if opcao in valor_bruto
+            ]
+            if not valor:
+                continue
+        else:
+            valor = _texto(valor_bruto)
+            if not valor:
+                continue
+            if pergunta.tipo == "sim_nao":
+                normalizado = valor.casefold().rstrip(".")
+                if normalizado not in {"sim", "não", "nao"}:
+                    continue
+                valor = "sim" if normalizado == "sim" else "não"
+            elif pergunta.opcoes and valor not in pergunta.opcoes:
+                continue
+
+        respostas[pergunta.id] = valor
+        extraidas.append(
+            {
+                "pergunta_id": pergunta.id,
+                "pergunta": pergunta.texto,
+                "valor": valor,
+                "trecho": _texto(item.get("trecho"), 240),
+            }
+        )
+
+    # Módulos condicionais só existem quando o respectivo rastreio foi positivo.
+    positivos = {
+        modulo
+        for pergunta_id, modulo in roteiros.MAPA_RASTREIO.items()
+        if str(respostas.get(pergunta_id, "")).strip().casefold() == "sim"
+    }
+    ids_inativos = {
+        pergunta.id
+        for bloco in roteiro.blocos
+        if bloco.modulo and bloco.modulo not in positivos
+        for pergunta in bloco.perguntas
+    }
+    for pergunta_id in ids_inativos:
+        if pergunta_id not in (respostas_iniciais or {}):
+            respostas.pop(pergunta_id, None)
+    extraidas = [item for item in extraidas if item["pergunta_id"] not in ids_inativos]
+
+    ativas = [
+        pergunta
+        for bloco in roteiro.blocos
+        if not bloco.delegado_a and (not bloco.modulo or bloco.modulo in positivos)
+        for pergunta in bloco.perguntas
+    ]
+    faltando = [
+        {
+            "pergunta_id": pergunta.id,
+            "pergunta": pergunta.texto,
+            "obrigatoria": pergunta.obrigatoria,
+        }
+        for pergunta in ativas
+        if not _respondida(respostas.get(pergunta.id))
+    ]
+
+    incertas = []
+    ids_ativos = {p.id for p in ativas}
+    for item in bruto.get("incertas") or []:
+        if not isinstance(item, dict):
+            continue
+        pergunta_id = str(item.get("pergunta_id", ""))
+        motivo = _texto(item.get("motivo"), 240)
+        if pergunta_id in ids_ativos and motivo:
+            incertas.append({"pergunta_id": pergunta_id, "motivo": motivo})
+
+    return {
+        "respostas": respostas,
+        "preenchidas": extraidas,
+        "faltando": faltando,
+        "incertas": incertas,
+        "transcricao_truncada": transcricao_truncada,
+    }
 
 
 def escutar(
