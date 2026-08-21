@@ -16,6 +16,7 @@ import type {
   Pedido,
   PortalEstado,
   PortalGerado,
+  ProcessamentoEntrevista,
   RespostaEnvio,
   RoteiroCompleto,
   RecomendacaoEntrevista,
@@ -523,6 +524,31 @@ export async function escutarTrecho(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ trecho, respostas, roteiro, pergunta_atual: perguntaAtual }),
     }),
+  );
+}
+
+function explicarRotaDeProcessamento(resposta: Response): Response {
+  if (resposta.status === 404) {
+    throw new ApiError(
+      "O serviço de preenchimento está desatualizado. Reinicie a aplicação e processe a entrevista novamente.",
+    );
+  }
+  return resposta;
+}
+
+/** Organiza a conversa completa somente depois que a captura foi encerrada. */
+export async function processarEntrevista(
+  transcricao: string,
+  respostas: Record<string, string | string[]>,
+  roteiro = "empregado_publico",
+): Promise<ProcessamentoEntrevista> {
+  const resposta = await buscar("/api/entrevista/processar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcricao, respostas, roteiro }),
+  });
+  return comoJson<ProcessamentoEntrevista>(
+    explicarRotaDeProcessamento(resposta),
   );
 }
 

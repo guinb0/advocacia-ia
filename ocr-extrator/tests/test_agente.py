@@ -27,7 +27,7 @@ armazenamento.DIR_CONTRATOS = _TEMP / "contratos"
 armazenamento.CAMINHO_BANCO = _TEMP / "casos.db"
 
 from app.agente import dossie, espelho  # noqa: E402
-from app.agente.cliente import AgenteIndisponivel, Cliente, ErroDoAgente  # noqa: E402
+from app.agente.cliente import AgenteIndisponivel, Cliente, ErroDoAgente, caso_ref_valido  # noqa: E402
 
 falhas = 0
 
@@ -54,6 +54,8 @@ class ClienteFalso:
             raise ClienteFalso.erro
 
     def caso_existe(self, caso_ref):
+        if not caso_ref_valido(caso_ref):
+            return False
         return caso_ref not in ClienteFalso.casos_apagados
 
     def caso(self, _caso_ref):
@@ -67,7 +69,7 @@ class ClienteFalso:
 
     def criar_caso(self, **_kwargs):
         ClienteFalso.casos_criados += 1
-        return {"id": f"case_TESTE{ClienteFalso.casos_criados}"}
+        return {"id": f"case_01J0000000000000000000000{ClienteFalso.casos_criados}"}
 
     def enviar_extracao(self, caso_ref, *, evento_externo, origem, extracao):
         ClienteFalso.enviados.append((caso_ref, evento_externo))
@@ -99,7 +101,10 @@ def main() -> int:
     caso_id = caso["id"]
 
     vinculo = espelho.garantir_caso(caso_id)
-    checar(vinculo["caso_ref"] == "case_TESTE1", "o caso é espelhado no agente")
+    checar(
+        vinculo["caso_ref"] == "case_01J00000000000000000000001",
+        "o caso é espelhado no agente",
+    )
 
     espelho.garantir_caso(caso_id)
     checar(
@@ -125,6 +130,14 @@ def main() -> int:
     )
     ClienteFalso.casos_apagados.clear()
 
+    antigo = armazenamento.criar_caso("Vinculo Antigo", "acidente_trabalho_geral")["id"]
+    armazenamento.vincular_agente(antigo, "123", "client_antigo")
+    recriado = espelho.garantir_caso(antigo)
+    checar(
+        recriado["caso_ref"].startswith("case_"),
+        "vínculo antigo fora do formato case_ é recriado em vez de derrubar o worker",
+    )
+
     print("\n2. Envio da extração")
     caminho = armazenamento.DIR_ARQUIVOS / caso_id / "ctps.png"
     caminho.parent.mkdir(parents=True, exist_ok=True)
@@ -139,7 +152,7 @@ def main() -> int:
     armazenamento.concluir_entrega(entrega["id"], extracao_falsa(), True, ["DOC.01"])
     checar(espelho.enviar_entrega(caso_id, entrega["id"]), "entrega pronta é enviada")
     checar(
-        ClienteFalso.enviados == [("case_TESTE1", entrega["id"])],
+        ClienteFalso.enviados == [("case_01J00000000000000000000001", entrega["id"])],
         "o id da entrega vai como chave de idempotência",
     )
 
@@ -317,13 +330,13 @@ def main() -> int:
             }
 
     paginado = ClientePaginado()
-    pagina = paginado.fatos("case_TESTE1")
+    pagina = paginado.fatos("case_01J00000000000000000000001")
     checar(len(pagina["items"]) == 102, "todos os fatos são lidos, não só os 20 padrão")
     checar(
         paginado.chamadas
         == [
-            "/api/v1/cases/case_TESTE1/facts?limit=100&offset=0",
-            "/api/v1/cases/case_TESTE1/facts?limit=100&offset=100",
+            "/api/v1/cases/case_01J00000000000000000000001/facts?limit=100&offset=0",
+            "/api/v1/cases/case_01J00000000000000000000001/facts?limit=100&offset=100",
         ],
         "a API usa limit/offset e avança até o total declarado",
     )
@@ -336,7 +349,7 @@ def main() -> int:
             return {"items": [{"id": "fact_repetido"}], "total": 2}
 
     try:
-        ClienteSemProgresso().fatos("case_TESTE1")
+        ClienteSemProgresso().fatos("case_01J00000000000000000000001")
     except ErroDoAgente:
         falhou_explicitamente = True
     else:
@@ -382,16 +395,16 @@ def main() -> int:
         {"type": "PERSON.CPF", "value": {"digits": "52998224725"}, "status": "CONFIRMED"},
     ]
 
-    aplicado = espelho.qualificar_reclamante("case_TESTE1")
+    aplicado = espelho.qualificar_reclamante("case_01J00000000000000000000001")
     checar(aplicado == "52998224725", "o CPF confirmado vence o apenas extraído")
     checar(
-        ClienteQualificador.qualificadas == [("case_TESTE1", "party_1", "52998224725")],
+        ClienteQualificador.qualificadas == [("case_01J00000000000000000000001", "party_1", "52998224725")],
         "só a parte reclamante é qualificada, e uma vez",
     )
 
     ClienteQualificador.qualificadas = []
     checar(
-        espelho.qualificar_reclamante("case_TESTE1") is None
+        espelho.qualificar_reclamante("case_01J00000000000000000000001") is None
         and ClienteQualificador.qualificadas == [],
         "parte que já tem documento não é sobrescrita — quem digitou vence o que foi lido",
     )
@@ -401,7 +414,7 @@ def main() -> int:
         {"type": "PERSON.CPF", "value": {"digits": "11122233344"}, "status": "REJECTED"}
     ]
     checar(
-        espelho.qualificar_reclamante("case_TESTE1") is None,
+        espelho.qualificar_reclamante("case_01J00000000000000000000001") is None,
         "CPF de fato rejeitado não qualifica ninguém",
     )
     espelho.Cliente = ClienteFalso  # type: ignore[assignment]

@@ -10,27 +10,20 @@ import {
 } from "react";
 import type { ReactNode, Ref } from "react";
 
-import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { analisarResposta, consultarCep, escutarTrecho, obterRoteiro, recomendarEntrevista } from "@/lib/api";
+import { analisarResposta, consultarCep, obterRoteiro, processarEntrevista, recomendarEntrevista } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
 import type {
   AnaliseResposta,
   Bloco,
-  CampoOuvido,
   EnderecoCep,
-  Lembrete,
   Pergunta,
-  PerguntaPendente,
   RecomendacaoEntrevista,
   RoteiroCompleto,
 } from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
-import AudioDaEntrevista from "./AudioDaEntrevista";
-import Conducao from "./Conducao";
 import ConferenciaResposta from "./ConferenciaResposta";
 import VideoDaEntrevista from "./VideoDaEntrevista";
-import PainelEscuta from "./PainelEscuta";
 import estilos from "./Roteiro.module.css";
 import transcricaoEstilos from "./EntrevistaAoVivo.module.css";
 
@@ -45,6 +38,7 @@ import transcricaoEstilos from "./EntrevistaAoVivo.module.css";
  * número ditado o Whisper erra, e ninguém confere dígito lido de ouvido. */
 
 type Respostas = Record<string, string | string[]>;
+export type FaseEntrevista = "preparacao" | "entrevista" | "processando" | "revisao";
 
 /** O que a chamada, na coluna ao lado, precisa poder fazer com o roteiro. */
 export interface ManipuladorRoteiro {
@@ -54,19 +48,6 @@ export interface ManipuladorRoteiro {
   aoPerderChamada: () => void;
   /** Há vídeo gravado e não baixado — fechar a tela agora o destrói. */
   temVideoPendente: () => boolean;
-  /** Quantas respostas ouvidas ainda esperam confirmação (nome e CPF).
-   *
-   * Quem encerra o atendimento é a tela de fora, mas o dado é daqui — e sair
-   * sem confirmar descarta em silêncio justamente os dois campos que
-   * identificam o cliente no contrato e na procuração. */
-  sugestoesPendentes: () => number;
-  /** Fecha a gravação e espera o áudio inteiro chegar ao disco.
-   *
-   * Só no FIM do atendimento: a gravação corre durante a avaliação, os
-   * documentos e o envio dos primeiros arquivos, que é justamente quando o
-   * cliente diz coisas que valem estar no áudio. Devolve o `entrevistaId`, que
-   * é por onde o arquivo é baixado depois. */
-  encerrarGravacao: () => Promise<string>;
   /** Tudo que foi transcrito, na ordem, com o instante de cada trecho.
    *
    * É a transcrição BRUTA: a conversa como ela saiu do Whisper, sem passar
@@ -91,74 +72,48 @@ interface EstadoConferencia {
  * para não gastar uma ida à API só para ouvir "curta demais". */
 const MINIMO_PARA_CONFERIR = 40;
 
-/* Por quanto tempo, depois do último campo preenchido, a entrevista conta como
- * FLUINDO.
- *
- * Enquanto ela flui, a cobrança dos 10s recolhe: o relógio continua correndo e
- * a linha continua na tela, mas a placa vermelha some. O cliente está
- * respondendo o roteiro — fora de ordem, mas respondendo — e gritar PARE por
- * cima disso é o alarme virar paisagem. Um alarme que fica no ar por minutos
- * deixa de ser lido, e aí ele não serve para o caso em que importa: o cliente
- * falando do filho, da vizinha, sem nada entrando em campo nenhum.
- *
- * 20s porque é o intervalo típico entre dois preenchimentos numa conversa
- * corrida — abaixo disso a placa piscaria a cada pausa para respirar. */
-const SEGUNDOS_FLUINDO = 20;
-
 /** Tem valor? Mesmo critério de `escuta._respondida`, no backend. */
 function respondida(valor: string | string[] | undefined): boolean {
   return Array.isArray(valor) ? valor.length > 0 : Boolean(String(valor ?? "").trim());
 }
 
+function formatarDuracao(totalSegundos: number): string {
+  const horas = Math.floor(totalSegundos / 3600);
+  const minutos = Math.floor((totalSegundos % 3600) / 60);
+  const segundos = totalSegundos % 60;
+  return [horas, minutos, segundos].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
 interface Props {
   codigo?: string;
-  /** As respostas conforme mudam, sem esperar o fim.
-   *
-   * O `entrevistaId` sobe junto porque o áudio sobrevive a esta tela: quem
-   * encerra o atendimento precisa continuar podendo baixar o arquivo.
-   *
-   * As etapas seguintes do atendimento (avaliação, documentos, assinatura) ficam
-   * na mesma rolagem, logo abaixo do roteiro, e precisam do que já foi
-   * respondido enquanto a entrevista ainda corre — o contrato pede nome e CPF,
-   * e eles chegam nas duas primeiras perguntas. */
+  /** Resultado pós-processamento e alterações feitas durante a revisão. */
   onRespostas?: (
     respostas: Respostas,
     relatoUnificado: string,
     entrevistaId: string,
   ) => void;
+  onFase?: (fase: FaseEntrevista) => void;
   ref?: Ref<ManipuladorRoteiro>;
 }
 
 export default function Roteiro({
   codigo = "empregado_publico",
   onRespostas,
+  onFase,
   ref,
 }: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
   const [respostas, setRespostas] = useState<Respostas>({});
+  const [fase, setFase] = useState<FaseEntrevista>("preparacao");
+  const [transcricaoVisivel, setTranscricaoVisivel] = useState("");
+  const [inicioEntrevista, setInicioEntrevista] = useState<number | null>(null);
+  const [duracaoEntrevista, setDuracaoEntrevista] = useState(0);
+  const [incertas, setIncertas] = useState<Array<{ pergunta_id: string; motivo: string }>>([]);
+  const [erroProcessamento, setErroProcessamento] = useState<string | null>(null);
+  const finalizarTranscricao = useRef<((texto: string) => void) | null>(null);
+  const transcricaoConsolidada = useRef("");
   const [erro, setErro] = useState<string | null>(null);
-  /* Perguntas que saíram da vez sem resposta — o cliente não sabia, não quis,
-   * ou o assunto não estava maduro. Não somem do roteiro: continuam pendentes
-   * na lista e voltam à condução com um clique. É o que impede a sequência de
-   * travar numa pergunta impossível com a cobrança tocando sem saída. */
-  const [puladas, setPuladas] = useState<string[]>([]);
-  /* Quando um campo QUALQUER foi preenchido pela última vez. É o sinal de que a
-   * entrevista está andando, mesmo que fora da ordem do roteiro. */
-  const [ultimoPreenchimento, setUltimoPreenchimento] = useState<number | null>(null);
-  // A pergunta da vez, lida dentro da fila da escuta — que é fixada na
-  // construção e não enxergaria o estado do React.
-  const atualRef = useRef<string>("");
-
   const [estadoMic, setEstadoMic] = useState<EstadoCaptura>("sem-audio");
-  const [gravandoId, setGravandoId] = useState<string | null>(null);
-  /* Entre clicar em "Finalizar" e o texto voltar do servidor.
-   *
-   * A captura para no clique, mas o texto final é transcrito do áudio INTEIRO —
-   * numa resposta de três minutos são vários segundos. Nesse intervalo a
-   * pergunta continuava mostrando "Pausar" e "Finalizar", e os dois não faziam
-   * nada: a captura já tinha parado, e os métodos saem calados quando não há
-   * gravação. Era o "clico e não acontece nada". */
-  const [finalizando, setFinalizando] = useState(false);
   const [parcial, setParcial] = useState("");
   const [aviso, setAviso] = useState<string | null>(null);
   const [fonte, setFonte] = useState<Fonte>("nenhuma");
@@ -185,59 +140,10 @@ export default function Roteiro({
   const [atualizandoRecomendacao, setAtualizandoRecomendacao] = useState(false);
   const ultimoRelatoRecomendado = useRef("");
 
-  /* A escuta chegou ao fim e o áudio pode ser oferecido. Quem grava é o
-   * servidor, do mesmo PCM que alimenta a transcrição — ver `app/gravacao.py` e
-   * `AudioDaEntrevista`, que cuida da conversão e do download. */
-  const [escutaEncerrada, setEscutaEncerrada] = useState(false);
   /* Vídeo gravado e ainda não baixado. Ao contrário do áudio, ele não está em
    * lugar nenhum além desta aba — concluir a entrevista o destrói. */
   const videoPendente = useRef(false);
 
-  /* ---------------------------------------------------- escuta contínua
-   *
-   * O microfone abre uma vez, no "podemos começar?", e não fecha mais. Cada
-   * trecho que o servidor CONFIRMA (não o parcial, que ainda se reescreve) vai
-   * para a escuta, que decide a que perguntas ele responde.
-   *
-   * `escutando` é o estado que substitui os 86 ciclos de gravar/finalizar. */
-  const [escutando, setEscutando] = useState(false);
-  const [ouvindo, setOuvindo] = useState(false);
-  const [sugestoes, setSugestoes] = useState<CampoOuvido[]>([]);
-  // Lido pelo `useImperativeHandle`, que é fixado na montagem e não enxergaria
-  // o estado — é por ele que a tela de fora sabe o que falta conferir.
-  const sugestoesRef = useRef<CampoOuvido[]>([]);
-  sugestoesRef.current = sugestoes;
-  const [lembretes, setLembretes] = useState<Lembrete[]>([]);
-  const [faltando, setFaltando] = useState<PerguntaPendente[]>([]);
-  const [ouvidas, setOuvidas] = useState<CampoOuvido[]>([]);
-  const [erroEscuta, setErroEscuta] = useState<string | null>(null);
-  const [saudacaoLida, setSaudacaoLida] = useState(false);
-  /* Quando um trecho de fala foi reconhecido pela última vez.
-   *
-   * É o único sinal que distingue "conversa em silêncio" de "microfone mudo" —
-   * e o segundo é o que já custou uma entrevista inteira transcrita como nada. */
-  const [ultimaFala, setUltimaFala] = useState<number | null>(null);
-  /* Quando o microfone captou som pela última vez — som QUALQUER, não fala
-   * reconhecida. É o que separa "ninguém está falando" de "o microfone está
-   * mudo", e sem essa distinção a tela não tem como avisar do segundo. */
-  const [ultimoSom, setUltimoSom] = useState<number | null>(null);
-  /* Nível TÍPICO da fala e velocidade com que o áudio chega. Existem para a
-   * tela poder dizer POR QUE o texto não aparece, em vez de só mostrar que não
-   * apareceu — que é indistinguível de "ninguém falou". */
-  const [nivelTipico, setNivelTipico] = useState<number | null>(null);
-  const [chegada, setChegada] = useState<number | null>(null);
-  /* Em ref, e não em estado: chega ~2x por segundo e re-renderizar a cada
-   * amostra redesenharia o roteiro inteiro sem nada mudar na tela. */
-  const niveisComSom = useRef<number[]>([]);
-
-  /* A conversa não espera a resposta da escuta anterior.
-   *
-   * Trechos chegam a cada poucos segundos e cada chamada leva alguns; sem fila,
-   * duas rodadas simultâneas mandariam o mesmo `respostas` desatualizado e a
-   * segunda desfaria o preenchimento da primeira. A fila serializa, e o trecho
-   * que chega enquanto uma roda espera a vez. */
-  const filaTrechos = useRef<string[]>([]);
-  const escutaEmCurso = useRef(false);
   /* A conversa inteira, como o Whisper a devolveu, na ordem.
    *
    * Num ref e não em estado: cresce a cada frase de uma conversa de trinta
@@ -246,11 +152,7 @@ export default function Roteiro({
   const transcricaoBruta = useRef<{ quando: number; texto: string }[]>([]);
 
   const captura = useRef<CapturaEntrevista | null>(null);
-  // A pergunta em gravação, lida dentro dos callbacks da captura — que são
-  // fixados na construção e não enxergariam o estado do React.
-  const emGravacao = useRef<string | null>(null);
-  // Espelhos para os mesmos callbacks: eles precisam do texto já respondido e do
-  // enunciado da pergunta, e nenhum dos dois chega até lá pelo estado.
+  // Espelho para os callbacks da captura, que são fixados na construção.
   const respostasRef = useRef<Respostas>({});
   respostasRef.current = respostas;
   const roteiroRef = useRef<RoteiroCompleto | null>(null);
@@ -263,6 +165,20 @@ export default function Roteiro({
   useEffect(() => {
     obterRoteiro(codigo).then(setRoteiro).catch((e) => setErro(String(e)));
   }, [codigo]);
+
+  const aoMudarFase = useRef(onFase);
+  aoMudarFase.current = onFase;
+  useEffect(() => {
+    aoMudarFase.current?.(fase);
+  }, [fase]);
+
+  useEffect(() => {
+    if (fase !== "entrevista" || inicioEntrevista === null) return;
+    const atualizar = () => setDuracaoEntrevista(Math.floor((Date.now() - inicioEntrevista) / 1000));
+    atualizar();
+    const id = window.setInterval(atualizar, 1000);
+    return () => window.clearInterval(id);
+  }, [fase, inicioEntrevista]);
 
   /* O que já se sabe do caso, resumido para a conferência.
    *
@@ -330,80 +246,6 @@ export default function Roteiro({
     [contextoDoCaso],
   );
 
-  // Lido dentro dos callbacks da captura, que são fixados na construção.
-  const conferirRef = useRef(conferir);
-  conferirRef.current = conferir;
-
-  /* Consome a fila de trechos, um por vez.
-   *
-   * Cada volta manda o trecho e o estado ATUAL das respostas: é assim que a
-   * escuta sabe o que já foi respondido e não repete pergunta. Por isso a
-   * serialização importa — mandar duas em paralelo é mandar duas vezes o mesmo
-   * estado velho. */
-  const consumirFila = useCallback(async () => {
-    if (escutaEmCurso.current) return;
-    escutaEmCurso.current = true;
-    setOuvindo(true);
-    try {
-      while (filaTrechos.current.length > 0) {
-        // Junta o que se acumulou: se três trechos entraram enquanto a chamada
-        // anterior rodava, eles são uma frase só para quem vai interpretá-los.
-        const trecho = filaTrechos.current.join(" ").trim();
-        filaTrechos.current = [];
-        if (!trecho) continue;
-
-        const r = await escutarTrecho(trecho, respostasRef.current, "empregado_publico", atualRef.current);
-        setErroEscuta(null);
-        setFaltando(r.faltando);
-        setLembretes(r.lembretes);
-        if (r.sugestoes.length) {
-          // Sugestão nova de um campo substitui a anterior daquele campo: o
-          // cliente que repete o CPF está corrigindo, não acrescentando.
-          setSugestoes((atuais) => [
-            ...atuais.filter((s) => !r.sugestoes.some((n) => n.pergunta_id === s.pergunta_id)),
-            ...r.sugestoes,
-          ]);
-        }
-        if (r.preenchidas.length) {
-          // Caiu em qualquer pergunta: a entrevista está andando, e a cobrança
-          // recolhe enquanto isso durar.
-          setUltimoPreenchimento(Date.now());
-          setRespostas((atuais) => {
-            const novo = { ...atuais };
-            for (const p of r.preenchidas) {
-              const anterior = String(novo[p.pergunta_id] ?? "").trim();
-              // Acrescenta em vez de substituir: o cliente volta ao assunto
-              // várias vezes numa conversa, e o segundo trecho complementa o
-              // primeiro em vez de apagá-lo.
-              novo[p.pergunta_id] = anterior ? `${anterior} ${p.valor}` : p.valor;
-            }
-            // A fila pode começar a interpretar o próximo trecho antes de o
-            // React renderizar novamente. Atualizar o espelho aqui garante que
-            // esse trecho já veja todos os complementos recém-aplicados.
-            respostasRef.current = novo;
-            return novo;
-          });
-          setOuvidas((atuais) => [
-            ...atuais.filter((o) => !r.preenchidas.some((n) => n.pergunta_id === o.pergunta_id)),
-            ...r.preenchidas,
-          ]);
-        }
-      }
-    } catch (e) {
-      // A escuta falhando não pode parar a entrevista: a conversa continua e os
-      // campos seguem editáveis à mão.
-      setErroEscuta(
-        e instanceof Error ? e.message : "A escuta automática falhou. Digite à mão.",
-      );
-    } finally {
-      escutaEmCurso.current = false;
-      setOuvindo(false);
-    }
-  }, []);
-
-  const consumirFilaRef = useRef(consumirFila);
-  consumirFilaRef.current = consumirFila;
-
   if (captura.current === null && typeof window !== "undefined") {
     captura.current = new CapturaEntrevista({
       onParcial: (texto) => {
@@ -412,59 +254,25 @@ export default function Roteiro({
         setParcial(texto);
       },
       onAviso: setAviso,
-      /* Limiar medido nesta máquina: silêncio de microfone aberto fica em
-       * 0,0004–0,0005 (está nos logs do serviço); fala passa de 0,01. 0,002
-       * fica no meio, longe dos dois — não dispara com ruído de sala nem deixa
-       * de disparar com voz baixa. */
-      onNivel: (rms) => {
-        if (rms <= 0.002) return;
-        setUltimoSom(Date.now());
-        /* MEDIANA dos blocos com som — não média, não pico. A média afunda com
-         * as pausas (a maior parte de uma entrevista é silêncio) e o pico sobe
-         * com um estalo de mesa. A mediana separou limpo os dois extremos
-         * medidos aqui: microfone baixo 0,023, microfone bom 0,061.
-         *
-         * Só os blocos COM som entram: incluir o silêncio mediria quanto a
-         * pessoa fala, não quão alto. */
-        const b = niveisComSom.current;
-        b.push(rms);
-        if (b.length > 40) b.shift(); // ~20s de fala
-        /* 20 blocos (~10s de fala) antes de opinar. Com 8 a mediana pulava a
-         * cada frase e o aviso piscava — e aviso que pisca ninguém lê. */
-        if (b.length >= 20) {
-          const ordenado = [...b].sort((x, y) => x - y);
-          setNivelTipico(ordenado[Math.floor(ordenado.length / 2)]);
-        }
-      },
-      onChegada: setChegada,
-      /* Um trecho parou de mudar. Vai para a fila, não direto para a API: dois
-       * trechos podem confirmar quase juntos, e a fila os junta numa chamada. */
+      /* Um trecho estável entra somente no registro da conversa. */
       onTrecho: (texto) => {
         if (!texto.trim()) return;
-        setUltimaFala(Date.now());
         // Guardado ANTES de ir para a escuta: o arquivo bruto é o que foi dito,
         // não o que o modelo entendeu — inclusive o que ele descartou.
         transcricaoBruta.current.push({ quando: Date.now(), texto: texto.trim() });
-        filaTrechos.current.push(texto);
-        void consumirFilaRef.current();
+        // Durante a conversa isto é somente registro. Nenhuma chamada à IA e
+        // nenhuma alteração do formulário acontece antes da finalização.
+        setTranscricaoVisivel((anterior) =>
+          [anterior, texto.trim()].filter(Boolean).join(" "),
+        );
       },
       onFinal: (texto) => {
-        const id = emGravacao.current;
-        if (id) {
-          // Acrescenta em vez de substituir: é o que faz "adicionar complemento"
-          // funcionar — o cliente completa a resposta depois de uma pausa, e o
-          // trecho novo entra no fim do que já havia.
-          const novo = [String(respostasRef.current[id] ?? ""), texto]
-            .filter(Boolean)
-            .join(" ");
-          setRespostas((r) => ({ ...r, [id]: novo }));
-          // A conferência roda sobre a resposta INTEIRA, não só o trecho novo:
-          // o complemento costuma justamente preencher a lacuna apontada antes.
-          conferirRef.current(id, novo);
+        transcricaoConsolidada.current = texto.trim();
+        if (texto.trim()) setTranscricaoVisivel(texto.trim());
+        if (finalizarTranscricao.current) {
+          finalizarTranscricao.current(texto.trim());
+          finalizarTranscricao.current = null;
         }
-        emGravacao.current = null;
-        setGravandoId(null);
-        setFinalizando(false);
         setParcial("");
       },
       onEstado: (e) => {
@@ -475,15 +283,12 @@ export default function Roteiro({
       },
       onErro: (m) => {
         setErro(m);
-        /* Destrava a pergunta.
-         *
-         * Sem isto, um erro na transcrição deixava `gravandoId` preso para
-         * sempre: a pergunta continuava mostrando "Pausar" e "Finalizar", os
-         * dois clicavam em nada (a captura já não estava gravando) e a única
-         * saída era recarregar a página perdendo a entrevista. */
-        emGravacao.current = null;
-        setGravandoId(null);
-        setFinalizando(false);
+        if (finalizarTranscricao.current) {
+          finalizarTranscricao.current(
+            transcricaoBruta.current.map((item) => item.texto).join(" "),
+          );
+          finalizarTranscricao.current = null;
+        }
         setParcial("");
       },
     });
@@ -519,12 +324,13 @@ export default function Roteiro({
         }
       },
       temVideoPendente: () => videoPendente.current,
-      sugestoesPendentes: () => sugestoesRef.current.length,
-      encerrarGravacao: async () => {
-        await encerrarEscutaRef.current();
-        return captura.current?.entrevistaId ?? "";
-      },
-      transcricaoBruta: () => [...transcricaoBruta.current],
+      transcricaoBruta: () =>
+        transcricaoConsolidada.current
+          ? [{
+              quando: transcricaoBruta.current[0]?.quando ?? Date.now(),
+              texto: transcricaoConsolidada.current,
+            }]
+          : [...transcricaoBruta.current],
     }),
     [],
   );
@@ -540,111 +346,73 @@ export default function Roteiro({
     }
   }, []);
 
-  /* Começa a gravar — ou volta a gravar por cima de uma resposta que já existe.
-   *
-   * São a mesma operação: o `onFinal` acrescenta ao que já havia. O que muda é
-   * só o rótulo do botão, e é a diferença entre "gravar a resposta" e
-   * "complementar o que ele já disse" — que é o que se faz depois de ler a
-   * conferência e descobrir que faltou perguntar da CAT. */
-  const gravar = useCallback(async (perguntaId: string) => {
-    setErro(null);
-    setParcial("");
-    setEscutaEncerrada(false); // gravar de novo é gravação em curso, não fecho
-    try {
-      emGravacao.current = perguntaId;
-      setGravandoId(perguntaId);
-      await captura.current?.iniciarResposta(perguntaId);
-    } catch (e) {
-      emGravacao.current = null;
-      setGravandoId(null);
-      setErro(e instanceof Error ? e.message : "Não foi possível iniciar.");
-    }
-  }, []);
-
-  /* Abre a escuta da entrevista inteira. É o "podemos começar?" do roteiro.
-   *
-   * Daqui em diante ninguém aperta gravar: a conversa corre e o roteiro se
-   * preenche atrás dela. */
+  /** Abre uma única captura contínua para toda a entrevista. */
   const comecarEntrevista = useCallback(async () => {
     setErro(null);
-    setErroEscuta(null);
     /* Some com o painel do áudio ANTES de voltar a gravar.
      *
      * Ele fecha a gravação do id que recebe: deixado na tela durante uma
      * entrevista nova, encerraria a conversa que acabou de começar. */
-    setEscutaEncerrada(false);
     try {
       if (!captura.current) throw new Error("A gravação ainda não está pronta.");
       if (estadoMic === "sem-audio") await captura.current.selecionarAudio();
       // O mesmo clique que abre a entrevista abre a sessão contínua no servidor:
       // não existe estado de entrevista em andamento sem gravação de áudio.
       await captura.current.iniciarEntrevista();
-      emGravacao.current = null;
-      setEscutando(true);
-      setFonte("microfone");
-      // Abre o painel com o que o roteiro pede, antes de alguém falar.
-      filaTrechos.current = [];
-      void escutarTrecho("", respostasRef.current)
-        .then((r) => setFaltando(r.faltando))
-        .catch(() => undefined);
+      if (fonteAtual.current !== "chamada") setFonte("microfone");
+      setTranscricaoVisivel("");
+      transcricaoConsolidada.current = "";
+      transcricaoBruta.current = [];
+      setInicioEntrevista(Date.now());
+      setDuracaoEntrevista(0);
+      setErroProcessamento(null);
+      setFase("entrevista");
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível abrir o microfone.";
       setErro(/NotAllowedError|denied/i.test(m) ? "Permissão de microfone negada." : m);
     }
   }, [estadoMic]);
 
-  const encerrarEscuta = useCallback(async () => {
-    // Fecha a resposta ANTES: é o que faz o navegador parar de mandar bytes.
-    captura.current?.finalizarResposta();
-    setEscutando(false);
-    /* E só então oferece o áudio. O `aguardarEnvio` é o que separa "a fala
-     * inteira está no arquivo" de "faltou o fim": o encerramento vai por HTTP,
-     * numa conexão diferente da que leva o PCM, e poderia chegar primeiro. */
-    await captura.current?.aguardarEnvio();
-    setEscutaEncerrada(true);
-  }, []);
+  const finalizarEntrevista = useCallback(async () => {
+    if (!captura.current || fase !== "entrevista") return;
+    setFase("processando");
+    setErroProcessamento(null);
 
-  // Lido pelo `useImperativeHandle`, fixado na montagem: é assim que a tela de
-  // fora fecha a gravação no fim do atendimento, e não antes.
-  const encerrarEscutaRef = useRef(encerrarEscuta);
-  encerrarEscutaRef.current = encerrarEscuta;
+    const transcricaoFinal = new Promise<string>((resolve) => {
+      finalizarTranscricao.current = resolve;
+      window.setTimeout(() => {
+        if (!finalizarTranscricao.current) return;
+        finalizarTranscricao.current = null;
+        resolve(transcricaoBruta.current.map((item) => item.texto).join(" "));
+      }, 60_000);
+    });
 
-  const aceitarSugestao = useCallback((perguntaId: string, valor: string) => {
-    setRespostas((r) => ({ ...r, [perguntaId]: valor }));
-    setSugestoes((s) => s.filter((x) => x.pergunta_id !== perguntaId));
-  }, []);
+    captura.current.finalizarResposta();
+    await captura.current.aguardarEnvio();
 
-  const descartarSugestao = useCallback((perguntaId: string) => {
-    setSugestoes((s) => s.filter((x) => x.pergunta_id !== perguntaId));
-  }, []);
-
-  /** Rola até o campo e o destaca — o painel é índice, não só relatório. */
-  const irPara = useCallback((perguntaId: string) => {
-    const alvo = document.getElementById(`pergunta-${perguntaId}`);
-    if (!alvo) return;
-    alvo.scrollIntoView({ behavior: "smooth", block: "center" });
-    alvo.querySelector("textarea,input,select,button")?.setAttribute("data-realce", "1");
-    (alvo.querySelector("textarea,input") as HTMLElement | null)?.focus();
-  }, []);
-
-  /* Tira a pergunta da vez sem respondê-la. Ela continua pendente: o painel a
-   * mostra em "falta perguntar" e a condução a devolve quando o roteiro acabar,
-   * ou antes, no "retomar". */
-  const pular = useCallback((perguntaId: string) => {
-    setPuladas((p) => (p.includes(perguntaId) ? p : [...p, perguntaId]));
-  }, []);
-
-  const retomarPuladas = useCallback(() => setPuladas([]), []);
-
-  const pausar = useCallback(() => captura.current?.pausar(), []);
-  const retomar = useCallback(() => captura.current?.retomar(), []);
-  const finalizar = useCallback(() => {
-    // Marca ANTES de mandar parar: o servidor pode levar segundos para devolver
-    // o texto, e é essa marca que troca os botões por "Transcrevendo…" em vez
-    // de deixar dois botões inertes na tela.
-    setFinalizando(true);
-    captura.current?.finalizarResposta();
-  }, []);
+    try {
+      const texto = (await transcricaoFinal).trim() ||
+        transcricaoBruta.current.map((item) => item.texto).join(" ");
+      const [resultado] = await Promise.all([
+        processarEntrevista(texto, respostasRef.current, codigo),
+        captura.current.encerrarGravacao(),
+      ]);
+      respostasRef.current = resultado.respostas;
+      setRespostas(resultado.respostas);
+      setIncertas(resultado.incertas);
+      setFase("revisao");
+    } catch (e) {
+      // Mesmo quando a IA falha, a entrevista e a transcrição continuam
+      // disponíveis para revisão e preenchimento manual.
+      await captura.current.encerrarGravacao().catch(() => undefined);
+      setErroProcessamento(
+        e instanceof Error
+          ? e.message
+          : "Não foi possível organizar a entrevista. A transcrição foi preservada.",
+      );
+      setFase("revisao");
+    }
+  }, [codigo, fase]);
 
   const responder = useCallback((id: string, valor: string | string[]) => {
     setRespostas((r) => ({ ...r, [id]: valor }));
@@ -677,50 +445,6 @@ export default function Roteiro({
         .flatMap((b) => b.perguntas.map((pergunta) => ({ pergunta, bloco: b.titulo }))),
     [blocosVisiveis],
   );
-
-  /* Pergunta que já tem sugestão esperando um clique NÃO é pergunta a fazer.
-   *
-   * Nome e CPF nunca entram sozinhos: a escuta os manda como sugestão, e quem
-   * confirma é quem está ouvindo (ver `escuta.DADOS_PERMITIDOS` — dígito
-   * transcrito ninguém confere de ouvido). Só que "esperando confirmação" é
-   * outra coisa que "o cliente não respondeu": ele já falou o nome dele.
-   *
-   * Sem esta linha a condução parava nas duas primeiras perguntas do roteiro
-   * até alguém achar o clique no painel ao lado — com a cobrança de PARE no ar
-   * o tempo todo, mandando insistir numa pergunta que o cliente já tinha
-   * respondido. A confirmação continua obrigatória; ela é que não trava mais a
-   * conversa, e a pergunta volta à vez sozinha se a sugestão for descartada. */
-  const aguardandoConfirmacao = useMemo(
-    () => new Map(sugestoes.map((s) => [s.pergunta_id, s.valor] as const)),
-    [sugestoes],
-  );
-
-  /* A pergunta da vez: a primeira ainda em aberto, na ordem.
-   *
-   * O que o cliente adiantar fora de ordem já entrou pela escuta e some daqui
-   * sozinho — é assim que a entrevista encurta sem que ninguém perca o fio.
-   * Quem escolhe a pergunta é o roteiro; o entrevistador só a lê. */
-  const posicaoNatural = useMemo(
-    () =>
-      sequencia.findIndex(
-        ({ pergunta }) =>
-          !respondida(respostas[pergunta.id]) &&
-          !puladas.includes(pergunta.id) &&
-          !aguardandoConfirmacao.has(pergunta.id),
-      ),
-    [sequencia, respostas, puladas, aguardandoConfirmacao],
-  );
-
-  /* Resposta aceita libera a próxima pergunta no mesmo render. A captura e a
-   * fila de interpretação continuam independentes da pergunta visível, então
-   * uma fala posterior ainda pode complementar qualquer resposta anterior. */
-  const posicaoAtual = posicaoNatural;
-  const atual = posicaoAtual >= 0 ? sequencia[posicaoAtual] : null;
-  atualRef.current = atual?.pergunta.id ?? "";
-  /** A entrevista anda: caiu resposta em ALGUMA pergunta há pouco. */
-  const fluindo =
-    ultimoPreenchimento !== null &&
-    Date.now() - ultimoPreenchimento < SEGUNDOS_FLUINDO * 1000;
 
   /* Nome e CPF são DIGITADOS, e são a condição para o microfone abrir.
    *
@@ -762,6 +486,7 @@ export default function Roteiro({
    * mudam `respostas`; e o debounce evita uma consulta por campo quando a escuta
    * preenche vários de uma vez. A última leitura boa permanece visível em falha. */
   useEffect(() => {
+    if (fase !== "revisao") return;
     if (relatoConsolidado.length < 160 || feitas < 3) return;
     if (relatoConsolidado === ultimoRelatoRecomendado.current) return;
     const timer = window.setTimeout(() => {
@@ -780,23 +505,20 @@ export default function Roteiro({
         .finally(() => setAtualizandoRecomendacao(false));
     }, 3500);
     return () => window.clearTimeout(timer);
-  }, [relatoConsolidado, lacunasObrigatorias, feitas]);
+  }, [relatoConsolidado, lacunasObrigatorias, feitas, fase]);
 
-  /* Sobe o que já foi respondido, sem esperar o fim da entrevista.
-   *
-   * O ref é para o callback poder ser inline no pai (novo a cada render) sem
-   * disparar este efeito a cada volta — o que interessa é a mudança das
-   * RESPOSTAS. */
+  /* Publica resultados somente na revisão; durante a conversa o formulário
+   * externo continua intocado. */
   const aoMudar = useRef(onRespostas);
   aoMudar.current = onRespostas;
   useEffect(() => {
-    if (!aoMudar.current) return;
+    if (!aoMudar.current || fase !== "revisao") return;
     aoMudar.current(
       respostas,
       montarRelato(blocosVisiveis, respostas),
       captura.current?.entrevistaId ?? "",
     );
-  }, [respostas, blocosVisiveis]);
+  }, [respostas, blocosVisiveis, fase]);
 
   if (erro && !roteiro) return <p className={estilos.vazio}>{erro}</p>;
   if (!roteiro) return <p className={estilos.vazio}>Carregando o roteiro…</p>;
@@ -809,171 +531,193 @@ export default function Roteiro({
         * for falado não vira campo preenchido. É a única coisa que importa. */}
       {sessaoCaiu && (
         <div className={estilos.sessaoCaiu} role="alert">
-          <strong>Sua sessão expirou — o que está sendo dito NÃO está sendo salvo.</strong>{" "}
-          A transcrição continua na tela, mas o roteiro parou de ser preenchido.
-          Recarregue a página (F5) para voltar a gravar; o que já foi preenchido
-          está guardado.
+          <strong>Sua sessão de acesso expirou.</strong>{" "}
+          A gravação e a transcrição continuam registrando a conversa, mas será
+          necessário entrar novamente para processar os resultados.
         </div>
       )}
       <div className={estilos.cabecalho}>
         <div>
           <h2 className={estilos.titulo}>{roteiro.nome}</h2>
+          <span className={estilos.fonte}>
+            {fase === "preparacao" && "Preparação"}
+            {fase === "entrevista" && "Entrevista em andamento"}
+            {fase === "processando" && "Entrevista finalizada — processando informações"}
+            {fase === "revisao" && "Resultados para revisão"}
+          </span>
         </div>
         <div className={transcricaoEstilos.acoes}>
-          {/* O botão que abre a entrevista inteira. Substitui os 86 ciclos de
-              gravar/finalizar: daqui em diante o microfone fica aberto e o
-              roteiro se preenche atrás da conversa. */}
-          {escutando && (
-            <button
-              type="button"
-              className={transcricaoEstilos.secundario}
-              onClick={() => void encerrarEscuta()}
-            >
-              Encerrar escuta
-            </button>
-          )}
-
-          {/* Com a chamada no ar, o microfone daqui não entra na transcrição —
-              ele serve para o entrevistado ouvir o advogado, e quem cuida disso
-              é o painel da chamada. Oferecer "ligar microfone" aqui convidaria a
-              trocar a voz do cliente pela do entrevistador sem perceber. */}
-          {fonte !== "chamada" && !escutando && (
+          {fase === "preparacao" && fonte !== "chamada" && (
             <button
               type="button"
               className={transcricaoEstilos.secundario}
               onClick={ligarMicrofone}
-              disabled={gravandoId !== null}
             >
               {temMic ? "Trocar microfone" : "Ligar microfone"}
             </button>
           )}
-
-          <span className={estilos.fonte}>
-            {fonte === "chamada"
-              ? "transcrevendo a voz do entrevistado"
-              : fonte === "microfone"
-                ? "transcrevendo este microfone"
-                : "sem áudio"}
-          </span>
-
-          <button
-            type="button"
-            className={estilos.teste}
-            onClick={() => {
-              const amostra = entrevistaDeTeste(roteiro.blocos);
-              // Completa o que falta sem apagar respostas que já foram
-              // digitadas ou transcritas pelo cliente.
-              setRespostas((atuais) => {
-                const preenchidas = { ...amostra };
-                for (const [id, valor] of Object.entries(atuais)) {
-                  if (respondida(valor)) preenchidas[id] = valor;
-                }
-                return preenchidas;
-              });
-              setPuladas([]);
-              setAviso("Campos vazios preenchidos automaticamente com dados fictícios para teste.");
-            }}
-            title="Completa os campos vazios com uma entrevista fictícia; não substitui respostas existentes"
-          >
-            Preencher automaticamente
-          </button>
-
-          <span className={estilos.progresso}>
-            {feitas}/{total}
-          </span>
+          {fase === "entrevista" && (
+            <span className={estilos.progresso}>{formatarDuracao(duracaoEntrevista)}</span>
+          )}
+          {fase === "revisao" && <span className={estilos.progresso}>{feitas}/{total}</span>}
         </div>
       </div>
 
-      <div className={estilos.barra}>
+      {fase === "revisao" && <div className={estilos.barra}>
         <i
           className={estilos.preenchimento}
           style={{ width: `${total ? (feitas / total) * 100 : 0}%` }}
         />
-      </div>
+      </div>}
 
       {/* O vídeo fica aqui em cima porque gravar em vídeo se decide no começo
         * da conversa — e porque ele não é guardado em lugar nenhum, então quem
         * quiser precisa ver a opção antes, não depois. */}
       <VideoDaEntrevista
+        permitirInicio={fase === "preparacao"}
+        finalizar={fase === "processando" || fase === "revisao"}
         onPendente={(pendente) => {
           videoPendente.current = pendente;
         }}
       />
 
       {erro && <div className={transcricaoEstilos.erro}>{erro}</div>}
+      {aviso && <p className={transcricaoEstilos.aviso} aria-live="polite">{aviso}</p>}
 
-      {aviso && (
-        <p className={transcricaoEstilos.aviso} aria-live="polite">
-          {aviso}
-        </p>
-      )}
-
-      {/* A porta de entrada: sem nome e CPF, o microfone não abre.
-        *
-        * O aviso diz o que falta e leva até o campo, em vez de deixar um botão
-        * cinza sem explicação — que é como o entrevistador descobriria a regra,
-        * com o cliente esperando. */}
-      {!escutando && faltaParaComecar.length > 0 && (
-        <p className={transcricaoEstilos.aviso}>
-          <strong>Digite {faltaParaComecar.join(" e ")} para começar.</strong> São os dois
-          dados que abrem o atendimento e que o contrato, a procuração e a declaração
-          exigem — e os únicos que não se colhem de ouvido, porque número e nome próprio
-          a transcrição erra.{" "}
-          <button
-            type="button"
-            className={estilos.saudacaoAlternar}
-            onClick={() => irPara(respondida(respostas["nome"]) ? "cpf" : "nome")}
-          >
-            ir ao campo
-          </button>
-        </p>
-      )}
-
-      {!temMic && !escutando && faltaParaComecar.length === 0 && (
-        <p className={transcricaoEstilos.aviso}>
-          Clique em <strong>Começar a entrevista</strong> para abrir o microfone. Daí em
-          diante a conversa é transcrita e o roteiro se preenche sozinho — você não
-          precisa gravar pergunta por pergunta.
-        </p>
-      )}
-
-      {/* O áudio passou a ser GUARDADO, não só transcrito. A saudação do roteiro
-        * promete sigilo e não fala em gravação; enquanto ela não falar, quem
-        * avisa é o entrevistador — e o lembrete fica onde ele olha antes de
-        * abrir o microfone, não escondido num rodapé. */}
-      {escutando && (
-        <p className={transcricaoEstilos.aviso}>
-          A conversa está sendo <strong>gravada e transcrita</strong>, e o áudio fica
-          guardado nesta máquina. Avise o cliente — o roteiro promete sigilo, mas não
-          menciona gravação.
-        </p>
-      )}
-
-      {/* A saudação, palavra por palavra, para ser LIDA ao cliente.
-        *
-        * Fica recolhida depois de lida porque ela é longa e ocupa a tela que o
-        * roteiro precisa; mas não some, porque a atendente pode querer voltar a
-        * uma frase. Ver `roteiros.SAUDACAO`. */}
-      {roteiro.saudacao?.length > 0 && (
-        <section className={estilos.saudacao}>
-          <div className={estilos.saudacaoTopo}>
-            <span className={estilos.saudacaoRotulo}>LEIA AO CLIENTE</span>
+      {fase === "preparacao" && (
+        <section className={estilos.etapaEntrevista}>
+          <span className={estilos.blocoTitulo}>ANTES DE COMEÇAR</span>
+          <p className={estilos.objetivo}>
+            Identifique o cliente e confirme a fonte de áudio. Depois disso, a
+            conversa será registrada sem preencher campos durante a entrevista.
+          </p>
+          <label className={estilos.campoPreparacao}>
+            <span>Nome completo</span>
+            <input
+              className={estilos.campo}
+              value={String(respostas.nome ?? "")}
+              onChange={(e) => responder("nome", e.target.value)}
+            />
+          </label>
+          <label className={estilos.campoPreparacao}>
+            <span>CPF</span>
+            <input
+              className={estilos.campo}
+              inputMode="numeric"
+              value={String(respostas.cpf ?? "")}
+              onChange={(e) => responder("cpf", formatarCpf(e.target.value))}
+            />
+          </label>
+          <div className={estilos.inicioEntrevista}>
             <button
               type="button"
-              className={estilos.saudacaoAlternar}
-              onClick={() => setSaudacaoLida((v) => !v)}
+              className={transcricaoEstilos.botao}
+              onClick={comecarEntrevista}
+              disabled={faltaParaComecar.length > 0}
             >
-              {saudacaoLida ? "mostrar de novo" : "já li"}
+              Iniciar entrevista
             </button>
+            <span>
+              {fonte === "chamada"
+                ? "A voz do cliente na chamada será gravada e transcrita."
+                : temMic
+                  ? "Microfone pronto para gravar e transcrever a conversa."
+                  : "O microfone será solicitado ao iniciar."}
+            </span>
           </div>
-          {!saudacaoLida &&
-            roteiro.saudacao.map((p, i) => (
-              <p key={i} className={estilos.saudacaoTexto}>
-                {p}
-              </p>
-            ))}
+          {faltaParaComecar.length > 0 && (
+            <p className={transcricaoEstilos.aviso}>
+              Informe {faltaParaComecar.join(" e ")} para iniciar.
+            </p>
+          )}
         </section>
       )}
+
+      {fase === "entrevista" && (
+        <section className={estilos.etapaEntrevista}>
+          <div className={estilos.estadoEntrevista}>
+            <span>
+              <i className={estilos.indicadorGravando} />
+              {estadoMic === "sem-audio" ? "Captura interrompida" : "Em andamento"}
+            </span>
+            <strong>{formatarDuracao(duracaoEntrevista)}</strong>
+          </div>
+          <p className={estilos.objetivo}>
+            A conversa está sendo gravada e transcrita. O formulário será preparado
+            somente depois da finalização.
+          </p>
+          <details className={estilos.transcricaoSessao} open>
+            <summary>Transcrição da conversa</summary>
+            <div className={transcricaoEstilos.transcricao} aria-live="polite">
+              {[transcricaoVisivel, parcial].filter(Boolean).join(" ") || "Aguardando a conversa…"}
+            </div>
+          </details>
+          <details className={estilos.guiaEntrevista}>
+            <summary>Consultar roteiro de perguntas</summary>
+            {roteiro.saudacao.length > 0 && (
+              <section>
+                <strong>Abertura</strong>
+                {roteiro.saudacao.map((texto, indice) => <p key={indice}>{texto}</p>)}
+              </section>
+            )}
+            {roteiro.blocos
+              .filter((bloco) => !bloco.delegado_a)
+              .map((bloco) => (
+                <section key={bloco.id}>
+                  <strong>{bloco.titulo}</strong>
+                  <ol>
+                    {bloco.perguntas.map((pergunta) => <li key={pergunta.id}>{pergunta.texto}</li>)}
+                  </ol>
+                </section>
+              ))}
+            {roteiro.encerramento.length > 0 && (
+              <section>
+                <strong>Encerramento</strong>
+                {roteiro.encerramento.map((texto, indice) => <p key={indice}>{texto}</p>)}
+              </section>
+            )}
+          </details>
+          <button
+            type="button"
+            className={transcricaoEstilos.botao}
+            onClick={() => void finalizarEntrevista()}
+          >
+            Finalizar entrevista
+          </button>
+        </section>
+      )}
+
+      {fase === "processando" && (
+        <section className={estilos.processando} role="status" aria-live="polite">
+          <i className={estilos.processandoIndicador} />
+          <div>
+            <strong>Entrevista finalizada — processando informações</strong>
+            <p>Estamos organizando a conversa e preparando os resultados para revisão.</p>
+          </div>
+        </section>
+      )}
+
+      {fase === "revisao" && (
+        <section className={estilos.revisaoTopo}>
+          <span className={estilos.blocoTitulo}>REVISÃO DOS RESULTADOS</span>
+          <p>Confira e ajuste os campos antes de continuar o atendimento jurídico.</p>
+          {erroProcessamento && (
+            <div className={transcricaoEstilos.erro}>{erroProcessamento}</div>
+          )}
+          {incertas.length > 0 && (
+            <details>
+              <summary>{incertas.length} informação(ões) deixada(s) em aberto por segurança</summary>
+              <ul>{incertas.map((item) => <li key={item.pergunta_id}>{item.motivo}</li>)}</ul>
+            </details>
+          )}
+          <details className={estilos.transcricaoSessao}>
+            <summary>Transcrição completa da entrevista</summary>
+            <div className={transcricaoEstilos.transcricao}>{transcricaoVisivel}</div>
+          </details>
+        </section>
+      )}
+
+      {fase === "revisao" && <div>
 
       {(recomendacaoCaso || atualizandoRecomendacao || erroRecomendacao) && (
         <section className={estilos.recomendacao} aria-live="polite">
@@ -1030,7 +774,7 @@ export default function Roteiro({
         </section>
       )}
 
-      <div className={escutando ? estilos.comPainel : undefined}>
+      <div>
         <div>
           {/* A pergunta da vez, grudada no alto da coluna do roteiro. Vem ANTES
             * das perguntas todas porque é o que se lê ao cliente; o que está
@@ -1038,92 +782,19 @@ export default function Roteiro({
             * não por cima do painel: os dois grudam ao rolar, e um passaria por
             * cima do outro. Enquanto a escuta não abriu ela só aponta por onde
             * começar — sem relógio, porque não há entrevista para cobrar ainda. */}
-          <Conducao
-            pergunta={atual?.pergunta ?? null}
-            bloco={atual?.bloco ?? ""}
-            posicao={posicaoAtual + 1}
-            total={total}
-            puladas={puladas.length}
-            sugestoes={sugestoes}
-            retomadas={roteiro.retomadas ?? []}
-            fechosPorTipo={roteiro.fechos_por_tipo ?? {}}
-            ativo={escutando && estadoMic !== "pausado"}
-            respondendo={false}
-            fluindo={fluindo}
-            onIrPara={irPara}
-            onPular={pular}
-            onRetomarPuladas={retomarPuladas}
-            onAceitar={aceitarSugestao}
-            onDescartar={descartarSugestao}
-          />
-
           {blocosVisiveis.map((bloco) => (
             <BlocoRoteiro
               key={bloco.id}
               bloco={bloco}
               respostas={respostas}
-              perguntaAtual={atual?.pergunta.id ?? ""}
-              puladas={puladas}
-              aguardando={aguardandoConfirmacao}
               onResponder={responder}
-              gravandoId={gravandoId}
-              pausado={estadoMic === "pausado"}
-              finalizando={finalizando}
-              parcial={parcial}
-              temMic={temMic}
-              escutando={escutando}
-              onGravar={gravar}
-              onPausar={pausar}
-              onRetomar={retomar}
-              onFinalizar={finalizar}
               conferencias={conferencias}
               onConferir={conferir}
-              rodape={
-                !escutando &&
-                bloco.perguntas.some((p) => p.id === "nome") &&
-                bloco.perguntas.some((p) => p.id === "cpf") ? (
-                  <div className={estilos.inicioEntrevista}>
-                    <button
-                      type="button"
-                      className={transcricaoEstilos.botao}
-                      onClick={comecarEntrevista}
-                      disabled={gravandoId !== null || faltaParaComecar.length > 0}
-                      title={
-                        faltaParaComecar.length > 0
-                          ? `Digite ${faltaParaComecar.join(" e ")} antes de começar`
-                          : "Começa a entrevista, a gravação e a transcrição"
-                      }
-                    >
-                      Começar e gravar entrevista
-                    </button>
-                    <span>
-                      Ao clicar, o microfone abre e o áudio começa a ser gravado e
-                      transcrito automaticamente.
-                    </span>
-                  </div>
-                ) : undefined
-              }
+              rodape={undefined}
             />
           ))}
         </div>
 
-        {escutando && (
-          <PainelEscuta
-            preenchidas={ouvidas}
-            aConferir={sugestoes.length}
-            lembretes={lembretes}
-            faltando={faltando}
-            interpretando={ouvindo}
-            captando={escutando && estadoMic !== "sem-audio"}
-            pausado={estadoMic === "pausado"}
-            ultimaFala={ultimaFala}
-            ultimoSom={ultimoSom}
-            nivelTipico={nivelTipico}
-            chegada={chegada}
-            erro={erroEscuta}
-            onIrPara={irPara}
-          />
-        )}
       </div>
 
       {/* O encerramento, também para ser lido. Só aparece quando há o que
@@ -1141,11 +812,7 @@ export default function Roteiro({
         </details>
       )}
 
-      {/* O áudio, depois de encerrada a escuta. Antes disso não há arquivo, e um
-        * botão que não baixa nada é pior que botão nenhum. */}
-      {escutaEncerrada && (
-        <AudioDaEntrevista entrevistaId={captura.current?.entrevistaId ?? ""} />
-      )}
+      </div>}
 
       {/* Não há botão de concluir aqui.
         *
@@ -1177,45 +844,14 @@ function montarRelato(blocos: Bloco[], respostas: Respostas): string {
 function BlocoRoteiro({
   bloco,
   respostas,
-  perguntaAtual,
-  puladas,
-  aguardando,
   onResponder,
-  gravandoId,
-  pausado,
-  finalizando,
-  parcial,
-  temMic,
-  escutando,
-  onGravar,
-  onPausar,
-  onRetomar,
-  onFinalizar,
   conferencias,
   onConferir,
   rodape,
 }: {
   bloco: Bloco;
   respostas: Respostas;
-  /** A pergunta da vez na sequência — marcada na lista para o olho achar. */
-  perguntaAtual: string;
-  puladas: string[];
-  /** Ouvidas e esperando conferência, por id -> o que a escuta ouviu. Saíram da
-   *  vez, mas não estão respondidas — e o valor aparece para o entrevistador
-   *  VER que o sistema pegou, sem ter de parar a conversa para confirmar. */
-  aguardando: Map<string, string>;
   onResponder: (id: string, valor: string | string[]) => void;
-  gravandoId: string | null;
-  pausado: boolean;
-  finalizando: boolean;
-  parcial: string;
-  temMic: boolean;
-  /** A entrevista está com o microfone aberto: os botões por pergunta somem. */
-  escutando: boolean;
-  onGravar: (id: string) => void;
-  onPausar: () => void;
-  onRetomar: () => void;
-  onFinalizar: () => void;
   conferencias: Record<string, EstadoConferencia>;
   onConferir: (id: string, texto: string, forcar?: boolean) => void;
   /** Ação contextual depois do bloco de identificação (nome e CPF). */
@@ -1248,7 +884,6 @@ function BlocoRoteiro({
             className={[
               estilos.pergunta,
               respostas[p.id] ? estilos.respondida : "",
-              p.id === perguntaAtual ? estilos.daVez : "",
             ]
               .filter(Boolean)
               .join(" ")}
@@ -1259,20 +894,6 @@ function BlocoRoteiro({
                 {p.texto}
                 {p.obrigatoria && <span className={estilos.obrigatoria}>*</span>}
               </span>
-              {/* A mesma pergunta que está na barra do topo. Sem esta marca, o
-                * entrevistador que rolou a tela precisa reler a barra para
-                * saber onde ela caiu no formulário. */}
-              {p.id === perguntaAtual && <span className={estilos.marcaDaVez}>AGORA</span>}
-              {/* Ouvida, não confirmada. A condução seguiu em frente para não
-                * travar a conversa; a marca é o que impede a pergunta de passar
-                * por respondida quando ainda depende de um clique. */}
-              {aguardando.has(p.id) && (
-                <span className={estilos.marcaConferir}>OUVIDO · CONFIRA NO FIM</span>
-              )}
-              {puladas.includes(p.id) && (
-                <span className={estilos.marcaPulada}>DEIXADA PARA DEPOIS</span>
-              )}
-              {p.transcrever && <span className={estilos.marcaGravavel}>VOZ</span>}
             </div>
 
             {p.dica && <span className={estilos.dica}>{p.dica}</span>}
@@ -1283,32 +904,8 @@ function BlocoRoteiro({
                 valor={respostas[p.id]}
                 valorAlvo={p.preenche ? respostas[p.preenche] : undefined}
                 onResponder={onResponder}
-                gravando={gravandoId === p.id}
-                pausado={gravandoId === p.id && pausado}
-                finalizando={gravandoId === p.id && finalizando}
-                parcial={gravandoId === p.id ? parcial : ""}
-                temMic={temMic}
-                escutando={escutando}
-                ocupado={gravandoId !== null && gravandoId !== p.id}
-                onGravar={onGravar}
-                onPausar={onPausar}
-                onRetomar={onRetomar}
-                onFinalizar={onFinalizar}
                 onConferir={onConferir}
               />
-
-              {/* O que a escuta ouviu, à mostra no próprio campo.
-                *
-                * Sem isto o entrevistador fala o nome, o campo continua vazio e
-                * a conclusão óbvia é "não pegou nada" — foi exatamente o que
-                * aconteceu quando a caixa de confirmação saiu do painel. O
-                * valor fica visível; confirmar continua sendo no fim. */}
-              {aguardando.has(p.id) && (
-                <span className={estilos.ouvido}>
-                  ouvi <strong>“{aguardando.get(p.id)}”</strong> — entra no campo quando
-                  você confirmar, no fim do roteiro
-                </span>
-              )}
             </div>
 
             {/* A conferência mora embaixo da pergunta que a gerou: lida em
@@ -1444,17 +1041,6 @@ function CampoResposta({
   valor,
   valorAlvo,
   onResponder,
-  gravando,
-  pausado,
-  finalizando,
-  parcial,
-  temMic,
-  escutando,
-  ocupado,
-  onGravar,
-  onPausar,
-  onRetomar,
-  onFinalizar,
   onConferir,
 }: {
   pergunta: Pergunta;
@@ -1462,20 +1048,6 @@ function CampoResposta({
   /** Resposta atual do campo que a busca preenche — para não sobrescrevê-la. */
   valorAlvo?: string | string[];
   onResponder: (id: string, valor: string | string[]) => void;
-  gravando: boolean;
-  pausado: boolean;
-  /** Esperando o texto final voltar do servidor. */
-  finalizando: boolean;
-  parcial: string;
-  temMic: boolean;
-  /** A entrevista corre com o microfone aberto. */
-  escutando: boolean;
-  /** Outra pergunta está gravando — o microfone é um só para a entrevista. */
-  ocupado: boolean;
-  onGravar: (id: string) => void;
-  onPausar: () => void;
-  onRetomar: () => void;
-  onFinalizar: () => void;
   onConferir: (id: string, texto: string, forcar?: boolean) => void;
 }) {
   const texto = typeof valor === "string" ? valor : "";
@@ -1618,94 +1190,21 @@ function CampoResposta({
     );
   }
 
-  // relato — com gravador quando marcado, sempre editável por teclado.
-  const emCurso = gravando || pausado;
-
   return (
     <>
-      {/* Com o microfone aberto, os botões por pergunta somem.
-        *
-        * Era exatamente disso que o escritório reclamou: gravar/finalizar 86
-        * vezes fazia o entrevistador administrar botões em vez de conversar. A
-        * caixa de texto continua editável — o que a escuta preenche, a mão
-        * corrige. */}
-      {pergunta.transcrever && !escutando && (
-        <div className={estilos.opcoes} style={{ marginBottom: 8 }}>
-          {!emCurso && (
-            <button
-              type="button"
-              className={transcricaoEstilos.botao}
-              onClick={() => onGravar(pergunta.id)}
-              disabled={!temMic || ocupado}
-              title={
-                !temMic
-                  ? "Ligue o microfone no topo da tela"
-                  : ocupado
-                    ? "Outra pergunta está gravando — finalize aquela antes"
-                    : ""
-              }
-            >
-              {/* O rótulo muda porque a operação é a mesma mas a intenção não:
-                * complementar é o que se faz depois de ler a conferência e
-                * descobrir o que faltou perguntar. O trecho novo entra no fim
-                * do que já estava escrito, sem apagar nada. */}
-              {texto.trim() ? "Adicionar complemento" : "Gravar resposta"}
-            </button>
-          )}
-
-          {emCurso && (
-            <>
-              <button
-                type="button"
-                className={transcricaoEstilos.secundario}
-                onClick={pausado ? onRetomar : onPausar}
-                // Depois de finalizar não há o que pausar: a captura já parou.
-                // Desabilitar é o que faz o botão parar de mentir.
-                disabled={finalizando}
-              >
-                {pausado ? "Retomar" : "Pausar"}
-              </button>
-              <button
-                type="button"
-                className={`${transcricaoEstilos.botao} ${
-                  gravando && !finalizando ? transcricaoEstilos.gravando : ""
-                }`}
-                onClick={onFinalizar}
-                disabled={finalizando}
-              >
-                {finalizando ? "Transcrevendo…" : "Finalizar resposta"}
-              </button>
-            </>
-          )}
-
-          {pausado && !finalizando && (
-            <span className={estilos.pausa}>
-              pausado — o que for dito agora não entra na resposta
-            </span>
-          )}
-
-          {finalizando && (
-            <span className={estilos.pausa}>
-              transcrevendo a resposta inteira — o texto aparece em instantes
-            </span>
-          )}
-        </div>
-      )}
-
       <textarea
         className={estilos.area}
-        value={gravando && parcial ? `${texto}${texto ? " " : ""}${parcial}` : texto}
+        value={texto}
         onChange={(e) => onResponder(pergunta.id, e.target.value)}
         /* Conferir ao sair do campo é o equivalente digitado de "finalizar
          * resposta". Fazê-lo a cada tecla custaria uma chamada ao modelo por
          * letra; num botão à parte, ninguém clicaria no meio da entrevista. */
         onBlur={(e) => {
-          if (pergunta.transcrever && !emCurso) onConferir(pergunta.id, e.target.value);
+          if (pergunta.transcrever) onConferir(pergunta.id, e.target.value);
         }}
         placeholder={
-          pergunta.transcrever ? "Grave pelo microfone ou digite aqui." : "Digite a resposta."
+          pergunta.transcrever ? "Revise ou complete a resposta." : "Digite a resposta."
         }
-        readOnly={gravando}
       />
     </>
   );

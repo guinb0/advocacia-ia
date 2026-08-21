@@ -432,6 +432,14 @@ class PedidoEscuta(BaseModel):
     pergunta_atual: str = Field(default="", max_length=80)
 
 
+class PedidoProcessamentoEntrevista(BaseModel):
+    """A conversa completa, enviada uma única vez depois do encerramento."""
+
+    transcricao: str = Field(min_length=1, max_length=80_000)
+    respostas: dict[str, Any] = Field(default_factory=dict)
+    roteiro: str = Field(default="empregado_publico", max_length=60)
+
+
 @app.post("/api/entrevista/escuta")
 async def escutar_entrevista(pedido: PedidoEscuta):
     """O que este trecho de fala respondeu do roteiro, e o que ainda falta.
@@ -448,6 +456,20 @@ async def escutar_entrevista(pedido: PedidoEscuta):
         return await run_in_threadpool(
             escuta.escutar, pedido.trecho, pedido.respostas, pedido.roteiro,
             pedido.pergunta_atual
+        )
+    except escuta.ErroEscuta as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/entrevista/processar")
+async def processar_entrevista(pedido: PedidoProcessamentoEntrevista):
+    """Consolida a transcrição e preenche o formulário após a entrevista."""
+    try:
+        return await run_in_threadpool(
+            escuta.processar_entrevista,
+            pedido.transcricao,
+            pedido.respostas,
+            pedido.roteiro,
         )
     except escuta.ErroEscuta as exc:
         raise HTTPException(503, str(exc)) from exc

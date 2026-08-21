@@ -19,9 +19,17 @@ import estilos from "./VideoDaEntrevista.module.css";
 interface Props {
   /** Avisa que há vídeo gravado e ainda não baixado — o que se perde ao sair. */
   onPendente?: (pendente: boolean) => void;
+  /** Só a preparação pode abrir uma gravação nova. */
+  permitirInicio?: boolean;
+  /** Para uma gravação em curso quando a entrevista é finalizada. */
+  finalizar?: boolean;
 }
 
-export default function VideoDaEntrevista({ onPendente }: Props) {
+export default function VideoDaEntrevista({
+  onPendente,
+  permitirInicio = true,
+  finalizar = false,
+}: Props) {
   const [estado, setEstado] = useState<EstadoVideo>("parado");
   const [video, setVideo] = useState<VideoGravado | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -70,6 +78,10 @@ export default function VideoDaEntrevista({ onPendente }: Props) {
 
   useEffect(() => setPodeGravar(podeGravarVideo()), []);
 
+  useEffect(() => {
+    if (finalizar && estado === "gravando") gravacao.current?.parar();
+  }, [estado, finalizar]);
+
   // Sair da tela solta câmera e microfone. Sem isto a luz da câmera fica acesa
   // depois da entrevista fechada.
   useEffect(() => () => gravacao.current?.encerrar(), []);
@@ -115,7 +127,7 @@ export default function VideoDaEntrevista({ onPendente }: Props) {
       <div className={estilos.linha}>
         <span className={estilos.rotulo}>VÍDEO</span>
 
-        {!gravando ? (
+        {!gravando && permitirInicio ? (
           <>
             <button
               type="button"
@@ -137,7 +149,7 @@ export default function VideoDaEntrevista({ onPendente }: Props) {
               Gravar a tela do sistema
             </button>
           </>
-        ) : (
+        ) : gravando ? (
           <>
             <button
               type="button"
@@ -151,7 +163,7 @@ export default function VideoDaEntrevista({ onPendente }: Props) {
               {formatarRelogio(decorrido)}
             </span>
           </>
-        )}
+        ) : null}
       </div>
 
       <p className={estilos.nota}>
