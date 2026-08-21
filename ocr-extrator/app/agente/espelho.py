@@ -111,7 +111,7 @@ def _titulo(caso: dict[str, Any]) -> str:
 # -------------------------------------------------------------- documentos
 
 
-def enviar_entrega(caso_id: str, entrega_id: str) -> bool:
+def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) -> bool:
     """Entrega ao agente uma extração já concluída. Silencioso por design.
 
     Chamado logo depois do OCR, em segundo plano: se o agente estiver fora do ar, o
@@ -142,6 +142,8 @@ def enviar_entrega(caso_id: str, entrega_id: str) -> bool:
     except ErroDoAgente as erro:
         log.warning("falha ao enviar entrega %s ao agente: %s", entrega_id, erro)
         armazenamento.registrar_erro_agente(caso_id, str(erro))
+        if not silencioso:
+            raise
         return False
 
     armazenamento.marcar_entrega_enviada(caso_id, entrega_id)

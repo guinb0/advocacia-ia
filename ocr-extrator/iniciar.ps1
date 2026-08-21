@@ -101,6 +101,26 @@ function Wait-ModeloAquecido {
     return $false
 }
 
+function Wait-WorkerOcr {
+    param(
+        [System.Diagnostics.Process]$Processo,
+        [string]$Destino,
+        [int]$TimeoutSegundos = 120
+    )
+
+    $limite = [DateTime]::UtcNow.AddSeconds($TimeoutSegundos)
+    while ([DateTime]::UtcNow -lt $limite) {
+        if ($Processo.HasExited) {
+            throw "O worker de OCR encerrou durante a inicializacao."
+        }
+        $resposta = & ".\.venv\Scripts\celery.exe" -A app.celery_app:celery_app `
+            inspect ping -d $Destino --timeout 2 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0 -and $resposta -match "pong") { return $true }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
 $PortaBackend = 8100
 $PortaTranscricao = 8200
 $HostEscuta = if ($env:APP_BIND_HOST) { $env:APP_BIND_HOST } else { "0.0.0.0" }
@@ -381,6 +401,10 @@ $backend = Start-Process -PassThru -NoNewWindow `
 # No Windows, pool=solo evita o prefork incompatível e garante uma inferência
 # por worker. As filas impedem OCR, IA e manutenção de se bloquearem no broker.
 $instanciaCelery = ([Guid]::NewGuid().ToString("N")).Substring(0, 8)
+# Encerra uma instância órfã de uma execução anterior antes de reutilizar o mesmo
+# nome. Sem isso dois leitores poderiam disputar a fila depois de um reinício.
+& ".\.venv\Scripts\celery.exe" -A app.celery_app:celery_app control shutdown `
+    -d "ocr@$env:COMPUTERNAME" --timeout 2 2>$null | Out-Null
 $workerOcr = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
@@ -403,6 +427,13 @@ try {
             break
         } catch { Start-Sleep -Milliseconds 500 }
     }
+
+    Write-Host "Preparando o leitor de documentos..." -ForegroundColor Yellow
+    $destinoWorkerOcr = "ocr@$env:COMPUTERNAME-$instanciaCelery"
+    if (-not (Wait-WorkerOcr -Processo $workerOcr -Destino $destinoWorkerOcr -TimeoutSegundos 180)) {
+        throw "O worker de OCR nao respondeu em 180 segundos. O sistema foi interrompido para nao deixar documentos presos na fila."
+    }
+    Write-Host "Leitor de documentos pronto." -ForegroundColor Green
 
     Write-Host "Aquecendo Whisper..." -ForegroundColor Yellow
     $transcricao = Start-Process -PassThru -NoNewWindow `

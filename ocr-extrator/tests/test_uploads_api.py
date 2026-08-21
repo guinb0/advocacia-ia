@@ -66,7 +66,7 @@ def checar(condicao: bool, descricao: str) -> bool:
 def esperar_leitura(cliente: TestClient, caso_id: str, limite_s: float = 20.0) -> dict:
     """Devolve a situação do caso já com todas as leituras terminadas.
 
-    O upload responde ANTES do OCR: a rota grava a entrega como 'processando' e
+    O upload responde ANTES do OCR: a rota grava a entrega como 'na_fila' e
     devolve 201 em milissegundos. Sem esperar aqui, o teste conferiria o status
     do item antes de existir resultado — e passaria ou falharia conforme a
     máquina estivesse mais ou menos ocupada, que é o pior tipo de teste.
@@ -78,7 +78,7 @@ def esperar_leitura(cliente: TestClient, caso_id: str, limite_s: float = 20.0) -
             entrega
             for item in situacao["itens"]
             for entrega in item["entregas"]
-            if entrega.get("status_proc") == "processando"
+            if entrega.get("status_proc") in {"na_fila", "processando"}
         ]
         if not lendo:
             return situacao
@@ -107,6 +107,7 @@ def main_teste() -> int:
     celery_app.conf.task_eager_propagates = False
 
     falhas = 0
+
     try:
         with (
             patch.object(main, "_tentar_aquecer"),

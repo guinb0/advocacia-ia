@@ -239,13 +239,22 @@ def registrar_entrega_pendente(
                                   tipo_confere, veredito, dados_utilizaveis, confirmado_manual,
                                   score_legibilidade, itens_atendidos, extracao_json,
                                   status_proc, criado_em)
-            VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, 0, 0, NULL, ?, NULL, 'processando', ?)
+            VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, 0, 0, NULL, ?, NULL, 'na_fila', ?)
             """,
             (entrega_id, caso_id, item_codigo, arquivo, str(caminho), json.dumps(itens), agora()),
         )
         _tocar_caso(con, caso_id)
 
     return obter_entrega(entrega_id) or {}
+
+
+def marcar_entrega_processando(entrega_id: str) -> None:
+    """Diferencia espera no broker de uma leitura que realmente começou."""
+    with conectar() as con:
+        con.execute(
+            "UPDATE entregas SET status_proc = 'processando', erro_proc = NULL WHERE id = ?",
+            (entrega_id,),
+        )
 
 
 def concluir_entrega(

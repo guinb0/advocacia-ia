@@ -896,10 +896,12 @@ def obter_categoria(codigo: str):
 def saude():
     from . import ocr_engine
 
+    ocr_via_worker = os.getenv("OCR_AQUECER_API", "0") != "1"
     return {
         "status": "ok",
         "modelo_carregado": ocr_engine.modelo_carregado(),
         "modelo_aquecido": _ocr_aquecido.is_set(),
+        "ocr_via_worker": ocr_via_worker,
     }
 
 
@@ -917,16 +919,10 @@ def eu(usuario: auth.Usuario = Depends(auth.usuario_atual)):
 
 
 def _aquecer_modelo() -> None:
-    """Constrói os modelos do PaddleOCR rodando um OCR numa imagem em branco.
+    """Carrega o PaddleOCR e conclui a primeira inferência."""
+    from .ocr_engine import aquecer_modelo
 
-    A construção acontece dentro da thread dona do predictor (ver `ocr_engine`),
-    porque é `rodar_ocr` quem a agenda lá — não chamar `get_engine` daqui.
-    """
-    import numpy as np
-
-    from .ocr_engine import rodar_ocr
-
-    rodar_ocr(np.full((80, 400, 3), 255, dtype=np.uint8))
+    aquecer_modelo()
 
 
 def _tentar_aquecer() -> None:
@@ -1384,10 +1380,8 @@ async def _registrar_documento(
     conteudo = await _ler_upload(arquivo)
     nome = arquivo.filename or "sem-nome"
 
-    # O arquivo vai para o disco e a entrega é criada ANTES do OCR: é isso que
-    # permite responder o upload em milissegundos. Medido nesta máquina, a
-    # leitura leva de 12s (ociosa) a 200s (saturada) — tempo demais para segurar
-    # uma requisição de celular, que morreria por timeout no meio.
+    # O arquivo vai para o disco e a entrega é criada antes de entrar na fila.
+    # Assim o upload responde sem manter a conexão aberta durante a inferência.
     destino = armazenamento.DIR_ARQUIVOS / caso_id
     destino.mkdir(parents=True, exist_ok=True)
     caminho = destino / f"{item}_{uuid.uuid4()}{Path(nome).suffix.lower()}"
@@ -1399,7 +1393,7 @@ async def _registrar_documento(
     # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
     # único dono do modelo; a requisição continua voltando imediatamente.
     try:
-        processar_entrega.apply_async(
+        tarefa = processar_entrega.apply_async(
             args=(
                 entrega["id"], caso_id, str(caminho), nome, item_checklist.codigo,
                 categoria.codigo, idioma, usar_para_rg_e_cpf,
@@ -1408,10 +1402,11 @@ async def _registrar_documento(
             priority=7,
         )
     except Exception as exc:
-        armazenamento.falhar_entrega(entrega["id"], f"Fila OCR indisponível: {exc}")
+        armazenamento.falhar_entrega(entrega["id"], "Fila de OCR indisponível.")
+        log.exception("Falha ao enfileirar a entrega %s", entrega["id"])
         raise HTTPException(503, "Fila de leitura indisponível. Tente novamente.") from exc
 
-    return {"entrega": entrega, "processando": True}
+    return {"entrega": entrega, "processando": True, "task_id": tarefa.id}
 
 
 @app.post("/api/casos/{caso_id}/documentos", status_code=201)

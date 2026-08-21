@@ -572,6 +572,8 @@ def previsao_pela_mediana(
 def _tom_da_entrega(entrega: dict[str, Any]) -> tuple[str, str]:
     """Tom e leitura de uma entrega, no vocabulário da tela."""
     estado = entrega.get("status_proc", "pronto")
+    if estado == "na_fila":
+        return INFO, "aguardando na fila de leitura"
     if estado == "processando":
         return INFO, "leitura em andamento"
     if estado == "erro":
