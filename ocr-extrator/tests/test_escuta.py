@@ -43,6 +43,26 @@ def _resposta(retorno: dict) -> httpx.Response:
     )
 
 
+class _ClienteDublado:
+    """Faz `escuta.httpx.post` continuar sendo o ponto de dublagem.
+
+    A escuta passou a reaproveitar um `httpx.Client` — mudança feita porque a
+    PRIMEIRA chamada da entrevista levava ~37s contra ~1,7s das seguintes, todo
+    o custo em TLS novo a cada chamada. Só que os testes dublavam `httpx.post`,
+    e com o cliente eles deixaram de interceptar: a suíte passou a bater na API
+    de verdade, com chave de teste, e a falhar com 401.
+
+    Delegar aqui preserva os dublês como já estavam escritos. O que se perde é
+    testar o keep-alive em si — que é comportamento do httpx, não nosso.
+    """
+
+    def post(self, url, **kwargs):
+        return escuta.httpx.post(url, **kwargs)
+
+
+escuta._cliente = _ClienteDublado()  # type: ignore[assignment]
+
+
 def instalar_modelo(retorno: dict):
     def falso(url, **kwargs):
         visto["corpo"] = kwargs.get("json")
@@ -558,10 +578,15 @@ def cenario_processamento_consolidado() -> int:
         {
             "respostas": [
                 {"pergunta_id": "nome", "valor": "Nome inventado", "trecho": "meu nome"},
-                {"pergunta_id": "tempo_casa", "valor": "oito anos", "trecho": "faz oito anos"},
-                {"pergunta_id": "r_assalto", "valor": "sim", "trecho": "fui assaltado"},
-                {"pergunta_id": "as_ocorrencias", "valor": "duas vezes no ano passado", "trecho": "duas vezes"},
-                {"pergunta_id": "r_doenca", "valor": "não", "trecho": "não tive doença"},
+                # Citações COPIADAS da `FALA`. Antes eram paráfrases ("faz oito
+                # anos" para um texto que diz "faz uns oito anos"), e passavam
+                # porque ninguém as conferia contra a transcrição. Agora a
+                # conferência existe e o campo cai junto com a citação — que é o
+                # comportamento que o teste logo abaixo fixa.
+                {"pergunta_id": "tempo_casa", "valor": "oito anos", "trecho": "faz uns oito anos"},
+                {"pergunta_id": "r_assalto", "valor": "sim", "trecho": "Fui assaltado"},
+                {"pergunta_id": "as_ocorrencias", "valor": "duas vezes no ano passado", "trecho": "duas vezes no ano passado"},
+                {"pergunta_id": "r_doenca", "valor": "não", "trecho": "não consigo mais dormir direito"},
                 {"pergunta_id": "doenca", "valor": "campo inventado", "trecho": ""},
             ],
             "incertas": [
@@ -582,6 +607,67 @@ def cenario_processamento_consolidado() -> int:
     falhas += not checar(
         isinstance(corpo, dict) and corpo.get("max_tokens") == 8_000,
         "a conversa completa usa uma única resposta estruturada",
+    )
+
+    return falhas
+
+
+def cenario_citacao_conferida() -> int:
+    """Campo cuja citação não existe na transcrição não entra no formulário.
+
+    Sem esta conferência o `trecho` é promessa: o campo diz de onde veio e
+    ninguém verificou. Quem revisa o formulário depois não estava na conversa —
+    para ele, origem inventada e origem verdadeira são indistinguíveis, e o
+    formulário vira peça processual.
+
+    A recusa não some em silêncio: vira `incerta` com o motivo, que é o canal
+    que o processamento já tem para dizer "não preenchi, e foi por isto".
+    """
+    falhas = 0
+    instalar_modelo(
+        {
+            "respostas": [
+                # Paráfrase fiel do que a FALA diz — e ainda assim paráfrase.
+                # "faz uns oito anos" é o texto; "faz oito anos" ninguém disse.
+                {"pergunta_id": "tempo_casa", "valor": "oito anos", "trecho": "faz oito anos"},
+                # Inventado por completo.
+                {"pergunta_id": "funcao", "valor": "Carteiro motociclista",
+                 "trecho": "trabalho de moto na zona norte"},
+            ],
+            "incertas": [],
+        }
+    )
+    r = escuta.processar_entrevista(FALA, {})
+    falhas += not checar(
+        "tempo_casa" not in r["respostas"],
+        f"paráfrase não preenche campo ({r['respostas'].get('tempo_casa')!r})",
+    )
+    falhas += not checar(
+        "funcao" not in r["respostas"], "citação inventada não preenche campo"
+    )
+    falhas += not checar(
+        len(r["incertas"]) == 2,
+        f"as duas recusas viram incertas com motivo ({len(r['incertas'])})",
+    )
+    falhas += not checar(
+        all("citação" in i["motivo"].casefold() or "citacao" in i["motivo"].casefold()
+            for i in r["incertas"]),
+        "e o motivo diz que foi a citação",
+    )
+
+    # O outro lado, que importa tanto quanto: citação literal continua passando.
+    instalar_modelo(
+        {
+            "respostas": [
+                {"pergunta_id": "tempo_casa", "valor": "oito anos", "trecho": "faz uns oito anos"},
+            ],
+            "incertas": [],
+        }
+    )
+    r = escuta.processar_entrevista(FALA, {})
+    falhas += not checar(
+        r["respostas"].get("tempo_casa") == "oito anos",
+        "citação copiada da transcrição preenche normalmente",
     )
     return falhas
 
@@ -605,6 +691,7 @@ def main_teste() -> int:
         ("completar o que já foi respondido", cenario_complemento),
         ("a pergunta lida não é resposta", cenario_enunciado_lido),
         ("processamento consolidado pós-entrevista", cenario_processamento_consolidado),
+        ("a citação é conferida contra a transcrição", cenario_citacao_conferida),
         ("sem chave", cenario_sem_chave),
     ):
         print(f"\n{titulo}")

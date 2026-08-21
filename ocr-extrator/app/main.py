@@ -438,6 +438,9 @@ class PedidoProcessamentoEntrevista(BaseModel):
     transcricao: str = Field(min_length=1, max_length=80_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
     roteiro: str = Field(default="empregado_publico", max_length=60)
+    #: Buscar precedentes no pgvector para sugerir perguntas e apontar lacunas.
+    #: Melhor-esforço: banco fora do ar não impede o preenchimento do formulário.
+    analisar: bool = True
 
 
 @app.post("/api/entrevista/escuta")
@@ -463,9 +466,42 @@ async def escutar_entrevista(pedido: PedidoEscuta):
 
 @app.post("/api/entrevista/processar")
 async def processar_entrevista(pedido: PedidoProcessamentoEntrevista):
-    """Consolida a transcrição e preenche o formulário após a entrevista."""
+    """Consolida a transcrição, preenche o formulário e diz o que mais perguntar.
+
+    Duas leituras independentes, em PARALELO porque nenhuma depende da outra e
+    quem conduz está esperando com o cliente ainda na sala:
+
+    - `escuta.processar_entrevista` diz o que a conversa respondeu do roteiro,
+      cada campo com o trecho da transcrição que o sustenta;
+    - `rag.sugerir_acoes` compara o relato com o acervo vetorial e devolve o que
+      processos parecidos mostraram ser necessário — perguntas que valem a pena
+      e lacunas que costumam custar caro.
+
+    Separadas de propósito. Num prompt só, o precedente contaminaria a leitura: o
+    modelo passaria a "encontrar" na conversa o que a jurisprudência sugeriu que
+    deveria estar lá, e o campo preenchido deixaria de ser o que o cliente disse.
+    """
+    analise: dict[str, Any] | None = None
+    erro_analise = ""
+
+    def _analisar() -> None:
+        nonlocal analise, erro_analise
+        if not pedido.analisar:
+            return
+        try:
+            analise = rag.sugerir_acoes(pedido.transcricao[:12_000])
+        except Exception as exc:  # noqa: BLE001 — melhor-esforço, ver docstring
+            # O formulário não pode cair junto com o banco de precedentes: ele é
+            # a parte que o escritório não consegue refazer à mão, e o pgvector
+            # já ficou fora do ar (CONTEXTO.md).
+            erro_analise = str(exc)[:200]
+            log.warning("Análise por precedentes falhou: %s", erro_analise)
+
+    tarefa = threading.Thread(target=_analisar, name="entrevista-precedentes", daemon=True)
+    tarefa.start()
+
     try:
-        return await run_in_threadpool(
+        resultado = await run_in_threadpool(
             escuta.processar_entrevista,
             pedido.transcricao,
             pedido.respostas,
@@ -473,6 +509,12 @@ async def processar_entrevista(pedido: PedidoProcessamentoEntrevista):
         )
     except escuta.ErroEscuta as exc:
         raise HTTPException(503, str(exc)) from exc
+    finally:
+        # Esperar aqui é o que permite devolver as duas juntas: a tela mostra um
+        # resultado só, no fim da entrevista.
+        tarefa.join(timeout=escuta.TEMPO_PROCESSAMENTO_S)
+
+    return {**resultado, "analise": analise, "analise_indisponivel": erro_analise}
 
 
 class PedidoAnaliseResposta(BaseModel):
