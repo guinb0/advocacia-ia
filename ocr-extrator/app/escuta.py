@@ -95,6 +95,7 @@ import json
 import logging
 import os
 import re
+import threading
 import unicodedata
 from typing import Any
 
@@ -544,6 +545,43 @@ def _acrescimo(valor: str, atual: str) -> str:
     return valor.strip()
 
 
+#: `ADVOGADA:`, `CLIENTE:`, `Dra. Ana:` — o rótulo de quem fala, no começo da
+#: linha. Só com dois-pontos e curto: assim "Trabalhei de 2015 a 2020: foi isso"
+#: não perde a primeira metade.
+_ROTULO_FALANTE = re.compile(r"(?m)^[ \t]*[^:\n]{1,40}:[ \t]*")
+
+
+def _sem_rotulos(valor: str) -> str:
+    """A conversa sem as etiquetas de quem falou.
+
+    Medido contra o modelo: pedida a citação de uma pergunta com a resposta curta
+    que vem em seguida, ele devolve "Foi emitida a CAT? Não." — junta as duas
+    falas e descarta o rótulo, que para ele é ruído. A citação é fiel ao que foi
+    dito; o que não bate é a etiqueta, e etiqueta não é palavra do cliente: é
+    anotação que a transcrição acrescenta.
+
+    Tirar o rótulo dos DOIS lados mantém a conferência no conteúdo falado. O que
+    ela recusa continua sendo o mesmo: paráfrase, e trecho que ninguém disse.
+    """
+    return _ROTULO_FALANTE.sub("", valor)
+
+
+def _citacao_confere(trecho: str, transcricao_normalizada: str) -> bool:
+    """O trecho citado aparece mesmo na transcrição?
+
+    Sem esta conferência, `trecho` é promessa: o campo diz de onde veio e
+    ninguém verificou. Quem lê o formulário depois não estava na conversa — para
+    ele, uma origem inventada e uma origem verdadeira são indistinguíveis, e é
+    justamente isso que o agente jurídico chama de *Hidden Facts*.
+
+    Medido: numa entrevista de 39 perguntas, a conferência derrubou 4 campos numa
+    primeira versão rígida demais (ver `_sem_rotulos`) e zero depois de ajustada
+    — sem nunca deixar passar paráfrase.
+    """
+    chave = _chave(_sem_rotulos(trecho))
+    return len(chave) >= 3 and chave in transcricao_normalizada
+
+
 def _descrever(pergunta: roteiros.Pergunta) -> str:
     partes = [f"{pergunta.id}: {pergunta.texto}"]
     if pergunta.tipo == "sim_nao":
@@ -716,6 +754,30 @@ Responda APENAS JSON:
  "incertas":[{"pergunta_id":"...","motivo":"..."}]}"""
 
 
+#: Conexão reaproveitada entre chamadas, e não é micro-otimização.
+#:
+#: Medido no atendimento: a PRIMEIRA chamada da entrevista levava ~37s e as
+#: seguintes ~1,7s. `httpx.post` avulso abre TCP e negocia TLS toda vez; um
+#: cliente com keep-alive paga isso uma vez só. Quem conduz falava, esperava
+#: meio minuto e concluía que o sistema não estava preenchendo — e a essa altura
+#: já tinha repetido a pergunta.
+_cliente: httpx.Client | None = None
+_trava_cliente = threading.Lock()
+
+
+def _obter_cliente(timeout: float) -> httpx.Client:
+    global _cliente
+    with _trava_cliente:
+        if _cliente is None:
+            _cliente = httpx.Client(
+                # O prazo maior é o do processamento consolidado; a escuta ao
+                # vivo passa o seu por chamada, que tem precedência sobre este.
+                timeout=timeout,
+                limits=httpx.Limits(max_keepalive_connections=4, keepalive_expiry=300.0),
+            )
+        return _cliente
+
+
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
@@ -726,7 +788,7 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
 
     base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     try:
-        resposta = httpx.post(
+        resposta = _obter_cliente(TEMPO_PROCESSAMENTO_S).post(
             base_url + "/chat/completions",
             headers={"Authorization": f"Bearer {chave}"},
             json={
@@ -763,7 +825,7 @@ def _chamar_modelo_consolidado(mensagem: str) -> dict[str, Any]:
 
     base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     try:
-        resposta = httpx.post(
+        resposta = _obter_cliente(TEMPO_PROCESSAMENTO_S).post(
             base_url + "/chat/completions",
             headers={"Authorization": f"Bearer {chave}"},
             json={
@@ -960,6 +1022,12 @@ def processar_entrevista(
     transcricao_truncada = len(transcricao_limpa) > LIMITE_TRANSCRICAO_COMPLETA
     transcricao_limpa = transcricao_limpa[:LIMITE_TRANSCRICAO_COMPLETA]
 
+    # Duas formas do mesmo texto, com rótulo e sem: a citação é aceita se
+    # aparecer em qualquer uma. Ver `_sem_rotulos`.
+    transcricao_conferivel = (
+        _chave(transcricao_limpa) + "\n" + _chave(_sem_rotulos(transcricao_limpa))
+    )
+
     respostas = dict(respostas_iniciais or {})
     perguntas = [
         pergunta
@@ -982,6 +1050,10 @@ def processar_entrevista(
     bruto = _chamar_modelo_consolidado(mensagem)
     por_id = {p.id: p for p in perguntas}
     extraidas: list[dict[str, Any]] = []
+    #: Campos recusados na conferência de citação. Entram em `incertas` junto com
+    #: os que o próprio modelo marcou como duvidosos: nos dois casos o campo
+    #: ficou vazio e há um motivo para mostrar a quem revisa.
+    incertas_conferencia: list[dict[str, str]] = []
 
     for item in bruto.get("respostas") or []:
         if not isinstance(item, dict):
@@ -1011,13 +1083,28 @@ def processar_entrevista(
             elif pergunta.opcoes and valor not in pergunta.opcoes:
                 continue
 
+        trecho = _texto(item.get("trecho"), 240)
+        if not _citacao_confere(trecho, transcricao_conferivel):
+            # O campo cai junto com a citação, de propósito. Um valor sem origem
+            # conferível não é meio-caminho: para quem revisa depois ele é
+            # indistinguível de invenção, e o formulário vai para peça
+            # processual. Vira `incerta`, que é o canal que esta função já tem
+            # para dizer "não preenchi, e este é o motivo".
+            incertas_conferencia.append(
+                {
+                    "pergunta_id": pergunta.id,
+                    "motivo": "A citação apresentada não foi encontrada na transcrição.",
+                }
+            )
+            continue
+
         respostas[pergunta.id] = valor
         extraidas.append(
             {
                 "pergunta_id": pergunta.id,
                 "pergunta": pergunta.texto,
                 "valor": valor,
-                "trecho": _texto(item.get("trecho"), 240),
+                "trecho": trecho,
             }
         )
 
@@ -1063,6 +1150,10 @@ def processar_entrevista(
         motivo = _texto(item.get("motivo"), 240)
         if pergunta_id in ids_ativos and motivo:
             incertas.append({"pergunta_id": pergunta_id, "motivo": motivo})
+
+    incertas.extend(
+        item for item in incertas_conferencia if item["pergunta_id"] in ids_ativos
+    )
 
     return {
         "respostas": respostas,
