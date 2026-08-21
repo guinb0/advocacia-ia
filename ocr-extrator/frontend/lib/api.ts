@@ -105,14 +105,10 @@ export async function listarTipos(): Promise<TipoDocumento[]> {
 }
 
 export async function verificarSaude(): Promise<boolean> {
-  const dados = await comoJson<{ modelo_carregado: boolean }>(
+  const dados = await comoJson<{ modelo_aquecido: boolean; ocr_via_worker: boolean }>(
     await buscar("/api/saude"),
   );
-  return dados.modelo_carregado;
-}
-
-export async function aquecerModelo(): Promise<void> {
-  await comoJson(await buscar("/api/aquecer", { method: "POST" }));
+  return dados.ocr_via_worker || dados.modelo_aquecido;
 }
 
 export async function extrair(

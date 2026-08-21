@@ -27,9 +27,22 @@ def _inteiro_env(nome: str, padrao: int, minimo: int = 1) -> int:
         return padrao
 
 
-# 1280 foi 45% mais rápido com 24/24 campos no benchmark. Pode ser zerado na
-# configuração para investigar algum documento excepcional em resolução integral.
-_DET_LADO_MAXIMO = os.getenv("OCR_DET_LADO_MAXIMO", "1280").strip()
+_CPU_THREADS = min(_inteiro_env("OCR_CPU_THREADS", 1), os.cpu_count() or 1)
+_DET_LADO_MAXIMO = os.getenv("OCR_DET_LADO_MAXIMO", "").strip()
+_VALOR_MKLDNN = os.getenv(
+    "OCR_USAR_MKLDNN", os.getenv("OCR_ENABLE_MKLDNN", "0")
+).strip().lower()
+_USAR_MKLDNN = _VALOR_MKLDNN in {"1", "true", "sim"}
+_MKLDNN_CACHE = _inteiro_env("OCR_MKLDNN_CACHE_CAPACITY", 10, minimo=1)
+_ORIENTAR_DOCUMENTO = os.getenv("OCR_DOC_ORIENTATION", "1").strip().lower() not in {"0", "false"}
+_ORIENTAR_LINHAS = os.getenv("OCR_TEXTLINE_ORIENTATION", "1").strip().lower() not in {"0", "false"}
+
+# O Paddle recomenda uma thread OMP neste modo. Forçar oito fazia a construção
+# do predictor parar indefinidamente em algumas instalações OpenBLAS no Windows.
+# O paralelismo interno restante continua sob controle do próprio Paddle.
+os.environ["OMP_NUM_THREADS"] = str(_CPU_THREADS)
+os.environ["MKL_NUM_THREADS"] = str(_CPU_THREADS)
+os.environ["FLAGS_cpu_threads"] = str(_CPU_THREADS)
 
 # ------------------------------------------------------------------ dispositivo
 #
@@ -51,16 +64,11 @@ os.environ.setdefault("FLAGS_gpu_memory_limit_mb", LIMITE_VRAM_MB)
 #: essa saída, `gpu` aqui é experimento — e exige a wheel `paddlepaddle-gpu`.
 DISPOSITIVO = os.getenv("OCR_DISPOSITIVO", "cpu").strip().lower()
 
-#: Na GPU o mobile reduz VRAM. Em CPU ele só é usado por configuração explícita;
-#: a dupla detector+reconhecedor mobile preservou campos, mas não venceu o server
-#: limitado a 1280 neste equipamento.
-DETECTOR = os.getenv("OCR_DETECTOR") or ("PP-OCRv5_mobile_det" if DISPOSITIVO == "gpu" else "")
-RECONHECEDOR = os.getenv("OCR_RECONHECEDOR", "").strip()
-MKLDNN = os.getenv("OCR_ENABLE_MKLDNN", "1").strip().lower() not in {"0", "false", "nao", "não"}
-CPU_THREADS = _inteiro_env("OCR_CPU_THREADS", 10, minimo=1)
-MKLDNN_CACHE = _inteiro_env("OCR_MKLDNN_CACHE_CAPACITY", 10, minimo=1)
-ORIENTAR_DOCUMENTO = os.getenv("OCR_DOC_ORIENTATION", "1").strip().lower() not in {"0", "false"}
-ORIENTAR_LINHAS = os.getenv("OCR_TEXTLINE_ORIENTATION", "1").strip().lower() not in {"0", "false"}
+# Selecionar os dois modelos explicitamente evita o caminho automático do
+# PaddleOCR que prendia a inicialização no Windows. A variante latina preserva
+# acentos e o vocabulário dos documentos brasileiros.
+DETECTOR = os.getenv("OCR_DETECTOR") or "PP-OCRv5_mobile_det"
+RECONHECEDOR = os.getenv("OCR_RECONHECEDOR") or "latin_PP-OCRv5_mobile_rec"
 
 _lock = threading.Lock()
 _engine = None
@@ -97,15 +105,18 @@ def _construir(lang: str, dispositivo: str):
 
     return PaddleOCR(
         lang=lang,
-        # Endireita a página inteira antes de detectar. Sem isso uma foto deitada
-        # até é lida, mas as caixas saem transpostas e a associação rótulo->valor
-        # (que é geométrica) troca os campos de lugar.
-        use_doc_orientation_classify=ORIENTAR_DOCUMENTO,
+        # oneDNN/MKLDNN entra em deadlock ao construir o reconhecedor nesta
+        # combinação de Windows + Paddle. Desligado por padrão; pode ser
+        # reavaliado por ambiente quando a wheel for atualizada.
+        enable_mkldnn=_USAR_MKLDNN,
+        mkldnn_cache_capacity=_MKLDNN_CACHE,
+        cpu_threads=_CPU_THREADS,
+        # Corrige fotos deitadas antes da geometria dos campos. Com detector e
+        # reconhecedor explícitos estes auxiliares carregam normalmente; o
+        # travamento vinha da seleção automática do reconhecedor.
+        use_doc_orientation_classify=_ORIENTAR_DOCUMENTO,
         use_doc_unwarping=False,   # correção de páginas onduladas: pesada e rara aqui
-        use_textline_orientation=ORIENTAR_LINHAS,
-        enable_mkldnn=MKLDNN,
-        mkldnn_cache_capacity=MKLDNN_CACHE,
-        cpu_threads=CPU_THREADS,
+        use_textline_orientation=_ORIENTAR_LINHAS,
         device=dispositivo,
         **extra,
     )
@@ -136,8 +147,13 @@ def get_engine(lang: str = "pt"):
                     log.info("Carregando PaddleOCR (lang=%s, device=%s)...", tentativa, dispositivo)
                     _engine = _construir(tentativa, dispositivo)
                     _lang_carregado = lang
-                    log.info("PaddleOCR pronto (lang=%s, device=%s%s).", tentativa, dispositivo,
-                             f", det={DETECTOR}" if dispositivo == "gpu" and DETECTOR else "")
+                    log.info(
+                        "PaddleOCR pronto (lang=%s, device=%s, det=%s, rec=%s).",
+                        tentativa,
+                        dispositivo,
+                        DETECTOR,
+                        RECONHECEDOR,
+                    )
                     return _engine
                 except Exception as exc:  # modelo indisponível para o idioma, ou GPU cheia
                     log.warning("Falha ao carregar lang=%s device=%s: %s",

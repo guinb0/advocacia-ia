@@ -144,8 +144,8 @@ export interface CasoCriado extends Caso {
 
 export interface Entrega {
   id: string;
-  /** 'processando' enquanto o OCR não terminou; 'erro' se a leitura falhou. */
-  status_proc?: "processando" | "pronto" | "erro";
+  /** Estado real da fila/leitura; 'erro' indica que o arquivo foi preservado. */
+  status_proc?: "na_fila" | "processando" | "pronto" | "erro";
   erro_proc?: string | null;
   caso_id: string;
   item_codigo: string;

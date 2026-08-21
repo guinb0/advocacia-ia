@@ -13,7 +13,13 @@ celery_app = Celery(
     "advocacia",
     broker=BROKER,
     backend=BACKEND,
-    include=("app.tasks.ocr", "app.tasks.documentos", "app.tasks.ia", "app.tasks.manutencao"),
+    include=(
+        "app.tasks.ocr",
+        "app.tasks.agente",
+        "app.tasks.documentos",
+        "app.tasks.ia",
+        "app.tasks.manutencao",
+    ),
 )
 
 celery_app.conf.update(
@@ -39,6 +45,7 @@ celery_app.conf.update(
     task_default_queue="default",
     task_routes={
         "app.tasks.ocr.*": {"queue": "gpu_background"},
+        "app.tasks.agente.*": {"queue": "default"},
         "app.tasks.transcricao.*": {"queue": "gpu_realtime"},
         "app.tasks.ia.*": {"queue": "ai"},
         "app.tasks.documentos.*": {"queue": "documents"},
@@ -52,6 +59,10 @@ celery_app.conf.update(
         "recuperar-jobs-abandonados": {
             "task": "app.tasks.manutencao.recuperar_jobs_abandonados",
             "schedule": 900.0,
+        },
+        "reenfileirar-entregas-ao-agente": {
+            "task": "app.tasks.agente.reenfileirar_pendentes",
+            "schedule": 600.0,
         },
     },
 )

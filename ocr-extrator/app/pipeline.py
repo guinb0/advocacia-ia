@@ -82,8 +82,8 @@ def ocr_com_rotacao_medido(
 ) -> tuple[list[Linha], int, list[dict[str, float | int]], int]:
     """Roda o OCR na orientação original; se render pouco texto, testa 90/180/270.
 
-    O PaddleOCR já endireita a página sozinho (`use_doc_orientation_classify`);
-    isto aqui é a rede de segurança para quando o classificador erra.
+    O Paddle endireita a página primeiro; esta é a rede de segurança para casos
+    em que o classificador de orientação não encontra a posição correta.
 
     Devolve também quantas passadas de OCR foram gastas. O número importa: uma
     foto que pontua mal custa **quatro** inferências, não uma, e é essa a
@@ -346,6 +346,15 @@ def processar(
     with crono.medir("extrair"):
         campos = extrair_campos(linhas, tipo)
         validacao = montar_validacao(tipo, campos, qual)
+        # Um documento juridico pode nao ter campos estruturados conhecidos pelo OCR e,
+        # ainda assim, possuir texto plenamente aproveitavel para classificacao e RAG.
+        # Este sinal e separado de `dados_utilizaveis`, que continua significando que os
+        # campos esperados daquele tipo documental foram extraidos e validados.
+        validacao["texto_utilizavel"] = bool(
+            qual.legivel
+            and qtd_caracteres >= 80
+            and (conf_media is None or conf_media >= 0.55)
+        )
 
     doc = {
         "id": str(uuid.uuid4()),

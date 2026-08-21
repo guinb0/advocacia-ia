@@ -15,14 +15,42 @@ from ..gpu_lock import gpu_exclusiva
 log = logging.getLogger("ocr-worker")
 
 
+def _executar_ocr(caminho: str, nome: str, idioma: str, tipo: str | None) -> dict:
+    conteudo = Path(caminho).read_bytes()
+    trava = gpu_exclusiva() if os.getenv("OCR_USA_GPU", "0") == "1" else nullcontext()
+    with trava:
+        return pipeline.processar(conteudo, nome, idioma, tipo)
+
+
+def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
+    """Enfileira a integracao sem manter o worker pesado esperando HTTP."""
+    try:
+        from .agente import enviar_entrega_ao_agente
+
+        enviar_entrega_ao_agente.apply_async(
+            args=(caso_id, entrega_id),
+            queue="default",
+            priority=6,
+        )
+    except Exception:
+        # O documento ja esta persistido e continua pendente no vinculo. Abrir o dossie
+        # ainda executa a sincronizacao idempotente; perder a notificacao nunca perde OCR.
+        log.warning(
+            "nao foi possivel enfileirar a entrega %s ao agente juridico",
+            entrega_id,
+            exc_info=True,
+        )
+
+
 @worker_ready.connect
 def aquecer_worker_ocr(sender=None, **_kwargs):
-    """Aquece o modelo no processo que realmente executa `/extrair/jobs`."""
+    """Carrega o modelo no worker, sem prender o boot numa inferência completa."""
     hostname = str(getattr(sender, "hostname", ""))
     if not hostname.lower().startswith("ocr@"):
         return
     try:
         from ..ocr_engine import aquecer
+
         aquecer()
         log.info("PaddleOCR aquecido no worker %s.", hostname)
     except Exception:
@@ -45,13 +73,8 @@ def processar_documento(self, job_id: str, caminho: str, nome: str, idioma: str,
     jobs.atualizar(job_id, status="STARTED", progresso=5, iniciado_em=inicio)
     try:
         jobs.atualizar(job_id, status="PROCESSING", progresso=15)
-        conteudo = Path(caminho).read_bytes()
-        # O Paddle atual é CPU por decisão medida. Ao ativar a wheel CUDA, esta
-        # mesma tarefa passa a disputar a trava interprocesso com o Whisper.
-        trava = gpu_exclusiva() if os.getenv("OCR_USA_GPU", "0") == "1" else nullcontext()
-        with trava:
-            jobs.atualizar(job_id, progresso=30)
-            resultado = pipeline.processar(conteudo, nome, idioma, tipo)
+        jobs.atualizar(job_id, progresso=30)
+        resultado = _executar_ocr(caminho, nome, idioma, tipo)
         jobs.atualizar(
             job_id,
             status="COMPLETED",
@@ -67,8 +90,17 @@ def processar_documento(self, job_id: str, caminho: str, nome: str, idioma: str,
         raise
 
 
-@celery_app.task(name="app.tasks.ocr.processar_entrega")
+@celery_app.task(
+    bind=True,
+    name="app.tasks.ocr.processar_entrega",
+    autoretry_for=(OSError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    retry_kwargs={"max_retries": 3},
+)
 def processar_entrega(
+    self,
     entrega_id: str,
     caso_id: str,
     caminho: str,
@@ -80,6 +112,7 @@ def processar_entrega(
 ):
     """Lê documento do checklist no worker que já mantém o Paddle aquecido."""
     try:
+        armazenamento.marcar_entrega_processando(entrega_id)
         categoria = categorias.obter(categoria_codigo)
         if categoria is None:
             raise ValueError(f"Categoria {categoria_codigo!r} não existe mais.")
@@ -117,11 +150,7 @@ def processar_entrega(
         detectado = resultado.get("tipo", {}).get("detectado")
         confere = casos.tipo_confere(item, detectado, unificar)
         armazenamento.concluir_entrega(entrega_id, resultado, confere, itens_atendidos)
-        try:
-            from ..agente import espelho
-            espelho.enviar_entrega(caso_id, entrega_id)
-        except Exception:
-            log.warning("Não foi possível entregar %s ao agente jurídico.", entrega_id, exc_info=True)
+        _entregar_ao_agente(caso_id, entrega_id)
         return {"entrega_id": entrega_id, "concluida": True}
     except Exception as exc:
         log.exception("Falha ao ler o documento da entrega %s", entrega_id)

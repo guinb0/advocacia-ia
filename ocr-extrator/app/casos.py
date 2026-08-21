@@ -41,7 +41,7 @@ def _status_do_item(entregas: list[dict[str, Any]]) -> str:
         return ENTREGUE
 
     # Nenhuma boa ainda, mas há leitura em curso: não é pendência nem ressalva.
-    if any(e.get("status_proc") == "processando" for e in entregas):
+    if any(e.get("status_proc") in {"na_fila", "processando"} for e in entregas):
         return PROCESSANDO
 
     # Sobrou o que chegou e não presta: lido com ressalva ou falho na leitura.
@@ -56,6 +56,8 @@ def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[st
     # Ainda sem leitura: os campos de validação estão vazios, e lê-los produziria
     # o alerta de "não foi possível extrair" para um arquivo que só está na fila.
     estado = entrega.get("status_proc", "pronto")
+    if estado == "na_fila":
+        return ["Documento recebido e aguardando a vez na fila de leitura."]
     if estado == "processando":
         return ["Documento recebido. A leitura está em andamento."]
     if estado == "erro":

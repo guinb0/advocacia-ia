@@ -70,6 +70,9 @@ export default function ItemChecklistLinha({
   const estadoModelo = useModelo();
   const aparencia = APARENCIA[item.status];
   const podeUsarParaAmbos = item.tipo_ocr === "rg" || item.tipo_ocr === "cpf";
+  const lendoAgora = item.entregas.some((entrega) => entrega.status_proc === "processando");
+  const aguardandoNaFila =
+    !lendoAgora && item.entregas.some((entrega) => entrega.status_proc === "na_fila");
 
   // A legibilidade que interessa é a da entrega que resolveu o item.
   const melhorScore = item.entregas.reduce<number | null>(
@@ -132,7 +135,10 @@ export default function ItemChecklistLinha({
       </div>
 
       {(enviando || item.status === "processando") && (
-        <ProgressoOcr modeloPronto={estadoModelo === "pronto"} />
+        <ProgressoOcr
+          modeloPronto={estadoModelo === "pronto"}
+          naFila={!enviando && aguardandoNaFila}
+        />
       )}
 
       {podeUsarParaAmbos && (

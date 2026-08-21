@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, aquecerModelo, extrair, listarTipos, verificarSaude } from "./api";
+import { ApiError, extrair, listarTipos, verificarSaude } from "./api";
 import type { Documento, TipoDocumento } from "./types";
 
 export const TAMANHO_MAXIMO = 20 * 1024 * 1024;
@@ -13,6 +13,17 @@ function ehPdf(arquivo: File): boolean {
 
 export type EstadoModelo = "verificando" | "carregando" | "pronto" | "indisponivel";
 
+let verificacaoModelo: Promise<EstadoModelo> | null = null;
+
+function verificarModeloUmaVez(): Promise<EstadoModelo> {
+  if (!verificacaoModelo) {
+    verificacaoModelo = verificarSaude()
+      .then((pronto) => (pronto ? "pronto" : "indisponivel"))
+      .catch(() => "indisponivel");
+  }
+  return verificacaoModelo;
+}
+
 /** Estado do painel de status do modelo, no topo da página. */
 export function useModelo() {
   const [estado, setEstado] = useState<EstadoModelo>("verificando");
@@ -20,20 +31,10 @@ export function useModelo() {
   useEffect(() => {
     let cancelado = false;
 
-    (async () => {
-      try {
-        if (await verificarSaude()) {
-          if (!cancelado) setEstado("pronto");
-          return;
-        }
-        if (!cancelado) setEstado("carregando");
-        await aquecerModelo();
-        if (!cancelado) setEstado("pronto");
-      } catch {
-        // O modelo ainda carrega no primeiro upload — só não dá para prometer que já está pronto.
-        if (!cancelado) setEstado("indisponivel");
-      }
-    })();
+    setEstado("carregando");
+    verificarModeloUmaVez().then((resultado) => {
+      if (!cancelado) setEstado(resultado);
+    });
 
     return () => {
       cancelado = true;
