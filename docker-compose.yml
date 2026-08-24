@@ -1,0 +1,81 @@
+# Serviços de apoio do Acervo: fila, banco de jobs e observabilidade.
+#
+#   docker compose up -d redis jobs-db flower prometheus grafana
+#
+# O LOGIN NÃO ESTÁ AQUI. Havia um Keycloak neste arquivo; ele saiu quando a
+# autenticação passou a ser um JWT assinado pelo próprio backend (ver
+# `app/auth.py`). Não há mais container de identidade para subir, nem realm para
+# importar — as contas vivem na tabela `acervo_usuarios` do SQL Server.
+services:
+  jobs-db:
+    image: postgres:16-alpine
+    container_name: advocacia-jobs-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: advocacia_jobs
+      POSTGRES_USER: advocacia
+      POSTGRES_PASSWORD: advocacia_local
+    ports:
+      - "5434:5432"
+    volumes:
+      - jobs_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U advocacia -d advocacia_jobs"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: advocacia-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  flower:
+    image: mher/flower:2.0
+    container_name: advocacia-flower
+    restart: unless-stopped
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: advocacia-prometheus
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: advocacia-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/default.yml:ro
+      - ./observability/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/default.yml:ro
+      - ./observability/advocacia-dashboard.json:/var/lib/grafana/dashboards/advocacia.json:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  redis_data:
+  grafana_data:
+  jobs_postgres_data:

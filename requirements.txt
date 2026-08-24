@@ -1,0 +1,35 @@
+# CPU deliberadamente, e não por falta de placa. A wheel de GPU foi medida:
+# 17x mais rápida (0,25s contra 4,2s por documento) e cabe na VRAM que sobra do
+# Whisper — mas o caminho CUDA devolve caixas com geometria diferente, e a
+# extração de campos (que é geométrica) quebra: `tests/test_pipeline.py` sai de
+# 2 para 9 falhas, com nome de titular trocado pelo do pai. Ver `docs/SISTEMA.md`.
+#
+# Trocar exige reajustar `_agrupar_em_linhas` para a saída da GPU — projeto
+# próprio, não troca de wheel. Enquanto isso, CPU.
+paddlepaddle==3.0.0
+paddleocr>=3.0,<3.3
+fastapi
+uvicorn[standard]
+python-multipart
+opencv-python-headless
+pillow
+pypdfium2>=5.12,<6
+numpy<2.3
+# Assina e valida o JWT de sessão (`app/auth.py`). HS256 não precisa do extra
+# `crypto`, mas ele fica: sai de graça e é o que permite trocar para RS256 sem
+# mexer no requirements se um dia a chave precisar ser assimétrica.
+pyjwt[crypto]>=2.8,<3
+httpx>=0.27,<1
+psycopg[binary]>=3.2,<4
+reportlab>=4.2,<5
+pyodbc>=5.2,<6
+celery[redis]>=5.4,<6
+flower>=2.0,<3
+prometheus-client>=0.21,<1
+sentry-sdk[fastapi]>=2.20,<3
+opentelemetry-api>=1.29,<2
+opentelemetry-sdk>=1.29,<2
+opentelemetry-exporter-otlp>=1.29,<2
+opentelemetry-instrumentation-fastapi>=0.50b0,<1
+opentelemetry-instrumentation-celery>=0.50b0,<1
+faster-whisper>=1.1,<2
