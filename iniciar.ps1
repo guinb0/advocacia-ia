@@ -46,19 +46,22 @@ Importar-Env ".\.env"
 # workers com o mesmo nome consomem a mesma fila de forma invisível e um upload
 # pode cair no processo antigo, sem o modelo aquecido. Antes de criar a nova
 # topologia, encerra somente processos Celery desta instalação do projeto.
-$pythonProjeto = (Resolve-Path ".\.venv\Scripts\python.exe").Path
-$processosAtuais = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
-$celeryAntigos = $processosAtuais | Where-Object {
-    $_.CommandLine -and
-    $_.CommandLine.Contains($pythonProjeto) -and
-    $_.CommandLine -match "-m\s+celery\s+-A\s+app\.celery_app:celery_app"
-}
-foreach ($processoAntigo in $celeryAntigos) {
-    $filhos = $processosAtuais | Where-Object { $_.ParentProcessId -eq $processoAntigo.ProcessId }
-    foreach ($filho in $filhos) {
-        Stop-Process -Id $filho.ProcessId -Force -ErrorAction SilentlyContinue
+$celeryAntigos = @()
+if (Test-Path ".\.venv\Scripts\python.exe") {
+    $pythonProjeto = (Resolve-Path ".\.venv\Scripts\python.exe").Path
+    $processosAtuais = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $celeryAntigos = $processosAtuais | Where-Object {
+        $_.CommandLine -and
+        $_.CommandLine.Contains($pythonProjeto) -and
+        $_.CommandLine -match "-m\s+celery\s+-A\s+app\.celery_app:celery_app"
     }
-    Stop-Process -Id $processoAntigo.ProcessId -Force -ErrorAction SilentlyContinue
+    foreach ($processoAntigo in $celeryAntigos) {
+        $filhos = $processosAtuais | Where-Object { $_.ParentProcessId -eq $processoAntigo.ProcessId }
+        foreach ($filho in $filhos) {
+            Stop-Process -Id $filho.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Stop-Process -Id $processoAntigo.ProcessId -Force -ErrorAction SilentlyContinue
+    }
 }
 if ($celeryAntigos) { Start-Sleep -Milliseconds 500 }
 
