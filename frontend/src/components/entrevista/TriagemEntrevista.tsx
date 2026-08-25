@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { analisarEstrategia, triarEntrevista } from "@/lib/api";
+import { analisarEstrategia, gravarEntrevistaAoVivo, triarEntrevista } from "@/lib/api";
+import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
 import type { CasoCriado, Categoria, Estrategia, Triagem } from "@/lib/types";
 import CasoEDocumentos from "@/components/caso/CasoEDocumentos";
 import { useChamada } from "@/lib/ChamadaContexto";
@@ -75,6 +76,15 @@ export default function TriagemEntrevista({
    * caixa dela: voltar ao roteiro desmonta a caixa, e a marcação sumiria junto
    * — dando a etapa por pendente depois de ela ter sido cumprida. */
   const [avaliacaoConcluida, setAvaliacaoConcluida] = useState(false);
+  /* A conversa como o Whisper a ouviu, guardada aqui pelo mesmo motivo da
+   * qualificação: ela sobrevive ao fechamento da tela da entrevista, e é o que
+   * vai para o caso. Sem isto, a entrevista conduzida pelo roteiro morria com a
+   * aba e a supervisão nunca a via (ver `app/supervisao.py`). */
+  const [transcricao, setTranscricao] = useState<TrechoTranscrito[]>([]);
+  /* O caso, depois de criado aqui embaixo. Guardado para o encerramento poder
+   * regravar a transcrição completa: o caso nasce NO MEIO do atendimento, e o
+   * fechamento do roteiro — inclusive o pedido da avaliação — vem depois dele. */
+  const [casoCriado, setCasoCriado] = useState("");
   /* O atendimento foi ENCERRADO no botão do fim — diferente de "fechei a tela".
    *
    * Encerrado, as etapas não se repetem aqui embaixo: elas já foram feitas lá
@@ -108,6 +118,36 @@ export default function TriagemEntrevista({
   useEffect(() => {
     avisar.current?.(fase);
   }, [fase]);
+
+  /* Manda a entrevista conduzida para o caso.
+   *
+   * Chamada duas vezes por atendimento — ao criar o caso e ao encerrar — e a
+   * rota é PUT justamente por isso: `gravacao_id` é a chave, e a segunda
+   * chamada REESCREVE a primeira em vez de criar outra entrevista. Sem isso, a
+   * supervisão contaria o dobro do trabalho de quem conduziu.
+   *
+   * Falhar aqui NÃO pode desfazer o atendimento: o caso foi criado, o cliente
+   * está na linha, e os documentos chegam do mesmo jeito. O que se perde é o
+   * registro para a supervisão — grave, mas não na frente do cliente. */
+  async function guardarEntrevista(
+    casoId: string,
+    trechos: TrechoTranscrito[],
+    gravacaoId: string,
+    concluida: boolean,
+  ) {
+    if (!casoId || !gravacaoId) return;
+    try {
+      await gravarEntrevistaAoVivo(casoId, {
+        gravacao_id: gravacaoId,
+        texto: montarTranscricaoBruta(trechos),
+        realizada_em: new Date().toISOString().slice(0, 10),
+        avaliacao_google: avaliacaoConcluida,
+        concluida,
+      });
+    } catch (e) {
+      console.error("Não foi possível guardar a entrevista no caso.", e);
+    }
+  }
 
   async function analisar(arquivo?: File) {
     if (!arquivo && !texto.trim()) return;
@@ -161,6 +201,12 @@ export default function TriagemEntrevista({
       <CasoEDocumentos
         cliente={String(qualificacao.nome ?? "")}
         entrevistaId={audioEntrevista}
+        onCasoCriado={(casoId) => {
+          setCasoCriado(casoId);
+          // Grava já, sem esperar o encerramento: se a aba morrer daqui para a
+          // frente, a entrevista conduzida até aqui não se perde.
+          return guardarEntrevista(casoId, transcricao, audioEntrevista, encerrado);
+        }}
         categorias={categorias}
         sugerida={escolhida ?? undefined}
         onCriar={onCriarCaso}
@@ -177,17 +223,25 @@ export default function TriagemEntrevista({
           /* As respostas sobem a cada mudança: é o que deixa as etapas abaixo
            * do roteiro prontas antes de a entrevista fechar. O relato e o id do
            * áudio vêm junto, pelos mesmos motivos de sempre. */
-          onRespostas={(respostas, relato, entrevistaId) => {
+          onRespostas={(respostas, relato, entrevistaId, trechos) => {
             setTexto(relato);
             setQualificacao(respostas);
             setAudioEntrevista(entrevistaId);
+            setTranscricao(trechos);
           }}
-          onConcluir={(respostas, relato, entrevistaId) => {
+          onConcluir={(respostas, relato, entrevistaId, trechos) => {
             setTexto(relato);
             setQualificacao(respostas);
             setAudioEntrevista(entrevistaId);
+            setTranscricao(trechos);
             setMostrarRoteiro(false);
             setEncerrado(true);
+            // Encerrou com o caso já criado: regrava a conversa inteira, agora
+            // com o fechamento do roteiro dentro dela, e libera a leitura do
+            // agente. Sem caso ainda, quem grava é a criação dele, logo abaixo.
+            if (casoCriado) {
+              void guardarEntrevista(casoCriado, trechos, entrevistaId, true);
+            }
           }}
           onFechar={() => setMostrarRoteiro(false)}
           depois={etapasDoAtendimento}

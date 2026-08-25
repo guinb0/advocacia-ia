@@ -37,6 +37,8 @@ from typing import Any
 
 import pyodbc
 
+from . import ambiente
+
 __all__ = [
     "ESQUEMA_SQLSERVER",
     "Conexao",
@@ -66,28 +68,11 @@ prefixo é o que substitui o schema separado na hora de saber de quem é cada ta
 DRIVER_PADRAO = "ODBC Driver 17 for SQL Server"
 
 
-_ENV = Path(__file__).resolve().parent.parent / ".env"
+_ENV = ambiente.CAMINHO
 
-
-def _carregar_env() -> None:
-    """Lê o `.env` do projeto, uma vez, sem sobrescrever o que já veio do ambiente.
-
-    O Acervo não tinha esse carregamento: as variáveis chegavam pelo `iniciar.ps1`, que
-    as exporta antes de subir o uvicorn. Isso bastava enquanto o banco era um arquivo —
-    agora não basta, porque um script (`scripts/migrar_sqlite_para_sqlserver.py`) ou um
-    teste rodam fora daquele caminho e ficariam sem credencial.
-
-    Variável já presente no ambiente **vence** o arquivo: é o que permite apontar para
-    outro banco numa execução pontual sem editar o `.env`.
-    """
-    if not _ENV.exists():
-        return
-    for linha in _ENV.read_text(encoding="utf-8").splitlines():
-        texto = linha.strip()
-        if not texto or texto.startswith("#") or "=" not in texto:
-            continue
-        chave, _, valor = texto.partition("=")
-        os.environ.setdefault(chave.strip(), valor.strip())
+#: Mantido como nome local porque metade do módulo (e os testes) já o chamam assim.
+#: A leitura em si mudou de casa: ver o cabeçalho de `app/ambiente.py`.
+_carregar_env = ambiente.carregar
 
 
 def dsn() -> str:
@@ -366,6 +351,8 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entrevistas (
     perguntas     nvarchar(max) NOT NULL CONSTRAINT df_ocr_entrev_perg DEFAULT N'[]',
     fatos_gerados int           NOT NULL CONSTRAINT df_ocr_entrev_fatos DEFAULT 0,
     enviada_em    varchar(40)   NULL,
+    avaliacao_google_em varchar(40) NULL,
+    gravacao_id   varchar(64)   NULL,
     criado_em     varchar(40)   NOT NULL,
     CONSTRAINT fk_ocr_entrevistas_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
@@ -426,8 +413,36 @@ INDICES = (
     f"CREATE INDEX idx_acervo_entregas_caso ON {SCHEMA}.{PREFIXO}entregas (caso_id)",
     f"CREATE INDEX idx_acervo_entregas_item ON {SCHEMA}.{PREFIXO}entregas (caso_id, item_codigo)",
     f"CREATE INDEX idx_acervo_entrevistas_caso ON {SCHEMA}.{PREFIXO}entrevistas (caso_id)",
+    # A rota do atendimento ao vivo procura por esta coluna a cada gravação de
+    # transcrição, e ela roda duas vezes por atendimento.
+    f"CREATE INDEX idx_acervo_entrevistas_gravacao ON {SCHEMA}.{PREFIXO}entrevistas (gravacao_id)",
     f"CREATE INDEX idx_acervo_assinaturas_caso ON {SCHEMA}.{PREFIXO}assinaturas (caso_id)",
     f"CREATE INDEX idx_acervo_municipios_uf_nome ON {SCHEMA}.{PREFIXO}municipios (uf_id, nome)",
+)
+
+
+#: Colunas acrescentadas a tabelas que JÁ EXISTEM no banco.
+#:
+#: O DDL acima só roda quando a tabela ainda não existe (`IF OBJECT_ID ... IS NULL`),
+#: então acrescentar uma linha lá alcança apenas instalação nova. Um banco já em uso
+#: continuaria sem a coluna, e a consulta que a lê quebraria em produção enquanto
+#: passa nos testes — que rodam contra banco recém-criado. Cada entrada é
+#: `(tabela, coluna, tipo)` e vira um ALTER guardado por `IF COL_LENGTH(...) IS NULL`.
+#:
+#: Só coluna ANULÁVEL, ou com DEFAULT: preencher linha existente é migração de dado, e
+#: migração de dado não cabe num passo de partida que roda a cada subida do servidor.
+COLUNAS_NOVAS = (
+    # A avaliação no Google Meu Negócio é etapa do roteiro (ver `FECHAMENTO` em
+    # `app/roteiros.py`) e era marcada só na tela do atendente, em estado de React que
+    # morria no refresh. Sem gravar, a supervisão não tinha como conferir se a etapa
+    # aconteceu — que é justamente o que o checklist do roteiro pergunta.
+    (f"{PREFIXO}entrevistas", "avaliacao_google_em", "varchar(40) NULL"),
+    # O id da gravação do atendimento ao vivo (o serviço de transcrição, na 8200).
+    # É por ele que a entrevista gravada ao vivo se reconhece entre duas chamadas
+    # da mesma rota — sem uma chave estável, criar o caso e depois encerrar o
+    # atendimento gravaria a MESMA entrevista duas vezes, e a supervisão passaria a
+    # contar o dobro do trabalho de quem a conduziu.
+    (f"{PREFIXO}entrevistas", "gravacao_id", "varchar(64) NULL"),
 )
 
 
@@ -439,6 +454,11 @@ def inicializar_schema() -> None:
         for lote in ESQUEMA_SQLSERVER.split(";\n"):
             if lote.strip():
                 cursor.execute(lote)
+        for tabela, coluna, tipo in COLUNAS_NOVAS:
+            cursor.execute(
+                f"IF COL_LENGTH('{SCHEMA}.{tabela}', '{coluna}') IS NULL "
+                f"ALTER TABLE {SCHEMA}.{tabela} ADD {coluna} {tipo}"
+            )
         for indice in INDICES:
             nome = indice.split()[2]
             cursor.execute(

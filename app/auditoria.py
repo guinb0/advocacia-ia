@@ -43,6 +43,13 @@ TEMPO_MODELO_S = 180.0
 #: para saber se uma pergunta foi feita está espalhado, não concentrado no fim.
 LIMITE_TRANSCRICAO = 24_000
 
+#: Piso de caracteres para haver conversa que se possa auditar.
+#:
+#: Exportado porque a supervisão o consulta antes de chamar o modelo: gastar uma ida
+#: ao modelo para receber de volta "curta demais" é pagar por uma resposta que a
+#: contagem de caracteres já dava de graça.
+MINIMO_CONVERSA = 200
+
 
 class ErroAuditoria(RuntimeError):
     pass
@@ -195,7 +202,7 @@ def _parte_lida(bruto: Any) -> dict[str, Any]:
 def auditar(texto: str, codigo_roteiro: str = "") -> dict[str, Any]:
     """Compara a transcrição com o roteiro e devolve o relatório."""
     limpo = re.sub(r"\s+", " ", str(texto or "")).strip()
-    if len(limpo) < 200:
+    if len(limpo) < MINIMO_CONVERSA:
         raise ErroAuditoria(
             "Transcrição curta demais para auditar — não há conversa suficiente "
             "para dizer o que foi ou não perguntado."

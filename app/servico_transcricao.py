@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import gravacao, transcricao
+from . import gravacao, transcricao, transcricao_openrouter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("servico-transcricao")
@@ -50,13 +50,30 @@ _whisper_aquecido = threading.Event()
 
 @asynccontextmanager
 async def ciclo_de_vida(_: FastAPI):
-    """Carrega e AQUECE o Whisper no boot.
+    """Carrega e AQUECE o Whisper no boot — quando o Whisper é o motor.
 
     Eram ~85s de carga que ninguém queria pagar na 1ª pergunta — e faltava a
     outra metade: com os pesos já na GPU, a primeira inferência de verdade
     ainda custava 30s (kernels CUDA e caches do cuDNN). Ver
     `transcricao.aquecer_modelo`.
+
+    Com a OpenRouter ligada não há o que aquecer, e carregar o modelo assim mesmo
+    gastaria os 85s e a RAM de um modelo que nunca seria chamado. A transcrição
+    fica pronta na hora — o custo saiu do boot e foi para cada requisição.
     """
+    if transcricao.usando_openrouter():
+        log.info(
+            "Transcrição pela OpenRouter (%s). Whisper local não será carregado.",
+            transcricao_openrouter.MODELO,
+        )
+        if not transcricao_openrouter.configurada():
+            log.warning(
+                "OPENROUTER_API_KEY ausente: a transcrição vai falhar em toda "
+                "resposta. Preencha o .env ou volte para MOTOR_TRANSCRICAO=whisper."
+            )
+        _whisper_aquecido.set()
+        yield
+        return
 
     def aquecer():
         try:
@@ -88,7 +105,18 @@ _gravacoes = gravacao.Gravacoes()
 def saude():
     return {
         "status": "ok",
-        "modelo_carregado": transcricao.modelo_carregado(),
+        "motor": transcricao.MOTOR,
+        "modelo": (
+            transcricao_openrouter.MODELO
+            if transcricao.usando_openrouter()
+            else transcricao.MODELO
+        ),
+        # Com a OpenRouter não há modelo local: "pronto" é ter a chave.
+        "modelo_carregado": (
+            transcricao_openrouter.configurada()
+            if transcricao.usando_openrouter()
+            else transcricao.modelo_carregado()
+        ),
         "modelo_aquecido": _whisper_aquecido.is_set(),
     }
 
@@ -274,7 +302,10 @@ async def ws_transcricao(ws: WebSocket):
                     # São ~85s de carga do Whisper. Sem este aviso a tela fica
                     # muda e parece quebrada — e é justamente quando alguém já
                     # está falando, achando que está sendo transcrito.
-                    if not transcricao.modelo_carregado():
+                    # Com a OpenRouter não há carga a esperar; o aviso só faria
+                    # sentido se a chave faltasse, e aí o erro vem na 1ª resposta
+                    # com a mensagem certa.
+                    if not transcricao.usando_openrouter() and not transcricao.modelo_carregado():
                         await ws.send_json({"type": "aquecendo"})
 
                 elif tipo == "stop":

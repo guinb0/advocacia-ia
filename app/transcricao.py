@@ -29,6 +29,8 @@ from typing import Any
 
 import numpy as np
 
+from . import ambiente, transcricao_openrouter
+
 log = logging.getLogger("transcricao")
 
 # ATENÇÃO — a ordem deste import não é decorativa.
@@ -49,8 +51,43 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("CTranslate2 indisponível — a transcrição não vai funcionar: %s", _exc)
 
-TAXA = 16_000                    # o Whisper opera em 16 kHz mono
-SEGUNDOS_ENTRE_PARCIAIS = 0.5    # cadência do texto provisório na tela
+#: Qual motor transcreve: "openrouter" (padrão) ou "whisper" (local).
+#:
+#: A OpenRouter é o motor escolhido pelo escritório. O Whisper local continua no
+#: código e a um `MOTOR_TRANSCRICAO=whisper` de distância, por dois motivos
+#: práticos: ele é o único caminho quando a chave estoura a cota ou a rede cai no
+#: meio de uma entrevista, e é o único que transcreve sem o áudio sair da máquina.
+#: Manter a alternativa não custa nada — o código já existia e o acoplamento com o
+#: resto do módulo é uma função só, `_segmentos_sem_trava`.
+MOTOR = (os.getenv("MOTOR_TRANSCRICAO", "").strip() or "openrouter").lower()
+
+
+def usando_openrouter() -> bool:
+    return MOTOR == "openrouter"
+
+
+TAXA = 16_000                    # 16 kHz mono nos dois motores
+
+#: Cadência do texto provisório na tela, e ela depende do motor.
+#:
+#: No Whisper local o parcial é CPU e sai de graça, então roda duas vezes por
+#: segundo e o texto acompanha a fala quase palavra a palavra. Na OpenRouter cada
+#: parcial é uma requisição paga: na mesma cadência seriam ~120 por minuto POR
+#: ENTREVISTA, o que estoura custo e limite de taxa antes do fim da primeira
+#: pergunta.
+#:
+#: Seis segundos foi medido, não estimado. Numa entrevista de 49s de fala real
+#: (gemini-3.7-flash, janela de ~6s): 5 parciais, 2 trechos congelados, e a ida à
+#: rede levando 4,6s a 5,8s. O efeito prático é que o PRIMEIRO texto aparece por
+#: volta dos 20s de conversa, e daí em diante a tela anda a cada ~6s, sempre uns
+#: 11s atrás da fala. Baixar este número não adianta: a cadência já é da ordem do
+#: tempo de resposta, e `parcial_em_curso` descartaria as rodadas sobrepostas.
+#:
+#: O congelamento (o `trecho`, que é o que alimenta o roteiro) continua
+#: acontecendo — mais espaçado, e é esse o preço da troca.
+SEGUNDOS_ENTRE_PARCIAIS = ambiente.numero(
+    "SEGUNDOS_ENTRE_PARCIAIS", 6.0 if MOTOR == "openrouter" else 0.5
+)
 LIMITE_CAUDA_S = 8.0             # cauda máxima antes de cortar à força
 MARGEM_CAUDA_S = 1.5             # o que ainda pode mudar com o que vem depois
 SOBREPOSICAO_PARCIAL_S = 1.0     # emenda quando o corte é forçado
@@ -411,19 +448,33 @@ class AnswerSession:
         if len(cauda) < TAXA * 0.5:  # menos de meio segundo não vale rodar
             return self.texto_em_construcao()
 
-        if not _trava_inferencia.acquire(blocking=False):
-            return self.texto_em_construcao()
         inicio = time.perf_counter()
-        try:
-            from .gpu_lock import gpu_exclusiva
+        if usando_openrouter():
+            # Sem trava: não há GPU nem modelo local a disputar, e serializar
+            # chamadas de rede faria duas entrevistas simultâneas esperarem uma
+            # pela outra. Quem impede o empilhamento é `parcial_em_curso`, que é
+            # por sessão. Falha de rede não pode derrubar a resposta — o parcial
+            # é descartável, e o próximo já vem com o texto acumulado.
             try:
-                with gpu_exclusiva(espera=1):
-                    trechos = _segmentos_sem_trava(cauda)
-            except TimeoutError:
-                # Parcial é descartável; o texto final espera a GPU sem perder áudio.
+                trechos = _segmentos_sem_trava(
+                    cauda, transcricao_openrouter.TEMPO_LIMITE_PARCIAL_S
+                )
+            except transcricao_openrouter.ErroTranscricao as erro:
+                log.warning("Parcial descartado: %s", erro)
                 return self.texto_em_construcao()
-        finally:
-            _trava_inferencia.release()
+        else:
+            if not _trava_inferencia.acquire(blocking=False):
+                return self.texto_em_construcao()
+            try:
+                from .gpu_lock import gpu_exclusiva
+                try:
+                    with gpu_exclusiva(espera=1):
+                        trechos = _segmentos_sem_trava(cauda)
+                except TimeoutError:
+                    # Parcial é descartável; o final espera a GPU sem perder áudio.
+                    return self.texto_em_construcao()
+            finally:
+                _trava_inferencia.release()
 
         # Uma linha por parcial, com os quatro números que separam as causas de
         # "está demorando": inferência lenta, áudio chegando devagar, microfone
@@ -517,7 +568,14 @@ class AnswerSession:
 
 
 def _transcrever(audio: np.ndarray) -> str:
-    """Transcrição garantida — espera a vez. Usada no texto final."""
+    """Transcrição garantida — espera a vez. Usada no texto final.
+
+    As travas são do Whisper: um modelo local, um processo, uma GPU. A OpenRouter
+    é rede, e serializar chamadas de rede atrás de uma trava global faria duas
+    entrevistas simultâneas esperarem uma pela outra sem nenhum recurso disputado.
+    """
+    if usando_openrouter():
+        return _transcrever_sem_trava(audio)
     from .gpu_lock import gpu_exclusiva
     with _trava_inferencia:
         with gpu_exclusiva():
@@ -529,14 +587,37 @@ def _transcrever_sem_trava(audio: np.ndarray) -> str:
     return " ".join(t.texto for t in _segmentos_sem_trava(audio)).strip()
 
 
-def _segmentos_sem_trava(audio: np.ndarray) -> list[Trecho]:
+def _segmentos_openrouter(audio: np.ndarray, tempo_limite: float | None = None) -> list[Trecho]:
+    """A janela inteira como UM trecho, porque é só isso que a API devolve.
+
+    A OpenRouter transcreve por chat/completions e volta texto puro — sem tempos
+    de segmento. O parcial usava esses tempos para achar a pausa e congelar ali,
+    sem partir palavra; sem eles, o trecho único cobre a janela toda e o
+    `_congelar` cai no corte forçado por `LIMITE_CAUDA_S`, que já existia para
+    fala longa sem pausa nenhuma. A emenda pode repetir ou comer uma palavra, e
+    isso vale só para o texto provisório na tela: o definitivo sai de
+    `transcrever_final`, que manda o áudio inteiro de uma vez.
+    """
+    texto = transcricao_openrouter.transcrever(audio, tempo_limite)
+    if not texto:
+        return []
+    return [Trecho(0.0, len(audio) / TAXA, texto)]
+
+
+def _segmentos_sem_trava(audio: np.ndarray, tempo_limite: float | None = None) -> list[Trecho]:
     """O trabalho em si, com as fronteiras que o VAD encontrou.
+
+    `tempo_limite` só vale para a OpenRouter, e existe porque parcial e final têm
+    urgências opostas: o parcial é descartável e precisa desistir rápido para não
+    travar a tela; o final não pode se perder e espera o quanto for.
 
     Os tempos importam tanto quanto o texto: é neles que o parcial descobre
     onde houve pausa, e é na pausa que dá para congelar sem cortar palavra.
     Com `vad_filter`, o faster-whisper já devolve os tempos referentes ao áudio
     original, não ao áudio comprimido — então servem para fatiar o buffer.
     """
+    if usando_openrouter():
+        return _segmentos_openrouter(audio, tempo_limite)
     modelo = carregar_modelo()
     segmentos, _ = modelo.transcribe(
         audio,

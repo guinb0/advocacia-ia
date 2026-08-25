@@ -937,11 +937,16 @@ export async function criarUsuario(dados: {
 export interface EntrevistaResumo {
   id: string;
   caso_id: string | null;
+  /** Nome do cliente do caso. Data sozinha não diz qual atendimento é qual. */
+  cliente: string;
   arquivo: string | null;
   realizada_em: string | null;
   criado_em: string | null;
   caracteres: number;
   fatos_gerados: number | null;
+  /** Os dois sinais que a lista dá sem ida ao modelo (ver `app/supervisao.py`). */
+  avaliacao_google: boolean;
+  enviada: boolean;
 }
 
 export interface PessoaSupervisao {
@@ -1007,6 +1012,129 @@ export async function auditarEntrevista(id: string): Promise<Auditoria> {
     await buscar(`/api/supervisao/entrevistas/${encodeURIComponent(id)}/auditoria`, {
       method: "POST",
     }),
+  );
+}
+
+/* ------------------------------------- a entrevista conduzida ao vivo
+ *
+ * Até aqui, a entrevista só virava registro quando alguém anexava um arquivo ao
+ * caso, à mão, depois. O atendimento guiado — roteiro, escuta, gravação — não
+ * gravava nada: a conversa transcrita morria com a aba, e a supervisão (que lê
+ * essa tabela) enxergava só a amostra que tinha sido anexada.
+ *
+ * O que sobe é a transcrição BRUTA, não o relato montado das respostas: o relato
+ * diz o que a escuta extraiu, e auditá-lo mediria o reconhecimento de voz em vez
+ * da condução da entrevista (ver o cabeçalho de `app/auditoria.py`).
+ *
+ * PUT, e chamado mais de uma vez por atendimento: o caso nasce no meio da
+ * rolagem e a conversa continua depois dele — avaliação, documentos, fechamento.
+ * `gravacao_id` é a chave, e a segunda chamada reescreve a primeira. */
+
+export interface EntrevistaAoVivo {
+  /** Id da gravação no serviço de transcrição. Identifica a entrevista. */
+  gravacao_id: string;
+  texto: string;
+  realizada_em: string;
+  avaliacao_google: boolean;
+  /** O atendimento foi encerrado — só então o agente lê a conversa. */
+  concluida: boolean;
+}
+
+export async function gravarEntrevistaAoVivo(
+  casoId: string,
+  dados: EntrevistaAoVivo,
+): Promise<EntrevistaResumo> {
+  return comoJson(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/entrevista-ao-vivo`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
+/* ------------------------------------------- checklist do roteiro (secretário)
+ *
+ * O checklist tem DUAS origens, e elas não se misturam de propósito.
+ *
+ * `ChecklistRegistro` sai do banco — assinatura enviada, avaliação marcada,
+ * documento recebido. É fato, é barato de consultar e carrega junto com a tela.
+ *
+ * `Auditoria` (acima) sai da leitura da transcrição pelo modelo, custa uma ida ao
+ * DeepSeek e por isso só roda quando o secretário pede. A tela junta as duas em uma
+ * lista só, mas mantém visível de onde cada linha veio: uma diz o que ACONTECEU,
+ * a outra o que APARECE na conversa — e a segunda erra. */
+
+export type SituacaoItem = "feito" | "pendente" | "incerto" | "nao_aplica";
+
+export interface ItemChecklist {
+  id: string;
+  titulo: string;
+  detalhe: string;
+  /** Pílula à direita da linha: "Assinatura", "Dossiê", "Crítico"… */
+  etiqueta: string;
+  situacao: SituacaoItem;
+  /** O que não tem segunda chance depois que o cliente desliga. */
+  critico: boolean;
+}
+
+export interface FaseChecklist {
+  codigo: string;
+  titulo: string;
+  descricao: string;
+  itens: ItemChecklist[];
+}
+
+export interface ChecklistRegistro {
+  entrevista_id: string;
+  entrevistador: string;
+  caso: { id: string; cliente: string; categoria: string };
+  realizada_em: string | null;
+  criado_em: string | null;
+  avaliacao_google: boolean;
+  /** "ao_vivo" foi conduzida pelo roteiro e tem áudio; "anexada" veio de arquivo. */
+  origem: "ao_vivo" | "anexada";
+  gravacao_id: string;
+  fases: FaseChecklist[];
+  progresso: { feitos: number; total: number; percentual: number };
+}
+
+/** GET, e não POST: nada aqui vai ao modelo, então repetir a chamada não custa. */
+export async function obterChecklist(id: string): Promise<ChecklistRegistro> {
+  return comoJson(
+    await buscar(`/api/supervisao/entrevistas/${encodeURIComponent(id)}/checklist`),
+  );
+}
+
+/** Conserta a marcação da avaliação do Google. Devolve o checklist já refeito. */
+export async function corrigirAvaliacaoGoogle(
+  id: string,
+  concluida: boolean,
+): Promise<ChecklistRegistro> {
+  return comoJson(
+    await buscar(`/api/supervisao/entrevistas/${encodeURIComponent(id)}/avaliacao-google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ concluida }),
+    }),
+  );
+}
+
+/** A marcação do atendente, no atendimento — com o cliente ainda na chamada. */
+export async function marcarAvaliacaoGoogle(
+  casoId: string,
+  entrevistaId: string,
+  concluida: boolean,
+): Promise<{ avaliacao_google: boolean }> {
+  return comoJson(
+    await buscar(
+      `/api/casos/${encodeURIComponent(casoId)}/entrevista/${encodeURIComponent(entrevistaId)}/avaliacao-google`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ concluida }),
+      },
+    ),
   );
 }
 

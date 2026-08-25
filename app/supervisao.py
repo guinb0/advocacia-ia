@@ -29,8 +29,9 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
-from . import armazenamento, auditoria
+from . import armazenamento, auditoria, contrato
 from .auth import exigir_papel
 
 log = logging.getLogger("supervisao")
@@ -58,6 +59,11 @@ def _chave(nome: object) -> str:
 def por_entrevistador() -> dict[str, Any]:
     """Quantas entrevistas cada um fez, e a lista de cada pessoa."""
     entrevistas = armazenamento.listar_todas_entrevistas()
+    # O nome do cliente não está na entrevista, e abrir caso a caso seria uma
+    # consulta por linha. Uma leitura da lista de casos resolve todas de uma vez:
+    # a tela mostra "Helena Prado — 12 entrevistas" e, dentro, de quem foi cada
+    # uma; data sozinha não diz ao secretário qual atendimento ele está abrindo.
+    clientes = {c["id"]: c.get("cliente") or "" for c in armazenamento.listar_casos()}
 
     pessoas: dict[str, dict[str, Any]] = {}
     for e in entrevistas:
@@ -71,6 +77,7 @@ def por_entrevistador() -> dict[str, Any]:
             {
                 "id": e.get("id"),
                 "caso_id": e.get("caso_id"),
+                "cliente": clientes.get(str(e.get("caso_id") or ""), ""),
                 "arquivo": e.get("arquivo"),
                 "realizada_em": e.get("realizada_em"),
                 "criado_em": e.get("criado_em"),
@@ -78,6 +85,12 @@ def por_entrevistador() -> dict[str, Any]:
                 # inteiro numa lista que pode ter centenas de linhas.
                 "caracteres": len(str(e.get("texto") or "")),
                 "fatos_gerados": e.get("fatos_gerados"),
+                # Os dois sinais que a lista consegue dar SEM ir ao modelo. Ficam
+                # aqui para o secretário ver a pendência antes de abrir a
+                # entrevista — a conferência do roteiro custa uma ida ao modelo e
+                # não pode rodar em lote para trinta linhas de uma lista.
+                "avaliacao_google": bool(e.get("avaliacao_google")),
+                "enviada": bool(e.get("enviada")),
             }
         )
 
@@ -117,6 +130,8 @@ def transcricao(entrevista_id: str) -> dict[str, Any]:
         "resumo": e.get("resumo") or "",
         "perguntas": e.get("perguntas") or [],
         "fatos_gerados": e.get("fatos_gerados"),
+        "avaliacao_google": bool(e.get("avaliacao_google")),
+        "gravacao_id": e.get("gravacao_id") or "",
     }
 
 
@@ -140,3 +155,296 @@ def auditar_entrevista(entrevista_id: str) -> dict[str, Any]:
     relatorio["entrevista_id"] = entrevista_id
     relatorio["entrevistador"] = e.get("entrevistador") or SEM_NOME
     return relatorio
+
+
+# --------------------------------------------------------------- checklist
+
+
+#: Situações possíveis de um item do checklist.
+#:
+#: `incerto` existe porque nem tudo que a tela mostra é fato: o que vem da leitura do
+#: modelo pode ser erro de reconhecimento de voz, e marcar como pendente o que só está
+#: ilegível manda o secretário cobrar trabalho que foi feito. `nao_aplica` sai da conta
+#: do progresso — cobrar assinatura de um atendimento que ainda não gerou papelada
+#: deixaria todo checklist eternamente incompleto.
+SITUACOES = ("feito", "pendente", "incerto", "nao_aplica")
+
+
+def _item(
+    identificador: str,
+    titulo: str,
+    detalhe: str,
+    etiqueta: str,
+    situacao: str,
+    *,
+    critico: bool = False,
+) -> dict[str, Any]:
+    """Uma linha do checklist. `critico` é o que não tem segunda chance."""
+    return {
+        "id": identificador,
+        "titulo": titulo,
+        "detalhe": detalhe,
+        "etiqueta": etiqueta,
+        "situacao": situacao if situacao in SITUACOES else "incerto",
+        "critico": critico,
+    }
+
+
+def _fase(codigo: str, titulo: str, descricao: str, itens: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"codigo": codigo, "titulo": titulo, "descricao": descricao, "itens": itens}
+
+
+def _fase_avaliacao(entrevista: dict[str, Any]) -> dict[str, Any]:
+    """Google Meu Negócio — a etapa que só acontece com o cliente ainda na chamada.
+
+    O roteiro é explícito: a atendente pede a avaliação AGORA e permanece na
+    videoconferência até confirmar que saiu. Por isso o item é crítico — desligada a
+    chamada não há segunda chance, e "mandei o link" não é avaliação feita.
+    """
+    marcada = bool(entrevista.get("avaliacao_google"))
+    quando = str(entrevista.get("avaliacao_google_em") or "")[:16].replace("T", " ")
+    return _fase(
+        "avaliacao",
+        "Avaliação no Google Meu Negócio",
+        "O fechamento do roteiro pede a avaliação com o cliente ainda na chamada.",
+        [
+            _item(
+                "avaliacao-confirmada",
+                "O cliente concluiu a avaliação, e o atendente confirmou na chamada",
+                f"Marcada em {quando}."
+                if marcada
+                else (
+                    "Sem marcação. Pode ter acontecido sem ninguém registrar — mas, "
+                    "sem registro, não há como conferir."
+                ),
+                "Crítico",
+                "feito" if marcada else "pendente",
+                critico=True,
+            )
+        ],
+    )
+
+
+def _situacao_do_documento(registro: dict[str, Any] | None) -> tuple[str, str]:
+    """Estado de um dos documentos assinados, e a frase que explica o estado."""
+    if registro is None:
+        return "pendente", "Não foi enviado para assinatura."
+    estado = str(registro.get("estado") or "pendente")
+    if estado == "assinado":
+        return "feito", "Assinado por todos os signatários."
+    if estado == "recusado":
+        return "pendente", "Recusado por um dos signatários — precisa ser reenviado."
+    faltam = [str(n).strip() for n in (registro.get("faltam") or []) if str(n).strip()]
+    assinaram = registro.get("assinaram") or 0
+    total = registro.get("total") or 0
+    if faltam:
+        return "pendente", f"{assinaram} de {total} assinaram. Falta: {', '.join(faltam[:3])}."
+    return "pendente", f"Enviado; {assinaram} de {total} assinaram."
+
+
+def _fase_papelada(caso_id: str, assinaturas: list[dict[str, Any]]) -> dict[str, Any]:
+    """Contrato, procuração e declaração — a papelada que sai do mesmo atendimento.
+
+    São os três de `contrato.MODELOS`, e não só o contrato: sem procuração não se
+    peticiona, e sem declaração de hipossuficiência não há gratuidade de justiça. O
+    casamento é pelo começo do nome gravado ("Contrato de honorários — Fulano"), que é
+    como `main.py` o monta ao enviar para a ZapSign.
+    """
+    itens: list[dict[str, Any]] = []
+    for modelo in contrato.MODELOS:
+        rotulo = str(modelo["rotulo"])
+        registro = next(
+            (a for a in assinaturas if str(a.get("nome") or "").startswith(rotulo)), None
+        )
+        situacao, detalhe = _situacao_do_documento(registro)
+        itens.append(
+            _item(
+                f"assinatura-{modelo['codigo']}",
+                rotulo,
+                detalhe if caso_id else "A entrevista não está vinculada a um caso.",
+                "Assinatura",
+                situacao if caso_id else "nao_aplica",
+                critico=modelo["codigo"] in ("contrato", "procuracao"),
+            )
+        )
+    return _fase(
+        "papelada",
+        "Papelada e assinaturas",
+        "Os três documentos que o cliente assina saem do mesmo atendimento.",
+        itens,
+    )
+
+
+def _fase_registro(entrevista: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[str, Any]:
+    """O que o atendimento deixou gravado — conferível sem ler a conversa."""
+    entrevistador = " ".join(str(entrevista.get("entrevistador") or "").split())
+    gravacao = str(entrevista.get("gravacao_id") or "")
+    caracteres = len(str(entrevista.get("texto") or ""))
+    fatos = int(entrevista.get("fatos_gerados") or 0)
+    resumo = str(entrevista.get("resumo") or "").strip()
+    realizada = str(entrevista.get("realizada_em") or "").strip()
+
+    return _fase(
+        "registro",
+        "Registro do atendimento",
+        "O rastro que o atendimento deixou no sistema.",
+        [
+            _item(
+                "registro-entrevistador",
+                "Quem conduziu está registrado",
+                entrevistador
+                or "Gravada antes de o sistema passar a atribuir a entrevista a quem a fez.",
+                "Atribuição",
+                "feito" if entrevistador else "pendente",
+            ),
+            _item(
+                "registro-data",
+                "Data da entrevista informada",
+                realizada or "Sem data de realização — consta só quando o arquivo subiu.",
+                "Cadastro",
+                "feito" if realizada else "pendente",
+            ),
+            _item(
+                "registro-transcricao",
+                "Transcrição gravada e com conversa suficiente",
+                f"{caracteres} caracteres."
+                if caracteres >= auditoria.MINIMO_CONVERSA
+                else "Texto curto demais para conferir a condução da entrevista.",
+                "Transcrição",
+                "feito" if caracteres >= auditoria.MINIMO_CONVERSA else "pendente",
+                critico=True,
+            ),
+            _item(
+                "registro-agente",
+                "Entrevista lida pelo agente jurídico",
+                f"{fatos} fato(s) gerados para o dossiê."
+                if entrevista.get("enviada")
+                else "Ainda não foi lida — o dossiê do caso não tem os fatos desta conversa.",
+                "Dossiê",
+                "feito" if entrevista.get("enviada") else "pendente",
+            ),
+            _item(
+                "registro-resumo",
+                "Resumo do atendimento disponível",
+                resumo[:180] if resumo else "Sem resumo gravado.",
+                "Dossiê",
+                "feito" if resumo else "pendente",
+            ),
+            _item(
+                "registro-audio",
+                "Áudio do atendimento guardado",
+                f"Gravação {gravacao[:8]} — dá para ouvir o trecho em vez de só ler."
+                if gravacao
+                else (
+                    "Entrevista anexada como arquivo: não há gravação do atendimento "
+                    "a que ligá-la."
+                ),
+                "Gravação",
+                # Sem gravação não é falha de ninguém: a entrevista anexada à mão
+                # nunca teve áudio para guardar. Cobrar isso apontaria pendência em
+                # todo registro antigo do escritório.
+                "feito" if gravacao else "nao_aplica",
+            ),
+            _item(
+                "registro-documentos",
+                "Documentos do cliente recebidos",
+                f"{len(entregas)} documento(s) entregues no caso."
+                if entregas
+                else "Nenhum documento entregue até agora.",
+                "Documentação",
+                "feito" if entregas else "pendente",
+            ),
+        ],
+    )
+
+
+def _progresso(fases: list[dict[str, Any]]) -> dict[str, int]:
+    """Quanto do que é conferível SEM ler a conversa já está feito.
+
+    `nao_aplica` sai do denominador. `incerto` conta como não feito, mas a diferença
+    entre um e outro aparece na linha, não no número.
+    """
+    itens = [i for f in fases for i in f["itens"] if i["situacao"] != "nao_aplica"]
+    feitos = sum(1 for i in itens if i["situacao"] == "feito")
+    return {
+        "feitos": feitos,
+        "total": len(itens),
+        "percentual": round(feitos * 100 / len(itens)) if itens else 0,
+    }
+
+
+@roteador.get("/entrevistas/{entrevista_id}/checklist", dependencies=[SoSecretario])
+def checklist(entrevista_id: str) -> dict[str, Any]:
+    """A parte do checklist que sai do REGISTRO, sem ida ao modelo.
+
+    Separada da auditoria de propósito. Assinatura, avaliação e documento são fato
+    gravado: consultá-los é barato, não erra, e por isso pode carregar junto com a
+    tela. Se estivessem na mesma rota da conferência do roteiro, o secretário só
+    descobriria que faltou a procuração depois de pagar a leitura da conversa inteira
+    — e não descobriria nada com o modelo fora do ar.
+    """
+    e = armazenamento.obter_entrevista(entrevista_id)
+    if e is None:
+        raise HTTPException(404, "Entrevista não encontrada.")
+
+    caso_id = str(e.get("caso_id") or "")
+    caso = armazenamento.obter_caso(caso_id) if caso_id else None
+    assinaturas = armazenamento.listar_assinaturas(caso_id=caso_id) if caso_id else []
+    entregas = armazenamento.listar_entregas(caso_id) if caso_id else []
+
+    fases = [
+        _fase_avaliacao(e),
+        _fase_papelada(caso_id, assinaturas),
+        _fase_registro(e, entregas),
+    ]
+
+    return {
+        "entrevista_id": entrevista_id,
+        "entrevistador": e.get("entrevistador") or SEM_NOME,
+        "caso": {
+            "id": caso_id,
+            "cliente": (caso or {}).get("cliente") or "",
+            "categoria": (caso or {}).get("categoria") or "",
+        },
+        "realizada_em": e.get("realizada_em"),
+        "criado_em": e.get("criado_em"),
+        "avaliacao_google": bool(e.get("avaliacao_google")),
+        # Por onde a entrevista entrou. "ao_vivo" foi conduzida pelo roteiro guiado
+        # e tem áudio; "anexada" foi um arquivo que alguém subiu ao caso depois. A
+        # tela usa isto para oferecer (ou não) o áudio, e para não cobrar da segunda
+        # o que só a primeira pode ter.
+        "origem": "ao_vivo" if e.get("gravacao_id") else "anexada",
+        "gravacao_id": e.get("gravacao_id") or "",
+        "fases": fases,
+        "progresso": _progresso(fases),
+    }
+
+
+class MarcacaoAvaliacao(BaseModel):
+    concluida: bool
+
+
+@roteador.post("/entrevistas/{entrevista_id}/avaliacao-google", dependencies=[SoSecretario])
+def corrigir_avaliacao_google(
+    entrevista_id: str, marcacao: MarcacaoAvaliacao
+) -> dict[str, Any]:
+    """Registra que a avaliação no Google aconteceu, ou desfaz a marcação.
+
+    ONDE ELA DEVERIA SER MARCADA, E POR QUE NÃO É AINDA
+
+    O certo é o atendente marcar no ato, com o cliente ainda na videoconferência —
+    é o que a caixa de `AvaliacaoGoogle.tsx` pede, e o que o `FECHAMENTO` do roteiro
+    manda. Só que aquela marcação vive em estado de React e não tem onde pousar: o
+    atendimento ao vivo não cria linha em `entrevistas` (só o anexo de arquivo cria,
+    em `POST /api/casos/{id}/entrevista`), então não existe registro a que prendê-la.
+
+    Enquanto isso não muda, quem grava é o secretário, aqui, conferindo com o
+    atendente. É pior que marcar no ato — depende da memória de alguém — e por isso
+    a linha do checklist diz "sem marcação", e não "não foi avaliada": a diferença
+    entre não ter acontecido e não ter sido registrado é justamente o que esta tela
+    não pode confundir.
+    """
+    if armazenamento.obter_entrevista(entrevista_id) is None:
+        raise HTTPException(404, "Entrevista não encontrada.")
+    armazenamento.marcar_avaliacao_google(entrevista_id, marcacao.concluida)
+    return checklist(entrevista_id)

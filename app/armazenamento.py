@@ -754,6 +754,13 @@ def _normalizar_entrevista(linha: banco.Linha) -> dict[str, Any]:
     except json.JSONDecodeError:
         registro["perguntas"] = []
     registro["enviada"] = bool(registro.get("enviada_em"))
+    # Coluna nova (ver `COLUNAS_NOVAS` em `app/banco.py`): entrevista gravada antes
+    # dela volta sem a chave, e `.get` a trata como não marcada — que é o certo. O
+    # booleano é o que a tela lê; a data fica para quem quiser auditar quando foi.
+    registro["avaliacao_google"] = bool(registro.get("avaliacao_google_em"))
+    # Idem: coluna nova. Preenchida só na entrevista gravada ao vivo — a que foi
+    # anexada como arquivo não tem gravação a que se ligar.
+    registro["gravacao_id"] = registro.get("gravacao_id") or ""
     return registro
 
 
@@ -765,16 +772,22 @@ def registrar_entrevista(
     texto: str,
     realizada_em: str = "",
     entrevistador: str = "",
+    gravacao_id: str = "",
 ) -> dict[str, Any]:
-    """Guarda a entrevista do atendimento: o arquivo original e o texto lido dele."""
+    """Guarda a entrevista do atendimento: o arquivo original e o texto lido dele.
+
+    `gravacao_id` só vem da entrevista conduzida ao vivo pelo roteiro — é a chave
+    pela qual ela se reconhece entre duas gravações do mesmo atendimento. A
+    entrevista anexada como arquivo não tem gravação, e vai com o campo vazio.
+    """
     identificador = uuid.uuid4().hex
     with conectar() as con:
         con.execute(
             """
             INSERT INTO entrevistas
                    (id, caso_id, arquivo, caminho, texto, realizada_em, entrevistador,
-                    resumo, perguntas, fatos_gerados, enviada_em, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '', '[]', 0, NULL, ?)
+                    resumo, perguntas, fatos_gerados, enviada_em, gravacao_id, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '', '[]', 0, NULL, ?, ?)
             """,
             (
                 identificador,
@@ -784,11 +797,45 @@ def registrar_entrevista(
                 texto,
                 realizada_em,
                 entrevistador,
+                gravacao_id,
                 agora(),
             ),
         )
         _tocar_caso(con, caso_id)
     return obter_entrevista(identificador) or {}
+
+
+def obter_entrevista_por_gravacao(gravacao_id: str) -> dict[str, Any] | None:
+    """A entrevista de uma gravação, se ela já foi registrada.
+
+    É o que torna a rota do atendimento ao vivo repetível. Ela é chamada duas vezes
+    por atendimento — ao criar o caso e ao encerrar — e pode ser chamada mais vezes
+    se o atendente voltar ao roteiro. Sem esta busca, cada chamada inseriria outra
+    linha, e a supervisão contaria três entrevistas onde houve uma.
+    """
+    if not gravacao_id:
+        return None
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM entrevistas WHERE gravacao_id = ?", (gravacao_id,)
+        ).fetchone()
+    return _normalizar_entrevista(linha) if linha else None
+
+
+def atualizar_transcricao(entrevista_id: str, texto: str, realizada_em: str = "") -> bool:
+    """Regrava a transcrição de uma entrevista já registrada.
+
+    O atendimento ao vivo continua depois de o caso nascer — a avaliação no Google,
+    os documentos e o encerramento acontecem com a gravação correndo, e é justamente
+    ali que a atendente lê o fechamento do roteiro. Gravar a transcrição só uma vez,
+    no meio, deixaria a supervisão auditando uma conversa que termina antes do fim.
+    """
+    with conectar() as con:
+        cur = con.execute(
+            "UPDATE entrevistas SET texto = ?, realizada_em = ? WHERE id = ?",
+            (texto, realizada_em, entrevista_id),
+        )
+    return cur.rowcount > 0
 
 
 def listar_entrevistas(caso_id: str) -> list[dict[str, Any]]:
@@ -840,6 +887,25 @@ def marcar_entrevista_lida(
             " enviada_em = ? WHERE id = ?",
             (resumo[:4000], json.dumps(perguntas[:15]), fatos_gerados, agora(), entrevista_id),
         )
+
+
+def marcar_avaliacao_google(entrevista_id: str, concluida: bool) -> bool:
+    """Registra que o cliente avaliou o escritório no Google, ou desfaz a marcação.
+
+    Quem marca é o atendente, com o cliente ainda na videoconferência — é o que o
+    `FECHAMENTO` do roteiro manda (ver `app/roteiros.py`). Guardar a HORA e não um
+    booleano é de graça e responde a pergunta seguinte da supervisão: se a marcação
+    saiu junto do atendimento ou dias depois, de memória.
+
+    Desmarcar apaga a data em vez de guardar "false". Uma marcação feita por engano
+    não deve deixar rastro de que a avaliação aconteceu.
+    """
+    with conectar() as con:
+        cur = con.execute(
+            "UPDATE entrevistas SET avaliacao_google_em = ? WHERE id = ?",
+            (agora() if concluida else None, entrevista_id),
+        )
+    return cur.rowcount > 0
 
 
 def excluir_entrevista(entrevista_id: str) -> bool:
