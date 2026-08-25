@@ -165,7 +165,12 @@ export default function Retratos({
   const [podeExpandir, setPodeExpandir] = useState(false);
 
   useEffect(() => {
-    setPodeExpandir(document.fullscreenEnabled === true);
+    /* Os dois: ja apareceu botao em navegador de celular que anuncia
+     * `fullscreenEnabled` e nao implementa o metodo no elemento. */
+    setPodeExpandir(
+      document.fullscreenEnabled === true &&
+        typeof document.documentElement.requestFullscreen === "function",
+    );
     const aoTrocar = () => setCheia(document.fullscreenElement === palco.current);
     document.addEventListener("fullscreenchange", aoTrocar);
     return () => document.removeEventListener("fullscreenchange", aoTrocar);
@@ -203,7 +208,11 @@ export default function Retratos({
             ? "h-screen w-screen max-h-none rounded-none border-0"
             : coluna
               ? "aspect-[4/3] max-h-[360px] rounded-campo"
-              : "aspect-video max-h-[58vh] rounded-campo"
+              /* No celular em pe, 16/9 desperdica a tela: a largura toda vira
+               * uma faixa de ~190px de altura e o rosto fica do tamanho de uma
+               * unha. Retrato 3/4 usa a mesma largura e mais que dobra a altura.
+               * De `sm` para cima volta a 16/9, que e a proporcao do monitor. */
+              : "aspect-[3/4] max-h-[62vh] sm:aspect-video sm:max-h-[58vh] rounded-campo"
         }`}
       >
         {podeExpandir && (
