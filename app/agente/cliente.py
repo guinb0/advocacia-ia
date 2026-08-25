@@ -402,7 +402,9 @@ class Cliente:
         )
 
     def documentos(self, caso_ref: str) -> dict[str, Any]:
-        return self._ler(f"/api/v1/cases/{caso_ref}/documents")
+        # A proveniência de um fato pode apontar para o 21º anexo. Ler só a primeira
+        # página faria a tela saber o fato, mas não conseguir abrir justamente a prova.
+        return self._listar_paginas(f"/api/v1/cases/{caso_ref}/documents", limite=100)
 
     # ------------------------------------------------------------- análise
 

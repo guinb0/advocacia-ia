@@ -21,6 +21,9 @@ export interface Validacao {
   aprovado: boolean;
   /** "posso usar esses dados?" — é este que um fluxo automatizado consulta. */
   dados_utilizaveis: boolean;
+  /** Texto corrido aproveitável por análise jurídica/RAG, mesmo sem campos. */
+  texto_utilizavel?: boolean;
+  caracteres_aproveitaveis?: number;
   imagem_legivel: boolean;
   score_legibilidade: number;
   completude_percentual: number;
@@ -216,6 +219,12 @@ export interface Pergunta {
   busca: "" | "cep";
   /** Id da pergunta que recebe o resultado da busca. */
   preenche: string;
+  /** Esta pergunta só existe quando OUTRA foi respondida de certo jeito. Vazio
+   *  = sempre aberta. Ver `depende_valor` e `roteiros.py`. */
+  depende_de: string;
+  /** O valor do pai que ABRE esta pergunta. Nem sempre é "sim": a da recusa da
+   *  CAT só faz sentido quando a CAT NÃO foi emitida. */
+  depende_valor: string;
   /** Texto que a atendente LÊ em voz alta conforme a resposta. Chave "sim"/"não"
    *  nas de rastreio, "*" para qualquer uma. Vem do roteiro do escritório. */
   fala: Record<string, string>;

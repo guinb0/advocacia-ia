@@ -397,6 +397,26 @@ def _respondida(valor: Any) -> bool:
     return bool(str(valor or "").strip())
 
 
+def _dependencia_aberta(pergunta: roteiros.Pergunta, respostas: dict[str, Any]) -> bool:
+    """A pergunta condicional só existe quando a de cima foi respondida assim.
+
+    Sem o pai respondido ela fica FECHADA, e não aberta: o enunciado pressupõe a
+    resposta anterior ("Se já entrou com ação: qual o número do processo?") e
+    lê-lo antes dela confunde o cliente. Quando o pai é respondido de outro
+    jeito, ela some — que é o ponto: era ela que voltava para o painel a cada
+    volta, pedindo de novo o que o cliente já tinha dito não existir.
+    """
+    if not pergunta.depende_de:
+        return True
+    valor = str(respostas.get(pergunta.depende_de, "")).strip().casefold()
+    esperado = pergunta.depende_valor.strip().casefold()
+    # "nao" e "não" são a mesma resposta; o normalizador do sim/não já grava
+    # com acento, mas dado antigo e digitação à mão chegam das duas formas.
+    if esperado in {"nao", "não"}:
+        return valor in {"nao", "não"}
+    return valor == esperado
+
+
 def _perguntas_abertas(
     roteiro: roteiros.Roteiro, respostas: dict[str, Any], pergunta_atual: str = ""
 ) -> list[roteiros.Pergunta]:
@@ -423,6 +443,8 @@ def _perguntas_abertas(
             continue
         for pergunta in bloco.perguntas:
             if _respondida(respostas.get(pergunta.id)):
+                continue
+            if not _dependencia_aberta(pergunta, respostas):
                 continue
             # Rede de segurança para quando o roteiro mudar de forma: campo com
             # dígito verificador, e os que são digitados por regra, nunca saem
@@ -748,9 +770,17 @@ REGRAS
   possuir ou conseguir enviar.
 - `valor` deve conter a resposta limpa, sem repetir o enunciado ou muletas.
 - `trecho` deve ser uma citação curta da transcrição que sustenta o valor.
+- Separe COBERTURA de PREENCHIMENTO. Em `perguntadas`, liste toda pergunta do
+  formulário que o entrevistador efetivamente fez, mesmo com palavras
+  diferentes e mesmo quando o cliente não respondeu de forma aproveitável.
+- Não marque como perguntada apenas porque o cliente falou espontaneamente do
+  assunto. Precisa existir uma pergunta reconhecível na conversa.
+- Se foi perguntada mas ficou sem resposta clara, inclua também em `incertas`
+  com motivo direto. Ela nunca deve aparecer como "não foi perguntada".
 
 Responda APENAS JSON:
 {"respostas":[{"pergunta_id":"...","valor":"...","trecho":"..."}],
+ "perguntadas":["pergunta_id"],
  "incertas":[{"pergunta_id":"...","motivo":"..."}]}"""
 
 
@@ -1130,7 +1160,14 @@ def processar_entrevista(
         for bloco in roteiro.blocos
         if not bloco.delegado_a and (not bloco.modulo or bloco.modulo in positivos)
         for pergunta in bloco.perguntas
+        if _dependencia_aberta(pergunta, respostas)
     ]
+    ids_ativos = {p.id for p in ativas}
+    perguntadas = {
+        str(pergunta_id)
+        for pergunta_id in (bruto.get("perguntadas") or [])
+        if str(pergunta_id) in ids_ativos
+    }
     faltando = [
         {
             "pergunta_id": pergunta.id,
@@ -1139,10 +1176,10 @@ def processar_entrevista(
         }
         for pergunta in ativas
         if not _respondida(respostas.get(pergunta.id))
+        and pergunta.id not in perguntadas
     ]
 
     incertas = []
-    ids_ativos = {p.id for p in ativas}
     for item in bruto.get("incertas") or []:
         if not isinstance(item, dict):
             continue
@@ -1154,6 +1191,31 @@ def processar_entrevista(
     incertas.extend(
         item for item in incertas_conferencia if item["pergunta_id"] in ids_ativos
     )
+
+    # Uma pergunta reconhecidamente feita não pode voltar para a tela com a
+    # alegação falsa de que ninguém a perguntou. Sem resposta utilizável, ela
+    # pertence à confirmação, não à lista de perguntas ausentes.
+    ids_incertos = {item["pergunta_id"] for item in incertas}
+    for pergunta_id in perguntadas:
+        if not _respondida(respostas.get(pergunta_id)) and pergunta_id not in ids_incertos:
+            incertas.append(
+                {
+                    "pergunta_id": pergunta_id,
+                    "motivo": "A pergunta foi feita, mas não houve resposta clara para registrar.",
+                }
+            )
+
+    # A mesma regra do bloco acima, aplicada ao caso que faltava: a pergunta cuja
+    # resposta o modelo TENTOU extrair e a conferência de citação recusou.
+    #
+    # `faltando` é montado antes de `incertas_conferencia` existir e filtra só
+    # por `perguntadas`, que é o que o modelo se lembra de ter perguntado. Quem
+    # cai na conferência não passa por ali — e voltava para a tela como "ainda
+    # não foi perguntado" ao lado do "precisa ser confirmado" sobre a MESMA
+    # pergunta. Para quem conduz, isso é o painel mandando repetir uma pergunta
+    # que o cliente acabou de responder.
+    ids_incertos = {item["pergunta_id"] for item in incertas}
+    faltando = [f for f in faltando if f["pergunta_id"] not in ids_incertos]
 
     return {
         "respostas": respostas,

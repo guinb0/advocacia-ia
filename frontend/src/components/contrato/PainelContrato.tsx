@@ -288,6 +288,11 @@ export default function PainelContrato({ respostas }: Props) {
           <strong>Os documentos ainda não podem ser gerados.</strong>
           <br />
           Informe {requisitosContrato.join(" e ")}. Nenhum arquivo será criado antes disso.
+          {cliente && requisitosContrato.includes("nome completo do cliente") && (
+            <span className="block mt-[6px] text-[11.5px] text-tinta-3">
+              Nome recebido: “{cliente}”. Preencha nome e sobrenome na identificação da entrevista.
+            </span>
+          )}
         </div>
       )}
 

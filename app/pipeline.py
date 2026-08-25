@@ -17,7 +17,7 @@ import numpy as np
 
 from . import quality
 from .extractors import CAMPOS_ESPERADOS, ROTULOS_TIPO, Campo, Linha, classificar, normalizar
-from .ocr_engine import rodar_ocr_com_tempo
+from .ocr_engine import motor_ativo, rodar_ocr_com_tempo
 
 log = logging.getLogger("pipeline")
 
@@ -82,8 +82,8 @@ def ocr_com_rotacao_medido(
 ) -> tuple[list[Linha], int, list[dict[str, float | int]], int]:
     """Roda o OCR na orientação original; se render pouco texto, testa 90/180/270.
 
-    O Paddle endireita a página primeiro; esta é a rede de segurança para casos
-    em que o classificador de orientação não encontra a posição correta.
+    A Mistral reconhece orientação; esta é a rede de segurança para casos em
+    que o serviço não encontra a posição correta.
 
     Devolve também quantas passadas de OCR foram gastas. O número importa: uma
     foto que pontua mal custa **quatro** inferências, não uma, e é essa a
@@ -99,7 +99,7 @@ def ocr_com_rotacao_medido(
         for rot, code in ((90, cv2.ROTATE_90_CLOCKWISE),
                           (180, cv2.ROTATE_180),
                           (270, cv2.ROTATE_90_COUNTERCLOCKWISE)):
-            # O Paddle já classifica a orientação. Esta segunda defesa não pode
+            # A Mistral já classifica a orientação. Esta segunda defesa não pode
             # transformar uma foto ruim em quatro inferências de ~50 segundos.
             # Zero desliga o teto para benchmarks específicos.
             limite_s = float(os.getenv("OCR_ORIENTATION_FALLBACK_BUDGET_S", "45"))
@@ -290,6 +290,132 @@ def salvar_temporarios(doc: dict) -> dict:
 # -------------------------------------------------------------- pipeline
 
 
+# ------------------------------------------------------- resgate de foto ruim
+
+
+#: Realces extras tentados quando a primeira leitura sai fraca, do mais suave ao
+#: mais agressivo. `(sigma, amount, escala)`.
+#:
+#: Os números saíram de varredura nas amostras reais, não de palpite. Na CNH
+#: borrada (nitidez 1.9 contra 3265 da mesma CNH limpa) a passada única extraía
+#: UM campo; a união destas três extrai TRÊS. Nas amostras boas nenhuma delas muda
+#: nada — 22 blocos e 342 caracteres antes e depois —, e é por isso que dá para
+#: tentá-las sem risco de estragar o que já funcionava.
+#:
+#: Ampliar (escala 2.0) fragmenta o texto em mais caixas e derruba a confiança
+#: média, mas encontra campo que os outros não encontram: na medição foi ela quem
+#: trouxe o CPF. Por isso está na lista e por isso é a última.
+REALCES_DE_RESGATE: tuple[tuple[float, float, float], ...] = (
+    (1.5, 1.5, 1.0),
+    (2.5, 2.0, 1.0),
+    (2.0, 1.5, 2.0),
+)
+
+#: Teto de tempo do resgate inteiro. Documento ruim não pode prender a fila: o
+#: cliente está esperando o retorno do envio, e três passadas de OCR numa foto de
+#: 12 MP passam de um minuto em CPU.
+#: Desligável por ambiente: se um acervo específico regredir, dá para voltar ao
+#: comportamento antigo sem reverter código.
+RESGATE_LIGADO = os.getenv("OCR_RESGATE", "1").strip().lower() not in {"0", "false", "nao"}
+
+RESGATE_SEGUNDOS = float(os.getenv("OCR_RESGATE_SEGUNDOS", "45"))
+
+#: O quanto a releitura precisa ser melhor para SUBSTITUIR um campo já extraído.
+#: Ver a justificativa no ponto da troca, em `_resgatar`.
+MARGEM_TROCA = 0.10
+#: E o piso abaixo do qual nem com margem se troca: duas leituras ruins não se
+#: corrigem uma à outra.
+CONFIANCA_MINIMA_TROCA = 0.60
+
+
+def _realcar(
+    original: np.ndarray, sigma: float, amount: float, escala: float
+) -> np.ndarray:
+    """Uma variante de realce, refeita a partir da imagem ORIGINAL.
+
+    Quando amplia, amplia ANTES de preparar: gamma e CLAHE trabalham melhor na
+    resolução maior, e foi assim — e só assim — que a medição encontrou o CPF que
+    a variante aplicada sobre a imagem já preparada perdia.
+    """
+    if escala != 1.0:
+        base = cv2.resize(original, None, fx=escala, fy=escala, interpolation=cv2.INTER_CUBIC)
+        base = quality.preparar_para_ocr(base, lado_maximo=int(2000 * escala))
+    else:
+        base = quality.preparar_para_ocr(original)
+    suave = cv2.GaussianBlur(base, (0, 0), sigma)
+    return cv2.addWeighted(base, 1 + amount, suave, -amount, 0)
+
+
+def _merecer_resgate(campos: list, validacao: dict, tipo: str) -> bool:
+    """Vale gastar mais OCR nesta imagem?
+
+    Só quando a leitura saiu de fato incompleta. Duas condições, e nenhuma delas
+    é "a foto está feia": o que importa é o resultado. Documento sem tipo
+    conhecido não tem campo esperado para comparar e fica de fora — repetir OCR
+    numa foto de nota fiscal não faria surgir campo de CNH.
+    """
+    if tipo == "desconhecido":
+        return False
+    esperados = validacao.get("campos_esperados") or []
+    if not esperados:
+        return False
+    achados = sum(1 for c in campos if str(getattr(c, "valor", "") or "").strip())
+    # Metade é o corte: acima disso a leitura funcionou e as variantes só
+    # acrescentariam ruído de baixa confiança sobre campo que já saiu bom.
+    return achados < len(esperados) * 0.5
+
+
+def _resgatar(original: np.ndarray, lang: str, tipo: str, campos: list) -> tuple[list, int]:
+    """Relê a imagem com outros realces e devolve a MELHOR versão de cada campo.
+
+    NUNCA piora: um campo só é substituído por outro de confiança estritamente
+    maior, e campo que já saiu continua saindo. O ganho vem do que a primeira
+    passada não viu — cada realce revela caixa de texto que os outros perdem.
+    """
+    from .extractors import extrair_campos
+
+    melhores = {
+        c.nome: c for c in campos if str(getattr(c, "valor", "") or "").strip()
+    }
+    inicio = time.perf_counter()
+    tentadas = 0
+
+    for sigma, amount, escala in REALCES_DE_RESGATE:
+        if time.perf_counter() - inicio > RESGATE_SEGUNDOS:
+            log.info("resgate interrompido pelo teto de %.0fs", RESGATE_SEGUNDOS)
+            break
+        try:
+            variante = _realcar(original, sigma, amount, escala)
+            linhas_v, _ = rodar_ocr_com_tempo(variante, lang)
+            tentadas += 1
+            for campo in extrair_campos(linhas_v, tipo):
+                valor = str(getattr(campo, "valor", "") or "").strip()
+                if not valor:
+                    continue
+                atual = melhores.get(campo.nome)
+                if atual is None:
+                    melhores[campo.nome] = campo
+                    continue
+                # SUBSTITUIR exige margem, e não só ser maior.
+                #
+                # Confiança não é correção: na CNH borrada, uma variante trocou
+                # "ARIA APARECIDA" por "BARIA APARECIDA" com confiança um pouco
+                # maior — dois erros, e a troca não melhorou nada. Pior: num
+                # documento que vira peça, alternar entre duas leituras erradas a
+                # cada reprocessamento é ruído que ninguém consegue auditar.
+                #
+                # Com margem, só troca quando a nova leitura é claramente melhor.
+                # O ganho de campo NOVO (o ramo acima) não tem trava nenhuma: ali
+                # a alternativa é não ter o campo.
+                nova, velha = float(campo.confianca or 0), float(atual.confianca or 0)
+                if nova >= velha + MARGEM_TROCA and nova >= CONFIANCA_MINIMA_TROCA:
+                    melhores[campo.nome] = campo
+        except Exception:  # noqa: BLE001 — resgate é bônus; falhar nele não perde o que já há
+            log.warning("realce de resgate falhou (sigma=%s)", sigma, exc_info=True)
+
+    return list(melhores.values()), tentadas
+
+
 def processar(
     conteudo: bytes,
     nome_arquivo: str,
@@ -346,15 +472,50 @@ def processar(
     with crono.medir("extrair"):
         campos = extrair_campos(linhas, tipo)
         validacao = montar_validacao(tipo, campos, qual)
-        # Um documento juridico pode nao ter campos estruturados conhecidos pelo OCR e,
-        # ainda assim, possuir texto plenamente aproveitavel para classificacao e RAG.
-        # Este sinal e separado de `dados_utilizaveis`, que continua significando que os
-        # campos esperados daquele tipo documental foram extraidos e validados.
-        validacao["texto_utilizavel"] = bool(
-            qual.legivel
-            and qtd_caracteres >= 80
-            and (conf_media is None or conf_media >= 0.55)
+
+    # SEGUNDA CHANCE PARA FOTO RUIM
+    #
+    # Uma passada de OCR lê a imagem de um jeito só. Numa foto borrada isso custa
+    # caro: medido na CNH borrada do acervo, a passada única extraía 1 dos 11
+    # campos que a mesma CNH limpa entrega. Reler com outros realces e ficar com a
+    # melhor versão de cada campo levou esse número a 3 — cada realce revela caixa
+    # de texto que os outros perdem, e nenhum deles muda o resultado de documento
+    # que já saiu bom.
+    #
+    # Só roda quando a leitura saiu de fato incompleta (ver `_merecer_resgate`), e
+    # o `montar_validacao` é refeito depois porque completude e veredito mudam com
+    # os campos novos.
+    resgate = {"tentado": False, "realces": 0, "campos_antes": len(campos)}
+    if RESGATE_LIGADO and _merecer_resgate(campos, validacao, tipo):
+        with crono.medir("resgate"):
+            campos, realces = _resgatar(para_ocr, lang, tipo, campos)
+            validacao = montar_validacao(tipo, campos, qual)
+        resgate.update({"tentado": True, "realces": realces, "campos_depois": len(campos)})
+        log.info(
+            "resgate em %s: %d -> %d campo(s) em %d realce(s)",
+            nome_arquivo, resgate["campos_antes"], len(campos), realces,
         )
+
+    # Um documento jurídico pode não ter campos cadastrais conhecidos e ainda
+    # conter fatos, fundamentos, pedidos, datas e provas essenciais. Este sinal
+    # é calculado SEMPRE (antes ficava acidentalmente dentro do bloco de resgate).
+    texto_utilizavel = bool(
+        qual.legivel
+        and qtd_caracteres >= 80
+        and (conf_media is None or conf_media >= 0.55)
+    )
+    validacao["texto_utilizavel"] = texto_utilizavel
+    validacao["caracteres_aproveitaveis"] = qtd_caracteres
+    if texto_utilizavel and not campos:
+        validacao["veredito"] = "APROVADO_COM_RESSALVAS"
+        validacao["resumo"] = (
+            "Texto integral extraído e preservado para análise jurídica. "
+            "Este documento não possui campos cadastrais estruturados conhecidos."
+        )
+        validacao["erros"] = [
+            erro for erro in validacao.get("erros", [])
+            if not erro.startswith("Nenhum campo estruturado")
+        ]
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -382,12 +543,15 @@ def processar(
         "validacao": validacao,
         "qualidade_imagem": qual.to_dict(),
         "ocr": {
-            "motor": "PaddleOCR",
+            "motor": motor_ativo(),
             "idioma": lang,
             "confianca_media": round(conf_media, 4) if conf_media is not None else None,
             "blocos_detectados": len(linhas),
             "caracteres_detectados": qtd_caracteres,
             "passadas": passadas,
+            # Diz se a foto precisou de segunda chance e o que ela rendeu. Sem
+            # isto, "por que este documento demorou 40s" não tem resposta no log.
+            "resgate": resgate,
             "tentativas": [
                 {k: round(v, 3) if isinstance(v, float) else v for k, v in tentativa.items()}
                 for tentativa in tentativas_ocr

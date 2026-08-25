@@ -167,7 +167,7 @@ MODELOS: tuple[dict[str, str], ...] = (
     },
     {
         "codigo": "procuracao",
-        "rotulo": "Procuração ad judicia",
+        "rotulo": "Procuração",
         "prefixo": "procuracao",
         "arquivo": "Procuração",
     },

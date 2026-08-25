@@ -410,8 +410,8 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
             entrega = armazenamento.obter_entrega(entrega_id)
             if entrega is None:
                 continue
-            caminho = Path(entrega["caminho"])
-            if not caminho.is_file():
+            caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+            if caminho is None:
                 faltando.append(entrega["arquivo"])
                 continue
 

@@ -589,6 +589,7 @@ def cenario_processamento_consolidado() -> int:
                 {"pergunta_id": "r_doenca", "valor": "não", "trecho": "não consigo mais dormir direito"},
                 {"pergunta_id": "doenca", "valor": "campo inventado", "trecho": ""},
             ],
+            "perguntadas": ["tempo_casa", "funcao"],
             "incertas": [
                 {"pergunta_id": "funcao", "motivo": "A função não ficou clara."},
             ],
@@ -603,6 +604,10 @@ def cenario_processamento_consolidado() -> int:
     falhas += not checar(r["respostas"]["as_ocorrencias"] == "duas vezes no ano passado", "rastreio positivo mantém o módulo")
     falhas += not checar("doenca" not in r["respostas"], "campo de módulo fechado é descartado")
     falhas += not checar(len(r["incertas"]) == 1, "informação insegura fica em aberto para revisão")
+    falhas += not checar(
+        "funcao" not in {item["pergunta_id"] for item in r["faltando"]},
+        "pergunta feita sem resposta vai para confirmação, não para não perguntadas",
+    )
     corpo = visto.get("corpo") or {}
     falhas += not checar(
         isinstance(corpo, dict) and corpo.get("max_tokens") == 8_000,
@@ -672,6 +677,48 @@ def cenario_citacao_conferida() -> int:
     return falhas
 
 
+def cenario_recusada_nao_volta_como_ausente() -> int:
+    """A pergunta recusada na conferência não reaparece como "não perguntada".
+
+    Era o painel mandando repetir uma pergunta que o cliente acabou de
+    responder: a resposta chegava, a conferência de citação recusava (paráfrase,
+    ruído da transcrição), o campo ficava vazio — e como `faltando` só olha o
+    campo, a pergunta voltava para "o que ainda não foi perguntado" ao lado do
+    "precisa ser confirmado" sobre ELA MESMA, nas duas listas da mesma tela.
+
+    Quem conduz não tem como saber que as duas linhas são a mesma pergunta no
+    meio de uma conversa. A regra já existia para o que o modelo declara ter
+    perguntado; faltava para o que ele tentou responder e foi recusado.
+    """
+    falhas = 0
+    instalar_modelo(
+        {
+            "respostas": [
+                # Paráfrase: o cliente respondeu, mas a citação não é literal.
+                {"pergunta_id": "tempo_casa", "valor": "oito anos", "trecho": "faz oito anos"},
+            ],
+            "incertas": [],
+        }
+    )
+    r = escuta.processar_entrevista(FALA, {})
+
+    ids_incertos = {i["pergunta_id"] for i in r["incertas"]}
+    ids_faltando = {f["pergunta_id"] for f in r["faltando"]}
+
+    falhas += not checar(
+        "tempo_casa" in ids_incertos, "a recusa continua aparecendo para confirmar"
+    )
+    falhas += not checar(
+        "tempo_casa" not in ids_faltando,
+        "e NAO aparece tambem como pergunta ausente",
+    )
+    falhas += not checar(
+        not (ids_incertos & ids_faltando),
+        f"nenhuma pergunta nas duas listas ao mesmo tempo ({sorted(ids_incertos & ids_faltando)})",
+    )
+    return falhas
+
+
 def main_teste() -> int:
     guardada = os.environ.get("DEEPSEEK_API_KEY")
     if not guardada:
@@ -692,6 +739,7 @@ def main_teste() -> int:
         ("a pergunta lida não é resposta", cenario_enunciado_lido),
         ("processamento consolidado pós-entrevista", cenario_processamento_consolidado),
         ("a citação é conferida contra a transcrição", cenario_citacao_conferida),
+        ("recusada não volta como ausente", cenario_recusada_nao_volta_como_ausente),
         ("sem chave", cenario_sem_chave),
     ):
         print(f"\n{titulo}")

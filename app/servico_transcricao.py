@@ -45,6 +45,30 @@ ORIGENS = [
     ).split(",")
     if o.strip()
 ]
+
+#: Origens aceitas por PADRÃO DE ENDEREÇO, além da lista fixa acima.
+#:
+#: A lista fixa só serve a quem abre o sistema NA MÁQUINA que o hospeda. Abrindo
+#: de outro computador da rede, a origem passa a ser `http://192.168.x.x:3000` e o
+#: navegador descarta toda resposta — a API responde 200 e a tela mostra "Failed
+#: to fetch", que é o sintoma mais enganoso que existe aqui.
+#:
+#: Não dá para resolver com `allow_origins=["*"]`: o login usa cookie, e a
+#: especificação de CORS proíbe curinga junto de credencial. `allow_origin_regex`
+#: é o mecanismo correto.
+#:
+#: O padrão cobre localhost e as três faixas privadas de IPv4 — a rede do
+#: escritório. Endereço público NÃO entra: para publicar num domínio, preencha
+#: `ORIGENS_PERMITIDAS` com ele, explicitamente.
+ORIGENS_REGEX = os.getenv(
+    "ORIGENS_REGEX",
+    r"^https?://("
+    r"localhost|127\.0\.0\.1|\[::1\]"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$",
+).strip()
 _whisper_aquecido = threading.Event()
 
 
@@ -92,6 +116,7 @@ app = FastAPI(title="Transcrição de entrevista", version="1.0.0", lifespan=cic
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGENS,
+    allow_origin_regex=ORIGENS_REGEX or None,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],

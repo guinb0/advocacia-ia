@@ -62,14 +62,6 @@ function corBordaLinha(severidade: Severidade, selecionada: boolean): string {
   return selecionada ? "var(--acao)" : "transparent";
 }
 
-const NAV_ITEM =
-  "min-h-9 px-[13px] py-[7px] border border-transparent rounded-campo bg-transparent text-tinta-2 text-sm " +
-  "font-semibold cursor-pointer transition-[background-color,color] duration-[120ms] ease-[ease] " +
-  "hover:bg-papel-3 hover:text-tinta";
-const NAV_ATIVO =
-  "min-h-9 px-[13px] py-[7px] border border-acao-borda rounded-campo bg-acao-clara text-acao text-sm " +
-  "font-semibold cursor-pointer";
-
 const HOJE_FORMATO = new Intl.DateTimeFormat("pt-BR", {
   weekday: "long",
   day: "numeric",
@@ -184,66 +176,12 @@ export default function Carteira({
       <header className="flex justify-between items-center gap-6 px-7 py-3 border-b border-borda bg-papel flex-wrap">
         <div className="flex items-center gap-7 flex-wrap">
           <span className="text-tinta font-titulo text-[1.25rem] font-bold tracking-[-0.01em]">Acervo</span>
-          {/* Módulos. Cada item troca de tela — nenhum deles filtra a lista. */}
-          <nav className="flex gap-1" aria-label="Módulos do sistema">
-            <button type="button" className={NAV_ATIVO} aria-current="page">
-              Carteira
-            </button>
-            {/* Antes da lista de casos: conduzir a entrevista é o trabalho do
-              * dia, e abrir caso antigo é a exceção. */}
-            <button type="button" className={NAV_ITEM} onClick={onEntrevista}>
-              Entrevista guiada
-            </button>
-            <button type="button" className={NAV_ITEM} onClick={onNovoCaso}>
-              Casos
-            </button>
-            <button type="button" className={NAV_ITEM} onClick={onAnalisarAvulso}>
-              Ler um documento
-            </button>
-            <button type="button" className={NAV_ITEM} onClick={onInvestigar}>
-              Investigar
-            </button>
-            {/* Só para advogado: o backend recusa o cadastro a quem não tem o
-              * papel, e um item de menu que só dá 403 é pior que item nenhum. */}
-            {/* Advogado e secretário: quem lê a recomendação precisa poder
-              * conferir de onde ela veio. */}
-            <button type="button" className={NAV_ITEM} onClick={onDados}>
-              Dados
-            </button>
-            {/* O escritório inteiro medido: quantos casos, em que estágio, o que está
-              * parado. Mora fora da carteira porque responde a outra pergunta — a
-              * carteira diz o que fazer agora, o panorama diz como o escritório vai. */}
-            <button type="button" className={NAV_ITEM} onClick={onPanorama}>
-              Panorama
-            </button>
-            {/* TEMPORÁRIO — os quatro itens abaixo eram filtrados por papel:
-              * `Supervisão` só para secretário; `Usuários`, `Saúde do agente` e
-              * `Modelos de petição` só para advogado.
-              *
-              * O filtro foi retirado a pedido, para todo mundo alcançar todos os módulos
-              * enquanto o produto está em construção. Duas coisas precisam ficar claras
-              * para quem ler isto depois:
-              *
-              * 1. **Isto não concede permissão nenhuma.** O backend continua recusando quem
-              *    não tem o papel — o menu passa a mostrar caminhos que podem terminar em
-              *    403. Era justamente o que o filtro evitava ("item de menu que só dá 403 é
-              *    pior que item nenhum"), e o incômodo é o preço combinado.
-              * 2. **Para voltar atrás**, basta reenvolver cada botão em
-              *    `{sessao.papeis.includes("<papel>") && ( … )}`. Nada mais depende disto.
-              */}
-            <button type="button" className={NAV_ITEM} onClick={onSupervisao}>
-              Supervisão
-            </button>
-            <button type="button" className={NAV_ITEM} onClick={onUsuarios}>
-              Usuários
-            </button>
-            <button type="button" className={NAV_ITEM} onClick={onSaudeAgente}>
-              Saúde do agente
-            </button>
-            <button type="button" className={NAV_ITEM} onClick={onModelosDePeticao}>
-              Modelos de petição
-            </button>
-          </nav>
+          {/* Os módulos saíram daqui e viraram a barra lateral, que existe em
+            * TODAS as telas — ver `components/layout/BarraLateral.tsx`. Onze
+            * botões nesta faixa quebravam em duas linhas num notebook e
+            * empurravam a Mesa do dia para baixo da dobra; num celular
+            * ocupavam a tela inteira antes de qualquer conteúdo. O que fica
+            * aqui é o estado do sistema, que é desta tela. */}
         </div>
 
         <div className="flex items-center gap-[14px] flex-wrap">
@@ -263,7 +201,7 @@ export default function Carteira({
         </div>
       </header>
 
-      <div className="flex justify-between items-end gap-6 max-w-[1440px] px-7 pt-7 flex-wrap">
+      <div className="flex justify-between items-end gap-6 max-w-[1440px] px-4 sm:px-7 pt-7 flex-wrap">
         <div>
           <h1 className="m-0 text-xl tracking-[-0.01em]">Mesa do dia</h1>
           <p className="mt-[6px] mb-0 max-w-[62ch] text-tinta-2 text-base">
@@ -280,7 +218,7 @@ export default function Carteira({
         </Botao>
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(212px,1fr))] gap-3 max-w-[1440px] px-7 pt-[18px]">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3 max-w-[1440px] px-4 sm:px-7 pt-[18px]">
         <CartaoTriagem
           numero={triagem.travados}
           rotulo="Travados"
@@ -319,7 +257,7 @@ export default function Carteira({
         />
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_330px] max-[1040px]:grid-cols-1 gap-6 max-w-[1440px] px-7 pt-[22px] pb-10 items-start">
+      <div className="grid grid-cols-[minmax(0,1fr)_330px] max-[1040px]:grid-cols-1 gap-6 max-w-[1440px] px-4 sm:px-7 pt-[22px] pb-10 items-start">
         <section className="border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden" aria-label="Fila de casos">
           <div className="flex justify-between items-baseline gap-4 px-[18px] py-4 border-b border-borda flex-wrap">
             <h2 className="m-0 text-lg">Fila de casos</h2>

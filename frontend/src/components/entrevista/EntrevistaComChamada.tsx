@@ -110,7 +110,7 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
         </div>
       </div>
       {processamento.faltando.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que ainda não foi perguntado ou respondido ({processamento.faltando.length})</summary>
+        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que ainda não foi perguntado ({processamento.faltando.length})</summary>
           <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.slice(0, 12).map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
@@ -219,6 +219,37 @@ export default function EntrevistaComChamada({
             }}
           />
 
+          {encerrada === null && (
+            <div className="max-w-[860px] mt-4 mb-5 border-t-[3px] border-double border-borda-forte pt-4 flex items-center flex-wrap gap-3">
+              <button
+                type="button"
+                className={CONCLUIR}
+                disabled={fechando}
+                onClick={() => document.getElementById("acao-revisar-entrevista")?.click()}
+              >
+                {fechando ? "Revisando a entrevista…" : resultadoFinal ? "Revisar novamente" : "Revisar entrevista"}
+              </button>
+              {resultadoFinal && (
+                <button
+                  type="button"
+                  className={CONCLUIR}
+                  disabled={fechando}
+                  onClick={() => document.getElementById("acao-avancar-finalizacao")?.click()}
+                >
+                  Avançar para finalizar entrevista
+                </button>
+              )}
+              <span className={ENCERRAR_NOTA}>
+                Revise aqui sem sair da entrevista. Você pode voltar ao roteiro ou avançar para finalizar.
+              </span>
+              {resultadoFinal && (
+                <div className="basis-full w-full">
+                  <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} />
+                </div>
+              )}
+            </div>
+          )}
+
           {/* O atendimento continua aqui embaixo, sem trocar de tela.
             *
             * Na mesma medida do roteiro (860px). Estes painéis foram desenhados
@@ -230,6 +261,7 @@ export default function EntrevistaComChamada({
           {encerrada === null ? (
             <div className="flex items-center flex-wrap gap-[14px] max-w-[860px] mt-7 mb-2 border-t-[3px] border-double border-borda-forte pt-[18px]">
               <button
+                id="acao-revisar-entrevista"
                 type="button"
                 className={CONCLUIR}
                 disabled={fechando}
@@ -256,6 +288,9 @@ export default function EntrevistaComChamada({
                     if (!transcricao.trim()) throw new Error("A conversa ainda não produziu transcrição. Confira o microfone ou preencha os campos manualmente.");
                     const [respostasAtuais, relatoAtual, entrevistaId, trechos] = ultimo.current;
                     const processamento = await processarEntrevista(transcricao, respostasAtuais);
+                    // A revisão não pode viver só numa cópia externa: o roteiro
+                    // que permanece na tela precisa exibir a consolidação.
+                    roteiro.current?.atualizarRespostas(processamento.respostas);
                     ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
                     onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
                     const lacunas = processamento.faltando.filter((p) => p.obrigatoria).map((p) => p.pergunta);
@@ -280,9 +315,9 @@ export default function EntrevistaComChamada({
               </span>
               {consolidando && <Aviso tom="neutro" titulo="Revisando a entrevista inteira">Conferindo perguntas, lacunas e casos semelhantes da base vetorial…</Aviso>}
               {erroFecho && <Aviso tom="atencao" titulo="A revisão não foi concluída">{erroFecho}</Aviso>}
-              {resultadoFinal && <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} />}
               {resultadoFinal && (
                 <button
+                  id="acao-avancar-finalizacao"
                   type="button"
                   className={CONCLUIR}
                   disabled={fechando}
@@ -298,7 +333,7 @@ export default function EntrevistaComChamada({
                       .finally(() => setFechando(false));
                   }}
                 >
-                  Encerrar atendimento
+                  Avançar para finalizar entrevista
                 </button>
               )}
             </div>
@@ -366,7 +401,7 @@ export default function EntrevistaComChamada({
                   onConcluir(...ultimo.current);
                 }}
               >
-                Sair do atendimento
+                Finalizar entrevista
               </button>
             </div>
           )}

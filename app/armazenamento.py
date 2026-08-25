@@ -11,7 +11,9 @@ disco (`dados/casos/`); o que foi para o servidor é o registro, não o binário
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import unicodedata
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +22,8 @@ from typing import Any, Iterator
 
 from . import banco
 from .banco import conectar
+
+log = logging.getLogger("armazenamento")
 
 BASE = Path(__file__).resolve().parent.parent
 DIR_DADOS = BASE / "dados"
@@ -231,17 +235,30 @@ def registrar_entrega_pendente(
     itens = list(dict.fromkeys(itens_atendidos or [item_codigo]))
     if item_codigo not in itens:
         itens.append(item_codigo)
+    conteudo = caminho.read_bytes()
+    checksum = hashlib.sha256(conteudo).hexdigest()
 
     with conectar() as con:
         con.execute(
             """
-            INSERT INTO entregas (id, caso_id, item_codigo, arquivo, caminho, tipo_detectado,
+            INSERT INTO entregas (id, caso_id, item_codigo, arquivo, caminho, conteudo,
+                                  conteudo_sha256, tipo_detectado,
                                   tipo_confere, veredito, dados_utilizaveis, confirmado_manual,
                                   score_legibilidade, itens_atendidos, extracao_json,
                                   status_proc, criado_em)
-            VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, 0, 0, NULL, ?, NULL, 'na_fila', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, 0, NULL, ?, NULL, 'na_fila', ?)
             """,
-            (entrega_id, caso_id, item_codigo, arquivo, str(caminho), json.dumps(itens), agora()),
+            (
+                entrega_id,
+                caso_id,
+                item_codigo,
+                arquivo,
+                str(caminho),
+                conteudo,
+                checksum,
+                json.dumps(itens),
+                agora(),
+            ),
         )
         _tocar_caso(con, caso_id)
 
@@ -414,7 +431,13 @@ def marcos_por_caso(caso_ids: list[str]) -> dict[str, dict[str, Any]]:
             reunido[linha["caso_id"]]["entregas"].append(_normalizar_entrega(linha))
 
         for linha in con.execute(
-            f"SELECT * FROM entrevistas WHERE caso_id IN ({marcadores}) ORDER BY criado_em DESC",
+            f"""
+            SELECT id, caso_id, arquivo, realizada_em, entrevistador, fatos_gerados,
+                   enviada_em, avaliacao_google_em, gravacao_id, criado_em
+              FROM entrevistas
+             WHERE caso_id IN ({marcadores})
+             ORDER BY criado_em DESC
+            """,
             caso_ids,
         ).fetchall():
             reunido[linha["caso_id"]]["entrevistas"].append(_normalizar_entrevista(linha))
@@ -469,19 +492,83 @@ def atualizar_para_identidade_unificada(
         atualizada = con.execute("SELECT * FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
 
     registro = _normalizar_entrega(atualizada)
+    registro.pop("conteudo", None)
     registro.pop("extracao_json", None)
     return registro
 
 
 def obter_entrega(entrega_id: str) -> dict[str, Any] | None:
     with conectar() as con:
-        linha = con.execute("SELECT * FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+        linha = con.execute(
+            """
+            SELECT id, caso_id, item_codigo, arquivo, caminho, conteudo_sha256,
+                   tipo_detectado, tipo_confere, veredito, dados_utilizaveis,
+                   confirmado_manual, score_legibilidade, itens_atendidos,
+                   extracao_json, criado_em, status_proc, erro_proc
+              FROM entregas WHERE id = ?
+            """,
+            (entrega_id,),
+        ).fetchone()
     if not linha:
         return None
     registro = _normalizar_entrega(linha)
     if registro.get("extracao_json"):
         registro["extracao"] = json.loads(registro.pop("extracao_json"))
     return registro
+
+
+def caminho_duravel_da_entrega(entrega_id: str) -> Path | None:
+    """Localiza o anexo e restaura o cache local a partir do SQL Server quando preciso.
+
+    O checksum é conferido antes e depois. Um binário corrompido jamais é servido com
+    os campos extraídos de outro conteúdo.
+    """
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT caso_id, caminho, conteudo, conteudo_sha256 FROM entregas WHERE id = ?",
+            (entrega_id,),
+        ).fetchone()
+    if linha is None:
+        return None
+
+    original = Path(str(linha["caminho"]))
+    nome_fisico = original.name
+    destino = (DIR_ARQUIVOS / str(linha["caso_id"]) / nome_fisico).resolve()
+    raiz = DIR_ARQUIVOS.resolve()
+    if raiz not in destino.parents:
+        return None
+
+    esperado = str(linha.get("conteudo_sha256") or "").lower()
+
+    def valido(caminho: Path) -> bool:
+        if not caminho.is_file():
+            return False
+        if not esperado:
+            return True
+        return hashlib.sha256(caminho.read_bytes()).hexdigest() == esperado
+
+    # Caminhos antigos fora da raiz não são servidos diretamente, mas podem ser
+    # recuperados para a localização canônica se ainda existirem após uma mudança.
+    if valido(destino):
+        return destino
+    if valido(original):
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(original.read_bytes())
+        return destino
+
+    conteudo = linha.get("conteudo")
+    if conteudo is None:
+        return None
+    bytes_duraveis = bytes(conteudo)
+    if esperado and hashlib.sha256(bytes_duraveis).hexdigest() != esperado:
+        log.error("anexo %s corrompido no armazenamento durável", entrega_id)
+        return None
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    parcial = destino.with_suffix(destino.suffix + ".restaurando")
+    parcial.write_bytes(bytes_duraveis)
+    parcial.replace(destino)
+    return destino
 
 
 def excluir_entrega(entrega_id: str) -> bool:
@@ -857,6 +944,27 @@ def listar_todas_entrevistas() -> list[dict[str, Any]]:
     with conectar() as con:
         linhas = con.execute(
             "SELECT * FROM entrevistas ORDER BY criado_em DESC"
+        ).fetchall()
+    return [_normalizar_entrevista(linha) for linha in linhas]
+
+
+def listar_resumo_supervisao() -> list[dict[str, Any]]:
+    """Lista gerencial sem transportar as transcrições inteiras pelo banco.
+
+    `LEN` calcula o tamanho no SQL Server e o JOIN traz o cliente na mesma viagem.
+    O texto completo só é lido quando alguém abre uma entrevista específica.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT e.id, e.caso_id, c.cliente, e.arquivo, e.realizada_em,
+                   e.entrevistador, e.fatos_gerados, e.enviada_em,
+                   e.avaliacao_google_em, e.gravacao_id, e.criado_em,
+                   LEN(e.texto) AS caracteres
+              FROM entrevistas e
+              JOIN casos c ON c.id = e.caso_id
+             ORDER BY e.criado_em DESC
+            """
         ).fetchall()
     return [_normalizar_entrevista(linha) for linha in linhas]
 

@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { analisarEstrategia, gravarEntrevistaAoVivo, triarEntrevista } from "@/lib/api";
+import {
+  analisarEstrategia,
+  gravarEntrevistaAoVivo,
+  listarAssinaturas,
+  triarEntrevista,
+  vincularAssinaturaAoCaso,
+} from "@/lib/api";
 import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
 import type { CasoCriado, Categoria, Estrategia, Triagem } from "@/lib/types";
 import CasoEDocumentos from "@/components/caso/CasoEDocumentos";
@@ -201,11 +207,25 @@ export default function TriagemEntrevista({
       <CasoEDocumentos
         cliente={String(qualificacao.nome ?? "")}
         entrevistaId={audioEntrevista}
-        onCasoCriado={(casoId) => {
+        onCasoCriado={async (casoId) => {
           setCasoCriado(casoId);
           // Grava já, sem esperar o encerramento: se a aba morrer daqui para a
           // frente, a entrevista conduzida até aqui não se perde.
-          return guardarEntrevista(casoId, transcricao, audioEntrevista, encerrado);
+          await guardarEntrevista(casoId, transcricao, audioEntrevista, encerrado);
+          const nome = String(qualificacao.nome ?? "");
+          const cpf = String(qualificacao.cpf ?? "");
+          if (nome && cpf) {
+            // O caso já existe neste ponto. Uma indisponibilidade momentânea da
+            // assinatura não pode fazer a tela alegar que a criação falhou.
+            try {
+              const existentes = await listarAssinaturas({ cliente: nome, cpf });
+              await Promise.allSettled(
+                existentes.map((item) => vincularAssinaturaAoCaso(item.id, casoId)),
+              );
+            } catch {
+              // A listagem de assinaturas retoma o vínculo na próxima abertura.
+            }
+          }
         }}
         categorias={categorias}
         sugerida={escolhida ?? undefined}

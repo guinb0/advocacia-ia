@@ -206,6 +206,7 @@ TABELAS = (
     "entregas",
     "entrevistas",
     "assinaturas",
+    "roteiros",
     "vinculos_agente",
     "ufs",
     "municipios",
@@ -323,6 +324,8 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     item_codigo        varchar(80)   NOT NULL,
     arquivo            nvarchar(255) NOT NULL,
     caminho            nvarchar(500) NOT NULL,
+    conteudo           varbinary(max) NULL,
+    conteudo_sha256    char(64)       NULL,
     tipo_detectado     varchar(80)   NULL,
     tipo_confere       int           NULL,
     veredito           varchar(40)   NULL,
@@ -371,6 +374,17 @@ CREATE TABLE {SCHEMA}.{PREFIXO}assinaturas (
     criado_em     varchar(40)   NOT NULL,
     atualizado_em varchar(40)   NOT NULL,
     cpf           varchar(20)   NOT NULL CONSTRAINT df_ocr_assin_cpf DEFAULT ''
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
+    codigo        varchar(80)   NOT NULL CONSTRAINT pk_acervo_roteiros PRIMARY KEY,
+    nome          nvarchar(200) NOT NULL,
+    descricao     nvarchar(max) NOT NULL CONSTRAINT df_acervo_rot_desc DEFAULT N'',
+    corpo         nvarchar(max) NOT NULL,
+    criado_por    nvarchar(200) NOT NULL CONSTRAINT df_acervo_rot_quem DEFAULT N'',
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}vinculos_agente') IS NULL
@@ -432,6 +446,10 @@ INDICES = (
 #: Só coluna ANULÁVEL, ou com DEFAULT: preencher linha existente é migração de dado, e
 #: migração de dado não cabe num passo de partida que roda a cada subida do servidor.
 COLUNAS_NOVAS = (
+    # O banco é a cópia durável do anexo. O caminho local é só cache: caminhos
+    # absolutos quebram quando o projeto muda de pasta ou outro servidor atende.
+    (f"{PREFIXO}entregas", "conteudo", "varbinary(max) NULL"),
+    (f"{PREFIXO}entregas", "conteudo_sha256", "char(64) NULL"),
     # A avaliação no Google Meu Negócio é etapa do roteiro (ver `FECHAMENTO` em
     # `app/roteiros.py`) e era marcada só na tela do atendente, em estado de React que
     # morria no refresh. Sem gravar, a supervisão não tinha como conferir se a etapa
