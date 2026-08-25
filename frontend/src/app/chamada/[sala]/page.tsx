@@ -144,6 +144,11 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
                 <button type="button" className={SECUNDARIO} onClick={() => void chamada.alternarCamera()}>
                   {chamada.temCamera ? "Desligar câmera" : "Ligar câmera"}
                 </button>
+                {chamada.telaDisponivel && (
+                  <button type="button" className={SECUNDARIO} onClick={() => void chamada.alternarTela()}>
+                    {chamada.compartilhandoTela ? "Parar de mostrar a tela" : "Mostrar minha tela"}
+                  </button>
+                )}
                 <button type="button" className={SECUNDARIO} onClick={chamada.alternarMudo}>
                   {chamada.mudo ? "Voltar a falar" : "Desligar meu microfone"}
                 </button>

@@ -53,6 +53,9 @@ export interface Participante {
   nome: string;
   /** `null` enquanto a câmera estiver desligada — aí vale a inicial do nome. */
   video: MediaStreamTrack | null;
+  /** O vídeo é uma tela compartilhada, não um rosto. Muda como se mostra:
+   *  recortar uma tela corta justamente o documento que se quis mostrar. */
+  tela: boolean;
   /** Este é o retrato de quem está usando a tela. */
   souEu: boolean;
 }
@@ -79,6 +82,8 @@ export interface OpcoesEntrada {
 interface FaixaJitsi {
   isLocal(): boolean;
   getType(): "audio" | "video";
+  /** "camera" ou "desktop". A lib só o define em faixa de vídeo. */
+  getVideoType?(): string | undefined;
   getTrack(): MediaStreamTrack;
   getParticipantId?(): string;
   attach(elemento: HTMLMediaElement): void;
@@ -183,9 +188,14 @@ export class ChamadaJitsi {
   private sala: ConferenciaJitsi | null = null;
   private minhaFaixa: FaixaJitsi | null = null;
   private minhaCamera: FaixaJitsi | null = null;
+  private minhaTela: FaixaJitsi | null = null;
+  /** A câmera estava ligada quando a tela entrou? Decide se ela volta no fim. */
+  private cameraAntesDaTela = false;
   private remotas = new Map<FaixaJitsi, HTMLAudioElement>();
   /** Vídeo de cada participante, por id. Áudio não entra aqui: ele é ouvido. */
   private videos = new Map<string, MediaStreamTrack>();
+  /** Quem está mostrando a tela, por id de participante. */
+  private telas = new Set<string>();
   private meuNome = "";
   private estadoAtual: EstadoChamada = "fora";
   private desligando = false;
@@ -206,6 +216,20 @@ export class ChamadaJitsi {
 
   get temCamera(): boolean {
     return this.minhaCamera !== null;
+  }
+
+  get compartilhandoTela(): boolean {
+    return this.minhaTela !== null;
+  }
+
+  /** O navegador sabe capturar tela?
+   *
+   * Falso no Safari do iPhone e na maior parte dos navegadores de celular, que
+   * não implementam `getDisplayMedia`. O cliente entra pelo telefone — oferecer
+   * um botão que abre um erro de permissão no meio da entrevista é pior que não
+   * ter botão. Quem não pode compartilhar não vê a opção. */
+  static telaDisponivel(): boolean {
+    return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getDisplayMedia);
   }
 
   /** Abre o microfone (e a câmera, se pedida) e entra na sala. */
@@ -260,6 +284,15 @@ export class ChamadaJitsi {
   async alternarCamera(): Promise<boolean> {
     if (!this.api) return false;
 
+    /* Ligar a câmera durante o compartilhamento encerra o compartilhamento:
+     * é uma faixa de vídeo por participante. `pararTela` já devolve a câmera
+     * quando ela estava ligada antes, então aqui só resta o caso de acender. */
+    if (this.minhaTela) {
+      const voltaSozinha = this.cameraAntesDaTela;
+      await this.pararTela();
+      if (voltaSozinha) return this.minhaCamera !== null;
+    }
+
     if (this.minhaCamera) {
       const faixa = this.minhaCamera;
       this.minhaCamera = null;
@@ -278,11 +311,100 @@ export class ChamadaJitsi {
     return this.minhaCamera !== null;
   }
 
+  /* Mostra ou para de mostrar a tela. Devolve se ficou compartilhando.
+   *
+   * A TELA ENTRA NO LUGAR DA CÂMERA, NÃO AO LADO
+   *
+   * O Jitsi aceita uma faixa de vídeo por participante: um segundo `addTrack`
+   * de vídeo é recusado ("Cannot add second video track"). Então a câmera sai
+   * enquanto a tela está no ar e volta sozinha quando ela para — que é também
+   * o que o advogado espera, porque foi ele quem tinha a câmera ligada antes.
+   *
+   * QUEM PARA O COMPARTILHAMENTO NÃO É SÓ O NOSSO BOTÃO
+   *
+   * O navegador desenha a própria barra "Parar de compartilhar", e é nela que
+   * a maioria clica. Sem ouvir o `ended` da faixa, o nosso botão continuaria
+   * dizendo "Parar de mostrar" com nada sendo mostrado, e a câmera não
+   * voltaria. Por isso o encerramento passa pelo mesmo caminho nos dois casos.
+   */
+  async alternarTela(): Promise<boolean> {
+    if (!this.api) return false;
+    if (this.minhaTela) {
+      await this.pararTela();
+      return false;
+    }
+
+    let faixa: FaixaJitsi | undefined;
+    try {
+      const faixas = await this.api.createLocalTracks({ devices: ["desktop"] });
+      faixa = faixas.find((f) => f.getType() === "video");
+    } catch {
+      /* Cancelar o seletor de janela do navegador cai aqui e NÃO é erro: a
+       * pessoa desistiu. Avisar "falhou" a faria procurar problema onde não
+       * há. Só a falta de faixa depois de escolher merece aviso. */
+      return false;
+    }
+    if (!faixa) {
+      this.eventos.onErro?.("O navegador não devolveu a tela para compartilhar.");
+      return false;
+    }
+
+    this.cameraAntesDaTela = this.minhaCamera !== null;
+    if (this.minhaCamera) {
+      const camera = this.minhaCamera;
+      this.minhaCamera = null;
+      await this.sala?.removeTrack(camera).catch(() => {});
+      await camera.dispose().catch(() => {});
+    }
+
+    this.minhaTela = faixa;
+    this.videos.set("eu", faixa.getTrack());
+    // A barra do próprio navegador. `once`: a faixa termina uma vez só.
+    faixa.getTrack().addEventListener("ended", () => void this.pararTela(), { once: true });
+
+    if (this.sala) {
+      try {
+        await this.sala.addTrack(faixa);
+      } catch {
+        await this.pararTela();
+        this.eventos.onErro?.("Não foi possível enviar a tela para a chamada.");
+        return false;
+      }
+    }
+    this.anunciarParticipantes();
+    return true;
+  }
+
+  private async pararTela(): Promise<void> {
+    const faixa = this.minhaTela;
+    if (!faixa) return;
+    this.minhaTela = null;
+    this.videos.delete("eu");
+    await this.sala?.removeTrack(faixa).catch(() => {});
+    await faixa.dispose().catch(() => {});
+
+    // A câmera volta ao estado anterior — mas não durante o desligamento, que
+    // já está soltando tudo e reabriria o dispositivo para fechá-lo em seguida.
+    if (this.cameraAntesDaTela && this.api && !this.desligando) {
+      try {
+        await this.abrirCamera(this.api);
+        if (this.minhaCamera && this.sala) await this.sala.addTrack(this.minhaCamera);
+      } catch {
+        this.eventos.onErro?.("A tela parou, mas a câmera não voltou. Ligue-a de novo.");
+      }
+    }
+    this.cameraAntesDaTela = false;
+    this.anunciarParticipantes();
+  }
+
   private conectar(api: ApiJitsi, sala: string, token?: string): Promise<void> {
     const eventos = api.events.connection;
     const conexao = new api.JitsiConnection(
       "level33-chamadas",
-      token ?? null,
+      /* `||` e não `??`: sem `AUTH_TYPE=jwt` no Jitsi o backend devolve token
+       * VAZIO, e string vazia não é `null` — o `??` a deixaria passar, e a lib
+       * tentaria autenticar com um JWT em branco em vez de entrar como anônimo. */
+      token || null,
       {
         hosts: { domain: "meet.jitsi", muc: "muc.meet.jitsi" },
         // O `room` na query é o que permite ao Prosody escolher o shard certo
@@ -337,6 +459,10 @@ export class ChamadaJitsi {
         const de = faixa.getParticipantId?.();
         if (de) {
           this.videos.set(de, faixa.getTrack());
+          // `videoType` é o que separa rosto de tela. Sem isto a tela do outro
+          // lado chegaria recortada como se fosse um retrato.
+          if (faixa.getVideoType?.() === "desktop") this.telas.add(de);
+          else this.telas.delete(de);
           this.anunciarParticipantes();
         }
         return;
@@ -350,6 +476,7 @@ export class ChamadaJitsi {
         const de = faixa.getParticipantId?.();
         if (de) {
           this.videos.delete(de);
+          this.telas.delete(de);
           this.anunciarParticipantes();
         }
         return;
@@ -362,6 +489,7 @@ export class ChamadaJitsi {
 
     sala.on(ev.USER_LEFT, (...args: unknown[]) => {
       this.videos.delete(String(args[0]));
+      this.telas.delete(String(args[0]));
       if (sala.getParticipantCount() === 0) this.mudarEstado("aguardando");
       this.anunciarParticipantes();
     });
@@ -383,6 +511,7 @@ export class ChamadaJitsi {
         id: "eu",
         nome: this.meuNome || "Você",
         video: this.videos.get("eu") ?? null,
+        tela: this.minhaTela !== null,
         souEu: true,
       },
     ];
@@ -395,6 +524,7 @@ export class ChamadaJitsi {
         // que não diz nada a ninguém.
         nome: (p.getDisplayName() || "").trim() || "Convidado",
         video: this.videos.get(id) ?? null,
+        tela: this.telas.has(id),
         souEu: false,
       });
     }
@@ -453,7 +583,11 @@ export class ChamadaJitsi {
     this.minhaFaixa = null;
     void this.minhaCamera?.dispose().catch(() => {});
     this.minhaCamera = null;
+    void this.minhaTela?.dispose().catch(() => {});
+    this.minhaTela = null;
+    this.cameraAntesDaTela = false;
     this.videos.clear();
+    this.telas.clear();
     this.eventos.onParticipantes?.([]);
 
     void this.sala?.leave().catch(() => {});

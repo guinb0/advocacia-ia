@@ -1202,15 +1202,33 @@ async def triar_entrevista(
 # --------------------------------------------------- chamada de voz (WebRTC)
 
 
-def gerar_token_jitsi(sala: str) -> str:
-    """Gera JWT HS256 para o Jitsi aceitar a conexão.
+def gerar_token_jitsi(sala: str) -> str | None:
+    """Gera JWT HS256 para o Jitsi aceitar a conexão — quando ele pede um.
 
     O Jitsi valida tokens com aud/iss/sub = JITSI_JWT_APP_ID e room = nome da sala.
     O secret é compartilhado com o Prosody (configurado em docker-jitsi-meet/.env).
+
+    SEM SECRET, DEVOLVE `None` — E ISSO É UM ESTADO VÁLIDO
+
+    O token só existe porque o Jitsi o exige quando sobe com `AUTH_TYPE=jwt`. Com
+    `ENABLE_AUTH=0`, que é como o stack local está hoje, o servidor aceita
+    conexão anônima e o token é decorativo: o que protege a sala continua sendo o
+    nome dela, 256 bits sorteados que ninguém adivinha.
+
+    A versão anterior registrava um aviso e seguia adiante para `jwt.encode`, que
+    recusa chave vazia com `InvalidKeyError`. O resultado era 500 na criação da
+    sala — e, no navegador, "Failed to fetch", porque resposta de exceção não
+    tratada sai sem cabeçalho de CORS e o `fetch` rejeita antes de ver o status.
+    Um aviso no log do servidor não ajuda quem está com o cliente na linha vendo
+    a chamada não abrir.
+
+    Ligando `AUTH_TYPE=jwt` no Jitsi, preencha `JITSI_JWT_APP_SECRET` com o mesmo
+    valor do `docker-jitsi-meet/.env`: aí o token volta a ser obrigatório dos
+    dois lados.
     """
     secret = os.environ.get("JITSI_JWT_APP_SECRET", "")
     if not secret:
-        log.warning("JITSI_JWT_APP_SECRET não configurado — Jitsi vai rejeitar a conexão")
+        return None
     app_id = os.environ.get("JITSI_JWT_APP_ID", "level33-chamadas")
     agora = datetime.now(timezone.utc)
 
@@ -1254,12 +1272,15 @@ def criar_sala(sala: str | None = None):
     alguém dentro (ver `app/chamada.py`).
 
     O token JWT é exigido pelo Jitsi quando AUTH_TYPE=jwt. O cliente também
-    chama este endpoint com o sala existente para obter o próprio token.
+    chama este endpoint com o sala existente para obter o próprio token. Sem
+    `JITSI_JWT_APP_SECRET` o campo vem vazio, e é assim que deve ser: o Jitsi
+    local roda com `ENABLE_AUTH=0` e aceita conexão anônima (ver
+    `gerar_token_jitsi`).
     """
     if sala is None:
         sala = chamada.gerar_sala()
     token = gerar_token_jitsi(sala)
-    return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}", "token": token}
+    return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}", "token": token or ""}
 
 
 @app.websocket("/ws/chamada/{sala_id}")

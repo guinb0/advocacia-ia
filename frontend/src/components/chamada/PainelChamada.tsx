@@ -192,6 +192,11 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
             <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.alternarCamera()}>
               {chamada.temCamera ? "Desligar câmera" : "Ligar câmera"}
             </button>
+            {chamada.telaDisponivel && (
+              <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.alternarTela()}>
+                {chamada.compartilhandoTela ? "Parar de mostrar a tela" : "Mostrar minha tela"}
+              </button>
+            )}
             <button type="button" className={BOTAO_SECUNDARIO} onClick={chamada.alternarMudo}>
               {chamada.mudo ? "Reativar meu microfone" : "Ficar mudo"}
             </button>

@@ -43,6 +43,11 @@ interface ValorChamada {
   papel: PapelChamada | null;
   mudo: boolean;
   temCamera: boolean;
+  /** Estou mostrando a minha tela agora. */
+  compartilhandoTela: boolean;
+  /** O navegador sabe capturar tela. Falso em quase todo celular — a UI usa
+   *  isto para não oferecer um botão que só levaria a um erro. */
+  telaDisponivel: boolean;
   erro: string | null;
   /** Há chamada de pé. */
   ativa: boolean;
@@ -58,6 +63,7 @@ interface ValorChamada {
   desligar: () => void;
   alternarMudo: () => void;
   alternarCamera: () => Promise<void>;
+  alternarTela: () => Promise<void>;
   limparErro: () => void;
   /** Assina a voz do outro lado — é o que alimenta a transcrição do escritório.
    *  Devolve o cancelamento. Se a faixa já chegou, chama o retorno na hora. */
@@ -73,6 +79,12 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
   const [papel, setPapel] = useState<PapelChamada | null>(null);
   const [mudo, setMudo] = useState(false);
   const [temCamera, setTemCamera] = useState(false);
+  const [compartilhandoTela, setCompartilhandoTela] = useState(false);
+  /* Fica `false` no servidor E na primeira renderização do cliente, virando
+   * `true` só no efeito. Ler `navigator` direto no corpo do componente daria
+   * marcação diferente dos dois lados — o servidor nunca tem `navigator` — e o
+   * React descartaria a árvore hidratada com um aviso. */
+  const [telaDisponivel, setTelaDisponivel] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   // Quantas telas mostram a chamada por inteiro agora. Enquanto > 0, o painel
   // flutuante fica recolhido — não há por que repetir a chamada num canto.
@@ -143,7 +155,18 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
 
   const alternarCamera = useCallback(async () => {
     setTemCamera(await (chamada.current?.alternarCamera() ?? Promise.resolve(false)));
+    // Ligar a câmera encerra o compartilhamento (uma faixa de vídeo por
+    // participante), então os dois estados são lidos do objeto, sempre.
+    setCompartilhandoTela(chamada.current?.compartilhandoTela ?? false);
   }, []);
+
+  const alternarTela = useCallback(async () => {
+    setCompartilhandoTela(await (chamada.current?.alternarTela() ?? Promise.resolve(false)));
+    // A tela substitui a câmera enquanto está no ar, e a devolve ao parar.
+    setTemCamera(chamada.current?.temCamera ?? false);
+  }, []);
+
+  useEffect(() => setTelaDisponivel(ChamadaJitsi.telaDisponivel()), []);
 
   const registrarPainel = useCallback(() => {
     setPaineis((n) => n + 1);
@@ -176,6 +199,8 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     papel,
     mudo,
     temCamera,
+    compartilhandoTela,
+    telaDisponivel,
     erro,
     ativa: estado !== "fora",
     mostrarDock: estado !== "fora" && paineis === 0,
@@ -184,6 +209,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     desligar: soltar,
     alternarMudo,
     alternarCamera,
+    alternarTela,
     limparErro,
     aoReceberFaixa,
   };

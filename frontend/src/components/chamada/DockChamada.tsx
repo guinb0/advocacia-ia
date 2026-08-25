@@ -101,6 +101,11 @@ export default function DockChamada() {
         <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.alternarCamera()}>
           {chamada.temCamera ? "Câmera off" : "Câmera"}
         </button>
+        {chamada.telaDisponivel && (
+          <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.alternarTela()}>
+            {chamada.compartilhandoTela ? "Parar tela" : "Tela"}
+          </button>
+        )}
         <button type="button" className={BOTAO_SECUNDARIO} onClick={chamada.alternarMudo}>
           {chamada.mudo ? "Reativar mic" : "Mudo"}
         </button>
