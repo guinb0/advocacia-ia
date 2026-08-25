@@ -29,7 +29,11 @@ def falar(sessao: T.AnswerSession, segundos: float) -> None:
     sessao.acrescentar(np.zeros(int(segundos * T.TAXA), dtype=np.float32))
 
 
-def falante_sem_pausa(audio: np.ndarray) -> list[T.Trecho]:
+# `tempo_limite` é ignorado pelos dublês, mas precisa estar na assinatura: o
+# parcial passa um teto curto e o final um longo (ver TEMPO_LIMITE_PARCIAL_S em
+# `app/transcricao_openrouter.py`), e sem o parâmetro aqui o teste quebra com
+# TypeError em vez de exercitar a mecânica.
+def falante_sem_pausa(audio: np.ndarray, tempo_limite: float | None = None) -> list[T.Trecho]:
     """Um segmento só, que vai até o fim do áudio: ninguém parou para respirar.
 
     É o pior caso para o parcial — não há pausa onde congelar, então a cauda só
@@ -39,7 +43,7 @@ def falante_sem_pausa(audio: np.ndarray) -> list[T.Trecho]:
     return [T.Trecho(0.0, dur, f"trecho de {dur:.0f}s")]
 
 
-def falante_com_pausa(audio: np.ndarray) -> list[T.Trecho]:
+def falante_com_pausa(audio: np.ndarray, tempo_limite: float | None = None) -> list[T.Trecho]:
     """Uma frase fechada logo no começo e outra ainda em curso no fim.
 
     O caso comum de uma entrevista: a pessoa termina uma frase, respira, e
@@ -58,6 +62,13 @@ def main_teste() -> int:
     falhas = 0
     original = T._segmentos_sem_trava
     T._segmentos_sem_trava = falante_sem_pausa
+    # A cadência é FIXADA aqui de propósito. Ela passou a depender do motor —
+    # 0,5s no Whisper local, 6s na OpenRouter, onde cada parcial é requisição paga
+    # (ver `SEGUNDOS_ENTRE_PARCIAIS` em `app/transcricao.py`). O que este teste
+    # cobre é a mecânica em volta, não o valor configurado: sem fixar, ele passa
+    # ou falha conforme o `.env` da máquina em que roda.
+    cadencia_original = T.SEGUNDOS_ENTRE_PARCIAIS
+    T.SEGUNDOS_ENTRE_PARCIAIS = 0.5
     try:
         sessao = T.AnswerSession(sessao_id="s1", pergunta_id="p1")
         sessao.estado = T.Estado.LISTENING
@@ -206,6 +217,7 @@ def main_teste() -> int:
         )
     finally:
         T._segmentos_sem_trava = original
+        T.SEGUNDOS_ENTRE_PARCIAIS = cadencia_original
 
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     return 1 if falhas else 0

@@ -9,6 +9,7 @@ import PainelChamada from "@/components/chamada/PainelChamada";
 import Roteiro from "@/components/entrevista/Roteiro";
 import type { ManipuladorRoteiro } from "@/components/entrevista/Roteiro";
 import { processarEntrevista, recomendarEntrevista, triarEntrevista } from "@/lib/api";
+import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
 import type { ProcessamentoEntrevista, RecomendacaoEntrevista, Triagem } from "@/lib/types";
 
 /* A tela da entrevista: roteiro à esquerda, chamada à direita.
@@ -27,6 +28,7 @@ interface Props {
     respostas: Record<string, string | string[]>,
     relato: string,
     entrevistaId: string,
+    transcricao: TrechoTranscrito[],
   ) => void;
   /** Sai da entrevista sem concluir — o que foi respondido se perde. */
   onFechar: () => void;
@@ -39,6 +41,7 @@ interface Props {
     respostas: Record<string, string | string[]>,
     relato: string,
     entrevistaId: string,
+    transcricao: TrechoTranscrito[],
   ) => void;
   /** O que vem DEPOIS do roteiro, na mesma rolagem.
    *
@@ -57,11 +60,6 @@ function baixarTexto(nome: string, conteudo: string): void {
   link.download = nome;
   link.click();
   URL.revokeObjectURL(url);
-}
-
-/** "14:07:32" — a hora de parede, que é como se procura um trecho no áudio. */
-function relogio(quando: number): string {
-  return new Date(quando).toLocaleTimeString("pt-BR");
 }
 
 const CONCLUIR =
@@ -150,7 +148,9 @@ export default function EntrevistaComChamada({
    * seguintes na mesma rolagem, ele caía NO MEIO do atendimento — "concluir
    * entrevista" acima da avaliação e do contrato, que ainda estavam por fazer.
    * Agora ele é o último elemento da tela, e usa o que o roteiro já reportou. */
-  const ultimo = useRef<[Record<string, string | string[]>, string, string]>([{}, "", ""]);
+  const ultimo = useRef<
+    [Record<string, string | string[]>, string, string, TrechoTranscrito[]]
+  >([{}, "", "", []]);
   /* O encerramento tem duas etapas, e é de propósito.
    *
    * A gravação corre até o FIM — durante a avaliação, os documentos e o envio
@@ -206,8 +206,16 @@ export default function EntrevistaComChamada({
           <Roteiro
             ref={roteiro}
             onRespostas={(respostas, relato, entrevistaId) => {
-              ultimo.current = [respostas, relato, entrevistaId];
-              onRespostas?.(respostas, relato, entrevistaId);
+              /* A transcrição BRUTA sobe junto, e é ela que vai para o caso.
+               *
+               * O `relato` é montado a partir das respostas: diz o que a escuta
+               * conseguiu extrair. A auditoria da supervisão precisa do outro —
+               * o que foi perguntado e respondido de verdade. Auditar o roteiro
+               * preenchido mediria o acerto do reconhecimento de voz, não a
+               * condução (ver o cabeçalho de `app/auditoria.py`). */
+              const trechos = roteiro.current?.transcricaoBruta() ?? [];
+              ultimo.current = [respostas, relato, entrevistaId, trechos];
+              onRespostas?.(respostas, relato, entrevistaId, trechos);
             }}
           />
 
@@ -246,10 +254,10 @@ export default function EntrevistaComChamada({
                   void (async () => {
                     const transcricao = roteiro.current?.transcricaoBruta().map((t) => t.texto).join("\n") ?? "";
                     if (!transcricao.trim()) throw new Error("A conversa ainda não produziu transcrição. Confira o microfone ou preencha os campos manualmente.");
-                    const [respostasAtuais, relatoAtual, entrevistaId] = ultimo.current;
+                    const [respostasAtuais, relatoAtual, entrevistaId, trechos] = ultimo.current;
                     const processamento = await processarEntrevista(transcricao, respostasAtuais);
-                    ultimo.current = [processamento.respostas, relatoAtual, entrevistaId];
-                    onRespostas?.(processamento.respostas, relatoAtual, entrevistaId);
+                    ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
+                    onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
                     const lacunas = processamento.faltando.filter((p) => p.obrigatoria).map((p) => p.pergunta);
                     const avisos: string[] = [];
                     const [triagem, recomendacao] = await Promise.all([
@@ -327,23 +335,11 @@ export default function EntrevistaComChamada({
                   type="button"
                   className={CONCLUIR}
                   onClick={() => {
-                    const trechos = roteiro.current?.transcricaoBruta() ?? [];
-                    const cabecalho = [
-                      "TRANSCRIÇÃO BRUTA DA ENTREVISTA",
-                      `Gerada em ${new Date().toLocaleString("pt-BR")}`,
-                      `${trechos.length} trecho(s) reconhecido(s)`,
-                      "",
-                      "Esta é a fala como saiu da transcrição automática, na ordem, sem",
-                      "passar pelo roteiro. O que está nos campos da entrevista é o que",
-                      "o sistema interpretou; isto é o que foi dito.",
-                      "",
-                      "-".repeat(62),
-                      "",
-                    ].join("\n");
+                    /* Mesmo texto que vai gravado no caso — de propósito. Ver
+                     * `montarTranscricaoBruta`, em `lib/transcricao.ts`. */
                     baixarTexto(
                       `Transcrição bruta ${new Date().toLocaleDateString("pt-BR")}.txt`,
-                      cabecalho +
-                        trechos.map((t) => `[${relogio(t.quando)}] ${t.texto}`).join("\n"),
+                      montarTranscricaoBruta(roteiro.current?.transcricaoBruta() ?? []),
                     );
                   }}
                 >

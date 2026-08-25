@@ -33,6 +33,11 @@ interface Props {
   onCriar: (cliente: string, categoria: string) => Promise<CasoCriado>;
   /** A categoria que a triagem sugeriu, quando houve. */
   sugerida?: string;
+  /** O caso nasceu — quem chama guarda no caso a entrevista já conduzida.
+   *
+   * É aqui e não no fim do atendimento porque o caso é o primeiro momento em que
+   * existe onde prender a entrevista: `entrevistas.caso_id` é obrigatório. */
+  onCasoCriado?: (casoId: string) => Promise<void> | void;
   /** Desliga a chamada e deixa o cliente enviar o resto depois. */
   onEncerrarChamada: () => void;
   /** Há chamada de pé — sem ela, o botão de desligar não faz sentido. */
@@ -45,6 +50,7 @@ export default function CasoEDocumentos({
   categorias,
   onCriar,
   sugerida,
+  onCasoCriado,
   onEncerrarChamada,
   emChamada,
 }: Props) {
@@ -86,6 +92,9 @@ export default function CasoEDocumentos({
       const salaEmCurso = chamada.sala;
       const novo = await onCriar(cliente.trim(), escolhida);
       setCriado(novo);
+      // Antes da sala e da documentação: é a primeira coisa que pode ser feita
+      // com o caso na mão, e a que se perde para sempre se a aba fechar.
+      await onCasoCriado?.(novo.id);
       if (entrevistaId) {
         await solicitarDocumentacao(entrevistaId, novo.id, salaEmCurso || novo.portal.token, cliente.trim());
       }

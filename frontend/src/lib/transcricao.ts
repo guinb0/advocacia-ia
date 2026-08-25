@@ -81,6 +81,49 @@ function novoIdEntrevista(): string {
   return typeof crypto !== "undefined" ? crypto.randomUUID() : "";
 }
 
+/* ------------------------------------------------- transcrição bruta
+ *
+ * A conversa como o Whisper a ouviu, na ordem, sem passar pelo roteiro.
+ *
+ * Ela tem DOIS destinos e um formato só, de propósito: o .txt que o atendente
+ * baixa e o texto que vai para o caso (`PUT /api/casos/{id}/entrevista-ao-vivo`)
+ * são o mesmo texto. Se divergissem, o secretário auditaria uma versão e o
+ * atendente teria em mãos outra — e a divergência só apareceria numa discussão
+ * sobre o que foi dito, que é o pior momento possível para descobri-la. */
+
+/** Um trecho reconhecido: quando foi dito e o que se ouviu. */
+export interface TrechoTranscrito {
+  quando: number;
+  texto: string;
+}
+
+/** "14:07:32" — a hora de parede, que é como se procura um trecho no áudio. */
+function relogio(quando: number): string {
+  return new Date(quando).toLocaleTimeString("pt-BR");
+}
+
+/** O texto completo da transcrição bruta, com cabeçalho que diz o que ela é.
+ *
+ * O cabeçalho não é enfeite: sem ele, quem abre o arquivo seis meses depois lê
+ * erros de reconhecimento como se fossem o que o cliente disse. E o mesmo aviso
+ * precisa alcançar o secretário, que lê este texto pela tela da supervisão.
+ */
+export function montarTranscricaoBruta(trechos: TrechoTranscrito[]): string {
+  const cabecalho = [
+    "TRANSCRIÇÃO BRUTA DA ENTREVISTA",
+    `Gerada em ${new Date().toLocaleString("pt-BR")}`,
+    `${trechos.length} trecho(s) reconhecido(s)`,
+    "",
+    "Esta é a fala como saiu da transcrição automática, na ordem, sem",
+    "passar pelo roteiro. O que está nos campos da entrevista é o que",
+    "o sistema interpretou; isto é o que foi dito.",
+    "",
+    "-".repeat(62),
+    "",
+  ].join("\n");
+  return cabecalho + trechos.map((t) => `[${relogio(t.quando)}] ${t.texto}`).join("\n");
+}
+
 /** Onde baixar ou tocar o áudio já convertido. */
 export function urlDoAudio(entrevistaId: string): string {
   return `${BASE_TRANSCRICAO}/entrevista/${entrevistaId}/audio`;

@@ -4,20 +4,34 @@
  *
  * Três níveis, e a ordem é a das perguntas que ele faz de verdade: quem fez
  * quantas → quais foram → como foi esta. Cada nível só carrega quando é aberto;
- * a auditoria, em especial, custa uma ida ao modelo e por isso nunca dispara
- * sozinha ao abrir a tela.
+ * a conferência contra o roteiro, em especial, custa uma ida ao modelo e por isso
+ * nunca dispara sozinha ao abrir a tela.
+ *
+ * O TERCEIRO NÍVEL É O CHECKLIST, NÃO A TRANSCRIÇÃO
+ *
+ * Era a transcrição que abria primeiro, e ela é quarenta minutos de texto: na
+ * prática ninguém lia, e a conferência não acontecia. Agora abre o checklist do
+ * roteiro (`ChecklistRoteiro`), que responde em uma tela o que a leitura responderia
+ * em meia hora — assinaturas, avaliação do Google, perguntas, abertura e
+ * encerramento. A transcrição continua a um clique, na outra aba, porque é ela que
+ * resolve a dúvida quando o checklist aponta algo que o secretário quer conferir
+ * com os próprios olhos.
  */
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Aviso, Botao } from "@/components/ui/Basicos";
+import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
+import ChecklistRoteiro from "@/components/admin/ChecklistRoteiro";
+import { Aviso, BarraAbas, Botao, BotaoAba, Selo, Vazio } from "@/components/ui/Basicos";
 import {
   ApiError,
   auditarEntrevista,
+  corrigirAvaliacaoGoogle,
   listarSupervisao,
+  obterChecklist,
   obterTranscricao,
   type Auditoria,
-  type ParteLida,
+  type ChecklistRegistro,
   type PessoaSupervisao,
 } from "@/lib/api";
 
@@ -25,46 +39,11 @@ interface Props {
   onVoltar: () => void;
 }
 
-const SELO_PLACAR_BASE = "px-[10px] py-[2px] rounded-pill text-[0.82rem]";
-const SELO_PLACAR: Record<"ok" | "falta" | "incerta", string> = {
-  ok: `${SELO_PLACAR_BASE} bg-ok-claro text-ok`,
-  falta: `${SELO_PLACAR_BASE} bg-atencao-claro text-atencao`,
-  incerta: `${SELO_PLACAR_BASE} bg-papel-3 text-tinta-3`,
-};
-
-const SITUACAO: Record<ParteLida["situacao"], { texto: string; classe: "ok" | "falta" | "incerta" }> = {
-  feita: { texto: "feita", classe: "ok" },
-  parcial: { texto: "parcial", classe: "falta" },
-  ausente: { texto: "não aparece", classe: "falta" },
-  incerta: { texto: "incerta", classe: "incerta" },
-};
-
-/** Uma das partes lidas em voz alta, com o que faltou dela. */
-function Parte({ rotulo, parte }: { rotulo: string; parte: ParteLida }) {
-  const s = SITUACAO[parte.situacao] ?? SITUACAO.incerta;
-  return (
-    <div className="[&+&]:mt-[10px]">
-      <span className="flex items-center gap-2 font-semibold text-[0.88rem]">
-        {rotulo}
-        <span className={SELO_PLACAR[s.classe]}>{s.texto}</span>
-      </span>
-      {parte.faltou.length > 0 && (
-        <ul className="list-none m-0 p-0">
-          {parte.faltou.map((f, i) => (
-            <li key={i} className="py-[5px] border-b border-borda leading-[1.5] last:border-b-0">
-              {f}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 const ITEM_BASE =
-  "flex justify-between gap-[10px] w-full px-[9px] py-[7px] border-0 rounded-[6px] [font:inherit] text-left cursor-pointer";
+  "flex flex-col gap-[5px] w-full px-[11px] py-[9px] border border-transparent rounded-campo " +
+  "[font:inherit] text-left cursor-pointer";
 const ITEM_RESTING = "bg-transparent hover:bg-papel-3";
-const ITEM_ABERTO = "bg-acao-clara font-semibold hover:bg-papel-3";
+const ITEM_ABERTO = "bg-acao-clara border-acao-borda";
 
 export default function Supervisao({ onVoltar }: Props) {
   const [pessoas, setPessoas] = useState<PessoaSupervisao[]>([]);
@@ -73,8 +52,14 @@ export default function Supervisao({ onVoltar }: Props) {
   const [erro, setErro] = useState<string | null>(null);
 
   const [aberta, setAberta] = useState<string | null>(null);
+  const [aba, setAba] = useState<"checklist" | "transcricao">("checklist");
+
   const [texto, setTexto] = useState<string>("");
   const [carregandoTexto, setCarregandoTexto] = useState(false);
+
+  const [registro, setRegistro] = useState<ChecklistRegistro | null>(null);
+  const [erroRegistro, setErroRegistro] = useState<string | null>(null);
+  const [corrigindo, setCorrigindo] = useState(false);
 
   const [relatorio, setRelatorio] = useState<Auditoria | null>(null);
   const [auditando, setAuditando] = useState(false);
@@ -102,18 +87,30 @@ export default function Supervisao({ onVoltar }: Props) {
   }, [carregar]);
 
   async function abrir(id: string) {
-    // Trocar de entrevista limpa o relatório: um relatório de OUTRA entrevista
-    // ao lado desta transcrição é pior que relatório nenhum.
+    // Trocar de entrevista limpa a conferência: um relatório de OUTRA entrevista
+    // ao lado deste checklist é pior que relatório nenhum.
     setAberta(id);
+    setAba("checklist");
     setRelatorio(null);
     setErroAuditoria(null);
     setTexto("");
+    setRegistro(null);
+    setErroRegistro(null);
+
+    // O checklist do registro é uma consulta ao banco e abre junto. A transcrição
+    // vem no mesmo passo porque é o mesmo custo — o que NÃO vem é a leitura pelo
+    // modelo, que espera o secretário pedir.
     setCarregandoTexto(true);
+    try {
+      setRegistro(await obterChecklist(id));
+    } catch (e) {
+      setErroRegistro(e instanceof ApiError ? e.message : "Erro ao montar o checklist.");
+    }
     try {
       setTexto((await obterTranscricao(id)).texto);
     } catch (e) {
       setTexto("");
-      setErroAuditoria(e instanceof ApiError ? e.message : "Erro ao ler a transcrição.");
+      setErroRegistro(e instanceof ApiError ? e.message : "Erro ao ler a transcrição.");
     } finally {
       setCarregandoTexto(false);
     }
@@ -125,9 +122,25 @@ export default function Supervisao({ onVoltar }: Props) {
     try {
       setRelatorio(await auditarEntrevista(id));
     } catch (e) {
-      setErroAuditoria(e instanceof ApiError ? e.message : "Não foi possível auditar.");
+      setErroAuditoria(e instanceof ApiError ? e.message : "Não foi possível conferir.");
     } finally {
       setAuditando(false);
+    }
+  }
+
+  async function corrigirAvaliacao(id: string, concluida: boolean) {
+    setCorrigindo(true);
+    try {
+      setRegistro(await corrigirAvaliacaoGoogle(id, concluida));
+      // A lista à esquerda mostra o mesmo sinal; deixá-la desatualizada faria o
+      // secretário achar que a correção não pegou.
+      await carregar();
+    } catch (e) {
+      setErroRegistro(
+        e instanceof ApiError ? e.message : "Não foi possível gravar a marcação.",
+      );
+    } finally {
+      setCorrigindo(false);
     }
   }
 
@@ -138,21 +151,18 @@ export default function Supervisao({ onVoltar }: Props) {
       </Botao>
 
       <header className="my-5">
-        <h1 className="mb-[6px] mt-0 text-[1.6rem]">Supervisão</h1>
+        <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">Supervisão</h1>
         <p className="m-0 text-tinta-3 max-w-[66ch] leading-[1.5]">
-          As entrevistas do escritório por quem as conduziu. Abra uma para ler a
-          transcrição e conferir se o roteiro foi seguido.
+          As entrevistas do escritório por quem as conduziu. Abra uma para conferir o
+          checklist do roteiro — assinaturas, avaliação no Google, perguntas — e para
+          ler a transcrição.
         </p>
         {!carregando && (
           <p className="mt-[10px] mb-0 text-tinta-3 max-w-[66ch] leading-[1.5]">
             <strong>{totais.entrevistas}</strong> entrevista(s) ·{" "}
             <strong>{totais.pessoas}</strong> pessoa(s)
             {totais.sem > 0 && (
-              <>
-                {" "}
-                ·{" "}
-                <span className="text-atencao">{totais.sem} sem quem conduziu</span>
-              </>
+              <> · <span className="text-atencao">{totais.sem} sem quem conduziu</span></>
             )}
           </p>
         )}
@@ -175,159 +185,139 @@ export default function Supervisao({ onVoltar }: Props) {
         </Aviso>
       )}
 
-      <div className="grid grid-cols-[320px_minmax(0,1fr)] max-[900px]:grid-cols-1 gap-6 items-start mt-5">
-        <section className="border border-borda-forte rounded-[10px] p-4 bg-papel">
+      <div className="grid grid-cols-[340px_minmax(0,1fr)] max-[900px]:grid-cols-1 gap-6 items-start mt-5">
+        {/* ------------------------------------------- funcionário e entrevistas */}
+        <section className="border border-borda-forte rounded-cartao bg-papel shadow-cartao p-4">
           {carregando ? (
             <p className="m-0 text-tinta-3">Carregando…</p>
           ) : pessoas.length === 0 ? (
-            <p className="m-0 text-tinta-3">Nenhuma entrevista registrada ainda.</p>
+            <Vazio>Nenhuma entrevista registrada ainda.</Vazio>
           ) : (
-            pessoas.map((p) => (
-              <div key={p.entrevistador} className="[&+&]:mt-[18px] [&+&]:pt-[18px] [&+&]:border-t [&+&]:border-borda">
-                <h2 className="flex justify-between items-baseline gap-[10px] mb-2 mt-0 text-[0.98rem]">
-                  {p.entrevistador}
-                  <span className="font-normal text-[0.8rem] text-tinta-3 whitespace-nowrap">
-                    {p.quantidade} entrevista{p.quantidade === 1 ? "" : "s"}
-                  </span>
-                </h2>
-                <ul className="list-none m-0 p-0">
-                  {p.entrevistas.map((e) => (
-                    <li key={e.id}>
-                      <button
-                        type="button"
-                        className={`${ITEM_BASE} ${aberta === e.id ? ITEM_ABERTO : ITEM_RESTING}`}
-                        onClick={() => void abrir(e.id)}
-                      >
-                        <span>{e.realizada_em || e.criado_em?.slice(0, 10) || "sem data"}</span>
-                        <span className="text-tinta-3 text-[0.82rem] whitespace-nowrap">
-                          {e.caracteres.toLocaleString("pt-BR")} car.
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))
+            pessoas.map((p) => {
+              const semAvaliacao = p.entrevistas.filter((e) => !e.avaliacao_google).length;
+
+              return (
+                <div
+                  key={p.entrevistador}
+                  className="[&+&]:mt-[18px] [&+&]:pt-[18px] [&+&]:border-t [&+&]:border-borda"
+                >
+                  <h2 className="flex justify-between items-baseline gap-[10px] mb-1 mt-0 text-tinta font-titulo text-md font-semibold">
+                    {p.entrevistador}
+                    <span className="font-ui font-normal text-xs text-tinta-3 whitespace-nowrap">
+                      {p.quantidade} entrevista{p.quantidade === 1 ? "" : "s"}
+                    </span>
+                  </h2>
+
+                  {/* O que o secretário cobraria desta pessoa hoje, sem abrir nada.
+                    * A avaliação do Google é o único item do roteiro que a lista
+                    * consegue conferir sem ir ao modelo — e é o mais frágil deles. */}
+                  <p className="mt-0 mb-2 text-xs leading-[1.5]">
+                    {semAvaliacao === 0 ? (
+                      <span className="text-ok">✓ avaliação do Google em todas</span>
+                    ) : (
+                      <span className="text-atencao">
+                        ! {semAvaliacao} sem avaliação do Google registrada
+                      </span>
+                    )}
+                  </p>
+
+                  <ul className="list-none m-0 p-0 flex flex-col gap-[2px]">
+                    {p.entrevistas.map((e) => (
+                      <li key={e.id}>
+                        <button
+                          type="button"
+                          className={`${ITEM_BASE} ${aberta === e.id ? ITEM_ABERTO : ITEM_RESTING}`}
+                          onClick={() => void abrir(e.id)}
+                        >
+                          <span className="flex justify-between items-baseline gap-[10px] w-full">
+                            <span
+                              className={`text-tinta text-sm truncate ${aberta === e.id ? "font-semibold" : ""}`}
+                            >
+                              {e.cliente || "cliente não informado"}
+                            </span>
+                            <span className="text-tinta-3 text-xs whitespace-nowrap">
+                              {e.realizada_em || e.criado_em?.slice(0, 10) || "sem data"}
+                            </span>
+                          </span>
+                          <span className="flex items-center gap-[6px] flex-wrap">
+                            <Selo
+                              tom={e.avaliacao_google ? "ok" : "atencao"}
+                              simbolo={e.avaliacao_google ? "✓" : "!"}
+                            >
+                              Google
+                            </Selo>
+                            {!e.enviada && (
+                              <Selo tom="atencao" simbolo="!">
+                                sem dossiê
+                              </Selo>
+                            )}
+                            <span className="text-tinta-3 text-xs whitespace-nowrap">
+                              {e.caracteres.toLocaleString("pt-BR")} car.
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })
           )}
         </section>
 
-        <section className="border border-borda-forte rounded-[10px] p-4 bg-papel">
+        {/* --------------------------------------------------- checklist e texto */}
+        <section className="min-w-0">
           {!aberta ? (
-            <p className="m-0 text-tinta-3">Escolha uma entrevista à esquerda para ler a transcrição.</p>
+            <Vazio>
+              Escolha uma entrevista à esquerda para abrir o checklist do roteiro.
+            </Vazio>
           ) : (
-            <>
-              <div className="flex items-center gap-3 flex-wrap mb-[14px]">
-                {/* Só o botão base, sem variante — assim como no CSS original. */}
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center gap-2 min-h-10 px-4 py-[9px] border border-transparent rounded-campo bg-transparent font-ui text-sm font-semibold text-tinta-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => void auditar(aberta)}
-                  disabled={auditando || carregandoTexto}
-                >
-                  {auditando ? "Analisando…" : "Conferir contra o roteiro"}
-                </button>
-                {auditando && (
-                  <span className="text-tinta-3 text-[0.82rem] whitespace-nowrap">
-                    A leitura da conversa inteira leva alguns segundos.
-                  </span>
-                )}
-              </div>
+            <div className="flex flex-col gap-4">
+              <BarraAbas className="self-start">
+                <BotaoAba ativa={aba === "checklist"} onClick={() => setAba("checklist")}>
+                  Checklist do roteiro
+                </BotaoAba>
+                <BotaoAba ativa={aba === "transcricao"} onClick={() => setAba("transcricao")}>
+                  Transcrição
+                </BotaoAba>
+              </BarraAbas>
 
-              {erroAuditoria && (
-                <Aviso tom="critico" titulo="Não deu para analisar">
-                  {erroAuditoria}
+              {erroRegistro && (
+                <Aviso tom="critico" titulo="Falhou ao carregar">
+                  {erroRegistro}
                 </Aviso>
               )}
 
-              {relatorio && (
-                <div className="border border-borda-forte rounded-[8px] px-4 py-[14px] bg-papel-2">
-                  <h3 className="mt-0">Conferência do roteiro</h3>
-                  <p className="mb-3 mt-0 leading-[1.55]">{relatorio.resumo}</p>
-
-                  <div className="flex gap-2 flex-wrap items-center mb-3">
-                    <span className={SELO_PLACAR.ok}>{relatorio.cobertas.length} cobertas</span>
-                    <span className={SELO_PLACAR.falta}>{relatorio.nao_cobertas.length} não cobertas</span>
-                    {relatorio.incertas.length > 0 && (
-                      <span className={SELO_PLACAR.incerta}>{relatorio.incertas.length} incertas</span>
-                    )}
-                    <span className="text-tinta-3 text-[0.82rem] whitespace-nowrap">
-                      de {relatorio.total_perguntas}
-                    </span>
-                  </div>
-
-                  {/* Antes das perguntas: abertura e encerramento são o que o
-                    * escritório pediu para seguir à risca, e é o que some
-                    * primeiro quando a entrevista corre apertada. */}
-                  <div className="mt-[14px]">
-                    <h4 className="mb-[6px] mt-0 text-[0.88rem]">Abertura e encerramento</h4>
-                    <Parte rotulo="Abertura" parte={relatorio.abertura} />
-                    <Parte rotulo="Encerramento" parte={relatorio.encerramento} />
-                  </div>
-
-                  {relatorio.faltando_obrigatorias.length > 0 && (
-                    <div className="mt-[14px]">
-                      <h4 className="mb-[6px] mt-0 text-[0.88rem]">
-                        Obrigatórias que não aparecem (
-                        {relatorio.faltando_obrigatorias.length} de{" "}
-                        {relatorio.total_obrigatorias})
-                      </h4>
-                      <ul className="list-none m-0 p-0">
-                        {relatorio.faltando_obrigatorias.map((p) => (
-                          <li key={p.id} className="py-[5px] border-b border-borda leading-[1.5] last:border-b-0">
-                            {p.texto} <span className="text-tinta-3 text-[0.82rem] whitespace-nowrap">({p.bloco})</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {relatorio.observacoes.length > 0 && (
-                    <div className="mt-[14px]">
-                      <h4 className="mb-[6px] mt-0 text-[0.88rem]">Observações</h4>
-                      <ul className="list-none m-0 p-0">
-                        {relatorio.observacoes.map((o, i) => (
-                          <li key={i} className="py-[5px] border-b border-borda leading-[1.5] last:border-b-0">
-                            <strong>{o.item}</strong> — {o.porque}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {relatorio.pontos_fortes.length > 0 && (
-                    <div className="mt-[14px]">
-                      <h4 className="mb-[6px] mt-0 text-[0.88rem]">Pontos fortes</h4>
-                      <ul className="list-none m-0 p-0">
-                        {relatorio.pontos_fortes.map((p, i) => (
-                          <li key={i} className="py-[5px] border-b border-borda leading-[1.5] last:border-b-0">
-                            {p}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {relatorio.transcricao_truncada && (
-                    <p className="text-tinta-3 text-[0.82rem] whitespace-nowrap">
-                      A transcrição é longa e foi analisada até o limite do modelo — o
-                      fim da conversa pode não ter entrado.
-                    </p>
-                  )}
-                  <p className="mt-[14px] mb-0 text-tinta-3 text-[0.82rem] leading-[1.5]">{relatorio.aviso}</p>
-                </div>
-              )}
-
-              <h3 className="my-[18px] mb-2 text-[0.9rem] uppercase tracking-[0.04em] text-tinta-3">Transcrição</h3>
-              {carregandoTexto ? (
+              {aba === "checklist" ? (
+                <ChecklistRoteiro
+                  registro={registro}
+                  auditoria={relatorio}
+                  auditando={auditando}
+                  erroAuditoria={erroAuditoria}
+                  onAuditar={() => void auditar(aberta)}
+                  onCorrigirAvaliacao={(c) => void corrigirAvaliacao(aberta, c)}
+                  corrigindoAvaliacao={corrigindo}
+                />
+              ) : carregandoTexto ? (
                 <p className="m-0 text-tinta-3">Carregando…</p>
               ) : texto ? (
-                <pre className="m-0 px-[14px] py-3 max-h-[460px] overflow-y-auto border border-borda-forte rounded-[8px] bg-papel-2 [font-family:inherit] text-[0.9rem] leading-[1.6] whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {texto}
-                </pre>
+                <>
+                  {/* O áudio, quando a entrevista foi conduzida pelo roteiro.
+                    * A transcrição vem de reconhecimento de voz e erra — quando
+                    * o checklist aponta algo que o secretário quer conferir de
+                    * verdade, é aqui que ele ouve o trecho em vez de decidir
+                    * pelo texto. A anexada como arquivo não tem áudio. */}
+                  {registro?.origem === "ao_vivo" && registro.gravacao_id && (
+                    <AudioDaEntrevista entrevistaId={registro.gravacao_id} />
+                  )}
+                  <pre className="m-0 px-[14px] py-3 max-h-[620px] overflow-y-auto border border-borda-forte rounded-cartao bg-papel text-tinta-2 [font-family:inherit] text-sm leading-[1.6] whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    {texto}
+                  </pre>
+                </>
               ) : (
-                <p className="m-0 text-tinta-3">Esta entrevista não tem texto.</p>
+                <Vazio>Esta entrevista não tem texto.</Vazio>
               )}
-            </>
+            </div>
           )}
         </section>
       </div>
