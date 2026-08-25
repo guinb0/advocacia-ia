@@ -209,7 +209,7 @@ export class ChamadaJitsi {
   }
 
   /** Abre o microfone (e a câmera, se pedida) e entra na sala. */
-  async entrar(sala: string, opcoes: OpcoesEntrada = {}): Promise<void> {
+  async entrar(sala: string, opcoes: OpcoesEntrada = {}, token?: string): Promise<void> {
     if (this.sala) return;
     // Tokens do portal usam base64url e podem conter maiúsculas. O Prosody/Jitsi
     // transforma o nome da MUC em minúsculas e rejeita a conferência quando o
@@ -247,7 +247,7 @@ export class ChamadaJitsi {
       }
     }
 
-    await this.conectar(api, salaJitsi);
+    await this.conectar(api, salaJitsi, token);
   }
 
   private async abrirCamera(api: ApiJitsi): Promise<void> {
@@ -278,14 +278,18 @@ export class ChamadaJitsi {
     return this.minhaCamera !== null;
   }
 
-  private conectar(api: ApiJitsi, sala: string): Promise<void> {
+  private conectar(api: ApiJitsi, sala: string, token?: string): Promise<void> {
     const eventos = api.events.connection;
-    const conexao = new api.JitsiConnection(null, null, {
-      hosts: { domain: "meet.jitsi", muc: "muc.meet.jitsi" },
-      // O `room` na query é o que permite ao Prosody escolher o shard certo
-      // quando há mais de um; num servidor só, é inofensivo e recomendado.
-      serviceUrl: `${BASE_JITSI.replace(/^http/, "ws")}/xmpp-websocket?room=${encodeURIComponent(sala)}`,
-    });
+    const conexao = new api.JitsiConnection(
+      "level33-chamadas",
+      token ?? null,
+      {
+        hosts: { domain: "meet.jitsi", muc: "muc.meet.jitsi" },
+        // O `room` na query é o que permite ao Prosody escolher o shard certo
+        // quando há mais de um; num servidor só, é inofensivo e recomendado.
+        serviceUrl: `${BASE_JITSI.replace(/^http/, "ws")}/xmpp-websocket?room=${encodeURIComponent(sala)}`,
+      },
+    );
     this.conexao = conexao;
 
     return new Promise<void>((ok, falhou) => {

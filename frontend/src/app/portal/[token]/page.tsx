@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import { criarSalaChamada } from "@/lib/api";
 import * as portal from "@/lib/apiPortal";
 import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
 import type { TomSelo } from "@/lib/formato";
@@ -370,7 +371,8 @@ function Chamada({ token }: { token: string }) {
     setErro(null);
     setEntrando(true);
     try {
-      await chamada.entrar(token, "cliente");
+      const { token: jitsiToken } = await criarSalaChamada(token);
+      await chamada.entrar(token, "cliente", undefined, jitsiToken);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(

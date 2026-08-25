@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import { CapturaEntrevista } from "@/lib/transcricao";
@@ -129,7 +130,8 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
     setErro(null);
     setEntrando(true);
     try {
-      await chamada.entrar(sala, "advogado", { nome: "Escritório" });
+      const { token } = await criarSalaChamada(sala);
+      await chamada.entrar(sala, "advogado", { nome: "Escritório" }, token);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
