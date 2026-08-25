@@ -6,6 +6,7 @@ import {
   baixarContratoAssinado,
   configAssinatura,
   DOCUMENTOS_DO_CLIENTE,
+  enviarLinkAssinatura,
   enviarParaAssinatura,
   gerarContrato,
   listarAssinaturas,
@@ -448,6 +449,7 @@ export default function PainelContrato({ respostas }: Props) {
             <span className={ROTULO}>{a.nome}</span>
             <Acompanhamento
               assinatura={a}
+              whatsappProprio={Boolean(config?.whatsapp_proprio)}
               desatualizado={desatualizado}
               baixando={baixandoAssinado}
               onAtualizar={() => void atualizar(a.id)}
@@ -473,12 +475,16 @@ export default function PainelContrato({ respostas }: Props) {
  * pergunta que o escritório faz. */
 function Acompanhamento({
   assinatura,
+  whatsappProprio,
   desatualizado,
   baixando,
   onAtualizar,
   onBaixar,
 }: {
   assinatura: Assinatura;
+  /** O WhatsApp do escritório está pareado. Falso enquanto ninguém escaneou o
+   *  QR Code — e aí o convite do cliente sai só pelo e-mail da ZapSign. */
+  whatsappProprio: boolean;
   desatualizado: string | null;
   baixando: boolean;
   onAtualizar: () => void;
@@ -503,7 +509,12 @@ function Acompanhamento({
 
       <ul className="mb-3 mt-0 p-0 list-none border-t border-borda">
         {assinatura.signatarios.map((s) => (
-          <LinhaSignatario key={s.token} signatario={s} />
+          <LinhaSignatario
+            key={s.token}
+            signatario={s}
+            assinaturaId={assinatura.id}
+            whatsappProprio={whatsappProprio}
+          />
         ))}
       </ul>
 
@@ -548,8 +559,18 @@ const COR_ESTADO: Partial<Record<Signatario["estado"], string>> = {
   recusou: "text-critico",
 };
 
-function LinhaSignatario({ signatario }: { signatario: Signatario }) {
+function LinhaSignatario({
+  signatario,
+  assinaturaId,
+  whatsappProprio,
+}: {
+  signatario: Signatario;
+  assinaturaId: string;
+  whatsappProprio: boolean;
+}) {
   const [copiado, setCopiado] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [envio, setEnvio] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
 
   async function copiar() {
     try {
@@ -558,6 +579,21 @@ function LinhaSignatario({ signatario }: { signatario: Signatario }) {
       setTimeout(() => setCopiado(false), 2000);
     } catch {
       /* navegador sem permissão de área de transferência: o link segue à vista */
+    }
+  }
+
+  /* Um documento por mensagem, e o servidor é quem sabe o link e o número: a
+   * tela manda só quem e qual. Ver o cabeçalho de `app/whatsapp.py`. */
+  async function enviarWhatsApp() {
+    setEnviando(true);
+    setEnvio(null);
+    try {
+      await enviarLinkAssinatura(assinaturaId, signatario.token);
+      setEnvio({ tom: "ok", texto: "link enviado" });
+    } catch (e) {
+      setEnvio({ tom: "erro", texto: e instanceof Error ? e.message : "falha no envio" });
+    } finally {
+      setEnviando(false);
     }
   }
 
@@ -590,6 +626,24 @@ function LinhaSignatario({ signatario }: { signatario: Signatario }) {
         >
           {copiado ? "link copiado" : "copiar link"}
         </button>
+      )}
+      {/* O reenvio por WhatsApp resolve o mesmo caso que o "copiar link", sem
+        * o atendente ter de abrir o WhatsApp e achar a conversa. Só aparece
+        * para quem tem telefone: sem número não há para onde mandar. */}
+      {whatsappProprio && signatario.url_assinatura && signatario.estado !== "assinou" && signatario.telefone && (
+        <button
+          type="button"
+          className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-[1.4] font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta disabled:cursor-wait disabled:opacity-60"
+          disabled={enviando}
+          onClick={() => void enviarWhatsApp()}
+        >
+          {enviando ? "enviando…" : "enviar por WhatsApp"}
+        </button>
+      )}
+      {envio && (
+        <span className={`font-normal text-[11px] leading-[1.4] font-ui ${envio.tom === "ok" ? "text-ok" : "text-critico"}`}>
+          {envio.texto}
+        </span>
       )}
     </li>
   );
