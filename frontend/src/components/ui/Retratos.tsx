@@ -44,7 +44,16 @@ const TAMANHO_INICIAL = {
   miniatura: "w-9 text-[1rem]",
 } as const;
 
-function Video({ trilha, espelhar }: { trilha: MediaStreamTrack; espelhar: boolean }) {
+function Video({
+  trilha,
+  espelhar,
+  tela,
+}: {
+  trilha: MediaStreamTrack;
+  espelhar: boolean;
+  /** Tela compartilhada: cabe inteira, sem recorte e sem espelho. */
+  tela: boolean;
+}) {
   const video = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -59,16 +68,24 @@ function Video({ trilha, espelhar }: { trilha: MediaStreamTrack; espelhar: boole
     };
   }, [trilha]);
 
+  /* `contain` na tela, `cover` no rosto. Recortar um rosto para preencher o
+   * quadro é o normal de qualquer chamada; recortar uma tela corta a margem do
+   * documento que a pessoa quis mostrar — e é sempre na margem que está o
+   * número, a data ou o botão que ela está apontando. Espelhar, então, deixa o
+   * texto de trás para frente. */
+  const espelhado = espelhar && !tela;
+
   return (
     <video
       ref={video}
-      className="w-full h-full object-cover"
-      style={{ background: "#1c1917", ...(espelhar ? { transform: "scaleX(-1)" } : {}) }}
+      className={`w-full h-full ${tela ? "object-contain" : "object-cover"}`}
+      style={{ background: "#1c1917", ...(espelhado ? { transform: "scaleX(-1)" } : {}) }}
       playsInline
       autoPlay
       // O próprio vídeo entra mudo e espelhado: ouvir a si mesmo é microfonia,
       // e a imagem não espelhada confunde quem se vê.
       muted={espelhar}
+      aria-label={tela ? "Tela compartilhada" : undefined}
     />
   );
 }
@@ -81,7 +98,9 @@ function Miolo({
   variante: keyof typeof TAMANHO_INICIAL;
 }) {
   if (participante.video) {
-    return <Video trilha={participante.video} espelhar={participante.souEu} />;
+    return (
+      <Video trilha={participante.video} espelhar={participante.souEu} tela={participante.tela} />
+    );
   }
   return (
     <span
@@ -128,6 +147,9 @@ export default function Retratos({
         <figcaption className={`${NOME_BASE} px-[10px] py-2 text-[0.8125rem]`}>
           {noPalco.nome}
           {noPalco.souEu && <span className="opacity-75 font-normal"> (você)</span>}
+          {/* Sem isto, uma tela quase toda branca no palco se parece com câmera
+              travada — e o advogado fica esperando a imagem "voltar". */}
+          {noPalco.tela && <span className="opacity-75 font-normal"> · mostrando a tela</span>}
         </figcaption>
 
         {mostrarCanto && eu && (

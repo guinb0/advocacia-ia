@@ -94,6 +94,15 @@ export default function ChamadaDoAtendimento() {
         >
           {chamada.temCamera ? "Câmera off" : "Câmera"}
         </button>
+        {chamada.telaDisponivel && (
+          <button
+            type="button"
+            className="bg-transparent text-tinta text-[10.5px] font-semibold leading-none font-ui tracking-[0.06em] uppercase px-[11px] py-2 cursor-pointer hover:bg-tinta hover:text-papel"
+            onClick={() => void chamada.alternarTela()}
+          >
+            {chamada.compartilhandoTela ? "Parar tela" : "Tela"}
+          </button>
+        )}
         <button
           type="button"
           className="bg-transparent text-tinta text-[10.5px] font-semibold leading-none font-ui tracking-[0.06em] uppercase px-[11px] py-2 cursor-pointer hover:bg-tinta hover:text-papel"
