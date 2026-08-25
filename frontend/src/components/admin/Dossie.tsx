@@ -832,6 +832,112 @@ export default function Dossie({
 
 /* ------------------------------------------------------------- precedentes */
 
+/* O conjunto recuperado — o que dá para dizer dele ANTES de abrir um a um.
+ *
+ * Não confundir com o Panorama (`app/panorama.py`), que é o painel analítico do
+ * escritório inteiro. Aqui o recorte é uma pesquisa de um caso.
+ *
+ * Dez precedentes abertos na tela não são leitura, são rolagem: o advogado
+ * chegava ao terceiro e já não sabia se o quarto acrescentava algo. O que ele
+ * pergunta primeiro é do conjunto — "quantos me servem, de que assunto, de
+ * quando" —, e só depois escolhe qual ler.
+ *
+ * Só agrega o que já vem estruturado: aplicabilidade, assunto, ano. Os pontos
+ * favoráveis e desfavoráveis são frase livre do modelo — duas frases sobre a
+ * mesma tese não se parecem o bastante para agrupar por texto, e um agrupamento
+ * errado aqui inventaria consenso onde não há. Quem quiser a tese lê o
+ * precedente, que está a um clique. */
+function resumirConjunto(precedentes: Precedente[]) {
+  const porAplicabilidade = new Map<string, number>();
+  const porAssunto = new Map<string, number>();
+  const anos: number[] = [];
+  let semAnalise = 0;
+
+  for (const p of precedentes) {
+    const analise = p.analyses[0];
+    if (analise) {
+      porAplicabilidade.set(analise.applicability, (porAplicabilidade.get(analise.applicability) ?? 0) + 1);
+    } else {
+      semAnalise += 1;
+    }
+    for (const assunto of p.subjects) {
+      porAssunto.set(assunto, (porAssunto.get(assunto) ?? 0) + 1);
+    }
+    const ano = p.decided_at ? new Date(p.decided_at).getFullYear() : NaN;
+    if (!Number.isNaN(ano)) anos.push(ano);
+  }
+
+  /* A ordem é a do vocabulário, não a da contagem: "aplica-se" antes de "não se
+   * aplica" se lê como escala, e uma ordem que dança a cada pesquisa obriga a
+   * reler os rótulos toda vez. */
+  const aplicabilidade = (["HIGH", "MEDIUM", "LOW", "NOT_APPLICABLE"] as const)
+    .map((chave) => ({ chave, rotulo: APLICABILIDADE[chave], quantidade: porAplicabilidade.get(chave) ?? 0 }))
+    .filter((linha) => linha.quantidade > 0);
+
+  const assuntos = [...porAssunto.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt-BR"))
+    .slice(0, 4);
+
+  return {
+    total: precedentes.length,
+    aplicabilidade,
+    assuntos,
+    semAnalise,
+    periodo: anos.length ? { de: Math.min(...anos), ate: Math.max(...anos) } : null,
+  };
+}
+
+function ResumoDoConjunto({ precedentes }: { precedentes: Precedente[] }) {
+  const dados = resumirConjunto(precedentes);
+  if (!dados.total) return null;
+
+  return (
+    <div className={INDICADOR}>
+      <div className={ITEM_TOPO}>
+        <strong>Resumo do conjunto</strong>
+        <span className={ORIGEM}>
+          {dados.total} precedente{dados.total > 1 ? "s" : ""} recuperado
+          {dados.total > 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {dados.aplicabilidade.length > 0 && (
+        <div className="flex flex-wrap items-center gap-[8px]">
+          {dados.aplicabilidade.map(({ chave, rotulo, quantidade }) => (
+            <Selo key={chave} tom={rotulo.tom} simbolo={rotulo.simbolo}>
+              {quantidade} {rotulo.texto.toLowerCase()}
+            </Selo>
+          ))}
+          {dados.semAnalise > 0 && (
+            <Selo tom="neutro" simbolo="•">
+              {dados.semAnalise} sem análise
+            </Selo>
+          )}
+        </div>
+      )}
+
+      {dados.assuntos.length > 0 && (
+        <p className="m-0 text-tinta-2 text-xs leading-[1.6]">
+          <span className="text-tinta-3">assuntos: </span>
+          {dados.assuntos.map(([assunto, quantidade], i) => (
+            <span key={assunto}>
+              {i > 0 && " · "}
+              {assunto} <span className="font-codigo tabular-nums text-tinta-3">({quantidade})</span>
+            </span>
+          ))}
+        </p>
+      )}
+
+      {dados.periodo && (
+        <p className="m-0 text-tinta-3 text-xs leading-[1.6]">
+          julgados entre {dados.periodo.de}
+          {dados.periodo.ate !== dados.periodo.de ? ` e ${dados.periodo.ate}` : ""}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PainelJurisprudencia({
   pesquisa,
   resumo,
@@ -877,6 +983,8 @@ function PainelJurisprudencia({
             </Aviso>
           )}
 
+          <ResumoDoConjunto precedentes={pesquisa?.precedents ?? []} />
+
           {indicadores && indicadores.sample_size > 0 && (
             <div className={INDICADOR}>
               <div className="flex items-center justify-between gap-[10px]">
@@ -889,7 +997,7 @@ function PainelJurisprudencia({
               </div>
               <div className="grid gap-[6px]">
                 {indicadores.indicators.map((item) => (
-                  <div key={item.label} className="grid grid-cols-[130px_1fr_auto] items-center gap-[10px] text-xs text-tinta-2">
+                  <div key={item.label} className="grid grid-cols-[1fr_auto] sm:grid-cols-[130px_1fr_auto] items-center gap-[10px] text-xs text-tinta-2">
                     <span>{item.label.toLowerCase()}</span>
                     <span className="block h-2 bg-papel-3 border border-borda">
                       <i className="block h-full bg-acao" style={{ width: `${Math.round(item.share * 100)}%` }} />
@@ -904,6 +1012,11 @@ function PainelJurisprudencia({
             </div>
           )}
 
+          {(pesquisa?.precedents ?? []).length > 0 && (
+            <p className="m-0 mb-2 text-tinta-3 text-xs">
+              Cada precedente abre a análise completa no clique.
+            </p>
+          )}
           <ul className={LISTA}>
             {(pesquisa?.precedents ?? []).map((precedente) => (
               <CartaoPrecedente key={precedente.id} precedente={precedente} />
@@ -915,28 +1028,63 @@ function PainelJurisprudencia({
   );
 }
 
+/* Primeira frase do resumo — o bastante para escolher qual precedente abrir.
+ *
+ * Fechado, o cartão precisa dizer mais que o número do processo; aberto, o
+ * resumo inteiro aparece logo abaixo. Corta na pontuação e não no caractere:
+ * meia frase terminada em "…" o advogado lê como texto truncado por bug. */
+function primeiraFrase(texto: string): string {
+  const fim = texto.search(/[.!?](\s|$)/);
+  return fim === -1 ? texto : texto.slice(0, fim + 1);
+}
+
+/* Um precedente por vez, fechado por padrão.
+ *
+ * `<details>` e não estado em React: são dez na tela, o navegador já sabe abrir
+ * e fechar, responde a teclado e a Ctrl+F encontra texto dentro do que está
+ * fechado. Um `useState` por cartão daria o mesmo com mais código e sem a
+ * busca da página. */
 function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
   const analise = precedente.analyses[0];
   const visual = analise ? APLICABILIDADE[analise.applicability] : null;
 
   return (
     <li className={ITEM}>
-      <div className={ITEM_TOPO}>
-        <strong className="font-codigo tabular-nums">{precedente.process_number}</strong>
-        {visual && (
-          <Selo tom={visual.tom} simbolo={visual.simbolo}>
-            {visual.texto}
-          </Selo>
-        )}
-      </div>
-      <div className={ORIGEM}>
-        {[precedente.court, precedente.judging_body, precedente.document_type, precedente.outcome]
-          .filter(Boolean)
-          .join(" · ")}
-        {precedente.decided_at
-          ? ` · ${new Date(precedente.decided_at).toLocaleDateString("pt-BR")}`
-          : ""}
-      </div>
+      {/* `grid` no <details>: o espaçamento entre resumo, pontos e trechos vinha
+        * do gap de ITEM, e eles deixaram de ser filhos dele ao entrar aqui. */}
+      <details className="group grid gap-[6px]">
+        <summary className="cursor-pointer list-none grid gap-[6px] [&::-webkit-details-marker]:hidden">
+          <div className={ITEM_TOPO}>
+            <span className="flex items-center gap-[8px] min-w-0">
+              <span
+                aria-hidden
+                className="text-tinta-3 text-[10px] leading-none transition-transform group-open:rotate-90"
+              >
+                ▶
+              </span>
+              <strong className="font-codigo tabular-nums">{precedente.process_number}</strong>
+            </span>
+            {visual && (
+              <Selo tom={visual.tom} simbolo={visual.simbolo}>
+                {visual.texto}
+              </Selo>
+            )}
+          </div>
+          <div className={ORIGEM}>
+            {[precedente.court, precedente.judging_body, precedente.document_type, precedente.outcome]
+              .filter(Boolean)
+              .join(" · ")}
+            {precedente.decided_at
+              ? ` · ${new Date(precedente.decided_at).toLocaleDateString("pt-BR")}`
+              : ""}
+          </div>
+          {/* Some ao abrir: repetida acima do resumo inteiro, viraria eco. */}
+          {analise && (
+            <p className="m-0 text-tinta-2 text-sm leading-[1.5] group-open:hidden">
+              {primeiraFrase(analise.summary)}
+            </p>
+          )}
+        </summary>
 
       {analise ? (
         <>
@@ -978,6 +1126,7 @@ function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
       {precedente.rank_reason && (
         <div className={ORIGEM}>por que apareceu: {precedente.rank_reason}</div>
       )}
+      </details>
     </li>
   );
 }
