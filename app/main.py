@@ -738,8 +738,13 @@ def config_assinatura():
 
     A tela pergunta antes de oferecer o botão: sem a chave no `.env` o envio não
     existe, e é melhor dizer isso do que deixar o advogado clicar e tomar erro.
+
+    `whatsapp_proprio` é o nosso canal (Evolution), e não o da ZapSign. Os dois
+    convivem: o e-mail da ZapSign sai sempre, e o WhatsApp entra por cima quando
+    a instância do escritório está pareada. Enquanto não estiver, a tela não
+    oferece o botão — mas o cliente continua recebendo o convite por e-mail.
     """
-    return assinatura.configuracao()
+    return {**assinatura.configuracao(), "whatsapp_proprio": whatsapp.configurado()}
 
 
 @app.post("/api/contrato/assinatura", status_code=201)

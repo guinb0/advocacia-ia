@@ -57,6 +57,21 @@ export async function enviarAvaliacaoGoogle(telefone: string): Promise<{ enviado
   }));
 }
 
+/** O link de assinatura de UM documento para UM signatário, pelo WhatsApp.
+ *
+ * Manda identificadores, nunca a URL nem o telefone: o servidor busca os dois no
+ * registro do documento. Ver o cabeçalho de `app/whatsapp.py`. */
+export async function enviarLinkAssinatura(
+  assinaturaId: string,
+  signatarioToken: string,
+): Promise<{ enviado: boolean }> {
+  return comoJson(await buscar("/api/whatsapp/link-assinatura", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ assinatura_id: assinaturaId, signatario_token: signatarioToken }),
+  }));
+}
+
 export interface EvidenciaInvestigativa {
   identificador: string;
   categoria: string;

@@ -24,7 +24,7 @@ import { enviarAvaliacaoGoogle } from "@/lib/api";
  *      link" não é avaliação feita, e era isso que ficava sem registro. */
 
 /** Perfil do escritório no Google Meu Negócio. */
-const LINK_AVALIACAO = "https://share.google/jejesXtEzd87GKxbU";
+const LINK_AVALIACAO = "https://share.google/BrQVYGnjqdSz3pEw7";
 const MENSAGEM =
   "Obrigado por conversar conosco. Sua avaliação ajuda outras pessoas a encontrarem nosso trabalho. Se puder, avalie a LARA & MELO no Google: ";
 

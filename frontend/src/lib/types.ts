@@ -445,7 +445,11 @@ export interface AssinaturaConsultada {
 export interface ConfigAssinatura {
   ativa: boolean;
   auth_mode: string;
+  /** Convite por WhatsApp pela própria ZapSign — consome crédito do plano. */
   whatsapp: boolean;
+  /** O WhatsApp do escritório (Evolution) está pareado. Sem isto o convite sai
+   *  só por e-mail, e a tela não oferece o botão de reenviar por WhatsApp. */
+  whatsapp_proprio: boolean;
   signatario_escritorio: { nome: string; email: string; papel: string } | null;
 }
 
