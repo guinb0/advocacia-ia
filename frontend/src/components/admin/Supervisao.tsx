@@ -22,6 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import ChecklistRoteiro from "@/components/admin/ChecklistRoteiro";
+import PainelSupervisao from "@/components/admin/PainelSupervisao";
 import { Aviso, BarraAbas, Botao, BotaoAba, Selo, Vazio } from "@/components/ui/Basicos";
 import {
   ApiError,
@@ -32,8 +33,17 @@ import {
   obterTranscricao,
   type Auditoria,
   type ChecklistRegistro,
+  type PendenciasSupervisao,
   type PessoaSupervisao,
 } from "@/lib/api";
+
+const SEM_PENDENCIAS: PendenciasSupervisao = {
+  sem_avaliacao: 0,
+  sem_dossie: 0,
+  sem_quem_conduziu: 0,
+  ao_vivo: 0,
+  anexadas: 0,
+};
 
 interface Props {
   onVoltar: () => void;
@@ -48,6 +58,11 @@ const ITEM_ABERTO = "bg-acao-clara border-acao-borda";
 export default function Supervisao({ onVoltar }: Props) {
   const [pessoas, setPessoas] = useState<PessoaSupervisao[]>([]);
   const [totais, setTotais] = useState({ entrevistas: 0, pessoas: 0, sem: 0 });
+  const [pendencias, setPendencias] = useState<PendenciasSupervisao>(SEM_PENDENCIAS);
+  /* Quem está aberto na tabela do painel. `null` = ninguém, e aí a coluna da
+   * esquerda mostra todos — é o estado em que a tela abre, porque escolher uma
+   * pessoa por padrão esconderia as outras quatro sem o secretário ter pedido. */
+  const [pessoaAberta, setPessoaAberta] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -69,6 +84,7 @@ export default function Supervisao({ onVoltar }: Props) {
     try {
       const d = await listarSupervisao();
       setPessoas(d.itens);
+      setPendencias(d.pendencias ?? SEM_PENDENCIAS);
       setTotais({
         entrevistas: d.total_entrevistas,
         pessoas: d.total_pessoas,
@@ -145,7 +161,7 @@ export default function Supervisao({ onVoltar }: Props) {
   }
 
   return (
-    <div className="max-w-[1240px] mx-auto px-5 pt-6 pb-16">
+    <div className="max-w-[1240px] mx-auto px-4 sm:px-5 pt-6 pb-16">
       <Botao variante="secundario" onClick={onVoltar}>
         ← Voltar para a carteira
       </Botao>
@@ -157,15 +173,6 @@ export default function Supervisao({ onVoltar }: Props) {
           checklist do roteiro — assinaturas, avaliação no Google, perguntas — e para
           ler a transcrição.
         </p>
-        {!carregando && (
-          <p className="mt-[10px] mb-0 text-tinta-3 max-w-[66ch] leading-[1.5]">
-            <strong>{totais.entrevistas}</strong> entrevista(s) ·{" "}
-            <strong>{totais.pessoas}</strong> pessoa(s)
-            {totais.sem > 0 && (
-              <> · <span className="text-atencao">{totais.sem} sem quem conduziu</span></>
-            )}
-          </p>
-        )}
       </header>
 
       {erro && (
@@ -185,6 +192,23 @@ export default function Supervisao({ onVoltar }: Props) {
         </Aviso>
       )}
 
+      {/* O painel: o que o escritório deve e quem deve o quê. Fica ACIMA da
+        * grade de duas colunas porque é a pergunta com que o secretário abre a
+        * tela; a lista e o checklist são o aprofundamento dela. */}
+      {!carregando && pessoas.length > 0 && (
+        <div className="mt-5">
+          <PainelSupervisao
+            pessoas={pessoas}
+            pendencias={pendencias}
+            total={totais.entrevistas}
+            pessoaAberta={pessoaAberta}
+            onEscolherPessoa={(nome) =>
+              setPessoaAberta((atual) => (atual === nome ? null : nome))
+            }
+          />
+        </div>
+      )}
+
       <div className="grid grid-cols-[340px_minmax(0,1fr)] max-[900px]:grid-cols-1 gap-6 items-start mt-5">
         {/* ------------------------------------------- funcionário e entrevistas */}
         <section className="border border-borda-forte rounded-cartao bg-papel shadow-cartao p-4">
@@ -193,7 +217,13 @@ export default function Supervisao({ onVoltar }: Props) {
           ) : pessoas.length === 0 ? (
             <Vazio>Nenhuma entrevista registrada ainda.</Vazio>
           ) : (
-            pessoas.map((p) => {
+            /* Escolher alguém na tabela do painel FILTRA esta coluna em vez de
+             * rolar até ele. Com cinco pessoas rolar bastava; com trinta, a lista
+             * inteira é um muro, e o clique na tabela viraria promessa não
+             * cumprida. Clicar de novo no mesmo nome mostra todos outra vez. */
+            pessoas
+              .filter((p) => !pessoaAberta || p.entrevistador === pessoaAberta)
+              .map((p) => {
               const semAvaliacao = p.entrevistas.filter((e) => !e.avaliacao_google).length;
 
               return (

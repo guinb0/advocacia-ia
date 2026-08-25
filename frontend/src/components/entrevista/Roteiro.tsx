@@ -34,6 +34,10 @@ import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
 import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
 
+// TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
+// Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
+const TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA = false;
+
 const T_BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
   "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
@@ -144,6 +148,8 @@ export interface ManipuladorRoteiro {
   sugestoesPendentes: () => number;
   /** Volta da revisão ao ponto exato do roteiro que precisa de complemento. */
   irParaPergunta: (perguntaId: string) => void;
+  /** Aplica ao roteiro as respostas consolidadas pela revisão final. */
+  atualizarRespostas: (respostas: Record<string, string | string[]>) => void;
   /** Fecha a gravação e espera o áudio inteiro chegar ao disco.
    *
    * Só no FIM do atendimento: a gravação corre durante a avaliação, os
@@ -657,6 +663,7 @@ export default function Roteiro({
       temVideoPendente: () => videoPendente.current,
       sugestoesPendentes: () => sugestoesRef.current.length,
       irParaPergunta: (perguntaId: string) => irParaRef.current(perguntaId),
+      atualizarRespostas: (novas) => setRespostas((atuais) => ({ ...atuais, ...novas })),
       encerrarGravacao: async () => {
         await encerrarEscutaRef.current();
         return captura.current?.entrevistaId ?? "";
@@ -710,6 +717,12 @@ export default function Roteiro({
      * Ele fecha a gravação do id que recebe: deixado na tela durante uma
      * entrevista nova, encerraria a conversa que acabou de começar. */
     setEscutaEncerrada(false);
+    if (TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA) {
+      // Abre o roteiro completo sem microfone, WebSocket ou sessão do Whisper.
+      setEscutando(true);
+      setFonte("nenhuma");
+      return;
+    }
     try {
       if (estadoMic === "sem-audio") await captura.current?.selecionarAudio();
       await captura.current?.iniciarEntrevista();
@@ -1062,7 +1075,9 @@ function preencherMarcadores(
 
   const temMic = estadoMic !== "sem-audio";
   const identificacaoConcluida = faltaParaComecar.length === 0;
-  const blocosNaTela = escutando && identificacaoConcluida
+  const blocosNaTela = escutaEncerrada
+    ? (roteiro?.blocos ?? [])
+    : escutando && identificacaoConcluida
     // Sem preenchimento ao vivo não há resposta de rastreio para abrir módulos.
     // Mostra todos de uma vez para o funcionário escolher livremente a ordem.
     ? (roteiro?.blocos ?? [])
@@ -1072,6 +1087,11 @@ function preencherMarcadores(
 
   return (
     <div id="roteiro-da-entrevista" className={`${escutando ? "max-w-[1320px]" : "max-w-[860px]"} roteiro-contentor`}>
+      {TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA && (
+        <div className="mb-4 border-l-4 border-atencao bg-papel-2 px-3 py-[10px] text-[12px] leading-[1.5] font-ui text-tinta">
+          <strong>Modo de teste:</strong> transcrição temporariamente desativada. Nenhum áudio é enviado ao serviço de transcrição.
+        </div>
+      )}
       <div className="flex justify-between items-end gap-4 flex-wrap pb-3 border-b border-borda-forte">
         <div>
           <h2 className="m-0 font-semibold text-[22px] leading-[1.15] font-titulo">{roteiro.nome}</h2>
@@ -1834,7 +1854,23 @@ function CampoResposta({
 
   // Ao vivo o roteiro é guia de leitura, não formulário. A fala só será
   // interpretada e distribuída entre campos depois do encerramento.
-  if (escutando && !CAMPOS_TECNICOS_DIGITADOS.has(pergunta.id)) return null;
+  if (escutando && !CAMPOS_TECNICOS_DIGITADOS.has(pergunta.id)) {
+    // As alternativas fazem parte do enunciado. Mesmo sem transformar o
+    // roteiro ao vivo em formulário, elas precisam ficar visíveis para leitura.
+    if (pergunta.tipo === "documentos" || pergunta.tipo === "escolha" || pergunta.tipo === "lista") {
+      const marcados = Array.isArray(valor) ? valor : [texto].filter(Boolean);
+      return (
+        <ul className="m-0 pl-5 text-[12.5px] leading-[1.65] font-ui text-tinta-3">
+          {pergunta.opcoes.map((opcao) => (
+            <li key={opcao} className={marcados.includes(opcao) ? "font-semibold text-tinta" : ""}>
+              {opcao}
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    return null;
+  }
 
   if (pergunta.id === "municipio") {
     return (

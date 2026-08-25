@@ -1,4 +1,4 @@
-"""API do extrator de documentos (FastAPI + PaddleOCR)."""
+"""API do extrator de documentos (FastAPI + Mistral OCR)."""
 
 from __future__ import annotations
 
@@ -68,6 +68,7 @@ from . import (
 )
 from . import jobs, observabilidade
 from . import entrevista as entrevista_lib
+from .cache_leitura import por_alguns_segundos
 from .agente import dossie as dossie_agente
 from .extractors import ROTULOS_TIPO
 from .tasks.ocr import processar_documento, processar_entrega
@@ -126,7 +127,7 @@ async def ciclo_de_vida(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Extrator de Documentos — PaddleOCR", version="1.0.0", lifespan=ciclo_de_vida)
+app = FastAPI(title="Extrator de Documentos — Mistral OCR", version="1.0.0", lifespan=ciclo_de_vida)
 observabilidade.configurar(app)
 
 # O frontend Next chama esta API direto do navegador, então precisa de CORS.
@@ -148,6 +149,30 @@ ORIGENS = [
     ).split(",")
     if o.strip()
 ]
+
+#: Origens aceitas por PADRÃO DE ENDEREÇO, além da lista fixa acima.
+#:
+#: A lista fixa só serve a quem abre o sistema NA MÁQUINA que o hospeda. Abrindo
+#: de outro computador da rede, a origem passa a ser `http://192.168.x.x:3000` e o
+#: navegador descarta toda resposta — a API responde 200 e a tela mostra "Failed
+#: to fetch", que é o sintoma mais enganoso que existe aqui.
+#:
+#: Não dá para resolver com `allow_origins=["*"]`: o login usa cookie, e a
+#: especificação de CORS proíbe curinga junto de credencial. `allow_origin_regex`
+#: é o mecanismo correto.
+#:
+#: O padrão cobre localhost e as três faixas privadas de IPv4 — a rede do
+#: escritório. Endereço público NÃO entra: para publicar num domínio, preencha
+#: `ORIGENS_PERMITIDAS` com ele, explicitamente.
+ORIGENS_REGEX = os.getenv(
+    "ORIGENS_REGEX",
+    r"^https?://("
+    r"localhost|127\.0\.0\.1|\[::1\]"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$",
+).strip()
 
 # Rotas que respondem sem token. Tudo que não estiver aqui exige autenticação —
 # a lista é de exceções justamente para que uma rota nova nasça protegida.
@@ -254,6 +279,7 @@ async def exigir_autenticacao(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGENS,
+    allow_origin_regex=ORIGENS_REGEX or None,
     # O cookie de sessão só acompanha a requisição se o servidor autorizar
     # credencial na origem — é o par do `credentials: "include"` do frontend.
     allow_credentials=True,
@@ -905,8 +931,21 @@ async def obter_assinatura(assinatura_id: str):
     atualizado = armazenamento.atualizar_assinatura(
         assinatura_id, resumo["estado"], resumo["signatarios"]
     )
+    registro_atual = atualizado or registro
+    if resumo["estado"] == "assinado" and armazenamento.caminho_do_assinado(assinatura_id) is None:
+        try:
+            url = await assinatura.url_do_assinado(registro["doc_token"])
+            pdf = await assinatura.baixar(url)
+            destino = armazenamento.DIR_CONTRATOS / f"{assinatura_id}.pdf"
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_bytes(pdf)
+            armazenamento.definir_arquivo_assinatura(assinatura_id, destino)
+            registro_atual = armazenamento.obter_assinatura(assinatura_id) or registro_atual
+            _anexar_documento_assinado_ao_caso(registro_atual, destino)
+        except assinatura.ErroAssinatura as exc:
+            log.warning("Assinado %s ainda não pôde ser anexado ao caso: %s", assinatura_id, exc)
     return {
-        "assinatura": _resposta_assinatura(atualizado or registro),
+        "assinatura": _resposta_assinatura(registro_atual),
         "atualizado": True,
         "tem_assinado": resumo["tem_assinado"],
     }
@@ -929,6 +968,7 @@ async def baixar_contrato_assinado(assinatura_id: str):
 
     guardado = armazenamento.caminho_do_assinado(assinatura_id)
     if guardado is not None:
+        _anexar_documento_assinado_ao_caso(registro, guardado)
         return FileResponse(guardado, media_type="application/pdf", filename=nome_arquivo)
 
     try:
@@ -943,8 +983,54 @@ async def baixar_contrato_assinado(assinatura_id: str):
     destino.parent.mkdir(parents=True, exist_ok=True)
     destino.write_bytes(pdf)
     armazenamento.definir_arquivo_assinatura(assinatura_id, destino)
+    _anexar_documento_assinado_ao_caso(registro, destino)
 
     return FileResponse(destino, media_type="application/pdf", filename=nome_arquivo)
+
+
+def _codigo_documento_assinado(nome: str) -> str:
+    normalizado = contrato._sem_acento(nome)
+    if normalizado.startswith("procuracao"):
+        return "DOC.01"
+    if normalizado.startswith("contrato"):
+        return "ASS.CONTRATO"
+    if normalizado.startswith("declaracao"):
+        return "ASS.HIPOSSUFICIENCIA"
+    return "ASS.DOCUMENTO"
+
+
+def _anexar_documento_assinado_ao_caso(registro: dict[str, Any], caminho: Path) -> None:
+    """Transforma a via assinada em anexo do caso, uma única vez.
+
+    A procuração atende diretamente o DOC.01 do checklist. Os demais papéis
+    também ficam presos ao dossiê, embora não substituam documentos probatórios
+    específicos da ação.
+    """
+    caso_id = str(registro.get("caso_id") or "")
+    if not caso_id or not caminho.is_file():
+        return
+    nome = f"{registro['nome']}.pdf".replace("/", "-").replace("\\", "-")
+    for entrega in armazenamento.listar_entregas(caso_id):
+        detalhe = armazenamento.obter_entrega(entrega["id"])
+        origem = (detalhe or {}).get("extracao", {}).get("origem", {})
+        if origem.get("assinatura_id") == registro.get("id"):
+            return
+    codigo = _codigo_documento_assinado(str(registro.get("nome") or ""))
+    entrega = armazenamento.registrar_entrega_pendente(caso_id, codigo, nome, caminho)
+    armazenamento.concluir_entrega(
+        entrega["id"],
+        {
+            "tipo": {"codigo": "documento_assinado", "detectado": "documento_assinado"},
+            "validacao": {
+                "veredito": "valido",
+                "dados_utilizaveis": True,
+                "score_legibilidade": 100,
+            },
+            "origem": {"assinatura_id": registro["id"], "assinatura_eletronica": True},
+        },
+        True,
+        [codigo],
+    )
 
 
 @app.post("/api/assinaturas/{assinatura_id}/caso")
@@ -956,6 +1042,10 @@ def vincular_assinatura(assinatura_id: str, caso_id: str = Form(...)):
     _exigir_identidade_do_caso(caso_id, registro.get("cliente"), registro.get("cpf"))
     if not armazenamento.vincular_assinatura_ao_caso(assinatura_id, caso_id):
         raise HTTPException(404, "Contrato não encontrado.")
+    atualizado = armazenamento.obter_assinatura(assinatura_id)
+    guardado = armazenamento.caminho_do_assinado(assinatura_id)
+    if atualizado and guardado:
+        _anexar_documento_assinado_ao_caso(atualizado, guardado)
     return {"vinculado": True}
 
 
@@ -1378,10 +1468,12 @@ def criar_caso(cliente: str = Form(...), categoria: str = Form(...), observacao:
         raise HTTPException(400, f"Categoria '{categoria}' não existe.")
 
     caso = armazenamento.criar_caso(cliente, categoria, observacao)
+    listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return {**caso, "portal": _criar_portal(caso["id"])}
 
 
 @app.get("/api/casos")
+@por_alguns_segundos(5)
 def listar_casos():
     return {"casos": armazenamento.listar_casos()}
 
@@ -1431,6 +1523,7 @@ def panorama_do_escritorio():
 def atualizar_caso(caso_id: str, cliente: str | None = Form(None), observacao: str | None = Form(None)):
     if not armazenamento.atualizar_caso(caso_id, cliente, observacao):
         raise HTTPException(404, "Caso não encontrado ou nada para atualizar.")
+    listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return armazenamento.obter_caso(caso_id)
 
 
@@ -1438,6 +1531,7 @@ def atualizar_caso(caso_id: str, cliente: str | None = Form(None), observacao: s
 def excluir_caso(caso_id: str):
     if not armazenamento.excluir_caso(caso_id):
         raise HTTPException(404, "Caso não encontrado.")
+    listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return {"removido": True}
 
 
@@ -1500,9 +1594,26 @@ def _ler_entrevista_no_agente(caso_id: str, entrevista_id: str) -> None:
     try:
         from .agente import espelho
 
-        espelho.enviar_entrevista(caso_id, entrevista_id)
+        resposta = espelho.enviar_entrevista(caso_id, entrevista_id)
     except Exception:  # noqa: BLE001 - fronteira com serviço externo
         log.warning("não foi possível ler a entrevista %s no agente", entrevista_id, exc_info=True)
+        return
+
+    # A entrevista virou fato. Falta LER o caso inteiro com ela dentro — a
+    # classificação e a jurisprudência saem dos fatos do caso, sem distinguir se
+    # vieram de documento ou da conversa, e é essa leitura combinada que interessa
+    # ao advogado. Ela existia só nos dois botões do dossiê, e no fim de um
+    # atendimento ninguém clica: o cliente acabou de sair.
+    #
+    # Só quando a leitura ACONTECEU agora. `ja_enviada` e `failure` significam que
+    # nenhum fato novo entrou, e reclassificar o caso por isso seria gastar duas
+    # chamadas de modelo para chegar ao mesmo resultado.
+    if resposta.get("ja_enviada") or resposta.get("failure"):
+        return
+    try:
+        espelho.analisar_caso_inteiro(caso_id)
+    except Exception:  # noqa: BLE001 - idem; a entrevista já está lida e salva
+        log.warning("não foi possível analisar o caso %s após a entrevista", caso_id, exc_info=True)
 
 
 def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
@@ -1918,9 +2029,9 @@ async def vincular_identidade_unificada(caso_id: str, entrega_id: str = Form(...
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    caminho = Path(entrega["caminho"]).resolve()
-    if armazenamento.DIR_ARQUIVOS.resolve() not in caminho.parents or not caminho.is_file():
-        raise HTTPException(404, "Arquivo original não encontrado.")
+    caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+    if caminho is None:
+        raise HTTPException(410, "O anexo antigo não possui cópia recuperável; reenvie o arquivo.")
 
     # O botão é a confirmação expressa de que se trata de identidade unificada.
     # Reprocessamos no layout da CIN para extrair e validar o CPF sem depender de
@@ -2063,9 +2174,12 @@ def baixar_arquivo_entrega(entrega_id: str, download: bool = False):
     if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
 
-    caminho = Path(entrega["caminho"]).resolve()
-    if armazenamento.DIR_ARQUIVOS.resolve() not in caminho.parents or not caminho.is_file():
-        raise HTTPException(404, "Arquivo não encontrado no disco.")
+    caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+    if caminho is None:
+        raise HTTPException(
+            410,
+            "O registro existe, mas este anexo antigo não possui cópia recuperável. Reenvie o arquivo.",
+        )
 
     # `inline` deixa o navegador exibir o arquivo em vez de baixá-lo, que é o que
     # permite a pré-visualização no checklist. Passar só `filename=` produzia
@@ -2085,9 +2199,12 @@ def baixar_arquivo_entrega_pdf(entrega_id: str):
     if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
 
-    caminho = Path(entrega["caminho"]).resolve()
-    if armazenamento.DIR_ARQUIVOS.resolve() not in caminho.parents or not caminho.is_file():
-        raise HTTPException(404, "Arquivo não encontrado no disco.")
+    caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+    if caminho is None:
+        raise HTTPException(
+            410,
+            "O registro existe, mas este anexo antigo não possui cópia recuperável. Reenvie o arquivo.",
+        )
 
     destino = pipeline.TMP_DIR / f"entrega-{entrega_id}-{uuid.uuid4().hex}.pdf"
     try:

@@ -436,7 +436,7 @@ export async function gerarContrato(
  *  junta. Os rótulos são os mesmos de `contrato.MODELOS`, no backend. */
 export const DOCUMENTOS_DO_CLIENTE: { codigo: DocumentoDoCliente; rotulo: string }[] = [
   { codigo: "contrato", rotulo: "Contrato de honorários" },
-  { codigo: "procuracao", rotulo: "Procuração ad judicia" },
+  { codigo: "procuracao", rotulo: "Procuração" },
   { codigo: "hipossuficiencia", rotulo: "Declaração de hipossuficiência" },
 ];
 
@@ -980,12 +980,30 @@ export interface EntrevistaResumo {
   /** Os dois sinais que a lista dá sem ida ao modelo (ver `app/supervisao.py`). */
   avaliacao_google: boolean;
   enviada: boolean;
+  /** Vazio = anexada como arquivo; preenchida = conduzida ao vivo, e tem áudio. */
+  gravacao_id: string;
 }
 
 export interface PessoaSupervisao {
   entrevistador: string;
   quantidade: number;
   entrevistas: EntrevistaResumo[];
+  /* O resumo de cada um vem calculado do servidor — a tela ordena e desenha barra
+   * a partir dele, e refazer a conta no navegador a espalharia por dois lugares. */
+  com_avaliacao: number;
+  com_dossie: number;
+  ao_vivo: number;
+  /** dd/mm/aaaa, já normalizada: `realizada_em` é texto livre e tem dois formatos. */
+  ultima_em: string;
+}
+
+/** O que o escritório deve, em número. Pendências, não acertos — ver `app/supervisao.py`. */
+export interface PendenciasSupervisao {
+  sem_avaliacao: number;
+  sem_dossie: number;
+  sem_quem_conduziu: number;
+  ao_vivo: number;
+  anexadas: number;
 }
 
 export interface PerguntaAuditada {
@@ -1025,6 +1043,7 @@ export async function listarSupervisao(): Promise<{
   total_entrevistas: number;
   total_pessoas: number;
   sem_atribuicao: number;
+  pendencias: PendenciasSupervisao;
 }> {
   return comoJson(await buscar("/api/supervisao/entrevistas"));
 }

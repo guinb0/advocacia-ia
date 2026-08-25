@@ -40,6 +40,7 @@ from typing import Any
 from . import armazenamento, banco
 from . import casos as casos_ocr
 from . import painel
+from .cache_leitura import por_alguns_segundos
 
 log = logging.getLogger("panorama")
 
@@ -792,6 +793,7 @@ def compor(
     }
 
 
+@por_alguns_segundos(30)
 def montar() -> dict[str, Any]:
     """O panorama do escritório inteiro, em cinco consultas.
 

@@ -244,5 +244,59 @@ finally:
     ) = _guardados
 
 
+
+# ------------------------------------------------ os agregados do painel
+
+print("\nAgregados do painel")
+
+# `realizada_em` e texto livre e o acervo tem os DOIS formatos convivendo. Numa
+# coluna de tabela, lado a lado, a data parece erro de dado.
+for bruto, esperado, o_que in [
+    ("2026-08-21", "21/08/2026", "ISO vira brasileira"),
+    ("12/08/2026", "12/08/2026", "brasileira passa intacta"),
+    ("2026-08-21T14:30:00", "21/08/2026", "ISO com hora tambem"),
+    ("", "", "vazio continua vazio"),
+    (None, "", "None nao vira 'None'"),
+]:
+    checar(supervisao._data_curta(bruto) == esperado, o_que,
+           f"{bruto!r} -> {supervisao._data_curta(bruto)!r}")
+
+_guardados2 = (
+    supervisao.armazenamento.listar_todas_entrevistas,
+    supervisao.armazenamento.listar_casos,
+)
+supervisao.armazenamento.listar_casos = lambda: [{"id": "c1", "cliente": "Ana"}]
+supervisao.armazenamento.listar_todas_entrevistas = lambda: [
+    entrevista(id="a", entrevistador="Helena", avaliacao_google=True, enviada=True,
+               gravacao_id="g1", realizada_em="2026-08-20"),
+    entrevista(id="b", entrevistador="Helena", avaliacao_google=False, enviada=True,
+               realizada_em="19/08/2026"),
+    entrevista(id="c", entrevistador="", avaliacao_google=False, enviada=False),
+]
+try:
+    d = supervisao.por_entrevistador()
+    pend = d["pendencias"]
+    checar(pend["sem_avaliacao"] == 2, "conta quem NAO tem avaliacao (nao quem tem)", str(pend))
+    checar(pend["sem_dossie"] == 1, "conta quem nao virou dossie")
+    checar(pend["sem_quem_conduziu"] == 1, "conta a que nao tem quem conduziu")
+    checar(pend["ao_vivo"] == 1 and pend["anexadas"] == 2, "separa ao vivo de anexada", str(pend))
+
+    helena = next(p for p in d["itens"] if p["entrevistador"] == "Helena")
+    checar(helena["com_avaliacao"] == 1 and helena["quantidade"] == 2,
+           "o resumo da pessoa bate com as entrevistas dela")
+    checar(helena["com_dossie"] == 2, "e conta o dossie separado da avaliacao")
+    checar(helena["ultima_em"] == "20/08/2026",
+           f"a ultima e a mais recente, normalizada ({helena['ultima_em']})")
+    checar(
+        all("gravacao_id" in e for p in d["itens"] for e in p["entrevistas"]),
+        "toda entrevista da lista traz gravacao_id — o painel soma por ele",
+    )
+finally:
+    (
+        supervisao.armazenamento.listar_todas_entrevistas,
+        supervisao.armazenamento.listar_casos,
+    ) = _guardados2
+
+
 print(f"\n{'TUDO OK' if not falhas else f'{falhas} FALHA(S)'}")
 raise SystemExit(1 if falhas else 0)

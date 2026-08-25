@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from contextlib import nullcontext
-import os
 from pathlib import Path
 import logging
 
@@ -10,16 +8,13 @@ from celery.signals import worker_ready
 
 from .. import armazenamento, casos, categorias, jobs, pipeline
 from ..celery_app import celery_app
-from ..gpu_lock import gpu_exclusiva
 
 log = logging.getLogger("ocr-worker")
 
 
 def _executar_ocr(caminho: str, nome: str, idioma: str, tipo: str | None) -> dict:
     conteudo = Path(caminho).read_bytes()
-    trava = gpu_exclusiva() if os.getenv("OCR_USA_GPU", "0") == "1" else nullcontext()
-    with trava:
-        return pipeline.processar(conteudo, nome, idioma, tipo)
+    return pipeline.processar(conteudo, nome, idioma, tipo)
 
 
 def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
@@ -52,11 +47,11 @@ def aquecer_worker_ocr(sender=None, **_kwargs):
         from ..ocr_engine import aquecer
 
         aquecer()
-        log.info("PaddleOCR aquecido no worker %s.", hostname)
+        log.info("Mistral OCR configurada no worker %s.", hostname)
     except Exception:
         # O primeiro job tenta novamente; worker vivo é melhor que abortar toda
         # a fila por uma falha transitória de modelo no boot.
-        log.exception("Falha ao aquecer PaddleOCR no worker %s.", hostname)
+        log.exception("Falha ao configurar Mistral OCR no worker %s.", hostname)
 
 
 @celery_app.task(
@@ -110,7 +105,7 @@ def processar_entrega(
     idioma: str,
     usar_para_rg_e_cpf: bool,
 ):
-    """Lê documento do checklist no worker que já mantém o Paddle aquecido."""
+    """Lê documento do checklist no worker dedicado ao OCR."""
     try:
         armazenamento.marcar_entrega_processando(entrega_id)
         categoria = categorias.obter(categoria_codigo)

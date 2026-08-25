@@ -96,7 +96,7 @@ export default function Usuarios({ onVoltar }: Props) {
   const descricaoPerfil = perfis.find((p) => p.codigo === form.perfil)?.descricao;
 
   return (
-    <div className="max-w-[1080px] mx-auto px-5 pt-6 pb-16">
+    <div className="max-w-[1080px] mx-auto px-4 sm:px-5 pt-6 pb-16">
       <Botao variante="secundario" onClick={onVoltar}>
         ← Voltar para a carteira
       </Botao>

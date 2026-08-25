@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from . import armazenamento, auditoria, contrato
 from .auth import exigir_papel
+from .cache_leitura import por_alguns_segundos
 
 log = logging.getLogger("supervisao")
 
@@ -55,15 +56,30 @@ def _chave(nome: object) -> str:
     return " ".join(str(nome or "").split()).casefold()
 
 
+def _data_curta(bruto: object) -> str:
+    """dd/mm/aaaa a partir do que estiver gravado, seja lá em que formato.
+
+    `realizada_em` é texto livre digitado à mão, e o acervo tem os dois formatos
+    convivendo: "2026-08-21" (ISO, do `criado_em` e do que a tela nova grava) e
+    "12/08/2026" (brasileiro, do que foi digitado). Mostrar os dois lado a lado numa
+    coluna de tabela faz a data parecer erro de dado — e aqui ela é só a resposta a
+    "quando foi a última", que precisa ser comparável de bater o olho.
+    """
+    texto = str(bruto or "").strip()[:10]
+    if len(texto) == 10 and texto[4] == "-" and texto[7] == "-":
+        return f"{texto[8:10]}/{texto[5:7]}/{texto[0:4]}"
+    return texto
+
+
 @roteador.get("/entrevistas", dependencies=[SoSecretario])
+@por_alguns_segundos(5)
 def por_entrevistador() -> dict[str, Any]:
     """Quantas entrevistas cada um fez, e a lista de cada pessoa."""
-    entrevistas = armazenamento.listar_todas_entrevistas()
+    entrevistas = armazenamento.listar_resumo_supervisao()
     # O nome do cliente não está na entrevista, e abrir caso a caso seria uma
     # consulta por linha. Uma leitura da lista de casos resolve todas de uma vez:
     # a tela mostra "Helena Prado — 12 entrevistas" e, dentro, de quem foi cada
     # uma; data sozinha não diz ao secretário qual atendimento ele está abrindo.
-    clientes = {c["id"]: c.get("cliente") or "" for c in armazenamento.listar_casos()}
 
     pessoas: dict[str, dict[str, Any]] = {}
     for e in entrevistas:
@@ -77,13 +93,13 @@ def por_entrevistador() -> dict[str, Any]:
             {
                 "id": e.get("id"),
                 "caso_id": e.get("caso_id"),
-                "cliente": clientes.get(str(e.get("caso_id") or ""), ""),
+                "cliente": e.get("cliente") or "",
                 "arquivo": e.get("arquivo"),
                 "realizada_em": e.get("realizada_em"),
                 "criado_em": e.get("criado_em"),
                 # O tamanho dá noção do que há para ler sem despejar o texto
                 # inteiro numa lista que pode ter centenas de linhas.
-                "caracteres": len(str(e.get("texto") or "")),
+                "caracteres": int(e.get("caracteres") or 0),
                 "fatos_gerados": e.get("fatos_gerados"),
                 # Os dois sinais que a lista consegue dar SEM ir ao modelo. Ficam
                 # aqui para o secretário ver a pendência antes de abrir a
@@ -91,6 +107,9 @@ def por_entrevistador() -> dict[str, Any]:
                 # não pode rodar em lote para trinta linhas de uma lista.
                 "avaliacao_google": bool(e.get("avaliacao_google")),
                 "enviada": bool(e.get("enviada")),
+                # Vazio = anexada como arquivo; preenchida = conduzida ao vivo pelo
+                # roteiro, e só essa tem áudio para o secretário ouvir.
+                "gravacao_id": e.get("gravacao_id") or "",
             }
         )
 
@@ -102,14 +121,41 @@ def por_entrevistador() -> dict[str, Any]:
     )
     for pessoa in itens:
         pessoa["entrevistas"].sort(key=lambda x: str(x.get("criado_em") or ""), reverse=True)
+        # O resumo de cada um, calculado AQUI e não na tela.
+        #
+        # A tela precisa ordenar por "quem tem mais pendência" e desenhar barra de
+        # proporção; fazer essa conta no navegador significaria refazê-la a cada
+        # render e, pior, tê-la escrita em dois lugares no dia em que a supervisão
+        # ganhar um segundo consumidor (um relatório, um e-mail semanal).
+        lista = pessoa["entrevistas"]
+        pessoa["com_avaliacao"] = sum(1 for e in lista if e["avaliacao_google"])
+        pessoa["com_dossie"] = sum(1 for e in lista if e["enviada"])
+        pessoa["ao_vivo"] = sum(1 for e in lista if e["gravacao_id"])
+        pessoa["ultima_em"] = next(
+            (_data_curta(e.get("realizada_em") or e.get("criado_em")) for e in lista), ""
+        )
 
+    total = len(entrevistas)
     return {
         "itens": itens,
-        "total_entrevistas": len(entrevistas),
+        "total_entrevistas": total,
         "total_pessoas": sum(1 for p in itens if p["entrevistador"] != SEM_NOME),
         "sem_atribuicao": sum(
             p["quantidade"] for p in itens if p["entrevistador"] == SEM_NOME
         ),
+        # O que o escritório inteiro deve, em número — é o topo do painel. São
+        # PENDÊNCIAS e não acertos de propósito: o secretário abre esta tela para
+        # descobrir o que cobrar hoje, e "21 com avaliação" o obrigaria a subtrair
+        # de cabeça para chegar no número que ele veio buscar.
+        "pendencias": {
+            "sem_avaliacao": sum(1 for e in entrevistas if not e.get("avaliacao_google")),
+            "sem_dossie": sum(1 for e in entrevistas if not e.get("enviada")),
+            "sem_quem_conduziu": sum(
+                1 for e in entrevistas if not str(e.get("entrevistador") or "").strip()
+            ),
+            "ao_vivo": sum(1 for e in entrevistas if e.get("gravacao_id")),
+            "anexadas": sum(1 for e in entrevistas if not e.get("gravacao_id")),
+        },
     }
 
 

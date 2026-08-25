@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
+import BarraLateral from "@/components/layout/BarraLateral";
 import Carteira from "@/components/carteira/Carteira";
 import Checklist from "@/components/caso/Checklist";
 import Dados from "@/components/caso/Dados";
@@ -30,7 +31,26 @@ import { CABECALHO, useHomeModel } from "./home.model";
 
 type HomeViewProps = ReturnType<typeof useHomeModel>;
 
-const HomeView = (props: HomeViewProps) => {
+/* A casca: barra lateral + conteúdo, em volta de QUALQUER tela.
+ *
+ * Fica aqui, e não dentro de cada tela, porque menu montado por tela é o que havia
+ * antes — a faixa horizontal vivia dentro da `Carteira` e por isso sumia nas outras
+ * dez. Envolvendo o miolo, a barra existe em todas e cada uma continua sem saber
+ * que ela existe.
+ *
+ * `min-w-0` no `<main>` não é enfeite: sem ele, um filho largo (tabela, `<pre>` de
+ * transcrição, grade de cartões) força o item de grid a crescer e a página inteira
+ * ganha rolagem horizontal — com a barra lateral empurrada para fora da tela. */
+const HomeView = (props: HomeViewProps) => (
+  <div className="lg:flex min-h-screen bg-fundo">
+    <BarraLateral tela={props.tela} onNavegar={props.setTela} />
+    <main className="min-w-0 flex-1">
+      <Telas {...props} />
+    </main>
+  </div>
+);
+
+const Telas = (props: HomeViewProps) => {
   const {
     tela,
     setTela,

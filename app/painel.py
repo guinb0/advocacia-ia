@@ -44,6 +44,7 @@ from typing import Any
 from . import armazenamento, casos as casos_ocr
 from . import banco
 from .agente import dossie
+from .cache_leitura import por_alguns_segundos
 
 log = logging.getLogger("painel")
 
@@ -2105,6 +2106,7 @@ def compor(
     }
 
 
+@por_alguns_segundos(20)
 def montar(caso_id: str) -> dict[str, Any] | None:
     """O painel do caso. `None` quando o caso não existe.
 

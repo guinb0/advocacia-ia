@@ -179,6 +179,7 @@ def _cliente(
                 "confianca": fato.get("confidence"),
                 "status": fato.get("status"),
                 "fontes": origens_do_fato(fato),
+                "anexos": anexos_do_fato(fato),
             }
         )
 
@@ -205,6 +206,27 @@ def origens_do_fato(fato: dict[str, Any]) -> list[str]:
             partes.append(str(fonte["user_subject"]))
         origens.append(", ".join(parte for parte in partes if parte))
     return origens
+
+
+def anexos_do_fato(fato: dict[str, Any]) -> list[dict[str, Any]]:
+    """Anexos efetivamente citados pelas fontes deste fato, sem duplicação."""
+    anexos: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    for fonte in fato.get("sources") or []:
+        anexo = fonte.get("anexo") or {}
+        url = str(anexo.get("url") or "")
+        if not url or url in vistos:
+            continue
+        vistos.add(url)
+        anexos.append(
+            {
+                "nome": str(anexo.get("nome") or "Abrir documento usado como prova"),
+                "url": url,
+                "pagina": fonte.get("page"),
+                "campo": fonte.get("ocr_field"),
+            }
+        )
+    return anexos
 
 
 def _chave_nome(nome: object) -> str:
@@ -440,7 +462,43 @@ def _do_agente(vinculo: dict[str, Any] | None, caso_id: str | None = None) -> di
                     {"bloco": chave, "motivo": str(erro)}
                 )
 
+    _ligar_fatos_aos_anexos(bloco)
+
     return bloco
+
+
+def _ligar_fatos_aos_anexos(bloco: dict[str, Any]) -> None:
+    """Completa a proveniência com nome e URL do arquivo que realmente provou o fato."""
+    por_uuid: dict[str, dict[str, Any]] = {}
+    for documento in bloco.get("documentos") or []:
+        origem = str(documento.get("source_reference") or "")
+        encontrado = re.match(r"^ocr://entregas/([^/]+)/", origem)
+        anexo = {
+            "nome": documento.get("filename"),
+            "url": f"/api/entregas/{encontrado.group(1)}/arquivo" if encontrado else None,
+            "indexado": bool(documento.get("knowledge_indexed")),
+        }
+        identificador = str(documento.get("id") or "")
+        por_uuid[identificador] = anexo
+        por_uuid[str(documento.get("source_document_id") or "")] = anexo
+        # FactSource guarda o UUID interno; o DocumentSummary usa ULID público. A
+        # referência de origem é a segunda chave segura quando os formatos diferem.
+        if encontrado:
+            por_uuid[encontrado.group(1)] = anexo
+
+    for fato in bloco.get("fatos") or []:
+        for fonte in fato.get("sources") or []:
+            if str(fonte.get("source_type")) != "OCR_DOCUMENT":
+                continue
+            doc_id = str(fonte.get("document_id") or "")
+            anexo = por_uuid.get(doc_id)
+            if anexo is None:
+                # O ID público contém o ULID, enquanto a origem usa UUID. O nome ainda
+                # pode ser resolvido pelo único documento que possui a mesma página;
+                # não fazemos aproximação: sem correspondência, a fonte fica explícita
+                # mas sem link, em vez de apontar para o anexo errado.
+                continue
+            fonte["anexo"] = anexo
 
 
 # ------------------------------------------------------------------- etapas

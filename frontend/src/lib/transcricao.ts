@@ -3,8 +3,23 @@
 /* O serviço de transcrição roda em processo próprio, separado da API do OCR:
  * os dois modelos disputavam CPU e o mesmo áudio que leva 3s isolado levava
  * 227s dividindo processo com o PaddleOCR. */
+/* O endereço do serviço de transcrição, e ele NÃO pode ser fixo.
+ *
+ * Era `?? "http://127.0.0.1:8200"`, com a variável preenchida no `.env` — e como
+ * `NEXT_PUBLIC_*` é embutida no bundle em tempo de build, todo navegador recebia
+ * o literal `127.0.0.1`. Abrindo o sistema de outra máquina, o browser tentava a
+ * PRÓPRIA localhost: a chamada e a transcrição só funcionavam no computador que
+ * roda os servidores.
+ *
+ * O padrão agora acompanha de onde a página foi aberta, igual à `lib/api.ts`.
+ * Preencher a variável continua valendo, e é o que serve quando o serviço mora
+ * atrás de um domínio ou de outra porta — mas aí o valor tem de ser alcançável
+ * por quem ABRE o sistema, não por quem o hospeda. */
 const BASE_TRANSCRICAO =
-  process.env.NEXT_PUBLIC_TRANSCRICAO_API ?? "http://127.0.0.1:8200";
+  process.env.NEXT_PUBLIC_TRANSCRICAO_API ||
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8200`
+    : "http://127.0.0.1:8200");
 
 /* Cliente da transcrição da entrevista.
  *
@@ -26,7 +41,19 @@ const BASE_TRANSCRICAO =
  *   transcrever o entrevistador, e sem diarização.
  */
 
-export type EstadoCaptura = "sem-audio" | "capturando" | "gravando" | "pausado";
+export type EstadoCaptura =
+  | "sem-audio"
+  | "capturando"
+  | "gravando"
+  | "pausado"
+  /* A FONTE caiu, a SESSÃO continua.
+   *
+   * É a diferença que faltava. Antes, microfone trocado e faixa da chamada
+   * renegociada caíam no mesmo `encerrar()` que fecha o WebSocket — e o envio,
+   * que checa `readyState`, passava a descartar todo o áudio em silêncio. A tela
+   * seguia dizendo "ouvindo" pelo resto da entrevista. Este estado existe para
+   * que a queda da fonte seja recuperável e VISÍVEL. */
+  | "recuperando";
 
 export interface Microfone {
   id: string;
@@ -183,6 +210,17 @@ export class CapturaEntrevista {
   private sessaoAtual: string | null = null;
   /** Contador para medir o nível a cada dois blocos, não a cada um. */
   private blocosDesdeNivel = 0;
+  /* De ONDE veio a fonte atual, e com qual dispositivo.
+   *
+   * Sem isto não há como reabrir: `getUserMedia` precisa do `deviceId`, e a faixa
+   * da chamada não pode ser reaberta por aqui (ela é da `ChamadaJitsi`, e pedir
+   * outra ao navegador devolveria o microfone do advogado no lugar da voz do
+   * cliente — a transcrição continuaria, gravando a pessoa errada). */
+  private origem: "microfone" | "chamada" | null = null;
+  private dispositivoAtual: string | undefined;
+  /** Uma recuperação por vez; a troca de microfone dispara vários eventos. */
+  private recuperando = false;
+  private ouvindoDispositivos = false;
 
   constructor(private eventos: EventosTranscricao = {}) {}
 
@@ -231,6 +269,9 @@ export class CapturaEntrevista {
     }
 
     this.stream = stream;
+    this.origem = "microfone";
+    this.dispositivoAtual = dispositivoId;
+    this.ouvirDispositivos();
     await this.montar(trilhas[0]);
   }
 
@@ -241,13 +282,151 @@ export class CapturaEntrevista {
    * antes, mas sem encerrar a conexão de transcrição, que continua a mesma. */
   async usarTrilha(trilha: MediaStreamTrack): Promise<void> {
     this.desmontar();
+    this.origem = "chamada";
+    this.dispositivoAtual = undefined;
+    // Uma faixa nova chegando É a recuperação: em produção a fonte é a voz do
+    // cliente, e a chamada reentrega a faixa quando ela é renegociada.
+    this.recuperando = false;
     await this.montar(trilha);
+  }
+
+  /* -------------------------------------------------- fonte que cai e volta
+   *
+   * O microfone é trocado no meio da entrevista (fone que desconecta, USB que
+   * cai, o advogado que muda de dispositivo) e, em produção, a fonte nem sequer
+   * é o microfone: é a voz do CLIENTE, chegando pela faixa remota da chamada. Um
+   * WebRTC renegocia essa faixa sozinho ao trocar de rede ou ligar a câmera.
+   *
+   * Nos dois casos o que morre é a FONTE, não a entrevista. A sessão no servidor
+   * continua aberta, o áudio já enviado continua lá, e reabrir a fonte devolve a
+   * transcrição de onde ela parou. */
+
+  /** A trilha morreu ou emudeceu. Solta a cadeia e tenta voltar. */
+  private async aoPerderFonte(motivo: string): Promise<void> {
+    if (this.recuperando || this.trilha === null) return;
+    this.recuperando = true;
+    // Só a cadeia de áudio. O WebSocket e a `sessaoAtual` FICAM: é isso que
+    // separa "trocaram o microfone" de "a entrevista acabou".
+    this.desmontar();
+    this.eventos.onEstado?.("recuperando");
+    this.eventos.onAviso?.(`Fonte de áudio perdida (${motivo}). Tentando reabrir…`);
+
+    if (this.origem !== "microfone") {
+      /* Faixa da chamada: quem a reabre é a chamada, não nós.
+       *
+       * Pedir `getUserMedia` aqui devolveria o MICROFONE DO ADVOGADO no lugar da
+       * voz do cliente — e a transcrição continuaria correndo, gravando a pessoa
+       * errada sem ninguém perceber. Errar calado desse jeito, numa entrevista
+       * que vira peça, é pior que ficar sem áudio. */
+      this.recuperando = false;
+      return;
+    }
+
+    await this.reabrirMicrofone();
+  }
+
+  /** Reabre o microfone: o mesmo de antes; se sumiu, o padrão do sistema. */
+  private async reabrirMicrofone(): Promise<void> {
+    // Três tentativas com folga crescente: o sistema operacional leva um tempo
+    // para publicar o dispositivo novo, e pedir no primeiro instante falha com
+    // NotFoundError mesmo quando o microfone já está fisicamente conectado.
+    const esperas = [250, 750, 1500];
+    for (const espera of esperas) {
+      await new Promise((r) => setTimeout(r, espera));
+      for (const alvo of [this.dispositivoAtual, undefined]) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: alvo ? { exact: alvo } : undefined,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+          const trilha = stream.getAudioTracks()[0];
+          if (!trilha) {
+            stream.getTracks().forEach((t) => t.stop());
+            continue;
+          }
+          this.stream = stream;
+          this.dispositivoAtual = alvo;
+          await this.montar(trilha);
+          this.recuperando = false;
+          this.eventos.onAviso?.("Áudio reaberto. A entrevista continua.");
+          // O estado volta ao que era: gravando, se a resposta estava em curso.
+          this.eventos.onEstado?.(
+            this.gravando ? (this.pausado ? "pausado" : "gravando") : "capturando",
+          );
+          return;
+        } catch {
+          // Dispositivo exato sumiu (desconectado de vez): a volta do laço tenta
+          // o padrão do sistema, que é o que o usuário passou a usar.
+        }
+      }
+    }
+
+    this.recuperando = false;
+    this.eventos.onEstado?.("sem-audio");
+    this.eventos.onErro?.(
+      "Não consegui reabrir o microfone. Escolha um dispositivo para retomar — " +
+        "a entrevista e o que já foi transcrito continuam aqui.",
+    );
+  }
+
+  /* Dispositivo conectado ou removido enquanto a entrevista corre.
+   *
+   * `ended`/`mute` cobrem a trilha que morre, mas há um caso que eles não
+   * cobrem: o microfone continua "vivo" e mudo porque o sistema passou a saída
+   * para outro dispositivo. Aqui a checagem é do lado de fora — se o dispositivo
+   * que estamos usando sumiu da lista, reabrimos. */
+  private ouvirDispositivos(): void {
+    if (this.ouvindoDispositivos || !navigator.mediaDevices?.addEventListener) return;
+    this.ouvindoDispositivos = true;
+    navigator.mediaDevices.addEventListener("devicechange", () => {
+      void this.aoTrocarDispositivos();
+    });
+  }
+
+  private async aoTrocarDispositivos(): Promise<void> {
+    if (this.origem !== "microfone" || this.recuperando) return;
+    const atual = this.trilha;
+    if (atual && atual.readyState === "live" && !atual.muted) {
+      // A trilha em uso continua boa: dispositivo novo apareceu, mas trocar
+      // sozinho seria pior — tiraria o microfone que está funcionando no meio
+      // de uma resposta. Quem quiser trocar usa o seletor.
+      return;
+    }
+    this.recuperando = true;
+    this.desmontar();
+    this.eventos.onEstado?.("recuperando");
+    await this.reabrirMicrofone();
   }
 
   /** Liga a fonte ao worklet que fatia o PCM e o manda para o servidor. */
   private async montar(trilha: MediaStreamTrack): Promise<void> {
-    // Microfone desconectado, ou chamada que caiu no meio da entrevista.
-    trilha.addEventListener("ended", () => this.encerrar());
+    /* Microfone desconectado, ou faixa da chamada renegociada.
+     *
+     * Isto chamava `encerrar()`, e era o defeito mais caro do módulo: `encerrar`
+     * fecha o WebSocket e zera a sessão, então trocar de microfone no meio da
+     * entrevista emudecia a transcrição até o fim SEM erro nenhum na tela — o
+     * envio simplesmente passava a descartar cada bloco por `readyState`.
+     *
+     * `mute` entra junto porque nem todo navegador dispara `ended` ao trocar de
+     * dispositivo; alguns só silenciam a trilha, o que é pior: dá áudio mudo em
+     * vez de trilha morta, e ninguém percebe. */
+    /* O evento diz QUAL trilha caiu, e isso importa.
+     *
+     * O ouvinte fica preso à trilha em que foi registrado, e trilha morta pode
+     * disparar mais de um evento (`ended` e `mute`, ou `ended` duas vezes). Sem
+     * comparar, um evento atrasado da trilha VELHA derrubaria a trilha NOVA que
+     * a recuperação acabou de montar — e aí a entrevista perderia o áudio
+     * justamente por causa do mecanismo que existe para salvá-lo. */
+    const cair = (motivo: string) => {
+      if (this.trilha !== trilha) return;
+      void this.aoPerderFonte(motivo);
+    };
+    trilha.addEventListener("ended", () => cair("trilha encerrada"));
+    trilha.addEventListener("mute", () => cair("trilha muda"));
     this.trilha = trilha;
 
     /* Taxa NATIVA de propósito, e não 16 kHz forçado.
@@ -484,6 +663,10 @@ export class CapturaEntrevista {
 
   /** Fim da entrevista: solta a captura e a conexão. */
   encerrar(): void {
+    // O encerramento DE VERDADE — o da entrevista. A queda de fonte não passa
+    // mais por aqui; ela vai para `aoPerderFonte`, que preserva a sessão.
+    this.origem = null;
+    this.recuperando = false;
     this.gravando = false;
     this.pausado = false;
     this.sessaoAtual = null;

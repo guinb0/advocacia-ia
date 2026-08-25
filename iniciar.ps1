@@ -235,8 +235,17 @@ if (-not $env:JOBS_DATABASE_URL) {
 }
 
 # O frontend le estas na hora do build/dev -- precisam do prefixo NEXT_PUBLIC_.
-$env:NEXT_PUBLIC_OCR_API             = $UrlApi
-$env:NEXT_PUBLIC_TRANSCRICAO_API     = $UrlTranscricao
+# ESTAS DUAS SO SAO EXPORTADAS QUANDO ALGUEM AS CONFIGUROU DE PROPOSITO.
+#
+# Sao NEXT_PUBLIC_*: vao embutidas no bundle. Exportar $UrlApi/$UrlTranscricao
+# aqui gravava `127.0.0.1` no pacote que o navegador baixa, e o sistema deixava de
+# funcionar de qualquer outro computador — o browser tentava a propria localhost.
+# Vazias, o front usa o host de onde a pagina foi aberta.
+#
+# $UrlApi e $UrlTranscricao continuam servindo para a checagem de saude e para o
+# que este script imprime: aquilo e local e deve mesmo apontar para 127.0.0.1.
+$env:NEXT_PUBLIC_OCR_API         = if ($env:OCR_API_PUBLIC_URL) { $UrlApi } else { "" }
+$env:NEXT_PUBLIC_TRANSCRICAO_API = if ($env:TRANSCRICAO_PUBLIC_URL) { $UrlTranscricao } else { "" }
 $origens = @("http://localhost:$Porta", "http://127.0.0.1:$Porta", $UrlFrontend)
 if ($env:ORIGENS_PERMITIDAS) { $origens += $env:ORIGENS_PERMITIDAS.Split(",") }
 $env:ORIGENS_PERMITIDAS             = ($origens | ForEach-Object { $_.Trim().TrimEnd("/") } | Where-Object { $_ } | Select-Object -Unique) -join ","
@@ -293,7 +302,7 @@ $env:PORTAL_SEGREDO = (Get-Content -Raw $arquivoSegredo).Trim()
 # ---------------------------------------------------------------- backend
 if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     Write-Host "Criando o ambiente Python..." -ForegroundColor Yellow
-    uv venv --python 3.11      # o paddlepaddle ainda nao publica wheels para 3.13+
+    uv venv --python 3.11
 }
 # Sincroniza também ambientes já existentes; pulls podem adicionar dependências.
 uv pip install --python .\.venv\Scripts\python.exe -r requirements.txt | Out-Null
@@ -461,8 +470,8 @@ Write-Host "Ctrl+C encerra o backend e o frontend.`n" -ForegroundColor DarkGray
 # conexoes de um cliente HTTP moderno, que reusaria um socket ja fechado do lado
 # do servidor e quebraria a requisicao com "socket hang up" (ECONNRESET).
 # Transcricao e OCR ficam em processos separados por usarem runtimes numericos
-# pesados e potencialmente incompativeis. O Paddle é aquecido pelo worker `ocr@`,
-# que é quem recebe `/api/extrair/jobs`; a API não carrega uma segunda cópia.
+# O worker `ocr@` recebe `/api/extrair/jobs`; a API web não executa o trabalho
+# pesado do pipeline na thread das requisições.
 $transcricao = $null
 
 $backend = Start-Process -PassThru -NoNewWindow `

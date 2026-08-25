@@ -29,15 +29,24 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
 
   useEffect(() => {
     let cancelado = false;
-    obterEntrega(entregaId)
-      .then((d) => {
-        if (!cancelado) setDetalhe(d);
-      })
-      .catch((e) => {
+    let temporizador: ReturnType<typeof setTimeout> | undefined;
+    async function carregar() {
+      try {
+        const d = await obterEntrega(entregaId);
+        if (cancelado) return;
+        setDetalhe(d);
+        setErro(null);
+        if (d.status_proc === "na_fila" || d.status_proc === "processando") {
+          temporizador = setTimeout(carregar, 1500);
+        }
+      } catch (e) {
         if (!cancelado) setErro(e instanceof Error ? e.message : "Falha ao carregar a entrega.");
-      });
+      }
+    }
+    void carregar();
     return () => {
       cancelado = true;
+      if (temporizador) clearTimeout(temporizador);
     };
   }, [entregaId]);
 
@@ -135,10 +144,17 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
               </Aviso>
             ) : !detalhe ? (
               <p className="py-6 text-tinta-3 text-sm leading-[1.6]">Carregando os dados extraídos…</p>
+            ) : !extracao && detalhe.status_proc === "erro" ? (
+              <Aviso tom="critico" titulo="Não foi possível ler agora">
+                O arquivo original está preservado. {detalhe.erro_proc || "O serviço de OCR não respondeu."}
+              </Aviso>
+            ) : !extracao && (detalhe.status_proc === "na_fila" || detalhe.status_proc === "processando") ? (
+              <Aviso tom="info" titulo="Leitura em andamento">
+                Extraindo todo o conteúdo do documento. Esta tela será atualizada automaticamente.
+              </Aviso>
             ) : !extracao ? (
-              <Aviso tom="atencao" titulo="Sem leitura guardada">
-                Esta entrega foi registrada sem extração guardada. Reenvie o arquivo para
-                extrair os campos.
+              <Aviso tom="atencao" titulo="Documento antigo sem leitura">
+                O arquivo original está preservado, mas este registro antigo ainda não possui texto extraído.
               </Aviso>
             ) : (
               <>
@@ -180,9 +196,15 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                 </span>
 
                 {campos.length === 0 ? (
-                  <p className="py-6 text-tinta-3 text-sm leading-[1.6]">
-                    Nenhum campo estruturado foi extraído deste documento.
-                  </p>
+                  <div className="py-4">
+                    <Aviso tom="info" titulo="Conteúdo jurídico preservado">
+                      Este documento não possui campos cadastrais conhecidos. O texto integral abaixo foi
+                      guardado e será usado pela IA jurídica com referência a este anexo.
+                    </Aviso>
+                    <pre className="mt-3 p-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-campo border border-borda bg-papel-2 text-tinta text-xs leading-relaxed font-codigo select-text">
+                      {extracao.texto_completo || extracao.texto_linhas.map((linha) => linha.texto).join("\n")}
+                    </pre>
+                  </div>
                 ) : (
                   <table className="w-full border-collapse">
                     <thead>

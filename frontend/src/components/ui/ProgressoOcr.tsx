@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 /* O OCR roda inteiro dentro de um POST: o backend não reporta andamento, e ~95%
- * do tempo está numa única chamada opaca ao PaddleOCR. Então não há percentual
+ * do tempo está numa única chamada opaca à API de OCR. Então não há percentual
  * verdadeiro a exibir.
  *
  * O que esta barra mostra de real é o tempo decorrido. O preenchimento é uma

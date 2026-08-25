@@ -24,6 +24,7 @@ import {
   requisitosDoContrato,
 } from "@/lib/api";
 import type { TomSelo } from "@/lib/formato";
+import { ESTADO_DO_FATO, ORIGEM_DO_FATO, valorDoFato } from "@/lib/painel";
 import {
   analisarNoAgente,
   anexarEntrevista,
@@ -114,19 +115,13 @@ const TRECHO =
   "mt-[6px] p-[8px_12px] bg-papel-2 border-l-[3px] border-borda-forte text-tinta-2 text-sm leading-[1.55]";
 const PONTOS = "mt-[2px] p-0 list-none grid gap-1 text-sm leading-[1.5]";
 const SECAO_TITULO = "mt-[18px] mb-[6px] font-ui text-sm font-bold tracking-[0.02em] text-tinta first:mt-0";
-const FICHA_LINHA = "grid grid-cols-[150px_1fr] gap-3 bg-papel p-[9px_12px]";
+const FICHA_LINHA =
+  "grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-x-3 gap-y-[2px] bg-papel p-[9px_12px]";
 const INDICADOR = "border border-borda bg-papel-2 p-[12px_14px] mb-[14px] grid gap-2";
 const MINUTA = "mt-[14px] p-[16px_18px] bg-papel-2 border border-borda max-h-[520px] overflow-y-auto";
 const PARAGRAFO_MINUTA = "m-0 mb-2 font-titulo text-base leading-[1.7] text-justify text-tinta-2 max-w-[72ch]";
 const CAMPO_ENTREVISTA = "grid gap-1 text-tinta-2 text-sm";
 const INPUT_ENTREVISTA = "p-[7px_10px] border border-borda rounded-[6px] bg-papel text-tinta";
-
-function valorLegivel(valor: Record<string, unknown>): string {
-  return Object.values(valor)
-    .filter((item) => item !== null && item !== "")
-    .map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item)))
-    .join(" · ");
-}
 
 function cpfCanonicoDoFato(valor: string): string | null {
   const normalizado = valor.normalize("NFKC");
@@ -362,7 +357,7 @@ export default function Dossie({
 
   if (erro && !dados) {
     return (
-      <div className="max-w-[1240px] mx-auto px-7 pt-6 pb-16 grid gap-[18px]">
+      <div className="max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
         <Botao variante="secundario" pequeno onClick={onVoltar}>
           ← Voltar
         </Botao>
@@ -375,7 +370,7 @@ export default function Dossie({
 
   if (!dados)
     return (
-      <div className="max-w-[1240px] mx-auto px-7 pt-6 pb-16 grid gap-[18px]">
+      <div className="max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
         Carregando o dossiê…
       </div>
     );
@@ -391,7 +386,7 @@ export default function Dossie({
   const bloqueantes = pendencias.filter((item) => item.severity === "BLOCKING");
 
   return (
-    <div className="max-w-[1240px] mx-auto px-7 pt-6 pb-16 grid gap-[18px]">
+    <div className="max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
       <header className="flex justify-between items-end gap-5 flex-wrap">
         <div>
           <Botao variante="secundario" pequeno onClick={onVoltar}>
@@ -562,6 +557,19 @@ export default function Dossie({
                         origem: {campo.fontes.join(", ").toLowerCase()}
                       </span>
                     )}
+                    {(campo.anexos ?? []).map((anexo) => (
+                      <a
+                        key={anexo.url}
+                        href={anexo.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-azul-claro text-sm underline underline-offset-2"
+                      >
+                        Prova: {anexo.nome}
+                        {anexo.pagina ? ` · página ${anexo.pagina}` : ""}
+                        {anexo.campo && anexo.campo !== "__document__" ? ` · campo ${anexo.campo}` : ""}
+                      </a>
+                    ))}
                   </dd>
                 </div>
               ))}
@@ -677,18 +685,30 @@ export default function Dossie({
                 <li key={fato.id} className={ITEM}>
                   <div className={ITEM_TOPO}>
                     <strong>{ROTULO_FATO[fato.type] ?? fato.type}</strong>
-                    <Selo tom={fato.status === "CONTRADICTED" ? "critico" : "neutro"}>
-                      {fato.status === "CONTRADICTED" ? "em contradição" : fato.status.toLowerCase()}
+                    {/* O estado sai do mesmo mapa que o painel do caso usa. Antes
+                      * era `status.toLowerCase()`, e o advogado lia "alleged" e
+                      * "extracted" na tela — que é justamente a distinção que
+                      * decide se a alegação precisa de prova. */}
+                    <Selo
+                      tom={ESTADO_DO_FATO[fato.status]?.tom ?? "neutro"}
+                      simbolo={ESTADO_DO_FATO[fato.status]?.simbolo}
+                    >
+                      {ESTADO_DO_FATO[fato.status]?.palavra ?? fato.status.toLowerCase()}
                     </Selo>
                   </div>
-                  <div className={VALOR}>{valorLegivel(fato.value)}</div>
+                  <div className={VALOR} title={ESTADO_DO_FATO[fato.status]?.explicacao}>
+                    {valorDoFato(fato.value)}
+                  </div>
                   <div className={ORIGEM}>
                     confiança {Math.round((fato.confidence ?? 0) * 100)}%
                     {fato.sources?.length
                       ? ` · ${fato.sources
                           .map((fonte) =>
                             [
-                              fonte.source_type?.toLowerCase(),
+                              fonte.source_type
+                                ? ORIGEM_DO_FATO[fonte.source_type.toUpperCase()] ??
+                                  fonte.source_type.toLowerCase()
+                                : null,
                               fonte.page ? `página ${fonte.page}` : null,
                               fonte.ocr_field ? `campo ${fonte.ocr_field}` : null,
                             ]
@@ -1142,7 +1162,10 @@ const MOTIVO_READINESS: Record<string, string> = {
   RESEARCH_MISSING: "sem pesquisa de jurisprudência concluída",
   STRATEGY_NOT_APPROVED: "gerada sem estratégia aprovada",
   CONTRADICTION_OPEN_MINOR: "há contradição de baixa relevância em aberto",
-  FACT_MISSING: "falta o fato",
+  FACT_MISSING: "nenhum documento entregou este dado",
+  // Faltava no mapa, e é o mais frequente desde que a entrevista alimenta o caso:
+  // o cliente contou e nenhum documento confirmou.
+  FACT_ONLY_ALLEGED: "só o relato do cliente sustenta; falta o documento",
   FACT_UNUSABLE: "fato não confirmado o bastante para sustentar a peça",
   FACT_UNCONFIRMED: "fato ainda não conferido por pessoa",
   FACT_ABSENT: "fato recomendado ausente",
@@ -1179,7 +1202,7 @@ function PainelPeticao({
       <Cartao titulo="Petição inicial">
         <p className={TEXTO_VAZIO}>
           {disponivel
-            ? "Nenhuma minuta gerada. Use “Gerar petição” — ela só sai com o caso classificado e os fatos essenciais confirmados."
+            ? "Nenhuma minuta gerada. Use “Gerar petição” — ela sai mesmo com prova faltando, marcando o que falta comprovar."
             : "Sem resposta do agente."}
         </p>
       </Cartao>
@@ -1191,6 +1214,13 @@ function PainelPeticao({
   const avisos = achados.filter((item) => item.severity !== "BLOCKING");
   const retida = peticao.blocking_findings > 0;
   const ressalvas = peticao.readiness?.warnings ?? [];
+  /* O que a peça AFIRMA sem ter documento por trás.
+   *
+   * Isto antes RECUSAVA a geração: o advogado ficava sem minuta nenhuma. Agora a peça
+   * sai e a lista vem junto — na tela, aqui, e carimbada dentro do próprio arquivo (ver
+   * `aviso_de_pendencia`, no agente), porque o `.docx` circula por e-mail e o aviso
+   * precisa acompanhá-lo. */
+  const pendencias = peticao.readiness?.pendencias ?? [];
 
   return (
     <Cartao>
@@ -1219,6 +1249,30 @@ function PainelPeticao({
         <Aviso tom="critico" titulo={`${bloqueantes.length} achado(s) impedem a entrega`}>
           O sistema não entrega peça que ele mesmo sabe defeituosa. Corrija o caso e gere
           outra versão.
+        </Aviso>
+      )}
+
+      {/* O CHECKLIST DO QUE FALTA COMPROVAR.
+        *
+        * Vem ANTES das ressalvas e em tom crítico porque não é a mesma coisa: ressalva é
+        * "gerada sem estratégia aprovada"; isto é a peça AFIRMANDO fato que nenhum
+        * documento sustenta. Protocolar assim é o risco que a recusa antiga evitava — e,
+        * já que ela saiu, o aviso precisa ser impossível de não ver. */}
+      {pendencias.length > 0 && (
+        <Aviso tom="critico" titulo={`Falta comprovar ${pendencias.length} ponto(s)`}>
+          Esta minuta afirma fatos que só o relato do cliente sustenta. Junte os
+          documentos e gere nova versão antes de protocolar — o mesmo aviso vai dentro
+          do arquivo.
+          <ul className={PONTOS}>
+            {pendencias.map((codigo) => (
+              <li key={codigo}>
+                <span aria-hidden className="text-critico font-bold mr-[6px]">
+                  ✕
+                </span>{" "}
+                {motivoLegivel(codigo)}
+              </li>
+            ))}
+          </ul>
         </Aviso>
       )}
 

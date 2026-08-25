@@ -116,6 +116,18 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
 
   const [ponto, textoPonto]: [React.ReactNode, string] = {
     "sem-audio": [<i key="p" className="w-2 h-2 flex-none border border-tinta-3" />, "microfone desligado"],
+    /* A fonte caiu e está voltando — a entrevista NÃO acabou.
+     *
+     * Precisa aparecer na tela: antes, trocar de microfone emudecia a
+     * transcrição pelo resto da entrevista e o indicador continuava verde,
+     * dizendo "microfone aberto". Quem conduz só descobria no fim, sem áudio. */
+    recuperando: [
+      <i
+        key="p"
+        className="w-2 h-2 flex-none bg-atencao animate-[respirar_2s_ease-in-out_infinite] motion-reduce:animate-none"
+      />,
+      "reabrindo o áudio…",
+    ],
     capturando: [<i key="p" className="w-2 h-2 flex-none bg-ok" />, "microfone aberto"],
     gravando: [
       <i

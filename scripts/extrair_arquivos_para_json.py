@@ -1,4 +1,4 @@
-"""Executa o PaddleOCR em arquivos locais e grava um lote JSON temporario.
+"""Executa o OCR Mistral em arquivos locais e grava um lote JSON temporario.
 
 O texto extraido nao e impresso no terminal porque pode conter dados pessoais.
 Este utilitario e usado por importacoes administrativas controladas.

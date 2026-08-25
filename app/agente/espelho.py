@@ -23,16 +23,19 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 import unicodedata
+from copy import deepcopy
 from typing import Any
 
-from .. import armazenamento
+from .. import armazenamento, extractors
 from . import vocabulario
 from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente
 
 log = logging.getLogger("agente")
 
 __all__ = [
+    "analisar_caso_inteiro",
     "conferir_contrato",
     "enviar_entrega",
     "garantir_caso",
@@ -132,13 +135,60 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
         # fato; mandar assim faria o agente registrar documento sem campo nenhum.
         return False
 
+    origem = f"ocr://entregas/{entrega_id}/{entrega.get('arquivo', '')}"
+    tipo = str((entrega["extracao"].get("tipo") or {}).get("codigo") or "").strip()
+
     try:
-        Cliente().enviar_extracao(
-            vinculo["caso_ref"],
-            evento_externo=entrega_id,
-            origem=f"ocr://entregas/{entrega_id}/{entrega.get('arquivo', '')}",
-            extracao=entrega["extracao"],
-        )
+        cliente = Cliente()
+        if tipo in extractors.ROTULOS_TIPO:
+            cliente.enviar_extracao(
+                vinculo["caso_ref"],
+                evento_externo=entrega_id,
+                origem=origem,
+                extracao=entrega["extracao"],
+            )
+        else:
+            # CNIS, CAT, PPP, ASO e outros documentos jurídicos não pertencem ao
+            # contrato do OCR de identificação do agente. O Acervo sabe que o arquivo
+            # chegou pelo item do checklist; portanto envia apenas essa declaração,
+            # sem inventar campos extraídos nem ampliar artificialmente o OCR.
+            caso = armazenamento.obter_caso(caso_id) or {}
+            kind = vocabulario.kind_do_item(
+                str(caso.get("categoria") or ""),
+                str(entrega.get("item_codigo") or ""),
+            )
+            # Mesmo sem item conhecido no vocabulário, o conteúdo pertence ao caso e
+            # precisa entrar na leitura/recuperação semântica da IA jurídica.
+            generica = deepcopy(entrega["extracao"])
+            generica.setdefault("tipo", {})["codigo"] = "desconhecido"
+            generica["tipo"]["detectado"] = "desconhecido"
+            cliente.enviar_extracao(
+                vinculo["caso_ref"],
+                evento_externo=entrega_id,
+                origem=origem,
+                extracao=generica,
+            )
+            if kind is not None:
+                # O endpoint de extrações tem contrato fechado para documentos de
+                # identificação. Enviamos uma cópia como tipo genérico para preservar
+                # TODO o texto do anexo, gerar embeddings e permitir que o agente levante
+                # fatos/alertas; em seguida a declaração atribui o tipo jurídico real ao
+                # mesmo source_reference.
+                cliente.declarar_documento(
+                    vinculo["caso_ref"],
+                    kind=kind,
+                    arquivo=str(entrega.get("arquivo") or kind),
+                    origem=origem,
+                )
+                log.info("entrega %s indexada e declarada ao agente como %s", entrega_id, kind)
+            else:
+                # Sem tipo jurídico seguro, permanece DOCUMENT.UNKNOWN — mas o texto,
+                # embedding, fatos candidatos e proveniência já foram recebidos.
+                log.info(
+                    "entrega %s (%s) indexada sem tipo jurídico específico",
+                    entrega_id,
+                    tipo or "tipo ausente",
+                )
     except ErroDoAgente as erro:
         log.warning("falha ao enviar entrega %s ao agente: %s", entrega_id, erro)
         armazenamento.registrar_erro_agente(caso_id, str(erro))
@@ -445,3 +495,71 @@ def _comparavel(valor: str) -> str:
     if somente_digitos and not re.search(r"[a-z]", texto):
         return somente_digitos
     return re.sub(r"[^a-z0-9]+", " ", texto).strip()
+
+
+# ------------------------------------------------- leitura combinada do caso
+
+
+#: Quanto se espera a classificação ficar pronta antes de pedir a jurisprudência.
+#:
+#: A análise responde 202 e roda do outro lado; a pesquisa sai "a partir das questões
+#: do caso", e essas questões são produto dela. Disparar as duas juntas faria a
+#: jurisprudência ser pesquisada antes de existir pergunta — e voltar vazia, que é
+#: pior que não ter rodado, porque parece resposta.
+ESPERA_ANALISE_S = 5.0
+TENTATIVAS_ANALISE = 12
+
+
+def analisar_caso_inteiro(caso_id: str) -> dict[str, Any]:
+    """Classifica o caso com TUDO que ele tem, e então pesquisa a jurisprudência.
+
+    O QUE ISTO JUNTA
+
+    Nada aqui produz fato novo. A esta altura o agente já recebeu, por caminhos
+    separados e automáticos, as duas fontes que importam: cada extração de documento
+    (`enviar_entrega`) e a transcrição do atendimento (`enviar_entrevista`). Elas
+    convivem na mesma base de fatos, distinguidas pela proveniência — `ocr_document`
+    de um lado, `interview` do outro.
+
+    O que faltava era o passo que LÊ as duas juntas. A classificação e as pendências
+    saem dos fatos do caso, sem separar de onde vieram; a pesquisa sai das questões
+    que a classificação levantou. Até agora esse passo só acontecia se alguém
+    clicasse em "Classificar o caso" e depois em "Pesquisar jurisprudência", na tela
+    do dossiê — e no fim de um atendimento ninguém clica: o cliente acabou de sair,
+    o advogado foi para o próximo.
+
+    POR QUE ESPERAR ENTRE UMA COISA E OUTRA
+
+    Ver `ESPERA_ANALISE_S`. Se a classificação não ficar pronta a tempo, a pesquisa
+    NÃO é disparada: o botão continua na tela, e uma pesquisa sem questão nenhuma
+    voltaria vazia parecendo resposta.
+    """
+    vinculo = garantir_caso(caso_id)
+    caso_ref = vinculo["caso_ref"]
+    cliente = Cliente()
+
+    resultado: dict[str, Any] = {"caso_ref": caso_ref, "analise": False, "pesquisa": False}
+    cliente.analisar(caso_ref)
+    resultado["analise"] = True
+
+    for _ in range(TENTATIVAS_ANALISE):
+        time.sleep(ESPERA_ANALISE_S)
+        try:
+            analise = cliente.analise(caso_ref)
+        except ErroDoAgente:
+            # Leitura falhou no meio; a análise pode estar rodando ainda. Tentar de
+            # novo é barato, e desistir aqui perderia a pesquisa por um soluço de rede.
+            continue
+        if analise.get("classifications"):
+            cliente.pesquisar(caso_ref)
+            resultado["pesquisa"] = True
+            resultado["classificacoes"] = len(analise["classifications"])
+            return resultado
+
+    log.info(
+        "caso %s: classificação não ficou pronta em %.0fs — jurisprudência não foi "
+        "pedida, o botão do dossiê continua valendo",
+        caso_id,
+        ESPERA_ANALISE_S * TENTATIVAS_ANALISE,
+    )
+    return resultado

@@ -340,7 +340,9 @@ RE_11_DIGITOS = re.compile(r"(?<!\d)\d{11}(?!\d)")
 # Título vem impresso em blocos ("1234 5678 0191"), então aceitamos separadores.
 RE_TITULO = re.compile(r"(?<!\d)(\d{4})[.\s]?(\d{4})[.\s]?(\d{4})(?!\d)")
 RE_CNS = re.compile(r"(?<!\d)(\d{3})[\s.]?(\d{4})[\s.]?(\d{4})[\s.]?(\d{4})(?!\d)")
-RE_CEP = re.compile(r"(?<!\d)(\d{5})[-.\s]?(\d{3})(?!\d)")
+# Além do formato oficial 12345-678, concessionárias imprimem 12.345-678.
+# O valor é normalizado só com dígitos antes da validação.
+RE_CEP = re.compile(r"(?<!\d)(?:\d{5}|\d{2}[.\s]\d{3})[-.\s]?\d{3}(?!\d)")
 # O DV do RG só é aceito com separador explícito ("12.345.678-X"); sem isso o
 # regex engolia a inicial da sigla do órgão emissor ("12.345.678 SSP/MG").
 RE_RG = re.compile(r"(?<!\d)(\d[\d.\s]{4,16}\d)(?:\s*[-/]\s*([0-9Xx]))?(?![\d\-/])")
@@ -686,8 +688,50 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
             break
 
     if tipo == "comprovante_residencia":
+        # Contas de consumo quase sempre trazem um rótulo explícito. Ele é mais
+        # confiável que tentar adivinhar o logradouro pela primeira palavra:
+        # endereços reais aparecem como "R 26", "QD 12", "CJ A" e outras
+        # abreviações que não começam literalmente por RUA/AVENIDA.
         for i, ln in enumerate(linhas):
-            if re.search(r"\b(RUA|AV|AVENIDA|TRAVESSA|ALAMEDA|PRACA|ROD|RODOVIA|ESTRADA|QUADRA)\b", ln.norm):
+            if not re.search(r"\bENDEREC(?:O|0)\b", ln.norm):
+                continue
+
+            apos_rotulo = re.sub(
+                r"^.*?ENDERE[CÇ](?:O|0)\s*[:\-]?\s*",
+                "",
+                ln.texto,
+                flags=re.IGNORECASE,
+            ).strip()
+            partes = [apos_rotulo] if apos_rotulo else []
+            confiancas = [ln.confianca]
+            # No retorno linear da Mistral as linhas mantêm a ordem de leitura.
+            # O CEP encerra o bloco; se ele não vier, limitamos a três linhas
+            # para não engolir REF./vencimento e o restante da fatura.
+            for j in range(i + 1, min(len(linhas), i + 5)):
+                candidata = linhas[j].texto.strip()
+                norm_candidata = linhas[j].norm
+                if not candidata:
+                    continue
+                if re.search(r"\b(CPF|CNPJ|CODIGO|INSTALACAO|REF|VENCIMENTO|TOTAL)\b", norm_candidata):
+                    break
+                partes.append(candidata)
+                confiancas.append(linhas[j].confianca)
+                if RE_CEP.search(candidata) or "CEP" in norm_candidata:
+                    break
+
+            trecho = " ".join(partes).strip()
+            if trecho:
+                campos["endereco"] = Campo(
+                    "endereco", "Endereço", trecho, trecho,
+                    min(confiancas), True,
+                    "Endereço extraído a partir do rótulo da conta — confira manualmente.",
+                    ln.texto,
+                )
+                break
+
+    if tipo == "comprovante_residencia" and "endereco" not in campos:
+        for i, ln in enumerate(linhas):
+            if re.search(r"\b(RUA|R|AV|AVENIDA|TRAVESSA|ALAMEDA|PRACA|ROD|RODOVIA|ESTRADA|QUADRA|QD)\b", ln.norm):
                 trecho = ln.texto.strip()
                 # O CEP costuma vir na linha de baixo, na mesma coluna do logradouro.
                 for j in indices_abaixo(linhas, i):

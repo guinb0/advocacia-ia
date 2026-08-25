@@ -770,9 +770,17 @@ REGRAS
   possuir ou conseguir enviar.
 - `valor` deve conter a resposta limpa, sem repetir o enunciado ou muletas.
 - `trecho` deve ser uma citação curta da transcrição que sustenta o valor.
+- Separe COBERTURA de PREENCHIMENTO. Em `perguntadas`, liste toda pergunta do
+  formulário que o entrevistador efetivamente fez, mesmo com palavras
+  diferentes e mesmo quando o cliente não respondeu de forma aproveitável.
+- Não marque como perguntada apenas porque o cliente falou espontaneamente do
+  assunto. Precisa existir uma pergunta reconhecível na conversa.
+- Se foi perguntada mas ficou sem resposta clara, inclua também em `incertas`
+  com motivo direto. Ela nunca deve aparecer como "não foi perguntada".
 
 Responda APENAS JSON:
 {"respostas":[{"pergunta_id":"...","valor":"...","trecho":"..."}],
+ "perguntadas":["pergunta_id"],
  "incertas":[{"pergunta_id":"...","motivo":"..."}]}"""
 
 

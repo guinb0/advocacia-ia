@@ -22,7 +22,7 @@ log = logging.getLogger("integracao-agente")
     retry_kwargs={"max_retries": 5},
 )
 def enviar_entrega_ao_agente(self, caso_id: str, entrega_id: str) -> bool:
-    """Garante o vinculo e envia sem repetir a inferencia PaddleOCR em caso de falha."""
+    """Garante o vínculo e envia sem repetir a inferência de OCR em caso de falha."""
     try:
         espelho.garantir_caso(caso_id)
         enviado = espelho.enviar_entrega(caso_id, entrega_id, silencioso=False)

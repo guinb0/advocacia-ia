@@ -21,6 +21,9 @@ export interface Validacao {
   aprovado: boolean;
   /** "posso usar esses dados?" — é este que um fluxo automatizado consulta. */
   dados_utilizaveis: boolean;
+  /** Texto corrido aproveitável por análise jurídica/RAG, mesmo sem campos. */
+  texto_utilizavel?: boolean;
+  caracteres_aproveitaveis?: number;
   imagem_legivel: boolean;
   score_legibilidade: number;
   completude_percentual: number;

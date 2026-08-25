@@ -6,8 +6,6 @@
 #
 # Trocar exige reajustar `_agrupar_em_linhas` para a saída da GPU — projeto
 # próprio, não troca de wheel. Enquanto isso, CPU.
-paddlepaddle==3.0.0
-paddleocr>=3.0,<3.3
 fastapi
 uvicorn[standard]
 python-multipart

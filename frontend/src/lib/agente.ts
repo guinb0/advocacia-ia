@@ -27,6 +27,7 @@ export interface CampoDoCliente {
   confianca: number | null;
   status: string;
   fontes: string[];
+  anexos?: { nome: string; url: string; pagina?: number | null; campo?: string | null }[];
 }
 
 export interface FatoDoAgente {
@@ -42,6 +43,7 @@ export interface FatoDoAgente {
     page?: number | null;
     ocr_field?: string | null;
     user_subject?: string | null;
+    anexo?: { nome: string; url: string | null; indexado: boolean };
   }[];
 }
 
@@ -150,7 +152,17 @@ export interface Peticao {
   version: number;
   title: string;
   /** A saída do readiness: por que a peça saiu assim, e o que faltava. */
-  readiness: { ready: boolean; blocking_issues: string[]; warnings: string[] };
+  readiness: {
+    /** Dá para GERAR. Falta de prova não derruba mais isto — ver `readiness.py`. */
+    ready: boolean;
+    /** O que impede a peça de existir. Hoje só "caso não classificado". */
+    blocking_issues: string[];
+    warnings: string[];
+    /** O que falta COMPROVAR. A peça sai assim mesmo, marcada. */
+    pendencias?: string[];
+    /** Dá para PROTOCOLAR: nada falta, nem estrutura nem prova. */
+    completo?: boolean;
+  };
   review: { findings?: AchadoRevisao[]; summary?: string; blocking?: number };
   blocking_findings: number;
   model?: string | null;

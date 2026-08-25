@@ -589,6 +589,7 @@ def cenario_processamento_consolidado() -> int:
                 {"pergunta_id": "r_doenca", "valor": "não", "trecho": "não consigo mais dormir direito"},
                 {"pergunta_id": "doenca", "valor": "campo inventado", "trecho": ""},
             ],
+            "perguntadas": ["tempo_casa", "funcao"],
             "incertas": [
                 {"pergunta_id": "funcao", "motivo": "A função não ficou clara."},
             ],
@@ -603,6 +604,10 @@ def cenario_processamento_consolidado() -> int:
     falhas += not checar(r["respostas"]["as_ocorrencias"] == "duas vezes no ano passado", "rastreio positivo mantém o módulo")
     falhas += not checar("doenca" not in r["respostas"], "campo de módulo fechado é descartado")
     falhas += not checar(len(r["incertas"]) == 1, "informação insegura fica em aberto para revisão")
+    falhas += not checar(
+        "funcao" not in {item["pergunta_id"] for item in r["faltando"]},
+        "pergunta feita sem resposta vai para confirmação, não para não perguntadas",
+    )
     corpo = visto.get("corpo") or {}
     falhas += not checar(
         isinstance(corpo, dict) and corpo.get("max_tokens") == 8_000,

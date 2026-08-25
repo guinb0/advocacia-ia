@@ -43,6 +43,7 @@ class ClienteFalso:
     """Dublê do agente. Registra o que recebeu e devolve o que for programado."""
 
     enviados: list[tuple[str, str]] = []
+    declarados: list[tuple[str, str, str]] = []
     casos_criados: int = 0
     fatos_devolvidos: list[dict] = []
     erro: Exception | None = None
@@ -74,6 +75,10 @@ class ClienteFalso:
     def enviar_extracao(self, caso_ref, *, evento_externo, origem, extracao):
         ClienteFalso.enviados.append((caso_ref, evento_externo))
         return {"document": {"id": "doc_1"}}
+
+    def declarar_documento(self, caso_ref, *, kind, arquivo, origem):
+        ClienteFalso.declarados.append((caso_ref, kind, origem))
+        return {"document": {"id": "doc_declarado"}}
 
     def fatos(self, _caso_ref):
         return {"items": ClienteFalso.fatos_devolvidos}
@@ -159,12 +164,26 @@ def main() -> int:
     espelho.enviar_entrega(caso_id, entrega["id"])
     checar(len(ClienteFalso.enviados) == 1, "o mesmo documento não é reenviado")
 
+    caminho_cnis = armazenamento.DIR_ARQUIVOS / caso_id / "cnis.pdf"
+    caminho_cnis.write_bytes(b"x")
+    cnis = armazenamento.registrar_entrega_pendente(caso_id, "DOC.08", "cnis.pdf", caminho_cnis)
+    armazenamento.concluir_entrega(cnis["id"], extracao_falsa("cnis"), True, ["DOC.08"])
+    checar(espelho.enviar_entrega(caso_id, cnis["id"]), "CNIS é aceito como documento jurídico recebido")
+    checar(
+        ClienteFalso.declarados[-1][1] == "DOCUMENT.CNIS",
+        "CNIS baixa o item do dossiê sem ser enviado como OCR de identificação",
+    )
+    checar(
+        len(ClienteFalso.enviados) == 2,
+        "documento jurídico entra como conhecimento genérico sem fingir tipo de identificação",
+    )
+
     print("\n3. Agente fora do ar")
     ClienteFalso.erro = AgenteIndisponivel("O agente jurídico não respondeu.")
-    caminho2 = armazenamento.DIR_ARQUIVOS / caso_id / "cnis.png"
+    caminho2 = armazenamento.DIR_ARQUIVOS / caso_id / "cpf.png"
     caminho2.write_bytes(b"x")
-    entrega2 = armazenamento.registrar_entrega_pendente(caso_id, "DOC.02", "cnis.png", caminho2)
-    armazenamento.concluir_entrega(entrega2["id"], extracao_falsa("cnis"), True, ["DOC.02"])
+    entrega2 = armazenamento.registrar_entrega_pendente(caso_id, "DOC.02", "cpf.png", caminho2)
+    armazenamento.concluir_entrega(entrega2["id"], extracao_falsa("cpf"), True, ["DOC.02"])
 
     checar(not espelho.enviar_entrega(caso_id, entrega2["id"]), "o envio falha sem estourar")
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
