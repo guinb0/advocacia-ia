@@ -112,8 +112,26 @@ export function cabecalhos(extra?: HeadersInit): HeadersInit | undefined {
 }
 
 /** fetch com o cookie de sessão anexado — todo acesso à API passa por aqui. */
+/* "Failed to fetch" é o que o navegador diz quando a requisição não chega ao
+ * servidor — conexão recusada, CORS barrado, extensão bloqueando. A frase não
+ * nomeia o endereço, e como este app fala com TRÊS servidores em portas
+ * diferentes (API na 8100, transcrição na 8200, chamadas na 8081), ela manda
+ * procurar o defeito em três lugares ao mesmo tempo.
+ *
+ * Aqui a falha de rede vira uma frase que diz para onde a chamada ia. O erro
+ * original segue em `cause`, para o console não perder o rastro. */
 async function buscar(caminho: string, init: RequestInit = {}): Promise<Response> {
-  const resposta = await fetch(urlApi(caminho), { ...init, credentials: CREDENCIAIS });
+  const url = urlApi(caminho);
+  let resposta: Response;
+  try {
+    resposta = await fetch(url, { ...init, credentials: CREDENCIAIS });
+  } catch (erro) {
+    throw new ApiError(
+      `Não foi possível falar com o servidor em ${url}. ` +
+        "Confira se ele está no ar e se o endereço está certo.",
+      { cause: erro },
+    );
+  }
   if (resposta.status === 401 && typeof window !== "undefined") {
     // A sessão venceu. A carteira não deve fingir que é falha de dados: limpa o
     // estado local (quem escuta é o `ContextWrapper`) e devolve ao login.
