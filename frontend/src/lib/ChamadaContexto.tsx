@@ -54,7 +54,7 @@ interface ValorChamada {
    *  Enquanto houver ao menos uma, o painel flutuante se recolhe. */
   registrarPainel: () => () => void;
 
-  entrar: (sala: string, papel: PapelChamada, opcoes?: OpcoesEntrada) => Promise<void>;
+  entrar: (sala: string, papel: PapelChamada, opcoes?: OpcoesEntrada, token?: string) => Promise<void>;
   desligar: () => void;
   alternarMudo: () => void;
   alternarCamera: () => Promise<void>;
@@ -100,7 +100,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
   }, []);
 
   const entrar = useCallback(
-    async (novaSala: string, novoPapel: PapelChamada, opcoes?: OpcoesEntrada) => {
+    async (novaSala: string, novoPapel: PapelChamada, opcoes?: OpcoesEntrada, token?: string) => {
       // Já na sala pedida: nada a fazer — é o caso de outra tela "reabrindo" a
       // chamada que já está de pé, e reabrir de verdade a derrubaria.
       if (chamada.current && salaRef.current === novaSala) return;
@@ -121,7 +121,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
       setSala(novaSala);
       setPapel(novoPapel);
       setErro(null);
-      await instancia.entrar(novaSala, opcoes);
+      await instancia.entrar(novaSala, opcoes, token);
       /* A câmera pedida na entrada precisa aparecer no ESTADO, não só no vídeo.
        *
        * `soltar` zera `temCamera`, e só `alternarCamera` voltava a escrevê-lo —

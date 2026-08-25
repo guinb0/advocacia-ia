@@ -59,6 +59,27 @@ def main_teste() -> int:
             re.fullmatch(r"[0-9a-f]{32}", primeira["sala"]) is not None,
             f"o nome da sala é válido em XMPP sem normalização ({primeira['sala'][:12]}…)",
         )
+        # --- token JWT para o Jitsi -----------------------------------------
+        terceira = cliente.post("/api/chamada/sala").json()
+        falhas += not checar(
+            "token" in terceira and isinstance(terceira["token"], str) and len(terceira["token"]) > 0,
+            "a sala vem com token JWT para o Jitsi",
+        )
+        # O token deve ser um JWT válido (3 partes separadas por ponto)
+        partes_token = terceira["token"].split(".")
+        falhas += not checar(
+            len(partes_token) == 3,
+            "o token é um JWT válido (3 partes: header.payload.signature)",
+        )
+        # O endpoint aceita sala existente e devolve token novo
+        quarta = cliente.post(
+            "/api/chamada/sala",
+            json={"sala": terceira["sala"]},
+        ).json()
+        falhas += not checar(
+            quarta["sala"] == terceira["sala"] and "token" in quarta,
+            "o endpoint aceita sala existente e devolve token novo",
+        )
         # A sala é sorteada, não derivada de caso: a entrevista acontece antes
         # de o caso existir, e é ela que decide a categoria.
         with cliente.websocket_connect(

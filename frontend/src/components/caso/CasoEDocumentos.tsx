@@ -8,7 +8,7 @@ import { useSituacao } from "@/lib/useCasos";
 import { Aviso, Selo } from "@/components/ui/Basicos";
 import Checklist from "@/components/caso/Checklist";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { obterAtendimentoDocumentacao, solicitarDocumentacao } from "@/lib/api";
+import { obterAtendimentoDocumentacao, criarSalaChamada, solicitarDocumentacao } from "@/lib/api";
 import type { AtendimentoDocumentacao } from "@/lib/api";
 
 /* A última etapa do atendimento, e ela acontece COM O CLIENTE NA LINHA.
@@ -99,10 +99,11 @@ export default function CasoEDocumentos({
        * porque fechar a chamada zera o estado. */
       const camera = chamada.temCamera;
       if (!salaEmCurso) try {
+        const { token } = await criarSalaChamada(novo.portal.token);
         await chamada.entrar(novo.portal.token, "advogado", {
           nome: "Escritório",
           camera,
-        });
+        }, token);
       } catch {
         // A sala não é o caso: ele foi criado e os documentos podem chegar do
         // mesmo jeito. Falhar aqui não pode desfazer o que deu certo.

@@ -9,9 +9,12 @@ import re
 import threading
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+
+import jwt
 
 from fastapi import (
     Depends,
@@ -1193,6 +1196,37 @@ async def triar_entrevista(
 
 # --------------------------------------------------- chamada de voz (WebRTC)
 
+
+def gerar_token_jitsi(sala: str) -> str:
+    """Gera JWT HS256 para o Jitsi aceitar a conexão.
+
+    O Jitsi valida tokens com aud/iss/sub = JITSI_JWT_APP_ID e room = nome da sala.
+    O secret é compartilhado com o Prosody (configurado em docker-jitsi-meet/.env).
+    """
+    secret = os.environ.get("JITSI_JWT_APP_SECRET", "")
+    if not secret:
+        log.warning("JITSI_JWT_APP_SECRET não configurado — Jitsi vai rejeitar a conexão")
+    app_id = os.environ.get("JITSI_JWT_APP_ID", "level33-chamadas")
+    agora = datetime.now(timezone.utc)
+
+    payload = {
+        "aud": app_id,
+        "iss": app_id,
+        "sub": app_id,
+        "room": sala,
+        "exp": agora + timedelta(hours=2),
+        "nbf": agora - timedelta(seconds=10),
+        "context": {
+            "user": {
+                "name": "Advogado",
+                "id": "advogado",
+                "moderator": True,
+            }
+        },
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
 _salas = chamada.Salas()
 
 
@@ -1203,7 +1237,7 @@ def config_chamada():
 
 
 @app.post("/api/chamada/sala", status_code=201)
-def criar_sala():
+def criar_sala(sala: str | None = None):
     """Sorteia uma sala de chamada e devolve o link para mandar ao entrevistado.
 
     A entrevista acontece ANTES de o caso existir — é ela que decide a categoria
@@ -1213,9 +1247,14 @@ def criar_sala():
 
     Sala é efêmera e não é gravada em lugar nenhum: existe enquanto houver
     alguém dentro (ver `app/chamada.py`).
+
+    O token JWT é exigido pelo Jitsi quando AUTH_TYPE=jwt. O cliente também
+    chama este endpoint com o sala existente para obter o próprio token.
     """
-    sala = chamada.gerar_sala()
-    return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}"}
+    if sala is None:
+        sala = chamada.gerar_sala()
+    token = gerar_token_jitsi(sala)
+    return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}", "token": token}
 
 
 @app.websocket("/ws/chamada/{sala_id}")

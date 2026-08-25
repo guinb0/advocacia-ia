@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { assumirAtendimentoDocumentacao, listarAtendimentosDocumentacao, registrarPresencaDocumentacao } from "@/lib/api";
+import { assumirAtendimentoDocumentacao, criarSalaChamada, listarAtendimentosDocumentacao, registrarPresencaDocumentacao } from "@/lib/api";
 import type { AtendimentoDocumentacao } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import { useSessao } from "@/lib/auth";
@@ -38,10 +38,11 @@ export default function PainelDocumentacao({ onVoltar }: { onVoltar: () => void 
     setErro(null);
     try {
       const reservado = await assumirAtendimentoDocumentacao(item.entrevista_id);
+      const { token } = await criarSalaChamada(reservado.sala!);
       await chamada.entrar(reservado.sala!, "advogado", {
         nome: `Documentação · ${sessao.nome || "Atendente"}`,
         camera: false,
-      });
+      }, token);
       carregar();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível assumir a chamada.");

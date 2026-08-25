@@ -319,9 +319,13 @@ export async function listarMunicipios(uf: string): Promise<MunicipioLocalidade[
 // ----------------------------------------------------------------- chamada
 
 /** Sorteia uma sala e devolve o link para mandar ao entrevistado. */
-export async function criarSalaChamada(): Promise<{ sala: string; url: string }> {
-  return comoJson<{ sala: string; url: string }>(
-    await buscar("/api/chamada/sala", { method: "POST" }),
+export async function criarSalaChamada(sala?: string): Promise<{ sala: string; url: string; token: string }> {
+  return comoJson<{ sala: string; url: string; token: string }>(
+    await buscar("/api/chamada/sala", {
+      method: "POST",
+      headers: sala ? { "Content-Type": "application/json" } : undefined,
+      body: sala ? JSON.stringify({ sala }) : undefined,
+    }),
   );
 }
 

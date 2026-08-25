@@ -43,7 +43,7 @@ const BOTAO_SECUNDARIO =
 
 export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
   const chamada = useChamada();
-  const [sala, setSala] = useState<{ sala: string; url: string } | null>(null);
+  const [sala, setSala] = useState<{ sala: string; url: string; token: string } | null>(null);
   const [abrindo, setAbrindo] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -81,7 +81,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
       // Se já há uma chamada de pé (por exemplo, retomada), reaproveita a sala.
       const nova = sala ?? (await criarSalaChamada());
       setSala(nova);
-      await chamada.entrar(nova.sala, "advogado", { nome: "Escritório" });
+      await chamada.entrar(nova.sala, "advogado", { nome: "Escritório" }, nova.token);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível abrir a chamada.";
       setErro(

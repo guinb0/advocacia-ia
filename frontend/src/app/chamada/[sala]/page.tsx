@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 
+import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
@@ -48,7 +49,8 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
     setErro(null);
     setEntrando(true);
     try {
-      await chamada.entrar(sala, "cliente", { nome: nome.trim(), camera });
+      const { token: jitsiToken } = await criarSalaChamada(sala);
+      await chamada.entrar(sala, "cliente", { nome: nome.trim(), camera }, jitsiToken);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
