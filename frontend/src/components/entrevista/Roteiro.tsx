@@ -829,8 +829,12 @@ export default function Roteiro({
     () =>
       blocosVisiveis
         .filter((b) => !b.delegado_a)
-        .flatMap((b) => b.perguntas.map((pergunta) => ({ pergunta, bloco: b.titulo }))),
-    [blocosVisiveis],
+        .flatMap((b) =>
+          b.perguntas
+            .filter((pergunta) => dependenciaAberta(pergunta, respostas))
+            .map((pergunta) => ({ pergunta, bloco: b.titulo })),
+        ),
+    [blocosVisiveis, respostas],
   );
 
   /* Pergunta que já tem sugestão esperando um clique NÃO é pergunta a fazer.
@@ -1443,6 +1447,30 @@ function montarRelato(blocos: Bloco[], respostas: Respostas): string {
   return partes.join("\n\n");
 }
 
+/* A condicional que o roteiro escreve no enunciado, aplicada de verdade.
+ *
+ * "Se já entrou com ação: qual o número do processo?" só faz sentido depois de
+ * "Já ingressou com ação?" ter sido respondida — e só se a resposta abrir o
+ * caminho. Sem o pai respondido a filha fica FECHADA: ler o enunciado antes da
+ * resposta anterior confunde o cliente.
+ *
+ * Função de módulo, e não um `useCallback` no componente de cima, porque as
+ * DUAS pontas da tela precisam dela: a sequência (que decide a pergunta da vez)
+ * e o render do bloco (que decide o campo visível). Duas cópias divergiriam no
+ * primeiro ajuste, e o sintoma seria a tela pedindo uma pergunta que não
+ * desenha.
+ *
+ * Mesma regra do backend (`_dependencia_aberta`, em app/escuta.py). Divergindo,
+ * a tela esconde um campo que o painel continua cobrando — que é exatamente o
+ * problema que este encadeamento veio resolver. */
+function dependenciaAberta(p: Pergunta, respostas: Respostas): boolean {
+  if (!p.depende_de) return true;
+  const valor = String(respostas[p.depende_de] ?? "").trim().toLowerCase();
+  const esperado = p.depende_valor.trim().toLowerCase();
+  if (esperado === "nao" || esperado === "não") return valor === "nao" || valor === "não";
+  return valor === esperado;
+}
+
 function BlocoRoteiro({
   bloco,
   respostas,
@@ -1520,7 +1548,7 @@ function BlocoRoteiro({
       )}
 
       <ul className="list-none mt-3 mb-0 p-0 border-t-[3px] border-double border-borda-forte">
-        {bloco.perguntas.map((p, i) => (
+        {bloco.perguntas.filter((p) => dependenciaAberta(p, respostas)).map((p, i) => (
           <li
             key={p.id}
             // A âncora que o painel usa para rolar até aqui.

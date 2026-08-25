@@ -64,6 +64,19 @@ class Pergunta:
     #: Chave "sim"/"não" para as de rastreio; "*" para qualquer resposta. Vem do
     #: roteiro do escritório — ver `docs/ENTREVISTA*.docx`.
     fala: dict[str, str] = field(default_factory=dict)
+    #: Esta pergunta só existe quando OUTRA foi respondida de certo jeito.
+    #:
+    #: O roteiro do escritório escreve a condição no próprio enunciado — "Se já
+    #: entrou com ação: qual o número do processo?" — e o sistema a ignorava: a
+    #: pergunta ficava pendente para sempre em quem respondeu "não", e o painel
+    #: mandava perguntar de novo algo que já tinha sido respondido.
+    #:
+    #: Sem o pai respondido, a pergunta fica FECHADA: o enunciado pressupõe a
+    #: resposta anterior, e lê-lo antes dela confunde o cliente.
+    depende_de: str = ""
+    #: O valor do pai que ABRE esta pergunta. Nem sempre é "sim": a CAT tem uma
+    #: pergunta que só faz sentido quando ela NÃO foi emitida.
+    depende_valor: str = ""
     #: Resposta que IMPEDE o prosseguimento, com o motivo. O roteiro tem um caso:
     #: quem já ganhou ação sobre o mesmo fato e ainda não recebeu não pode entrar
     #: com outra. Ver `ALERTAS` no fim do módulo.
@@ -260,6 +273,8 @@ RASTREIO = Bloco(
             "Qual ação foi ajuizada, qual é o número do processo, já transitou em julgado e já recebeu os valores?",
             "relato",
             transcrever=True,
+            depende_de="r_acao",
+            depende_valor="sim",
             dica="Registrar separadamente o assunto, o processo, o trânsito em julgado e o recebimento.",
         ),
     ],
@@ -298,6 +313,8 @@ ASSALTO = Bloco(
             "Já recebeu as indenizações?",
             "relato",
             transcrever=True,
+            depende_de="as_acao",
+            depende_valor="sim",
             dica="ATENÇÃO: se ainda não recebeu, não é possível entrar com nova ação.",
         ),
         # O único impedimento explícito do roteiro (§62 do .docx, em caixa alta):
@@ -308,6 +325,8 @@ ASSALTO = Bloco(
             "as_recebeu",
             "Já recebeu as indenizações dessa ação anterior?",
             "sim_nao",
+            depende_de="as_acao",
+            depende_valor="sim",
             impedimento="não",
             dica=(
                 "Se NÃO recebeu: não é possível entrar com nova ação sobre o mesmo "
@@ -362,6 +381,9 @@ ACIDENTE = Bloco(
             "Se não foi emitida: a empresa se recusou? Você comunicou por escrito?",
             "relato",
             transcrever=True,
+            # A única que abre no "não": não há recusa a apurar se a CAT saiu.
+            depende_de="ac_cat",
+            depende_valor="não",
         ),
         Pergunta("ac_hospital", "Foi levado ao médico/hospital pela empresa? Qual?", "dado"),
         Pergunta(
