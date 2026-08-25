@@ -82,6 +82,49 @@ function Testar-Http([string]$Url, [int]$Timeout = 3) {
     } catch { return $false }
 }
 
+# Por que o Jitsi nao subiu -- em vez de so dizer que nao subiu.
+#
+# "Jitsi nao respondeu depois de 120 segundos" e verdade e nao ajuda: quem le
+# isso na primeira vez que roda o projeto nao tem como saber se falta Docker,
+# se a porta esta ocupada, ou se o endereco no .env e de outro computador -- que
+# e o caso mais comum, porque o .env nao vai no git e todo mundo copia o do
+# colega, IP da maquina dele junto. Cada causa pede uma acao diferente.
+function Diagnostico-Jitsi([string]$Url, [double]$Segundos = 120) {
+    $alvo = ([Uri]$Url).Host
+    $causa = ""
+
+    # `$host` e variavel automatica do PowerShell: usar esse nome aqui
+    # sobrescreveria o console. Dai `$alvo`.
+    $locais = @("localhost", "127.0.0.1", "::1")
+    try { $locais += (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop).IPAddress } catch {}
+
+    if ($alvo -match "^\d+\.\d+\.\d+\.\d+$" -and $locais -notcontains $alvo) {
+        $causa = "O endereco $alvo nao pertence a esta maquina. O JITSI_PUBLIC_URL do seu .env veio " +
+                 "do computador de outra pessoa. Troque por http://localhost:8081 e rode de novo."
+    } elseif (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        $causa = "O Docker nao esta instalado (ou nao esta no PATH). O Jitsi roda em containers."
+    } else {
+        docker info 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $causa = "O Docker esta instalado mas o servico nao responde. Abra o Docker Desktop e espere ficar verde."
+        } else {
+            $emPe = (docker ps --filter "name=jitsi" --format "{{.Names}}" | Measure-Object -Line).Lines
+            if ($emPe -eq 0) {
+                $causa = "O Docker responde, mas nenhum container do Jitsi subiu. Veja o erro com: " +
+                         "cd ..\docker-jitsi-meet; docker compose up"
+            } else {
+                $causa = "Os containers do Jitsi estao de pe, mas $Url nao responde. A porta pode estar " +
+                         "ocupada por outro projeto: Get-NetTCPConnection -LocalPort 8081"
+            }
+        }
+    }
+
+    return ("Jitsi nao respondeu em {0} depois de {1:N0} segundos.`n`n" -f $Url, $Segundos) +
+           "  Causa provavel: $causa`n`n" +
+           "  Para seguir sem chamadas por enquanto:  .\iniciar.ps1 -SemJitsi`n" +
+           "  O resto do sistema funciona; so a videoconferencia fica indisponivel."
+}
+
 function Wait-ModeloAquecido {
     param(
         [string]$Url,
@@ -211,12 +254,20 @@ if (-not $SemJitsi) {
             -UrlPublica $UrlJitsi `
             -IpsAnunciados $(if ($env:JITSI_ADVERTISE_IPS) { $env:JITSI_ADVERTISE_IPS } else { "127.0.0.1" })
     }
+    # Espera por RELOGIO, nao por numero de tentativas. Contar 120 iteracoes de
+    # "1 segundo" dava 8 minutos de espera real: cada Testar-Http gasta ate 3s
+    # montando a excecao quando a conexao e recusada, e isso nao aparecia em
+    # lugar nenhum -- a mensagem final ainda dizia "120 segundos". Quem esperava
+    # concluia que o script tinha travado, e matava o terminal antes do erro.
+    $limiteSegundos = 120
+    $relogio = [Diagnostics.Stopwatch]::StartNew()
     $jitsiPronto = $false
-    for ($i = 0; $i -lt 120; $i++) {
+    while ($relogio.Elapsed.TotalSeconds -lt $limiteSegundos) {
         if (Testar-Http "$UrlJitsi/libs/lib-jitsi-meet.min.js") { $jitsiPronto = $true; break }
         Start-Sleep -Seconds 1
     }
-    if (-not $jitsiPronto) { throw "Jitsi nao respondeu em $UrlJitsi depois de 120 segundos." }
+    $relogio.Stop()
+    if (-not $jitsiPronto) { throw (Diagnostico-Jitsi $UrlJitsi $relogio.Elapsed.TotalSeconds) }
     Write-Host "Chamadas  : $UrlJitsi (Jitsi pronto)" -ForegroundColor Green
 } else {
     Write-Host "Jitsi nao iniciado (-SemJitsi); chamadas remotas ficarao indisponiveis." -ForegroundColor Yellow
