@@ -18,7 +18,7 @@
 const BASE_TRANSCRICAO =
   process.env.NEXT_PUBLIC_TRANSCRICAO_API ||
   (typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8200`
+    ? window.location.origin
     : "http://127.0.0.1:8200");
 
 /* Cliente da transcrição da entrevista.
