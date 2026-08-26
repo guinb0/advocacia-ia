@@ -14,37 +14,15 @@ stages:
 #  vig-agent, e é menos coisa para cadastrar à mão.
 #
 #  As variáveis abaixo precisam existir em Settings > CI/CD > Variables com o
-#  environment scope correspondente (`prod` / `homolog`). O compose usa a forma
-#  `${VAR?VAR is required}`: faltando qualquer uma, a stack recusa subir em vez
-#  de subir quebrada.
+#  environment scope `prod`. O compose usa a forma `${VAR?VAR is required}`:
+#  faltando qualquer uma, a stack recusa subir em vez de subir quebrada.
 #
 #  Ver docs/DEPLOY.md.
 # ============================================================
 
 include:
   # ============================================================
-  # ROTA 1: HOMOLOGAÇÃO (Branch: release)
-  # ============================================================
-  - component: $CI_SERVER_FQDN/components/ci-platform/pipeline-generic@1.1.6
-    rules:
-      - if: $CI_COMMIT_BRANCH == "release"
-    inputs:
-      trigger_branch: "release"
-      env_type: "Homologation"
-      stack_name: "advocacia-ia-hom"
-      compose_file: "docker-compose.homologation.yml"
-      tag_prefix: "release/v"
-      increment_version: true
-      build_args_additional: "environment=production"
-      build_args_version: true
-      portainer_endpoint_id: "1"
-      initial_version: "0.1.0"
-      tag_suffix: "_hom"
-      gitlab_variables_environment: "homolog"
-      gitlab_variables: '["SQLSERVER_HOST","SQLSERVER_PASSWORD","PGVECTOR_HOST","PGVECTOR_USER","PGVECTOR_PASSWORD","JWT_SECRET","PORTAL_SEGREDO","DEEPSEEK_API_KEY","OPENROUTER_API_KEY","ZAPSIGN_API_TOKEN","DATAJUD_API_KEY","EVOLUTION_API_KEY","EVOLUTION_INSTANCE"]'
-
-  # ============================================================
-  # ROTA 2: PRODUÇÃO (Branch: production)
+  # PRODUÇÃO (Branch: production)
   # ============================================================
   - component: $CI_SERVER_FQDN/components/ci-platform/pipeline-generic@1.1.6
     rules:
@@ -74,7 +52,7 @@ testes-python:
   stage: .pre
   image: python:3.11-slim
   rules:
-    - if: $CI_COMMIT_BRANCH != "release" && $CI_COMMIT_BRANCH != "production"
+    - if: $CI_COMMIT_BRANCH != "production"
   before_script:
     # Sem paddle nem pyodbc: a suíte do WhatsApp toca httpx e fastapi apenas, e
     # instalar o requirements inteiro (paddle, ~1 GB) custaria minutos de runner
@@ -87,7 +65,7 @@ typecheck-frontend:
   stage: .pre
   image: node:22-slim
   rules:
-    - if: $CI_COMMIT_BRANCH != "release" && $CI_COMMIT_BRANCH != "production"
+    - if: $CI_COMMIT_BRANCH != "production"
   before_script:
     - cd frontend && npm ci
   script:
@@ -102,7 +80,6 @@ no-op:
   script:
     - echo "ℹ️  Branch '${CI_COMMIT_BRANCH}' não possui pipeline de CI/CD configurado."
     - echo "📋 Pipelines disponíveis:"
-    - echo "   - 'release' → Pipeline de Homologação (Gera versão + Build + Deploy)"
-    - echo "   - 'production' → Pipeline de Produção (Reusa versão + Build Prod + Deploy)"
+    - echo "   - 'production' → Pipeline de Produção (Build + Deploy)"
   rules:
-    - if: $CI_COMMIT_BRANCH != "release" && $CI_COMMIT_BRANCH != "production"
+    - if: $CI_COMMIT_BRANCH != "production"
