@@ -130,7 +130,8 @@ services:
 
       AGENTE_API_URL: ${AGENTE_API_URL:-http://ia-juridica:8011}
       JITSI_PUBLIC_URL: ${JITSI_PUBLIC_URL:-https://jitsi.level33lab.cloud}
-      JITSI_JWT_APP_SECRET: ${JITSI_JWT_APP_SECRET:-}
+      JITSI_JWT_APP_ID: ${JITSI_JWT_APP_ID:-level33-chamadas}
+      JITSI_JWT_APP_SECRET: ${JITSI_JWT_APP_SECRET?JITSI_JWT_APP_SECRET is required}
 
       CELERY_BROKER_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/1
       CELERY_RESULT_BACKEND: redis://:${VALKEY_PASSWORD}@valkey:6379/1
