@@ -253,9 +253,15 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                     </span>
                   </div>
                   <div className="px-[11px] py-[9px] border border-borda rounded-campo bg-papel-2">
-                    <span className="block text-tinta-3 text-xs">Dados encontrados</span>
+                    <span className="block text-tinta-3 text-xs">
+                      {extracao.classificacao_semantica ? "Texto extraído" : "Dados encontrados"}
+                    </span>
                     <span className="block mt-[1px] text-tinta text-base font-semibold tabular-nums">
-                      {validacao?.completude_percentual === undefined ? "—" : `${validacao.completude_percentual}%`}
+                      {extracao.classificacao_semantica
+                        ? `${extracao.ocr?.caracteres_detectados ?? 0} caracteres`
+                        : validacao?.completude_percentual === undefined
+                          ? "—"
+                          : `${validacao.completude_percentual}%`}
                     </span>
                   </div>
                   <div className="px-[11px] py-[9px] border border-borda rounded-campo bg-papel-2">

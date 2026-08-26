@@ -6,7 +6,7 @@ import logging
 
 from celery.signals import worker_ready
 
-from .. import armazenamento, casos, categorias, jobs, pipeline
+from .. import armazenamento, casos, categorias, indexacao_documento, jobs, pipeline
 from ..celery_app import celery_app
 
 log = logging.getLogger("ocr-worker")
@@ -163,6 +163,17 @@ def processar_entrega(
             gerar_arquivos_temporarios=False,
         )
 
+        # Tipos não estruturados (laudo, atestado, BO, CNIS...) não passam pelo
+        # extrator cadastral. O DeepSeek interpreta o texto integral do OCR.
+        if resultado.get("tipo", {}).get("codigo") == "desconhecido" and resultado.get("validacao", {}).get("texto_utilizavel"):
+            try:
+                semantica = indexacao_documento.classificar(resultado, categoria.nome)
+                resultado["classificacao_semantica"] = semantica
+                resultado["tipo"]["descricao_detectado"] = semantica["tipo_semantico"]
+            except Exception as exc:
+                log.warning("classificação semântica falhou para %s: %s", entrega_id, exc)
+                resultado["classificacao_semantica"] = {"status": "indisponivel", "erro": str(exc)[:200]}
+
         unificar = usar_para_rg_e_cpf
         if not unificar and item.tipo_ocr in {"rg", "cpf"}:
             unificar = casos.cobre_rg_e_cpf(resultado)
@@ -178,6 +189,13 @@ def processar_entrega(
         detectado = resultado.get("tipo", {}).get("detectado")
         confere = casos.tipo_confere(item, detectado, unificar)
         armazenamento.concluir_entrega(entrega_id, resultado, confere, itens_atendidos)
+        if resultado.get("classificacao_semantica", {}).get("tipo_semantico"):
+            try:
+                indexacao_documento.indexar(entrega_id, caso_id, nome, resultado)
+            except Exception:
+                # Upload e OCR já estão persistidos; indisponibilidade de OpenRouter
+                # ou PGVector não pode transformar uma entrega válida em erro.
+                log.warning("indexação vetorial falhou para %s", entrega_id, exc_info=True)
         _entregar_ao_agente(caso_id, entrega_id)
         return {"entrega_id": entrega_id, "concluida": True}
     except Exception as exc:

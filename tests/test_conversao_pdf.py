@@ -32,6 +32,14 @@ def main() -> int:
         convertido = conversao_pdf.converter_para_pdf(multipagina, multipagina.name, raiz / "duas.pdf")
         assert convertido.caminho.read_bytes().startswith(b"%PDF-")
 
+        # Foto de celular: o PDF gerado pelo próprio Acervo precisa caber de
+        # volta no limite de upload (20 MB), sem carregar a resolução integral.
+        grande = raiz / "foto-celular.png"
+        Image.effect_noise((4000, 3000), 80).convert("RGB").save(grande)
+        compacto = conversao_pdf.converter_para_pdf(grande, grande.name, raiz / "compacto.pdf")
+        assert compacto.caminho.stat().st_size < 20 * 1024 * 1024
+        assert compacto.caminho.stat().st_size < grande.stat().st_size
+
         texto = raiz / "relato.txt"
         texto.write_text("não suportado", encoding="utf-8")
         try:
