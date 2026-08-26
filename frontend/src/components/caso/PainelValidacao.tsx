@@ -1,8 +1,16 @@
 import type { Documento } from "@/lib/types";
-import { ListaMensagens, ObservacaoTabela, Selo, Tabela, Td, TrZebra, ValorTabela } from "@/components/ui/Basicos";
+import { Aviso, ListaMensagens, ObservacaoTabela, Selo, Tabela, Td, TrZebra, ValorTabela } from "@/components/ui/Basicos";
 
 /** Resposta de sim/não como selo: símbolo + palavra, nunca só a cor. */
-function SimNao({ valor, tomDoNao = "critico" }: { valor: boolean; tomDoNao?: "critico" | "atencao" }) {
+function SimNao({ valor, tomDoNao = "critico" }: { valor?: boolean | null; tomDoNao?: "critico" | "atencao" }) {
+  if (valor === null || valor === undefined) {
+    return (
+      <Selo tom="neutro" simbolo="–">
+        não informado
+      </Selo>
+    );
+  }
+
   return valor ? (
     <Selo tom="ok" simbolo="✓">
       sim
@@ -16,6 +24,20 @@ function SimNao({ valor, tomDoNao = "critico" }: { valor: boolean; tomDoNao?: "c
 
 export default function PainelValidacao({ doc }: { doc: Documento }) {
   const v = doc.validacao;
+  const erros = v?.erros ?? [];
+  const avisos = v?.avisos ?? [];
+  const sugestoes = v?.sugestoes ?? [];
+  const camposEsperados = v?.campos_esperados ?? [];
+  const camposFaltando = v?.campos_faltando ?? [];
+  const tipoDescricao = doc.tipo?.descricao ?? "este documento";
+
+  if (!v) {
+    return (
+      <Aviso tom="atencao" titulo="Conferência indisponível">
+        Esta leitura foi salva sem os dados de conferência automática.
+      </Aviso>
+    );
+  }
 
   return (
     <>
@@ -53,19 +75,19 @@ export default function PainelValidacao({ doc }: { doc: Documento }) {
         </tbody>
       </Tabela>
 
-      <ListaMensagens titulo="Erros" itens={v.erros} tom="erro" />
-      <ListaMensagens titulo="Avisos" itens={v.avisos} tom="aviso" />
-      <ListaMensagens titulo="Sugestões ao usuário" itens={v.sugestoes} tom="sugestao" />
+      <ListaMensagens titulo="Erros" itens={erros} tom="erro" />
+      <ListaMensagens titulo="Avisos" itens={avisos} tom="aviso" />
+      <ListaMensagens titulo="Sugestões ao usuário" itens={sugestoes} tom="sugestao" />
 
-      {v.campos_esperados.length > 0 && (
+      {camposEsperados.length > 0 && (
         <>
           <div className="mt-[22px] mb-[10px] text-tinta text-sm font-bold">
-            Campos esperados para {doc.tipo.descricao}
+            Campos esperados para {tipoDescricao}
           </div>
           <Tabela>
             <tbody>
-              {v.campos_esperados.map((campo) => {
-                const extraido = !v.campos_faltando.includes(campo);
+              {camposEsperados.map((campo) => {
+                const extraido = !camposFaltando.includes(campo);
                 return (
                   <TrZebra key={campo}>
                     <ValorTabela>{campo}</ValorTabela>
