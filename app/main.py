@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -71,6 +72,7 @@ from . import jobs, observabilidade
 from . import entrevista as entrevista_lib
 from .cache_leitura import por_alguns_segundos
 from .agente import dossie as dossie_agente
+from .celery_app import celery_app
 from .extractors import ROTULOS_TIPO
 from .tasks.ocr import processar_documento, processar_entrega
 from .tasks.documentos import gerar_relatorio as gerar_relatorio_job
@@ -1113,16 +1115,164 @@ def obter_categoria(codigo: str):
 
 
 @app.get("/api/saude")
-def saude():
+def saude(fila: bool = False):
+    """Sonda de saúde. `?fila=1` acrescenta o estado da leitura de documentos.
+
+    O acréscimo é OPCIONAL de propósito. Esta rota é a sonda de inicialização do
+    `iniciar.ps1`, chamada em laço com 2 s de timeout; perguntar ao broker e aos
+    workers em toda chamada colocaria segundos no caminho quente por um dado que
+    quase ninguém está pedindo. Com o parâmetro, quem precisa diagnosticar pede —
+    inclusive de fora do servidor, que é o ponto: `/metrics` mora fora de `/api/`
+    e o proxy o devolve como 404.
+    """
     from . import ocr_engine
 
     ocr_via_worker = os.getenv("OCR_AQUECER_API", "0") != "1"
-    return {
+    corpo = {
         "status": "ok",
         "modelo_carregado": ocr_engine.modelo_carregado(),
         "modelo_aquecido": _ocr_aquecido.is_set(),
         "ocr_via_worker": ocr_via_worker,
     }
+    if fila:
+        corpo["leitura_de_documentos"] = _estado_da_leitura()
+    return corpo
+
+
+#: Última resposta de `_estado_da_leitura`, com o instante em que foi medida.
+_ESTADO_LEITURA: dict[str, Any] = {"medido_em": 0.0, "dados": None}
+_VALIDADE_ESTADO_LEITURA = 15.0
+
+
+def _estado_da_leitura() -> dict[str, Any]:
+    """Existe alguém para ler o próximo documento enviado?
+
+    ESTA PERGUNTA NÃO TINHA RESPOSTA DE FORA DO SERVIDOR, e essa foi a razão de um
+    documento ficar preso por horas sem ninguém saber por quê. `/api/saude` dizia
+    "ok" — e dizia a verdade, porque olhava só para si mesma. Quem lê o documento
+    é outro processo, e ninguém perguntava por ele.
+
+    As métricas do Prometheus responderiam, mas moram em `/metrics`, fora de
+    `/api/` — e o proxy manda tudo que não é `/api/*` para o frontend. De fora,
+    aquilo é um 404. Por isso a resposta precisa sair por aqui.
+
+    Nunca levanta: um diagnóstico que derruba a sonda de saúde troca um problema
+    por outro pior. O que não der para medir volta como `null`/"desconhecido".
+    """
+    agora = time.monotonic()
+    if (
+        _ESTADO_LEITURA["dados"] is not None
+        and agora - _ESTADO_LEITURA["medido_em"] < _VALIDADE_ESTADO_LEITURA
+    ):
+        return _ESTADO_LEITURA["dados"]
+
+    dados: dict[str, Any] = {"leitor": "desconhecido", "esperando_na_fila": None}
+
+    try:
+        from redis import Redis
+
+        conexao = Redis.from_url(
+            celery_app.conf.broker_url, socket_connect_timeout=2, socket_timeout=2
+        )
+        # Quantas mensagens estão paradas no Redis QUE ESTA API USA. É a metade
+        # da história que a API conhece de fato: ela publicou, e ninguém tirou.
+        dados["esperando_na_fila"] = conexao.llen("gpu_background")
+    except Exception as exc:  # noqa: BLE001 - diagnóstico não pode derrubar a sonda
+        dados["erro_broker"] = f"{type(exc).__name__}"
+
+    try:
+        filas = celery_app.control.inspect(timeout=2).active_queues() or {}
+        consome = any(
+            q["name"] == "gpu_background" for lista in filas.values() for q in lista
+        )
+        dados["leitor"] = "no ar" if consome else "fora do ar"
+        dados["workers"] = len(filas)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if dados["leitor"] == "fora do ar":
+        dados["diagnostico"] = (
+            "Nenhum worker consome 'gpu_background'. Documento enviado agora fica "
+            "esperando indefinidamente."
+        )
+    elif dados["leitor"] == "no ar" and (dados["esperando_na_fila"] or 0) > 0:
+        dados["diagnostico"] = (
+            "Há worker no ar E mensagem parada na fila: provavelmente ele está "
+            "noutro Redis, ou a task não está registrada nele."
+        )
+
+    _ESTADO_LEITURA.update(medido_em=agora, dados=dados)
+    return dados
+
+
+def _sem_segredo(url: str) -> str:
+    """`redis://user:senha@host:6379/0` -> `redis://host:6379/0`."""
+    if "@" not in url:
+        return url
+    esquema, _, resto = url.partition("://")
+    return f"{esquema}://{resto.rpartition('@')[2]}"
+
+
+@app.get("/api/saude/fila")
+def saude_da_fila():
+    """A leitura de documentos está de pé? — respondido sem shell no servidor.
+
+    `/api/saude` responde "ok" com o leitor de documentos MORTO: ela olha só para
+    este processo. Foi esse ponto cego que deixou documento parado em "aguardando
+    a vez na fila de leitura" sem ninguém perceber — a API estava ótima, e era
+    verdade; o que faltava era quem tirasse a mensagem da fila.
+
+    O que esta rota mostra, e por que cada campo importa:
+
+    - `broker`: o Redis que ESTA API usa. Compare com o do worker: em container, o
+      padrão `redis://localhost:6380/0` aponta para o próprio container, e API e
+      worker acabam em Redis diferentes — a fila enche de um lado e ninguém
+      escuta do outro.
+    - `consumindo_gpu_background`: `false` aqui é a resposta de quase todo caso.
+    - `entregas_esperando`: quantos documentos estão parados, e há quanto tempo o
+      mais antigo espera.
+
+    Exige sessão: o endereço do broker não é informação pública.
+    """
+    from .tasks.manutencao import MINUTOS_TRAVADA
+
+    resposta: dict[str, Any] = {"broker": _sem_segredo(celery_app.conf.broker_url)}
+
+    try:
+        inspecao = celery_app.control.inspect(timeout=5)
+        filas = inspecao.active_queues() or {}
+        resposta["workers"] = {
+            nome: [q["name"] for q in lista] for nome, lista in filas.items()
+        }
+        resposta["consumindo_gpu_background"] = any(
+            q["name"] == "gpu_background" for lista in filas.values() for q in lista
+        )
+    except Exception as exc:  # noqa: BLE001 - fronteira com o broker
+        resposta["workers"] = {}
+        resposta["consumindo_gpu_background"] = False
+        resposta["erro_broker"] = f"{type(exc).__name__}: {exc}"
+
+    travadas = armazenamento.entregas_travadas(0)  # 0 min: tudo que está esperando
+    resposta["entregas_esperando"] = len(travadas)
+    resposta["esperando_ha_mais_de_%d_min" % MINUTOS_TRAVADA] = sum(
+        1 for e in armazenamento.entregas_travadas(MINUTOS_TRAVADA)
+    )
+    if travadas:
+        resposta["mais_antiga_em"] = travadas[0]["criado_em"]
+
+    if resposta["entregas_esperando"] and not resposta["consumindo_gpu_background"]:
+        resposta["diagnostico"] = (
+            "Há documento esperando e NENHUM worker consumindo 'gpu_background'. "
+            "O leitor de documentos está fora do ar ou apontando para outro Redis."
+        )
+    elif not resposta["consumindo_gpu_background"]:
+        resposta["diagnostico"] = (
+            "Nenhum worker consumindo 'gpu_background'. Nada está preso agora, mas "
+            "o próximo documento enviado ficará."
+        )
+    else:
+        resposta["diagnostico"] = "Leitor de documentos no ar."
+    return resposta
 
 
 @app.get("/api/config")

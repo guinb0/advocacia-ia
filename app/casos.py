@@ -8,6 +8,7 @@ chegou com problema. Tudo aqui é derivado das entregas — nada de status guard
 from __future__ import annotations
 
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,15 @@ PENDENTE = "pendente"          # nada foi enviado
 PROCESSANDO = "processando"    # chegou e está sendo lido pelo OCR
 CONFERIR = "conferir"          # chegou, mas com ressalva (ilegível ou tipo trocado)
 ENTREGUE = "entregue"          # chegou e passou na validação
+
+#: A partir daqui a espera não é mais fila, é problema.
+#:
+#: Uma leitura leva de 4 a 30 segundos. Passados dez minutos no mesmo estado, o
+#: que existe não é um documento na frente na fila — é o leitor fora do ar ou uma
+#: mensagem perdida. `tasks.manutencao.recuperar_entregas_travadas` usa o mesmo
+#: número para ir buscar essas entregas, e o alerta abaixo para parar de dizer
+#: que está tudo normal enquanto não está.
+MINUTOS_ESPERA_ANORMAL = 10
 
 
 def _esta_pronta(entrega: dict[str, Any]) -> bool:
@@ -50,15 +60,47 @@ def _status_do_item(entregas: list[dict[str, Any]]) -> str:
     return CONFERIR
 
 
+def _esperando_ha_muito(entrega: dict[str, Any]) -> bool:
+    """A entrega passou de `MINUTOS_ESPERA_ANORMAL` sem ser lida?
+
+    Medido por `criado_em`, que é o único carimbo que a entrega tem — não há
+    coluna de "última tentativa". Como só é consultado para entrega ainda não
+    lida, `criado_em` é justamente o momento em que ela entrou na fila.
+
+    `criado_em` ausente ou ilegível responde `False`: um formato inesperado não
+    pode virar alarme numa entrega que acabou de chegar.
+    """
+    bruto = entrega.get("criado_em")
+    if not bruto:
+        return False
+    try:
+        criado = datetime.fromisoformat(str(bruto))
+    except ValueError:
+        return False
+    if criado.tzinfo is None:
+        criado = criado.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - criado > timedelta(minutes=MINUTOS_ESPERA_ANORMAL)
+
+
 def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[str]:
     alertas: list[str] = []
 
     # Ainda sem leitura: os campos de validação estão vazios, e lê-los produziria
     # o alerta de "não foi possível extrair" para um arquivo que só está na fila.
     estado = entrega.get("status_proc", "pronto")
-    if estado == "na_fila":
-        return ["Documento recebido e aguardando a vez na fila de leitura."]
-    if estado == "processando":
+    if estado in {"na_fila", "processando"}:
+        if _esperando_ha_muito(entrega):
+            # A mensagem antiga ("aguardando a vez na fila") continuava serena
+            # depois de horas paradas, e era o único sinal que o advogado tinha.
+            # Quem repara é `recuperar_entregas_travadas`, a cada 5 minutos.
+            return [
+                "Este documento está há mais de "
+                f"{MINUTOS_ESPERA_ANORMAL} minutos esperando para ser lido — mais que o "
+                "normal. O sistema tenta de novo sozinho; se não sair daqui, o leitor "
+                "de documentos está fora do ar."
+            ]
+        if estado == "na_fila":
+            return ["Documento recebido e aguardando a vez na fila de leitura."]
         return ["Documento recebido. A leitura está em andamento."]
     if estado == "erro":
         return [
