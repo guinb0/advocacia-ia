@@ -36,6 +36,7 @@ from starlette.concurrency import run_in_threadpool
 from . import (
     agente,
     advbox,
+    analise_documentos,
     analise_resposta,
     armazenamento,
     assinatura,
@@ -1387,6 +1388,26 @@ def criar_sala(payload: dict | None = None):
         sala = chamada.gerar_sala()
     token = gerar_token_jitsi(sala)
     return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}", "token": token or ""}
+
+
+@app.post("/api/casos/{caso_id}/analise-documentos")
+def analisar_documentos_do_caso(caso_id: str):
+    """O que os anexos dizem e a entrevista não registrou.
+
+    Sob demanda, com botão, e não a cada upload: são vinte documentos num caso
+    grande, e reanalisar a cada um pagaria vinte chamadas de modelo para
+    responder a mesma pergunta. O advogado clica quando o checklist já está de
+    pé, que é quando a resposta vale.
+
+    Falta de chave e modelo mudo viram 503 com o que dá para fazer — os
+    documentos continuam anexados e legíveis de qualquer forma.
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    try:
+        return analise_documentos.analisar(caso_id)
+    except analise_documentos.ErroAnaliseDocumentos as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.post("/api/chamada/sala/{sala_id}/token", status_code=201)
