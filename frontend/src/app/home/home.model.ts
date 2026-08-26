@@ -24,6 +24,30 @@ export type Tela =
   | "modelosDePeticao"
   | "documentacao";
 
+export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
+  carteira: "casos",
+  caso: "casos",
+  dossie: "casos",
+  painel: "metricas",
+  jurimetria: "agente",
+  casos: "casos",
+  avulso: "documentos",
+  investigacao: "investigacao",
+  usuarios: "usuarios",
+  panorama: "metricas",
+  entrevista: "entrevista",
+  supervisao: "supervisao",
+  dados: "metricas",
+  saudeAgente: "agente",
+  modelosDePeticao: "agente",
+  documentacao: "documentacao",
+};
+
+export function podeAbrirTela(tela: Tela, modulos: string[]): boolean {
+  const modulo = MODULO_DA_TELA[tela];
+  return !modulo || modulos.includes(modulo);
+}
+
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
  * que responde "onde eu estou" sem depender de memória. */
 export const CABECALHO: Record<
@@ -69,25 +93,40 @@ export const useHomeModel = () => {
   const categorias = useCategorias();
   const listaCasos = useCasos();
   const situacaoCaso = useSituacao(casoAberto);
+  const modulos = sessao.modulos;
 
   useEffect(() => {
-    if (sessao.papeis.includes("documentacao")) setTela("documentacao");
-  }, [sessao.papeis]);
+    if (sessao.carregando) return;
+    if (sessao.papeis.includes("documentacao") && podeAbrirTela("documentacao", modulos)) {
+      setTela("documentacao");
+      return;
+    }
+    if (!podeAbrirTela(tela, modulos)) {
+      const primeira = (Object.keys(MODULO_DA_TELA) as Tela[]).find((candidata) =>
+        podeAbrirTela(candidata, modulos),
+      );
+      setTela(primeira ?? "carteira");
+    }
+  }, [modulos, sessao.carregando, sessao.papeis, tela]);
+
+  function navegar(telaNova: Tela) {
+    if (podeAbrirTela(telaNova, modulos)) setTela(telaNova);
+  }
 
   function abrirCaso(casoId: string) {
     setCasoAberto(casoId);
-    setTela("caso");
+    navegar("caso");
   }
 
   function voltarParaCarteira() {
     setCasoAberto(null);
-    setTela("carteira");
+    navegar("carteira");
     void listaCasos.recarregar();
   }
 
   return {
     tela,
-    setTela,
+    setTela: navegar,
     casoAberto,
     categorias,
     listaCasos,

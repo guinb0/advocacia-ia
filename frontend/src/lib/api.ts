@@ -893,6 +893,7 @@ export async function baixarArquivoEntregaPdf(
 // Daqui isso não aparece: a tela fala com a API, e a API fala com o banco.
 
 export interface Perfil {
+  id: number;
   /** Texto livre, e não uma união fechada.
    *
    * Era `"advogado" | "cliente"` — errado já na origem (faltava `secretario`) e
@@ -910,13 +911,18 @@ export interface Perfil {
  * códigos que as rotas usam em `auth.exigir_modulo`. Uma lista mantida na tela
  * divergiria em silêncio, e a caixa marcada não corresponderia a acesso nenhum. */
 export interface ModuloDeAcesso {
+  id?: number;
   codigo: string;
   rotulo: string;
   descricao: string;
+  rota?: string;
+  grupo?: string;
+  ordem?: number;
 }
 
 /** Um perfil com os módulos que ele alcança — a linha da matriz de acesso. */
 export interface PerfilComAcesso {
+  id: number;
   codigo: string;
   rotulo: string;
   descricao: string;
@@ -934,6 +940,7 @@ export interface UsuarioCadastrado {
   email: string | null;
   ativo: boolean;
   perfis: string[];
+  perfilId?: number | null;
 }
 
 /** Os perfis que o cadastro oferece. Vêm do servidor para a tela não manter uma
@@ -990,7 +997,7 @@ export async function listarUsuarios(): Promise<UsuarioCadastrado[]> {
 export async function criarUsuario(dados: {
   nome: string;
   email: string;
-  perfil: string;
+  perfilId: number;
   senha: string;
 }): Promise<UsuarioCadastrado> {
   return comoJson<UsuarioCadastrado>(
