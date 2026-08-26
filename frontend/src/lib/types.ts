@@ -81,6 +81,13 @@ export interface Documento {
   };
   campos?: Campo[];
   validacao?: Validacao;
+  classificacao_semantica?: {
+    tipo_semantico?: string;
+    documento?: string;
+    classificador?: string;
+    status?: string;
+    erro?: string;
+  };
   /** Entregas antigas podem ter sido salvas antes deste bloco existir. */
   qualidade_imagem?: QualidadeImagem;
   ocr?: {
