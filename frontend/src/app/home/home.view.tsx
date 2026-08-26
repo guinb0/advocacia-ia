@@ -7,7 +7,7 @@ import BarraLateral from "@/components/layout/BarraLateral";
 import Carteira from "@/components/carteira/Carteira";
 import Checklist from "@/components/caso/Checklist";
 import Dados from "@/components/caso/Dados";
-import Dossie from "@/components/admin/Dossie";
+import Dossie, { PainelAnaliseDocumentos } from "@/components/admin/Dossie";
 import Investigacao from "@/components/carteira/Investigacao";
 import Jurimetria from "@/components/admin/Jurimetria";
 import ListaCasos from "@/components/carteira/ListaCasos";
@@ -138,7 +138,12 @@ const Telas = (props: HomeViewProps) => {
   }
 
   if (tela === "documentacao") {
-    return <PainelDocumentacao onVoltar={voltarParaCarteira} />;
+    return (
+      <PainelDocumentacao
+        onVoltar={voltarParaCarteira}
+        onAbrirDocumentos={abrirCaso}
+      />
+    );
   }
 
   if (tela === "supervisao") {
@@ -188,16 +193,21 @@ const Telas = (props: HomeViewProps) => {
           </Botao>
         </div>
         {situacaoCaso.situacao ? (
-          <Checklist
-            mostrarPrazos
-            situacao={situacaoCaso.situacao}
-            enviando={situacaoCaso.enviando}
-            erro={situacaoCaso.erro}
-            onVoltar={voltarParaCarteira}
-            onEnviar={situacaoCaso.enviar}
-            onRemover={situacaoCaso.removerEntrega}
-            onVincularIdentidade={situacaoCaso.vincularIdentidade}
-          />
+          <>
+            <Checklist
+              mostrarPrazos
+              situacao={situacaoCaso.situacao}
+              enviando={situacaoCaso.enviando}
+              erro={situacaoCaso.erro}
+              onVoltar={voltarParaCarteira}
+              onEnviar={situacaoCaso.enviar}
+              onRemover={situacaoCaso.removerEntrega}
+              onVincularIdentidade={situacaoCaso.vincularIdentidade}
+            />
+            <div className="mt-5">
+              <PainelAnaliseDocumentos casoId={casoAberto} />
+            </div>
+          </>
         ) : situacaoCaso.erro ? (
           <>
             <Botao variante="secundario" className="mb-4" onClick={voltarParaCarteira}>
