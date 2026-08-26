@@ -34,7 +34,7 @@ include:
       compose_file: "docker-compose.production.yml"
       tag_prefix: "release/v"
       increment_version: true
-      build_args_additional: "environment=production"
+      build_args_additional: "environment=production,NEXT_PUBLIC_JITSI_URL=https://jitsi.level33lab.cloud"
       build_args_version: true
       portainer_endpoint_id: "1"
       initial_version: "0.1.0"
