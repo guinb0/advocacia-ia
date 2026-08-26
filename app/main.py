@@ -1350,7 +1350,7 @@ def config_chamada():
 
 
 @app.post("/api/chamada/sala", status_code=201)
-def criar_sala(sala: str | None = None):
+def criar_sala(payload: dict | None = None):
     """Sorteia uma sala de chamada e devolve o link para mandar ao entrevistado.
 
     A entrevista acontece ANTES de o caso existir — é ela que decide a categoria
@@ -1367,7 +1367,8 @@ def criar_sala(sala: str | None = None):
     local roda com `ENABLE_AUTH=0` e aceita conexão anônima (ver
     `gerar_token_jitsi`).
     """
-    if sala is None:
+    sala = (payload or {}).get("sala") if payload else None
+    if not sala:
         sala = chamada.gerar_sala()
     token = gerar_token_jitsi(sala)
     return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}", "token": token or ""}
