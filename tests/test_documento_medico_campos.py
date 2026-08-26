@@ -15,6 +15,7 @@ def test_documento_medico_desconhecido_nao_inventa_dados_pessoais():
     campos = {campo.nome: campo.valor for campo in extrair_campos(linhas, "desconhecido")}
     assert "nome" not in campos
     assert "nome_mae" not in campos
+    assert "cep" not in campos
     assert not any(nome.startswith("filiacao") for nome in campos)
 
 

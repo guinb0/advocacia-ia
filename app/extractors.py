@@ -543,6 +543,12 @@ def _conferir_coerencia_das_datas(campos: dict[str, Campo]) -> None:
 
 
 def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
+    # Tipo não estruturado não ganha campos cadastrais por coincidência textual.
+    # Um laudo pode trazer o CEP da clínica no rodapé, CPF do médico ou datas;
+    # nenhum deles é automaticamente um dado do cliente. O texto integral segue
+    # para classificação semântica depois do OCR.
+    if tipo == "desconhecido":
+        return []
     texto_bruto = "\n".join(ln.texto for ln in linhas)
     texto_norm = "\n".join(ln.norm for ln in linhas)
     campos: dict[str, Campo] = {}
