@@ -80,6 +80,13 @@ celery_app.conf.update(
             "task": "app.tasks.manutencao.recuperar_jobs_abandonados",
             "schedule": 900.0,
         },
+        # A cada 5 min porque é o intervalo em que um documento preso ainda passa
+        # por lentidão, e não por sistema quebrado. Só reenfileira o que já passou
+        # de `MINUTOS_TRAVADA` — não interfere numa leitura em andamento.
+        "recuperar-entregas-travadas": {
+            "task": "app.tasks.manutencao.recuperar_entregas_travadas",
+            "schedule": 300.0,
+        },
         "reenfileirar-entregas-ao-agente": {
             "task": "app.tasks.agente.reenfileirar_pendentes",
             "schedule": 600.0,

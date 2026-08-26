@@ -85,7 +85,8 @@ def test_entrega_usa_o_pipeline_do_worker(tmp_path, monkeypatch):
     resultado = {"tipo": {"detectado": "rg"}}
 
     monkeypatch.setattr(ocr.categorias, "obter", lambda _codigo: categoria)
-    monkeypatch.setattr(ocr.pipeline, "processar", lambda *args: resultado)
+    # `gerar_arquivos_temporarios` vai por nome: o dublê precisa aceitar kwargs.
+    monkeypatch.setattr(ocr.pipeline, "processar", lambda *args, **kwargs: resultado)
     monkeypatch.setattr(ocr.casos, "cobre_rg_e_cpf", lambda _resultado: False)
     monkeypatch.setattr(ocr.casos, "tipo_confere", lambda *_args: True)
     monkeypatch.setattr(ocr, "_entregar_ao_agente", lambda *_args: None)

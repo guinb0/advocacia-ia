@@ -16,7 +16,7 @@ import json
 import logging
 import unicodedata
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -315,6 +315,53 @@ def falhar_entrega(entrega_id: str, mensagem: str) -> None:
             "UPDATE entregas SET status_proc = 'erro', erro_proc = ? WHERE id = ?",
             (mensagem[:500], entrega_id),
         )
+
+
+def entregas_travadas(minutos: int) -> list[dict[str, Any]]:
+    """Entregas paradas há tempo demais em `na_fila` ou `processando`.
+
+    Quem lê o documento é outro processo (`ocr@`, em `app/tasks/ocr.py`). Se ele
+    morre — ou se a mensagem se perde numa reinicialização do Redis —, a entrega
+    fica exatamente no estado em que estava e ninguém volta para ela: o arquivo
+    aparece como recebido, o item do checklist fica "Lendo" e não sai mais dali.
+    Foi o que aconteceu: o worker de OCR caiu com o resto do sistema no ar, e
+    todo upload seguinte parou em "aguardando a vez na fila de leitura".
+
+    Nada aqui decide o que fazer com a entrega — só a encontra. Vem com a
+    categoria do caso porque quem reenfileira precisa dela para remontar os
+    argumentos de `processar_entrega`.
+    """
+    limite = (datetime.now(timezone.utc) - timedelta(minutes=minutos)).isoformat(
+        timespec="seconds"
+    )
+    with conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT e.id, e.caso_id, e.item_codigo, e.arquivo, e.caminho,
+                   e.itens_atendidos, e.status_proc, e.criado_em, c.categoria
+              FROM entregas e
+              JOIN casos c ON c.id = e.caso_id
+             WHERE e.status_proc IN ('na_fila', 'processando')
+               AND e.criado_em < ?
+             ORDER BY e.criado_em
+            """,
+            (limite,),
+        ).fetchall()
+
+    return [
+        {
+            "id": l["id"],
+            "caso_id": l["caso_id"],
+            "item_codigo": l["item_codigo"],
+            "arquivo": l["arquivo"],
+            "caminho": l["caminho"],
+            "categoria": l["categoria"],
+            "status_proc": l["status_proc"],
+            "criado_em": l["criado_em"],
+            "itens_atendidos": json.loads(l["itens_atendidos"] or "[]"),
+        }
+        for l in linhas
+    ]
 
 
 def registrar_entrega(

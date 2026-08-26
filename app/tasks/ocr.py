@@ -17,6 +17,39 @@ def _executar_ocr(caminho: str, nome: str, idioma: str, tipo: str | None) -> dic
     return pipeline.processar(conteudo, nome, idioma, tipo)
 
 
+def _ler_anexo(entrega_id: str, caminho: str) -> bytes:
+    """O binário do documento, venha ele do disco ou do banco.
+
+    QUEM GRAVA E QUEM LÊ PODEM NÃO SER A MESMA MÁQUINA.
+
+    O caminho que chega aqui foi escrito pela API, no disco DELA. Na estação de
+    trabalho isso é o mesmo disco e ninguém nota. Em container — e em qualquer
+    worker rodando fora da máquina da API, que é o modo de escalar descrito em
+    `docs/CELERY.md` — o caminho pode simplesmente não existir deste lado.
+
+    Ler direto do caminho transformava isso em `FileNotFoundError`, que a task
+    reconhece como `OSError` e tenta de novo três vezes antes de desistir: quatro
+    leituras condenadas a falhar por um arquivo que está inteiro no SQL Server,
+    em `entregas.conteudo`. `caminho_duravel_da_entrega` restaura a cópia local a
+    partir dele, conferindo o checksum antes de servir.
+    """
+    arquivo = Path(caminho)
+    if arquivo.is_file():
+        return arquivo.read_bytes()
+
+    restaurado = armazenamento.caminho_duravel_da_entrega(entrega_id)
+    if restaurado is None:
+        # De propósito NÃO é um `OSError`: `autoretry_for` o repetiria três vezes,
+        # e nada disto melhora com o tempo — ou o binário está no banco, ou não
+        # está. Falhar na hora põe o pedido de reenvio na tela do advogado agora.
+        raise RuntimeError(
+            "O arquivo enviado não está no disco deste leitor nem tem cópia íntegra "
+            "no banco. Peça o reenvio do documento."
+        )
+    log.info("anexo da entrega %s restaurado do banco para %s", entrega_id, restaurado)
+    return restaurado.read_bytes()
+
+
 def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
     """Enfileira a integracao sem manter o worker pesado esperando HTTP."""
     try:
@@ -115,7 +148,7 @@ def processar_entrega(
         if item is None:
             raise ValueError(f"Item {item_codigo!r} não pertence ao checklist.")
 
-        conteudo = Path(caminho).read_bytes()
+        conteudo = _ler_anexo(entrega_id, caminho)
         tipo_extracao = (
             "cin" if usar_para_rg_e_cpf and item.tipo_ocr in {"rg", "cpf"}
             else item.tipo_ocr
