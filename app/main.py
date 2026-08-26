@@ -188,6 +188,7 @@ PUBLICAS = {
     "/api/saude",
     "/api/config",
     "/api/chamada/config",
+    "/api/chamada/sala",
     "/api/user/authenticate",
     "/api/user/logout",
     "/docs",
