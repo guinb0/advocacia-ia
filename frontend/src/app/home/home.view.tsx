@@ -205,7 +205,7 @@ const Telas = (props: HomeViewProps) => {
               onVincularIdentidade={situacaoCaso.vincularIdentidade}
             />
             <div className="mt-5">
-              <PainelAnaliseDocumentos casoId={casoAberto} />
+              {casoAberto && <PainelAnaliseDocumentos casoId={casoAberto} />}
             </div>
           </>
         ) : situacaoCaso.erro ? (
