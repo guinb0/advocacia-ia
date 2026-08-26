@@ -1,0 +1,179 @@
+# A stack do Acervo em produção — os serviços e, principalmente, AS FILAS.
+#
+# POR QUE ESTE ARQUIVO EXISTE
+#
+# Ele não existia, e a stack vivia só dentro do Portainer. O resultado foi um
+# worker subido sem `-Q` nenhum: nome padrão, fila padrão, consumindo apenas
+# `default`. Quatro das cinco filas ficaram órfãs por tempo indeterminado, e
+# ninguém percebeu porque a única fila atendida era a da ponte com o agente
+# jurídico — a parte visível continuava respondendo.
+#
+# O sintoma foi documento parado em "aguardando a vez na fila de leitura" para
+# sempre: o upload entrava em `gpu_background` e não havia quem retirasse.
+#
+# O QUE PRECISA CASAR COM AS ROTAS DO CÓDIGO
+#
+# `app/celery_app.py` roteia por prefixo de módulo. Toda fila listada ali precisa
+# de alguém consumindo, ou o trabalho correspondente desaparece em silêncio:
+#
+#   app.tasks.ocr.*         -> gpu_background   leitura de documentos (OCR)
+#   app.tasks.agente.*      -> default          ponte com o ia-juridica
+#   app.tasks.ia.*          -> ai               análise e estratégia
+#   app.tasks.documentos.*  -> documents        PDF e relatórios
+#   app.tasks.manutencao.*  -> low              limpeza e as rondas do beat
+#
+# `gpu_background` fica num worker SEPARADO de propósito, com concorrência 1: uma
+# leitura leva de 4 a 30 segundos, e dividir o processo com as filas leves faria
+# IA, PDF e manutenção esperarem atrás de cada documento.
+#
+# CONFIRA ANTES DE SUBIR
+#
+#   - `IMAGE`: o caminho abaixo segue a convenção do `ia-juridica`
+#     (`registry.level33lab.cloud/ia/<projeto>`). Se o repositório de imagem do
+#     Acervo tiver outro nome, é a única linha a mudar.
+#   - Os nomes de rede (`traefik-public`, `interna`) são os do stack do agente.
+#   - `CELERY_BROKER_URL` e `CELERY_RESULT_BACKEND` precisam apontar para índices
+#     DIFERENTES do mesmo Valkey, e ser idênticos em TODOS os serviços. O default
+#     do código é `redis://localhost:6380/...`, que dentro de um container é o
+#     próprio container — se escapar sem definir, o worker sobe e nunca recebe
+#     nada.
+#
+# Depois de subir, confirme sem entrar em servidor nenhum:
+#
+#   GET /api/saude?fila=1     -> público, diz se há quem leia
+#   GET /api/saude/fila       -> com sessão, mostra worker por worker e as filas
+
+x-imagem: &imagem
+  image: ${IMAGE:-registry.level33lab.cloud/ia/advocacia-ia}:${IMAGE_TAG:-latest}
+
+# O ambiente é o MESMO para API, workers e beat. Divergir aqui é o erro que este
+# arquivo existe para impedir: worker noutro broker publica a fila de um lado e
+# escuta do outro, e o documento fica esperando para sempre.
+x-ambiente: &ambiente
+  SQLSERVER_HOST: ${SQLSERVER_HOST?SQLSERVER_HOST is required}
+  SQLSERVER_PORT: ${SQLSERVER_PORT:-1433}
+  SQLSERVER_DATABASE: ${SQLSERVER_DATABASE:-advocacia}
+  SQLSERVER_USER: ${SQLSERVER_USER?SQLSERVER_USER is required}
+  SQLSERVER_PASSWORD: ${SQLSERVER_PASSWORD?SQLSERVER_PASSWORD is required}
+
+  # Broker e backend em índices distintos: o código documenta `/0` para a fila e
+  # `/1` para resultados. Compartilhar o mesmo índice mistura as chaves das duas
+  # coisas no mesmo banco.
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://valkey:6379/0}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+  # Lido por `app/observabilidade.py` para medir o tamanho das filas.
+  REDIS_URL: ${CELERY_BROKER_URL:-redis://valkey:6379/0}
+
+  # Sem esta chave o motor de OCR não tem para onde ir: a leitura levanta
+  # "MISTRAL_API_KEY não configurada" e a entrega termina em erro.
+  MISTRAL_API_KEY: ${MISTRAL_API_KEY?MISTRAL_API_KEY is required}
+  MISTRAL_OCR_MODEL: ${MISTRAL_OCR_MODEL:-mistral-ocr-latest}
+
+  JWT_SECRET: ${JWT_SECRET?JWT_SECRET is required}
+  JWT_ISSUER: ${PUBLIC_URL}/
+  JWT_AUDIENCE: ${PUBLIC_URL}/
+  PORTAL_SEGREDO: ${PORTAL_SEGREDO?PORTAL_SEGREDO is required}
+  ORIGENS_PERMITIDAS: ${PUBLIC_URL}
+  JOBS_DATABASE_URL: ${JOBS_DATABASE_URL?JOBS_DATABASE_URL is required}
+  AGENTE_API_URL: ${AGENTE_API_URL:-http://ia-juridica:8011}
+
+services:
+  api:
+    <<: *imagem
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100",
+              "--timeout-keep-alive", "65"]
+    environment: *ambiente
+    volumes:
+      # O binário do anexo também vai para o SQL Server, e desde
+      # `tasks.ocr._ler_anexo` o worker se vira sem este volume. Ele continua aqui
+      # porque ler do disco evita puxar o arquivo do banco a cada leitura.
+      - anexos:/app/dados/casos
+    networks:
+      traefik-public: {}
+      interna: {}
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8100/api/saude',timeout=5); sys.exit(0 if r.status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      restart_policy: {condition: any, delay: 5s}
+
+  # A LEITURA DE DOCUMENTOS. Foi este serviço que faltou.
+  worker-ocr:
+    <<: *imagem
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker",
+              "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h"]
+    environment: *ambiente
+    volumes:
+      - anexos:/app/dados/casos
+    networks:
+      interna: {}
+    deploy:
+      restart_policy: {condition: any, delay: 5s}
+
+  # Tudo que não é OCR. `low` entra aqui: é para onde o beat manda as rondas,
+  # inclusive a que devolve à fila o documento que ficou órfão.
+  worker-background:
+    <<: *imagem
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker",
+              "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@%h"]
+    environment: *ambiente
+    volumes:
+      - anexos:/app/dados/casos
+    networks:
+      interna: {}
+    deploy:
+      restart_policy: {condition: any, delay: 5s}
+
+  # Sem o beat, nenhuma ronda periódica existe — e a recuperação de entregas
+  # travadas, que é a rede de segurança de tudo isto, nunca dispara.
+  beat:
+    <<: *imagem
+    command: ["celery", "-A", "app.celery_app:celery_app", "beat"]
+    environment: *ambiente
+    networks:
+      interna: {}
+    deploy:
+      # Um só. Dois beats agendam a mesma tarefa duas vezes.
+      replicas: 1
+      restart_policy: {condition: any, delay: 5s}
+
+  frontend:
+    image: ${IMAGE_FRONTEND:-registry.level33lab.cloud/ia/advocacia-ia-frontend}:${IMAGE_TAG:-latest}
+    environment:
+      # `src/proxy.ts` confere a MESMA assinatura da API antes de servir `/home`.
+      # Sem o prefixo público de propósito: com ele o segredo iria para o pacote
+      # do navegador e qualquer pessoa poderia forjar sessão.
+      JWT_SECRET: ${JWT_SECRET?JWT_SECRET is required}
+    networks:
+      traefik-public: {}
+      interna: {}
+    deploy:
+      restart_policy: {condition: any, delay: 5s}
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkey_data:/data
+    networks:
+      interna: {}
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      restart_policy: {condition: any, delay: 5s}
+
+volumes:
+  anexos:
+  valkey_data:
+
+networks:
+  traefik-public:
+    external: true
+  interna:
