@@ -33,7 +33,11 @@ export default function TabelaCampos({ campos }: { campos: Campo[] }) {
               {campo.observacao && <ObservacaoTabela>{campo.observacao}</ObservacaoTabela>}
             </ValorTabela>
             {/* Confiança 0 significa "não medida" (campo veio de regex, não de uma caixa do OCR). */}
-            <ValorTabela>{campo.confianca ? `${Math.round(campo.confianca * 100)}%` : "—"}</ValorTabela>
+            <ValorTabela>
+              {typeof campo.confianca === "number" && campo.confianca > 0
+                ? `${Math.round(campo.confianca * 100)}%`
+                : "—"}
+            </ValorTabela>
             <Td>
               {campo.valido === true ? (
                 <Selo tom="ok" simbolo="✓">
