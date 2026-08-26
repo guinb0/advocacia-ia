@@ -138,7 +138,12 @@ const Telas = (props: HomeViewProps) => {
   }
 
   if (tela === "documentacao") {
-    return <PainelDocumentacao onVoltar={voltarParaCarteira} />;
+    return (
+      <PainelDocumentacao
+        onVoltar={voltarParaCarteira}
+        onAbrirDocumentos={abrirCaso}
+      />
+    );
   }
 
   if (tela === "supervisao") {

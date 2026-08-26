@@ -7,7 +7,12 @@ import type { AtendimentoDocumentacao } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import { useSessao } from "@/lib/auth";
 
-export default function PainelDocumentacao({ onVoltar }: { onVoltar: () => void }) {
+interface Props {
+  onVoltar: () => void;
+  onAbrirDocumentos: (casoId: string) => void;
+}
+
+export default function PainelDocumentacao({ onVoltar, onAbrirDocumentos }: Props) {
   const [itens, setItens] = useState<AtendimentoDocumentacao[]>([]);
   const [ativas, setAtivas] = useState(0);
   const [solicitacoes, setSolicitacoes] = useState(0);
@@ -43,7 +48,11 @@ export default function PainelDocumentacao({ onVoltar }: { onVoltar: () => void 
         nome: `Documentação · ${sessao.nome || "Atendente"}`,
         camera: false,
       }, token);
-      carregar();
+      if (!reservado.caso_id) {
+        throw new Error("O atendimento foi assumido, mas ainda não possui um caso vinculado.");
+      }
+      // A chamada fica no contexto global e continua ativa na tela do caso.
+      onAbrirDocumentos(reservado.caso_id);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível assumir a chamada.");
     } finally {
