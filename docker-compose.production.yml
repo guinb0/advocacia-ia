@@ -102,7 +102,7 @@ services:
       JWT_SECRET: ${JWT_SECRET?JWT_SECRET is required}
       # Vazio faz o servidor sortear uma por processo, e as sessoes do portal
       # do cliente caem a cada restart.
-      PORTAL_SEGREDO: ${PORTAL_SEGREDO?PORTAL_SEGREDO is required}
+      PORTAL_SEGREDO: ${PORTAL_SEGREDO:-}
 
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY?DEEPSEEK_API_KEY is required}
       DEEPSEEK_BASE_URL: https://api.deepseek.com
@@ -116,17 +116,25 @@ services:
       # do plano — o link ja sai pela nossa Evolution, de graca.
       ZAPSIGN_WHATSAPP: "0"
 
-      EVOLUTION_API_URL: https://evolution.level33lab.cloud
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-https://evolution.level33lab.cloud}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY?EVOLUTION_API_KEY is required}
       EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE?EVOLUTION_INSTANCE is required}
       GOOGLE_AVALIACAO_URL: https://share.google/BrQVYGnjqdSz3pEw7
       DATAJUD_API_KEY: ${DATAJUD_API_KEY?DATAJUD_API_KEY is required}
 
-      AGENTE_API_URL: http://ia-juridica:8011
-      JITSI_PUBLIC_URL: https://meet.level33lab.cloud
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      EMBEDDINGS_API_KEY: ${EMBEDDINGS_API_KEY:-}
+      EMBEDDINGS_MODEL_NAME: ${EMBEDDINGS_MODEL_NAME:-google/gemini-embedding-001}
+      EMBEDDINGS_BASE_URL: ${EMBEDDINGS_BASE_URL:-https://openrouter.ai/api/v1}
+      DATABASE_URL: ${DATABASE_URL:-}
 
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      AGENTE_API_URL: ${AGENTE_API_URL:-http://ia-juridica:8011}
+      JITSI_PUBLIC_URL: ${JITSI_PUBLIC_URL:-https://jitsi.level33lab.cloud}
+      JITSI_JWT_APP_SECRET: ${JITSI_JWT_APP_SECRET:-}
+
+      CELERY_BROKER_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/1
+      CELERY_RESULT_BACKEND: redis://:${VALKEY_PASSWORD}@valkey:6379/1
+      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/1
     volumes:
       - dados:/app/dados
     deploy:
@@ -167,6 +175,8 @@ services:
         aliases:
           - acervo-api
       interna: {}
+      psql_db: {}
+      cache_shared_net: {}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8100/api/saude',timeout=5); sys.exit(0 if r.status==200 else 1)"]
       interval: 30s
@@ -215,6 +225,7 @@ services:
       traefik-public:
         aliases:
           - acervo-transcricao
+      interna: {}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8200/saude',timeout=5); sys.exit(0 if r.status==200 else 1)"]
       interval: 30s
@@ -242,7 +253,8 @@ services:
           cpus: "2.00"
     networks:
       interna: {}
-
+      psql_db: {}
+      cache_shared_net: {}
   beat:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
     command: ["celery", "-A", "app.celery_app:celery_app", "beat"]
@@ -259,29 +271,7 @@ services:
           cpus: "0.50"
     networks:
       interna: {}
-
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis_data:/data
-    deploy:
-      restart_policy:
-        condition: any
-        delay: "5s"
-        max_attempts: 0
-        window: "30s"
-      resources:
-        limits:
-          memory: 512M
-          cpus: "0.50"
-    networks:
-      interna: {}
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
+      cache_shared_net: {}
 
 volumes:
   # `api` e `worker` gravam os dois aqui (arquivos de caso, contratos
@@ -289,9 +279,12 @@ volumes:
   # precisam de placement constraint no mesmo, ou isto vira armazenamento
   # compartilhado. Ver docs/DEPLOY.md.
   dados:
-  redis_data:
 
 networks:
   traefik-public:
+    external: true
+  psql_db:
+    external: true
+  cache_shared_net:
     external: true
   interna:
