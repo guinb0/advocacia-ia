@@ -203,6 +203,19 @@ PUBLICAS = {
 # rota entra por aqui.
 PREFIXO_PORTAL = "/api/portal/"
 
+# ENTRAR NUMA CHAMADA NÃO PODE PEDIR LOGIN.
+#
+# Quem abre o link da chamada é o cliente, e ele não tem conta — a página diz
+# isso na cara: "não precisa instalar nada, criar conta nem informar o seu
+# número". Só que a rota que devolve o token do Jitsi exigia sessão, e o
+# navegador dele batia em 401: o link público abria uma tela de login.
+#
+# A sala vai no CAMINHO, e não no corpo, justamente para o middleware poder
+# liberar por prefixo. E é seguro pelo mesmo motivo do portal: o nome da sala
+# são 256 bits sorteados, e quem não tem o link não o adivinha. Criar sala NOVA
+# continua exigindo sessão — isso é ato do escritório.
+PREFIXO_CHAMADA = "/api/chamada/sala/"
+
 # O QUE ALGUÉM SEM O PAPEL `advogado` ALCANÇA — e por que a lista é esta.
 #
 # Até aqui `exigir_papel` não era usado em rota nenhuma: bastava estar
@@ -251,6 +264,7 @@ async def exigir_autenticacao(request: Request, call_next):
         request.method == "OPTIONS"
         or caminho in PUBLICAS
         or caminho.startswith(PREFIXO_PORTAL)
+        or caminho.startswith(PREFIXO_CHAMADA)
     )
 
     if auth.ATIVA and not livre:
@@ -1373,6 +1387,34 @@ def criar_sala(payload: dict | None = None):
         sala = chamada.gerar_sala()
     token = gerar_token_jitsi(sala)
     return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}", "token": token or ""}
+
+
+@app.post("/api/chamada/sala/{sala_id}/token", status_code=201)
+def token_da_sala(sala_id: str):
+    """O token para ENTRAR numa sala que já existe. Sem login, de propósito.
+
+    É o que o cliente chama ao abrir o link da chamada. Ele não tem conta — a
+    página promete que não precisa criar uma —, e a rota de cima exige sessão
+    porque criar sala é ato do escritório. Sem esta separação, o link público
+    abria uma tela de login.
+
+    O QUE PROTEGE A SALA CONTINUA SENDO O NOME DELA
+
+    São 256 bits sorteados pelo mesmo gerador que assina o portal. Quem tem o
+    link entra; quem não tem não adivinha. É a mesma proteção que o portal do
+    caso usa, e o motivo de a sala vir no CAMINHO: o middleware libera por
+    prefixo, e o segredo viaja com a requisição sem depender do corpo.
+
+    Não cria nada. Sala inexistente devolve token para um nome que ninguém está
+    usando — e a chamada fica esperando alguém que não vem, que é o mesmo que
+    acontece com um link antigo. Recusar aqui exigiria manter registro de salas,
+    e a sala é efêmera de propósito (ver `app/chamada.py`).
+    """
+    sala_id = sala_id.strip()
+    if not sala_id:
+        raise HTTPException(422, "Identificador da sala vazio.")
+    token = gerar_token_jitsi(sala_id)
+    return {"sala": sala_id, "url": f"{URL_PORTAL}/chamada/{sala_id}", "token": token or ""}
 
 
 @app.websocket("/ws/chamada/{sala_id}")
