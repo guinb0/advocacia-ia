@@ -351,14 +351,22 @@ export async function listarMunicipios(uf: string): Promise<MunicipioLocalidade[
 
 // ----------------------------------------------------------------- chamada
 
-/** Sorteia uma sala e devolve o link para mandar ao entrevistado. */
+/** Sorteia uma sala nova, ou pega o token para ENTRAR numa que já existe.
+ *
+ * São duas rotas porque são dois atos com donos diferentes. Sortear sala é do
+ * escritório e exige sessão. Entrar é do cliente, que não tem conta — a página
+ * da chamada promete que ele não precisa criar uma —, e por isso a rota de
+ * entrada é pública, com a sala no caminho: o que protege é o nome dela, 256
+ * bits sorteados, igual ao portal do caso.
+ *
+ * Antes as duas passavam pela mesma rota autenticada, e o link público da
+ * chamada abria uma tela de login. */
 export async function criarSalaChamada(sala?: string): Promise<{ sala: string; url: string; token: string }> {
+  const destino = sala
+    ? `/api/chamada/sala/${encodeURIComponent(sala)}/token`
+    : "/api/chamada/sala";
   return comoJson<{ sala: string; url: string; token: string }>(
-    await buscar("/api/chamada/sala", {
-      method: "POST",
-      headers: sala ? { "Content-Type": "application/json" } : undefined,
-      body: sala ? JSON.stringify({ sala }) : undefined,
-    }),
+    await buscar(destino, { method: "POST" }),
   );
 }
 
