@@ -92,6 +92,43 @@ _ECT = r"(CORREIOS|CARTEIR[OA]|\bECT\b|CORRESPONDENCIA|TRIAGEM|CENTRO DE DISTRIB
 
 # Sinais que valem mais que palavra isolada porque combinam dois fatos. Cada um
 # some/subtrai pontos de uma categoria quando o padrão casa no texto inteiro.
+#: Palavras que viram o sentido do que vem depois. Medido na entrevista real do
+#: dia 26/08: "não teve via acidente de trabalho" somava +10 para Acidente Geral,
+#: e "não sei que que é a CAT" somava +5 — a categoria venceu com 18 pontos dos
+#: quais 18 eram negação ou pedaço de palavra.
+NEGACOES = ("NAO", "NUNCA", "NENHUM", "NENHUMA", "JAMAIS", "SEM")
+
+#: Conectivo de CAUSA entre a negação e o termo desfaz a negação: em "não
+#: consigo trabalhar POR CAUSA do acidente", o acidente é real e deve pontuar.
+#: Sem esta ressalva, a correção da negação apagaria caso verdadeiro — que é
+#: erro pior que o que ela conserta.
+CONECTIVOS_DE_CAUSA = ("POR CAUSA", "DEVIDO", "POR CONTA", "EM RAZAO", "DECORRENTE")
+
+#: Quanto texto antes do termo conta como contexto da negação. Três ou quatro
+#: palavras: "não teve via acidente" cabe, "não consigo dormir direito desde o
+#: acidente" não — e não deve caber mesmo, ali o acidente existe.
+JANELA_NEGACAO = 28
+
+
+def _negado(norm: str, inicio: int) -> bool:
+    """A menção logo antes do termo o nega?"""
+    janela = norm[max(0, inicio - JANELA_NEGACAO) : inicio]
+    if not any(re.search(rf"\b{n}\b", janela) for n in NEGACOES):
+        return False
+    # A negação existe, mas há uma causa entre ela e o termo: o fato é real.
+    return not any(c in janela for c in CONECTIVOS_DE_CAUSA)
+
+
+def _ocorrencias(norm: str, termo: str):
+    """Onde o termo aparece como PALAVRA, e não como pedaço de outra.
+
+    O `in` solto casava "CAI" dentro de "enCAIxa" e "BO" dentro de "BOm dia" —
+    os dois medidos na mesma entrevista. Termo de uma sílaba é comum dentro de
+    palavra comprida, e cada falso positivo desses empurra a categoria errada.
+    """
+    return re.finditer(rf"\b{re.escape(termo)}\b", norm)
+
+
 @dataclass
 class Desempate:
     padrao: str
@@ -189,9 +226,14 @@ def classificar_entrevista(texto: str) -> dict[str, Any]:
 
     for codigo, pistas in PISTAS.items():
         for termo, peso in pistas:
-            if termo in norm:
+            # Uma vez por termo, como antes: repetir a mesma expressão não é
+            # mais evidência, é a pessoa repetindo a mesma coisa.
+            for achado in _ocorrencias(norm, termo):
+                if _negado(norm, achado.start()):
+                    continue
                 pontos[codigo] = pontos.get(codigo, 0) + peso
                 evidencias.setdefault(codigo, []).append(_trecho_ao_redor(norm, termo))
+                break
 
     for d in DESEMPATES:
         if re.search(d.padrao, norm, re.S):

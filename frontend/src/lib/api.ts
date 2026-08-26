@@ -351,6 +351,35 @@ export async function listarMunicipios(uf: string): Promise<MunicipioLocalidade[
 
 // ----------------------------------------------------------------- chamada
 
+export interface AchadoDocumento {
+  informacao: string;
+  documento: string;
+  entrega_id: string;
+  /** Trecho LITERAL do documento. Conferido no servidor contra o texto lido —
+   *  achado cuja citação não existe no documento apontado não chega até aqui. */
+  citacao: string;
+  relevancia: string;
+  /** O documento contradiz o que a entrevista registrou. */
+  contradiz: boolean;
+}
+
+export interface AnaliseDocumentos {
+  achados: AchadoDocumento[];
+  documentos_lidos: number;
+  /** Quantos achados o servidor recusou por citação não conferida. Aparece na
+   *  tela de propósito: silenciar esconderia um modelo alucinando com
+   *  frequência, que é o que precisa aparecer. */
+  recusados?: number;
+  aviso?: string;
+}
+
+/** O que os anexos dizem e a entrevista não registrou. Sob demanda. */
+export async function analisarDocumentosDoCaso(casoId: string): Promise<AnaliseDocumentos> {
+  return comoJson(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/analise-documentos`, { method: "POST" }),
+  );
+}
+
 /** Sorteia uma sala nova, ou pega o token para ENTRAR numa que já existe.
  *
  * São duas rotas porque são dois atos com donos diferentes. Sortear sala é do
