@@ -976,7 +976,7 @@ function ResumoDoConjunto({ precedentes }: { precedentes: Precedente[] }) {
  * A citação de cada achado é conferida NO SERVIDOR contra o texto do documento
  * apontado. O que não confere não chega aqui — e o número de recusas aparece,
  * porque silenciá-lo esconderia um modelo alucinando com frequência. */
-function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
+export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
   const [analise, setAnalise] = useState<AnaliseDocumentos | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
