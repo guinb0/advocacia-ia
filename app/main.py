@@ -1887,7 +1887,9 @@ async def _registrar_documento(
     caminho = destino / f"{item}_{uuid.uuid4()}{Path(nome).suffix.lower()}"
     caminho.write_bytes(conteudo)
 
-    entrega = armazenamento.registrar_entrega_pendente(caso_id, item, nome, caminho)
+    entrega = armazenamento.registrar_entrega_pendente(
+        caso_id, item, nome, caminho, conteudo=conteudo
+    )
 
     # O checklist antes abria uma thread na API e carregava outra cópia do
     # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
@@ -1974,7 +1976,9 @@ async def enviar_documento_de_teste(
     }
     tipo_confere = True if tipo else None
 
-    entrega = armazenamento.registrar_entrega(caso_id, item, nome, caminho, extracao, tipo_confere)
+    entrega = armazenamento.registrar_entrega(
+        caso_id, item, nome, caminho, extracao, tipo_confere, conteudo=caminho.read_bytes()
+    )
 
     threading.Thread(
         target=_entregar_ao_agente,
@@ -2247,11 +2251,12 @@ async def vincular_identidade_unificada(caso_id: str, entrega_id: str = Form(...
     caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
     if caminho is None:
         raise HTTPException(410, "O anexo antigo não possui cópia recuperável; reenvie o arquivo.")
+    bruto = caminho.read_bytes()
 
     # O botão é a confirmação expressa de que se trata de identidade unificada.
     # Reprocessamos no layout da CIN para extrair e validar o CPF sem depender de
     # o classificador conseguir nomear corretamente todas as versões do documento.
-    resultado = await _processar(caminho.read_bytes(), entrega["arquivo"], "pt", "cin")
+    resultado = await _processar(bruto, entrega["arquivo"], "pt", "cin")
 
     atualizada = armazenamento.atualizar_para_identidade_unificada(
         entrega_id, resultado, itens_atendidos
@@ -2338,6 +2343,8 @@ def obter_entrega(entrega_id: str):
     if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
     entrega.pop("caminho", None)  # caminho no disco não interessa ao cliente HTTP
+    entrega.pop("conteudo", None)
+    entrega.pop("conteudo_sha256", None)
     return entrega
 
 

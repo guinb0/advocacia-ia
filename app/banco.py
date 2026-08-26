@@ -461,6 +461,10 @@ COLUNAS_NOVAS = (
     # atendimento gravaria a MESMA entrevista duas vezes, e a supervisão passaria a
     # contar o dobro do trabalho de quem a conduziu.
     (f"{PREFIXO}entrevistas", "gravacao_id", "varchar(64) NULL"),
+    # Cópia do documento original para que a pré-visualização sobreviva a mudança
+    # de pasta, servidor ou nome absoluto gravado antes da migração.
+    (f"{PREFIXO}entregas", "conteudo", "varbinary(max) NULL"),
+    (f"{PREFIXO}entregas", "conteudo_sha256", "char(64) NULL"),
 )
 
 

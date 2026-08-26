@@ -399,7 +399,7 @@ def montar_pedido(caso_id: str, incluir_opcionais: bool = False) -> dict[str, An
 #: Caracteres que o Windows recusa em nome de arquivo. Um documento chamado
 #: "RG (frente/verso).jpg" quebra o unzip do outro lado, e quem recebe o pacote
 #: é o escritório — não dá para pedir que renomeie na mão.
-_PROIBIDOS = str.maketrans({c: "-" for c in '\/:*?"<>|'})
+_PROIBIDOS = str.maketrans({c: "-" for c in '\\/:*?"<>|'})
 
 
 def _nome_no_pacote(indice: int, item_nome: str, arquivo: str) -> str:
