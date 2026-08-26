@@ -1,0 +1,26 @@
+{
+  "title": "Advocacia IA — Filas e API",
+  "uid": "advocacia-filas",
+  "schemaVersion": 40,
+  "refresh": "15s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Jobs aguardando por fila",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
+      "targets": [{"expr": "advocacia_queue_size", "legendFormat": "{{queue}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latência HTTP p95",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, path) (rate(advocacia_http_request_seconds_bucket[5m])))", "legendFormat": "{{path}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Taxa de erros HTTP",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 9},
+      "targets": [{"expr": "sum by (path, status) (rate(advocacia_http_requests_total{status=~\"5..\"}[5m]))", "legendFormat": "{{path}} {{status}}"}]
+    }
+  ]
+}

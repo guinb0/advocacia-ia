@@ -1,0 +1,85 @@
+stages:
+  - version
+  - build-and-push
+  - deploy
+  - tag
+  - notify
+  - .pre
+
+# ============================================================
+#  Acervo (advocacia-ia) — mesmo componente do vig-agent e do dflegal.
+#
+#  Só SEGREDO entra em `gitlab_variables`; domínio, modelo e porta de banco
+#  ficam fixos no compose, onde se lê junto com o contexto. É o critério do
+#  vig-agent, e é menos coisa para cadastrar à mão.
+#
+#  As variáveis abaixo precisam existir em Settings > CI/CD > Variables com o
+#  environment scope `prod`. O compose usa a forma `${VAR?VAR is required}`:
+#  faltando qualquer uma, a stack recusa subir em vez de subir quebrada.
+#
+#  Ver docs/DEPLOY.md.
+# ============================================================
+
+include:
+  # ============================================================
+  # PRODUÇÃO (Branch: production)
+  # ============================================================
+  - component: $CI_SERVER_FQDN/components/ci-platform/pipeline-generic@1.1.6
+    rules:
+      - if: $CI_COMMIT_BRANCH == "production"
+    inputs:
+      trigger_branch: "production"
+      env_type: "Production"
+      stack_name: "advocacia-ia"
+      compose_file: "docker-compose.production.yml"
+      tag_prefix: "release/v"
+      increment_version: false
+      build_args_additional: "environment=production"
+      build_args_version: true
+      portainer_endpoint_id: "1"
+      initial_version: "0.1.0"
+      gitlab_variables_environment: "prod"
+      gitlab_variables: '["DOMINIO","SQLSERVER_HOST","SQLSERVER_PASSWORD","PGVECTOR_HOST","PGVECTOR_USER","PGVECTOR_PASSWORD","JWT_SECRET","PORTAL_SEGREDO","DEEPSEEK_API_KEY","OPENROUTER_API_KEY","ZAPSIGN_API_TOKEN","DATAJUD_API_KEY","EVOLUTION_API_URL","EVOLUTION_API_KEY","EVOLUTION_INSTANCE","MISTRAL_API_KEY","EMBEDDINGS_API_KEY","DATABASE_URL","AGENTE_API_URL","JITSI_PUBLIC_URL","JITSI_JWT_APP_SECRET","VALKEY_PASSWORD"]'
+
+# ============================================================
+# QUALIDADE: roda em toda branch e em todo MR.
+#
+# Existe porque o pipeline de deploy só olha `release` e `production`, e até
+# agora nada segurava um `tsc` quebrado antes de chegar lá. Não bloqueia
+# deploy — bloqueia merge, que é onde ainda é barato consertar.
+# ============================================================
+testes-python:
+  stage: .pre
+  image: python:3.11-slim
+  rules:
+    - if: $CI_COMMIT_BRANCH != "production"
+  before_script:
+    # Sem paddle nem pyodbc: a suíte do WhatsApp toca httpx e fastapi apenas, e
+    # instalar o requirements inteiro (paddle, ~1 GB) custaria minutos de runner
+    # a cada push.
+    - pip install --no-cache-dir fastapi httpx "pyjwt[crypto]" python-multipart
+  script:
+    - python -m tests.test_whatsapp
+
+typecheck-frontend:
+  stage: .pre
+  image: node:22-slim
+  rules:
+    - if: $CI_COMMIT_BRANCH != "production"
+  before_script:
+    - cd frontend && npm ci
+  script:
+    - npx tsc --noEmit
+
+# ============================================================
+# FALLBACK: Aviso para outras branches
+# ============================================================
+no-op:
+  stage: .pre
+  image: alpine:latest
+  script:
+    - echo "ℹ️  Branch '${CI_COMMIT_BRANCH}' não possui pipeline de CI/CD configurado."
+    - echo "📋 Pipelines disponíveis:"
+    - echo "   - 'production' → Pipeline de Produção (Build + Deploy)"
+  rules:
+    - if: $CI_COMMIT_BRANCH != "production"

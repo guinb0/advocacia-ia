@@ -1,0 +1,386 @@
+@import "tailwindcss";
+
+/* =========================================================================
+ * SISTEMA VISUAL — tema claro institucional (ver docs/GUIA-VISUAL.md)
+ *
+ * Substitui a antiga direção "AUTOS" (fundo quase preto, filetes duplos,
+ * carimbos girados, micro-rótulos em caixa alta de 9px). O motivo da troca não
+ * foi estética: usuários sem familiaridade técnica não conseguiam ler a
+ * hierarquia, achar a ação principal nem saber o que cada cor significava.
+ *
+ * As três regras que sustentam o desenho:
+ *
+ *   1. HIERARQUIA POR PESO E ESPAÇO, não por linha divisória. Cartão branco
+ *      sobre fundo cinza-claro, com sombra discreta. Divisória só entre itens
+ *      de uma mesma lista.
+ *   2. UMA COR DE AÇÃO. Azul-marinho (--acao) é o que se clica. Vermelho,
+ *      âmbar e verde ficam reservados a ESTADO (problema, conferir, pronto) e
+ *      nunca aparecem como cor de botão comum — assim a cor volta a informar.
+ *   3. COR NUNCA SOZINHA. Todo estado traz rótulo em palavra e um símbolo
+ *      (✕ ! ✓ ●). Quem não distingue as cores continua lendo a tela.
+ *
+ * Contraste medido (WCAG 2.1). Texto ≥ 4,5:1; borda de controle e símbolo
+ * ≥ 3:1. Sobre o branco: --tinta 16,5:1 · --tinta-2 9,7:1 · --tinta-3 5,5:1 ·
+ * --acao 9,7:1 · --critico 6,5:1 · --atencao 6,3:1 · --ok 6,5:1 ·
+ * --borda-campo 3,5:1. Ao trocar qualquer valor, remeça antes de commitar.
+ * ========================================================================= */
+
+:root {
+  /* ------------------------------------------------------------ superfícies */
+  --fundo: #f5f7fa; /* fundo da aplicação */
+  --papel: #ffffff; /* cartão, painel, modal */
+  --papel-2: #f7f9fc; /* área rebaixada: campo, bloco de código, zona de envio */
+  --papel-3: #eff3f8; /* hover de linha e de item selecionado */
+
+  /* ----------------------------------------------------------------- tinta */
+  --tinta: #14202e; /* títulos e números */
+  --tinta-2: #33465c; /* texto corrido */
+  --tinta-3: #5a6b80; /* rótulo, metadado, texto de apoio */
+
+  /* ---------------------------------------------------------------- bordas */
+  --borda: #e3e9f0; /* divisória entre itens de uma lista */
+  --borda-forte: #c8d3e0; /* contorno de cartão */
+  --borda-campo: #7a8b9f; /* contorno de campo e de botão — precisa dos 3:1 */
+
+  /* ------------------------------------------------- ação (só o que se clica) */
+  --acao: #17457a;
+  --acao-forte: #10345f; /* hover/active */
+  --acao-clara: #ebf2fa; /* fundo de destaque informativo */
+  --acao-borda: #bad2ea;
+
+  /* ------------------------------------------------------ estado: problema */
+  --critico: #b3261e;
+  --critico-claro: #fdecea;
+  --critico-borda: #f0bbb6;
+
+  /* ------------------------------------------------------ estado: conferir */
+  --atencao: #8a5300; /* âmbar fechado: âmbar vivo reprova como texto */
+  --atencao-claro: #fff7e6;
+  --atencao-borda: #efd59a;
+  --atencao-marca: #a96f00; /* símbolo/barra: 4,2:1, acima dos 3:1 exigidos */
+
+  /* -------------------------------------------------------- estado: pronto */
+  --ok: #1c6b3e;
+  --ok-claro: #eaf6ef;
+  --ok-borda: #b3dcc4;
+
+  --foco: #1f6feb;
+
+  /* ------------------------------------------------------------ tipografia *
+   * --fonte-serif/-sans/-mono são injetadas no <html> pelo next/font (ver
+   * layout.tsx) e não devem ser redefinidas aqui: o <html> É o :root, então os
+   * dois nomes disputariam o mesmo elemento com a mesma especificidade e quem
+   * ganharia dependeria da ordem de carga do CSS. Os tokens semânticos abaixo
+   * usam nomes próprios e apenas as consomem. */
+  --fonte-titulo: var(--fonte-serif), Georgia, "Times New Roman", serif;
+  --fonte-ui: var(--fonte-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fonte-codigo: var(--fonte-mono), ui-monospace, Menlo, Consolas, monospace;
+
+  /* Escala. O piso é 13px: abaixo disso o texto deixa de ser lido por quem
+   * mais precisa dele. Nada de 9px em caixa alta como antes. */
+  --t-xs: 0.8125rem; /* 13px — metadado, legenda */
+  --t-sm: 0.875rem; /* 14px — rótulo, texto de apoio */
+  --t-base: 0.9375rem; /* 15px — corpo */
+  --t-md: 1.0625rem; /* 17px — destaque em lista */
+  --t-lg: 1.375rem; /* 22px — título de bloco */
+  --t-xl: 1.75rem; /* 28px — título de página */
+
+  /* -------------------------------------------------------- forma e sombra */
+  --raio: 10px; /* cartão, painel */
+  --raio-sm: 8px; /* campo, botão */
+  --raio-pill: 999px; /* selo de estado */
+
+  --sombra-1: 0 1px 2px rgba(20, 32, 46, 0.06), 0 1px 3px rgba(20, 32, 46, 0.05);
+  --sombra-2: 0 4px 12px rgba(20, 32, 46, 0.08), 0 1px 3px rgba(20, 32, 46, 0.06);
+  --sombra-modal: 0 24px 60px rgba(20, 32, 46, 0.24);
+
+  --transicao: 120ms ease;
+
+  color-scheme: light;
+}
+
+/* Tema escuro usa o mesmo vocabulário semântico do claro. Como os componentes
+ * consomem estes tokens, a troca alcança cartões, formulários, modais e gráficos
+ * sem inverter imagens, vídeos ou cores de estado. */
+html[data-theme="dark"] {
+  --fundo: #0d141d;
+  --papel: #151f2b;
+  --papel-2: #192532;
+  --papel-3: #223142;
+
+  --tinta: #f0f5fb;
+  --tinta-2: #cfdae7;
+  --tinta-3: #9eafc2;
+
+  --borda: #2a3a4c;
+  --borda-forte: #3b4d61;
+  --borda-campo: #71849a;
+
+  --acao: #79b8ff;
+  --acao-forte: #a8d1ff;
+  --acao-clara: #172f4a;
+  --acao-borda: #315b84;
+
+  --critico: #ff938a;
+  --critico-claro: #3b2022;
+  --critico-borda: #764044;
+
+  --atencao: #ffc66d;
+  --atencao-claro: #382b17;
+  --atencao-borda: #6b5126;
+  --atencao-marca: #e9a83f;
+
+  --ok: #79d49d;
+  --ok-claro: #173426;
+  --ok-borda: #35674a;
+  --foco: #79b8ff;
+
+  --sombra-1: 0 1px 2px rgba(0, 0, 0, 0.32), 0 1px 4px rgba(0, 0, 0, 0.24);
+  --sombra-2: 0 7px 18px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.28);
+  --sombra-modal: 0 24px 70px rgba(0, 0, 0, 0.62);
+  color-scheme: dark;
+}
+
+/* =========================================================================
+ * PONTE PARA O TAILWIND
+ *
+ * Só APONTA para os tokens de :root acima — nunca redefine valor. O bloco
+ * acima continua sendo o único lugar onde um valor hexadecimal é escrito;
+ * mudar uma cor aqui propaga para toda CSS que usa var(--token) direto, para
+ * o JS que lê var(--token) em runtime (ver corDoScore em lib/formato.ts e
+ * graficos.tsx) E para as classes Tailwind abaixo, ao mesmo tempo — porque
+ * (c) é só um apelido de (a).
+ *
+ * De propósito, só o vocabulário ATUAL entra aqui — não há mais apelidos de
+ * compatibilidade (--accent, --ink, --surface, --warn...): a migração para
+ * Tailwind terminou e nenhum arquivo usa mais o vocabulário antigo.
+ * ========================================================================= */
+
+@theme inline {
+  --color-fundo: var(--fundo);
+  --color-papel: var(--papel);
+  --color-papel-2: var(--papel-2);
+  --color-papel-3: var(--papel-3);
+
+  --color-tinta: var(--tinta);
+  --color-tinta-2: var(--tinta-2);
+  --color-tinta-3: var(--tinta-3);
+
+  --color-borda: var(--borda);
+  --color-borda-forte: var(--borda-forte);
+  --color-borda-campo: var(--borda-campo);
+
+  --color-acao: var(--acao);
+  --color-acao-forte: var(--acao-forte);
+  --color-acao-clara: var(--acao-clara);
+  --color-acao-borda: var(--acao-borda);
+
+  --color-critico: var(--critico);
+  --color-critico-claro: var(--critico-claro);
+  --color-critico-borda: var(--critico-borda);
+
+  --color-atencao: var(--atencao);
+  --color-atencao-claro: var(--atencao-claro);
+  --color-atencao-borda: var(--atencao-borda);
+  --color-atencao-marca: var(--atencao-marca);
+
+  --color-ok: var(--ok);
+  --color-ok-claro: var(--ok-claro);
+  --color-ok-borda: var(--ok-borda);
+
+  --color-foco: var(--foco);
+
+  /* tipografia */
+  --font-titulo: var(--fonte-titulo);
+  --font-ui: var(--fonte-ui);
+  --font-codigo: var(--fonte-codigo);
+
+  /* Escala de texto do projeto. Sobrescreve de propósito a escala padrão do
+   * Tailwind inteira (text-xs a text-xl) — é para suprimir o vocabulário
+   * default, não para conviver com ele; o piso do projeto é 13px, e
+   * --t-lg/text-lg (22px) não tem nada a ver com o text-lg padrão (18px). */
+  --text-xs: var(--t-xs);
+  --text-sm: var(--t-sm);
+  --text-base: var(--t-base);
+  --text-md: var(--t-md);
+  --text-lg: var(--t-lg);
+  --text-xl: var(--t-xl);
+
+  /* Raio: nomes próprios, não a escala genérica sm/md/lg do Tailwind — este
+   * projeto tem só três raios com papel fixo (campo/botão, cartão, pílula),
+   * não uma escala progressiva. */
+  --radius-campo: var(--raio-sm);
+  --radius-cartao: var(--raio);
+  --radius-pill: var(--raio-pill);
+
+  /* Sombra: idem, três papéis fixos. */
+  --shadow-cartao: var(--sombra-1);
+  --shadow-cartao-forte: var(--sombra-2);
+  --shadow-modal: var(--sombra-modal);
+}
+
+/* O reset manual de box-model que existia aqui (*,*::before,*::after —
+ * box-sizing/margin/padding) foi removido: o Preflight do Tailwind
+ * (importado no topo do arquivo) já cobre exatamente isso. As regras
+ * abaixo (body, h1-h4, a, :focus-visible, ::selection, ::placeholder,
+ * prefers-reduced-motion) ficam — elas codificam decisão de design que o
+ * Preflight não toma. */
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--fundo);
+  color: var(--tinta-2);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--tinta);
+  font-family: var(--fonte-titulo);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+a {
+  color: var(--acao);
+  text-underline-offset: 2px;
+}
+
+button,
+select,
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Números, códigos e datas em mono de largura fixa — sem isso as colunas
+ * numéricas dançam a cada atualização da lista. */
+.tabular {
+  font-family: var(--fonte-codigo);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Anel de foco único em toda a aplicação. Azul (nunca âmbar, que agora quer
+ * dizer "conferir") e com 3px para ser visto sem esforço. */
+:focus-visible {
+  outline: 3px solid var(--foco);
+  outline-offset: 2px;
+  border-radius: var(--raio-sm);
+}
+
+::selection {
+  background: var(--acao-clara);
+  color: var(--tinta);
+}
+
+::placeholder {
+  color: var(--tinta-3);
+  opacity: 1;
+}
+
+/* Ponto pulsante de "aguardando" (dock da chamada) — `motion-reduce:animate-none`
+ * já cobre `prefers-reduced-motion`, então a regra fica só aqui, sem media query. */
+@keyframes pulsar {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Ponto pulsante de "gravando" (vídeo/áudio da entrevista) — opacidade mínima
+ * um pouco menor que `pulsar`; mantidos separados para não alterar nenhum
+ * pixel do que já existia em cada tela. */
+@keyframes pulsarForte {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Ponto de "esperando o entrevistado" (painel de chamada da entrevista) —
+ * mais lenta que as duas acima, mantida separada pelo mesmo motivo. */
+@keyframes respirar {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Brilho do esqueleto de carregamento (Carteira). */
+@keyframes brilho {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Roteiro da entrevista + painel de escuta (Roteiro.tsx): duas colunas só
+ * quando ESTA coluna comporta as duas — `@container`, não `@media`, porque a
+ * largura que sobra aqui depende de a chamada estar aberta ao lado (ela leva
+ * 460px numa coluna vizinha). Numa janela larga com a chamada aberta, uma
+ * media query pela largura da JANELA mandaria dividir mesmo sem espaço. */
+.roteiro-contentor {
+  container-type: inline-size;
+  container-name: roteiro;
+}
+.roteiro-grade {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@container roteiro (min-width: 700px) {
+  .roteiro-grade {
+    grid-template-columns: minmax(340px, 0.82fr) minmax(0, 1.35fr);
+  }
+  .roteiro-grade > .roteiro-transcricao { order: -1; }
+}
+
+/* O campo para onde o painel de escuta acabou de levar (`Roteiro.tsx`,
+ * `irPara`). É uma dica de "é aqui", não um estado — por isso é setado via
+ * `setAttribute` direto no DOM, fora do ciclo de render do React, e não dá
+ * para expressar como classe condicional. Escopado em `.roteiro-contentor`
+ * porque um seletor de atributo solto vazaria para fora deste componente. */
+.roteiro-contentor [data-realce="1"] {
+  outline: 2px solid var(--atencao);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* =========================================================================
+ * OS PRIMITIVOS SAÍRAM DAQUI
+ *
+ * Este arquivo tinha ~430 linhas de `.botao`, `.campo`, `.cartao`, `.selo`,
+ * `.aviso`, `.abas-modulo` e afins. Eles viraram componentes React em
+ * `components/ui/Basicos.tsx` (`Botao`, `Campo`, `Cartao`, `Selo`, `Aviso`,
+ * `BarraAbas`), escritos em Tailwind.
+ *
+ * A razão de terem existido aqui continua valendo e foi só reendereçada: uma
+ * definição só, usada por todas as telas. O que muda é que agora ela é um
+ * componente — não dá para escrever `class="botao"` errado, nem esquecer o
+ * modificador. E o que sobrou de CSS neste arquivo é o que NÃO tem forma de
+ * classe utilitária: os tokens do tema, o `@theme` que os entrega ao Tailwind,
+ * e o estilo de elemento base (body, títulos, foco, seleção).
+ * ========================================================================= */
