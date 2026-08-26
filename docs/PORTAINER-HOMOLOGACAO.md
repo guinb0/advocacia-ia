@@ -1,5 +1,55 @@
 # Homologação no Portainer
 
+## Serviços obrigatórios e as filas de cada um
+
+A stack está em `docker-compose.prod.yml`, na raiz. **Leia antes de mexer nos
+serviços**: subir um worker a menos aqui não quebra nada de forma visível — some
+um pedaço do sistema, em silêncio.
+
+Foi o que aconteceu. A stack rodou com um worker só, iniciado sem `-Q`:
+
+```
+"workers": {"celery@037919c6d2a3": ["default"]}
+```
+
+Fila padrão, nome padrão. `default` atende a ponte com o agente jurídico, então
+a parte visível respondia normalmente — enquanto **quatro das cinco filas não
+tinham consumidor nenhum**. Documento enviado entrava em `gpu_background` e
+ficava em "aguardando a vez na fila de leitura" indefinidamente: não havia quem
+retirasse a mensagem.
+
+`app/celery_app.py` roteia por prefixo de módulo. Cada linha precisa de alguém
+do outro lado:
+
+| fila | trabalho | quem consome |
+|---|---|---|
+| `gpu_background` | leitura de documentos (OCR) | `worker-ocr` |
+| `default` | ponte com o `ia-juridica` | `worker-background` |
+| `ai` | análise e estratégia | `worker-background` |
+| `documents` | PDF e relatórios | `worker-background` |
+| `low` | limpeza e as rondas do `beat` | `worker-background` |
+
+`gpu_background` fica isolado com concorrência 1 porque uma leitura leva de 4 a
+30 segundos; junto das filas leves, ele faria IA, PDF e manutenção esperarem
+atrás de cada documento.
+
+O `beat` também é obrigatório: é ele que dispara
+`manutencao.recuperar_entregas_travadas`, a ronda que devolve à fila o documento
+que ficou órfão. Sem `beat` — ou com `low` sem consumidor — essa rede de
+segurança não existe.
+
+### Como conferir, sem entrar em servidor
+
+```
+GET /api/saude?fila=1     # público: diz se há alguém para ler o próximo documento
+GET /api/saude/fila       # com sessão: worker por worker, as filas e o que está preso
+```
+
+A primeira responde `"leitor": "fora do ar"` quando ninguém consome
+`gpu_background`. Vale rodar depois de todo deploy que mexa em worker — o
+`/api/saude` puro responde `"ok"` mesmo com a leitura de documentos morta, porque
+olha só para o processo da API.
+
 ## OpenTelemetry / Grafana
 
 Definir na API e nos workers Celery:
