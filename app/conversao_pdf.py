@@ -26,6 +26,11 @@ class PdfConvertido:
 
 EXTENSOES_IMAGEM = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
+# 2400 px preserva texto pequeno para leitura e impressão, mas evita colocar no
+# PDF os 12–48 megapixels inteiros de uma foto de celular.
+MAX_LADO_PDF = 2400
+QUALIDADE_JPEG_PDF = 82
+
 
 def nome_pdf(nome_original: str, padrao: str = "documento") -> str:
     base = Path(nome_original or padrao).stem or padrao
@@ -55,6 +60,9 @@ def converter_para_pdf(origem: Path, nome_original: str, destino: Path) -> PdfCo
                 format="PDF",
                 save_all=len(paginas) > 1,
                 append_images=paginas[1:],
+                resolution=150,
+                quality=QUALIDADE_JPEG_PDF,
+                optimize=True,
             )
     except UnidentifiedImageError as exc:
         raise ErroConversaoPdf("Arquivo de imagem inválido ou corrompido.") from exc
@@ -75,9 +83,11 @@ def _preparar_pagina(imagem: Image.Image) -> Image.Image:
         alpha = pagina.getchannel("A") if "A" in pagina.getbands() else None
         fundo.paste(pagina.convert("RGB"), mask=alpha)
         pagina.close()
-        return fundo
+        pagina = fundo
     if pagina.mode != "RGB":
         convertida = pagina.convert("RGB")
         pagina.close()
-        return convertida
+        pagina = convertida
+    if max(pagina.size) > MAX_LADO_PDF:
+        pagina.thumbnail((MAX_LADO_PDF, MAX_LADO_PDF), Image.Resampling.LANCZOS)
     return pagina
