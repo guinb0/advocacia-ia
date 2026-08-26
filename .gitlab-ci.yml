@@ -33,7 +33,7 @@ include:
       stack_name: "advocacia-ia"
       compose_file: "docker-compose.production.yml"
       tag_prefix: "release/v"
-      increment_version: false
+      increment_version: true
       build_args_additional: "environment=production"
       build_args_version: true
       portainer_endpoint_id: "1"
