@@ -334,8 +334,10 @@ export default function CasoEDocumentos({
           erro={situacao.erro}
           onVoltar={() => undefined}
           onEnviar={situacao.enviar}
+          onEnviarLote={situacao.enviarLote}
           onRemover={situacao.removerEntrega}
           onVincularIdentidade={situacao.vincularIdentidade}
+          onReatribuir={situacao.reatribuir}
           dentroDoAtendimento
         />
       ) : (

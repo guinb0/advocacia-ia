@@ -8,6 +8,7 @@ import { useSessao } from "@/lib/auth";
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
 export type Tela =
   | "carteira"
+  | "agente"
   | "caso"
   | "dossie"
   | "painel"

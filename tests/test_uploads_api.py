@@ -39,10 +39,18 @@ def resultado_falso(nome: str, tipo_forcado: str | None) -> dict:
     return {
         "id": f"resultado-{len(CHAMADAS) + 1}",
         "arquivo": nome,
-        "tipo": {"codigo": tipo, "detectado": tipo, "descricao": tipo},
+        "tipo": {
+            "codigo": tipo,
+            "detectado": tipo,
+            "descricao": tipo,
+            "descricao_detectado": tipo,
+            "confianca_classificacao": 30,
+        },
+        "campos": [],
         "validacao": {
             "veredito": "APROVADO",
             "dados_utilizaveis": True,
+            "texto_utilizavel": True,
             "score_legibilidade": 95,
         },
     }
@@ -51,7 +59,15 @@ def resultado_falso(nome: str, tipo_forcado: str | None) -> dict:
 CHAMADAS: list[tuple[str, str | None]] = []
 
 
-def processar_falso(conteudo: bytes, nome: str, idioma: str, tipo_forcado: str | None) -> dict:
+def processar_falso(
+    conteudo: bytes,
+    nome: str,
+    idioma: str,
+    tipo_forcado: str | None = None,
+    **_opcoes: object,
+) -> dict:
+    """Substitui o OCR. Aceita as opções do pipeline real (`gerar_arquivos_temporarios`)
+    sem se importar com elas: o que este teste mede é o transporte, não a leitura."""
     assert conteudo
     assert idioma == "pt"
     CHAMADAS.append((nome, tipo_forcado))

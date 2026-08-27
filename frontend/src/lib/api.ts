@@ -10,6 +10,7 @@ import type {
   Documento,
   DocumentoDoCliente,
   EnderecoCep,
+  Entrega,
   EntregaDetalhe,
   Escuta,
   Estrategia,
@@ -279,6 +280,30 @@ export async function listarCategorias(): Promise<Categoria[]> {
 export async function listarCasos(): Promise<Caso[]> {
   const dados = await comoJson<{ casos: Caso[] }>(await buscar("/api/casos"));
   return dados.casos;
+}
+
+export interface PaginaCarteira {
+  situacoes: SituacaoCaso[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+  triagem: {
+    travados: number;
+    aConferir: number;
+    pedidosProntos: number;
+    completos: number;
+    ativos: number;
+  };
+  chegando_agora: { entrega: Entrega; cliente: string }[];
+  pedidos: { casoId: string; cliente: string; faltantes: number; reenvios: number }[];
+}
+
+/** A fila da carteira já montada e paginada pelo servidor (ver `app/carteira.py`). */
+export async function obterCarteira(pagina: number, tamanho: number): Promise<PaginaCarteira> {
+  return comoJson<PaginaCarteira>(
+    await buscar(`/api/carteira?pagina=${pagina}&tamanho=${tamanho}`),
+  );
 }
 
 export async function criarCaso(
@@ -884,6 +909,38 @@ export async function enviarDocumento(
   form.append("usar_para_rg_e_cpf", String(usarParaRgECpf));
   return comoJson<RespostaEnvio>(
     await buscar(`/api/casos/${casoId}/documentos`, { method: "POST", body: form }),
+  );
+}
+
+export interface RespostaLote {
+  lote_id: string;
+  recebidos: Array<{ arquivo: string; entrega_id: string }>;
+  recusados: Array<{ arquivo: string; motivo: string }>;
+  processando: boolean;
+}
+
+/** Envia vários arquivos sem atribuir item: cada leitura encontra seu destino. */
+export async function enviarDocumentosEmLote(
+  casoId: string,
+  arquivos: File[],
+  idioma = "pt",
+): Promise<RespostaLote> {
+  const form = new FormData();
+  arquivos.forEach((arquivo) => form.append("arquivos", arquivo));
+  form.append("idioma", idioma);
+  return comoJson<RespostaLote>(
+    await buscar(`/api/casos/${casoId}/documentos/lote`, { method: "POST", body: form }),
+  );
+}
+
+/** Palavra final do escritório sobre o item de um documento já lido. */
+export async function reatribuirEntrega(entregaId: string, itens: string[]): Promise<Entrega> {
+  return comoJson<Entrega>(
+    await buscar(`/api/entregas/${entregaId}/itens`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itens }),
+    }),
   );
 }
 

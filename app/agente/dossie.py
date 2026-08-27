@@ -37,7 +37,7 @@ ATENCAO = "atencao"
 INDISPONIVEL = "indisponivel"
 
 
-def montar(caso_id: str) -> dict[str, Any] | None:
+def montar(caso_id: str, *, recuperar: bool = True) -> dict[str, Any] | None:
     """O dossiê inteiro. `None` quando o caso não existe no OCR."""
     # Uma conexão para todas as leituras desta montagem; ver `banco.sessao`.
     #
@@ -51,7 +51,7 @@ def montar(caso_id: str) -> dict[str, Any] | None:
         situacao = casos_ocr.montar_situacao(caso_id) or {}
         vinculo = armazenamento.obter_vinculo_agente(caso_id)
 
-    agente = _do_agente(vinculo, caso_id)
+    agente = _do_agente(vinculo, caso_id, recuperar=recuperar)
 
     with banco.sessao():
         entrevistas = [
@@ -365,8 +365,16 @@ def _recuperar_vinculo(erro: ErroDoAgente, caso_id: str | None) -> str | None:
         return None
 
 
-def _do_agente(vinculo: dict[str, Any] | None, caso_id: str | None = None) -> dict[str, Any]:
-    """Lê o agente. Cada falha vira estado declarado, nunca lista vazia."""
+def _do_agente(
+    vinculo: dict[str, Any] | None, caso_id: str | None = None, *, recuperar: bool = True
+) -> dict[str, Any]:
+    """Lê o agente. Cada falha vira estado declarado, nunca lista vazia.
+
+    `recuperar=False` desliga a recriação do caso do outro lado. Quem abre o dossiê na
+    TELA quer o caso de volta e paga por isso conscientemente; quem apenas consulta —
+    o analista, que pode abrir dez casos para responder uma pergunta — não pode ESCREVER
+    no agente como efeito de uma leitura. Ler é ler.
+    """
     cfg = config()
     bloco: dict[str, Any] = {
         "ligado": cfg.ligado,
@@ -394,9 +402,13 @@ def _do_agente(vinculo: dict[str, Any] | None, caso_id: str | None = None) -> di
 
     caso_ref = vinculo["caso_ref"]
     if not caso_ref_valido(str(caso_ref)):
-        caso_ref = _recuperar_vinculo(
-            ErroDoAgente("Identificador inválido no vínculo local."),
-            caso_id,
+        caso_ref = (
+            _recuperar_vinculo(
+                ErroDoAgente("Identificador inválido no vínculo local."),
+                caso_id,
+            )
+            if recuperar
+            else None
         )
         if caso_ref is None:
             bloco["motivo"] = "O vínculo local do agente está inválido."
@@ -416,7 +428,7 @@ def _do_agente(vinculo: dict[str, Any] | None, caso_id: str | None = None) -> di
             # (banco recriado, migração). Sem esta recuperação a tela repete "caso não
             # encontrado" para sempre, porque o vínculo continua apontando para o
             # mesmo identificador morto e nada nesta rota o corrige.
-            caso_ref = _recuperar_vinculo(erro, caso_id)
+            caso_ref = _recuperar_vinculo(erro, caso_id) if recuperar else None
             if caso_ref is None:
                 raise
             bloco["caso_ref"] = caso_ref

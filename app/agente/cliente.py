@@ -415,6 +415,39 @@ class Cliente:
     def analise(self, caso_ref: str) -> dict[str, Any]:
         return self._ler(f"/api/v1/cases/{caso_ref}/analysis")
 
+    # ----------------------------------------------------------- chat do caso
+
+    def perguntar_ao_caso(
+        self, caso_ref: str, *, mensagem: str, conversa_ref: str | None = None
+    ) -> dict[str, Any]:
+        """Pergunta ao agente com o estado deste caso, e só dele.
+
+        Síncrona de propósito, ao contrário da análise e da pesquisa: quem perguntou está
+        olhando a conversa esperando a resposta, e um `202` com identificador de execução
+        não é resposta nenhuma num chat.
+
+        O `conversa_ref` é o fio do raciocínio do outro lado. Sem ele, cada pergunta
+        recomeça do zero e "e quanto ao PPP?" vira uma pergunta sem sujeito.
+        """
+        corpo: dict[str, Any] = {"message": mensagem}
+        if conversa_ref:
+            corpo["conversation_id"] = conversa_ref
+        return self._chamar("POST", f"/api/v1/cases/{caso_ref}/chat", json=corpo)
+
+    def conversa_do_caso(self, caso_ref: str, conversa_ref: str) -> dict[str, Any]:
+        """A transcrição que o agente guarda daquele fio, para reabrir a conversa."""
+        return self._chamar("GET", f"/api/v1/cases/{caso_ref}/chat/{conversa_ref}")
+
+    def confirmar_proposta(self, caso_ref: str, proposta_ref: str) -> dict[str, Any]:
+        """Aplica a alteração proposta — só depois da confirmação explícita do advogado.
+
+        É o único caminho pelo qual uma conversa altera o caso (`AGENTS.md §2.4`): o
+        agente propõe com o antes e o depois, e nada acontece até alguém clicar.
+        """
+        return self._chamar(
+            "POST", f"/api/v1/cases/{caso_ref}/chat/proposals/{proposta_ref}/confirm"
+        )
+
     # ------------------------------------------------------------- pesquisa
 
     def pesquisar(self, caso_ref: str) -> dict[str, Any]:
@@ -585,14 +618,23 @@ class Cliente:
     def peticao(self, caso_ref: str, peca_ref: str) -> dict[str, Any]:
         return self._chamar("GET", f"/api/v1/cases/{caso_ref}/generations/{peca_ref}")
 
-    def baixar_peticao(self, caso_ref: str, peca_ref: str) -> bytes:
-        """O `.docx` da peça, renderizado pelo agente a partir das seções guardadas.
+    def progresso_peticao(self, caso_ref: str, desde: str) -> dict[str, Any]:
+        """Onde a redação está agora — contada pelo agente, não estimada aqui."""
+        return self._ler(
+            f"/api/v1/cases/{caso_ref}/generations/progress?since={quote(desde)}"
+        )
+
+    def baixar_peticao(self, caso_ref: str, peca_ref: str, *, formato: str = "docx") -> bytes:
+        """O arquivo da peça, renderizado pelo agente a partir das seções guardadas.
 
         Passa por aqui e não pelo navegador porque o token e o endereço do agente ficam
         no servidor — e porque o arquivo precisa chegar ao advogado com o mesmo aviso de
         minuta que o agente carimba nele.
         """
-        url = f"{self._cfg.url}/api/v1/cases/{caso_ref}/generations/{peca_ref}/file"
+        url = (
+            f"{self._cfg.url}/api/v1/cases/{caso_ref}/generations/{peca_ref}/file"
+            f"?format={formato}"
+        )
         try:
             resposta = _cliente_http().get(
                 url, headers=self._cabecalhos(), timeout=self._cfg.timeout_envio
@@ -718,16 +760,16 @@ class Cliente:
     # ------------------------------------------------------------------ saúde
 
     def saude(self) -> dict[str, Any]:
-        return self._chamar("GET", "/health", timeout=5)
+        return self._chamar("GET", "/api/health", timeout=5)
 
     def inspecao(self) -> dict[str, Any]:
         """Latência dos dois bancos do agente e o desempenho de cada agente de IA.
 
-        `/health/inspection`, do lado de lá, é mais lento que `/health` (mede o corpus de
+        `/api/health/inspection`, do lado de lá, é mais lento que `/api/health` (mede o corpus de
         jurisprudência e agrega `agent_runs`) e exige papel interno — por isso um método
         à parte, com prazo próprio, em vez de reaproveitar `saude()`.
         """
-        return self._chamar("GET", "/health/inspection", timeout=15)
+        return self._chamar("GET", "/api/health/inspection", timeout=15)
 
 
 def _detalhe(resposta: httpx.Response) -> str:

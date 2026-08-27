@@ -9,6 +9,7 @@ import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
 import type { TomSelo } from "@/lib/formato";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
+import EnvioEmLote from "@/components/caso/EnvioEmLote";
 
 /* Cada estado com símbolo, palavra e tom. O cliente lê "Recebido" e "Precisa
  * reenviar" — não "ENTREGUE" e "CONFERIR", que eram o vocabulário interno do
@@ -69,7 +70,9 @@ export default function PaginaPortal({ params }: { params: Promise<{ token: stri
 
   /* O envio responde antes de a leitura terminar, então a tela se atualiza
    * sozinha enquanto houver documento sendo lido — e só enquanto houver. */
-  const lendo = situacao?.itens.some((i) => i.status === "processando") ?? false;
+  const lendo =
+    situacao?.itens.some((i) => i.status === "processando") ||
+    Boolean(situacao?.processando);
 
   useEffect(() => {
     if (!sessao || !lendo) return;
@@ -191,7 +194,9 @@ function Checklist({
   onSair: () => void;
 }) {
   const [enviando, setEnviando] = useState<string | null>(null);
+  const [enviandoLote, setEnviandoLote] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [avisoLote, setAvisoLote] = useState<string | null>(null);
 
   if (!situacao) {
     return (
@@ -220,6 +225,29 @@ function Checklist({
       setErro(e instanceof Error ? e.message : "Não foi possível enviar o arquivo.");
     } finally {
       setEnviando(null);
+    }
+  }
+
+  async function enviarLote(arquivos: File[]) {
+    setEnviandoLote(true);
+    setErro(null);
+    setAvisoLote(null);
+    try {
+      const resultado = await portal.enviarDocumentosEmLote(token, sessao, arquivos);
+      onAtualizar(resultado.situacao);
+      const recusados = resultado.recusados.length;
+      setAvisoLote(
+        recusados
+          ? `${resultado.recebidos.length} arquivo(s) recebido(s). ${recusados} não entraram e precisam ser selecionados novamente.`
+          : `${resultado.recebidos.length} arquivo(s) recebido(s). Agora estamos identificando cada documento.`,
+      );
+      if (recusados) {
+        setErro(resultado.recusados.map((item) => `${item.arquivo}: ${item.motivo}`).join("; "));
+      }
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível enviar os arquivos.");
+    } finally {
+      setEnviandoLote(false);
     }
   }
 
@@ -269,6 +297,26 @@ function Checklist({
         )}
 
         <Chamada token={token} />
+
+        <div className="mt-5">
+          <EnvioEmLote onEnviar={enviarLote} enviando={enviandoLote} compacto />
+        </div>
+
+        {avisoLote && (
+          <div className="mt-4">
+            <Aviso tom="ok" titulo="Arquivos recebidos">{avisoLote}</Aviso>
+          </div>
+        )}
+
+        {situacao.em_analise > 0 && (
+          <div className="mt-4">
+            <Aviso tom="info" titulo="Estamos separando seus documentos">
+              {situacao.em_analise} {situacao.em_analise === 1 ? "arquivo está" : "arquivos estão"} em análise.
+              Você não precisa escolher onde colocar: o escritório verá qualquer documento que não
+              pudermos identificar automaticamente.
+            </Aviso>
+          </div>
+        )}
 
         {erro && (
           <div className="mt-5">
@@ -491,7 +539,6 @@ function Linha({
       <input
         ref={inputRef}
         type="file"
-        accept="image/*,application/pdf,.pdf"
         hidden
         onChange={(e) => {
           const arquivo = e.target.files?.[0];

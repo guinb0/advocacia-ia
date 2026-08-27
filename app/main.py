@@ -22,6 +22,7 @@ from urllib.parse import quote
 import jwt
 
 from fastapi import (
+    Body,
     Depends,
     FastAPI,
     File,
@@ -46,6 +47,7 @@ from . import (
     armazenamento,
     assinatura,
     auth,
+    carteira,
     casos,
     categorias,
     chamada,
@@ -67,6 +69,7 @@ from . import (
     rag,
     recomendacao,
     relatorio,
+    roteamento,
     roteiros,
     triagem,
     valor_documento,
@@ -94,7 +97,6 @@ BASE = Path(__file__).resolve().parent.parent
 STATIC = BASE / "static"
 
 MAX_BYTES = 20 * 1024 * 1024
-EXTENSOES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".pdf"}
 _ocr_aquecido = threading.Event()
 
 
@@ -1619,11 +1621,12 @@ def aquecer():
 
 
 async def _ler_upload(arquivo: UploadFile) -> bytes:
-    """Valida extensão e tamanho, devolvendo os bytes do arquivo enviado."""
-    ext = Path(arquivo.filename or "").suffix.lower()
-    if ext and ext not in EXTENSOES:
-        raise HTTPException(400, f"Extensão '{ext}' não suportada. Use: {', '.join(sorted(EXTENSOES))}")
+    """Aceita qualquer tipo de arquivo e aplica apenas limites de segurança.
 
+    Imagens e PDFs seguem para o OCR. Os demais formatos continuam sendo
+    preservados no caso e vão para conferência/triagem, em vez de serem
+    recusados antes mesmo de o escritório recebê-los.
+    """
     conteudo = await arquivo.read()
     if not conteudo:
         raise HTTPException(400, "Arquivo vazio.")
@@ -1991,6 +1994,18 @@ def listar_casos():
     return {"casos": armazenamento.listar_casos()}
 
 
+@app.get("/api/carteira")
+def fila_da_carteira(pagina: int = 1, tamanho: int = carteira.TAMANHO_PADRAO):
+    """A fila de casos da carteira, uma página por vez.
+
+    Substitui o `GET /api/casos` seguido de um `GET /api/casos/{id}` por caso que a tela
+    fazia: eram N+1 requisições e a carteira inteira no navegador. Aqui são duas consultas
+    e só a página pedida no payload — mas a ordem por risco e os contadores do topo são
+    medidos sobre a carteira toda (ver `app/carteira.py`).
+    """
+    return carteira.montar(pagina=pagina, tamanho=tamanho)
+
+
 @app.get("/api/casos/{caso_id}")
 def obter_caso(caso_id: str):
     situacao = casos.montar_situacao(caso_id)
@@ -2149,27 +2164,38 @@ def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
 
 async def _registrar_documento(
     caso: dict[str, Any],
-    item: str,
+    item: str | None,
     arquivo: UploadFile,
     idioma: str,
     usar_para_rg_e_cpf: bool,
+    lote_id: str | None = None,
 ) -> dict[str, Any]:
     """OCR + registro da entrega. Compartilhado pelo advogado e pelo portal.
 
     O cliente passa pelo mesmo caminho de propósito: a validação de tipo, a
     legibilidade e o vínculo RG/CPF não podem depender de quem enviou.
+
+    `item` VAZIO é o envio sem destino — o cliente jogou o arquivo na área de
+    envio em massa e não disse que documento é. A entrega nasce em triagem e o
+    item sai da leitura, em `roteamento.decidir`. Quando o item vem preenchido,
+    ele é um palpite: se o documento o desmentir, a entrega vai para o item certo.
     """
     caso_id = caso["id"]
     categoria = categorias.obter(caso["categoria"])
     if categoria is None:
         raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
 
-    item_checklist = next((i for i in categoria.itens if i.codigo == item), None)
-    if item_checklist is None:
-        raise HTTPException(400, f"Item '{item}' não pertence ao checklist de {categoria.nome}.")
+    item = (item or "").strip() or None
+    item_checklist = None
+    if item is not None:
+        item_checklist = next((i for i in categoria.itens if i.codigo == item), None)
+        if item_checklist is None:
+            raise HTTPException(400, f"Item '{item}' não pertence ao checklist de {categoria.nome}.")
 
     # Valida a opção manual antes de gastar o OCR, para o erro sair na hora.
     if usar_para_rg_e_cpf:
+        if item_checklist is None:
+            raise HTTPException(400, "A identidade unificada exige o item RG ou CPF no envio.")
         try:
             casos.itens_para_identidade_unificada(categoria, item_checklist)
         except ValueError as exc:
@@ -2178,15 +2204,17 @@ async def _registrar_documento(
     conteudo = await _ler_upload(arquivo)
     nome = arquivo.filename or "sem-nome"
 
+    item_codigo = item or categorias.ITEM_TRIAGEM
+
     # O arquivo vai para o disco e a entrega é criada antes de entrar na fila.
     # Assim o upload responde sem manter a conexão aberta durante a inferência.
     destino = armazenamento.DIR_ARQUIVOS / caso_id
     destino.mkdir(parents=True, exist_ok=True)
-    caminho = destino / f"{item}_{uuid.uuid4()}{Path(nome).suffix.lower()}"
+    caminho = destino / f"{item_codigo}_{uuid.uuid4()}{Path(nome).suffix.lower()}"
     caminho.write_bytes(conteudo)
 
     entrega = armazenamento.registrar_entrega_pendente(
-        caso_id, item, nome, caminho, conteudo=conteudo
+        caso_id, item_codigo, nome, caminho, conteudo=conteudo, lote_id=lote_id
     )
 
     # O checklist antes abria uma thread na API e carregava outra cópia do
@@ -2195,7 +2223,7 @@ async def _registrar_documento(
     try:
         tarefa = processar_entrega.apply_async(
             args=(
-                entrega["id"], caso_id, str(caminho), nome, item_checklist.codigo,
+                entrega["id"], caso_id, str(caminho), nome, item_codigo,
                 categoria.codigo, idioma, usar_para_rg_e_cpf,
             ),
             queue="gpu_background",
@@ -2212,16 +2240,128 @@ async def _registrar_documento(
 @app.post("/api/casos/{caso_id}/documentos", status_code=201)
 async def enviar_documento(
     caso_id: str,
-    item: str = Form(...),
+    item: str = Form(""),
     arquivo: UploadFile = File(...),
     idioma: str = Form("pt"),
     usar_para_rg_e_cpf: bool = Form(False),
 ):
-    """Recebe um documento, roda o OCR e marca o item do checklist."""
+    """Recebe um documento, roda o OCR e marca o item do checklist.
+
+    `item` é opcional: sem ele, quem decide o item é a leitura do documento.
+    """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         raise HTTPException(404, "Caso não encontrado.")
     return await _registrar_documento(caso, item, arquivo, idioma, usar_para_rg_e_cpf)
+
+
+#: Teto de arquivos por envio em massa. Não é limite de tamanho — é para o
+#: cliente não despejar a galeria inteira do celular numa requisição só e ficar
+#: sem resposta enquanto duzentas fotos são gravadas antes do primeiro 201.
+MAX_ARQUIVOS_POR_LOTE = 30
+
+
+async def _registrar_lote(
+    caso: dict[str, Any],
+    arquivos: list[UploadFile],
+    idioma: str,
+) -> dict[str, Any]:
+    """Vários documentos de uma vez, cada um achando o próprio item.
+
+    Um arquivo que falha não derruba os outros: o lote devolve o que entrou e o
+    que não entrou, com o motivo, porque quem mandou doze fotos precisa saber
+    qual das doze precisa repetir.
+    """
+    if not arquivos:
+        raise HTTPException(400, "Nenhum arquivo foi enviado.")
+    if len(arquivos) > MAX_ARQUIVOS_POR_LOTE:
+        raise HTTPException(
+            400,
+            f"São aceitos até {MAX_ARQUIVOS_POR_LOTE} arquivos por envio. "
+            "Divida em partes menores.",
+        )
+
+    lote_id = uuid.uuid4().hex
+    aceitos: list[dict[str, Any]] = []
+    recusados: list[dict[str, str]] = []
+    for arquivo in arquivos:
+        nome = arquivo.filename or "sem-nome"
+        try:
+            registro = await _registrar_documento(caso, None, arquivo, idioma, False, lote_id)
+            aceitos.append({"arquivo": nome, "entrega_id": registro["entrega"]["id"]})
+        except HTTPException as exc:
+            recusados.append({"arquivo": nome, "motivo": str(exc.detail)})
+        except Exception as exc:  # noqa: BLE001 - um arquivo ruim não perde o lote
+            log.exception("falha ao registrar %s no lote %s", nome, lote_id)
+            recusados.append({"arquivo": nome, "motivo": str(exc)[:200]})
+
+    if not aceitos:
+        raise HTTPException(400, recusados[0]["motivo"] if recusados else "Nenhum arquivo aceito.")
+
+    return {"lote_id": lote_id, "recebidos": aceitos, "recusados": recusados, "processando": True}
+
+
+@app.post("/api/casos/{caso_id}/documentos/lote", status_code=201)
+async def enviar_documentos_em_lote(
+    caso_id: str,
+    arquivos: list[UploadFile] = File(...),
+    idioma: str = Form("pt"),
+):
+    """Envio em massa: N documentos, sem escolher item para nenhum deles."""
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return await _registrar_lote(caso, arquivos, idioma)
+
+
+@app.patch("/api/entregas/{entrega_id}/itens")
+def reatribuir_entrega(entrega_id: str, itens: list[str] = Body(..., embed=True)):
+    """Move um documento já lido para outro(s) item(ns) do checklist.
+
+    É a palavra final sobre o roteamento automático, e a saída da triagem: o
+    advogado olhou o arquivo e disse a que ele responde. Não refaz OCR — o texto
+    e os campos já estão gravados, e o arquivo é o mesmo.
+
+    Lista vazia devolve a entrega para a triagem, que é como se desfaz uma
+    atribuição errada sem apagar o documento.
+    """
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+
+    caso = armazenamento.obter_caso(entrega["caso_id"])
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
+
+    escolhidos = list(dict.fromkeys(i.strip() for i in itens if i and i.strip()))
+    validos = {i.codigo: i for i in categoria.itens}
+    desconhecidos = [i for i in escolhidos if i not in validos]
+    if desconhecidos:
+        raise HTTPException(
+            400,
+            f"Item(ns) fora do checklist de {categoria.nome}: {', '.join(desconhecidos)}.",
+        )
+
+    if not escolhidos:
+        return armazenamento.reatribuir_entrega(
+            entrega_id, [], categorias.ITEM_TRIAGEM, roteamento.HUMANO,
+            motivo="Devolvido à triagem pelo escritório.",
+        )
+
+    detectado = entrega.get("tipo_detectado")
+    confere = casos.tipo_confere(validos[escolhidos[0]], detectado, len(escolhidos) > 1)
+    return armazenamento.reatribuir_entrega(
+        entrega_id,
+        escolhidos,
+        escolhidos[0],
+        roteamento.HUMANO,
+        tipo_confere=confere,
+        confianca=100,
+        motivo="Atribuído pelo escritório.",
+    )
 
 
 @app.post("/api/casos/{caso_id}/documentos/teste", status_code=201)
@@ -2624,15 +2764,40 @@ def portal_situacao(token: str, request: Request):
 async def portal_enviar(
     token: str,
     request: Request,
-    item: str = Form(...),
     arquivo: UploadFile = File(...),
+    item: str = Form(""),
 ):
-    """Upload feito pelo cliente. Mesmo caminho do advogado, resposta enxuta."""
+    """Upload feito pelo cliente. Mesmo caminho do advogado, resposta enxuta.
+
+    O item deixou de ser obrigatório: o cliente pode mandar o documento pela
+    linha do checklist (e aí ele é um palpite) ou sem linha nenhuma.
+    """
     caso = _caso_do_portal(token, request)
     await _registrar_documento(caso, item, arquivo, "pt", False)
 
     situacao = casos.montar_situacao(caso["id"])
     return casos.visao_do_cliente(situacao) if situacao else {}
+
+
+@app.post("/api/portal/{token}/documentos/lote", status_code=201)
+async def portal_enviar_lote(
+    token: str,
+    request: Request,
+    arquivos: list[UploadFile] = File(...),
+):
+    """Envio em massa pelo cliente: manda tudo, o sistema separa.
+
+    É o caminho que tira do cliente a tarefa de saber o que é cada papel — ele
+    fotografa a pilha inteira e cada arquivo acha o próprio item do checklist.
+    """
+    caso = _caso_do_portal(token, request)
+    resultado = await _registrar_lote(caso, arquivos, "pt")
+
+    situacao = casos.montar_situacao(caso["id"])
+    return {
+        **resultado,
+        "situacao": casos.visao_do_cliente(situacao) if situacao else {},
+    }
 
 
 @app.get("/api/entregas/{entrega_id}")
