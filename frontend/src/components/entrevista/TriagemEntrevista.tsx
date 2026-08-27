@@ -20,6 +20,7 @@ import CasoEDocumentos from "@/components/caso/CasoEDocumentos";
 import { useChamada } from "@/lib/ChamadaContexto";
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import AvaliacaoGoogle from "@/components/contrato/AvaliacaoGoogle";
+import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import { Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
@@ -305,6 +306,12 @@ export default function TriagemEntrevista({
         telefone={String(qualificacao.telefone ?? "")}
       />
       <PainelContrato respostas={qualificacao} />
+
+      {/* O roteiro inteiro com o que foi respondido, para conferir antes de o
+        * cliente desligar. Vem DEPOIS do contrato de propósito: quem chegou até
+        * aqui já fechou o atendimento, e o que resta é revisar — o que ficou em
+        * branco ainda dá para colher com ele na linha. */}
+      <RespostasDoRoteiro respostas={qualificacao} />
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
         * ainda na linha, e o checklist recebe o que ele já tem em mãos. */}
