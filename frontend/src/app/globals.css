@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* =========================================================================
  * SISTEMA VISUAL — tema claro institucional (ver docs/GUIA-VISUAL.md)
  *
@@ -27,26 +29,31 @@
 
 :root {
   /* ------------------------------------------------------------ superfícies */
-  --fundo: #f5f7fa; /* fundo da aplicação */
+  --fundo: #f1f6fb; /* fundo da aplicação */
   --papel: #ffffff; /* cartão, painel, modal */
   --papel-2: #f7f9fc; /* área rebaixada: campo, bloco de código, zona de envio */
-  --papel-3: #eff3f8; /* hover de linha e de item selecionado */
+  --papel-3: #e6ecf2; /* hover de linha e de item selecionado */
 
   /* ----------------------------------------------------------------- tinta */
-  --tinta: #14202e; /* títulos e números */
+  --tinta: #102033; /* títulos e números */
   --tinta-2: #33465c; /* texto corrido */
-  --tinta-3: #5a6b80; /* rótulo, metadado, texto de apoio */
+  --tinta-3: #65758a; /* rótulo, metadado, texto de apoio */
 
   /* ---------------------------------------------------------------- bordas */
-  --borda: #e3e9f0; /* divisória entre itens de uma lista */
+  --borda: #dce5ef; /* divisória entre itens de uma lista */
   --borda-forte: #c8d3e0; /* contorno de cartão */
   --borda-campo: #7a8b9f; /* contorno de campo e de botão — precisa dos 3:1 */
 
   /* ------------------------------------------------- ação (só o que se clica) */
-  --acao: #17457a;
-  --acao-forte: #10345f; /* hover/active */
+  --acao: #002a47;
+  --acao-forte: #0b3a63; /* hover/active */
   --acao-clara: #ebf2fa; /* fundo de destaque informativo */
   --acao-borda: #bad2ea;
+
+  /* ------------------------------------------------ marca: acento, não estado */
+  --marca-ouro: #b88634;
+  --marca-ouro-claro: #fff4dc;
+  --marca-navy-suave: #123d66;
 
   /* ------------------------------------------------------ estado: problema */
   --critico: #b3261e;
@@ -116,10 +123,10 @@ html[data-theme="dark"] {
   --borda-forte: #3b4d61;
   --borda-campo: #71849a;
 
-  --acao: #79b8ff;
-  --acao-forte: #a8d1ff;
-  --acao-clara: #172f4a;
-  --acao-borda: #315b84;
+  --acao: #1f6feb;
+  --acao-forte: #1158c7;
+  --acao-clara: #10284a;
+  --acao-borda: #2f81f7;
 
   --critico: #ff938a;
   --critico-claro: #3b2022;
@@ -174,6 +181,10 @@ html[data-theme="dark"] {
   --color-acao-forte: var(--acao-forte);
   --color-acao-clara: var(--acao-clara);
   --color-acao-borda: var(--acao-borda);
+
+  --color-marca-ouro: var(--marca-ouro);
+  --color-marca-ouro-claro: var(--marca-ouro-claro);
+  --color-marca-navy-suave: var(--marca-navy-suave);
 
   --color-critico: var(--critico);
   --color-critico-claro: var(--critico-claro);
@@ -305,6 +316,28 @@ textarea {
 @keyframes pulsarForte {
   50% {
     opacity: 0.25;
+  }
+}
+
+/* Ilustracao leve da tela de login. Fica aqui, e nao no tema global, para nao
+ * contaminar os demais modulos com animacoes decorativas. */
+@keyframes loginFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0);
+  }
+}
+
+@keyframes loginPulseLine {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 0.72;
   }
 }
 
