@@ -6,8 +6,9 @@ import type { ReactNode } from "react";
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import { Aviso } from "@/components/ui/Basicos";
 import PainelChamada from "@/components/chamada/PainelChamada";
+import PainelEscuta from "@/components/entrevista/PainelEscuta";
 import Roteiro from "@/components/entrevista/Roteiro";
-import type { ManipuladorRoteiro } from "@/components/entrevista/Roteiro";
+import type { EstadoEscuta, ManipuladorRoteiro } from "@/components/entrevista/Roteiro";
 import { processarEntrevista, recomendarEntrevista, triarEntrevista } from "@/lib/api";
 import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
 import type { ProcessamentoEntrevista, RecomendacaoEntrevista, Triagem } from "@/lib/types";
@@ -163,6 +164,10 @@ export default function EntrevistaComChamada({
   const [erroFecho, setErroFecho] = useState<string | null>(null);
   const [consolidando, setConsolidando] = useState(false);
   const [resultadoFinal, setResultadoFinal] = useState<ResultadoFinal | null>(null);
+  /* O painel "A ENTREVISTA ATÉ AQUI" agora mora nesta coluna, embaixo da
+   * chamada. O estado que o alimenta nasce no `Roteiro` e chega por `onEscuta`;
+   * é `null` enquanto a escuta não abriu. */
+  const [escuta, setEscuta] = useState<EstadoEscuta | null>(null);
 
   const voltarAoRoteiro = () => {
     document.getElementById("roteiro-da-entrevista")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -205,6 +210,7 @@ export default function EntrevistaComChamada({
             * embaixo, depois das etapas seguintes. */}
           <Roteiro
             ref={roteiro}
+            onEscuta={setEscuta}
             onRespostas={(respostas, relato, entrevistaId) => {
               /* A transcrição BRUTA sobe junto, e é ela que vai para o caso.
                *
@@ -421,6 +427,11 @@ export default function EntrevistaComChamada({
             onFaixaRemota={(trilha) => void roteiro.current?.usarFaixaDaChamada(trilha)}
             onFimDaFaixa={() => roteiro.current?.aoPerderChamada()}
           />
+
+          {/* "A ENTREVISTA ATÉ AQUI" — a transcrição em tempo real, agora abaixo
+            * da chamada e não mais ao lado do formulário. A coluna já rola e
+            * gruda; o painel só precisa se empilhar. */}
+          {escuta && <PainelEscuta {...escuta} />}
         </div>
       </div>
     </div>

@@ -326,26 +326,13 @@ textarea {
   }
 }
 
-/* Roteiro da entrevista + painel de escuta (Roteiro.tsx): duas colunas só
- * quando ESTA coluna comporta as duas — `@container`, não `@media`, porque a
- * largura que sobra aqui depende de a chamada estar aberta ao lado (ela leva
- * 460px numa coluna vizinha). Numa janela larga com a chamada aberta, uma
- * media query pela largura da JANELA mandaria dividir mesmo sem espaço. */
+/* O painel de escuta ("A ENTREVISTA ATÉ AQUI") deixou de dividir espaço com o
+ * formulário: foi para a coluna da chamada, abaixo do cartão CHAMADA (ver
+ * `EntrevistaComChamada`). A coluna do roteiro é uma só agora. `.roteiro-contentor`
+ * permanece só para escopar o realce de `data-realce` abaixo. */
 .roteiro-contentor {
   container-type: inline-size;
   container-name: roteiro;
-}
-.roteiro-grade {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
-}
-@container roteiro (min-width: 700px) {
-  .roteiro-grade {
-    grid-template-columns: minmax(340px, 0.82fr) minmax(0, 1.35fr);
-  }
-  .roteiro-grade > .roteiro-transcricao { order: -1; }
 }
 
 /* O campo para onde o painel de escuta acabou de levar (`Roteiro.tsx`,

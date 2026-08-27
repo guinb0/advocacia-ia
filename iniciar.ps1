@@ -70,7 +70,11 @@ foreach ($comando in @("docker", "uv", "npm")) {
         throw "Dependencia ausente: '$comando' nao foi encontrado no PATH. Instale-o e execute iniciar.ps1 novamente."
     }
 }
-docker info *> $null
+# `cmd /c` engole os dois streams dentro do proprio cmd: no Windows PowerShell 5.1
+# um `docker info *> $null` faz cada linha de stderr (ex.: "WARNING: No blkio
+# throttle...") virar ErrorRecord e, com $ErrorActionPreference='Stop', aborta o
+# script mesmo o docker tendo saido com 0. Aqui o PowerShell nao ve stream nenhum.
+cmd /c "docker info >NUL 2>NUL"
 if ($LASTEXITCODE -ne 0) {
     throw "Docker nao esta respondendo. Abra o Docker Desktop e execute iniciar.ps1 novamente."
 }
@@ -104,7 +108,7 @@ function Diagnostico-Jitsi([string]$Url, [double]$Segundos = 120) {
     } elseif (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         $causa = "O Docker nao esta instalado (ou nao esta no PATH). O Jitsi roda em containers."
     } else {
-        docker info 2>&1 | Out-Null
+        cmd /c "docker info >NUL 2>NUL"
         if ($LASTEXITCODE -ne 0) {
             $causa = "O Docker esta instalado mas o servico nao responde. Abra o Docker Desktop e espere ficar verde."
         } else {
