@@ -30,8 +30,11 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   carteira: "casos",
   caso: "casos",
   dossie: "casos",
-  painel: "agente",
-  jurimetria: "agente",
+  /* São leituras do caso aberto. O backend pode depender de cálculos do agente,
+   * mas a navegação aqui não pode exigir o módulo "agente", senão a aba aparece
+   * no bloco do caso e o clique é ignorado para quem tem acesso à carteira. */
+  painel: "casos",
+  jurimetria: "casos",
   casos: "casos",
   avulso: "documentos",
   investigacao: "investigacao",
