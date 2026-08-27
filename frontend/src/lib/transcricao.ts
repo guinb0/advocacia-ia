@@ -677,6 +677,18 @@ export class CapturaEntrevista {
     this.eventos.onEstado?.("sem-audio");
   }
 
+  /** Solta só a fonte de áudio — a sessão do Whisper fica aberta.
+   *
+   * Usado quando a chamada cai no meio da entrevista: matar o WebSocket aqui
+   * apagava a transcrição em andamento. Quem reabre a fonte (nova faixa remota
+   * ou microfone) retoma de onde parou. */
+  soltarFonte(): void {
+    this.recuperando = false;
+    this.desmontar();
+    this.origem = null;
+    this.eventos.onEstado?.("sem-audio");
+  }
+
   /** Desfaz a cadeia de áudio. Só desliga a trilha se o microfone for nosso: a
    * faixa da chamada pertence à `ChamadaJitsi`, e pará-la aqui emudeceria a
    * conversa inteira — não só a transcrição. */

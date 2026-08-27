@@ -41,12 +41,19 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   supervisao: "supervisao",
   dados: "metricas",
   saudeAgente: "agente",
-  modelosDePeticao: "agente",
   documentacao: "documentacao",
   /* Sem esta linha a tela seria LIVRE, não restrita: `podeAbrirTela` libera o
    * que não está mapeado. O catálogo de roteiros pertence ao módulo `roteiros`,
    * que o advogado e o secretário têm — ver `app/perfis.py`. */
   catalogoRoteiros: "roteiros",
+  /* `modelosDePeticao` de propósito NÃO está aqui.
+   *
+   * Na barra horizontal antiga o item aparecia para todo mundo (filtro de
+   * perfil retirado enquanto o produto está em construção). Ao migrar para a
+   * barra lateral, o mapeamento para o módulo `agente` escondeu a entrada de
+   * quem não tinha esse módulo na sessão — e a modelagem de petições "sumiu"
+   * do menu. Sem mapeamento, `podeAbrirTela` libera a tela; o backend segue
+   * autenticando as APIs do agente. */
 };
 
 export function podeAbrirTela(tela: Tela, modulos: string[]): boolean {

@@ -16,7 +16,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Aviso, Botao, Cartao, Selo, Tabela, Th } from "@/components/ui/Basicos";
-import { ApiError } from "@/lib/api";
+import { ApiError, listarCategorias } from "@/lib/api";
+import type { ItemChecklist } from "@/lib/types";
 
 /* `.tabela th/td` era seletor descendente; sem equivalente no Tailwind, a regra
  * vira constante e cada célula a carrega. */
@@ -72,6 +73,8 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [configuracao, setConfiguracao] = useState<ConfiguracaoDeGeracao | null>(null);
   const [documentoNovo, setDocumentoNovo] = useState("");
   const [salvandoConfiguracao, setSalvandoConfiguracao] = useState(false);
+  /** Checklist do Acervo para a ação escolhida — sugestões clicáveis. */
+  const [checklistAcao, setChecklistAcao] = useState<ItemChecklist[]>([]);
 
   const [enviando, setEnviando] = useState(false);
   const [arrastando, setArrastando] = useState(false);
@@ -106,6 +109,32 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       );
     // Uma vez só: a taxonomia é YAML versionado, não muda entre requisições.
   }, []);
+
+  /* O checklist do caso (Acervo) e a taxonomia do agente usam o mesmo código de
+   * ação (`auxilio_acidente`, etc.). Quando bate, oferecemos os documentos do
+   * checklist como atalho — em vez de digitar "CNIS" / "laudo" à mão. */
+  useEffect(() => {
+    if (!acao) {
+      setChecklistAcao([]);
+      return;
+    }
+    let cancelado = false;
+    void listarCategorias()
+      .then((categorias) => {
+        if (cancelado) return;
+        const chave = acao.trim().toLowerCase();
+        const categoria =
+          categorias.find((c) => c.codigo.toLowerCase() === chave) ??
+          categorias.find((c) => c.codigo.toLowerCase().replace(/-/g, "_") === chave.replace(/-/g, "_"));
+        setChecklistAcao(categoria?.itens ?? []);
+      })
+      .catch(() => {
+        if (!cancelado) setChecklistAcao([]);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [acao]);
 
   const recarregar = useCallback(async () => {
     if (!acao) return;
@@ -212,20 +241,36 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       setConfiguracao(await salvarConfiguracaoDeGeracao(configuracao));
       setRecado("Configuração da peça salva e pronta para orientar a IA Jurídica.");
     } catch (falha) {
-      setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar a configuração.");
+      const mensagem = falha instanceof ApiError ? falha.message : "Não foi possível salvar a configuração.";
+      setErro(
+        /404|not found/i.test(mensagem)
+          ? "O agente jurídico ainda não tem a rota de configuração desta peça (404). Atualize o serviço ia-juridica ou confira AGENTE_API_URL."
+          : mensagem,
+      );
     } finally {
       setSalvandoConfiguracao(false);
     }
   }
 
-  function adicionarDocumento() {
-    const nome = documentoNovo.trim();
+  function incluirDocumento(nomeBruto: string) {
+    const nome = nomeBruto.trim();
     if (!nome || !configuracao) return;
-    if (!configuracao.required_documents.some((item) => item.toLocaleLowerCase() === nome.toLocaleLowerCase())) {
-      setConfiguracao({ ...configuracao, required_documents: [...configuracao.required_documents, nome] });
+    if (configuracao.required_documents.some((item) => item.toLocaleLowerCase() === nome.toLocaleLowerCase())) {
+      return;
     }
+    setConfiguracao({ ...configuracao, required_documents: [...configuracao.required_documents, nome] });
+  }
+
+  function adicionarDocumento() {
+    incluirDocumento(documentoNovo);
     setDocumentoNovo("");
   }
+
+  const sugestoesChecklist = useMemo(() => {
+    if (!configuracao) return [];
+    const ja = new Set(configuracao.required_documents.map((d) => d.toLocaleLowerCase()));
+    return checklistAcao.filter((item) => !ja.has(item.nome.toLocaleLowerCase()));
+  }, [checklistAcao, configuracao]);
 
   const semSecoes = useMemo(
     () => pecas.filter((peca) => !peca.eligibility.eligible_for_section_profile).length,
@@ -401,31 +446,110 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               placeholder="Ex.: destacar a incapacidade laboral e separar os pedidos subsidiários."
               onChange={(evento) => setConfiguracao({ ...configuracao, drafting_instructions: evento.target.value })} />
           </label>
-          <div className="mt-4">
-            <strong className="text-sm text-tinta">Documentos necessários para gerar esta peça</strong>
-            <p className="mt-1 text-xs text-tinta-3">A IA usa esta lista como checklist e não inventa informação quando um documento estiver ausente.</p>
-            <div className="mt-2 flex gap-2">
-              <input className={`${SELECT} flex-1`} value={documentoNovo} placeholder="Ex.: laudo médico, CNIS, procuração"
+          <div className="mt-4 rounded-campo border border-borda-forte bg-papel-2 px-4 py-3">
+            <strong className="text-sm text-tinta">Documentos relacionados a esta petição / ação</strong>
+            <p className="mt-1 mb-0 text-xs text-tinta-3 leading-[1.5]">
+              Liste o que a IA precisa ter no dossiê para gerar a peça. Clique nas
+              sugestões do checklist desta ação, ou digite um nome e use Adicionar.
+              Depois clique em <strong>Salvar configuração</strong> — sem salvar, a lista
+              não fica gravada.
+            </p>
+
+            {sugestoesChecklist.length > 0 && (
+              <div className="mt-3">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-tinta-3">
+                  Checklist desta ação — clique para incluir
+                </span>
+                <ul className="mt-2 flex list-none flex-wrap gap-2 p-0">
+                  {sugestoesChecklist.map((item) => (
+                    <li key={item.codigo}>
+                      <button
+                        type="button"
+                        className={
+                          "rounded-pill border px-3 py-1.5 text-xs cursor-pointer transition-colors " +
+                          (item.obrigatorio
+                            ? "border-acao-borda bg-acao-clara text-acao hover:bg-acao hover:text-papel"
+                            : "border-borda bg-papel text-tinta hover:border-borda-forte hover:bg-papel-3")
+                        }
+                        onClick={() => incluirDocumento(item.nome)}
+                        title={item.obrigatorio ? "Obrigatório no checklist do caso" : "Opcional no checklist do caso"}
+                      >
+                        {item.obrigatorio ? "● " : ""}
+                        {item.nome}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="mt-3 flex gap-2">
+              <input
+                className={`${SELECT} flex-1`}
+                value={documentoNovo}
+                placeholder="Ex.: laudo médico, CNIS, procuração"
                 onChange={(evento) => setDocumentoNovo(evento.target.value)}
-                onKeyDown={(evento) => { if (evento.key === "Enter") { evento.preventDefault(); adicionarDocumento(); } }} />
-              <Botao variante="secundario" onClick={adicionarDocumento}>Adicionar</Botao>
+                onKeyDown={(evento) => {
+                  if (evento.key === "Enter") {
+                    evento.preventDefault();
+                    adicionarDocumento();
+                  }
+                }}
+              />
+              <Botao variante="secundario" onClick={adicionarDocumento}>
+                Adicionar
+              </Botao>
             </div>
+
             {configuracao.required_documents.length ? (
               <ul className="mt-3 flex list-none flex-wrap gap-2 p-0">
                 {configuracao.required_documents.map((documento) => (
-                  <li key={documento} className="flex items-center gap-2 rounded-pill border border-borda px-3 py-1.5 text-xs text-tinta">
+                  <li
+                    key={documento}
+                    className="flex items-center gap-2 rounded-pill border border-borda bg-papel px-3 py-1.5 text-xs text-tinta"
+                  >
                     {documento}
-                    <button type="button" className="text-critico" aria-label={`Remover ${documento}`}
-                      onClick={() => setConfiguracao({ ...configuracao, required_documents: configuracao.required_documents.filter((item) => item !== documento) })}>×</button>
+                    <button
+                      type="button"
+                      className="text-critico cursor-pointer"
+                      aria-label={`Remover ${documento}`}
+                      onClick={() =>
+                        setConfiguracao({
+                          ...configuracao,
+                          required_documents: configuracao.required_documents.filter(
+                            (item) => item !== documento,
+                          ),
+                        })
+                      }
+                    >
+                      ×
+                    </button>
                   </li>
                 ))}
               </ul>
-            ) : <p className="mt-3 text-xs text-tinta-3">Nenhum documento exigido foi cadastrado.</p>}
+            ) : (
+              <p className="mt-3 mb-0 text-xs text-tinta-3">
+                Nenhum documento exigido foi cadastrado ainda
+                {checklistAcao.length
+                  ? " — use as sugestões do checklist acima."
+                  : "."}
+              </p>
+            )}
           </div>
-          <div className="mt-4 flex justify-end">
-            <Botao onClick={() => void salvarConfiguracao()} disabled={salvandoConfiguracao || !configuracao.display_name.trim()}>
-              {salvandoConfiguracao ? "Salvando…" : "Salvar configuração"}
-            </Botao>
+          <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+            {erro && (
+              <Aviso tom="critico" titulo="Não salvou">
+                {erro}
+              </Aviso>
+            )}
+            <div className="flex justify-end sm:ml-auto">
+              <Botao
+                onClick={() => void salvarConfiguracao()}
+                disabled={salvandoConfiguracao || !configuracao.display_name.trim()}
+              >
+                {salvandoConfiguracao ? "Salvando…" : "Salvar configuração"}
+              </Botao>
+            </div>
           </div>
         </Cartao>
       )}

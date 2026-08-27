@@ -144,17 +144,49 @@ function inferirFalante(
   perguntaAtual: string,
   anterior: TrechoAoVivo["quem"] | null,
 ): TrechoAoVivo["quem"] {
+  // Faixa remota do Jitsi: só a voz do outro lado chega. Sem heurística.
   if (fonte === "chamada") return "Entrevistado";
   const limpo = texto.trim();
   const normalizado = palavras(limpo).join(" ");
-  if (/^(sim|nao|isso|exato|exatamente|correto|aham|uhum|nunca|claro)$/.test(normalizado)) return "Entrevistado";
-  if (/\b(eu|meu|minha|comigo|trabalhei|trabalhava|sofri|recebi|ganhava|fui|tive)\b/.test(normalizado)) return "Entrevistado";
+
+  /* Quem CONDUZ também fala em primeira pessoa ("meu nome é… da equipe de
+   * acolhimento"). Se o "eu/meu" rodar antes, a saudação inteira vira
+   * "Entrevistado" — e foi exatamente o que aconteceu na sessão com o
+   * Guilherme. Estes padrões vêm ANTES do first-person de propósito. */
+  if (
+    /\b(equipe de acolhimento|sou da equipe|aqui da|lara.?melo|lari melo|vamos comecar|vamos iniciar|gostariamos|entrevista integra|confianca depositada|posso lhe|peco apenas|roteiro de acolhimento)\b/.test(
+      normalizado,
+    ) ||
+    /\b(qual (que )?e (o |a )?(seu|sua)|como e (que e )?(o |a )?(seu|sua)|voce e |o senhor|a senhora|me diga|conte (me|pra mim))\b/.test(
+      normalizado,
+    )
+  ) {
+    return "Entrevistador";
+  }
+
+  if (/^(sim|nao|isso|exato|exatamente|correto|aham|uhum|nunca|claro)$/.test(normalizado)) {
+    return "Entrevistado";
+  }
+  if (/\b(eu|meu|minha|comigo|trabalhei|trabalhava|sofri|recebi|ganhava|fui|tive)\b/.test(normalizado)) {
+    return "Entrevistado";
+  }
   const pergunta = roteiro?.blocos.flatMap((b) => b.perguntas).find((p) => p.id === perguntaAtual);
   if (limpo.endsWith("?")) return "Entrevistador";
   if (pergunta) {
     const ditas = palavras(limpo);
     const roteiroPalavras = new Set(palavras(pergunta.texto));
-    if (ditas.length >= 4 && ditas.filter((p) => roteiroPalavras.has(p)).length / ditas.length >= 0.6) return "Entrevistador";
+    if (ditas.length >= 4 && ditas.filter((p) => roteiroPalavras.has(p)).length / ditas.length >= 0.6) {
+      return "Entrevistador";
+    }
+  }
+  // Sobreposição com a saudação do roteiro — a abertura quase sempre é lida
+  // em voz alta pelo atendente, e não tem "?" no fim.
+  if (roteiro?.saudacao?.length) {
+    const ditas = palavras(limpo);
+    const saudacao = new Set(palavras(roteiro.saudacao.join(" ")));
+    if (ditas.length >= 6 && ditas.filter((p) => saudacao.has(p)).length / ditas.length >= 0.45) {
+      return "Entrevistador";
+    }
   }
   if (anterior === "Entrevistador") return "Entrevistado";
   return "Falante não identificado";
@@ -525,7 +557,12 @@ export default function Roteiro({
         filaTrechos.current = [];
         if (!trecho) continue;
 
-        const r = await escutarTrecho(trecho, respostasRef.current);
+        const r = await escutarTrecho(
+          trecho,
+          respostasRef.current,
+          roteiroRef.current?.codigo ?? codigo,
+          atualRef.current,
+        );
         setErroEscuta(null);
         setFaltando(r.faltando);
         setLembretes(r.lembretes);
@@ -583,7 +620,7 @@ export default function Roteiro({
       escutaEmCurso.current = false;
       setOuvindo(false);
     }
-  }, []);
+  }, [codigo]);
 
   const consumirFilaRef = useRef(consumirFila);
   consumirFilaRef.current = consumirFila;
@@ -639,6 +676,12 @@ export default function Roteiro({
         );
         ultimoFalante.current = quem;
         setTranscricaoVisivel((atuais) => [...atuais, { ...trecho, quem }].slice(-60));
+        /* Trecho do entrevistador (leitura do roteiro / saudação) não vai para
+         * a escuta: o modelo já confunde pergunta com resposta, e mandar a
+         * fala de quem conduz piora. Na faixa da chamada tudo é Entrevistado. */
+        if (quem === "Entrevistador") return;
+        filaTrechos.current.push(texto.trim());
+        void consumirFilaRef.current();
       },
       onFinal: (texto) => {
         const id = emGravacao.current;
@@ -699,14 +742,18 @@ export default function Roteiro({
     () => ({
       usarFaixaDaChamada: async (trilha: MediaStreamTrack) => {
         await captura.current?.usarTrilha(trilha);
+        // Ref na hora: `setFonte` é assíncrono e o `comecarEntrevista` pode
+        // rodar no mesmo ciclo ainda vendo "nenhuma"/"microfone".
+        fonteAtual.current = "chamada";
         setFonte("chamada");
         setErro(null);
       },
       aoPerderChamada: () => {
         // Só solta se a fonte era a chamada: quem estava no microfone continua
-        // no microfone, mesmo que a chamada do lado tenha caído.
+        // no microfone, mesmo que a chamada do lado tenha caído. `soltarFonte`
+        // preserva a sessão do Whisper — `encerrar()` matava a transcrição.
         if (fonteAtual.current === "chamada") {
-          captura.current?.encerrar();
+          captura.current?.soltarFonte();
           setFonte("nenhuma");
         }
       },
@@ -774,29 +821,27 @@ export default function Roteiro({
       return;
     }
     try {
-      if (estadoMic === "sem-audio") await captura.current?.selecionarAudio();
+      // Se a faixa da chamada já chegou (`usarFaixaDaChamada`), não abre o
+      // microfone da sala por cima — misturaria a voz do atendente na
+      // transcrição. Só pede getUserMedia quando ainda não há fonte.
+      if (!captura.current?.temAudio) await captura.current?.selecionarAudio();
       await captura.current?.iniciarEntrevista();
       emGravacao.current = null;
       setEscutando(true);
-      setFonte("microfone");
+      // Preserva "chamada" se a trilha remota já estava montada.
+      if (fonteAtual.current !== "chamada") setFonte("microfone");
       const entrevistaId = captura.current?.entrevistaId ?? "";
       if (entrevistaId) {
         void registrarAtendimentoDocumentacao(entrevistaId, String(respostasRef.current.nome ?? ""))
           .catch(() => undefined);
       }
-      // Ao vivo só transcreve. A interpretação e o preenchimento ficam para o fim.
+      // Fila limpa no início: trechos da sessão anterior não contaminam esta.
       filaTrechos.current = [];
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível abrir o microfone.";
       setErro(/NotAllowedError|denied/i.test(m) ? "Permissão de microfone negada." : m);
     }
-  }, [estadoMic]);
-
-  useEffect(() => {
-    if (!roteiro || inicioAutomatico.current) return;
-    inicioAutomatico.current = true;
-    void comecarEntrevista();
-  }, [roteiro, comecarEntrevista]);
+  }, []);
 
   useEffect(() => {
     if (!escutando) return;
@@ -1128,6 +1173,19 @@ function preencherMarcadores(
       setIdExpandida(true);
     }
   }, [faltaParaComecar]);
+
+  /* Só começa a transcrever DEPOIS da identificação (nome/CPF/UF/município).
+   *
+   * Antes, o auto-start no carregamento do roteiro abria o microfone da sala
+   * enquanto o atendente lia a saudação — e essa fala ia para a transcrição
+   * rotulada como "Entrevistado". Com a chamada, o cliente ainda nem entrou.
+   * Esperar a identificação dá tempo de abrir o Jitsi e receber a faixa remota. */
+  useEffect(() => {
+    if (!roteiro || inicioAutomatico.current) return;
+    if (faltaParaComecar.length > 0) return;
+    inicioAutomatico.current = true;
+    void comecarEntrevista();
+  }, [roteiro, comecarEntrevista, faltaParaComecar.length]);
 
   /* Os nomes que preenchem os marcadores do roteiro.
    *
