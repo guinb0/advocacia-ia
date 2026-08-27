@@ -33,6 +33,8 @@ import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
 import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
+import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
+import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
 
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
 // Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
@@ -255,6 +257,15 @@ export default function Roteiro({
   ref,
 }: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
+  /* O roteiro é editável no meio do atendimento. Só isto vive aqui em cima: o
+   * painel de edição é um componente à parte, e o que ele devolve substitui o
+   * `roteiro` desta sessão. As RESPOSTAS não são tocadas — elas são guardadas
+   * por id de pergunta, e reescrever um enunciado não muda o id. */
+  const [editandoRoteiro, setEditandoRoteiro] = useState(false);
+  const [importandoRoteiro, setImportandoRoteiro] = useState(false);
+  /* De qual arquivo veio o roteiro em edição, quando veio de um. Sobe junto ao
+   * salvar para o catálogo registrar a procedência. */
+  const [origemRoteiro, setOrigemRoteiro] = useState("");
   const [respostas, setRespostas] = useState<Respostas>({});
   const [erro, setErro] = useState<string | null>(null);
   /* Perguntas que saíram da vez sem resposta — o cliente não sabia, não quis,
@@ -1087,6 +1098,35 @@ function preencherMarcadores(
 
   return (
     <div id="roteiro-da-entrevista" className={`${escutando ? "max-w-[1320px]" : "max-w-[860px]"} roteiro-contentor`}>
+      {editandoRoteiro && (
+        <EditorRoteiro
+          roteiro={roteiro}
+          origem={origemRoteiro}
+          /* Vale só para esta sessão: nada é gravado, e o próximo atendimento
+             volta ao roteiro do catálogo. */
+          aoUsar={setRoteiro}
+          /* Gravado: o servidor devolve a versão canônica já validada, que é a
+             que passa a valer aqui também — assim a tela não fica com um
+             rascunho que o backend normalizou de outro jeito. */
+          aoSalvar={setRoteiro}
+          aoFechar={() => setEditandoRoteiro(false)}
+        />
+      )}
+
+      {importandoRoteiro && (
+        <ImportarRoteiro
+          aoImportar={(importado) => {
+            setRoteiro(importado.roteiro);
+            setOrigemRoteiro(importado.origem);
+            setImportandoRoteiro(false);
+            // Direto para o editor: o que veio é uma proposta do modelo, e
+            // ninguém entrevista com roteiro que ninguém leu.
+            setEditandoRoteiro(true);
+          }}
+          aoFechar={() => setImportandoRoteiro(false)}
+        />
+      )}
+
       {TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA && (
         <div className="mb-4 border-l-4 border-atencao bg-papel-2 px-3 py-[10px] text-[12px] leading-[1.5] font-ui text-tinta">
           <strong>Modo de teste:</strong> transcrição temporariamente desativada. Nenhum áudio é enviado ao serviço de transcrição.
@@ -1097,6 +1137,28 @@ function preencherMarcadores(
           <h2 className="m-0 font-semibold text-[22px] leading-[1.15] font-titulo">{roteiro.nome}</h2>
         </div>
         <div className={T_ACOES}>
+          {/* Fica ao lado do título, disponível o atendimento inteiro.
+              A pergunta que não serve para este cliente, a que faltou, a opção
+              que ninguém listou — tudo isso aparece com o cliente na linha, e
+              até aqui a saída era anotar à parte e consertar o código depois.
+              Editar não interrompe a entrevista: as respostas são guardadas por
+              id de pergunta e continuam intactas atrás do painel. */}
+          <button
+            type="button"
+            className={T_SECUNDARIO}
+            onClick={() => setEditandoRoteiro(true)}
+            title="Corrigir perguntas, blocos e falas sem sair do atendimento"
+          >
+            Editar roteiro
+          </button>
+          <button
+            type="button"
+            className={T_SECUNDARIO}
+            onClick={() => setImportandoRoteiro(true)}
+            title="Montar um roteiro a partir do documento do escritório"
+          >
+            Importar de documento
+          </button>
           {/* O botão que abre a entrevista inteira. Substitui os 86 ciclos de
               gravar/finalizar: daqui em diante o microfone fica aberto e o
               roteiro se preenche atrás da conversa. */}
