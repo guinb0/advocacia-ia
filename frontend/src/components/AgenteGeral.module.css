@@ -1,0 +1,756 @@
+/* O agente geral: histórico à esquerda, conversa no centro.
+ *
+ * Duas decisões de grade sustentam a tela. A coluna do histórico é FIXA (268px) e rola
+ * sozinha — ela é índice, e índice que empurra o conteúdo deixa de servir. E a conversa
+ * tem largura de leitura (~760px) mesmo num monitor largo: linha de 1400px de texto
+ * corrido faz o olho perder o começo da linha seguinte.
+ *
+ * Só grade, espaçamento e composição aqui. Cor, fonte, botão e campo vêm de
+ * `globals.css` (`docs/GUIA-VISUAL.md`). */
+
+.pagina {
+  display: flex;
+  align-items: stretch;
+  height: 100vh;
+  background: var(--papel);
+}
+
+/* ------------------------------------------------------------------ histórico */
+
+.historico {
+  display: flex;
+  flex-direction: column;
+  width: 268px;
+  flex-shrink: 0;
+  min-height: 0;
+  border-right: 1px solid var(--borda);
+  background: var(--papel-2);
+}
+
+.blocoDoTopo {
+  padding: 14px 14px 10px;
+}
+
+.blocoDaBusca {
+  padding: 0 14px 10px;
+}
+
+.campoDeBusca {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+  color: var(--tinta-3);
+}
+
+.campoDeBusca:focus-within {
+  border-color: var(--acao);
+  outline: 2px solid var(--foco);
+  outline-offset: 1px;
+}
+
+/* O contorno e o fundo são do rótulo acima, que abraça a lupa e o campo. A entrada em si
+ * fica nua para os dois parecerem um controle só. */
+.entradaDeBusca {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  color: var(--tinta);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-sm);
+}
+
+.entradaDeBusca:focus {
+  outline: none;
+}
+
+.lista {
+  flex: 1;
+  min-height: 0;
+  padding: 0 8px 8px;
+  overflow-y: auto;
+}
+
+.tituloDoGrupo {
+  padding: 10px 6px 5px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--tinta-3);
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--raio-sm);
+}
+
+.item:hover {
+  background: var(--papel-3);
+}
+
+/* A conversa aberta ganha fundo de papel e contorno — no fundo cinza da coluna, é o
+ * suficiente para se destacar sem precisar de cor de estado, que aqui não significaria
+ * nada. */
+.itemAberto,
+.itemAberto:hover {
+  border-color: var(--borda-forte);
+  background: var(--papel);
+}
+
+.abrirItem {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 4px 9px 10px;
+  border: none;
+  background: none;
+  font-family: var(--fonte-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tituloDoItem {
+  overflow: hidden;
+  font-size: var(--t-sm);
+  line-height: 1.35;
+  color: var(--tinta);
+  /* Duas linhas: título de conversa é uma pergunta, e uma linha corta quase todas no
+   * meio de uma palavra. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.itemAberto .tituloDoItem {
+  font-weight: 600;
+}
+
+.contextoDoItem {
+  font-size: var(--t-xs);
+  line-height: 1.35;
+  color: var(--tinta-3);
+}
+
+.apagarItem {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin: 6px 6px 0 0;
+  border: none;
+  border-radius: var(--raio-sm);
+  background: none;
+  color: var(--tinta-3);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-xs);
+  /* Invisível até a linha ser apontada ou receber foco: um ✕ em cada linha da lista
+   * transforma o histórico num painel de exclusão. `:focus-visible` mantém o botão
+   * alcançável por teclado, que é onde "só no hover" costuma deixar gente de fora. */
+  opacity: 0;
+  cursor: pointer;
+}
+
+.item:hover .apagarItem,
+.apagarItem:focus-visible {
+  opacity: 1;
+}
+
+.apagarItem:hover {
+  background: var(--critico-claro);
+  color: var(--critico);
+}
+
+.itemAConfirmar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  border-color: var(--critico-borda);
+  background: var(--critico-claro);
+}
+
+.perguntaDeExclusao {
+  font-size: var(--t-sm);
+  color: var(--tinta);
+}
+
+.acoesDaExclusao {
+  display: flex;
+  gap: 6px;
+}
+
+.vazioDoHistorico {
+  margin: 12px 6px;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--tinta-3);
+}
+
+.rodapeDoHistorico {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--borda);
+}
+
+.iniciais {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--raio-pill);
+  background: var(--acao);
+  color: #ffffff;
+  font-size: var(--t-xs);
+  font-weight: 600;
+}
+
+.nomeDoUsuario {
+  overflow: hidden;
+  font-size: var(--t-sm);
+  color: var(--tinta-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------- conversa */
+
+.coluna {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 24px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.tituloDaConversa {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nomeDaConversa {
+  overflow: hidden;
+  font-size: var(--t-base);
+  font-weight: 600;
+  color: var(--tinta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.escolhaDeCaso {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rotuloDaEscolha {
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+.escolhaDeCaso select {
+  max-width: 240px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: var(--t-sm);
+}
+
+.conversa {
+  flex: 1;
+  min-height: 0;
+  padding: 24px 0;
+  overflow-y: auto;
+}
+
+/* A largura de leitura, usada pela conversa e pelo campo de envio — os dois têm de ficar
+ * na mesma coluna, ou o campo parece pertencer a outra tela. */
+.leitura {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.contexto {
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--tinta-3);
+}
+
+.pergunta {
+  align-self: flex-end;
+  max-width: 78%;
+  padding: 11px 15px;
+  border-radius: var(--raio) var(--raio) 3px var(--raio);
+  background: var(--acao);
+  color: #ffffff;
+  font-size: var(--t-base);
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.blocoDaResposta {
+  display: flex;
+  gap: 12px;
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--raio-sm);
+  background: var(--papel-3);
+  color: var(--acao);
+}
+
+.corpoDaResposta {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 11px;
+  min-width: 0;
+}
+
+/* O selo de natureza e o que o acompanha, acima do texto. */
+.marcador {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tituloDoVerbete {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.textoDaResposta {
+  margin: 0;
+  font-size: var(--t-base);
+  line-height: 1.65;
+  color: var(--tinta-2);
+  white-space: pre-line;
+}
+
+/* Dentro do aviso a quebra de linha também precisa valer: a recusa tem três parágrafos, e
+ * emendá-los num bloco só apagaria a estrutura "não sei / por quê / o que dá para fazer". */
+.textoDaRecusa {
+  display: block;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.oQueFalta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 13px;
+  border: 1px dashed var(--borda-forte);
+  border-radius: var(--raio);
+}
+
+.rotuloDoQueFalta {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--tinta-3);
+}
+
+.itensDoQueFalta {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--tinta-2);
+}
+
+.candidatos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Cada candidato é um botão de duas linhas: o nome e o que o distingue dos homônimos. */
+.candidato {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 13px;
+  border: 1px solid var(--borda-campo);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+  font-family: var(--fonte-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.candidato:hover {
+  border-color: var(--acao);
+  background: var(--papel-3);
+}
+
+.clienteDoCandidato {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.detalheDoCandidato {
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+.notaDoSistema {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.4;
+  color: var(--tinta-3);
+}
+
+.pensando {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--tinta-3);
+}
+
+/* -------------------------------------------------------------------- abertura */
+
+.abertura {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 32px 0 8px;
+}
+
+.tituloDaAbertura {
+  margin: 0;
+  font-family: var(--fonte-titulo);
+  font-size: var(--t-xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--tinta);
+}
+
+.textoDaAbertura {
+  margin: 0;
+  max-width: 60ch;
+  font-size: var(--t-base);
+  line-height: 1.6;
+  color: var(--tinta-2);
+}
+
+.sugestoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.sugestao {
+  padding: 7px 13px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-pill);
+  background: var(--papel);
+  color: var(--tinta-2);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.sugestao:hover {
+  border-color: var(--acao);
+  color: var(--acao);
+}
+
+/* ------------------------------------------------------------------ composição */
+
+.composicao {
+  padding: 0 0 20px;
+}
+
+.composicao .leitura {
+  gap: 8px;
+}
+
+.linhaDeEnvio {
+  display: flex;
+  align-items: flex-end;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--borda-campo);
+  border-radius: var(--raio);
+  background: var(--papel);
+  box-shadow: var(--sombra-1);
+}
+
+.linhaDeEnvio:focus-within {
+  border-color: var(--acao);
+}
+
+/* O campo perde o próprio contorno: quem desenha a caixa é a linha acima, para o botão de
+ * enviar ficar dentro dela e não ao lado de um segundo retângulo. */
+.campoDaPergunta {
+  flex: 1;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 8px 4px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  resize: none;
+}
+
+.campoDaPergunta:focus,
+.campoDaPergunta:focus-visible,
+.campoDaPergunta:hover {
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+
+.enviar {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: var(--t-md);
+}
+
+.rodape {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.45;
+  color: var(--tinta-3);
+  text-align: center;
+}
+
+/* Em tela estreita o histórico deixa de disputar largura com a conversa: 268px de índice
+ * ao lado de 400px de leitura tornam as duas ilegíveis. A conversa é o que a pessoa veio
+ * fazer, então é o índice que sai — alcançável de novo pela Carteira. */
+/* Só aparece quando o histórico sai da tela (ver a consulta de mídia abaixo). */
+.novaNoCabecalho {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .historico {
+    display: none;
+  }
+
+  .novaNoCabecalho {
+    display: inline-flex;
+  }
+
+  .leitura {
+    padding: 0 16px;
+  }
+
+  .cabecalho {
+    padding: 11px 16px;
+  }
+
+  .escolhaDeCaso select {
+    max-width: 150px;
+  }
+}
+
+
+/* ------------------------------------------------ atalho de caso (`#`)
+ *
+ * Digitar `#` abre a lista de clientes do acervo, e cada letra depois dele estreita a
+ * busca. Existe porque escrever o nome por extenso é onde a conversa erra: o acervo tem
+ * homônimos, o nome vem com grafias diferentes ("José", "Jose"), e um primeiro nome
+ * sozinho é ambíguo de propósito — o roteador se recusa a adivinhar. Escolher da lista
+ * transforma a citação em ORDEM: vai junto o identificador do caso, e não o texto.
+ *
+ * Abre PARA CIMA porque o campo mora no rodapé da tela: para baixo, o primeiro candidato
+ * — o mais provável — ficaria fora da janela. */
+
+.ancoraDoAtalho {
+  position: relative;
+}
+
+.atalho {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 296px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+  box-shadow: var(--sombra-2);
+}
+
+.atalhoTitulo {
+  padding: 6px 10px 8px;
+  color: var(--tinta-3);
+  font-size: var(--t-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.atalhoItem {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--raio-sm);
+  background: none;
+  color: var(--tinta);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-base);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* O item sob o cursor do TECLADO e o sob o do mouse recebem o mesmo destaque: são a
+ * mesma coisa para quem olha, e distingui-los faria a lista parecer ter dois estados
+ * ativos ao mesmo tempo. */
+.atalhoItem[data-ativo="sim"],
+.atalhoItem:hover {
+  background: var(--acao-clara);
+}
+
+.atalhoCliente {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Categoria e data de abertura não são enfeite: o mesmo cliente com dois casos é
+ * corriqueiro, e uma lista de nomes repetidos não distingue nada — quem escolhe estaria
+ * clicando no escuro. É a mesma regra da desambiguação da resposta. */
+.atalhoDetalhe {
+  margin-left: auto;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.atalhoVazio {
+  padding: 10px;
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+}
+
+/* A menção já escolhida, marcada no rodapé do campo: sem isso o `#Maria Santos` no texto
+ * pareceria só texto, e não haveria como saber que a pergunta vai com o caso amarrado. */
+.mencaoAtiva {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border: 1px solid var(--acao-borda);
+  border-radius: var(--raio-pill);
+  background: var(--acao-clara);
+  color: var(--acao);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.soltarMencao {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: var(--t-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* --------------------------------------------- o caminho da análise
+ *
+ * Recolhido porque a resposta é o que se lê e o caminho é o que se confere. Presente
+ * porque, sem ele, uma leitura crítica do acervo é indistinguível de um palpite bem
+ * escrito — e é justamente esta lista que permite ao advogado checar a origem. */
+
+.comoCheguei {
+  margin-top: 4px;
+  border-top: 1px dashed var(--borda);
+  padding-top: 8px;
+}
+
+.resumoDoCaminho {
+  color: var(--tinta-3);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.resumoDoCaminho::marker,
+.resumoDoCaminho::-webkit-details-marker {
+  display: none;
+}
+
+.resumoDoCaminho::before {
+  content: "▸ ";
+}
+
+.comoCheguei[open] .resumoDoCaminho::before {
+  content: "▾ ";
+}
+
+.listaDoCaminho {
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+}
+
+.passoDoCaminho {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nomeDaConsulta {
+  font-weight: 600;
+}
+
+.argumentosDaConsulta {
+  color: var(--tinta-3);
+  font-family: var(--fonte-mono, ui-monospace, monospace);
+  font-size: var(--t-xs);
+}

@@ -352,7 +352,13 @@ export interface SaudeAgente {
   };
 }
 
-async function chamar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
+/** A chamada crua a `/api/agente/*`, com o cookie de sessão e o tratamento de erro.
+ *
+ * Exportada com nome próprio porque `lib/conversas.ts` fala com as mesmas rotas: sem
+ * isto, o chat geral teria um `fetch` paralelo — e o dia em que a autenticação mudasse,
+ * uma das duas telas passaria a receber 401 sem ninguém saber por quê.
+ */
+export async function chamarAgente<T>(caminho: string, init: RequestInit = {}): Promise<T> {
   const resposta = await fetch(urlApi(caminho), {
     ...init,
     // O cookie de sessão só acompanha a chamada com isto — ver `lib/api.ts`.
@@ -380,6 +386,9 @@ async function chamar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
   }
   return corpo as T;
 }
+
+/** Apelido interno: as demais funções deste arquivo já se escrevem com ele. */
+const chamar = chamarAgente;
 
 export function configDoAgente(): Promise<ConfigAgente> {
   return chamar<ConfigAgente>("/api/agente/config");
@@ -439,9 +448,36 @@ export function conferirContrato(
 
 /* ------------------------------------------------------------------ petição */
 
-/** Dispara a minuta. Responde 202: a peça aparece no dossiê quando ficar pronta. */
-export function gerarPeticao(casoId: string): Promise<{ run_id: string; status: string }> {
+/**
+ * Dispara a minuta. Responde 202: a peça aparece no dossiê quando ficar pronta.
+ *
+ * `requested_at` e `expected_sections` são o que permite acompanhar a redação em vez de
+ * anunciar que ela terminou: o primeiro delimita esta geração, o segundo diz quantas seções
+ * o modelo ainda vai escrever.
+ */
+export function gerarPeticao(casoId: string): Promise<{
+  run_id: string;
+  status: string;
+  requested_at: string;
+  expected_sections: number;
+}> {
   return chamar(`/api/agente/casos/${casoId}/peticao`, { method: "POST" });
+}
+
+export interface ProgressoPeticao {
+  status: "RUNNING" | "DONE";
+  /** Seções redigidas mais a revisão — execuções de IA já gravadas, não estimativa. */
+  completed_steps: number;
+  /** Só existe quando a peça terminou; é o sinal de que a tela pode mostrá-la. */
+  generation_id: string | null;
+  blocking_findings: number;
+}
+
+/** Onde a redação está agora. `desde` é o `requested_at` devolvido pelo POST. */
+export function progressoPeticao(casoId: string, desde: string): Promise<ProgressoPeticao> {
+  return chamar(
+    `/api/agente/casos/${casoId}/peticao/progresso?desde=${encodeURIComponent(desde)}`,
+  );
 }
 
 export function buscarPeticao(casoId: string, pecaId: string): Promise<Peticao> {
@@ -568,9 +604,42 @@ export async function enviarPecaDeEstilo(
   return chamar(`/api/agente/estilo/pecas`, { method: "POST", body: corpo });
 }
 
-/** URL do `.docx`. O download passa pelo backend, que é quem tem o token do agente. */
-export function urlDaPeticao(casoId: string, pecaId: string): string {
-  return urlApi(`/api/agente/casos/${casoId}/peticao/${pecaId}/arquivo`);
+/**
+ * URL do arquivo da peça. O download passa pelo backend, que é quem tem o token do agente.
+ *
+ * O PDF sai `inline` do servidor, e é por isso que ele pode ser exibido dentro do dossiê;
+ * o `.docx` continua vindo como anexo, para o advogado editar e assinar.
+ */
+export function urlDaPeticao(
+  casoId: string,
+  pecaId: string,
+  formato: "pdf" | "docx" = "docx",
+): string {
+  return urlApi(`/api/agente/casos/${casoId}/peticao/${pecaId}/arquivo?formato=${formato}`);
+}
+
+/**
+ * O arquivo da peça em memória, para a tela exibi-lo sem uma segunda viagem ao servidor.
+ *
+ * Não dá para apontar um `<iframe>` direto para a URL do backend: a sessão vive num cookie
+ * `HttpOnly` de **outra origem** (a API está noutra porta), e o navegador não manda cookie
+ * de terceiro numa subrequisição de moldura — o visualizador abriria em branco ou em 401.
+ * Buscando por `fetch` com `credentials`, o cookie vai; o `blob:` resultante é da mesma
+ * origem da página e sempre renderiza. O mesmo objeto serve ao botão de baixar.
+ */
+export async function baixarArquivoDaPeticao(
+  casoId: string,
+  pecaId: string,
+  formato: "pdf" | "docx" = "pdf",
+): Promise<Blob> {
+  const resposta = await fetch(urlDaPeticao(casoId, pecaId, formato), {
+    headers: cabecalhos(),
+    credentials: CREDENCIAIS,
+  });
+  if (!resposta.ok) {
+    throw new ApiError(`Não foi possível abrir o arquivo da peça (erro ${resposta.status}).`);
+  }
+  return resposta.blob();
 }
 
 /* --------------------------------------------------------------- entrevista */
@@ -679,4 +748,194 @@ export function resolverContradicao(
 
 export async function removerPecaDeEstilo(id: string): Promise<void> {
   await chamar(`/api/agente/estilo/pecas/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+
+/* ------------------------------------------------------------- chat do caso
+ *
+ * A conversa com o agente sobre UM caso, e a proposta de alteração que pode sair dela.
+ *
+ * Os tipos daqui são os que as DUAS telas usam — o painel ao lado do dossiê e o chat
+ * geral (`lib/conversas.ts` importa deste arquivo de propósito). Uma segunda tradução
+ * divergiria no dia em que `preview` mudasse de nome, e a confirmação passaria a mostrar
+ * o "antes" vazio numa das telas: o advogado aprovaria uma alteração sem ver o que perde.
+ */
+
+/** A natureza de cada afirmação da resposta. É o que vira o selo na tela.
+ *
+ * Chega no vocabulário do agente (`PROVEN_FACT`, `ALLEGED_FACT`) e assim fica: traduzir
+ * para nomes locais faria o mapa de selos depender de uma tabela a mais para valer, e a
+ * distinção entre provado e alegado é justamente a que o guardrail do backend protege. */
+export type NaturezaDaAfirmacao =
+  | "PROVEN_FACT"
+  | "ALLEGED_FACT"
+  | "HYPOTHESIS"
+  | "INFERENCE"
+  | "RECOMMENDATION"
+  | "STATISTICAL_PATTERN"
+  | "PRECEDENT";
+
+export interface AfirmacaoDoAgente {
+  statement: string;
+  nature: NaturezaDaAfirmacao;
+  /** Proveniência: o fato, o documento ou o caso de onde a afirmação saiu. */
+  refs: string[];
+}
+
+/** Uma alteração que o agente propôs — e que NÃO aconteceu.
+ *
+ * Nada é aplicado sem confirmação explícita (`AGENTS.md §2.4`), e é por isso que o
+ * `antes` viaja junto: proposta sem o antes não é revisável, porque quem aprova não sabe
+ * o que perde. */
+export interface PropostaDoAgente {
+  id: string;
+  acao: string;
+  intencao: string;
+  motivo: string;
+  antes: string;
+  depois: string;
+  impacto: string[];
+  risco: "NONE" | "REVERSIBLE" | "SENSITIVE";
+  /** `PENDING` é a única que a tela oferece para aplicar; as demais são histórico. */
+  estado: "PENDING" | "APPLIED" | "EXPIRED" | "REJECTED" | string;
+  expiraEm: string | null;
+}
+
+/** Uma linha da conversa, com o lastro junto do texto.
+ *
+ * O lastro anda com a mensagem, e não em estado à parte: reabrir a conversa mostrando a
+ * conclusão sem as afirmações que a sustentam é exatamente o que este sistema não pode
+ * produzir. */
+export interface MensagemDoChat {
+  id: string;
+  papel: "USER" | "ASSISTANT";
+  conteudo: string;
+  criadaEm: string;
+  citacoes: string[];
+  afirmacoes: AfirmacaoDoAgente[];
+  /** O que o agente disse que faltou para responder melhor (as `gaps` de lá). */
+  pendencias: string[];
+}
+
+export interface RespostaDoChat {
+  /** O fio do raciocínio do agente. Sem ele, a pergunta seguinte recomeça do zero. */
+  conversaId: string;
+  mensagem: MensagemDoChat;
+  propostas: PropostaDoAgente[];
+}
+
+/* ------------------------------------------------------------------ tradução */
+
+function objeto(valor: unknown): Record<string, unknown> {
+  return valor && typeof valor === "object" && !Array.isArray(valor)
+    ? (valor as Record<string, unknown>)
+    : {};
+}
+
+function textos(valor: unknown): string[] {
+  return Array.isArray(valor) ? valor.map((item) => String(item)) : [];
+}
+
+function traduzirAfirmacoes(valor: unknown): AfirmacaoDoAgente[] {
+  if (!Array.isArray(valor)) return [];
+  return valor.map((item) => {
+    const bruta = objeto(item);
+    return {
+      statement: String(bruta.statement ?? ""),
+      // `INFERENCE` como último recurso, e não `PROVEN_FACT`: natureza desconhecida tem
+      // de cair no lado que promete menos. O contrário faria um campo novo do agente
+      // aparecer como prova na tela.
+      nature: (bruta.nature ?? "INFERENCE") as NaturezaDaAfirmacao,
+      refs: textos(bruta.refs),
+    };
+  });
+}
+
+/** O formato do agente (`intent`, `preview.before/after`) no vocabulário da tela.
+ *
+ * Exportada porque `lib/conversas.ts` recebe as mesmas propostas pela conversa geral: as
+ * duas telas mostram a mesma proposta, e uma cópia desta função é uma chance a mais de
+ * elas discordarem sobre o que está sendo aprovado.
+ */
+export function traduzirPropostaCrua(cru: unknown): PropostaDoAgente {
+  const bruta = objeto(cru);
+  const previa = objeto(bruta.preview);
+  return {
+    id: String(bruta.id ?? ""),
+    acao: String(bruta.action ?? ""),
+    intencao: String(bruta.intent ?? ""),
+    motivo: String(bruta.rationale ?? ""),
+    antes: String(previa.before ?? ""),
+    depois: String(previa.after ?? ""),
+    impacto: textos(bruta.impact),
+    risco: (bruta.risk ?? "REVERSIBLE") as PropostaDoAgente["risco"],
+    estado: String(bruta.status ?? "PENDING"),
+    expiraEm: bruta.expires_at ? String(bruta.expires_at) : null,
+  };
+}
+
+function traduzirMensagem(cru: unknown): MensagemDoChat {
+  const bruta = objeto(cru);
+  const lastro = objeto(bruta.payload);
+  const papel = String(bruta.role ?? bruta.papel ?? "ASSISTANT").toUpperCase();
+  return {
+    id: String(bruta.id ?? ""),
+    papel: papel === "USER" ? "USER" : "ASSISTANT",
+    conteudo: String(bruta.content ?? ""),
+    criadaEm: String(bruta.created_at ?? new Date().toISOString()),
+    citacoes: textos(bruta.citations),
+    afirmacoes: traduzirAfirmacoes(lastro.assertions),
+    pendencias: textos(lastro.gaps),
+  };
+}
+
+/* --------------------------------------------------------------------- rotas */
+
+/** A pergunta sobre um caso. Síncrona: quem perguntou está olhando a conversa. */
+export async function perguntarAoCaso(
+  casoId: string,
+  mensagem: string,
+  conversaId?: string,
+): Promise<RespostaDoChat> {
+  const corpo = await chamar<{
+    conversation_id?: string;
+    message?: unknown;
+    proposals?: unknown[] | null;
+  }>(`/api/agente/casos/${casoId}/chat`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: mensagem,
+      ...(conversaId ? { conversation_id: conversaId } : {}),
+    }),
+  });
+
+  return {
+    conversaId: String(corpo.conversation_id ?? conversaId ?? ""),
+    mensagem: traduzirMensagem(corpo.message),
+    propostas: (corpo.proposals ?? []).map(traduzirPropostaCrua),
+  };
+}
+
+/** A transcrição que o agente guarda daquele fio — para reabrir a conversa do caso. */
+export async function conversaDoCaso(
+  casoId: string,
+  conversaId: string,
+): Promise<MensagemDoChat[]> {
+  const corpo = await chamar<{ messages?: unknown[] | null }>(
+    `/api/agente/casos/${casoId}/chat/${conversaId}`,
+  );
+  return (corpo.messages ?? []).map(traduzirMensagem);
+}
+
+/** Aplica a proposta. É o único caminho pelo qual uma conversa altera o caso. */
+export async function confirmarProposta(
+  casoId: string,
+  propostaId: string,
+): Promise<PropostaDoAgente> {
+  return traduzirPropostaCrua(
+    await chamar<unknown>(
+      `/api/agente/casos/${casoId}/chat/propostas/${propostaId}/confirmar`,
+      { method: "POST" },
+    ),
+  );
 }

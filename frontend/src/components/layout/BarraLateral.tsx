@@ -61,6 +61,10 @@ const GRUPOS: Grupo[] = [
       // não são módulos, e sim onde a carteira leva. Acendem a carteira para a
       // barra não ficar sem resposta quando o advogado está dentro de um caso.
       { tela: "carteira", rotulo: "Carteira", filhas: ["caso", "dossie", "painel", "jurimetria"] },
+      // Fica em Atendimento, e não em Análise, porque a pergunta que ele responde é a de
+      // ANTES de saber qual caso abrir — o vizinho certo dela é a carteira, não o painel
+      // de dados.
+      { tela: "agente", rotulo: "Agente" },
       { tela: "casos", rotulo: "Casos" },
       { tela: "documentacao", rotulo: "Documentação" },
     ],

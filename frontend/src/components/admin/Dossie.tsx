@@ -16,8 +16,12 @@
  *   como lista vazia — as duas coisas se parecem e significam o oposto.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import AjudanteDoCaso from "@/components/AjudanteDoCaso";
+/* O trilho recolhido é desenhado por quem hospeda o painel, e não pelo painel: só o
+ * dossiê sabe que existe uma coluna para devolver ao conteúdo quando ele se fecha. */
+import trilho from "@/components/AjudanteDoCaso.module.css";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import {
   gerarContratoDoCaso as solicitarContratoDoCaso,
@@ -30,6 +34,7 @@ import { ESTADO_DO_FATO, ORIGEM_DO_FATO, valorDoFato } from "@/lib/painel";
 import {
   analisarNoAgente,
   anexarEntrevista,
+  baixarArquivoDaPeticao,
   buscarDossie,
   buscarEntrevista,
   buscarPeticao,
@@ -41,6 +46,7 @@ import {
   gerarPeticao,
   lerEntrevistaNoAgente,
   pesquisarNoAgente,
+  progressoPeticao,
   resolverContradicao,
   sincronizarComAgente,
   urlDaEntrevista,
@@ -256,8 +262,23 @@ export default function Dossie({
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [pesquisa, setPesquisa] = useState<PesquisaDetalhe | null>(null);
   const [peticao, setPeticao] = useState<Peticao | null>(null);
+  /* A redação em curso. Enquanto existir, a tela mostra a barra de progresso em vez do
+   * "ficou pronta" — que era falso: o POST responde 202, e a peça só aparece minutos
+   * depois. `desde` é a marca que separa esta geração da anterior. */
+  const [redacao, setRedacao] = useState<{
+    desde: string;
+    esperadas: number;
+    passos: number;
+  } | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [camposFaltandoContrato, setCamposFaltandoContrato] = useState<string[] | null>(null);
+  /* Começa recolhido: o dossiê é o que o advogado veio ver, e abrir por cima dele uma
+   * coluna de 400px em toda visita decidiria por ele. Recolhido não é escondido — o
+   * trilho ao lado continua anunciando que o agente está ali, a um clique. */
+  const [agenteAberto, setAgenteAberto] = useState(false);
+  /* Qual fato a citação da resposta está apontando. Sem o destaque, seguir a referência
+   * rola a página e nada muda na tela: o advogado não sabe qual dos cartões era. */
+  const [fatoCitado, setFatoCitado] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -282,6 +303,71 @@ export default function Dossie({
     const timer = setInterval(() => void carregar(), 5000);
     return () => clearInterval(timer);
   }, [emAndamento, ocupado, carregar]);
+
+  /* Acompanha a redação até a peça existir de verdade.
+   *
+   * O que se lê é execução de IA já gravada — seção redigida e revisão —, não relógio
+   * correndo na tela: uma barra que anda sozinha mentiria do mesmo jeito que o aviso
+   * antigo, só mais devagar.
+   *
+   * Falha de leitura é engolida de propósito: a redação continua no worker do outro lado,
+   * e derrubar o acompanhamento por uma consulta que não voltou deixaria o advogado sem
+   * saber de nada. O prazo máximo abaixo é o do próprio worker (`time_limit`, 15 min); dali
+   * em diante o silêncio é defeito, e aí sim ele precisa ser dito.
+   */
+  const redigindoDesde = redacao?.desde ?? null;
+  useEffect(() => {
+    if (!redigindoDesde) return;
+    let ativo = true;
+    const limite = Date.now() + 16 * 60 * 1000;
+
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const andamento = await progressoPeticao(casoId, redigindoDesde);
+          if (!ativo) return;
+          if (andamento.status === "DONE") {
+            /* Busque a peça antes de anunciar o fim. Atualizar primeiro o aviso e só depois
+             * recarregar o dossiê ainda deixava uma janela em que "ficou pronta" aparecia
+             * sobre a versão antiga (ou sobre cartão vazio), que é justamente o falso
+             * positivo que este acompanhamento elimina. */
+            if (!andamento.generation_id) {
+              throw new Error("A geração terminou sem identificar a petição criada.");
+            }
+            const pronta = await buscarPeticao(casoId, andamento.generation_id);
+            if (!ativo) return;
+            setPeticao(pronta);
+            setRedacao(null);
+            setAviso(
+              andamento.blocking_findings > 0
+                ? "A minuta ficou pronta, mas a revisão a reteve — o motivo está abaixo."
+                : "A petição ficou pronta e está aberta abaixo.",
+            );
+            /* Sincroniza também o resumo/lista, sem bloquear a exibição que acabou de
+             * receber o documento completo pelo identificador exato. */
+            void carregar();
+            return;
+          }
+          setRedacao((atual) =>
+            atual ? { ...atual, passos: andamento.completed_steps } : atual,
+          );
+        } catch {
+          /* leitura perdida; a próxima tentativa vem em três segundos */
+        }
+        if (ativo && Date.now() > limite) {
+          setRedacao(null);
+          setErro(
+            "A redação passou do prazo do agente sem devolver a peça. Verifique o worker de geração antes de pedir outra.",
+          );
+        }
+      })();
+    }, 3000);
+
+    return () => {
+      ativo = false;
+      clearInterval(timer);
+    };
+  }, [casoId, redigindoDesde, carregar]);
 
   const ultimaPesquisa = dados?.agente.pesquisas[0] ?? null;
   const ultimaPeticao = dados?.agente.peticoes?.[0] ?? null;
@@ -325,6 +411,29 @@ export default function Dossie({
       await carregar();
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "A ação não pôde ser concluída.");
+    } finally {
+      setOcupado(null);
+    }
+  }
+
+  /* A petição tem caminho próprio, e não o `executar` das demais ações: as outras
+   * terminam quando o pedido é aceito, esta só termina quando a peça existe. É a diferença
+   * entre "enfileirada" e "pronta", e era ela que o aviso antigo apagava. */
+  async function pedirPeticao() {
+    setOcupado("peticao");
+    setAviso(null);
+    setErro(null);
+    try {
+      const pedido = await gerarPeticao(casoId);
+      setRedacao({
+        desde: pedido.requested_at,
+        // Piso, não previsão: seção com subtítulos vira mais de uma chamada de modelo. A
+        // barra respeita isso e não fecha por contagem — só quando a peça aparece.
+        esperadas: Math.max(1, pedido.expected_sections + 1),
+        passos: 0,
+      });
+    } catch (falha) {
+      setErro(falha instanceof Error ? falha.message : "Não foi possível gerar a petição.");
     } finally {
       setOcupado(null);
     }
@@ -388,7 +497,15 @@ export default function Dossie({
   const bloqueantes = pendencias.filter((item) => item.severity === "BLOCKING");
 
   return (
-    <div className="max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
+    /* Duas colunas: o dossiê e o agente. O caso NÃO sai da tela quando se fala com ele —
+     * antes isso era uma aba que substituía o dossiê inteiro, e a citação da resposta
+     * ("Entrevista · falta fazer") apontava para algo que o advogado não estava mais
+     * vendo. Ao lado, ela vira caminho de ida e volta.
+     *
+     * A coluna só existe a partir de `lg`: em 400px de painel sobre uma tela de celular
+     * não sobra dossiê nenhum para a citação apontar, e aí ela não serviria para nada. */
+    <div className="flex items-start">
+      <div className="min-w-0 flex-1 max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
       <header className="flex justify-between items-end gap-5 flex-wrap">
         <div>
           <Botao variante="secundario" pequeno onClick={onVoltar}>
@@ -471,16 +588,10 @@ export default function Dossie({
           </Botao>
           <Botao
             variante="secundario"
-            disabled={!agente.ligado || ocupado !== null}
-            onClick={() =>
-              void executar(
-                "peticao",
-                () => gerarPeticao(casoId),
-                "Minuta enfileirada. Ela aparece aqui com o relatório da revisão.",
-              )
-            }
+            disabled={!agente.ligado || ocupado !== null || redacao !== null}
+            onClick={() => void pedirPeticao()}
           >
-            {ocupado === "peticao" ? "Redigindo…" : "Gerar petição"}
+            {ocupado === "peticao" || redacao ? "Redigindo…" : "Gerar petição"}
           </Botao>
         </div>
       </header>
@@ -684,7 +795,18 @@ export default function Dossie({
             </p>
             <ul className={LISTA}>
               {agente.fatos.map((fato) => (
-                <li key={fato.id} className={ITEM}>
+                /* O `id` é o que a citação da resposta do agente procura: ela chega com o
+                 * identificador do fato, e sem âncora no cartão o "ver no dossiê" seria
+                 * um botão que não leva a lugar nenhum. */
+                <li
+                  key={fato.id}
+                  id={`fato-${fato.id}`}
+                  className={
+                    fatoCitado === fato.id
+                      ? `${ITEM} border-acao-borda bg-acao-clara`
+                      : ITEM
+                  }
+                >
                   <div className={ITEM_TOPO}>
                     <strong>{ROTULO_FATO[fato.type] ?? fato.type}</strong>
                     {/* O estado sai do mesmo mapa que o painel do caso usa. Antes
@@ -838,6 +960,7 @@ export default function Dossie({
           <PainelPeticao
             casoId={casoId}
             peticao={peticao}
+            redacao={redacao}
             disponivel={agente.disponivel}
             ocupado={ocupado !== null}
             onDecidir={(aprovada, nota) =>
@@ -849,6 +972,44 @@ export default function Dossie({
             }
           />
         </div>
+      </div>
+      </div>
+
+      <div className="hidden lg:flex sticky top-0 h-screen">
+        {agenteAberto ? (
+          <AjudanteDoCaso
+            casoId={casoId}
+            aoRecolher={() => setAgenteAberto(false)}
+            /* O destaque some sozinho: um cartão marcado para sempre viraria ruído no
+             * dossiê, e a próxima citação não teria como se distinguir dele. */
+            aoAbrirReferencia={(referencia) => {
+              setFatoCitado(referencia);
+              window.setTimeout(
+                () => setFatoCitado((atual) => (atual === referencia ? null : atual)),
+                2600,
+              );
+            }}
+          />
+        ) : (
+          <div className={trilho.trilho}>
+            <button
+              type="button"
+              className={trilho.iconeBotao}
+              onClick={() => setAgenteAberto(true)}
+              aria-label="Abrir o agente do caso"
+              title="Agente do caso"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+            {/* O rótulo na vertical existe para o trilho não ser um ícone mudo: quem
+              * nunca abriu não tem como adivinhar o que há atrás dele. */}
+            <span className="[writing-mode:vertical-rl] text-tinta-3 text-xs font-semibold tracking-[0.04em]">
+              Agente do caso
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1273,15 +1434,158 @@ function motivoLegivel(codigo: string): string {
   return complemento ? `${texto} (${complemento})` : texto;
 }
 
+/* A barra da redação em curso.
+ *
+ * Anda por etapa MEDIDA (seção redigida, revisão), e não por tempo. Por isso ela para
+ * quando o agente para — que é exatamente a informação que o advogado precisa ter.
+ *
+ * O teto de 92% é deliberado: seção com subtítulos vira mais de uma chamada de modelo, e a
+ * contagem esperada é um piso. Deixar a barra encostar em 100% antes de a peça existir
+ * recriaria, em forma de desenho, o mesmo "pronto" falso que ela veio substituir. */
+function BarraDeRedacao({ passos, esperadas }: { passos: number; esperadas: number }) {
+  const proporcao = Math.min(0.92, esperadas > 0 ? passos / esperadas : 0);
+
+  return (
+    <div className={INDICADOR} aria-live="polite">
+      <div className={ITEM_TOPO}>
+        <strong>
+          <span aria-hidden className="text-acao font-bold mr-[6px]">
+            →
+          </span>
+          Redigindo a petição
+        </strong>
+        <span className={VALOR}>
+          {passos} de ~{esperadas} etapas
+        </span>
+      </div>
+      <div
+        className="h-[6px] rounded-pill bg-papel-3 overflow-hidden"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={esperadas}
+        /* Subtítulos podem gerar mais passos que o piso estimado. O texto pode mostrar
+         * isso, mas ARIA não pode anunciar um valor maior que o seu próprio máximo. */
+        aria-valuenow={Math.min(passos, esperadas)}
+        aria-label="Progresso da redação da petição"
+      >
+        <i
+          className="block h-full rounded-pill transition-[width] duration-500"
+          style={{ width: `${Math.round(proporcao * 100)}%`, background: "var(--acao)" }}
+        />
+      </div>
+      <p className={RAZAO}>
+        Uma chamada de modelo por seção, mais a revisão. A peça aparece aqui sozinha quando
+        terminar — não é preciso recarregar a tela.
+      </p>
+    </div>
+  );
+}
+
+/* O PDF da peça, dentro do dossiê.
+ *
+ * O arquivo vem por `fetch` e vira `blob:` porque a sessão está num cookie `HttpOnly` de
+ * outra origem, e o navegador não o manda numa moldura apontada direto para a API — o
+ * visualizador abriria em branco. De quebra, o mesmo objeto serve ao botão de baixar, sem
+ * uma segunda viagem ao servidor.
+ *
+ * `URL.revokeObjectURL` na limpeza não é zelo: sem ele, cada nova versão da peça deixa um
+ * PDF inteiro preso na memória da aba, que o advogado mantém aberta o dia todo. */
+function VisualizadorPeticao({
+  casoId,
+  pecaId,
+  versao,
+}: {
+  casoId: string;
+  pecaId: string;
+  versao: number;
+}) {
+  const [endereco, setEndereco] = useState<string | null>(null);
+  const [falha, setFalha] = useState<string | null>(null);
+  const nome = useMemo(() => `Peticao inicial - v${versao}.pdf`, [versao]);
+  const ancora = useRef<HTMLAnchorElement | null>(null);
+
+  useEffect(() => {
+    let ativo = true;
+    let atual: string | null = null;
+    setEndereco(null);
+    setFalha(null);
+
+    void baixarArquivoDaPeticao(casoId, pecaId, "pdf")
+      .then((arquivo) => {
+        if (!ativo) return;
+        atual = URL.createObjectURL(arquivo);
+        setEndereco(atual);
+      })
+      .catch((erro) =>
+        ativo && setFalha(erro instanceof Error ? erro.message : "Não foi possível abrir o PDF."),
+      );
+
+    return () => {
+      ativo = false;
+      if (atual) URL.revokeObjectURL(atual);
+    };
+  }, [casoId, pecaId]);
+
+  if (falha) {
+    return (
+      <Aviso tom="atencao" titulo="O PDF não abriu">
+        {falha} O texto continua legível em “Ler a minuta”, e o .docx continua disponível.
+      </Aviso>
+    );
+  }
+
+  return (
+    <div className="mt-[14px] border border-borda bg-papel-2">
+      <div className={`${ITEM_TOPO} p-[10px_12px] border-b border-borda bg-papel sticky top-0 z-10`}>
+        <strong className="text-sm">Petição em PDF — versão {versao}</strong>
+        <div className="flex gap-2 flex-wrap">
+          {/* Baixa o mesmo arquivo que está na tela: o `blob:` já está em memória, e um
+            * link para a API abriria outra requisição — e, sendo `inline`, o navegador o
+            * exibiria numa aba nova em vez de salvar. */}
+          <a ref={ancora} href={endereco ?? undefined} download={nome} className="hidden" />
+          <Botao
+            variante="secundario"
+            pequeno
+            disabled={!endereco}
+            onClick={() => ancora.current?.click()}
+          >
+            Baixar PDF
+          </Botao>
+          <LinkBotao
+            variante="secundario"
+            pequeno
+            href={urlDaPeticao(casoId, pecaId, "docx")}
+            download
+          >
+            Baixar .docx
+          </LinkBotao>
+        </div>
+      </div>
+      {endereco ? (
+        <iframe
+          src={endereco}
+          title={`Petição inicial, versão ${versao}`}
+          className="block w-full h-[70vh] min-h-[520px] border-0 bg-papel"
+        />
+      ) : (
+        <p className="p-[16px_18px] text-tinta-3 text-sm">Abrindo o PDF da peça…</p>
+      )}
+    </div>
+  );
+}
+
 function PainelPeticao({
   casoId,
   peticao,
+  redacao,
   disponivel,
   ocupado,
   onDecidir,
 }: {
   casoId: string;
   peticao: Peticao | null;
+  /** A geração em curso, quando há uma. É ela que substitui o aviso de "pronta". */
+  redacao: { desde: string; esperadas: number; passos: number } | null;
   disponivel: boolean;
   ocupado: boolean;
   onDecidir: (aprovada: boolean, nota?: string) => Promise<void>;
@@ -1291,11 +1595,15 @@ function PainelPeticao({
   if (!peticao) {
     return (
       <Cartao titulo="Petição inicial">
-        <p className={TEXTO_VAZIO}>
-          {disponivel
-            ? "Nenhuma minuta gerada. Use “Gerar petição” — ela sai mesmo com prova faltando, marcando o que falta comprovar."
-            : "Sem resposta do agente."}
-        </p>
+        {redacao ? (
+          <BarraDeRedacao passos={redacao.passos} esperadas={redacao.esperadas} />
+        ) : (
+          <p className={TEXTO_VAZIO}>
+            {disponivel
+              ? "Nenhuma minuta gerada. Use “Gerar petição” — ela sai mesmo com prova faltando, marcando o que falta comprovar."
+              : "Sem resposta do agente."}
+          </p>
+        )}
       </Cartao>
     );
   }
@@ -1335,6 +1643,10 @@ function PainelPeticao({
         Minuta de apoio: exige revisão e assinatura de advogado. Cada afirmação aponta o fato
         que a sustenta, e cada citação foi conferida contra a pesquisa deste caso.
       </p>
+
+      {/* Nova versão sendo redigida sobre uma que já existe: a barra vem primeiro, senão a
+        * peça velha na tela se passa pela nova enquanto o modelo ainda escreve. */}
+      {redacao && <BarraDeRedacao passos={redacao.passos} esperadas={redacao.esperadas} />}
 
       {retida && (
         <Aviso tom="critico" titulo={`${bloqueantes.length} achado(s) impedem a entrega`}>
@@ -1404,11 +1716,11 @@ function PainelPeticao({
       )}
 
       <div className="flex gap-2 flex-wrap">
-        <LinkBotao variante="secundario" href={urlDaPeticao(casoId, peticao.id)} download>
-          Baixar .docx
-        </LinkBotao>
+        {/* Os botões de arquivo saíram daqui e foram para o topo do visualizador: é lá que
+          * a peça está, e é lá que se decide levá-la. O que sobra nesta linha é decisão
+          * sobre a peça, não sobre o arquivo. */}
         <Botao variante="texto" onClick={() => setAberta((valor) => !valor)}>
-          {aberta ? "Ocultar o texto" : "Ler a minuta"}
+          {aberta ? "Ocultar o texto corrido" : "Ler o texto corrido"}
         </Botao>
         {!retida && peticao.status === "IN_REVIEW" && (
           <>
@@ -1421,6 +1733,8 @@ function PainelPeticao({
           </>
         )}
       </div>
+
+      <VisualizadorPeticao casoId={casoId} pecaId={peticao.id} versao={peticao.version} />
 
       {aberta && (
         <div className={MINUTA}>

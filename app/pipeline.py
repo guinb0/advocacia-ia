@@ -49,6 +49,10 @@ TMP_DIR = Path(__file__).resolve().parent.parent / "tmp"
 TMP_DIR.mkdir(exist_ok=True)
 TTL_SEGUNDOS = 30 * 60  # arquivos temporários expiram em 30 min
 
+# Formatos que o motor consegue transformar em imagem e ler. Outros formatos
+# ainda são aceitos nas entregas, mas ficam preservados para conferência humana.
+EXTENSOES_OCR = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".pdf"}
+
 
 # --------------------------------------------------------------- decodificação
 
@@ -465,7 +469,19 @@ def processar(
     with crono.medir("classificar"):
         tipo_detectado, pontos, todos = classificar(texto_norm)
     forcado = bool(tipo_forcado and tipo_forcado in ROTULOS_TIPO)
-    tipo = tipo_forcado if forcado else tipo_detectado
+    # DOCUMENTO NO CAMPO ERRADO
+    #
+    # `tipo_forcado` vem do item em que o arquivo foi enviado, e serve para dizer
+    # ao extrator quais campos procurar. Quando o classificador reconhece, com
+    # confiança, um documento DIFERENTE, insistir no tipo forçado extrai campos
+    # de CPF de um comprovante de residência: nenhum sai, o documento é dado por
+    # ilegível e o cliente é mandado tirar outra foto do arquivo certo.
+    #
+    # Quem manda aqui é o classificador — ele só afirma acima do próprio limiar,
+    # e `tipo.detectado` continua registrando o que ele leu, intacto, para o
+    # `casos.tipo_confere` e o roteamento decidirem o item.
+    reclassificado = bool(forcado and tipo_detectado not in {"desconhecido", tipo_forcado})
+    tipo = tipo_detectado if (reclassificado or not forcado) else tipo_forcado
 
     from .extractors import extrair_campos
 
@@ -537,7 +553,10 @@ def processar(
             "descricao_detectado": ROTULOS_TIPO.get(tipo_detectado, tipo_detectado),
             "confianca_classificacao": pontos,
             "pontuacoes": todos,
-            "forcado_pelo_usuario": forcado,
+            "forcado_pelo_usuario": forcado and not reclassificado,
+            # O tipo pedido no envio não era o do documento, e a extração seguiu
+            # o que o classificador leu.
+            "reclassificado": reclassificado,
         },
         "campos": [c.to_dict() for c in campos],
         "validacao": validacao,

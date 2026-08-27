@@ -15,6 +15,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+#: Código sentinela do documento que chegou SEM destino, à espera de triagem.
+#:
+#: Não pertence a checklist nenhum de propósito: é `itens_atendidos` vazio que o
+#: mantém fora de todos os itens da tela, e este código serve só para a coluna
+#: `item_codigo`, que é obrigatória no banco. Mora aqui, e não em
+#: `app/roteamento.py`, porque `armazenamento` precisa dele e não pode importar
+#: o roteamento sem fechar um ciclo.
+ITEM_TRIAGEM = "TRIAGEM"
+
 
 @dataclass(frozen=True)
 class ItemChecklist:

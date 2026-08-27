@@ -22,6 +22,7 @@ from typing import Any, Iterator
 
 from . import banco
 from .banco import conectar
+from .categorias import ITEM_TRIAGEM
 
 log = logging.getLogger("armazenamento")
 
@@ -211,8 +212,15 @@ def _normalizar_entrega(linha: banco.Linha) -> dict[str, Any]:
             itens_atendidos = json.loads(itens_atendidos)
         except json.JSONDecodeError:
             itens_atendidos = []
-    # Entregas antigas atendem apenas ao item em que foram enviadas.
-    registro["itens_atendidos"] = itens_atendidos or [registro["item_codigo"]]
+    # Entregas antigas atendem apenas ao item em que foram enviadas. A entrega em
+    # triagem é a exceção: ela nasce SEM item, e herdar o sentinela aqui a faria
+    # aparecer como documento entregue de um item que não existe no checklist.
+    if not itens_atendidos and registro["item_codigo"] != ITEM_TRIAGEM:
+        itens_atendidos = [registro["item_codigo"]]
+    registro["itens_atendidos"] = itens_atendidos or []
+    if "texto_utilizavel" in registro:
+        valor = registro["texto_utilizavel"]
+        registro["texto_utilizavel"] = None if valor is None else bool(valor)
     return registro
 
 
@@ -505,16 +513,25 @@ def registrar_entrega_pendente(
     caminho: Path,
     itens_atendidos: list[str] | None = None,
     conteudo: bytes | None = None,
+    lote_id: str | None = None,
 ) -> dict[str, Any]:
     """Cria a entrega antes do OCR: o arquivo já está salvo, a leitura vem depois.
 
     É o que permite responder o upload na hora. Até `concluir_entrega`, esta
     linha não conta como documento entregue em lugar nenhum.
+
+    `item_codigo` igual a `ITEM_TRIAGEM` é o envio sem destino: quem decide a
+    que item ele responde é `roteamento.decidir`, depois da leitura. Nesse caso
+    `itens_atendidos` fica VAZIO de propósito — herdar o sentinela colocaria o
+    arquivo num item que não existe no checklist.
     """
     entrega_id = str(uuid.uuid4())
-    itens = list(dict.fromkeys(itens_atendidos or [item_codigo]))
-    if item_codigo not in itens:
-        itens.append(item_codigo)
+    if item_codigo == ITEM_TRIAGEM:
+        itens: list[str] = list(dict.fromkeys(itens_atendidos or []))
+    else:
+        itens = list(dict.fromkeys(itens_atendidos or [item_codigo]))
+        if item_codigo not in itens:
+            itens.append(item_codigo)
     if conteudo is None:
         conteudo = caminho.read_bytes()
     checksum = _sha256(conteudo)
@@ -525,9 +542,9 @@ def registrar_entrega_pendente(
             INSERT INTO entregas (id, caso_id, item_codigo, arquivo, caminho, conteudo,
                                   conteudo_sha256, tipo_detectado,
                                   tipo_confere, veredito, dados_utilizaveis, confirmado_manual,
-                                  score_legibilidade, itens_atendidos, extracao_json,
+                                  score_legibilidade, itens_atendidos, lote_id, extracao_json,
                                   status_proc, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, 0, NULL, ?, NULL, 'na_fila', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, 0, NULL, ?, ?, NULL, 'na_fila', ?)
             """,
             (
                 entrega_id,
@@ -538,6 +555,7 @@ def registrar_entrega_pendente(
                 conteudo,
                 checksum,
                 json.dumps(itens),
+                lote_id,
                 agora(),
             ),
         )
@@ -560,15 +578,28 @@ def concluir_entrega(
     extracao: dict[str, Any],
     tipo_confere: bool | None,
     itens_atendidos: list[str],
+    item_codigo: str | None = None,
+    origem: str | None = None,
+    confianca: int | None = None,
+    motivo: str | None = None,
 ) -> dict[str, Any] | None:
-    """Preenche a entrega com o resultado do OCR."""
+    """Preenche a entrega com o resultado do OCR e com o destino decidido.
+
+    `item_codigo` chega preenchido quando a leitura mudou o documento de item —
+    o cliente enviou no campo errado, ou não escolheu campo nenhum. Os três
+    campos de roteamento gravam QUEM decidiu e por quê: sem eles, uma atribuição
+    automática errada fica indistinguível de uma escolha do cliente.
+    """
     validacao = extracao.get("validacao", {})
     with conectar() as con:
         con.execute(
             """
             UPDATE entregas
                SET tipo_detectado = ?, tipo_confere = ?, veredito = ?, dados_utilizaveis = ?,
-                   score_legibilidade = ?, itens_atendidos = ?, extracao_json = ?,
+                   texto_utilizavel = ?, score_legibilidade = ?, itens_atendidos = ?,
+                   item_codigo = COALESCE(?, item_codigo),
+                   roteamento_origem = ?, roteamento_confianca = ?, roteamento_motivo = ?,
+                   extracao_json = ?,
                    status_proc = 'pronto', erro_proc = NULL
              WHERE id = ?
             """,
@@ -577,9 +608,53 @@ def concluir_entrega(
                 None if tipo_confere is None else int(tipo_confere),
                 validacao.get("veredito"),
                 int(bool(validacao.get("dados_utilizaveis"))),
+                int(bool(validacao.get("texto_utilizavel"))),
                 validacao.get("score_legibilidade"),
                 json.dumps(list(dict.fromkeys(itens_atendidos))),
+                item_codigo,
+                origem,
+                confianca,
+                (motivo or "")[:600] or None,
                 json.dumps(extracao, ensure_ascii=False),
+                entrega_id,
+            ),
+        )
+        linha = con.execute("SELECT caso_id FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+        if linha:
+            _tocar_caso(con, linha["caso_id"])
+    return obter_entrega(entrega_id)
+
+
+def reatribuir_entrega(
+    entrega_id: str,
+    itens_atendidos: list[str],
+    item_codigo: str,
+    origem: str,
+    tipo_confere: bool | None = None,
+    confianca: int | None = None,
+    motivo: str | None = None,
+) -> dict[str, Any] | None:
+    """Move uma entrega já lida para outro(s) item(ns) do checklist.
+
+    Não refaz o OCR: o texto e os campos já estão gravados, e o arquivo é o
+    mesmo. O que muda é a que pergunta do checklist ele responde — e `origem`
+    registra se quem decidiu foi o classificador, o modelo ou uma pessoa.
+    """
+    with conectar() as con:
+        con.execute(
+            """
+            UPDATE entregas
+               SET itens_atendidos = ?, item_codigo = ?, tipo_confere = ?,
+                   roteamento_origem = ?, roteamento_confianca = ?, roteamento_motivo = ?
+             WHERE id = ?
+            """,
+            (
+                json.dumps(list(dict.fromkeys(itens_atendidos))),
+                item_codigo,
+                None if tipo_confere is None else int(tipo_confere),
+                origem,
+                confianca,
+                (motivo or "")[:600] or None,
                 entrega_id,
             ),
         )
@@ -715,7 +790,9 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
             """
             SELECT id, caso_id, item_codigo, arquivo, tipo_detectado, tipo_confere,
                    veredito, dados_utilizaveis, confirmado_manual, score_legibilidade,
-                   itens_atendidos, status_proc, erro_proc, criado_em
+                   itens_atendidos, texto_utilizavel, lote_id, roteamento_origem,
+                   roteamento_confianca, roteamento_motivo,
+                   status_proc, erro_proc, criado_em
               FROM entregas
              WHERE caso_id = ?
              ORDER BY criado_em
@@ -752,7 +829,9 @@ def marcos_por_caso(caso_ids: list[str]) -> dict[str, dict[str, Any]]:
             f"""
             SELECT id, caso_id, item_codigo, arquivo, tipo_detectado, tipo_confere,
                    veredito, dados_utilizaveis, confirmado_manual, score_legibilidade,
-                   itens_atendidos, status_proc, erro_proc, criado_em
+                   itens_atendidos, texto_utilizavel, lote_id, roteamento_origem,
+                   roteamento_confianca, roteamento_motivo,
+                   status_proc, erro_proc, criado_em
               FROM entregas
              WHERE caso_id IN ({marcadores})
              ORDER BY criado_em
@@ -835,6 +914,8 @@ def obter_entrega(entrega_id: str) -> dict[str, Any] | None:
             SELECT id, caso_id, item_codigo, arquivo, caminho, conteudo_sha256,
                    tipo_detectado, tipo_confere, veredito, dados_utilizaveis,
                    confirmado_manual, score_legibilidade, itens_atendidos,
+                   texto_utilizavel, lote_id, roteamento_origem,
+                   roteamento_confianca, roteamento_motivo,
                    extracao_json, criado_em, status_proc, erro_proc
               FROM entregas WHERE id = ?
             """,
@@ -1409,6 +1490,257 @@ def excluir_assinatura(assinatura_id: str) -> bool:
     return True
 
 
+def entregas_de_todos_os_casos() -> dict[str, list[dict[str, Any]]]:
+    """Entregas de toda a carteira, agrupadas por caso, numa consulta só.
+
+    A fila da carteira precisa do progresso de cada caso para ordenar por risco, e
+    `listar_entregas` por caso custava uma ida ao banco por caso — a mesma conta que
+    `marcos_por_caso` já evita para o painel. Aqui não há `IN (...)`: a fila olha a
+    carteira inteira, e o `IN` ainda esbarraria no limite de parâmetros do driver.
+    """
+    reunido: dict[str, list[dict[str, Any]]] = {}
+    with conectar() as con:
+        for linha in con.execute(
+            """
+            SELECT id, caso_id, item_codigo, arquivo, tipo_detectado, tipo_confere,
+                   veredito, dados_utilizaveis, confirmado_manual, score_legibilidade,
+                   itens_atendidos, status_proc, erro_proc, criado_em
+              FROM entregas
+             ORDER BY criado_em
+            """
+        ).fetchall():
+            reunido.setdefault(linha["caso_id"], []).append(_normalizar_entrega(linha))
+    return reunido
+
+
+# --------------------------------------------------- conversas do agente geral
+#
+# A conversa é do Acervo, e não do agente jurídico: ela começa antes de haver caso e pode
+# nunca ter um. Só ela mistura o que o agente respondeu sobre um caso, o que o glossário
+# explicou sobre o sistema e a recusa honesta de uma pergunta sobre o acervo inteiro —
+# nenhum dos outros lados guarda essa transcrição, e é ela que a tela reabre.
+#
+# O `usuario` é o `sub` do token, e não o nome de quem entrou (que muda). O histórico é de
+# quem perguntou: listar, ler e apagar filtram por ele.
+
+
+def _normalizar_conversa(linha: banco.Linha) -> dict[str, Any]:
+    return {
+        "id": linha["id"],
+        "titulo": linha["titulo"],
+        "resumo": linha["resumo"] or "",
+        "usuario": linha["usuario"],
+        "caso_id": linha["caso_id"],
+        "conversa_ref": linha["conversa_ref"],
+        "criado_em": linha["criado_em"],
+        "atualizado_em": linha["atualizado_em"],
+    }
+
+
+def _normalizar_mensagem(linha: banco.Linha) -> dict[str, Any]:
+    """O `payload` volta como dicionário — a tela lê `afirmacoes`, não uma string JSON."""
+    try:
+        payload = json.loads(linha["payload"] or "{}")
+    except (TypeError, ValueError):
+        # A transcrição não se perde por causa do lastro: o texto da resposta continua
+        # valendo, e uma carga ilegível vira ausência de lastro, não erro de tela.
+        log.warning("payload ilegível na mensagem %s", linha["id"])
+        payload = {}
+    return {
+        "id": linha["id"],
+        "conversa_id": linha["conversa_id"],
+        "papel": linha["papel"],
+        "conteudo": linha["conteudo"],
+        "natureza": linha["natureza"],
+        "payload": payload if isinstance(payload, dict) else {},
+        "criado_em": linha["criado_em"],
+    }
+
+
+def criar_conversa(
+    titulo: str, *, usuario: str, caso_id: str | None = None, resumo: str = ""
+) -> dict[str, Any]:
+    conversa_id = str(uuid.uuid4())
+    instante = agora()
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO conversas"
+            " (id, titulo, resumo, usuario, caso_id, conversa_ref, criado_em, atualizado_em)"
+            " VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+            (conversa_id, titulo, resumo, usuario, caso_id, instante, instante),
+        )
+    return {
+        "id": conversa_id,
+        "titulo": titulo,
+        "resumo": resumo,
+        "usuario": usuario,
+        "caso_id": caso_id,
+        "conversa_ref": None,
+        "criado_em": instante,
+        "atualizado_em": instante,
+    }
+
+
+def _para_like(termo: str) -> str:
+    """Escapa o que o `LIKE` do SQL Server trata como curinga.
+
+    Sem isto, procurar por `100%` traz o histórico inteiro e `_` casa com qualquer
+    caractere — a busca pareceria quebrada justamente para quem digitou um termo exato.
+    """
+    escapado = termo.replace("\\", "\\\\")
+    for curinga in ("%", "_", "["):
+        escapado = escapado.replace(curinga, "\\" + curinga)
+    return f"%{escapado}%"
+
+
+def listar_conversas(usuario: str, *, busca: str = "") -> list[dict[str, Any]]:
+    """O histórico de quem perguntou, da mais recente para a mais antiga.
+
+    A busca alcança também o TEXTO das mensagens, e não só o título: o título é a primeira
+    pergunta, e quem procura "PPP" três dias depois está lembrando do que foi respondido,
+    não de como a conversa começou.
+    """
+    termo = " ".join(busca.split())
+    if not termo:
+        with conectar() as con:
+            linhas = con.execute(
+                "SELECT * FROM conversas WHERE usuario = ? ORDER BY atualizado_em DESC",
+                (usuario,),
+            ).fetchall()
+        return [_normalizar_conversa(l) for l in linhas]
+
+    padrao = _para_like(termo)
+    with conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT c.* FROM conversas c
+             WHERE c.usuario = ?
+               AND (c.titulo LIKE ? ESCAPE '\\'
+                 OR c.resumo LIKE ? ESCAPE '\\'
+                 OR EXISTS (SELECT 1 FROM conversa_mensagens m
+                             WHERE m.conversa_id = c.id
+                               AND m.conteudo LIKE ? ESCAPE '\\'))
+             ORDER BY c.atualizado_em DESC
+            """,
+            (usuario, padrao, padrao, padrao),
+        ).fetchall()
+    return [_normalizar_conversa(l) for l in linhas]
+
+
+def obter_conversa(conversa_id: str) -> dict[str, Any] | None:
+    """Sem filtro de dono aqui: quem chama compara o `usuario` e responde `404`."""
+    with conectar() as con:
+        linha = con.execute("SELECT * FROM conversas WHERE id = ?", (conversa_id,)).fetchone()
+    return _normalizar_conversa(linha) if linha else None
+
+
+def atualizar_conversa(
+    conversa_id: str,
+    *,
+    titulo: str | None = None,
+    resumo: str | None = None,
+    caso_id: str | None = None,
+    conversa_ref: str | None = None,
+    soltar_caso: bool = False,
+) -> bool:
+    """Campo em `None` não é mexido; soltar o caso é pedido explicitamente.
+
+    A distinção existe porque `responder` chama isto com `caso_id=None` toda vez que a
+    resposta não foi sobre um caso (glossário, recusa de acervo). Tratar esse `None` como
+    "apague o caso da conversa" desfaria, a cada explicação de termo, o caso que o
+    advogado tinha acabado de fixar.
+    """
+    campos = ["atualizado_em = ?"]
+    valores: list[Any] = [agora()]
+
+    if titulo is not None:
+        campos.append("titulo = ?")
+        valores.append(titulo)
+    if resumo is not None:
+        campos.append("resumo = ?")
+        valores.append(resumo)
+    if soltar_caso:
+        # O fio do agente pertence ao caso que saiu: reaproveitá-lo pediria ao agente que
+        # respondesse sobre um caso com o histórico de outro.
+        campos.extend(["caso_id = NULL", "conversa_ref = NULL"])
+    if caso_id is not None:
+        campos.append("caso_id = ?")
+        valores.append(caso_id)
+    if conversa_ref is not None:
+        campos.append("conversa_ref = ?")
+        valores.append(conversa_ref)
+
+    valores.append(conversa_id)
+    with conectar() as con:
+        cur = con.execute(f"UPDATE conversas SET {', '.join(campos)} WHERE id = ?", valores)
+    return cur.rowcount > 0
+
+
+def excluir_conversa(conversa_id: str, usuario: str) -> bool:
+    """As mensagens vão junto, pela cascata do banco."""
+    with conectar() as con:
+        cur = con.execute(
+            "DELETE FROM conversas WHERE id = ? AND usuario = ?", (conversa_id, usuario)
+        )
+    return cur.rowcount > 0
+
+
+def registrar_mensagem(
+    conversa_id: str,
+    *,
+    papel: str,
+    conteudo: str,
+    natureza: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Grava a mensagem no fim da conversa e devolve o registro já normalizado.
+
+    A ORDEM é coluna, e não o instante: `criado_em` tem precisão de segundos, e pergunta e
+    resposta caem no mesmo segundo com facilidade. Quando isso acontecia, o desempate ia
+    para o `id` — que é UUID — e a conversa reabria com a resposta antes da pergunta.
+
+    O maior entre o `MAX(ordem)` e a CONTAGEM não é preciosismo: a coluna foi acrescentada
+    depois, e as mensagens gravadas antes dela ficaram todas com `ordem = 0`. Sem a
+    contagem, a próxima mensagem de uma conversa antiga nasceria com `1` — atrás de todas
+    as que vieram antes dela.
+    """
+    mensagem_id = str(uuid.uuid4())
+    instante = agora()
+    carga = json.dumps(payload or {}, ensure_ascii=False)
+    with conectar() as con:
+        # As duas colunas vão com APELIDO: sem ele o driver devolve nome vazio para as
+        # duas, e a linha (que é um dicionário por nome de coluna) fica com uma só.
+        atual = con.execute(
+            "SELECT ISNULL(MAX(ordem), 0) AS maior, COUNT(*) AS total"
+            " FROM conversa_mensagens WHERE conversa_id = ?",
+            (conversa_id,),
+        ).fetchone()
+        ordem = (max(int(atual["maior"]), int(atual["total"])) if atual else 0) + 1
+        con.execute(
+            "INSERT INTO conversa_mensagens"
+            " (id, conversa_id, ordem, papel, conteudo, natureza, payload, criado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (mensagem_id, conversa_id, ordem, papel, conteudo, natureza, carga, instante),
+        )
+    return {
+        "id": mensagem_id,
+        "conversa_id": conversa_id,
+        "papel": papel,
+        "conteudo": conteudo,
+        "natureza": natureza,
+        "payload": payload or {},
+        "criado_em": instante,
+    }
+
+
+def mensagens_da_conversa(conversa_id: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT * FROM conversa_mensagens WHERE conversa_id = ?"
+            " ORDER BY ordem, criado_em, id",
+            (conversa_id,),
+        ).fetchall()
+    return [_normalizar_mensagem(l) for l in linhas]
 # ------------------------------------------------------- catálogo de roteiros
 #
 # O roteiro do `app/roteiros.py` é código: veio de um `.docx` transcrito à mão.

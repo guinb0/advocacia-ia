@@ -15,11 +15,11 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from .. import armazenamento, contrato
-from . import dossie, espelho
+from .. import armazenamento, auth, contrato
+from . import conversas, dossie, espelho
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
 from .config import config
 
@@ -87,7 +87,7 @@ def configuracao() -> dict[str, Any]:
 @roteador.get("/saude")
 def saude_do_agente() -> dict[str, Any]:
     """Latência dos dois bancos do agente e o desempenho de cada agente de IA nas
-    últimas 24h — o `/health/inspection` de lá, repassado para a tela não precisar
+    últimas 24h — o `/api/health/inspection` de lá, repassado para a tela não precisar
     falar HTTP com outro serviço nem conhecer o token dele.
     """
     if not config().ligado:
@@ -381,6 +381,20 @@ def gerar_peticao(caso_id: str) -> dict[str, Any]:
         raise _erro(erro) from erro
 
 
+@roteador.get("/casos/{caso_id}/peticao/progresso")
+def progresso_peticao(caso_id: str, desde: str) -> dict[str, Any]:
+    """Quanto da minuta já foi escrito, para a tela mostrar andamento e não uma promessa.
+
+    `desde` é o instante do pedido, devolvido pelo POST. É ele que separa esta geração da
+    anterior: sem o corte, as execuções da versão passada contariam de novo.
+    """
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().progresso_peticao(caso_ref, desde)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
 @roteador.get("/casos/{caso_id}/peticao/{peca_ref}")
 def peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
     """A minuta com as seções, o readiness e o relatório de revisão."""
@@ -392,22 +406,37 @@ def peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
 
 
 @roteador.get("/casos/{caso_id}/peticao/{peca_ref}/arquivo")
-def baixar_peticao(caso_id: str, peca_ref: str) -> Response:
-    """O `.docx` da minuta, buscado no agente e repassado ao navegador."""
+def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Response:
+    """O arquivo da minuta, buscado no agente e repassado ao navegador.
+
+    Dois formatos: o **PDF** é o que a tela exibe embutido — vai `inline`, senão o
+    navegador baixa em vez de mostrar, e o advogado volta a ter de sair do dossiê para ler
+    o que acabou de pedir. O **.docx** continua sendo baixado, porque é o que ele edita e
+    assina.
+    """
+    if formato not in {"docx", "pdf"}:
+        raise HTTPException(status_code=400, detail="Formato inválido: use docx ou pdf.")
+
     caso_ref = _caso_ref(caso_id)
     try:
-        conteudo = Cliente().baixar_peticao(caso_ref, peca_ref)
+        conteudo = Cliente().baixar_peticao(caso_ref, peca_ref, formato=formato)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
     caso = armazenamento.obter_caso(caso_id) or {}
-    arquivo = f"Peticao inicial - {caso.get('cliente', 'caso')}.docx".replace("/", "-")
+    arquivo = f"Peticao inicial - {caso.get('cliente', 'caso')}.{formato}".replace("/", "-")
+    disposicao = "inline" if formato == "pdf" else "attachment"
+    tipo = (
+        "application/pdf"
+        if formato == "pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
     return Response(
         content=conteudo,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        media_type=tipo,
         headers={
             "Content-Disposition": (
-                f'attachment; filename="peticao.docx"; '
+                f'{disposicao}; filename="peticao.{formato}"; '
                 f"filename*=UTF-8''{quote(arquivo)}"
             )
         },
@@ -540,26 +569,146 @@ def conferir_contrato(caso_id: str, campos: dict[str, Any] = Body(...)) -> dict[
         raise _erro(erro) from erro
 
 
-def _caso_ref(caso_id: str) -> str:
-    """O caso correspondente no agente, criando-o se for a primeira vez.
+# ------------------------------------------------------------- chat do caso
 
-    Criar aqui é deliberado: o advogado que clica em "analisar" quer a análise, não
-    uma mensagem dizendo que precisa antes clicar em outro botão.
 
-    O vínculo guardado **não** serve como atalho: ele diz que o caso foi criado, não que
-    ele ainda existe. Confiar nele fazia toda ação — analisar, pesquisar, gerar peça —
-    apontar para um caso morto depois de o agente trocar de banco, e o advogado recebia
-    "caso não encontrado" sem nada que pudesse fazer na tela.
+@roteador.post("/casos/{caso_id}/chat")
+def perguntar_ao_caso(
+    caso_id: str,
+    message: str = Body(..., embed=True),
+    conversation_id: str | None = Body(None, embed=True),
+) -> dict[str, Any]:
+    """Pergunta ao agente sobre ESTE caso, com o estado dele e só dele.
 
-    `garantir_caso` custa uma leitura e resolve o caso comum. A sincronização completa,
-    que reenvia documentos e requalifica a parte, só roda quando o caso teve mesmo de ser
-    recriado — do contrário cada clique em "analisar" pagaria por ela.
+    Síncrona, ao contrário da análise e da pesquisa: quem perguntou está olhando a
+    conversa, e um `202` com identificador de execução não é resposta num chat.
     """
-    anterior = armazenamento.obter_vinculo_agente(caso_id)
+    caso_ref = _caso_ref(caso_id)
     try:
-        vinculo = espelho.garantir_caso(caso_id)
-        if anterior is None or anterior["caso_ref"] != vinculo["caso_ref"]:
-            return str(espelho.sincronizar(caso_id)["caso_ref"])
+        return Cliente().perguntar_ao_caso(
+            caso_ref, mensagem=message, conversa_ref=conversation_id
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
-    return str(vinculo["caso_ref"])
+
+
+@roteador.get("/casos/{caso_id}/chat/{conversa_ref}")
+def conversa_do_caso(caso_id: str, conversa_ref: str) -> dict[str, Any]:
+    """A transcrição que o agente guarda daquele fio, para reabrir a conversa."""
+    ref = _caso_ref(caso_id)
+    try:
+        return Cliente().conversa_do_caso(ref, conversa_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/chat/propostas/{proposta_ref}/confirmar")
+def confirmar_proposta(caso_id: str, proposta_ref: str) -> dict[str, Any]:
+    """Aplica a alteração proposta pelo agente, depois da confirmação do advogado.
+
+    É o único caminho pelo qual uma conversa muda o caso (`AGENTS.md §2.4`). A recusa
+    mais comum é a proposta obsoleta — a peça mudou desde que ela foi feita —, e ela
+    chega como `409`, que a tela já sabe mostrar com o texto do agente.
+    """
+    ref = _caso_ref(caso_id)
+    try:
+        return Cliente().confirmar_proposta(ref, proposta_ref)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+# ---------------------------------------------------- conversas do agente geral
+#
+# O chat que não começa dentro de um caso. O roteamento de cada pergunta é
+# determinístico e acontece do lado de cá (`conversa_geral.py`), antes de qualquer
+# modelo entrar na história — ele precisa ser o mesmo amanhã e para qualquer tela que
+# venha depois desta.
+#
+# Todas filtram pelo `sub` do token: o histórico é de quem perguntou. Conversa de outra
+# pessoa responde `404`, e não `403` — dizer "existe, mas não é sua" já entrega que ela
+# existe.
+
+
+_SEM_CONVERSA = "Conversa não encontrada."
+
+
+@roteador.get("/conversas")
+def listar_conversas(
+    busca: str = Query("", max_length=200),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """O histórico de quem perguntou, da conversa mais recente para a mais antiga."""
+    return {"conversas": conversas.listar(usuario.id, busca=busca)}
+
+
+@roteador.post("/conversas", status_code=status.HTTP_201_CREATED)
+def abrir_conversa(
+    caso_id: str | None = Body(None, embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Uma conversa vazia. O título real chega com a primeira pergunta."""
+    return conversas.abrir(usuario.id, caso_id=caso_id)
+
+
+@roteador.get("/conversas/{conversa_id}")
+def detalhar_conversa(
+    conversa_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
+    conversa = conversas.detalhar(conversa_id, usuario.id)
+    if conversa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _SEM_CONVERSA)
+    return conversa
+
+
+@roteador.post("/conversas/{conversa_id}/mensagens")
+def responder_na_conversa(
+    conversa_id: str,
+    mensagem: str = Body(..., embed=True, min_length=1, max_length=10_000),
+    caso_id: str | None = Body(None, embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """A pergunta. Quem decide o destino é o servidor — a tela não adivinha.
+
+    `caso_id` aqui é a ORDEM de quem clicou num caso da lista de desambiguação, e não o
+    caso da conversa: escolha explícita vence os nomes citados na pergunta. Sem essa
+    distinção, clicar no candidato devolvia a mesma lista, porque o texto continuava
+    citando os dois nomes.
+    """
+    resposta = conversas.responder(conversa_id, mensagem, usuario.id, caso_escolhido=caso_id)
+    if resposta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _SEM_CONVERSA)
+    return resposta
+
+
+@roteador.patch("/conversas/{conversa_id}/caso")
+def fixar_caso_da_conversa(
+    conversa_id: str,
+    caso_id: str | None = Body(None, embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Cola a conversa a um caso, ou a solta (`null`) para voltar a falar do sistema."""
+    conversa = conversas.fixar_caso(conversa_id, usuario.id, caso_id)
+    if conversa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _SEM_CONVERSA)
+    return conversa
+
+
+@roteador.delete("/conversas/{conversa_id}", status_code=status.HTTP_204_NO_CONTENT)
+def apagar_conversa(
+    conversa_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> None:
+    if not conversas.apagar(conversa_id, usuario.id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _SEM_CONVERSA)
+
+
+def _caso_ref(caso_id: str) -> str:
+    """O mesmo `espelho.caso_ref`, com a falha traduzida para a resposta HTTP.
+
+    A regra de criar o caso do outro lado quando ele ainda não existe mora no espelho:
+    a conversa geral precisa dela sem passar por rota nenhuma, e duas cópias dessa regra
+    divergiriam no dia em que uma das duas passasse a sincronizar de outro jeito.
+    """
+    try:
+        return espelho.caso_ref(caso_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro

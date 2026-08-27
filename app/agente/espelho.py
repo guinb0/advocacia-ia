@@ -36,6 +36,7 @@ log = logging.getLogger("agente")
 
 __all__ = [
     "analisar_caso_inteiro",
+    "caso_ref",
     "conferir_contrato",
     "enviar_entrega",
     "garantir_caso",
@@ -244,6 +245,29 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
         "itens_declarados": declarados,
         "ultimo_erro": atual.get("ultimo_erro"),
     }
+
+
+def caso_ref(caso_id: str) -> str:
+    """O caso correspondente no agente, criando-o se for a primeira vez.
+
+    Criar aqui é deliberado: quem pergunta ao agente sobre um caso quer a resposta, não
+    uma mensagem dizendo que precisa antes clicar em outro botão.
+
+    O vínculo guardado **não** serve como atalho: ele diz que o caso foi criado, não que
+    ele ainda existe. Confiar nele fazia toda ação apontar para um caso morto depois de o
+    agente trocar de banco, e o advogado recebia "caso não encontrado" sem nada que
+    pudesse fazer na tela. `garantir_caso` custa uma leitura e resolve o caso comum; a
+    sincronização completa só roda quando o caso teve mesmo de ser recriado.
+
+    Levanta `ErroDoAgente`, e não `HTTPException`: quem chama decide o que fazer com a
+    indisponibilidade. Na conversa geral, por exemplo, ela vira mensagem NA transcrição —
+    transformá-la em erro de tela apagaria a conversa inteira por causa de uma resposta.
+    """
+    anterior = armazenamento.obter_vinculo_agente(caso_id)
+    vinculo = garantir_caso(caso_id)
+    if anterior is None or anterior["caso_ref"] != vinculo["caso_ref"]:
+        return str(sincronizar(caso_id)["caso_ref"])
+    return str(vinculo["caso_ref"])
 
 
 def declarar_itens_entregues(caso_id: str, caso_ref: str) -> int:
