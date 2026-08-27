@@ -288,6 +288,7 @@ export class CapturaEntrevista {
     // cliente, e a chamada reentrega a faixa quando ela é renegociada.
     this.recuperando = false;
     await this.montar(trilha);
+    if (this.gravando) this.eventos.onEstado?.("gravando");
   }
 
   /* -------------------------------------------------- fonte que cai e volta
