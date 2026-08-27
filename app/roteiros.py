@@ -23,6 +23,8 @@ import logging
 import re
 import time
 import unicodedata
+from datetime import datetime, timezone
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -789,9 +791,40 @@ def obter(codigo: str) -> Roteiro | None:
     saída se uma edição sair errada.
     """
     salvo = _importados().get(codigo)
+    embutido = ROTEIROS.get(codigo)
+
+    if salvo is not None and embutido is not None:
+        # A ARMADILHA QUE ISTO FECHA, E ELA JA MORDEU.
+        #
+        # A precedencia acima vale para roteiro que so existe no banco. Quando o
+        # MESMO codigo tambem existe em `ROTEIROS`, a copia salva passava a
+        # esconder o modulo para sempre: alguem editava `roteiros.py`, subia, e
+        # nada acontecia -- sem aviso, sem log, sem sintoma.
+        #
+        # Aconteceu com o `empregado_publico`: o campo `estado_civil` entrou no
+        # bloco de abertura pelo codigo, o frontend passou a exigi-lo para
+        # comecar a entrevista, e a tela servia a versao salva, que nao o tinha.
+        # A entrevista travou num campo que ela cobrava e nao mostrava. So deu
+        # para achar porque a contradicao paralisou a tela; um enunciado
+        # reescrito teria passado semanas sem ninguem notar.
+        #
+        # Agora quem chegou por ultimo vence. O modulo carrega a data do arquivo
+        # em `_VERSAO_MODULO`: deploy novo tem carimbo novo, e uma edicao feita
+        # DEPOIS do deploy continua valendo, que e o que o botao "Editar
+        # roteiro" promete.
+        if _VERSAO_MODULO > _salvo_em(codigo):
+            log.info(
+                "Roteiro '%s' foi alterado no codigo depois da edicao salva; "
+                "o do modulo passa a valer. Apague a linha do catalogo para "
+                "silenciar este aviso.",
+                codigo,
+            )
+            return embutido
+        return salvo
+
     if salvo is not None:
         return salvo
-    return ROTEIROS.get(codigo)
+    return embutido
 
 
 def perguntas_transcritas(codigo: str) -> list[str]:
@@ -1022,6 +1055,32 @@ def _mapa_de_texto(valor: Any) -> dict[str, str]:
 _TTL_CACHE_S = 30.0
 _cache: dict[str, Roteiro] = {}
 _cache_ate: float = 0.0
+
+#: Quando este arquivo foi escrito — o "carimbo" do roteiro que vem em código.
+#:
+#: A data do arquivo, e não uma constante que alguém teria de lembrar de subir a
+#: cada alteração: esquecer de incrementá-la traria de volta exatamente o defeito
+#: que ela existe para evitar. Numa imagem Docker o arquivo é gravado no build,
+#: então cada deploy nasce com carimbo novo.
+_VERSAO_MODULO = datetime.fromtimestamp(
+    Path(__file__).stat().st_mtime, tz=timezone.utc
+).isoformat(timespec="seconds")
+
+
+def _salvo_em(codigo: str) -> str:
+    """Quando aquele roteiro foi salvo no catálogo. String vazia se não foi.
+
+    Comparação de texto ISO-8601 em UTC é comparação cronológica — é assim que o
+    resto do Acervo guarda data (ver `armazenamento.agora`), e converter para
+    `datetime` aqui só acrescentaria um lugar onde fuso horário pode errar.
+    """
+    try:
+        from . import armazenamento
+
+        registro = armazenamento.obter_roteiro(codigo)
+    except Exception:
+        return ""
+    return str((registro or {}).get("atualizado_em") or "")
 
 
 def invalidar_cache() -> None:
