@@ -8,6 +8,7 @@ import ModuleFrame from "@/components/layout/ModuleFrame";
 import AgenteGeral from "@/components/AgenteGeral";
 import Carteira from "@/components/carteira/Carteira";
 import Checklist from "@/components/caso/Checklist";
+import CasoWorkspaceTabs from "@/components/caso/CasoWorkspaceTabs";
 import Dados from "@/components/caso/Dados";
 import Dossie, { PainelAnaliseDocumentos } from "@/components/admin/Dossie";
 import Investigacao from "@/components/carteira/Investigacao";
@@ -65,6 +66,15 @@ const Telas = (props: HomeViewProps) => {
     abrirAnalises,
     voltarParaCarteira,
   } = props;
+  const dadosDoCasoAberto = situacaoCaso.situacao;
+  const navegacaoDoCaso = (
+    <CasoWorkspaceTabs
+      tela={tela}
+      onNavegar={setTela}
+      cliente={dadosDoCasoAberto?.caso.cliente}
+      categoria={dadosDoCasoAberto?.categoria?.nome}
+    />
+  );
 
   if (tela === "carteira") {
     return (
@@ -96,12 +106,10 @@ const Telas = (props: HomeViewProps) => {
     }
     return (
       <ModuleFrame variant="wide">
-        <Dossie
-          casoId={casoAberto}
-          onVoltar={voltarParaCarteira}
-          onAbrirPainel={() => setTela("painel")}
-          onAbrirJurimetria={() => setTela("jurimetria")}
-        />
+        <div className="min-w-0 space-y-5">
+          {navegacaoDoCaso}
+          <Dossie casoId={casoAberto} onVoltar={voltarParaCarteira} />
+        </div>
       </ModuleFrame>
     );
   }
@@ -114,12 +122,10 @@ const Telas = (props: HomeViewProps) => {
     }
     return (
       <ModuleFrame variant="wide">
-        <Jurimetria
-          casoId={casoAberto}
-          onVoltar={voltarParaCarteira}
-          onAbrirDossie={() => setTela("dossie")}
-          onAbrirPainel={() => setTela("painel")}
-        />
+        <div className="min-w-0 space-y-5">
+          {navegacaoDoCaso}
+          <Jurimetria casoId={casoAberto} onVoltar={voltarParaCarteira} />
+        </div>
       </ModuleFrame>
     );
   }
@@ -132,13 +138,13 @@ const Telas = (props: HomeViewProps) => {
     }
     return (
       <ModuleFrame variant="wide">
-        <PainelCaso
-          casoId={casoAberto}
-          onVoltar={voltarParaCarteira}
-          onAbrirChecklist={() => setTela("caso")}
-          onAbrirDossie={() => setTela("dossie")}
-          onAbrirJurimetria={() => setTela("jurimetria")}
-        />
+        <div className="min-w-0 space-y-5">
+          {navegacaoDoCaso}
+          <PainelCaso
+            casoId={casoAberto}
+            onVoltar={voltarParaCarteira}
+          />
+        </div>
       </ModuleFrame>
     );
   }
@@ -221,36 +227,17 @@ const Telas = (props: HomeViewProps) => {
   }
 
   if (tela === "caso") {
+    const situacao = dadosDoCasoAberto;
     return (
       <ModuleFrame variant="wide">
-      <div className="space-y-5">
-        {/* O checklist responde "o que falta chegar"; o dossiê, "o que o caso já
-          * é". São perguntas diferentes e telas diferentes — juntá-las numa só
-          * faria a mais longa esconder a mais usada. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Botao variante="secundario" pequeno disabled>
-            Checklist de documentos
-          </Botao>
-          <Botao variante="texto" pequeno onClick={() => setTela("dossie")}>
-            Dossiê do caso →
-          </Botao>
-          {/* O painel é a leitura no tempo: quanto cada etapa levou, como o caso se
-            * compara com os anteriores e há quantos dias nada acontece. */}
-          <Botao variante="texto" pequeno onClick={() => setTela("painel")}>
-            Painel analítico →
-          </Botao>
-          {/* A jurimetria é a única leitura que olha para fora do escritório: como o
-            * foro decidiu casos comparáveis, e onde este cai dentro disso. */}
-          <Botao variante="texto" pequeno onClick={() => setTela("jurimetria")}>
-            Jurisprudência e jurimetria →
-          </Botao>
-        </div>
+      <div className="min-w-0 space-y-5">
+        {navegacaoDoCaso}
         {sessao.modulos.includes("documentacao") && <ChamadaDoAtendimento modo="documentacao" />}
-        {situacaoCaso.situacao ? (
+        {situacao ? (
           <>
             <Checklist
               mostrarPrazos
-              situacao={situacaoCaso.situacao}
+              situacao={situacao}
               enviando={situacaoCaso.enviando}
               erro={situacaoCaso.erro}
               onVoltar={voltarParaCarteira}

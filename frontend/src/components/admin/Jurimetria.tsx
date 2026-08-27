@@ -62,13 +62,11 @@ function corDoDesfecho(codigo: string): string {
 export default function Jurimetria({
   casoId,
   onVoltar,
-  onAbrirDossie,
-  onAbrirPainel,
 }: {
   casoId: string;
   onVoltar: () => void;
-  onAbrirDossie: () => void;
-  onAbrirPainel: () => void;
+  onAbrirDossie?: () => void;
+  onAbrirPainel?: () => void;
 }) {
   const [dados, setDados] = useState<Dados | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -99,12 +97,6 @@ export default function Jurimetria({
         <div className="flex gap-2 items-center flex-wrap">
           <Botao variante="secundario" pequeno onClick={onVoltar}>
             ← Voltar para a carteira
-          </Botao>
-          <Botao variante="texto" pequeno onClick={onAbrirDossie}>
-            Dossiê do caso →
-          </Botao>
-          <Botao variante="texto" pequeno onClick={onAbrirPainel}>
-            Painel analítico →
           </Botao>
         </div>
         <h1 className="font-titulo text-xl text-tinta leading-[1.15] m-0">Jurisprudência e jurimetria</h1>

@@ -227,14 +227,11 @@ function CartaoIndicador({
 export default function PainelCaso({
   casoId,
   onVoltar,
-  onAbrirChecklist,
-  onAbrirDossie,
-  onAbrirJurimetria,
 }: {
   casoId: string;
   onVoltar: () => void;
-  onAbrirChecklist: () => void;
-  onAbrirDossie: () => void;
+  onAbrirChecklist?: () => void;
+  onAbrirDossie?: () => void;
   onAbrirJurimetria?: () => void;
 }) {
   const [dados, setDados] = useState<Painel | null>(null);
@@ -361,20 +358,6 @@ export default function PainelCaso({
           <Botao variante="secundario" pequeno onClick={onVoltar}>
             ← Voltar para a carteira
           </Botao>
-          <Botao variante="texto" pequeno onClick={onAbrirChecklist}>
-            Checklist de documentos
-          </Botao>
-          <Botao variante="texto" pequeno onClick={onAbrirDossie}>
-            Dossiê do caso
-          </Botao>
-          <Botao variante="secundario" pequeno disabled>
-            Painel analítico
-          </Botao>
-          {onAbrirJurimetria && (
-            <Botao variante="texto" pequeno onClick={onAbrirJurimetria}>
-              Jurisprudência e jurimetria →
-            </Botao>
-          )}
         </div>
 
         <div className="flex justify-between items-start gap-5 flex-wrap">
