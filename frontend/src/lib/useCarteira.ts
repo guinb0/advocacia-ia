@@ -6,11 +6,15 @@ import * as api from "./api";
 import type { Caso, Entrega, SituacaoCaso } from "./types";
 
 /* A carteira é a visão do sócio: a fila ordenada por risco de travar, não por
- * data. `GET /api/casos` devolve só o cadastro do caso, então o progresso vem
- * de `GET /api/casos/{id}` (o mesmo `montar_situacao` da tela do caso) buscado
- * em paralelo. Tudo aqui é derivado — nenhum status é guardado à mão, pela
- * mesma razão que `casos.py` não guarda: sairia do lugar assim que alguém
- * apagasse uma entrega. */
+ * data. Tudo aqui é derivado — nenhum status é guardado à mão, pela mesma razão
+ * que `casos.py` não guarda: sairia do lugar assim que alguém apagasse uma
+ * entrega.
+ *
+ * A fila vem paginada de `GET /api/carteira` (10 casos por página). Antes era
+ * `GET /api/casos` mais um `GET /api/casos/{id}` por caso — a carteira inteira
+ * no navegador e uma requisição por caso. A ordem por risco e os contadores da
+ * triagem continuam medidos sobre a carteira toda, no servidor: paginá-los faria
+ * o topo da tela mudar de número ao virar de página. */
 
 export type Severidade = "critico" | "atencao" | "pronto" | "neutro";
 
@@ -171,82 +175,102 @@ function estagioDaEntrega(entrega: Entrega): { estagio: string; severidade: Seve
   };
 }
 
+export const CASOS_POR_PAGINA = 10;
+
 export function useCarteira() {
-  const [situacoes, setSituacoes] = useState<SituacaoCaso[]>([]);
+  const [pagina, setPagina] = useState(1);
+  const [dados, setDados] = useState<api.PaginaCarteira | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
   const recarregar = useCallback(async () => {
     setCarregando(true);
     try {
-      const casos = await api.listarCasos();
-      // Storage local em JSON: as N leituras saem de uma vez sem custo real.
-      const detalhes = await Promise.all(
-        casos.map((caso) =>
-          api.obterCaso(caso.id).catch(() => null),
-        ),
-      );
-      setSituacoes(detalhes.filter((s): s is SituacaoCaso => s !== null && !!s.progresso));
+      const resposta = await api.obterCarteira(pagina, CASOS_POR_PAGINA);
+      setDados(resposta);
+      // O servidor prende a página ao total: apagar o último caso de uma página
+      // deixaria o cursor além do fim e a lista viria vazia sem explicação.
+      if (resposta.pagina !== pagina) setPagina(resposta.pagina);
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Falha ao carregar a carteira.");
     } finally {
       setCarregando(false);
     }
-  }, []);
+  }, [pagina]);
 
   useEffect(() => {
     void recarregar();
   }, [recarregar]);
 
+  /* A página já vem ordenada por risco do servidor; reordenar aqui pelo mesmo
+   * peso mantém as duas pontas de acordo caso uma delas mude. */
   const linhas = useMemo(
-    () => situacoes.map(montarLinha).sort((a, b) => a.peso - b.peso),
-    [situacoes],
+    () =>
+      (dados?.situacoes ?? [])
+        .filter((s) => !!s.progresso)
+        .map(montarLinha)
+        .sort((a, b) => a.peso - b.peso),
+    [dados],
   );
 
   const triagem = useMemo<Triagem>(
-    () => ({
-      travados: linhas.filter((l) => l.severidade === "critico").length,
-      aConferir: linhas.reduce((soma, l) => soma + l.situacao.progresso.itens_a_conferir, 0),
-      pedidosProntos: linhas.filter((l) => l.situacao.progresso.obrigatorios_pendentes > 0).length,
-      completos: linhas.filter((l) => l.situacao.progresso.pronto).length,
-      ativos: linhas.length,
-    }),
-    [linhas],
-  );
-
-  const chegandoAgora = useMemo<ChegandoAgora[]>(() => {
-    const todas = situacoes.flatMap((s) =>
-      s.itens.flatMap((item) =>
-        item.entregas.map((entrega) => ({ entrega, cliente: s.caso.cliente })),
-      ),
-    );
-    // Uma entrega que atende RG e CPF aparece duas vezes em `itens`.
-    const vistas = new Set<string>();
-    return todas
-      .filter(({ entrega }) => {
-        if (vistas.has(entrega.id)) return false;
-        vistas.add(entrega.id);
-        return true;
-      })
-      .sort((a, b) => b.entrega.criado_em.localeCompare(a.entrega.criado_em))
-      .slice(0, 4)
-      .map(({ entrega, cliente }) => ({ entrega, cliente, ...estagioDaEntrega(entrega) }));
-  }, [situacoes]);
-
-  const pedidos = useMemo(
     () =>
-      linhas
-        .filter((l) => l.situacao.progresso.obrigatorios_pendentes > 0)
-        .slice(0, 4)
-        .map((l) => ({
-          casoId: l.caso.id,
-          cliente: l.caso.cliente,
-          faltantes: l.situacao.progresso.obrigatorios_pendentes,
-          reenvios: l.situacao.progresso.itens_a_conferir,
-        })),
-    [linhas],
+      dados?.triagem ?? {
+        travados: 0,
+        aConferir: 0,
+        pedidosProntos: 0,
+        completos: 0,
+        ativos: 0,
+      },
+    [dados],
   );
 
-  return { linhas, triagem, chegandoAgora, pedidos, carregando, erro, recarregar };
+  const chegandoAgora = useMemo<ChegandoAgora[]>(
+    () =>
+      (dados?.chegando_agora ?? []).map(({ entrega, cliente }) => ({
+        entrega,
+        cliente,
+        ...estagioDaEntrega(entrega),
+      })),
+    [dados],
+  );
+
+  const pedidos = useMemo(() => dados?.pedidos ?? [], [dados]);
+
+  const paginacao = useMemo(
+    () => ({
+      pagina: dados?.pagina ?? pagina,
+      paginas: dados?.paginas ?? 1,
+      total: dados?.total ?? 0,
+      tamanho: dados?.tamanho ?? CASOS_POR_PAGINA,
+      /** Índice do primeiro caso desta página na fila inteira, base 1. */
+      primeiro: dados && dados.total > 0 ? (dados.pagina - 1) * dados.tamanho + 1 : 0,
+      ultimo: dados ? Math.min(dados.pagina * dados.tamanho, dados.total) : 0,
+    }),
+    [dados, pagina],
+  );
+
+  const irPara = useCallback(
+    (destino: number) => {
+      setPagina((atual) => {
+        const limite = dados?.paginas ?? 1;
+        const alvo = Math.min(Math.max(1, destino), Math.max(1, limite));
+        return alvo === atual ? atual : alvo;
+      });
+    },
+    [dados],
+  );
+
+  return {
+    linhas,
+    triagem,
+    chegandoAgora,
+    pedidos,
+    carregando,
+    erro,
+    recarregar,
+    paginacao,
+    irPara,
+  };
 }

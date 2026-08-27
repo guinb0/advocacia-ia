@@ -376,7 +376,7 @@ if (-not $SemAgente) {
         $env:AGENTE_API_URL = "http://127.0.0.1:8011"
     }
     $urlAgente = $env:AGENTE_API_URL.TrimEnd("/")
-    if (Testar-Http "$urlAgente/health") {
+    if (Testar-Http "$urlAgente/api/health") {
         Write-Host "Agente juridico ja estava no ar: $urlAgente" -ForegroundColor Green
     } else {
         $raizAgente = Resolve-Path (Join-Path $PSScriptRoot "..\ia-juridica") -ErrorAction SilentlyContinue
@@ -437,10 +437,10 @@ if (-not $SemAgente) {
                     [Environment]::SetEnvironmentVariable($nome, $salvas[$nome], "Process")
                 }
             }
-            for ($i = 0; $i -lt 30 -and -not (Testar-Http "$urlAgente/health"); $i++) {
+            for ($i = 0; $i -lt 30 -and -not (Testar-Http "$urlAgente/api/health"); $i++) {
                 Start-Sleep -Seconds 1
             }
-            if (Testar-Http "$urlAgente/health") {
+            if (Testar-Http "$urlAgente/api/health") {
                 Write-Host "Agente juridico pronto: $urlAgente" -ForegroundColor Green
             } else {
                 throw "O Agente Juridico nao respondeu em $urlAgente. Os dois projetos precisam iniciar juntos."
@@ -482,6 +482,12 @@ $backend = Start-Process -PassThru -NoNewWindow `
 # No Windows, pool=solo evita o prefork incompatível e garante uma inferência
 # por worker. As filas impedem OCR, IA e manutenção de se bloquearem no broker.
 $instanciaCelery = ([Guid]::NewGuid().ToString("N")).Substring(0, 8)
+# O nome do no e montado aqui, e nao com o `%h` do Celery, porque o destino do
+# `inspect ping` compara texto exato: `%h` vira `socket.gethostname()` (minusculo,
+# "vinicius") enquanto `$env:COMPUTERNAME` vem em maiusculas ("VINICIUS"). Com as
+# duas grafias em jogo, o ping nunca achava o worker vivo e a espera estourava os
+# 180 segundos com o OCR funcionando do lado.
+$hostCelery = [System.Net.Dns]::GetHostName()
 # Instancias orfas desta instalacao ja foram encerradas no inicio do script via
 # Win32_Process. Nao envie `celery control shutdown` aqui: numa inicializacao
 # limpa ele escreve "No nodes replied" em stderr e o PowerShell 5.1, com
@@ -489,11 +495,11 @@ $instanciaCelery = ([Guid]::NewGuid().ToString("N")).Substring(0, 8)
 $workerOcr = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
-                  "--pool=solo", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h-$instanciaCelery"
+                  "--pool=solo", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@$hostCelery-$instanciaCelery"
 $workerBackground = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
-                  "--pool=solo", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@%h-$instanciaCelery"
+                  "--pool=solo", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@$hostCelery-$instanciaCelery"
 $beat = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "beat"
@@ -510,7 +516,7 @@ try {
     }
 
     Write-Host "Preparando o leitor de documentos..." -ForegroundColor Yellow
-    $destinoWorkerOcr = "ocr@$env:COMPUTERNAME-$instanciaCelery"
+    $destinoWorkerOcr = "ocr@$hostCelery-$instanciaCelery"
     if (-not (Wait-WorkerOcr -Processo $workerOcr -Destino $destinoWorkerOcr -TimeoutSegundos 180)) {
         throw "O worker de OCR nao respondeu em 180 segundos. O sistema foi interrompido para nao deixar documentos presos na fila."
     }

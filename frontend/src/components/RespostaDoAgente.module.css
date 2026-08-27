@@ -1,0 +1,116 @@
+/* O lastro da resposta e a proposta de alteração — as duas coisas que o painel do caso e
+ * o chat geral mostram igual.
+ *
+ * Só grade, espaçamento e composição aqui. Cor, fonte, botão e campo vêm de
+ * `globals.css` (`docs/GUIA-VISUAL.md`). */
+
+.lastro {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 13px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+}
+
+.rotuloDoLastro {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--tinta-3);
+}
+
+.afirmacao {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.textoDaAfirmacao {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--tinta-2);
+}
+
+.referencias {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.referencia {
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--borda-forte);
+  background: none;
+  color: var(--acao);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.referencia:hover {
+  border-bottom-color: var(--acao);
+}
+
+.proposta {
+  border: 1px solid var(--borda-campo);
+  border-radius: var(--raio);
+  overflow: hidden;
+}
+
+.tituloDaProposta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--borda);
+  background: var(--papel-3);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.corpoDaProposta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 13px;
+}
+
+/* Antes e depois, um sob o outro. Confirmar sem ver o que sai é assinar em branco. */
+.antes,
+.depois {
+  padding: 9px 12px;
+  border-radius: 0 6px 6px 0;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--tinta-2);
+  white-space: pre-line;
+}
+
+.antes {
+  border-left: 3px solid var(--critico);
+  background: var(--critico-claro);
+}
+
+.depois {
+  border-left: 3px solid var(--ok);
+  background: var(--ok-claro);
+}
+
+/* Lista de apoio: o impacto de uma proposta e as pendências de uma resposta. */
+.itens {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--tinta-3);
+}
+
+.acoesDaProposta {
+  display: flex;
+  gap: 8px;
+}

@@ -22,12 +22,24 @@ export interface SituacaoPortal {
   cliente: string;
   categoria: string;
   itens: ItemPortal[];
+  /** Arquivos recebidos que ainda estão sendo identificados. */
+  em_analise: number;
+  /** Subconjunto ainda na fila/OCR; usado para encerrar o polling. */
+  processando: number;
   progresso: {
     obrigatorios_total: number;
     obrigatorios_entregues: number;
     percentual: number;
     pronto: boolean;
   };
+}
+
+export interface RespostaLotePortal {
+  lote_id: string;
+  recebidos: Array<{ arquivo: string; entrega_id: string }>;
+  recusados: Array<{ arquivo: string; motivo: string }>;
+  processando: boolean;
+  situacao: SituacaoPortal;
 }
 
 export interface Sessao {
@@ -76,6 +88,22 @@ export async function enviarDocumento(
   form.append("arquivo", arquivo);
   return comoJson<SituacaoPortal>(
     await fetch(urlApi(`/api/portal/${token}/documentos`), {
+      method: "POST",
+      body: form,
+      headers: { Authorization: `Bearer ${sessao}` },
+    }),
+  );
+}
+
+export async function enviarDocumentosEmLote(
+  token: string,
+  sessao: string,
+  arquivos: File[],
+): Promise<RespostaLotePortal> {
+  const form = new FormData();
+  arquivos.forEach((arquivo) => form.append("arquivos", arquivo));
+  return comoJson<RespostaLotePortal>(
+    await fetch(urlApi(`/api/portal/${token}/documentos/lote`), {
       method: "POST",
       body: form,
       headers: { Authorization: `Bearer ${sessao}` },

@@ -6,7 +6,15 @@ import logging
 
 from celery.signals import worker_ready
 
-from .. import armazenamento, casos, categorias, indexacao_documento, jobs, pipeline
+from .. import (
+    armazenamento,
+    casos,
+    categorias,
+    indexacao_documento,
+    jobs,
+    pipeline,
+    roteamento,
+)
 from ..celery_app import celery_app
 
 log = logging.getLogger("ocr-worker")
@@ -144,51 +152,128 @@ def processar_entrega(
         categoria = categorias.obter(categoria_codigo)
         if categoria is None:
             raise ValueError(f"Categoria {categoria_codigo!r} não existe mais.")
-        item = next((i for i in categoria.itens if i.codigo == item_codigo), None)
-        if item is None:
+
+        # `ITEM_TRIAGEM` é o envio sem destino — o cliente mandou o arquivo e não
+        # disse (ou não soube dizer) que documento é. Aqui isso não é erro: quem
+        # decide o item é `roteamento.decidir`, depois de ler.
+        em_triagem = item_codigo == categorias.ITEM_TRIAGEM
+        item = None if em_triagem else next(
+            (i for i in categoria.itens if i.codigo == item_codigo), None
+        )
+        if item is None and not em_triagem:
             raise ValueError(f"Item {item_codigo!r} não pertence ao checklist.")
 
         conteudo = _ler_anexo(entrega_id, caminho)
-        tipo_extracao = (
-            "cin" if usar_para_rg_e_cpf and item.tipo_ocr in {"rg", "cpf"}
-            else item.tipo_ocr
-        )
+        if item is None:
+            # Sem item não há tipo a forçar: o classificador decide sozinho, e a
+            # extração de campos já sai pelo tipo que ele detectou.
+            tipo_extracao = None
+        else:
+            tipo_extracao = (
+                "cin" if usar_para_rg_e_cpf and item.tipo_ocr in {"rg", "cpf"}
+                else item.tipo_ocr
+            )
         # O checklist persiste o JSON no banco e conserva o original em `dados`.
         # Gravar ainda outro JSON e XML em `tmp` era I/O sem consumidor.
-        resultado = pipeline.processar(
-            conteudo,
-            nome,
-            idioma,
-            tipo_extracao,
-            gerar_arquivos_temporarios=False,
-        )
-
-        # Tipos não estruturados (laudo, atestado, BO, CNIS...) não passam pelo
-        # extrator cadastral. O DeepSeek interpreta o texto integral do OCR.
-        if resultado.get("tipo", {}).get("codigo") == "desconhecido" and resultado.get("validacao", {}).get("texto_utilizavel"):
-            try:
-                semantica = indexacao_documento.classificar(resultado, categoria.nome)
-                resultado["classificacao_semantica"] = semantica
-                resultado["tipo"]["descricao_detectado"] = semantica["tipo_semantico"]
-            except Exception as exc:
-                log.warning("classificação semântica falhou para %s: %s", entrega_id, exc)
-                resultado["classificacao_semantica"] = {"status": "indisponivel", "erro": str(exc)[:200]}
-
-        unificar = usar_para_rg_e_cpf
-        if not unificar and item.tipo_ocr in {"rg", "cpf"}:
-            unificar = casos.cobre_rg_e_cpf(resultado)
-        try:
-            itens_atendidos = (
-                casos.itens_para_identidade_unificada(categoria, item)
-                if unificar else [item.codigo]
+        extensao = Path(nome).suffix.lower()
+        formato_lido = extensao in pipeline.EXTENSOES_OCR
+        if formato_lido:
+            resultado = pipeline.processar(
+                conteudo,
+                nome,
+                idioma,
+                tipo_extracao,
+                gerar_arquivos_temporarios=False,
             )
-        except ValueError:
-            itens_atendidos = [item.codigo]
-            unificar = False
+        else:
+            # Receber não é o mesmo que conseguir aplicar OCR. Word, planilha,
+            # áudio, vídeo, ZIP e qualquer formato futuro ficam preservados no
+            # caso. Um envio associado a um item permanece nesse item para
+            # conferência; no envio em massa, fica na triagem para uma pessoa.
+            rotulo = extensao or "sem extensão"
+            resultado = {
+                "arquivo": nome,
+                "tipo": {
+                    "codigo": "desconhecido",
+                    "detectado": "desconhecido",
+                    "descricao": "Formato preservado sem OCR",
+                    "descricao_detectado": "Formato preservado sem OCR",
+                    "confianca_classificacao": 0,
+                },
+                "campos": [],
+                "validacao": {
+                    "veredito": "NAO_ANALISADO",
+                    "dados_utilizaveis": False,
+                    "texto_utilizavel": False,
+                    "score_legibilidade": None,
+                    "erros": [f"O formato {rotulo} foi recebido, mas não possui leitura OCR automática."],
+                },
+            }
 
+        # A QUE ITEM ESTE ARQUIVO RESPONDE
+        #
+        # A escolha de quem enviou é um palpite; o documento é que decide (ver
+        # `app/roteamento.py`). Quando o roteamento consulta o modelo, a leitura
+        # que ele devolve é a MESMA classificação semântica que esta task
+        # gravava por conta própria — reaproveitá-la evita a segunda chamada.
+        destino = roteamento.decidir(resultado, categoria, item)
+        if not formato_lido:
+            motivo_formato = (
+                f"Arquivo {extensao or 'sem extensão'} preservado sem leitura OCR automática."
+            )
+            destino = roteamento.Destino(
+                [item.codigo] if item is not None else [],
+                roteamento.ESCOLHA if item is not None else roteamento.TRIAGEM,
+                30 if item is not None else 0,
+                motivo_formato,
+            )
+        if destino.analise:
+            semantica = {
+                **destino.analise,
+                "classificador": "deepseek",
+                "tipo_semantico": str(destino.analise.get("documento") or "indefinido"),
+            }
+            resultado["classificacao_semantica"] = semantica
+            resultado["tipo"]["descricao_detectado"] = semantica["tipo_semantico"]
+
+        # A identidade unificada marcada à mão continua valendo sobre tudo: quem
+        # marcou olhou o documento, e nenhum classificador desmente isso.
+        if usar_para_rg_e_cpf and item is not None:
+            try:
+                itens_atendidos = casos.itens_para_identidade_unificada(categoria, item)
+                destino = roteamento.Destino(
+                    itens_atendidos,
+                    roteamento.ESCOLHA,
+                    100,
+                    "Identidade unificada confirmada no envio.",
+                    destino.analise,
+                )
+            except ValueError:
+                pass
+
+        itens_atendidos = list(destino.itens)
+        item_destino = next(
+            (i for i in categoria.itens if itens_atendidos and i.codigo == itens_atendidos[0]),
+            None,
+        )
         detectado = resultado.get("tipo", {}).get("detectado")
-        confere = casos.tipo_confere(item, detectado, unificar)
-        armazenamento.concluir_entrega(entrega_id, resultado, confere, itens_atendidos)
+        confere = (
+            casos.tipo_confere(item_destino, detectado, len(itens_atendidos) > 1)
+            if item_destino is not None
+            else None
+        )
+        armazenamento.concluir_entrega(
+            entrega_id,
+            resultado,
+            confere,
+            itens_atendidos,
+            item_codigo=itens_atendidos[0] if itens_atendidos else categorias.ITEM_TRIAGEM,
+            origem=destino.origem,
+            confianca=destino.confianca,
+            motivo=destino.motivo,
+        )
+        if destino.em_triagem:
+            log.info("entrega %s ficou em triagem: %s", entrega_id, destino.motivo)
         if resultado.get("classificacao_semantica", {}).get("tipo_semantico"):
             try:
                 indexacao_documento.indexar(entrega_id, caso_id, nome, resultado)

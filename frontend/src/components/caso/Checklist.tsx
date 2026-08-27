@@ -9,6 +9,8 @@ import { prazosAcervo, type PrazosAcervo } from "@/lib/api";
 import ItemChecklistLinha from "@/components/caso/ItemChecklistLinha";
 import PainelPortal from "@/components/portal/PainelPortal";
 import PedidoCliente from "@/components/caso/PedidoCliente";
+import EnvioEmLote from "@/components/caso/EnvioEmLote";
+import TriagemDocumentos from "@/components/caso/TriagemDocumentos";
 
 type Filtro = "todos" | "obrigatorios" | "falta";
 
@@ -18,8 +20,10 @@ interface Props {
   erro: string | null;
   onVoltar: () => void;
   onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
+  onEnviarLote: (arquivos: File[]) => Promise<void> | void;
   onRemover: (entregaId: string) => void;
   onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
+  onReatribuir: (entregaId: string, itens: string[]) => Promise<void> | void;
   /** O checklist está dentro do atendimento, não na tela do caso.
    *
    * Ali a chamada já está na tela e o advogado já entrou na sala do caso ao
@@ -53,8 +57,10 @@ export default function Checklist({
   erro,
   onVoltar,
   onEnviar,
+  onEnviarLote,
   onRemover,
   onVincularIdentidade,
+  onReatribuir,
   dentroDoAtendimento = false,
   mostrarPrazos = false,
 }: Props) {
@@ -145,6 +151,11 @@ export default function Checklist({
               {progresso.itens_a_conferir} a conferir
             </Selo>
           )}
+          {(progresso.em_triagem ?? 0) > 0 && (
+            <Selo tom="atencao" simbolo="?">
+              {progresso.em_triagem ?? 0} para identificar
+            </Selo>
+          )}
           <Selo tom="neutro">
             {progresso.opcionais_entregues} de {progresso.opcionais_total} opcionais
           </Selo>
@@ -179,7 +190,16 @@ export default function Checklist({
         </div>
       )}
 
-      <BarraAbas className="mb-0" aria-label="Filtrar os documentos">
+      <EnvioEmLote onEnviar={onEnviarLote} enviando={enviando === "__lote__"} />
+
+      <TriagemDocumentos
+        entregas={situacao.triagem ?? []}
+        itens={itens}
+        onAtribuir={onReatribuir}
+        onRemover={onRemover}
+      />
+
+      <BarraAbas className="mt-5 mb-0" aria-label="Filtrar os documentos">
         {filtros.map((f) => (
           <BotaoAba key={f.id} ativa={filtro === f.id} onClick={() => setFiltro(f.id)}>
             {f.nome}

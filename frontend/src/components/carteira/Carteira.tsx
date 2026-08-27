@@ -96,7 +96,8 @@ export default function Carteira({
   onSaudeAgente,
   onModelosDePeticao,
 }: Props) {
-  const { linhas, triagem, chegandoAgora, pedidos, carregando, erro } = useCarteira();
+  const { linhas, triagem, chegandoAgora, pedidos, carregando, erro, paginacao, irPara } =
+    useCarteira();
   const estadoModelo = useModelo();
   const sessao = useSessao();
 
@@ -120,6 +121,9 @@ export default function Carteira({
   useEffect(() => {
     setSelecionado((atual) => Math.min(atual, Math.max(0, visiveis.length - 1)));
   }, [visiveis.length]);
+
+  // Página nova, lista nova: o cursor volta para o topo dela.
+  useEffect(() => setSelecionado(0), [paginacao.pagina]);
 
   const alternarFiltro = useCallback((alvo: Filtro) => {
     setFiltro((atual) => (atual === alvo ? "todos" : alvo));
@@ -264,6 +268,9 @@ export default function Carteira({
             <span className="text-tinta-3 text-xs">
               {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · o que pode
               travar aparece primeiro
+              {paginacao.total > 0 && (
+                <> · mostrando {paginacao.primeiro}–{paginacao.ultimo}</>
+              )}
             </span>
           </div>
 
@@ -271,7 +278,8 @@ export default function Carteira({
           {filtro !== "todos" && (
             <div className="flex justify-between items-center gap-3 px-[18px] py-[10px] border-b border-acao-borda bg-acao-clara text-acao text-sm font-semibold flex-wrap">
               <span>
-                Mostrando {visiveis.length} de {linhas.length} — {DESCRICAO_FILTRO[filtro]}
+                Mostrando {visiveis.length} de {linhas.length} nesta página —{" "}
+                {DESCRICAO_FILTRO[filtro]}
               </span>
               <Botao variante="secundario" pequeno onClick={() => setFiltro("todos")}>
                 Ver todos os casos
@@ -334,6 +342,39 @@ export default function Carteira({
                 </li>
               ))}
             </ul>
+          )}
+
+          {/* A fila carrega 10 casos por vez: a ordem por risco e os contadores
+            * do topo são medidos no servidor sobre a carteira inteira, então
+            * virar de página não muda o que a triagem diz. */}
+          {paginacao.paginas > 1 && (
+            <nav
+              className="flex justify-between items-center gap-3 px-[18px] py-3 border-t border-borda flex-wrap"
+              aria-label="Páginas da fila de casos"
+            >
+              <span className="text-tinta-3 text-xs" aria-live="polite">
+                Página {paginacao.pagina} de {paginacao.paginas} · casos {paginacao.primeiro}–
+                {paginacao.ultimo} de {paginacao.total}
+              </span>
+              <div className="flex items-center gap-2">
+                <Botao
+                  variante="secundario"
+                  pequeno
+                  onClick={() => irPara(paginacao.pagina - 1)}
+                  disabled={paginacao.pagina <= 1 || carregando}
+                >
+                  ← Anterior
+                </Botao>
+                <Botao
+                  variante="secundario"
+                  pequeno
+                  onClick={() => irPara(paginacao.pagina + 1)}
+                  disabled={paginacao.pagina >= paginacao.paginas || carregando}
+                >
+                  Próxima →
+                </Botao>
+              </div>
+            </nav>
           )}
         </section>
 

@@ -136,7 +136,6 @@ export default function ItemChecklistLinha({
         <input
           ref={inputRef}
           type="file"
-          accept="image/*,application/pdf,.pdf"
           hidden
           onChange={(e) => {
             const arquivo = e.target.files?.[0];

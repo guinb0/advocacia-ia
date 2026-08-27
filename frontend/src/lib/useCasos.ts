@@ -114,9 +114,37 @@ export function useSituacao(casoId: string | null) {
     [casoId, recarregar],
   );
 
+  const enviarLote = useCallback(
+    async (arquivos: File[]) => {
+      if (!casoId || arquivos.length === 0) return;
+      setEnviando("__lote__");
+      setErro(null);
+      try {
+        const resultado = await api.enviarDocumentosEmLote(casoId, arquivos);
+        await recarregar();
+        if (resultado.recusados.length > 0) {
+          setErro(
+            `${resultado.recebidos.length} arquivo(s) recebido(s), mas ${resultado.recusados.length} não entraram: ` +
+              resultado.recusados.map((item) => `${item.arquivo}: ${item.motivo}`).join("; "),
+          );
+        }
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : "Falha ao enviar os documentos.");
+      } finally {
+        setEnviando(null);
+      }
+    },
+    [casoId, recarregar],
+  );
+
   /* Enquanto algum item estiver sendo lido, recarrega sozinho. Para de checar
    * assim que nada mais está em processamento — sem timer eterno rodando. */
-  const processando = situacao?.itens.some((i) => i.status === "processando") ?? false;
+  const processando =
+    situacao?.itens.some((i) => i.status === "processando") ||
+    situacao?.triagem?.some(
+      (e) => e.status_proc === "na_fila" || e.status_proc === "processando",
+    ) ||
+    false;
 
   useEffect(() => {
     if (!processando) return;
@@ -153,6 +181,19 @@ export function useSituacao(casoId: string | null) {
     [casoId, recarregar],
   );
 
+  const reatribuir = useCallback(
+    async (entregaId: string, itens: string[]) => {
+      setErro(null);
+      try {
+        await api.reatribuirEntrega(entregaId, itens);
+        await recarregar();
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : "Não foi possível atribuir o documento.");
+      }
+    },
+    [recarregar],
+  );
+
   return {
     situacao,
     carregando,
@@ -160,7 +201,9 @@ export function useSituacao(casoId: string | null) {
     enviando,
     recarregar,
     enviar,
+    enviarLote,
     removerEntrega,
     vincularIdentidade,
+    reatribuir,
   };
 }
