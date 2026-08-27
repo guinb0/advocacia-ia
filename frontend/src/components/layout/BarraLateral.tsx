@@ -58,16 +58,16 @@ import { podeAbrirTela } from "@/app/home/home.model";
 import type { Tela } from "@/app/home/home.model";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 
-interface Modulo {
+export interface ModuloNavegacao {
   tela: Tela;
   rotulo: string;
   /** Telas internas que devem acender o mesmo item de navegação. */
   relacionadas?: Tela[];
 }
 
-interface Grupo {
+export interface GrupoNavegacao {
   titulo: string;
-  itens: Modulo[];
+  itens: ModuloNavegacao[];
 }
 
 /* Os três grupos são os três trabalhos do escritório, e a ordem dentro deles é a
@@ -75,7 +75,7 @@ interface Grupo {
  * exceção. Era a mesma ordem da faixa horizontal — o que ela não tinha era o
  * rótulo do grupo, que numa lista vertical é o que impede onze itens de virarem
  * uma parede indistinta. */
-const GRUPOS: Grupo[] = [
+export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
   {
     titulo: "Atendimento",
     itens: [
@@ -126,7 +126,7 @@ const ITEM_ATIVO =
 const GRUPO_TITULO =
   "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#83a0bd] first:mt-0";
 
-const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
+export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   entrevista: MessageSquareText,
   carteira: LayoutDashboard,
   agente: Bot,
@@ -147,13 +147,30 @@ const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   jurimetria: FileText,
 };
 
-function ativa(modulo: Modulo, tela: Tela): boolean {
+function ativa(modulo: ModuloNavegacao, tela: Tela): boolean {
   return modulo.tela === tela || (modulo.relacionadas?.includes(tela) ?? false);
 }
 
-function indiceDoModulo(item: Modulo, modulos: string[]): number {
+function indiceDoModulo(item: ModuloNavegacao, modulos: string[]): number {
   const indice = modulos.findIndex((modulo) => podeAbrirTela(item.tela, [modulo]));
   return indice === -1 ? Number.MAX_SAFE_INTEGER : indice;
+}
+
+export function gruposPermitidos(modulos: string[]): GrupoNavegacao[] {
+  return [...GRUPOS_NAVEGACAO]
+    .map((grupo, indiceGrupo) => {
+      const itens = grupo.itens
+        .filter((item) => podeAbrirTela(item.tela, modulos))
+        .sort((a, b) => indiceDoModulo(a, modulos) - indiceDoModulo(b, modulos));
+      return { ...grupo, itens, indiceGrupo };
+    })
+    .filter((grupo) => grupo.itens.length > 0)
+    .sort((a, b) => {
+      const ordemA = Math.min(...a.itens.map((item) => indiceDoModulo(item, modulos)));
+      const ordemB = Math.min(...b.itens.map((item) => indiceDoModulo(item, modulos)));
+      return ordemA - ordemB || a.indiceGrupo - b.indiceGrupo;
+    })
+    .map(({ indiceGrupo: _indiceGrupo, ...grupo }) => grupo);
 }
 
 interface Props {
@@ -197,19 +214,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
 
   const lista = (
     <nav className="flex flex-col gap-[2px] px-3 pb-5 pt-2" aria-label="Módulos do sistema">
-      {[...GRUPOS]
-        .map((grupo, indiceGrupo) => {
-          const itens = grupo.itens
-            .filter((item) => podeAbrirTela(item.tela, modulos))
-            .sort((a, b) => indiceDoModulo(a, modulos) - indiceDoModulo(b, modulos));
-          return { ...grupo, itens, indiceGrupo };
-        })
-        .filter((grupo) => grupo.itens.length > 0)
-        .sort((a, b) => {
-          const ordemA = Math.min(...a.itens.map((item) => indiceDoModulo(item, modulos)));
-          const ordemB = Math.min(...b.itens.map((item) => indiceDoModulo(item, modulos)));
-          return ordemA - ordemB || a.indiceGrupo - b.indiceGrupo;
-        })
+      {gruposPermitidos(modulos)
         .map((grupo) => {
           const itens = grupo.itens;
           if (itens.length === 0) return null;

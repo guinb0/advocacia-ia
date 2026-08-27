@@ -72,15 +72,7 @@ const Telas = (props: HomeViewProps) => {
         <Carteira
           onAbrir={abrirCaso}
           onNovoCaso={() => setTela("casos")}
-          onAnalisarAvulso={() => setTela("avulso")}
-          onInvestigar={() => setTela("investigacao")}
-          onUsuarios={() => setTela("usuarios")}
-          onEntrevista={() => setTela("entrevista")}
-          onSupervisao={() => setTela("supervisao")}
-          onDados={() => setTela("dados")}
-          onPanorama={() => setTela("panorama")}
-          onSaudeAgente={() => setTela("saudeAgente")}
-          onModelosDePeticao={() => setTela("modelosDePeticao")}
+          onNavegar={setTela}
         />
       </ModuleFrame>
     );

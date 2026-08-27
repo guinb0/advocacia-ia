@@ -41,7 +41,7 @@
 
   /* ---------------------------------------------------------------- bordas */
   --borda: #dce5ef; /* divisória entre itens de uma lista */
-  --borda-forte: #33465c; /* contorno de cartão */
+  --borda-forte: #33465c33; /* contorno de cartão */
   --borda-campo: #7a8b9f; /* contorno de campo e de botão — precisa dos 3:1 */
 
   /* ------------------------------------------------- ação (só o que se clica) */

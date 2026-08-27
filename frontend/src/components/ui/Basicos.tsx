@@ -396,11 +396,12 @@ export function Selo({
     <span
       className={cn(
         "inline-flex items-center gap-[5px] px-[10px] py-[3px] border rounded-pill text-xs font-semibold leading-[1.45] whitespace-nowrap",
+        "max-w-full overflow-hidden text-ellipsis",
         CLASSE_SELO[tom],
       )}
     >
-      {simbolo && <span aria-hidden>{simbolo}</span>}
-      {children}
+      {simbolo && <span className="shrink-0" aria-hidden>{simbolo}</span>}
+      <span className="min-w-0 truncate">{children}</span>
     </span>
   );
 }
