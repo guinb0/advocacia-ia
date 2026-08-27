@@ -769,6 +769,8 @@ REGRAS
   anterior. Não descarte o trecho inteiro só porque ele começa com uma pergunta.
 - Primeira pessoa ("eu trabalho", "fui vítima", "nunca sofri") e respostas
   diretas depois de uma pergunta ("sim", "não") indicam fala do cliente.
+- Fala de acolhimento ("sou da equipe", "Lara & Melo", "vamos começar") é do
+  entrevistador, mesmo em primeira pessoa — nunca trate como resposta do cliente.
 - Respostas existentes foram digitadas por uma pessoa e são autoritativas: não
   as altere nem as repita.
 - Nunca extraia CPF, RG, data de nascimento ou número de documento da fala.
@@ -781,6 +783,18 @@ REGRAS
   possuir ou conseguir enviar.
 - `valor` deve conter a resposta limpa, sem repetir o enunciado ou muletas.
 - `trecho` deve ser uma citação curta da transcrição que sustenta o valor.
+- NUNCA preencha com marcador de ausência. "não informado", "não mencionado",
+  "não especificado", "não consta", "sem informação", "n/a", "—" e similares
+  NÃO são respostas. Se o cliente não falou do assunto, OMITA o campo — não
+  invente um valor. Campo com "não informado" conta como respondido e some da
+  lista de pendências como se o cliente tivesse dito aquilo.
+- Rastreio (assalto / acidente / doença / sequela): se o cliente NARROU o fato
+  com clareza, preencha o sim/não correspondente mesmo que a pergunta formal
+  não tenha sido feita com as palavras do roteiro. Respeite o enunciado exato
+  ("durante o trabalho", "fora do trabalho", "em razão do trabalho").
+- Quando o cliente descreveu acidente, assalto, afastamento, demissão, função
+  ou sintomas, preencha TODOS os campos do formulário que essa narrativa
+  responde — não deixe o módulo aberto só com o rastreio em "sim".
 - Separe COBERTURA de PREENCHIMENTO. Em `perguntadas`, liste toda pergunta do
   formulário que o entrevistador efetivamente fez, mesmo com palavras
   diferentes e mesmo quando o cliente não respondeu de forma aproveitável.
@@ -1164,6 +1178,16 @@ def processar_entrevista(
         else:
             valor = _texto(valor_bruto)
             if not valor:
+                continue
+            # Mesma barreira da escuta ao vivo: o modelo anota a falta no lugar
+            # de omitir o campo. Aceito, "não informado" vira dezenas de
+            # respostas falsas e some das pendências (já aconteceu numa
+            # entrevista real com o módulo de acidente quase todo assim).
+            if _e_nao_resposta(valor):
+                log.info(
+                    "Processamento preencheu %r com marcador de ausência; descartado.",
+                    pergunta.id,
+                )
                 continue
             if pergunta.tipo == "sim_nao":
                 normalizado = valor.casefold().rstrip(".")

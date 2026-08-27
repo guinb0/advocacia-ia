@@ -28,15 +28,26 @@ def _iso(valor: datetime | None = None) -> str:
     return (valor or _agora_dt()).isoformat()
 
 
-def reservar(chave: str, tipo: str, destino: str, caso_id: str | None = None) -> bool:
-    """Reserva um envio, impedindo duplicidade entre API e workers concorrentes."""
+def reservar(
+    chave: str, tipo: str, destino: str, caso_id: str | None = None, forcar: bool = False
+) -> bool:
+    """Reserva um envio, impedindo duplicidade entre API e workers concorrentes.
+
+    `forcar` libera um reenvio deliberado: um envio já CONCLUÍDO ('enviado')
+    deixa de barrar a operação — é o caso do atendente que, com o cliente ainda
+    na chamada, pede o link de novo. O que nunca é liberado é um envio EM
+    ANDAMENTO ('enviando'): essa continua sendo a defesa contra clique duplo e
+    corrida entre a API e o worker.
+    """
     instante = _iso()
     try:
         with conectar() as con:
             anterior = con.execute(
                 "SELECT status FROM automacoes_whatsapp WHERE chave = ?", (chave,)
             ).fetchone()
-            if anterior and anterior["status"] in ("enviando", "enviado"):
+            if anterior and anterior["status"] == "enviando":
+                return False
+            if anterior and anterior["status"] == "enviado" and not forcar:
                 return False
             if anterior:
                 con.execute(

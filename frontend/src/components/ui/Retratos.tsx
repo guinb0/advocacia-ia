@@ -92,6 +92,12 @@ function Video({
       // O próprio vídeo entra mudo e espelhado: ouvir a si mesmo é microfonia,
       // e a imagem não espelhada confunde quem se vê.
       muted={espelhar}
+      // O Chrome injeta sozinho um botão flutuante de picture-in-picture no canto
+      // superior direito de <video>, e ele caía exatamente EM CIMA do nosso botão
+      // "Tela cheia" — a sobreposição da captura. Aqui a chamada já tem tela
+      // cheia própria; o PiP nativo só atrapalha, então o desligamos.
+      disablePictureInPicture
+      controlsList="nodownload noplaybackrate noremoteplayback"
       aria-label={tela ? "Tela compartilhada" : undefined}
     />
   );

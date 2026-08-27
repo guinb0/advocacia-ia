@@ -78,6 +78,9 @@ def _mensagem_erro_evolution(erro: httpx.HTTPError) -> str:
 
 class Destinatario(BaseModel):
     telefone: str
+    #: Reenvio deliberado: o atendente pediu o link de novo com o cliente na
+    #: chamada. Sem isto, um segundo pedido só ouviria "já foi enviado".
+    forcar: bool = False
 
 
 class PedidoLinkAssinatura(BaseModel):
@@ -176,7 +179,7 @@ async def enviar_avaliacao_google(dados: Destinatario) -> dict[str, bool]:
     numero = _numero_brasileiro(dados.telefone)
     chave = f"avaliacao-google:{numero}"
     reservado = await run_in_threadpool(
-        automacoes_whatsapp.reservar, chave, "avaliacao_google", numero, None
+        automacoes_whatsapp.reservar, chave, "avaliacao_google", numero, None, dados.forcar
     )
     if not reservado:
         return {"enviado": False, "ja_enviado": True}
