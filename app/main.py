@@ -11,6 +11,8 @@ import threading
 import time
 import uuid
 import zipfile
+
+import httpx
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -439,6 +441,54 @@ def gerar_contrato(pedido: PedidoContrato):
 # `contrato.caminho_modelo` e a tabela em `app/banco.py`.
 
 PodeManterModelos = Depends(auth.exigir_modulo("contratos"))
+
+
+#: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.
+#:
+#: Em produção o navegador chega na transcrição pelo Traefik, que só roteia
+#: `/ws/transcricao` e `/entrevista` — o `/saude` dela NÃO é alcançável de fora.
+#: A API está na mesma rede `interna` e pode perguntar por ela.
+URL_TRANSCRICAO_INTERNA = os.getenv(
+    "URL_TRANSCRICAO_INTERNA", "http://localhost:8200"
+).rstrip("/")
+
+
+@app.get("/api/saude/transcricao")
+async def saude_da_transcricao():
+    """O estado do serviço de transcrição, visto de dentro do cluster.
+
+    POR QUE ESTA ROTA EXISTE
+
+    A transcrição parou em produção e o diagnóstico levou horas porque o sintoma
+    — "fica ouvindo e nada aparece" — é o mesmo para chave ausente, crédito no
+    fim, modelo fora do ar e serviço morto. O motivo real ficava no log do
+    contêiner, que ninguém alcança do meio de um atendimento.
+
+    `modelo_carregado` é o que responde a pergunta mais cara: com a OpenRouter
+    ele significa **a chave está no ambiente do contêiner**. Falso aqui, com o
+    serviço respondendo, é configuração faltando — não rede, não modelo.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as cliente:
+            resposta = await cliente.get(f"{URL_TRANSCRICAO_INTERNA}/saude")
+            resposta.raise_for_status()
+            dados = resposta.json()
+    except Exception as exc:
+        # 200 com `alcancavel: false`, e não 5xx: a pergunta "o serviço está de
+        # pé?" foi respondida com sucesso — a resposta é que não está.
+        return {
+            "alcancavel": False,
+            "url": URL_TRANSCRICAO_INTERNA,
+            "erro": f"{type(exc).__name__}: {str(exc)[:200]}",
+        }
+
+    return {
+        "alcancavel": True,
+        "url": URL_TRANSCRICAO_INTERNA,
+        **dados,
+        # Explícito para quem lê a resposta sem conhecer o código do serviço.
+        "chave_presente": bool(dados.get("modelo_carregado")),
+    }
 
 
 @app.get("/api/modelos")
