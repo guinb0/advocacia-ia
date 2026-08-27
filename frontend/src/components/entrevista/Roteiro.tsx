@@ -42,11 +42,13 @@ const TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA = false;
 
 const T_BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
 const T_BOTAO_GRAVANDO =
   "border-[1.5px] border-critico bg-transparent text-critico text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-critico enabled:hover:text-papel";
 const T_SECUNDARIO =
   "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
@@ -1300,7 +1302,7 @@ function preencherMarcadores(
     .join("  ·  ");
 
   return (
-    <div id="roteiro-da-entrevista" className="max-w-[860px] roteiro-contentor">
+    <div id="roteiro-da-entrevista" className="w-full max-w-[860px] min-w-0 roteiro-contentor">
       {trocandoRoteiro && (
         <SeletorDeRoteiro
           atualCodigo={roteiro.codigo}
@@ -1341,9 +1343,11 @@ function preencherMarcadores(
           <strong>Modo de teste:</strong> transcrição temporariamente desativada. Nenhum áudio é enviado ao serviço de transcrição.
         </div>
       )}
-      <div className="flex justify-between items-end gap-4 flex-wrap pb-3 border-b border-borda-forte">
-        <div>
-          <h2 className="m-0 font-semibold text-[22px] leading-[1.15] font-titulo">{roteiro.nome}</h2>
+      <div className="flex min-w-0 justify-between items-end gap-4 flex-wrap pb-3 border-b border-borda-forte">
+        <div className="min-w-0">
+          <h2 className="m-0 truncate font-semibold text-[22px] leading-[1.15] font-titulo" title={roteiro.nome}>
+            {roteiro.nome}
+          </h2>
         </div>
         <div className={T_ACOES}>
           {/* Fica ao lado do título, disponível o atendimento inteiro.
@@ -2231,7 +2235,7 @@ function CampoResposta({
   if (pergunta.id === "municipio") {
     return (
       <select
-        className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui disabled:opacity-60"
+        className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui disabled:bg-papel-3 disabled:text-tinta-desabilitada"
         value={texto}
         disabled={carregandoMunicipios || municipios.length === 0}
         onChange={(e) => onResponder(pergunta.id, e.target.value)}

@@ -26,9 +26,9 @@ const CABECALHO_CELULA =
   "px-[0.4rem] py-2 text-tinta-3 text-xs font-semibold uppercase tracking-[0.03em]";
 const ITEM_TOPO = "flex items-center justify-between gap-[0.6rem]";
 const CAMPO = "flex flex-col gap-[0.28rem] min-w-[220px] flex-1 text-tinta-3 text-xs";
-/* Cor explícita no select E no option não é redundância: o `globals.css` põe
- * `color: inherit` em todo select, e no Windows a lista aberta de um select sem
- * cor própria herda as do sistema — deu faixa preta sem texto legível. */
+/* Cor explícita no select E no option não é redundância: no Windows a lista
+ * aberta de um select sem cor própria pode herdar as do sistema — deu faixa
+ * preta sem texto legível. */
 const SELECT =
   "px-[0.6rem] py-[0.55rem] border border-borda-campo rounded-campo bg-papel text-tinta text-sm " +
   "[&>option]:bg-papel [&>option]:text-tinta";

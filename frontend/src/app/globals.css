@@ -38,6 +38,17 @@
   --tinta: #102033; /* títulos e números */
   --tinta-2: #424c58; /* texto corrido */
   --tinta-3: #65758a; /* rótulo, metadado, texto de apoio */
+  --tinta-desabilitada: #56677a; /* texto inativo sem depender de opacity */
+
+  /* -------------------------------------------------- navegação sobre azul */
+  --nav-fundo: #002a47;
+  --nav-fundo-ativo: #123d66;
+  --nav-fundo-hover: #0c385f;
+  --nav-texto: #f4f8fd;
+  --nav-texto-2: #d6e6f7;
+  --nav-texto-3: #aac8e8;
+  --nav-borda: #143a5d;
+  --nav-icone: #c4dcf4;
 
   /* ---------------------------------------------------------------- bordas */
   --borda: #dce5ef; /* divisória entre itens de uma lista */
@@ -118,6 +129,16 @@ html[data-theme="dark"] {
   --tinta: #f0f5fb;
   --tinta-2: #cfdae7;
   --tinta-3: #9eafc2;
+  --tinta-desabilitada: #aebdd0;
+
+  --nav-fundo: #071829;
+  --nav-fundo-ativo: #123d66;
+  --nav-fundo-hover: #102f4e;
+  --nav-texto: #f5f9ff;
+  --nav-texto-2: #d8e8f8;
+  --nav-texto-3: #b7d0ea;
+  --nav-borda: #1c4164;
+  --nav-icone: #c7ddf5;
 
   --borda: #2a3a4c;
   --borda-forte: #3b4d61;
@@ -172,6 +193,16 @@ html[data-theme="dark"] {
   --color-tinta: var(--tinta);
   --color-tinta-2: var(--tinta-2);
   --color-tinta-3: var(--tinta-3);
+  --color-tinta-desabilitada: var(--tinta-desabilitada);
+
+  --color-nav-fundo: var(--nav-fundo);
+  --color-nav-fundo-ativo: var(--nav-fundo-ativo);
+  --color-nav-fundo-hover: var(--nav-fundo-hover);
+  --color-nav-texto: var(--nav-texto);
+  --color-nav-texto-2: var(--nav-texto-2);
+  --color-nav-texto-3: var(--nav-texto-3);
+  --color-nav-borda: var(--nav-borda);
+  --color-nav-icone: var(--nav-icone);
 
   --color-borda: var(--borda);
   --color-borda-forte: var(--borda-forte);
@@ -274,7 +305,6 @@ input,
 textarea {
   font-family: inherit;
   font-size: inherit;
-  color: inherit;
 }
 
 /* Números, códigos e datas em mono de largura fixa — sem isso as colunas

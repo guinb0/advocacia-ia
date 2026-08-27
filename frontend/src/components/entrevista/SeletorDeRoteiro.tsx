@@ -83,7 +83,7 @@ export default function SeletorDeRoteiro({
           <div className="flex gap-[10px] items-center flex-wrap">
             <button
               type="button"
-              className="px-[14px] py-[7px] rounded-campo border border-borda-campo bg-papel text-tinta text-[13px] font-ui cursor-pointer hover:bg-papel-3 disabled:opacity-50"
+              className="px-[14px] py-[7px] rounded-campo border border-borda-campo bg-papel text-tinta text-[13px] font-ui cursor-pointer hover:bg-papel-3 disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada"
               onClick={aoEditarAtual}
             >
               Editar o roteiro atual

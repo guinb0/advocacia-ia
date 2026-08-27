@@ -99,7 +99,7 @@ export default function PainelDocumentacao({ onVoltar, onAbrirDocumentos }: Prop
             {item.status === "solicitado" && (
               chamadaViva(item) ? (
                 <button type="button" onClick={() => void assumir(item)} disabled={assumindo !== null}
-                  className="mt-3 border border-acao bg-acao text-papel px-4 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50">
+                  className="mt-3 border border-acao bg-acao text-papel px-4 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada">
                   {assumindo === item.entrevista_id ? "Entrando na chamada…" : "Assumir chamada"}
                 </button>
               ) : (

@@ -32,7 +32,7 @@ const BASE_BOTAO =
   "inline-flex items-center justify-center gap-2 border border-transparent " +
   "rounded-campo bg-transparent font-ui text-sm font-semibold leading-tight " +
   "text-center no-underline cursor-pointer transition-[background-color,border-color,color] " +
-  "duration-[120ms] ease-out disabled:opacity-50 disabled:cursor-not-allowed";
+  "duration-[120ms] ease-out disabled:cursor-not-allowed";
 
 /* Ação principal: preenchimento sólido — é o que faz o olho achá-la sem
  * procurar. Só uma por bloco (ver GUIA-VISUAL.md). */
@@ -40,23 +40,26 @@ const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
   primario:
     "bg-acao border-acao text-white " +
     "enabled:hover:bg-acao-forte enabled:hover:border-acao-forte " +
-    "enabled:focus-visible:bg-acao-forte enabled:focus-visible:border-acao-forte",
+    "enabled:focus-visible:bg-acao-forte enabled:focus-visible:border-acao-forte " +
+    "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada",
   secundario:
     "border-borda-campo bg-papel text-acao " +
-    "enabled:hover:bg-acao-clara enabled:hover:border-acao",
-  discreto: "text-tinta-2 enabled:hover:bg-papel-3 enabled:hover:text-tinta",
+    "enabled:hover:bg-acao-clara enabled:hover:border-acao " +
+    "disabled:border-borda disabled:bg-papel-2 disabled:text-tinta-desabilitada",
+  discreto: "text-tinta-2 enabled:hover:bg-papel-3 enabled:hover:text-tinta disabled:text-tinta-desabilitada",
   /* Destrutiva: única variante em que cor de estado também é cor de ação —
    * de propósito, para pedir hesitação antes de excluir. */
   perigo:
     "border-critico-borda text-critico bg-papel " +
-    "enabled:hover:bg-critico-claro enabled:hover:border-critico",
+    "enabled:hover:bg-critico-claro enabled:hover:border-critico " +
+    "disabled:border-borda disabled:bg-papel-2 disabled:text-tinta-desabilitada",
   /* Link-como-botão (voltar, "ver mais"): sem altura mínima nem padding de
    * botão de verdade. Nunca ganha as classes de tamanho da base (ver
    * `variante !== "texto"` abaixo), então não há conflito a resolver com
    * `!important`. */
   texto:
     "min-h-0 px-0 py-[2px] text-acao underline underline-offset-[3px] " +
-    "enabled:hover:text-acao-forte",
+    "enabled:hover:text-acao-forte disabled:text-tinta-desabilitada",
 };
 
 interface BotaoProps extends React.ComponentPropsWithoutRef<"button"> {
@@ -112,7 +115,7 @@ export function LinkBotao({
         variante !== "texto" && (pequeno ? "min-h-8 px-[11px] py-[6px] text-xs gap-[6px]" : "min-h-10 px-4 py-[9px]"),
         VARIANTE_BOTAO[variante],
         bloco && "w-full",
-        desabilitado && "opacity-50 cursor-not-allowed",
+        desabilitado && "cursor-not-allowed border-borda bg-papel-2 text-tinta-desabilitada",
         className,
       )}
       aria-disabled={desabilitado || undefined}

@@ -65,7 +65,7 @@ export default function RelatorioEntrevista({ respostas, relato }: Props) {
       <div className="flex items-center gap-[14px] flex-wrap mt-3">
         <button
           type="button"
-          className="border-[1.5px] border-tinta bg-transparent text-tinta font-semibold text-[11px] leading-none font-ui tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-50 disabled:cursor-default enabled:hover:bg-tinta enabled:hover:text-papel"
+          className="border-[1.5px] border-tinta bg-transparent text-tinta font-semibold text-[11px] leading-none font-ui tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada enabled:hover:bg-tinta enabled:hover:text-papel"
           onClick={gerar}
           disabled={gerando}
         >

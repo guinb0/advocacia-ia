@@ -118,13 +118,13 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
 
 const ITEM =
   "group relative flex w-full items-center gap-3 rounded-[10px] border border-transparent px-3 py-2.5 " +
-  "text-left text-sm font-semibold text-[#c8d7e8] cursor-pointer transition-colors duration-[120ms] " +
-  "hover:bg-white/[0.08] hover:text-white";
+  "text-left text-sm font-semibold text-nav-texto-2 cursor-pointer transition-colors duration-[120ms] " +
+  "hover:bg-nav-fundo-hover hover:text-nav-texto";
 const ITEM_ATIVO =
-  "relative flex w-full items-center gap-3 rounded-[10px] border border-white/10 bg-[#123d66] px-3 py-2.5 " +
-  "text-left text-sm font-semibold text-white shadow-[inset_3px_0_0_var(--marca-ouro)] cursor-pointer";
+  "relative flex w-full items-center gap-3 rounded-[10px] border border-white/10 bg-nav-fundo-ativo px-3 py-2.5 " +
+  "text-left text-sm font-semibold text-nav-texto shadow-[inset_3px_0_0_var(--marca-ouro)] cursor-pointer";
 const GRUPO_TITULO =
-  "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#83a0bd] first:mt-0";
+  "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-nav-texto-3 first:mt-0";
 
 export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   entrevista: MessageSquareText,
@@ -234,7 +234,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
                   >
                     <Icone
                       size={17}
-                      className={acesa ? "shrink-0 text-[#f4c879]" : "shrink-0 text-[#8fb2d4] group-hover:text-white"}
+                      className={acesa ? "shrink-0 text-marca-ouro" : "shrink-0 text-nav-icone group-hover:text-nav-texto"}
                       aria-hidden
                     />
                     <span className="min-w-0 truncate">{item.rotulo}</span>
@@ -250,10 +250,10 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
   return (
     <>
       {/* ------------------------------------------------- topo só do celular */}
-      <div className="sticky top-0 z-30 flex h-[65px] shrink-0 items-center gap-3 border-b border-[#143a5d] bg-[#002a47] px-4 py-3 text-white shadow-[0_12px_30px_rgba(0,42,71,0.18)] lg:hidden">
+      <div className="sticky top-0 z-30 flex h-[65px] shrink-0 items-center gap-3 border-b border-nav-borda bg-nav-fundo px-4 py-3 text-nav-texto shadow-[0_12px_30px_rgba(0,42,71,0.18)] lg:hidden">
         <button
           type="button"
-          className="inline-flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-[10px] border border-white/[0.16] bg-white/[0.08] text-white transition-colors hover:bg-white/[0.14]"
+          className="inline-flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-[10px] border border-white/[0.16] bg-white/[0.08] text-nav-texto transition-colors hover:bg-white/[0.14]"
           aria-expanded={aberta}
           aria-controls="barra-lateral"
           aria-label={aberta ? "Fechar menu" : "Abrir menu"}
@@ -263,23 +263,23 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
         </button>
         <div className="min-w-0 flex-1">
           <span className="block truncate font-titulo text-lg font-bold leading-none">Acervo</span>
-          <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-[#b8d0e8]">
+          <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
             Escritório jurídico
           </span>
         </div>
         <div className="ml-auto flex min-w-0 items-center gap-2">
           <span className="hidden min-w-0 text-right min-[430px]:block">
-            <strong className="block max-w-[130px] truncate text-xs text-white">{nome}</strong>
-            <span className="block max-w-[130px] truncate text-[11px] text-[#b8d0e8]">{perfil}</span>
+            <strong className="block max-w-[130px] truncate text-xs text-nav-texto">{nome}</strong>
+            <span className="block max-w-[130px] truncate text-[11px] text-nav-texto-3">{perfil}</span>
           </span>
-          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.10] text-xs font-bold uppercase text-white ring-1 ring-white/[0.16]">
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.10] text-xs font-bold uppercase text-nav-texto ring-1 ring-white/[0.16]">
             {nome.slice(0, 2)}
           </span>
           {AUTH_ATIVA && (
             <button
               type="button"
               onClick={sessao.sair}
-              className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-[10px] border border-white/[0.16] bg-white/[0.08] text-white transition-colors hover:bg-white/[0.14]"
+              className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-[10px] border border-white/[0.16] bg-white/[0.08] text-nav-texto transition-colors hover:bg-white/[0.14]"
               aria-label="Sair"
               title="Sair"
             >
@@ -302,7 +302,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
       <aside
         id="barra-lateral"
         className={
-          "border-[#143a5d] bg-[#002a47] " +
+          "border-nav-borda bg-nav-fundo " +
           // Celular: gaveta fixa que desliza. `translate-x` em vez de `display`
           // para a transição existir e para o conteúdo continuar no DOM — um menu
           // que some do DOM perde o foco do teclado no meio da navegação.
@@ -316,12 +316,12 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
       >
         <div className="hidden px-5 pb-4 pt-5 lg:block">
           <div className="flex items-center gap-3">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-[12px] bg-white/[0.10] text-[#f4c879] ring-1 ring-white/[0.12]">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-[12px] bg-white/[0.10] text-marca-ouro ring-1 ring-white/[0.12]">
               <FileText size={20} aria-hidden />
             </span>
             <div className="min-w-0">
-              <span className="block truncate font-titulo text-xl font-bold leading-none text-white">Acervo</span>
-              <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9db8d2]">
+              <span className="block truncate font-titulo text-xl font-bold leading-none text-nav-texto">Acervo</span>
+              <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
                 Escritório jurídico
               </span>
             </div>

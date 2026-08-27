@@ -38,7 +38,8 @@ const CELULA_MATRIZ = "border-b border-borda px-2 py-[10px] text-center";
 const COLUNA_FIXA = "sticky left-0 z-[1] min-w-[220px] bg-papel text-left";
 const BOTAO_ACAO =
   "border-[1.5px] border-tinta bg-tinta text-papel text-xs font-semibold uppercase " +
-  "tracking-[0.06em] leading-none px-3 py-2 cursor-pointer disabled:opacity-45 disabled:cursor-default";
+  "tracking-[0.06em] leading-none px-3 py-2 cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
 const CAMPO_NOVO =
   "flex flex-col gap-[5px] " +
   "[&>span]:text-tinta-3 [&>span]:text-xs [&>span]:font-semibold [&>span]:uppercase " +

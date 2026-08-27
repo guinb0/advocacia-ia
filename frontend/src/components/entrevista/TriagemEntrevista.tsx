@@ -375,7 +375,36 @@ export default function TriagemEntrevista({
   )[gravacaoEstado];
 
   return (
-    <div className="p-4 mb-5 border border-borda rounded-campo bg-papel-2">
+    <section className="mb-5 min-w-0 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+      <header className="border-b border-borda bg-papel-2 px-4 py-4 sm:px-5">
+        <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
+              Atendimento
+            </span>
+            <h2 className="mt-1 truncate text-xl font-semibold leading-[1.15] text-tinta">
+              Entrevista guiada
+            </h2>
+            <p className="mt-2 max-w-[76ch] text-sm leading-[1.55] text-tinta-2">
+              Conduza o relato, valide a ação cabível e crie o caso sem sair do atendimento.
+            </p>
+          </div>
+
+          <div className="flex min-w-0 flex-wrap gap-2">
+            <Selo tom={mostrarRoteiro ? "info" : qualificacao ? "ok" : "neutro"}>
+              Roteiro
+            </Selo>
+            <Selo tom={resultado ? "ok" : analisando ? "info" : "neutro"}>
+              Validação
+            </Selo>
+            <Selo tom={casoCriado || casoTxtId ? "ok" : "neutro"}>
+              Caso
+            </Selo>
+          </div>
+        </div>
+      </header>
+
+      <div className="min-w-0 p-4 sm:p-5">
       {mostrarRoteiro ? (
         <EntrevistaComChamada
           /* As respostas sobem a cada mudança: é o que deixa as etapas abaixo
@@ -764,6 +793,7 @@ export default function TriagemEntrevista({
         </section>
       )}
 
-    </div>
+      </div>
+    </section>
   );
 }

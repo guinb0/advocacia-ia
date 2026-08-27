@@ -413,7 +413,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
           </LinkBotao>
           <button
             type="button"
-            className="min-h-8 px-[11px] py-[6px] text-xs inline-flex items-center justify-center border border-borda-campo bg-papel text-acao rounded-campo font-ui font-semibold cursor-pointer hover:bg-acao-clara hover:border-acao disabled:opacity-50 disabled:cursor-default"
+            className="min-h-8 px-[11px] py-[6px] text-xs inline-flex items-center justify-center border border-borda-campo bg-papel text-acao rounded-campo font-ui font-semibold cursor-pointer hover:bg-acao-clara hover:border-acao disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada"
             onClick={() => void baixarPdf()}
             disabled={baixandoPdf}
           >
