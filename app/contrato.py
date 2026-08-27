@@ -36,6 +36,8 @@ revisão e vira contrato assinado com dado faltando. O colchete não passa.
 from __future__ import annotations
 
 import io
+import logging
+import os
 import re
 import unicodedata
 import zipfile
@@ -45,6 +47,8 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from . import validators
+
+log = logging.getLogger(__name__)
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -194,15 +198,37 @@ def _sem_acento(texto: str) -> str:
     return "".join(c for c in sem if not unicodedata.combining(c)).casefold()
 
 
-def caminho_modelo(codigo: str = "contrato") -> Path:
-    """O .docx oficial. Trocar de versão é soltar o arquivo novo em `docs/`.
+#: Onde os modelos vindos do banco são materializados para o `zipfile` abrir.
+#: `preencher` recebe um `Path` e o abre como zip — guardar os bytes num arquivo
+#: temporário evita reescrever essa cadeia inteira só para trocar a origem.
+DIR_MODELOS_TMP = BASE / "tmp" / "modelos"
 
-    O nome não é fixo de propósito: o escritório versiona pela data no próprio
-    nome do arquivo, como já faz com os checklists. A comparação ignora acento e
-    caixa porque "Procuração.docx" e "PROCURACAO.docx" são o mesmo documento
-    para quem salvou, e um `glob` literal acharia só um dos dois.
+
+def caminho_modelo(codigo: str = "contrato") -> Path:
+    """O .docx oficial: primeiro o do banco, depois o de `docs/`.
+
+    DUAS ORIGENS, E A ORDEM IMPORTA
+
+    O banco vem primeiro porque é a origem que funciona em toda parte. O
+    contrato de honorários não é versionado — traz tabela de honorários, CNPJ e
+    inscrições na OAB, e o `.gitignore` o mantém fora do repositório — então ele
+    NÃO existe em `docs/` dentro do contêiner, e nenhum volume o repõe. Antes
+    disso, gerar contrato em produção falhava com "modelo não encontrado em
+    docs/" num ambiente onde ninguém tem shell para ir lá colocá-lo.
+
+    `docs/` continua valendo como reserva, e é o que faz a máquina do advogado
+    funcionar sem precisar subir nada: quem tem o arquivo no disco não percebe
+    diferença. O nome não é fixo de propósito — o escritório versiona pela data
+    no próprio nome do arquivo, como já faz com os checklists, e a comparação
+    ignora acento e caixa porque "Procuração.docx" e "PROCURACAO.docx" são o
+    mesmo documento para quem salvou.
     """
     alvo = modelo(codigo)
+
+    guardado = _modelo_do_banco(codigo)
+    if guardado is not None:
+        return guardado
+
     candidatos = [
         p
         for p in DIR_DOCS.glob("*.docx")
@@ -210,11 +236,47 @@ def caminho_modelo(codigo: str = "contrato") -> Path:
     ]
     if not candidatos:
         raise ErroContrato(
-            f"Modelo de {alvo['rotulo'].lower()} não encontrado em docs/ "
-            f"(esperado um arquivo começando por {alvo['prefixo'].upper()})."
+            f"Modelo de {alvo['rotulo'].lower()} não encontrado. Envie o arquivo "
+            f".docx pela tela de modelos, ou deixe um documento começando por "
+            f"{alvo['prefixo'].upper()} em docs/."
         )
     # O mais recente vence, para a versão nova entrar sem mexer no código.
     return max(candidatos, key=lambda p: p.stat().st_mtime)
+
+
+def _modelo_do_banco(codigo: str) -> Path | None:
+    """Materializa o modelo guardado num arquivo temporário, ou `None`.
+
+    O arquivo é reescrito quando o registro muda: o nome carrega o instante de
+    `atualizado_em`, então trocar o modelo pela tela produz um caminho novo e o
+    antigo simplesmente deixa de ser procurado. Sem isso, um contêiner de vida
+    longa continuaria gerando contrato com a versão que leu na primeira vez.
+
+    Banco fora do ar não pode derrubar a geração de procuração, que tem o
+    arquivo em `docs/` e não precisa do banco para nada — daí engolir o erro e
+    devolver `None`, deixando a reserva assumir.
+    """
+    try:
+        from . import armazenamento
+
+        registro = armazenamento.obter_modelo(codigo)
+    except Exception:
+        log.warning("Não foi possível ler o modelo '%s' do banco.", codigo, exc_info=True)
+        return None
+
+    if not registro or not registro.get("conteudo"):
+        return None
+
+    carimbo = re.sub(r"[^0-9]", "", str(registro.get("atualizado_em") or ""))[:14]
+    destino = DIR_MODELOS_TMP / f"{codigo}-{carimbo or 'sem-data'}.docx"
+    if not destino.exists():
+        DIR_MODELOS_TMP.mkdir(parents=True, exist_ok=True)
+        # Escreve ao lado e renomeia: dois workers pedindo o contrato ao mesmo
+        # tempo não podem produzir um `.docx` lido pela metade.
+        parcial = destino.with_suffix(f".{os.getpid()}.parcial")
+        parcial.write_bytes(registro["conteudo"])
+        parcial.replace(destino)
+    return destino
 
 
 # -------------------------------------------------------------- marcadores

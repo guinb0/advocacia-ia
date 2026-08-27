@@ -378,6 +378,23 @@ async def ws_transcricao(ws: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    except transcricao_openrouter.ErroTranscricao as erro:
+        # O MOTIVO VAI PARA A TELA, e isto custou uma tarde.
+        #
+        # Estes erros já vêm escritos para quem lê: "falta OPENROUTER_API_KEY",
+        # "A OpenRouter respondeu 402 <corpo>". Achatá-los num "Falha na
+        # transcrição." genérico jogava a única informação útil para o log do
+        # contêiner — que em produção ninguém alcança de dentro do atendimento.
+        # O sintoma virava "parou de transcrever", indistinguível entre chave
+        # vencida, crédito no fim e modelo fora do ar.
+        #
+        # Não há segredo nestas mensagens: elas dizem o código HTTP e o que a
+        # OpenRouter respondeu, nunca a chave.
+        log.warning("Transcrição recusada: %s", erro)
+        try:
+            await ws.send_json({"type": "error", "detail": str(erro)})
+        except Exception:
+            pass
     except Exception:
         log.exception("Erro na transcrição")
         try:

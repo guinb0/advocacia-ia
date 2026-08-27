@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import io
 import logging
 import os
 import re
 import threading
 import time
 import uuid
+import zipfile
+
+import httpx
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -427,6 +431,140 @@ def gerar_contrato(pedido: PedidoContrato):
             "X-Campos-Faltando": ", ".join(faltando),
         },
     )
+
+
+# ------------------------------------------- modelos .docx do escritorio
+#
+# O contrato de honorarios nao e versionado (traz honorarios, CNPJ e as OAB), e
+# por isso nao existe em `docs/` dentro do conteiner. Estas rotas sao como ele
+# chega la: sobe uma vez, fica no banco, vale para todos os conteineres. Ver
+# `contrato.caminho_modelo` e a tabela em `app/banco.py`.
+
+PodeManterModelos = Depends(auth.exigir_modulo("contratos"))
+
+
+#: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.
+#:
+#: Em produção o navegador chega na transcrição pelo Traefik, que só roteia
+#: `/ws/transcricao` e `/entrevista` — o `/saude` dela NÃO é alcançável de fora.
+#: A API está na mesma rede `interna` e pode perguntar por ela.
+URL_TRANSCRICAO_INTERNA = os.getenv(
+    "URL_TRANSCRICAO_INTERNA", "http://localhost:8200"
+).rstrip("/")
+
+
+@app.get("/api/saude/transcricao")
+async def saude_da_transcricao():
+    """O estado do serviço de transcrição, visto de dentro do cluster.
+
+    POR QUE ESTA ROTA EXISTE
+
+    A transcrição parou em produção e o diagnóstico levou horas porque o sintoma
+    — "fica ouvindo e nada aparece" — é o mesmo para chave ausente, crédito no
+    fim, modelo fora do ar e serviço morto. O motivo real ficava no log do
+    contêiner, que ninguém alcança do meio de um atendimento.
+
+    `modelo_carregado` é o que responde a pergunta mais cara: com a OpenRouter
+    ele significa **a chave está no ambiente do contêiner**. Falso aqui, com o
+    serviço respondendo, é configuração faltando — não rede, não modelo.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as cliente:
+            resposta = await cliente.get(f"{URL_TRANSCRICAO_INTERNA}/saude")
+            resposta.raise_for_status()
+            dados = resposta.json()
+    except Exception as exc:
+        # 200 com `alcancavel: false`, e não 5xx: a pergunta "o serviço está de
+        # pé?" foi respondida com sucesso — a resposta é que não está.
+        return {
+            "alcancavel": False,
+            "url": URL_TRANSCRICAO_INTERNA,
+            "erro": f"{type(exc).__name__}: {str(exc)[:200]}",
+        }
+
+    return {
+        "alcancavel": True,
+        "url": URL_TRANSCRICAO_INTERNA,
+        **dados,
+        # Explícito para quem lê a resposta sem conhecer o código do serviço.
+        "chave_presente": bool(dados.get("modelo_carregado")),
+    }
+
+
+@app.get("/api/modelos")
+async def listar_modelos(_autorizado=PodeManterModelos):
+    """Os modelos guardados no banco e de onde cada documento esta vindo.
+
+    `origem` e o que responde a pergunta que aparece quando um contrato sai
+    errado: o arquivo que gerou este documento e o que subiram pela tela, ou um
+    que ficou no disco do servidor?
+    """
+    guardados = {m["codigo"]: m for m in await run_in_threadpool(armazenamento.listar_modelos)}
+    saida = []
+    for alvo in contrato.MODELOS:
+        codigo = alvo["codigo"]
+        registro = guardados.get(codigo)
+        try:
+            caminho = await run_in_threadpool(contrato.caminho_modelo, codigo)
+            nome, disponivel = caminho.name, True
+        except contrato.ErroContrato:
+            nome, disponivel = "", False
+        saida.append(
+            {
+                "codigo": codigo,
+                "rotulo": alvo["rotulo"],
+                "disponivel": disponivel,
+                "origem": "banco" if registro else ("docs" if disponivel else "nenhuma"),
+                "arquivo": registro["nome_arquivo"] if registro else nome,
+                "enviado_por": registro["enviado_por"] if registro else "",
+                "atualizado_em": registro["atualizado_em"] if registro else "",
+            }
+        )
+    return {"modelos": saida}
+
+
+@app.post("/api/modelos/{codigo}", status_code=201)
+async def enviar_modelo(
+    codigo: str,
+    arquivo: UploadFile = File(...),
+    usuario: auth.Usuario = PodeManterModelos,
+):
+    """Guarda o .docx daquele documento no banco, substituindo o anterior."""
+    try:
+        alvo = contrato.modelo(codigo)
+    except contrato.ErroContrato as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    nome = arquivo.filename or f"{codigo}.docx"
+    if Path(nome).suffix.lower() != ".docx":
+        raise HTTPException(400, "O modelo precisa ser um arquivo .docx.")
+
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > MAX_BYTES:
+        raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
+    # Conferir ANTES de gravar: um .docx corrompido guardado no banco quebraria a
+    # geracao de todo mundo, e o erro apareceria na hora de fechar um contrato.
+    if not zipfile.is_zipfile(io.BytesIO(conteudo)):
+        raise HTTPException(400, "Este arquivo nao e um .docx valido.")
+
+    registro = await run_in_threadpool(
+        armazenamento.salvar_modelo,
+        codigo,
+        nome_arquivo=nome,
+        conteudo=conteudo,
+        enviado_por=usuario.nome,
+    )
+    return {"codigo": codigo, "rotulo": alvo["rotulo"], **registro}
+
+
+@app.delete("/api/modelos/{codigo}")
+async def excluir_modelo(codigo: str, _autorizado=PodeManterModelos):
+    """Tira o modelo do banco. O arquivo de `docs/` volta a valer, se houver."""
+    if not await run_in_threadpool(armazenamento.excluir_modelo, codigo):
+        raise HTTPException(404, f"Nenhum modelo guardado para {codigo!r}.")
+    return {"codigo": codigo}
 
 
 @app.get("/api/contrato/campos")

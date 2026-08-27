@@ -1491,3 +1491,76 @@ def excluir_roteiro(codigo: str) -> bool:
     """
     with conectar() as con:
         return bool(con.execute("DELETE FROM roteiros WHERE codigo = ?", (codigo,)).rowcount)
+
+
+# --------------------------------------------------- modelos .docx do escritório
+#
+# O contrato de honorários não é versionado (ver o `.gitignore` e o comentário da
+# tabela em `app/banco.py`), então em produção ele não existe em `docs/` — não
+# entra na imagem e nenhum volume o repõe. Guardá-lo no banco é o que permite
+# subi-lo uma vez pela tela e ele valer para todos os contêineres.
+#
+# `varbinary(max)` e não caminho de arquivo: caminho exigiria um volume
+# compartilhado entre a API e os workers, que é justamente a peça de infra que
+# não existe hoje.
+
+
+def salvar_modelo(
+    codigo: str, *, nome_arquivo: str, conteudo: bytes, enviado_por: str = ""
+) -> dict[str, Any]:
+    """Grava (ou regrava) o modelo daquele código. Idempotente."""
+    instante = agora()
+    with conectar() as con:
+        atualizadas = con.execute(
+            """
+            UPDATE modelos_documento
+               SET nome_arquivo = ?, conteudo = ?, enviado_por = ?, atualizado_em = ?
+             WHERE codigo = ?
+            """,
+            (nome_arquivo, conteudo, enviado_por, instante, codigo),
+        ).rowcount
+        if not atualizadas:
+            con.execute(
+                """
+                INSERT INTO modelos_documento
+                       (codigo, nome_arquivo, conteudo, enviado_por, criado_em, atualizado_em)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (codigo, nome_arquivo, conteudo, enviado_por, instante, instante),
+            )
+    registro = obter_modelo(codigo) or {}
+    registro.pop("conteudo", None)
+    return registro
+
+
+def obter_modelo(codigo: str) -> dict[str, Any] | None:
+    """O modelo COM o conteúdo. Quem só quer listar usa `listar_modelos`."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM modelos_documento WHERE codigo = ?", (codigo,)
+        ).fetchone()
+    if not linha:
+        return None
+    registro = dict(linha)
+    # O pyodbc devolve `bytes` para varbinary, mas versões antigas devolvem
+    # `bytearray`. O `zipfile` aceita os dois; quem grava em disco, não.
+    registro["conteudo"] = bytes(registro["conteudo"])
+    return registro
+
+
+def listar_modelos() -> list[dict[str, Any]]:
+    """Os modelos guardados, SEM o conteúdo — a tela só mostra nome e data."""
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT codigo, nome_arquivo, enviado_por, criado_em, atualizado_em"
+            "  FROM modelos_documento ORDER BY codigo"
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def excluir_modelo(codigo: str) -> bool:
+    """Tira o modelo do banco. O `docs/` volta a valer, se houver arquivo lá."""
+    with conectar() as con:
+        return bool(
+            con.execute("DELETE FROM modelos_documento WHERE codigo = ?", (codigo,)).rowcount
+        )
