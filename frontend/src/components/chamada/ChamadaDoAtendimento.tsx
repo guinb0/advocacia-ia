@@ -33,7 +33,7 @@ const LEGENDA: Record<EstadoChamada, string> = {
 
 const PONTO_ATIVO_ESTILO = { background: "#3fa46a", boxShadow: "0 0 0 3px rgba(63, 164, 106, 0.2)" };
 
-export default function ChamadaDoAtendimento() {
+export default function ChamadaDoAtendimento({ modo = "avaliacao" }: { modo?: "avaliacao" | "documentacao" }) {
   const chamada = useChamada();
 
   // `registrarPainel` é estável, então roda uma vez. O retorno dele desfaz o
@@ -49,7 +49,7 @@ export default function ChamadaDoAtendimento() {
     <section
       className="my-[18px] border border-borda-forte border-t-[3px] px-[15px] pt-[13px] pb-[15px] bg-papel"
       style={{ borderTopColor: "var(--tinta)" }}
-      aria-label="Chamada com o cliente"
+      aria-label={modo === "documentacao" ? "Chamada para coleta de documentos" : "Chamada com o cliente"}
     >
       <div className="flex items-baseline justify-between flex-wrap gap-2 mb-[11px]">
         <span className="inline-flex items-center gap-[7px] text-[10px] font-semibold leading-none font-ui tracking-[0.1em] uppercase text-tinta-3">
@@ -67,7 +67,9 @@ export default function ChamadaDoAtendimento() {
             a avaliação. */}
         {!encerrada && (
           <span className="font-semibold text-[11px] leading-[1.4] font-ui text-atencao">
-            Não desligue até o cliente concluir a avaliação.
+            {modo === "documentacao"
+              ? "Permaneça na chamada enquanto confere os documentos com o cliente."
+              : "Não desligue até o cliente concluir a avaliação."}
           </span>
         )}
       </div>

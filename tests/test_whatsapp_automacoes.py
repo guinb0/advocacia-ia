@@ -3,7 +3,26 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
+import httpx
+
 from app import whatsapp
+
+
+def test_nome_da_instancia_com_espaco_vai_codificado():
+    assert whatsapp._url_instancia(
+        "https://evolution.exemplo", "message/sendText", "Advocacia LM"
+    ) == "https://evolution.exemplo/message/sendText/Advocacia%20LM"
+
+
+def test_erro_de_chave_da_evolution_e_explicito_sem_expor_resposta():
+    requisicao = httpx.Request("POST", "https://evolution.exemplo/message/sendText/instancia")
+    resposta = httpx.Response(401, request=requisicao, text="apikey secreta recusada")
+    erro = httpx.HTTPStatusError("Unauthorized", request=requisicao, response=resposta)
+
+    mensagem = whatsapp._mensagem_erro_evolution(erro)
+
+    assert mensagem == "A chave da Evolution configurada no servidor foi recusada."
+    assert "secreta" not in mensagem
 
 
 def test_link_zapsign_automatico_so_vai_para_parte_externa(monkeypatch):

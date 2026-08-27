@@ -27,6 +27,7 @@ import re
 import hashlib
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -44,6 +45,28 @@ MENSAGEM_AVALIACAO = (
     "encontrarem nosso trabalho. Se puder, avalie a LARA & MELO no Google: "
 )
 log = logging.getLogger("whatsapp")
+
+
+def _url_instancia(base: str, recurso: str, instancia: str) -> str:
+    """Monta a URL sem deixar espaços do nome da instância no caminho."""
+    return f"{base}/{recurso}/{quote(instancia.strip(), safe='')}"
+
+
+def _mensagem_erro_evolution(erro: httpx.HTTPError) -> str:
+    """Traduz a falha da Evolution sem devolver chave ou resposta sensível."""
+    if isinstance(erro, httpx.HTTPStatusError):
+        status = erro.response.status_code
+        if status in (401, 403):
+            return "A chave da Evolution configurada no servidor foi recusada."
+        if status == 404:
+            return "A instância do WhatsApp configurada no servidor não foi encontrada."
+        if status in (400, 409, 422):
+            return "A Evolution recusou a mensagem ou o destinatário informado."
+        if status >= 500:
+            return "A Evolution está indisponível no momento. Tente novamente."
+    if isinstance(erro, httpx.TimeoutException):
+        return "A Evolution demorou demais para responder. Tente novamente."
+    return "Não foi possível conectar à Evolution API."
 
 
 class Destinatario(BaseModel):
@@ -100,13 +123,15 @@ async def _enviar_texto(numero: str, texto: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=20) as cliente:
             resposta = await cliente.post(
-                f"{base}/message/sendText/{instancia}",
+                _url_instancia(base, "message/sendText", instancia),
                 headers={"apikey": chave, "Content-Type": "application/json"},
                 json={"number": numero, "text": texto},
             )
             resposta.raise_for_status()
     except httpx.HTTPError as erro:
-        raise HTTPException(502, "A Evolution API não confirmou o envio da mensagem.") from erro
+        status = erro.response.status_code if isinstance(erro, httpx.HTTPStatusError) else None
+        log.warning("Falha no envio pela Evolution: status=%s tipo=%s", status, type(erro).__name__)
+        raise HTTPException(502, _mensagem_erro_evolution(erro)) from erro
 
 
 def _enviar_texto_sync(numero: str, texto: str) -> None:
@@ -116,13 +141,15 @@ def _enviar_texto_sync(numero: str, texto: str) -> None:
     base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
     try:
         resposta = httpx.post(
-            f"{base}/message/sendText/{os.getenv('EVOLUTION_INSTANCE', '')}",
+            _url_instancia(base, "message/sendText", os.getenv("EVOLUTION_INSTANCE", "")),
             headers={"apikey": os.getenv("EVOLUTION_API_KEY", ""), "Content-Type": "application/json"},
             json={"number": numero, "text": texto}, timeout=20,
         )
         resposta.raise_for_status()
     except httpx.HTTPError as erro:
-        raise RuntimeError("A Evolution API não confirmou o envio da mensagem.") from erro
+        status = erro.response.status_code if isinstance(erro, httpx.HTTPStatusError) else None
+        log.warning("Falha no envio pela Evolution: status=%s tipo=%s", status, type(erro).__name__)
+        raise RuntimeError(_mensagem_erro_evolution(erro)) from erro
 
 
 @roteador.post("/avaliacao-google")

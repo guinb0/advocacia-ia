@@ -59,6 +59,7 @@ from . import (
     supervisao,
     dados,
     documentacao,
+    docx_pdf,
     contrato,
     escuta,
     perfis,
@@ -382,6 +383,7 @@ class PedidoContrato(BaseModel):
     municipio: str = ""
     #: Qual dos documentos da papelada. Ver `contrato.MODELOS`.
     documento: str = "contrato"
+    formato: str = "docx"
 
 
 @app.post("/api/contrato")
@@ -403,6 +405,8 @@ def gerar_contrato(pedido: PedidoContrato):
         raise HTTPException(
             422, f"Documento {pedido.documento!r} não existe. Conhecidos: {', '.join(contrato.CODIGOS)}."
         )
+    if pedido.formato not in {"docx", "pdf"}:
+        raise HTTPException(422, "Formato inválido: escolha docx ou pdf.")
 
     try:
         alvo = contrato.modelo(pedido.documento)
@@ -416,18 +420,27 @@ def gerar_contrato(pedido: PedidoContrato):
         raise HTTPException(503, str(exc)) from exc
 
     nome_cliente = str(respostas["nome"])
-    arquivo = f"{alvo['arquivo']} - {nome_cliente}.docx".replace("/", "-").replace("\\", "-")
+    extensao = pedido.formato
+    arquivo = f"{alvo['arquivo']} - {nome_cliente}.{extensao}".replace("/", "-").replace("\\", "-")
+
+    if pedido.formato == "pdf":
+        try:
+            conteudo = docx_pdf.converter(docx)
+        except docx_pdf.ErroConversaoDocx as exc:
+            raise HTTPException(503, str(exc)) from exc
+        media_type = "application/pdf"
+    else:
+        conteudo = docx
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
     return Response(
-        content=docx,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
+        content=conteudo,
+        media_type=media_type,
         headers={
             # `filename*` em UTF-8 porque nome de cliente tem acento, e o
             # `filename` sem aspas quebraria no primeiro espaço.
             "Content-Disposition": (
-                f'attachment; filename="{pedido.documento}.docx"; '
+                f'attachment; filename="{pedido.documento}.{extensao}"; '
                 f"filename*=UTF-8''{quote(arquivo)}"
             ),
             "X-Campos-Faltando": ", ".join(faltando),
@@ -1324,7 +1337,9 @@ async def importar_roteiro(
 
     try:
         await run_in_threadpool(jobs.inicializar)
-        job_id = await run_in_threadpool(jobs.criar, "ROTEIRO", arquivo=str(caminho))
+        job_id = await run_in_threadpool(
+            jobs.criar, "ROTEIRO", arquivo=str(caminho), conteudo=conteudo
+        )
         tarefa = importar_roteiro_task.apply_async(
             args=(job_id, str(caminho), nome), queue="ai"
         )
