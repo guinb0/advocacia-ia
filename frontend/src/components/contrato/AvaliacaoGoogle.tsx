@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { Selo } from "@/components/ui/Basicos";
 import { enviarAvaliacaoGoogle } from "@/lib/api";
@@ -50,7 +50,6 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
   const [copiado, setCopiado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [retorno, setRetorno] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
-  const tentouAutomatico = useRef(false);
 
   async function copiar() {
     await navigator.clipboard.writeText(`${MENSAGEM}${LINK_AVALIACAO}`);
@@ -65,9 +64,11 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
       const resultado = await enviarAvaliacaoGoogle(telefone);
       setRetorno({
         tom: "ok",
+        // O servidor deduplica pelo número: apertar duas vezes não manda duas
+        // mensagens, e dizer isso evita que alguém insista achando que falhou.
         texto: resultado.ja_enviado
           ? "O link já tinha sido enviado para este cliente."
-          : "Link enviado automaticamente para o WhatsApp do cliente.",
+          : "Link enviado para o WhatsApp do cliente.",
       });
     } catch (e) {
       setRetorno({ tom: "erro", texto: e instanceof Error ? e.message : "Não foi possível enviar o link." });
@@ -76,13 +77,16 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
     }
   }
 
-  useEffect(() => {
-    if (tentouAutomatico.current || concluida || !telefone.trim()) return;
-    tentouAutomatico.current = true;
-    void enviar();
-    // O backend deduplica pelo número. Não repetir por mudanças visuais do componente.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [telefone, concluida]);
+  /* QUEM APERTA O BOTÃO É O ADVOGADO, e isto já foi automático uma vez.
+   *
+   * O envio disparava sozinho ao abrir a etapa. O problema não é técnico — a
+   * deduplicação no servidor funciona — é de momento: esta etapa aparece assim
+   * que a qualificação fica pronta, e nem sempre é a hora de pedir avaliação. O
+   * roteiro pede que o link vá COM O CLIENTE AINDA NA CHAMADA, para o atendente
+   * acompanhar; disparado antes disso, o cliente recebe o link no meio do
+   * atendimento, sem ninguém ter pedido nada, e a avaliação se perde.
+   *
+   * Quem sabe se a conversa chegou nesse ponto é quem está conduzindo. */
 
   return (
     <section className="mt-6 border-t border-borda pt-[14px]" aria-labelledby="titulo-avaliacao-google">
@@ -105,7 +109,7 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
 
         <div className="flex items-center flex-wrap gap-[9px] mt-[13px] max-[640px]:items-stretch max-[640px]:flex-col">
           <button type="button" className={PRIMARIO} disabled={enviando || !telefone.trim()} onClick={() => void enviar()}>
-            {enviando ? "Enviando automaticamente…" : "Rever envio pelo WhatsApp"}
+            {enviando ? "Enviando…" : "Enviar pelo WhatsApp"}
           </button>
           <button type="button" className={SECUNDARIO} onClick={() => void copiar()}>
             {copiado ? "Convite copiado ✓" : "Copiar convite"}
