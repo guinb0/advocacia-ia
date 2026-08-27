@@ -981,27 +981,57 @@ function preencherMarcadores(
    *
    * Digitados antes de começar, não há o que ouvir: quando a escuta abre, eles
    * já estão respondidos, e a condução parte da terceira pergunta. */
-  const faltaParaComecar = useMemo(() => {
-    /* Guarda o id junto do rótulo: sem ele o botão "ir ao campo" precisaria de
-     * uma segunda lista com a mesma ordem, e as duas divergiriam no dia em que
-     * alguém acrescentasse um campo aqui. */
-    const pendentes: { id: string; rotulo: string }[] = [];
-    if (!respondida(respostas["nome"])) pendentes.push({ id: "nome", rotulo: "o nome completo" });
-    if (conferirCpf(String(respostas["cpf"] ?? "")).valido !== true) {
-      pendentes.push({ id: "cpf", rotulo: "um CPF válido" });
-    }
-    if (!respondida(respostas["estado_civil"])) {
-      pendentes.push({ id: "estado_civil", rotulo: "o estado civil" });
-    }
-    // UF e município entram pelo mesmo motivo dos outros dois: são o recorte que
-    // a jurimetria usa para comparar o caso, e ouvi-los no meio do relato erra
-    // com frequência — "Pará" e "Paraná" soam quase igual em fala corrida.
-    if (!respondida(respostas["uf"])) pendentes.push({ id: "uf", rotulo: "a UF" });
-    if (!respondida(respostas["municipio"])) {
-      pendentes.push({ id: "municipio", rotulo: "o município" });
-    }
-    return pendentes;
-  }, [respostas]);
+  /* OS CAMPOS DA IDENTIFICAÇÃO, EM UM LUGAR SÓ — e a duplicação já custou caro.
+   *
+   * Esta lista era escrita duas vezes: aqui, para saber o que falta antes de
+   * começar, e lá embaixo, para filtrar o que a tela inicial desenha. Quando o
+   * `estado_civil` entrou no roteiro, só a primeira foi atualizada — e a
+   * entrevista parou de abrir. O campo era exigido para prosseguir e não era
+   * desenhado em lugar nenhum: quem atendia respondia os quatro visíveis e nada
+   * acontecia, sem nada na tela explicando o que faltava.
+   *
+   * Com uma lista só, acrescentar campo é mexer num lugar. A ordem aqui é a
+   * ordem em que eles aparecem. */
+  /* O que a tela desenha E o que ela exige saem DAQUI — uma lista só.
+   *
+   * UF e município entram pelo mesmo motivo do nome e do CPF: são o recorte que
+   * a jurimetria usa para comparar o caso, e ouvi-los no meio do relato erra com
+   * frequência — "Pará" e "Paraná" soam quase igual em fala corrida.
+   *
+   * O rótulo mora junto do id porque o botão "ir ao campo" precisa dos dois, e
+   * `completo` existe pelo CPF, que não basta estar preenchido: precisa ter
+   * dígito verificador válido. A ordem aqui é a ordem em que eles aparecem. */
+  const CAMPOS_DA_IDENTIFICACAO = useMemo(
+    () =>
+      [
+        { id: "nome", rotulo: "o nome completo" },
+        {
+          id: "cpf",
+          rotulo: "um CPF válido",
+          completo: (v: string | string[] | undefined) =>
+            conferirCpf(String(v ?? "")).valido === true,
+        },
+        { id: "estado_civil", rotulo: "o estado civil" },
+        { id: "uf", rotulo: "a UF" },
+        { id: "municipio", rotulo: "o município" },
+      ] as const,
+    [],
+  );
+
+  const idsDaIdentificacao = useMemo(
+    () => new Set<string>(CAMPOS_DA_IDENTIFICACAO.map((c) => c.id)),
+    [CAMPOS_DA_IDENTIFICACAO],
+  );
+
+  const faltaParaComecar = useMemo(
+    () =>
+      CAMPOS_DA_IDENTIFICACAO.filter((campo) =>
+        "completo" in campo && campo.completo
+          ? !campo.completo(respostas[campo.id])
+          : !respondida(respostas[campo.id]),
+      ).map(({ id, rotulo }) => ({ id, rotulo })),
+    [CAMPOS_DA_IDENTIFICACAO, respostas],
+  );
 
   const rotulosPendentes = useMemo(
     () => faltaParaComecar.map((c) => c.rotulo),
@@ -1094,7 +1124,10 @@ function preencherMarcadores(
     // Mostra todos de uma vez para o funcionário escolher livremente a ordem.
     ? (roteiro?.blocos ?? [])
     : blocosVisiveis
-        .map((bloco) => ({ ...bloco, perguntas: bloco.perguntas.filter((p) => ["nome", "cpf", "uf", "municipio"].includes(p.id)) }))
+        .map((bloco) => ({
+          ...bloco,
+          perguntas: bloco.perguntas.filter((p) => idsDaIdentificacao.has(p.id)),
+        }))
         .filter((bloco) => bloco.perguntas.length > 0);
 
   return (
