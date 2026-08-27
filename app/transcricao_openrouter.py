@@ -277,7 +277,15 @@ def _uma_requisicao(audio: np.ndarray, chave: str, tempo_limite: float) -> str:
         )
         resposta.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        detalhe = exc.response.text[:200] if exc.response is not None else ""
+        # 200 CARACTERES ERA POUCO, e o corte custou um diagnostico errado.
+        #
+        # A OpenRouter responde erro com `metadata`, e e ali que ela diz o que
+        # fazer: `limit_source` (qual limite bateu) e `remedy_hint` (como
+        # resolver). Com 200 caracteres a mensagem chegava cortada no meio do
+        # `remedy_hint` -- deu para ver que era 402, nao para ver QUAL limite. O
+        # palpite errado veio dai, e este e o unico canal de diagnostico que
+        # existe: o log do conteiner ninguem alcanca de dentro do atendimento.
+        detalhe = exc.response.text[:800] if exc.response is not None else ""
         log.warning("OpenRouter recusou (%s): %s", exc.response.status_code, detalhe)
         raise ErroTranscricao(
             f"A OpenRouter respondeu {exc.response.status_code}. {detalhe}"
