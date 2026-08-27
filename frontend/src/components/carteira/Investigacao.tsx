@@ -53,25 +53,25 @@ export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
     finally { setOcupado(false); }
   }
 
-  return <main className="max-w-[1180px] mx-auto p-7">
+  return <div className="min-w-0 space-y-6">
     <Botao variante="secundario" pequeno onClick={onVoltar}>← Voltar</Botao>
-    <header className="my-6">
+    <header>
       <h1>Investigação do caso</h1>
       <p className="text-tinta-2 max-w-[75ch]">Coleta fontes públicas, preserva a procedência e busca indícios. Todo resultado exige conferência humana.</p>
     </header>
     <form
-      className="grid grid-cols-[1fr_1.4fr_0.6fr_auto] max-[850px]:grid-cols-1 gap-3 items-end p-[18px] border border-borda rounded-cartao bg-papel"
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(120px,0.6fr)_max-content] items-end gap-3 rounded-cartao border border-borda bg-papel p-[18px] max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1"
       onSubmit={coletar}
     >
-      <label className="grid gap-[6px] text-tinta-2 text-sm">
+      <label className="grid min-w-0 gap-[6px] text-tinta-2 text-sm">
         CNPJ da empresa
         <Campo value={cnpj} onChange={e => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
       </label>
-      <label className="grid gap-[6px] text-tinta-2 text-sm">
+      <label className="grid min-w-0 gap-[6px] text-tinta-2 text-sm">
         Número do processo
         <Campo value={processo} onChange={e => setProcesso(e.target.value)} placeholder="0000000-00.0000.0.00.0000" />
       </label>
-      <label className="grid gap-[6px] text-tinta-2 text-sm">
+      <label className="grid min-w-0 gap-[6px] text-tinta-2 text-sm">
         Tribunal
         <CampoSeletor value={tribunal} onChange={e => setTribunal(e.target.value)}>
           <option value="trt8">TRT8</option>
@@ -81,7 +81,7 @@ export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
           ))}
         </CampoSeletor>
       </label>
-      <Botao variante="primario" disabled={ocupado || (!cnpj && !processo)}>
+      <Botao variante="primario" disabled={ocupado || (!cnpj && !processo)} className="max-[1100px]:w-full">
         {ocupado ? "Coletando…" : "Coletar e vetorizar"}
       </Botao>
     </form>
@@ -103,7 +103,7 @@ export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
     )}
     <section className="my-[26px]">
       <h2>Buscar peculiaridades</h2>
-      <div className="grid grid-cols-[1fr_auto] max-[850px]:grid-cols-1 gap-[10px]">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_max-content] gap-[10px] max-[850px]:grid-cols-1">
         <Campo value={consulta} onChange={e => setConsulta(e.target.value)} />
         <Botao variante="secundario" onClick={pesquisar} disabled={ocupado || (!cnpj && !processo)}>Buscar nos vetores</Botao>
       </div>
@@ -163,5 +163,5 @@ export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
         <p className="my-4 px-[14px] py-3 rounded-campo bg-acao-clara text-tinta">{analise.aviso}</p>
       </section>
     )}
-  </main>;
+  </div>;
 }

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 import type { TomSelo } from "@/lib/formato";
 import type { LinhaCarteira, Severidade } from "@/lib/useCarteira";
 import { useCarteira } from "@/lib/useCarteira";
@@ -99,7 +98,6 @@ export default function Carteira({
   const { linhas, triagem, chegandoAgora, pedidos, carregando, erro, paginacao, irPara } =
     useCarteira();
   const estadoModelo = useModelo();
-  const sessao = useSessao();
 
   /* A rota é prerenderizada: formatar a data no corpo do componente gravaria a
    * data do build no HTML e ela só mudaria no próximo deploy. Só depois de
@@ -177,19 +175,17 @@ export default function Carteira({
   const leitura = TEXTO_LEITURA[estadoModelo];
 
   return (
-    <div className="min-h-screen bg-fundo">
-      <header className="flex justify-between items-center gap-6 px-7 py-3 border-b border-borda bg-papel flex-wrap">
-        <div className="flex items-center gap-7 flex-wrap">
-          <span className="text-tinta font-titulo text-[1.25rem] font-bold tracking-[-0.01em]">Acervo</span>
-          {/* Os módulos saíram daqui e viraram a barra lateral, que existe em
-            * TODAS as telas — ver `components/layout/BarraLateral.tsx`. Onze
-            * botões nesta faixa quebravam em duas linhas num notebook e
-            * empurravam a Mesa do dia para baixo da dobra; num celular
-            * ocupavam a tela inteira antes de qualquer conteúdo. O que fica
-            * aqui é o estado do sistema, que é desta tela. */}
+    <div className="space-y-5">
+      <section className="flex items-center justify-between gap-4 rounded-cartao border border-borda-forte bg-papel px-4 py-3 shadow-cartao flex-wrap">
+        <div className="min-w-0">
+          <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
+            Estado da operação
+          </span>
+          <span className="mt-1 block text-sm font-semibold text-tinta">
+            Mesa de trabalho pronta para atendimento e documentos
+          </span>
         </div>
-
-        <div className="flex items-center gap-[14px] flex-wrap">
+        <div className="flex flex-wrap items-center gap-[14px]">
           <span
             className="inline-flex items-center gap-[7px] text-tinta-3 text-xs"
             title="Situação do programa que lê os documentos enviados"
@@ -198,15 +194,10 @@ export default function Carteira({
             {leitura.texto}
           </span>
           {hoje && <span className="text-tinta-3 text-xs tabular-nums">{hoje}</span>}
-          {AUTH_ATIVA && (
-            <Botao variante="discreto" pequeno onClick={sessao.sair}>
-              Sair ({sessao.nome || sessao.usuario})
-            </Botao>
-          )}
         </div>
-      </header>
+      </section>
 
-      <div className="flex justify-between items-end gap-6 max-w-[1440px] px-4 sm:px-7 pt-7 flex-wrap">
+      <div className="flex justify-between items-end gap-6 flex-wrap">
         <div>
           <h1 className="m-0 text-xl tracking-[-0.01em]">Mesa do dia</h1>
           <p className="mt-[6px] mb-0 max-w-[62ch] text-tinta-2 text-base">
@@ -223,7 +214,7 @@ export default function Carteira({
         </Botao>
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3 max-w-[1440px] px-4 sm:px-7 pt-[18px]">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">
         <CartaoTriagem
           numero={triagem.travados}
           rotulo="Travados"
@@ -262,7 +253,7 @@ export default function Carteira({
         />
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_330px] max-[1040px]:grid-cols-1 gap-6 max-w-[1440px] px-4 sm:px-7 pt-[22px] pb-10 items-start">
+      <div className="grid grid-cols-[minmax(0,1fr)_330px] max-[1040px]:grid-cols-1 gap-6 items-start">
         <section className="border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden" aria-label="Fila de casos">
           <div className="flex justify-between items-baseline gap-4 px-[18px] py-4 border-b border-borda flex-wrap">
             <h2 className="m-0 text-lg">Fila de casos</h2>
@@ -446,7 +437,7 @@ export default function Carteira({
 
       {/* Atalhos: apoio para quem trabalha rápido, não requisito de uso. Toda
           ação daqui também existe como botão na tela. */}
-      <footer className="flex gap-[18px] flex-wrap items-center px-7 pt-[14px] pb-7 max-w-[1440px] text-tinta-3 text-xs">
+      <footer className="flex gap-[18px] flex-wrap items-center pt-[2px] text-tinta-3 text-xs">
         <span className="font-semibold">Atalhos do teclado (opcionais):</span>
         <span>
           <Tecla>↑↓</Tecla> navegar

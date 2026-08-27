@@ -644,7 +644,7 @@ export default function Dossie({
         })}
       </section>
 
-      <div className="grid grid-cols-[minmax(320px,1fr)_minmax(380px,1.2fr)] max-[900px]:grid-cols-1 gap-[18px] items-start">
+      <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),1fr)_minmax(min(100%,360px),1.2fr)] items-start gap-[18px] max-[900px]:grid-cols-1">
         {/* ------------------------------------------------ coluna esquerda */}
         <div className="grid gap-[18px] content-start">
           <Cartao titulo="Ficha do cliente">

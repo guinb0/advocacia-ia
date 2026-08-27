@@ -161,7 +161,7 @@ export default function Supervisao({ onVoltar }: Props) {
   }
 
   return (
-    <div className="max-w-[1240px] mx-auto px-4 sm:px-5 pt-6 pb-16">
+    <div className="min-w-0">
       <Botao variante="secundario" onClick={onVoltar}>
         ← Voltar para a carteira
       </Botao>
@@ -209,7 +209,7 @@ export default function Supervisao({ onVoltar }: Props) {
         </div>
       )}
 
-      <div className="grid grid-cols-[340px_minmax(0,1fr)] max-[900px]:grid-cols-1 gap-6 items-start mt-5">
+      <div className="mt-5 grid min-w-0 grid-cols-[minmax(min(100%,280px),340px)_minmax(0,1fr)] items-start gap-6 max-[900px]:grid-cols-1">
         {/* ------------------------------------------- funcionário e entrevistas */}
         <section className="border border-borda-forte rounded-cartao bg-papel shadow-cartao p-4">
           {carregando ? (

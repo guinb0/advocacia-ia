@@ -1253,7 +1253,7 @@ export default function PainelCaso({
                 motivo="O caso ainda não acumulou histórico suficiente para produzir uma leitura com base numérica."
               />
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))] gap-3">
                 {dados.insights.map((insight, indice) => (
                   <div
                     key={indice}

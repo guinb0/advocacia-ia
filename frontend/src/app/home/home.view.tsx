@@ -3,7 +3,8 @@
 import { useState } from "react";
 
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
-import BarraLateral from "@/components/layout/BarraLateral";
+import AppShell from "@/components/layout/AppShell";
+import ModuleFrame from "@/components/layout/ModuleFrame";
 import AgenteGeral from "@/components/AgenteGeral";
 import Carteira from "@/components/carteira/Carteira";
 import Checklist from "@/components/caso/Checklist";
@@ -45,12 +46,9 @@ type HomeViewProps = ReturnType<typeof useHomeModel>;
  * transcrição, grade de cartões) força o item de grid a crescer e a página inteira
  * ganha rolagem horizontal — com a barra lateral empurrada para fora da tela. */
 const HomeView = (props: HomeViewProps) => (
-  <div className="lg:flex min-h-screen bg-fundo">
-    <BarraLateral tela={props.tela} onNavegar={props.setTela} />
-    <main className="min-w-0 flex-1">
-      <Telas {...props} />
-    </main>
-  </div>
+  <AppShell tela={props.tela} onNavegar={props.setTela}>
+    <Telas {...props} />
+  </AppShell>
 );
 
 const Telas = (props: HomeViewProps) => {
@@ -70,26 +68,32 @@ const Telas = (props: HomeViewProps) => {
 
   if (tela === "carteira") {
     return (
-      <Carteira
-        onAbrir={abrirCaso}
-        onNovoCaso={() => setTela("casos")}
-        onAnalisarAvulso={() => setTela("avulso")}
-        onInvestigar={() => setTela("investigacao")}
-        onUsuarios={() => setTela("usuarios")}
-        onEntrevista={() => setTela("entrevista")}
-        onSupervisao={() => setTela("supervisao")}
-        onDados={() => setTela("dados")}
-        onPanorama={() => setTela("panorama")}
-        onSaudeAgente={() => setTela("saudeAgente")}
-        onModelosDePeticao={() => setTela("modelosDePeticao")}
-      />
+      <ModuleFrame variant="wide">
+        <Carteira
+          onAbrir={abrirCaso}
+          onNovoCaso={() => setTela("casos")}
+          onAnalisarAvulso={() => setTela("avulso")}
+          onInvestigar={() => setTela("investigacao")}
+          onUsuarios={() => setTela("usuarios")}
+          onEntrevista={() => setTela("entrevista")}
+          onSupervisao={() => setTela("supervisao")}
+          onDados={() => setTela("dados")}
+          onPanorama={() => setTela("panorama")}
+          onSaudeAgente={() => setTela("saudeAgente")}
+          onModelosDePeticao={() => setTela("modelosDePeticao")}
+        />
+      </ModuleFrame>
     );
   }
 
   /* O agente geral não pede caso aberto: ele é justamente a conversa de quem ainda não
    * sabe qual caso abrir. Da resposta se salta para o dossiê do caso citado. */
   if (tela === "agente") {
-    return <AgenteGeral onVoltar={voltarParaCarteira} onAbrirCaso={abrirCaso} />;
+    return (
+      <ModuleFrame variant="wide">
+        <AgenteGeral onVoltar={voltarParaCarteira} onAbrirCaso={abrirCaso} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "dossie") {
@@ -99,12 +103,14 @@ const Telas = (props: HomeViewProps) => {
       return null;
     }
     return (
-      <Dossie
-        casoId={casoAberto}
-        onVoltar={voltarParaCarteira}
-        onAbrirPainel={() => setTela("painel")}
-        onAbrirJurimetria={() => setTela("jurimetria")}
-      />
+      <ModuleFrame variant="wide">
+        <Dossie
+          casoId={casoAberto}
+          onVoltar={voltarParaCarteira}
+          onAbrirPainel={() => setTela("painel")}
+          onAbrirJurimetria={() => setTela("jurimetria")}
+        />
+      </ModuleFrame>
     );
   }
 
@@ -115,12 +121,14 @@ const Telas = (props: HomeViewProps) => {
       return null;
     }
     return (
-      <Jurimetria
-        casoId={casoAberto}
-        onVoltar={voltarParaCarteira}
-        onAbrirDossie={() => setTela("dossie")}
-        onAbrirPainel={() => setTela("painel")}
-      />
+      <ModuleFrame variant="wide">
+        <Jurimetria
+          casoId={casoAberto}
+          onVoltar={voltarParaCarteira}
+          onAbrirDossie={() => setTela("dossie")}
+          onAbrirPainel={() => setTela("painel")}
+        />
+      </ModuleFrame>
     );
   }
 
@@ -131,66 +139,103 @@ const Telas = (props: HomeViewProps) => {
       return null;
     }
     return (
-      <PainelCaso
-        casoId={casoAberto}
-        onVoltar={voltarParaCarteira}
-        onAbrirChecklist={() => setTela("caso")}
-        onAbrirDossie={() => setTela("dossie")}
-        onAbrirJurimetria={() => setTela("jurimetria")}
-      />
+      <ModuleFrame variant="wide">
+        <PainelCaso
+          casoId={casoAberto}
+          onVoltar={voltarParaCarteira}
+          onAbrirChecklist={() => setTela("caso")}
+          onAbrirDossie={() => setTela("dossie")}
+          onAbrirJurimetria={() => setTela("jurimetria")}
+        />
+      </ModuleFrame>
     );
   }
 
   if (tela === "investigacao") {
-    return <Investigacao onVoltar={voltarParaCarteira} />;
+    return (
+      <ModuleFrame variant="compact">
+        <Investigacao onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "usuarios") {
-    return <Usuarios onVoltar={voltarParaCarteira} />;
+    return (
+      <ModuleFrame variant="compact">
+        <Usuarios onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "documentacao") {
     return (
-      <CentralDocumentacao
-        onVoltar={voltarParaCarteira}
-        onAbrirDocumentos={abrirCaso}
-      />
+      <ModuleFrame variant="wide">
+        <CentralDocumentacao
+          onVoltar={voltarParaCarteira}
+          onAbrirDocumentos={abrirCaso}
+        />
+      </ModuleFrame>
     );
   }
 
   if (tela === "supervisao") {
-    return <Supervisao onVoltar={voltarParaCarteira} />;
+    return (
+      <ModuleFrame variant="wide">
+        <Supervisao onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
   }
 
   /* O panorama não pede caso aberto — é justamente a tela de quem não quer abrir
    * caso nenhum. Da lista de parados ele salta direto para o caso citado. */
   if (tela === "panorama") {
-    return <Panorama onVoltar={voltarParaCarteira} onAbrirCaso={abrirCaso} />;
+    return (
+      <ModuleFrame variant="wide">
+        <Panorama onVoltar={voltarParaCarteira} onAbrirCaso={abrirCaso} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "saudeAgente") {
-    return <SaudeAgente onVoltar={voltarParaCarteira} />;
+    return (
+      <ModuleFrame variant="wide">
+        <SaudeAgente onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "modelosDePeticao") {
-    return <ModelosDePeticao onVoltar={voltarParaCarteira} />;
+    return (
+      <ModuleFrame variant="compact">
+        <ModelosDePeticao onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "catalogoRoteiros") {
-    return <CatalogoRoteiros onVoltar={voltarParaCarteira} />;
+    return (
+      <ModuleFrame variant="compact">
+        <CatalogoRoteiros onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "dados") {
-    return <Dados onVoltar={voltarParaCarteira} />;
+    return (
+      <ModuleFrame variant="wide">
+        <Dados onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
   }
 
   if (tela === "caso") {
     return (
-      <div className="max-w-[1180px] mx-auto px-7 pt-6 pb-16">
+      <ModuleFrame variant="wide">
+      <div className="space-y-5">
         {/* O checklist responde "o que falta chegar"; o dossiê, "o que o caso já
           * é". São perguntas diferentes e telas diferentes — juntá-las numa só
           * faria a mais longa esconder a mais usada. */}
-        <div className="flex gap-2 items-center mb-[14px] flex-wrap">
+        <div className="flex flex-wrap items-center gap-2">
           <Botao variante="secundario" pequeno disabled>
             Checklist de documentos
           </Botao>
@@ -223,9 +268,7 @@ const Telas = (props: HomeViewProps) => {
               onVincularIdentidade={situacaoCaso.vincularIdentidade}
               onReatribuir={situacaoCaso.reatribuir}
             />
-            <div className="mt-5">
-              {casoAberto && <PainelAnaliseDocumentos casoId={casoAberto} />}
-            </div>
+            {casoAberto && <PainelAnaliseDocumentos casoId={casoAberto} />}
           </>
         ) : situacaoCaso.erro ? (
           <>
@@ -240,13 +283,15 @@ const Telas = (props: HomeViewProps) => {
           <Vazio>Carregando o caso…</Vazio>
         )}
       </div>
+      </ModuleFrame>
     );
   }
 
   const cabecalho = CABECALHO[tela];
 
   return (
-    <div className="max-w-[1180px] mx-auto px-7 pt-6 pb-16">
+    <ModuleFrame variant={tela === "casos" ? "compact" : "wide"}>
+    <div>
       <div className="flex justify-between items-end gap-5 mb-[22px] flex-wrap">
         <div>
           <Botao variante="secundario" pequeno onClick={voltarParaCarteira}>
@@ -278,6 +323,7 @@ const Telas = (props: HomeViewProps) => {
         <AnaliseAvulsa />
       )}
     </div>
+    </ModuleFrame>
   );
 };
 
@@ -329,7 +375,7 @@ function AnaliseAvulsa() {
     useExtracao();
 
   return (
-    <div className="grid grid-cols-[minmax(320px,420px)_1fr] max-[900px]:grid-cols-1 gap-5 items-start">
+    <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),420px)_minmax(0,1fr)] items-start gap-5 max-[900px]:grid-cols-1">
       <PainelEnvio
         arquivo={arquivo}
         previewUrl={previewUrl}

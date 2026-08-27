@@ -116,13 +116,13 @@ export default function SaudeAgente({ onVoltar }: Props) {
   }, [carregar]);
 
   return (
-    <div className="max-w-[1240px] mx-auto px-5 pt-6 pb-16">
+    <div className="min-w-0 space-y-6">
       <Botao variante="secundario" onClick={onVoltar}>
         ← Voltar para a carteira
       </Botao>
 
-      <header className="flex justify-between items-start gap-4 mt-5 mb-2">
-        <div>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="m-0 mb-[6px] text-[1.6rem]">Saúde do agente jurídico</h1>
           <p className="m-0 max-w-[66ch] text-tinta-3 leading-[1.5]">
             Latência dos dois bancos que o agente usa e o desempenho de cada tipo de
@@ -161,7 +161,7 @@ export default function SaudeAgente({ onVoltar }: Props) {
       {dados?.ligado && dados.dependencies && (
         <section className="mt-7">
           <h2 className="m-0 mb-3 text-[1.05rem]">Bancos e cache</h2>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
+          <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-3">
             {Object.entries(dados.dependencies).map(([chave, dep]) => (
               <CartaoDependencia key={chave} nome={NOME_DEPENDENCIA[chave] ?? chave} dep={dep} />
             ))}
@@ -177,8 +177,8 @@ export default function SaudeAgente({ onVoltar }: Props) {
               Nenhuma execução de IA nas últimas {dados.agents.window_hours} horas.
             </p>
           ) : (
-            <div className="overflow-x-auto border border-borda rounded-cartao">
-              <Tabela>
+            <div className="max-w-full overflow-x-auto rounded-cartao border border-borda">
+              <Tabela className="min-w-[920px]">
                 <thead>
                   <tr>
                     {[
