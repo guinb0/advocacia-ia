@@ -94,7 +94,7 @@ export default function Jurimetria({
   }, [carregar]);
 
   return (
-    <div className="max-w-[1320px] mx-auto px-6 pt-5 pb-16 flex flex-col gap-[22px]">
+    <div className="flex min-w-0 flex-col gap-[22px]">
       <div className="flex flex-col gap-3">
         <div className="flex gap-2 items-center flex-wrap">
           <Botao variante="secundario" pequeno onClick={onVoltar}>

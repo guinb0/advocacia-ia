@@ -60,7 +60,7 @@ export default function ListaCasos({
   const casosVisiveis = casos.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
   return (
-    <div className="grid grid-cols-[minmax(320px,420px)_1fr] max-[900px]:grid-cols-1 gap-5 items-start">
+    <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),420px)_minmax(0,1fr)] items-start gap-5 max-[900px]:grid-cols-1">
       <Cartao
         titulo="Novo caso"
         subtitulo="Escolher o tipo de ação é o que monta o checklist de documentos do cliente."

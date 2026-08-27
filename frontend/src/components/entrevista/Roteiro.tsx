@@ -34,6 +34,7 @@ import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
 import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
+import SeletorDeRoteiro from "@/components/entrevista/SeletorDeRoteiro";
 
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
 // Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
@@ -291,6 +292,9 @@ export default function Roteiro({
    * `roteiro` desta sessão. As RESPOSTAS não são tocadas — elas são guardadas
    * por id de pergunta, e reescrever um enunciado não muda o id. */
   const [editandoRoteiro, setEditandoRoteiro] = useState(false);
+  /* Escolher OUTRO roteiro do catálogo — o caso comum do botão "Alterar
+   * roteiro". Editar o atual virou ação secundária dentro do seletor. */
+  const [trocandoRoteiro, setTrocandoRoteiro] = useState(false);
   /* De qual arquivo veio o roteiro em edição, quando veio de um. Sobe junto ao
    * salvar para o catálogo registrar a procedência. */
   const [origemRoteiro, setOrigemRoteiro] = useState("");
@@ -1239,6 +1243,26 @@ function preencherMarcadores(
 
   return (
     <div id="roteiro-da-entrevista" className="max-w-[860px] roteiro-contentor">
+      {trocandoRoteiro && (
+        <SeletorDeRoteiro
+          atualCodigo={roteiro.codigo}
+          /* Troca o roteiro da sessão pelo escolhido. As respostas não são
+             tocadas: ficam guardadas por id de pergunta e reaparecem se o id
+             existir no novo roteiro. */
+          aoEscolher={(novo, origem) => {
+            setRoteiro(novo);
+            setOrigemRoteiro(origem);
+          }}
+          /* A antiga função do botão continua a um clique: consertar uma
+             pergunta para ESTE cliente sem trocar de roteiro. */
+          aoEditarAtual={() => {
+            setTrocandoRoteiro(false);
+            setEditandoRoteiro(true);
+          }}
+          aoFechar={() => setTrocandoRoteiro(false)}
+        />
+      )}
+
       {editandoRoteiro && (
         <EditorRoteiro
           roteiro={roteiro}
@@ -1273,8 +1297,8 @@ function preencherMarcadores(
           <button
             type="button"
             className={T_SECUNDARIO}
-            onClick={() => setEditandoRoteiro(true)}
-            title="Corrigir perguntas, blocos e falas sem sair do atendimento"
+            onClick={() => setTrocandoRoteiro(true)}
+            title="Escolher outro roteiro do catálogo para este atendimento"
           >
             Alterar roteiro
           </button>
