@@ -1,0 +1,158 @@
+{
+  "01_pe_quebrado_demissao": {
+    "iniciais": {
+      "nome": "Guilherme Bezerra",
+      "cpf": "537.639.640-10",
+      "uf": "MA",
+      "municipio": "Arari",
+      "estado_civil": "Solteiro(a)"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "tempo_casa": "uns quatro anos",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": ["demit"],
+      "ac_como": ["pé", "quebr"],
+      "tempo_casa": ["quatro", "4"],
+      "funcao": ["pedestre"]
+    }
+  },
+  "02_assalto_em_rota": {
+    "iniciais": {
+      "nome": "João Pereira",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "São Paulo"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "tempo_casa": "oito anos",
+      "desligamento": "ainda trabalho",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_inss": "não",
+      "as_testemunhas": "sim",
+      "as_ocorrencias": "duas vezes no ano passado"
+    },
+    "contem": {
+      "desligamento": ["ainda trabal", "sim"],
+      "as_sintomas": ["ansiedade", "dormir", "medo"],
+      "as_ocorrencias": ["duas", "ano passado"],
+      "as_documentos": ["Boletim", "CAT", "psicológ"]
+    }
+  },
+  "03_doenca_ler": {
+    "iniciais": {
+      "nome": "Ana Souza",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Rio de Janeiro"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "tempo_casa": "Doze anos",
+      "desligamento": "ainda trabalha",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "M75",
+      "sa_afastamento": "quatro meses",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "desligamento": ["ainda", "sim", "trabalh"],
+      "sa_medicos": ["Ortopedista", "fisioterapeuta"],
+      "sa_tratamento": ["fisioterapia"],
+      "sa_afastamento": ["quatro", "4", "INSS"],
+      "sa_diagnostico": ["M75", "tendinite", "manguito"]
+    }
+  },
+  "04_queda_bicicleta": {
+    "iniciais": {
+      "nome": "Pedro Lima",
+      "cpf": "390.533.447-05",
+      "uf": "MG",
+      "municipio": "Belo Horizonte"
+    },
+    "esperadas": {
+      "funcao": "Carteiro ciclista",
+      "tempo_casa": "Três anos",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim",
+      "ac_data": "março de 2025"
+    },
+    "contem": {
+      "ac_local": ["rua das Flores", "entrega"],
+      "ac_como": ["bicicleta", "buraco"],
+      "ac_atendimento": ["gesso"],
+      "ac_inss": ["dois meses", "2 meses"]
+    }
+  },
+  "05_sequela_fora_trabalho": {
+    "iniciais": {
+      "nome": "Maria da Silva",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "tempo_casa": "Quinze anos",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "sim",
+      "r_acao": "não",
+      "hl_epi": "Sim, fornecia e era obrigatório usar"
+    },
+    "contem": {
+      "desligamento": ["demissão", "acordo", "janeiro"],
+      "hl_pressao": ["metas", "pressão"],
+      "hl_epi": ["EPI", "calçado", "obrigat"]
+    }
+  },
+  "06_interviewer_sugere_errado": {
+    "iniciais": {
+      "nome": "Carlos Mendes",
+      "cpf": "390.533.447-05",
+      "uf": "PR",
+      "municipio": "Curitiba"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "tempo_casa": "Cinco anos",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "desligamento": ["ainda", "sim", "trabalh"],
+      "ac_data": ["junho", "2024", "quinze"],
+      "ac_local": ["escada", "depósito", "distribuição", "CD"],
+      "ac_como": ["escorreg", "torci", "tornozelo"]
+    }
+  }
+}

@@ -608,6 +608,10 @@ def _descrever(pergunta: roteiros.Pergunta) -> str:
     partes = [f"{pergunta.id}: {pergunta.texto}"]
     if pergunta.tipo == "sim_nao":
         partes.append("(responda apenas sim ou não)")
+    elif pergunta.tipo in {"relato", "dado"}:
+        partes.append(
+            "(relato/dado: registre o conteúdo falado, não só sim/não)"
+        )
     elif pergunta.opcoes:
         partes.append(f"(uma de: {', '.join(pergunta.opcoes)})")
     if pergunta.dica:
@@ -782,6 +786,10 @@ REGRAS
 - Para `documentos`, devolva uma lista apenas com opções que o cliente afirmou
   possuir ou conseguir enviar.
 - `valor` deve conter a resposta limpa, sem repetir o enunciado ou muletas.
+- Em perguntas `relato` / `dado`: NÃO devolva só "sim" ou "não" se o cliente
+  acrescentou fato. Ex.: "Sim, tenho ansiedade e não durmo" → valor com os
+  sintomas (ansiedade, sono…), não apenas "sim". "Ainda trabalho" / "fui
+  demitido essa semana" devem ir por extenso no campo `desligamento`.
 - `trecho` deve ser uma citação curta da transcrição que sustenta o valor.
 - NUNCA preencha com marcador de ausência. "não informado", "não mencionado",
   "não especificado", "não consta", "sem informação", "n/a", "—" e similares
@@ -792,9 +800,23 @@ REGRAS
   com clareza, preencha o sim/não correspondente mesmo que a pergunta formal
   não tenha sido feita com as palavras do roteiro. Respeite o enunciado exato
   ("durante o trabalho", "fora do trabalho", "em razão do trabalho").
-- Quando o cliente descreveu acidente, assalto, afastamento, demissão, função
-  ou sintomas, preencha TODOS os campos do formulário que essa narrativa
-  responde — não deixe o módulo aberto só com o rastreio em "sim".
+- Em `r_assalto` o critério é ASSALTO DURANTE O TRABALHO (jornada, rota de
+  entrega, no exercício da função). Se o cliente sofreu assalto mas afirma que
+  NÃO foi na jornada / "não foi no trabalho" / voltando para casa / fora do
+  serviço, responda `r_assalto` = "não" — mesmo que tenha usado uniforme ou
+  duvidado se "conta". `as_jornada` = "não" confirma isso: não abra o módulo
+  de assalto só porque houve assalto na vida pessoal.
+- Em `r_acidente` / `r_doenca` / `r_sequela` o mesmo rigor: o fato precisa
+  encaixar no enunciado (trabalho / fora do trabalho / em razão do trabalho).
+  Narrar o fato sem o nexo pedido = "não" no rastreio correspondente.
+- Quando o cliente descreveu acidente, assalto (de trabalho), afastamento,
+  demissão, função ou sintomas, preencha TODOS os campos do formulário que
+  essa narrativa responde — não deixe o módulo aberto só com o rastreio em "sim".
+  Em especial: se `r_acidente` = "sim", preencha `ac_como` (e o que mais a fala
+  cobrir: local, data, CAT…) com o relato do cliente; se `r_assalto` = "sim",
+  preencha `as_ocorrencias` / `as_sintomas` com o conteúdo, não só "sim".
+- Preserve a pessoa verbal do cliente quando possível ("fui demitido", "quebrei
+  o pé"); não reescreva em terceira pessoa ("foi demitido", "quebrou").
 - Separe COBERTURA de PREENCHIMENTO. Em `perguntadas`, liste toda pergunta do
   formulário que o entrevistador efetivamente fez, mesmo com palavras
   diferentes e mesmo quando o cliente não respondeu de forma aproveitável.
@@ -1194,6 +1216,20 @@ def processar_entrevista(
                 if normalizado not in {"sim", "não", "nao"}:
                     continue
                 valor = "sim" if normalizado == "sim" else "não"
+            elif pergunta.tipo in {"relato", "dado"}:
+                # Modelo às vezes devolve só "sim" quando o cliente elaborou.
+                # Se a citação traz conteúdo além do sim/não, usa a citação.
+                so_sim_nao = valor.casefold().rstrip(".") in {"sim", "não", "nao"}
+                trecho_candidato = _texto(item.get("trecho"), 240)
+                if so_sim_nao and trecho_candidato:
+                    corpo = re.sub(
+                        r"^(sim|não|nao)[,.\s]*",
+                        "",
+                        trecho_candidato,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    if len(corpo) >= 8:
+                        valor = corpo
             elif pergunta.opcoes and valor not in pergunta.opcoes:
                 continue
 
