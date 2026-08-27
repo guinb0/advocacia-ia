@@ -158,7 +158,8 @@ export default function Retratos({
   tamanho?: "grande" | "coluna";
 }) {
   const palco = useRef<HTMLElement | null>(null);
-  const [cheia, setCheia] = useState(false);
+  const [cheiaNativa, setCheiaNativa] = useState(false);
+  const [cheiaCss, setCheiaCss] = useState(false);
   /* Falso no servidor e na primeira renderizacao do cliente — `document` nao
    * existe no primeiro — e falso tambem no Safari do iPhone, que nao faz tela
    * cheia de elemento. Sem isto o botao apareceria e nao faria nada. */
@@ -171,21 +172,46 @@ export default function Retratos({
       document.fullscreenEnabled === true &&
         typeof document.documentElement.requestFullscreen === "function",
     );
-    const aoTrocar = () => setCheia(document.fullscreenElement === palco.current);
+    const aoTrocar = () => setCheiaNativa(document.fullscreenElement === palco.current);
     document.addEventListener("fullscreenchange", aoTrocar);
     return () => document.removeEventListener("fullscreenchange", aoTrocar);
   }, []);
 
+  useEffect(() => {
+    if (!cheiaCss) return;
+    const overflowAnterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const sairComEsc = (evento: KeyboardEvent) => {
+      if (evento.key === "Escape") setCheiaCss(false);
+    };
+    document.addEventListener("keydown", sairComEsc);
+    return () => {
+      document.body.style.overflow = overflowAnterior;
+      document.removeEventListener("keydown", sairComEsc);
+    };
+  }, [cheiaCss]);
+
+  const cheia = cheiaNativa || cheiaCss;
+
   const alternarTelaCheia = useCallback(async () => {
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await palco.current?.requestFullscreen();
+      if (cheiaCss) {
+        setCheiaCss(false);
+      } else if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (podeExpandir) {
+        await palco.current?.requestFullscreen();
+      } else {
+        // Safari/iPhone não oferece fullscreen para elementos HTML. Neste caso
+        // o palco ocupa o viewport por CSS, mantendo o botão disponível para o cliente.
+        setCheiaCss(true);
+      }
     } catch {
       /* O navegador pode recusar (sem gesto do usuario, ou politica de
        * permissao num iframe). Nao ha o que consertar aqui, e um alerta no meio
        * da entrevista atrapalha mais que a tela pequena. */
     }
-  }, []);
+  }, [cheiaCss, podeExpandir]);
 
   if (participantes.length === 0) return null;
 
@@ -205,7 +231,7 @@ export default function Retratos({
         ref={palco}
         className={`relative m-0 w-full border border-borda-forte bg-papel-3 overflow-hidden grid place-items-center ${
           cheia
-            ? "h-screen w-screen max-h-none rounded-none border-0"
+            ? `${cheiaCss ? "fixed inset-0 z-[100]" : ""} h-[100dvh] w-screen max-h-none rounded-none border-0`
             : coluna
               ? "aspect-[4/3] max-h-[360px] rounded-campo"
               /* No celular em pe, 16/9 desperdica a tela: a largura toda vira
@@ -215,7 +241,7 @@ export default function Retratos({
               : "aspect-[3/4] max-h-[62vh] sm:aspect-video sm:max-h-[58vh] rounded-campo"
         }`}
       >
-        {podeExpandir && (
+        {(podeExpandir || tamanho === "grande") && (
           <button
             type="button"
             className={BOTAO_PALCO}

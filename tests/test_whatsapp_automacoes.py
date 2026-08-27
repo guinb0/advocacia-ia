@@ -57,6 +57,10 @@ def test_cobranca_recalcula_o_texto_no_momento_do_envio(monkeypatch):
     }
     monkeypatch.setattr(whatsapp.automacoes_whatsapp, "listar_cobrancas_vencidas", lambda: [config])
     monkeypatch.setattr(
+        whatsapp.armazenamento, "obter_caso_com_segredos",
+        lambda _caso_id: {"portal_token": "portal-seguro-123"},
+    )
+    monkeypatch.setattr(
         whatsapp.casos, "montar_pedido",
         lambda *_args: {
             "texto": "Agora falta somente o RG", "faltando_obrigatorios": ["RG"],
@@ -68,4 +72,6 @@ def test_cobranca_recalcula_o_texto_no_momento_do_envio(monkeypatch):
     monkeypatch.setattr(whatsapp.automacoes_whatsapp, "registrar_resultado_cobranca", lambda *_args: None)
 
     assert whatsapp.processar_cobrancas_documentos() == 1
-    assert enviado == ["Agora falta somente o RG"]
+    assert len(enviado) == 1
+    assert "Agora falta somente o RG" in enviado[0]
+    assert enviado[0].endswith("/portal/portal-seguro-123")
