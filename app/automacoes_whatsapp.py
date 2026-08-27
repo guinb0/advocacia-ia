@@ -7,6 +7,8 @@ próxima mensagem, sem o atendente precisar editar uma cópia antiga.
 
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -14,6 +16,8 @@ import pyodbc
 
 from . import armazenamento
 from .banco import conectar
+
+log = logging.getLogger(__name__)
 
 
 def _agora_dt() -> datetime:
@@ -64,6 +68,64 @@ def finalizar(chave: str, erro: str | None = None) -> None:
         )
 
 
+def telefone_do_caso(caso_id: str) -> str:
+    """O WhatsApp que a entrevista colheu, recuperado do caso.
+
+    POR QUE VEM DA ASSINATURA, E NÃO DA ENTREVISTA
+
+    As respostas do roteiro NÃO são guardadas: elas vivem na tela enquanto o
+    atendimento corre e vão embora com ela. O único lugar onde o telefone do
+    cliente sobrevive é o registro da assinatura — o contrato é montado com as
+    respostas, e `assinatura.montar_signatario` grava `phone_country` e
+    `phone_number` no signatário.
+
+    Não é rodeio: é onde o dado está. Pedir de novo um número que o cliente já
+    ditou na entrevista é o tipo de retrabalho que faz a cobrança automática
+    ficar desligada porque ninguém preencheu o campo.
+
+    Vazio quando o caso ainda não tem contrato — aí o campo continua para
+    digitar à mão, como antes.
+    """
+    try:
+        assinaturas = armazenamento.listar_assinaturas(caso_id=caso_id)
+        if not assinaturas:
+            # POR NOME, quando o vínculo não existe -- e hoje ele quase nunca
+            # existe: das assinaturas gravadas neste banco, NENHUMA tem
+            # `caso_id` preenchido. Procurar só pelo vínculo devolveria vazio
+            # sempre, e o recurso nasceria morto.
+            #
+            # É o mesmo par que o painel de assinaturas usa para reencontrar um
+            # documento depois de um F5 (ver `listar_assinaturas`), com o nome
+            # já normalizado lá dentro.
+            caso = armazenamento.obter_caso(caso_id)
+            cliente = str((caso or {}).get("cliente") or "").strip()
+            if cliente:
+                assinaturas = armazenamento.listar_assinaturas(cliente=cliente)
+    except Exception:
+        log.debug("Não foi possível procurar o telefone do caso %s.", caso_id, exc_info=True)
+        return ""
+
+    for registro in assinaturas:
+        for signatario in registro.get("signatarios") or []:
+            # DOIS FORMATOS, e a diferença já enganou: `phone_number` /
+            # `phone_country` é o payload que vai PARA a ZapSign (ver
+            # `assinatura.montar_signatario`); o que fica GRAVADO na coluna
+            # `signatarios` é a forma interna, com `telefone` num campo só.
+            # Ler os dois cobre registro antigo e registro novo.
+            numero = str(
+                signatario.get("telefone") or signatario.get("phone_number") or ""
+            ).strip()
+            if not numero:
+                continue
+            ddi = str(signatario.get("phone_country") or "").strip()
+            # O `_numero_brasileiro` do `whatsapp.py` acrescenta o 55 sozinho
+            # quando o número vem com 10 ou 11 dígitos, então o caso comum não
+            # precisa de prefixo. DDI estrangeiro (raro, mas existe) vai junto
+            # para não virar um telefone brasileiro inventado.
+            return f"+{ddi}{numero}" if ddi and ddi != "55" else numero
+    return ""
+
+
 def obter_cobranca(caso_id: str) -> dict[str, Any]:
     with conectar() as con:
         linha = con.execute(
@@ -71,13 +133,20 @@ def obter_cobranca(caso_id: str) -> dict[str, Any]:
         ).fetchone()
     if not linha:
         return {
-            "caso_id": caso_id, "ativa": False, "telefone": "", "intervalo_dias": 3,
+            "caso_id": caso_id, "ativa": False,
+            # Já vem preenchido na primeira abertura da tela: o número é o mesmo
+            # que o cliente ditou na entrevista.
+            "telefone": telefone_do_caso(caso_id), "intervalo_dias": 3,
             "incluir_opcionais": False, "proximo_envio_em": None,
             "ultimo_envio_em": None, "ultimo_erro": None,
         }
     return {
         "caso_id": linha["caso_id"], "ativa": bool(linha["ativa"]),
-        "telefone": linha["telefone"], "intervalo_dias": linha["intervalo_dias"],
+        # O salvo vence: quem digitou outro número tinha motivo. A busca só cobre
+        # o campo em branco — inclusive numa configuração antiga, salva antes de
+        # o contrato existir.
+        "telefone": linha["telefone"] or telefone_do_caso(caso_id),
+        "intervalo_dias": linha["intervalo_dias"],
         "incluir_opcionais": bool(linha["incluir_opcionais"]),
         "proximo_envio_em": linha["proximo_envio_em"],
         "ultimo_envio_em": linha["ultimo_envio_em"], "ultimo_erro": linha["ultimo_erro"],
@@ -113,15 +182,27 @@ def salvar_cobranca(
 
 
 def listar_cobrancas_vencidas() -> list[dict[str, Any]]:
+    """As cobranças no ponto de enviar, já com o telefone resolvido.
+
+    O `telefone <> ''` saiu do SQL de propósito. Ele filtrava a coluna, que pode
+    estar em branco num caso configurado ANTES de o contrato existir — e desde
+    que `obter_cobranca` passou a recuperar o número da assinatura, esse caso
+    aparecia ativo na tela, com o número à vista, e mesmo assim nunca era
+    cobrado. Ficar "ligado" sem enviar nada é pior que não ligar.
+
+    Agora o filtro é sobre o valor RESOLVIDO. Quem continuar sem número nenhum é
+    descartado aqui, e não vira uma tentativa de envio fadada a falhar.
+    """
     instante = _iso()
     with conectar() as con:
         linhas = con.execute(
             """SELECT caso_id FROM cobrancas_documentos
-                WHERE ativa = 1 AND telefone <> ''
+                WHERE ativa = 1
                   AND (proximo_envio_em IS NULL OR proximo_envio_em <= ?)""",
             (instante,),
         ).fetchall()
-    return [obter_cobranca(linha["caso_id"]) for linha in linhas]
+    resolvidas = [obter_cobranca(linha["caso_id"]) for linha in linhas]
+    return [c for c in resolvidas if str(c.get("telefone") or "").strip()]
 
 
 def registrar_resultado_cobranca(
