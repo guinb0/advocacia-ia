@@ -22,6 +22,7 @@ from urllib.parse import quote
 import jwt
 
 from fastapi import (
+    BackgroundTasks,
     Body,
     Depends,
     FastAPI,
@@ -1306,14 +1307,19 @@ PodeManterRoteiros = Depends(auth.exigir_modulo("roteiros"))
 
 @app.post("/api/roteiros/importar", status_code=202)
 async def importar_roteiro(
+    tarefas: BackgroundTasks,
     arquivo: UploadFile = File(...),
     _autorizado=PodeManterRoteiros,
 ):
-    """Enfileira a leitura do documento e a montagem do roteiro.
+    """Agenda a leitura do documento e a montagem do roteiro neste servidor.
 
     202 e não 200: são de dez segundos a dois minutos entre OCR e as chamadas ao
     modelo, uma por bloco. A tela acompanha por `GET /api/jobs/{id}`, onde o
     campo `resultado.etapa` diz em que bloco a montagem está.
+
+    Não depende do worker Celery: esta é uma operação administrativa rara e a
+    produção pode continuar atendendo mesmo quando os workers estiverem fora.
+    O processamento começa em thread logo depois de a resposta 202 ser enviada.
     """
     nome = arquivo.filename or "documento"
     extensao = Path(nome).suffix.lower()
@@ -1340,14 +1346,11 @@ async def importar_roteiro(
         job_id = await run_in_threadpool(
             jobs.criar, "ROTEIRO", arquivo=str(caminho), conteudo=conteudo
         )
-        tarefa = importar_roteiro_task.apply_async(
-            args=(job_id, str(caminho), nome), queue="ai"
-        )
-        await run_in_threadpool(jobs.vincular_tarefa, job_id, tarefa.id)
+        tarefas.add_task(importar_roteiro_task.run, job_id, str(caminho), nome)
     except Exception as exc:
         caminho.unlink(missing_ok=True)
-        log.exception("Falha ao enfileirar importação de roteiro")
-        raise HTTPException(503, f"Fila de processamento indisponível: {exc}") from exc
+        log.exception("Falha ao agendar importação de roteiro")
+        raise HTTPException(503, f"Processamento indisponível: {exc}") from exc
 
     return {"job_id": job_id}
 

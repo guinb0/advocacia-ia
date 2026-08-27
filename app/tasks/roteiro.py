@@ -5,10 +5,9 @@ montagem são várias chamadas ao modelo, uma por bloco — de dez segundos a do
 minutos. Numa requisição HTTP isso seria um botão travado e um proxy cortando a
 conexão no meio.
 
-Fica na fila `ai`, e não na `gpu_background` do OCR de propósito: o worker de OCR
-processa um documento por vez e é o que o cliente está esperando na tela do
-checklist. Importar roteiro é trabalho de escritório, raro, e não vale bloquear
-a papelada de ninguém por um minuto.
+Pode ser executada como tarefa Celery ou diretamente pela API em uma thread de
+segundo plano. A segunda forma impede que uma importação administrativa fique
+eternamente em `QUEUED` quando nenhum worker externo estiver conectado.
 """
 
 from __future__ import annotations
