@@ -178,8 +178,59 @@ def classificar(texto_norm: str) -> tuple[str, int, dict[str, int]]:
     if not pontos:
         return "desconhecido", 0, {}
 
+    # CAT e holerite trazem Ministério do Trabalho, PIS e Previdência — o mesmo
+    # léxico da CTPS. Sem este corte, o roteamento determinístico manda a CAT para
+    # DOC.06 e a leitura semântica (DOC.10 / DOC.07) nem roda.
+    if pontos.get("ctps") and _evita_classificacao_ctps(texto_norm):
+        pontos.pop("ctps", None)
+        if not pontos:
+            return "desconhecido", 0, {}
+
     tipo = max(pontos, key=lambda k: pontos[k])
     return (tipo, pontos[tipo], pontos) if pontos[tipo] >= 10 else ("desconhecido", pontos[tipo], pontos)
+
+
+def _evita_classificacao_ctps(texto_norm: str) -> bool:
+    """True quando o texto é CAT, contracheque ou holerite — não carteira de trabalho."""
+    if not texto_norm:
+        return False
+
+    sinais_cat = (
+        "COMUNICACAO DE ACIDENTE DE TRABALHO",
+        "COMUNICACAO DE ACIDENTE",
+        "COMUNIC DE ACIDENTE",
+        "COMUNICACAO ACIDENTE",
+        "EMISSAO DE CAT",
+        "NUMERO DA CAT",
+        "N DA CAT",
+        "N CAT",
+    )
+    if any(s in texto_norm for s in sinais_cat):
+        return True
+    if "ACIDENTE DE TRABALHO" in texto_norm and (
+        "COMUNIC" in texto_norm or " EMIT" in texto_norm or " CAT" in texto_norm
+    ):
+        return True
+
+    sinais_holerite = (
+        "CONTRACHEQUE",
+        "CONTRA CHEQUE",
+        "HOLERITE",
+        "FOLHA DE PAGAMENTO",
+        "RECIBO DE PAGAMENTO",
+        "FOLHA DE PAGTO",
+        "PROVENTOS",
+        "DESCONTOS",
+        "SALARIO LIQUIDO",
+        "SALARIO BRUTO",
+        "TOTAL DE PROVENTOS",
+        "TOTAL DE DESCONTOS",
+        "BASE INSS",
+        "REMUNERACAO",
+        "VENCIMENTOS",
+        "LIQUIDO A RECEBER",
+    )
+    return any(s in texto_norm for s in sinais_holerite)
 
 
 # -------------------------------------------------------- geometria da página
