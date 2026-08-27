@@ -590,3 +590,107 @@ def processar(
         nome_arquivo, time.perf_counter() - inicio, passadas, w, h, crono.resumo(),
     )
     return doc
+
+
+def processar_texto(
+    texto: str,
+    nome_arquivo: str,
+    lang: str = "pt",
+    tipo_forcado: str | None = None,
+    *,
+    gerar_arquivos_temporarios: bool = False,
+) -> dict:
+    """Extrai campos de um documento cujo texto já é digital (DOCX, TXT).
+
+    Não há foto para avaliar nem OCR a rodar: o texto é fiel, então a qualidade é
+    sempre legível. Daí para a frente o caminho é o MESMO do OCR — classificar o
+    tipo, extrair campos, validar e sinalizar texto útil — para que a saída seja
+    intercambiável com a de `processar` e siga por `roteamento` e classificação
+    semântica sem tratamento especial.
+    """
+    inicio = time.perf_counter()
+    crono = Cronometro()
+
+    # Uma Linha por parágrafo não vazio. A geometria (x/y) não existe no texto
+    # digital: os extratores que dependem de posição simplesmente não acham nada,
+    # e os que leem o texto funcionam igual. A confiança é 1.0 — não houve OCR.
+    linhas = [
+        Linha(texto=t.strip(), confianca=1.0, y=float(i), x=0.0)
+        for i, t in enumerate(texto.splitlines())
+        if t.strip()
+    ]
+    textos = [ln.texto for ln in linhas]
+    qtd_caracteres = sum(len(t) for t in textos)
+
+    # Texto digital é legível por definição; não passou por foto nem por OCR.
+    qual = quality.Qualidade(score=100, legivel=qtd_caracteres > 0)
+
+    texto_norm = "\n".join(normalizar(t) for t in textos)
+    with crono.medir("classificar"):
+        tipo_detectado, pontos, todos = classificar(texto_norm)
+    forcado = bool(tipo_forcado and tipo_forcado in ROTULOS_TIPO)
+    reclassificado = bool(forcado and tipo_detectado not in {"desconhecido", tipo_forcado})
+    tipo = tipo_detectado if (reclassificado or not forcado) else tipo_forcado
+
+    from .extractors import extrair_campos
+
+    with crono.medir("extrair"):
+        campos = extrair_campos(linhas, tipo)
+        validacao = montar_validacao(tipo, campos, qual)
+
+    # Mesmo sem campos cadastrais conhecidos, uma procuração ou contrato traz
+    # nome, CPF, fatos e datas — texto que a classificação semântica aproveita.
+    texto_utilizavel = bool(qual.legivel and qtd_caracteres >= 80)
+    validacao["texto_utilizavel"] = texto_utilizavel
+    validacao["caracteres_aproveitaveis"] = qtd_caracteres
+    if texto_utilizavel and not campos:
+        validacao["veredito"] = "APROVADO_COM_RESSALVAS"
+        validacao["resumo"] = (
+            "Texto integral extraído e preservado para análise jurídica. "
+            "Este documento não possui campos cadastrais estruturados conhecidos."
+        )
+        validacao["erros"] = [
+            erro for erro in validacao.get("erros", [])
+            if not erro.startswith("Nenhum campo estruturado")
+        ]
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "arquivo": nome_arquivo,
+        "processado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "tempo_processamento_s": round(time.perf_counter() - inicio, 2),
+        "tipo": {
+            "codigo": tipo,
+            "descricao": ROTULOS_TIPO.get(tipo, tipo),
+            "detectado": tipo_detectado,
+            "descricao_detectado": ROTULOS_TIPO.get(tipo_detectado, tipo_detectado),
+            "confianca_classificacao": pontos,
+            "pontuacoes": todos,
+            "forcado_pelo_usuario": forcado and not reclassificado,
+            "reclassificado": reclassificado,
+        },
+        "campos": [c.to_dict() for c in campos],
+        "validacao": validacao,
+        "qualidade_imagem": qual.to_dict(),
+        "ocr": {
+            "motor": "texto-digital",
+            "idioma": lang,
+            "confianca_media": 1.0 if linhas else None,
+            "blocos_detectados": len(linhas),
+            "caracteres_detectados": qtd_caracteres,
+            "passadas": 0,
+        },
+        "texto_linhas": [{"texto": ln.texto, "confianca": 1.0} for ln in linhas],
+        "texto_completo": "\n".join(textos),
+    }
+
+    if gerar_arquivos_temporarios:
+        with crono.medir("salvar"):
+            doc["arquivos_temporarios"] = salvar_temporarios(doc)
+
+    doc["tempo_etapas_s"] = crono.etapas
+    log.info(
+        "processado (texto) %s: total=%.2fs blocos=%d caracteres=%d",
+        nome_arquivo, time.perf_counter() - inicio, len(linhas), qtd_caracteres,
+    )
+    return doc

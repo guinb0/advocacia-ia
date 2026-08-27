@@ -53,11 +53,14 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {}
 
-export async function enviarAvaliacaoGoogle(telefone: string): Promise<{ enviado: boolean; ja_enviado?: boolean }> {
+export async function enviarAvaliacaoGoogle(
+  telefone: string,
+  forcar = false,
+): Promise<{ enviado: boolean; ja_enviado?: boolean }> {
   return comoJson(await buscar("/api/whatsapp/avaliacao-google", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ telefone }),
+    body: JSON.stringify({ telefone, forcar }),
   }));
 }
 

@@ -10,6 +10,7 @@ from .. import (
     armazenamento,
     casos,
     categorias,
+    extracao_office,
     indexacao_documento,
     jobs,
     pipeline,
@@ -176,8 +177,10 @@ def processar_entrega(
         # O checklist persiste o JSON no banco e conserva o original em `dados`.
         # Gravar ainda outro JSON e XML em `tmp` era I/O sem consumidor.
         extensao = Path(nome).suffix.lower()
-        formato_lido = extensao in pipeline.EXTENSOES_OCR
-        if formato_lido:
+        formato_lido = False
+        resultado: dict | None = None
+        if extensao in pipeline.EXTENSOES_OCR:
+            formato_lido = True
             resultado = pipeline.processar(
                 conteudo,
                 nome,
@@ -185,11 +188,31 @@ def processar_entrega(
                 tipo_extracao,
                 gerar_arquivos_temporarios=False,
             )
-        else:
-            # Receber não é o mesmo que conseguir aplicar OCR. Word, planilha,
-            # áudio, vídeo, ZIP e qualquer formato futuro ficam preservados no
-            # caso. Um envio associado a um item permanece nesse item para
-            # conferência; no envio em massa, fica na triagem para uma pessoa.
+        elif extensao in extracao_office.EXTENSOES_TEXTO:
+            # DOCX e TXT já trazem o texto gravado: em vez de preservar sem ler,
+            # extrai o texto digital e segue pelo MESMO caminho do OCR (campos +
+            # classificação semântica), para que uma procuração em .docx tenha
+            # nome, CPF e demais achados lidos e roteados como qualquer outro.
+            try:
+                texto = extracao_office.extrair_texto(conteudo, extensao)
+            except Exception as exc:
+                log.warning("leitura de texto falhou para %s (%s): %s", entrega_id, nome, exc)
+                texto = ""
+            if texto.strip():
+                formato_lido = True
+                resultado = pipeline.processar_texto(
+                    texto,
+                    nome,
+                    idioma,
+                    tipo_extracao,
+                    gerar_arquivos_temporarios=False,
+                )
+
+        if not formato_lido:
+            # Receber não é o mesmo que conseguir ler. Word binário (.doc),
+            # planilha, áudio, vídeo, ZIP e qualquer formato futuro ficam
+            # preservados no caso. Um envio associado a um item permanece nesse
+            # item para conferência; no envio em massa, fica na triagem.
             rotulo = extensao or "sem extensão"
             resultado = {
                 "arquivo": nome,

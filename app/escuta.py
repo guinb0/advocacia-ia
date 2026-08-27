@@ -640,6 +640,17 @@ REGRAS
   processual. Fala copiada com repetição faz o documento parecer rascunho.
 - A fala é de transcrição automática: pode vir truncada ou com palavra trocada.
   Na dúvida sobre o que foi dito, NÃO preencha — registre em `lembretes`.
+- NUNCA preencha com marcador de ausência. "não informado", "não mencionado",
+  "não especificado", "sem informação", "n/a" e afins NÃO são valores: se o dado
+  não foi dito, simplesmente não devolva aquela pergunta em `preenchidas`.
+  Campo em branco é honesto — a tela mostra o que falta e o entrevistador vai
+  atrás. Campo com "não informado" conta como respondido, some da lista de
+  pendências e desce para a peça processual como se o cliente tivesse dito
+  aquilo. Isso já aconteceu com 30 e tantos campos numa entrevista real.
+
+  Atenção: "não sei" e "não lembro" DITOS PELO CLIENTE são resposta de verdade e
+  devem ser preenchidos. A diferença é quem está falando — o cliente responde,
+  você não anota a falta.
 - O microfone capta a SALA: a voz do entrevistador entra junto com a do cliente.
   Você recebe as duas misturadas, sem etiqueta de quem falou. Preencha SÓ com o
   que o cliente respondeu — nunca com o que o entrevistador perguntou.
@@ -758,6 +769,8 @@ REGRAS
   anterior. Não descarte o trecho inteiro só porque ele começa com uma pergunta.
 - Primeira pessoa ("eu trabalho", "fui vítima", "nunca sofri") e respostas
   diretas depois de uma pergunta ("sim", "não") indicam fala do cliente.
+- Fala de acolhimento ("sou da equipe", "Lara & Melo", "vamos começar") é do
+  entrevistador, mesmo em primeira pessoa — nunca trate como resposta do cliente.
 - Respostas existentes foram digitadas por uma pessoa e são autoritativas: não
   as altere nem as repita.
 - Nunca extraia CPF, RG, data de nascimento ou número de documento da fala.
@@ -770,6 +783,18 @@ REGRAS
   possuir ou conseguir enviar.
 - `valor` deve conter a resposta limpa, sem repetir o enunciado ou muletas.
 - `trecho` deve ser uma citação curta da transcrição que sustenta o valor.
+- NUNCA preencha com marcador de ausência. "não informado", "não mencionado",
+  "não especificado", "não consta", "sem informação", "n/a", "—" e similares
+  NÃO são respostas. Se o cliente não falou do assunto, OMITA o campo — não
+  invente um valor. Campo com "não informado" conta como respondido e some da
+  lista de pendências como se o cliente tivesse dito aquilo.
+- Rastreio (assalto / acidente / doença / sequela): se o cliente NARROU o fato
+  com clareza, preencha o sim/não correspondente mesmo que a pergunta formal
+  não tenha sido feita com as palavras do roteiro. Respeite o enunciado exato
+  ("durante o trabalho", "fora do trabalho", "em razão do trabalho").
+- Quando o cliente descreveu acidente, assalto, afastamento, demissão, função
+  ou sintomas, preencha TODOS os campos do formulário que essa narrativa
+  responde — não deixe o módulo aberto só com o rastreio em "sim".
 - Separe COBERTURA de PREENCHIMENTO. Em `perguntadas`, liste toda pergunta do
   formulário que o entrevistador efetivamente fez, mesmo com palavras
   diferentes e mesmo quando o cliente não respondeu de forma aproveitável.
@@ -890,6 +915,48 @@ def _texto(valor: Any, limite: int = 600) -> str:
     return re.sub(r"\s+", " ", str(valor or "")).strip()[:limite]
 
 
+#: Marcadores de AUSÊNCIA que o modelo devolve no lugar de não responder nada.
+#:
+#: "não informado" num campo do roteiro não é resposta: é o modelo anotando que
+#: não achou o dado. Aceito como valor, ele mente três vezes — conta como
+#: respondida no total, esconde a pergunta de quem revisa, e desce para o
+#: relatório e a peça como se o cliente tivesse dito aquilo.
+#:
+#: Numa entrevista real, 30 e tantos campos vieram assim: perguntas do módulo de
+#: acidente que NUNCA foram feitas apareceram todas como "não informado", e a
+#: tela anunciou "50 respostas já".
+#:
+#: O QUE NÃO ENTRA NESTA LISTA, E POR QUÊ
+#:
+#: "não sei", "não lembro", "não tenho certeza" ficam de FORA de propósito: são
+#: resposta legítima do cliente. "Sabe qual foi o NB?" respondida com "não sei" é
+#: informação de verdade — e das úteis, porque diz ao jurídico que aquele número
+#: terá de ser buscado noutro lugar. O que se descarta aqui é a linguagem de quem
+#: ANOTA a falta, não a de quem responde.
+_NAO_RESPOSTAS = {
+    "nao informado", "nao informada", "nao informou", "nao informados",
+    "nao mencionado", "nao mencionada", "nao mencionou",
+    "nao especificado", "nao especificada", "nao declarado", "nao declarada",
+    "nao respondido", "nao respondida", "nao respondeu",
+    "nao citado", "nao citada", "nao consta", "nao ha informacao",
+    "sem informacao", "sem resposta", "sem dados", "nao se aplica",
+    "n/a", "na", "-", "--", "---",
+}
+
+
+def _e_nao_resposta(valor: str) -> bool:
+    """O modelo anotou a ausência do dado em vez de deixar o campo em branco?"""
+    limpo = unicodedata.normalize("NFKD", valor.strip().lower())
+    limpo = limpo.encode("ascii", "ignore").decode()
+    limpo = re.sub(r"[\s.!,;:]+", " ", limpo).strip()
+    # Valor sem letra nem número nenhum ("—", "...", "??") também não é resposta:
+    # é pontuação de quem não tinha o que escrever. O travessão some no dobra
+    # para ascii, então esta checagem vem depois dela de propósito.
+    if not any(c.isalnum() for c in valor):
+        return True
+    return limpo in _NAO_RESPOSTAS
+
+
 def _normalizar(
     bruto: dict[str, Any],
     abertas: list[roteiros.Pergunta],
@@ -920,6 +987,9 @@ def _normalizar(
             continue
         valor = _texto(item.get("valor"))
         if not valor:
+            continue
+        if _e_nao_resposta(valor):
+            log.info("Escuta preencheu %r com marcador de ausência; descartado.", pergunta.id)
             continue
 
         # `_perguntas_abertas` já não oferece estes campos ao modelo. Esta
@@ -984,7 +1054,11 @@ def _complementos(
             # Id que não estava na lista de completáveis: ou é alucinação, ou é
             # uma pergunta que este módulo decidiu que não se completa.
             continue
-        acrescimo = _acrescimo(_texto(item.get("valor")), atual[pergunta.id])
+        bruto_valor = _texto(item.get("valor"))
+        if _e_nao_resposta(bruto_valor):
+            log.info("Complemento com marcador de ausência em %r; descartado.", pergunta.id)
+            continue
+        acrescimo = _acrescimo(bruto_valor, atual[pergunta.id])
         if not acrescimo:
             log.info("Complemento sem dado novo em %r; descartado.", pergunta.id)
             continue
@@ -1104,6 +1178,16 @@ def processar_entrevista(
         else:
             valor = _texto(valor_bruto)
             if not valor:
+                continue
+            # Mesma barreira da escuta ao vivo: o modelo anota a falta no lugar
+            # de omitir o campo. Aceito, "não informado" vira dezenas de
+            # respostas falsas e some das pendências (já aconteceu numa
+            # entrevista real com o módulo de acidente quase todo assim).
+            if _e_nao_resposta(valor):
+                log.info(
+                    "Processamento preencheu %r com marcador de ausência; descartado.",
+                    pergunta.id,
+                )
                 continue
             if pergunta.tipo == "sim_nao":
                 normalizado = valor.casefold().rstrip(".")

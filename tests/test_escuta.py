@@ -719,6 +719,53 @@ def cenario_recusada_nao_volta_como_ausente() -> int:
     return falhas
 
 
+def cenario_descarta_nao_informado() -> int:
+    """Marcador de ausência no processamento consolidado não vira resposta.
+
+    Foi o que encheu o módulo de acidente com "não informado" numa entrevista
+    real: o modelo anotou a falta no lugar de omitir o campo, e a tela anunciou
+    dezenas de respostas que o cliente nunca deu.
+    """
+    falhas = 0
+    instalar_modelo(
+        {
+            "respostas": [
+                {
+                    "pergunta_id": "tempo_casa",
+                    "valor": "oito anos",
+                    "trecho": "faz uns oito anos",
+                },
+                {
+                    "pergunta_id": "funcao",
+                    "valor": "não informado",
+                    "trecho": "faz uns oito anos",
+                },
+                {
+                    "pergunta_id": "r_doenca",
+                    "valor": "—",
+                    "trecho": "faz uns oito anos",
+                },
+            ],
+            "perguntadas": ["tempo_casa", "funcao"],
+            "incertas": [],
+        }
+    )
+    r = escuta.processar_entrevista(FALA, {})
+    falhas += not checar(
+        r["respostas"].get("tempo_casa") == "oito anos",
+        "resposta real continua preenchendo",
+    )
+    falhas += not checar(
+        "funcao" not in r["respostas"],
+        "não informado é descartado",
+    )
+    falhas += not checar(
+        "r_doenca" not in r["respostas"],
+        "travessão sozinho também é descartado",
+    )
+    return falhas
+
+
 def main_teste() -> int:
     guardada = os.environ.get("DEEPSEEK_API_KEY")
     if not guardada:
@@ -740,6 +787,7 @@ def main_teste() -> int:
         ("processamento consolidado pós-entrevista", cenario_processamento_consolidado),
         ("a citação é conferida contra a transcrição", cenario_citacao_conferida),
         ("recusada não volta como ausente", cenario_recusada_nao_volta_como_ausente),
+        ("descarta marcador de ausência", cenario_descarta_nao_informado),
         ("sem chave", cenario_sem_chave),
     ):
         print(f"\n{titulo}")

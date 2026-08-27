@@ -108,6 +108,31 @@ def test_avaliacao_google_nao_duplica(monkeypatch):
     envio.assert_not_awaited()
 
 
+def test_avaliacao_google_reenvia_quando_forcado(monkeypatch):
+    # Com o cliente na chamada o atendente pode pedir o link de novo: `forcar`
+    # atravessa a dedup do envio já concluído e a mensagem sai outra vez.
+    capturado = {}
+
+    def reservar(chave, tipo, destino, caso_id=None, forcar=False):
+        capturado["forcar"] = forcar
+        return True
+
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "reservar", reservar)
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "finalizar", lambda *_a, **_k: None)
+    envio = AsyncMock()
+    monkeypatch.setattr(whatsapp, "_enviar_texto", envio)
+
+    resposta = asyncio.run(
+        whatsapp.enviar_avaliacao_google(
+            whatsapp.Destinatario(telefone="61999999999", forcar=True)
+        )
+    )
+
+    assert resposta == {"enviado": True, "ja_enviado": False}
+    assert capturado["forcar"] is True
+    envio.assert_awaited_once()
+
+
 def test_cobranca_recalcula_o_texto_no_momento_do_envio(monkeypatch):
     config = {
         "caso_id": "caso-1", "telefone": "5561999999999", "intervalo_dias": 3,
