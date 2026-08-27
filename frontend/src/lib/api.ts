@@ -24,6 +24,7 @@ import type {
   RecomendacaoEntrevista,
   SituacaoCaso,
   TipoDocumento,
+  CobrancaDocumentos,
   Triagem as TriagemResposta,
 } from "./types";
 
@@ -41,7 +42,7 @@ import type {
 const BASE =
   process.env.NEXT_PUBLIC_OCR_API ||
   (typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8100`
+    ? window.location.origin
     : "http://localhost:8100");
 
 /** Monta a URL absoluta da API a partir de um caminho tipo "/api/temp/x.json". */
@@ -51,11 +52,26 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {}
 
-export async function enviarAvaliacaoGoogle(telefone: string): Promise<{ enviado: boolean }> {
+export async function enviarAvaliacaoGoogle(telefone: string): Promise<{ enviado: boolean; ja_enviado?: boolean }> {
   return comoJson(await buscar("/api/whatsapp/avaliacao-google", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ telefone }),
+  }));
+}
+
+export async function obterCobrancaDocumentos(casoId: string): Promise<CobrancaDocumentos> {
+  return comoJson(await buscar(`/api/whatsapp/casos/${encodeURIComponent(casoId)}/cobranca-documentos`));
+}
+
+export async function salvarCobrancaDocumentos(
+  casoId: string,
+  config: Pick<CobrancaDocumentos, "ativa" | "telefone" | "intervalo_dias" | "incluir_opcionais">,
+): Promise<CobrancaDocumentos> {
+  return comoJson(await buscar(`/api/whatsapp/casos/${encodeURIComponent(casoId)}/cobranca-documentos`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
   }));
 }
 
@@ -419,6 +435,35 @@ export async function listarMunicipios(uf: string): Promise<MunicipioLocalidade[
 }
 
 // ----------------------------------------------------------------- chamada
+
+export interface AchadoDocumento {
+  informacao: string;
+  documento: string;
+  entrega_id: string;
+  /** Trecho LITERAL do documento. Conferido no servidor contra o texto lido —
+   *  achado cuja citação não existe no documento apontado não chega até aqui. */
+  citacao: string;
+  relevancia: string;
+  /** O documento contradiz o que a entrevista registrou. */
+  contradiz: boolean;
+}
+
+export interface AnaliseDocumentos {
+  achados: AchadoDocumento[];
+  documentos_lidos: number;
+  /** Quantos achados o servidor recusou por citação não conferida. Aparece na
+   *  tela de propósito: silenciar esconderia um modelo alucinando com
+   *  frequência, que é o que precisa aparecer. */
+  recusados?: number;
+  aviso?: string;
+}
+
+/** O que os anexos dizem e a entrevista não registrou. Sob demanda. */
+export async function analisarDocumentosDoCaso(casoId: string): Promise<AnaliseDocumentos> {
+  return comoJson(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/analise-documentos`, { method: "POST" }),
+  );
+}
 
 /** Sorteia uma sala nova, ou pega o token para ENTRAR numa que já existe.
  *
@@ -933,6 +978,7 @@ export async function baixarArquivoEntregaPdf(
 // Daqui isso não aparece: a tela fala com a API, e a API fala com o banco.
 
 export interface Perfil {
+  id: number;
   /** Texto livre, e não uma união fechada.
    *
    * Era `"advogado" | "cliente"` — errado já na origem (faltava `secretario`) e
@@ -950,13 +996,18 @@ export interface Perfil {
  * códigos que as rotas usam em `auth.exigir_modulo`. Uma lista mantida na tela
  * divergiria em silêncio, e a caixa marcada não corresponderia a acesso nenhum. */
 export interface ModuloDeAcesso {
+  id?: number;
   codigo: string;
   rotulo: string;
   descricao: string;
+  rota?: string;
+  grupo?: string;
+  ordem?: number;
 }
 
 /** Um perfil com os módulos que ele alcança — a linha da matriz de acesso. */
 export interface PerfilComAcesso {
+  id: number;
   codigo: string;
   rotulo: string;
   descricao: string;
@@ -974,6 +1025,7 @@ export interface UsuarioCadastrado {
   email: string | null;
   ativo: boolean;
   perfis: string[];
+  perfilId?: number | null;
 }
 
 /** Os perfis que o cadastro oferece. Vêm do servidor para a tela não manter uma
@@ -1030,7 +1082,7 @@ export async function listarUsuarios(): Promise<UsuarioCadastrado[]> {
 export async function criarUsuario(dados: {
   nome: string;
   email: string;
-  perfil: string;
+  perfilId: number;
   senha: string;
 }): Promise<UsuarioCadastrado> {
   return comoJson<UsuarioCadastrado>(

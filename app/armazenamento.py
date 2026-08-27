@@ -16,7 +16,7 @@ import json
 import logging
 import unicodedata
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -216,6 +216,285 @@ def _normalizar_entrega(linha: banco.Linha) -> dict[str, Any]:
     return registro
 
 
+def _sha256(conteudo: bytes | None) -> str | None:
+    return hashlib.sha256(conteudo).hexdigest() if conteudo else None
+
+
+def _bytes(valor: Any) -> bytes | None:
+    if valor is None:
+        return None
+    if isinstance(valor, bytes):
+        return valor
+    if isinstance(valor, bytearray):
+        return bytes(valor)
+    if isinstance(valor, memoryview):
+        return valor.tobytes()
+    return None
+
+
+def _dentro_dos_arquivos(caminho: Path) -> bool:
+    raiz = DIR_ARQUIVOS.resolve()
+    resolvido = caminho.resolve()
+    return resolvido == raiz or raiz in resolvido.parents
+
+
+def _dentro_de_pasta_legada(caminho: Path, entrega: dict[str, Any]) -> bool:
+    caso_id = str(entrega.get("caso_id") or "").lower()
+    if not caso_id:
+        return False
+    partes = caminho.resolve().parts
+    baixos = [p.lower() for p in partes]
+    for indice in range(len(baixos) - 2):
+        if (
+            baixos[indice] == "dados"
+            and baixos[indice + 1] == "casos"
+            and baixos[indice + 2] == caso_id
+        ):
+            return True
+    return False
+
+
+def _candidatos_de_entrega(entrega: dict[str, Any]) -> Iterator[Path]:
+    """Caminhos possíveis para uma entrega, incluindo registros de pasta antiga."""
+    vistos: set[str] = set()
+
+    def incluir(caminho: Path | None) -> Iterator[Path]:
+        if caminho is None:
+            return
+        chave = str(caminho)
+        if chave not in vistos:
+            vistos.add(chave)
+            yield caminho
+
+    bruto = str(entrega.get("caminho") or "")
+    salvo = Path(bruto) if bruto else None
+    yield from incluir(salvo)
+
+    if salvo is not None:
+        partes = salvo.parts
+        baixos = [p.lower() for p in partes]
+        for indice in range(len(baixos) - 1):
+            if baixos[indice] == "dados" and baixos[indice + 1] == "casos":
+                # Banco migrado de outra pasta/máquina: preserva o trecho
+                # `caso_id/arquivo.ext`, mas troca a raiz para a instalação atual.
+                yield from incluir(DIR_ARQUIVOS.joinpath(*partes[indice + 2:]))
+                break
+
+    caso_id = str(entrega.get("caso_id") or "")
+    if caso_id:
+        nomes: list[str] = []
+        if salvo is not None and salvo.name:
+            nomes.append(salvo.name)
+        if entrega.get("arquivo"):
+            nomes.append(Path(str(entrega["arquivo"])).name)
+        for nome in nomes:
+            yield from incluir(DIR_ARQUIVOS / caso_id / nome)
+
+
+def caminho_arquivo_entrega(entrega: dict[str, Any]) -> Path | None:
+    """Arquivo original da entrega dentro da pasta atual de documentos, se existir."""
+    for candidato in _candidatos_de_entrega(entrega):
+        try:
+            permitido = _dentro_dos_arquivos(candidato) or _dentro_de_pasta_legada(candidato, entrega)
+            if permitido and candidato.is_file():
+                return candidato.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def conteudo_arquivo_entrega(entrega: dict[str, Any]) -> bytes | None:
+    """Conteúdo original: disco primeiro, banco como fallback de migração."""
+    caminho = caminho_arquivo_entrega(entrega)
+    if caminho is not None:
+        return caminho.read_bytes()
+    return _bytes(entrega.get("conteudo"))
+
+
+def _resumo_validacao(veredito: str | None, dados_utilizaveis: bool) -> str:
+    if veredito == "APROVADO":
+        return "Documento aprovado pelos dados salvos no banco."
+    if veredito == "REPROVADO":
+        return "Documento reprovado pelos dados salvos no banco."
+    if veredito == "APROVADO_COM_RESSALVAS":
+        return "Documento aprovado com ressalvas pelos dados salvos no banco."
+    return (
+        "Registro salvo no banco como utilizável."
+        if dados_utilizaveis
+        else "Registro salvo no banco sem conferência detalhada."
+    )
+
+
+def _completar_extracao(registro: dict[str, Any]) -> dict[str, Any]:
+    extracao = registro.get("extracao")
+    if not isinstance(extracao, dict):
+        extracao = {}
+
+    tipo_detectado = registro.get("tipo_detectado") or "desconhecido"
+    tipo = extracao.get("tipo")
+    if not isinstance(tipo, dict):
+        tipo = {}
+    tipo.setdefault("codigo", tipo_detectado)
+    tipo.setdefault("detectado", tipo_detectado)
+    tipo.setdefault("descricao", tipo.get("codigo") or tipo_detectado)
+    tipo.setdefault("descricao_detectado", tipo.get("detectado") or tipo_detectado)
+    extracao["tipo"] = tipo
+
+    extracao.setdefault("id", registro.get("id"))
+    extracao.setdefault("arquivo", registro.get("arquivo"))
+    extracao.setdefault("processado_em", registro.get("criado_em"))
+    extracao.setdefault("campos", [])
+    extracao.setdefault("texto_linhas", [])
+    extracao.setdefault("texto_completo", "")
+
+    validacao = extracao.get("validacao")
+    if not isinstance(validacao, dict):
+        validacao = {}
+    veredito = validacao.get("veredito") or registro.get("veredito")
+    dados_utilizaveis = bool(
+        validacao.get("dados_utilizaveis")
+        if "dados_utilizaveis" in validacao
+        else registro.get("dados_utilizaveis")
+    )
+    if veredito:
+        validacao["veredito"] = veredito
+    validacao.setdefault("dados_utilizaveis", dados_utilizaveis)
+    validacao.setdefault("aprovado", dados_utilizaveis and veredito == "APROVADO")
+    if registro.get("score_legibilidade") is not None:
+        validacao.setdefault("score_legibilidade", registro.get("score_legibilidade"))
+    if "completude_percentual" not in validacao:
+        validacao["completude_percentual"] = 100 if dados_utilizaveis else 0
+    validacao.setdefault("campos_esperados", [])
+    validacao.setdefault("campos_faltando", [])
+    validacao.setdefault("campos_invalidos", [])
+    validacao.setdefault("campos_baixa_confianca", [])
+    validacao.setdefault("erros", [])
+    validacao.setdefault("avisos", [])
+    validacao.setdefault("sugestoes", [])
+    validacao.setdefault("resumo", _resumo_validacao(veredito, dados_utilizaveis))
+    extracao["validacao"] = validacao
+
+    return extracao
+
+
+def _tipo_do_agente(codigo: str | None) -> tuple[str, str] | None:
+    if not codigo:
+        return None
+    texto = str(codigo)
+    curto = texto.removeprefix("DOCUMENT.").lower()
+    if not curto:
+        return None
+    return curto, texto
+
+
+def _enriquecer_extracao_do_agente(registro: dict[str, Any]) -> None:
+    """Busca OCR/classificação espelhados no agente para entregas antigas."""
+    entrega_id = str(registro.get("id") or "")
+    if not entrega_id:
+        return
+
+    refs = (
+        f"ocr://entregas/{entrega_id}",
+        f"ocr://entregas/{entrega_id}/%",
+    )
+    try:
+        with conectar() as con:
+            doc = con.execute(
+                """
+                SELECT TOP 1 CONVERT(varchar(64), id) AS id,
+                       document_type, detected_type, status, verdict,
+                       CONVERT(varchar(40), processed_at, 126) AS processed_at
+                  FROM documents
+                 WHERE source_reference = ? OR source_reference LIKE ?
+                 ORDER BY
+                       CASE WHEN document_type LIKE 'DOCUMENT.%' THEN 0 ELSE 1 END,
+                       CASE WHEN status = 'PROCESSED' THEN 0 ELSE 1 END,
+                       updated_at DESC
+                """,
+                refs,
+            ).fetchone()
+            if not doc:
+                return
+
+            doc_id = doc["id"]
+            payload_linha = con.execute(
+                """
+                SELECT TOP 1 payload
+                  FROM document_extractions
+                 WHERE CONVERT(varchar(64), document_id) = ?
+                 ORDER BY received_at DESC
+                """,
+                (doc_id,),
+            ).fetchone()
+            paginas = con.execute(
+                """
+                SELECT number, legibility_score, legible, text
+                  FROM document_pages
+                 WHERE CONVERT(varchar(64), document_id) = ?
+                 ORDER BY number
+                """,
+                (doc_id,),
+            ).fetchall()
+    except Exception:
+        return
+
+    extracao = registro.get("extracao")
+    if not isinstance(extracao, dict):
+        extracao = {}
+        registro["extracao"] = extracao
+
+    if payload_linha and payload_linha["payload"]:
+        try:
+            payload = json.loads(payload_linha["payload"])
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            if payload.get("campos") and not extracao.get("campos"):
+                extracao["campos"] = payload["campos"]
+            if payload.get("texto_linhas") and not extracao.get("texto_linhas"):
+                extracao["texto_linhas"] = payload["texto_linhas"]
+            if payload.get("texto_completo") and not extracao.get("texto_completo"):
+                extracao["texto_completo"] = payload["texto_completo"]
+            if payload.get("validacao"):
+                validacao = extracao.get("validacao") if isinstance(extracao.get("validacao"), dict) else {}
+                validacao.update({k: v for k, v in payload["validacao"].items() if v is not None})
+                extracao["validacao"] = validacao
+
+    tipo_agente = _tipo_do_agente(doc["document_type"]) or _tipo_do_agente(doc["detected_type"])
+    if tipo_agente:
+        codigo, descricao = tipo_agente
+        tipo = extracao.get("tipo") if isinstance(extracao.get("tipo"), dict) else {}
+        if tipo.get("codigo") in (None, "", "desconhecido"):
+            tipo["codigo"] = codigo
+            tipo["descricao"] = descricao
+        if tipo.get("detectado") in (None, "", "desconhecido"):
+            tipo["detectado"] = codigo
+            tipo["descricao_detectado"] = descricao
+        extracao["tipo"] = tipo
+
+    if doc["verdict"]:
+        validacao = extracao.get("validacao") if isinstance(extracao.get("validacao"), dict) else {}
+        validacao.setdefault("veredito", doc["verdict"])
+        extracao["validacao"] = validacao
+    if doc["processed_at"] and not extracao.get("processado_em"):
+        extracao["processado_em"] = doc["processed_at"]
+
+    textos = [str(p["text"] or "").strip() for p in paginas if str(p["text"] or "").strip()]
+    if textos and not extracao.get("texto_completo"):
+        extracao["texto_completo"] = "\n".join(textos)
+    if textos and not extracao.get("texto_linhas"):
+        extracao["texto_linhas"] = [
+            {"texto": texto, "confianca": 0}
+            for texto in textos
+        ]
+
+    scores = [p["legibility_score"] for p in paginas if p["legibility_score"] is not None]
+    if scores:
+        validacao = extracao.get("validacao") if isinstance(extracao.get("validacao"), dict) else {}
+        validacao.setdefault("score_legibilidade", max(scores))
+        extracao["validacao"] = validacao
+
+
 # ---------------------------------------------------------------- entregas
 
 
@@ -225,6 +504,7 @@ def registrar_entrega_pendente(
     arquivo: str,
     caminho: Path,
     itens_atendidos: list[str] | None = None,
+    conteudo: bytes | None = None,
 ) -> dict[str, Any]:
     """Cria a entrega antes do OCR: o arquivo já está salvo, a leitura vem depois.
 
@@ -235,8 +515,9 @@ def registrar_entrega_pendente(
     itens = list(dict.fromkeys(itens_atendidos or [item_codigo]))
     if item_codigo not in itens:
         itens.append(item_codigo)
-    conteudo = caminho.read_bytes()
-    checksum = hashlib.sha256(conteudo).hexdigest()
+    if conteudo is None:
+        conteudo = caminho.read_bytes()
+    checksum = _sha256(conteudo)
 
     with conectar() as con:
         con.execute(
@@ -317,6 +598,53 @@ def falhar_entrega(entrega_id: str, mensagem: str) -> None:
         )
 
 
+def entregas_travadas(minutos: int) -> list[dict[str, Any]]:
+    """Entregas paradas há tempo demais em `na_fila` ou `processando`.
+
+    Quem lê o documento é outro processo (`ocr@`, em `app/tasks/ocr.py`). Se ele
+    morre — ou se a mensagem se perde numa reinicialização do Redis —, a entrega
+    fica exatamente no estado em que estava e ninguém volta para ela: o arquivo
+    aparece como recebido, o item do checklist fica "Lendo" e não sai mais dali.
+    Foi o que aconteceu: o worker de OCR caiu com o resto do sistema no ar, e
+    todo upload seguinte parou em "aguardando a vez na fila de leitura".
+
+    Nada aqui decide o que fazer com a entrega — só a encontra. Vem com a
+    categoria do caso porque quem reenfileira precisa dela para remontar os
+    argumentos de `processar_entrega`.
+    """
+    limite = (datetime.now(timezone.utc) - timedelta(minutes=minutos)).isoformat(
+        timespec="seconds"
+    )
+    with conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT e.id, e.caso_id, e.item_codigo, e.arquivo, e.caminho,
+                   e.itens_atendidos, e.status_proc, e.criado_em, c.categoria
+              FROM entregas e
+              JOIN casos c ON c.id = e.caso_id
+             WHERE e.status_proc IN ('na_fila', 'processando')
+               AND e.criado_em < ?
+             ORDER BY e.criado_em
+            """,
+            (limite,),
+        ).fetchall()
+
+    return [
+        {
+            "id": l["id"],
+            "caso_id": l["caso_id"],
+            "item_codigo": l["item_codigo"],
+            "arquivo": l["arquivo"],
+            "caminho": l["caminho"],
+            "categoria": l["categoria"],
+            "status_proc": l["status_proc"],
+            "criado_em": l["criado_em"],
+            "itens_atendidos": json.loads(l["itens_atendidos"] or "[]"),
+        }
+        for l in linhas
+    ]
+
+
 def registrar_entrega(
     caso_id: str,
     item_codigo: str,
@@ -325,6 +653,7 @@ def registrar_entrega(
     extracao: dict[str, Any],
     tipo_confere: bool | None,
     itens_atendidos: list[str] | None = None,
+    conteudo: bytes | None = None,
 ) -> dict[str, Any]:
     entrega_id = str(uuid.uuid4())
     validacao = extracao.get("validacao", {})
@@ -347,13 +676,15 @@ def registrar_entrega(
     with conectar() as con:
         con.execute(
             """
-            INSERT INTO entregas (id, caso_id, item_codigo, arquivo, caminho, tipo_detectado,
+            INSERT INTO entregas (id, caso_id, item_codigo, arquivo, caminho, conteudo,
+                                  conteudo_sha256, tipo_detectado,
                                   tipo_confere, veredito, dados_utilizaveis, confirmado_manual,
                                   score_legibilidade, itens_atendidos, extracao_json, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
             """,
             (
-                entrega_id, caso_id, item_codigo, arquivo, str(caminho), tipo_detectado,
+                entrega_id, caso_id, item_codigo, arquivo, str(caminho),
+                conteudo, _sha256(conteudo), tipo_detectado,
                 tipo_confere_db, veredito, dados_utilizaveis,
                 score_legibilidade, itens_json, extracao_json, criado_em,
             ),
@@ -514,6 +845,8 @@ def obter_entrega(entrega_id: str) -> dict[str, Any] | None:
     registro = _normalizar_entrega(linha)
     if registro.get("extracao_json"):
         registro["extracao"] = json.loads(registro.pop("extracao_json"))
+    _enriquecer_extracao_do_agente(registro)
+    registro["extracao"] = _completar_extracao(registro)
     return registro
 
 
@@ -581,7 +914,9 @@ def excluir_entrega(entrega_id: str) -> bool:
         con.execute("DELETE FROM entregas WHERE id = ?", (entrega_id,))
         _tocar_caso(con, linha["caso_id"])
 
-    Path(linha["caminho"]).unlink(missing_ok=True)
+    caminho = caminho_arquivo_entrega(dict(linha))
+    if caminho is not None:
+        caminho.unlink(missing_ok=True)
     return True
 
 

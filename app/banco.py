@@ -210,6 +210,8 @@ TABELAS = (
     "vinculos_agente",
     "ufs",
     "municipios",
+    "automacoes_whatsapp",
+    "cobrancas_documentos",
 )
 
 
@@ -376,6 +378,37 @@ CREATE TABLE {SCHEMA}.{PREFIXO}assinaturas (
     cpf           varchar(20)   NOT NULL CONSTRAINT df_ocr_assin_cpf DEFAULT ''
 );
 
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}automacoes_whatsapp') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}automacoes_whatsapp (
+    chave         varchar(220)  NOT NULL CONSTRAINT pk_acervo_automacoes_whatsapp PRIMARY KEY,
+    tipo          varchar(50)   NOT NULL,
+    caso_id       varchar(64)   NULL,
+    destino       varchar(20)   NOT NULL,
+    status        varchar(20)   NOT NULL,
+    tentativas    int           NOT NULL CONSTRAINT df_acervo_auto_tentativas DEFAULT 1,
+    ultimo_erro   nvarchar(1000) NULL,
+    enviado_em    varchar(40)   NULL,
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}cobrancas_documentos') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
+    caso_id            varchar(64)   NOT NULL CONSTRAINT pk_acervo_cobrancas_documentos PRIMARY KEY,
+    ativa              int           NOT NULL CONSTRAINT df_acervo_cobranca_ativa DEFAULT 0,
+    telefone           varchar(20)   NOT NULL CONSTRAINT df_acervo_cobranca_telefone DEFAULT '',
+    intervalo_dias     int           NOT NULL CONSTRAINT df_acervo_cobranca_intervalo DEFAULT 3,
+    incluir_opcionais  int           NOT NULL CONSTRAINT df_acervo_cobranca_opcionais DEFAULT 0,
+    proximo_envio_em   varchar(40)   NULL,
+    ultimo_envio_em    varchar(40)   NULL,
+    ultimo_hash        char(64)      NULL,
+    ultimo_erro        nvarchar(1000) NULL,
+    criado_em          varchar(40)   NOT NULL,
+    atualizado_em      varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_cobrancas_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
     codigo        varchar(80)   NOT NULL CONSTRAINT pk_acervo_roteiros PRIMARY KEY,
@@ -481,6 +514,10 @@ COLUNAS_NOVAS = (
     # atendimento gravaria a MESMA entrevista duas vezes, e a supervisão passaria a
     # contar o dobro do trabalho de quem a conduziu.
     (f"{PREFIXO}entrevistas", "gravacao_id", "varchar(64) NULL"),
+    # Cópia do documento original para que a pré-visualização sobreviva a mudança
+    # de pasta, servidor ou nome absoluto gravado antes da migração.
+    (f"{PREFIXO}entregas", "conteudo", "varbinary(max) NULL"),
+    (f"{PREFIXO}entregas", "conteudo_sha256", "char(64) NULL"),
 )
 
 

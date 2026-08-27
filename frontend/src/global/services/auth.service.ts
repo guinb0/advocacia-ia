@@ -1,6 +1,7 @@
 import { Md5 } from "ts-md5";
 
 import api from "./api";
+import { urlApi } from "@/lib/api";
 import type { SessaoUsuario } from "@/app/page.interface";
 
 /**
@@ -53,11 +54,18 @@ export async function LogoutService(): Promise<void> {
 
 export async function MyAccountService(): Promise<SessaoUsuario | null> {
   try {
-    const resposta = await api.get<Envelope<SessaoUsuario>>("/api/user/my-account");
-    return resposta?.data ?? null;
+    /* NÃO usa o `api` global: ele redireciona para `/` ao receber 401, e esta
+     * chamada roda em TODAS as páginas — inclusive as públicas (`/portal/[token]`,
+     * `/chamada/[sala]`), onde 401 é o estado esperado. Fetch direto deixa o
+     * 401 ser apenas "não logado", sem efeito colateral. */
+    const resposta = await fetch(urlApi("/api/user/my-account"), {
+      cache: "no-store",
+      credentials: "include",
+    });
+    if (!resposta.ok) return null;
+    const corpo = (await resposta.json()) as Envelope<SessaoUsuario>;
+    return corpo?.data ?? null;
   } catch {
-    // 401 já derruba para o login dentro do `api.ts`. Qualquer outra falha aqui
-    // é rede instável, e devolver `null` deixa a tela seguir com o que já tem.
     return null;
   }
 }

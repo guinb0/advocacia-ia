@@ -157,6 +157,11 @@ CAMPOS_ESPERADOS: dict[str, list[str]] = {
     "desconhecido": [],
 }
 
+TIPOS_COM_TITULAR = frozenset(
+    {"rg", "cnh", "ctps", "cin", "cpf", "titulo_eleitor", "cartao_sus", "certidao"}
+)
+TIPOS_COM_FILIACAO = frozenset({"rg", "cnh", "cin", "certidao"})
+
 
 def classificar(texto_norm: str) -> tuple[str, int, dict[str, int]]:
     pontos: dict[str, int] = {}
@@ -283,6 +288,11 @@ def _valor_apos_rotulo(linha_norm: str, linha_orig: str, rotulos: list[str]) -> 
     for rot in rotulos:
         idx = linha_norm.find(rot)
         if idx == -1:
+            continue
+        if idx > 0 and linha_norm[idx - 1].isalpha():
+            continue
+        fim = idx + len(rot)
+        if fim < len(linha_norm) and linha_norm[fim].isalpha():
             continue
         resto_norm = linha_norm[idx + len(rot):].lstrip(" :.-/")
         if not resto_norm:
@@ -533,6 +543,12 @@ def _conferir_coerencia_das_datas(campos: dict[str, Campo]) -> None:
 
 
 def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
+    # Tipo não estruturado não ganha campos cadastrais por coincidência textual.
+    # Um laudo pode trazer o CEP da clínica no rodapé, CPF do médico ou datas;
+    # nenhum deles é automaticamente um dado do cliente. O texto integral segue
+    # para classificação semântica depois do OCR.
+    if tipo == "desconhecido":
+        return []
     texto_bruto = "\n".join(ln.texto for ln in linhas)
     texto_norm = "\n".join(ln.norm for ln in linhas)
     campos: dict[str, Campo] = {}
@@ -746,7 +762,7 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
     usados: set[int] = set()
 
     achado = buscar_nome(linhas, ["NOME COMPLETO", "NOME SOCIAL", "NOME DO TITULAR", "NOME"], usados)
-    if achado is None and tipo != "comprovante_residencia":
+    if achado is None and tipo in TIPOS_COM_TITULAR:
         # Sem rótulo: usa a linha de maior altura que pareça um nome (nome vem em destaque).
         candidatas = [(i, ln) for i, ln in enumerate(linhas) if parece_nome(ln.texto)]
         if candidatas:
@@ -758,8 +774,10 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
         campos["nome"] = Campo("nome", "Nome completo", valor, origem, conf, True,
                                "Nome não possui validação formal — confira com o documento.", origem)
 
-    achado_mae = buscar_nome(linhas, ["NOME DA MAE", "MAE"], usados)
-    achado_pai = buscar_nome(linhas, ["NOME DO PAI", "PAI"], usados)
+    achado_mae = achado_pai = None
+    if tipo in TIPOS_COM_FILIACAO:
+        achado_mae = buscar_nome(linhas, ["NOME DA MAE", "MAE"], usados)
+        achado_pai = buscar_nome(linhas, ["NOME DO PAI", "PAI"], usados)
 
     # "FILIAÇÃO" é seguido por dois nomes, mas o documento não diz qual é qual e
     # a ordem varia entre emissores. Antes o primeiro virava "mãe" e o segundo
@@ -767,7 +785,7 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
     # mãe. Agora os dois viram "Filiação", numerados, com a ressalva de que o
     # papel não foi identificado. Melhor um rótulo neutro que um fato errado.
     filiacao: list[tuple[str, float, str, int]] = []
-    if achado_mae is None and achado_pai is None:
+    if tipo in TIPOS_COM_FILIACAO and achado_mae is None and achado_pai is None:
         for i, ln in enumerate(linhas):
             if "FILIACAO" not in ln.norm:
                 continue

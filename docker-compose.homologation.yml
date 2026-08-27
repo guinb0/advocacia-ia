@@ -1,0 +1,315 @@
+services:
+
+  # ============================================================================
+  # HOMOLOGACAO — identica a producao, outro dominio (ver docker-compose.production.yml)
+  #
+  # O Acervo tem tres processos que o navegador chama (front, API e
+  # transcricao), e a tentacao e dar um subdominio para cada. Aqui nao serve:
+  # o login e um cookie HttpOnly assinado pela API, e front e API precisam ser
+  # o MESMO site para ele acompanhar a chamada (esta escrito no .env.example,
+  # ao lado de JWT_COOKIE_SAMESITE). Com um dominio so, cookie e CORS deixam
+  # de existir como problema e as NEXT_PUBLIC_* ficam vazias.
+  #
+  # Isso NAO reintroduz o proxy do Next, que foi removido de proposito (ver
+  # frontend/next.config.ts): quem roteia e o Traefik, na borda, sem o teto de
+  # 30s nem o buffer em memoria que matavam o upload de foto de celular.
+  #
+  # A prioridade importa: rotas mais especificas primeiro, senao o router do
+  # front (que casa com tudo) engole /api.
+  # ============================================================================
+
+  frontend:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["node", "frontend/server.js"]
+    environment:
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+        monitor: 45s
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.00"
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=traefik-public"
+        - "traefik.http.routers.acervo-hom.rule=Host(`advocacia.levelhom.com.br`)"
+        - "traefik.http.routers.acervo-hom.entrypoints=websecure"
+        - "traefik.http.routers.acervo-hom.tls=true"
+        - "traefik.http.routers.acervo-hom.tls.certresolver=cfresolver"
+        - "traefik.http.routers.acervo-hom.middlewares=hsts-headers"
+        - "traefik.http.routers.acervo-hom.priority=1"
+        - "traefik.http.middlewares.hsts-headers.headers.stsSeconds=63072000"
+        - "traefik.http.middlewares.hsts-headers.headers.stsPreload=true"
+        - "traefik.http.services.acervo-hom.loadbalancer.server.port=3000"
+    networks:
+      traefik-public:
+        aliases:
+          - acervo-hom
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  api:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    environment: &ambiente_api
+      # Nao-segredo fica aqui, fixo. So o que e segredo passa pelas variaveis
+      # do GitLab (ver gitlab_variables no .gitlab-ci.yml) — mesmo criterio do
+      # vig-agent, e menos coisa para a infra cadastrar a mao.
+      URL_PORTAL: https://advocacia.levelhom.com.br
+      ORIGENS_PERMITIDAS: https://advocacia.levelhom.com.br
+      JWT_ISSUER: https://advocacia.levelhom.com.br
+      JWT_AUDIENCE: https://advocacia.levelhom.com.br
+      JWT_COOKIE_SECURE: "1"
+      JWT_COOKIE_SAMESITE: lax
+      PERMITIR_DADOS_TESTE: "true"
+
+      SQLSERVER_HOST: ${SQLSERVER_HOST?SQLSERVER_HOST is required}
+      SQLSERVER_PORT: "1433"
+      SQLSERVER_DATABASE: advocacia
+      SQLSERVER_USER: advocacia
+      SQLSERVER_PASSWORD: ${SQLSERVER_PASSWORD?SQLSERVER_PASSWORD is required}
+      # `TrustServerCertificate=yes` ja e fixo em app/banco.py, entao o Driver
+      # 18 (que exige criptografia) conecta sem certificado emitido.
+      SQLSERVER_DRIVER: "ODBC Driver 18 for SQL Server"
+
+      PGVECTOR_HOST: ${PGVECTOR_HOST?PGVECTOR_HOST is required}
+      PGVECTOR_PORT: "5432"
+      PGVECTOR_DB: advocacia_ia
+      PGVECTOR_USER: ${PGVECTOR_USER?PGVECTOR_USER is required}
+      PGVECTOR_PASSWORD: ${PGVECTOR_PASSWORD?PGVECTOR_PASSWORD is required}
+      PGVECTOR_SSLMODE: prefer
+      PGVECTOR_TABLE: knowledge_chunks
+
+      # Vazio DESLIGA a autenticacao e abre a API inteira (ver app/auth.py).
+      JWT_SECRET: ${JWT_SECRET?JWT_SECRET is required}
+      # Vazio faz o servidor sortear uma por processo, e as sessoes do portal
+      # do cliente caem a cada restart.
+      PORTAL_SEGREDO: ${PORTAL_SEGREDO?PORTAL_SEGREDO is required}
+
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY?DEEPSEEK_API_KEY is required}
+      DEEPSEEK_BASE_URL: https://api.deepseek.com
+      DEEPSEEK_MODEL: deepseek-chat
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY?OPENROUTER_API_KEY is required}
+
+      ZAPSIGN_API_TOKEN: ${ZAPSIGN_API_TOKEN?ZAPSIGN_API_TOKEN is required}
+      ZAPSIGN_BASE_URL: https://api.zapsign.com.br/api/v1
+      ZAPSIGN_AUTH_MODE: assinaturaTela
+      # `1` manda o convite tambem pelo WhatsApp da ZapSign e consome credito
+      # do plano — o link ja sai pela nossa Evolution, de graca.
+      ZAPSIGN_WHATSAPP: "0"
+
+      EVOLUTION_API_URL: https://evolution.level33lab.cloud
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY?EVOLUTION_API_KEY is required}
+      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE?EVOLUTION_INSTANCE is required}
+      GOOGLE_AVALIACAO_URL: https://share.google/BrQVYGnjqdSz3pEw7
+      DATAJUD_API_KEY: ${DATAJUD_API_KEY?DATAJUD_API_KEY is required}
+
+      AGENTE_API_URL: http://ia-juridica:8011
+      JITSI_PUBLIC_URL: https://meet.level33lab.cloud
+
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    volumes:
+      - dados:/app/dados
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+        monitor: 45s
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.00"
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=traefik-public"
+        # /metrics, /docs e /redoc NAO entram: sao internos e ficam alcancaveis
+        # so de dentro da stack. Expor o /metrics publicaria a telemetria do
+        # escritorio para quem souber o endereco.
+        - "traefik.http.routers.acervo-hom-api.rule=Host(`advocacia.levelhom.com.br`) && (PathPrefix(`/api`) || PathPrefix(`/ws/chamada`))"
+        - "traefik.http.routers.acervo-hom-api.entrypoints=websecure"
+        - "traefik.http.routers.acervo-hom-api.tls=true"
+        - "traefik.http.routers.acervo-hom-api.tls.certresolver=cfresolver"
+        - "traefik.http.routers.acervo-hom-api.middlewares=hsts-headers"
+        - "traefik.http.routers.acervo-hom-api.priority=100"
+        - "traefik.http.services.acervo-hom-api.loadbalancer.server.port=8100"
+    networks:
+      traefik-public:
+        aliases:
+          - acervo-hom-api
+      interna: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8100/api/saude',timeout=5); sys.exit(0 if r.status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  transcricao:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.servico_transcricao:app", "--host", "0.0.0.0", "--port", "8200", "--ws-ping-interval", "20"]
+    environment:
+      # `openrouter` OBRIGATORIO: o motor `whisper` e local e quer GPU, que o
+      # cluster nao tem. Trocar para whisper aqui derruba a transcricao.
+      MOTOR_TRANSCRICAO: openrouter
+      OPENROUTER_MODELO_AUDIO: google/gemini-3.7-flash
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY?OPENROUTER_API_KEY is required}
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+        monitor: 45s
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.00"
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=traefik-public"
+        # WebSocket nao precisa de label especial no Traefik — ele repassa o
+        # Upgrade sozinho. O que precisa e da prioridade acima do front.
+        - "traefik.http.routers.acervo-hom-transcricao.rule=Host(`advocacia.levelhom.com.br`) && (PathPrefix(`/ws/transcricao`) || PathPrefix(`/entrevista`))"
+        - "traefik.http.routers.acervo-hom-transcricao.entrypoints=websecure"
+        - "traefik.http.routers.acervo-hom-transcricao.tls=true"
+        - "traefik.http.routers.acervo-hom-transcricao.tls.certresolver=cfresolver"
+        - "traefik.http.routers.acervo-hom-transcricao.middlewares=hsts-headers"
+        - "traefik.http.routers.acervo-hom-transcricao.priority=200"
+        - "traefik.http.services.acervo-hom-transcricao.loadbalancer.server.port=8200"
+    networks:
+      traefik-public:
+        aliases:
+          - acervo-hom-transcricao
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8200/saude',timeout=5); sys.exit(0 if r.status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # OCR isolado: uma leitura longa nao bloqueia IA, documentos e manutencao.
+  worker-ocr:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h"]
+    environment: *ambiente_api
+    volumes:
+      - dados:/app/dados
+    deploy:
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.00"
+    networks:
+      interna: {}
+
+  worker-background:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@%h"]
+    environment: *ambiente_api
+    volumes:
+      - dados:/app/dados
+    deploy:
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.00"
+    networks:
+      interna: {}
+
+  beat:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["celery", "-A", "app.celery_app:celery_app", "beat"]
+    environment: *ambiente_api
+    deploy:
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
+    networks:
+      interna: {}
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    deploy:
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.50"
+    networks:
+      interna: {}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  # `api` e `worker` gravam os dois aqui (arquivos de caso, contratos
+  # assinados). Volume nomeado em Swarm e POR NO: com mais de um no, os dois
+  # precisam de placement constraint no mesmo, ou isto vira armazenamento
+  # compartilhado. Ver docs/DEPLOY.md.
+  dados:
+  redis_data:
+
+networks:
+  traefik-public:
+    external: true
+  interna:

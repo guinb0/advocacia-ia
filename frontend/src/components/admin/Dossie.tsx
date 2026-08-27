@@ -22,6 +22,8 @@ import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/com
 import {
   gerarContratoDoCaso as solicitarContratoDoCaso,
   requisitosDoContrato,
+  analisarDocumentosDoCaso,
+  type AnaliseDocumentos,
 } from "@/lib/api";
 import type { TomSelo } from "@/lib/formato";
 import { ESTADO_DO_FATO, ORIGEM_DO_FATO, valorDoFato } from "@/lib/painel";
@@ -803,6 +805,8 @@ export default function Dossie({
             )}
           </Cartao>
 
+          <PainelAnaliseDocumentos casoId={casoId} />
+
           <PainelJurisprudencia
             pesquisa={pesquisa}
             resumo={ultimaPesquisa}
@@ -955,6 +959,93 @@ function ResumoDoConjunto({ precedentes }: { precedentes: Precedente[] }) {
         </p>
       )}
     </div>
+  );
+}
+
+/* O que os anexos dizem e a entrevista não registrou.
+ *
+ * O OCR lê a página inteira e o formulário guarda meia dúzia de campos. Todo o
+ * resto — o CID no laudo, a data de afastamento no CNIS, o valor no
+ * contracheque — fica no texto lido e não chega a lugar nenhum. Ninguém abre
+ * vinte documentos para conferir se algum diz algo que a conversa não pegou, e
+ * é aí que costuma estar o fato que sustenta a peça.
+ *
+ * Sob demanda, com botão, e não a cada upload: num caso de vinte documentos
+ * seriam vinte chamadas de modelo para responder a mesma pergunta.
+ *
+ * A citação de cada achado é conferida NO SERVIDOR contra o texto do documento
+ * apontado. O que não confere não chega aqui — e o número de recusas aparece,
+ * porque silenciá-lo esconderia um modelo alucinando com frequência. */
+export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
+  const [analise, setAnalise] = useState<AnaliseDocumentos | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function analisar() {
+    setCarregando(true);
+    setErro(null);
+    try {
+      setAnalise(await analisarDocumentosDoCaso(casoId));
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível analisar os documentos.");
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  return (
+    <Cartao titulo="O que os documentos dizem">
+      <p className={EXPLICACAO}>
+        Lê o texto de todos os anexos e aponta o que eles trazem e a entrevista não
+        registrou. Cada achado cita o trecho literal do documento.
+      </p>
+
+      <Botao onClick={() => void analisar()} disabled={carregando}>
+        {carregando ? "Lendo os documentos…" : analise ? "Analisar de novo" : "Analisar documentos"}
+      </Botao>
+
+      {erro && (
+        <Aviso tom="critico" titulo="A análise não foi concluída">
+          {erro}
+        </Aviso>
+      )}
+
+      {analise?.aviso && <Aviso tom="atencao">{analise.aviso}</Aviso>}
+
+      {analise && !analise.aviso && (
+        <>
+          <p className={ORIGEM}>
+            {analise.documentos_lidos} documento{analise.documentos_lidos === 1 ? "" : "s"} lido
+            {analise.documentos_lidos === 1 ? "" : "s"}
+            {analise.recusados ? ` · ${analise.recusados} achado(s) recusados na conferência da citação` : ""}
+          </p>
+
+          {analise.achados.length === 0 ? (
+            <p className={TEXTO_VAZIO}>
+              Nada nos documentos que a entrevista já não tenha registrado.
+            </p>
+          ) : (
+            <ul className={LISTA}>
+              {analise.achados.map((a, i) => (
+                <li key={i} className={ITEM}>
+                  <div className={ITEM_TOPO}>
+                    <strong>{a.informacao}</strong>
+                    {a.contradiz && (
+                      <Selo tom="critico" simbolo="!">
+                        contradiz a entrevista
+                      </Selo>
+                    )}
+                  </div>
+                  <div className={ORIGEM}>{a.documento}</div>
+                  {a.relevancia && <p className={RAZAO}>{a.relevancia}</p>}
+                  <blockquote className={TRECHO}>{a.citacao}</blockquote>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </Cartao>
   );
 }
 

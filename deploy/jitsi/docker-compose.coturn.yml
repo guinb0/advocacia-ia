@@ -1,0 +1,94 @@
+services:
+
+  # ============================================================================
+  # TURN — o relay que faz o audio chegar quando o caminho direto nao fecha.
+  #
+  # POR QUE ISTO EXISTE
+  #
+  # O navegador manda a voz por UDP na 10000 para o videobridge. Funciona na
+  # maioria das redes e falha justamente nas duas em que o cliente costuma
+  # estar: 4G de operadora (NAT que nao deixa o caminho fechar) e rede de
+  # empresa (UDP em porta alta bloqueado). Nesses casos a chamada ABRE e
+  # ninguem ouve ninguem — o pior sintoma possivel, porque parece que deu certo.
+  #
+  # O coturn escuta na 443/TCP, que nenhuma rede bloqueia, e repassa a midia.
+  #
+  # DE BRINDE, ELE CALA UM ERRO ANTIGO
+  #
+  # A lib-jitsi-meet pergunta ao Prosody por servidores de STUN/TURN assim que
+  # conecta (XEP-0215) e nao ha opcao no cliente para nao perguntar. Sem TURN
+  # configurado o Prosody responde "service-unavailable" e a lib registra dois
+  # ERROS no console a cada entrada na sala. A imagem do Prosody so carrega o
+  # modulo `external_services` quando TURN_HOST existe — entao configurar isto
+  # resolve o barulho junto com o problema de verdade.
+  #
+  # A 443 AQUI E A 443 DO TRAEFIK SAO A MESMA PORTA
+  #
+  # As duas nao cabem no mesmo IP. Ha tres saidas, em ordem de preferencia:
+  #   1. um segundo IP publico so para o TURN (mais simples de operar);
+  #   2. o TURN em 5349/TCP em vez de 443 — resolve 4G, mas nao a rede
+  #      corporativa que so libera 80 e 443, que e metade do motivo de existir;
+  #   3. Traefik na frente com TCP/SNI routing para separar por hostname.
+  # Nao escolhi por voce: depende de quantos IPs o cluster tem.
+  # ============================================================================
+
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    command:
+      - --listening-port=3478
+      - --tls-listening-port=5349
+      # `--external-ip` e o equivalente do JVB_ADVERTISE_IPS: sem ele o coturn
+      # anuncia o IP do container, que nao existe fora do cluster.
+      - --external-ip=${TURN_PUBLIC_IP?TURN_PUBLIC_IP is required}
+      - --realm=${TURN_REALM:-level33lab.cloud}
+      # Autenticacao por segredo compartilhado com o Prosody (RFC 5766 REST
+      # API). O MESMO valor precisa ir em TURN_CREDENTIALS no .env do Jitsi —
+      # se divergirem, o TURN recusa todo mundo em silencio.
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET?TURN_SECRET is required}
+      - --cert=/certs/cert.pem
+      - --pkey=/certs/privkey.pem
+      # Sem isto o coturn vira relay aberto e alguem de fora usa a banda de
+      # voces. `--no-multicast-peers` e `--denied-peer-ip` fecham o caminho
+      # para a rede interna, que e o risco real de um relay exposto.
+      - --no-multicast-peers
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --no-cli
+      - --no-tlsv1
+      - --no-tlsv1_1
+    ports:
+      - target: 3478
+        published: 3478
+        protocol: udp
+        mode: host
+      - target: 3478
+        published: 3478
+        protocol: tcp
+        mode: host
+      - target: 5349
+        published: 5349
+        protocol: tcp
+        mode: host
+    volumes:
+      # O certificado do dominio do TURN. Se o Traefik ja emite por DNS
+      # challenge, o caminho mais curto e um job que exporte o par para ca; o
+      # coturn le do disco e nao fala com o Let's Encrypt sozinho.
+      - ${TURN_CERTS_PATH:-/opt/certs/turn}:/certs:ro
+    deploy:
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.00"
+    networks:
+      - traefik-public
+
+networks:
+  traefik-public:
+    external: true

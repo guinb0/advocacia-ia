@@ -26,9 +26,17 @@ const BOTAO =
   "mt-5 w-full p-4 border-[1.5px] border-tinta bg-transparent text-tinta text-[13px] font-semibold leading-none " +
   "font-ui tracking-[0.14em] uppercase cursor-pointer disabled:opacity-[0.45] disabled:cursor-default " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
+/* Dois por linha no celular, e nao quatro empilhados.
+ *
+ * Empilhados, os botoes ocupavam ~300px — metade da tela do telefone — e
+ * empurravam a chamada para uma faixa no topo. `basis` de metade com o vao
+ * descontado da exatamente duas colunas; o texto quebra em duas linhas quando
+ * precisa, que custa muito menos altura que uma linha inteira por botao. De
+ * `sm` para cima volta ao comportamento antigo, que ali sobra largura. */
 const SECUNDARIO =
-  "flex-1 min-w-[150px] border border-borda-forte bg-transparent text-tinta text-[11px] font-semibold leading-none " +
-  "font-ui tracking-[0.08em] uppercase px-3 py-[13px] cursor-pointer hover:bg-papel-2";
+  "basis-[calc(50%-5px)] grow min-w-0 sm:basis-auto sm:min-w-[150px] border border-borda-forte " +
+  "bg-transparent text-tinta text-[11px] font-semibold leading-[1.3] text-center " +
+  "font-ui tracking-[0.08em] uppercase px-2 py-[13px] cursor-pointer hover:bg-papel-2";
 
 export default function PaginaChamada({ params }: { params: Promise<{ sala: string }> }) {
   const { sala } = use(params);
@@ -73,13 +81,15 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
     encerrada: "A chamada foi encerrada.",
   };
 
+  /* Margem menor no telefone: 16+26 de cada lado tiravam 84px dos 390 da
+   * tela, e essa largura e a que define o tamanho do rosto na chamada. */
   return (
-    <div className="min-h-screen bg-papel px-4 pt-6 pb-12 flex items-center">
+    <div className="min-h-screen bg-papel px-2 pt-4 pb-8 sm:px-4 sm:pt-6 sm:pb-12 flex items-center">
       <div className="w-[min(820px,100%)] mx-auto">
         <span className="font-bold text-[14px] leading-none font-titulo tracking-[0.02em]">ACERVO</span>
         <div className="mt-3 mb-[22px] border-t-[3px] border-double border-borda-forte" />
 
-        <div className="border border-borda-forte p-[26px]">
+        <div className="border border-borda-forte p-4 sm:p-[26px]">
           <h1 className="mb-[10px] mt-0 font-semibold text-[24px] leading-[1.15] font-titulo">
             Conversa com o escritório
           </h1>

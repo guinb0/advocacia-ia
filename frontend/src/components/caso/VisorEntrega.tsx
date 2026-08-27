@@ -12,6 +12,55 @@ function ehPdf(nome: string): boolean {
   return nome.toLowerCase().endsWith(".pdf");
 }
 
+const ROTULOS_TIPO_DOCUMENTO: Record<string, string> = {
+  "DOCUMENT.ID": "Documento de identidade",
+  "DOCUMENT.CPF": "CPF",
+  "DOCUMENT.PROOF_OF_ADDRESS": "Comprovante de endereço",
+  "DOCUMENT.CTPS": "CTPS",
+  "DOCUMENT.PAYSLIP": "Contracheque",
+  "DOCUMENT.CNIS": "CNIS",
+  "DOCUMENT.CAT": "CAT",
+  "DOCUMENT.PERSONNEL_RECORD": "Ficha funcional",
+  "DOCUMENT.POLICE_REPORT": "Boletim de ocorrência",
+  "DOCUMENT.EMERGENCY_CARE_RECORD": "Atendimento de urgência",
+  "DOCUMENT.MEDICAL_CERTIFICATE": "Atestado médico",
+  "DOCUMENT.MEDICAL_REPORT": "Laudo médico",
+  "DOCUMENT.MEDICAL_FOLLOW_UP": "Acompanhamento médico",
+  "DOCUMENT.MEDICAL_CHART": "Prontuário médico",
+  "DOCUMENT.TREATMENT_RECORD": "Registro de tratamento",
+  "DOCUMENT.IMAGING_EXAM": "Exame de imagem",
+  "DOCUMENT.IMAGING_REPORT": "Laudo de imagem",
+  "DOCUMENT.PRESCRIPTION": "Receita médica",
+  "DOCUMENT.INSS_DECISION": "Decisão do INSS",
+  "DOCUMENT.INSS_GRANT_LETTER": "Carta de concessão do INSS",
+  "DOCUMENT.INSS_BENEFIT_EXTENSION": "Prorrogação de benefício do INSS",
+  "DOCUMENT.INSS_EXPERT_REPORT": "Laudo pericial do INSS",
+  "DOCUMENT.INSS_ADMINISTRATIVE_FILE": "Processo administrativo do INSS",
+  "DOCUMENT.PPP": "PPP",
+  "DOCUMENT.ASO": "ASO",
+  "DOCUMENT.PRIVATE_EXPERT_REPORT": "Parecer técnico particular",
+  "DOCUMENT.ACCIDENT_SCENE_MEDIA": "Mídia do local do acidente",
+  "DOCUMENT.OCCUPATIONAL_PROGRAM": "Programa ocupacional",
+  "DOCUMENT.UNKNOWN": "Desconhecido",
+  DESCONHECIDO: "Desconhecido",
+};
+
+function formatarTipoDocumento(tipo: string): string {
+  const chave = tipo.trim().toUpperCase();
+  const rotuloConhecido = ROTULOS_TIPO_DOCUMENTO[chave];
+  if (rotuloConhecido) return rotuloConhecido;
+
+  const limpo = tipo
+    .replace(/^DOCUMENT\./i, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  if (!limpo || limpo === "—") return "—";
+  if (limpo.toLowerCase() === "desconhecido") return "Desconhecido";
+  return limpo
+    .toLowerCase()
+    .replace(/\b\p{L}/gu, (letra) => letra.toLocaleUpperCase("pt-BR"));
+}
+
 interface Props {
   entregaId: string;
   arquivo: string;
@@ -67,6 +116,29 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
   const validacao = extracao?.validacao;
   const campos = extracao?.campos ?? [];
   const veredito = validacao ? ESTILO_VEREDITO[validacao.veredito] : null;
+  const errosValidacao = validacao?.erros ?? [];
+  const tipoLido =
+    extracao?.tipo?.descricao_detectado ??
+    extracao?.tipo?.descricao ??
+    detalhe?.tipo_detectado ??
+    "—";
+  const tipoLidoFormatado = formatarTipoDocumento(tipoLido);
+  const scoreLegibilidade =
+    extracao?.qualidade_imagem?.score_legibilidade ??
+    validacao?.score_legibilidade ??
+    detalhe?.score_legibilidade ??
+    null;
+  const tempoProcessamento = extracao?.tempo_processamento_s;
+  const statusLeitura = detalhe?.status_proc ?? "pronto";
+  const vereditoSalvo = validacao?.veredito ?? detalhe?.veredito;
+  const dadosUtilizaveis =
+    validacao?.dados_utilizaveis ?? detalhe?.dados_utilizaveis ?? false;
+  const criadoEm = detalhe?.criado_em
+    ? new Date(detalhe.criado_em).toLocaleString("pt-BR")
+    : "—";
+  const textoCompleto =
+    extracao?.texto_completo ||
+    (extracao?.texto_linhas ?? []).map((linha) => linha.texto).join("\n");
 
   async function baixarPdf() {
     setBaixandoPdf(true);
@@ -167,26 +239,35 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-2 my-[14px] mb-[18px]">
                   <div className="px-[11px] py-[9px] border border-borda rounded-campo bg-papel-2">
                     <span className="block text-tinta-3 text-xs">Tipo lido</span>
-                    <span className="block mt-[1px] text-tinta text-base font-semibold tabular-nums">
-                      {extracao.tipo.descricao_detectado}
+                    <span
+                      className="block mt-[1px] max-w-full text-tinta text-[0.92rem] font-semibold leading-tight [overflow-wrap:anywhere]"
+                      title={tipoLido}
+                    >
+                      {tipoLidoFormatado}
                     </span>
                   </div>
                   <div className="px-[11px] py-[9px] border border-borda rounded-campo bg-papel-2">
                     <span className="block text-tinta-3 text-xs">Nitidez</span>
                     <span className="block mt-[1px] text-tinta text-base font-semibold tabular-nums">
-                      {extracao.qualidade_imagem.score_legibilidade}%
+                      {scoreLegibilidade === null ? "—" : `${scoreLegibilidade}%`}
                     </span>
                   </div>
                   <div className="px-[11px] py-[9px] border border-borda rounded-campo bg-papel-2">
-                    <span className="block text-tinta-3 text-xs">Dados encontrados</span>
+                    <span className="block text-tinta-3 text-xs">
+                      {extracao.classificacao_semantica ? "Texto extraído" : "Dados encontrados"}
+                    </span>
                     <span className="block mt-[1px] text-tinta text-base font-semibold tabular-nums">
-                      {validacao?.completude_percentual ?? 0}%
+                      {extracao.classificacao_semantica
+                        ? `${extracao.ocr?.caracteres_detectados ?? 0} caracteres`
+                        : validacao?.completude_percentual === undefined
+                          ? "—"
+                          : `${validacao.completude_percentual}%`}
                     </span>
                   </div>
                   <div className="px-[11px] py-[9px] border border-borda rounded-campo bg-papel-2">
                     <span className="block text-tinta-3 text-xs">Tempo de leitura</span>
                     <span className="block mt-[1px] text-tinta text-base font-semibold tabular-nums">
-                      {extracao.tempo_processamento_s}s
+                      {tempoProcessamento === undefined ? "—" : `${tempoProcessamento}s`}
                     </span>
                   </div>
                 </div>
@@ -196,14 +277,37 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                 </span>
 
                 {campos.length === 0 ? (
-                  <div className="py-4">
-                    <Aviso tom="info" titulo="Conteúdo jurídico preservado">
-                      Este documento não possui campos cadastrais conhecidos. O texto integral abaixo foi
-                      guardado e será usado pela IA jurídica com referência a este anexo.
-                    </Aviso>
-                    <pre className="mt-3 p-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-campo border border-borda bg-papel-2 text-tinta text-xs leading-relaxed font-codigo select-text">
-                      {extracao.texto_completo || extracao.texto_linhas.map((linha) => linha.texto).join("\n")}
-                    </pre>
+                  <div className="py-2">
+                    {textoCompleto ? (
+                      <>
+                        <Aviso tom="info" titulo="Conteúdo jurídico preservado">
+                          Este documento não possui campos cadastrais conhecidos. O texto integral abaixo foi
+                          guardado e será usado pela IA jurídica com referência a este anexo.
+                        </Aviso>
+                        <pre className="mt-3 mb-4 p-3 max-h-[340px] overflow-auto whitespace-pre-wrap rounded-campo border border-borda bg-papel-2 text-tinta text-xs leading-relaxed font-codigo select-text">
+                          {textoCompleto}
+                        </pre>
+                      </>
+                    ) : (
+                      <p className="mb-3 text-tinta-3 text-sm leading-[1.6]">
+                        Este registro não tem campos estruturados de OCR salvos, mas os dados
+                        de conferência do banco estão abaixo.
+                      </p>
+                    )}
+                    <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-2 text-sm">
+                      <dt className="text-tinta-3">Arquivo</dt>
+                      <dd className="m-0 text-tinta font-codigo [overflow-wrap:anywhere]">{detalhe.arquivo}</dd>
+                      <dt className="text-tinta-3">Item</dt>
+                      <dd className="m-0 text-tinta font-codigo">{detalhe.item_codigo}</dd>
+                      <dt className="text-tinta-3">Leitura</dt>
+                      <dd className="m-0 text-tinta">{statusLeitura}</dd>
+                      <dt className="text-tinta-3">Conferência</dt>
+                      <dd className="m-0 text-tinta">{vereditoSalvo ?? "—"}</dd>
+                      <dt className="text-tinta-3">Dados utilizáveis</dt>
+                      <dd className="m-0 text-tinta">{dadosUtilizaveis ? "sim" : "não"}</dd>
+                      <dt className="text-tinta-3">Recebido em</dt>
+                      <dd className="m-0 text-tinta">{criadoEm}</dd>
+                    </dl>
                   </div>
                 ) : (
                   <table className="w-full border-collapse">
@@ -238,7 +342,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                             )}
                           </td>
                           <td className="pr-[10px] py-[10px] pl-0 border-b border-borda align-top text-tinta-3 font-codigo tabular-nums text-xs text-right whitespace-nowrap">
-                            {Math.round(campo.confianca * 100)}%
+                            {typeof campo.confianca === "number" ? `${Math.round(campo.confianca * 100)}%` : "—"}
                           </td>
                           <td className="pr-[10px] py-[10px] pl-0 border-b border-borda align-top">
                             {campo.valido === null ? null : campo.valido ? (
@@ -257,13 +361,13 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                   </table>
                 )}
 
-                {validacao && validacao.erros.length > 0 && (
+                {errosValidacao.length > 0 && (
                   <>
                     <span className="block my-[18px] mb-2 text-tinta text-sm font-bold">
-                      Problemas encontrados ({validacao.erros.length})
+                      Problemas encontrados ({errosValidacao.length})
                     </span>
                     <ul className="list-none mb-[14px] mt-0 p-0">
-                      {validacao.erros.map((e, i) => (
+                      {errosValidacao.map((e, i) => (
                         <li
                           key={i}
                           className="flex gap-2 px-3 py-[9px] mb-[6px] border border-critico-borda border-l-4 rounded-campo bg-critico-claro text-tinta-2 text-sm leading-[1.55]"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Selo } from "@/components/ui/Basicos";
 import { enviarAvaliacaoGoogle } from "@/lib/api";
@@ -50,6 +50,7 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
   const [copiado, setCopiado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [retorno, setRetorno] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
+  const tentouAutomatico = useRef(false);
 
   async function copiar() {
     await navigator.clipboard.writeText(`${MENSAGEM}${LINK_AVALIACAO}`);
@@ -61,14 +62,27 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
     setEnviando(true);
     setRetorno(null);
     try {
-      await enviarAvaliacaoGoogle(telefone);
-      setRetorno({ tom: "ok", texto: "Link enviado para o WhatsApp do cliente." });
+      const resultado = await enviarAvaliacaoGoogle(telefone);
+      setRetorno({
+        tom: "ok",
+        texto: resultado.ja_enviado
+          ? "O link já tinha sido enviado para este cliente."
+          : "Link enviado automaticamente para o WhatsApp do cliente.",
+      });
     } catch (e) {
       setRetorno({ tom: "erro", texto: e instanceof Error ? e.message : "Não foi possível enviar o link." });
     } finally {
       setEnviando(false);
     }
   }
+
+  useEffect(() => {
+    if (tentouAutomatico.current || concluida || !telefone.trim()) return;
+    tentouAutomatico.current = true;
+    void enviar();
+    // O backend deduplica pelo número. Não repetir por mudanças visuais do componente.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [telefone, concluida]);
 
   return (
     <section className="mt-6 border-t border-borda pt-[14px]" aria-labelledby="titulo-avaliacao-google">
@@ -91,7 +105,7 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
 
         <div className="flex items-center flex-wrap gap-[9px] mt-[13px] max-[640px]:items-stretch max-[640px]:flex-col">
           <button type="button" className={PRIMARIO} disabled={enviando || !telefone.trim()} onClick={() => void enviar()}>
-            {enviando ? "Enviando…" : "Enviar pelo WhatsApp"}
+            {enviando ? "Enviando automaticamente…" : "Rever envio pelo WhatsApp"}
           </button>
           <button type="button" className={SECUNDARIO} onClick={() => void copiar()}>
             {copiado ? "Convite copiado ✓" : "Copiar convite"}

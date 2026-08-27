@@ -32,7 +32,7 @@ function baseDaApi(): string {
   const definida = process.env.API_URL || process.env.NEXT_PUBLIC_OCR_API;
   if (typeof window === "undefined") return definida || `http://localhost:${PORTA_API}`;
 
-  const doNavegador = `${window.location.protocol}//${window.location.hostname}:${PORTA_API}`;
+  const doNavegador = window.location.origin;
   if (!definida) return doNavegador;
 
   try {

@@ -16,11 +16,11 @@ A rota de envio passou a assumir quem está logado (ver `_quem_conduziu` em
 nome continua sem nome, e aparece agrupado como "não identificado" em vez de ser
 escondido. Sumir com elas faria a soma da tela não bater com a realidade.
 
-POR QUE SÓ O SECRETÁRIO
+CONTROLE DE ACESSO
 
 Ver a transcrição de todas as entrevistas do escritório é acesso amplo a relato
-de cliente. O advogado já alcança o que é dos casos dele; esta visão atravessa
-todos, e por isso é do papel cuja função é justamente essa.
+de cliente. Quem pode fazê-lo é definido pelo módulo `supervisao` na matriz de
+perfis, para a API e a navbar seguirem a mesma regra.
 """
 
 from __future__ import annotations
@@ -32,14 +32,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from . import armazenamento, auditoria, contrato
-from .auth import exigir_papel
+from .auth import exigir_modulo
 from .cache_leitura import por_alguns_segundos
 
 log = logging.getLogger("supervisao")
 
 roteador = APIRouter(prefix="/api/supervisao", tags=["supervisao"])
 
-SoSecretario = Depends(exigir_papel("secretario"))
+PodeSupervisionar = Depends(exigir_modulo("supervisao"))
 
 #: Como aparece quem conduziu entrevista antes de a atribuição existir.
 SEM_NOME = "não identificado"
@@ -71,7 +71,7 @@ def _data_curta(bruto: object) -> str:
     return texto
 
 
-@roteador.get("/entrevistas", dependencies=[SoSecretario])
+@roteador.get("/entrevistas", dependencies=[PodeSupervisionar])
 @por_alguns_segundos(5)
 def por_entrevistador() -> dict[str, Any]:
     """Quantas entrevistas cada um fez, e a lista de cada pessoa."""
@@ -159,7 +159,7 @@ def por_entrevistador() -> dict[str, Any]:
     }
 
 
-@roteador.get("/entrevistas/{entrevista_id}", dependencies=[SoSecretario])
+@roteador.get("/entrevistas/{entrevista_id}", dependencies=[PodeSupervisionar])
 def transcricao(entrevista_id: str) -> dict[str, Any]:
     """A transcrição inteira de uma entrevista, com o que o agente extraiu dela."""
     e = armazenamento.obter_entrevista(entrevista_id)
@@ -181,7 +181,7 @@ def transcricao(entrevista_id: str) -> dict[str, Any]:
     }
 
 
-@roteador.post("/entrevistas/{entrevista_id}/auditoria", dependencies=[SoSecretario])
+@roteador.post("/entrevistas/{entrevista_id}/auditoria", dependencies=[PodeSupervisionar])
 def auditar_entrevista(entrevista_id: str) -> dict[str, Any]:
     """Lê a transcrição bruta e diz o que do roteiro não aparece nela.
 
@@ -419,7 +419,7 @@ def _progresso(fases: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-@roteador.get("/entrevistas/{entrevista_id}/checklist", dependencies=[SoSecretario])
+@roteador.get("/entrevistas/{entrevista_id}/checklist", dependencies=[PodeSupervisionar])
 def checklist(entrevista_id: str) -> dict[str, Any]:
     """A parte do checklist que sai do REGISTRO, sem ida ao modelo.
 
@@ -470,7 +470,7 @@ class MarcacaoAvaliacao(BaseModel):
     concluida: bool
 
 
-@roteador.post("/entrevistas/{entrevista_id}/avaliacao-google", dependencies=[SoSecretario])
+@roteador.post("/entrevistas/{entrevista_id}/avaliacao-google", dependencies=[PodeSupervisionar])
 def corrigir_avaliacao_google(
     entrevista_id: str, marcacao: MarcacaoAvaliacao
 ) -> dict[str, Any]:

@@ -6,7 +6,7 @@ import logging
 
 from celery.signals import worker_ready
 
-from .. import armazenamento, casos, categorias, jobs, pipeline
+from .. import armazenamento, casos, categorias, indexacao_documento, jobs, pipeline
 from ..celery_app import celery_app
 
 log = logging.getLogger("ocr-worker")
@@ -15,6 +15,39 @@ log = logging.getLogger("ocr-worker")
 def _executar_ocr(caminho: str, nome: str, idioma: str, tipo: str | None) -> dict:
     conteudo = Path(caminho).read_bytes()
     return pipeline.processar(conteudo, nome, idioma, tipo)
+
+
+def _ler_anexo(entrega_id: str, caminho: str) -> bytes:
+    """O binário do documento, venha ele do disco ou do banco.
+
+    QUEM GRAVA E QUEM LÊ PODEM NÃO SER A MESMA MÁQUINA.
+
+    O caminho que chega aqui foi escrito pela API, no disco DELA. Na estação de
+    trabalho isso é o mesmo disco e ninguém nota. Em container — e em qualquer
+    worker rodando fora da máquina da API, que é o modo de escalar descrito em
+    `docs/CELERY.md` — o caminho pode simplesmente não existir deste lado.
+
+    Ler direto do caminho transformava isso em `FileNotFoundError`, que a task
+    reconhece como `OSError` e tenta de novo três vezes antes de desistir: quatro
+    leituras condenadas a falhar por um arquivo que está inteiro no SQL Server,
+    em `entregas.conteudo`. `caminho_duravel_da_entrega` restaura a cópia local a
+    partir dele, conferindo o checksum antes de servir.
+    """
+    arquivo = Path(caminho)
+    if arquivo.is_file():
+        return arquivo.read_bytes()
+
+    restaurado = armazenamento.caminho_duravel_da_entrega(entrega_id)
+    if restaurado is None:
+        # De propósito NÃO é um `OSError`: `autoretry_for` o repetiria três vezes,
+        # e nada disto melhora com o tempo — ou o binário está no banco, ou não
+        # está. Falhar na hora põe o pedido de reenvio na tela do advogado agora.
+        raise RuntimeError(
+            "O arquivo enviado não está no disco deste leitor nem tem cópia íntegra "
+            "no banco. Peça o reenvio do documento."
+        )
+    log.info("anexo da entrega %s restaurado do banco para %s", entrega_id, restaurado)
+    return restaurado.read_bytes()
 
 
 def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
@@ -115,7 +148,7 @@ def processar_entrega(
         if item is None:
             raise ValueError(f"Item {item_codigo!r} não pertence ao checklist.")
 
-        conteudo = Path(caminho).read_bytes()
+        conteudo = _ler_anexo(entrega_id, caminho)
         tipo_extracao = (
             "cin" if usar_para_rg_e_cpf and item.tipo_ocr in {"rg", "cpf"}
             else item.tipo_ocr
@@ -129,6 +162,17 @@ def processar_entrega(
             tipo_extracao,
             gerar_arquivos_temporarios=False,
         )
+
+        # Tipos não estruturados (laudo, atestado, BO, CNIS...) não passam pelo
+        # extrator cadastral. O DeepSeek interpreta o texto integral do OCR.
+        if resultado.get("tipo", {}).get("codigo") == "desconhecido" and resultado.get("validacao", {}).get("texto_utilizavel"):
+            try:
+                semantica = indexacao_documento.classificar(resultado, categoria.nome)
+                resultado["classificacao_semantica"] = semantica
+                resultado["tipo"]["descricao_detectado"] = semantica["tipo_semantico"]
+            except Exception as exc:
+                log.warning("classificação semântica falhou para %s: %s", entrega_id, exc)
+                resultado["classificacao_semantica"] = {"status": "indisponivel", "erro": str(exc)[:200]}
 
         unificar = usar_para_rg_e_cpf
         if not unificar and item.tipo_ocr in {"rg", "cpf"}:
@@ -145,6 +189,13 @@ def processar_entrega(
         detectado = resultado.get("tipo", {}).get("detectado")
         confere = casos.tipo_confere(item, detectado, unificar)
         armazenamento.concluir_entrega(entrega_id, resultado, confere, itens_atendidos)
+        if resultado.get("classificacao_semantica", {}).get("tipo_semantico"):
+            try:
+                indexacao_documento.indexar(entrega_id, caso_id, nome, resultado)
+            except Exception:
+                # Upload e OCR já estão persistidos; indisponibilidade de OpenRouter
+                # ou PGVector não pode transformar uma entrega válida em erro.
+                log.warning("indexação vetorial falhou para %s", entrega_id, exc_info=True)
         _entregar_ao_agente(caso_id, entrega_id)
         return {"entrega_id": entrega_id, "concluida": True}
     except Exception as exc:

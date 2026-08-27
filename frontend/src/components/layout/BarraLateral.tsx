@@ -31,7 +31,9 @@
 
 import { useEffect, useState } from "react";
 
+import { podeAbrirTela } from "@/app/home/home.model";
 import type { Tela } from "@/app/home/home.model";
+import { useSessao } from "@/lib/auth";
 
 interface Modulo {
   tela: Tela;
@@ -75,13 +77,6 @@ const GRUPOS: Grupo[] = [
   {
     titulo: "Escritório",
     itens: [
-      // TEMPORÁRIO — estes quatro eram filtrados por papel (`Supervisão` para
-      // secretário; os outros três para advogado). O filtro foi retirado a pedido
-      // enquanto o produto está em construção, e a observação que estava na faixa
-      // horizontal continua valendo aqui: isto NÃO concede permissão nenhuma. O
-      // backend segue recusando quem não tem o papel, então o menu mostra caminhos
-      // que podem terminar em 403. Para voltar atrás, filtre `GRUPOS` por
-      // `sessao.papeis` antes de desenhar.
       { tela: "supervisao", rotulo: "Supervisão" },
       // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
       // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
@@ -108,6 +103,11 @@ function ativa(modulo: Modulo, tela: Tela): boolean {
   return modulo.tela === tela || (modulo.filhas?.includes(tela) ?? false);
 }
 
+function indiceDoModulo(item: Modulo, modulos: string[]): number {
+  const indice = modulos.findIndex((modulo) => podeAbrirTela(item.tela, [modulo]));
+  return indice === -1 ? Number.MAX_SAFE_INTEGER : indice;
+}
+
 interface Props {
   tela: Tela;
   onNavegar: (tela: Tela) => void;
@@ -115,6 +115,8 @@ interface Props {
 
 export default function BarraLateral({ tela, onNavegar }: Props) {
   const [aberta, setAberta] = useState(false);
+  const sessao = useSessao();
+  const modulos = sessao.carregando ? [] : sessao.modulos;
 
   // Esc fecha a gaveta. Sem isto, no celular, o único jeito de desistir do menu é
   // acertar o backdrop — e ele é justamente o que fica atrás do dedo.
@@ -145,25 +147,42 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
 
   const lista = (
     <nav className="flex flex-col gap-[2px] p-3" aria-label="Módulos do sistema">
-      {GRUPOS.map((grupo) => (
-        <div key={grupo.titulo}>
-          <div className={GRUPO_TITULO}>{grupo.titulo}</div>
-          {grupo.itens.map((item) => {
-            const acesa = ativa(item, tela);
-            return (
-              <button
-                key={item.tela}
-                type="button"
-                className={acesa ? ITEM_ATIVO : ITEM}
-                aria-current={acesa ? "page" : undefined}
-                onClick={() => navegar(item.tela)}
-              >
-                {item.rotulo}
-              </button>
-            );
-          })}
-        </div>
-      ))}
+      {[...GRUPOS]
+        .map((grupo, indiceGrupo) => {
+          const itens = grupo.itens
+            .filter((item) => podeAbrirTela(item.tela, modulos))
+            .sort((a, b) => indiceDoModulo(a, modulos) - indiceDoModulo(b, modulos));
+          return { ...grupo, itens, indiceGrupo };
+        })
+        .filter((grupo) => grupo.itens.length > 0)
+        .sort((a, b) => {
+          const ordemA = Math.min(...a.itens.map((item) => indiceDoModulo(item, modulos)));
+          const ordemB = Math.min(...b.itens.map((item) => indiceDoModulo(item, modulos)));
+          return ordemA - ordemB || a.indiceGrupo - b.indiceGrupo;
+        })
+        .map((grupo) => {
+          const itens = grupo.itens;
+          if (itens.length === 0) return null;
+          return (
+            <div key={grupo.titulo}>
+              <div className={GRUPO_TITULO}>{grupo.titulo}</div>
+              {itens.map((item) => {
+                const acesa = ativa(item, tela);
+                return (
+                  <button
+                    key={item.tela}
+                    type="button"
+                    className={acesa ? ITEM_ATIVO : ITEM}
+                    aria-current={acesa ? "page" : undefined}
+                    onClick={() => navegar(item.tela)}
+                  >
+                    {item.rotulo}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
     </nav>
   );
 

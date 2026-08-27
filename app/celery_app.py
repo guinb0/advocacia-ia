@@ -6,6 +6,26 @@ import os
 
 from celery import Celery
 
+from . import ambiente
+
+# O `.env` PRECISA ser lido aqui, e não só na API.
+#
+# O worker importa `app.tasks.*`, e nenhum desses módulos passa por quem lê o
+# arquivo (`app/rag.py` e `app/banco.py` leem no import deles; o OCR não importa
+# nem um nem outro). Enquanto se sobe tudo pelo `iniciar.ps1`, o script exporta o
+# `.env` antes de lançar os processos e nada disto aparece.
+#
+# O caso que isto cobre é o outro, e ele já aconteceu: uma chave acrescentada ao
+# `.env` DEPOIS de o worker subir não chega nele. Foi o que houve com
+# `MISTRAL_API_KEY` — o motor de OCR é só Mistral, sem queda para o Paddle, então
+# toda leitura passou a levantar "MISTRAL_API_KEY não configurada" e o documento
+# ficava eternamente em "Leitura em andamento". Erro de configuração parecendo
+# fila travada, que é o mesmo engano que o docstring de `app/ambiente.py` conta
+# ter acontecido com a transcrição.
+#
+# `carregar` só preenche o que falta: variável já exportada continua vencendo.
+ambiente.carregar()
+
 BROKER = os.getenv("CELERY_BROKER_URL", "redis://localhost:6380/0")
 BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6380/1")
 
@@ -64,9 +84,20 @@ celery_app.conf.update(
             "task": "app.tasks.manutencao.recuperar_jobs_abandonados",
             "schedule": 900.0,
         },
+        # A cada 5 min porque é o intervalo em que um documento preso ainda passa
+        # por lentidão, e não por sistema quebrado. Só reenfileira o que já passou
+        # de `MINUTOS_TRAVADA` — não interfere numa leitura em andamento.
+        "recuperar-entregas-travadas": {
+            "task": "app.tasks.manutencao.recuperar_entregas_travadas",
+            "schedule": 300.0,
+        },
         "reenfileirar-entregas-ao-agente": {
             "task": "app.tasks.agente.reenfileirar_pendentes",
             "schedule": 600.0,
+        },
+        "cobrar-documentos-pendentes": {
+            "task": "app.tasks.manutencao.cobrar_documentos_pendentes",
+            "schedule": 900.0,
         },
     },
 )

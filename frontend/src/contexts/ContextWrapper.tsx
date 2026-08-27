@@ -20,8 +20,9 @@ import type { SessaoUsuario } from "@/app/page.interface";
  * a piscada de "carregando" a cada navegação.
  *
  * Eles NÃO são credencial. Quem autoriza é o token, conferido no servidor a cada
- * requisição; adulterar `UP` aqui muda o menu que a tela desenha e não abre porta
- * nenhuma — a rota continua respondendo 403. É a mesma divisão do DFLegal.
+ * requisição. Permissões de módulo também não ficam mais aqui: cookie velho ou
+ * adulterado não pode decidir navbar. A tela só desenha módulos vindos do
+ * `my-account`, que lê a matriz atual no banco. É a mesma divisão do DFLegal.
  *
  * O `my-account` corrige a deriva: perfil trocado no meio do expediente muda no
  * banco e não no cookie, e sem essa releitura o menu ficaria mostrando o alcance
@@ -32,8 +33,16 @@ const COOKIE_ID = "UID";
 const COOKIE_PERFIL = "UP";
 const COOKIE_NOME = "UN";
 const COOKIE_MODULOS = "UM";
+const COOKIE_ROTAS_ANTIGO = "UR";
 const COOKIE_SENHA_PADRAO = "USP";
-const COOKIES_SESSAO = [COOKIE_ID, COOKIE_PERFIL, COOKIE_NOME, COOKIE_MODULOS, COOKIE_SENHA_PADRAO];
+const COOKIES_SESSAO = [
+  COOKIE_ID,
+  COOKIE_PERFIL,
+  COOKIE_NOME,
+  COOKIE_MODULOS,
+  COOKIE_ROTAS_ANTIGO,
+  COOKIE_SENHA_PADRAO,
+];
 
 /** Acompanha a validade do token (24h). Cookie que sobrevive ao token faria a
  *  tela mostrar um usuário logado que leva 401 no primeiro clique. */
@@ -81,7 +90,8 @@ export const ContextWrapper = ({ children }: { children: ReactNode }) => {
     guardar(COOKIE_ID, usuario.codigo);
     guardar(COOKIE_PERFIL, usuario.perfil);
     guardar(COOKIE_NOME, usuario.nome);
-    guardar(COOKIE_MODULOS, (usuario.modulos ?? []).join(","));
+    deleteCookie(COOKIE_MODULOS);
+    deleteCookie(COOKIE_ROTAS_ANTIGO);
     guardar(COOKIE_SENHA_PADRAO, String(usuario.senhaPadrao));
   }, []);
 
@@ -89,6 +99,15 @@ export const ContextWrapper = ({ children }: { children: ReactNode }) => {
     setLoggedUser(null);
     COOKIES_SESSAO.forEach((nome) => deleteCookie(nome));
   }, []);
+
+  const confirmarSessao = useCallback(async () => {
+    const conta = await MyAccountService();
+    // `null` aqui é rede instável, rota pública ou sessão ausente. O 401 real já
+    // é tratado em `api.ts`; preservar o cookie evita desmontar a tela por queda
+    // curta da API.
+    if (conta) setCookieLoggedUser(conta);
+    return conta;
+  }, [setCookieLoggedUser]);
 
   const sair = useCallback(async () => {
     await LogoutService();
@@ -108,18 +127,15 @@ export const ContextWrapper = ({ children }: { children: ReactNode }) => {
         nome: ler(COOKIE_NOME) ?? "",
         email: "",
         senhaPadrao: ler(COOKIE_SENHA_PADRAO) === "true",
-        modulos: (ler(COOKIE_MODULOS) ?? "").split(",").filter(Boolean),
+        // Identidade pode vir do cookie para evitar piscada visual; permissão,
+        // nunca. A navbar espera o `my-account`, que respeita `ativo` e
+        // `hasPermissao` direto do banco.
+        modulos: [],
       });
     }
 
     let ativo = true;
-    void MyAccountService()
-      .then((conta) => {
-        if (!ativo) return;
-        // `null` aqui é rede instável, não sessão inválida: o 401 já teria
-        // levado para o login dentro do `api.ts`. Manter o que veio do cookie.
-        if (conta) setCookieLoggedUser(conta);
-      })
+    void confirmarSessao()
       .finally(() => {
         if (ativo) setCarregando(false);
       });
@@ -127,7 +143,22 @@ export const ContextWrapper = ({ children }: { children: ReactNode }) => {
     return () => {
       ativo = false;
     };
-  }, [setCookieLoggedUser]);
+  }, [confirmarSessao]);
+
+  // Perfil e módulos podem mudar no banco enquanto a tela está aberta. Ao voltar
+  // para a aba, reconfirma a sessão para o menu refletir a matriz atual.
+  useEffect(() => {
+    const aoFocar = () => void confirmarSessao();
+    const aoMudarVisibilidade = () => {
+      if (document.visibilityState === "visible") aoFocar();
+    };
+    window.addEventListener("focus", aoFocar);
+    document.addEventListener("visibilitychange", aoMudarVisibilidade);
+    return () => {
+      window.removeEventListener("focus", aoFocar);
+      document.removeEventListener("visibilitychange", aoMudarVisibilidade);
+    };
+  }, [confirmarSessao]);
 
   // O `api.ts` dispara este evento ao receber 401. Sem limpar aqui, a tela de
   // login voltaria a "restaurar" um usuário que já não vale e mostraria o nome
