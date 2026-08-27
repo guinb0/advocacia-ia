@@ -1,0 +1,28 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: OTT.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: doze anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Sim.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: Quais sintomas e diagnóstico?
+Entrevistado: Tenho tendinite no ombro por causa da repetição no trabalho. CID M75.
+Entrevistador: Quais médicos consultou?
+Entrevistado: Ortopedista e reumatologista.
+Entrevistador: Fez tratamento?
+Entrevistado: Fiz fisioterapia e anti-inflamatório.
+Entrevistador: Foi afastado?
+Entrevistado: Sim, pelo INSS por três meses.
+Entrevistador: Tem laudos?
+Entrevistado: Sim.
+Entrevistador: Já tinha isso antes de entrar nos Correios?
+Entrevistado: Não.

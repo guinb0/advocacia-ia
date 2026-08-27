@@ -161,6 +161,11 @@ TIPOS_COM_TITULAR = frozenset(
     {"rg", "cnh", "ctps", "cin", "cpf", "titulo_eleitor", "cartao_sus", "certidao"}
 )
 TIPOS_COM_FILIACAO = frozenset({"rg", "cnh", "cin", "certidao"})
+# CPF só sai da foto do documento de identificação que o imprime de verdade.
+# CTPS, comprovante, título etc. podem citar um CPF no texto — isso não é a
+# foto do documento do cliente, e misturar esses números no dossiê já gerou
+# CPF errado. Nome, endereço e demais campos seguem a regra por tipo.
+TIPOS_COM_CPF = frozenset({"cpf", "cnh", "cin"})
 
 
 def classificar(texto_norm: str) -> tuple[str, int, dict[str, int]]:
@@ -554,15 +559,18 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
     campos: dict[str, Campo] = {}
 
     # --- CPF ---------------------------------------------------------------
-    cpfs = _achar_com_correcao(RE_CPF, texto_bruto, V.validar_cpf)
-    if not cpfs:
-        cpfs = [(d, d) for d in RE_11_DIGITOS.findall(texto_bruto) if V.validar_cpf(d)]
-    if cpfs:
-        # Se houver mais de um, prefere o que tem o rótulo "CPF" por perto.
-        escolhido = next((c for c in cpfs if _rotulo_proximo(linhas, c[0], ["CPF"])), cpfs[0])
-        conf, origem = _contexto(linhas, escolhido[0])
-        campos["cpf"] = Campo("cpf", "CPF", V.formatar_cpf(escolhido[0]), escolhido[1], conf, True,
-                              "Dígitos verificadores conferem.", origem)
+    # Só na foto do cartão CPF / CNH / CIN. Em outros tipos o número pode
+    # aparecer (médico, cônjuge, empregador) e NÃO deve virar o CPF do cliente.
+    if tipo in TIPOS_COM_CPF:
+        cpfs = _achar_com_correcao(RE_CPF, texto_bruto, V.validar_cpf)
+        if not cpfs:
+            cpfs = [(d, d) for d in RE_11_DIGITOS.findall(texto_bruto) if V.validar_cpf(d)]
+        if cpfs:
+            # Se houver mais de um, prefere o que tem o rótulo "CPF" por perto.
+            escolhido = next((c for c in cpfs if _rotulo_proximo(linhas, c[0], ["CPF"])), cpfs[0])
+            conf, origem = _contexto(linhas, escolhido[0])
+            campos["cpf"] = Campo("cpf", "CPF", V.formatar_cpf(escolhido[0]), escolhido[1], conf, True,
+                                  "Dígitos verificadores conferem.", origem)
 
     cpf_digitos = V.only_digits(campos["cpf"].valor) if "cpf" in campos else ""
 
@@ -576,11 +584,16 @@ def extrair_campos(linhas: list[Linha], tipo: str) -> list[Campo]:
             corrigido = texto_bruto.translate(_LETRA_PARA_DIGITO)
             candidatos_cnh = [d for d in RE_11_DIGITOS.findall(corrigido) if V.validar_cnh(d)]
 
+        # Nunca use o CPF impresso na CNH como nº de registro — o checksum do
+        # Denatran às vezes passa em número que também é CPF válido.
+        def _candidato_registro(c: str) -> bool:
+            return c != cpf_digitos and not V.validar_cpf(c)
+
         rotulos_cnh = ["N REGISTRO", "N. REGISTRO", "REGISTRO", "RENACH"]
         cnh = next((c for c in candidatos_cnh
-                    if c != cpf_digitos and _rotulo_proximo(linhas, c, rotulos_cnh)), None)
+                    if _candidato_registro(c) and _rotulo_proximo(linhas, c, rotulos_cnh)), None)
         if cnh is None:
-            cnh = next((c for c in candidatos_cnh if c != cpf_digitos), None)
+            cnh = next((c for c in candidatos_cnh if _candidato_registro(c)), None)
         if cnh:
             cnh_digitos = cnh
             conf, origem = _contexto(linhas, cnh)
