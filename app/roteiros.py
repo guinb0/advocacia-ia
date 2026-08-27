@@ -147,14 +147,14 @@ class Roteiro:
 # --------------------------------------------------------------- blocos
 
 
-# A entrevista abre com quatro campos de localização e identificação.
+# A entrevista abre com cinco campos de localização e identificação.
 #
 # O escritório tirou a qualificação do começo: perguntar nacionalidade, filiação
 # e órgão expedidor antes de ouvir a história é o que fazia a conversa começar
-# como um formulário. Nome e CPF identificam o atendimento; UF e município
-# definem desde o início onde o caso será tratado e evitam voltar ao cliente.
+# como um formulário. Nome, CPF e estado civil identificam o atendimento; UF e
+# município definem desde o início onde o caso será tratado e evitam voltar ao cliente.
 #
-# Os quatro são digitados. A escuta automática pode SUGERI-los a partir da fala,
+# Os cinco são digitados. A escuta automática pode SUGERI-los a partir da fala,
 # nunca preenchê-los sozinha — ver `app/escuta.py`.
 ABERTURA = Bloco(
     id="abertura",
@@ -163,6 +163,20 @@ ABERTURA = Bloco(
     perguntas=[
         Pergunta("nome", "Nome completo", "dado", obrigatoria=True),
         Pergunta("cpf", "CPF", "dado", obrigatoria=True, validacao="cpf"),
+        Pergunta(
+            "estado_civil",
+            "Estado civil",
+            "escolha",
+            opcoes=[
+                "Solteiro(a)",
+                "Casado(a)",
+                "União estável",
+                "Divorciado(a)",
+                "Separado(a) judicialmente",
+                "Viúvo(a)",
+            ],
+            obrigatoria=True,
+        ),
         Pergunta("uf", "UF onde reside", "lista", opcoes=UFS, obrigatoria=True),
         Pergunta("municipio", "Município onde reside", "dado", obrigatoria=True),
     ],
@@ -176,24 +190,6 @@ IDENTIFICACAO = Bloco(
     perguntas=[
         Pergunta("nacionalidade", "Nacionalidade", "dado"),
         Pergunta("nascimento", "Data de nascimento", "data"),
-        # Escolha, não campo livre: estado civil digitado vira "casado",
-        # "Casada", "casado(a)" e "amasiado" no mesmo escritório, e a
-        # qualificação da petição precisa do termo certo. União estável entra na
-        # lista porque muda dependente e pensão, ainda que juridicamente o
-        # estado civil siga sendo outro.
-        Pergunta(
-            "estado_civil",
-            "Estado civil",
-            "escolha",
-            opcoes=[
-                "Solteiro(a)",
-                "Casado(a)",
-                "União estável",
-                "Divorciado(a)",
-                "Separado(a) judicialmente",
-                "Viúvo(a)",
-            ],
-        ),
         Pergunta("profissao", "Profissão", "dado"),
         # Três campos, não um: o contrato pede o número num lugar e o órgão
         # noutro ("portador(a) do RG nº ___, expedido por ___"). Perguntando

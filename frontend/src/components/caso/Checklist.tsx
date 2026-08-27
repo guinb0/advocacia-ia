@@ -9,6 +9,7 @@ import { prazosAcervo, type PrazosAcervo } from "@/lib/api";
 import ItemChecklistLinha from "@/components/caso/ItemChecklistLinha";
 import PainelPortal from "@/components/portal/PainelPortal";
 import PedidoCliente from "@/components/caso/PedidoCliente";
+import ResumoDocumentos from "@/components/caso/ResumoDocumentos";
 
 type Filtro = "todos" | "obrigatorios" | "falta";
 
@@ -205,6 +206,10 @@ export default function Checklist({
           </ul>
         </div>
       )}
+
+      <div className="mt-5">
+        <ResumoDocumentos itens={itens} />
+      </div>
 
       <div className="flex flex-col gap-5 mt-5">
         {/* Dentro do atendimento a chamada já está na tela e o advogado já

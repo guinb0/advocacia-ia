@@ -87,6 +87,15 @@ export interface Documento {
     classificador?: string;
     status?: string;
     erro?: string;
+    achados?: Array<{
+      campo: string;
+      valor: string;
+      importancia?: string;
+      relevante_para?: string;
+    }>;
+    serve_para?: Array<{ item: string; porque: string }>;
+    atencao?: string[];
+    sugere_pedir?: string[];
   };
   /** Entregas antigas podem ter sido salvas antes deste bloco existir. */
   qualidade_imagem?: QualidadeImagem;
