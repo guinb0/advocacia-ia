@@ -1,12 +1,38 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { assumirAtendimentoDocumentacao, criarSalaChamada, listarAtendimentosDocumentacao, registrarPresencaDocumentacao } from "@/lib/api";
+import type { ReactNode } from "react";
+import { BellRing, Headphones, Radio, UsersRound } from "lucide-react";
+
+import {
+  assumirAtendimentoDocumentacao,
+  criarSalaChamada,
+  listarAtendimentosDocumentacao,
+  registrarPresencaDocumentacao,
+} from "@/lib/api";
 import type { AtendimentoDocumentacao } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import { useSessao } from "@/lib/auth";
+import { Aviso, Botao, Selo, Vazio } from "@/components/ui/Basicos";
 
-interface Props { onVoltar: () => void; onAbrirDocumentos: (casoId: string) => void; }
+interface Props {
+  onVoltar: () => void;
+  onAbrirDocumentos: (casoId: string) => void;
+}
+
+const ROTULO_STATUS: Record<AtendimentoDocumentacao["status"], string> = {
+  entrevista: "entrevista em andamento",
+  solicitado: "aguardando documentação",
+  assumido: "assumido",
+  encerrado: "encerrado",
+};
+
+function hora(iso: string | null): string {
+  if (!iso) return "sem horário";
+  const data = new Date(iso);
+  if (!Number.isFinite(data.getTime())) return "sem horário";
+  return data.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
 
 export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Props) {
   const [fila, setFila] = useState<AtendimentoDocumentacao[]>([]);
@@ -25,51 +51,84 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
     setAlerta(item);
     document.title = `🔔 ${item.cliente || "Cliente"} precisa da Documentação`;
     try {
-      const audio = new AudioContext(); const som = audio.createOscillator(); const volume = audio.createGain();
-      som.frequency.value = 880; volume.gain.setValueAtTime(0.12, audio.currentTime);
+      const audio = new AudioContext();
+      const som = audio.createOscillator();
+      const volume = audio.createGain();
+      som.frequency.value = 880;
+      volume.gain.setValueAtTime(0.12, audio.currentTime);
       volume.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.45);
-      som.connect(volume).connect(audio.destination); som.start(); som.stop(audio.currentTime + 0.45);
-    } catch { /* O alerta visual continua quando o navegador bloqueia o som. */ }
+      som.connect(volume).connect(audio.destination);
+      som.start();
+      som.stop(audio.currentTime + 0.45);
+    } catch {
+      /* O alerta visual continua quando o navegador bloqueia o som. */
+    }
     if ("Notification" in window && Notification.permission === "granted") {
       const aviso = new Notification("Documentação solicitada", {
         body: `${item.entrevistador_nome} pediu sua presença para atender ${item.cliente || "o cliente"}.`,
-        tag: `documentacao-${item.entrevista_id}`, requireInteraction: true,
+        tag: `documentacao-${item.entrevista_id}`,
+        requireInteraction: true,
       });
-      aviso.onclick = () => { window.focus(); aviso.close(); };
+      aviso.onclick = () => {
+        window.focus();
+        aviso.close();
+      };
     }
   }, []);
 
   const carregar = useCallback(() => {
-    void listarAtendimentosDocumentacao().then((r) => {
-      setFila(r.atendimentos);
-      setMetricas({ ativas: r.entrevistas_ativas, solicitacoes: r.solicitacoes, online: r.documentadores_online });
-      setErro(null);
-      for (const item of r.atendimentos) {
-        if (item.status !== "solicitado" || vistas.current.has(item.entrevista_id)) continue;
-        vistas.current.add(item.entrevista_id); avisar(item);
-      }
-    }).catch((e) => setErro(e instanceof Error ? e.message : "Não foi possível atualizar a fila."));
+    void listarAtendimentosDocumentacao()
+      .then((r) => {
+        setFila(r.atendimentos);
+        setMetricas({
+          ativas: r.entrevistas_ativas,
+          solicitacoes: r.solicitacoes,
+          online: r.documentadores_online,
+        });
+        setErro(null);
+        for (const item of r.atendimentos) {
+          if (item.status !== "solicitado" || vistas.current.has(item.entrevista_id)) continue;
+          vistas.current.add(item.entrevista_id);
+          avisar(item);
+        }
+      })
+      .catch((e) => setErro(e instanceof Error ? e.message : "Não foi possível atualizar a fila."));
   }, [avisar]);
 
   useEffect(() => {
     const marcar = () => void registrarPresencaDocumentacao().catch(() => undefined);
-    marcar(); carregar();
+    marcar();
+    carregar();
     const atualizacao = window.setInterval(carregar, 5_000);
     const presenca = window.setInterval(marcar, 30_000);
-    return () => { window.clearInterval(atualizacao); window.clearInterval(presenca); };
+    return () => {
+      window.clearInterval(atualizacao);
+      window.clearInterval(presenca);
+    };
   }, [carregar]);
 
   async function assumir(item: AtendimentoDocumentacao) {
     if (!item.sala) return;
-    setAssumindo(item.entrevista_id); setErro(null);
+    setAssumindo(item.entrevista_id);
+    setErro(null);
     try {
       const reservado = await assumirAtendimentoDocumentacao(item.entrevista_id);
       const { token } = await criarSalaChamada(reservado.sala!);
-      await chamada.entrar(reservado.sala!, "advogado", { nome: `Documentação · ${sessao.nome || "Atendente"}`, camera: false }, token);
+      await chamada.entrar(
+        reservado.sala!,
+        "advogado",
+        { nome: `Documentação · ${sessao.nome || "Atendente"}`, camera: false },
+        token,
+      );
       if (!reservado.caso_id) throw new Error("O atendimento ainda não possui um caso vinculado.");
-      setAlerta(null); document.title = "Acervo"; onAbrirDocumentos(reservado.caso_id);
-    } catch (e) { setErro(e instanceof Error ? e.message : "Não foi possível assumir a chamada."); }
-    finally { setAssumindo(null); }
+      setAlerta(null);
+      document.title = "Acervo";
+      onAbrirDocumentos(reservado.caso_id);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível assumir a chamada.");
+    } finally {
+      setAssumindo(null);
+    }
   }
 
   async function ativarNotificacoes() {
@@ -77,22 +136,215 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
   }
 
   return (
-    <main className="max-w-[1180px] mx-auto px-7 pt-6 pb-16">
-      <button type="button" onClick={onVoltar} className="text-xs text-acao bg-transparent border-0 cursor-pointer">← Carteira</button>
-      <header className="mt-3 flex items-start justify-between gap-5 flex-wrap border-b border-borda-forte pb-5">
-        <div><span className="text-[10px] font-semibold tracking-[0.14em] uppercase text-tinta-3">Central de atendimento</span><h1 className="mt-2 mb-1 text-3xl">Departamento de Documentação</h1><p className="mt-0 max-w-[68ch] text-tinta-3">Acompanhe as entrevistas, receba a convocação e entre na chamada com os documentos do cliente à mão.</p></div>
-        {permissao !== "granted" && permissao !== "indisponivel" && <button type="button" onClick={() => void ativarNotificacoes()} className="border border-acao bg-acao text-papel px-4 py-3 text-xs font-bold uppercase tracking-wider cursor-pointer">Ativar notificações</button>}
+    <main className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-5">
+      <header className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+        <div className="flex min-w-0 flex-col gap-4 border-b border-borda bg-papel-2 px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <Botao variante="texto" pequeno onClick={onVoltar}>
+              ← Carteira
+            </Botao>
+            <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
+              Central de atendimento
+            </span>
+            <h1 className="mt-1 truncate text-xl font-semibold leading-[1.15] text-tinta">
+              Departamento de Documentação
+            </h1>
+            <p className="mt-2 max-w-[74ch] text-sm leading-[1.55] text-tinta-2">
+              Acompanhe entrevistas em andamento, receba a convocação e entre na mesma
+              chamada com os documentos do cliente à mão.
+            </p>
+          </div>
+
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Selo tom={permissao === "granted" ? "ok" : "neutro"}>
+              notificações {permissao === "granted" ? "ativas" : "pendentes"}
+            </Selo>
+            {permissao !== "granted" && permissao !== "indisponivel" && (
+              <Botao variante="primario" pequeno onClick={() => void ativarNotificacoes()}>
+                Ativar notificações
+              </Botao>
+            )}
+          </div>
+        </div>
+
+        <div className="grid min-w-0 gap-3 p-4 sm:grid-cols-3 sm:p-5">
+          <Metrica
+            icone={<Radio size={18} aria-hidden />}
+            rotulo="Entrevistas acontecendo"
+            valor={metricas.ativas}
+            tom="neutro"
+          />
+          <Metrica
+            icone={<BellRing size={18} aria-hidden />}
+            rotulo="Aguardando Documentação"
+            valor={metricas.solicitacoes}
+            tom={metricas.solicitacoes > 0 ? "info" : "neutro"}
+          />
+          <Metrica
+            icone={<UsersRound size={18} aria-hidden />}
+            rotulo="Documentadores online"
+            valor={metricas.online}
+            tom="ok"
+          />
+        </div>
       </header>
 
-      {alerta && <section className="my-5 border-2 border-acao bg-acao-clara p-5 shadow-cartao" role="alert" aria-live="assertive"><div className="flex justify-between gap-4 items-start flex-wrap"><div><span className="text-[10px] font-bold tracking-[0.14em] uppercase text-acao">🔔 Presença solicitada agora</span><h2 className="mt-2 mb-1 text-xl">{alerta.cliente || "Cliente ainda não identificado"}</h2><p className="m-0 text-sm text-tinta-2">{alerta.entrevistador_nome} está aguardando você na chamada.</p></div><button type="button" onClick={() => void assumir(alerta)} disabled={assumindo !== null} className="border border-acao bg-acao text-papel px-5 py-3 text-xs font-bold uppercase tracking-wider cursor-pointer disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada">{assumindo === alerta.entrevista_id ? "Entrando…" : "Entrar e abrir documentos"}</button></div></section>}
+      {alerta && (
+        <section
+          className="overflow-hidden rounded-cartao border-2 border-acao bg-acao-clara shadow-cartao"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="flex min-w-0 flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-acao">
+                <BellRing size={16} aria-hidden />
+                Presença solicitada agora
+              </span>
+              <h2 className="mt-2 truncate text-lg font-semibold text-tinta">
+                {alerta.cliente || "Cliente ainda não identificado"}
+              </h2>
+              <p className="mt-1 text-sm leading-[1.55] text-tinta-2">
+                {alerta.entrevistador_nome} está aguardando você na chamada.
+              </p>
+            </div>
+            <Botao
+              variante="primario"
+              onClick={() => void assumir(alerta)}
+              disabled={assumindo !== null}
+              className="shrink-0"
+            >
+              {assumindo === alerta.entrevista_id ? "Entrando…" : "Entrar e abrir documentos"}
+            </Botao>
+          </div>
+        </section>
+      )}
 
-      <div className="grid grid-cols-3 max-[620px]:grid-cols-1 max-w-[820px] gap-3 my-5"><div className="border border-borda bg-papel-2 p-4"><strong className="block text-3xl">{metricas.ativas}</strong><span className="text-xs text-tinta-3">entrevistas acontecendo</span></div><div className="border border-acao-borda bg-acao-clara p-4"><strong className="block text-3xl text-acao">{metricas.solicitacoes}</strong><span className="text-xs text-tinta-3">aguardando Documentação</span></div><div className="border border-borda bg-papel-2 p-4"><strong className="block text-3xl text-ok">{metricas.online}</strong><span className="text-xs text-tinta-3">documentadores online</span></div></div>
-      {erro && <p className="border-l-4 border-critico bg-critico-claro p-3 text-sm">{erro}</p>}
-      <div className="flex items-baseline justify-between gap-3 mt-7 mb-3"><h2 className="m-0 text-lg">Fila de atendimentos</h2><span className="text-xs text-tinta-3">Atualização a cada 5 segundos</span></div>
-      <div className="grid gap-3">
-        {fila.map((item) => <article key={item.entrevista_id} className={`border-l-4 border-y border-r p-5 ${item.status === "solicitado" ? "border-acao bg-acao-clara" : "border-borda bg-papel"}`}><div className="flex justify-between gap-4 flex-wrap"><div><strong className="block text-base">{item.cliente || "Cliente ainda não identificado"}</strong><span className="block mt-1 text-xs text-tinta-3">Entrevistador: {item.entrevistador_nome}</span></div><span className="text-[10px] uppercase tracking-wider text-tinta-3">{item.status === "solicitado" ? "aguardando você" : item.status === "assumido" ? `assumido por ${item.documentador_nome}` : "entrevista em andamento"}</span></div>{item.status === "solicitado" && <button type="button" onClick={() => void assumir(item)} disabled={assumindo !== null} className="mt-3 border border-acao bg-acao text-papel px-4 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada">{assumindo === item.entrevista_id ? "Entrando na chamada…" : "Entrar e abrir documentos"}</button>}</article>)}
-        {fila.length === 0 && <p className="border border-dashed border-borda p-10 text-center text-tinta-3">Nenhuma entrevista ativa agora. Você será avisado quando precisarem da Documentação.</p>}
-      </div>
+      {erro && (
+        <Aviso tom="critico" titulo="Não foi possível atualizar a documentação">
+          {erro}
+        </Aviso>
+      )}
+
+      <section className="min-w-0 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+        <div className="flex min-w-0 items-baseline justify-between gap-3 border-b border-borda bg-papel-2 px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <h2 className="m-0 truncate text-lg font-semibold text-tinta">Fila de atendimentos</h2>
+            <p className="mt-1 text-xs text-tinta-3">Atualização a cada 5 segundos</p>
+          </div>
+          <Selo tom={fila.length > 0 ? "info" : "neutro"}>{fila.length} na fila</Selo>
+        </div>
+
+        {fila.length === 0 ? (
+          <div className="p-4 sm:p-5">
+            <Vazio>Nenhuma entrevista ativa agora. Você será avisado quando precisarem da Documentação.</Vazio>
+          </div>
+        ) : (
+          <ul className="m-0 list-none divide-y divide-borda p-0">
+            {fila.map((item) => (
+              <AtendimentoLinha
+                key={item.entrevista_id}
+                item={item}
+                assumindo={assumindo}
+                onAssumir={assumir}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
     </main>
+  );
+}
+
+function Metrica({
+  icone,
+  rotulo,
+  valor,
+  tom,
+}: {
+  icone: ReactNode;
+  rotulo: string;
+  valor: number;
+  tom: "info" | "ok" | "neutro";
+}) {
+  const classe =
+    tom === "info"
+      ? "border-acao-borda bg-acao-clara text-acao"
+      : tom === "ok"
+        ? "border-ok-borda bg-ok-claro text-ok"
+        : "border-borda bg-papel-2 text-tinta";
+
+  return (
+    <article className={`min-w-0 rounded-campo border px-4 py-3 ${classe}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-current/20 bg-papel/70">
+          {icone}
+        </span>
+        <strong className="text-2xl font-semibold tabular-nums leading-none">{valor}</strong>
+      </div>
+      <span className="mt-3 block truncate text-xs font-semibold text-tinta-2" title={rotulo}>
+        {rotulo}
+      </span>
+    </article>
+  );
+}
+
+function AtendimentoLinha({
+  item,
+  assumindo,
+  onAssumir,
+}: {
+  item: AtendimentoDocumentacao;
+  assumindo: string | null;
+  onAssumir: (item: AtendimentoDocumentacao) => Promise<void>;
+}) {
+  const solicitado = item.status === "solicitado";
+  return (
+    <li className={solicitado ? "bg-acao-clara" : "bg-papel"}>
+      <article
+        className={`grid min-w-0 gap-3 border-l-4 px-4 py-4 sm:px-5 min-[760px]:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_150px] min-[760px]:items-center ${
+          solicitado ? "border-l-acao" : "border-l-borda"
+        }`}
+      >
+        <div className="min-w-0">
+          <strong className="block truncate text-base text-tinta" title={item.cliente || undefined}>
+            {item.cliente || "Cliente ainda não identificado"}
+          </strong>
+          <span className="mt-1 block truncate text-xs text-tinta-3" title={item.entrevistador_nome}>
+            Entrevistador: {item.entrevistador_nome}
+          </span>
+        </div>
+
+        <div className="min-w-0">
+          <Selo tom={solicitado ? "info" : item.status === "assumido" ? "ok" : "neutro"}>
+            {item.status === "assumido" && item.documentador_nome
+              ? `assumido por ${item.documentador_nome}`
+              : ROTULO_STATUS[item.status]}
+          </Selo>
+          <span className="mt-2 block truncate text-xs text-tinta-3">
+            {solicitado ? `solicitado às ${hora(item.solicitado_em)}` : `atualizado às ${hora(item.atualizado_em)}`}
+          </span>
+        </div>
+
+        <div className="flex min-w-0 justify-start min-[760px]:justify-end">
+          {solicitado ? (
+            <Botao
+              variante="primario"
+              pequeno
+              onClick={() => void onAssumir(item)}
+              disabled={assumindo !== null}
+              className="max-w-full"
+            >
+              <Headphones size={15} aria-hidden />
+              <span className="min-w-0 truncate">
+                {assumindo === item.entrevista_id ? "Entrando…" : "Assumir"}
+              </span>
+            </Botao>
+          ) : (
+            <span className="text-xs text-tinta-3">Aguardando solicitação</span>
+          )}
+        </div>
+      </article>
+    </li>
   );
 }

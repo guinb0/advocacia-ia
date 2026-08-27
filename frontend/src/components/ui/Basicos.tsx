@@ -29,8 +29,8 @@ function cn(...classes: (string | false | null | undefined)[]): string {
 type BotaoVariante = "primario" | "secundario" | "discreto" | "perigo" | "texto";
 
 const BASE_BOTAO =
-  "inline-flex items-center justify-center gap-2 border border-transparent " +
-  "rounded-campo bg-transparent font-ui text-sm font-semibold leading-tight " +
+  "inline-flex items-center justify-center gap-2 border " +
+  "rounded-campo font-ui text-sm font-semibold leading-tight " +
   "text-center no-underline cursor-pointer transition-[background-color,border-color,color] " +
   "duration-[120ms] ease-out disabled:cursor-not-allowed";
 
@@ -46,7 +46,9 @@ const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
     "border-borda-campo bg-papel text-acao " +
     "enabled:hover:bg-acao-clara enabled:hover:border-acao " +
     "disabled:border-borda disabled:bg-papel-2 disabled:text-tinta-desabilitada",
-  discreto: "text-tinta-2 enabled:hover:bg-papel-3 enabled:hover:text-tinta disabled:text-tinta-desabilitada",
+  discreto:
+    "border-transparent bg-transparent text-tinta-2 " +
+    "enabled:hover:bg-papel-3 enabled:hover:text-tinta disabled:text-tinta-desabilitada",
   /* Destrutiva: única variante em que cor de estado também é cor de ação —
    * de propósito, para pedir hesitação antes de excluir. */
   perigo:
@@ -58,7 +60,7 @@ const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
    * `variante !== "texto"` abaixo), então não há conflito a resolver com
    * `!important`. */
   texto:
-    "min-h-0 px-0 py-[2px] text-acao underline underline-offset-[3px] " +
+    "min-h-0 border-transparent bg-transparent px-0 py-[2px] text-acao underline underline-offset-[3px] " +
     "enabled:hover:text-acao-forte disabled:text-tinta-desabilitada",
 };
 
