@@ -78,6 +78,11 @@ services:
       JWT_ISSUER: https://${DOMINIO?defina o dominio de producao}
       JWT_AUDIENCE: https://${DOMINIO?defina o dominio de producao}
       JWT_COOKIE_SECURE: "1"
+      # Como a API alcanca a transcricao POR DENTRO. O Traefik so expoe
+      # `/ws/transcricao` e `/entrevista` dela, entao o `/saude` nao e
+      # alcancavel de fora — e era justamente ele que respondia se a chave da
+      # OpenRouter chegou ao conteiner. Ver GET /api/saude/transcricao.
+      URL_TRANSCRICAO_INTERNA: http://transcricao:8200
       JWT_COOKIE_SAMESITE: lax
       PERMITIR_DADOS_TESTE: "false"
 

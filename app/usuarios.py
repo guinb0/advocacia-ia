@@ -53,11 +53,10 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from . import auth
 from . import perfis as perfis_lib
-from .auth import exigir_qualquer_papel
 from .banco import PREFIXO, SCHEMA, conectar
 
 log = logging.getLogger("usuarios")
@@ -106,9 +105,13 @@ CODIGOS = tuple(p["codigo"] for p in PERFIS)
 #: Cliente nunca — um cliente que criasse contas criaria acesso ao acervo.
 PODEM_GERIR = ("advogado", "secretario")
 
-PodeGerir = Depends(exigir_qualquer_papel(*PODEM_GERIR))
+# O nome dos perfis acima permanece para clientes antigos, mas a autorizacao
+# atual vem da matriz relacional. Assim um perfil novo com o modulo `usuarios`
+# funciona sem alteracao de codigo.
+PodeGerir = Depends(auth.exigir_modulo("usuarios"))
 
 _TABELA = f"{SCHEMA}.{PREFIXO}usuarios"
+_TABELA_PERFIS_NOVA = f"{SCHEMA}.{PREFIXO}tb_perfis"
 
 ESQUEMA = f"""
 IF OBJECT_ID('{_TABELA}') IS NULL
@@ -121,6 +124,52 @@ CREATE TABLE {_TABELA} (
     ativo      bit           NOT NULL CONSTRAINT df_acervo_usuarios_ativo DEFAULT 1,
     criado_em  varchar(40)   NOT NULL
 );
+
+IF COL_LENGTH('{_TABELA}', 'perfil_id') IS NULL
+ALTER TABLE {_TABELA} ADD perfil_id int NULL;
+
+IF OBJECT_ID('{SCHEMA}.fk_acervo_usuarios_perfil_id', 'F') IS NULL
+   AND OBJECT_ID('{_TABELA_PERFIS_NOVA}') IS NOT NULL
+   AND COL_LENGTH('{_TABELA}', 'perfil_id') IS NOT NULL
+ALTER TABLE {_TABELA}
+    ADD CONSTRAINT fk_acervo_usuarios_perfil_id
+    FOREIGN KEY (perfil_id) REFERENCES {_TABELA_PERFIS_NOVA} (id);
+"""
+
+# Versoes antigas ainda gravam apenas `perfil`. O gatilho preserva esse contrato
+# enquanto faz `perfil_id` virar a referencia principal das versoes atuais.
+# Precisa ser executado em lote separado: SQL Server exige CREATE TRIGGER como a
+# primeira instrucao do lote.
+GATILHO_SINCRONIZAR_PERFIL = f"""
+CREATE OR ALTER TRIGGER {SCHEMA}.tr_acervo_usuarios_sincronizar_perfil
+ON {_TABELA}
+AFTER INSERT, UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF UPDATE(perfil_id)
+    BEGIN
+        UPDATE u
+           SET perfil_id = COALESCE(i.perfil_id, p_nome.id),
+               perfil = COALESCE(p_id.nome, p_nome.nome, i.perfil)
+          FROM {_TABELA} u
+          JOIN inserted i ON i.codigo = u.codigo
+     LEFT JOIN {_TABELA_PERFIS_NOVA} p_id ON p_id.id = i.perfil_id
+     LEFT JOIN {_TABELA_PERFIS_NOVA} p_nome
+            ON p_nome.nome = LTRIM(RTRIM(i.perfil));
+    END
+    ELSE
+    BEGIN
+        UPDATE u
+           SET perfil_id = p_nome.id,
+               perfil = COALESCE(p_nome.nome, i.perfil)
+          FROM {_TABELA} u
+          JOIN inserted i ON i.codigo = u.codigo
+     LEFT JOIN {_TABELA_PERFIS_NOVA} p_nome
+            ON p_nome.nome = LTRIM(RTRIM(i.perfil));
+    END
+END
 """
 
 
@@ -186,6 +235,8 @@ def inicializar() -> None:
         for lote in ESQUEMA.split(";\n"):
             if lote.strip():
                 con.execute(lote)
+        _sincronizar_perfis_dos_usuarios(con)
+        con.execute(GATILHO_SINCRONIZAR_PERFIL)
 
         email = (_env("ACERVO_ADMIN_EMAIL") or "admin@acervo.local").lower()
         ja_tem = con.execute(f"SELECT TOP 1 codigo FROM {_TABELA}").fetchone()
@@ -197,10 +248,11 @@ def inicializar() -> None:
         # `senhaPadrao: true` — a tela obriga a trocar antes de seguir. É melhor
         # que gerar uma senha aleatória que ninguém vê passar no log.
         hash_senha = _hash_de(senha) if senha else auth.SENHA_PADRAO_MD5
+        perfil_id = perfis_lib.perfil_id_de("advogado", con=con)
         con.execute(
-            f"INSERT INTO {_TABELA} (nome, email, senha_md5, perfil, ativo, criado_em)"
-            " VALUES (?, ?, ?, 'advogado', 1, ?)",
-            ("Administrador", email, hash_senha, _agora()),
+            f"INSERT INTO {_TABELA} (nome, email, senha_md5, perfil, perfil_id, ativo, criado_em)"
+            " VALUES (?, ?, ?, 'advogado', ?, 1, ?)",
+            ("Administrador", email, hash_senha, perfil_id, _agora()),
         )
         log.warning(
             "Nenhum usuário cadastrado: criada a conta inicial %s%s",
@@ -209,23 +261,129 @@ def inicializar() -> None:
         )
 
 
-def _por_email(email: str) -> dict[str, Any] | None:
-    with conectar() as con:
-        linha = con.execute(
-            f"SELECT codigo, nome, email, senha_md5, perfil, ativo FROM {_TABELA}"
-            " WHERE email = ?",
-            (email.strip().lower(),),
-        ).fetchone()
-    if linha is None:
-        return None
+def _sincronizar_perfis_dos_usuarios(con: Any) -> None:
+    # `perfil_id` e a fonte atual. Quando ele existe, a string antiga vira um
+    # espelho canonico; quando falta, fazemos o backfill pelo nome legado.
+    con.execute(
+        f"""UPDATE u
+               SET perfil = p.nome
+              FROM {_TABELA} u
+              JOIN {_TABELA_PERFIS_NOVA} p ON p.id = u.perfil_id
+             WHERE u.perfil <> p.nome"""
+    )
+    con.execute(
+        f"""UPDATE u
+               SET perfil_id = p.id, perfil = p.nome
+              FROM {_TABELA} u
+              JOIN {_TABELA_PERFIS_NOVA} p
+                ON p.nome = LTRIM(RTRIM(u.perfil))
+             WHERE u.perfil_id IS NULL"""
+    )
+
+
+def _resolver_perfil_usuario(
+    con: Any, perfil_id: int | None, perfil_legado: str | None
+) -> tuple[int, str]:
+    """Resolve o perfil dentro da mesma transacao que cria o usuario."""
+    nome_legado = (perfil_legado or "").strip()
+    if perfil_id is not None:
+        nome = perfis_lib.perfil_nome_de_id(perfil_id, con=con)
+        if nome is None:
+            raise HTTPException(400, f"Perfil inexistente ou inativo: {perfil_id}.")
+        if nome_legado and nome_legado != nome:
+            raise HTTPException(
+                400,
+                "O identificador e o nome do perfil informados nao correspondem.",
+            )
+        return perfil_id, nome
+
+    if not nome_legado:
+        raise HTTPException(400, "Informe o perfil do usuario.")
+    id_legado = perfis_lib.perfil_id_de(nome_legado, con=con)
+    if id_legado is None:
+        raise HTTPException(400, f"Perfil desconhecido: {nome_legado}.")
+    return id_legado, nome_legado
+
+
+def _linha_usuario(linha: Any) -> dict[str, Any]:
+    perfil = linha["perfil_ref"] or linha["perfil"]
     return {
         "codigo": str(linha["codigo"]),
         "nome": linha["nome"],
         "email": linha["email"],
         "senha_md5": (linha["senha_md5"] or "").strip().lower(),
-        "perfil": linha["perfil"],
+        "perfil": perfil,
+        "perfil_id": linha["perfil_id"],
+        "perfil_ativo": bool(linha["perfil_ativo"]) if linha["perfil_ativo"] is not None else False,
         "ativo": bool(linha["ativo"]),
     }
+
+
+def _por_email(email: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            f"""SELECT u.codigo, u.nome, u.email, u.senha_md5, u.perfil,
+                       COALESCE(p_id.id, p_nome.id) AS perfil_id,
+                       u.ativo,
+                       COALESCE(p_id.nome, p_nome.nome) AS perfil_ref,
+                       COALESCE(p_id.ativo, p_nome.ativo) AS perfil_ativo
+                  FROM {_TABELA} u
+             LEFT JOIN {_TABELA_PERFIS_NOVA} p_id ON p_id.id = u.perfil_id
+             LEFT JOIN {_TABELA_PERFIS_NOVA} p_nome ON p_nome.nome = u.perfil
+                 WHERE u.email = ?""",
+            (email.strip().lower(),),
+        ).fetchone()
+    if linha is None:
+        return None
+    return _linha_usuario(linha)
+
+
+def papeis_ativos_de_email(email: str) -> tuple[str, ...]:
+    """Perfil atual da conta, consultado do banco para autorizacao."""
+    pessoa = _por_email(email)
+    if pessoa is None or not pessoa["ativo"] or not pessoa["perfil_ativo"]:
+        return ()
+    return (pessoa["perfil"],)
+
+
+def _primeira_conta_ativa() -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            f"""SELECT TOP 1 u.codigo, u.nome, u.email, u.senha_md5, u.perfil,
+                       COALESCE(p_id.id, p_nome.id) AS perfil_id,
+                       u.ativo,
+                       COALESCE(p_id.nome, p_nome.nome) AS perfil_ref,
+                       COALESCE(p_id.ativo, p_nome.ativo) AS perfil_ativo
+                  FROM {_TABELA} u
+             LEFT JOIN {_TABELA_PERFIS_NOVA} p_id ON p_id.id = u.perfil_id
+             LEFT JOIN {_TABELA_PERFIS_NOVA} p_nome ON p_nome.nome = u.perfil
+                 WHERE u.ativo = 1
+              ORDER BY u.codigo"""
+        ).fetchone()
+    if linha is None:
+        return None
+    return _linha_usuario(linha)
+
+
+def _sessao_da_pessoa(pessoa: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "codigo": pessoa["codigo"],
+        "nome": pessoa["nome"],
+        "email": pessoa["email"],
+        "perfil": pessoa["perfil"],
+        "perfilId": pessoa["perfil_id"],
+        "ativo": pessoa["ativo"],
+        "senhaPadrao": pessoa["senha_md5"] == auth.SENHA_PADRAO_MD5,
+        "modulos": perfis_lib.modulos_ordenados_de([pessoa["perfil"]]),
+    }
+
+
+def _exigir_perfil_ativo(pessoa: dict[str, Any]) -> None:
+    if not pessoa.get("perfil_id") or not pessoa.get("perfil_ativo"):
+        raise HTTPException(
+            403,
+            "Esta conta usa um perfil desativado ou inexistente. Ajuste o usuário antes de entrar.",
+        )
 
 
 # ------------------------------------------------------------------- sessão
@@ -273,6 +431,7 @@ def autenticar(pedido: PedidoLogin, resposta: Response) -> dict[str, Any]:
         raise HTTPException(401, "E-mail ou senha incorretos.")
     if not pessoa["ativo"]:
         raise HTTPException(403, "Esta conta está desativada. Procure quem administra.")
+    _exigir_perfil_ativo(pessoa)
 
     senha_padrao = pessoa["senha_md5"] == auth.SENHA_PADRAO_MD5
     token = auth.gerar_token(
@@ -288,17 +447,10 @@ def autenticar(pedido: PedidoLogin, resposta: Response) -> dict[str, Any]:
     return {
         "flag": True,
         "message": "Autenticado.",
-        "data": {
-            "codigo": pessoa["codigo"],
-            "nome": pessoa["nome"],
-            "email": pessoa["email"],
-            "perfil": pessoa["perfil"],
-            "senhaPadrao": senha_padrao,
-            # Os módulos que este perfil alcança vão junto para a tela montar o
-            # menu sem uma segunda ida ao servidor — e para o menu não oferecer
-            # botão que a rota vai recusar depois.
-            "modulos": sorted(perfis_lib.modulos_de([pessoa["perfil"]])),
-        },
+        # Os módulos que este perfil alcança vão junto para a tela montar o menu
+        # sem uma segunda ida ao servidor — e para o menu não oferecer botão que
+        # a rota vai recusar depois.
+        "data": _sessao_da_pessoa(pessoa),
     }
 
 
@@ -325,25 +477,31 @@ def minha_conta(request: Request) -> dict[str, Any]:
     """
     usuario = auth.usuario_atual(request)
     if not auth.ATIVA:
-        return {"flag": True, "data": usuario.to_dict()}
+        pessoa = _primeira_conta_ativa()
+        if pessoa is not None:
+            _exigir_perfil_ativo(pessoa)
+            return {"flag": True, "data": _sessao_da_pessoa(pessoa)}
+        return {
+            "flag": True,
+            "data": {
+                "codigo": usuario.id,
+                "nome": usuario.nome,
+                "email": usuario.email,
+                "perfil": "advogado",
+                "perfilId": perfis_lib.perfil_id_de("advogado"),
+                "ativo": True,
+                "senhaPadrao": False,
+                "modulos": perfis_lib.modulos_ordenados_de(["advogado"]),
+            },
+        }
 
     pessoa = _por_email(usuario.email)
     if pessoa is None:
         # A conta sumiu depois do token emitido. Não é 404: do ponto de vista de
         # quem chama, a sessão é que deixou de valer.
         raise HTTPException(401, "Sua conta não existe mais. Entre novamente.")
-    return {
-        "flag": True,
-        "data": {
-            "codigo": pessoa["codigo"],
-            "nome": pessoa["nome"],
-            "email": pessoa["email"],
-            "perfil": pessoa["perfil"],
-            "ativo": pessoa["ativo"],
-            "senhaPadrao": pessoa["senha_md5"] == auth.SENHA_PADRAO_MD5,
-            "modulos": sorted(perfis_lib.modulos_de([pessoa["perfil"]])),
-        },
-    }
+    _exigir_perfil_ativo(pessoa)
+    return {"flag": True, "data": _sessao_da_pessoa(pessoa)}
 
 
 class PedidoTrocaSenha(BaseModel):
@@ -383,6 +541,7 @@ def trocar_senha(pedido: PedidoTrocaSenha, request: Request, resposta: Response)
 
     pessoa = _por_email(usuario.email)
     assert pessoa is not None  # acabou de ser atualizada
+    _exigir_perfil_ativo(pessoa)
     auth.definir_cookie(
         resposta,
         auth.gerar_token(
@@ -422,7 +581,7 @@ def catalogo_de_modulos() -> dict[str, Any]:
     rotas usam em `auth.exigir_modulo`. Uma lista digitada na tela divergiria em
     silêncio, e a caixa marcada não corresponderia a acesso nenhum.
     """
-    return {"modulos": list(perfis_lib.MODULOS)}
+    return {"modulos": perfis_lib.catalogo()}
 
 
 @roteador.get("/perfis/matriz", dependencies=[PodeGerir])
@@ -436,7 +595,7 @@ def matriz_de_perfis() -> dict[str, Any]:
     administra. Juntar as duas obrigaria a proteger o vocabulário ou a expor a
     matriz; nenhuma das duas serve.
     """
-    return {"perfis": perfis_lib.listar(), "modulos": list(perfis_lib.MODULOS)}
+    return {"perfis": perfis_lib.listar(), "modulos": perfis_lib.catalogo()}
 
 
 @roteador.put("/perfis/{codigo}", dependencies=[PodeGerir])
@@ -466,8 +625,13 @@ def remover_perfil(codigo: str) -> dict[str, str]:
     entra e não enxerga tela nenhuma, sem mensagem que explique.
     """
     with conectar() as con:
+        perfil_id = perfis_lib.perfil_id_de(codigo, ativo=False, con=con)
         em_uso = con.execute(
-            f"SELECT COUNT(*) AS n FROM {_TABELA} WHERE perfil = ?", (codigo,)
+            f"""SELECT COUNT(*) AS n
+                  FROM {_TABELA}
+                 WHERE perfil = ?
+                    OR (? IS NOT NULL AND perfil_id = ?)""",
+            (codigo, perfil_id, perfil_id),
         ).fetchone()
     if em_uso and int(em_uso["n"]):
         raise HTTPException(
@@ -490,21 +654,20 @@ def listar_perfis() -> dict[str, Any]:
     perfil NÃO vêm aqui — quem pergunta isto está montando um seletor, e o
     desenho de acesso do escritório não precisa sair sem token para isso.
 
-    Se o banco não responder, devolve a semente. Um seletor vazio impediria
-    cadastrar qualquer pessoa, e os três perfis de sistema são justamente os que
-    sempre existem.
+    Falha de banco deve aparecer como erro: devolver a semente sem IDs criaria
+    contas inconsistentes e faria o cadastro parecer disponivel quando nao esta.
     """
-    try:
-        cadastrados = perfis_lib.listar()
-    except Exception:
-        log.exception("Perfis não puderam ser lidos; usando a semente")
-        return {"perfis": list(PERFIS)}
+    cadastrados = perfis_lib.listar()
     return {
         "perfis": [
-            {"codigo": p["codigo"], "rotulo": p["rotulo"], "descricao": p["descricao"]}
+            {
+                "id": p["id"],
+                "codigo": p["codigo"],
+                "rotulo": p["rotulo"],
+                "descricao": p["descricao"],
+            }
             for p in cadastrados
         ]
-        or list(PERFIS)
     }
 
 
@@ -529,7 +692,13 @@ class NovoUsuario(BaseModel):
     #: `app/perfis.py`, e cravá-la aqui faria um perfil criado na tela ser
     #: recusado no cadastro pela validação do corpo. A conferência é abaixo,
     #: contra os perfis que existem de verdade.
-    perfil: Annotated[str, Field(min_length=2, max_length=60)]
+    perfil_id: Annotated[
+        int | None,
+        Field(validation_alias=AliasChoices("perfilId", "perfil_id"), gt=0),
+    ] = None
+    #: Compatibilidade com clientes antigos. A tela atual envia `perfilId` e o
+    #: servidor deriva este nome da tabela de perfis.
+    perfil: Annotated[str | None, Field(default=None, min_length=2, max_length=60)] = None
     #: 8 é o mínimo que não é teatro. Vazio deixa a conta com a senha padrão, e o
     #: token sai marcado para a tela exigir a troca no primeiro acesso.
     senha: Annotated[str, Field(max_length=128)] = ""
@@ -545,7 +714,13 @@ def listar_usuarios() -> dict[str, Any]:
     """
     with conectar() as con:
         linhas = con.execute(
-            f"SELECT codigo, nome, email, perfil, ativo FROM {_TABELA} ORDER BY nome"
+            f"""SELECT u.codigo, u.nome, u.email, u.perfil, u.ativo,
+                       COALESCE(p_id.id, p_nome.id) AS perfil_id,
+                       COALESCE(p_id.nome, p_nome.nome) AS perfil_ref
+                  FROM {_TABELA} u
+             LEFT JOIN {_TABELA_PERFIS_NOVA} p_id ON p_id.id = u.perfil_id
+             LEFT JOIN {_TABELA_PERFIS_NOVA} p_nome ON p_nome.nome = u.perfil
+              ORDER BY u.nome"""
         ).fetchall()
 
     itens = [
@@ -555,7 +730,8 @@ def listar_usuarios() -> dict[str, Any]:
             "nome": linha["nome"],
             "email": linha["email"],
             "ativo": bool(linha["ativo"]),
-            "perfis": [linha["perfil"]],
+            "perfis": [linha["perfil_ref"] or linha["perfil"]],
+            "perfilId": linha["perfil_id"],
         }
         for linha in linhas
     ]
@@ -572,38 +748,36 @@ def criar_usuario(pedido: NovoUsuario) -> dict[str, Any]:
     """
     email = pedido.email.strip().lower()
 
-    disponiveis = {p["codigo"] for p in perfis_lib.listar()} or set(CODIGOS)
-    if pedido.perfil not in disponiveis:
-        raise HTTPException(400, f"Perfil desconhecido: {pedido.perfil}.")
-
     senha = pedido.senha.strip()
     if senha and not _parece_md5(senha) and len(senha) < 8:
         raise HTTPException(400, "A senha precisa de pelo menos 8 caracteres.")
     hash_senha = _hash_de(senha) if senha else auth.SENHA_PADRAO_MD5
 
     with conectar() as con:
+        perfil_id, perfil = _resolver_perfil_usuario(con, pedido.perfil_id, pedido.perfil)
         existe = con.execute(
             f"SELECT 1 FROM {_TABELA} WHERE email = ?", (email,)
         ).fetchone()
         if existe:
             raise HTTPException(409, f"Já existe usuário com o e-mail {email}.")
         con.execute(
-            f"INSERT INTO {_TABELA} (nome, email, senha_md5, perfil, ativo, criado_em)"
-            " VALUES (?, ?, ?, ?, 1, ?)",
-            (pedido.nome.strip(), email, hash_senha, pedido.perfil, _agora()),
+            f"INSERT INTO {_TABELA} (nome, email, senha_md5, perfil, perfil_id, ativo, criado_em)"
+            " VALUES (?, ?, ?, ?, ?, 1, ?)",
+            (pedido.nome.strip(), email, hash_senha, perfil, perfil_id, _agora()),
         )
         criado = con.execute(
             f"SELECT codigo FROM {_TABELA} WHERE email = ?", (email,)
         ).fetchone()
 
-    log.info("usuario criado: %s (%s)", email, pedido.perfil)
+    log.info("usuario criado: %s (%s, id=%s)", email, perfil, perfil_id)
     return {
         "id": str(criado["codigo"]),
         "usuario": email,
         "nome": pedido.nome.strip(),
         "email": email,
-        "perfil": pedido.perfil,
-        "perfis": [pedido.perfil],
+        "perfil": perfil,
+        "perfilId": perfil_id,
+        "perfis": [perfil],
         "ativo": True,
         "senhaPadrao": hash_senha == auth.SENHA_PADRAO_MD5,
     }

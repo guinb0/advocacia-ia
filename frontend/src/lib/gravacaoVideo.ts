@@ -136,6 +136,25 @@ export function podeGravarVideo(): boolean {
   );
 }
 
+/** Este navegador sabe capturar a TELA? Câmera e tela não andam juntas.
+ *
+ * O Safari do iPhone tem `MediaRecorder`, tem `mediaDevices` e grava pela
+ * câmera — mas não implementa `getDisplayMedia`, em nenhuma versão. Como
+ * `podeGravarVideo` só olhava os três primeiros, a tela oferecia "Autorizar
+ * gravação da tela" no iPhone e o clique estourava
+ * `getDisplayMedia is not a function`: uma exceção crua, no meio de um
+ * atendimento, para uma limitação conhecida do aparelho.
+ *
+ * Separado de `podeGravarVideo` de propósito: quem está no iPhone continua
+ * podendo gravar pela câmera, que é o que aquele aparelho faz.
+ */
+export function podeGravarTela(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof navigator.mediaDevices?.getDisplayMedia === "function"
+  );
+}
+
 export class GravacaoVideo {
   private gravador: MediaRecorder | null = null;
   private pedacos: Blob[] = [];
@@ -221,6 +240,18 @@ export class GravacaoVideo {
   }
 
   private async daTelaComMicrofone(): Promise<MediaStream> {
+    /* Segunda barreira, e não redundância: a tela já não oferece o botão sem
+     * `podeGravarTela()`, mas esta classe é chamada de mais de um lugar — a
+     * gravação automática, o atendimento por .txt — e o `TypeError` cru que
+     * aparecia aqui não dizia nada a quem estava atendendo. */
+    if (!podeGravarTela()) {
+      throw new Error(
+        "Este navegador não grava a tela. No iPhone e no iPad o Safari não " +
+          "oferece esse recurso — use “Gravar pela câmera”, ou faça a gravação " +
+          "da tela por um computador.",
+      );
+    }
+
     const tela = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 24 } },
       // Áudio da aba: é por onde sai a voz de quem está na chamada.

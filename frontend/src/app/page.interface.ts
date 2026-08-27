@@ -9,6 +9,7 @@ export interface SessaoUsuario {
   nome: string;
   email: string;
   perfil: string;
+  perfilId?: number | null;
   senhaPadrao: boolean;
   /** Os módulos do Acervo que este perfil alcança (ver `app/perfis.py`).
    *

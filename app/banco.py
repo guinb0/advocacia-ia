@@ -210,6 +210,9 @@ TABELAS = (
     "vinculos_agente",
     "ufs",
     "municipios",
+    "automacoes_whatsapp",
+    "cobrancas_documentos",
+    "modelos_documento",
 )
 
 
@@ -376,15 +379,35 @@ CREATE TABLE {SCHEMA}.{PREFIXO}assinaturas (
     cpf           varchar(20)   NOT NULL CONSTRAINT df_ocr_assin_cpf DEFAULT ''
 );
 
-IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL
-CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
-    codigo        varchar(80)   NOT NULL CONSTRAINT pk_acervo_roteiros PRIMARY KEY,
-    nome          nvarchar(200) NOT NULL,
-    descricao     nvarchar(max) NOT NULL CONSTRAINT df_acervo_rot_desc DEFAULT N'',
-    corpo         nvarchar(max) NOT NULL,
-    criado_por    nvarchar(200) NOT NULL CONSTRAINT df_acervo_rot_quem DEFAULT N'',
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}automacoes_whatsapp') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}automacoes_whatsapp (
+    chave         varchar(220)  NOT NULL CONSTRAINT pk_acervo_automacoes_whatsapp PRIMARY KEY,
+    tipo          varchar(50)   NOT NULL,
+    caso_id       varchar(64)   NULL,
+    destino       varchar(20)   NOT NULL,
+    status        varchar(20)   NOT NULL,
+    tentativas    int           NOT NULL CONSTRAINT df_acervo_auto_tentativas DEFAULT 1,
+    ultimo_erro   nvarchar(1000) NULL,
+    enviado_em    varchar(40)   NULL,
     criado_em     varchar(40)   NOT NULL,
     atualizado_em varchar(40)   NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}cobrancas_documentos') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
+    caso_id            varchar(64)   NOT NULL CONSTRAINT pk_acervo_cobrancas_documentos PRIMARY KEY,
+    ativa              int           NOT NULL CONSTRAINT df_acervo_cobranca_ativa DEFAULT 0,
+    telefone           varchar(20)   NOT NULL CONSTRAINT df_acervo_cobranca_telefone DEFAULT '',
+    intervalo_dias     int           NOT NULL CONSTRAINT df_acervo_cobranca_intervalo DEFAULT 3,
+    incluir_opcionais  int           NOT NULL CONSTRAINT df_acervo_cobranca_opcionais DEFAULT 0,
+    proximo_envio_em   varchar(40)   NULL,
+    ultimo_envio_em    varchar(40)   NULL,
+    ultimo_hash        char(64)      NULL,
+    ultimo_erro        nvarchar(1000) NULL,
+    criado_em          varchar(40)   NOT NULL,
+    atualizado_em      varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_cobrancas_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}vinculos_agente') IS NULL
@@ -418,6 +441,51 @@ CREATE TABLE {SCHEMA}.{PREFIXO}municipios (
     CONSTRAINT fk_acervo_municipios_uf FOREIGN KEY (uf_id)
         REFERENCES {SCHEMA}.{PREFIXO}ufs (id)
 );
+
+-- Os modelos .docx do escritorio: contrato, procuracao, hipossuficiencia.
+--
+-- POR QUE NO BANCO, E NAO SO EM `docs/`
+--
+-- O contrato de honorarios e o unico dos tres que NAO e versionado: traz tabela
+-- de honorarios, CNPJ e as inscricoes na OAB, e por isso o `.gitignore` o mantem
+-- fora do repositorio. A consequencia so aparecia em producao -- o arquivo nao
+-- entra na imagem Docker, nenhum volume o repoe no conteiner, e gerar contrato
+-- falhava com "modelo nao encontrado em docs/" num ambiente onde ninguem tem
+-- shell para ir la coloca-lo.
+--
+-- Guardado aqui, o modelo acompanha o banco: sobe uma vez pela tela e vale para
+-- todos os conteineres, inclusive os recriados no proximo deploy. O `docs/`
+-- continua valendo como reserva, que e o que faz a maquina do advogado
+-- funcionar sem precisar subir nada.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}modelos_documento') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}modelos_documento (
+    codigo        varchar(40)    NOT NULL CONSTRAINT pk_acervo_modelos_doc PRIMARY KEY,
+    nome_arquivo  nvarchar(400)  NOT NULL,
+    conteudo      varbinary(max) NOT NULL,
+    enviado_por   nvarchar(400)  NOT NULL CONSTRAINT df_acervo_mod_quem DEFAULT N'',
+    criado_em     varchar(40)    NOT NULL,
+    atualizado_em varchar(40)    NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
+    codigo        varchar(80)   NOT NULL CONSTRAINT pk_acervo_roteiros PRIMARY KEY,
+    nome          nvarchar(400) NOT NULL,
+    descricao     nvarchar(max) NOT NULL CONSTRAINT df_acervo_rot_desc DEFAULT N'',
+    corpo         nvarchar(max) NOT NULL,
+    criado_por    nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_quem DEFAULT N'',
+    origem        nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_origem DEFAULT N'',
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL
+);
+
+-- `origem` (o arquivo de onde o roteiro foi importado) nasceu depois da tabela:
+-- o banco de produção já tinha `acervo_roteiros` sem essa coluna, e o
+-- `IF OBJECT_ID ... IS NULL` acima nunca roda para ela. Sem este acréscimo, uma
+-- instalação antiga aceitaria o INSERT e perderia a procedência em silêncio.
+IF COL_LENGTH('{SCHEMA}.{PREFIXO}roteiros', 'origem') IS NULL
+ALTER TABLE {SCHEMA}.{PREFIXO}roteiros
+    ADD origem nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_origem DEFAULT N'';
 """
 
 # As constraints criadas antes da faxina mantêm o nome `pk_ocr_*` / `fk_ocr_*`. Renomear

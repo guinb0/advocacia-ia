@@ -329,8 +329,24 @@ if ($Prod) {
         # vazio, e a checagem passaria batido sem erro nenhum), e varrer a raiz
         # entraria em node_modules, que sozinho tem dezenas de milhares de
         # arquivos e faria cada subida parecer travada.
-        $fontes = @(".\frontend\app", ".\frontend\components", ".\frontend\lib",
-                    ".\frontend\public") | Where-Object { Test-Path $_ }
+        #
+        # AS PASTAS SAO PROCURADAS, E O `Test-Path` CALADO JA CUSTOU CARO.
+        # Quando o frontend migrou para `frontend\src\`, os tres caminhos antigos
+        # (`app`, `components`, `lib`) deixaram de existir, o filtro os descartou
+        # sem dizer nada e sobrou so `public`. Resultado: o `-Prod` parou de
+        # recompilar por mudanca de codigo e passou a servir o build velho para
+        # sempre -- exatamente o defeito que o comentario acima da como resolvido.
+        $candidatas = @(".\frontend\src", ".\frontend\app", ".\frontend\components",
+                        ".\frontend\lib", ".\frontend\public")
+        $fontes = @($candidatas | Where-Object { Test-Path $_ })
+        # Sobrar so `public` significa que o layout mudou de novo e esta checagem
+        # voltou a ser decorativa. Recompilar e o lado seguro de errar: custa um
+        # build, contra servir codigo velho sem ninguem perceber.
+        $comCodigo = @($fontes | Where-Object { $_ -ne ".\frontend\public" })
+        if ($comCodigo.Count -eq 0) {
+            Write-Host "Nao achei as pastas de fonte do frontend; recompilando por seguranca." -ForegroundColor Yellow
+            $precisa = $true
+        }
         $maisNovo = Get-ChildItem $fontes -Recurse -File |
             Where-Object { $_.Extension -in ".ts", ".tsx", ".css", ".json", ".js" } |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1

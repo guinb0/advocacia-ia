@@ -61,14 +61,32 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
     setEnviando(true);
     setRetorno(null);
     try {
-      await enviarAvaliacaoGoogle(telefone);
-      setRetorno({ tom: "ok", texto: "Link enviado para o WhatsApp do cliente." });
+      const resultado = await enviarAvaliacaoGoogle(telefone);
+      setRetorno({
+        tom: "ok",
+        // O servidor deduplica pelo número: apertar duas vezes não manda duas
+        // mensagens, e dizer isso evita que alguém insista achando que falhou.
+        texto: resultado.ja_enviado
+          ? "O link já tinha sido enviado para este cliente."
+          : "Link enviado para o WhatsApp do cliente.",
+      });
     } catch (e) {
       setRetorno({ tom: "erro", texto: e instanceof Error ? e.message : "Não foi possível enviar o link." });
     } finally {
       setEnviando(false);
     }
   }
+
+  /* QUEM APERTA O BOTÃO É O ADVOGADO, e isto já foi automático uma vez.
+   *
+   * O envio disparava sozinho ao abrir a etapa. O problema não é técnico — a
+   * deduplicação no servidor funciona — é de momento: esta etapa aparece assim
+   * que a qualificação fica pronta, e nem sempre é a hora de pedir avaliação. O
+   * roteiro pede que o link vá COM O CLIENTE AINDA NA CHAMADA, para o atendente
+   * acompanhar; disparado antes disso, o cliente recebe o link no meio do
+   * atendimento, sem ninguém ter pedido nada, e a avaliação se perde.
+   *
+   * Quem sabe se a conversa chegou nesse ponto é quem está conduzindo. */
 
   return (
     <section className="mt-6 border-t border-borda pt-[14px]" aria-labelledby="titulo-avaliacao-google">
