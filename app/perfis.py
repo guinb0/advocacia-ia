@@ -100,6 +100,14 @@ MODULOS: tuple[dict[str, str], ...] = (
         "rotulo": "Usuários e perfis",
         "descricao": "Cadastrar pessoas e definir o que cada perfil acessa.",
     },
+    {
+        "codigo": "roteiros",
+        "rotulo": "Roteiros de entrevista",
+        "descricao": (
+            "Manter o catálogo de roteiros: importar de um documento, editar "
+            "perguntas e blocos, e desfazer edição."
+        ),
+    },
 )
 CODIGOS_MODULOS = tuple(m["codigo"] for m in MODULOS)
 
@@ -114,15 +122,19 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "sistema": True,
         "modulos": (
             "entrevista", "casos", "documentos", "agente", "contratos",
-            "investigacao", "usuarios",
+            "investigacao", "usuarios", "roteiros",
         ),
     },
     {
         "codigo": "secretario",
         "rotulo": "Secretário",
-        "descricao": "Gerencia usuários e acompanha as entrevistas de toda a equipe.",
+        "descricao": "Gerencia usuários, mantém os roteiros e acompanha as entrevistas da equipe.",
         "sistema": True,
-        "modulos": ("casos", "documentos", "supervisao", "metricas", "usuarios"),
+        # `roteiros` sem `entrevista`: o secretário MANTÉM o roteiro do
+        # escritório — importa do documento, corrige pergunta, desfaz edição —
+        # sem necessariamente conduzir atendimento. São trabalhos diferentes, e
+        # dar um não obriga a dar o outro.
+        "modulos": ("casos", "documentos", "supervisao", "metricas", "usuarios", "roteiros"),
     },
     {
         "codigo": "cliente",
@@ -175,6 +187,17 @@ def inicializar() -> None:
         from datetime import datetime, timezone
 
         agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        # UMA vez, antes do laço. Dentro dele, o módulo entregue ao advogado já
+        # contaria como "conhecido" na vez do secretário, e ele ficaria de fora
+        # do módulo novo — que é exatamente o problema que isto veio resolver.
+        conhecidos = {
+            linha["modulo"]
+            for linha in con.execute(
+                f"SELECT DISTINCT modulo FROM {_TABELA_ACESSOS}"
+            ).fetchall()
+        }
+
         for perfil in SEMENTE:
             existe = con.execute(
                 f"SELECT 1 FROM {_TABELA_PERFIS} WHERE codigo = ?", (perfil["codigo"],)
@@ -183,6 +206,7 @@ def inicializar() -> None:
                 # Perfil de sistema já cadastrado NÃO é sobrescrito: o escritório
                 # pode ter ajustado o que o secretário enxerga, e uma reinicialização
                 # do servidor não é lugar para desfazer decisão de quem administra.
+                _entregar_modulos_ineditos(con, perfil, conhecidos)
                 continue
             con.execute(
                 f"INSERT INTO {_TABELA_PERFIS} (codigo, rotulo, descricao, sistema, criado_em)"
@@ -194,6 +218,40 @@ def inicializar() -> None:
                     f"INSERT INTO {_TABELA_ACESSOS} (perfil_codigo, modulo) VALUES (?, ?)",
                     (perfil["codigo"], modulo),
                 )
+
+
+def _entregar_modulos_ineditos(
+    con: Any, perfil: dict[str, Any], conhecidos: set[str]
+) -> None:
+    """Entrega ao perfil de sistema os módulos que esta instalação nunca viu.
+
+    O CASO QUE ISTO RESOLVE, E POR QUE NÃO É "SOBRESCREVER"
+
+    Perfil de sistema já cadastrado não é reescrito — a nota acima explica por
+    quê, e ela continua valendo. Só que a consequência era esta: um módulo NOVO,
+    acrescentado ao `MODULOS` junto com a rota que ele protege, nunca chegava a
+    nenhum escritório já instalado. A rota nascia guardada por um módulo que
+    ninguém tinha, e o recurso simplesmente não existia até alguém descobrir
+    sozinho que precisava marcar uma caixa na tela de perfis.
+
+    A distinção que torna isto seguro: um módulo que NÃO APARECE em nenhuma linha
+    da tabela — para perfil nenhum — é um módulo que esta instalação nunca
+    conheceu. Ninguém pode tê-lo desmarcado, porque ele não existia para ser
+    desmarcado. Entregá-lo é completar a instalação, não desfazer decisão.
+
+    Módulo que já aparece para qualquer perfil fica intocado, mesmo que este aqui
+    não o tenha: aí houve escolha, e escolha de quem administra se respeita.
+    """
+    ineditos = [m for m in perfil["modulos"] if m not in conhecidos]
+    for modulo in ineditos:
+        con.execute(
+            f"INSERT INTO {_TABELA_ACESSOS} (perfil_codigo, modulo) VALUES (?, ?)",
+            (perfil["codigo"], modulo),
+        )
+    if ineditos:
+        log.info(
+            "Perfil '%s' recebeu os módulos novos %s.", perfil["codigo"], ", ".join(ineditos)
+        )
 
 
 def listar() -> list[dict[str, Any]]:

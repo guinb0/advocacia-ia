@@ -23,6 +23,7 @@ import ModelosDePeticao from "@/components/ModelosDePeticao";
 import Usuarios from "@/components/admin/Usuarios";
 import Resultado from "@/components/caso/Resultado";
 import PainelDocumentacao from "@/components/documentacao/PainelDocumentacao";
+import CatalogoRoteiros from "@/components/admin/CatalogoRoteiros";
 import { useCasos, useCategorias } from "@/lib/useCasos";
 import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 
@@ -157,6 +158,10 @@ const Telas = (props: HomeViewProps) => {
 
   if (tela === "modelosDePeticao") {
     return <ModelosDePeticao onVoltar={voltarParaCarteira} />;
+  }
+
+  if (tela === "catalogoRoteiros") {
+    return <CatalogoRoteiros onVoltar={voltarParaCarteira} />;
   }
 
   if (tela === "dados") {

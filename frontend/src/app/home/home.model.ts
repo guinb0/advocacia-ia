@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useCasos, useCategorias, useSituacao } from "@/lib/useCasos";
 import { useSessao } from "@/lib/auth";
@@ -22,6 +22,7 @@ export type Tela =
   | "dados"
   | "saudeAgente"
   | "modelosDePeticao"
+  | "catalogoRoteiros"
   | "documentacao";
 
 /* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
@@ -70,8 +71,25 @@ export const useHomeModel = () => {
   const listaCasos = useCasos();
   const situacaoCaso = useSituacao(casoAberto);
 
+  /* Quem é da Documentação CAI na tela da Documentação — uma vez, ao entrar.
+   *
+   * Este efeito prendia. `sessao.papeis` é montado como `[loggedUser.perfil]`
+   * em `lib/auth.tsx`: um array literal novo a cada render, então a dependência
+   * mudava de identidade sempre, o efeito redisparava sempre, e qualquer clique
+   * em outro item do menu era desfeito antes de a tela aparecer. Na prática o
+   * perfil ficava trancado na própria tela, sem alcançar carteira, casos ou
+   * documentos — que ele tem todo direito de ver.
+   *
+   * O `useRef` faz o que o `useEffect` prometia: leva para lá na primeira carga
+   * e não interfere mais. É atalho de conveniência, nunca permissão — quem
+   * decide o que cada perfil acessa é `app/perfis.py`, no servidor. */
+  const jaDirecionado = useRef(false);
   useEffect(() => {
-    if (sessao.papeis.includes("documentacao")) setTela("documentacao");
+    if (jaDirecionado.current) return;
+    if (sessao.papeis.includes("documentacao")) {
+      jaDirecionado.current = true;
+      setTela("documentacao");
+    }
   }, [sessao.papeis]);
 
   function abrirCaso(casoId: string) {

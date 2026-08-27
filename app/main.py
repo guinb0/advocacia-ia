@@ -68,12 +68,14 @@ from . import (
 )
 from . import jobs, observabilidade
 from . import entrevista as entrevista_lib
+from . import roteiro_ia
 from .cache_leitura import por_alguns_segundos
 from .agente import dossie as dossie_agente
 from .extractors import ROTULOS_TIPO
 from .tasks.ocr import processar_documento, processar_entrega
 from .tasks.documentos import gerar_relatorio as gerar_relatorio_job
 from .tasks.ia import gerar_estrategia as gerar_estrategia_job
+from .tasks.roteiro import importar_roteiro as importar_roteiro_task
 
 # Onde o frontend atende — é o que monta o link enviado ao cliente.
 URL_PORTAL = os.getenv("URL_PORTAL", "http://localhost:3000").rstrip("/")
@@ -325,12 +327,41 @@ def tipos():
 
 @app.get("/api/roteiros")
 def listar_roteiros():
-    """Roteiros de entrevista disponíveis, sem as perguntas."""
+    """Roteiros de entrevista disponíveis, sem as perguntas.
+
+    `importado` diz se aquele roteiro tem uma versão salva no catálogo. É o que
+    a tela usa para oferecer "voltar ao original": só faz sentido em quem tem
+    original para voltar.
+    """
+    salvos = {r["codigo"]: r for r in _roteiros_salvos()}
     return {
         "roteiros": [
-            {"codigo": r.codigo, "nome": r.nome, "descricao": r.descricao} for r in roteiros.listar()
+            {
+                "codigo": r.codigo,
+                "nome": r.nome,
+                "descricao": r.descricao,
+                "importado": r.codigo in salvos,
+                "origem": salvos.get(r.codigo, {}).get("origem", ""),
+                "criado_por": salvos.get(r.codigo, {}).get("criado_por", ""),
+                "atualizado_em": salvos.get(r.codigo, {}).get("atualizado_em", ""),
+            }
+            for r in roteiros.listar()
         ]
     }
+
+
+def _roteiros_salvos() -> list[dict[str, Any]]:
+    """O catálogo do banco, ou vazio se ele ainda não existe.
+
+    A listagem de roteiros não pode falhar por causa da tabela: sem ela o
+    escritório ainda tem o roteiro escrito em `app/roteiros.py`, que é o que se
+    usa todo dia.
+    """
+    try:
+        return armazenamento.listar_roteiros()
+    except Exception:
+        log.debug("Catálogo de roteiros indisponível.", exc_info=True)
+        return []
 
 
 class PedidoContrato(BaseModel):
@@ -1094,6 +1125,132 @@ def obter_roteiro(codigo: str):
     if roteiro is None:
         raise HTTPException(404, f"Roteiro '{codigo}' não encontrado.")
     return {**roteiro.to_dict(), "mapa_rastreio": roteiros.MAPA_RASTREIO}
+
+
+# ------------------------------------------------ roteiro vindo de documento
+#
+# O roteiro do escritório está escrito em `app/roteiros.py` porque foi transcrito
+# à mão de um `.docx`. Cada nova categoria de causa tem o seu documento, e
+# transcrever 86 perguntas em dataclasses leva um dia. Estas três rotas fecham
+# esse caminho: o documento entra como arquivo, vira proposta de roteiro, e o
+# advogado corrige o que o modelo errou antes de salvar.
+#
+# Nada aqui grava sozinho. A importação devolve uma PROPOSTA; salvar é um passo
+# separado e deliberado, porque um roteiro é o que a entrevista inteira segue.
+
+
+#: Manter o catálogo é trabalho de escritório, não de atendimento: o secretário
+#: tem este módulo sem ter `entrevista`. Ver `app/perfis.py`.
+PodeManterRoteiros = Depends(auth.exigir_modulo("roteiros"))
+
+
+@app.post("/api/roteiros/importar", status_code=202)
+async def importar_roteiro(
+    arquivo: UploadFile = File(...),
+    _autorizado=PodeManterRoteiros,
+):
+    """Enfileira a leitura do documento e a montagem do roteiro.
+
+    202 e não 200: são de dez segundos a dois minutos entre OCR e as chamadas ao
+    modelo, uma por bloco. A tela acompanha por `GET /api/jobs/{id}`, onde o
+    campo `resultado.etapa` diz em que bloco a montagem está.
+    """
+    nome = arquivo.filename or "documento"
+    extensao = Path(nome).suffix.lower()
+    if extensao not in roteiro_ia.EXTENSOES_ROTEIRO:
+        raise HTTPException(
+            400,
+            f"Extensão '{extensao or '(sem)'}' não suportada. "
+            f"Use: {', '.join(sorted(roteiro_ia.EXTENSOES_ROTEIRO))}.",
+        )
+
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > MAX_BYTES:
+        raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
+
+    pasta = BASE / "tmp" / "jobs"
+    pasta.mkdir(parents=True, exist_ok=True)
+    caminho = pasta / f"{uuid.uuid4().hex}{extensao}"
+    caminho.write_bytes(conteudo)
+
+    try:
+        await run_in_threadpool(jobs.inicializar)
+        job_id = await run_in_threadpool(jobs.criar, "ROTEIRO", arquivo=str(caminho))
+        tarefa = importar_roteiro_task.apply_async(
+            args=(job_id, str(caminho), nome), queue="ai"
+        )
+        await run_in_threadpool(jobs.vincular_tarefa, job_id, tarefa.id)
+    except Exception as exc:
+        caminho.unlink(missing_ok=True)
+        log.exception("Falha ao enfileirar importação de roteiro")
+        raise HTTPException(503, f"Fila de processamento indisponível: {exc}") from exc
+
+    return {"job_id": job_id}
+
+
+class PedidoSalvarRoteiro(BaseModel):
+    """O roteiro inteiro, como o editor da tela o tem em mãos."""
+
+    roteiro: dict[str, Any]
+    #: De onde ele veio — nome do arquivo importado, ou vazio se foi escrito à mão.
+    origem: str = Field(default="", max_length=400)
+
+
+@app.post("/api/roteiros", status_code=201)
+async def salvar_roteiro(
+    pedido: PedidoSalvarRoteiro,
+    usuario: auth.Usuario = PodeManterRoteiros,
+):
+    """Grava o roteiro no catálogo. Regrava, se o código já existir.
+
+    É por aqui que passa tanto o roteiro recém-importado quanto a edição feita no
+    meio de um atendimento — e é de propósito que os dois usem a mesma validação:
+    um roteiro escrito por um advogado às onze da noite pode quebrar a tela
+    exatamente como um escrito pelo modelo.
+    """
+    try:
+        roteiro = roteiros.de_dict(pedido.roteiro)
+    except roteiros.RoteiroInvalido as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    try:
+        registro = await run_in_threadpool(
+            armazenamento.salvar_roteiro,
+            roteiro.codigo,
+            nome=roteiro.nome,
+            descricao=roteiro.descricao,
+            conteudo=roteiro.to_dict(),
+            origem=pedido.origem.strip(),
+            criado_por=usuario.nome,
+        )
+    except Exception as exc:
+        log.exception("Falha ao salvar roteiro '%s'", roteiro.codigo)
+        raise HTTPException(503, f"Não foi possível salvar o roteiro: {exc}") from exc
+
+    roteiros.invalidar_cache()
+    return {
+        **roteiro.to_dict(),
+        "mapa_rastreio": roteiros.MAPA_RASTREIO,
+        "atualizado_em": registro.get("atualizado_em", ""),
+    }
+
+
+@app.delete("/api/roteiros/{codigo}")
+async def excluir_roteiro(codigo: str, _autorizado=PodeManterRoteiros):
+    """Tira o roteiro do catálogo.
+
+    Num roteiro importado isto o apaga. Num que também existe em
+    `app/roteiros.py`, desfaz a edição e devolve o do módulo — a saída para uma
+    edição malfeita no meio do expediente, sem precisar de deploy.
+    """
+    removido = await run_in_threadpool(armazenamento.excluir_roteiro, codigo)
+    if not removido:
+        raise HTTPException(404, f"Roteiro '{codigo}' não está salvo no catálogo.")
+
+    roteiros.invalidar_cache()
+    return {"codigo": codigo, "revertido_para_o_modulo": codigo in roteiros.ROTEIROS}
 
 
 @app.get("/api/categorias")

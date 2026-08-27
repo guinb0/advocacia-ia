@@ -19,6 +19,8 @@ import type {
   ProcessamentoEntrevista,
   RespostaEnvio,
   RoteiroCompleto,
+  RoteiroImportado,
+  RoteiroResumo,
   RecomendacaoEntrevista,
   SituacaoCaso,
   TipoDocumento,
@@ -292,6 +294,73 @@ export async function obterPedido(casoId: string, incluirOpcionais: boolean): Pr
 
 export async function obterRoteiro(codigo: string): Promise<RoteiroCompleto> {
   return comoJson<RoteiroCompleto>(await buscar(`/api/roteiros/${codigo}`));
+}
+
+export async function listarRoteiros(): Promise<RoteiroResumo[]> {
+  const dados = await comoJson<{ roteiros: RoteiroResumo[] }>(await buscar("/api/roteiros"));
+  return dados.roteiros;
+}
+
+/** Lê o documento anexado e monta um roteiro a partir dele.
+ *
+ * São de dez segundos a dois minutos: o arquivo pode precisar de OCR e a
+ * montagem é uma chamada ao modelo por bloco. Por isso o `aoProgredir` — sem
+ * ele o advogado olha para um botão travado sem saber se falta muito.
+ */
+export async function importarRoteiro(
+  arquivo: File,
+  aoProgredir?: (pct: number, etapa: string) => void,
+): Promise<RoteiroImportado> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  const criado = await comoJson<{ job_id: string }>(
+    await buscar("/api/roteiros/importar", { method: "POST", body: form }),
+  );
+
+  // Generoso porque o teto real é o do worker: um PDF digitalizado de vinte
+  // páginas gasta OCR antes da primeira chamada ao modelo.
+  const limite = Date.now() + 10 * 60_000;
+  while (Date.now() < limite) {
+    const job = await comoJson<{
+      status: "QUEUED" | "STARTED" | "PROCESSING" | "COMPLETED" | "FAILED";
+      progresso?: number;
+      erro?: string | null;
+      resultado?: (RoteiroImportado & { etapa?: string }) | null;
+    }>(await buscar(`/api/jobs/${criado.job_id}`));
+
+    if (job.status === "COMPLETED" && job.resultado?.roteiro) return job.resultado;
+    if (job.status === "FAILED") {
+      throw new ApiError(job.erro || "Não foi possível montar o roteiro deste documento.");
+    }
+    // Enquanto corre, `resultado` carrega só a etapa: o backend não tem coluna
+    // para ela e reaproveitar o campo evita uma migração por uma frase.
+    aoProgredir?.(job.progresso ?? 0, job.resultado?.etapa ?? "Na fila");
+    await new Promise((resolver) => window.setTimeout(resolver, 1500));
+  }
+  throw new ApiError("A importação continua em andamento. Tente consultar em instantes.");
+}
+
+/** Grava o roteiro no catálogo — o recém-importado ou o editado no atendimento. */
+export async function salvarRoteiro(
+  roteiro: RoteiroCompleto,
+  origem = "",
+): Promise<RoteiroCompleto> {
+  return comoJson<RoteiroCompleto>(
+    await buscar("/api/roteiros", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roteiro, origem }),
+    }),
+  );
+}
+
+/** Tira o roteiro do catálogo. Num que também existe em código, desfaz a edição. */
+export async function excluirRoteiroSalvo(
+  codigo: string,
+): Promise<{ revertido_para_o_modulo: boolean }> {
+  return comoJson<{ revertido_para_o_modulo: boolean }>(
+    await buscar(`/api/roteiros/${codigo}`, { method: "DELETE" }),
+  );
 }
 
 export interface AtendimentoDocumentacao {

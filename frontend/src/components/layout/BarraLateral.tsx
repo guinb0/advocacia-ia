@@ -83,6 +83,10 @@ const GRUPOS: Grupo[] = [
       // que podem terminar em 403. Para voltar atrás, filtre `GRUPOS` por
       // `sessao.papeis` antes de desenhar.
       { tela: "supervisao", rotulo: "Supervisão" },
+      // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
+      // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
+      // dentro do roteiro; esta entrada é para quem vem consertar depois.
+      { tela: "catalogoRoteiros", rotulo: "Roteiros" },
       { tela: "usuarios", rotulo: "Usuários" },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
