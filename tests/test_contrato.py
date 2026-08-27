@@ -31,6 +31,8 @@ ENTREVISTA = {
     "endereco": "Avenida Governador José Malcher, nº 100, Nazaré, Belém/PA, CEP 66055-240",
     "telefone": "(91) 98888-7777",
     "email": "maria@exemplo.com",
+    "municipio": "Belém",
+    "uf": "PA",
 }
 
 
@@ -196,6 +198,15 @@ def main_teste() -> int:
     saida = texto_do_docx(docx)
 
     falhas += not checar(achou_modelo, f"modelo oficial encontrado ({modelo.name})")
+
+    sem_cidade_no_endereco = {
+        **ENTREVISTA,
+        "endereco": "Avenida Principal, nº 100, Centro, CEP 66055-240",
+    }
+    falhas += not checar(
+        contrato.valores_da_entrevista(sem_cidade_no_endereco)["Município"] == "Belém/PA",
+        "município e UF da identificação entram mesmo sem cidade no endereço",
+    )
 
     for esperado, onde in (
         ("Maria Aparecida da Silva", "nome"),

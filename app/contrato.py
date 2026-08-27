@@ -609,6 +609,10 @@ def valores_da_entrevista(
         return str(valor or "").strip()
 
     endereco = r("endereco")
+    municipio_entrevista = r("municipio")
+    uf_entrevista = r("uf").upper()
+    if municipio_entrevista and uf_entrevista and "/" not in municipio_entrevista:
+        municipio_entrevista = f"{municipio_entrevista}/{uf_entrevista}"
 
     # O roteiro pergunta número, órgão e UF em campos próprios. Se o órgão vier
     # vazio, ainda se tenta separar do número — entrevista feita às pressas põe
@@ -645,7 +649,12 @@ def valores_da_entrevista(
         "endereço completo": endereco,
         "telefone": r("telefone"),
         "e-mail": r("email"),
-        "Município": municipio.strip() or _municipio_do_endereco(endereco),
+        # A identificação pergunta município e UF em campos próprios. O
+        # argumento explícito continua vencendo para quem escolhe outro local de
+        # assinatura; o endereço completo é apenas a última rede de segurança.
+        "Município": (
+            municipio.strip() or municipio_entrevista or _municipio_do_endereco(endereco)
+        ),
         "data": por_extenso(quando or date.today()),
         "Nome do Contratante": r("nome"),
     }
