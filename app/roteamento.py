@@ -89,6 +89,15 @@ def _deterministico(
     if not detectado or detectado == "desconhecido":
         return None
 
+    # Segunda barreira: OCR pode não trazer o título legível, mas quem enviou
+    # marcou CAT/contracheque — não deslocar para CTPS só por PIS e Ministério.
+    if detectado == "ctps":
+        from .extractors import _evita_classificacao_ctps, normalizar
+
+        texto = normalizar(str(extracao.get("texto_completo") or ""))
+        if _evita_classificacao_ctps(texto):
+            return None
+
     # CIN e CNH trazem identidade e CPF no mesmo arquivo, e só valem pelos dois
     # quando os dados saíram legíveis — a mesma regra do envio manual.
     if casos.cobre_rg_e_cpf(extracao):
@@ -176,6 +185,36 @@ def decidir(
             return Destino(itens, DETERMINISTICO, confianca, motivo)
         if item_escolhido.codigo in itens:
             return Destino(itens, ESCOLHA, confianca, motivo)
+        # CAT, contracheque e laudos não têm tipo_ocr cadastral: se o determinístico
+        # aponta CTPS mas quem enviou marcou outro item sem tipo_ocr, confia na
+        # escolha e deixa a leitura semântica decidir — não joga na carteira.
+        if (
+            detectado := (extracao.get("tipo") or {}).get("detectado")
+        ) == "ctps" and item_escolhido.tipo_ocr is None:
+            from .extractors import normalizar
+
+            nome = normalizar(item_escolhido.nome)
+            if any(
+                chave in nome
+                for chave in ("CAT", "CONTRACHEQUE", "HOLERITE", "FOLHA DE PAGAMENTO")
+            ):
+                sem = _semantico(extracao, categoria)
+                if sem is not None:
+                    itens_sem, conf_sem, motivo_sem, analise = sem
+                    if item_escolhido.codigo in itens_sem:
+                        return Destino(
+                            [item_escolhido.codigo], ESCOLHA, conf_sem, motivo_sem, analise
+                        )
+                    if len(itens_sem) == 1 and itens_sem[0] != item_escolhido.codigo:
+                        return Destino(
+                            itens_sem, SEMANTICO, conf_sem, motivo_sem, analise
+                        )
+                return Destino(
+                    [item_escolhido.codigo],
+                    ESCOLHA,
+                    40,
+                    f"Mantido em '{item_escolhido.nome}': não é carteira de trabalho.",
+                )
         # Divergência com evidência: o arquivo é de outro item, e é para lá que vai.
         return Destino(
             itens,
