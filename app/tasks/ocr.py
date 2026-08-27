@@ -234,7 +234,27 @@ def processar_entrega(
                 "tipo_semantico": str(destino.analise.get("documento") or "indefinido"),
             }
             resultado["classificacao_semantica"] = semantica
-            resultado["tipo"]["descricao_detectado"] = semantica["tipo_semantico"]
+            indexacao_documento.aplicar_interpretacao(resultado, semantica)
+        elif formato_lido and resultado.get("validacao", {}).get("texto_utilizavel"):
+            # O roteamento determinístico já decidiu o item, mas a interpretação
+            # da main ainda agrega achados semânticos úteis ao documento. Ela não
+            # muda o destino escolhido acima.
+            try:
+                documentos_esperados = [
+                    {"codigo": esperado.codigo, "nome": esperado.nome}
+                    for esperado in categoria.itens
+                ]
+                semantica = indexacao_documento.classificar(
+                    resultado, categoria.nome, documentos_esperados
+                )
+                resultado["classificacao_semantica"] = semantica
+                indexacao_documento.aplicar_interpretacao(resultado, semantica)
+            except Exception as exc:
+                log.warning("classificação semântica falhou para %s: %s", entrega_id, exc)
+                resultado["classificacao_semantica"] = {
+                    "status": "indisponivel",
+                    "erro": str(exc)[:200],
+                }
 
         # A identidade unificada marcada à mão continua valendo sobre tudo: quem
         # marcou olhou o documento, e nenhum classificador desmente isso.

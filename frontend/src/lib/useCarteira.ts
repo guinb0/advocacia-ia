@@ -261,7 +261,6 @@ export function useCarteira() {
     },
     [dados],
   );
-
   return {
     linhas,
     triagem,

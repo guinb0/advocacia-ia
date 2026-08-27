@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { obterPedido } from "@/lib/api";
-import type { Pedido, Progresso } from "@/lib/types";
+import { obterCobrancaDocumentos, obterPedido, salvarCobrancaDocumentos } from "@/lib/api";
+import type { CobrancaDocumentos, Pedido, Progresso } from "@/lib/types";
 import { AjudaCampo, Botao, Cartao, Marcacao, RotuloCampo, Vazio } from "@/components/ui/Basicos";
 
 /** Painel que gera o texto pronto para o advogado mandar ao cliente. */
@@ -21,6 +21,9 @@ export default function PedidoCliente({
   const [pedido, setPedido] = useState<Pedido | null>(null);
   const [incluirOpcionais, setIncluirOpcionais] = useState(false);
   const [copiado, setCopiado] = useState(false);
+  const [cobranca, setCobranca] = useState<CobrancaDocumentos | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [retorno, setRetorno] = useState("");
 
   const chave = `${progresso.obrigatorios_entregues}-${progresso.itens_a_conferir}-${progresso.opcionais_entregues}`;
 
@@ -37,6 +40,25 @@ export default function PedidoCliente({
       cancelado = true;
     };
   }, [casoId, incluirOpcionais, chave]);
+
+  useEffect(() => {
+    obterCobrancaDocumentos(casoId).then(setCobranca).catch(() => setCobranca(null));
+  }, [casoId]);
+
+  const salvarAutomacao = useCallback(async () => {
+    if (!cobranca) return;
+    setSalvando(true);
+    setRetorno("");
+    try {
+      const atualizada = await salvarCobrancaDocumentos(casoId, cobranca);
+      setCobranca(atualizada);
+      setRetorno(atualizada.ativa ? "Cobrança automática ativada." : "Cobrança automática desativada.");
+    } catch (e) {
+      setRetorno(e instanceof Error ? e.message : "Não foi possível salvar a automação.");
+    } finally {
+      setSalvando(false);
+    }
+  }, [casoId, cobranca]);
 
   const copiar = useCallback(async () => {
     if (!pedido) return;
@@ -91,6 +113,59 @@ export default function PedidoCliente({
           <AjudaCampo>
             O texto se refaz sozinho conforme os documentos chegam — não precisa editar aqui.
           </AjudaCampo>
+
+          {cobranca && (
+            <div className="mt-5 border-t border-borda pt-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Marcacao>
+                  <input
+                    type="checkbox"
+                    checked={cobranca.ativa}
+                    onChange={(e) => setCobranca({ ...cobranca, ativa: e.target.checked })}
+                  />
+                  <span>Cobrar documentos automaticamente pelo WhatsApp</span>
+                </Marcacao>
+              </div>
+              <div className="grid grid-cols-[minmax(220px,1fr)_150px] gap-3 mt-3 max-[640px]:grid-cols-1">
+                <label className="text-xs text-tinta-3">
+                  WhatsApp do cliente
+                  <input
+                    className="block w-full mt-1 p-2 border border-borda-campo rounded-campo bg-papel text-tinta"
+                    value={cobranca.telefone}
+                    onChange={(e) => setCobranca({ ...cobranca, telefone: e.target.value })}
+                    placeholder="(61) 99999-9999"
+                  />
+                </label>
+                <label className="text-xs text-tinta-3">
+                  Repetir a cada
+                  <select
+                    className="block w-full mt-1 p-2 border border-borda-campo rounded-campo bg-papel text-tinta"
+                    value={cobranca.intervalo_dias}
+                    onChange={(e) => setCobranca({ ...cobranca, intervalo_dias: Number(e.target.value) })}
+                  >
+                    {[1, 2, 3, 5, 7, 14].map((dias) => <option key={dias} value={dias}>{dias} {dias === 1 ? "dia" : "dias"}</option>)}
+                  </select>
+                </label>
+              </div>
+              <Marcacao className="mt-3">
+                <input
+                  type="checkbox"
+                  checked={cobranca.incluir_opcionais}
+                  onChange={(e) => setCobranca({ ...cobranca, incluir_opcionais: e.target.checked })}
+                />
+                <span>Incluir documentos opcionais nas cobranças</span>
+              </Marcacao>
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <Botao variante="primario" onClick={() => void salvarAutomacao()} disabled={salvando}>
+                  {salvando ? "Salvando…" : "Salvar automação"}
+                </Botao>
+                {retorno && <span className="text-xs text-tinta-3">{retorno}</span>}
+              </div>
+              <AjudaCampo>
+                Cada envio usa a mensagem acima refeita naquele momento. Quando o cliente envia outro arquivo, a próxima cobrança já remove o que chegou e inclui apenas o que continua pendente.
+              </AjudaCampo>
+            </div>
+          )}
         </>
       )}
     </Cartao>

@@ -167,7 +167,8 @@ export default function Carteira({
     return () => window.removeEventListener("keydown", aoTeclar);
   }, [visiveis, selecionado, onAbrir, onNovoCaso, alternarFiltro]);
 
-  // Mantém a linha do cursor visível quando a navegação passa da dobra.
+  // Mantém a linha do cursor visível quando a navegação passa da dobra. O
+  // backend já entrega apenas os itens da página atual.
   useEffect(() => {
     const item = listaRef.current?.children[selecionado] as HTMLElement | undefined;
     item?.scrollIntoView({ block: "nearest" });

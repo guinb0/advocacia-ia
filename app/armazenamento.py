@@ -1741,3 +1741,158 @@ def mensagens_da_conversa(conversa_id: str) -> list[dict[str, Any]]:
             (conversa_id,),
         ).fetchall()
     return [_normalizar_mensagem(l) for l in linhas]
+# ------------------------------------------------------- catálogo de roteiros
+#
+# O roteiro do `app/roteiros.py` é código: veio de um `.docx` transcrito à mão.
+# Estes aqui vieram de um arquivo que alguém anexou, ou da tela de edição durante
+# um atendimento. Guardar o roteiro inteiro como JSON numa coluna, e não em
+# tabelas de bloco e pergunta, é deliberado: ninguém consulta "todas as perguntas
+# do tipo data do escritório" — o roteiro é sempre lido e salvo por inteiro, e
+# normalizá-lo custaria três tabelas e um JOIN para nunca ser usado.
+
+
+def _normalizar_roteiro(linha: banco.Linha) -> dict[str, Any]:
+    registro = dict(linha)
+    bruto = registro.get("corpo")
+    try:
+        registro["conteudo"] = json.loads(bruto) if isinstance(bruto, str) else {}
+    except json.JSONDecodeError:
+        registro["conteudo"] = {}
+    registro.pop("corpo", None)
+    return registro
+
+
+def salvar_roteiro(
+    codigo: str,
+    *,
+    nome: str,
+    descricao: str,
+    conteudo: dict[str, Any],
+    origem: str = "",
+    criado_por: str = "",
+) -> dict[str, Any]:
+    """Grava (ou regrava) um roteiro do catálogo. Idempotente pelo código.
+
+    `criado_por` guarda quem salvou. Não é enfeite de auditoria: um roteiro
+    salvo no catálogo passa a reger os atendimentos de todo o escritório, e
+    quando um aparecer estranho na segunda-feira alguém precisa saber com quem
+    conversar. `UPDATE` não o toca — quem criou continua sendo quem criou.
+    """
+    instante = agora()
+    corpo = json.dumps(conteudo, ensure_ascii=False)
+    with conectar() as con:
+        atualizadas = con.execute(
+            """
+            UPDATE roteiros
+               SET nome = ?, descricao = ?, corpo = ?, origem = ?, atualizado_em = ?
+             WHERE codigo = ?
+            """,
+            (nome, descricao, corpo, origem, instante, codigo),
+        ).rowcount
+        if not atualizadas:
+            con.execute(
+                """
+                INSERT INTO roteiros
+                       (codigo, nome, descricao, corpo, criado_por, origem,
+                        criado_em, atualizado_em)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (codigo, nome, descricao, corpo, criado_por, origem, instante, instante),
+            )
+    return obter_roteiro(codigo) or {}
+
+
+def listar_roteiros() -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute("SELECT * FROM roteiros ORDER BY criado_em").fetchall()
+    return [_normalizar_roteiro(linha) for linha in linhas]
+
+
+def obter_roteiro(codigo: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute("SELECT * FROM roteiros WHERE codigo = ?", (codigo,)).fetchone()
+    return _normalizar_roteiro(linha) if linha else None
+
+
+def excluir_roteiro(codigo: str) -> bool:
+    """Tira o roteiro do catálogo.
+
+    Quando o código é o de um roteiro escrito em `app/roteiros.py`, isto não
+    apaga nada de verdade: desfaz a edição e devolve o roteiro do módulo. É a
+    saída de emergência de uma edição malfeita no meio do expediente.
+    """
+    with conectar() as con:
+        return bool(con.execute("DELETE FROM roteiros WHERE codigo = ?", (codigo,)).rowcount)
+
+
+# --------------------------------------------------- modelos .docx do escritório
+#
+# O contrato de honorários não é versionado (ver o `.gitignore` e o comentário da
+# tabela em `app/banco.py`), então em produção ele não existe em `docs/` — não
+# entra na imagem e nenhum volume o repõe. Guardá-lo no banco é o que permite
+# subi-lo uma vez pela tela e ele valer para todos os contêineres.
+#
+# `varbinary(max)` e não caminho de arquivo: caminho exigiria um volume
+# compartilhado entre a API e os workers, que é justamente a peça de infra que
+# não existe hoje.
+
+
+def salvar_modelo(
+    codigo: str, *, nome_arquivo: str, conteudo: bytes, enviado_por: str = ""
+) -> dict[str, Any]:
+    """Grava (ou regrava) o modelo daquele código. Idempotente."""
+    instante = agora()
+    with conectar() as con:
+        atualizadas = con.execute(
+            """
+            UPDATE modelos_documento
+               SET nome_arquivo = ?, conteudo = ?, enviado_por = ?, atualizado_em = ?
+             WHERE codigo = ?
+            """,
+            (nome_arquivo, conteudo, enviado_por, instante, codigo),
+        ).rowcount
+        if not atualizadas:
+            con.execute(
+                """
+                INSERT INTO modelos_documento
+                       (codigo, nome_arquivo, conteudo, enviado_por, criado_em, atualizado_em)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (codigo, nome_arquivo, conteudo, enviado_por, instante, instante),
+            )
+    registro = obter_modelo(codigo) or {}
+    registro.pop("conteudo", None)
+    return registro
+
+
+def obter_modelo(codigo: str) -> dict[str, Any] | None:
+    """O modelo COM o conteúdo. Quem só quer listar usa `listar_modelos`."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM modelos_documento WHERE codigo = ?", (codigo,)
+        ).fetchone()
+    if not linha:
+        return None
+    registro = dict(linha)
+    # O pyodbc devolve `bytes` para varbinary, mas versões antigas devolvem
+    # `bytearray`. O `zipfile` aceita os dois; quem grava em disco, não.
+    registro["conteudo"] = bytes(registro["conteudo"])
+    return registro
+
+
+def listar_modelos() -> list[dict[str, Any]]:
+    """Os modelos guardados, SEM o conteúdo — a tela só mostra nome e data."""
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT codigo, nome_arquivo, enviado_por, criado_em, atualizado_em"
+            "  FROM modelos_documento ORDER BY codigo"
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def excluir_modelo(codigo: str) -> bool:
+    """Tira o modelo do banco. O `docs/` volta a valer, se houver arquivo lá."""
+    with conectar() as con:
+        return bool(
+            con.execute("DELETE FROM modelos_documento WHERE codigo = ?", (codigo,)).rowcount
+        )

@@ -34,6 +34,14 @@ def recuperar_jobs_abandonados() -> int:
     return jobs.recuperar_abandonados()
 
 
+@celery_app.task(name="app.tasks.manutencao.cobrar_documentos_pendentes")
+def cobrar_documentos_pendentes() -> int:
+    # Import local evita carregar HTTP/Evolution no worker que não executa esta fila.
+    from ..whatsapp import processar_cobrancas_documentos
+
+    return processar_cobrancas_documentos()
+
+
 def _leitor_de_documentos_ativo() -> tuple[bool, set[str]]:
     """O worker de OCR está no ar, e quais entregas ele já tem em mãos?
 

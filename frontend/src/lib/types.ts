@@ -250,6 +250,31 @@ export interface Pergunta {
   impedimento: string;
 }
 
+/** Uma linha do catálogo de roteiros — o que a lista mostra, sem as perguntas. */
+export interface RoteiroResumo {
+  codigo: string;
+  nome: string;
+  descricao: string;
+  /** Tem versão salva no banco. Só nesses cabe "voltar ao original". */
+  importado: boolean;
+  /** Nome do arquivo de onde ele veio, quando veio de um. */
+  origem: string;
+  /** Quem salvou esta versão no catálogo. */
+  criado_por: string;
+  atualizado_em: string;
+}
+
+/** O que a importação de um documento devolve: a PROPOSTA, ainda não salva. */
+export interface RoteiroImportado {
+  roteiro: RoteiroCompleto;
+  /** Nome do arquivo anexado. */
+  origem: string;
+  /** Como o texto foi lido: "texto nativo" ou "OCR". */
+  leitura: string;
+  /** O texto lido, para conferir lado a lado o que o modelo entendeu. */
+  texto: string;
+}
+
 export interface EnderecoCep {
   cep: string;
   logradouro: string;
@@ -394,6 +419,17 @@ export interface Pedido {
 export interface RespostaEnvio {
   entrega: Entrega;
   extracao: Documento;
+}
+
+export interface CobrancaDocumentos {
+  caso_id: string;
+  ativa: boolean;
+  telefone: string;
+  intervalo_dias: number;
+  incluir_opcionais: boolean;
+  proximo_envio_em: string | null;
+  ultimo_envio_em: string | null;
+  ultimo_erro: string | null;
 }
 
 // ------------------------------------------- assinatura eletrônica (ZapSign)

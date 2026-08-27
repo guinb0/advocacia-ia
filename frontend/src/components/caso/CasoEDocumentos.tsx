@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { CasoCriado, Categoria } from "@/lib/types";
 import { useSituacao } from "@/lib/useCasos";
-import { Aviso, Selo } from "@/components/ui/Basicos";
+import { Aviso, Campo, CampoSeletor, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import Checklist from "@/components/caso/Checklist";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
 import { obterAtendimentoDocumentacao, criarSalaChamada, solicitarDocumentacao } from "@/lib/api";
@@ -31,8 +31,23 @@ interface Props {
   entrevistaId: string;
   categorias: Categoria[];
   onCriar: (cliente: string, categoria: string) => Promise<CasoCriado>;
-  /** A categoria que a triagem sugeriu, quando houve. */
+  /** A categoria que a triagem sugeriu, quando houve. Em modo `editavel` é o
+   *  valor atual do seletor, controlado por quem chama. */
   sugerida?: string;
+  /* ---- Modo editável (fluxo do .txt) ----
+   *
+   * No atendimento ao vivo o nome, o CPF e a categoria já vêm da entrevista, e
+   * o bloco abaixo só mostra um botão. Quando o atendimento começa por um .txt
+   * de transcrição, ainda não há nada disso preenchido: aí estes campos
+   * aparecem para o advogado confirmar antes de criar o caso. */
+  editavel?: boolean;
+  /** Edita o nome do cliente (só em `editavel`). */
+  onCliente?: (valor: string) => void;
+  /** CPF do cliente — obrigatório para criar no modo `editavel`. */
+  cpf?: string;
+  onCpf?: (valor: string) => void;
+  /** Troca a categoria escolhida no seletor (só em `editavel`). */
+  onCategoria?: (codigo: string) => void;
   /** O caso nasceu — quem chama guarda no caso a entrevista já conduzida.
    *
    * É aqui e não no fim do atendimento porque o caso é o primeiro momento em que
@@ -50,6 +65,11 @@ export default function CasoEDocumentos({
   categorias,
   onCriar,
   sugerida,
+  editavel,
+  onCliente,
+  cpf,
+  onCpf,
+  onCategoria,
   onCasoCriado,
   onEncerrarChamada,
   emChamada,
@@ -86,6 +106,10 @@ export default function CasoEDocumentos({
    * vão o link e a senha, que é o que a caixa de credenciais mostra em seguida. */
   async function criar() {
     if (!cliente.trim() || !escolhida) return;
+    // No fluxo do .txt o CPF é o que amarra assinaturas e identidade ao caso,
+    // então ele é obrigatório antes de criar — diferente do ao vivo, onde vem
+    // pronto da entrevista.
+    if (editavel && !cpf?.trim()) return;
     setCriando(true);
     setErro(null);
     try {
@@ -156,9 +180,53 @@ export default function CasoEDocumentos({
           que ele já tem em mãos e conferir se a foto saiu legível.
         </p>
 
-        <p className="mb-3 mt-0 text-[12px] font-ui text-tinta">
-          O caso será criado para <strong>{cliente}</strong> com os dados já coletados na entrevista.
-        </p>
+        {editavel ? (
+          /* Confirmação da identidade antes de criar (fluxo do .txt).
+           *
+           * A triagem já preenche o que conseguiu extrair do relato; o advogado
+           * confere e corrige. O CPF é o único obrigatório aqui, e o seletor de
+           * ação deixa trocar a categoria recomendada sem sair da tela. */
+          <div className="grid gap-3 mb-4 max-w-[440px]">
+            <div>
+              <RotuloCampo htmlFor="triagem-nome">Nome do cliente</RotuloCampo>
+              <Campo
+                id="triagem-nome"
+                value={cliente}
+                onChange={(e) => onCliente?.(e.target.value)}
+                placeholder="Nome completo do cliente"
+              />
+            </div>
+            <div>
+              <RotuloCampo htmlFor="triagem-cpf">CPF</RotuloCampo>
+              <Campo
+                id="triagem-cpf"
+                value={cpf ?? ""}
+                onChange={(e) => onCpf?.(e.target.value)}
+                placeholder="000.000.000-00"
+                inputMode="numeric"
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <RotuloCampo htmlFor="triagem-categoria">Tipo de ação (checklist)</RotuloCampo>
+              <CampoSeletor
+                id="triagem-categoria"
+                value={escolhida}
+                onChange={(e) => onCategoria?.(e.target.value)}
+              >
+                {categorias.map((c) => (
+                  <option key={c.codigo} value={c.codigo}>
+                    {c.nome}
+                  </option>
+                ))}
+              </CampoSeletor>
+            </div>
+          </div>
+        ) : (
+          <p className="mb-3 mt-0 text-[12px] font-ui text-tinta">
+            O caso será criado para <strong>{cliente}</strong> com os dados já coletados na entrevista.
+          </p>
+        )}
 
         {/* O tipo de ação é o que monta o checklist: escolhido errado, o
           * escritório passa a cobrar do cliente documento que a ação não usa. */}
@@ -182,7 +250,7 @@ export default function CasoEDocumentos({
           type="button"
           className="border-[1.5px] border-acao bg-acao text-papel text-[11px] font-semibold leading-none font-ui tracking-[0.1em] uppercase px-[15px] py-[11px] cursor-pointer enabled:hover:bg-acao-forte enabled:hover:border-acao-forte disabled:opacity-100 disabled:bg-papel-3 disabled:text-tinta-3 disabled:border-borda-forte disabled:cursor-default"
           onClick={() => void criar()}
-          disabled={criando || !cliente.trim() || !escolhida}
+          disabled={criando || !cliente.trim() || !escolhida || (editavel && !cpf?.trim())}
         >
           {criando ? "Criando…" : "Criar caso"}
         </button>

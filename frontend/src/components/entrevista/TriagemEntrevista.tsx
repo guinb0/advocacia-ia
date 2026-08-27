@@ -9,7 +9,12 @@ import {
   triarEntrevista,
   vincularAssinaturaAoCaso,
 } from "@/lib/api";
-import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
+import {
+  CapturaEntrevista,
+  montarTranscricaoBruta,
+  type EstadoCaptura,
+  type TrechoTranscrito,
+} from "@/lib/transcricao";
 import type { CasoCriado, Categoria, Estrategia, Triagem } from "@/lib/types";
 import CasoEDocumentos from "@/components/caso/CasoEDocumentos";
 import { useChamada } from "@/lib/ChamadaContexto";
@@ -17,7 +22,6 @@ import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import AvaliacaoGoogle from "@/components/contrato/AvaliacaoGoogle";
 import { Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
-import RelatorioEntrevista from "@/components/entrevista/RelatorioEntrevista";
 import PainelContrato from "@/components/contrato/PainelContrato";
 
 const OPCAO_BASE =
@@ -105,6 +109,25 @@ export default function TriagemEntrevista({
   const [erroEstrategia, setErroEstrategia] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /* -------- atendimento iniciado por um .txt de transcrição --------
+   *
+   * O upload do .txt deixou de ser só uma validação: ele agora ABRE um
+   * atendimento. A IA avalia e recomenda a ação, a gravação do áudio começa na
+   * hora (é o atendimento presencial/telefônico que segue o relato), e o
+   * advogado confirma nome e CPF para o caso nascer — daí em diante o processo
+   * é o mesmo do ao vivo (portal + checklist, em `CasoEDocumentos`). */
+  const [atendimentoTxt, setAtendimentoTxt] = useState(false);
+  const [nomeTxt, setNomeTxt] = useState("");
+  const [cpfTxt, setCpfTxt] = useState("");
+  const [categoriaTxt, setCategoriaTxt] = useState("");
+  const [entrevistaIdTxt, setEntrevistaIdTxt] = useState("");
+  const [gravacaoEstado, setGravacaoEstado] = useState<EstadoCaptura>("sem-audio");
+  const [gravacaoAviso, setGravacaoAviso] = useState<string | null>(null);
+  const [casoTxtId, setCasoTxtId] = useState("");
+  const [encerrandoTxt, setEncerrandoTxt] = useState(false);
+  const capturaTxtRef = useRef<CapturaEntrevista | null>(null);
+  const trechosTxtRef = useRef<TrechoTranscrito[]>([]);
   // A chamada vive na raiz do app; aqui ela serve para a última etapa saber se
   // ainda há cliente na linha, e para oferecer o desligar sem sair da tela.
   const chamada = useChamada();
@@ -155,6 +178,68 @@ export default function TriagemEntrevista({
     }
   }
 
+  /* Liga o microfone e começa a gravar assim que o .txt é analisado.
+   *
+   * Chamado de dentro do gesto do usuário (o clique que escolheu o arquivo),
+   * então o navegador concede o microfone sem bloquear o `getUserMedia`. Se
+   * ainda assim falhar, o atendimento segue: o caso pode ser criado sem áudio —
+   * só a gravação fica indisponível, e a tela diz isso. */
+  async function iniciarGravacaoTxt() {
+    if (capturaTxtRef.current) return;
+    trechosTxtRef.current = [];
+    const captura = new CapturaEntrevista({
+      onTrecho: (texto) => {
+        trechosTxtRef.current = [...trechosTxtRef.current, { quando: Date.now(), texto }];
+      },
+      onEstado: setGravacaoEstado,
+      onAviso: setGravacaoAviso,
+      onErro: setGravacaoAviso,
+    });
+    capturaTxtRef.current = captura;
+    setEntrevistaIdTxt(captura.entrevistaId);
+    setGravacaoAviso(null);
+    try {
+      await captura.selecionarAudio();
+      await captura.iniciarEntrevista();
+    } catch {
+      setGravacaoAviso(
+        "Não consegui ligar o microfone. O caso pode ser criado assim mesmo; a gravação do áudio fica indisponível.",
+      );
+      setGravacaoEstado("sem-audio");
+    }
+  }
+
+  /* Encerra a gravação do atendimento por .txt e regrava a transcrição completa
+   * no caso, agora marcada como concluída. Espelha o encerramento do ao vivo. */
+  async function encerrarGravacaoTxt() {
+    const captura = capturaTxtRef.current;
+    if (!captura) return;
+    setEncerrandoTxt(true);
+    try {
+      captura.finalizarResposta();
+      await captura.encerrarGravacao();
+      captura.encerrar();
+      capturaTxtRef.current = null;
+      setGravacaoEstado("sem-audio");
+      // Deixa o áudio disponível para conferência, como no fim da entrevista.
+      if (entrevistaIdTxt) setAudioEntrevista(entrevistaIdTxt);
+      if (casoTxtId) {
+        await guardarEntrevista(casoTxtId, trechosTxtRef.current, entrevistaIdTxt, true);
+      }
+    } finally {
+      setEncerrandoTxt(false);
+    }
+  }
+
+  /* Fecha a captura se a tela sair no meio: microfone aberto sem ninguém para
+   * fechá-lo fica com o indicador do navegador aceso e a trilha viva. */
+  useEffect(() => {
+    return () => {
+      capturaTxtRef.current?.encerrar();
+      capturaTxtRef.current = null;
+    };
+  }, []);
+
   async function analisar(arquivo?: File) {
     if (!arquivo && !texto.trim()) return;
     const relato = arquivo ? await arquivo.text() : texto;
@@ -182,6 +267,21 @@ export default function TriagemEntrevista({
       } else if (r.dados.cliente) {
         onEscolher("", r.dados.cliente);
       }
+      /* O .txt não para na avaliação: ele abre o atendimento.
+       *
+       * A IA já avaliou e recomendou acima; agora começa a gravação e sobe o
+       * formulário de nome/CPF para o caso nascer. A recomendação entra
+       * pré-selecionada (a primeira sugestão, ou a primeira categoria ativa),
+       * mas o advogado pode trocar antes de criar. O relato colado continua
+       * sendo só validação — quem inicia o atendimento é o arquivo. */
+      if (arquivo) {
+        setNomeTxt(r.dados.cliente ?? "");
+        setCpfTxt(r.dados.cpf ?? "");
+        setCategoriaTxt(r.sugestoes[0]?.codigo ?? categorias[0]?.codigo ?? "");
+        setCasoTxtId("");
+        setAtendimentoTxt(true);
+        void iniciarGravacaoTxt();
+      }
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível analisar a entrevista.");
       setResultado(null);
@@ -199,7 +299,11 @@ export default function TriagemEntrevista({
    * as duas cópias divergirem no primeiro ajuste. */
   const etapasDoAtendimento = qualificacao && (
     <>
-      <RelatorioEntrevista respostas={qualificacao} relato={texto} />
+      <AvaliacaoGoogle
+        concluida={avaliacaoConcluida}
+        onConcluir={setAvaliacaoConcluida}
+        telefone={String(qualificacao.telefone ?? "")}
+      />
       <PainelContrato respostas={qualificacao} />
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
@@ -235,6 +339,19 @@ export default function TriagemEntrevista({
       />
     </>
   );
+
+  /* Como desenhar o estado da gravação do atendimento por .txt. `sem-audio`
+   * cobre tanto "nunca ligou" quanto "já encerrou": o texto se resolve pelo
+   * aviso, quando há um. */
+  const gravInfo = (
+    {
+      gravando: { tom: "ok", titulo: "Gravando o atendimento" },
+      capturando: { tom: "info", titulo: "Microfone ligado — aguardando fala" },
+      pausado: { tom: "info", titulo: "Gravação pausada" },
+      recuperando: { tom: "atencao", titulo: "Reconectando o microfone…" },
+      "sem-audio": { tom: "neutro", titulo: "Gravação encerrada" },
+    } as const
+  )[gravacaoEstado];
 
   return (
     <div className="p-4 mb-5 border border-borda rounded-campo bg-papel-2">
@@ -433,6 +550,73 @@ export default function TriagemEntrevista({
         </div>
       )}
 
+      {/* O atendimento que o .txt abriu: gravação em curso + criação do caso.
+        *
+        * Fica logo abaixo da recomendação — a ordem que o escritório pediu:
+        * a IA avalia, diz qual ação recomenda e por quê, a gravação começa e o
+        * caso nasce com nome e CPF confirmados. Daí em diante é `CasoEDocumentos`,
+        * o mesmo do ao vivo (portal + checklist). */}
+      {atendimentoTxt && (
+        <div className="mt-4 pt-[14px] border-t border-borda">
+          <span className="block mb-1 text-tinta text-sm font-bold">Abrir o atendimento</span>
+          <p className="mb-3 mt-0 max-w-[64ch] text-tinta-3 text-xs leading-[1.55]">
+            A recomendação acima já está pré-selecionada. A gravação do áudio começou —
+            confirme o nome e o CPF do cliente para criar o caso e seguir com o portal e o
+            checklist.
+          </p>
+
+          <div className="mb-3">
+            <Aviso tom={gravInfo.tom} titulo={gravInfo.titulo}>
+              {gravacaoAviso}
+            </Aviso>
+          </div>
+
+          <CasoEDocumentos
+            editavel
+            cliente={nomeTxt}
+            onCliente={setNomeTxt}
+            cpf={cpfTxt}
+            onCpf={setCpfTxt}
+            sugerida={categoriaTxt}
+            onCategoria={setCategoriaTxt}
+            categorias={categorias}
+            entrevistaId={entrevistaIdTxt}
+            onCriar={onCriarCaso}
+            onCasoCriado={async (casoId) => {
+              setCasoTxtId(casoId);
+              setCasoCriado(casoId);
+              // Grava já, ainda sem encerrar: se a aba morrer, o que foi
+              // transcrito até aqui não se perde. O encerramento regrava com
+              // `concluida`.
+              await guardarEntrevista(casoId, trechosTxtRef.current, entrevistaIdTxt, false);
+              if (nomeTxt && cpfTxt) {
+                try {
+                  const existentes = await listarAssinaturas({ cliente: nomeTxt, cpf: cpfTxt });
+                  await Promise.allSettled(
+                    existentes.map((item) => vincularAssinaturaAoCaso(item.id, casoId)),
+                  );
+                } catch {
+                  // A listagem de assinaturas retoma o vínculo na próxima abertura.
+                }
+              }
+            }}
+            emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
+            onEncerrarChamada={chamada.desligar}
+          />
+
+          {casoTxtId && gravacaoEstado !== "sem-audio" && (
+            <Botao
+              variante="secundario"
+              className="mt-3"
+              disabled={encerrandoTxt}
+              onClick={() => void encerrarGravacaoTxt()}
+            >
+              {encerrandoTxt ? "Encerrando a gravação…" : "Encerrar a gravação do atendimento"}
+            </Botao>
+          )}
+        </div>
+      )}
+
       {(analisandoEstrategia || estrategia || erroEstrategia) && (
         <section className="mt-[18px] pt-4 border-t border-borda" aria-live="polite">
           <div className="flex justify-between items-baseline gap-3 flex-wrap">
@@ -518,13 +702,6 @@ export default function TriagemEntrevista({
         </section>
       )}
 
-      {resultado && qualificacao && (
-        <AvaliacaoGoogle
-          concluida={avaliacaoConcluida}
-          onConcluir={setAvaliacaoConcluida}
-          telefone={String(qualificacao.telefone ?? "")}
-        />
-      )}
     </div>
   );
 }
