@@ -231,11 +231,15 @@ if ($SemAuth) {
 # disponíveis sem compartilhar processo com a API.
 Write-Host "Subindo Redis e observabilidade..." -ForegroundColor Yellow
 docker compose up -d --wait --wait-timeout 60 redis jobs-db flower prometheus grafana | Out-Null
-$env:REDIS_URL = "redis://localhost:6380/0"
-$env:CELERY_BROKER_URL = "redis://localhost:6380/0"
-$env:CELERY_RESULT_BACKEND = "redis://localhost:6380/1"
+# 127.0.0.1 e nao "localhost": no Windows o "localhost" resolve primeiro para o
+# IPv6 ::1, e o encaminhamento IPv6 do Docker Desktop reseta as conexoes do
+# redis-py/kombu (WinError 10054) enquanto o IPv4 funciona. Fixar o loopback
+# IPv4 mantem os workers Celery e o beat conectados ao broker.
+$env:REDIS_URL = "redis://127.0.0.1:6380/0"
+$env:CELERY_BROKER_URL = "redis://127.0.0.1:6380/0"
+$env:CELERY_RESULT_BACKEND = "redis://127.0.0.1:6380/1"
 if (-not $env:JOBS_DATABASE_URL) {
-    $env:JOBS_DATABASE_URL = "postgresql://advocacia:advocacia_local@localhost:5434/advocacia_jobs"
+    $env:JOBS_DATABASE_URL = "postgresql://advocacia:advocacia_local@127.0.0.1:5434/advocacia_jobs"
 }
 
 # O frontend le estas na hora do build/dev -- precisam do prefixo NEXT_PUBLIC_.
