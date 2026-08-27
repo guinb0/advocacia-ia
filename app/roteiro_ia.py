@@ -30,6 +30,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable
 
@@ -98,14 +100,39 @@ def texto_do_documento(nome: str, conteudo: bytes) -> tuple[str, str]:
 
 
 def _texto_por_ocr(conteudo: bytes) -> str:
-    """Rasteriza (se for PDF) e passa o PaddleOCR, devolvendo só as linhas.
+    """O texto do documento pela API de OCR.
 
-    Não se usa `pipeline.processar` aqui de propósito: ele classifica o documento
-    e extrai campos de RG, CPF e contracheque. Um roteiro de entrevista não é
-    nenhum desses tipos, e todo esse trabalho seria descartado — o que se quer é
-    o texto.
+    PDF vai INTEIRO para a API, como documento. Imagem solta (a foto de uma folha
+    impressa) vai pelo caminho de sempre, que rasteriza e corrige orientação.
+
+    Não se usa `pipeline.processar` em nenhum dos dois de propósito: ele
+    classifica o documento e extrai campos de RG, CPF e contracheque. Um roteiro
+    de entrevista não é nenhum desses tipos, e todo esse trabalho seria
+    descartado — o que se quer aqui é o texto, todo ele.
     """
-    from . import pipeline, quality
+    from . import mistral_ocr, pipeline, quality
+
+    # PDF: o documento inteiro de uma vez, sem o teto de 10 páginas que a
+    # rasterização impõe e com a estrutura de títulos preservada. Ver
+    # `mistral_ocr.markdown_do_pdf`.
+    if conteudo.lstrip().startswith(b"%PDF-") and mistral_ocr.configurada():
+        try:
+            texto = mistral_ocr.markdown_do_pdf(conteudo)
+        except Exception as erro:
+            # Cai para a rasterização: ela lê menos páginas, mas ler as dez
+            # primeiras é melhor que devolver erro para quem só quer importar
+            # um roteiro.
+            log.warning(
+                "OCR do PDF inteiro falhou (%s). Tentando pela rasterização.",
+                str(erro)[:160],
+            )
+        else:
+            if texto.strip():
+                return texto[: entrevista_lib.LIMITE_CARACTERES]
+            raise ErroGeracao(
+                "O OCR não encontrou texto neste PDF. Confira se a digitalização "
+                "está legível e na orientação correta."
+            )
 
     try:
         imagem = pipeline.decodificar(conteudo)
@@ -168,6 +195,32 @@ Responda SOMENTE JSON no formato:
 orientacao interna. Se o documento nao trouxer o texto, devolva "".
 "modulo": null quando o bloco aparece sempre. Quando o bloco so existe se uma
 pergunta de rastreio for positiva, ponha um nome curto do assunto (ex.: "assalto").
+No maximo {MAX_BLOCOS} blocos."""
+
+#: A MESMA estrutura, sem os textos longos. Existe para a segunda tentativa.
+#:
+#: O esboço completo pede `abertura` e `instrucao` de cada bloco, mais os
+#: parágrafos de saudação e encerramento — e são esses textos, não a lista de
+#: blocos, que estouram o `max_tokens`. Um roteiro de 11 blocos voltou com o JSON
+#: cortado no meio de uma frase, e JSON cortado não é recuperável: o `json.loads`
+#: falha e a importação inteira morre depois de já ter lido o documento.
+#:
+#: Perder as falas dos blocos é ruim; perder a importação inteira é pior, e o
+#: editor da tela permite escrever as falas depois. O que NÃO dá para recuperar
+#: no editor é a estrutura de 11 blocos e 90 perguntas.
+_INSTRUCAO_ESBOCO_ENXUTO = f"""Voce recebe o texto de um roteiro de entrevista de um escritorio de advocacia
+brasileiro e devolve a LISTA DE BLOCOS dele em JSON, em portugues e com a
+acentuacao correta. Seja BREVE: nada de textos longos.
+
+Responda SOMENTE JSON no formato:
+{{"nome":"...","descricao":"...","saudacao":[],"encerramento":[],
+ "blocos":[{{"id":"identificacao","titulo":"Identificacao","objetivo":"",
+             "abertura":"","instrucao":"","modulo":null}}]}}
+
+"id" em minusculas, sem acento e sem espaco (use _).
+"modulo": null quando o bloco aparece sempre; um nome curto do assunto (ex.:
+"assalto") quando ele so existe se uma pergunta de rastreio for positiva.
+Deixe "objetivo", "abertura" e "instrucao" como "" — nao os preencha.
 No maximo {MAX_BLOCOS} blocos."""
 
 _INSTRUCAO_PERGUNTAS = f"""Voce recebe o texto de um roteiro de entrevista e o nome de UM bloco dele.
@@ -260,7 +313,7 @@ def gerar(
         )
 
     avisar(20, "Lendo a estrutura do documento")
-    esboco = _chamar_modelo(_INSTRUCAO_ESBOCO, f"Documento:\n\n{corpo}", max_tokens=4000)
+    esboco = _esboco_do_documento(corpo)
 
     blocos_brutos = esboco.get("blocos")
     if not isinstance(blocos_brutos, list) or not blocos_brutos:
@@ -273,6 +326,9 @@ def gerar(
     total = max(len(blocos_brutos), 1)
     blocos: list[dict[str, Any]] = []
     ids_usados: set[str] = set()
+    #: O que ja foi perguntado, normalizado. Impede que a lista de qualificacao
+    #: reapareca dentro do bloco de assalto, de acidente e de doenca.
+    ja_perguntadas: set[str] = set()
 
     for indice, bruto in enumerate(blocos_brutos):
         titulo = str(bruto.get("titulo") or f"Bloco {indice + 1}").strip()
@@ -280,7 +336,10 @@ def gerar(
             25 + int(70 * indice / total),
             f"Perguntas de '{titulo}' ({indice + 1} de {total})",
         )
-        perguntas = _perguntas_do_bloco(corpo, titulo, bruto, ids_usados)
+        perguntas = _perguntas_do_bloco(
+            corpo, titulo, bruto, ids_usados, ja_perguntadas
+        )
+        perguntas = _sem_repetidas(perguntas, ja_perguntadas, titulo)
         # Bloco sem pergunta nenhuma é ruído do modelo, não seção do roteiro: na
         # tela ele apareceria como um título solto que não pede nada.
         if not perguntas:
@@ -318,14 +377,61 @@ def gerar(
     }
 
 
+def _esboco_do_documento(corpo: str) -> dict[str, Any]:
+    """A estrutura do roteiro, com uma segunda tentativa mais barata.
+
+    `max_tokens` generoso na primeira: o custo real de importar um roteiro está
+    nas N chamadas de bloco que vêm depois, e economizar teto aqui só compra JSON
+    cortado.
+
+    Se ainda assim não couber, a segunda tentativa pede a MESMA estrutura sem os
+    textos lidos em voz alta. Ela cabe com folga, porque é justamente eles que
+    estouram — e o resultado continua sendo um roteiro utilizável, com os blocos
+    e as perguntas certos e as falas para escrever no editor.
+    """
+    try:
+        return _chamar_modelo(
+            _INSTRUCAO_ESBOCO, f"Documento:\n\n{corpo}", max_tokens=8000
+        )
+    except ErroGeracao as erro:
+        log.warning("Esboço completo falhou (%s). Tentando a versão enxuta.", erro)
+
+    return _chamar_modelo(
+        _INSTRUCAO_ESBOCO_ENXUTO, f"Documento:\n\n{corpo}", max_tokens=4000
+    )
+
+
 def _perguntas_do_bloco(
-    corpo: str, titulo: str, bruto: dict[str, Any], ids_usados: set[str]
+    corpo: str,
+    titulo: str,
+    bruto: dict[str, Any],
+    ids_usados: set[str],
+    ja_perguntadas: set[str],
 ) -> list[dict[str, Any]]:
+    """As perguntas de UM bloco, sem repetir o que outro bloco já pegou.
+
+    Cada passada recebe o documento INTEIRO — é o que permite ao modelo entender
+    o contexto de um bloco pelo que vem antes e depois dele. O preço é que ele
+    também enxerga a lista de qualificação toda vez, e a copiava para dentro de
+    cada bloco: numa medição, "CPF" apareceu cinco vezes em blocos diferentes e o
+    roteiro saiu com 163 perguntas onde o do escritório tem 89.
+
+    Pedir para não repetir resolve a maior parte. O `_sem_repetidas` na saída
+    fecha o resto, porque instrução em prompt não é garantia.
+    """
     pedido = (
         f"Bloco: {titulo}\n"
-        f"Objetivo: {bruto.get('objetivo') or '(nao informado)'}\n\n"
-        f"Documento:\n\n{corpo}"
+        f"Objetivo: {bruto.get('objetivo') or '(nao informado)'}\n"
     )
+    if ja_perguntadas:
+        # Só o texto, e cortado: a lista cresce a cada bloco e não vale gastar
+        # metade da janela de contexto com o que o modelo NÃO deve escrever.
+        amostra = sorted(ja_perguntadas)[:120]
+        pedido += (
+            "\nPerguntas que OUTROS blocos ja cobrem. NAO repita nenhuma delas "
+            "neste bloco:\n" + "\n".join(f"- {t}" for t in amostra) + "\n"
+        )
+    pedido += f"\nDocumento:\n\n{corpo}"
     try:
         resposta = _chamar_modelo(_INSTRUCAO_PERGUNTAS, pedido, max_tokens=6000)
     except ErroGeracao:
@@ -365,7 +471,7 @@ def _perguntas_do_bloco(
         perguntas.append(
             {
                 "id": id_final,
-                "texto": texto[:500],
+                "texto": _enunciado(texto),
                 "tipo": tipo,
                 # O modelo erra este campo com frequência (marca "transcrever" num
                 # CPF). A regra é do roteiro, não do modelo: quem CONTA é relato.
@@ -390,6 +496,46 @@ def _perguntas_do_bloco(
             # inventou. `roteiros.de_dict` solta o que sobrar de órfão.
             pergunta["depende_de"] = renomeadas.get(pai, pai)
     return perguntas
+
+
+def _sem_repetidas(
+    perguntas: list[dict[str, Any]], ja_perguntadas: set[str], titulo: str
+) -> list[dict[str, Any]]:
+    """Tira as perguntas que outro bloco já fez, e registra as que ficaram.
+
+    Compara por texto normalizado, não por id: os ids são gerados a partir do
+    enunciado e um "CPF" no bloco de assalto vira `cpf_2`, que não colide com o
+    `cpf` da qualificação — a duplicata passaria batida pela unicidade de id.
+    """
+    mantidas: list[dict[str, Any]] = []
+    repetidas = 0
+    for pergunta in perguntas:
+        chave = _chave_de_texto(pergunta["texto"])
+        if chave in ja_perguntadas:
+            repetidas += 1
+            continue
+        ja_perguntadas.add(chave)
+        mantidas.append(pergunta)
+    if repetidas:
+        log.info("Bloco '%s': %d pergunta(s) repetidas de outro bloco.", titulo, repetidas)
+    return mantidas
+
+
+def _chave_de_texto(texto: str) -> str:
+    """O enunciado reduzido ao que ele pergunta: sem acento, caixa nem pontuação."""
+    sem_acento = unicodedata.normalize("NFKD", texto.lower())
+    limpo = sem_acento.encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", limpo).strip()
+
+
+def _enunciado(texto: str) -> str:
+    """O enunciado sem a pontuação de item de lista.
+
+    O documento do escritório lista os campos de qualificação como "Nome
+    completo;", "CPF;", e o modelo copia o ponto e vírgula junto — fiel ao papel,
+    esquisito na tela, onde aquilo é o rótulo de um campo.
+    """
+    return texto.strip().rstrip(";,").strip()[:500]
 
 
 def _modulo(valor: Any) -> str | None:
