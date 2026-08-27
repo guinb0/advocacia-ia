@@ -132,44 +132,69 @@ def main() -> int:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--caso", help="Roda só este caso (stem do txt)")
+    parser.add_argument("--prefixo", help="Só casos cujo nome começa com este prefixo")
+    parser.add_argument("--workers", type=int, default=3, help="Chamadas paralelas (default 3)")
+    parser.add_argument("--meta", type=float, default=90.0, help="Média mínima de sucesso")
     args = parser.parse_args()
 
     ouro = json.loads((FIX / "esperado.json").read_text(encoding="utf-8"))
-    casos = [args.caso] if args.caso else sorted(ouro.keys())
+    if args.caso:
+        casos = [args.caso]
+    else:
+        casos = sorted(ouro.keys())
+        if args.prefixo:
+            casos = [c for c in casos if c.startswith(args.prefixo)]
 
     OUT.mkdir(parents=True, exist_ok=True)
     relatorio: list[dict] = []
+    falhas_campo: dict[str, int] = {}
 
-    print(f"Avaliando {len(casos)} caso(s)…\n")
-    for nome in casos:
-        if nome not in ouro:
-            print(f"  IGNORADO {nome}: sem ouro")
-            continue
-        print(f"=== {nome} ===")
+    print(f"Avaliando {len(casos)} caso(s) com {args.workers} worker(s)…\n")
+
+    def _rodar(nome: str) -> dict:
         try:
             r = avaliar_caso(nome, ouro[nome])
+            r["erro"] = None
+            return r
         except Exception as exc:
-            print(f"  ERRO: {exc}")
-            relatorio.append({"caso": nome, "erro": str(exc), "taxa": 0})
-            continue
-        print(f"  taxa={r['taxa']}%  ok={len(r['ok'])}  falhas={len(r['falhas'])}")
-        for f in r["falhas"]:
-            print(f"  FALHA  {f}")
-        for i in (r.get("incertas") or [])[:5]:
-            print(f"  incerta {i.get('pergunta_id')}: {i.get('motivo')}")
-        (OUT / f"{nome}.json").write_text(
-            json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        relatorio.append({k: r[k] for k in ("caso", "taxa", "ok", "falhas")})
+            return {"caso": nome, "erro": str(exc), "taxa": 0, "ok": [], "falhas": [], "incertas": []}
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+        futuros = {pool.submit(_rodar, nome): nome for nome in casos if nome in ouro}
+        for fut in as_completed(futuros):
+            nome = futuros[fut]
+            r = fut.result()
+            if r.get("erro"):
+                print(f"=== {nome} ===\n  ERRO: {r['erro']}")
+                relatorio.append({"caso": nome, "erro": r["erro"], "taxa": 0})
+                continue
+            print(f"=== {nome} ===  taxa={r['taxa']}%  ok={len(r['ok'])}  falhas={len(r['falhas'])}")
+            for f in r["falhas"]:
+                print(f"  FALHA  {f}")
+                campo = f.split(":", 1)[0].strip()
+                falhas_campo[campo] = falhas_campo.get(campo, 0) + 1
+            (OUT / f"{nome}.json").write_text(
+                json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            relatorio.append({k: r[k] for k in ("caso", "taxa", "ok", "falhas")})
 
     media = sum(c.get("taxa", 0) for c in relatorio) / max(1, len(relatorio))
     print(f"\nMédia: {media:.1f}%")
+    if falhas_campo:
+        print("Falhas por campo:")
+        for campo, n in sorted(falhas_campo.items(), key=lambda x: (-x[1], x[0])):
+            print(f"  {campo}: {n}")
     (OUT / "resumo.json").write_text(
-        json.dumps({"media": media, "casos": relatorio}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {"media": media, "falhas_campo": falhas_campo, "casos": relatorio},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
-    # Critério de “muito bom” para este loop: ≥ 85% na média.
-    return 0 if media >= 85 else 1
+    return 0 if media >= args.meta else 1
 
 
 if __name__ == "__main__":

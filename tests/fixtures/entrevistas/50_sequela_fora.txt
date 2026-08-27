@@ -1,0 +1,20 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Carteiro pedestre.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: quinze anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Sim.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: Conte o que aconteceu.
+Entrevistado: Sofri atropelamento fora do serviço em 2022, fora do horário de trabalho, e fiquei com sequela na coluna.
+Entrevistador: A empresa fornecia EPI?
+Entrevistado: Sim, fornecia e era obrigatório.

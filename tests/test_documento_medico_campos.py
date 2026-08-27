@@ -27,3 +27,24 @@ def test_identidade_mantem_extracao_de_nome_e_filiacao():
     campos = {campo.nome: campo.valor for campo in extrair_campos(linhas, "cnh")}
     assert campos["nome"] == "JOAO DA SILVA"
     assert campos["nome_mae"] == "JOANA PEREIRA"
+
+
+def test_cpf_so_sai_da_foto_de_identidade():
+    """CTPS/comprovante podem citar CPF; isso não vira o CPF do cliente."""
+    linhas = [
+        _linha("CPF 111.444.777-35", 0),
+        _linha("NOME JOSE ROBERTO", 30),
+        _linha("PIS 120.12345.67-2", 60),
+    ]
+    assert "cpf" not in {c.nome for c in extrair_campos(linhas, "ctps")}
+    assert "cpf" not in {c.nome for c in extrair_campos(linhas, "comprovante_residencia")}
+
+    cnh = {c.nome: c.valor for c in extrair_campos(
+        [
+            _linha("CPF 111.444.777-35", 0),
+            _linha("NOME MARIA SILVA", 20),
+            _linha("N REGISTRO 12345678900", 40),
+        ],
+        "cnh",
+    )}
+    assert cnh.get("cpf") == "111.444.777-35"

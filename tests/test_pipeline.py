@@ -154,12 +154,11 @@ AMOSTRAS = [
      ["nome", "pis", "data_nascimento"],
      {"nome": "JOSE ROBERTO DE OLIVEIRA LIMA",
       "pis": "120.12345.67-2",
-      "cpf": "111.444.777-35",
       "data_nascimento": "22/11/1985",
       "naturalidade": "CONTAGEM - MG",
       "numero_ctps": "1234567",
       "serie_ctps": "00123/MG"},
-     []),
+     ["cpf", "cnh"]),  # CPF/CNH só da foto de identidade, não da CTPS
 
     ("cpf.png", CPF_CARTAO, "cpf",
      ["nome", "cpf"],

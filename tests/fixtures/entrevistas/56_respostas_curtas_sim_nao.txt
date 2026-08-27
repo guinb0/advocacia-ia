@@ -1,0 +1,22 @@
+Entrevistador: Função?
+Entrevistado: Carteiro ciclista.
+Entrevistador: Tempo de casa?
+Entrevistado: Três anos.
+Entrevistador: Ainda trabalha?
+Entrevistado: Sim.
+Entrevistador: Assalto no trabalho?
+Entrevistado: Não.
+Entrevistador: Acidente de trabalho?
+Entrevistado: Sim.
+Entrevistador: O que aconteceu?
+Entrevistado: Cai da bike no buraco na rua das Palmeiras em maio de 2025.
+Entrevistador: CAT?
+Entrevistado: Sim.
+Entrevistador: Laudos?
+Entrevistado: Sim.
+Entrevistador: Doença?
+Entrevistado: Não.
+Entrevistador: Sequela fora?
+Entrevistado: Não.
+Entrevistador: Ação?
+Entrevistado: Não.

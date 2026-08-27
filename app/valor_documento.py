@@ -100,6 +100,8 @@ REGRAS
 - `achados`: os dados que um advogado procuraria neste tipo de documento — CID,
   datas, número de benefício, espécie (B31/B91), nome do médico, CRM, empresa,
   período de afastamento. Só o que ESTÁ no texto, com o valor como aparece.
+  NÃO inclua CPF, RG nem número de CNH como achado: esses números só valem
+  quando saem do OCR da foto do próprio documento de identidade.
 - `atencao`: problemas NO documento — falta assinatura, data ilegível, período
   incompleto, CID sem relação com o relato, documento vencido, página faltando.
 - `sugere_pedir`: o documento complementar que este torna necessário. Ex.: um
