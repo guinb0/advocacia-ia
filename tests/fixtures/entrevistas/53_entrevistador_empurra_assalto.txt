@@ -1,0 +1,16 @@
+Entrevistador: Função?
+Entrevistado: Carteiro pedestre.
+Entrevistador: Tempo?
+Entrevistado: Cinco anos.
+Entrevistador: Ainda trabalha?
+Entrevistado: Sim.
+Entrevistador: Você sofreu assalto no trabalho, certo?
+Entrevistado: Não. Nunca sofri assalto no trabalho.
+Entrevistador: Acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Doença?
+Entrevistado: Não.
+Entrevistador: Sequela fora?
+Entrevistado: Não.
+Entrevistador: Ação judicial?
+Entrevistado: Não.

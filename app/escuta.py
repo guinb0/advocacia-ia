@@ -815,6 +815,13 @@ REGRAS
   Em especial: se `r_acidente` = "sim", preencha `ac_como` (e o que mais a fala
   cobrir: local, data, CAT…) com o relato do cliente; se `r_assalto` = "sim",
   preencha `as_ocorrencias` / `as_sintomas` com o conteúdo, não só "sim".
+- Data do acidente (`ac_data`): se o cliente disse mês/ano/dia em QUALQUER
+  trecho do acidente ("em maio de 2024", "janeiro/2025", "no dia 10/03/2023"),
+  preencha `ac_data` com essa data — mesmo que a pergunta formal de data não
+  tenha sido feita e a data esteja embutida em `ac_como`.
+- Diagnóstico: se o cliente deu CID ou nome da doença, preencha `do_cid` E
+  `sa_diagnostico` com o mesmo conteúdo (são o mesmo fato em módulos distintos).
+  Não deixe um preenchido e o outro vazio.
 - Preserve a pessoa verbal do cliente quando possível ("fui demitido", "quebrei
   o pé"); não reescreva em terceira pessoa ("foi demitido", "quebrou").
 - Separe COBERTURA de PREENCHIMENTO. Em `perguntadas`, liste toda pergunta do
@@ -1126,6 +1133,88 @@ def _abertas_pelo_rastreio(
 # -------------------------------------------------------------------- ação
 
 
+_RE_DATA_NARRATIVA = re.compile(
+    r"(?:"
+    r"(?:em\s+)?(?P<mes>janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|"
+    r"setembro|outubro|novembro|dezembro)(?:\s+de\s+(?P<ano>\d{4}))?"
+    r"|(?P<dma>\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _data_na_narrativa(*trechos: object) -> str:
+    """Puxa mês/ano (ou data numérica) que o cliente já disse no relato."""
+    for trecho in trechos:
+        texto = str(trecho or "")
+        m = _RE_DATA_NARRATIVA.search(texto)
+        if not m:
+            continue
+        if m.group("dma"):
+            return m.group("dma")
+        mes = m.group("mes")
+        ano = m.group("ano")
+        if mes and ano:
+            return f"{mes} de {ano}"
+        if mes:
+            return mes
+    return ""
+
+
+def _completar_campos_espelhados(
+    respostas: dict[str, Any],
+    extraidas: list[dict[str, Any]],
+    por_id: dict[str, roteiros.Pergunta],
+    transcricao: str,
+) -> None:
+    """Completa campos que a fala já respondeu, mas o modelo deixou só num lugar.
+
+    Exemplos medidos no lote de regressão: a data veio dentro de `ac_como` e
+    `ac_data` ficou vazio; o CID foi para `do_cid` e `sa_diagnostico` não.
+    """
+
+    def _registrar(pergunta_id: str, valor: str, trecho: str) -> None:
+        if pergunta_id not in por_id or _respondida(respostas.get(pergunta_id)):
+            return
+        if not valor:
+            return
+        respostas[pergunta_id] = valor
+        pergunta = por_id[pergunta_id]
+        extraidas.append(
+            {
+                "pergunta_id": pergunta_id,
+                "pergunta": pergunta.texto,
+                "valor": valor,
+                "trecho": trecho[:240],
+            }
+        )
+
+    if str(respostas.get("r_acidente", "")).casefold() == "sim":
+        data = _data_na_narrativa(
+            respostas.get("ac_como"),
+            respostas.get("ac_local"),
+            respostas.get("ac_fazendo"),
+            transcricao,
+        )
+        if data:
+            trecho = next(
+                (
+                    str(respostas.get(c) or "")
+                    for c in ("ac_como", "ac_local", "ac_fazendo")
+                    if data.casefold() in str(respostas.get(c) or "").casefold()
+                ),
+                data,
+            )
+            _registrar("ac_data", data, trecho)
+
+    do_cid = _texto(respostas.get("do_cid"))
+    sa_diag = _texto(respostas.get("sa_diagnostico"))
+    if do_cid and not sa_diag:
+        _registrar("sa_diagnostico", do_cid, do_cid)
+    elif sa_diag and not do_cid and str(respostas.get("r_doenca", "")).casefold() == "sim":
+        _registrar("do_cid", sa_diag, sa_diag)
+
+
 def processar_entrevista(
     transcricao: str,
     respostas_iniciais: dict[str, Any] | None = None,
@@ -1257,6 +1346,15 @@ def processar_entrevista(
                 "trecho": trecho,
             }
         )
+
+    por_id_completo = {
+        pergunta.id: pergunta
+        for bloco in roteiro.blocos
+        for pergunta in bloco.perguntas
+    }
+    _completar_campos_espelhados(
+        respostas, extraidas, por_id_completo, transcricao_limpa
+    )
 
     # Módulos condicionais só existem quando o respectivo rastreio foi positivo.
     positivos = {
