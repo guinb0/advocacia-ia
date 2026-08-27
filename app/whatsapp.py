@@ -38,6 +38,7 @@ from app import armazenamento, auth, automacoes_whatsapp, casos
 roteador = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
 
 LINK_AVALIACAO = os.getenv("GOOGLE_AVALIACAO_URL", "https://share.google/BrQVYGnjqdSz3pEw7")
+URL_PORTAL = os.getenv("URL_PORTAL", "http://localhost:3000").rstrip("/")
 MENSAGEM_AVALIACAO = (
     "Obrigado por conversar conosco. Sua avaliação ajuda outras pessoas a "
     "encontrarem nosso trabalho. Se puder, avalie a LARA & MELO no Google: "
@@ -266,6 +267,14 @@ def processar_cobrancas_documentos() -> int:
     """Envia cobranças vencidas sempre com o checklist mais recente."""
     enviados = 0
     for config in automacoes_whatsapp.listar_cobrancas_vencidas():
+        caso = armazenamento.obter_caso_com_segredos(config["caso_id"])
+        token_portal = str((caso or {}).get("portal_token") or "").strip()
+        if not token_portal:
+            automacoes_whatsapp.registrar_resultado_cobranca(
+                config["caso_id"], config["intervalo_dias"], None,
+                "O caso não possui link ativo para o portal do cliente.",
+            )
+            continue
         pedido = casos.montar_pedido(config["caso_id"], config["incluir_opcionais"])
         if not pedido:
             automacoes_whatsapp.registrar_resultado_cobranca(
@@ -282,7 +291,11 @@ def processar_cobrancas_documentos() -> int:
                 config["caso_id"], config["intervalo_dias"], None
             )
             continue
-        texto = pedido["texto"]
+        texto = (
+            f"{pedido['texto']}\n\n"
+            "Envie os documentos com segurança pelo seu portal:\n"
+            f"{URL_PORTAL}/portal/{token_portal}"
+        )
         texto_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
         try:
             _enviar_texto_sync(config["telefone"], texto)

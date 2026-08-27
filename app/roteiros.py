@@ -19,9 +19,14 @@ quais módulos aparecem. Quem não sofreu assalto não vê o módulo de assalto.
 
 from __future__ import annotations
 
+import logging
+import re
+import time
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
+
+log = logging.getLogger(__name__)
 
 #: `escolha` vira fileira de botões; `lista`, um seletor. A diferença é o número
 #: de opções: 27 UFs em botões viram uma parede, e 6 estados civis num seletor
@@ -769,10 +774,27 @@ def impedimentos(codigo: str, respostas: dict[str, Any]) -> list[dict[str, str]]
 
 
 def listar() -> list[Roteiro]:
-    return list(ROTEIROS.values())
+    """Os roteiros escritos em código e os importados de documento, nesta ordem.
+
+    O do escritório vem primeiro porque é o que se usa todo dia; os importados
+    aparecem depois, na ordem em que foram salvos.
+    """
+    catalogo = dict(ROTEIROS)
+    catalogo.update(_importados())
+    return list(catalogo.values())
 
 
 def obter(codigo: str) -> Roteiro | None:
+    """A versão salva tem precedência sobre a escrita em código.
+
+    É o que faz o botão "Editar roteiro" valer para `empregado_publico` também: a
+    edição vira uma linha no banco com o mesmo código, e essa linha passa a ser o
+    roteiro. Apagá-la devolve o roteiro do módulo — o escritório nunca fica sem
+    saída se uma edição sair errada.
+    """
+    salvo = _importados().get(codigo)
+    if salvo is not None:
+        return salvo
     return ROTEIROS.get(codigo)
 
 
@@ -782,3 +804,262 @@ def perguntas_transcritas(codigo: str) -> list[str]:
     if roteiro is None:
         return []
     return [p.id for b in roteiro.blocos for p in b.perguntas if p.transcrever]
+
+
+# ------------------------------------------------- roteiros vindos de fora
+#
+# Até aqui o módulo é uma transcrição do documento do escritório, em código. O
+# que segue existe porque cada categoria de causa tem o seu documento, e
+# transcrever 86 perguntas à mão não escala: `app/roteiro_ia.py` lê o arquivo e
+# devolve o mesmo formato em dicionário, que estas funções validam e convertem.
+#
+# A validação é aqui, e não no `roteiro_ia`, porque o editor da tela salva pelo
+# mesmo caminho. Um roteiro escrito por um advogado às onze da noite merece a
+# mesma conferência que um escrito pelo modelo.
+
+#: Os tipos que a tela sabe desenhar. Um tipo fora desta lista viraria um campo
+#: que o `CampoResposta` não renderiza — pergunta invisível no meio da entrevista.
+TIPOS_RESPOSTA: tuple[str, ...] = (
+    "dado", "data", "sim_nao", "escolha", "lista", "documentos", "relato",
+)
+
+VALIDACOES: tuple[str, ...] = ("", "cpf")
+BUSCAS: tuple[str, ...] = ("", "cep")
+
+
+class RoteiroInvalido(ValueError):
+    """Roteiro que a tela não conseguiria exibir, com o motivo em português."""
+
+
+def identificador(bruto: Any, usados: set[str], prefixo: str) -> str:
+    """Um id estável, em ascii, garantidamente único dentro de `usados`.
+
+    Ids saem de duas fontes pouco confiáveis — o modelo e o campo de texto do
+    editor — e são a chave das respostas: dois iguais fariam a segunda pergunta
+    sobrescrever a resposta da primeira, silenciosamente.
+    """
+    texto = unicodedata.normalize("NFKD", str(bruto or "").strip().lower())
+    limpo = texto.encode("ascii", "ignore").decode()
+    limpo = re.sub(r"[^a-z0-9]+", "_", limpo).strip("_")[:48]
+    base = limpo or prefixo
+
+    candidato = base
+    sufixo = 2
+    while candidato in usados:
+        candidato = f"{base}_{sufixo}"
+        sufixo += 1
+    usados.add(candidato)
+    return candidato
+
+
+def de_dict(dados: Any) -> Roteiro:
+    """Reconstrói o roteiro a partir do JSON, ou explica o que está errado."""
+    if not isinstance(dados, dict):
+        raise RoteiroInvalido("O roteiro precisa ser um objeto JSON.")
+
+    nome = str(dados.get("nome") or "").strip()
+    if not nome:
+        raise RoteiroInvalido("O roteiro precisa de um nome.")
+
+    codigo_bruto = str(dados.get("codigo") or "").strip()
+    codigo = identificador(codigo_bruto or nome, set(), "roteiro")
+
+    brutos = dados.get("blocos")
+    if not isinstance(brutos, list) or not brutos:
+        raise RoteiroInvalido("O roteiro precisa de pelo menos um bloco.")
+
+    usados: set[str] = set()
+    blocos = [_bloco_de_dict(bruto, usados) for bruto in brutos]
+    if not any(bloco.perguntas for bloco in blocos):
+        raise RoteiroInvalido("O roteiro precisa de pelo menos uma pergunta.")
+
+    _soltar_dependencias_orfas(blocos)
+
+    return Roteiro(
+        codigo=codigo,
+        nome=nome[:200],
+        descricao=str(dados.get("descricao") or "").strip()[:1000],
+        blocos=blocos,
+        saudacao=_lista_de_texto(dados.get("saudacao")),
+        encerramento=_lista_de_texto(dados.get("encerramento")),
+        retomadas=_lista_de_texto(dados.get("retomadas")),
+        fechos_por_tipo=_mapa_de_texto(dados.get("fechos_por_tipo")),
+    )
+
+
+def _bloco_de_dict(dados: Any, usados: set[str]) -> Bloco:
+    if not isinstance(dados, dict):
+        raise RoteiroInvalido("Cada bloco precisa ser um objeto JSON.")
+
+    titulo = str(dados.get("titulo") or "").strip()
+    if not titulo:
+        raise RoteiroInvalido("Todo bloco precisa de um título.")
+
+    modulo = str(dados.get("modulo") or "").strip() or None
+    perguntas_brutas = dados.get("perguntas")
+    perguntas = (
+        [_pergunta_de_dict(p, usados) for p in perguntas_brutas]
+        if isinstance(perguntas_brutas, list)
+        else []
+    )
+    return Bloco(
+        id=identificador(dados.get("id") or titulo, usados, "bloco"),
+        titulo=titulo[:200],
+        perguntas=perguntas,
+        modulo=modulo,
+        objetivo=str(dados.get("objetivo") or "").strip()[:1000],
+        abertura=str(dados.get("abertura") or "").strip()[:2000],
+        instrucao=str(dados.get("instrucao") or "").strip()[:2000],
+        delegado_a=str(dados.get("delegado_a") or "").strip()[:120],
+    )
+
+
+def _pergunta_de_dict(dados: Any, usados: set[str]) -> Pergunta:
+    if not isinstance(dados, dict):
+        raise RoteiroInvalido("Cada pergunta precisa ser um objeto JSON.")
+
+    texto = str(dados.get("texto") or "").strip()
+    if not texto:
+        raise RoteiroInvalido("Toda pergunta precisa de um enunciado.")
+
+    tipo = str(dados.get("tipo") or "relato").strip()
+    if tipo not in TIPOS_RESPOSTA:
+        raise RoteiroInvalido(
+            f"Tipo de resposta '{tipo}' não existe. Use um destes: "
+            f"{', '.join(TIPOS_RESPOSTA)}."
+        )
+
+    opcoes = dados.get("opcoes")
+    opcoes = (
+        [str(o).strip()[:120] for o in opcoes if str(o).strip()]
+        if isinstance(opcoes, list)
+        else []
+    )
+    if tipo in {"escolha", "lista"} and not opcoes:
+        raise RoteiroInvalido(
+            f"A pergunta “{texto[:60]}” é de {tipo} e não tem nenhuma opção."
+        )
+
+    validacao = str(dados.get("validacao") or "").strip()
+    if validacao not in VALIDACOES:
+        validacao = ""
+    busca = str(dados.get("busca") or "").strip()
+    if busca not in BUSCAS:
+        busca = ""
+
+    return Pergunta(
+        id=identificador(dados.get("id") or texto, usados, "p"),
+        texto=texto[:500],
+        tipo=tipo,  # type: ignore[arg-type]
+        transcrever=bool(dados.get("transcrever")),
+        opcoes=opcoes[:60],
+        dica=str(dados.get("dica") or "").strip()[:500],
+        obrigatoria=bool(dados.get("obrigatoria")),
+        validacao=validacao,  # type: ignore[arg-type]
+        busca=busca,  # type: ignore[arg-type]
+        preenche=str(dados.get("preenche") or "").strip()[:60],
+        fala=_mapa_de_texto(dados.get("fala")),
+        depende_de=str(dados.get("depende_de") or "").strip()[:60],
+        depende_valor=str(dados.get("depende_valor") or "").strip()[:60],
+        impedimento=str(dados.get("impedimento") or "").strip()[:60],
+    )
+
+
+def _soltar_dependencias_orfas(blocos: list[Bloco]) -> None:
+    """Abre as perguntas cujo `depende_de` não leva a lugar nenhum.
+
+    Sem um pai respondível, `depende_de` mantém a pergunta FECHADA para sempre —
+    ela some da entrevista sem avisar ninguém. Dois jeitos banais de chegar lá:
+
+        órfã          o pai não existe (o modelo inventou o id, ou o advogado
+                      apagou a pergunta-pai no editor)
+        auto-referente  a pergunta depende de si mesma, e como ela só é
+                      respondida depois de aberta, nunca abre
+
+    Soltar é o lado seguro de errar. Uma pergunta a mais na tela é um segundo de
+    conversa; uma pergunta que sumiu é um dado que ninguém colheu e que só
+    aparece na hora de redigir a petição.
+    """
+    existentes = {p.id for bloco in blocos for p in bloco.perguntas}
+    for bloco in blocos:
+        for pergunta in bloco.perguntas:
+            if not pergunta.depende_de:
+                continue
+            if pergunta.depende_de == pergunta.id:
+                motivo = "dependia de si mesma"
+            elif pergunta.depende_de not in existentes:
+                motivo = f"dependia de '{pergunta.depende_de}', que não existe no roteiro"
+            else:
+                continue
+            log.warning("Pergunta '%s' %s. Ela passa a aparecer sempre.", pergunta.id, motivo)
+            pergunta.depende_de = ""
+            pergunta.depende_valor = ""
+
+
+def _lista_de_texto(valor: Any) -> list[str]:
+    if isinstance(valor, str):
+        valor = [valor]
+    if not isinstance(valor, list):
+        return []
+    return [str(item).strip()[:2000] for item in valor if str(item).strip()][:40]
+
+
+def _mapa_de_texto(valor: Any) -> dict[str, str]:
+    if not isinstance(valor, dict):
+        return {}
+    return {
+        str(chave).strip().lower()[:20]: str(texto).strip()[:2000]
+        for chave, texto in valor.items()
+        if str(texto).strip()
+    }
+
+
+# ----------------------------------------------------------- cache do banco
+#
+# `obter` é chamado a cada trecho de fala pela escuta automática — várias vezes
+# por minuto durante a entrevista inteira. Ir ao SQL Server em todas seria trocar
+# uma consulta de dicionário por um ida-e-volta de rede no meio da conversa.
+#
+# O TTL é curto porque o preço de um cache velho aqui é baixo (a tela recarrega o
+# roteiro ao abrir) e `invalidar_cache` zera na hora em que alguém salva.
+
+_TTL_CACHE_S = 30.0
+_cache: dict[str, Roteiro] = {}
+_cache_ate: float = 0.0
+
+
+def invalidar_cache() -> None:
+    """Chamado depois de salvar ou excluir. Idempotente e barato."""
+    global _cache_ate
+    _cache_ate = 0.0
+
+
+def _importados() -> dict[str, Roteiro]:
+    global _cache, _cache_ate
+
+    agora = time.monotonic()
+    if agora < _cache_ate:
+        return _cache
+
+    try:
+        from . import armazenamento
+
+        linhas = armazenamento.listar_roteiros()
+    except Exception:
+        # Sem banco (testes, boot antes do schema) o sistema tem de continuar
+        # servindo o roteiro do escritório. Um catálogo vazio faz exatamente
+        # isso; levantar aqui derrubaria a entrevista inteira.
+        log.debug("Catálogo de roteiros indisponível; usando só os do módulo.", exc_info=True)
+        _cache, _cache_ate = {}, agora + _TTL_CACHE_S
+        return _cache
+
+    catalogo: dict[str, Roteiro] = {}
+    for linha in linhas:
+        try:
+            catalogo[linha["codigo"]] = de_dict(linha["conteudo"])
+        except RoteiroInvalido:
+            # Uma linha corrompida não pode esconder as outras do catálogo.
+            log.warning("Roteiro salvo '%s' está inválido e foi ignorado.", linha.get("codigo"))
+
+    _cache, _cache_ate = catalogo, agora + _TTL_CACHE_S
+    return _cache

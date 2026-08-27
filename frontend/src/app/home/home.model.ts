@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useCasos, useCategorias, useSituacao } from "@/lib/useCasos";
 import { useSessao } from "@/lib/auth";
@@ -22,6 +22,7 @@ export type Tela =
   | "dados"
   | "saudeAgente"
   | "modelosDePeticao"
+  | "catalogoRoteiros"
   | "documentacao";
 
 export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
@@ -41,6 +42,10 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   saudeAgente: "agente",
   modelosDePeticao: "agente",
   documentacao: "documentacao",
+  /* Sem esta linha a tela seria LIVRE, não restrita: `podeAbrirTela` libera o
+   * que não está mapeado. O catálogo de roteiros pertence ao módulo `roteiros`,
+   * que o advogado e o secretário têm — ver `app/perfis.py`. */
+  catalogoRoteiros: "roteiros",
 };
 
 export function podeAbrirTela(tela: Tela, modulos: string[]): boolean {
@@ -95,12 +100,39 @@ export const useHomeModel = () => {
   const situacaoCaso = useSituacao(casoAberto);
   const modulos = sessao.modulos;
 
+  /* Quem é da Documentação CAI na tela da Documentação — uma vez, ao entrar.
+   *
+   * Este efeito prendia, e por dois caminhos. `sessao.papeis` é montado como
+   * `[loggedUser.perfil]` em `lib/auth.tsx` — array literal novo a cada render,
+   * então a dependência muda de identidade sempre e o efeito redispara sempre.
+   * E `tela` também está nas dependências: a pessoa clica em Casos, `tela` muda,
+   * o efeito roda e a devolve para a Documentação antes de a tela aparecer.
+   *
+   * Nos dois casos o resultado era o mesmo: o perfil ficava trancado na própria
+   * tela, sem alcançar carteira, casos ou documentos — que ele tem todo direito
+   * de ver, e que o `podeAbrirTela` abaixo já confere de verdade.
+   *
+   * O `useRef` faz o que este ramo prometia: leva para lá na primeira carga e
+   * não interfere mais. É atalho de conveniência, nunca permissão — quem decide
+   * o que cada perfil acessa é `app/perfis.py`, no servidor. */
+  const jaDirecionado = useRef(false);
   useEffect(() => {
     if (sessao.carregando) return;
-    if (sessao.papeis.includes("documentacao") && podeAbrirTela("documentacao", modulos)) {
+    /* O atalho de entrada, UMA vez. Sem o `jaDirecionado`, `tela` está nas
+     * dependências e este ramo redispara a cada navegação: a pessoa clica em
+     * Casos, o efeito roda porque `tela` mudou, e ela volta para a Documentação
+     * antes de a tela aparecer. */
+    if (
+      !jaDirecionado.current &&
+      sessao.papeis.includes("documentacao") &&
+      podeAbrirTela("documentacao", modulos)
+    ) {
+      jaDirecionado.current = true;
       setTela("documentacao");
       return;
     }
+    /* Esta parte SEGUE valendo sempre, e é a que de fato guarda: tela que o
+     * perfil não alcança devolve para a primeira que ele alcança. */
     if (!podeAbrirTela(tela, modulos)) {
       const primeira = (Object.keys(MODULO_DA_TELA) as Tela[]).find((candidata) =>
         podeAbrirTela(candidata, modulos),

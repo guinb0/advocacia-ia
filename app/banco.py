@@ -451,6 +451,26 @@ CREATE TABLE {SCHEMA}.{PREFIXO}municipios (
     CONSTRAINT fk_acervo_municipios_uf FOREIGN KEY (uf_id)
         REFERENCES {SCHEMA}.{PREFIXO}ufs (id)
 );
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
+    codigo        varchar(80)   NOT NULL CONSTRAINT pk_acervo_roteiros PRIMARY KEY,
+    nome          nvarchar(400) NOT NULL,
+    descricao     nvarchar(max) NOT NULL CONSTRAINT df_acervo_rot_desc DEFAULT N'',
+    corpo         nvarchar(max) NOT NULL,
+    criado_por    nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_quem DEFAULT N'',
+    origem        nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_origem DEFAULT N'',
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL
+);
+
+-- `origem` (o arquivo de onde o roteiro foi importado) nasceu depois da tabela:
+-- o banco de produção já tinha `acervo_roteiros` sem essa coluna, e o
+-- `IF OBJECT_ID ... IS NULL` acima nunca roda para ela. Sem este acréscimo, uma
+-- instalação antiga aceitaria o INSERT e perderia a procedência em silêncio.
+IF COL_LENGTH('{SCHEMA}.{PREFIXO}roteiros', 'origem') IS NULL
+ALTER TABLE {SCHEMA}.{PREFIXO}roteiros
+    ADD origem nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_origem DEFAULT N'';
 """
 
 # As constraints criadas antes da faxina mantêm o nome `pk_ocr_*` / `fk_ocr_*`. Renomear

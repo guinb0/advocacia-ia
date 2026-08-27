@@ -39,6 +39,7 @@ celery_app = Celery(
         "app.tasks.documentos",
         "app.tasks.ia",
         "app.tasks.manutencao",
+        "app.tasks.roteiro",
     ),
 )
 
@@ -68,6 +69,9 @@ celery_app.conf.update(
         "app.tasks.agente.*": {"queue": "default"},
         "app.tasks.transcricao.*": {"queue": "gpu_realtime"},
         "app.tasks.ia.*": {"queue": "ai"},
+        # Importar roteiro pode rodar OCR, mas NÃO vai para a fila do OCR: aquele
+        # worker processa um documento por vez e é o que o cliente espera na tela.
+        "app.tasks.roteiro.*": {"queue": "ai"},
         "app.tasks.documentos.*": {"queue": "documents"},
         "app.tasks.manutencao.*": {"queue": "low"},
     },

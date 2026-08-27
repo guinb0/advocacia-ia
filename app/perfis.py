@@ -116,6 +116,19 @@ MODULOS: tuple[dict[str, str], ...] = (
         "grupo": "Escritório",
         "ordem": 100,
     },
+    {
+        "codigo": "roteiros",
+        "rotulo": "Roteiros de entrevista",
+        "descricao": (
+            "Manter o catálogo de roteiros: importar de um documento, editar "
+            "perguntas e blocos, e desfazer edição."
+        ),
+        "rota": "catalogoRoteiros",
+        # No "Escritório", e não em "Atendimento": manter o catálogo é trabalho
+        # de bastidor. Quem conduz entrevista já edita o roteiro de dentro dela.
+        "grupo": "Escritório",
+        "ordem": 110,
+    },
 )
 CODIGOS_MODULOS = tuple(m["codigo"] for m in MODULOS)
 
@@ -130,7 +143,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "sistema": True,
         "modulos": (
             "entrevista", "casos", "documentos", "agente", "contratos",
-            "investigacao", "usuarios",
+            "investigacao", "usuarios", "roteiros",
         ),
     },
     {
@@ -138,7 +151,11 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "rotulo": "Secretário",
         "descricao": "Gerencia usuários e acompanha as entrevistas de toda a equipe.",
         "sistema": True,
-        "modulos": ("casos", "documentos", "supervisao", "metricas", "usuarios"),
+        # `roteiros` sem `entrevista`: o secretário MANTÉM o roteiro do
+        # escritório — importa do documento, corrige pergunta, desfaz edição —
+        # sem necessariamente conduzir atendimento. São trabalhos diferentes, e
+        # dar um não obriga a dar o outro.
+        "modulos": ("casos", "documentos", "supervisao", "metricas", "usuarios", "roteiros"),
     },
     {
         "codigo": "cliente",
@@ -253,6 +270,51 @@ def _semear_legado(con: Any, agora: str) -> None:
                     f"INSERT INTO {_TABELA_ACESSOS} (perfil_codigo, modulo) VALUES (?, ?)",
                     (perfil["codigo"], modulo),
                 )
+
+
+def _entregar_modulos_ineditos(con: Any) -> None:
+    """Entrega aos perfis de sistema os módulos que esta instalação nunca viu.
+
+    O CASO QUE ISTO RESOLVE, E POR QUE NÃO É "SOBRESCREVER"
+
+    `_semear_legado` pula perfil já cadastrado, e com razão: o escritório pode
+    ter ajustado o que o secretário enxerga, e subir o servidor não é hora de
+    desfazer decisão de quem administra.
+
+    Só que a consequência era esta: um módulo NOVO, acrescentado ao `MODULOS`
+    junto com a rota que ele protege, nunca chegava a nenhuma instalação já
+    existente. Ele entra no catálogo pelo `_sincronizar_modulos` e o
+    `_garantir_matriz_completa` o carimba como NEGADO para todo mundo — a rota
+    nasce guardada por um módulo que ninguém tem, e o recurso simplesmente não
+    existe até alguém descobrir sozinho que precisa marcar uma caixa na tela.
+
+    A distinção que torna isto seguro: um módulo que não aparece em linha nenhuma
+    da tabela — para perfil nenhum — é um módulo que esta instalação nunca
+    conheceu. Ninguém pode tê-lo desmarcado, porque ele não existia para ser
+    desmarcado. Entregá-lo é completar a instalação, não desfazer escolha.
+
+    Módulo que já aparece para qualquer perfil fica intocado, mesmo que este aqui
+    não o tenha: aí houve decisão, e decisão de quem administra se respeita.
+    """
+    # Uma vez só, fora do laço: dentro dele, o módulo entregue ao advogado já
+    # contaria como conhecido na vez do secretário, e ele ficaria de fora.
+    conhecidos = {
+        linha["modulo"]
+        for linha in con.execute(f"SELECT DISTINCT modulo FROM {_TABELA_ACESSOS}").fetchall()
+    }
+    for perfil in SEMENTE:
+        ineditos = [m for m in perfil["modulos"] if m not in conhecidos]
+        for modulo in ineditos:
+            con.execute(
+                f"INSERT INTO {_TABELA_ACESSOS} (perfil_codigo, modulo) VALUES (?, ?)",
+                (perfil["codigo"], modulo),
+            )
+        if ineditos:
+            log.info(
+                "Perfil '%s' recebeu os módulos novos %s.",
+                perfil["codigo"],
+                ", ".join(ineditos),
+            )
 
 
 def _sincronizar_modulos(con: Any) -> None:
@@ -415,6 +477,11 @@ def inicializar() -> None:
         _executar_schema(con)
         agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
         _semear_legado(con, agora)
+        # ANTES do `_migrar_acessos_legados`, e essa ordem é o ponto: é ele que
+        # leva o acesso da tabela legada para a matriz nova como permitido. Se
+        # isto rodasse depois, o módulo novo já teria sido carimbado como negado
+        # pelo `_garantir_matriz_completa` e ninguém o alcançaria.
+        _entregar_modulos_ineditos(con)
         _sincronizar_modulos(con)
         _sincronizar_perfis(con, agora)
         _migrar_acessos_legados(con)
