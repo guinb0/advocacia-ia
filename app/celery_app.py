@@ -91,6 +91,10 @@ celery_app.conf.update(
             "task": "app.tasks.agente.reenfileirar_pendentes",
             "schedule": 600.0,
         },
+        "cobrar-documentos-pendentes": {
+            "task": "app.tasks.manutencao.cobrar_documentos_pendentes",
+            "schedule": 900.0,
+        },
     },
 )
 

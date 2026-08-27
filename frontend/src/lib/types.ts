@@ -386,6 +386,17 @@ export interface RespostaEnvio {
   extracao: Documento;
 }
 
+export interface CobrancaDocumentos {
+  caso_id: string;
+  ativa: boolean;
+  telefone: string;
+  intervalo_dias: number;
+  incluir_opcionais: boolean;
+  proximo_envio_em: string | null;
+  ultimo_envio_em: string | null;
+  ultimo_erro: string | null;
+}
+
 // ------------------------------------------- assinatura eletrônica (ZapSign)
 
 /** Como cada signatário está no documento mandado assinar. */

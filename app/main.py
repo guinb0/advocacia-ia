@@ -888,6 +888,9 @@ async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
             estado=resumo["estado"],
             caso_id=pedido.caso_id,
         )
+        enviados_whatsapp = await whatsapp.enviar_links_assinatura_automaticos(registro)
+        if enviados_whatsapp:
+            log.info("%d link(s) de assinatura enviados automaticamente pelo WhatsApp.", enviados_whatsapp)
         enviados.append(_resposta_assinatura(registro))
         faltando += doc["faltando"]
 
