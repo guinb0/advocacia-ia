@@ -311,7 +311,10 @@ export default function TriagemEntrevista({
         * cliente desligar. Vem DEPOIS do contrato de propósito: quem chegou até
         * aqui já fechou o atendimento, e o que resta é revisar — o que ficou em
         * branco ainda dá para colher com ele na linha. */}
-      <RespostasDoRoteiro respostas={qualificacao} />
+      {/* `aberto` aqui, recolhido no `Roteiro`: são momentos diferentes. Lá a
+        * entrevista ainda corre e a lista disputaria a atenção; aqui o
+        * atendimento já fechou e conferir É o trabalho. */}
+      <RespostasDoRoteiro respostas={qualificacao} aberto />
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
         * ainda na linha, e o checklist recebe o que ele já tem em mãos. */}

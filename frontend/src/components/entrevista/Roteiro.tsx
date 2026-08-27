@@ -33,6 +33,7 @@ import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
 import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
+import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
@@ -1334,7 +1335,12 @@ function preencherMarcadores(
           </div>
           {!saudacaoLida &&
             roteiro.saudacao.map((p, i) => (
-              <p key={i} className="mt-[10px] mb-0 font-normal text-[14px] leading-[1.65] font-titulo max-w-[74ch]">
+              /* Letra grande: este texto é LIDO EM VOZ ALTA, de relance, com o
+                 cliente esperando do outro lado. 14px servia para ler no
+                 silêncio; quem lê em voz alta precisa achar a linha de volta
+                 depois de olhar para a câmera. A medida de 62 caracteres
+                 acompanha — linha longa demais faz perder o lugar. */
+              <p key={i} className="mt-3 mb-0 font-normal text-[19px] leading-[1.7] font-titulo max-w-[62ch]">
                 {comNomes(p)}
               </p>
             ))}
@@ -1512,6 +1518,17 @@ function preencherMarcadores(
         * botão que não baixa nada é pior que botão nenhum. */}
       {escutaEncerrada && (
         <AudioDaEntrevista entrevistaId={captura.current?.entrevistaId ?? ""} />
+      )}
+
+      {/* O roteiro respondido, abaixo de tudo e RECOLHIDO enquanto a conversa
+        * corre — aberto ele disputaria o olho de quem conduz com o cliente.
+        *
+        * Ao encerrar, abre sozinho: as respostas que a escuta transpôs de cada
+        * trecho de fala para o campo certo ficam à vista, e o que ficou em
+        * branco ainda dá para colher com o cliente na linha. Depois disso quem
+        * manda é o clique de quem está lendo. */}
+      {escutando && (
+        <RespostasDoRoteiro respostas={respostas} codigo={codigo} aberto={escutaEncerrada} />
       )}
 
       {/* Não há botão de concluir aqui.

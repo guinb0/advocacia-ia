@@ -54,11 +54,34 @@ function comoTexto(valor: string | string[] | undefined): string {
 interface Props {
   respostas: Respostas;
   codigo?: string;
+  /** Abre o painel. Vira `true` quando a entrevista encerra — é o momento em
+   *  que a conferência deixa de ser distração e passa a ser o trabalho. */
+  aberto?: boolean;
 }
 
-export default function RespostasDoRoteiro({ respostas, codigo = "empregado_publico" }: Props) {
+export default function RespostasDoRoteiro({
+  respostas,
+  codigo = "empregado_publico",
+  aberto = false,
+}: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+
+  /* FECHADO POR PADRÃO, e isto é sobre atenção, não sobre espaço.
+   *
+   * Enquanto a conversa corre, quem conduz olha para a pergunta da vez; uma
+   * lista de 89 respostas aberta ao lado disputa o olho com o cliente. Ao
+   * encerrar, a prioridade se inverte — o que falta ainda dá para colher, e é
+   * aí que ele abre sozinho.
+   *
+   * Depois de aberto, quem manda é o clique: o estado só acompanha `aberto`
+   * enquanto ninguém tiver mexido, senão fechar o painel no fim da entrevista
+   * seria desfeito no próximo render. */
+  const [expandido, setExpandido] = useState(aberto);
+  const [mexido, setMexido] = useState(false);
+  useEffect(() => {
+    if (!mexido) setExpandido(aberto);
+  }, [aberto, mexido]);
 
   useEffect(() => {
     let cancelado = false;
@@ -109,18 +132,33 @@ export default function RespostasDoRoteiro({ respostas, codigo = "empregado_publ
 
   return (
     <section className="mt-6 border-t border-borda pt-[14px]" aria-labelledby="titulo-respostas">
-      <div className="flex items-center gap-[10px] flex-wrap mb-2">
-        <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
-          ROTEIRO RESPONDIDO
-        </span>
-        <Selo tom={faltando.length ? "atencao" : "ok"} simbolo={faltando.length ? "!" : "✓"}>
-          {respondidas} de {total}
-        </Selo>
-      </div>
+      {/* `details` nativo, e não um painel próprio: ele já traz teclado, leitor
+        * de tela e o estado aberto/fechado sem nenhuma linha de JavaScript. */}
+      <details
+        open={expandido}
+        onToggle={(e) => {
+          const agora = (e.currentTarget as HTMLDetailsElement).open;
+          if (agora !== expandido) {
+            setMexido(true);
+            setExpandido(agora);
+          }
+        }}
+      >
+        <summary className="cursor-pointer list-none flex items-center gap-[10px] flex-wrap">
+          <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
+            ROTEIRO RESPONDIDO
+          </span>
+          <Selo tom={faltando.length ? "atencao" : "ok"} simbolo={faltando.length ? "!" : "✓"}>
+            {respondidas} de {total}
+          </Selo>
+          <span className="text-tinta-3 text-[11px] font-ui underline underline-offset-[3px]">
+            {expandido ? "recolher" : "ver respostas"}
+          </span>
+        </summary>
 
-      <h3 id="titulo-respostas" className="mb-[6px] mt-0 font-medium text-[18px] leading-[1.25] font-titulo">
-        Confira o que a entrevista colheu
-      </h3>
+        <h3 id="titulo-respostas" className="mb-[6px] mt-3 font-medium text-[18px] leading-[1.25] font-titulo">
+          Confira o que a entrevista colheu
+        </h3>
 
       {faltando.length > 0 && (
         <div className="mt-2 mb-3">
@@ -170,8 +208,9 @@ export default function RespostasDoRoteiro({ respostas, codigo = "empregado_publ
               })}
             </dl>
           </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </details>
     </section>
   );
 }
