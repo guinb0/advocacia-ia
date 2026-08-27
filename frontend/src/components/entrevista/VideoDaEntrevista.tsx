@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { GravacaoVideo, podeGravarVideo } from "@/lib/gravacaoVideo";
+import { GravacaoVideo, podeGravarTela, podeGravarVideo } from "@/lib/gravacaoVideo";
 import type { EstadoVideo, FonteVideo, VideoGravado } from "@/lib/gravacaoVideo";
 
 /* Gravar a entrevista em vídeo — e baixar, porque ela não fica guardada.
@@ -84,6 +84,11 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
   }, [video, baixado]);
 
   useEffect(() => setPodeGravar(podeGravarVideo()), []);
+  /* Capacidade separada da de gravar: o Safari do iPhone grava pela câmera e
+   * NÃO implementa `getDisplayMedia`. Medido no cliente, nunca no servidor —
+   * o mesmo build serve computador e celular. */
+  const [temTela, setTemTela] = useState(false);
+  useEffect(() => setTemTela(podeGravarTela()), []);
 
   // Sair da tela solta câmera e microfone. Sem isto a luz da câmera fica acesa
   // depois da entrevista fechada.
@@ -113,8 +118,10 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
   useEffect(() => {
     if (!automatico || !podeGravar || tentouAutomatico.current) return;
     tentouAutomatico.current = true;
-    void iniciar("tela");
-  }, [automatico, podeGravar, iniciar]);
+    // Sem captura de tela, o automático grava pela câmera. Insistir na tela
+    // aqui produzia o erro cru assim que a entrevista abria no celular.
+    void iniciar(temTela ? "tela" : "camera");
+  }, [automatico, podeGravar, temTela, iniciar]);
 
   const baixar = useCallback(() => {
     gravacao.current?.marcarBaixado();
@@ -142,8 +149,12 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
 
         {!gravando ? (
           automatico ? (
-            <button type="button" className={BOTAO} onClick={() => void iniciar("tela")}>
-              Autorizar gravação da tela
+            <button
+              type="button"
+              className={BOTAO}
+              onClick={() => void iniciar(temTela ? "tela" : "camera")}
+            >
+              {temTela ? "Autorizar gravação da tela" : "Autorizar gravação pela câmera"}
             </button>
           ) : <>
             <button type="button" className={BOTAO} onClick={() => void iniciar("camera")}>
@@ -152,15 +163,21 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
             {/* "do sistema", e não "da chamada": a captura é presa nesta aba
                 (ver `ESTA_ABA` em `lib/gravacaoVideo.ts`). O rótulo antigo
                 prometia escolher uma janela, e escolher era justamente o que
-                fazia a entrevista ser gravada como outra aba qualquer. */}
-            <button
-              type="button"
-              className={BOTAO}
-              onClick={() => void iniciar("tela")}
-              title="Grava esta aba — roteiro e rosto do cliente — com a voz dos dois lados"
-            >
-              Gravar a tela do sistema
-            </button>
+                fazia a entrevista ser gravada como outra aba qualquer.
+
+                Some no iPhone e no iPad: o Safari de lá não implementa
+                `getDisplayMedia`, e o botão só existia para estourar ao ser
+                clicado. A gravação pela câmera continua oferecida. */}
+            {temTela && (
+              <button
+                type="button"
+                className={BOTAO}
+                onClick={() => void iniciar("tela")}
+                title="Grava esta aba — roteiro e rosto do cliente — com a voz dos dois lados"
+              >
+                Gravar a tela do sistema
+              </button>
+            )}
           </>
         ) : (
           <>
