@@ -45,11 +45,18 @@ MENSAGEM_AVALIACAO = (
     "encontrarem nosso trabalho. Se puder, avalie a LARA & MELO no Google: "
 )
 log = logging.getLogger("whatsapp")
+INSTANCIA_OFICIAL = os.getenv("EVOLUTION_INSTANCE_FALLBACK", "Advocacia LM").strip()
 
 
 def _url_instancia(base: str, recurso: str, instancia: str) -> str:
     """Monta a URL sem deixar espaços do nome da instância no caminho."""
     return f"{base}/{recurso}/{quote(instancia.strip(), safe='')}"
+
+
+def _instancias_candidatas() -> list[str]:
+    """Nome do deploy primeiro; nome oficial como recuperação de configuração antiga."""
+    candidatas = [os.getenv("EVOLUTION_INSTANCE", "").strip(), INSTANCIA_OFICIAL]
+    return list(dict.fromkeys(nome for nome in candidatas if nome))
 
 
 def _mensagem_erro_evolution(erro: httpx.HTTPError) -> str:
@@ -101,9 +108,10 @@ def configurado() -> bool:
     tomaria 503 no meio do atendimento — e o convite por e-mail da ZapSign, que
     sai de qualquer jeito, pareceria não ter saído.
     """
-    return all(
-        os.getenv(nome, "").strip()
-        for nome in ("EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE")
+    return bool(
+        os.getenv("EVOLUTION_API_URL", "").strip()
+        and os.getenv("EVOLUTION_API_KEY", "").strip()
+        and _instancias_candidatas()
     )
 
 
@@ -118,16 +126,21 @@ async def _enviar_texto(numero: str, texto: str) -> None:
         raise HTTPException(503, "O envio por WhatsApp ainda não foi configurado.")
     base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
     chave = os.getenv("EVOLUTION_API_KEY", "")
-    instancia = os.getenv("EVOLUTION_INSTANCE", "")
 
     try:
         async with httpx.AsyncClient(timeout=20) as cliente:
-            resposta = await cliente.post(
-                _url_instancia(base, "message/sendText", instancia),
-                headers={"apikey": chave, "Content-Type": "application/json"},
-                json={"number": numero, "text": texto},
-            )
-            resposta.raise_for_status()
+            candidatas = _instancias_candidatas()
+            for indice, instancia in enumerate(candidatas):
+                resposta = await cliente.post(
+                    _url_instancia(base, "message/sendText", instancia),
+                    headers={"apikey": chave, "Content-Type": "application/json"},
+                    json={"number": numero, "text": texto},
+                )
+                if resposta.status_code == 404 and indice < len(candidatas) - 1:
+                    log.warning("Instância Evolution configurada não existe; tentando a oficial.")
+                    continue
+                resposta.raise_for_status()
+                return
     except httpx.HTTPError as erro:
         status = erro.response.status_code if isinstance(erro, httpx.HTTPStatusError) else None
         log.warning("Falha no envio pela Evolution: status=%s tipo=%s", status, type(erro).__name__)
@@ -140,12 +153,18 @@ def _enviar_texto_sync(numero: str, texto: str) -> None:
         raise RuntimeError("O envio por WhatsApp ainda não foi configurado.")
     base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
     try:
-        resposta = httpx.post(
-            _url_instancia(base, "message/sendText", os.getenv("EVOLUTION_INSTANCE", "")),
-            headers={"apikey": os.getenv("EVOLUTION_API_KEY", ""), "Content-Type": "application/json"},
-            json={"number": numero, "text": texto}, timeout=20,
-        )
-        resposta.raise_for_status()
+        candidatas = _instancias_candidatas()
+        for indice, instancia in enumerate(candidatas):
+            resposta = httpx.post(
+                _url_instancia(base, "message/sendText", instancia),
+                headers={"apikey": os.getenv("EVOLUTION_API_KEY", ""), "Content-Type": "application/json"},
+                json={"number": numero, "text": texto}, timeout=20,
+            )
+            if resposta.status_code == 404 and indice < len(candidatas) - 1:
+                log.warning("Instância Evolution configurada não existe; tentando a oficial.")
+                continue
+            resposta.raise_for_status()
+            return
     except httpx.HTTPError as erro:
         status = erro.response.status_code if isinstance(erro, httpx.HTTPStatusError) else None
         log.warning("Falha no envio pela Evolution: status=%s tipo=%s", status, type(erro).__name__)
