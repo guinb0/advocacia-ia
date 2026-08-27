@@ -421,10 +421,17 @@ export default function Dossie({
    * entre "enfileirada" e "pronta", e era ela que o aviso antigo apagava. */
   async function pedirPeticao() {
     setOcupado("peticao");
-    setAviso(null);
+    setAviso("Enfileirando pesquisa com embeddings e a redação da petição…");
     setErro(null);
     try {
       const pedido = await gerarPeticao(casoId);
+      setAviso(
+        pedido.preparo?.pesquisa
+          ? "Pesquisa pronta. A petição está sendo redigida — aparece aqui quando terminar."
+          : pedido.preparo?.pesquisa_enfileirada || pedido.preparo?.analise_enfileirada
+            ? "Classificação e/ou pesquisa enfileiradas. A redação usa embeddings assim que concluírem."
+            : "Petição enfileirada. A redação começa em instantes.",
+      );
       setRedacao({
         desde: pedido.requested_at,
         // Piso, não previsão: seção com subtítulos vira mais de uma chamada de modelo. A

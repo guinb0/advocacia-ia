@@ -460,6 +460,12 @@ export function gerarPeticao(casoId: string): Promise<{
   status: string;
   requested_at: string;
   expected_sections: number;
+  preparo?: {
+    classificacao?: boolean;
+    pesquisa?: boolean;
+    analise_enfileirada?: boolean;
+    pesquisa_enfileirada?: boolean;
+  };
 }> {
   return chamar(`/api/agente/casos/${casoId}/peticao`, { method: "POST" });
 }

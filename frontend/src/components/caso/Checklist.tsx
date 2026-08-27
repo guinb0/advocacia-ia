@@ -193,6 +193,14 @@ export default function Checklist({
 
       <EnvioEmLote onEnviar={onEnviarLote} enviando={enviando === "__lote__"} />
 
+      {dentroDoAtendimento && (
+        <Aviso tom="info" titulo="Documento no item errado?">
+          Em cada arquivo recebido, use <strong>Mover para outro item</strong> para corrigir a
+          leitura automática (por exemplo, CAT que caiu em carteira de trabalho). O arquivo e
+          os dados lidos permanecem os mesmos.
+        </Aviso>
+      )}
+
       <TriagemDocumentos
         entregas={situacao.triagem ?? []}
         itens={itens}
@@ -217,10 +225,13 @@ export default function Checklist({
               <ItemChecklistLinha
                 key={item.codigo}
                 item={item}
+                itensChecklist={itens}
                 enviando={enviando === item.codigo}
                 onEnviar={onEnviar}
                 onRemover={onRemover}
                 onVincularIdentidade={onVincularIdentidade}
+                onReatribuir={onReatribuir}
+                dentroDoAtendimento={dentroDoAtendimento}
               />
             ))}
           </ul>
