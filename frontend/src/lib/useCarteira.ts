@@ -1,18 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as api from "./api";
 import type { Caso, Entrega, SituacaoCaso } from "./types";
 
 /* A carteira é a visão do sócio: a fila ordenada por risco de travar, não por
  * data. `GET /api/casos` devolve só o cadastro do caso, então o progresso vem
- * de `GET /api/casos/{id}` (o mesmo `montar_situacao` da tela do caso) buscado
- * em paralelo. Tudo aqui é derivado — nenhum status é guardado à mão, pela
- * mesma razão que `casos.py` não guarda: sairia do lugar assim que alguém
- * apagasse uma entrega. */
+ * de `GET /api/casos/{id}` (o mesmo `montar_situacao` da tela do caso).
+ *
+ * CARREGAMENTO EM LOTES, não tudo de uma vez.
+ *
+ * Antes as N situações vinham num `Promise.all` só — com o armazenamento em
+ * JSON local isso era de graça, mas em SQL Server viraram N idas ao banco que
+ * seguravam a primeira pintura da tela até a última responder. Agora o detalhe
+ * chega em lotes: o primeiro destrava a Mesa do dia (a lista já aparece), e os
+ * demais entram em segundo plano para completar os contadores do topo sem
+ * travar quem já está olhando a fila. */
 
 export type Severidade = "critico" | "atencao" | "pronto" | "neutro";
+
+/** Quantos casos carregam por vez. Também é o tamanho da página da fila. */
+export const LOTE_CARTEIRA = 5;
 
 /** Dias parados a partir dos quais um caso sem documento vira cobrança. */
 const DIAS_PARA_COBRAR = 7;
@@ -173,30 +182,63 @@ function estagioDaEntrega(entrega: Entrega): { estagio: string; severidade: Seve
 
 export function useCarteira() {
   const [situacoes, setSituacoes] = useState<SituacaoCaso[]>([]);
+  /** Total de casos cadastrados — sabido pela lista, antes dos detalhes. */
+  const [totalCasos, setTotalCasos] = useState(0);
+  /** Carregando o PRIMEIRO lote (a tela ainda não pode aparecer). */
   const [carregando, setCarregando] = useState(true);
+  /** Ainda há lotes chegando em segundo plano (contadores incompletos). */
+  const [carregandoDetalhes, setCarregandoDetalhes] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  /* Uma execução por vez: se `recarregar` for chamado de novo (ou a tela
+   * desmontar) no meio dos lotes, o loop antigo para de escrever no estado. */
+  const execucao = useRef(0);
 
   const recarregar = useCallback(async () => {
+    const meu = ++execucao.current;
     setCarregando(true);
+    setCarregandoDetalhes(true);
+    setSituacoes([]);
     try {
       const casos = await api.listarCasos();
-      // Storage local em JSON: as N leituras saem de uma vez sem custo real.
-      const detalhes = await Promise.all(
-        casos.map((caso) =>
-          api.obterCaso(caso.id).catch(() => null),
-        ),
-      );
-      setSituacoes(detalhes.filter((s): s is SituacaoCaso => s !== null && !!s.progresso));
-      setErro(null);
+      if (execucao.current !== meu) return;
+      setTotalCasos(casos.length);
+      if (casos.length === 0) {
+        setCarregando(false);
+        setCarregandoDetalhes(false);
+      }
+      // Em lotes: o primeiro destrava a tela, o resto completa os contadores.
+      for (let i = 0; i < casos.length; i += LOTE_CARTEIRA) {
+        const lote = casos.slice(i, i + LOTE_CARTEIRA);
+        const detalhes = await Promise.all(
+          lote.map((caso) => api.obterCaso(caso.id).catch(() => null)),
+        );
+        if (execucao.current !== meu) return;
+        const validos = detalhes.filter(
+          (s): s is SituacaoCaso => s !== null && !!s.progresso,
+        );
+        setSituacoes((atuais) => [...atuais, ...validos]);
+        // Assim que o primeiro lote chega, a Mesa do dia já pode aparecer.
+        if (i === 0) setCarregando(false);
+      }
+      if (execucao.current === meu) setErro(null);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Falha ao carregar a carteira.");
+      if (execucao.current === meu) {
+        setErro(e instanceof Error ? e.message : "Falha ao carregar a carteira.");
+      }
     } finally {
-      setCarregando(false);
+      if (execucao.current === meu) {
+        setCarregando(false);
+        setCarregandoDetalhes(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     void recarregar();
+    // Para a escrita de lotes pendentes se a carteira sair da tela.
+    return () => {
+      execucao.current += 1;
+    };
   }, [recarregar]);
 
   const linhas = useMemo(
@@ -248,5 +290,15 @@ export function useCarteira() {
     [linhas],
   );
 
-  return { linhas, triagem, chegandoAgora, pedidos, carregando, erro, recarregar };
+  return {
+    linhas,
+    triagem,
+    chegandoAgora,
+    pedidos,
+    carregando,
+    carregandoDetalhes,
+    totalCasos,
+    erro,
+    recarregar,
+  };
 }

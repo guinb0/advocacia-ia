@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 import type { TomSelo } from "@/lib/formato";
 import type { LinhaCarteira, Severidade } from "@/lib/useCarteira";
-import { useCarteira } from "@/lib/useCarteira";
+import { LOTE_CARTEIRA, useCarteira } from "@/lib/useCarteira";
 import type { EstadoModelo } from "@/lib/useExtracao";
 import { useModelo } from "@/lib/useExtracao";
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
@@ -96,7 +96,8 @@ export default function Carteira({
   onSaudeAgente,
   onModelosDePeticao,
 }: Props) {
-  const { linhas, triagem, chegandoAgora, pedidos, carregando, erro } = useCarteira();
+  const { linhas, triagem, chegandoAgora, pedidos, carregando, carregandoDetalhes, erro } =
+    useCarteira();
   const estadoModelo = useModelo();
   const sessao = useSessao();
 
@@ -120,6 +121,22 @@ export default function Carteira({
   useEffect(() => {
     setSelecionado((atual) => Math.min(atual, Math.max(0, visiveis.length - 1)));
   }, [visiveis.length]);
+
+  /* Paginação da fila: 5 por página. A página não é um estado à parte — ela sai
+   * do cursor (`selecionado`), que já é o índice global na lista visível. Assim
+   * as setas do teclado atravessam páginas sozinhas e os botões Anterior/Próxima
+   * só reposicionam o cursor no primeiro item da página vizinha. */
+  const totalPaginas = Math.max(1, Math.ceil(visiveis.length / LOTE_CARTEIRA));
+  const paginaAtual = Math.min(Math.floor(selecionado / LOTE_CARTEIRA), totalPaginas - 1);
+  const inicio = paginaAtual * LOTE_CARTEIRA;
+  const naPagina = visiveis.slice(inicio, inicio + LOTE_CARTEIRA);
+  const irParaPagina = useCallback(
+    (alvo: number) => {
+      const p = Math.max(0, Math.min(alvo, totalPaginas - 1));
+      setSelecionado(p * LOTE_CARTEIRA);
+    },
+    [totalPaginas],
+  );
 
   const alternarFiltro = useCallback((alvo: Filtro) => {
     setFiltro((atual) => (atual === alvo ? "todos" : alvo));
@@ -163,11 +180,13 @@ export default function Carteira({
     return () => window.removeEventListener("keydown", aoTeclar);
   }, [visiveis, selecionado, onAbrir, onNovoCaso, alternarFiltro]);
 
-  // Mantém a linha do cursor visível quando a navegação passa da dobra.
+  // Mantém a linha do cursor visível quando a navegação passa da dobra. A lista
+  // só tem os itens da página, então o índice é relativo ao início dela.
   useEffect(() => {
-    const item = listaRef.current?.children[selecionado] as HTMLElement | undefined;
+    const local = selecionado - inicio;
+    const item = listaRef.current?.children[local] as HTMLElement | undefined;
     item?.scrollIntoView({ block: "nearest" });
-  }, [selecionado]);
+  }, [selecionado, inicio]);
 
   const leitura = TEXTO_LEITURA[estadoModelo];
 
@@ -262,8 +281,8 @@ export default function Carteira({
           <div className="flex justify-between items-baseline gap-4 px-[18px] py-4 border-b border-borda flex-wrap">
             <h2 className="m-0 text-lg">Fila de casos</h2>
             <span className="text-tinta-3 text-xs">
-              {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · o que pode
-              travar aparece primeiro
+              {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"}
+              {carregandoDetalhes ? " · carregando…" : ""} · o que pode travar aparece primeiro
             </span>
           </div>
 
@@ -322,18 +341,59 @@ export default function Carteira({
               )}
             </div>
           ) : (
-            <ul className="list-none m-0 p-0" ref={listaRef}>
-              {visiveis.map((linha, indice) => (
-                <li key={linha.caso.id} className="last:[&>button]:border-b-0">
-                  <LinhaCaso
-                    linha={linha}
-                    selecionada={indice === selecionado}
-                    onAbrir={() => onAbrir(linha.caso.id)}
-                    onFocar={() => setSelecionado(indice)}
-                  />
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="list-none m-0 p-0" ref={listaRef}>
+                {naPagina.map((linha, indice) => {
+                  const global = inicio + indice;
+                  return (
+                    <li key={linha.caso.id} className="last:[&>button]:border-b-0">
+                      <LinhaCaso
+                        linha={linha}
+                        selecionada={global === selecionado}
+                        onAbrir={() => onAbrir(linha.caso.id)}
+                        onFocar={() => setSelecionado(global)}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {/* Paginação: só aparece quando há mais de uma página. Enquanto os
+                * demais casos ainda chegam em segundo plano, a nota avisa — a
+                * contagem total e as próximas páginas crescem à medida que os
+                * lotes completam. */}
+              {(visiveis.length > LOTE_CARTEIRA || carregandoDetalhes) && (
+                <div className="flex justify-between items-center gap-3 px-[18px] py-3 border-t border-borda flex-wrap">
+                  <span className="text-tinta-3 text-xs tabular-nums">
+                    {visiveis.length === 0
+                      ? "0 casos"
+                      : `${inicio + 1}–${Math.min(inicio + LOTE_CARTEIRA, visiveis.length)} de ${visiveis.length}`}
+                    {carregandoDetalhes && " · carregando os demais…"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Botao
+                      variante="secundario"
+                      pequeno
+                      disabled={paginaAtual === 0}
+                      onClick={() => irParaPagina(paginaAtual - 1)}
+                    >
+                      ← Anterior
+                    </Botao>
+                    <span className="text-tinta-3 text-xs tabular-nums">
+                      {paginaAtual + 1}/{totalPaginas}
+                    </span>
+                    <Botao
+                      variante="secundario"
+                      pequeno
+                      disabled={paginaAtual >= totalPaginas - 1}
+                      onClick={() => irParaPagina(paginaAtual + 1)}
+                    >
+                      Próxima →
+                    </Botao>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
 

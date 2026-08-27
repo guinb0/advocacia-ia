@@ -24,3 +24,25 @@ def test_fragmentacao_preserva_documento():
     partes = indexacao_documento._fragmentar(texto)
     assert len(partes) >= 2
     assert all(len(parte) <= 1800 for parte in partes)
+
+
+def test_interpretacao_preenche_tipo_e_campos_sem_sobrescrever_validado():
+    extracao = {
+        "tipo": {"detectado": "desconhecido", "descricao_detectado": "Documento não identificado"},
+        "campos": [{"nome": "cpf", "rotulo": "CPF", "valor": "111.444.777-35"}],
+    }
+    semantica = {
+        "codigo_documento": "nao_estruturado",
+        "tipo_semantico": "Laudo médico — psiquiatria",
+        "achados": [
+            {"campo": "CID", "valor": "F43.1"},
+            {"campo": "CPF", "valor": "valor que não pode sobrescrever"},
+        ],
+    }
+
+    resultado = indexacao_documento.aplicar_interpretacao(extracao, semantica)
+
+    assert resultado["tipo"]["descricao_detectado"] == "Laudo médico — psiquiatria"
+    assert resultado["tipo"]["detectado"] == "desconhecido"
+    assert [campo["nome"] for campo in resultado["campos"]] == ["cpf", "cid"]
+    assert resultado["campos"][1]["origem"] == "deepseek"

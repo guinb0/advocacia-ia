@@ -17,11 +17,49 @@ from . import rag, valor_documento
 log = logging.getLogger("indexacao-documento")
 
 
-def classificar(extracao: dict[str, Any], categoria: str = "") -> dict[str, Any]:
+def classificar(
+    extracao: dict[str, Any], categoria: str = "",
+    pendencias: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     """Usa o texto integral do OCR para identificar o documento via DeepSeek."""
-    analise = valor_documento.ler(extracao, [], categoria)
+    analise = valor_documento.ler(extracao, pendencias or [], categoria)
     tipo = str(analise.get("documento") or "indefinido").strip()
     return {**analise, "classificador": "deepseek", "tipo_semantico": tipo}
+
+
+def aplicar_interpretacao(extracao: dict[str, Any], semantica: dict[str, Any]) -> dict[str, Any]:
+    """Preenche tipo e achados da DeepSeek sem substituir campos validados."""
+    tipo = extracao.setdefault("tipo", {})
+    codigo = str(semantica.get("codigo_documento") or "nao_estruturado")
+    descricao = str(semantica.get("tipo_semantico") or "Documento não identificado")
+    tipo["descricao_detectado"] = descricao
+    # Uma identificação determinística já reconhecida não é rebaixada por uma
+    # opinião do modelo. A DeepSeek resolve justamente o caso antes desconhecido.
+    if codigo != "nao_estruturado" and tipo.get("detectado") in (None, "", "desconhecido"):
+        tipo["detectado"] = codigo
+
+    campos = list(extracao.get("campos") or [])
+    existentes = {
+        re.sub(r"[^a-z0-9]+", "_", str(c.get("nome") or "").lower()).strip("_")
+        for c in campos if isinstance(c, dict)
+    }
+    for achado in semantica.get("achados") or []:
+        if not isinstance(achado, dict):
+            continue
+        rotulo = re.sub(r"\s+", " ", str(achado.get("campo") or "")).strip()[:60]
+        valor = re.sub(r"\s+", " ", str(achado.get("valor") or "")).strip()[:300]
+        nome = re.sub(r"[^a-z0-9]+", "_", rotulo.lower()).strip("_")
+        if not nome or not valor or nome in existentes:
+            continue
+        campos.append({
+            "nome": nome, "rotulo": rotulo, "valor": valor, "valor_bruto": valor,
+            "confianca": 0.0, "valido": None,
+            "observacao": "Interpretado pela DeepSeek a partir do texto integral; confira no documento.",
+            "origem": "deepseek",
+        })
+        existentes.add(nome)
+    extracao["campos"] = campos
+    return extracao
 
 
 def _fragmentar(texto: str, tamanho: int = 1800, sobreposicao: int = 240) -> list[str]:

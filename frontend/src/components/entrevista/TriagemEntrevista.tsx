@@ -22,7 +22,6 @@ import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import AvaliacaoGoogle from "@/components/contrato/AvaliacaoGoogle";
 import { Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
-import RelatorioEntrevista from "@/components/entrevista/RelatorioEntrevista";
 import PainelContrato from "@/components/contrato/PainelContrato";
 
 const OPCAO_BASE =
@@ -300,7 +299,11 @@ export default function TriagemEntrevista({
    * as duas cópias divergirem no primeiro ajuste. */
   const etapasDoAtendimento = qualificacao && (
     <>
-      <RelatorioEntrevista respostas={qualificacao} relato={texto} />
+      <AvaliacaoGoogle
+        concluida={avaliacaoConcluida}
+        onConcluir={setAvaliacaoConcluida}
+        telefone={String(qualificacao.telefone ?? "")}
+      />
       <PainelContrato respostas={qualificacao} />
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
@@ -699,13 +702,6 @@ export default function TriagemEntrevista({
         </section>
       )}
 
-      {resultado && qualificacao && (
-        <AvaliacaoGoogle
-          concluida={avaliacaoConcluida}
-          onConcluir={setAvaliacaoConcluida}
-          telefone={String(qualificacao.telefone ?? "")}
-        />
-      )}
     </div>
   );
 }
