@@ -178,7 +178,10 @@ export default function PainelEscuta({
   const atrasado = captando && !pausado && chegada !== null && chegada < CHEGADA_MINIMA;
 
   return (
-    <aside className="roteiro-transcricao border border-borda-forte p-[14px] sticky top-[18px] max-h-[calc(100vh-36px)] overflow-y-auto">
+    /* Fica embaixo do cartão CHAMADA, na mesma coluna. A coluna já é `sticky` e
+     * rola por conta própria (ver `EntrevistaComChamada`); aqui basta empilhar
+     * com a mesma moldura do cartão de cima. */
+    <aside className="mt-4 border border-borda-forte px-4 pt-[14px] pb-4 bg-papel">
       <div className="flex items-baseline justify-between gap-2 mb-3 pb-[10px] border-b border-borda">
         <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
           A ENTREVISTA ATÉ AQUI

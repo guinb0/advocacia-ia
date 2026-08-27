@@ -70,7 +70,11 @@ foreach ($comando in @("docker", "uv", "npm")) {
         throw "Dependencia ausente: '$comando' nao foi encontrado no PATH. Instale-o e execute iniciar.ps1 novamente."
     }
 }
-docker info *> $null
+# `cmd /c` engole os dois streams dentro do proprio cmd: no Windows PowerShell 5.1
+# um `docker info *> $null` faz cada linha de stderr (ex.: "WARNING: No blkio
+# throttle...") virar ErrorRecord e, com $ErrorActionPreference='Stop', aborta o
+# script mesmo o docker tendo saido com 0. Aqui o PowerShell nao ve stream nenhum.
+cmd /c "docker info >NUL 2>NUL"
 if ($LASTEXITCODE -ne 0) {
     throw "Docker nao esta respondendo. Abra o Docker Desktop e execute iniciar.ps1 novamente."
 }
@@ -104,7 +108,7 @@ function Diagnostico-Jitsi([string]$Url, [double]$Segundos = 120) {
     } elseif (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         $causa = "O Docker nao esta instalado (ou nao esta no PATH). O Jitsi roda em containers."
     } else {
-        docker info 2>&1 | Out-Null
+        cmd /c "docker info >NUL 2>NUL"
         if ($LASTEXITCODE -ne 0) {
             $causa = "O Docker esta instalado mas o servico nao responde. Abra o Docker Desktop e espere ficar verde."
         } else {
@@ -227,11 +231,15 @@ if ($SemAuth) {
 # disponíveis sem compartilhar processo com a API.
 Write-Host "Subindo Redis e observabilidade..." -ForegroundColor Yellow
 docker compose up -d --wait --wait-timeout 60 redis jobs-db flower prometheus grafana | Out-Null
-$env:REDIS_URL = "redis://localhost:6380/0"
-$env:CELERY_BROKER_URL = "redis://localhost:6380/0"
-$env:CELERY_RESULT_BACKEND = "redis://localhost:6380/1"
+# 127.0.0.1 e nao "localhost": no Windows o "localhost" resolve primeiro para o
+# IPv6 ::1, e o encaminhamento IPv6 do Docker Desktop reseta as conexoes do
+# redis-py/kombu (WinError 10054) enquanto o IPv4 funciona. Fixar o loopback
+# IPv4 mantem os workers Celery e o beat conectados ao broker.
+$env:REDIS_URL = "redis://127.0.0.1:6380/0"
+$env:CELERY_BROKER_URL = "redis://127.0.0.1:6380/0"
+$env:CELERY_RESULT_BACKEND = "redis://127.0.0.1:6380/1"
 if (-not $env:JOBS_DATABASE_URL) {
-    $env:JOBS_DATABASE_URL = "postgresql://advocacia:advocacia_local@localhost:5434/advocacia_jobs"
+    $env:JOBS_DATABASE_URL = "postgresql://advocacia:advocacia_local@127.0.0.1:5434/advocacia_jobs"
 }
 
 # O frontend le estas na hora do build/dev -- precisam do prefixo NEXT_PUBLIC_.

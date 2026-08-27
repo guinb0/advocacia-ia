@@ -555,6 +555,32 @@ export interface NoDaTaxonomia {
   description?: string;
 }
 
+export interface ConfiguracaoDeGeracao {
+  taxonomy_code: string;
+  document_type: string;
+  display_name: string;
+  drafting_instructions: string;
+  required_documents: string[];
+  updated_at?: string | null;
+}
+
+export function configuracaoDeGeracao(
+  taxonomyCode: string,
+  documentType = "INITIAL_PETITION",
+): Promise<ConfiguracaoDeGeracao> {
+  const busca = new URLSearchParams({ taxonomy_code: taxonomyCode, document_type: documentType });
+  return chamar(`/api/agente/estilo/configuracao?${busca}`);
+}
+
+export function salvarConfiguracaoDeGeracao(
+  configuracao: ConfiguracaoDeGeracao,
+): Promise<ConfiguracaoDeGeracao> {
+  return chamar("/api/agente/estilo/configuracao", {
+    method: "PUT",
+    body: JSON.stringify(configuracao),
+  });
+}
+
 /** Os códigos de ação que o agente conhece. A tela oferece só estes. */
 export async function taxonomiaDeEstilo(): Promise<NoDaTaxonomia[]> {
   const dados = await chamar<{ items?: NoDaTaxonomia[]; nodes?: NoDaTaxonomia[] }>(

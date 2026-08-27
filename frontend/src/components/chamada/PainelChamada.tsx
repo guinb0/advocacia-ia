@@ -27,6 +27,8 @@ interface Props {
   onFaixaRemota: (trilha: MediaStreamTrack) => void;
   /** A chamada caiu ou foi desligada: a transcrição perde a fonte. */
   onFimDaFaixa?: () => void;
+  /** No fluxo de entrevista pronta, a chamada acompanha a coleta de documentos. */
+  modo?: "roteiro" | "documentos";
 }
 
 const LEGENDA: Record<EstadoChamada, string> = {
@@ -41,7 +43,7 @@ const BOTAO_SECUNDARIO =
   "flex-1 min-w-[118px] border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none " +
   "font-ui tracking-[0.08em] uppercase px-[10px] py-[9px] cursor-pointer hover:bg-papel-2";
 
-export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
+export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "roteiro" }: Props) {
   const chamada = useChamada();
   const [sala, setSala] = useState<{ sala: string; url: string; token: string } | null>(null);
   const [abrindo, setAbrindo] = useState(false);
@@ -119,7 +121,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
     <aside className="border border-borda-forte px-4 pt-[14px] pb-4 bg-papel">
       <div className="flex justify-between items-center gap-[10px] flex-wrap mb-[10px]">
         <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
-          CHAMADA
+          {modo === "documentos" ? "JITSI MEET · CHAMADA E GRAVAÇÃO" : "JITSI MEET"}
         </span>
         <span className="text-[11px] font-normal leading-[1.4] font-codigo text-tinta-3 flex items-center gap-[7px]">
           {ponto}
@@ -130,8 +132,9 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
       {!naChamada ? (
         <>
           <p className="mb-3 mt-0 font-normal text-[12px] leading-[1.6] font-ui text-tinta-3">
-            Abra a chamada e mande o link ao entrevistado. A voz dele chega separada da sua
-            — é ela, e só ela, que vira texto no roteiro.
+            {modo === "documentos"
+              ? "Crie a chamada no Jitsi Meet e mande o link ao cliente. Você continua na aba de documentos, e a conversa entra na mesma gravação do atendimento."
+              : "Abra a chamada e mande o link ao entrevistado. A voz dele chega separada da sua — é ela, e só ela, que vira texto no roteiro."}
           </p>
           <button
             type="button"
@@ -139,7 +142,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
             onClick={abrir}
             disabled={abrindo}
           >
-            {abrindo ? "Abrindo…" : "Abrir chamada"}
+            {abrindo ? "Abrindo…" : modo === "documentos" ? "Criar chamada no Jitsi Meet" : "Abrir Jitsi Meet"}
           </button>
         </>
       ) : (
@@ -181,8 +184,9 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa }: Props) {
 
           {chamada.estado === "falando" && (
             <p className="m-0 font-normal text-[12px] leading-[1.55] font-ui text-ok">
-              A voz do entrevistado está chegando. Use “Gravar resposta” em cada pergunta do
-              roteiro — o que for transcrito é a fala dele, não a sua.
+              {modo === "documentos"
+                ? "A voz do cliente está chegando e sendo acrescentada à gravação do atendimento. Continue conferindo os documentos abaixo."
+                : "A voz do entrevistado está chegando. Use “Gravar resposta” em cada pergunta do roteiro — o que for transcrito é a fala dele, não a sua."}
             </p>
           )}
 

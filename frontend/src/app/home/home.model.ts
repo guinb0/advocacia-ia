@@ -30,7 +30,7 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   carteira: "casos",
   caso: "casos",
   dossie: "casos",
-  painel: "metricas",
+  painel: "agente",
   jurimetria: "agente",
   casos: "casos",
   avulso: "documentos",
@@ -156,6 +156,11 @@ export const useHomeModel = () => {
     navegar("dossie");
   }
 
+  function abrirAnalises(casoId: string) {
+    setCasoAberto(casoId);
+    navegar("painel");
+  }
+
   function voltarParaCarteira() {
     setCasoAberto(null);
     navegar("carteira");
@@ -171,6 +176,7 @@ export const useHomeModel = () => {
     situacaoCaso,
     abrirCaso,
     abrirDossie,
+    abrirAnalises,
     voltarParaCarteira,
   };
 };

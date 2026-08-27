@@ -556,6 +556,22 @@ def remover_peca_de_estilo(peca_id: str) -> None:
         raise _erro(erro) from erro
 
 
+@roteador.get("/estilo/configuracao")
+def configuracao_de_geracao(taxonomy_code: str, document_type: str = "INITIAL_PETITION") -> dict[str, Any]:
+    try:
+        return Cliente().configuracao_de_geracao(taxonomy_code, document_type)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.put("/estilo/configuracao")
+def salvar_configuracao_de_geracao(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return Cliente().salvar_configuracao_de_geracao(payload)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
 @roteador.post("/casos/{caso_id}/contrato/conferencia")
 def conferir_contrato(caso_id: str, campos: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Confere a qualificação do contrato contra os fatos apurados dos documentos.

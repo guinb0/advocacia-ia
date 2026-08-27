@@ -2179,6 +2179,7 @@ function PainelEntrevista({
   onLer: (entrevistaId: string) => Promise<void>;
 }) {
   const [arquivo, setArquivo] = useState<File | null>(null);
+  const [arrastando, setArrastando] = useState(false);
   const [realizadaEm, setRealizadaEm] = useState("");
   const [entrevistador, setEntrevistador] = useState("");
   const [lendo, setLendo] = useState<string | null>(null);
@@ -2278,14 +2279,28 @@ function PainelEntrevista({
       )}
 
       <div className="grid gap-[10px] mt-[14px] pt-3 border-t border-borda">
-        <label className={CAMPO_ENTREVISTA}>
-          <span>Arquivo da entrevista</span>
+        <label
+          className={`${CAMPO_ENTREVISTA} border-2 border-dashed rounded-[6px] p-3 transition-colors ${
+            arrastando ? "border-tinta bg-papel-2" : "border-borda"
+          }`}
+          onDragEnter={(evento) => { evento.preventDefault(); setArrastando(true); }}
+          onDragOver={(evento) => { evento.preventDefault(); evento.dataTransfer.dropEffect = "copy"; }}
+          onDragLeave={(evento) => {
+            if (!evento.currentTarget.contains(evento.relatedTarget as Node | null)) setArrastando(false);
+          }}
+          onDrop={(evento) => {
+            evento.preventDefault();
+            setArrastando(false);
+            setArquivo(evento.dataTransfer.files?.[0] ?? null);
+          }}
+        >
+          <span>{arrastando ? "Solte a entrevista aqui" : "Arraste a entrevista pronta ou escolha o arquivo"}</span>
           <input
             type="file"
-            accept=".txt,.md,.docx,.pdf"
             className="p-[6px] border border-borda rounded-[6px] bg-papel text-tinta"
             onChange={(evento) => setArquivo(evento.target.files?.[0] ?? null)}
           />
+          {arquivo && <small className="text-tinta-3">Selecionado: {arquivo.name}</small>}
         </label>
         <label className={CAMPO_ENTREVISTA}>
           <span>Data do atendimento</span>

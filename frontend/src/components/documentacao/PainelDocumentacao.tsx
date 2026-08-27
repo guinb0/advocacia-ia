@@ -12,6 +12,17 @@ interface Props {
   onAbrirDocumentos: (casoId: string) => void;
 }
 
+/* O entrevistador bate ponto a cada ~30s enquanto a entrevista está aberta.
+ * Passados uns três batimentos sem notícia, a chamada daquele caso não está
+ * mais de pé — o entrevistado não entrou, ou a chamada foi encerrada. */
+const CHAMADA_VIVA_MS = 90_000;
+
+function chamadaViva(item: AtendimentoDocumentacao): boolean {
+  if (!item.sala) return false;
+  const t = Date.parse(item.atualizado_em);
+  return Number.isFinite(t) && Date.now() - t < CHAMADA_VIVA_MS;
+}
+
 export default function PainelDocumentacao({ onVoltar, onAbrirDocumentos }: Props) {
   const [itens, setItens] = useState<AtendimentoDocumentacao[]>([]);
   const [ativas, setAtivas] = useState(0);
@@ -86,10 +97,17 @@ export default function PainelDocumentacao({ onVoltar, onAbrirDocumentos }: Prop
               </span>
             </div>
             {item.status === "solicitado" && (
-              <button type="button" onClick={() => void assumir(item)} disabled={assumindo !== null}
-                className="mt-3 border border-acao bg-acao text-papel px-4 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50">
-                {assumindo === item.entrevista_id ? "Entrando na chamada…" : "Assumir chamada"}
-              </button>
+              chamadaViva(item) ? (
+                <button type="button" onClick={() => void assumir(item)} disabled={assumindo !== null}
+                  className="mt-3 border border-acao bg-acao text-papel px-4 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50">
+                  {assumindo === item.entrevista_id ? "Entrando na chamada…" : "Assumir chamada"}
+                </button>
+              ) : (
+                <p className="mt-3 inline-flex items-center gap-2 border border-borda bg-papel-2 px-3 py-2 text-[11px] uppercase tracking-wider text-tinta-3">
+                  <span aria-hidden>■</span>
+                  {item.sala ? "Chamada encerrada" : "Aguardando início da chamada"}
+                </p>
+              )
             )}
           </article>
         ))}

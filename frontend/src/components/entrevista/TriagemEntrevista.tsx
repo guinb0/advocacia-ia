@@ -24,6 +24,7 @@ import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import { Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
+import PainelChamada from "@/components/chamada/PainelChamada";
 
 const OPCAO_BASE =
   "flex gap-3 items-start w-full px-[14px] py-3 border-none border-b border-borda border-l-4 bg-transparent " +
@@ -59,6 +60,7 @@ export default function TriagemEntrevista({
   categorias,
   onCriarCaso,
   onAbrirDossie,
+  onAbrirAnalises,
 }: {
   /** Tipos de ação, para criar o caso sem sair do atendimento. */
   categorias: Categoria[];
@@ -66,6 +68,7 @@ export default function TriagemEntrevista({
   onCriarCaso: (cliente: string, categoria: string) => Promise<CasoCriado>;
   /** Sai da entrevista direto para a visão completa do caso recém-criado. */
   onAbrirDossie?: (casoId: string) => void;
+  onAbrirAnalises?: (casoId: string) => void;
   /** Aplica a categoria (e o nome do cliente, se a entrevista trouxer). */
   onEscolher: (categoria: string, cliente?: string) => void;
   /** Em que ponto o atendimento está. A tela ao redor usa isto para tirar do
@@ -351,6 +354,7 @@ export default function TriagemEntrevista({
         sugerida={escolhida ?? undefined}
         onCriar={onCriarCaso}
         onAbrirDossie={onAbrirDossie}
+        onAbrirAnalises={onAbrirAnalises}
         emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
         onEncerrarChamada={chamada.desligar}
       />
@@ -613,8 +617,18 @@ export default function TriagemEntrevista({
 
           <div className="mb-3">
             <Aviso tom={gravInfo.tom} titulo={gravInfo.titulo}>
-              {gravacaoAviso}
+              {gravacaoAviso || "O áudio e a transcrição deste atendimento estão sendo guardados."}
             </Aviso>
+          </div>
+
+          <div className="sticky top-3 z-20 mb-4 max-w-[680px] shadow-[0_10px_30px_rgba(15,23,42,0.16)]">
+            <PainelChamada
+              modo="documentos"
+              onFaixaRemota={(trilha) => {
+                const captura = capturaTxtRef.current;
+                if (captura) void captura.usarTrilha(trilha);
+              }}
+            />
           </div>
 
           <CasoEDocumentos
@@ -647,6 +661,7 @@ export default function TriagemEntrevista({
               }
             }}
             onAbrirDossie={onAbrirDossie}
+            onAbrirAnalises={onAbrirAnalises}
             emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
             onEncerrarChamada={chamada.desligar}
           />
