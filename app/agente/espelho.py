@@ -587,3 +587,63 @@ def analisar_caso_inteiro(caso_id: str) -> dict[str, Any]:
         ESPERA_ANALISE_S * TENTATIVAS_ANALISE,
     )
     return resultado
+
+
+def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
+    """Dispara classificação e pesquisa com embeddings quando faltam.
+
+    Falta de documento no checklist não impede a petição — vira pendência na minuta. Aqui
+    só garantimos classificação (template aplicável) e pesquisa jurídica quando possível.
+    """
+    vinculo = garantir_caso(caso_id)
+    caso_ref = vinculo["caso_ref"]
+    cliente = Cliente()
+
+    resultado: dict[str, Any] = {
+        "caso_ref": caso_ref,
+        "classificacao": False,
+        "pesquisa": False,
+    }
+
+    qualificar_reclamante(caso_ref)
+
+    try:
+        analise = cliente.analise(caso_ref)
+    except ErroDoAgente:
+        analise = {}
+
+    if not analise.get("classifications"):
+        cliente.analisar(caso_ref)
+        for _ in range(TENTATIVAS_ANALISE):
+            time.sleep(ESPERA_ANALISE_S)
+            try:
+                analise = cliente.analise(caso_ref)
+            except ErroDoAgente:
+                continue
+            if analise.get("classifications"):
+                break
+
+    if analise.get("classifications"):
+        resultado["classificacao"] = True
+        resultado["classificacoes"] = len(analise["classifications"])
+    else:
+        resultado["analise_enfileirada"] = True
+
+    try:
+        pesquisas = cliente.pesquisas(caso_ref).get("items", [])
+    except ErroDoAgente:
+        pesquisas = []
+
+    if pesquisas and pesquisas[0].get("status") == "COMPLETED":
+        resultado["pesquisa"] = True
+        return resultado
+
+    recente = pesquisas[0] if pesquisas else None
+    if recente and recente.get("status") == "RUNNING":
+        resultado["pesquisa_enfileirada"] = True
+        return resultado
+
+    if resultado.get("classificacao"):
+        cliente.pesquisar(caso_ref)
+        resultado["pesquisa_enfileirada"] = True
+    return resultado

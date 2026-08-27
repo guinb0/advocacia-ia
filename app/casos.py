@@ -160,6 +160,11 @@ def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[st
             "Este arquivo foi encaminhado a este item pela leitura do documento"
             + (f": {motivo}" if motivo else ".")
         )
+        if entrega.get("tipo_detectado") == "ctps":
+            alertas.append(
+                "Se não for carteira de trabalho (por exemplo CAT ou contracheque), "
+                "use «Mover para outro item» abaixo e escolha o documento certo."
+            )
     elif origem == "semantico":
         # Vem de modelo de linguagem, e a tela precisa dizer isso com todas as
         # letras: é a única fonte que existe para CAT, laudo e contracheque.

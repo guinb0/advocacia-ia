@@ -90,7 +90,7 @@ def saude_do_agente() -> dict[str, Any]:
     últimas 24h — o `/api/health/inspection` de lá, repassado para a tela não precisar
     falar HTTP com outro serviço nem conhecer o token dele.
     """
-    if not config().ligado:
+    if not  ().ligado:
         return {"ligado": False}
     try:
         dados = Cliente().inspecao()
@@ -373,10 +373,16 @@ def gerar_peticao(caso_id: str) -> dict[str, Any]:
 
     Responde 202 e a peça aparece no dossiê quando ficar pronta: são várias chamadas de
     modelo, uma por seção, e prender a tela do advogado nisso é o que o Fast Path proíbe.
+
+    Antes de enfileirar a redação, garante pesquisa de jurisprudência com embeddings quando
+    o caso já está classificado — é o que alimenta a fundamentação com precedentes reais.
     """
     caso_ref = _caso_ref(caso_id)
     try:
-        return Cliente().gerar_peticao(caso_ref)
+        preparo = espelho.garantir_pesquisa_para_peca(caso_id)
+        resposta = Cliente().gerar_peticao(caso_ref)
+        resposta["preparo"] = preparo
+        return resposta
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
