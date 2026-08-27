@@ -63,6 +63,7 @@ const Telas = (props: HomeViewProps) => {
     listaCasos,
     situacaoCaso,
     abrirCaso,
+    abrirDossie,
     voltarParaCarteira,
   } = props;
 
@@ -266,7 +267,11 @@ const Telas = (props: HomeViewProps) => {
           onExcluir={listaCasos.excluir}
         />
       ) : tela === "entrevista" ? (
-        <EntrevistaGuiada categorias={categorias} onCriar={listaCasos.criar} />
+        <EntrevistaGuiada
+          categorias={categorias}
+          onCriar={listaCasos.criar}
+          onAbrirDossie={abrirDossie}
+        />
       ) : (
         <AnaliseAvulsa />
       )}
@@ -286,9 +291,11 @@ export default HomeView;
 function EntrevistaGuiada({
   categorias,
   onCriar,
+  onAbrirDossie,
 }: {
   categorias: ReturnType<typeof useCategorias>;
   onCriar: ReturnType<typeof useCasos>["criar"];
+  onAbrirDossie: (casoId: string) => void;
 }) {
   const [fase, setFase] = useState<"nenhum" | "entrevista" | "pos-entrevista">("nenhum");
   return (
@@ -298,6 +305,7 @@ function EntrevistaGuiada({
         onCriarCaso={onCriar}
         onAtendimento={setFase}
         onEscolher={() => {}}
+        onAbrirDossie={onAbrirDossie}
       />
       {/* Só no pós-entrevista: durante a entrevista a chamada já está na coluna
         * da direita, e desenhá-la aqui também decodificaria o mesmo vídeo em

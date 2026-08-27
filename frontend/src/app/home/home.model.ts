@@ -151,6 +151,11 @@ export const useHomeModel = () => {
     navegar("caso");
   }
 
+  function abrirDossie(casoId: string) {
+    setCasoAberto(casoId);
+    navegar("dossie");
+  }
+
   function voltarParaCarteira() {
     setCasoAberto(null);
     navegar("carteira");
@@ -165,6 +170,7 @@ export const useHomeModel = () => {
     listaCasos,
     situacaoCaso,
     abrirCaso,
+    abrirDossie,
     voltarParaCarteira,
   };
 };

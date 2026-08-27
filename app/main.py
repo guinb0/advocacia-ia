@@ -22,6 +22,7 @@ from urllib.parse import quote
 import jwt
 
 from fastapi import (
+    BackgroundTasks,
     Body,
     Depends,
     FastAPI,
@@ -1306,14 +1307,19 @@ PodeManterRoteiros = Depends(auth.exigir_modulo("roteiros"))
 
 @app.post("/api/roteiros/importar", status_code=202)
 async def importar_roteiro(
+    tarefas: BackgroundTasks,
     arquivo: UploadFile = File(...),
     _autorizado=PodeManterRoteiros,
 ):
-    """Enfileira a leitura do documento e a montagem do roteiro.
+    """Agenda a leitura do documento e a montagem do roteiro neste servidor.
 
     202 e não 200: são de dez segundos a dois minutos entre OCR e as chamadas ao
     modelo, uma por bloco. A tela acompanha por `GET /api/jobs/{id}`, onde o
     campo `resultado.etapa` diz em que bloco a montagem está.
+
+    Não depende do worker Celery: esta é uma operação administrativa rara e a
+    produção pode continuar atendendo mesmo quando os workers estiverem fora.
+    O processamento começa em thread logo depois de a resposta 202 ser enviada.
     """
     nome = arquivo.filename or "documento"
     extensao = Path(nome).suffix.lower()
@@ -1340,14 +1346,11 @@ async def importar_roteiro(
         job_id = await run_in_threadpool(
             jobs.criar, "ROTEIRO", arquivo=str(caminho), conteudo=conteudo
         )
-        tarefa = importar_roteiro_task.apply_async(
-            args=(job_id, str(caminho), nome), queue="ai"
-        )
-        await run_in_threadpool(jobs.vincular_tarefa, job_id, tarefa.id)
+        tarefas.add_task(importar_roteiro_task.run, job_id, str(caminho), nome)
     except Exception as exc:
         caminho.unlink(missing_ok=True)
-        log.exception("Falha ao enfileirar importação de roteiro")
-        raise HTTPException(503, f"Fila de processamento indisponível: {exc}") from exc
+        log.exception("Falha ao agendar importação de roteiro")
+        raise HTTPException(503, f"Processamento indisponível: {exc}") from exc
 
     return {"job_id": job_id}
 
@@ -1747,27 +1750,21 @@ async def triar_entrevista(
     conteudo = texto or ""
 
     if arquivo is not None and arquivo.filename:
-        if not arquivo.filename.lower().endswith((".txt", ".md")):
-            raise HTTPException(400, "Envie a entrevista em .txt (ou cole o texto).")
         bruto = await arquivo.read()
         if len(bruto) > 2 * 1024 * 1024:
             raise HTTPException(400, "Arquivo grande demais para uma entrevista (máx. 2 MB).")
-        # Entrevista digitada no Word e salva como txt costuma vir em latin-1.
-        for cod in ("utf-8", "utf-8-sig", "latin-1"):
-            try:
-                conteudo = bruto.decode(cod)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            raise HTTPException(400, "Não foi possível ler o texto do arquivo.")
+        try:
+            conteudo = entrevista_lib.extrair_texto(arquivo.filename, bruto)
+        except entrevista_lib.ErroDeLeitura as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     if not conteudo.strip():
-        raise HTTPException(400, "Cole a entrevista ou envie um arquivo .txt.")
+        raise HTTPException(400, "Cole a entrevista ou envie um arquivo com texto.")
 
     resultado = triagem.triar(conteudo)
     resultado["dados"] = triagem.extrair_dados_do_cliente(conteudo)
     resultado["caracteres"] = len(conteudo)
+    resultado["texto_extraido"] = conteudo
     return resultado
 
 

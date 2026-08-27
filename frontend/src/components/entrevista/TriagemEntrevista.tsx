@@ -58,11 +58,14 @@ export default function TriagemEntrevista({
   onAtendimento,
   categorias,
   onCriarCaso,
+  onAbrirDossie,
 }: {
   /** Tipos de ação, para criar o caso sem sair do atendimento. */
   categorias: Categoria[];
   /** Cria o caso e devolve o portal do cliente (link + senha). */
   onCriarCaso: (cliente: string, categoria: string) => Promise<CasoCriado>;
+  /** Sai da entrevista direto para a visão completa do caso recém-criado. */
+  onAbrirDossie?: (casoId: string) => void;
   /** Aplica a categoria (e o nome do cliente, se a entrevista trouxer). */
   onEscolher: (categoria: string, cliente?: string) => void;
   /** Em que ponto o atendimento está. A tela ao redor usa isto para tirar do
@@ -109,6 +112,7 @@ export default function TriagemEntrevista({
   const [estrategia, setEstrategia] = useState<Estrategia | null>(null);
   const [erroEstrategia, setErroEstrategia] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [arrastandoArquivo, setArrastandoArquivo] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   /* -------- atendimento iniciado por um .txt de transcrição --------
@@ -243,24 +247,25 @@ export default function TriagemEntrevista({
 
   async function analisar(arquivo?: File) {
     if (!arquivo && !texto.trim()) return;
-    const relato = arquivo ? await arquivo.text() : texto;
     setAnalisando(true);
     setAnalisandoEstrategia(true);
     setErro(null);
     setErroEstrategia(null);
     setEstrategia(null);
     setEscolhida(null);
-    void analisarEstrategia(relato)
-      .then(setEstrategia)
-      .catch((e: unknown) =>
-        setErroEstrategia(
-          e instanceof Error ? e.message : "Não foi possível consultar os processos semelhantes.",
-        ),
-      )
-      .finally(() => setAnalisandoEstrategia(false));
     try {
       const r = await triarEntrevista(texto, arquivo);
       setResultado(r);
+      const relato = r.texto_extraido || texto;
+      if (arquivo && relato) setTexto(relato);
+      void analisarEstrategia(relato)
+        .then(setEstrategia)
+        .catch((e: unknown) =>
+          setErroEstrategia(
+            e instanceof Error ? e.message : "Não foi possível consultar os processos semelhantes.",
+          ),
+        )
+        .finally(() => setAnalisandoEstrategia(false));
       // Confiante aplica direto; ambíguo espera o clique.
       if (r.confiante && r.sugestoes[0]) {
         setEscolhida(r.sugestoes[0].codigo);
@@ -286,6 +291,7 @@ export default function TriagemEntrevista({
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível analisar a entrevista.");
       setResultado(null);
+      setAnalisandoEstrategia(false);
     } finally {
       setAnalisando(false);
     }
@@ -344,6 +350,7 @@ export default function TriagemEntrevista({
         categorias={categorias}
         sugerida={escolhida ?? undefined}
         onCriar={onCriarCaso}
+        onAbrirDossie={onAbrirDossie}
         emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
         onEncerrarChamada={chamada.desligar}
       />
@@ -441,16 +448,42 @@ export default function TriagemEntrevista({
         mostra o que sustenta cada uma e compara o caso com a base vetorial. A decisão final é da equipe jurídica.
       </p>
 
-      <RotuloCampo htmlFor="relato-entrevista">Relato da entrevista</RotuloCampo>
-      <Campo
-        area
-        id="relato-entrevista"
-        value={texto}
-        onChange={(e) => setTexto(e.target.value)}
-        placeholder={
-          "Ex.: O cliente é carteiro dos Correios há 8 anos. Durante a entrega foi abordado por dois homens armados…"
-        }
-      />
+      <div
+        className={`rounded-campo border-2 border-dashed p-3 transition-colors ${
+          arrastandoArquivo ? "border-tinta bg-papel-2" : "border-transparent"
+        }`}
+        onDragEnter={(evento) => {
+          evento.preventDefault();
+          setArrastandoArquivo(true);
+        }}
+        onDragOver={(evento) => {
+          evento.preventDefault();
+          evento.dataTransfer.dropEffect = "copy";
+        }}
+        onDragLeave={(evento) => {
+          if (!evento.currentTarget.contains(evento.relatedTarget as Node | null)) {
+            setArrastandoArquivo(false);
+          }
+        }}
+        onDrop={(evento) => {
+          evento.preventDefault();
+          setArrastandoArquivo(false);
+          const arquivo = evento.dataTransfer.files?.[0];
+          if (arquivo && !analisando) void analisar(arquivo);
+        }}
+      >
+        <RotuloCampo htmlFor="relato-entrevista">Colar entrevista ou arrastar um arquivo</RotuloCampo>
+        <Campo
+          area
+          id="relato-entrevista"
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder={
+            arrastandoArquivo
+              ? "Solte o arquivo aqui"
+              : "Cole o relato ou arraste para cá um arquivo que contenha texto…"
+          }
+        />
 
       <div className="flex gap-[10px] items-center flex-wrap mt-3">
         <Botao variante="secundario" onClick={() => void analisar()} disabled={analisando || !texto.trim()}>
@@ -458,13 +491,12 @@ export default function TriagemEntrevista({
         </Botao>
 
         <Botao variante="discreto" pequeno onClick={() => inputRef.current?.click()} disabled={analisando}>
-          Enviar um arquivo .txt
+          Escolher arquivo com texto
         </Botao>
 
         <input
           ref={inputRef}
           type="file"
-          accept=".txt,.md,text/plain"
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -476,6 +508,10 @@ export default function TriagemEntrevista({
         {texto.trim() && (
           <span className="ml-auto text-tinta-3 text-xs tabular-nums">{texto.trim().length} caracteres</span>
         )}
+      </div>
+      <p className="mb-0 mt-2 text-[11px] leading-[1.5] text-tinta-3">
+        Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual.
+      </p>
       </div>
 
       {erro && (
@@ -610,6 +646,7 @@ export default function TriagemEntrevista({
                 }
               }
             }}
+            onAbrirDossie={onAbrirDossie}
             emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
             onEncerrarChamada={chamada.desligar}
           />

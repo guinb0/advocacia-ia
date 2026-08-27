@@ -53,6 +53,8 @@ interface Props {
    * É aqui e não no fim do atendimento porque o caso é o primeiro momento em que
    * existe onde prender a entrevista: `entrevistas.caso_id` é obrigatório. */
   onCasoCriado?: (casoId: string) => Promise<void> | void;
+  /** Abre a tela completa com dossiê, análise, contrato e andamento. */
+  onAbrirDossie?: (casoId: string) => void;
   /** Desliga a chamada e deixa o cliente enviar o resto depois. */
   onEncerrarChamada: () => void;
   /** Há chamada de pé — sem ela, o botão de desligar não faz sentido. */
@@ -71,6 +73,7 @@ export default function CasoEDocumentos({
   onCpf,
   onCategoria,
   onCasoCriado,
+  onAbrirDossie,
   onEncerrarChamada,
   emChamada,
 }: Props) {
@@ -268,6 +271,15 @@ export default function CasoEDocumentos({
       <span className="block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3 mb-2">
         DOCUMENTOS DO CLIENTE
       </span>
+      {onAbrirDossie && (
+        <button
+          type="button"
+          className="mb-4 border-[1.5px] border-tinta bg-tinta text-papel px-[15px] py-[11px] text-[11px] font-semibold font-ui uppercase tracking-[0.1em] cursor-pointer hover:opacity-90"
+          onClick={() => onAbrirDossie(criado.id)}
+        >
+          Abrir detalhes e dossiê do caso →
+        </button>
+      )}
       <div className="mb-3">
         {transferencia?.status === "assumido" ? (
           <Aviso tom="ok" titulo="Chamada transferida">

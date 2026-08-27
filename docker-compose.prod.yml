@@ -81,7 +81,7 @@ x-ambiente: &ambiente
   # Também precisa chegar ao worker, que executa as cobranças periódicas.
   EVOLUTION_API_URL: ${EVOLUTION_API_URL:-https://evolution.level33lab.cloud}
   EVOLUTION_API_KEY: ${EVOLUTION_API_KEY?EVOLUTION_API_KEY is required}
-  EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE?EVOLUTION_INSTANCE is required}
+  EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-Advocacia LM}
   GOOGLE_AVALIACAO_URL: ${GOOGLE_AVALIACAO_URL:-https://share.google/BrQVYGnjqdSz3pEw7}
 
 services:

@@ -14,6 +14,45 @@ def test_nome_da_instancia_com_espaco_vai_codificado():
     ) == "https://evolution.exemplo/message/sendText/Advocacia%20LM"
 
 
+def test_instancia_oficial_recupera_configuracao_antiga(monkeypatch):
+    monkeypatch.setenv("EVOLUTION_INSTANCE", "instancia-antiga")
+    monkeypatch.setattr(whatsapp, "INSTANCIA_OFICIAL", "Advocacia LM")
+
+    assert whatsapp._instancias_candidatas() == ["instancia-antiga", "Advocacia LM"]
+
+
+def test_envio_tenta_instancia_oficial_quando_configurada_nao_existe(monkeypatch):
+    monkeypatch.setenv("EVOLUTION_API_URL", "https://evolution.exemplo")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "chave")
+    monkeypatch.setenv("EVOLUTION_INSTANCE", "instancia-antiga")
+    monkeypatch.setattr(whatsapp, "INSTANCIA_OFICIAL", "Advocacia LM")
+    urls: list[str] = []
+
+    class ClienteFalso:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **_kwargs):
+            urls.append(url)
+            requisicao = httpx.Request("POST", url)
+            return httpx.Response(404 if len(urls) == 1 else 201, request=requisicao)
+
+    monkeypatch.setattr(whatsapp.httpx, "AsyncClient", ClienteFalso)
+
+    asyncio.run(whatsapp._enviar_texto("5561999999999", "convite"))
+
+    assert urls == [
+        "https://evolution.exemplo/message/sendText/instancia-antiga",
+        "https://evolution.exemplo/message/sendText/Advocacia%20LM",
+    ]
+
+
 def test_erro_de_chave_da_evolution_e_explicito_sem_expor_resposta():
     requisicao = httpx.Request("POST", "https://evolution.exemplo/message/sendText/instancia")
     resposta = httpx.Response(401, request=requisicao, text="apikey secreta recusada")
