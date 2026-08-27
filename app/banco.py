@@ -210,6 +210,10 @@ TABELAS = (
     "vinculos_agente",
     "ufs",
     "municipios",
+    # `conversa_mensagens` vem antes de `conversas` só por clareza de leitura: a regex
+    # de `_qualificar` já recusa prefixo de nome maior, e uma não alcança a outra.
+    "conversa_mensagens",
+    "conversas",
     "automacoes_whatsapp",
     "cobrancas_documentos",
     "modelos_documento",
@@ -336,6 +340,11 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     confirmado_manual  int           NOT NULL CONSTRAINT df_ocr_entregas_conf DEFAULT 0,
     score_legibilidade int           NULL,
     itens_atendidos    nvarchar(max) NOT NULL CONSTRAINT df_ocr_entregas_itens DEFAULT N'[]',
+    texto_utilizavel   int           NULL,
+    lote_id            varchar(64)   NULL,
+    roteamento_origem  varchar(20)   NULL,
+    roteamento_confianca int         NULL,
+    roteamento_motivo  nvarchar(600) NULL,
     extracao_json      nvarchar(max) NULL,
     criado_em          varchar(40)   NOT NULL,
     status_proc        varchar(40)   NOT NULL CONSTRAINT df_ocr_entregas_status DEFAULT 'pronto',
@@ -423,6 +432,36 @@ CREATE TABLE {SCHEMA}.{PREFIXO}vinculos_agente (
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
+-- A conversa do agente geral. `caso_id` NÃO tem chave estrangeira de propósito: a
+-- conversa é do Acervo, começa antes de haver caso e sobrevive ao caso apagado — a
+-- transcrição continua sendo o registro do que foi perguntado e respondido. Quem lê
+-- trata o caso sumido como estado ("esse caso não está mais no acervo"), e não como
+-- linha órfã.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}conversas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}conversas (
+    id            varchar(64)   NOT NULL CONSTRAINT pk_acervo_conversas PRIMARY KEY,
+    titulo        nvarchar(300) NOT NULL,
+    resumo        nvarchar(300) NOT NULL CONSTRAINT df_acervo_conv_resumo DEFAULT N'',
+    usuario       varchar(160)  NOT NULL CONSTRAINT df_acervo_conv_usuario DEFAULT '',
+    caso_id       varchar(64)   NULL,
+    conversa_ref  varchar(80)   NULL,
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}conversa_mensagens') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}conversa_mensagens (
+    id          varchar(64)   NOT NULL CONSTRAINT pk_acervo_conv_msg PRIMARY KEY,
+    conversa_id varchar(64)   NOT NULL,
+    papel       varchar(20)   NOT NULL,
+    conteudo    nvarchar(max) NOT NULL CONSTRAINT df_acervo_msg_conteudo DEFAULT N'',
+    natureza    varchar(30)   NOT NULL CONSTRAINT df_acervo_msg_natureza DEFAULT 'CASO',
+    payload     nvarchar(max) NOT NULL CONSTRAINT df_acervo_msg_payload DEFAULT N'{{}}',
+    criado_em   varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_msg_conversa FOREIGN KEY (conversa_id)
+        REFERENCES {SCHEMA}.{PREFIXO}conversas (id) ON DELETE CASCADE
+);
+
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}ufs') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}ufs (
     id int NOT NULL CONSTRAINT pk_acervo_ufs PRIMARY KEY,
@@ -500,6 +539,13 @@ INDICES = (
     f"CREATE INDEX idx_acervo_entrevistas_gravacao ON {SCHEMA}.{PREFIXO}entrevistas (gravacao_id)",
     f"CREATE INDEX idx_acervo_assinaturas_caso ON {SCHEMA}.{PREFIXO}assinaturas (caso_id)",
     f"CREATE INDEX idx_acervo_municipios_uf_nome ON {SCHEMA}.{PREFIXO}municipios (uf_id, nome)",
+    # O histórico é de quem perguntou, e abre ordenado pela conversa mais recente.
+    f"CREATE INDEX idx_acervo_conversas_usuario ON {SCHEMA}.{PREFIXO}conversas"
+    f" (usuario, atualizado_em DESC)",
+    # Reabrir a conversa lê as mensagens dela na ordem em que foram ditas. `ordem` vem
+    # antes de `criado_em` porque é ela que decide o empate — ver `COLUNAS_NOVAS`.
+    f"CREATE INDEX idx_acervo_conv_msg_conversa ON {SCHEMA}.{PREFIXO}conversa_mensagens"
+    f" (conversa_id, ordem, criado_em)",
 )
 
 
@@ -529,10 +575,30 @@ COLUNAS_NOVAS = (
     # atendimento gravaria a MESMA entrevista duas vezes, e a supervisão passaria a
     # contar o dobro do trabalho de quem a conduziu.
     (f"{PREFIXO}entrevistas", "gravacao_id", "varchar(64) NULL"),
-    # Cópia do documento original para que a pré-visualização sobreviva a mudança
-    # de pasta, servidor ou nome absoluto gravado antes da migração.
-    (f"{PREFIXO}entregas", "conteudo", "varbinary(max) NULL"),
-    (f"{PREFIXO}entregas", "conteudo_sha256", "char(64) NULL"),
+    # A ordem da mensagem dentro da conversa. `criado_em` tem precisão de SEGUNDOS, e
+    # pergunta e resposta caem no mesmo segundo com facilidade — quando isso acontecia,
+    # o desempate ia para o `id` (um UUID) e a conversa reabria com a resposta ANTES da
+    # pergunta. Nasce com `0` nas mensagens que já existem, e aí o desempate volta a ser
+    # `criado_em`: o mesmo comportamento de antes para o que já está gravado, sem
+    # migração de dado num passo que roda a cada subida.
+    (
+        f"{PREFIXO}conversa_mensagens",
+        "ordem",
+        "int NOT NULL CONSTRAINT df_acervo_msg_ordem DEFAULT 0",
+    ),
+    # Documento sem campo cadastral — CAT, laudo, contracheque, procuração — não tem
+    # `dados_utilizaveis`: o extrator só conhece documento de identidade. Sem este
+    # sinal, o item ficava para sempre "a conferir" com o arquivo certo e legível na
+    # mão, e o cliente lia "precisa reenviar" (ver `casos._status_do_item`).
+    (f"{PREFIXO}entregas", "texto_utilizavel", "int NULL"),
+    # Envio em massa: agrupa as entregas de um mesmo `POST .../documentos/lote`.
+    (f"{PREFIXO}entregas", "lote_id", "varchar(64) NULL"),
+    # Quem decidiu a que item do checklist o arquivo pertence, com que confiança e
+    # por quê. Sem isso, uma atribuição automática errada fica indistinguível de uma
+    # escolha do cliente na hora de auditar por que a petição levou o documento errado.
+    (f"{PREFIXO}entregas", "roteamento_origem", "varchar(20) NULL"),
+    (f"{PREFIXO}entregas", "roteamento_confianca", "int NULL"),
+    (f"{PREFIXO}entregas", "roteamento_motivo", "nvarchar(600) NULL"),
 )
 
 

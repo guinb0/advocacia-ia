@@ -990,6 +990,9 @@ function preencherMarcadores(
     if (conferirCpf(String(respostas["cpf"] ?? "")).valido !== true) {
       pendentes.push({ id: "cpf", rotulo: "um CPF válido" });
     }
+    if (!respondida(respostas["estado_civil"])) {
+      pendentes.push({ id: "estado_civil", rotulo: "o estado civil" });
+    }
     // UF e município entram pelo mesmo motivo dos outros dois: são o recorte que
     // a jurimetria usa para comparar o caso, e ouvi-los no meio do relato erra
     // com frequência — "Pará" e "Paraná" soam quase igual em fala corrida.

@@ -87,6 +87,15 @@ export interface Documento {
     classificador?: string;
     status?: string;
     erro?: string;
+    achados?: Array<{
+      campo: string;
+      valor: string;
+      importancia?: string;
+      relevante_para?: string;
+    }>;
+    serve_para?: Array<{ item: string; porque: string }>;
+    atencao?: string[];
+    sugere_pedir?: string[];
   };
   /** Entregas antigas podem ter sido salvas antes deste bloco existir. */
   qualidade_imagem?: QualidadeImagem;
@@ -171,6 +180,12 @@ export interface Entrega {
   score_legibilidade: number | null;
   /** Itens do checklist atendidos pelo mesmo arquivo; CIN pode atender RG e CPF. */
   itens_atendidos: string[];
+  /** Mesmo lote de envio em massa. Ausente em entregas individuais/antigas. */
+  lote_id?: string | null;
+  /** Quem decidiu o item final do documento. */
+  roteamento_origem?: "escolha" | "deterministico" | "semantico" | "humano" | null;
+  roteamento_confianca?: number | null;
+  roteamento_motivo?: string | null;
   criado_em: string;
   /** Mensagens para o advogado — não são o texto que vai ao cliente. */
   alertas: string[];
@@ -194,6 +209,8 @@ export interface Progresso {
   opcionais_total: number;
   opcionais_entregues: number;
   itens_a_conferir: number;
+  /** Ausente enquanto o frontend conversa com uma versão anterior da API. */
+  em_triagem?: number;
   percentual_obrigatorios: number;
   pronto: boolean;
 }
@@ -202,6 +219,8 @@ export interface SituacaoCaso {
   caso: Caso;
   categoria: { codigo: string; nome: string; descricao: string } | null;
   itens: ItemSituacao[];
+  /** Arquivos preservados cuja leitura ainda não encontrou um item seguro. */
+  triagem?: Entrega[];
   progresso: Progresso;
   erro?: string;
 }

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 import BarraLateral from "@/components/layout/BarraLateral";
+import AgenteGeral from "@/components/AgenteGeral";
 import Carteira from "@/components/carteira/Carteira";
 import Checklist from "@/components/caso/Checklist";
 import Dados from "@/components/caso/Dados";
@@ -79,6 +80,12 @@ const Telas = (props: HomeViewProps) => {
         onModelosDePeticao={() => setTela("modelosDePeticao")}
       />
     );
+  }
+
+  /* O agente geral não pede caso aberto: ele é justamente a conversa de quem ainda não
+   * sabe qual caso abrir. Da resposta se salta para o dossiê do caso citado. */
+  if (tela === "agente") {
+    return <AgenteGeral onVoltar={voltarParaCarteira} onAbrirCaso={abrirCaso} />;
   }
 
   if (tela === "dossie") {
@@ -206,8 +213,10 @@ const Telas = (props: HomeViewProps) => {
               erro={situacaoCaso.erro}
               onVoltar={voltarParaCarteira}
               onEnviar={situacaoCaso.enviar}
+              onEnviarLote={situacaoCaso.enviarLote}
               onRemover={situacaoCaso.removerEntrega}
               onVincularIdentidade={situacaoCaso.vincularIdentidade}
+              onReatribuir={situacaoCaso.reatribuir}
             />
             <div className="mt-5">
               {casoAberto && <PainelAnaliseDocumentos casoId={casoAberto} />}

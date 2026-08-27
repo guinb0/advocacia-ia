@@ -108,13 +108,16 @@ REGRAS
   existe. Você descreve o documento; quem conclui é o advogado.
 - Seja breve: no máximo 4 itens em cada lista.
 
+Em cada `achado`, explique em `importancia` por que o dado importa e em
+`relevante_para` qual pedido, prova ou providência jurídica ele ajuda.
+
 Responda APENAS JSON. Em `codigo_documento`, use cpf, rg, cin, cnh, ctps,
 titulo_eleitor, cartao_sus, comprovante_residencia ou certidao quando houver
 evidência. Para laudo, atestado, contrato, petição, boletim de ocorrência, CNIS
 e qualquer tipo livre, use nao_estruturado:
 {"documento":"...", "codigo_documento":"nao_estruturado",
  "serve_para":[{"item":"DOC.10","porque":"..."}],
- "achados":[{"campo":"CID","valor":"M54.5"}],
+ "achados":[{"campo":"CID","valor":"M54.5","importancia":"identifica o diagnóstico registrado","relevante_para":"provar doença e relacionar afastamentos"}],
  "atencao":["..."],
  "sugere_pedir":["..."]}"""
 
@@ -225,7 +228,12 @@ def ler(
             continue
         campo, valor = _texto(item.get("campo"), 60), _texto(item.get("valor"), 120)
         if campo and valor:
-            achados.append({"campo": campo, "valor": valor})
+            achados.append({
+                "campo": campo,
+                "valor": valor,
+                "importancia": _texto(item.get("importancia"), 240),
+                "relevante_para": _texto(item.get("relevante_para"), 240),
+            })
 
     codigo = _texto(bruto.get("codigo_documento"), 40).lower()
     return {
