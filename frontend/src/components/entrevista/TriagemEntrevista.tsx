@@ -24,6 +24,7 @@ import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import { Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
+import PainelChamada from "@/components/chamada/PainelChamada";
 
 const OPCAO_BASE =
   "flex gap-3 items-start w-full px-[14px] py-3 border-none border-b border-borda border-l-4 bg-transparent " +
@@ -613,8 +614,18 @@ export default function TriagemEntrevista({
 
           <div className="mb-3">
             <Aviso tom={gravInfo.tom} titulo={gravInfo.titulo}>
-              {gravacaoAviso}
+              {gravacaoAviso || "O áudio e a transcrição deste atendimento estão sendo guardados."}
             </Aviso>
+          </div>
+
+          <div className="mb-4 max-w-[680px]">
+            <PainelChamada
+              modo="documentos"
+              onFaixaRemota={(trilha) => {
+                const captura = capturaTxtRef.current;
+                if (captura) void captura.usarTrilha(trilha);
+              }}
+            />
           </div>
 
           <CasoEDocumentos
