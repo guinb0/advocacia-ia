@@ -212,6 +212,7 @@ TABELAS = (
     "municipios",
     "automacoes_whatsapp",
     "cobrancas_documentos",
+    "modelos_documento",
 )
 
 
@@ -409,17 +410,6 @@ CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
-IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL
-CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
-    codigo        varchar(80)   NOT NULL CONSTRAINT pk_acervo_roteiros PRIMARY KEY,
-    nome          nvarchar(200) NOT NULL,
-    descricao     nvarchar(max) NOT NULL CONSTRAINT df_acervo_rot_desc DEFAULT N'',
-    corpo         nvarchar(max) NOT NULL,
-    criado_por    nvarchar(200) NOT NULL CONSTRAINT df_acervo_rot_quem DEFAULT N'',
-    criado_em     varchar(40)   NOT NULL,
-    atualizado_em varchar(40)   NOT NULL
-);
-
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}vinculos_agente') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}vinculos_agente (
     caso_id       varchar(64)   NOT NULL CONSTRAINT pk_ocr_vinculos PRIMARY KEY,
@@ -450,6 +440,31 @@ CREATE TABLE {SCHEMA}.{PREFIXO}municipios (
     atualizado_em varchar(40) NOT NULL,
     CONSTRAINT fk_acervo_municipios_uf FOREIGN KEY (uf_id)
         REFERENCES {SCHEMA}.{PREFIXO}ufs (id)
+);
+
+-- Os modelos .docx do escritorio: contrato, procuracao, hipossuficiencia.
+--
+-- POR QUE NO BANCO, E NAO SO EM `docs/`
+--
+-- O contrato de honorarios e o unico dos tres que NAO e versionado: traz tabela
+-- de honorarios, CNPJ e as inscricoes na OAB, e por isso o `.gitignore` o mantem
+-- fora do repositorio. A consequencia so aparecia em producao -- o arquivo nao
+-- entra na imagem Docker, nenhum volume o repoe no conteiner, e gerar contrato
+-- falhava com "modelo nao encontrado em docs/" num ambiente onde ninguem tem
+-- shell para ir la coloca-lo.
+--
+-- Guardado aqui, o modelo acompanha o banco: sobe uma vez pela tela e vale para
+-- todos os conteineres, inclusive os recriados no proximo deploy. O `docs/`
+-- continua valendo como reserva, que e o que faz a maquina do advogado
+-- funcionar sem precisar subir nada.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}modelos_documento') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}modelos_documento (
+    codigo        varchar(40)    NOT NULL CONSTRAINT pk_acervo_modelos_doc PRIMARY KEY,
+    nome_arquivo  nvarchar(400)  NOT NULL,
+    conteudo      varbinary(max) NOT NULL,
+    enviado_por   nvarchar(400)  NOT NULL CONSTRAINT df_acervo_mod_quem DEFAULT N'',
+    criado_em     varchar(40)    NOT NULL,
+    atualizado_em varchar(40)    NOT NULL
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL

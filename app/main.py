@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import io
 import logging
 import os
 import re
 import threading
 import time
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -427,6 +429,92 @@ def gerar_contrato(pedido: PedidoContrato):
             "X-Campos-Faltando": ", ".join(faltando),
         },
     )
+
+
+# ------------------------------------------- modelos .docx do escritorio
+#
+# O contrato de honorarios nao e versionado (traz honorarios, CNPJ e as OAB), e
+# por isso nao existe em `docs/` dentro do conteiner. Estas rotas sao como ele
+# chega la: sobe uma vez, fica no banco, vale para todos os conteineres. Ver
+# `contrato.caminho_modelo` e a tabela em `app/banco.py`.
+
+PodeManterModelos = Depends(auth.exigir_modulo("contratos"))
+
+
+@app.get("/api/modelos")
+async def listar_modelos(_autorizado=PodeManterModelos):
+    """Os modelos guardados no banco e de onde cada documento esta vindo.
+
+    `origem` e o que responde a pergunta que aparece quando um contrato sai
+    errado: o arquivo que gerou este documento e o que subiram pela tela, ou um
+    que ficou no disco do servidor?
+    """
+    guardados = {m["codigo"]: m for m in await run_in_threadpool(armazenamento.listar_modelos)}
+    saida = []
+    for alvo in contrato.MODELOS:
+        codigo = alvo["codigo"]
+        registro = guardados.get(codigo)
+        try:
+            caminho = await run_in_threadpool(contrato.caminho_modelo, codigo)
+            nome, disponivel = caminho.name, True
+        except contrato.ErroContrato:
+            nome, disponivel = "", False
+        saida.append(
+            {
+                "codigo": codigo,
+                "rotulo": alvo["rotulo"],
+                "disponivel": disponivel,
+                "origem": "banco" if registro else ("docs" if disponivel else "nenhuma"),
+                "arquivo": registro["nome_arquivo"] if registro else nome,
+                "enviado_por": registro["enviado_por"] if registro else "",
+                "atualizado_em": registro["atualizado_em"] if registro else "",
+            }
+        )
+    return {"modelos": saida}
+
+
+@app.post("/api/modelos/{codigo}", status_code=201)
+async def enviar_modelo(
+    codigo: str,
+    arquivo: UploadFile = File(...),
+    usuario: auth.Usuario = PodeManterModelos,
+):
+    """Guarda o .docx daquele documento no banco, substituindo o anterior."""
+    try:
+        alvo = contrato.modelo(codigo)
+    except contrato.ErroContrato as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    nome = arquivo.filename or f"{codigo}.docx"
+    if Path(nome).suffix.lower() != ".docx":
+        raise HTTPException(400, "O modelo precisa ser um arquivo .docx.")
+
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > MAX_BYTES:
+        raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
+    # Conferir ANTES de gravar: um .docx corrompido guardado no banco quebraria a
+    # geracao de todo mundo, e o erro apareceria na hora de fechar um contrato.
+    if not zipfile.is_zipfile(io.BytesIO(conteudo)):
+        raise HTTPException(400, "Este arquivo nao e um .docx valido.")
+
+    registro = await run_in_threadpool(
+        armazenamento.salvar_modelo,
+        codigo,
+        nome_arquivo=nome,
+        conteudo=conteudo,
+        enviado_por=usuario.nome,
+    )
+    return {"codigo": codigo, "rotulo": alvo["rotulo"], **registro}
+
+
+@app.delete("/api/modelos/{codigo}")
+async def excluir_modelo(codigo: str, _autorizado=PodeManterModelos):
+    """Tira o modelo do banco. O arquivo de `docs/` volta a valer, se houver."""
+    if not await run_in_threadpool(armazenamento.excluir_modelo, codigo):
+        raise HTTPException(404, f"Nenhum modelo guardado para {codigo!r}.")
+    return {"codigo": codigo}
 
 
 @app.get("/api/contrato/campos")
