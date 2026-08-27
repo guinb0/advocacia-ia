@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Ref } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { useSessao } from "@/lib/auth";
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
@@ -32,7 +32,6 @@ import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
 import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
-import PainelEscuta from "@/components/entrevista/PainelEscuta";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 
@@ -106,6 +105,32 @@ const CAMPOS_TECNICOS_DIGITADOS = new Set([
   "rg_uf", "mae", "pai", "cep", "endereco", "telefone", "email", "pis",
 ]);
 type TrechoAoVivo = { quando: number; texto: string; quem: "Entrevistador" | "Entrevistado" | "Falante não identificado" };
+
+/* Tudo que o `PainelEscuta` ("A ENTREVISTA ATÉ AQUI") precisa para se desenhar.
+ *
+ * O painel deixou de morar ao lado do formulário: agora ele fica na coluna da
+ * direita, embaixo do cartão CHAMADA (ver `EntrevistaComChamada`). Como o estado
+ * que o alimenta nasce todo aqui dentro, o roteiro o publica para cima por
+ * `onEscuta`, e quem o renderiza é a tela de fora. `onIrPara` viaja no pacote
+ * porque é só `document.getElementById(...).scrollIntoView` — funciona de
+ * qualquer lugar da página. */
+export interface EstadoEscuta {
+  transcricao: TrechoAoVivo[];
+  parcial: string;
+  preenchidas: CampoOuvido[];
+  aConferir: number;
+  lembretes: Lembrete[];
+  faltando: PerguntaPendente[];
+  interpretando: boolean;
+  captando: boolean;
+  pausado: boolean;
+  ultimaFala: number | null;
+  ultimoSom: number | null;
+  nivelTipico: number | null;
+  chegada: number | null;
+  erro: string | null;
+  onIrPara: (perguntaId: string) => void;
+}
 
 function palavras(texto: string): string[] {
   return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().match(/[a-z0-9]+/g) ?? [];
@@ -248,12 +273,16 @@ interface Props {
     relatoUnificado: string,
     entrevistaId: string,
   ) => void;
+  /** O estado do painel "A ENTREVISTA ATÉ AQUI", para a tela de fora desenhá-lo
+   *  na coluna da chamada. `null` enquanto a escuta não abriu (ou ao desmontar). */
+  onEscuta?: (estado: EstadoEscuta | null) => void;
   ref?: Ref<ManipuladorRoteiro>;
 }
 
 export default function Roteiro({
   codigo = "empregado_publico",
   onRespostas,
+  onEscuta,
   ref,
 }: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
@@ -343,6 +372,13 @@ export default function Roteiro({
   const [ouvidas, setOuvidas] = useState<CampoOuvido[]>([]);
   const [erroEscuta, setErroEscuta] = useState<string | null>(null);
   const [saudacaoLida, setSaudacaoLida] = useState(false);
+  /* O bloco de identificação (nome, CPF, UF, município) vira um cabeçalho
+   * recolhível assim que os quatro campos ficam válidos — o entrevistador
+   * raramente volta a eles, e aberto empurram o roteiro para baixo. Recolhe
+   * sozinho UMA vez (via `idRecolheuAuto`); reabrir e voltar a recolher fica a
+   * cargo do usuário. Se um campo volta a ficar inválido, reabre e rearma. */
+  const [idExpandida, setIdExpandida] = useState(true);
+  const idRecolheuAuto = useRef(false);
   /* Quando um trecho de fala foi reconhecido pela última vez.
    *
    * É o único sinal que distingue "conversa em silêncio" de "microfone mudo" —
@@ -828,6 +864,41 @@ export default function Roteiro({
   }, []);
   irParaRef.current = irPara;
 
+  /* Publica o estado da escuta para a tela de fora desenhar o painel "A
+   * ENTREVISTA ATÉ AQUI" na coluna da chamada. Em ref para o callback poder ser
+   * inline no pai (novo a cada render) sem re-disparar este efeito. */
+  const publicarEscuta = useRef(onEscuta);
+  publicarEscuta.current = onEscuta;
+  useEffect(() => {
+    if (!publicarEscuta.current) return;
+    if (!escutando) {
+      publicarEscuta.current(null);
+      return;
+    }
+    publicarEscuta.current({
+      transcricao: transcricaoVisivel,
+      parcial,
+      preenchidas: ouvidas,
+      aConferir: sugestoes.length,
+      lembretes,
+      faltando,
+      interpretando: ouvindo,
+      captando: escutando && estadoMic !== "sem-audio",
+      pausado: estadoMic === "pausado",
+      ultimaFala,
+      ultimoSom,
+      nivelTipico,
+      chegada,
+      erro: erroEscuta,
+      onIrPara: irPara,
+    });
+  }, [
+    escutando, transcricaoVisivel, parcial, ouvidas, sugestoes, lembretes,
+    faltando, ouvindo, estadoMic, ultimaFala, ultimoSom, nivelTipico, chegada,
+    erroEscuta, irPara,
+  ]);
+  useEffect(() => () => publicarEscuta.current?.(null), []);
+
   /* Só entram os módulos cujo rastreio deu positivo: quem não sofreu assalto
    * não percorre o módulo de assalto. */
   const blocosVisiveis = useMemo(() => {
@@ -1039,6 +1110,21 @@ function preencherMarcadores(
     [faltaParaComecar],
   );
 
+  /* Recolhe a identificação sozinho quando os quatro campos ficam válidos, e
+   * uma vez só. Volta a abrir (e rearma) se algum deles perde a validade — aí o
+   * entrevistador precisa vê-lo para corrigir. */
+  useEffect(() => {
+    if (faltaParaComecar.length === 0) {
+      if (!idRecolheuAuto.current) {
+        idRecolheuAuto.current = true;
+        setIdExpandida(false);
+      }
+    } else {
+      idRecolheuAuto.current = false;
+      setIdExpandida(true);
+    }
+  }, [faltaParaComecar]);
+
   /* Os nomes que preenchem os marcadores do roteiro.
    *
    * O do cliente sai do campo que já é obrigatório para iniciar; o de quem
@@ -1131,8 +1217,28 @@ function preencherMarcadores(
         }))
         .filter((bloco) => bloco.perguntas.length > 0);
 
+  /* Com a identificação concluída e a escuta aberta, o bloco "abertura" sai da
+   * lista corrida e passa a viver dentro do cabeçalho recolhível, logo acima
+   * dela. Nos outros estados ele é um bloco como os demais. */
+  const acordeaoIdentificacao = escutando && identificacaoConcluida;
+  const aberturaBloco = acordeaoIdentificacao
+    ? blocosNaTela.find((b) => b.id === "abertura") ?? null
+    : null;
+  const blocosNoCorpo = acordeaoIdentificacao
+    ? blocosNaTela.filter((b) => b.id !== "abertura")
+    : blocosNaTela;
+  const resumoIdentificacao = [
+    String(respostas.nome ?? "").trim(),
+    formatarCpf(String(respostas.cpf ?? "")),
+    [String(respostas.municipio ?? "").trim(), String(respostas.uf ?? "").trim()]
+      .filter(Boolean)
+      .join("/"),
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
+
   return (
-    <div id="roteiro-da-entrevista" className={`${escutando ? "max-w-[1320px]" : "max-w-[860px]"} roteiro-contentor`}>
+    <div id="roteiro-da-entrevista" className="max-w-[860px] roteiro-contentor">
       {editandoRoteiro && (
         <EditorRoteiro
           roteiro={roteiro}
@@ -1321,16 +1427,28 @@ function preencherMarcadores(
         * uma frase. Ver `roteiros.SAUDACAO`. */}
       {escutando && roteiro.saudacao?.length > 0 && (
         <section className="border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
-          <div className="flex items-baseline justify-between gap-[10px]">
+          <div className="flex items-center justify-between gap-[10px]">
             <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
               LEIA AO CLIENTE
             </span>
+            {/* Botão sólido, não link: "já li" é uma ação que muda a tela
+              * (recolhe a saudação), e como link discreto passava despercebido. */}
             <button
               type="button"
-              className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta"
+              className={
+                saudacaoLida
+                  ? "flex-none inline-flex items-center gap-[6px] border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui tracking-[0.08em] uppercase px-3 py-2 rounded-campo cursor-pointer hover:bg-papel-3"
+                  : "flex-none inline-flex items-center gap-[6px] border border-acao bg-acao text-papel text-[10px] font-semibold leading-none font-ui tracking-[0.08em] uppercase px-3 py-2 rounded-campo cursor-pointer hover:bg-acao-forte hover:border-acao-forte"
+              }
               onClick={() => setSaudacaoLida((v) => !v)}
             >
-              {saudacaoLida ? "mostrar de novo" : "já li"}
+              {saudacaoLida ? (
+                "Mostrar de novo"
+              ) : (
+                <>
+                  <span aria-hidden>✓</span> Já li
+                </>
+              )}
             </button>
           </div>
           {!saudacaoLida &&
@@ -1402,7 +1520,11 @@ function preencherMarcadores(
         </section>
       )}
 
-      <div className={escutando ? "roteiro-grade" : undefined}>
+      {/* O painel "A ENTREVISTA ATÉ AQUI" não fica mais ao lado do formulário:
+        * ele foi para a coluna da direita, embaixo do cartão CHAMADA, e é a tela
+        * de fora (`EntrevistaComChamada`) que o desenha a partir do que o efeito
+        * de `onEscuta` publica. Aqui sobra só a coluna do roteiro. */}
+      <div>
         <div>
           {/* A pergunta da vez, grudada no alto da coluna do roteiro. Vem ANTES
             * das perguntas todas porque é o que se lê ao cliente; o que está
@@ -1433,7 +1555,39 @@ function preencherMarcadores(
             onDescartar={descartarSugestao}
           />}
 
-          {blocosNaTela.map((bloco) => (
+          {aberturaBloco && (
+            <IdentificacaoRecolhivel
+              resumo={resumoIdentificacao}
+              aberta={idExpandida}
+              onAlternar={() => setIdExpandida((v) => !v)}
+            >
+              <BlocoRoteiro
+                bloco={aberturaBloco}
+                compacto
+                respostas={respostas}
+                perguntaAtual={escutando ? "" : (atual?.pergunta.id ?? "")}
+                puladas={puladas}
+                aguardando={aguardandoConfirmacao}
+                onResponder={responder}
+                gravandoId={gravandoId}
+                pausado={estadoMic === "pausado"}
+                finalizando={finalizando}
+                parcial={parcial}
+                temMic={temMic}
+                escutando={escutando && identificacaoConcluida}
+                onGravar={gravar}
+                onPausar={pausar}
+                onRetomar={retomar}
+                onFinalizar={finalizar}
+                conferencias={conferencias}
+                onConferir={conferir}
+                municipios={municipios}
+                carregandoMunicipios={carregandoMunicipios}
+              />
+            </IdentificacaoRecolhivel>
+          )}
+
+          {blocosNoCorpo.map((bloco) => (
             <BlocoRoteiro
               key={bloco.id}
               bloco={bloco}
@@ -1477,26 +1631,6 @@ function preencherMarcadores(
             </div>
           )}
         </div>
-
-        {escutando && (
-          <PainelEscuta
-            preenchidas={ouvidas}
-            aConferir={sugestoes.length}
-            lembretes={lembretes}
-            faltando={faltando}
-            interpretando={ouvindo}
-            captando={escutando && estadoMic !== "sem-audio"}
-            pausado={estadoMic === "pausado"}
-            ultimaFala={ultimaFala}
-            ultimoSom={ultimoSom}
-            nivelTipico={nivelTipico}
-            chegada={chegada}
-            erro={erroEscuta}
-            transcricao={transcricaoVisivel}
-            parcial={parcial}
-            onIrPara={irPara}
-          />
-        )}
       </div>
 
       {/* O encerramento, também para ser lido. Só aparece quando há o que
@@ -1582,6 +1716,49 @@ function dependenciaAberta(p: Pergunta, respostas: Respostas): boolean {
   return valor === esperado;
 }
 
+/* O bloco de identificação depois de preenchido: um cabeçalho compacto tipo
+ * accordion. Recolhido mostra só o resumo (nome · CPF · município/UF); aberto,
+ * os quatro campos, editáveis. O resto da página se reorganiza sozinho — o
+ * conteúdo abaixo é fluxo normal e sobe para ocupar o espaço liberado. */
+function IdentificacaoRecolhivel({
+  resumo,
+  aberta,
+  onAlternar,
+  children,
+}: {
+  resumo: string;
+  aberta: boolean;
+  onAlternar: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mt-[26px] border border-borda-forte rounded-campo bg-papel-2 overflow-hidden">
+      <button
+        type="button"
+        onClick={onAlternar}
+        aria-expanded={aberta}
+        className="flex w-full items-center gap-3 border-none bg-transparent px-4 py-3 text-left cursor-pointer hover:bg-papel-3"
+      >
+        <span className="flex-none text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
+          IDENTIFICAÇÃO
+        </span>
+        {!aberta && resumo && (
+          <span className="flex-1 min-w-0 truncate font-normal text-[12.5px] leading-[1.4] font-ui text-tinta">
+            {resumo}
+          </span>
+        )}
+        <span className="flex-none ml-auto inline-flex items-center gap-[6px] text-[10px] font-semibold uppercase leading-none tracking-[0.1em] text-tinta-3">
+          {aberta ? "Recolher" : "Revisar"}
+          <span aria-hidden className={`transition-transform ${aberta ? "rotate-180" : ""}`}>
+            ▾
+          </span>
+        </span>
+      </button>
+      {aberta && <div className="px-4 pb-4 pt-1">{children}</div>}
+    </section>
+  );
+}
+
 function BlocoRoteiro({
   bloco,
   respostas,
@@ -1603,9 +1780,13 @@ function BlocoRoteiro({
   onConferir,
   municipios,
   carregandoMunicipios,
+  compacto = false,
 }: {
   bloco: Bloco;
   respostas: Respostas;
+  /** Dentro do cabeçalho recolhível da identificação: sem título nem objetivo
+   *  (o cabeçalho já os dá) e sem o espaçamento de bloco solto. */
+  compacto?: boolean;
   /** A pergunta da vez na sequência — marcada na lista para o olho achar. */
   perguntaAtual: string;
   puladas: string[];
@@ -1631,11 +1812,13 @@ function BlocoRoteiro({
   carregandoMunicipios: boolean;
 }) {
   return (
-    <section className="mt-[26px]">
-      <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
-        {bloco.titulo.toUpperCase()}
-      </span>
-      {bloco.objetivo && (
+    <section className={compacto ? "" : "mt-[26px]"}>
+      {!compacto && (
+        <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
+          {bloco.titulo.toUpperCase()}
+        </span>
+      )}
+      {!compacto && bloco.objetivo && (
         <p className="mt-[5px] mb-0 italic font-normal text-[12px] leading-[1.5] font-titulo text-tinta-3">
           {bloco.objetivo}
         </p>
@@ -1658,7 +1841,7 @@ function BlocoRoteiro({
         </p>
       )}
 
-      <ul className="list-none mt-3 mb-0 p-0 border-t-[3px] border-double border-borda-forte">
+      <ul className={`list-none mb-0 p-0 ${compacto ? "mt-0" : "mt-3 border-t-[3px] border-double border-borda-forte"}`}>
         {bloco.perguntas.filter((p) => dependenciaAberta(p, respostas)).map((p, i) => (
           <li
             key={p.id}

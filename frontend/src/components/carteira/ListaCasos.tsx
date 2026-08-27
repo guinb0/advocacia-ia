@@ -29,6 +29,11 @@ export default function ListaCasos({
   const [categoria, setCategoria] = useState("");
   const [criando, setCriando] = useState(false);
   const [confirmando, setConfirmando] = useState<string | null>(null);
+  /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
+   * de 5 em 5 só para exibição — nada é buscado por página. `pagina` pode ficar
+   * maior que o total depois de uma exclusão; `paginaAtual` reancora. */
+  const POR_PAGINA = 5;
+  const [pagina, setPagina] = useState(1);
   /* Credenciais do caso recém-criado. Ficam só em memória: a senha existe em
    * texto claro apenas nesta resposta, e some ao sair da tela. */
   const [novoPortal, setNovoPortal] = useState<CasoCriado | null>(null);
@@ -49,6 +54,10 @@ export default function ListaCasos({
 
   const nomeCategoria = (codigo: string) =>
     categorias.find((c) => c.codigo === codigo)?.nome ?? codigo;
+
+  const totalPaginas = Math.max(1, Math.ceil(casos.length / POR_PAGINA));
+  const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
+  const casosVisiveis = casos.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
   return (
     <div className="grid grid-cols-[minmax(320px,420px)_1fr] max-[900px]:grid-cols-1 gap-5 items-start">
@@ -150,8 +159,9 @@ export default function ListaCasos({
         ) : casos.length === 0 ? (
           <Vazio>Crie o primeiro caso ao lado para começar a cobrar os documentos do cliente.</Vazio>
         ) : (
+          <>
           <ul className="list-none m-0 p-0">
-            {casos.map((caso) => (
+            {casosVisiveis.map((caso) => (
               <li
                 key={caso.id}
                 className="flex items-center gap-[10px] py-2 border-b border-borda flex-wrap last:border-b-0"
@@ -195,6 +205,31 @@ export default function ListaCasos({
               </li>
             ))}
           </ul>
+
+          {casos.length > POR_PAGINA && (
+            <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-borda">
+              <Botao
+                variante="discreto"
+                pequeno
+                disabled={paginaAtual <= 1}
+                onClick={() => setPagina(paginaAtual - 1)}
+              >
+                ← Anterior
+              </Botao>
+              <span className="text-tinta-3 text-xs tabular-nums">
+                Página {paginaAtual} de {totalPaginas}
+              </span>
+              <Botao
+                variante="discreto"
+                pequeno
+                disabled={paginaAtual >= totalPaginas}
+                onClick={() => setPagina(paginaAtual + 1)}
+              >
+                Próximo →
+              </Botao>
+            </div>
+          )}
+          </>
         )}
       </Cartao>
     </div>
