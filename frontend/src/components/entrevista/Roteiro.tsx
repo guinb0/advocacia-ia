@@ -34,7 +34,6 @@ import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
 import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
-import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
 
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
 // Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
@@ -262,7 +261,6 @@ export default function Roteiro({
    * `roteiro` desta sessão. As RESPOSTAS não são tocadas — elas são guardadas
    * por id de pergunta, e reescrever um enunciado não muda o id. */
   const [editandoRoteiro, setEditandoRoteiro] = useState(false);
-  const [importandoRoteiro, setImportandoRoteiro] = useState(false);
   /* De qual arquivo veio o roteiro em edição, quando veio de um. Sobe junto ao
    * salvar para o catálogo registrar a procedência. */
   const [origemRoteiro, setOrigemRoteiro] = useState("");
@@ -1113,20 +1111,6 @@ function preencherMarcadores(
         />
       )}
 
-      {importandoRoteiro && (
-        <ImportarRoteiro
-          aoImportar={(importado) => {
-            setRoteiro(importado.roteiro);
-            setOrigemRoteiro(importado.origem);
-            setImportandoRoteiro(false);
-            // Direto para o editor: o que veio é uma proposta do modelo, e
-            // ninguém entrevista com roteiro que ninguém leu.
-            setEditandoRoteiro(true);
-          }}
-          aoFechar={() => setImportandoRoteiro(false)}
-        />
-      )}
-
       {TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA && (
         <div className="mb-4 border-l-4 border-atencao bg-papel-2 px-3 py-[10px] text-[12px] leading-[1.5] font-ui text-tinta">
           <strong>Modo de teste:</strong> transcrição temporariamente desativada. Nenhum áudio é enviado ao serviço de transcrição.
@@ -1149,15 +1133,7 @@ function preencherMarcadores(
             onClick={() => setEditandoRoteiro(true)}
             title="Corrigir perguntas, blocos e falas sem sair do atendimento"
           >
-            Editar roteiro
-          </button>
-          <button
-            type="button"
-            className={T_SECUNDARIO}
-            onClick={() => setImportandoRoteiro(true)}
-            title="Montar um roteiro a partir do documento do escritório"
-          >
-            Importar de documento
+            Alterar roteiro
           </button>
           {/* O botão que abre a entrevista inteira. Substitui os 86 ciclos de
               gravar/finalizar: daqui em diante o microfone fica aberto e o

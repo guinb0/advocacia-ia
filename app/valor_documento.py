@@ -60,9 +60,10 @@ TEMPO_MODELO_S = 30.0
 #: ilegível, página em branco, verso de documento.
 MINIMO_CARACTERES = 60
 
-#: Teto do texto enviado. Um laudo longo não fica melhor interpretado inteiro, e
-#: prontuário de internação passa de 20 mil caracteres.
-MAXIMO_CARACTERES = 6000
+CODIGOS_DOCUMENTO = {
+    "cpf", "rg", "cin", "cnh", "ctps", "titulo_eleitor", "cartao_sus",
+    "comprovante_residencia", "certidao", "nao_estruturado",
+}
 
 
 class ErroValor(Exception):
@@ -78,7 +79,9 @@ def texto_do_ocr(extracao: dict[str, Any]) -> str:
     """
     linhas = extracao.get("texto_linhas") or []
     partes = [str(l.get("texto", "")).strip() for l in linhas if isinstance(l, dict)]
-    return "\n".join(p for p in partes if p)[:MAXIMO_CARACTERES]
+    # Diagnóstico, assinatura e conclusão podem estar nas páginas finais; a
+    # DeepSeek recebe o conteúdo integral que a Mistral conseguiu ler.
+    return "\n".join(p for p in partes if p)
 
 
 INSTRUCAO = """Você assessora um advogado trabalhista brasileiro. Recebe o TEXTO BRUTO
@@ -105,8 +108,11 @@ REGRAS
   existe. Você descreve o documento; quem conclui é o advogado.
 - Seja breve: no máximo 4 itens em cada lista.
 
-Responda APENAS JSON:
-{"documento":"...",
+Responda APENAS JSON. Em `codigo_documento`, use cpf, rg, cin, cnh, ctps,
+titulo_eleitor, cartao_sus, comprovante_residencia ou certidao quando houver
+evidência. Para laudo, atestado, contrato, petição, boletim de ocorrência, CNIS
+e qualquer tipo livre, use nao_estruturado:
+{"documento":"...", "codigo_documento":"nao_estruturado",
  "serve_para":[{"item":"DOC.10","porque":"..."}],
  "achados":[{"campo":"CID","valor":"M54.5"}],
  "atencao":["..."],
@@ -221,8 +227,10 @@ def ler(
         if campo and valor:
             achados.append({"campo": campo, "valor": valor})
 
+    codigo = _texto(bruto.get("codigo_documento"), 40).lower()
     return {
         "documento": _texto(bruto.get("documento"), 80) or "indefinido",
+        "codigo_documento": codigo if codigo in CODIGOS_DOCUMENTO else "nao_estruturado",
         "serve_para": serve_para[:4],
         "achados": achados[:8],
         "atencao": _lista(bruto.get("atencao")),

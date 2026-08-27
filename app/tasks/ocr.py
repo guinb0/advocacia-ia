@@ -165,11 +165,17 @@ def processar_entrega(
 
         # Tipos não estruturados (laudo, atestado, BO, CNIS...) não passam pelo
         # extrator cadastral. O DeepSeek interpreta o texto integral do OCR.
-        if resultado.get("tipo", {}).get("codigo") == "desconhecido" and resultado.get("validacao", {}).get("texto_utilizavel"):
+        if resultado.get("validacao", {}).get("texto_utilizavel"):
             try:
-                semantica = indexacao_documento.classificar(resultado, categoria.nome)
+                documentos_esperados = [
+                    {"codigo": esperado.codigo, "nome": esperado.nome}
+                    for esperado in categoria.itens
+                ]
+                semantica = indexacao_documento.classificar(
+                    resultado, categoria.nome, documentos_esperados
+                )
                 resultado["classificacao_semantica"] = semantica
-                resultado["tipo"]["descricao_detectado"] = semantica["tipo_semantico"]
+                indexacao_documento.aplicar_interpretacao(resultado, semantica)
             except Exception as exc:
                 log.warning("classificação semântica falhou para %s: %s", entrega_id, exc)
                 resultado["classificacao_semantica"] = {"status": "indisponivel", "erro": str(exc)[:200]}
