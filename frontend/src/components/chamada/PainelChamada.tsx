@@ -121,7 +121,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
     <aside className="border border-borda-forte px-4 pt-[14px] pb-4 bg-papel">
       <div className="flex justify-between items-center gap-[10px] flex-wrap mb-[10px]">
         <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
-          {modo === "documentos" ? "CHAMADA E GRAVAÇÃO" : "CHAMADA"}
+          {modo === "documentos" ? "JITSI MEET · CHAMADA E GRAVAÇÃO" : "JITSI MEET"}
         </span>
         <span className="text-[11px] font-normal leading-[1.4] font-codigo text-tinta-3 flex items-center gap-[7px]">
           {ponto}
@@ -133,7 +133,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
         <>
           <p className="mb-3 mt-0 font-normal text-[12px] leading-[1.6] font-ui text-tinta-3">
             {modo === "documentos"
-              ? "Crie a chamada no Meet e mande o link ao cliente. Você continua na aba de documentos, e a conversa entra na mesma gravação do atendimento."
+              ? "Crie a chamada no Jitsi Meet e mande o link ao cliente. Você continua na aba de documentos, e a conversa entra na mesma gravação do atendimento."
               : "Abra a chamada e mande o link ao entrevistado. A voz dele chega separada da sua — é ela, e só ela, que vira texto no roteiro."}
           </p>
           <button
@@ -142,7 +142,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
             onClick={abrir}
             disabled={abrindo}
           >
-            {abrindo ? "Abrindo…" : modo === "documentos" ? "Criar chamada no Meet" : "Abrir chamada"}
+            {abrindo ? "Abrindo…" : modo === "documentos" ? "Criar chamada no Jitsi Meet" : "Abrir Jitsi Meet"}
           </button>
         </>
       ) : (
