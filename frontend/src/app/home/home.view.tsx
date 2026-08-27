@@ -23,10 +23,11 @@ import SaudeAgente from "@/components/SaudeAgente";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
 import Usuarios from "@/components/admin/Usuarios";
 import Resultado from "@/components/caso/Resultado";
-import PainelDocumentacao from "@/components/documentacao/PainelDocumentacao";
+import CentralDocumentacao from "@/components/documentacao/CentralDocumentacao";
 import CatalogoRoteiros from "@/components/admin/CatalogoRoteiros";
 import { useCasos, useCategorias } from "@/lib/useCasos";
 import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
+import { useSessao } from "@/lib/auth";
 
 
 import { CABECALHO, useHomeModel } from "./home.model";
@@ -53,6 +54,7 @@ const HomeView = (props: HomeViewProps) => (
 );
 
 const Telas = (props: HomeViewProps) => {
+  const sessao = useSessao();
   const {
     tela,
     setTela,
@@ -147,7 +149,7 @@ const Telas = (props: HomeViewProps) => {
 
   if (tela === "documentacao") {
     return (
-      <PainelDocumentacao
+      <CentralDocumentacao
         onVoltar={voltarParaCarteira}
         onAbrirDocumentos={abrirCaso}
       />
@@ -204,6 +206,7 @@ const Telas = (props: HomeViewProps) => {
             Jurisprudência e jurimetria →
           </Botao>
         </div>
+        {sessao.modulos.includes("documentacao") && <ChamadaDoAtendimento modo="documentacao" />}
         {situacaoCaso.situacao ? (
           <>
             <Checklist

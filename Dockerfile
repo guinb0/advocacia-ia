@@ -74,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
         > /etc/apt/sources.list.d/mssql.list \
     && apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
-        msodbcsql18 unixodbc libgssapi-krb5-2 \
+        msodbcsql18 unixodbc libgssapi-krb5-2 libreoffice-writer fonts-liberation \
     && apt-get purge -y curl gnupg2 && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 

@@ -33,7 +33,13 @@ def importar_roteiro(self, job_id: str, caminho: str, nome: str):
         resultado={"etapa": "Lendo o arquivo"},
     )
     try:
-        conteudo = Path(caminho).read_bytes()
+        # A API e este worker normalmente estão em containers diferentes.
+        # `/app/tmp/jobs/...` pertence ao disco da API e não existe aqui; o
+        # binário durável do job é a fonte principal. O caminho só atende
+        # instalações antigas em que ambos ainda compartilham o mesmo disco.
+        conteudo = jobs.conteudo_arquivo(job_id)
+        if conteudo is None:
+            conteudo = Path(caminho).read_bytes()
         texto, leitura = roteiro_ia.texto_do_documento(nome, conteudo)
 
         jobs.atualizar(

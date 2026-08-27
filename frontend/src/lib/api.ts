@@ -569,11 +569,12 @@ export async function gerarContrato(
   respostas: Record<string, string | string[]>,
   municipio = "",
   documento: DocumentoDoCliente = "contrato",
+  formato: "docx" | "pdf" = "docx",
 ): Promise<ContratoGerado> {
   const r = await buscar("/api/contrato", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ respostas, municipio, documento }),
+    body: JSON.stringify({ respostas, municipio, documento, formato }),
   });
 
   return interpretarContrato(r);

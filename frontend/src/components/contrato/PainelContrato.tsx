@@ -81,7 +81,7 @@ const CODIGO = "font-normal text-[11.5px] leading-none font-codigo text-tinta";
 
 export default function PainelContrato({ respostas }: Props) {
   /** Qual documento está sendo gerado agora — só um botão fica ocupado. */
-  const [gerando, setGerando] = useState<DocumentoDoCliente | null>(null);
+  const [gerando, setGerando] = useState<string | null>(null);
   /** O que já foi baixado, por documento: nome do arquivo e campos em branco. */
   const [porDocumento, setPorDocumento] = useState<
     Partial<Record<DocumentoDoCliente, { nome: string; faltando: string[] }>>
@@ -137,15 +137,16 @@ export default function PainelContrato({ respostas }: Props) {
    * O `faltando` é POR documento porque cada modelo pede um conjunto diferente:
    * o contrato quer telefone e e-mail, a procuração não. Somados, sugeririam
    * buracos onde não há. */
-  async function gerar(codigo: DocumentoDoCliente) {
+  async function gerar(codigo: DocumentoDoCliente, formato: "docx" | "pdf") {
     if (requisitosContrato.length > 0) {
       setErro(`Documentos não gerados: informe ${requisitosContrato.join(" e ")}.`);
       return;
     }
-    setGerando(codigo);
+    const chave = `${codigo}:${formato}`;
+    setGerando(chave);
     setErro(null);
     try {
-      const gerado = await gerarContrato(respostas, "", codigo);
+      const gerado = await gerarContrato(respostas, "", codigo, formato);
       setPorDocumento((atuais) => ({
         ...atuais,
         [codigo]: { nome: gerado.nome, faltando: gerado.faltando },
@@ -317,14 +318,22 @@ export default function PainelContrato({ respostas }: Props) {
                 <button
                   type="button"
                   className={BOTAO}
-                  onClick={() => void gerar(doc.codigo)}
+                  onClick={() => void gerar(doc.codigo, "pdf")}
                   disabled={gerando !== null || requisitosContrato.length > 0}
                 >
-                  {gerando === doc.codigo
+                  {gerando === `${doc.codigo}:pdf`
                     ? "Gerando…"
-                    : feito
-                      ? `Baixar ${doc.rotulo} de novo`
-                      : `Baixar ${doc.rotulo}`}
+                    : `Baixar ${doc.rotulo} em PDF`}
+                </button>
+                <button
+                  type="button"
+                  className={BOTAO_SECUNDARIO}
+                  onClick={() => void gerar(doc.codigo, "docx")}
+                  disabled={gerando !== null || requisitosContrato.length > 0}
+                >
+                  {gerando === `${doc.codigo}:docx`
+                    ? "Gerando…"
+                    : `Baixar ${doc.rotulo} em DOCX`}
                 </button>
                 {feito && feito.faltando.length === 0 && (
                   <span className="mt-3 mb-0 font-normal text-[12.5px] leading-[1.5] font-ui text-ok">

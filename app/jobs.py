@@ -44,23 +44,40 @@ def inicializar() -> None:
                 erro text,
                 resultado jsonb,
                 arquivo_temporario text,
+                arquivo_conteudo bytea,
                 criado_em timestamptz NOT NULL DEFAULT now(),
                 iniciado_em timestamptz,
                 finalizado_em timestamptz,
                 atualizado_em timestamptz NOT NULL DEFAULT now()
             )
         """)
+        con.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS arquivo_conteudo bytea")
         con.execute("CREATE INDEX IF NOT EXISTS ix_jobs_status_criado ON jobs(status, criado_em)")
 
 
-def criar(tipo: str, *, caso_id: str | None = None, arquivo: str | None = None) -> str:
+def criar(
+    tipo: str, *, caso_id: str | None = None, arquivo: str | None = None,
+    conteudo: bytes | None = None,
+) -> str:
     job_id = str(uuid.uuid4())
     with _conectar() as con:
         con.execute(
-            "INSERT INTO jobs(id,tipo,status,caso_id,arquivo_temporario) VALUES (%s,%s,'QUEUED',%s,%s)",
-            (job_id, tipo, caso_id, arquivo),
+            """INSERT INTO jobs(id,tipo,status,caso_id,arquivo_temporario,arquivo_conteudo)
+               VALUES (%s,%s,'QUEUED',%s,%s,%s)""",
+            (job_id, tipo, caso_id, arquivo, conteudo),
         )
     return job_id
+
+
+def conteudo_arquivo(job_id: str) -> bytes | None:
+    """Arquivo original do job, acessível por qualquer worker/container."""
+    with _conectar() as con:
+        linha = con.execute(
+            "SELECT arquivo_conteudo FROM jobs WHERE id=%s", (job_id,)
+        ).fetchone()
+    if not linha or linha[0] is None:
+        return None
+    return bytes(linha[0])
 
 
 def vincular_tarefa(job_id: str, task_id: str) -> None:
