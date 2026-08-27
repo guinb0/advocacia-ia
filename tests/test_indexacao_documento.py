@@ -46,3 +46,24 @@ def test_interpretacao_preenche_tipo_e_campos_sem_sobrescrever_validado():
     assert resultado["tipo"]["detectado"] == "desconhecido"
     assert [campo["nome"] for campo in resultado["campos"]] == ["cpf", "cid"]
     assert resultado["campos"][1]["origem"] == "deepseek"
+
+
+def test_interpretacao_nao_inventa_cpf_nem_cnh():
+    extracao = {
+        "tipo": {"detectado": "desconhecido"},
+        "campos": [],
+    }
+    semantica = {
+        "codigo_documento": "nao_estruturado",
+        "tipo_semantico": "Comprovante",
+        "achados": [
+            {"campo": "CPF", "valor": "111.444.777-35"},
+            {"campo": "CNH", "valor": "12345678900"},
+            {"campo": "CID", "valor": "M54.5"},
+        ],
+    }
+    resultado = indexacao_documento.aplicar_interpretacao(extracao, semantica)
+    nomes = [campo["nome"] for campo in resultado["campos"]]
+    assert nomes == ["cid"]
+    assert "cpf" not in nomes
+    assert "cnh" not in nomes
