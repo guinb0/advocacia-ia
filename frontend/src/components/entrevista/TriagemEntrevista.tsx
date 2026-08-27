@@ -60,6 +60,7 @@ export default function TriagemEntrevista({
   categorias,
   onCriarCaso,
   onAbrirDossie,
+  onAbrirAnalises,
 }: {
   /** Tipos de ação, para criar o caso sem sair do atendimento. */
   categorias: Categoria[];
@@ -67,6 +68,7 @@ export default function TriagemEntrevista({
   onCriarCaso: (cliente: string, categoria: string) => Promise<CasoCriado>;
   /** Sai da entrevista direto para a visão completa do caso recém-criado. */
   onAbrirDossie?: (casoId: string) => void;
+  onAbrirAnalises?: (casoId: string) => void;
   /** Aplica a categoria (e o nome do cliente, se a entrevista trouxer). */
   onEscolher: (categoria: string, cliente?: string) => void;
   /** Em que ponto o atendimento está. A tela ao redor usa isto para tirar do
@@ -352,6 +354,7 @@ export default function TriagemEntrevista({
         sugerida={escolhida ?? undefined}
         onCriar={onCriarCaso}
         onAbrirDossie={onAbrirDossie}
+        onAbrirAnalises={onAbrirAnalises}
         emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
         onEncerrarChamada={chamada.desligar}
       />
@@ -618,7 +621,7 @@ export default function TriagemEntrevista({
             </Aviso>
           </div>
 
-          <div className="mb-4 max-w-[680px]">
+          <div className="sticky top-3 z-20 mb-4 max-w-[680px] shadow-[0_10px_30px_rgba(15,23,42,0.16)]">
             <PainelChamada
               modo="documentos"
               onFaixaRemota={(trilha) => {
@@ -658,6 +661,7 @@ export default function TriagemEntrevista({
               }
             }}
             onAbrirDossie={onAbrirDossie}
+            onAbrirAnalises={onAbrirAnalises}
             emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
             onEncerrarChamada={chamada.desligar}
           />

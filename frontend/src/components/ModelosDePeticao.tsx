@@ -33,13 +33,16 @@ const SELECT =
   "[&>option]:bg-papel [&>option]:text-tinta";
 
 import {
+  type ConfiguracaoDeGeracao,
   type NoDaTaxonomia,
   type PecaDeEstilo,
   type PerfilDeEstilo,
+  configuracaoDeGeracao,
   enviarPecaDeEstilo,
   pecasDeEstilo,
   perfilDeEstilo,
   removerPecaDeEstilo,
+  salvarConfiguracaoDeGeracao,
   taxonomiaDeEstilo,
 } from "@/lib/agente";
 
@@ -66,6 +69,9 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
 
   const [pecas, setPecas] = useState<PecaDeEstilo[]>([]);
   const [perfil, setPerfil] = useState<PerfilDeEstilo | null>(null);
+  const [configuracao, setConfiguracao] = useState<ConfiguracaoDeGeracao | null>(null);
+  const [documentoNovo, setDocumentoNovo] = useState("");
+  const [salvandoConfiguracao, setSalvandoConfiguracao] = useState(false);
 
   const [enviando, setEnviando] = useState(false);
   const [arrastando, setArrastando] = useState(false);
@@ -103,13 +109,21 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
 
   const recarregar = useCallback(async () => {
     if (!acao) return;
-    const [lista, encontrado] = await Promise.all([
+    const [lista, encontrado, config] = await Promise.all([
       pecasDeEstilo(acao).catch(() => [] as PecaDeEstilo[]),
       // 404 aqui é resposta legítima: o grupo ainda não tem padrão. Não é erro de tela.
       perfilDeEstilo(acao, tipo).catch(() => null),
+      configuracaoDeGeracao(acao, tipo).catch(() => null),
     ]);
     setPecas(lista);
     setPerfil(encontrado);
+    setConfiguracao(config ?? {
+      taxonomy_code: acao,
+      document_type: tipo,
+      display_name: TIPOS.find((item) => item.codigo === tipo)?.rotulo ?? "Petição",
+      drafting_instructions: "",
+      required_documents: [],
+    });
   }, [acao, tipo]);
 
   useEffect(() => {
@@ -188,6 +202,29 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     } finally {
       setRemovendo(null);
     }
+  }
+
+  async function salvarConfiguracao() {
+    if (!configuracao) return;
+    setSalvandoConfiguracao(true);
+    setErro(null);
+    try {
+      setConfiguracao(await salvarConfiguracaoDeGeracao(configuracao));
+      setRecado("Configuração da peça salva e pronta para orientar a IA Jurídica.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar a configuração.");
+    } finally {
+      setSalvandoConfiguracao(false);
+    }
+  }
+
+  function adicionarDocumento() {
+    const nome = documentoNovo.trim();
+    if (!nome || !configuracao) return;
+    if (!configuracao.required_documents.some((item) => item.toLocaleLowerCase() === nome.toLocaleLowerCase())) {
+      setConfiguracao({ ...configuracao, required_documents: [...configuracao.required_documents, nome] });
+    }
+    setDocumentoNovo("");
   }
 
   const semSecoes = useMemo(
@@ -340,6 +377,58 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           </Aviso>
         )}
       </Cartao>
+
+      {configuracao && (
+        <Cartao titulo="Configuração da peça">
+          <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
+            Configure este tipo de documento para a ação escolhida. As regras e a checklist
+            acompanham o estilo aprendido e entram diretamente na geração da IA Jurídica.
+          </p>
+          <div className="flex flex-wrap gap-[0.9rem]">
+            <label className={CAMPO}>
+              <span>Nome do tipo de documento</span>
+              <input className={SELECT} value={configuracao.display_name}
+                onChange={(evento) => setConfiguracao({ ...configuracao, display_name: evento.target.value })} />
+            </label>
+            <label className={CAMPO}>
+              <span>Ação vinculada</span>
+              <input className={SELECT} value={acoes.find((item) => item.code === acao)?.label ?? acao} disabled />
+            </label>
+          </div>
+          <label className="mt-4 flex flex-col gap-2 text-tinta-3 text-xs">
+            <span>Orientações de conteúdo e redação</span>
+            <textarea className={`${SELECT} min-h-28 resize-y`} value={configuracao.drafting_instructions}
+              placeholder="Ex.: destacar a incapacidade laboral e separar os pedidos subsidiários."
+              onChange={(evento) => setConfiguracao({ ...configuracao, drafting_instructions: evento.target.value })} />
+          </label>
+          <div className="mt-4">
+            <strong className="text-sm text-tinta">Documentos necessários para gerar esta peça</strong>
+            <p className="mt-1 text-xs text-tinta-3">A IA usa esta lista como checklist e não inventa informação quando um documento estiver ausente.</p>
+            <div className="mt-2 flex gap-2">
+              <input className={`${SELECT} flex-1`} value={documentoNovo} placeholder="Ex.: laudo médico, CNIS, procuração"
+                onChange={(evento) => setDocumentoNovo(evento.target.value)}
+                onKeyDown={(evento) => { if (evento.key === "Enter") { evento.preventDefault(); adicionarDocumento(); } }} />
+              <Botao variante="secundario" onClick={adicionarDocumento}>Adicionar</Botao>
+            </div>
+            {configuracao.required_documents.length ? (
+              <ul className="mt-3 flex list-none flex-wrap gap-2 p-0">
+                {configuracao.required_documents.map((documento) => (
+                  <li key={documento} className="flex items-center gap-2 rounded-pill border border-borda px-3 py-1.5 text-xs text-tinta">
+                    {documento}
+                    <button type="button" className="text-critico" aria-label={`Remover ${documento}`}
+                      onClick={() => setConfiguracao({ ...configuracao, required_documents: configuracao.required_documents.filter((item) => item !== documento) })}>×</button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="mt-3 text-xs text-tinta-3">Nenhum documento exigido foi cadastrado.</p>}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Botao onClick={() => void salvarConfiguracao()} disabled={salvandoConfiguracao || !configuracao.display_name.trim()}>
+              {salvandoConfiguracao ? "Salvando…" : "Salvar configuração"}
+            </Botao>
+          </div>
+        </Cartao>
+      )}
 
       <PainelPerfil perfil={perfil} total={pecas.length} />
 

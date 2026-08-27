@@ -414,6 +414,10 @@ export interface AtendimentoDocumentacao {
   documentador_nome: string | null;
   iniciado_em: string;
   solicitado_em: string | null;
+  /** ISO-8601 UTC da última batida do entrevistador (a cada ~30s enquanto a
+   *  entrevista está aberta). Fica velho quando ele sai — é o sinal de que a
+   *  chamada já não está de pé. */
+  atualizado_em: string;
 }
 
 export async function registrarAtendimentoDocumentacao(entrevistaId: string, cliente: string): Promise<void> {

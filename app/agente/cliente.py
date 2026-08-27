@@ -757,6 +757,15 @@ class Cliente:
         """Remove uma amostra do corpus da organização autenticada."""
         self._chamar("DELETE", f"/api/v1/style/documents/{quote(peca_id)}")
 
+    def configuracao_de_geracao(self, taxonomy_code: str, document_type: str) -> dict[str, Any]:
+        return self._ler(
+            "/api/v1/style/generation-config"
+            f"?taxonomy_code={quote(taxonomy_code)}&document_type={quote(document_type)}"
+        )
+
+    def salvar_configuracao_de_geracao(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._chamar("PUT", "/api/v1/style/generation-config", json=payload)
+
     # ------------------------------------------------------------------ saúde
 
     def saude(self) -> dict[str, Any]:

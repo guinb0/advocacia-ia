@@ -55,6 +55,8 @@ interface Props {
   onCasoCriado?: (casoId: string) => Promise<void> | void;
   /** Abre a tela completa com dossiê, análise, contrato e andamento. */
   onAbrirDossie?: (casoId: string) => void;
+  /** Abre a leitura analítica e as ações da IA Jurídica para o caso criado. */
+  onAbrirAnalises?: (casoId: string) => void;
   /** Desliga a chamada e deixa o cliente enviar o resto depois. */
   onEncerrarChamada: () => void;
   /** Há chamada de pé — sem ela, o botão de desligar não faz sentido. */
@@ -74,6 +76,7 @@ export default function CasoEDocumentos({
   onCategoria,
   onCasoCriado,
   onAbrirDossie,
+  onAbrirAnalises,
   onEncerrarChamada,
   emChamada,
 }: Props) {
@@ -271,14 +274,29 @@ export default function CasoEDocumentos({
       <span className="block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3 mb-2">
         DOCUMENTOS DO CLIENTE
       </span>
-      {onAbrirDossie && (
-        <button
-          type="button"
-          className="mb-4 border-[1.5px] border-tinta bg-tinta text-papel px-[15px] py-[11px] text-[11px] font-semibold font-ui uppercase tracking-[0.1em] cursor-pointer hover:opacity-90"
-          onClick={() => onAbrirDossie(criado.id)}
-        >
-          Abrir detalhes e dossiê do caso →
-        </button>
+      {(onAbrirDossie || onAbrirAnalises) && (
+        <div className="mb-4 border border-acao bg-acao-clara p-4">
+          <strong className="block text-sm text-tinta">Caso criado. Para onde você quer ir?</strong>
+          <p className="mb-3 mt-1 text-xs leading-[1.5] text-tinta-2">
+            Os documentos continuam salvos mesmo se você abrir a visão completa do caso.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {onAbrirDossie && (
+              <button type="button"
+                className="border-[1.5px] border-tinta bg-tinta text-papel px-[15px] py-[11px] text-[11px] font-semibold font-ui uppercase tracking-[0.1em] cursor-pointer hover:opacity-90"
+                onClick={() => onAbrirDossie(criado.id)}>
+                Abrir dossiê completo →
+              </button>
+            )}
+            {onAbrirAnalises && (
+              <button type="button"
+                className="border-[1.5px] border-acao bg-acao text-papel px-[15px] py-[11px] text-[11px] font-semibold font-ui uppercase tracking-[0.1em] cursor-pointer hover:opacity-90"
+                onClick={() => onAbrirAnalises(criado.id)}>
+                Abrir análises da IA Jurídica →
+              </button>
+            )}
+          </div>
+        </div>
       )}
       <div className="mb-3">
         {transferencia?.status === "assumido" ? (
