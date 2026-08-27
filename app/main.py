@@ -1747,27 +1747,21 @@ async def triar_entrevista(
     conteudo = texto or ""
 
     if arquivo is not None and arquivo.filename:
-        if not arquivo.filename.lower().endswith((".txt", ".md")):
-            raise HTTPException(400, "Envie a entrevista em .txt (ou cole o texto).")
         bruto = await arquivo.read()
         if len(bruto) > 2 * 1024 * 1024:
             raise HTTPException(400, "Arquivo grande demais para uma entrevista (máx. 2 MB).")
-        # Entrevista digitada no Word e salva como txt costuma vir em latin-1.
-        for cod in ("utf-8", "utf-8-sig", "latin-1"):
-            try:
-                conteudo = bruto.decode(cod)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            raise HTTPException(400, "Não foi possível ler o texto do arquivo.")
+        try:
+            conteudo = entrevista_lib.extrair_texto(arquivo.filename, bruto)
+        except entrevista_lib.ErroDeLeitura as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     if not conteudo.strip():
-        raise HTTPException(400, "Cole a entrevista ou envie um arquivo .txt.")
+        raise HTTPException(400, "Cole a entrevista ou envie um arquivo com texto.")
 
     resultado = triagem.triar(conteudo)
     resultado["dados"] = triagem.extrair_dados_do_cliente(conteudo)
     resultado["caracteres"] = len(conteudo)
+    resultado["texto_extraido"] = conteudo
     return resultado
 
 

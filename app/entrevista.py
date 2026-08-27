@@ -21,7 +21,10 @@ from pathlib import Path
 __all__ = ["EXTENSOES_ENTREVISTA", "ErroDeLeitura", "extrair_texto"]
 
 #: O que o escritório efetivamente produz num atendimento.
-EXTENSOES_ENTREVISTA = {".txt", ".md", ".docx", ".pdf"}
+EXTENSOES_ENTREVISTA = {
+    ".txt", ".md", ".docx", ".pdf", ".csv", ".tsv", ".json", ".jsonl",
+    ".xml", ".html", ".htm", ".log", ".rtf", ".yaml", ".yml", ".srt", ".vtt",
+}
 
 #: Acima disto não é entrevista: é juntada de várias sessões ou arquivo errado.
 LIMITE_CARACTERES = 200_000
@@ -33,18 +36,17 @@ class ErroDeLeitura(ValueError):
 
 def extrair_texto(nome: str, conteudo: bytes) -> str:
     extensao = Path(nome).suffix.lower()
-    if extensao not in EXTENSOES_ENTREVISTA:
-        raise ErroDeLeitura(
-            f"Extensão '{extensao or '(sem)'}' não suportada para entrevista. "
-            f"Use: {', '.join(sorted(EXTENSOES_ENTREVISTA))}."
-        )
-
-    if extensao in {".txt", ".md"}:
-        texto = _texto_simples(conteudo)
-    elif extensao == ".docx":
+    if extensao == ".docx":
         texto = _texto_docx(conteudo)
-    else:
+    elif extensao == ".pdf":
         texto = _texto_pdf(conteudo)
+    elif extensao in EXTENSOES_ENTREVISTA or _parece_texto(conteudo):
+        texto = _texto_simples(conteudo)
+    else:
+        raise ErroDeLeitura(
+            f"O arquivo {extensao or '(sem extensão)'} não parece conter texto legível. "
+            "Envie um arquivo textual, DOCX ou PDF."
+        )
 
     limpo = _normalizar(texto)
     if not limpo:
@@ -63,6 +65,21 @@ def _texto_simples(conteudo: bytes) -> str:
             continue
     # `latin-1` aceita qualquer byte, então chegar aqui significa arquivo vazio.
     return ""
+
+
+def _parece_texto(conteudo: bytes) -> bool:
+    """Aceita extensões desconhecidas quando o conteúdo é realmente textual."""
+    amostra = conteudo[:64 * 1024]
+    if not amostra or b"\x00" in amostra:
+        return False
+    for codificacao in ("utf-8", "cp1252"):
+        try:
+            texto = amostra.decode(codificacao)
+        except UnicodeDecodeError:
+            continue
+        legiveis = sum(caractere.isprintable() or caractere in "\r\n\t" for caractere in texto)
+        return legiveis / max(len(texto), 1) >= 0.85
+    return False
 
 
 #: Um parágrafo do WordprocessingML. `w:p` é o parágrafo e `w:t` o texto dentro dele.

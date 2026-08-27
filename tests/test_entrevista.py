@@ -58,6 +58,11 @@ def main() -> int:
     acentuado = entrevista.extrair_texto("a.txt", "Nº do benefício: 6312".encode("cp1252"))
     checar("benefício" in acentuado, "arquivo salvo em cp1252 (Bloco de Notas antigo) é lido")
 
+    desconhecido = entrevista.extrair_texto(
+        "exportacao.dados", "CLIENTE: trabalhei sem registro.".encode("utf-8")
+    )
+    checar("sem registro" in desconhecido, "extensão desconhecida é aceita quando contém texto")
+
     docx = entrevista.extrair_texto("a.docx", docx_falso(["ADVOGADA: e depois?", "CLIENTE: fui demitido."]))
     checar(
         docx == "ADVOGADA: e depois?\nCLIENTE: fui demitido.",

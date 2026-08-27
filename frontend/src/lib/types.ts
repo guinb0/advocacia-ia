@@ -348,6 +348,8 @@ export interface Triagem {
   motivo: string;
   dados: { cliente?: string; cpf?: string };
   caracteres: number;
+  /** Texto lido do arquivo no servidor, inclusive de DOCX e PDF. */
+  texto_extraido?: string;
   /** 'llm' = o modelo leu e interpretou; 'pistas' = casamento local de termos. */
   metodo?: "llm" | "pistas";
   /** As duas leituras (modelo e termos) apontaram categorias diferentes. */
