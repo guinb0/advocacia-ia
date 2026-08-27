@@ -51,6 +51,10 @@ def aplicar_interpretacao(extracao: dict[str, Any], semantica: dict[str, Any]) -
         nome = re.sub(r"[^a-z0-9]+", "_", rotulo.lower()).strip("_")
         if not nome or not valor or nome in existentes:
             continue
+        # CPF e nº da CNH só vêm do OCR da foto do documento correspondente —
+        # achado semântico em laudo/comprovante não pode inventar esses campos.
+        if nome in {"cpf", "cnh", "numero_cnh", "n_registro", "registro_cnh"}:
+            continue
         campos.append({
             "nome": nome, "rotulo": rotulo, "valor": valor, "valor_bruto": valor,
             "confianca": 0.0, "valido": None,

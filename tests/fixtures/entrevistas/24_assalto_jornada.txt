@@ -1,0 +1,30 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: OTT.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: 8 anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim, ainda trabalho.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Sim.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: Quantas vezes e em que anos?
+Entrevistado: Fui assaltado duas vezes em 2020, na rota de entrega.
+Entrevistador: Ocorreu durante a jornada?
+Entrevistado: Sim, eu estava trabalhando na entrega.
+Entrevistador: Tem acesso às CATs?
+Entrevistado: Sim.
+Entrevistador: Passou a ter sintomas depois?
+Entrevistado: Sim, pânico.
+Entrevistador: Procurou atendimento psicológico?
+Entrevistado: Sim.
+Entrevistador: Afastado pelo INSS por causa do assalto?
+Entrevistado: Não.
+Entrevistador: Existem testemunhas?
+Entrevistado: Sim, um colega de rota.

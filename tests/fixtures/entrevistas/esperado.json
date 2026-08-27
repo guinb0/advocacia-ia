@@ -1,0 +1,1867 @@
+{
+  "01_pe_quebrado_demissao": {
+    "iniciais": {
+      "nome": "Guilherme Bezerra",
+      "cpf": "537.639.640-10",
+      "uf": "MA",
+      "municipio": "Arari",
+      "estado_civil": "Solteiro(a)"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "tempo_casa": "uns quatro anos",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": [
+        "demit"
+      ],
+      "ac_como": [
+        "pé",
+        "quebr"
+      ],
+      "tempo_casa": [
+        "quatro",
+        "4"
+      ],
+      "funcao": [
+        "pedestre"
+      ]
+    }
+  },
+  "02_assalto_em_rota": {
+    "iniciais": {
+      "nome": "João Pereira",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "São Paulo"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "tempo_casa": "oito anos",
+      "desligamento": "ainda trabalho",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_inss": "não",
+      "as_testemunhas": "sim",
+      "as_ocorrencias": "duas vezes no ano passado"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda trabal",
+        "sim"
+      ],
+      "as_sintomas": [
+        "ansiedade",
+        "dormir",
+        "medo"
+      ],
+      "as_ocorrencias": [
+        "duas",
+        "ano passado"
+      ],
+      "as_documentos": [
+        "Boletim",
+        "CAT",
+        "psicológ"
+      ]
+    }
+  },
+  "03_doenca_ler": {
+    "iniciais": {
+      "nome": "Ana Souza",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Rio de Janeiro"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "tempo_casa": "Doze anos",
+      "desligamento": "ainda trabalha",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "M75",
+      "sa_afastamento": "quatro meses",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim",
+        "trabalh"
+      ],
+      "sa_medicos": [
+        "Ortopedista",
+        "fisioterapeuta"
+      ],
+      "sa_tratamento": [
+        "fisioterapia"
+      ],
+      "sa_afastamento": [
+        "quatro",
+        "4",
+        "INSS"
+      ],
+      "sa_diagnostico": [
+        "M75",
+        "tendinite",
+        "manguito"
+      ]
+    }
+  },
+  "04_queda_bicicleta": {
+    "iniciais": {
+      "nome": "Pedro Lima",
+      "cpf": "390.533.447-05",
+      "uf": "MG",
+      "municipio": "Belo Horizonte"
+    },
+    "esperadas": {
+      "funcao": "Carteiro ciclista",
+      "tempo_casa": "Três anos",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim",
+      "ac_data": "março de 2025"
+    },
+    "contem": {
+      "ac_local": [
+        "rua das Flores",
+        "entrega"
+      ],
+      "ac_como": [
+        "bicicleta",
+        "buraco"
+      ],
+      "ac_atendimento": [
+        "gesso"
+      ],
+      "ac_inss": [
+        "dois meses",
+        "2 meses"
+      ]
+    }
+  },
+  "05_sequela_fora_trabalho": {
+    "iniciais": {
+      "nome": "Maria da Silva",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "tempo_casa": "Quinze anos",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "sim",
+      "r_acao": "não",
+      "hl_epi": "Sim, fornecia e era obrigatório usar"
+    },
+    "contem": {
+      "desligamento": [
+        "demissão",
+        "acordo",
+        "janeiro"
+      ],
+      "hl_pressao": [
+        "metas",
+        "pressão"
+      ],
+      "hl_epi": [
+        "EPI",
+        "calçado",
+        "obrigat"
+      ]
+    }
+  },
+  "06_interviewer_sugere_errado": {
+    "iniciais": {
+      "nome": "Carlos Mendes",
+      "cpf": "390.533.447-05",
+      "uf": "PR",
+      "municipio": "Curitiba"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "tempo_casa": "Cinco anos",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim",
+        "trabalh"
+      ],
+      "ac_data": [
+        "junho",
+        "2024",
+        "quinze"
+      ],
+      "ac_local": [
+        "escada",
+        "depósito",
+        "distribuição",
+        "CD"
+      ],
+      "ac_como": [
+        "escorreg",
+        "torci",
+        "tornozelo"
+      ]
+    }
+  },
+  "07_limpo_atendente": {
+    "iniciais": {
+      "nome": "Cliente 07",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "dois"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim",
+        "continu",
+        "estou"
+      ]
+    }
+  },
+  "08_limpo_ott": {
+    "iniciais": {
+      "nome": "Cliente 08",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "onze"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim",
+        "continu",
+        "estou"
+      ]
+    }
+  },
+  "09_limpo_motorizado": {
+    "iniciais": {
+      "nome": "Cliente 09",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "seis"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim",
+        "continu",
+        "estou"
+      ]
+    }
+  },
+  "10_limpo_pedestre": {
+    "iniciais": {
+      "nome": "Cliente 10",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "um"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim",
+        "continu",
+        "estou"
+      ]
+    }
+  },
+  "11_limpo_moto": {
+    "iniciais": {
+      "nome": "Cliente 11",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motociclista",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "nove"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim",
+        "continu",
+        "estou"
+      ]
+    }
+  },
+  "12_limpo_bike": {
+    "iniciais": {
+      "nome": "Cliente 12",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Carteiro ciclista",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "quatro"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim",
+        "continu",
+        "estou"
+      ]
+    }
+  },
+  "13_demitido_sem_fato": {
+    "iniciais": {
+      "nome": "Cliente 13",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "três"
+      ],
+      "desligamento": [
+        "demit"
+      ]
+    }
+  },
+  "14_acordo_sem_fato": {
+    "iniciais": {
+      "nome": "Cliente 14",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "oito"
+      ],
+      "desligamento": [
+        "acordo",
+        "demissão",
+        "pedi"
+      ]
+    }
+  },
+  "15_aposentado_sem_fato": {
+    "iniciais": {
+      "nome": "Cliente 15",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "trinta"
+      ],
+      "desligamento": [
+        "aposent"
+      ]
+    }
+  },
+  "16_outra_funcao": {
+    "iniciais": {
+      "nome": "Cliente 16",
+      "cpf": "529.982.247-25",
+      "uf": "SP",
+      "municipio": "Campinas"
+    },
+    "esperadas": {
+      "funcao": "Outra",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "tempo_casa": [
+        "cinco"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim",
+        "continu",
+        "estou"
+      ]
+    }
+  },
+  "17_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 17",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "não"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "uma",
+        "2023"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "ansiedade",
+        "insônia",
+        "insôn"
+      ]
+    }
+  },
+  "18_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 18",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "sim"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "duas",
+        "2024"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "pânico",
+        "medo"
+      ]
+    }
+  },
+  "19_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 19",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "não",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "não"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "três",
+        "2022"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "depressão"
+      ]
+    }
+  },
+  "20_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 20",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "não"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "uma",
+        "2025"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "tept",
+        "durmo"
+      ]
+    }
+  },
+  "21_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 21",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motociclista",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "não",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "sim"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "duas",
+        "2021"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "ansiedade"
+      ]
+    }
+  },
+  "22_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 22",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Carteiro ciclista",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "não"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "uma",
+        "2024"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "insônia",
+        "insôn"
+      ]
+    }
+  },
+  "23_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 23",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "não"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "uma",
+        "2023"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "ansiedade",
+        "medo"
+      ]
+    }
+  },
+  "24_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 24",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "não"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "duas",
+        "2020"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "pânico"
+      ]
+    }
+  },
+  "25_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 25",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "não",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "não"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "uma",
+        "2024"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "ansiedade"
+      ]
+    }
+  },
+  "26_assalto_jornada": {
+    "iniciais": {
+      "nome": "Assaltado 26",
+      "cpf": "111.444.777-35",
+      "uf": "RJ",
+      "municipio": "Niterói"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "sim",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "as_atendimento": "sim",
+      "as_testemunhas": "sim",
+      "as_inss": "sim"
+    },
+    "contem": {
+      "as_ocorrencias": [
+        "quatro",
+        "2023"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "as_sintomas": [
+        "insônia",
+        "depressão",
+        "insôn"
+      ]
+    }
+  },
+  "27_assalto_fora": {
+    "iniciais": {
+      "nome": "Fora 27",
+      "cpf": "390.533.447-05",
+      "uf": "MG",
+      "municipio": "Uberlândia"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "28_assalto_fora": {
+    "iniciais": {
+      "nome": "Fora 28",
+      "cpf": "390.533.447-05",
+      "uf": "MG",
+      "municipio": "Uberlândia"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motociclista",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "29_assalto_fora": {
+    "iniciais": {
+      "nome": "Fora 29",
+      "cpf": "390.533.447-05",
+      "uf": "MG",
+      "municipio": "Uberlândia"
+    },
+    "esperadas": {
+      "funcao": "Carteiro ciclista",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "30_assalto_fora": {
+    "iniciais": {
+      "nome": "Fora 30",
+      "cpf": "390.533.447-05",
+      "uf": "MG",
+      "municipio": "Uberlândia"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "31_assalto_fora": {
+    "iniciais": {
+      "nome": "Fora 31",
+      "cpf": "390.533.447-05",
+      "uf": "MG",
+      "municipio": "Uberlândia"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "32_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 32",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "escada",
+        "escorreguei"
+      ],
+      "ac_local": [
+        "CD"
+      ],
+      "ac_data": [
+        "maio",
+        "2024"
+      ],
+      "ac_atendimento": [
+        "gesso"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "33_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 33",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "moto",
+        "caí"
+      ],
+      "ac_local": [
+        "rota"
+      ],
+      "ac_data": [
+        "janeiro",
+        "2025"
+      ],
+      "ac_atendimento": [
+        "tala"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "34_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 34",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "não",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "buraco",
+        "bicicleta"
+      ],
+      "ac_local": [
+        "rua"
+      ],
+      "ac_data": [
+        "março",
+        "2023"
+      ],
+      "ac_atendimento": [
+        "fisioterapia"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "35_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 35",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "caixa",
+        "caixa"
+      ],
+      "ac_local": [
+        "depósito"
+      ],
+      "ac_data": [
+        "agosto",
+        "2024"
+      ],
+      "ac_atendimento": [
+        "cirurgia"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "36_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 36",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motociclista",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "porteira",
+        "porteira"
+      ],
+      "ac_local": [
+        "agência"
+      ],
+      "ac_data": [
+        "fevereiro",
+        "2022"
+      ],
+      "ac_atendimento": [
+        "imobilização"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "37_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 37",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Carteiro ciclista",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "calçada",
+        "tropecei"
+      ],
+      "ac_local": [
+        "entrega"
+      ],
+      "ac_data": [
+        "abril",
+        "2025"
+      ],
+      "ac_atendimento": [
+        "atestado"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "38_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 38",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "chuva",
+        "moto"
+      ],
+      "ac_local": [
+        "avenida"
+      ],
+      "ac_data": [
+        "novembro",
+        "2023"
+      ],
+      "ac_atendimento": [
+        "internação"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "39_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 39",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "não",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "caminhão",
+        "caí"
+      ],
+      "ac_local": [
+        "centro"
+      ],
+      "ac_data": [
+        "junho",
+        "2024"
+      ],
+      "ac_atendimento": [
+        "RX"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "40_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 40",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "carrinho",
+        "carrinho"
+      ],
+      "ac_local": [
+        "galpão"
+      ],
+      "ac_data": [
+        "setembro",
+        "2021"
+      ],
+      "ac_atendimento": [
+        "cirurgia"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "41_acidente": {
+    "iniciais": {
+      "nome": "Acidentado 41",
+      "cpf": "153.509.460-56",
+      "uf": "BA",
+      "municipio": "Salvador"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "choque",
+        "fio"
+      ],
+      "ac_local": [
+        "sala"
+      ],
+      "ac_data": [
+        "dezembro",
+        "2024"
+      ],
+      "ac_atendimento": [
+        "plantão"
+      ],
+      "desligamento": [
+        "ainda",
+        "demit",
+        "sim"
+      ]
+    }
+  },
+  "42_doenca": {
+    "iniciais": {
+      "nome": "Doente 42",
+      "cpf": "529.982.247-25",
+      "uf": "PR",
+      "municipio": "Curitiba"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "M65",
+      "do_preexistente": "não",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "sa_diagnostico": [
+        "M65",
+        "LER"
+      ],
+      "sa_tratamento": [
+        "fisioterapia"
+      ],
+      "sa_afastamento": [
+        "quatro",
+        "INSS"
+      ],
+      "sa_medicos": [
+        "Ortopedista"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "43_doenca": {
+    "iniciais": {
+      "nome": "Doente 43",
+      "cpf": "529.982.247-25",
+      "uf": "PR",
+      "municipio": "Curitiba"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "M75",
+      "do_preexistente": "não",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "sa_diagnostico": [
+        "M75",
+        "tendinite"
+      ],
+      "sa_tratamento": [
+        "fisioterapia"
+      ],
+      "sa_afastamento": [
+        "três",
+        "INSS"
+      ],
+      "sa_medicos": [
+        "Ortopedista"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "44_doenca": {
+    "iniciais": {
+      "nome": "Doente 44",
+      "cpf": "529.982.247-25",
+      "uf": "PR",
+      "municipio": "Curitiba"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "M51",
+      "do_preexistente": "não",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "sa_diagnostico": [
+        "M51",
+        "hérnia"
+      ],
+      "sa_tratamento": [
+        "fisioterapia"
+      ],
+      "sa_afastamento": [
+        "seis",
+        "INSS"
+      ],
+      "sa_medicos": [
+        "Ortopedista"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "45_doenca": {
+    "iniciais": {
+      "nome": "Doente 45",
+      "cpf": "529.982.247-25",
+      "uf": "PR",
+      "municipio": "Curitiba"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "M70",
+      "do_preexistente": "não",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "sa_diagnostico": [
+        "M70",
+        "bursite"
+      ],
+      "sa_tratamento": [
+        "fisioterapia"
+      ],
+      "sa_afastamento": [
+        "dois",
+        "INSS"
+      ],
+      "sa_medicos": [
+        "Ortopedista"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "46_doenca": {
+    "iniciais": {
+      "nome": "Doente 46",
+      "cpf": "529.982.247-25",
+      "uf": "PR",
+      "municipio": "Curitiba"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motociclista",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "G56",
+      "do_preexistente": "não",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "sa_diagnostico": [
+        "G56",
+        "túnel"
+      ],
+      "sa_tratamento": [
+        "cirurgia"
+      ],
+      "sa_afastamento": [
+        "cinco",
+        "INSS"
+      ],
+      "sa_medicos": [
+        "Neurologista"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "47_sequela_fora": {
+    "iniciais": {
+      "nome": "Sequela 47",
+      "cpf": "537.639.640-10",
+      "uf": "PE",
+      "municipio": "Recife"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "sim",
+      "r_acao": "não"
+    },
+    "contem": {
+      "se_quais": [
+        "joelho",
+        "permanente",
+        "sequela"
+      ],
+      "hl_epi": [
+        "EPI",
+        "obrigat",
+        "fornecia"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "48_sequela_fora": {
+    "iniciais": {
+      "nome": "Sequela 48",
+      "cpf": "537.639.640-10",
+      "uf": "PE",
+      "municipio": "Recife"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "sim",
+      "r_acao": "não"
+    },
+    "contem": {
+      "se_quais": [
+        "ombro",
+        "permanente",
+        "limitação"
+      ],
+      "hl_epi": [
+        "EPI",
+        "obrigat",
+        "fornecia"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "49_sequela_fora": {
+    "iniciais": {
+      "nome": "Sequela 49",
+      "cpf": "537.639.640-10",
+      "uf": "PE",
+      "municipio": "Recife"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "sim",
+      "r_acao": "não"
+    },
+    "contem": {
+      "se_quais": [
+        "tornozelo",
+        "sequela"
+      ],
+      "hl_epi": [
+        "EPI",
+        "obrigat",
+        "fornecia"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "50_sequela_fora": {
+    "iniciais": {
+      "nome": "Sequela 50",
+      "cpf": "537.639.640-10",
+      "uf": "PE",
+      "municipio": "Recife"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "sim",
+      "r_acao": "não"
+    },
+    "contem": {
+      "se_quais": [
+        "coluna",
+        "sequela"
+      ],
+      "hl_epi": [
+        "EPI",
+        "obrigat",
+        "fornecia"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "51_sequela_fora": {
+    "iniciais": {
+      "nome": "Sequela 51",
+      "cpf": "537.639.640-10",
+      "uf": "PE",
+      "municipio": "Recife"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motociclista",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "sim",
+      "r_acao": "não"
+    },
+    "contem": {
+      "se_quais": [
+        "punho",
+        "sequela"
+      ],
+      "hl_epi": [
+        "EPI",
+        "obrigat",
+        "fornecia"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "52_assalto_e_acidente": {
+    "iniciais": {
+      "nome": "Combo 52",
+      "cpf": "111.444.777-35",
+      "uf": "SP",
+      "municipio": "Santos"
+    },
+    "esperadas": {
+      "funcao": "Carteiro motorizado",
+      "r_assalto": "sim",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "as_jornada": "sim",
+      "as_cat": "sim",
+      "ac_cat": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "moto",
+        "punho",
+        "chuva"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "53_entrevistador_empurra_assalto": {
+    "iniciais": {
+      "nome": "Corrige 53",
+      "cpf": "390.533.447-05",
+      "uf": "GO",
+      "municipio": "Goiânia"
+    },
+    "esperadas": {
+      "funcao": "Carteiro pedestre",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não"
+    },
+    "contem": {
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "tempo_casa": [
+        "cinco",
+        "5"
+      ]
+    }
+  },
+  "54_acao_ja_ajuizada": {
+    "iniciais": {
+      "nome": "Acao 54",
+      "cpf": "153.509.460-56",
+      "uf": "RJ",
+      "municipio": "Rio de Janeiro"
+    },
+    "esperadas": {
+      "funcao": "Atendente",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "sim",
+      "ac_cat": "sim"
+    },
+    "contem": {
+      "r_acao_quais": [
+        "0001234",
+        "recebi",
+        "transit"
+      ],
+      "ac_como": [
+        "escada",
+        "braço",
+        "quebr"
+      ],
+      "desligamento": [
+        "saí",
+        "2024",
+        "nao",
+        "não"
+      ]
+    }
+  },
+  "55_doenca_e_pressao": {
+    "iniciais": {
+      "nome": "Pressao 55",
+      "cpf": "529.982.247-25",
+      "uf": "RS",
+      "municipio": "Porto Alegre"
+    },
+    "esperadas": {
+      "funcao": "OTT",
+      "r_assalto": "não",
+      "r_acidente": "não",
+      "r_doenca": "sim",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "do_cid": "M65",
+      "sa_laudos": "sim"
+    },
+    "contem": {
+      "hl_pressao": [
+        "metas",
+        "pressão",
+        "abusiv"
+      ],
+      "hl_epi": [
+        "luva",
+        "EPI",
+        "fiscaliz"
+      ],
+      "sa_afastamento": [
+        "quatro",
+        "INSS"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ]
+    }
+  },
+  "56_respostas_curtas_sim_nao": {
+    "iniciais": {
+      "nome": "Curto 56",
+      "cpf": "111.444.777-35",
+      "uf": "SC",
+      "municipio": "Florianópolis"
+    },
+    "esperadas": {
+      "funcao": "Carteiro ciclista",
+      "r_assalto": "não",
+      "r_acidente": "sim",
+      "r_doenca": "não",
+      "r_sequela": "não",
+      "r_acao": "não",
+      "ac_cat": "sim",
+      "ac_laudos": "sim"
+    },
+    "contem": {
+      "ac_como": [
+        "bike",
+        "buraco",
+        "Palmeiras"
+      ],
+      "ac_data": [
+        "maio",
+        "2025"
+      ],
+      "desligamento": [
+        "ainda",
+        "sim"
+      ],
+      "tempo_casa": [
+        "três",
+        "3"
+      ]
+    }
+  }
+}

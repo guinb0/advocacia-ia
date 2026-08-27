@@ -1,0 +1,28 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Carteiro motociclista.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: 4 anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim, ainda trabalho.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Sim.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: O que aconteceu, passo a passo?
+Entrevistado: Em fevereiro de 2022, porteira bateu no ombro. Eu estava no trabalho.
+Entrevistador: Onde ocorreu?
+Entrevistado: No agência, durante o expediente.
+Entrevistador: Foi emitida a CAT?
+Entrevistado: Sim.
+Entrevistador: Como foi o atendimento?
+Entrevistado: Sim, no mesmo dia. Precisei de imobilização.
+Entrevistador: Tem laudos?
+Entrevistado: Sim.
+Entrevistador: Afastado pelo INSS?
+Entrevistado: um mês.
