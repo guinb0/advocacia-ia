@@ -58,11 +58,14 @@ export default function TriagemEntrevista({
   onAtendimento,
   categorias,
   onCriarCaso,
+  onAbrirDossie,
 }: {
   /** Tipos de ação, para criar o caso sem sair do atendimento. */
   categorias: Categoria[];
   /** Cria o caso e devolve o portal do cliente (link + senha). */
   onCriarCaso: (cliente: string, categoria: string) => Promise<CasoCriado>;
+  /** Sai da entrevista direto para a visão completa do caso recém-criado. */
+  onAbrirDossie?: (casoId: string) => void;
   /** Aplica a categoria (e o nome do cliente, se a entrevista trouxer). */
   onEscolher: (categoria: string, cliente?: string) => void;
   /** Em que ponto o atendimento está. A tela ao redor usa isto para tirar do
@@ -347,6 +350,7 @@ export default function TriagemEntrevista({
         categorias={categorias}
         sugerida={escolhida ?? undefined}
         onCriar={onCriarCaso}
+        onAbrirDossie={onAbrirDossie}
         emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
         onEncerrarChamada={chamada.desligar}
       />
@@ -642,6 +646,7 @@ export default function TriagemEntrevista({
                 }
               }
             }}
+            onAbrirDossie={onAbrirDossie}
             emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
             onEncerrarChamada={chamada.desligar}
           />
