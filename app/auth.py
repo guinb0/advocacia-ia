@@ -284,7 +284,7 @@ def exigir_papel(papel: str):
     """Dependência para rotas que pedem um papel específico."""
 
     def verificar(usuario: Usuario = Depends(usuario_atual)) -> Usuario:
-        if ATIVA and not usuario.tem_papel(papel):
+        if ATIVA and papel not in _papeis_atuais(usuario):
             raise HTTPException(403, f"Requer o papel '{papel}'.")
         return usuario
 
@@ -301,7 +301,8 @@ def exigir_qualquer_papel(*papeis: str):
     """
 
     def verificar(usuario: Usuario = Depends(usuario_atual)) -> Usuario:
-        if ATIVA and not any(usuario.tem_papel(p) for p in papeis):
+        atuais = _papeis_atuais(usuario) if ATIVA else usuario.papeis
+        if ATIVA and not any(p in atuais for p in papeis):
             raise HTTPException(403, f"Requer um destes papéis: {', '.join(papeis)}.")
         return usuario
 
@@ -330,7 +331,7 @@ def exigir_modulo(modulo: str):
             return usuario
         from . import perfis
 
-        if not perfis.pode(list(usuario.papeis), modulo):
+        if not perfis.pode(list(_papeis_atuais(usuario)), modulo):
             rotulo = next(
                 (m["rotulo"] for m in perfis.MODULOS if m["codigo"] == modulo), modulo
             )
@@ -338,6 +339,13 @@ def exigir_modulo(modulo: str):
         return usuario
 
     return verificar
+
+
+def _papeis_atuais(usuario: Usuario) -> tuple[str, ...]:
+    """Le o perfil atual no banco; o token prova identidade, nao permissao."""
+    from . import usuarios
+
+    return usuarios.papeis_ativos_de_email(usuario.email)
 
 
 def configuracao_publica() -> dict[str, Any]:

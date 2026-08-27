@@ -59,6 +59,7 @@ export async function MyAccountService(): Promise<SessaoUsuario | null> {
      * `/chamada/[sala]`), onde 401 é o estado esperado. Fetch direto deixa o
      * 401 ser apenas "não logado", sem efeito colateral. */
     const resposta = await fetch(urlApi("/api/user/my-account"), {
+      cache: "no-store",
       credentials: "include",
     });
     if (!resposta.ok) return null;

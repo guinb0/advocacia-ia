@@ -29,15 +29,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from . import rag
-from .auth import exigir_qualquer_papel
+from .auth import exigir_modulo
 
 log = logging.getLogger("dados")
 
 roteador = APIRouter(prefix="/api/dados", tags=["dados"])
 
-#: Quem audita o acervo. Advogado porque é ele quem lê a recomendação e precisa
-#: poder conferir de onde ela veio; secretário pela função de supervisão.
-PodeAuditar = Depends(exigir_qualquer_papel("advogado", "secretario"))
+# Quem audita o acervo e definido pela matriz relacional. O modulo `metricas`
+# cobre o panorama e estes detalhamentos de dados.
+PodeAuditar = Depends(exigir_modulo("metricas"))
 
 TEMPO_S = 30
 

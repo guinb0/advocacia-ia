@@ -27,7 +27,7 @@ interface Props {
   onVoltar: () => void;
 }
 
-const VAZIO = { nome: "", email: "", perfil: "advogado", senha: "" };
+const VAZIO = { nome: "", email: "", perfilId: 0, senha: "" };
 
 export default function Usuarios({ onVoltar }: Props) {
   const [perfis, setPerfis] = useState<Perfil[]>([]);
@@ -59,6 +59,13 @@ export default function Usuarios({ onVoltar }: Props) {
     void listarPerfis()
       .then((lista) => {
         setPerfis(lista);
+        const perfilInicial = lista.find((perfil) => perfil.codigo === "advogado") ?? lista[0];
+        setForm((atual) => ({
+          ...atual,
+          perfilId: lista.some((perfil) => perfil.id === atual.perfilId)
+            ? atual.perfilId
+            : (perfilInicial?.id ?? 0),
+        }));
         setErroPerfis(
           lista.length === 0 ? "Nenhum perfil cadastrado. Crie um em Perfis de acesso." : null,
         );
@@ -84,7 +91,8 @@ export default function Usuarios({ onVoltar }: Props) {
       // O e-mail é o login; dizê-lo de volta evita a dúvida de quem digitou
       // rápido e não sabe com o que a pessoa vai entrar.
       setFeito(`${novo.nome} cadastrado. Entra com ${novo.usuario}.`);
-      setForm(VAZIO);
+      const perfilInicial = perfis.find((perfil) => perfil.codigo === "advogado") ?? perfis[0];
+      setForm({ ...VAZIO, perfilId: perfilInicial?.id ?? 0 });
       await recarregar();
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : "Não foi possível cadastrar.");
@@ -93,7 +101,8 @@ export default function Usuarios({ onVoltar }: Props) {
     }
   }
 
-  const descricaoPerfil = perfis.find((p) => p.codigo === form.perfil)?.descricao;
+  const perfilSelecionado = perfis.find((p) => p.id === form.perfilId);
+  const descricaoPerfil = perfilSelecionado?.descricao;
 
   return (
     <div className="max-w-[1080px] mx-auto px-4 sm:px-5 pt-6 pb-16">
@@ -150,13 +159,13 @@ export default function Usuarios({ onVoltar }: Props) {
                 * em `ModelosDePeticao`. */}
               <select
                 className="w-full px-[11px] py-[9px] border border-borda-forte rounded-[7px] [font:inherit] bg-papel text-tinta [&>option]:bg-papel [&>option]:text-tinta focus:[outline:2px_solid_var(--foco)] focus:outline-offset-[1px] disabled:text-tinta-3"
-                value={form.perfil}
-                onChange={(e) => setForm({ ...form, perfil: e.target.value })}
+                value={form.perfilId || ""}
+                onChange={(e) => setForm({ ...form, perfilId: Number(e.target.value) })}
                 disabled={perfis.length === 0}
               >
                 {perfis.length === 0 && <option value="">— nenhum perfil disponível —</option>}
                 {perfis.map((p) => (
-                  <option key={p.codigo} value={p.codigo}>
+                  <option key={p.id} value={p.id}>
                     {p.rotulo}
                   </option>
                 ))}
@@ -189,7 +198,7 @@ export default function Usuarios({ onVoltar }: Props) {
             <button
               type="submit"
               className="inline-flex items-center justify-center gap-2 min-h-10 px-4 py-[9px] border border-transparent rounded-campo bg-transparent font-ui text-sm font-semibold text-tinta-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={salvando}
+              disabled={salvando || !perfilSelecionado}
             >
               {salvando ? "Cadastrando…" : "Cadastrar usuário"}
             </button>
@@ -207,7 +216,7 @@ export default function Usuarios({ onVoltar }: Props) {
           {/* O perfil Cliente existe, mas o caminho do cliente é o portal do
             * caso, com a senha dele. Dizer isto aqui evita cadastrar cliente
             * achando que é assim que ele acompanha o processo. */}
-          {form.perfil === "cliente" && (
+          {perfilSelecionado?.codigo === "cliente" && (
             <Aviso tom="atencao" titulo="Antes de cadastrar um cliente">
               O cliente acompanha o caso pelo <strong>portal</strong>, com o link e a
               senha do próprio caso — não precisa de conta aqui. Uma conta com perfil
