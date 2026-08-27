@@ -50,6 +50,9 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
   const [copiado, setCopiado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [retorno, setRetorno] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
+  // O link já foi mandado antes: em vez de deixar a mensagem num beco sem saída,
+  // abre a opção de reenviar quando o atendente pede, com o cliente na chamada.
+  const [jaEnviado, setJaEnviado] = useState(false);
 
   async function copiar() {
     await navigator.clipboard.writeText(`${MENSAGEM}${LINK_AVALIACAO}`);
@@ -57,19 +60,20 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
     window.setTimeout(() => setCopiado(false), 2500);
   }
 
-  async function enviar() {
+  async function enviar(forcar = false) {
     setEnviando(true);
     setRetorno(null);
     try {
-      const resultado = await enviarAvaliacaoGoogle(telefone);
-      setRetorno({
-        tom: "ok",
-        // O servidor deduplica pelo número: apertar duas vezes não manda duas
-        // mensagens, e dizer isso evita que alguém insista achando que falhou.
-        texto: resultado.ja_enviado
-          ? "O link já tinha sido enviado para este cliente."
-          : "Link enviado para o WhatsApp do cliente.",
-      });
+      const resultado = await enviarAvaliacaoGoogle(telefone, forcar);
+      // `ja_enviado` só volta quando NÃO se forçou: um reenvio deliberado passa
+      // pela dedup e cai no ramo "enviado", limpando a oferta de reenvio.
+      if (resultado.ja_enviado) {
+        setJaEnviado(true);
+        setRetorno({ tom: "ok", texto: "O link já tinha sido enviado para este cliente." });
+      } else {
+        setJaEnviado(false);
+        setRetorno({ tom: "ok", texto: "Link enviado para o WhatsApp do cliente." });
+      }
     } catch (e) {
       setRetorno({ tom: "erro", texto: e instanceof Error ? e.message : "Não foi possível enviar o link." });
     } finally {
@@ -119,7 +123,21 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
           </a>
         </div>
         {!telefone.trim() && <p className="mt-2 text-xs text-atencao">Informe o telefone do cliente antes de enviar.</p>}
-        {retorno && <p className={`mt-2 text-xs ${retorno.tom === "ok" ? "text-ok" : "text-critico"}`}>{retorno.texto}</p>}
+        {retorno && (
+          <div className="mt-2 flex items-center flex-wrap gap-x-3 gap-y-1">
+            <p className={`m-0 text-xs ${retorno.tom === "ok" ? "text-ok" : "text-critico"}`}>{retorno.texto}</p>
+            {jaEnviado && (
+              <button
+                type="button"
+                className={DISCRETO}
+                disabled={enviando || !telefone.trim()}
+                onClick={() => void enviar(true)}
+              >
+                {enviando ? "Reenviando…" : "Enviar novamente"}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* A marcação do atendente.
           *
