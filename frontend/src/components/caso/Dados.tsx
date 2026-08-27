@@ -289,7 +289,7 @@ export default function Dados({ onVoltar }: Props) {
   }
 
   return (
-    <div className="max-w-[1280px] mx-auto px-5 pt-6 pb-16">
+    <div className="min-w-0">
       <Botao variante="secundario" onClick={onVoltar}>
         ← Voltar para a carteira
       </Botao>
@@ -405,7 +405,7 @@ export default function Dados({ onVoltar }: Props) {
             metadados que carrega.
           </p>
 
-          <div className="grid grid-cols-[300px_minmax(0,1fr)] max-[940px]:grid-cols-1 gap-6 items-start">
+          <div className="grid min-w-0 grid-cols-[minmax(min(100%,260px),300px)_minmax(0,1fr)] items-start gap-6 max-[940px]:grid-cols-1">
             <div className="border border-borda-forte rounded-[10px] p-4 bg-papel max-h-[78vh] overflow-y-auto">
               <Grupo
                 titulo="Origem"
