@@ -105,7 +105,7 @@ export default function Usuarios({ onVoltar }: Props) {
   const descricaoPerfil = perfilSelecionado?.descricao;
 
   return (
-    <div className="max-w-[1080px] mx-auto px-4 sm:px-5 pt-6 pb-16">
+    <div className="min-w-0">
       <Botao variante="secundario" onClick={onVoltar}>
         ← Voltar para a carteira
       </Botao>
@@ -118,7 +118,7 @@ export default function Usuarios({ onVoltar }: Props) {
         </p>
       </header>
 
-      <div className="grid grid-cols-[minmax(320px,420px)_1fr] max-[860px]:grid-cols-1 gap-7 items-start">
+      <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),420px)_minmax(0,1fr)] items-start gap-7 max-[860px]:grid-cols-1">
         <section className="border border-borda-forte rounded-[10px] p-[18px] bg-papel">
           <h2 className="mb-4 mt-0 text-base uppercase tracking-[0.04em] text-tinta-3">Cadastrar</h2>
           <form onSubmit={enviar}>

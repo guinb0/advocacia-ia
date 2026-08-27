@@ -196,7 +196,7 @@ export default function Panorama({ onVoltar, onAbrirCaso }: Props) {
           <Movimento movimento={dados.movimento} />
           <Categorias categorias={dados.categorias} />
           <Parados parados={dados.parados} onAbrirCaso={onAbrirCaso} />
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-[22px]">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] gap-[22px]">
             <Equipe equipe={dados.equipe} />
             <Qualidade qualidade={dados.qualidade} />
           </div>
