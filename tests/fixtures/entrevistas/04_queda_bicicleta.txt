@@ -1,0 +1,30 @@
+Entrevistador: Vamos começar. Qual a função?
+Entrevistado: Carteiro ciclista.
+Entrevistador: Tempo nos Correios?
+Entrevistado: Três anos.
+Entrevistador: Ainda está na empresa?
+Entrevistado: Sim, trabalho ainda.
+Entrevistador: Sofreu acidente de trabalho?
+Entrevistado: Sim. Em março de 2025, por volta das nove da manhã, eu caí da bicicleta na rua das Flores durante a entrega. A roda travou no buraco.
+Entrevistador: O que você estava fazendo?
+Entrevistado: Estava entregando encomendas na rota.
+Entrevistador: Havia colegas?
+Entrevistado: Não, eu estava sozinho.
+Entrevistador: Comunicou o superior?
+Entrevistado: Sim, liguei pro encarregado na hora. A empresa mandou eu ir no pronto-socorro.
+Entrevistador: Foi emitida a CAT?
+Entrevistado: Sim.
+Entrevistador: Recebeu atendimento no mesmo dia?
+Entrevistado: Sim, no mesmo dia. Ficaram de observação, coloquei gesso no braço por seis semanas. Não fiquei internado.
+Entrevistador: Tem laudos e exames?
+Entrevistado: Sim.
+Entrevistador: Foi afastado pelo INSS?
+Entrevistado: Sim, por dois meses.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Doença ocupacional?
+Entrevistado: Não.
+Entrevistador: Acidente fora do trabalho com sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já ajuizou ação contra os Correios?
+Entrevistado: Não.

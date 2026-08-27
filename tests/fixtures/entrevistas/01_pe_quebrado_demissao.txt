@@ -1,0 +1,30 @@
+Entrevistador: Bom dia. Como é o seu nome?
+Entrevistado: Meu nome é Guilherme Bezerra.
+Entrevistador: Qual o estado e o município onde você reside?
+Entrevistado: Maranhão, Arari.
+Entrevistador: Há quanto tempo você trabalha nos Correios?
+Entrevistado: Trabalhei uns quatro anos.
+Entrevistador: Qual a sua função?
+Entrevistado: Carteiro pedestre. Carteiro pedestre.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Não, na verdade eu fui demitido essa semana. Tive uma briga com os chefes, aí eles me demitiram por uma causa que eu não entendi.
+Entrevistador: Você sofreu algum acidente de trabalho?
+Entrevistado: Sim. Eu machuquei o pé, quebrei meu pé por conta do trabalho. Eu estava na rua fazendo entrega a pé, pisei mal num buraco da calçada e torci forte. Por eu ter quebrado o pé, eu não conseguia exercer a minha função por umas duas semanas, porque eu não conseguia andar direito, não conseguia pegar a moto.
+Entrevistador: O que exatamente aconteceu, passo a passo?
+Entrevistado: Estava entregando cartas, pisei no buraco, caí e quebrei o pé.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Sofri um assalto, mas não foi dentro do trabalho em si. Eu tava com o uniforme dos Correios, mas eu tava voltando pra casa. Eu não sei se isso conta como durante o trabalho.
+Entrevistador: O assalto ocorreu durante a jornada de trabalho?
+Entrevistado: Não.
+Entrevistador: Tem acesso às CATs?
+Entrevistado: Não tenho acesso. Não emitiram.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios?
+Entrevistado: Não, ainda não entrei, mas tô querendo entrar porque acho muito injusto.
+Entrevistador: Ainda trabalha na empresa, sobre o assalto?
+Entrevistado: Não.
+Entrevistador: Já ingressou com ação judicial relacionada a esse assalto?
+Entrevistado: Não.
