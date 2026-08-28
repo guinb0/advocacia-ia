@@ -20,7 +20,7 @@ from . import casos as casos_ocr
 log = logging.getLogger("peticao_local")
 
 ID_LOCAL = "local"
-DOCX_STYLE_VERSION = 2
+DOCX_STYLE_VERSION = 3
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
@@ -30,7 +30,6 @@ SECOES_PADRAO = (
     ("EVIDENCE", "Das provas"),
     ("VALUE", "Do valor da causa"),
     ("CLOSING", "Fechamento"),
-    ("JURIMETRY", "Análise jurimétrica dos processos similares"),
 )
 
 
@@ -440,16 +439,7 @@ Cada content deve conter parágrafos separados por linha em branco.""",
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
-    jurimetria, texto_jurimetria = _analisar_jurimetria_da_minuta(secoes)
-    for secao in secoes:
-        if secao["code"] == "JURIMETRY":
-            secao["content"] = texto_jurimetria
-            secao["cited_precedent_ids"] = [
-                str(item.get("indice"))
-                for item in jurimetria.get("precedentes") or []
-                if item.get("indice")
-            ]
-            break
+    jurimetria, _ = _analisar_jurimetria_da_minuta(secoes)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     agora = _agora()
     anterior = carregar(caso_id) or {}
@@ -489,7 +479,12 @@ def salvar_secoes(caso_id: str, secoes: list[dict[str, str]]) -> dict[str, Any]:
     if not dados:
         raise ErroPeticao("Nenhuma petição gerada para este caso.")
     por_codigo = {s["code"]: s.get("content", "") for s in secoes if s.get("code")}
-    for secao in dados.get("sections") or []:
+    dados["sections"] = [
+        secao
+        for secao in dados.get("sections") or []
+        if secao.get("code") != "JURIMETRY"
+    ]
+    for secao in dados["sections"]:
         if secao["code"] in por_codigo:
             secao["content"] = por_codigo[secao["code"]]
     return _salvar(caso_id, dados)
@@ -516,7 +511,11 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "blocking_findings": dados.get("blocking_findings", 0),
         "model": dados.get("model"),
         "created_at": dados.get("created_at", _agora()),
-        "sections": dados.get("sections") or [],
+        "sections": [
+            secao
+            for secao in dados.get("sections") or []
+            if secao.get("code") != "JURIMETRY"
+        ],
     }
 
 
@@ -568,6 +567,8 @@ def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     corpo: list[str] = []
     for secao in secoes:
+        if secao.get("code") == "JURIMETRY":
+            continue
         rotulo = str(secao.get("label") or secao.get("code") or "").strip()
         conteudo = str(secao.get("content") or "").strip()
         if rotulo and secao.get("code") not in ("HEADING",):
