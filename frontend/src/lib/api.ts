@@ -39,12 +39,17 @@ import type {
  */
 /* Mesma regra do `global/services/api.ts`, e pelo mesmo motivo: a API precisa
  * ficar no host da página, senão o cookie de sessão não alcança o `proxy.ts` e o
- * login entra em laço. O default acompanha de onde o app foi aberto. */
+ * login entra em laço. O default acompanha de onde o app foi aberto — `origin`
+ * inteiro, protocolo E porta.
+ *
+ * NÃO cravar `:8100` aqui. Em produção o backend fica atrás de um proxy na 443 e
+ * a porta 8100 não é publicada: `https://host:8100` vira `ERR_CONNECTION_REFUSED`
+ * em todas as telas que usam este cliente. Em desenvolvimento, quando o front
+ * roda numa porta diferente do backend, defina `NEXT_PUBLIC_OCR_API`
+ * (ou `OCR_API_PUBLIC_URL`, que o `iniciar.sh`/`iniciar.ps1` propagam). */
 const BASE =
   process.env.NEXT_PUBLIC_OCR_API ||
-  (typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8100`
-    : "http://localhost:8100");
+  (typeof window !== "undefined" ? window.location.origin : "http://localhost:8100");
 
 /** Monta a URL absoluta da API a partir de um caminho tipo "/api/temp/x.json". */
 export function urlApi(caminho: string): string {
