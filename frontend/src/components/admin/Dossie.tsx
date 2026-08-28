@@ -43,8 +43,6 @@ import {
   decidirEstrategia,
   decidirHipotese,
   decidirPeticao,
-  gerarEstrategia,
-  gerarPeticao,
   lerEntrevistaNoAgente,
   pesquisarNoAgente,
   progressoPeticao,
@@ -270,8 +268,6 @@ export default function Dossie({
     esperadas: number;
     passos: number;
   } | null>(null);
-  /** Versão da estratégia antes do pedido — polling até subir ou estourar o prazo. */
-  const [estrategiaEmCurso, setEstrategiaEmCurso] = useState<number | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [camposFaltandoContrato, setCamposFaltandoContrato] = useState<string[] | null>(null);
   /* Começa recolhido: o dossiê é o que o advogado veio ver, e abrir por cima dele uma
@@ -415,37 +411,6 @@ export default function Dossie({
     };
   }, [casoId, ultimaPesquisa]);
 
-  const versaoEstrategia = dados?.agente.estrategia?.version ?? 0;
-
-  useEffect(() => {
-    if (estrategiaEmCurso === null) return;
-    let ativo = true;
-    const limite = Date.now() + 11 * 60 * 1000;
-
-    const timer = setInterval(() => {
-      void carregar();
-      if (ativo && Date.now() > limite) {
-        setEstrategiaEmCurso(null);
-        setErro(
-          "A estratégia passou do prazo do agente sem aparecer. Verifique o worker de estratégia antes de pedir outra.",
-        );
-      }
-    }, 3000);
-
-    return () => {
-      ativo = false;
-      clearInterval(timer);
-    };
-  }, [estrategiaEmCurso, carregar]);
-
-  useEffect(() => {
-    if (estrategiaEmCurso === null) return;
-    if (versaoEstrategia > estrategiaEmCurso) {
-      setEstrategiaEmCurso(null);
-      setAviso("Estratégia proposta — revise as teses abaixo e aprove se concordar.");
-    }
-  }, [versaoEstrategia, estrategiaEmCurso]);
-
   async function executar(nome: string, acao: () => Promise<unknown>, mensagem: string) {
     setOcupado(nome);
     setAviso(null);
@@ -455,58 +420,6 @@ export default function Dossie({
       await carregar();
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "A ação não pôde ser concluída.");
-    } finally {
-      setOcupado(null);
-    }
-  }
-
-  /* A petição tem caminho próprio, e não o `executar` das demais ações: as outras
-   * terminam quando o pedido é aceito, esta só termina quando a peça existe. É a diferença
-   * entre "enfileirada" e "pronta", e era ela que o aviso antigo apagava. */
-  async function pedirEstrategia() {
-    const versaoAntes = dados?.agente.estrategia?.version ?? 0;
-    setOcupado("estrategia");
-    setAviso("Preparando classificação, pesquisa e estratégia…");
-    setErro(null);
-    try {
-      if (dados?.agente.ultimo_erro) {
-        await sincronizarComAgente(casoId);
-      }
-      await gerarEstrategia(casoId);
-      setEstrategiaEmCurso(versaoAntes);
-      setAviso(
-        "Estratégia enfileirada. O worker classifica, pesquisa jurisprudência e propõe as teses — aparecem aqui quando terminar.",
-      );
-    } catch (falha) {
-      setErro(falha instanceof Error ? falha.message : "Não foi possível propor a estratégia.");
-    } finally {
-      setOcupado(null);
-    }
-  }
-
-  async function pedirPeticao() {
-    setOcupado("peticao");
-    setAviso("Preparando classificação, pesquisa e redação…");
-    setErro(null);
-    try {
-      if (dados?.agente.ultimo_erro) {
-        await sincronizarComAgente(casoId);
-      }
-      const pedido = await gerarPeticao(casoId);
-      setAviso(
-        pedido.preparo?.pesquisa
-          ? "Pesquisa pronta. Quando terminar, a petição baixa sozinha em .docx."
-          : "Petição enfileirada. Quando ficar pronta, o .docx baixa automaticamente.",
-      );
-      setRedacao({
-        desde: pedido.requested_at,
-        // Piso, não previsão: seção com subtítulos vira mais de uma chamada de modelo. A
-        // barra respeita isso e não fecha por contagem — só quando a peça aparece.
-        esperadas: Math.max(1, pedido.expected_sections + 1),
-        passos: 0,
-      });
-    } catch (falha) {
-      setErro(falha instanceof Error ? falha.message : "Não foi possível gerar a petição.");
     } finally {
       setOcupado(null);
     }
@@ -991,7 +904,7 @@ export default function Dossie({
           <PainelEstrategia
             estrategia={agente.estrategia}
             disponivel={agente.disponivel}
-            gerando={estrategiaEmCurso !== null}
+            gerando={false}
             ocupado={ocupado !== null}
             onDecidirEstrategia={(aprovada) =>
               executar(
