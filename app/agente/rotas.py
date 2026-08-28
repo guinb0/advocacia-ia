@@ -19,7 +19,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, 
 from fastapi.responses import Response
 
 from .. import armazenamento, auth, contrato
-from . import conversas, dossie, espelho
+from . import conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
 from .config import config
 
@@ -330,7 +330,10 @@ def gerar_estrategia(caso_id: str) -> dict[str, Any]:
     """Propõe as teses do caso, com o que sustenta e o que enfraquece cada uma."""
     caso_ref = _caso_ref(caso_id)
     try:
-        return Cliente().gerar_estrategia(caso_ref)
+        preparo = espelho.garantir_preparo_juridico(caso_id)
+        resposta = Cliente().gerar_estrategia(caso_ref)
+        resposta["preparo"] = preparo
+        return resposta
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -368,15 +371,46 @@ def decidir_hipotese(
 
 
 @roteador.post("/casos/{caso_id}/peticao", status_code=status.HTTP_202_ACCEPTED)
-def gerar_peticao(caso_id: str) -> dict[str, Any]:
-    """Dispara a minuta da petição inicial no agente.
+def gerar_peticao(caso_id: str, opcao: int = 0) -> dict[str, Any]:
+    """Gera petição a partir da entrevista, com embeddings de style e de documentos.
 
-    Responde 202 e a peça aparece no dossiê quando ficar pronta: são várias chamadas de
-    modelo, uma por seção, e prender a tela do advogado nisso é o que o Fast Path proíbe.
+    Fluxo: transcrição → análise resumida → duas estratégias → redação no modelo
+    treinado em Modelos de Petição. Use as rotas `/peticao-fluxo/*` para passo a passo.
     """
-    caso_ref = _caso_ref(caso_id)
     try:
-        return Cliente().gerar_peticao(caso_ref)
+        return peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/peticao-fluxo")
+def estado_peticao_fluxo(caso_id: str) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.estado(caso_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao-fluxo/analise")
+def analisar_peticao_fluxo(caso_id: str) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.analisar_entrevista(caso_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao-fluxo/estrategias")
+def estrategias_peticao_fluxo(caso_id: str) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.propor_estrategias(caso_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao-fluxo/gerar", status_code=status.HTTP_202_ACCEPTED)
+def gerar_peticao_fluxo(caso_id: str, opcao: int = 0) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -462,6 +496,19 @@ def decidir_peticao(
         return Cliente().decidir_peticao(
             caso_ref, peca_ref, aprovada=aprovada, nota=nota, secoes=secoes
         )
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.put("/casos/{caso_id}/peticao/{peca_ref}/rascunho")
+def salvar_rascunho_peticao(
+    caso_id: str,
+    peca_ref: str,
+    secoes: list[dict[str, str]] = Body(..., embed=True),
+) -> dict[str, Any]:
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().salvar_rascunho_peticao(caso_ref, peca_ref, secoes)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 

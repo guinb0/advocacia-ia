@@ -12,27 +12,52 @@ agente nunca escreve no SQLite daqui. Cada lado continua sendo dono do que produ
 O que atravessa a ponte:
 
 - **cliente e caso**, uma vez, na primeira sincronização;
-- **cada extração do OCR**, assim que a leitura termina, com o id da entrega como
-  chave de idempotência — reenviar não duplica documento;
+- **cada extração do OCR**, assim que a leitura termina, com chave
+  `entrega_id:hash_da_extracao` como idempotência — reprocessar o OCR reenvia com
+  payload novo; repetir o mesmo payload não duplica documento;
 - **a qualificação do contrato**, que não vira fato: ela é conferida contra os fatos
   que o agente já apurou, e a divergência é mostrada ao advogado antes da assinatura.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
 import time
 import unicodedata
 from copy import deepcopy
+from datetime import datetime, timezone
+from threading import Lock
 from typing import Any
 
-from .. import armazenamento, extractors
+from .. import armazenamento, banco, extractors
 from . import vocabulario
-from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente
+from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente, caso_ref_valido
 
 log = logging.getLogger("agente")
+
+# Abrir/atualizar o dossiê pode chamar a sincronização várias vezes em poucos
+# segundos. A fila do agente é idempotente para documentos, mas não para todos os
+# jobs jurídicos; esta janela impede enfileirar a mesma etapa a cada refresh.
+_RETOMADA_TTL_S = 120.0
+_retomadas_recentes: dict[str, float] = {}
+_retomadas_lock = Lock()
+
+# A abertura do dossiê dispara leituras paralelas. Sem serializar a recuperação,
+# duas requisições podem observar o mesmo vínculo órfão, criar casos diferentes e
+# sobrescrever `caso_ref` uma depois da outra. Documentos e geração acabam então
+# enviados ao identificador que perdeu a corrida.
+_vinculos_locks: dict[str, Lock] = {}
+_vinculos_locks_guard = Lock()
+
+# Depois de criar ou revincular, o agente pode levar alguns segundos para o caso
+# aparecer na leitura (réplica, pooler, commit). Recriar nessa janela gerava um caso
+# novo a cada requisição — o sintoma do `diag_pipeline` com três `case_ref` em 30s.
+_VINCULO_CONFIANCA_S = 90.0
+_EXISTE_RETRY_S = 0.4
 
 __all__ = [
     "analisar_caso_inteiro",
@@ -58,7 +83,59 @@ def jurisdicao_padrao() -> str:
 # ---------------------------------------------------------------- vínculo
 
 
+def _instante_vinculo(vinculo: dict[str, Any]) -> float | None:
+    """Converte `atualizado_em`/`criado_em` do vínculo para epoch UTC."""
+    bruto = vinculo.get("atualizado_em") or vinculo.get("criado_em")
+    if not bruto:
+        return None
+    texto = str(bruto).replace("Z", "+00:00")
+    try:
+        instante = datetime.fromisoformat(texto)
+    except ValueError:
+        return None
+    if instante.tzinfo is None:
+        instante = instante.replace(tzinfo=timezone.utc)
+    return instante.timestamp()
+
+
+def _vinculo_recente(vinculo: dict[str, Any]) -> bool:
+    """Vínculo atualizado há pouco — ainda não recriar por um 404 isolado."""
+    if not caso_ref_valido(str(vinculo.get("caso_ref") or "")):
+        return False
+    ultimo_erro = str(vinculo.get("ultimo_erro") or "").casefold()
+    if "caso não encontrado" in ultimo_erro or "caso nao encontrado" in ultimo_erro:
+        # Um 404 já observado pelo próprio agente não é atraso de réplica. Sem esta
+        # distinção, registrar o erro renovava ``atualizado_em`` e o vínculo órfão ganhava
+        # mais 90 segundos de confiança a cada tentativa, ficando preso para sempre.
+        return False
+    instante = _instante_vinculo(vinculo)
+    if instante is None:
+        return False
+    return (time.time() - instante) < _VINCULO_CONFIANCA_S
+
+
+def _caso_existe_no_agente(cliente: Cliente, caso_ref: str) -> bool:
+    """Confere existência com uma segunda tentativa para visibilidade atrasada."""
+    try:
+        if cliente.caso_existe(caso_ref):
+            return True
+    except AgenteIndisponivel:
+        raise
+    time.sleep(_EXISTE_RETRY_S)
+    try:
+        return cliente.caso_existe(caso_ref)
+    except AgenteIndisponivel:
+        raise
+
+
 def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
+    with _vinculos_locks_guard:
+        lock = _vinculos_locks.setdefault(caso_id, Lock())
+    with lock:
+        return _garantir_caso(caso_id, jurisdicao=jurisdicao)
+
+
+def _garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
     """Devolve o vínculo com o agente, criando cliente e caso quando preciso.
 
     Idempotente pelo vínculo guardado aqui: um segundo clique em "enviar ao agente"
@@ -69,11 +146,54 @@ def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, A
     O vínculo sozinho não basta como prova: ele diz que o caso **foi** criado, não que
     ele ainda está lá. Por isso a existência é conferida do outro lado antes de ser
     reaproveitada.
+
+    **Serializado por caso.** Abrir o dossiê ou clicar em "gerar petição" dispara
+    vários pedidos ao Acervo quase juntos (dossiê + sincronizar + peticao-fluxo + um
+    `documents/received` por item do checklist). Sem trava, cada um lia o vínculo,
+    via o caso "sumido" e o recriava: o `caso_ref` pulava entre casos recém-criados,
+    a entrevista e os documentos caíam em casos diferentes, e nenhum ficava completo.
+    A trava (`sp_getapplock`, não `threading.Lock`, porque os workers Celery chamam
+    isto em outro processo) faz o primeiro recriar uma vez e os demais lerem o
+    vínculo já corrigido.
+    """
+    with banco.trava_recurso(f"agente:vinculo:{caso_id}", timeout_ms=30000) as travada:
+        if not travada:
+            log.warning(
+                "trava do vínculo do caso %s não obtida em 30s; seguindo sem serializar",
+                caso_id,
+            )
+        return _garantir_caso_sob_trava(caso_id, jurisdicao=jurisdicao)
+
+
+def _garantir_caso_sob_trava(
+    caso_id: str, *, jurisdicao: str | None = None
+) -> dict[str, Any]:
+    """Corpo de `garantir_caso`, já sob a trava por caso.
+
+    A releitura do vínculo aqui dentro é o que resolve a corrida: quem entrou depois
+    lê a gravação que o primeiro acabou de fazer, em vez de recriar de novo.
     """
     cliente = Cliente()
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
-    if vinculo and cliente.caso_existe(vinculo["caso_ref"]):
-        return vinculo
+    if vinculo:
+        existe = _caso_existe_no_agente(cliente, vinculo["caso_ref"])
+        log.info(
+            "diagnostico vinculo agente caso_id=%s case_ref=%s existe=%s enviados=%s",
+            caso_id,
+            vinculo["caso_ref"],
+            existe,
+            len(vinculo.get("enviados") or []),
+        )
+        if existe:
+            return vinculo
+        if _vinculo_recente(vinculo):
+            log.warning(
+                "vínculo recente do caso %s (%s): agente ainda não confirma existência; "
+                "reutilizando sem recriar",
+                caso_id,
+                vinculo["caso_ref"],
+            )
+            return vinculo
 
     if vinculo:
         # Vínculo órfão: o caso existiu e não existe mais. Aconteceu de verdade na
@@ -115,6 +235,23 @@ def _titulo(caso: dict[str, Any]) -> str:
 # -------------------------------------------------------------- documentos
 
 
+def _assinatura_extracao(extracao: dict[str, Any]) -> str:
+    """Hash curto do JSON de extração — muda quando o OCR reprocessa o arquivo."""
+    bruto = json.dumps(extracao, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(bruto.encode()).hexdigest()[:12]
+
+
+def _chave_envio(entrega_id: str, extracao: dict[str, Any]) -> str:
+    """Idempotência por versão da extração, não só pelo id da entrega."""
+    return f"{entrega_id}:{_assinatura_extracao(extracao)}"
+
+
+def _envio_registrado(vinculo: dict[str, Any], entrega_id: str, extracao: dict[str, Any]) -> bool:
+    chave = _chave_envio(entrega_id, extracao)
+    enviados = vinculo.get("enviados") or []
+    return chave in enviados
+
+
 def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) -> bool:
     """Entrega ao agente uma extração já concluída. Silencioso por design.
 
@@ -125,8 +262,6 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
     if vinculo is None:
         return False
-    if entrega_id in vinculo["enviados"]:
-        return True
 
     entrega = armazenamento.obter_entrega(entrega_id)
     if entrega is None or not entrega.get("extracao"):
@@ -136,15 +271,20 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
         # fato; mandar assim faria o agente registrar documento sem campo nenhum.
         return False
 
+    chave = _chave_envio(entrega_id, entrega["extracao"])
+    if _envio_registrado(vinculo, entrega_id, entrega["extracao"]):
+        return True
+
     origem = f"ocr://entregas/{entrega_id}/{entrega.get('arquivo', '')}"
     tipo = str((entrega["extracao"].get("tipo") or {}).get("codigo") or "").strip()
+    evento_externo = chave
 
     try:
         cliente = Cliente()
         if tipo in extractors.ROTULOS_TIPO:
             cliente.enviar_extracao(
                 vinculo["caso_ref"],
-                evento_externo=entrega_id,
+                evento_externo=evento_externo,
                 origem=origem,
                 extracao=entrega["extracao"],
             )
@@ -165,7 +305,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
             generica["tipo"]["detectado"] = "desconhecido"
             cliente.enviar_extracao(
                 vinculo["caso_ref"],
-                evento_externo=entrega_id,
+                evento_externo=evento_externo,
                 origem=origem,
                 extracao=generica,
             )
@@ -197,7 +337,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
             raise
         return False
 
-    armazenamento.marcar_entrega_enviada(caso_id, entrega_id)
+    armazenamento.marcar_entrega_enviada(caso_id, chave)
     return True
 
 
@@ -208,10 +348,17 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     existir, chega ao agente com todos os seus documentos de uma vez.
     """
     vinculo = garantir_caso(caso_id, jurisdicao=jurisdicao)
+    log.info(
+        "diagnostico sincronizacao iniciada caso_id=%s case_ref=%s",
+        caso_id,
+        vinculo["caso_ref"],
+    )
     enviados, falhas = 0, 0
 
     for entrega in armazenamento.listar_entregas(caso_id):
-        if entrega["id"] in vinculo["enviados"] or entrega.get("status_proc") != "pronto":
+        if entrega.get("status_proc") != "pronto" or not entrega.get("extracao"):
+            continue
+        if _envio_registrado(vinculo, entrega["id"], entrega["extracao"]):
             continue
         if enviar_entrega(caso_id, entrega["id"]):
             enviados += 1
@@ -221,30 +368,137 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     # Entrevista ainda não lida do outro lado também sobe aqui. É o que devolve os fatos
     # relatados ao caso recriado: o revínculo as reabre, e sem este laço elas ficariam
     # marcadas como pendentes para sempre, porque nada mais as reenvia sozinho.
-    entrevistas = 0
+    entrevistas, falhas_entrevista = 0, 0
     for entrevista in armazenamento.listar_entrevistas(caso_id):
         if entrevista.get("enviada"):
             continue
         try:
-            enviar_entrevista(caso_id, entrevista["id"])
-            entrevistas += 1
+            resposta = enviar_entrevista(caso_id, entrevista["id"])
+            if resposta.get("failure"):
+                falhas_entrevista += 1
+                armazenamento.registrar_erro_agente(
+                    caso_id, f"Entrevista não lida: {resposta['failure']}"
+                )
+            else:
+                entrevistas += 1
         except ErroDoAgente as erro:
             # Uma entrevista que não sobe não derruba a sincronização: os documentos já
             # foram, e a tela precisa abrir com o que existe.
             log.warning("entrevista %s não foi enviada: %s", entrevista["id"], erro)
+            armazenamento.registrar_erro_agente(caso_id, f"Entrevista não lida: {erro}")
+            falhas_entrevista += 1
 
     atual = armazenamento.obter_vinculo_agente(caso_id) or vinculo
     declarados = declarar_itens_entregues(caso_id, atual["caso_ref"])
     qualificar_reclamante(atual["caso_ref"])
-    return {
+    # O fluxo de petição por entrevista não usa mais classificar → pesquisar → estratégia
+    # automáticos a cada sync — isso gerava 500 no agente e “Erro interno” na tela.
+    pipeline = "fluxo_entrevista"
+    if falhas == 0 and falhas_entrevista == 0:
+        # Um erro antigo não pode permanecer para sempre quando tudo que estava
+        # pendente já foi sincronizado (inclusive quando nenhum arquivo precisou ser
+        # reenviado nesta abertura).
+        armazenamento.registrar_erro_agente(caso_id, None)
+        atual = armazenamento.obter_vinculo_agente(caso_id) or atual
+    resultado = {
         "caso_ref": atual["caso_ref"],
         "cliente_ref": atual["cliente_ref"],
         "documentos_enviados": enviados,
         "documentos_com_falha": falhas,
         "entrevistas_enviadas": entrevistas,
+        "entrevistas_com_falha": falhas_entrevista,
         "itens_declarados": declarados,
+        "pipeline_juridico": pipeline,
         "ultimo_erro": atual.get("ultimo_erro"),
     }
+    log.info(
+        "diagnostico sincronizacao concluida caso_id=%s case_ref=%s docs_enviados=%s "
+        "docs_falha=%s entrevistas_enviadas=%s entrevistas_falha=%s pipeline=%s",
+        caso_id,
+        atual["caso_ref"],
+        enviados,
+        falhas,
+        entrevistas,
+        falhas_entrevista,
+        pipeline,
+    )
+    return resultado
+
+
+def _retomar_pipeline_juridico(caso_ref: str, *, caso_id: str | None = None) -> str:
+    """Enfileira a primeira etapa jurídica ausente de um caso já sincronizado.
+
+    Cada worker encadeia o seguinte no agente (análise -> pesquisa -> estratégia).
+    Casos antigos podem ter parado antes desse encadeamento existir; por isso o Acervo
+    retoma explicitamente a primeira lacuna sempre que o dossiê é aberto.
+    """
+    agora = time.monotonic()
+    with _retomadas_lock:
+        if _retomadas_recentes.get(caso_ref, 0.0) > agora - _RETOMADA_TTL_S:
+            return "aguardando"
+        _retomadas_recentes[caso_ref] = agora
+
+    cliente = Cliente()
+    try:
+        analise = cliente.analise(caso_ref)
+        log.info(
+            "diagnostico pipeline case_ref=%s etapa=classificacao quantidade=%s",
+            caso_ref,
+            len(analise.get("classifications") or []),
+        )
+        if not analise.get("classifications"):
+            cliente.analisar(caso_ref)
+            return "classificacao_enfileirada"
+
+        pesquisas = cliente.pesquisas(caso_ref).get("items", [])
+        recente = pesquisas[0] if pesquisas else None
+        log.info(
+            "diagnostico pipeline case_ref=%s etapa=jurisprudencia quantidade=%s status=%s",
+            caso_ref,
+            len(pesquisas),
+            recente.get("status") if recente else "AUSENTE",
+        )
+        if recente and recente.get("status") == "RUNNING":
+            return "jurisprudencia_em_andamento"
+        if not recente or recente.get("status") != "COMPLETED":
+            cliente.pesquisar(caso_ref)
+            return "jurisprudencia_enfileirada"
+
+        estrategia = cliente.estrategia(caso_ref)
+        log.info(
+            "diagnostico pipeline case_ref=%s etapa=estrategia existe=%s",
+            caso_ref,
+            estrategia is not None,
+        )
+        if estrategia is None:
+            gerar_estrategia = getattr(cliente, "gerar_estrategia", None)
+            if not callable(gerar_estrategia):
+                return "estrategia_indisponivel"
+            gerar_estrategia(caso_ref)
+            return "estrategia_enfileirada"
+        return "completo"
+    except ErroDoAgente as erro:
+        # Os documentos continuam disponíveis mesmo se o serviço jurídico oscilar.
+        # Retiramos a trava para permitir nova tentativa no próximo refresh.
+        with _retomadas_lock:
+            _retomadas_recentes.pop(caso_ref, None)
+        if erro.status == 404 and caso_id:
+            log.warning(
+                "pipeline do case_ref %s aponta para caso morto; revinculando %s",
+                caso_ref,
+                caso_id,
+            )
+            try:
+                novo = garantir_caso(caso_id)
+            except ErroDoAgente:
+                log.warning(
+                    "não foi possível retomar o pipeline do caso %s: %s", caso_ref, erro
+                )
+                return "indisponivel"
+            if novo["caso_ref"] != caso_ref:
+                return _retomar_pipeline_juridico(novo["caso_ref"], caso_id=caso_id)
+        log.warning("não foi possível retomar o pipeline do caso %s: %s", caso_ref, erro)
+        return "indisponivel"
 
 
 def caso_ref(caso_id: str) -> str:
@@ -332,7 +586,11 @@ def enviar_entrevista(caso_id: str, entrevista_id: str) -> dict[str, Any]:
     vinculo = garantir_caso(caso_id)
     resposta = Cliente().enviar_entrevista(
         vinculo["caso_ref"],
-        entrevista_id=entrevista_id,
+        # O agente pode recriar um caso depois de migração/restauração. O id local
+        # sozinho continuaria globalmente preso ao case_ref antigo e o novo caso receberia
+        # INTERVIEW_CASE_MISMATCH para sempre. Vincular a chave idempotente ao caso remoto
+        # permite a recuperação sem duplicar a entrevista dentro do mesmo caso.
+        entrevista_id=f"{vinculo['caso_ref']}:{entrevista_id}",
         transcricao=registro["texto"],
         realizada_em=registro["realizada_em"],
         entrevistador=registro["entrevistador"],
@@ -587,3 +845,65 @@ def analisar_caso_inteiro(caso_id: str) -> dict[str, Any]:
         ESPERA_ANALISE_S * TENTATIVAS_ANALISE,
     )
     return resultado
+
+
+def garantir_preparo_juridico(caso_id: str) -> dict[str, Any]:
+    """Sincroniza documentos e enfileira classificação/pesquisa quando faltam.
+
+    Usado antes de estratégia e petição: responde rápido e deixa a espera no worker.
+    """
+    vinculo = garantir_caso(caso_id)
+    caso_ref = vinculo["caso_ref"]
+    cliente = Cliente()
+
+    resultado: dict[str, Any] = {
+        "caso_ref": caso_ref,
+        "classificacao": False,
+        "pesquisa": False,
+    }
+
+    # Documentos novos ou reprocessados entram antes da classificação.
+    sincronizacao = sincronizar(caso_id)
+    retomada = str(sincronizacao.get("pipeline_juridico") or "")
+    qualificar_reclamante(caso_ref)
+
+    try:
+        analise = cliente.analise(caso_ref)
+    except ErroDoAgente:
+        analise = {}
+
+    if analise.get("classifications"):
+        resultado["classificacao"] = True
+        resultado["classificacoes"] = len(analise["classifications"])
+    else:
+        if retomada not in {"classificacao_enfileirada", "aguardando"}:
+            cliente.analisar(caso_ref)
+        resultado["analise_enfileirada"] = True
+
+    try:
+        pesquisas = cliente.pesquisas(caso_ref).get("items", [])
+    except ErroDoAgente:
+        pesquisas = []
+
+    if pesquisas and pesquisas[0].get("status") == "COMPLETED":
+        resultado["pesquisa"] = True
+        return resultado
+
+    recente = pesquisas[0] if pesquisas else None
+    if recente and recente.get("status") == "RUNNING":
+        resultado["pesquisa_enfileirada"] = True
+        return resultado
+
+    if resultado.get("classificacao") and retomada not in {
+        "jurisprudencia_enfileirada",
+        "jurisprudencia_em_andamento",
+        "aguardando",
+    }:
+        cliente.pesquisar(caso_ref)
+    resultado["pesquisa_enfileirada"] = True
+    return resultado
+
+
+def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
+    """Alias de `garantir_preparo_juridico` — mantido para rotas e testes existentes."""
+    return garantir_preparo_juridico(caso_id)

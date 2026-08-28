@@ -7,6 +7,7 @@ import { useModelo } from "@/lib/useExtracao";
 import { Botao, Marcacao, Selo } from "@/components/ui/Basicos";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import VisorEntrega from "@/components/caso/VisorEntrega";
+import CorrigirItemDocumento from "@/components/caso/CorrigirItemDocumento";
 
 /* A lista não pré-visualiza nada: cada entrega aparece só como enviada, e o
  * arquivo abre no visor ao clique. Além de deixar o checklist limpo, isso evita
@@ -57,18 +58,24 @@ const APARENCIA = {
 
 interface Props {
   item: ItemSituacao;
+  itensChecklist: ItemSituacao[];
   enviando: boolean;
   onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
   onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
+  onReatribuir: (entregaId: string, itens: string[]) => Promise<void> | void;
+  dentroDoAtendimento?: boolean;
 }
 
 export default function ItemChecklistLinha({
   item,
+  itensChecklist,
   enviando,
   onEnviar,
   onRemover,
   onVincularIdentidade,
+  onReatribuir,
+  dentroDoAtendimento = false,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
@@ -220,6 +227,22 @@ export default function ItemChecklistLinha({
               <Botao variante="perigo" pequeno onClick={() => onRemover(entrega.id)}>
                 Remover
               </Botao>
+
+              {entrega.status_proc !== "na_fila" && entrega.status_proc !== "processando" && (
+                <CorrigirItemDocumento
+                  entregaId={entrega.id}
+                  itemAtual={item.codigo}
+                  itens={itensChecklist}
+                  onReatribuir={onReatribuir}
+                  expandidoPorPadrao={dentroDoAtendimento}
+                  destacar={
+                    dentroDoAtendimento
+                    || entrega.roteamento_origem === "deterministico"
+                    || entrega.tipo_confere === false
+                    || entrega.tipo_detectado === "ctps"
+                  }
+                />
+              )}
 
               {entrega.alertas.length > 0 && (
                 <ul className="[flex-basis:100%] list-none mt-[6px] p-0">

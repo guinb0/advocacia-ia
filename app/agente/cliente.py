@@ -375,15 +375,17 @@ class Cliente:
         Prazo do envio, e não o da tela: a leitura é uma chamada de modelo sobre um texto
         que pode ter dez páginas.
         """
+        payload: dict[str, Any] = {
+            "interview_id": entrevista_id,
+            "transcript": transcricao,
+            "interviewer": entrevistador,
+        }
+        if realizada_em:
+            payload["occurred_at"] = realizada_em
         return self._chamar(
             "POST",
             f"/api/v1/cases/{caso_ref}/interviews",
-            json={
-                "interview_id": entrevista_id,
-                "transcript": transcricao,
-                "occurred_at": realizada_em,
-                "interviewer": entrevistador,
-            },
+            json=payload,
             timeout=self._cfg.timeout_envio,
         )
 
@@ -565,13 +567,16 @@ class Cliente:
     def estrategia(self, caso_ref: str) -> dict[str, Any] | None:
         """A versão atual, ou `None` quando ainda não há nenhuma.
 
-        Ausência aqui é estado normal do caso, não erro: a estratégia só existe depois que
-        alguém a pede. Tratar 404 como falha faria a tela mostrar erro para um caso novo.
+        O agente novo devolve 204 sem estratégia. 404 aqui significa caso inexistente
+        e precisa subir para o dossiê recriar o vínculo — não confundir com ausência
+        de estratégia (agente antigo ainda respondia 404 nesse caso).
         """
         try:
             return self._ler(f"/api/v1/cases/{caso_ref}/strategy")
         except ErroDoAgente as erro:
-            if "não encontrada" in str(erro) or "Nenhuma estratégia" in str(erro):
+            if erro.status == 404 and "Caso não encontrado" in str(erro):
+                raise
+            if erro.status == 404:
                 return None
             raise
 
@@ -609,6 +614,36 @@ class Cliente:
             "POST",
             f"/api/v1/cases/{caso_ref}/generations",
             json={"document_type": "INITIAL_PETITION"},
+            timeout=self._cfg.timeout_envio,
+        )
+
+    def gerar_peticao_entrevista(
+        self,
+        caso_ref: str,
+        *,
+        interview_id: str,
+        transcript: str,
+        analysis_summary: str,
+        taxonomy_code: str,
+        strategy_title: str,
+        strategy_thesis: str,
+        strategy_claims: list[str] | None = None,
+        strategy_risks: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Petição pelo fluxo de entrevista — usa embeddings de style e de documentos."""
+        return self._chamar(
+            "POST",
+            f"/api/v1/cases/{caso_ref}/generations/interview-pipeline",
+            json={
+                "interview_id": interview_id,
+                "transcript": transcript,
+                "analysis_summary": analysis_summary,
+                "taxonomy_code": taxonomy_code,
+                "strategy_title": strategy_title,
+                "strategy_thesis": strategy_thesis,
+                "strategy_claims": strategy_claims or [],
+                "strategy_risks": strategy_risks or [],
+            },
             timeout=self._cfg.timeout_envio,
         )
 
@@ -676,6 +711,16 @@ class Cliente:
             corpo["sections"] = secoes
         return self._chamar(
             "PATCH", f"/api/v1/cases/{caso_ref}/generations/{peca_ref}", json=corpo
+        )
+
+    def salvar_rascunho_peticao(
+        self, caso_ref: str, peca_ref: str, secoes: list[dict[str, str]]
+    ) -> dict[str, Any]:
+        """Persiste a edição sem aprovar/rejeitar e preserva a versão gerada."""
+        return self._chamar(
+            "PUT",
+            f"/api/v1/cases/{caso_ref}/generations/{peca_ref}/draft",
+            json={"sections": secoes},
         )
 
     def taxonomia(self) -> dict[str, Any]:

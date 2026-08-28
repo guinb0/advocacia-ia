@@ -49,6 +49,8 @@ class ClienteFalso:
     erro: Exception | None = None
     casos_apagados: set[str] = set()
     """Casos que o agente diz não conhecer — como um banco recriado do zero."""
+    casos_invisiveis: set[str] = set()
+    """Casos criados mas ainda não visíveis na leitura — réplica ou pooler atrasado."""
 
     def __init__(self, *_args, **_kwargs) -> None:
         if ClienteFalso.erro is not None:
@@ -57,7 +59,11 @@ class ClienteFalso:
     def caso_existe(self, caso_ref):
         if not caso_ref_valido(caso_ref):
             return False
-        return caso_ref not in ClienteFalso.casos_apagados
+        if caso_ref in ClienteFalso.casos_apagados:
+            return False
+        if caso_ref in ClienteFalso.casos_invisiveis:
+            return False
+        return True
 
     def caso(self, _caso_ref):
         # Quem sincroniza qualifica a parte reclamante em seguida, e para isso lê o caso.
@@ -117,6 +123,36 @@ def main() -> int:
         "chamar de novo reaproveita o caso — não cria um segundo para o mesmo cliente",
     )
 
+    # Visibilidade atrasada: o caso foi criado mas a leitura ainda devolve 404. Sem a
+    # janela de confiança, cada `garantir_caso` recriaria outro caso — o loop do
+    # `diag_pipeline` em produção.
+    ClienteFalso.casos_invisiveis.add(vinculo["caso_ref"])
+    reutilizado = espelho.garantir_caso(caso_id)
+    checar(
+        reutilizado["caso_ref"] == vinculo["caso_ref"],
+        "vínculo recente não é trocado quando o agente ainda não confirma o caso",
+    )
+    checar(
+        ClienteFalso.casos_criados == 1,
+        "visibilidade atrasada não dispara recriação em loop",
+    )
+    ClienteFalso.casos_invisiveis.clear()
+
+    # Um 404 confirmado não pode ganhar uma nova janela de confiança só porque o erro
+    # foi salvo. Esse era o loop em que "Sincronizar" renovava o vínculo morto para sempre.
+    confirmado_morto = armazenamento.criar_caso(
+        "Vinculo Morto Confirmado", "acidente_trabalho_geral"
+    )["id"]
+    morto_antes = espelho.garantir_caso(confirmado_morto)
+    ClienteFalso.casos_apagados.add(morto_antes["caso_ref"])
+    armazenamento.registrar_erro_agente(confirmado_morto, "Caso não encontrado.")
+    morto_depois = espelho.garantir_caso(confirmado_morto)
+    checar(
+        morto_depois["caso_ref"] != morto_antes["caso_ref"],
+        "404 confirmado invalida a confiança e recria o vínculo imediatamente",
+    )
+    ClienteFalso.casos_apagados.clear()
+
     # Vínculo órfão, num caso à parte para não mexer no que as seções seguintes usam: o
     # caso existiu e sumiu do outro lado (banco recriado, migração). Sem a conferência, o
     # vínculo continuaria apontando para o nada e o dossiê abriria vazio para sempre — foi
@@ -124,6 +160,7 @@ def main() -> int:
     orfao = armazenamento.criar_caso("Jose Orfao", "acidente_trabalho_geral")["id"]
     antes = espelho.garantir_caso(orfao)
     ClienteFalso.casos_apagados.add(antes["caso_ref"])
+    armazenamento.registrar_erro_agente(orfao, "Caso não encontrado.")
     depois = espelho.garantir_caso(orfao)
     checar(
         depois["caso_ref"] != antes["caso_ref"],
@@ -156,9 +193,11 @@ def main() -> int:
 
     armazenamento.concluir_entrega(entrega["id"], extracao_falsa(), True, ["DOC.01"])
     checar(espelho.enviar_entrega(caso_id, entrega["id"]), "entrega pronta é enviada")
+    entrega_db = armazenamento.obter_entrega(entrega["id"])
+    chave = espelho._chave_envio(entrega["id"], entrega_db["extracao"])
     checar(
-        ClienteFalso.enviados == [("case_01J00000000000000000000001", entrega["id"])],
-        "o id da entrega vai como chave de idempotência",
+        ClienteFalso.enviados == [("case_01J00000000000000000000001", chave)],
+        "entrega_id:hash da extração vai como chave de idempotência",
     )
 
     espelho.enviar_entrega(caso_id, entrega["id"])
@@ -188,8 +227,10 @@ def main() -> int:
     checar(not espelho.enviar_entrega(caso_id, entrega2["id"]), "o envio falha sem estourar")
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
     checar(bool(vinculo["ultimo_erro"]), "o motivo fica registrado no vínculo")
+    entrega2_db = armazenamento.obter_entrega(entrega2["id"])
+    chave2 = espelho._chave_envio(entrega2["id"], entrega2_db["extracao"])
     checar(
-        entrega2["id"] not in vinculo["enviados"],
+        chave2 not in vinculo["enviados"],
         "a entrega continua pendente de envio — não é dada como entregue",
     )
 
@@ -517,4 +558,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
