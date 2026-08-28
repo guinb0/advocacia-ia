@@ -422,7 +422,11 @@ def enviar_entrevista(caso_id: str, entrevista_id: str) -> dict[str, Any]:
     vinculo = garantir_caso(caso_id)
     resposta = Cliente().enviar_entrevista(
         vinculo["caso_ref"],
-        entrevista_id=entrevista_id,
+        # O agente pode recriar um caso depois de migração/restauração. O id local
+        # sozinho continuaria globalmente preso ao case_ref antigo e o novo caso receberia
+        # INTERVIEW_CASE_MISMATCH para sempre. Vincular a chave idempotente ao caso remoto
+        # permite a recuperação sem duplicar a entrevista dentro do mesmo caso.
+        entrevista_id=f"{vinculo['caso_ref']}:{entrevista_id}",
         transcricao=registro["texto"],
         realizada_em=registro["realizada_em"],
         entrevistador=registro["entrevistador"],
