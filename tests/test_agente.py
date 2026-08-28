@@ -49,6 +49,8 @@ class ClienteFalso:
     erro: Exception | None = None
     casos_apagados: set[str] = set()
     """Casos que o agente diz não conhecer — como um banco recriado do zero."""
+    casos_invisiveis: set[str] = set()
+    """Casos criados mas ainda não visíveis na leitura — réplica ou pooler atrasado."""
 
     def __init__(self, *_args, **_kwargs) -> None:
         if ClienteFalso.erro is not None:
@@ -57,7 +59,11 @@ class ClienteFalso:
     def caso_existe(self, caso_ref):
         if not caso_ref_valido(caso_ref):
             return False
-        return caso_ref not in ClienteFalso.casos_apagados
+        if caso_ref in ClienteFalso.casos_apagados:
+            return False
+        if caso_ref in ClienteFalso.casos_invisiveis:
+            return False
+        return True
 
     def caso(self, _caso_ref):
         # Quem sincroniza qualifica a parte reclamante em seguida, e para isso lê o caso.
@@ -116,6 +122,21 @@ def main() -> int:
         ClienteFalso.casos_criados == 1,
         "chamar de novo reaproveita o caso — não cria um segundo para o mesmo cliente",
     )
+
+    # Visibilidade atrasada: o caso foi criado mas a leitura ainda devolve 404. Sem a
+    # janela de confiança, cada `garantir_caso` recriaria outro caso — o loop do
+    # `diag_pipeline` em produção.
+    ClienteFalso.casos_invisiveis.add(vinculo["caso_ref"])
+    reutilizado = espelho.garantir_caso(caso_id)
+    checar(
+        reutilizado["caso_ref"] == vinculo["caso_ref"],
+        "vínculo recente não é trocado quando o agente ainda não confirma o caso",
+    )
+    checar(
+        ClienteFalso.casos_criados == 1,
+        "visibilidade atrasada não dispara recriação em loop",
+    )
+    ClienteFalso.casos_invisiveis.clear()
 
     # Vínculo órfão, num caso à parte para não mexer no que as seções seguintes usam: o
     # caso existiu e sumiu do outro lado (banco recriado, migração). Sem a conferência, o

@@ -29,6 +29,7 @@ import re
 import time
 import unicodedata
 from copy import deepcopy
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
@@ -44,6 +45,12 @@ log = logging.getLogger("agente")
 _RETOMADA_TTL_S = 120.0
 _retomadas_recentes: dict[str, float] = {}
 _retomadas_lock = Lock()
+
+# Depois de criar ou revincular, o agente pode levar alguns segundos para o caso
+# aparecer na leitura (réplica, pooler, commit). Recriar nessa janela gerava um caso
+# novo a cada requisição — o sintoma do `diag_pipeline` com três `case_ref` em 30s.
+_VINCULO_CONFIANCA_S = 90.0
+_EXISTE_RETRY_S = 0.4
 
 __all__ = [
     "analisar_caso_inteiro",
@@ -69,6 +76,43 @@ def jurisdicao_padrao() -> str:
 # ---------------------------------------------------------------- vínculo
 
 
+def _instante_vinculo(vinculo: dict[str, Any]) -> float | None:
+    """Converte `atualizado_em`/`criado_em` do vínculo para epoch UTC."""
+    bruto = vinculo.get("atualizado_em") or vinculo.get("criado_em")
+    if not bruto:
+        return None
+    texto = str(bruto).replace("Z", "+00:00")
+    try:
+        instante = datetime.fromisoformat(texto)
+    except ValueError:
+        return None
+    if instante.tzinfo is None:
+        instante = instante.replace(tzinfo=timezone.utc)
+    return instante.timestamp()
+
+
+def _vinculo_recente(vinculo: dict[str, Any]) -> bool:
+    """Vínculo atualizado há pouco — ainda não recriar por um 404 isolado."""
+    instante = _instante_vinculo(vinculo)
+    if instante is None:
+        return False
+    return (time.time() - instante) < _VINCULO_CONFIANCA_S
+
+
+def _caso_existe_no_agente(cliente: Cliente, caso_ref: str) -> bool:
+    """Confere existência com uma segunda tentativa para visibilidade atrasada."""
+    try:
+        if cliente.caso_existe(caso_ref):
+            return True
+    except AgenteIndisponivel:
+        raise
+    time.sleep(_EXISTE_RETRY_S)
+    try:
+        return cliente.caso_existe(caso_ref)
+    except AgenteIndisponivel:
+        raise
+
+
 def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
     """Devolve o vínculo com o agente, criando cliente e caso quando preciso.
 
@@ -84,7 +128,7 @@ def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, A
     cliente = Cliente()
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
     if vinculo:
-        existe = cliente.caso_existe(vinculo["caso_ref"])
+        existe = _caso_existe_no_agente(cliente, vinculo["caso_ref"])
         log.info(
             "diagnostico vinculo agente caso_id=%s case_ref=%s existe=%s enviados=%s",
             caso_id,
@@ -93,6 +137,14 @@ def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, A
             len(vinculo.get("enviados") or []),
         )
         if existe:
+            return vinculo
+        if _vinculo_recente(vinculo):
+            log.warning(
+                "vínculo recente do caso %s (%s): agente ainda não confirma existência; "
+                "reutilizando sem recriar",
+                caso_id,
+                vinculo["caso_ref"],
+            )
             return vinculo
 
     if vinculo:
@@ -287,7 +339,7 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     atual = armazenamento.obter_vinculo_agente(caso_id) or vinculo
     declarados = declarar_itens_entregues(caso_id, atual["caso_ref"])
     qualificar_reclamante(atual["caso_ref"])
-    pipeline = _retomar_pipeline_juridico(atual["caso_ref"])
+    pipeline = _retomar_pipeline_juridico(atual["caso_ref"], caso_id=caso_id)
     if falhas == 0 and falhas_entrevista == 0:
         # Um erro antigo não pode permanecer para sempre quando tudo que estava
         # pendente já foi sincronizado (inclusive quando nenhum arquivo precisou ser
@@ -319,7 +371,7 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     return resultado
 
 
-def _retomar_pipeline_juridico(caso_ref: str) -> str:
+def _retomar_pipeline_juridico(caso_ref: str, *, caso_id: str | None = None) -> str:
     """Enfileira a primeira etapa jurídica ausente de um caso já sincronizado.
 
     Cada worker encadeia o seguinte no agente (análise -> pesquisa -> estratégia).
@@ -376,6 +428,21 @@ def _retomar_pipeline_juridico(caso_ref: str) -> str:
         # Retiramos a trava para permitir nova tentativa no próximo refresh.
         with _retomadas_lock:
             _retomadas_recentes.pop(caso_ref, None)
+        if erro.status == 404 and caso_id:
+            log.warning(
+                "pipeline do case_ref %s aponta para caso morto; revinculando %s",
+                caso_ref,
+                caso_id,
+            )
+            try:
+                novo = garantir_caso(caso_id)
+            except ErroDoAgente:
+                log.warning(
+                    "não foi possível retomar o pipeline do caso %s: %s", caso_ref, erro
+                )
+                return "indisponivel"
+            if novo["caso_ref"] != caso_ref:
+                return _retomar_pipeline_juridico(novo["caso_ref"], caso_id=caso_id)
         log.warning("não foi possível retomar o pipeline do caso %s: %s", caso_ref, erro)
         return "indisponivel"
 

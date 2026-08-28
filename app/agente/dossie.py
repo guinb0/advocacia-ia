@@ -51,6 +51,17 @@ def montar(caso_id: str, *, recuperar: bool = True) -> dict[str, Any] | None:
         situacao = casos_ocr.montar_situacao(caso_id) or {}
         vinculo = armazenamento.obter_vinculo_agente(caso_id)
 
+    if vinculo is not None and recuperar:
+        # O vínculo local pode apontar para um case_ref que já não existe no agente
+        # (migração, banco recriado). Conferir antes das leituras paralelas evita
+        # GET /strategy 404 ruidoso e deixa o dossiê se recuperar sozinho.
+        from . import espelho
+
+        try:
+            vinculo = espelho.garantir_caso(caso_id)
+        except ErroDoAgente:
+            pass
+
     agente = _do_agente(vinculo, caso_id, recuperar=recuperar)
 
     with banco.sessao():

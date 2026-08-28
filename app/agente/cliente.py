@@ -565,12 +565,15 @@ class Cliente:
     def estrategia(self, caso_ref: str) -> dict[str, Any] | None:
         """A versão atual, ou `None` quando ainda não há nenhuma.
 
-        Ausência aqui é estado normal do caso, não erro: a estratégia só existe depois que
-        alguém a pede. Tratar 404 como falha faria a tela mostrar erro para um caso novo.
+        O agente novo devolve 204 sem estratégia. 404 aqui significa caso inexistente
+        e precisa subir para o dossiê recriar o vínculo — não confundir com ausência
+        de estratégia (agente antigo ainda respondia 404 nesse caso).
         """
         try:
             return self._ler(f"/api/v1/cases/{caso_ref}/strategy")
         except ErroDoAgente as erro:
+            if erro.status == 404 and "Caso não encontrado" in str(erro):
+                raise
             if erro.status == 404:
                 return None
             raise
@@ -609,6 +612,36 @@ class Cliente:
             "POST",
             f"/api/v1/cases/{caso_ref}/generations",
             json={"document_type": "INITIAL_PETITION"},
+            timeout=self._cfg.timeout_envio,
+        )
+
+    def gerar_peticao_entrevista(
+        self,
+        caso_ref: str,
+        *,
+        interview_id: str,
+        transcript: str,
+        analysis_summary: str,
+        taxonomy_code: str,
+        strategy_title: str,
+        strategy_thesis: str,
+        strategy_claims: list[str] | None = None,
+        strategy_risks: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Petição pelo fluxo de entrevista — usa embeddings de style e de documentos."""
+        return self._chamar(
+            "POST",
+            f"/api/v1/cases/{caso_ref}/generations/interview-pipeline",
+            json={
+                "interview_id": interview_id,
+                "transcript": transcript,
+                "analysis_summary": analysis_summary,
+                "taxonomy_code": taxonomy_code,
+                "strategy_title": strategy_title,
+                "strategy_thesis": strategy_thesis,
+                "strategy_claims": strategy_claims or [],
+                "strategy_risks": strategy_risks or [],
+            },
             timeout=self._cfg.timeout_envio,
         )
 

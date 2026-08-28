@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AjudanteDoCaso from "@/components/AjudanteDoCaso";
+import FluxoPeticao from "@/components/admin/FluxoPeticao";
 /* O trilho recolhido é desenhado por quem hospeda o painel, e não pelo painel: só o
  * dossiê sabe que existe uma coluna para devolver ao conteúdo quando ele se fecha. */
 import trilho from "@/components/AjudanteDoCaso.module.css";
@@ -645,22 +646,6 @@ export default function Dossie({
           >
             {ocupado === "pesquisar" ? "Pesquisando…" : "Pesquisar jurisprudência"}
           </Botao>
-          <Botao
-            variante="secundario"
-            disabled={!agente.ligado || ocupado !== null || estrategiaEmCurso !== null}
-            onClick={() => void pedirEstrategia()}
-          >
-            {ocupado === "estrategia" || estrategiaEmCurso !== null
-              ? "Propondo…"
-              : "Propor estratégia"}
-          </Botao>
-          <Botao
-            variante="secundario"
-            disabled={!agente.ligado || ocupado !== null || redacao !== null}
-            onClick={() => void pedirPeticao()}
-          >
-            {ocupado === "peticao" || redacao ? "Redigindo…" : "Gerar petição"}
-          </Botao>
         </div>
       </header>
 
@@ -1024,6 +1009,13 @@ export default function Dossie({
                 aceita ? "Tese aceita." : "Tese descartada.",
               )
             }
+          />
+
+          <FluxoPeticao
+            casoId={casoId}
+            agenteLigado={agente.ligado && agente.disponivel}
+            peticao={peticao}
+            onPeticaoPronta={() => void carregar()}
           />
 
           <PainelPeticao
@@ -1685,7 +1677,7 @@ function PainelPeticao({
         ) : (
           <p className={TEXTO_VAZIO}>
             {disponivel
-              ? "Nenhuma minuta gerada. Use “Gerar petição” — ela sai mesmo com prova faltando, marcando o que falta comprovar."
+              ? "Nenhuma minuta gerada. Use o fluxo acima — análise da entrevista, escolha da estratégia e redação com os modelos treinados."
               : "Sem resposta do agente."}
           </p>
         )}
