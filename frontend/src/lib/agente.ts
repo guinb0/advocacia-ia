@@ -492,11 +492,8 @@ export interface AnaliseFluxo {
 }
 
 export interface PreparacaoFluxo {
-  fatos_no_agente?: number;
   documentos_lidos?: number;
   achados_documentos?: number;
-  entrevistas_enviadas?: number;
-  documentos_enviados?: number;
   checklist_obrigatorios?: number;
   checklist_entregues?: number;
 }
@@ -524,6 +521,8 @@ export interface EstadoPeticaoFluxo {
   preparacao?: PreparacaoFluxo;
   categoria?: string;
   taxonomy_code?: string;
+  peticao_id?: string | null;
+  peticao_pronta?: boolean;
 }
 
 export function estadoPeticaoFluxo(casoId: string): Promise<EstadoPeticaoFluxo> {
@@ -543,6 +542,18 @@ export function proporEstrategiasPeticaoFluxo(casoId: string): Promise<{
   estrategias: EstrategiaFluxo[];
 }> {
   return chamar(`/api/agente/casos/${casoId}/peticao-fluxo/estrategias`, { method: "POST" });
+}
+
+export function gerarAnaliseEPeticao(casoId: string): Promise<{
+  run_id: string;
+  status: string;
+  requested_at: string;
+  generation_id: string;
+  pipeline?: string;
+  peticao: Peticao;
+  analise?: AnaliseFluxo;
+}> {
+  return chamar(`/api/agente/casos/${casoId}/peticao-fluxo/completo`, { method: "POST" });
 }
 
 export function gerarPeticaoFluxo(

@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import os
 import re
-import time
 import urllib.parse
 from pathlib import Path
 from collections.abc import Iterator, Sequence
@@ -48,7 +47,6 @@ __all__ = [
     "dsn",
     "inicializar_schema",
     "sessao",
-    "trava_recurso",
 ]
 
 SCHEMA = "dbo"
@@ -109,7 +107,9 @@ def url_sqlalchemy() -> str:
     porta = os.getenv("SQLSERVER_PORT", "1433")
     banco = os.getenv("SQLSERVER_DATABASE", "advocacia")
     driver = urllib.parse.quote_plus(os.getenv("SQLSERVER_DRIVER", DRIVER_PADRAO))
-    return f"mssql+pyodbc://{usuario}:{senha}@{servidor}:{porta}/{banco}?driver={driver}"
+    return (
+        f"mssql+pyodbc://{usuario}:{senha}@{servidor}:{porta}/{banco}?driver={driver}"
+    )
 
 
 class Linha:
@@ -172,36 +172,6 @@ class _Resultado:
         return int(self._cursor.rowcount)
 
 
-#: Última vez que `_recuperar_schema` rodou (relógio monotônico). Evita repetir o
-#: `inicializar_schema` a cada consulta quando o servidor está mesmo fora do ar.
-_ultima_recuperacao = 0.0
-
-
-def _e_objeto_invalido(exc: pyodbc.Error) -> bool:
-    """`42S02` — "Nome de objeto inválido": a tabela não existe no servidor."""
-    return bool(exc.args) and str(exc.args[0]) == "42S02"
-
-
-def _recuperar_schema() -> bool:
-    """Recria o schema quando uma consulta bate em tabela ausente.
-
-    Neste ambiente as tabelas do Acervo já sumiram do servidor compartilhado no meio
-    de uma sessão mais de uma vez (reset feito por fora). Sem isto, cada sumiço vira
-    500 no dossiê até alguém reiniciar o backend à mão. `inicializar_schema` é
-    idempotente; roda no máximo uma vez a cada 30 s.
-    """
-    global _ultima_recuperacao
-    agora = time.monotonic()
-    if agora - _ultima_recuperacao < 30.0:
-        return False
-    _ultima_recuperacao = agora
-    try:
-        inicializar_schema()
-        return True
-    except Exception:  # noqa: BLE001 - recuperação é best-effort; o erro original volta
-        return False
-
-
 class Conexao:
     """Envelope fino sobre a conexão pyodbc, com a interface que o Acervo já usa."""
 
@@ -209,31 +179,17 @@ class Conexao:
         self._bruta = bruta
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> _Resultado:
-        try:
-            cursor = self._bruta.cursor()
-            cursor.execute(_qualificar(sql), tuple(params))
-        except pyodbc.Error as exc:
-            if not _e_objeto_invalido(exc) or not _recuperar_schema():
-                raise
-            cursor = self._bruta.cursor()
-            cursor.execute(_qualificar(sql), tuple(params))
+        cursor = self._bruta.cursor()
+        cursor.execute(_qualificar(sql), tuple(params))
         return _Resultado(cursor)
 
     def executemany(self, sql: str, seq: Sequence[Sequence[Any]]) -> None:
-        def _run() -> None:
-            cursor = self._bruta.cursor()
-            # A base de municípios tem milhares de linhas. Sem o envio em lote do
-            # pyodbc, cada linha paga uma viagem completa até o SQL Server remoto.
-            if hasattr(cursor, "fast_executemany"):
-                cursor.fast_executemany = True
-            cursor.executemany(_qualificar(sql), [tuple(p) for p in seq])
-
-        try:
-            _run()
-        except pyodbc.Error as exc:
-            if not _e_objeto_invalido(exc) or not _recuperar_schema():
-                raise
-            _run()
+        cursor = self._bruta.cursor()
+        # A base de municípios tem milhares de linhas. Sem o envio em lote do
+        # pyodbc, cada linha paga uma viagem completa até o SQL Server remoto.
+        if hasattr(cursor, "fast_executemany"):
+            cursor.fast_executemany = True
+        cursor.executemany(_qualificar(sql), [tuple(p) for p in seq])
 
     def commit(self) -> None:
         self._bruta.commit()
@@ -251,9 +207,9 @@ TABELAS = (
     "casos",
     "entregas",
     "entrevistas",
+    "peticoes_locais",
     "assinaturas",
     "roteiros",
-    "vinculos_agente",
     "ufs",
     "municipios",
     # `conversa_mensagens` vem antes de `conversas` só por clareza de leitura: a regex
@@ -351,55 +307,6 @@ def sessao() -> Iterator[Conexao]:
             _emprestada.reset(marca)
 
 
-@contextmanager
-def trava_recurso(nome: str, *, timeout_ms: int = 15000) -> Iterator[bool]:
-    """Trava nomeada no SQL Server (`sp_getapplock`), viva enquanto o bloco roda.
-
-    Serializa entre PROCESSOS: o uvicorn e os workers Celery compartilham o mesmo
-    servidor, e um `threading.Lock` só valeria dentro de um deles. O uso concreto é
-    impedir que dois pedidos simultâneos recriem o mesmo caso no agente — ver
-    `espelho.garantir_caso`.
-
-    Abre a própria conexão, fora de qualquer `sessao()`, em `autocommit` para a trava
-    não ficar presa a uma transação. `@LockOwner = 'Session'` mantém a trava até o
-    `sp_releaseapplock` (ou o fechamento da conexão).
-
-    Devolve `True` quando obteve a trava e `False` quando desistiu na espera. No
-    segundo caso o bloco AINDA roda: outra chamada está fazendo o mesmo trabalho, e
-    transformar contenção em erro derrubaria o dossiê. O preço é a janela pequena de
-    corrida que a trava fecharia — aceitável frente a isso.
-    """
-    try:
-        bruta = pyodbc.connect(dsn(), timeout=15, autocommit=True)
-    except Exception:  # noqa: BLE001 - banco de trava fora do ar não pode travar a ponte
-        yield False
-        return
-    adquirida = False
-    try:
-        cursor = bruta.cursor()
-        cursor.execute(
-            "DECLARE @rc int; "
-            "EXEC @rc = sp_getapplock @Resource = ?, @LockMode = 'Exclusive', "
-            "@LockOwner = 'Session', @LockTimeout = ?; "
-            "SELECT @rc",
-            (nome[:255], int(timeout_ms)),
-        )
-        codigo = cursor.fetchone()
-        # >= 0: concedida (0 de imediato, 1 após espera). < 0: timeout (-1) ou falha.
-        adquirida = codigo is not None and int(codigo[0]) >= 0
-        yield adquirida
-    finally:
-        if adquirida:
-            try:
-                bruta.cursor().execute(
-                    "EXEC sp_releaseapplock @Resource = ?, @LockOwner = 'Session'",
-                    (nome[:255],),
-                )
-            except Exception:  # noqa: BLE001 - fechar a conexão já libera a trava
-                pass
-        bruta.close()
-
-
 # ---------------------------------------------------------------------------- schema
 
 ESQUEMA_SQLSERVER = f"""
@@ -416,7 +323,10 @@ CREATE TABLE {SCHEMA}.{PREFIXO}casos (
     portal_token      varchar(80)   NULL,
     portal_senha_hash varchar(255)  NULL,
     portal_sal        varchar(80)   NULL,
-    portal_criado_em  varchar(40)   NULL
+    portal_criado_em  varchar(40)   NULL,
+    case_ref          varchar(80)   NULL,
+    cliente_ref       varchar(80)   NULL,
+    agente_ultimo_erro nvarchar(max) NULL
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}entregas') IS NULL
@@ -444,6 +354,7 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     criado_em          varchar(40)   NOT NULL,
     status_proc        varchar(40)   NOT NULL CONSTRAINT df_ocr_entregas_status DEFAULT 'pronto',
     erro_proc          nvarchar(max) NULL,
+    agente_envio_chave varchar(120)  NULL,
     CONSTRAINT fk_ocr_entregas_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
@@ -465,6 +376,19 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entrevistas (
     gravacao_id   varchar(64)   NULL,
     criado_em     varchar(40)   NOT NULL,
     CONSTRAINT fk_ocr_entrevistas_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}peticoes_locais') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}peticoes_locais (
+    caso_id       varchar(64)    NOT NULL CONSTRAINT pk_acervo_peticoes_locais PRIMARY KEY,
+    versao        int            NOT NULL CONSTRAINT df_acervo_peticao_versao DEFAULT 1,
+    status        varchar(40)    NOT NULL CONSTRAINT df_acervo_peticao_status DEFAULT 'IN_REVIEW',
+    dados_json    nvarchar(max)  NOT NULL,
+    docx          varbinary(max) NOT NULL,
+    criado_em     varchar(40)    NOT NULL,
+    atualizado_em varchar(40)    NOT NULL,
+    CONSTRAINT fk_acervo_peticao_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
@@ -511,19 +435,6 @@ CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
     criado_em          varchar(40)   NOT NULL,
     atualizado_em      varchar(40)   NOT NULL,
     CONSTRAINT fk_acervo_cobrancas_caso FOREIGN KEY (caso_id)
-        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
-);
-
-IF OBJECT_ID('{SCHEMA}.{PREFIXO}vinculos_agente') IS NULL
-CREATE TABLE {SCHEMA}.{PREFIXO}vinculos_agente (
-    caso_id       varchar(64)   NOT NULL CONSTRAINT pk_ocr_vinculos PRIMARY KEY,
-    caso_ref      varchar(80)   NOT NULL,
-    cliente_ref   varchar(80)   NOT NULL CONSTRAINT df_ocr_vinc_cliente DEFAULT '',
-    enviados      nvarchar(max) NOT NULL CONSTRAINT df_ocr_vinc_enviados DEFAULT N'[]',
-    ultimo_erro   nvarchar(max) NULL,
-    criado_em     varchar(40)   NOT NULL,
-    atualizado_em varchar(40)   NOT NULL,
-    CONSTRAINT fk_ocr_vinculos_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
@@ -694,6 +605,13 @@ COLUNAS_NOVAS = (
     (f"{PREFIXO}entregas", "roteamento_origem", "varchar(20) NULL"),
     (f"{PREFIXO}entregas", "roteamento_confianca", "int NULL"),
     (f"{PREFIXO}entregas", "roteamento_motivo", "nvarchar(600) NULL"),
+    # Referência do caso no agente jurídico — antes ficava numa tabela separada que
+    # apontava para casos que já não existiam do outro lado.
+    (f"{PREFIXO}casos", "case_ref", "varchar(80) NULL"),
+    (f"{PREFIXO}casos", "cliente_ref", "varchar(80) NULL"),
+    (f"{PREFIXO}casos", "agente_ultimo_erro", "nvarchar(max) NULL"),
+    # Chave idempotente do envio ao agente (entrega_id:hash da extração).
+    (f"{PREFIXO}entregas", "agente_envio_chave", "varchar(120) NULL"),
 )
 
 
@@ -715,5 +633,9 @@ def inicializar_schema() -> None:
             cursor.execute(
                 f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '{nome}') {indice}"
             )
+        cursor.execute(
+            f"IF OBJECT_ID('{SCHEMA}.{PREFIXO}vinculos_agente') IS NOT NULL "
+            f"DROP TABLE {SCHEMA}.{PREFIXO}vinculos_agente"
+        )
     finally:
         bruta.close()

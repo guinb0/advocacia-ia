@@ -2128,7 +2128,7 @@ def montar(caso_id: str) -> dict[str, Any] | None:
         entregas = armazenamento.listar_entregas(caso_id)
         entrevistas = armazenamento.listar_entrevistas(caso_id)
         assinaturas = armazenamento.listar_assinaturas(caso_id=caso_id)
-        vinculo = armazenamento.obter_vinculo_agente(caso_id)
+        vinculo = armazenamento.estado_agente(caso_id)
         agora = datetime.now(timezone.utc)
         referencia = referencia_historica(str(caso.get("categoria")), caso_id, agora)
 
