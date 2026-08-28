@@ -280,6 +280,7 @@ export interface Dossie {
     progresso: Record<string, number | boolean> | null;
     itens: {
       codigo: string;
+      nome?: string;
       rotulo: string;
       status: string;
       obrigatorio: boolean;
@@ -406,7 +407,14 @@ export function buscarDossie(casoId: string): Promise<Dossie> {
 export function sincronizarComAgente(
   casoId: string,
   jurisdicao?: string,
-): Promise<{ caso_ref: string; documentos_enviados: number; documentos_com_falha: number }> {
+): Promise<{
+  caso_ref: string;
+  documentos_enviados: number;
+  documentos_com_falha: number;
+  entrevistas_enviadas?: number;
+  entrevistas_com_falha?: number;
+  ultimo_erro?: string | null;
+}> {
   return chamar(`/api/agente/casos/${casoId}/sincronizar`, {
     method: "POST",
     body: JSON.stringify({ jurisdicao: jurisdicao ?? null }),
@@ -468,9 +476,29 @@ export function gerarPeticao(casoId: string, opcao = 0): Promise<{
 
 export interface AnaliseFluxo {
   resumo: string;
+  cruzamento_entrevista_documentos?: string;
   pontos_fortes: string[];
   lacunas: string[];
+  fatos_confirmados?: string[];
+  fatos_so_na_entrevista?: string[];
+  achados_documentos?: Array<{
+    informacao: string;
+    documento: string;
+    citacao?: string;
+    relevancia?: string;
+    contradiz?: boolean;
+  }>;
   observacoes: string;
+}
+
+export interface PreparacaoFluxo {
+  fatos_no_agente?: number;
+  documentos_lidos?: number;
+  achados_documentos?: number;
+  entrevistas_enviadas?: number;
+  documentos_enviados?: number;
+  checklist_obrigatorios?: number;
+  checklist_entregues?: number;
 }
 
 export interface EstrategiaFluxo {
@@ -493,6 +521,7 @@ export interface EstadoPeticaoFluxo {
   analise?: AnaliseFluxo;
   estrategias?: EstrategiaFluxo[];
   escolha?: number;
+  preparacao?: PreparacaoFluxo;
   categoria?: string;
   taxonomy_code?: string;
 }
@@ -505,6 +534,7 @@ export function analisarPeticaoFluxo(casoId: string): Promise<{
   entrevista_id: string;
   analise: AnaliseFluxo;
   taxonomy_code: string;
+  preparacao?: PreparacaoFluxo;
 }> {
   return chamar(`/api/agente/casos/${casoId}/peticao-fluxo/analise`, { method: "POST" });
 }
@@ -548,6 +578,17 @@ export function progressoPeticao(casoId: string, desde: string): Promise<Progres
 
 export function buscarPeticao(casoId: string, pecaId: string): Promise<Peticao> {
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}`);
+}
+
+export function salvarRascunhoPeticao(
+  casoId: string,
+  pecaId: string,
+  secoes: { code: string; content: string }[],
+): Promise<Peticao> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/rascunho`, {
+    method: "PUT",
+    body: JSON.stringify({ secoes }),
+  });
 }
 
 /**

@@ -87,7 +87,8 @@ def montar(caso_id: str, *, recuperar: bool = True) -> dict[str, Any] | None:
             "itens": [
                 {
                     "codigo": item.get("codigo"),
-                    "rotulo": item.get("rotulo"),
+                    "nome": item.get("nome") or item.get("rotulo"),
+                    "rotulo": item.get("nome") or item.get("rotulo"),
                     "status": item.get("status"),
                     "obrigatorio": item.get("obrigatorio"),
                     "alertas": item.get("alertas") or [],

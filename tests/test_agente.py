@@ -138,6 +138,21 @@ def main() -> int:
     )
     ClienteFalso.casos_invisiveis.clear()
 
+    # Um 404 confirmado não pode ganhar uma nova janela de confiança só porque o erro
+    # foi salvo. Esse era o loop em que "Sincronizar" renovava o vínculo morto para sempre.
+    confirmado_morto = armazenamento.criar_caso(
+        "Vinculo Morto Confirmado", "acidente_trabalho_geral"
+    )["id"]
+    morto_antes = espelho.garantir_caso(confirmado_morto)
+    ClienteFalso.casos_apagados.add(morto_antes["caso_ref"])
+    armazenamento.registrar_erro_agente(confirmado_morto, "Caso não encontrado.")
+    morto_depois = espelho.garantir_caso(confirmado_morto)
+    checar(
+        morto_depois["caso_ref"] != morto_antes["caso_ref"],
+        "404 confirmado invalida a confiança e recria o vínculo imediatamente",
+    )
+    ClienteFalso.casos_apagados.clear()
+
     # Vínculo órfão, num caso à parte para não mexer no que as seções seguintes usam: o
     # caso existiu e sumiu do outro lado (banco recriado, migração). Sem a conferência, o
     # vínculo continuaria apontando para o nada e o dossiê abriria vazio para sempre — foi
@@ -145,6 +160,7 @@ def main() -> int:
     orfao = armazenamento.criar_caso("Jose Orfao", "acidente_trabalho_geral")["id"]
     antes = espelho.garantir_caso(orfao)
     ClienteFalso.casos_apagados.add(antes["caso_ref"])
+    armazenamento.registrar_erro_agente(orfao, "Caso não encontrado.")
     depois = espelho.garantir_caso(orfao)
     checar(
         depois["caso_ref"] != antes["caso_ref"],
@@ -542,4 +558,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -375,15 +375,17 @@ class Cliente:
         Prazo do envio, e não o da tela: a leitura é uma chamada de modelo sobre um texto
         que pode ter dez páginas.
         """
+        payload: dict[str, Any] = {
+            "interview_id": entrevista_id,
+            "transcript": transcricao,
+            "interviewer": entrevistador,
+        }
+        if realizada_em:
+            payload["occurred_at"] = realizada_em
         return self._chamar(
             "POST",
             f"/api/v1/cases/{caso_ref}/interviews",
-            json={
-                "interview_id": entrevista_id,
-                "transcript": transcricao,
-                "occurred_at": realizada_em,
-                "interviewer": entrevistador,
-            },
+            json=payload,
             timeout=self._cfg.timeout_envio,
         )
 
@@ -709,6 +711,16 @@ class Cliente:
             corpo["sections"] = secoes
         return self._chamar(
             "PATCH", f"/api/v1/cases/{caso_ref}/generations/{peca_ref}", json=corpo
+        )
+
+    def salvar_rascunho_peticao(
+        self, caso_ref: str, peca_ref: str, secoes: list[dict[str, str]]
+    ) -> dict[str, Any]:
+        """Persiste a edição sem aprovar/rejeitar e preserva a versão gerada."""
+        return self._chamar(
+            "PUT",
+            f"/api/v1/cases/{caso_ref}/generations/{peca_ref}/draft",
+            json={"sections": secoes},
         )
 
     def taxonomia(self) -> dict[str, Any]:

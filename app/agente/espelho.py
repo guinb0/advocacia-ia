@@ -35,7 +35,7 @@ from typing import Any
 
 from .. import armazenamento, extractors
 from . import vocabulario
-from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente
+from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente, caso_ref_valido
 
 log = logging.getLogger("agente")
 
@@ -93,6 +93,14 @@ def _instante_vinculo(vinculo: dict[str, Any]) -> float | None:
 
 def _vinculo_recente(vinculo: dict[str, Any]) -> bool:
     """Vínculo atualizado há pouco — ainda não recriar por um 404 isolado."""
+    if not caso_ref_valido(str(vinculo.get("caso_ref") or "")):
+        return False
+    ultimo_erro = str(vinculo.get("ultimo_erro") or "").casefold()
+    if "caso não encontrado" in ultimo_erro or "caso nao encontrado" in ultimo_erro:
+        # Um 404 já observado pelo próprio agente não é atraso de réplica. Sem esta
+        # distinção, registrar o erro renovava ``atualizado_em`` e o vínculo órfão ganhava
+        # mais 90 segundos de confiança a cada tentativa, ficando preso para sempre.
+        return False
     instante = _instante_vinculo(vinculo)
     if instante is None:
         return False
@@ -328,18 +336,24 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
             resposta = enviar_entrevista(caso_id, entrevista["id"])
             if resposta.get("failure"):
                 falhas_entrevista += 1
+                armazenamento.registrar_erro_agente(
+                    caso_id, f"Entrevista não lida: {resposta['failure']}"
+                )
             else:
                 entrevistas += 1
         except ErroDoAgente as erro:
             # Uma entrevista que não sobe não derruba a sincronização: os documentos já
             # foram, e a tela precisa abrir com o que existe.
             log.warning("entrevista %s não foi enviada: %s", entrevista["id"], erro)
+            armazenamento.registrar_erro_agente(caso_id, f"Entrevista não lida: {erro}")
             falhas_entrevista += 1
 
     atual = armazenamento.obter_vinculo_agente(caso_id) or vinculo
     declarados = declarar_itens_entregues(caso_id, atual["caso_ref"])
     qualificar_reclamante(atual["caso_ref"])
-    pipeline = _retomar_pipeline_juridico(atual["caso_ref"], caso_id=caso_id)
+    # O fluxo de petição por entrevista não usa mais classificar → pesquisar → estratégia
+    # automáticos a cada sync — isso gerava 500 no agente e “Erro interno” na tela.
+    pipeline = "fluxo_entrevista"
     if falhas == 0 and falhas_entrevista == 0:
         # Um erro antigo não pode permanecer para sempre quando tudo que estava
         # pendente já foi sincronizado (inclusive quando nenhum arquivo precisou ser
