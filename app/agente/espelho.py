@@ -29,6 +29,7 @@ import re
 import time
 import unicodedata
 from copy import deepcopy
+from threading import Lock
 from typing import Any
 
 from .. import armazenamento, extractors
@@ -36,6 +37,13 @@ from . import vocabulario
 from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente
 
 log = logging.getLogger("agente")
+
+# Abrir/atualizar o dossiê pode chamar a sincronização várias vezes em poucos
+# segundos. A fila do agente é idempotente para documentos, mas não para todos os
+# jobs jurídicos; esta janela impede enfileirar a mesma etapa a cada refresh.
+_RETOMADA_TTL_S = 120.0
+_retomadas_recentes: dict[str, float] = {}
+_retomadas_lock = Lock()
 
 __all__ = [
     "analisar_caso_inteiro",
@@ -246,30 +254,87 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     # Entrevista ainda não lida do outro lado também sobe aqui. É o que devolve os fatos
     # relatados ao caso recriado: o revínculo as reabre, e sem este laço elas ficariam
     # marcadas como pendentes para sempre, porque nada mais as reenvia sozinho.
-    entrevistas = 0
+    entrevistas, falhas_entrevista = 0, 0
     for entrevista in armazenamento.listar_entrevistas(caso_id):
         if entrevista.get("enviada"):
             continue
         try:
-            enviar_entrevista(caso_id, entrevista["id"])
-            entrevistas += 1
+            resposta = enviar_entrevista(caso_id, entrevista["id"])
+            if resposta.get("failure"):
+                falhas_entrevista += 1
+            else:
+                entrevistas += 1
         except ErroDoAgente as erro:
             # Uma entrevista que não sobe não derruba a sincronização: os documentos já
             # foram, e a tela precisa abrir com o que existe.
             log.warning("entrevista %s não foi enviada: %s", entrevista["id"], erro)
+            falhas_entrevista += 1
 
     atual = armazenamento.obter_vinculo_agente(caso_id) or vinculo
     declarados = declarar_itens_entregues(caso_id, atual["caso_ref"])
     qualificar_reclamante(atual["caso_ref"])
+    pipeline = _retomar_pipeline_juridico(atual["caso_ref"])
+    if falhas == 0 and falhas_entrevista == 0:
+        # Um erro antigo não pode permanecer para sempre quando tudo que estava
+        # pendente já foi sincronizado (inclusive quando nenhum arquivo precisou ser
+        # reenviado nesta abertura).
+        armazenamento.registrar_erro_agente(caso_id, None)
+        atual = armazenamento.obter_vinculo_agente(caso_id) or atual
     return {
         "caso_ref": atual["caso_ref"],
         "cliente_ref": atual["cliente_ref"],
         "documentos_enviados": enviados,
         "documentos_com_falha": falhas,
         "entrevistas_enviadas": entrevistas,
+        "entrevistas_com_falha": falhas_entrevista,
         "itens_declarados": declarados,
+        "pipeline_juridico": pipeline,
         "ultimo_erro": atual.get("ultimo_erro"),
     }
+
+
+def _retomar_pipeline_juridico(caso_ref: str) -> str:
+    """Enfileira a primeira etapa jurídica ausente de um caso já sincronizado.
+
+    Cada worker encadeia o seguinte no agente (análise -> pesquisa -> estratégia).
+    Casos antigos podem ter parado antes desse encadeamento existir; por isso o Acervo
+    retoma explicitamente a primeira lacuna sempre que o dossiê é aberto.
+    """
+    agora = time.monotonic()
+    with _retomadas_lock:
+        if _retomadas_recentes.get(caso_ref, 0.0) > agora - _RETOMADA_TTL_S:
+            return "aguardando"
+        _retomadas_recentes[caso_ref] = agora
+
+    cliente = Cliente()
+    try:
+        analise = cliente.analise(caso_ref)
+        if not analise.get("classifications"):
+            cliente.analisar(caso_ref)
+            return "classificacao_enfileirada"
+
+        pesquisas = cliente.pesquisas(caso_ref).get("items", [])
+        recente = pesquisas[0] if pesquisas else None
+        if recente and recente.get("status") == "RUNNING":
+            return "jurisprudencia_em_andamento"
+        if not recente or recente.get("status") != "COMPLETED":
+            cliente.pesquisar(caso_ref)
+            return "jurisprudencia_enfileirada"
+
+        if cliente.estrategia(caso_ref) is None:
+            gerar_estrategia = getattr(cliente, "gerar_estrategia", None)
+            if not callable(gerar_estrategia):
+                return "estrategia_indisponivel"
+            gerar_estrategia(caso_ref)
+            return "estrategia_enfileirada"
+        return "completo"
+    except ErroDoAgente as erro:
+        # Os documentos continuam disponíveis mesmo se o serviço jurídico oscilar.
+        # Retiramos a trava para permitir nova tentativa no próximo refresh.
+        with _retomadas_lock:
+            _retomadas_recentes.pop(caso_ref, None)
+        log.warning("não foi possível retomar o pipeline do caso %s: %s", caso_ref, erro)
+        return "indisponivel"
 
 
 def caso_ref(caso_id: str) -> str:
@@ -630,7 +695,8 @@ def garantir_preparo_juridico(caso_id: str) -> dict[str, Any]:
     }
 
     # Documentos novos ou reprocessados entram antes da classificação.
-    sincronizar(caso_id)
+    sincronizacao = sincronizar(caso_id)
+    retomada = str(sincronizacao.get("pipeline_juridico") or "")
     qualificar_reclamante(caso_ref)
 
     try:
@@ -642,7 +708,8 @@ def garantir_preparo_juridico(caso_id: str) -> dict[str, Any]:
         resultado["classificacao"] = True
         resultado["classificacoes"] = len(analise["classifications"])
     else:
-        cliente.analisar(caso_ref)
+        if retomada not in {"classificacao_enfileirada", "aguardando"}:
+            cliente.analisar(caso_ref)
         resultado["analise_enfileirada"] = True
 
     try:
@@ -659,7 +726,11 @@ def garantir_preparo_juridico(caso_id: str) -> dict[str, Any]:
         resultado["pesquisa_enfileirada"] = True
         return resultado
 
-    if resultado.get("classificacao"):
+    if resultado.get("classificacao") and retomada not in {
+        "jurisprudencia_enfileirada",
+        "jurisprudencia_em_andamento",
+        "aguardando",
+    }:
         cliente.pesquisar(caso_ref)
     resultado["pesquisa_enfileirada"] = True
     return resultado
