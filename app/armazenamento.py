@@ -42,6 +42,62 @@ def agora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# ---------------------------------------------------------- petições locais
+
+
+def obter_peticao_local(caso_id: str) -> dict[str, Any] | None:
+    """Minuta persistida no SQL Server, compartilhada por todas as instâncias."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT dados_json, docx FROM peticoes_locais WHERE caso_id = ?", (caso_id,)
+        ).fetchone()
+    if linha is None:
+        return None
+    try:
+        dados = json.loads(linha["dados_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    dados["_docx"] = bytes(linha["docx"] or b"")
+    return dados
+
+
+def salvar_peticao_local(caso_id: str, dados: dict[str, Any], docx: bytes) -> None:
+    """Insere ou atualiza atomicamente JSON editável e DOCX da mesma versão."""
+    if not docx:
+        raise ValueError("O DOCX da petição está vazio.")
+    criado = str(dados.get("created_at") or agora())
+    atualizado = str(dados.get("updated_at") or agora())
+    payload = {chave: valor for chave, valor in dados.items() if chave != "_docx"}
+    with conectar() as con:
+        con.execute(
+            """
+            MERGE peticoes_locais AS alvo
+            USING (SELECT ? AS caso_id) AS origem
+               ON alvo.caso_id = origem.caso_id
+            WHEN MATCHED THEN UPDATE SET
+                 versao = ?, status = ?, dados_json = ?, docx = ?, atualizado_em = ?
+            WHEN NOT MATCHED THEN INSERT
+                 (caso_id, versao, status, dados_json, docx, criado_em, atualizado_em)
+                 VALUES (?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                caso_id,
+                int(dados.get("version") or 1),
+                str(dados.get("status") or "IN_REVIEW"),
+                json.dumps(payload, ensure_ascii=False),
+                docx,
+                atualizado,
+                caso_id,
+                int(dados.get("version") or 1),
+                str(dados.get("status") or "IN_REVIEW"),
+                json.dumps(payload, ensure_ascii=False),
+                docx,
+                criado,
+                atualizado,
+            ),
+        )
+
+
 def _normalizar_nome_cliente(cliente: object) -> str:
     """Chave estável para reencontrar contratos criados antes do caso."""
     return " ".join(str(cliente or "").split())
@@ -79,7 +135,14 @@ def criar_caso(cliente: str, categoria: str, observacao: str = "") -> dict[str, 
         con.execute(
             "INSERT INTO casos (id, cliente, categoria, observacao, criado_em, atualizado_em)"
             " VALUES (?, ?, ?, ?, ?, ?)",
-            (caso_id, cliente.strip(), categoria, observacao.strip(), instante, instante),
+            (
+                caso_id,
+                cliente.strip(),
+                categoria,
+                observacao.strip(),
+                instante,
+                instante,
+            ),
         )
     (DIR_ARQUIVOS / caso_id).mkdir(parents=True, exist_ok=True)
     return {
@@ -138,7 +201,9 @@ def obter_caso_por_token(token: str) -> dict[str, Any] | None:
     if not token:
         return None
     with conectar() as con:
-        linha = con.execute("SELECT * FROM casos WHERE portal_token = ?", (token,)).fetchone()
+        linha = con.execute(
+            "SELECT * FROM casos WHERE portal_token = ?", (token,)
+        ).fetchone()
     return dict(linha) if linha else None
 
 
@@ -156,7 +221,9 @@ def definir_portal(caso_id: str, token: str, senha_hash: str, sal: str) -> bool:
     return cur.rowcount > 0
 
 
-def atualizar_caso(caso_id: str, cliente: str | None = None, observacao: str | None = None) -> bool:
+def atualizar_caso(
+    caso_id: str, cliente: str | None = None, observacao: str | None = None
+) -> bool:
     campos, valores = [], []
     if cliente is not None:
         campos.append("cliente = ?")
@@ -285,7 +352,7 @@ def _candidatos_de_entrega(entrega: dict[str, Any]) -> Iterator[Path]:
             if baixos[indice] == "dados" and baixos[indice + 1] == "casos":
                 # Banco migrado de outra pasta/máquina: preserva o trecho
                 # `caso_id/arquivo.ext`, mas troca a raiz para a instalação atual.
-                yield from incluir(DIR_ARQUIVOS.joinpath(*partes[indice + 2:]))
+                yield from incluir(DIR_ARQUIVOS.joinpath(*partes[indice + 2 :]))
                 break
 
     caso_id = str(entrega.get("caso_id") or "")
@@ -303,7 +370,9 @@ def caminho_arquivo_entrega(entrega: dict[str, Any]) -> Path | None:
     """Arquivo original da entrega dentro da pasta atual de documentos, se existir."""
     for candidato in _candidatos_de_entrega(entrega):
         try:
-            permitido = _dentro_dos_arquivos(candidato) or _dentro_de_pasta_legada(candidato, entrega)
+            permitido = _dentro_dos_arquivos(candidato) or _dentro_de_pasta_legada(
+                candidato, entrega
+            )
             if permitido and candidato.is_file():
                 return candidato.resolve()
         except OSError:
@@ -464,11 +533,19 @@ def _enriquecer_extracao_do_agente(registro: dict[str, Any]) -> None:
             if payload.get("texto_completo") and not extracao.get("texto_completo"):
                 extracao["texto_completo"] = payload["texto_completo"]
             if payload.get("validacao"):
-                validacao = extracao.get("validacao") if isinstance(extracao.get("validacao"), dict) else {}
-                validacao.update({k: v for k, v in payload["validacao"].items() if v is not None})
+                validacao = (
+                    extracao.get("validacao")
+                    if isinstance(extracao.get("validacao"), dict)
+                    else {}
+                )
+                validacao.update(
+                    {k: v for k, v in payload["validacao"].items() if v is not None}
+                )
                 extracao["validacao"] = validacao
 
-    tipo_agente = _tipo_do_agente(doc["document_type"]) or _tipo_do_agente(doc["detected_type"])
+    tipo_agente = _tipo_do_agente(doc["document_type"]) or _tipo_do_agente(
+        doc["detected_type"]
+    )
     if tipo_agente:
         codigo, descricao = tipo_agente
         tipo = extracao.get("tipo") if isinstance(extracao.get("tipo"), dict) else {}
@@ -481,24 +558,35 @@ def _enriquecer_extracao_do_agente(registro: dict[str, Any]) -> None:
         extracao["tipo"] = tipo
 
     if doc["verdict"]:
-        validacao = extracao.get("validacao") if isinstance(extracao.get("validacao"), dict) else {}
+        validacao = (
+            extracao.get("validacao")
+            if isinstance(extracao.get("validacao"), dict)
+            else {}
+        )
         validacao.setdefault("veredito", doc["verdict"])
         extracao["validacao"] = validacao
     if doc["processed_at"] and not extracao.get("processado_em"):
         extracao["processado_em"] = doc["processed_at"]
 
-    textos = [str(p["text"] or "").strip() for p in paginas if str(p["text"] or "").strip()]
+    textos = [
+        str(p["text"] or "").strip() for p in paginas if str(p["text"] or "").strip()
+    ]
     if textos and not extracao.get("texto_completo"):
         extracao["texto_completo"] = "\n".join(textos)
     if textos and not extracao.get("texto_linhas"):
         extracao["texto_linhas"] = [
-            {"texto": texto, "confianca": 0}
-            for texto in textos
+            {"texto": texto, "confianca": 0} for texto in textos
         ]
 
-    scores = [p["legibility_score"] for p in paginas if p["legibility_score"] is not None]
+    scores = [
+        p["legibility_score"] for p in paginas if p["legibility_score"] is not None
+    ]
     if scores:
-        validacao = extracao.get("validacao") if isinstance(extracao.get("validacao"), dict) else {}
+        validacao = (
+            extracao.get("validacao")
+            if isinstance(extracao.get("validacao"), dict)
+            else {}
+        )
         validacao.setdefault("score_legibilidade", max(scores))
         extracao["validacao"] = validacao
 
@@ -604,7 +692,8 @@ def concluir_entrega(
              WHERE id = ?
             """,
             (
-                extracao.get("tipo", {}).get("detectado") or extracao.get("tipo", {}).get("codigo"),
+                extracao.get("tipo", {}).get("detectado")
+                or extracao.get("tipo", {}).get("codigo"),
                 None if tipo_confere is None else int(tipo_confere),
                 validacao.get("veredito"),
                 int(bool(validacao.get("dados_utilizaveis"))),
@@ -619,7 +708,9 @@ def concluir_entrega(
                 entrega_id,
             ),
         )
-        linha = con.execute("SELECT caso_id FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+        linha = con.execute(
+            "SELECT caso_id FROM entregas WHERE id = ?", (entrega_id,)
+        ).fetchone()
         if linha:
             _tocar_caso(con, linha["caso_id"])
     return obter_entrega(entrega_id)
@@ -658,7 +749,9 @@ def reatribuir_entrega(
                 entrega_id,
             ),
         )
-        linha = con.execute("SELECT caso_id FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+        linha = con.execute(
+            "SELECT caso_id FROM entregas WHERE id = ?", (entrega_id,)
+        ).fetchone()
         if linha:
             _tocar_caso(con, linha["caso_id"])
     return obter_entrega(entrega_id)
@@ -739,7 +832,9 @@ def registrar_entrega(
 
     # O que o classificador leu sozinho — não o tipo que a extração usou, que pode
     # ter sido forçado pelo item do checklist. É este que denuncia a troca.
-    tipo_detectado = extracao.get("tipo", {}).get("detectado") or extracao.get("tipo", {}).get("codigo")
+    tipo_detectado = extracao.get("tipo", {}).get("detectado") or extracao.get(
+        "tipo", {}
+    ).get("codigo")
     tipo_confere_db = None if tipo_confere is None else int(tipo_confere)
     veredito = validacao.get("veredito")
     dados_utilizaveis = int(bool(validacao.get("dados_utilizaveis")))
@@ -758,10 +853,21 @@ def registrar_entrega(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
             """,
             (
-                entrega_id, caso_id, item_codigo, arquivo, str(caminho),
-                conteudo, _sha256(conteudo), tipo_detectado,
-                tipo_confere_db, veredito, dados_utilizaveis,
-                score_legibilidade, itens_json, extracao_json, criado_em,
+                entrega_id,
+                caso_id,
+                item_codigo,
+                arquivo,
+                str(caminho),
+                conteudo,
+                _sha256(conteudo),
+                tipo_detectado,
+                tipo_confere_db,
+                veredito,
+                dados_utilizaveis,
+                score_legibilidade,
+                itens_json,
+                extracao_json,
+                criado_em,
             ),
         )
         _tocar_caso(con, caso_id)
@@ -850,19 +956,30 @@ def marcos_por_caso(caso_ids: list[str]) -> dict[str, dict[str, Any]]:
             """,
             caso_ids,
         ).fetchall():
-            reunido[linha["caso_id"]]["entrevistas"].append(_normalizar_entrevista(linha))
+            reunido[linha["caso_id"]]["entrevistas"].append(
+                _normalizar_entrevista(linha)
+            )
 
         for linha in con.execute(
             f"SELECT * FROM assinaturas WHERE caso_id IN ({marcadores}) ORDER BY criado_em DESC",
             caso_ids,
         ).fetchall():
-            reunido[linha["caso_id"]]["assinaturas"].append(_normalizar_assinatura(linha))
+            reunido[linha["caso_id"]]["assinaturas"].append(
+                _normalizar_assinatura(linha)
+            )
 
         for linha in con.execute(
-            f"SELECT * FROM vinculos_agente WHERE caso_id IN ({marcadores})",
+            f"""
+            SELECT id, cliente, categoria, case_ref, cliente_ref, agente_ultimo_erro,
+                   atualizado_em
+              FROM casos
+             WHERE id IN ({marcadores})
+            """,
             caso_ids,
         ).fetchall():
-            reunido[linha["caso_id"]]["vinculo"] = _normalizar_vinculo(linha)
+            caso = dict(linha)
+            if caso.get("case_ref"):
+                reunido[caso["id"]]["vinculo"] = estado_agente_de_caso(caso)
 
     return reunido
 
@@ -876,7 +993,9 @@ def atualizar_para_identidade_unificada(
     validacao = extracao.get("validacao", {})
     itens = list(dict.fromkeys(itens_atendidos))
     with conectar() as con:
-        linha = con.execute("SELECT * FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+        linha = con.execute(
+            "SELECT * FROM entregas WHERE id = ?", (entrega_id,)
+        ).fetchone()
         if not linha:
             return None
 
@@ -889,7 +1008,8 @@ def atualizar_para_identidade_unificada(
              WHERE id = ?
             """,
             (
-                extracao.get("tipo", {}).get("detectado") or extracao.get("tipo", {}).get("codigo"),
+                extracao.get("tipo", {}).get("detectado")
+                or extracao.get("tipo", {}).get("codigo"),
                 validacao.get("veredito"),
                 int(bool(validacao.get("dados_utilizaveis"))),
                 validacao.get("score_legibilidade"),
@@ -899,7 +1019,9 @@ def atualizar_para_identidade_unificada(
             ),
         )
         _tocar_caso(con, linha["caso_id"])
-        atualizada = con.execute("SELECT * FROM entregas WHERE id = ?", (entrega_id,)).fetchone()
+        atualizada = con.execute(
+            "SELECT * FROM entregas WHERE id = ?", (entrega_id,)
+        ).fetchone()
 
     registro = _normalizar_entrega(atualizada)
     registro.pop("conteudo", None)
@@ -1078,7 +1200,12 @@ def atualizar_assinatura(
                SET estado = ?, signatarios = ?, atualizado_em = ?
              WHERE id = ?
             """,
-            (estado, json.dumps(signatarios, ensure_ascii=False), agora(), assinatura_id),
+            (
+                estado,
+                json.dumps(signatarios, ensure_ascii=False),
+                agora(),
+                assinatura_id,
+            ),
         )
     return obter_assinatura(assinatura_id)
 
@@ -1146,104 +1273,84 @@ def obter_assinatura(assinatura_id: str) -> dict[str, Any] | None:
 # --------------------------------------------------------- agente jurídico
 
 
-def vincular_agente(caso_id: str, caso_ref: str, cliente_ref: str) -> dict[str, Any]:
-    """Guarda (ou atualiza) o caso correspondente no agente.
+def estado_agente_de_caso(caso: dict[str, Any]) -> dict[str, Any]:
+    """Forma compatível com o que o painel e o dossiê esperam do antigo vínculo."""
+    return {
+        "caso_id": caso["id"],
+        "caso_ref": caso["case_ref"],
+        "cliente_ref": caso.get("cliente_ref") or "",
+        "ultimo_erro": caso.get("agente_ultimo_erro"),
+        "criado_em": caso.get("atualizado_em"),
+        "atualizado_em": caso.get("atualizado_em"),
+    }
 
-    `MERGE` e não `INSERT`: revincular é operação legítima — o agente
-    pode ter sido recriado do zero em desenvolvimento —, e falhar aqui deixaria o
-    caso preso a um identificador que não existe mais do outro lado.
-    """
+
+def estado_agente(caso_id: str) -> dict[str, Any] | None:
+    """Estado do espelhamento no agente, ou `None` se o caso ainda não foi criado lá."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT id, case_ref, cliente_ref, agente_ultimo_erro, atualizado_em"
+            " FROM casos WHERE id = ?",
+            (caso_id,),
+        ).fetchone()
+    if not linha or not linha["case_ref"]:
+        return None
+    return estado_agente_de_caso(dict(linha))
+
+
+def salvar_refs_agente(caso_id: str, case_ref: str, cliente_ref: str) -> dict[str, Any]:
+    """Grava o caso correspondente no agente e zera o sync local se o ref mudou."""
     instante = agora()
     with conectar() as con:
         anterior = con.execute(
-            "SELECT caso_ref, enviados, criado_em FROM vinculos_agente WHERE caso_id = ?",
-            (caso_id,),
+            "SELECT case_ref FROM casos WHERE id = ?", (caso_id,)
         ).fetchone()
-        # Trocar de caso no agente zera a lista de entregas enviadas: o outro lado
-        # não conhece nenhuma delas, e manter a lista faria o sistema achar que já
-        # mandou o que nunca chegou lá.
-        trocou = bool(anterior) and anterior["caso_ref"] != caso_ref
-        enviados = anterior["enviados"] if anterior and not trocou else "[]"
+        trocou = bool(anterior) and anterior["case_ref"] != case_ref
+        con.execute(
+            """
+            UPDATE casos
+               SET case_ref = ?, cliente_ref = ?, agente_ultimo_erro = NULL,
+                   atualizado_em = ?
+             WHERE id = ?
+            """,
+            (case_ref, cliente_ref, instante, caso_id),
+        )
         if trocou:
-            # Pela mesma razão, a entrevista volta a contar como não enviada. Ela é a
-            # origem dos fatos que o cliente relatou — sem isto, o caso recriado herda os
-            # documentos e perde justamente o que o advogado ouviu no atendimento.
             con.execute(
                 "UPDATE dbo.acervo_entrevistas SET enviada_em = NULL WHERE caso_id = ?",
                 (caso_id,),
             )
+            con.execute(
+                "UPDATE entregas SET agente_envio_chave = NULL WHERE caso_id = ?",
+                (caso_id,),
+            )
+    return estado_agente(caso_id) or {}
+
+
+def marcar_entrega_enviada(caso_id: str, chave: str) -> None:
+    """Registra que esta versão da entrega já foi entregue ao agente."""
+    entrega_id = chave.split(":", 1)[0]
+    with conectar() as con:
         con.execute(
-            """
-            MERGE dbo.acervo_vinculos_agente AS alvo
-            USING (SELECT ? AS caso_id, ? AS caso_ref, ? AS cliente_ref, ? AS enviados,
-                          ? AS criado_em, ? AS atualizado_em) AS origem
-               ON alvo.caso_id = origem.caso_id
-             WHEN MATCHED THEN UPDATE SET caso_ref = origem.caso_ref,
-                                          cliente_ref = origem.cliente_ref,
-                                          enviados = origem.enviados,
-                                          ultimo_erro = NULL,
-                                          atualizado_em = origem.atualizado_em
-             WHEN NOT MATCHED THEN
-                  INSERT (caso_id, caso_ref, cliente_ref, enviados, ultimo_erro,
-                          criado_em, atualizado_em)
-                  VALUES (origem.caso_id, origem.caso_ref, origem.cliente_ref,
-                          origem.enviados, NULL, origem.criado_em, origem.atualizado_em);
-            """,
-            (
-                caso_id,
-                caso_ref,
-                cliente_ref,
-                enviados,
-                anterior["criado_em"] if anterior else instante,
-                instante,
-            ),
+            "UPDATE entregas SET agente_envio_chave = ? WHERE id = ? AND caso_id = ?",
+            (chave, entrega_id, caso_id),
         )
-    return obter_vinculo_agente(caso_id) or {}
-
-
-def _normalizar_vinculo(linha: Any) -> dict[str, Any]:
-    registro = dict(linha)
-    bruto = registro.get("enviados")
-    try:
-        registro["enviados"] = json.loads(bruto) if isinstance(bruto, str) else []
-    except json.JSONDecodeError:
-        registro["enviados"] = []
-    return registro
-
-
-def obter_vinculo_agente(caso_id: str) -> dict[str, Any] | None:
-    with conectar() as con:
-        linha = con.execute(
-            "SELECT * FROM vinculos_agente WHERE caso_id = ?", (caso_id,)
-        ).fetchone()
-    return _normalizar_vinculo(linha) if linha else None
-
-
-def marcar_entrega_enviada(caso_id: str, entrega_id: str) -> None:
-    """Registra que esta entrega já foi entregue ao agente.
-
-    O agente também é idempotente pelo `external_event_id`, então isto não é a
-    garantia — é a economia: sem a lista, cada abertura do dossiê reenviaria todos
-    os documentos do caso.
-    """
-    vinculo = obter_vinculo_agente(caso_id)
-    if vinculo is None:
-        return
-    enviados = list(dict.fromkeys([*vinculo["enviados"], entrega_id]))
-    with conectar() as con:
         con.execute(
-            "UPDATE vinculos_agente SET enviados = ?, ultimo_erro = NULL, atualizado_em = ?"
-            " WHERE caso_id = ?",
-            (json.dumps(enviados), agora(), caso_id),
+            "UPDATE casos SET agente_ultimo_erro = NULL, atualizado_em = ? WHERE id = ?",
+            (agora(), caso_id),
         )
 
 
 def registrar_erro_agente(caso_id: str, mensagem: str | None) -> None:
     with conectar() as con:
         con.execute(
-            "UPDATE vinculos_agente SET ultimo_erro = ? WHERE caso_id = ?",
-            (mensagem[:500] if mensagem else None, caso_id),
+            "UPDATE casos SET agente_ultimo_erro = ?, atualizado_em = ? WHERE id = ?",
+            (mensagem[:500] if mensagem else None, agora(), caso_id),
         )
+
+
+# Compatibilidade com código que ainda chama o nome antigo.
+obter_vinculo_agente = estado_agente
 
 
 # ------------------------------------------------------------------ entrevistas
@@ -1325,7 +1432,9 @@ def obter_entrevista_por_gravacao(gravacao_id: str) -> dict[str, Any] | None:
     return _normalizar_entrevista(linha) if linha else None
 
 
-def atualizar_transcricao(entrevista_id: str, texto: str, realizada_em: str = "") -> bool:
+def atualizar_transcricao(
+    entrevista_id: str, texto: str, realizada_em: str = ""
+) -> bool:
     """Regrava a transcrição de uma entrevista já registrada.
 
     O atendimento ao vivo continua depois de o caso nascer — a avaliação no Google,
@@ -1409,7 +1518,13 @@ def marcar_entrevista_lida(
         con.execute(
             "UPDATE entrevistas SET resumo = ?, perguntas = ?, fatos_gerados = ?,"
             " enviada_em = ? WHERE id = ?",
-            (resumo[:4000], json.dumps(perguntas[:15]), fatos_gerados, agora(), entrevista_id),
+            (
+                resumo[:4000],
+                json.dumps(perguntas[:15]),
+                fatos_gerados,
+                agora(),
+                entrevista_id,
+            ),
         )
 
 
@@ -1630,7 +1745,9 @@ def listar_conversas(usuario: str, *, busca: str = "") -> list[dict[str, Any]]:
 def obter_conversa(conversa_id: str) -> dict[str, Any] | None:
     """Sem filtro de dono aqui: quem chama compara o `usuario` e responde `404`."""
     with conectar() as con:
-        linha = con.execute("SELECT * FROM conversas WHERE id = ?", (conversa_id,)).fetchone()
+        linha = con.execute(
+            "SELECT * FROM conversas WHERE id = ?", (conversa_id,)
+        ).fetchone()
     return _normalizar_conversa(linha) if linha else None
 
 
@@ -1672,7 +1789,9 @@ def atualizar_conversa(
 
     valores.append(conversa_id)
     with conectar() as con:
-        cur = con.execute(f"UPDATE conversas SET {', '.join(campos)} WHERE id = ?", valores)
+        cur = con.execute(
+            f"UPDATE conversas SET {', '.join(campos)} WHERE id = ?", valores
+        )
     return cur.rowcount > 0
 
 
@@ -1720,7 +1839,16 @@ def registrar_mensagem(
             "INSERT INTO conversa_mensagens"
             " (id, conversa_id, ordem, papel, conteudo, natureza, payload, criado_em)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (mensagem_id, conversa_id, ordem, papel, conteudo, natureza, carga, instante),
+            (
+                mensagem_id,
+                conversa_id,
+                ordem,
+                papel,
+                conteudo,
+                natureza,
+                carga,
+                instante,
+            ),
         )
     return {
         "id": mensagem_id,
@@ -1741,6 +1869,8 @@ def mensagens_da_conversa(conversa_id: str) -> list[dict[str, Any]]:
             (conversa_id,),
         ).fetchall()
     return [_normalizar_mensagem(l) for l in linhas]
+
+
 # ------------------------------------------------------- catálogo de roteiros
 #
 # O roteiro do `app/roteiros.py` é código: veio de um `.docx` transcrito à mão.
@@ -1797,7 +1927,16 @@ def salvar_roteiro(
                         criado_em, atualizado_em)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (codigo, nome, descricao, corpo, criado_por, origem, instante, instante),
+                (
+                    codigo,
+                    nome,
+                    descricao,
+                    corpo,
+                    criado_por,
+                    origem,
+                    instante,
+                    instante,
+                ),
             )
     return obter_roteiro(codigo) or {}
 
@@ -1810,7 +1949,9 @@ def listar_roteiros() -> list[dict[str, Any]]:
 
 def obter_roteiro(codigo: str) -> dict[str, Any] | None:
     with conectar() as con:
-        linha = con.execute("SELECT * FROM roteiros WHERE codigo = ?", (codigo,)).fetchone()
+        linha = con.execute(
+            "SELECT * FROM roteiros WHERE codigo = ?", (codigo,)
+        ).fetchone()
     return _normalizar_roteiro(linha) if linha else None
 
 
@@ -1822,7 +1963,9 @@ def excluir_roteiro(codigo: str) -> bool:
     saída de emergência de uma edição malfeita no meio do expediente.
     """
     with conectar() as con:
-        return bool(con.execute("DELETE FROM roteiros WHERE codigo = ?", (codigo,)).rowcount)
+        return bool(
+            con.execute("DELETE FROM roteiros WHERE codigo = ?", (codigo,)).rowcount
+        )
 
 
 # --------------------------------------------------- modelos .docx do escritório
@@ -1894,5 +2037,7 @@ def excluir_modelo(codigo: str) -> bool:
     """Tira o modelo do banco. O `docs/` volta a valer, se houver arquivo lá."""
     with conectar() as con:
         return bool(
-            con.execute("DELETE FROM modelos_documento WHERE codigo = ?", (codigo,)).rowcount
+            con.execute(
+                "DELETE FROM modelos_documento WHERE codigo = ?", (codigo,)
+            ).rowcount
         )

@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
-from .. import armazenamento, banco, extractors
+from .. import armazenamento, extractors
 from . import vocabulario
 from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente, caso_ref_valido
 
@@ -146,65 +146,33 @@ def _garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, 
     O vínculo sozinho não basta como prova: ele diz que o caso **foi** criado, não que
     ele ainda está lá. Por isso a existência é conferida do outro lado antes de ser
     reaproveitada.
-
-    **Serializado por caso.** Abrir o dossiê ou clicar em "gerar petição" dispara
-    vários pedidos ao Acervo quase juntos (dossiê + sincronizar + peticao-fluxo + um
-    `documents/received` por item do checklist). Sem trava, cada um lia o vínculo,
-    via o caso "sumido" e o recriava: o `caso_ref` pulava entre casos recém-criados,
-    a entrevista e os documentos caíam em casos diferentes, e nenhum ficava completo.
-    A trava (`sp_getapplock`, não `threading.Lock`, porque os workers Celery chamam
-    isto em outro processo) faz o primeiro recriar uma vez e os demais lerem o
-    vínculo já corrigido.
-    """
-    with banco.trava_recurso(f"agente:vinculo:{caso_id}", timeout_ms=30000) as travada:
-        if not travada:
-            log.warning(
-                "trava do vínculo do caso %s não obtida em 30s; seguindo sem serializar",
-                caso_id,
-            )
-        return _garantir_caso_sob_trava(caso_id, jurisdicao=jurisdicao)
-
-
-def _garantir_caso_sob_trava(
-    caso_id: str, *, jurisdicao: str | None = None
-) -> dict[str, Any]:
-    """Corpo de `garantir_caso`, já sob a trava por caso.
-
-    A releitura do vínculo aqui dentro é o que resolve a corrida: quem entrou depois
-    lê a gravação que o primeiro acabou de fazer, em vez de recriar de novo.
     """
     cliente = Cliente()
-    vinculo = armazenamento.obter_vinculo_agente(caso_id)
-    if vinculo:
-        existe = _caso_existe_no_agente(cliente, vinculo["caso_ref"])
+    estado = armazenamento.estado_agente(caso_id)
+    if estado:
+        existe = _caso_existe_no_agente(cliente, estado["caso_ref"])
         log.info(
-            "diagnostico vinculo agente caso_id=%s case_ref=%s existe=%s enviados=%s",
+            "diagnostico agente caso_id=%s case_ref=%s existe=%s",
             caso_id,
-            vinculo["caso_ref"],
+            estado["caso_ref"],
             existe,
-            len(vinculo.get("enviados") or []),
         )
         if existe:
-            return vinculo
-        if _vinculo_recente(vinculo):
+            return estado
+        if _vinculo_recente(estado):
             log.warning(
-                "vínculo recente do caso %s (%s): agente ainda não confirma existência; "
+                "case_ref recente do caso %s (%s): agente ainda não confirma existência; "
                 "reutilizando sem recriar",
                 caso_id,
-                vinculo["caso_ref"],
+                estado["caso_ref"],
             )
-            return vinculo
+            return estado
 
-    if vinculo:
-        # Vínculo órfão: o caso existiu e não existe mais. Aconteceu de verdade na
-        # migração do agente para o SQL Server — os casos ficaram no banco antigo e o
-        # dossiê passou a abrir vazio, sem que nada aqui estivesse errado. Recriar do
-        # lado de lá é o único caminho: `vincular_agente` troca o `caso_ref` e zera as
-        # entregas enviadas, e o material volta a subir na próxima sincronização.
+    if estado:
         log.warning(
-            "vínculo órfão do caso %s: %s não existe mais no agente; recriando",
+            "case_ref órfão do caso %s: %s não existe mais no agente; recriando",
             caso_id,
-            vinculo["caso_ref"],
+            estado["caso_ref"],
         )
 
     caso = armazenamento.obter_caso(caso_id)
@@ -219,7 +187,7 @@ def _garantir_caso_sob_trava(
         descricao=caso.get("observacao") or None,
     )
     log.info("caso %s espelhado no agente como %s", caso_id, caso_criado["id"])
-    return armazenamento.vincular_agente(caso_id, caso_criado["id"], criado["id"])
+    return armazenamento.salvar_refs_agente(caso_id, caso_criado["id"], criado["id"])
 
 
 def _titulo(caso: dict[str, Any]) -> str:
@@ -246,10 +214,12 @@ def _chave_envio(entrega_id: str, extracao: dict[str, Any]) -> str:
     return f"{entrega_id}:{_assinatura_extracao(extracao)}"
 
 
-def _envio_registrado(vinculo: dict[str, Any], entrega_id: str, extracao: dict[str, Any]) -> bool:
+def _envio_registrado(entrega_id: str, extracao: dict[str, Any]) -> bool:
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        return False
     chave = _chave_envio(entrega_id, extracao)
-    enviados = vinculo.get("enviados") or []
-    return chave in enviados
+    return entrega.get("agente_envio_chave") == chave
 
 
 def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) -> bool:
@@ -259,8 +229,8 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
     documento continua salvo aqui e o erro fica registrado no vínculo — o upload do
     cliente **não** pode falhar porque outro serviço caiu.
     """
-    vinculo = armazenamento.obter_vinculo_agente(caso_id)
-    if vinculo is None:
+    estado = armazenamento.estado_agente(caso_id)
+    if estado is None:
         return False
 
     entrega = armazenamento.obter_entrega(entrega_id)
@@ -272,7 +242,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
         return False
 
     chave = _chave_envio(entrega_id, entrega["extracao"])
-    if _envio_registrado(vinculo, entrega_id, entrega["extracao"]):
+    if _envio_registrado(entrega_id, entrega["extracao"]):
         return True
 
     origem = f"ocr://entregas/{entrega_id}/{entrega.get('arquivo', '')}"
@@ -283,7 +253,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
         cliente = Cliente()
         if tipo in extractors.ROTULOS_TIPO:
             cliente.enviar_extracao(
-                vinculo["caso_ref"],
+                estado["caso_ref"],
                 evento_externo=evento_externo,
                 origem=origem,
                 extracao=entrega["extracao"],
@@ -304,7 +274,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
             generica.setdefault("tipo", {})["codigo"] = "desconhecido"
             generica["tipo"]["detectado"] = "desconhecido"
             cliente.enviar_extracao(
-                vinculo["caso_ref"],
+                estado["caso_ref"],
                 evento_externo=evento_externo,
                 origem=origem,
                 extracao=generica,
@@ -316,7 +286,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
                 # fatos/alertas; em seguida a declaração atribui o tipo jurídico real ao
                 # mesmo source_reference.
                 cliente.declarar_documento(
-                    vinculo["caso_ref"],
+                    estado["caso_ref"],
                     kind=kind,
                     arquivo=str(entrega.get("arquivo") or kind),
                     origem=origem,
@@ -358,7 +328,7 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     for entrega in armazenamento.listar_entregas(caso_id):
         if entrega.get("status_proc") != "pronto" or not entrega.get("extracao"):
             continue
-        if _envio_registrado(vinculo, entrega["id"], entrega["extracao"]):
+        if _envio_registrado(entrega["id"], entrega["extracao"]):
             continue
         if enviar_entrega(caso_id, entrega["id"]):
             enviados += 1
@@ -388,7 +358,7 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
             armazenamento.registrar_erro_agente(caso_id, f"Entrevista não lida: {erro}")
             falhas_entrevista += 1
 
-    atual = armazenamento.obter_vinculo_agente(caso_id) or vinculo
+    atual = armazenamento.estado_agente(caso_id) or vinculo
     declarados = declarar_itens_entregues(caso_id, atual["caso_ref"])
     qualificar_reclamante(atual["caso_ref"])
     # O fluxo de petição por entrevista não usa mais classificar → pesquisar → estratégia
@@ -399,7 +369,7 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
         # pendente já foi sincronizado (inclusive quando nenhum arquivo precisou ser
         # reenviado nesta abertura).
         armazenamento.registrar_erro_agente(caso_id, None)
-        atual = armazenamento.obter_vinculo_agente(caso_id) or atual
+        atual = armazenamento.estado_agente(caso_id) or atual
     resultado = {
         "caso_ref": atual["caso_ref"],
         "cliente_ref": atual["cliente_ref"],
@@ -517,7 +487,7 @@ def caso_ref(caso_id: str) -> str:
     indisponibilidade. Na conversa geral, por exemplo, ela vira mensagem NA transcrição —
     transformá-la em erro de tela apagaria a conversa inteira por causa de uma resposta.
     """
-    anterior = armazenamento.obter_vinculo_agente(caso_id)
+    anterior = armazenamento.estado_agente(caso_id)
     vinculo = garantir_caso(caso_id)
     if anterior is None or anterior["caso_ref"] != vinculo["caso_ref"]:
         return str(sincronizar(caso_id)["caso_ref"])
@@ -702,7 +672,7 @@ def conferir_contrato(caso_id: str, campos: dict[str, Any]) -> dict[str, Any]:
     novo pelo contrato criaria uma segunda versão da mesma verdade, sem origem
     conferível, que é o que o `§2.2` proíbe.
     """
-    vinculo = armazenamento.obter_vinculo_agente(caso_id)
+    vinculo = armazenamento.estado_agente(caso_id)
     if vinculo is None:
         return {"disponivel": False, "motivo": "caso ainda não enviado ao agente"}
 
