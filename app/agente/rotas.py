@@ -90,7 +90,7 @@ def saude_do_agente() -> dict[str, Any]:
     últimas 24h — o `/api/health/inspection` de lá, repassado para a tela não precisar
     falar HTTP com outro serviço nem conhecer o token dele.
     """
-    if not  ().ligado:
+    if not config().ligado:
         return {"ligado": False}
     try:
         dados = Cliente().inspecao()
