@@ -43,10 +43,11 @@ def reenfileirar_pendentes(limite: int = 200) -> int:
     enfileiradas = 0
     for caso in armazenamento.listar_casos():
         caso_id = str(caso["id"])
-        vinculo = armazenamento.obter_vinculo_agente(caso_id) or {}
-        enviadas = {str(item) for item in (vinculo.get("enviados") or [])}
+        estado = armazenamento.estado_agente(caso_id) or {}
         for entrega in armazenamento.listar_entregas(caso_id):
-            if entrega.get("status_proc") != "pronto" or str(entrega["id"]) in enviadas:
+            if entrega.get("status_proc") != "pronto":
+                continue
+            if entrega.get("agente_envio_chave"):
                 continue
             enviar_entrega_ao_agente.apply_async(
                 args=(caso_id, str(entrega["id"])),

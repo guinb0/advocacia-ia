@@ -18,11 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import AjudanteDoCaso from "@/components/AjudanteDoCaso";
-import FluxoPeticao from "@/components/admin/FluxoPeticao";
-/* O trilho recolhido é desenhado por quem hospeda o painel, e não pelo painel: só o
- * dossiê sabe que existe uma coluna para devolver ao conteúdo quando ele se fecha. */
-import trilho from "@/components/AjudanteDoCaso.module.css";
+import FluxoPeticao, { type ControlesGeracaoPeticao } from "@/components/admin/FluxoPeticao";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import {
   gerarContratoDoCaso as solicitarContratoDoCaso,
@@ -260,24 +256,9 @@ export default function Dossie({
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [pesquisa, setPesquisa] = useState<PesquisaDetalhe | null>(null);
-  const [peticao, setPeticao] = useState<Peticao | null>(null);
-  /* A redação em curso. Enquanto existir, a tela mostra a barra de progresso em vez do
-   * "ficou pronta" — que era falso: o POST responde 202, e a peça só aparece minutos
-   * depois. `desde` é a marca que separa esta geração da anterior. */
-  const [redacao, setRedacao] = useState<{
-    desde: string;
-    esperadas: number;
-    passos: number;
-  } | null>(null);
+  const [geracaoPeticao, setGeracaoPeticao] = useState<ControlesGeracaoPeticao | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [camposFaltandoContrato, setCamposFaltandoContrato] = useState<string[] | null>(null);
-  /* Começa recolhido: o dossiê é o que o advogado veio ver, e abrir por cima dele uma
-   * coluna de 400px em toda visita decidiria por ele. Recolhido não é escondido — o
-   * trilho ao lado continua anunciando que o agente está ali, a um clique. */
-  const [agenteAberto, setAgenteAberto] = useState(false);
-  /* Qual fato a citação da resposta está apontando. Sem o destaque, seguir a referência
-   * rola a página e nada muda na tela: o advogado não sabe qual dos cartões era. */
-  const [fatoCitado, setFatoCitado] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -293,110 +274,7 @@ export default function Dossie({
     void carregar();
   }, [carregar]);
 
-  /* O agente trabalha em segundo plano: classificar e pesquisar rodam em worker do
-   * outro lado. Enquanto houver etapa em andamento, a tela se atualiza sozinha —
-   * sem isso o advogado ficaria apertando F5 para saber se terminou. */
-  const emAndamento = dados?.etapas.some((etapa) => etapa.estado === "andamento") ?? false;
-  useEffect(() => {
-    if (!emAndamento && !ocupado) return;
-    const timer = setInterval(() => void carregar(), 5000);
-    return () => clearInterval(timer);
-  }, [emAndamento, ocupado, carregar]);
-
-  /* Acompanha a redação até a peça existir de verdade.
-   *
-   * O que se lê é execução de IA já gravada — seção redigida e revisão —, não relógio
-   * correndo na tela: uma barra que anda sozinha mentiria do mesmo jeito que o aviso
-   * antigo, só mais devagar.
-   *
-   * Falha de leitura é engolida de propósito: a redação continua no worker do outro lado,
-   * e derrubar o acompanhamento por uma consulta que não voltou deixaria o advogado sem
-   * saber de nada. O prazo máximo abaixo é o do próprio worker (`time_limit`, 15 min); dali
-   * em diante o silêncio é defeito, e aí sim ele precisa ser dito.
-   */
-  const redigindoDesde = redacao?.desde ?? null;
-  useEffect(() => {
-    if (!redigindoDesde) return;
-    let ativo = true;
-    const limite = Date.now() + 16 * 60 * 1000;
-
-    const timer = setInterval(() => {
-      void (async () => {
-        try {
-          const andamento = await progressoPeticao(casoId, redigindoDesde);
-          if (!ativo) return;
-          if (andamento.status === "DONE") {
-            /* Busque a peça antes de anunciar o fim. Atualizar primeiro o aviso e só depois
-             * recarregar o dossiê ainda deixava uma janela em que "ficou pronta" aparecia
-             * sobre a versão antiga (ou sobre cartão vazio), que é justamente o falso
-             * positivo que este acompanhamento elimina. */
-            if (!andamento.generation_id) {
-              throw new Error("A geração terminou sem identificar a petição criada.");
-            }
-            const pronta = await buscarPeticao(casoId, andamento.generation_id);
-            if (!ativo) return;
-            setPeticao(pronta);
-            setRedacao(null);
-            try {
-              const arquivo = await baixarArquivoDaPeticao(casoId, pronta.id, "docx");
-              if (ativo) {
-                baixarArquivo(arquivo, `Peticao inicial - v${pronta.version}.docx`);
-              }
-            } catch {
-              /* a peça continua na tela; o advogado pode baixar pelo botão abaixo */
-            }
-            setAviso(
-              andamento.blocking_findings > 0
-                ? "A minuta ficou pronta e foi baixada. A revisão a reteve — o motivo está abaixo."
-                : "A petição foi baixada e está aberta abaixo.",
-            );
-            /* Sincroniza também o resumo/lista, sem bloquear a exibição que acabou de
-             * receber o documento completo pelo identificador exato. */
-            void carregar();
-            return;
-          }
-          setRedacao((atual) =>
-            atual ? { ...atual, passos: andamento.completed_steps } : atual,
-          );
-          if (andamento.completed_steps === 0) {
-            void carregar();
-          }
-        } catch {
-          /* leitura perdida; a próxima tentativa vem em três segundos */
-        }
-        if (ativo && Date.now() > limite) {
-          setRedacao(null);
-          setErro(
-            "A redação passou do prazo do agente sem devolver a peça. Verifique o worker de geração antes de pedir outra.",
-          );
-        }
-      })();
-    }, 3000);
-
-    return () => {
-      ativo = false;
-      clearInterval(timer);
-    };
-  }, [casoId, redigindoDesde, carregar]);
-
   const ultimaPesquisa = dados?.agente.pesquisas[0] ?? null;
-  const ultimaPeticao = dados?.agente.peticoes?.[0] ?? null;
-
-  /* A lista do dossiê traz o resumo; as seções vêm só quando a peça é aberta — é o
-   * texto inteiro da petição, e carregá-lo em toda atualização da tela seria caro. */
-  useEffect(() => {
-    if (!ultimaPeticao) {
-      setPeticao(null);
-      return;
-    }
-    let ativo = true;
-    void buscarPeticao(casoId, ultimaPeticao.id)
-      .then((detalhe) => ativo && setPeticao(detalhe))
-      .catch(() => ativo && setPeticao(ultimaPeticao));
-    return () => {
-      ativo = false;
-    };
-  }, [casoId, ultimaPeticao]);
 
   useEffect(() => {
     if (!ultimaPesquisa || ultimaPesquisa.status !== "COMPLETED") {
@@ -512,23 +390,18 @@ export default function Dossie({
           <p className="mt-1 text-tinta-3 text-sm">
             {dados.checklist.categoria ?? dados.caso.categoria} · aberto em{" "}
             {new Date(dados.caso.criado_em).toLocaleDateString("pt-BR")}
-            {agente.caso_ref ? ` · ${agente.caso_ref}` : ""}
           </p>
         </div>
 
         <div className="flex gap-2 flex-wrap">
           <Botao
             variante="primario"
-            disabled={!agente.ligado || ocupado !== null}
-            onClick={() =>
-              void executar(
-                "sincronizar",
-                () => sincronizarComAgente(casoId),
-                "Entrevista e documentos enviados ao agente.",
-              )
+            disabled={
+              !geracaoPeticao?.podeGerar || geracaoPeticao?.ocupado || ocupado !== null
             }
+            onClick={() => geracaoPeticao?.gerar()}
           >
-            {ocupado === "sincronizar" ? "Sincronizando…" : "Sincronizar com o agente"}
+            {geracaoPeticao?.rotulo ?? "Gerar análise e petição"}
           </Botao>
         </div>
       </header>
@@ -537,24 +410,6 @@ export default function Dossie({
       {erro && (
         <Aviso tom="critico" titulo="A última ação falhou">
           {erro}
-        </Aviso>
-      )}
-      {!agente.ligado && (
-        <Aviso tom="atencao" titulo="Agente jurídico não configurado">
-          {agente.motivo ?? "Defina AGENTE_API_URL no .env para ligar a análise jurídica."} O
-          restante do caso continua funcionando normalmente.
-        </Aviso>
-      )}
-      {agente.ligado && !agente.disponivel && agente.vinculado && (
-        <Aviso tom="critico" titulo="O agente não respondeu">
-          {agente.motivo ?? "Serviço indisponível."} O que aparece abaixo é só o que o Acervo
-          guarda — não significa que o caso esteja sem fatos.
-        </Aviso>
-      )}
-      {agente.ultimo_erro && agente.disponivel && (
-        <Aviso tom="atencao" titulo="Um envio anterior falhou">
-          {agente.ultimo_erro} Use “Sincronizar com o agente” e aguarde a análise automática
-          abaixo.
         </Aviso>
       )}
 
@@ -585,15 +440,6 @@ export default function Dossie({
           <PainelEntrevista
             casoId={casoId}
             entrevistas={dados.entrevistas ?? []}
-            ocupado={ocupado !== null}
-            agenteLigado={agente.ligado}
-            onLer={(entrevistaId) =>
-              executar(
-                "entrevista",
-                () => lerEntrevistaNoAgente(casoId, entrevistaId),
-                "Entrevista enviada ao agente.",
-              )
-            }
           />
         </div>
 
@@ -601,50 +447,10 @@ export default function Dossie({
           <FluxoPeticao
             casoId={casoId}
             temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
-            agenteLigado={agente.ligado && agente.disponivel}
-            peticao={peticao}
-            onPeticaoPronta={() => void carregar()}
-            onAnalisePronta={() => void carregar()}
+            onControlesGeracao={setGeracaoPeticao}
           />
         </div>
       </div>
-      </div>
-
-      <div className="hidden lg:flex sticky top-0 h-screen">
-        {agenteAberto ? (
-          <AjudanteDoCaso
-            casoId={casoId}
-            aoRecolher={() => setAgenteAberto(false)}
-            /* O destaque some sozinho: um cartão marcado para sempre viraria ruído no
-             * dossiê, e a próxima citação não teria como se distinguir dele. */
-            aoAbrirReferencia={(referencia) => {
-              setFatoCitado(referencia);
-              window.setTimeout(
-                () => setFatoCitado((atual) => (atual === referencia ? null : atual)),
-                2600,
-              );
-            }}
-          />
-        ) : (
-          <div className={trilho.trilho}>
-            <button
-              type="button"
-              className={trilho.iconeBotao}
-              onClick={() => setAgenteAberto(true)}
-              aria-label="Abrir o agente do caso"
-              title="Agente do caso"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-            {/* O rótulo na vertical existe para o trilho não ser um ícone mudo: quem
-              * nunca abriu não tem como adivinhar o que há atrás dele. */}
-            <span className="[writing-mode:vertical-rl] text-tinta-3 text-xs font-semibold tracking-[0.04em]">
-              Agente do caso
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1897,15 +1703,9 @@ function PainelContradicoes({
 function PainelEntrevista({
   casoId,
   entrevistas,
-  ocupado,
-  agenteLigado,
-  onLer,
 }: {
   casoId: string;
   entrevistas: EntrevistaResumo[];
-  ocupado: boolean;
-  agenteLigado: boolean;
-  onLer: (entrevistaId: string) => Promise<void>;
 }) {
   const [lendo, setLendo] = useState<string | null>(null);
   const [texto, setTexto] = useState<Record<string, string>>({});
@@ -1933,13 +1733,13 @@ function PainelEntrevista({
           <li key={item.id} className={ITEM}>
             <div className={ITEM_TOPO}>
               <strong>{item.arquivo}</strong>
-              {item.enviada ? (
+              {item.caracteres > 0 ? (
                 <Selo tom="ok" simbolo="✓">
-                  {item.fatos_gerados} fato(s) relatado(s)
+                  transcrita
                 </Selo>
               ) : (
                 <Selo tom="atencao" simbolo="!">
-                  ainda não lida pelo agente
+                  sem texto
                 </Selo>
               )}
             </div>
@@ -1981,16 +1781,6 @@ function PainelEntrevista({
               >
                 Baixar o arquivo
               </LinkBotao>
-              {!item.enviada && (
-                <Botao
-                  variante="primario"
-                  pequeno
-                  disabled={ocupado || !agenteLigado}
-                  onClick={() => void onLer(item.id)}
-                >
-                  Ler no agente
-                </Botao>
-              )}
             </div>
           </li>
         ))}

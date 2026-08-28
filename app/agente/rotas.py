@@ -15,10 +15,20 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
 
-from .. import armazenamento, auth, contrato
+from .. import armazenamento, auth, contrato, peticao_local
 from . import conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
 from .config import config
@@ -102,8 +112,8 @@ def saude_do_agente() -> dict[str, Any]:
 
 @roteador.get("/casos/{caso_id}")
 def dossie_do_caso(caso_id: str) -> dict[str, Any]:
-    """Tudo que o escritório sabe do caso, dos dois lados."""
-    montado = dossie.montar(caso_id)
+    """Tudo que o escritório sabe do caso — Acervo + entrevista + OCR (sem agente)."""
+    montado = dossie.montar(caso_id, recuperar=False, sem_agente=True)
     if montado is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Caso não encontrado.")
     return montado
@@ -146,7 +156,9 @@ def gerar_contrato_do_caso(caso_id: str) -> Response:
 
 
 @roteador.post("/casos/{caso_id}/sincronizar", status_code=status.HTTP_201_CREATED)
-def sincronizar(caso_id: str, jurisdicao: str | None = Body(None, embed=True)) -> dict[str, Any]:
+def sincronizar(
+    caso_id: str, jurisdicao: str | None = Body(None, embed=True)
+) -> dict[str, Any]:
     """Cria o caso no agente (se ainda não existe) e manda o que faltava.
 
     Idempotente: chamar duas vezes reaproveita o mesmo caso do outro lado e só envia
@@ -254,7 +266,8 @@ def jurimetria_do_acervo(
 
 
 @roteador.post(
-    "/casos/{caso_id}/jurimetria/linhas-argumentativas", status_code=status.HTTP_202_ACCEPTED
+    "/casos/{caso_id}/jurimetria/linhas-argumentativas",
+    status_code=status.HTTP_202_ACCEPTED,
 )
 def disparar_linhas_argumentativas(caso_id: str) -> dict[str, Any]:
     """Dispara a leitura das razões de decidir do recorte comparável deste caso."""
@@ -275,7 +288,9 @@ def linhas_argumentativas(caso_id: str) -> dict[str, Any] | None:
         raise _erro(erro) from erro
 
 
-@roteador.post("/casos/{caso_id}/jurimetria/contra-tese", status_code=status.HTTP_202_ACCEPTED)
+@roteador.post(
+    "/casos/{caso_id}/jurimetria/contra-tese", status_code=status.HTTP_202_ACCEPTED
+)
 def disparar_contra_tese(
     caso_id: str, hipotese_id: str = Body(..., embed=True)
 ) -> dict[str, Any]:
@@ -348,7 +363,9 @@ def decidir_estrategia(
     """Aprovar a estratégia é o que faz a petição parar de tirar pedidos do playbook."""
     caso_ref = _caso_ref(caso_id)
     try:
-        return Cliente().decidir_estrategia(caso_ref, versao, aprovada=aprovada, nota=nota)
+        return Cliente().decidir_estrategia(
+            caso_ref, versao, aprovada=aprovada, nota=nota
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -401,13 +418,23 @@ def analisar_peticao_fluxo(caso_id: str) -> dict[str, Any]:
 
 @roteador.post("/casos/{caso_id}/peticao-fluxo/estrategias")
 def estrategias_peticao_fluxo(caso_id: str) -> dict[str, Any]:
+    """Mantido por compatibilidade — o fluxo local não usa estratégias."""
     try:
-        return peticao_fluxo.propor_estrategias(caso_id)
+        return peticao_fluxo.analisar_entrevista(caso_id)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
 
-@roteador.post("/casos/{caso_id}/peticao-fluxo/gerar", status_code=status.HTTP_202_ACCEPTED)
+@roteador.post("/casos/{caso_id}/peticao-fluxo/completo")
+def gerar_analise_e_peticao(caso_id: str) -> dict[str, Any]:
+    """Analisa entrevista + OCR e redige a petição (síncrono, sem agente)."""
+    try:
+        return peticao_fluxo.gerar_completo(caso_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao-fluxo/gerar")
 def gerar_peticao_fluxo(caso_id: str, opcao: int = 0) -> dict[str, Any]:
     try:
         return peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
@@ -415,15 +442,17 @@ def gerar_peticao_fluxo(caso_id: str, opcao: int = 0) -> dict[str, Any]:
         raise _erro(erro) from erro
 
 
+def _peca_local(peca_ref: str) -> bool:
+    return peca_ref == peticao_local.ID_LOCAL
+
+
 @roteador.get("/casos/{caso_id}/peticao/progresso")
 def progresso_peticao(caso_id: str, desde: str) -> dict[str, Any]:
-    """Quanto da minuta já foi escrito, para a tela mostrar andamento e não uma promessa.
-
-    `desde` é o instante do pedido, devolvido pelo POST. É ele que separa esta geração da
-    anterior: sem o corte, as execuções da versão passada contariam de novo.
-    """
-    caso_ref = _caso_ref(caso_id)
+    """Quanto da minuta já foi escrito, para a tela mostrar andamento."""
+    if peticao_local.existe(caso_id):
+        return peticao_local.progresso(caso_id, desde)
     try:
+        caso_ref = _caso_ref(caso_id)
         return Cliente().progresso_peticao(caso_ref, desde)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
@@ -431,7 +460,12 @@ def progresso_peticao(caso_id: str, desde: str) -> dict[str, Any]:
 
 @roteador.get("/casos/{caso_id}/peticao/{peca_ref}")
 def peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
-    """A minuta com as seções, o readiness e o relatório de revisão."""
+    """A minuta com as seções."""
+    if _peca_local(peca_ref):
+        dados = peticao_local.carregar(caso_id)
+        if not dados:
+            raise HTTPException(status_code=404, detail="Petição não encontrada.")
+        return peticao_local.para_api(dados)
     caso_ref = _caso_ref(caso_id)
     try:
         return Cliente().peticao(caso_ref, peca_ref)
@@ -449,16 +483,30 @@ def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Respon
     assina.
     """
     if formato not in {"docx", "pdf"}:
-        raise HTTPException(status_code=400, detail="Formato inválido: use docx ou pdf.")
+        raise HTTPException(
+            status_code=400, detail="Formato inválido: use docx ou pdf."
+        )
 
-    caso_ref = _caso_ref(caso_id)
-    try:
-        conteudo = Cliente().baixar_peticao(caso_ref, peca_ref, formato=formato)
-    except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+    if _peca_local(peca_ref):
+        try:
+            conteudo = (
+                peticao_local.ler_pdf(caso_id)
+                if formato == "pdf"
+                else peticao_local.ler_docx(caso_id)
+            )
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
+    else:
+        caso_ref = _caso_ref(caso_id)
+        try:
+            conteudo = Cliente().baixar_peticao(caso_ref, peca_ref, formato=formato)
+        except ErroDoAgente as erro:
+            raise _erro(erro) from erro
 
     caso = armazenamento.obter_caso(caso_id) or {}
-    arquivo = f"Peticao inicial - {caso.get('cliente', 'caso')}.{formato}".replace("/", "-")
+    arquivo = f"Peticao inicial - {caso.get('cliente', 'caso')}.{formato}".replace(
+        "/", "-"
+    )
     disposicao = "inline" if formato == "pdf" else "attachment"
     tipo = (
         "application/pdf"
@@ -491,6 +539,21 @@ def decidir_peticao(
     gerada e mede, seção a seção, o que mudou — é assim que o sistema aprende o estilo do
     escritório em vez de repetir o do modelo.
     """
+    if _peca_local(peca_ref):
+        try:
+            if secoes:
+                dados = peticao_local.salvar_secoes(caso_id, secoes)
+            else:
+                dados = peticao_local.carregar(caso_id)
+            if not dados:
+                raise peticao_local.ErroPeticao("Petição não encontrada.")
+            if aprovada:
+                dados = peticao_local.atualizar_status(caso_id, status="APPROVED")
+            elif nota:
+                dados = peticao_local.atualizar_status(caso_id, status="REJECTED")
+            return peticao_local.para_api(dados)
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
     caso_ref = _caso_ref(caso_id)
     try:
         return Cliente().decidir_peticao(
@@ -506,6 +569,11 @@ def salvar_rascunho_peticao(
     peca_ref: str,
     secoes: list[dict[str, str]] = Body(..., embed=True),
 ) -> dict[str, Any]:
+    if _peca_local(peca_ref):
+        try:
+            return peticao_local.para_api(peticao_local.salvar_secoes(caso_id, secoes))
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
     caso_ref = _caso_ref(caso_id)
     try:
         return Cliente().salvar_rascunho_peticao(caso_ref, peca_ref, secoes)
@@ -579,7 +647,11 @@ def taxonomia_de_estilo() -> dict[str, Any]:
         for item in resposta.get("items", resposta.get("nodes", []))
         if isinstance(item, dict)
     }
-    return {"items": [por_codigo[codigo] for codigo in codigos_ativos if codigo in por_codigo]}
+    return {
+        "items": [
+            por_codigo[codigo] for codigo in codigos_ativos if codigo in por_codigo
+        ]
+    }
 
 
 @roteador.get("/estilo/pecas")
@@ -604,7 +676,9 @@ def remover_peca_de_estilo(peca_id: str) -> None:
 
 
 @roteador.get("/estilo/configuracao")
-def configuracao_de_geracao(taxonomy_code: str, document_type: str = "INITIAL_PETITION") -> dict[str, Any]:
+def configuracao_de_geracao(
+    taxonomy_code: str, document_type: str = "INITIAL_PETITION"
+) -> dict[str, Any]:
     try:
         return Cliente().configuracao_de_geracao(taxonomy_code, document_type)
     except ErroDoAgente as erro:
@@ -612,7 +686,9 @@ def configuracao_de_geracao(taxonomy_code: str, document_type: str = "INITIAL_PE
 
 
 @roteador.put("/estilo/configuracao")
-def salvar_configuracao_de_geracao(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def salvar_configuracao_de_geracao(
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
     try:
         return Cliente().salvar_configuracao_de_geracao(payload)
     except ErroDoAgente as erro:
@@ -620,7 +696,9 @@ def salvar_configuracao_de_geracao(payload: dict[str, Any] = Body(...)) -> dict[
 
 
 @roteador.post("/casos/{caso_id}/contrato/conferencia")
-def conferir_contrato(caso_id: str, campos: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def conferir_contrato(
+    caso_id: str, campos: dict[str, Any] = Body(...)
+) -> dict[str, Any]:
     """Confere a qualificação do contrato contra os fatos apurados dos documentos.
 
     Divergência de CPF entre o que o cliente falou na entrevista e o que a CTPS diz
@@ -737,7 +815,9 @@ def responder_na_conversa(
     distinção, clicar no candidato devolvia a mesma lista, porque o texto continuava
     citando os dois nomes.
     """
-    resposta = conversas.responder(conversa_id, mensagem, usuario.id, caso_escolhido=caso_id)
+    resposta = conversas.responder(
+        conversa_id, mensagem, usuario.id, caso_escolhido=caso_id
+    )
     if resposta is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _SEM_CONVERSA)
     return resposta

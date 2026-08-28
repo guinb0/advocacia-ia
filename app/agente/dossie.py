@@ -37,7 +37,7 @@ ATENCAO = "atencao"
 INDISPONIVEL = "indisponivel"
 
 
-def montar(caso_id: str, *, recuperar: bool = True) -> dict[str, Any] | None:
+def montar(caso_id: str, *, recuperar: bool = True, sem_agente: bool = False) -> dict[str, Any] | None:
     """O dossiê inteiro. `None` quando o caso não existe no OCR."""
     # Uma conexão para todas as leituras desta montagem; ver `banco.sessao`.
     #
@@ -49,20 +49,23 @@ def montar(caso_id: str, *, recuperar: bool = True) -> dict[str, Any] | None:
         if caso is None:
             return None
         situacao = casos_ocr.montar_situacao(caso_id) or {}
-        vinculo = armazenamento.obter_vinculo_agente(caso_id)
+        vinculo = armazenamento.estado_agente(caso_id)
 
-    if vinculo is not None and recuperar:
-        # O vínculo local pode apontar para um case_ref que já não existe no agente
-        # (migração, banco recriado). Conferir antes das leituras paralelas evita
-        # GET /strategy 404 ruidoso e deixa o dossiê se recuperar sozinho.
-        from . import espelho
+    if sem_agente:
+        agente = _agente_local()
+    else:
+        if vinculo is not None and recuperar:
+            # O vínculo local pode apontar para um case_ref que já não existe no agente
+            # (migração, banco recriado). Conferir antes das leituras paralelas evita
+            # GET /strategy 404 ruidoso e deixa o dossiê se recuperar sozinho.
+            from . import espelho
 
-        try:
-            vinculo = espelho.garantir_caso(caso_id)
-        except ErroDoAgente:
-            pass
+            try:
+                vinculo = espelho.garantir_caso(caso_id)
+            except ErroDoAgente:
+                pass
 
-    agente = _do_agente(vinculo, caso_id, recuperar=recuperar)
+        agente = _do_agente(vinculo, caso_id, recuperar=recuperar)
 
     with banco.sessao():
         entrevistas = [
@@ -377,6 +380,27 @@ def _recuperar_vinculo(erro: ErroDoAgente, caso_id: str | None) -> str | None:
         return None
 
 
+def _agente_local() -> dict[str, Any]:
+    """Dossiê só com Acervo — sem HTTP ao agente jurídico."""
+    return {
+        "ligado": False,
+        "disponivel": False,
+        "vinculado": False,
+        "caso_ref": None,
+        "ultimo_erro": None,
+        "sem_agente": True,
+        "fatos": [],
+        "classificacoes": [],
+        "pendencias": [],
+        "contradicoes": [],
+        "documentos": [],
+        "pesquisas": [],
+        "peticoes": [],
+        "estrategia": None,
+        "motivo": None,
+    }
+
+
 def _do_agente(
     vinculo: dict[str, Any] | None, caso_id: str | None = None, *, recuperar: bool = True
 ) -> dict[str, Any]:
@@ -575,6 +599,9 @@ def _etapas(
         },
     ]
 
+    if agente.get("sem_agente"):
+        return etapas
+
     if not agente["ligado"] or not agente["vinculado"] or not agente["disponivel"]:
         motivo = agente.get("motivo") or "Agente jurídico indisponível."
         etapas.extend(
@@ -620,14 +647,25 @@ def _etapa_entrevista(entrevistas: list[dict[str, Any]]) -> dict[str, Any]:
 
     recente = entrevistas[0]
     plural = "s" if len(entrevistas) > 1 else ""
+    caracteres = int(recente.get("caracteres") or 0)
+    if caracteres > 0:
+        pendentes = len(recente.get("perguntas") or [])
+        return {
+            "codigo": "entrevista",
+            "titulo": "Entrevista",
+            "estado": PRONTO,
+            "detalhe": (
+                f"{len(entrevistas)} entrevista{plural} com transcrição"
+                + (f"; {pendentes} ponto(s) a confirmar em documento." if pendentes else ".")
+            ),
+        }
     if not recente["enviada"]:
         return {
             "codigo": "entrevista",
             "titulo": "Entrevista",
             "estado": ANDAMENTO,
             "detalhe": (
-                f"{len(entrevistas)} entrevista{plural} anexada{plural}; a mais recente "
-                "ainda não foi lida pelo agente."
+                f"{len(entrevistas)} entrevista{plural} anexada{plural}; aguardando transcrição."
             ),
         }
 
