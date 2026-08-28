@@ -170,6 +170,26 @@ export interface Peticao {
   reviewed_at?: string | null;
   created_at: string;
   sections?: SecaoPeticao[];
+  jurimetria?: {
+    disponivel: boolean;
+    aviso?: string;
+    sintese?: string;
+    estatisticas?: {
+      processos_analisados: number;
+      desfechos_merito: { processos: number; favoraveis: number; percentual: number };
+      similaridade_amostra: { minima: number; mediana: number; maxima: number };
+    };
+    fundamentos?: Array<{ ponto?: string; impacto?: string; processos: string[] }>;
+    riscos?: Array<{ ponto?: string; distincao?: string; processos: string[] }>;
+    precedentes?: Array<{
+      indice: string;
+      processo?: string;
+      resultado?: string;
+      vara?: string;
+      similaridade?: number;
+      url?: string;
+    }>;
+  };
 }
 
 export interface Hipotese {

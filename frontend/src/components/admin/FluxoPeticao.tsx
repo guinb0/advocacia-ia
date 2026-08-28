@@ -243,7 +243,121 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
           </div>
         </section>
       )}
+
+      {peticao?.jurimetria && <ModuloJurimetria dados={peticao.jurimetria} />}
     </Cartao>
+  );
+}
+
+function ModuloJurimetria({
+  dados,
+}: {
+  dados: NonNullable<Peticao["jurimetria"]>;
+}) {
+  if (!dados.disponivel) {
+    return (
+      <section className="grid gap-3 border border-borda p-4 bg-papel">
+        <h3 className="text-sm font-semibold m-0">Jurimetria da minuta</h3>
+        <Aviso tom="atencao">{dados.aviso || "Base de processos indisponível."}</Aviso>
+      </section>
+    );
+  }
+
+  const estatisticas = dados.estatisticas;
+  const merito = estatisticas?.desfechos_merito;
+  const similaridade = estatisticas?.similaridade_amostra;
+  return (
+    <section className="grid gap-4 border border-borda p-4 bg-papel">
+      <header className="grid gap-1">
+        <h3 className="text-sm font-semibold m-0">Jurimetria da minuta</h3>
+        <p className={SUB}>
+          Módulo interno de apoio à decisão. Não integra o texto nem o arquivo da petição.
+        </p>
+      </header>
+
+      {estatisticas && (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-tinta-3">
+          <div className="border border-borda p-2 bg-papel-2">
+            <strong className="block text-tinta-2">{estatisticas.processos_analisados}</strong>
+            processos semelhantes
+          </div>
+          <div className="border border-borda p-2 bg-papel-2">
+            <strong className="block text-tinta-2">
+              {merito ? `${merito.favoraveis}/${merito.processos} (${merito.percentual.toLocaleString("pt-BR")}%)` : "—"}
+            </strong>
+            favoráveis no mérito
+          </div>
+          <div className="border border-borda p-2 bg-papel-2">
+            <strong className="block text-tinta-2">
+              {similaridade ? similaridade.mediana.toFixed(3) : "—"}
+            </strong>
+            similaridade mediana
+          </div>
+        </div>
+      )}
+
+      {dados.sintese && <p className={TEXTO}>{dados.sintese}</p>}
+      {(dados.fundamentos ?? []).length > 0 && (
+        <ListaJurimetria
+          titulo="Fundamentos que orientaram a análise"
+          itens={(dados.fundamentos ?? []).map((item) => ({
+            titulo: item.ponto || "Fundamento",
+            detalhe: item.impacto || "",
+            refs: item.processos,
+          }))}
+        />
+      )}
+      {(dados.riscos ?? []).length > 0 && (
+        <ListaJurimetria
+          titulo="Riscos e distinções"
+          itens={(dados.riscos ?? []).map((item) => ({
+            titulo: item.ponto || "Risco",
+            detalhe: item.distincao || "",
+            refs: item.processos,
+          }))}
+        />
+      )}
+
+      {(dados.precedentes ?? []).length > 0 && (
+        <div className="grid gap-2">
+          <h4 className="text-xs font-semibold text-tinta-3 m-0">Decisões consultadas</h4>
+          <ul className="grid gap-2 list-none p-0 m-0">
+            {(dados.precedentes ?? []).map((item) => (
+              <li key={item.indice} className="text-xs text-tinta-2 border-l-2 border-borda pl-3">
+                <strong>[{item.indice}] Processo {item.processo || "não informado"}</strong>
+                {` — ${item.resultado || "desfecho não informado"}; ${item.vara || "órgão não informado"}`}
+                {typeof item.similaridade === "number" ? `; similaridade ${item.similaridade.toFixed(3)}` : ""}
+                {item.url && <> — <a className="text-acao underline" href={item.url} target="_blank" rel="noreferrer">abrir decisão</a></>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="text-xs text-tinta-3 m-0">{dados.aviso}</p>
+    </section>
+  );
+}
+
+function ListaJurimetria({
+  titulo,
+  itens,
+}: {
+  titulo: string;
+  itens: Array<{ titulo: string; detalhe: string; refs: string[] }>;
+}) {
+  return (
+    <div className="grid gap-2">
+      <h4 className="text-xs font-semibold text-tinta-3 m-0">{titulo}</h4>
+      <ul className="grid gap-2 m-0 pl-4 text-xs text-tinta-2">
+        {itens.map((item, indice) => (
+          <li key={`${item.titulo}-${indice}`}>
+            <strong>{item.titulo}</strong>{item.detalhe ? ` — ${item.detalhe}` : ""}{" "}
+            <span className="text-tinta-3">[{item.refs.join(", ")}]</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
