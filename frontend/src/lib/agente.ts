@@ -280,6 +280,7 @@ export interface Dossie {
     progresso: Record<string, number | boolean> | null;
     itens: {
       codigo: string;
+      nome?: string;
       rotulo: string;
       status: string;
       obrigatorio: boolean;
@@ -406,7 +407,14 @@ export function buscarDossie(casoId: string): Promise<Dossie> {
 export function sincronizarComAgente(
   casoId: string,
   jurisdicao?: string,
-): Promise<{ caso_ref: string; documentos_enviados: number; documentos_com_falha: number }> {
+): Promise<{
+  caso_ref: string;
+  documentos_enviados: number;
+  documentos_com_falha: number;
+  entrevistas_enviadas?: number;
+  entrevistas_com_falha?: number;
+  ultimo_erro?: string | null;
+}> {
   return chamar(`/api/agente/casos/${casoId}/sincronizar`, {
     method: "POST",
     body: JSON.stringify({ jurisdicao: jurisdicao ?? null }),
@@ -455,19 +463,101 @@ export function conferirContrato(
  * anunciar que ela terminou: o primeiro delimita esta geração, o segundo diz quantas seções
  * o modelo ainda vai escrever.
  */
-export function gerarPeticao(casoId: string): Promise<{
+export function gerarPeticao(casoId: string, opcao = 0): Promise<{
   run_id: string;
   status: string;
   requested_at: string;
-  expected_sections: number;
-  preparo?: {
-    classificacao?: boolean;
-    pesquisa?: boolean;
-    analise_enfileirada?: boolean;
-    pesquisa_enfileirada?: boolean;
-  };
+  expected_sections?: number;
+  caso_ref?: string;
+  embeddings?: string[];
 }> {
-  return chamar(`/api/agente/casos/${casoId}/peticao`, { method: "POST" });
+  return chamar(`/api/agente/casos/${casoId}/peticao?opcao=${opcao}`, { method: "POST" });
+}
+
+export interface AnaliseFluxo {
+  resumo: string;
+  cruzamento_entrevista_documentos?: string;
+  pontos_fortes: string[];
+  lacunas: string[];
+  fatos_confirmados?: string[];
+  fatos_so_na_entrevista?: string[];
+  achados_documentos?: Array<{
+    informacao: string;
+    documento: string;
+    citacao?: string;
+    relevancia?: string;
+    contradiz?: boolean;
+  }>;
+  observacoes: string;
+}
+
+export interface PreparacaoFluxo {
+  fatos_no_agente?: number;
+  documentos_lidos?: number;
+  achados_documentos?: number;
+  entrevistas_enviadas?: number;
+  documentos_enviados?: number;
+  checklist_obrigatorios?: number;
+  checklist_entregues?: number;
+}
+
+export interface EstrategiaFluxo {
+  titulo: string;
+  tese: string;
+  fundamentacao: string;
+  pedidos: string[];
+  riscos: string[];
+  quando_usar: string;
+}
+
+export interface EstadoPeticaoFluxo {
+  entrevista?: {
+    entrevista_id: string;
+    arquivo?: string;
+    caracteres: number;
+    previa: string;
+    texto: string;
+  };
+  analise?: AnaliseFluxo;
+  estrategias?: EstrategiaFluxo[];
+  escolha?: number;
+  preparacao?: PreparacaoFluxo;
+  categoria?: string;
+  taxonomy_code?: string;
+}
+
+export function estadoPeticaoFluxo(casoId: string): Promise<EstadoPeticaoFluxo> {
+  return chamar(`/api/agente/casos/${casoId}/peticao-fluxo`);
+}
+
+export function analisarPeticaoFluxo(casoId: string): Promise<{
+  entrevista_id: string;
+  analise: AnaliseFluxo;
+  taxonomy_code: string;
+  preparacao?: PreparacaoFluxo;
+}> {
+  return chamar(`/api/agente/casos/${casoId}/peticao-fluxo/analise`, { method: "POST" });
+}
+
+export function proporEstrategiasPeticaoFluxo(casoId: string): Promise<{
+  estrategias: EstrategiaFluxo[];
+}> {
+  return chamar(`/api/agente/casos/${casoId}/peticao-fluxo/estrategias`, { method: "POST" });
+}
+
+export function gerarPeticaoFluxo(
+  casoId: string,
+  opcao: number,
+): Promise<{
+  run_id: string;
+  status: string;
+  requested_at: string;
+  pipeline?: string;
+  embeddings?: string[];
+}> {
+  return chamar(`/api/agente/casos/${casoId}/peticao-fluxo/gerar?opcao=${opcao}`, {
+    method: "POST",
+  });
 }
 
 export interface ProgressoPeticao {
@@ -488,6 +578,17 @@ export function progressoPeticao(casoId: string, desde: string): Promise<Progres
 
 export function buscarPeticao(casoId: string, pecaId: string): Promise<Peticao> {
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}`);
+}
+
+export function salvarRascunhoPeticao(
+  casoId: string,
+  pecaId: string,
+  secoes: { code: string; content: string }[],
+): Promise<Peticao> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/rascunho`, {
+    method: "PUT",
+    body: JSON.stringify({ secoes }),
+  });
 }
 
 /**

@@ -2651,15 +2651,30 @@ def obter_entrevista(caso_id: str, entrevista_id: str):
 
 @app.get("/api/casos/{caso_id}/entrevista/{entrevista_id}/arquivo")
 def baixar_entrevista(caso_id: str, entrevista_id: str):
-    """O arquivo original, como o advogado o enviou."""
+    """O arquivo original ou, se o volume mudou, a transcrição preservada no banco."""
     registro = _entrevista_do_caso(caso_id, entrevista_id)
     caminho = Path(registro["caminho"]).resolve()
-    if armazenamento.DIR_ARQUIVOS.resolve() not in caminho.parents or not caminho.is_file():
-        raise HTTPException(404, "Arquivo da entrevista não encontrado.")
-    return FileResponse(
-        caminho,
-        filename=registro["arquivo"],
-        media_type="application/octet-stream",
+    if armazenamento.DIR_ARQUIVOS.resolve() in caminho.parents and caminho.is_file():
+        return FileResponse(
+            caminho,
+            filename=registro["arquivo"],
+            media_type="application/octet-stream",
+        )
+
+    # Atendimentos criados dentro do container guardavam ``/app/dados/...``. Quando a
+    # API roda no host Windows esse caminho não existe, embora a transcrição integral
+    # continue na coluna ``texto``. O download não pode depender de onde o volume foi
+    # montado: para entrevista textual, o conteúdo preservado é o próprio artefato.
+    texto = str(registro.get("texto") or "")
+    if not texto.strip():
+        raise HTTPException(404, "Arquivo e transcrição da entrevista não encontrados.")
+    nome = str(registro.get("arquivo") or f"Entrevista {entrevista_id}.txt")
+    if not nome.casefold().endswith(".txt"):
+        nome = f"{Path(nome).stem or 'Entrevista'}.txt"
+    return Response(
+        content=texto.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(nome)}"},
     )
 
 
