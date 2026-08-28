@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
-from .. import armazenamento, extractors
+from .. import armazenamento, banco, extractors
 from . import vocabulario
 from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente, caso_ref_valido
 
@@ -132,6 +132,32 @@ def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, A
     O vínculo sozinho não basta como prova: ele diz que o caso **foi** criado, não que
     ele ainda está lá. Por isso a existência é conferida do outro lado antes de ser
     reaproveitada.
+
+    **Serializado por caso.** Abrir o dossiê ou clicar em "gerar petição" dispara
+    vários pedidos ao Acervo quase juntos (dossiê + sincronizar + peticao-fluxo + um
+    `documents/received` por item do checklist). Sem trava, cada um lia o vínculo,
+    via o caso "sumido" e o recriava: o `caso_ref` pulava entre casos recém-criados,
+    a entrevista e os documentos caíam em casos diferentes, e nenhum ficava completo.
+    A trava (`sp_getapplock`, não `threading.Lock`, porque os workers Celery chamam
+    isto em outro processo) faz o primeiro recriar uma vez e os demais lerem o
+    vínculo já corrigido.
+    """
+    with banco.trava_recurso(f"agente:vinculo:{caso_id}", timeout_ms=30000) as travada:
+        if not travada:
+            log.warning(
+                "trava do vínculo do caso %s não obtida em 30s; seguindo sem serializar",
+                caso_id,
+            )
+        return _garantir_caso_sob_trava(caso_id, jurisdicao=jurisdicao)
+
+
+def _garantir_caso_sob_trava(
+    caso_id: str, *, jurisdicao: str | None = None
+) -> dict[str, Any]:
+    """Corpo de `garantir_caso`, já sob a trava por caso.
+
+    A releitura do vínculo aqui dentro é o que resolve a corrida: quem entrou depois
+    lê a gravação que o primeiro acabou de fazer, em vez de recriar de novo.
     """
     cliente = Cliente()
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
