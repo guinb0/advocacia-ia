@@ -571,7 +571,7 @@ class Cliente:
         try:
             return self._ler(f"/api/v1/cases/{caso_ref}/strategy")
         except ErroDoAgente as erro:
-            if "não encontrada" in str(erro) or "Nenhuma estratégia" in str(erro):
+            if erro.status == 404:
                 return None
             raise
 
