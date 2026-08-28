@@ -8,6 +8,7 @@ import logging
 import os
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
@@ -19,6 +20,8 @@ from . import casos as casos_ocr
 log = logging.getLogger("peticao_local")
 
 ID_LOCAL = "local"
+DOCX_STYLE_VERSION = 2
+LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
     ("FACTS", "Dos fatos"),
@@ -52,6 +55,7 @@ def carregar(caso_id: str) -> dict[str, Any] | None:
 
 def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
     dados["updated_at"] = _agora()
+    dados["docx_style_version"] = DOCX_STYLE_VERSION
     armazenamento.salvar_peticao_local(
         caso_id,
         dados,
@@ -466,12 +470,49 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:document xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     {"".join(corpo)}
-    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1701"/></w:sectPr>
+    <w:sectPr>
+      <w:headerReference w:type="default" r:id="rIdHeader"/>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1985" w:right="1417" w:bottom="1417" w:left="1701" w:header="360"/>
+    </w:sectPr>
   </w:body>
 </w:document>"""
+
+    cabecalho_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
+    <wp:inline distT="0" distB="0" distL="0" distR="0">
+      <wp:extent cx="1600200" cy="905010"/><wp:docPr id="1" name="Lara e Melo"/>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+        <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="lara-melo-logo.png"/><pic:cNvPicPr/></pic:nvPicPr>
+          <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1600200" cy="905010"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+        </pic:pic>
+      </a:graphicData></a:graphic>
+    </wp:inline>
+  </w:drawing></w:r></w:p>
+</w:hdr>"""
+
+    estilos_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr>
+      <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+      <w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR"/>
+    </w:rPr></w:rPrDefault>
+    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+</w:styles>"""
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as arquivo:
@@ -481,7 +522,10 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>""",
         )
         arquivo.writestr(
@@ -492,10 +536,23 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
 </Relationships>""",
         )
         arquivo.writestr("word/document.xml", documento_xml)
+        arquivo.writestr("word/header1.xml", cabecalho_xml)
+        arquivo.writestr("word/styles.xml", estilos_xml)
+        arquivo.writestr("word/media/lara-melo-logo.png", LOGO_LARA_MELO.read_bytes())
         arquivo.writestr(
             "word/_rels/document.xml.rels",
             """<?xml version="1.0" encoding="UTF-8"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>""",
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>""",
+        )
+        arquivo.writestr(
+            "word/_rels/header1.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/lara-melo-logo.png"/>
+</Relationships>""",
         )
     return buffer.getvalue()
 
@@ -505,6 +562,8 @@ def ler_docx(caso_id: str) -> bytes:
     if not dados:
         raise ErroPeticao("Petição não encontrada.")
     conteudo = bytes(dados.get("_docx") or b"")
+    if int(dados.get("docx_style_version") or 0) < DOCX_STYLE_VERSION:
+        return montar_docx(dados.get("sections") or [])
     return conteudo or montar_docx(dados.get("sections") or [])
 
 
