@@ -500,6 +500,19 @@ def decidir_peticao(
         raise _erro(erro) from erro
 
 
+@roteador.put("/casos/{caso_id}/peticao/{peca_ref}/rascunho")
+def salvar_rascunho_peticao(
+    caso_id: str,
+    peca_ref: str,
+    secoes: list[dict[str, str]] = Body(..., embed=True),
+) -> dict[str, Any]:
+    caso_ref = _caso_ref(caso_id)
+    try:
+        return Cliente().salvar_rascunho_peticao(caso_ref, peca_ref, secoes)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
 # ------------------------------------------------------------------- estilo
 
 

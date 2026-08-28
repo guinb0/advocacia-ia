@@ -1241,8 +1241,8 @@ def marcar_entrega_enviada(caso_id: str, entrega_id: str) -> None:
 def registrar_erro_agente(caso_id: str, mensagem: str | None) -> None:
     with conectar() as con:
         con.execute(
-            "UPDATE vinculos_agente SET ultimo_erro = ?, atualizado_em = ? WHERE caso_id = ?",
-            (mensagem[:500] if mensagem else None, agora(), caso_id),
+            "UPDATE vinculos_agente SET ultimo_erro = ? WHERE caso_id = ?",
+            (mensagem[:500] if mensagem else None, caso_id),
         )
 
 

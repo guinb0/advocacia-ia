@@ -43,7 +43,7 @@ import type {
 const BASE =
   process.env.NEXT_PUBLIC_OCR_API ||
   (typeof window !== "undefined"
-    ? window.location.origin
+    ? `${window.location.protocol}//${window.location.hostname}:8100`
     : "http://localhost:8100");
 
 /** Monta a URL absoluta da API a partir de um caminho tipo "/api/temp/x.json". */

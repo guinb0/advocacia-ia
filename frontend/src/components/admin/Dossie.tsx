@@ -47,6 +47,7 @@ import {
   pesquisarNoAgente,
   progressoPeticao,
   resolverContradicao,
+  salvarRascunhoPeticao,
   sincronizarComAgente,
   urlDaEntrevista,
   type Contradicao,
@@ -507,11 +508,11 @@ export default function Dossie({
               Jurisprudência e jurimetria →
             </Botao>
           )}
-          <h1 className="mt-2 text-xl tracking-[-0.01em]">Dossiê de {dados.caso.cliente}</h1>
+          <h1 className="mt-2 text-xl tracking-[-0.01em]">{dados.caso.cliente}</h1>
           <p className="mt-1 text-tinta-3 text-sm">
-            {dados.checklist.categoria ?? dados.caso.categoria} · caso aberto em{" "}
+            {dados.checklist.categoria ?? dados.caso.categoria} · aberto em{" "}
             {new Date(dados.caso.criado_em).toLocaleDateString("pt-BR")}
-            {agente.caso_ref ? ` · agente ${agente.caso_ref}` : ""}
+            {agente.caso_ref ? ` · ${agente.caso_ref}` : ""}
           </p>
         </div>
 
@@ -523,41 +524,11 @@ export default function Dossie({
               void executar(
                 "sincronizar",
                 () => sincronizarComAgente(casoId),
-                "Caso e documentos enviados ao agente.",
+                "Entrevista e documentos enviados ao agente.",
               )
             }
           >
-            {ocupado === "sincronizar"
-              ? "Enviando…"
-              : agente.vinculado
-                ? "Enviar documentos novos"
-                : "Enviar ao agente"}
-          </Botao>
-          <Botao
-            variante="secundario"
-            disabled={!agente.ligado || ocupado !== null}
-            onClick={() =>
-              void executar(
-                "analisar",
-                () => analisarNoAgente(casoId),
-                "Análise enfileirada. O resultado aparece aqui em instantes.",
-              )
-            }
-          >
-            {ocupado === "analisar" ? "Analisando…" : "Classificar o caso"}
-          </Botao>
-          <Botao
-            variante="secundario"
-            disabled={!agente.ligado || ocupado !== null}
-            onClick={() =>
-              void executar(
-                "pesquisar",
-                () => pesquisarNoAgente(casoId),
-                "Pesquisa de jurisprudência enfileirada.",
-              )
-            }
-          >
-            {ocupado === "pesquisar" ? "Pesquisando…" : "Pesquisar jurisprudência"}
+            {ocupado === "sincronizar" ? "Sincronizando…" : "Sincronizar com o agente"}
           </Botao>
         </div>
       </header>
@@ -582,83 +553,32 @@ export default function Dossie({
       )}
       {agente.ultimo_erro && agente.disponivel && (
         <Aviso tom="atencao" titulo="Um envio anterior falhou">
-          {agente.ultimo_erro} Use “Enviar documentos novos” para tentar de novo.
+          {agente.ultimo_erro} Use “Sincronizar com o agente” e aguarde a análise automática
+          abaixo.
         </Aviso>
       )}
 
-      {/* ------------------------------------------------ linha do processo */}
-      <section className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-[10px]" aria-label="Etapas do caso">
-        {dados.etapas.map((etapa) => {
-          const visual = ETAPA[etapa.estado];
-          const cor = ESTILO_ETAPA[etapa.estado];
-          return (
-            <article
-              key={etapa.codigo}
-              className="bg-papel border border-borda p-[12px_14px] grid gap-[2px] content-start"
-              style={{ borderLeftWidth: "3px", borderLeftColor: cor.borda }}
-            >
-              <div className="flex items-baseline gap-2">
-                <span aria-hidden className={`font-codigo text-base ${cor.cor}`}>
-                  {visual.simbolo}
-                </span>
-                <h2 className="m-0 font-ui text-sm font-semibold">{etapa.titulo}</h2>
-              </div>
-              <p className={`m-0 text-xs font-semibold tracking-[0.01em] ${cor.cor}`}>{visual.palavra}</p>
-              <p className="mt-[2px] text-tinta-3 text-xs leading-[1.45]">{etapa.detalhe}</p>
-            </article>
-          );
-        })}
-      </section>
-
-      <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),1fr)_minmax(min(100%,360px),1.2fr)] items-start gap-[18px] max-[900px]:grid-cols-1">
-        {/* ------------------------------------------------ coluna esquerda */}
-        <div className="grid gap-[18px] content-start">
-          <Cartao titulo="Ficha do cliente">
+      <div className="grid min-w-0 grid-cols-1 lg:grid-cols-[minmax(260px,320px)_1fr] items-start gap-[18px]">
+        <div className="grid gap-[18px] content-start order-2 lg:order-1">
+          <Cartao titulo="Documentos do checklist">
             <p className={EXPLICACAO}>
-              O nome vem do cadastro; os demais campos foram lidos dos documentos enviados, com
-              a origem registrada.
+              {dados.checklist.progresso?.obrigatorios_entregues ?? 0} de{" "}
+              {dados.checklist.progresso?.obrigatorios_total ?? "?"} itens obrigatórios entregues.
             </p>
-            <dl className="m-0 grid gap-px bg-borda border border-borda">
-              <div className={FICHA_LINHA}>
-                <dt className="text-tinta-3 text-sm">Nome</dt>
-                <dd className="m-0 grid gap-[2px]">{dados.cliente.nome}</dd>
-              </div>
-              {dados.cliente.campos.map((campo, indice) => (
-                <div
-                  key={`${campo.rotulo}-${campo.valor}-${campo.status}-${indice}`}
-                  className={FICHA_LINHA}
-                >
-                  <dt className="text-tinta-3 text-sm">{campo.rotulo}</dt>
-                  <dd className="m-0 grid gap-[2px]">
-                    <span className={VALOR}>{campo.valor}</span>
-                    {campo.fontes.length > 0 && (
-                      <span className={ORIGEM}>
-                        origem: {campo.fontes.join(", ").toLowerCase()}
-                      </span>
-                    )}
-                    {(campo.anexos ?? []).map((anexo) => (
-                      <a
-                        key={anexo.url}
-                        href={anexo.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-azul-claro text-sm underline underline-offset-2"
-                      >
-                        Prova: {anexo.nome}
-                        {anexo.pagina ? ` · página ${anexo.pagina}` : ""}
-                        {anexo.campo && anexo.campo !== "__document__" ? ` · campo ${anexo.campo}` : ""}
-                      </a>
-                    ))}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            {dados.cliente.campos.length === 0 && (
-              <p className={TEXTO_VAZIO}>
-                {agente.disponivel
-                  ? "Nenhum documento lido produziu dado pessoal ainda."
-                  : "Sem resposta do agente — os dados do cliente não puderam ser lidos."}
-              </p>
+            <ul className="m-0 p-0 list-none grid gap-1 text-sm text-tinta-2">
+              {(dados.checklist.itens ?? [])
+                .filter((item) => item.obrigatorio && item.status !== "entregue")
+                .slice(0, 6)
+                .map((item) => (
+                  <li key={item.codigo}>
+                    • {item.rotulo || item.nome || item.codigo}
+                  </li>
+                ))}
+            </ul>
+            {(dados.checklist.itens ?? []).filter(
+              (item) => item.obrigatorio && item.status !== "entregue",
+            ).length === 0 && (
+              <p className={TEXTO_VAZIO}>Todos os obrigatórios entregues.</p>
             )}
           </Cartao>
 
@@ -667,283 +587,24 @@ export default function Dossie({
             entrevistas={dados.entrevistas ?? []}
             ocupado={ocupado !== null}
             agenteLigado={agente.ligado}
-            onAnexar={(arquivo, data, quem) =>
-              executar(
-                "entrevista",
-                () => anexarEntrevista(casoId, arquivo, data, quem),
-                "Entrevista anexada ao caso. Use “Ler no agente” para virar fato.",
-              )
-            }
             onLer={(entrevistaId) =>
               executar(
                 "entrevista",
                 () => lerEntrevistaNoAgente(casoId, entrevistaId),
-                "Entrevista lida. Os fatos relatados entram como alegados.",
+                "Entrevista enviada ao agente.",
               )
             }
           />
-
-          <PainelContradicoes
-            contradicoes={agente.contradicoes}
-            ocupado={ocupado !== null}
-            onResolver={(id, estado, resolucao, justificativa) =>
-              executar(
-                "contradicao",
-                () => resolverContradicao(casoId, id, estado, resolucao, justificativa),
-                "Divergência decidida. O histórico guarda quem decidiu e por quê.",
-              )
-            }
-          />
-
-          <Cartao titulo="Contrato de honorários">
-            <p className={EXPLICACAO}>
-              Preenche o modelo oficial com o nome do cadastro e os dados pessoais apurados nos
-              documentos deste caso. As cláusulas do escritório não são alteradas, e cada caso
-              recebe seus próprios dados.
-            </p>
-            {(requisitosContrato.length > 0 || alertasIdentificacaoContrato.length > 0) && (
-              <Aviso tom="atencao" titulo="Contrato ainda não pode ser gerado">
-                {alertasIdentificacaoContrato.length > 0 ? (
-                  <>
-                    {requisitosVisiveis.length > 0 && (
-                      <>Informe {requisitosVisiveis.join(" e ")} neste caso. </>
-                    )}
-                    {alertasIdentificacaoContrato.join(" ")}{" "}
-                  </>
-                ) : (
-                  <>Informe {requisitosContrato.join(" e ")} neste caso. </>
-                )}
-                Nenhum arquivo será criado enquanto esses dados obrigatórios não estiverem
-                válidos.
-              </Aviso>
-            )}
-            <div className="flex gap-2 flex-wrap">
-              <Botao
-                variante="primario"
-                disabled={
-                  ocupado !== null ||
-                  requisitosContrato.length > 0 ||
-                  alertasIdentificacaoContrato.length > 0
-                }
-                onClick={() => void gerarContratoDoCaso(dados)}
-              >
-                {ocupado === "contrato" ? "Gerando…" : "Gerar contrato do caso"}
-              </Botao>
-              {dados.contrato.assinado ? (
-                <Selo tom="ok" simbolo="✓">
-                  contrato assinado
-                </Selo>
-              ) : dados.contrato.assinaturas.length > 0 ? (
-                <Selo tom="info" simbolo="→">
-                  assinatura em andamento
-                </Selo>
-              ) : (
-                <Selo tom="neutro" simbolo="•">
-                  ainda não enviado para assinatura
-                </Selo>
-              )}
-            </div>
-
-            {camposFaltandoContrato && camposFaltandoContrato.length > 0 && (
-              <Aviso tom="atencao" titulo="Confira os campos que ficaram em aberto">
-                O arquivo foi gerado com marcadores visíveis para: {" "}
-                {camposFaltandoContrato.map(campoLegivel).join(", ")}.
-              </Aviso>
-            )}
-            {camposFaltandoContrato?.length === 0 && (
-              <Aviso tom="ok">✓ Todos os campos do modelo foram preenchidos.</Aviso>
-            )}
-          </Cartao>
-
-          <Cartao titulo={`Fatos apurados (${agente.fatos.length})`}>
-            <p className={EXPLICACAO}>
-              Cada fato aponta o documento de onde saiu. Fato sem origem não é registrado.
-            </p>
-            <ul className={LISTA}>
-              {agente.fatos.map((fato) => (
-                /* O `id` é o que a citação da resposta do agente procura: ela chega com o
-                 * identificador do fato, e sem âncora no cartão o "ver no dossiê" seria
-                 * um botão que não leva a lugar nenhum. */
-                <li
-                  key={fato.id}
-                  id={`fato-${fato.id}`}
-                  className={
-                    fatoCitado === fato.id
-                      ? `${ITEM} border-acao-borda bg-acao-clara`
-                      : ITEM
-                  }
-                >
-                  <div className={ITEM_TOPO}>
-                    <strong>{ROTULO_FATO[fato.type] ?? fato.type}</strong>
-                    {/* O estado sai do mesmo mapa que o painel do caso usa. Antes
-                      * era `status.toLowerCase()`, e o advogado lia "alleged" e
-                      * "extracted" na tela — que é justamente a distinção que
-                      * decide se a alegação precisa de prova. */}
-                    <Selo
-                      tom={ESTADO_DO_FATO[fato.status]?.tom ?? "neutro"}
-                      simbolo={ESTADO_DO_FATO[fato.status]?.simbolo}
-                    >
-                      {ESTADO_DO_FATO[fato.status]?.palavra ?? fato.status.toLowerCase()}
-                    </Selo>
-                  </div>
-                  <div className={VALOR} title={ESTADO_DO_FATO[fato.status]?.explicacao}>
-                    {valorDoFato(fato.value)}
-                  </div>
-                  <div className={ORIGEM}>
-                    confiança {Math.round((fato.confidence ?? 0) * 100)}%
-                    {fato.sources?.length
-                      ? ` · ${fato.sources
-                          .map((fonte) =>
-                            [
-                              fonte.source_type
-                                ? ORIGEM_DO_FATO[fonte.source_type.toUpperCase()] ??
-                                  fonte.source_type.toLowerCase()
-                                : null,
-                              fonte.page ? `página ${fonte.page}` : null,
-                              fonte.ocr_field ? `campo ${fonte.ocr_field}` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(", "),
-                          )
-                          .join(" · ")}`
-                      : ""}
-                  </div>
-                </li>
-              ))}
-            </ul>
-            {agente.fatos.length === 0 && (
-              <p className={TEXTO_VAZIO}>
-                {agente.disponivel
-                  ? "Envie os documentos ao agente para que eles virem fatos."
-                  : "Sem resposta do agente."}
-              </p>
-            )}
-          </Cartao>
         </div>
 
-        {/* -------------------------------------------------- coluna direita */}
-        <div className="grid gap-[18px] content-start">
-          <Cartao titulo="Leitura jurídica">
-            {agente.classificacoes.length === 0 ? (
-              <p className={TEXTO_VAZIO}>
-                {agente.disponivel
-                  ? "O caso ainda não foi classificado. Use “Classificar o caso”."
-                  : "Sem resposta do agente."}
-              </p>
-            ) : (
-              <ul className={LISTA}>
-                {agente.classificacoes.map((item) => (
-                  <li key={item.code} className={ITEM}>
-                    <div className={ITEM_TOPO}>
-                      <strong>{item.label}</strong>
-                      <Selo tom="info">{Math.round(item.confidence * 100)}% de confiança</Selo>
-                    </div>
-                    {item.rationale && <p className={RAZAO}>{item.rationale}</p>}
-                    {item.issues && item.issues.length > 0 && (
-                      <div className="flex gap-[6px] flex-wrap mt-1">
-                        {item.issues.map((questao) => (
-                          <Selo key={questao.code} tom="neutro">
-                            {questao.label}
-                          </Selo>
-                        ))}
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Cartao>
-
-          <Cartao titulo={`O que falta (${pendencias.length})`}>
-            <p className={EXPLICACAO}>
-              Lista derivada do playbook do escritório — cada item diz qual exigência o
-              originou.
-            </p>
-            <ul className={LISTA}>
-              {pendencias.map((item) => (
-                <li key={item.id} className={ITEM}>
-                  <div className={ITEM_TOPO}>
-                    <strong>{item.label}</strong>
-                    <Selo
-                      tom={item.severity === "BLOCKING" ? "critico" : "atencao"}
-                      simbolo={item.severity === "BLOCKING" ? "✕" : "!"}
-                    >
-                      {item.severity === "BLOCKING" ? "Indispensável" : "Recomendado"}
-                    </Selo>
-                  </div>
-                  <div className={ORIGEM}>
-                    {item.playbook_id ? `playbook ${item.playbook_id}` : ""}
-                    {item.requirement ? ` · ${item.requirement}` : ""}
-                  </div>
-                  {item.question && <p className={RAZAO}>“{item.question}”</p>}
-                </li>
-              ))}
-            </ul>
-            {pendencias.length === 0 && (
-              <p className={TEXTO_VAZIO}>
-                {agente.classificacoes.length
-                  ? "Nada pendente no playbook."
-                  : "A lista de pendências só existe depois da classificação."}
-              </p>
-            )}
-            {bloqueantes.length > 0 && (
-              <Aviso tom="critico" titulo={`${bloqueantes.length} itens travam a instrução`}>
-                Sem eles a peça não pode ser protocolada com segurança.
-              </Aviso>
-            )}
-          </Cartao>
-
-          <PainelAnaliseDocumentos casoId={casoId} />
-
-          <PainelJurisprudencia
-            pesquisa={pesquisa}
-            resumo={ultimaPesquisa}
-            disponivel={agente.disponivel}
-          />
-
-          <PainelEstrategia
-            estrategia={agente.estrategia}
-            disponivel={agente.disponivel}
-            gerando={false}
-            ocupado={ocupado !== null}
-            onDecidirEstrategia={(aprovada) =>
-              executar(
-                "decisao",
-                () => decidirEstrategia(casoId, agente.estrategia!.version, aprovada),
-                aprovada
-                  ? "Estratégia aprovada: os pedidos da petição passam a sair dela."
-                  : "Estratégia rejeitada.",
-              )
-            }
-            onDecidirHipotese={(id, aceita) =>
-              executar(
-                "decisao",
-                () => decidirHipotese(casoId, id, aceita),
-                aceita ? "Tese aceita." : "Tese descartada.",
-              )
-            }
-          />
-
+        <div className="grid gap-[18px] content-start order-1 lg:order-2">
           <FluxoPeticao
             casoId={casoId}
+            temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
             agenteLigado={agente.ligado && agente.disponivel}
             peticao={peticao}
             onPeticaoPronta={() => void carregar()}
-          />
-
-          <PainelPeticao
-            casoId={casoId}
-            peticao={peticao}
-            redacao={redacao}
-            disponivel={agente.disponivel}
-            ocupado={ocupado !== null}
-            onDecidir={(aprovada, nota) =>
-              executar(
-                "decisao",
-                () => decidirPeticao(casoId, peticao!.id, aprovada, nota),
-                aprovada ? "Minuta aprovada." : "Minuta rejeitada.",
-              )
-            }
+            onAnalisePronta={() => void carregar()}
           />
         </div>
       </div>
@@ -1581,6 +1242,38 @@ function PainelPeticao({
   onDecidir: (aprovada: boolean, nota?: string) => Promise<void>;
 }) {
   const [aberta, setAberta] = useState(false);
+  const [edicao, setEdicao] = useState<Record<string, string>>({});
+  const [salvando, setSalvando] = useState(false);
+  const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+  const [pdfKey, setPdfKey] = useState(0);
+
+  useEffect(() => {
+    setEdicao(
+      Object.fromEntries((peticao?.sections ?? []).map((secao) => [secao.code, secao.content])),
+    );
+  }, [peticao?.id, peticao?.sections]);
+
+  async function salvarEdicao(baixarPdf = false) {
+    if (!peticao) return;
+    setSalvando(true);
+    setErroEdicao(null);
+    try {
+      const secoes = (peticao.sections ?? []).map((secao) => ({
+        code: secao.code,
+        content: edicao[secao.code] ?? secao.content,
+      }));
+      await salvarRascunhoPeticao(casoId, peticao.id, secoes);
+      setPdfKey((valor) => valor + 1);
+      if (baixarPdf) {
+        const arquivo = await baixarArquivoDaPeticao(casoId, peticao.id, "pdf");
+        baixarArquivo(arquivo, `Peticao inicial editada - v${peticao.version}.pdf`);
+      }
+    } catch (erro) {
+      setErroEdicao(erro instanceof Error ? erro.message : "Não foi possível salvar a edição.");
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   if (!peticao) {
     return (
@@ -1710,7 +1403,7 @@ function PainelPeticao({
           * a peça está, e é lá que se decide levá-la. O que sobra nesta linha é decisão
           * sobre a peça, não sobre o arquivo. */}
         <Botao variante="texto" onClick={() => setAberta((valor) => !valor)}>
-          {aberta ? "Ocultar o texto corrido" : "Ler o texto corrido"}
+          {aberta ? "Fechar editor" : "Editar a petição"}
         </Botao>
         {!retida && peticao.status === "IN_REVIEW" && (
           <>
@@ -1724,11 +1417,45 @@ function PainelPeticao({
         )}
       </div>
 
-      <VisualizadorPeticao casoId={casoId} pecaId={peticao.id} versao={peticao.version} />
-
       {aberta && (
+        <div className="grid gap-4 border border-borda p-4 bg-papel-2">
+          <p className="m-0 text-sm text-tinta-3">
+            Edite as seções abaixo. A versão gerada pela IA permanece guardada para auditoria.
+          </p>
+          {(peticao!.sections ?? []).map((secao) => (
+            <label key={secao.code} className="grid gap-2">
+              <strong className="text-sm">{secao.label}</strong>
+              <textarea
+                className="min-h-48 w-full border border-borda bg-papel p-3 text-sm leading-relaxed text-tinta resize-y"
+                value={edicao[secao.code] ?? secao.content}
+                onChange={(evento) =>
+                  setEdicao((atual) => ({ ...atual, [secao.code]: evento.target.value }))
+                }
+              />
+            </label>
+          ))}
+          {erroEdicao && <Aviso tom="critico">{erroEdicao}</Aviso>}
+          <div className="flex flex-wrap gap-2">
+            <Botao variante="secundario" disabled={salvando} onClick={() => void salvarEdicao()}>
+              {salvando ? "Salvando…" : "Salvar rascunho"}
+            </Botao>
+            <Botao variante="primario" disabled={salvando} onClick={() => void salvarEdicao(true)}>
+              {salvando ? "Preparando PDF…" : "Salvar e baixar PDF"}
+            </Botao>
+          </div>
+        </div>
+      )}
+
+      <VisualizadorPeticao
+        key={`${peticao.id}-${pdfKey}`}
+        casoId={casoId}
+        pecaId={peticao.id}
+        versao={peticao.version}
+      />
+
+      {false && aberta && peticao && (
         <div className={MINUTA}>
-          {(peticao.sections ?? []).map((secao) => (
+          {(peticao!.sections ?? []).map((secao) => (
             <article key={secao.code}>
               <h3 className={SECAO_TITULO}>{secao.label.toUpperCase()}</h3>
               {secao.content.split("\n").map((paragrafo, indice) => (
@@ -2172,20 +1899,14 @@ function PainelEntrevista({
   entrevistas,
   ocupado,
   agenteLigado,
-  onAnexar,
   onLer,
 }: {
   casoId: string;
   entrevistas: EntrevistaResumo[];
   ocupado: boolean;
   agenteLigado: boolean;
-  onAnexar: (arquivo: File, realizadaEm: string, entrevistador: string) => Promise<void>;
   onLer: (entrevistaId: string) => Promise<void>;
 }) {
-  const [arquivo, setArquivo] = useState<File | null>(null);
-  const [arrastando, setArrastando] = useState(false);
-  const [realizadaEm, setRealizadaEm] = useState("");
-  const [entrevistador, setEntrevistador] = useState("");
   const [lendo, setLendo] = useState<string | null>(null);
   const [texto, setTexto] = useState<Record<string, string>>({});
 
@@ -2276,68 +1997,8 @@ function PainelEntrevista({
       </ul>
 
       {entrevistas.length === 0 && (
-        <p className={TEXTO_VAZIO}>
-          Nenhuma entrevista anexada. Envie as anotações do atendimento em .txt, .md, .docx
-          ou .pdf.
-        </p>
+        <p className={TEXTO_VAZIO}>Nenhuma entrevista registrada neste caso.</p>
       )}
-
-      <div className="grid gap-[10px] mt-[14px] pt-3 border-t border-borda">
-        <label
-          className={`${CAMPO_ENTREVISTA} border-2 border-dashed rounded-[6px] p-3 transition-colors ${
-            arrastando ? "border-tinta bg-papel-2" : "border-borda"
-          }`}
-          onDragEnter={(evento) => { evento.preventDefault(); setArrastando(true); }}
-          onDragOver={(evento) => { evento.preventDefault(); evento.dataTransfer.dropEffect = "copy"; }}
-          onDragLeave={(evento) => {
-            if (!evento.currentTarget.contains(evento.relatedTarget as Node | null)) setArrastando(false);
-          }}
-          onDrop={(evento) => {
-            evento.preventDefault();
-            setArrastando(false);
-            setArquivo(evento.dataTransfer.files?.[0] ?? null);
-          }}
-        >
-          <span>{arrastando ? "Solte a entrevista aqui" : "Arraste a entrevista pronta ou escolha o arquivo"}</span>
-          <input
-            type="file"
-            className="p-[6px] border border-borda rounded-[6px] bg-papel text-tinta"
-            onChange={(evento) => setArquivo(evento.target.files?.[0] ?? null)}
-          />
-          {arquivo && <small className="text-tinta-3">Selecionado: {arquivo.name}</small>}
-        </label>
-        <label className={CAMPO_ENTREVISTA}>
-          <span>Data do atendimento</span>
-          <input
-            type="text"
-            placeholder="12/08/2026"
-            className={INPUT_ENTREVISTA}
-            value={realizadaEm}
-            onChange={(evento) => setRealizadaEm(evento.target.value)}
-          />
-        </label>
-        <label className={CAMPO_ENTREVISTA}>
-          <span>Quem atendeu</span>
-          <input
-            type="text"
-            placeholder="Dra. Helena Prado"
-            className={INPUT_ENTREVISTA}
-            value={entrevistador}
-            onChange={(evento) => setEntrevistador(evento.target.value)}
-          />
-        </label>
-        <Botao
-          variante="primario"
-          pequeno
-          disabled={ocupado || arquivo === null}
-          onClick={() => {
-            if (!arquivo) return;
-            void onAnexar(arquivo, realizadaEm, entrevistador).then(() => setArquivo(null));
-          }}
-        >
-          Anexar entrevista
-        </Botao>
-      </div>
     </Cartao>
   );
 }

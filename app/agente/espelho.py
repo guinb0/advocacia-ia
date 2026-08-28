@@ -33,9 +33,9 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
-from .. import armazenamento, extractors
+from .. import armazenamento, banco, extractors
 from . import vocabulario
-from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente
+from .cliente import AgenteIndisponivel, Cliente, ErroDoAgente, caso_ref_valido
 
 log = logging.getLogger("agente")
 
@@ -45,6 +45,13 @@ log = logging.getLogger("agente")
 _RETOMADA_TTL_S = 120.0
 _retomadas_recentes: dict[str, float] = {}
 _retomadas_lock = Lock()
+
+# A abertura do dossiê dispara leituras paralelas. Sem serializar a recuperação,
+# duas requisições podem observar o mesmo vínculo órfão, criar casos diferentes e
+# sobrescrever `caso_ref` uma depois da outra. Documentos e geração acabam então
+# enviados ao identificador que perdeu a corrida.
+_vinculos_locks: dict[str, Lock] = {}
+_vinculos_locks_guard = Lock()
 
 # Depois de criar ou revincular, o agente pode levar alguns segundos para o caso
 # aparecer na leitura (réplica, pooler, commit). Recriar nessa janela gerava um caso
@@ -93,6 +100,14 @@ def _instante_vinculo(vinculo: dict[str, Any]) -> float | None:
 
 def _vinculo_recente(vinculo: dict[str, Any]) -> bool:
     """Vínculo atualizado há pouco — ainda não recriar por um 404 isolado."""
+    if not caso_ref_valido(str(vinculo.get("caso_ref") or "")):
+        return False
+    ultimo_erro = str(vinculo.get("ultimo_erro") or "").casefold()
+    if "caso não encontrado" in ultimo_erro or "caso nao encontrado" in ultimo_erro:
+        # Um 404 já observado pelo próprio agente não é atraso de réplica. Sem esta
+        # distinção, registrar o erro renovava ``atualizado_em`` e o vínculo órfão ganhava
+        # mais 90 segundos de confiança a cada tentativa, ficando preso para sempre.
+        return False
     instante = _instante_vinculo(vinculo)
     if instante is None:
         return False
@@ -114,6 +129,13 @@ def _caso_existe_no_agente(cliente: Cliente, caso_ref: str) -> bool:
 
 
 def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
+    with _vinculos_locks_guard:
+        lock = _vinculos_locks.setdefault(caso_id, Lock())
+    with lock:
+        return _garantir_caso(caso_id, jurisdicao=jurisdicao)
+
+
+def _garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
     """Devolve o vínculo com o agente, criando cliente e caso quando preciso.
 
     Idempotente pelo vínculo guardado aqui: um segundo clique em "enviar ao agente"
@@ -124,6 +146,32 @@ def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, A
     O vínculo sozinho não basta como prova: ele diz que o caso **foi** criado, não que
     ele ainda está lá. Por isso a existência é conferida do outro lado antes de ser
     reaproveitada.
+
+    **Serializado por caso.** Abrir o dossiê ou clicar em "gerar petição" dispara
+    vários pedidos ao Acervo quase juntos (dossiê + sincronizar + peticao-fluxo + um
+    `documents/received` por item do checklist). Sem trava, cada um lia o vínculo,
+    via o caso "sumido" e o recriava: o `caso_ref` pulava entre casos recém-criados,
+    a entrevista e os documentos caíam em casos diferentes, e nenhum ficava completo.
+    A trava (`sp_getapplock`, não `threading.Lock`, porque os workers Celery chamam
+    isto em outro processo) faz o primeiro recriar uma vez e os demais lerem o
+    vínculo já corrigido.
+    """
+    with banco.trava_recurso(f"agente:vinculo:{caso_id}", timeout_ms=30000) as travada:
+        if not travada:
+            log.warning(
+                "trava do vínculo do caso %s não obtida em 30s; seguindo sem serializar",
+                caso_id,
+            )
+        return _garantir_caso_sob_trava(caso_id, jurisdicao=jurisdicao)
+
+
+def _garantir_caso_sob_trava(
+    caso_id: str, *, jurisdicao: str | None = None
+) -> dict[str, Any]:
+    """Corpo de `garantir_caso`, já sob a trava por caso.
+
+    A releitura do vínculo aqui dentro é o que resolve a corrida: quem entrou depois
+    lê a gravação que o primeiro acabou de fazer, em vez de recriar de novo.
     """
     cliente = Cliente()
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
@@ -328,18 +376,24 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
             resposta = enviar_entrevista(caso_id, entrevista["id"])
             if resposta.get("failure"):
                 falhas_entrevista += 1
+                armazenamento.registrar_erro_agente(
+                    caso_id, f"Entrevista não lida: {resposta['failure']}"
+                )
             else:
                 entrevistas += 1
         except ErroDoAgente as erro:
             # Uma entrevista que não sobe não derruba a sincronização: os documentos já
             # foram, e a tela precisa abrir com o que existe.
             log.warning("entrevista %s não foi enviada: %s", entrevista["id"], erro)
+            armazenamento.registrar_erro_agente(caso_id, f"Entrevista não lida: {erro}")
             falhas_entrevista += 1
 
     atual = armazenamento.obter_vinculo_agente(caso_id) or vinculo
     declarados = declarar_itens_entregues(caso_id, atual["caso_ref"])
     qualificar_reclamante(atual["caso_ref"])
-    pipeline = _retomar_pipeline_juridico(atual["caso_ref"], caso_id=caso_id)
+    # O fluxo de petição por entrevista não usa mais classificar → pesquisar → estratégia
+    # automáticos a cada sync — isso gerava 500 no agente e “Erro interno” na tela.
+    pipeline = "fluxo_entrevista"
     if falhas == 0 and falhas_entrevista == 0:
         # Um erro antigo não pode permanecer para sempre quando tudo que estava
         # pendente já foi sincronizado (inclusive quando nenhum arquivo precisou ser
