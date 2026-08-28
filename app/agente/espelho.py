@@ -83,8 +83,17 @@ def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, A
     """
     cliente = Cliente()
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
-    if vinculo and cliente.caso_existe(vinculo["caso_ref"]):
-        return vinculo
+    if vinculo:
+        existe = cliente.caso_existe(vinculo["caso_ref"])
+        log.info(
+            "diagnostico vinculo agente caso_id=%s case_ref=%s existe=%s enviados=%s",
+            caso_id,
+            vinculo["caso_ref"],
+            existe,
+            len(vinculo.get("enviados") or []),
+        )
+        if existe:
+            return vinculo
 
     if vinculo:
         # Vínculo órfão: o caso existiu e não existe mais. Aconteceu de verdade na
@@ -239,6 +248,11 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     existir, chega ao agente com todos os seus documentos de uma vez.
     """
     vinculo = garantir_caso(caso_id, jurisdicao=jurisdicao)
+    log.info(
+        "diagnostico sincronizacao iniciada caso_id=%s case_ref=%s",
+        caso_id,
+        vinculo["caso_ref"],
+    )
     enviados, falhas = 0, 0
 
     for entrega in armazenamento.listar_entregas(caso_id):
@@ -280,7 +294,7 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
         # reenviado nesta abertura).
         armazenamento.registrar_erro_agente(caso_id, None)
         atual = armazenamento.obter_vinculo_agente(caso_id) or atual
-    return {
+    resultado = {
         "caso_ref": atual["caso_ref"],
         "cliente_ref": atual["cliente_ref"],
         "documentos_enviados": enviados,
@@ -291,6 +305,18 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
         "pipeline_juridico": pipeline,
         "ultimo_erro": atual.get("ultimo_erro"),
     }
+    log.info(
+        "diagnostico sincronizacao concluida caso_id=%s case_ref=%s docs_enviados=%s "
+        "docs_falha=%s entrevistas_enviadas=%s entrevistas_falha=%s pipeline=%s",
+        caso_id,
+        atual["caso_ref"],
+        enviados,
+        falhas,
+        entrevistas,
+        falhas_entrevista,
+        pipeline,
+    )
+    return resultado
 
 
 def _retomar_pipeline_juridico(caso_ref: str) -> str:
@@ -309,19 +335,36 @@ def _retomar_pipeline_juridico(caso_ref: str) -> str:
     cliente = Cliente()
     try:
         analise = cliente.analise(caso_ref)
+        log.info(
+            "diagnostico pipeline case_ref=%s etapa=classificacao quantidade=%s",
+            caso_ref,
+            len(analise.get("classifications") or []),
+        )
         if not analise.get("classifications"):
             cliente.analisar(caso_ref)
             return "classificacao_enfileirada"
 
         pesquisas = cliente.pesquisas(caso_ref).get("items", [])
         recente = pesquisas[0] if pesquisas else None
+        log.info(
+            "diagnostico pipeline case_ref=%s etapa=jurisprudencia quantidade=%s status=%s",
+            caso_ref,
+            len(pesquisas),
+            recente.get("status") if recente else "AUSENTE",
+        )
         if recente and recente.get("status") == "RUNNING":
             return "jurisprudencia_em_andamento"
         if not recente or recente.get("status") != "COMPLETED":
             cliente.pesquisar(caso_ref)
             return "jurisprudencia_enfileirada"
 
-        if cliente.estrategia(caso_ref) is None:
+        estrategia = cliente.estrategia(caso_ref)
+        log.info(
+            "diagnostico pipeline case_ref=%s etapa=estrategia existe=%s",
+            caso_ref,
+            estrategia is not None,
+        )
+        if estrategia is None:
             gerar_estrategia = getattr(cliente, "gerar_estrategia", None)
             if not callable(gerar_estrategia):
                 return "estrategia_indisponivel"
