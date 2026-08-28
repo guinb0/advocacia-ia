@@ -46,6 +46,13 @@ _RETOMADA_TTL_S = 120.0
 _retomadas_recentes: dict[str, float] = {}
 _retomadas_lock = Lock()
 
+# A abertura do dossiê dispara leituras paralelas. Sem serializar a recuperação,
+# duas requisições podem observar o mesmo vínculo órfão, criar casos diferentes e
+# sobrescrever `caso_ref` uma depois da outra. Documentos e geração acabam então
+# enviados ao identificador que perdeu a corrida.
+_vinculos_locks: dict[str, Lock] = {}
+_vinculos_locks_guard = Lock()
+
 # Depois de criar ou revincular, o agente pode levar alguns segundos para o caso
 # aparecer na leitura (réplica, pooler, commit). Recriar nessa janela gerava um caso
 # novo a cada requisição — o sintoma do `diag_pipeline` com três `case_ref` em 30s.
@@ -122,6 +129,13 @@ def _caso_existe_no_agente(cliente: Cliente, caso_ref: str) -> bool:
 
 
 def garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
+    with _vinculos_locks_guard:
+        lock = _vinculos_locks.setdefault(caso_id, Lock())
+    with lock:
+        return _garantir_caso(caso_id, jurisdicao=jurisdicao)
+
+
+def _garantir_caso(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any]:
     """Devolve o vínculo com o agente, criando cliente e caso quando preciso.
 
     Idempotente pelo vínculo guardado aqui: um segundo clique em "enviar ao agente"
