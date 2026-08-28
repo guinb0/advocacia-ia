@@ -269,6 +269,8 @@ export default function Dossie({
     esperadas: number;
     passos: number;
   } | null>(null);
+  /** Versão da estratégia antes do pedido — polling até subir ou estourar o prazo. */
+  const [estrategiaEmCurso, setEstrategiaEmCurso] = useState<number | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [camposFaltandoContrato, setCamposFaltandoContrato] = useState<string[] | null>(null);
   /* Começa recolhido: o dossiê é o que o advogado veio ver, e abrir por cima dele uma
@@ -412,6 +414,37 @@ export default function Dossie({
     };
   }, [casoId, ultimaPesquisa]);
 
+  const versaoEstrategia = dados?.agente.estrategia?.version ?? 0;
+
+  useEffect(() => {
+    if (estrategiaEmCurso === null) return;
+    let ativo = true;
+    const limite = Date.now() + 11 * 60 * 1000;
+
+    const timer = setInterval(() => {
+      void carregar();
+      if (ativo && Date.now() > limite) {
+        setEstrategiaEmCurso(null);
+        setErro(
+          "A estratégia passou do prazo do agente sem aparecer. Verifique o worker de estratégia antes de pedir outra.",
+        );
+      }
+    }, 3000);
+
+    return () => {
+      ativo = false;
+      clearInterval(timer);
+    };
+  }, [estrategiaEmCurso, carregar]);
+
+  useEffect(() => {
+    if (estrategiaEmCurso === null) return;
+    if (versaoEstrategia > estrategiaEmCurso) {
+      setEstrategiaEmCurso(null);
+      setAviso("Estratégia proposta — revise as teses abaixo e aprove se concordar.");
+    }
+  }, [versaoEstrategia, estrategiaEmCurso]);
+
   async function executar(nome: string, acao: () => Promise<unknown>, mensagem: string) {
     setOcupado(nome);
     setAviso(null);
@@ -429,6 +462,27 @@ export default function Dossie({
   /* A petição tem caminho próprio, e não o `executar` das demais ações: as outras
    * terminam quando o pedido é aceito, esta só termina quando a peça existe. É a diferença
    * entre "enfileirada" e "pronta", e era ela que o aviso antigo apagava. */
+  async function pedirEstrategia() {
+    const versaoAntes = dados?.agente.estrategia?.version ?? 0;
+    setOcupado("estrategia");
+    setAviso("Preparando classificação, pesquisa e estratégia…");
+    setErro(null);
+    try {
+      if (dados?.agente.ultimo_erro) {
+        await sincronizarComAgente(casoId);
+      }
+      await gerarEstrategia(casoId);
+      setEstrategiaEmCurso(versaoAntes);
+      setAviso(
+        "Estratégia enfileirada. O worker classifica, pesquisa jurisprudência e propõe as teses — aparecem aqui quando terminar.",
+      );
+    } catch (falha) {
+      setErro(falha instanceof Error ? falha.message : "Não foi possível propor a estratégia.");
+    } finally {
+      setOcupado(null);
+    }
+  }
+
   async function pedirPeticao() {
     setOcupado("peticao");
     setAviso("Preparando classificação, pesquisa e redação…");
@@ -593,16 +647,12 @@ export default function Dossie({
           </Botao>
           <Botao
             variante="secundario"
-            disabled={!agente.ligado || ocupado !== null}
-            onClick={() =>
-              void executar(
-                "estrategia",
-                () => gerarEstrategia(casoId),
-                "Estratégia enfileirada. As teses aparecem aqui para a sua decisão.",
-              )
-            }
+            disabled={!agente.ligado || ocupado !== null || estrategiaEmCurso !== null}
+            onClick={() => void pedirEstrategia()}
           >
-            {ocupado === "estrategia" ? "Analisando…" : "Propor estratégia"}
+            {ocupado === "estrategia" || estrategiaEmCurso !== null
+              ? "Propondo…"
+              : "Propor estratégia"}
           </Botao>
           <Botao
             variante="secundario"
@@ -956,6 +1006,7 @@ export default function Dossie({
           <PainelEstrategia
             estrategia={agente.estrategia}
             disponivel={agente.disponivel}
+            gerando={estrategiaEmCurso !== null}
             ocupado={ocupado !== null}
             onDecidirEstrategia={(aprovada) =>
               executar(
@@ -1814,16 +1865,26 @@ const NATUREZA: Record<string, { texto: string; tom: TomSelo }> = {
 function PainelEstrategia({
   estrategia,
   disponivel,
+  gerando,
   ocupado,
   onDecidirEstrategia,
   onDecidirHipotese,
 }: {
   estrategia: Estrategia | null;
   disponivel: boolean;
+  gerando: boolean;
   ocupado: boolean;
   onDecidirEstrategia: (aprovada: boolean) => Promise<void>;
   onDecidirHipotese: (id: string, aceita: boolean) => Promise<void>;
 }) {
+  if (gerando && !estrategia) {
+    return (
+      <Cartao titulo="Estratégia do caso">
+        <p className={TEXTO_VAZIO}>Classificando o caso, pesquisando jurisprudência e propondo teses…</p>
+      </Cartao>
+    );
+  }
+
   if (!estrategia) {
     return (
       <Cartao titulo="Estratégia do caso">
@@ -1855,6 +1916,10 @@ function PainelEstrategia({
       </div>
 
       {estrategia.summary && <p className={RAZAO}>{estrategia.summary}</p>}
+
+      {gerando && (
+        <Aviso tom="info">Nova versão em elaboração — o que aparece abaixo é a versão anterior.</Aviso>
+      )}
 
       {!aprovada && (
         <Aviso tom="atencao" titulo="A petição ainda não usa esta estratégia">

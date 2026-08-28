@@ -614,11 +614,10 @@ def analisar_caso_inteiro(caso_id: str) -> dict[str, Any]:
     return resultado
 
 
-def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
-    """Enfileira classificação e pesquisa — a espera fica no worker de redação.
+def garantir_preparo_juridico(caso_id: str) -> dict[str, Any]:
+    """Sincroniza documentos e enfileira classificação/pesquisa quando faltam.
 
-    Responde rápido: não bloqueia o clique em «Gerar petição». O worker classifica,
-    pesquisa com embeddings e só então redige.
+    Usado antes de estratégia e petição: responde rápido e deixa a espera no worker.
     """
     vinculo = garantir_caso(caso_id)
     caso_ref = vinculo["caso_ref"]
@@ -664,3 +663,8 @@ def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
         cliente.pesquisar(caso_ref)
     resultado["pesquisa_enfileirada"] = True
     return resultado
+
+
+def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
+    """Alias de `garantir_preparo_juridico` — mantido para rotas e testes existentes."""
+    return garantir_preparo_juridico(caso_id)

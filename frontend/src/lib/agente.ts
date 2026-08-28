@@ -730,7 +730,16 @@ export function urlDaEntrevista(casoId: string, entrevistaId: string): string {
 
 /* --------------------------------------------------------------- estratégia */
 
-export function gerarEstrategia(casoId: string): Promise<{ run_id: string; status: string }> {
+export function gerarEstrategia(casoId: string): Promise<{
+  run_id: string;
+  status: string;
+  preparo?: {
+    classificacao?: boolean;
+    pesquisa?: boolean;
+    analise_enfileirada?: boolean;
+    pesquisa_enfileirada?: boolean;
+  };
+}> {
   return chamar(`/api/agente/casos/${casoId}/estrategia`, { method: "POST" });
 }
 

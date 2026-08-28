@@ -330,7 +330,10 @@ def gerar_estrategia(caso_id: str) -> dict[str, Any]:
     """Propõe as teses do caso, com o que sustenta e o que enfraquece cada uma."""
     caso_ref = _caso_ref(caso_id)
     try:
-        return Cliente().gerar_estrategia(caso_ref)
+        preparo = espelho.garantir_preparo_juridico(caso_id)
+        resposta = Cliente().gerar_estrategia(caso_ref)
+        resposta["preparo"] = preparo
+        return resposta
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -379,7 +382,7 @@ def gerar_peticao(caso_id: str) -> dict[str, Any]:
     """
     caso_ref = _caso_ref(caso_id)
     try:
-        preparo = espelho.garantir_pesquisa_para_peca(caso_id)
+        preparo = espelho.garantir_preparo_juridico(caso_id)
         resposta = Cliente().gerar_peticao(caso_ref)
         resposta["preparo"] = preparo
         return resposta
