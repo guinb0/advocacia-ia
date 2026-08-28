@@ -4,7 +4,7 @@
  * Fluxo principal do caso: entrevista + documentos → análise → estratégia → petição.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Aviso, Botao, Cartao } from "@/components/ui/Basicos";
 import {
@@ -59,7 +59,6 @@ export default function FluxoPeticao({
   const [erro, setErro] = useState<string | null>(null);
   const [redacao, setRedacao] = useState<{ desde: string; runId: string } | null>(null);
   const [passosRedacao, setPassosRedacao] = useState(0);
-  const analiseAutomatica = useRef(false);
 
   const recarregar = useCallback(async () => {
     try {
@@ -87,29 +86,6 @@ export default function FluxoPeticao({
     setOcupado(null);
     setPasso(3);
   }, [peticao]);
-
-  /* Com entrevista pronta, analisa sozinho ao abrir (usa DeepSeek + docs locais). */
-  useEffect(() => {
-    if (!temEntrevista || estado?.analise || analiseAutomatica.current) {
-      return;
-    }
-    analiseAutomatica.current = true;
-    void (async () => {
-      setOcupado("analise");
-      setErro(null);
-      try {
-        await analisarPeticaoFluxo(casoId);
-        await recarregar();
-        setPasso(1);
-        onAnalisePronta?.();
-      } catch (e) {
-        analiseAutomatica.current = false;
-        setErro(e instanceof Error ? e.message : "Não foi possível analisar o caso.");
-      } finally {
-        setOcupado(null);
-      }
-    })();
-  }, [temEntrevista, estado?.analise, casoId, recarregar, onAnalisePronta]);
 
   useEffect(() => {
     if (!redacao) return;
@@ -153,6 +129,12 @@ export default function FluxoPeticao({
   async function gerarComModelos() {
     setErro(null);
     try {
+      if (!estado?.analise) {
+        setOcupado("analise");
+        await analisarPeticaoFluxo(casoId);
+        setPasso(1);
+        onAnalisePronta?.();
+      }
       if (!estado?.estrategias?.length) {
         setOcupado("estrategias");
         await proporEstrategiasPeticaoFluxo(casoId);
@@ -261,27 +243,19 @@ export default function FluxoPeticao({
         </div>
       )}
 
-      {passo === 0 && !semEntrevista && ocupado === "analise" && (
-        <Aviso tom="info" titulo="Preparando o caso">
-          Cruzando a entrevista com os documentos do checklist… A leitura no agente jurídico
-          roda em paralelo quando o serviço estiver disponível.
-        </Aviso>
-      )}
-
-      {passo === 0 && !semEntrevista && ocupado !== "analise" && !estado?.analise && (
+      {passo === 0 && !semEntrevista && !estado?.analise && (
         <Botao
           variante="primario"
-          disabled={ocupado !== null}
-          onClick={() =>
-            void executar("analise", async () => {
-              await analisarPeticaoFluxo(casoId);
-              setPasso(1);
-            })
-          }
+          disabled={ocupado !== null || redacao !== null}
+          onClick={() => void gerarComModelos()}
         >
           {ocupado === "analise"
-            ? "Sincronizando e analisando…"
-            : "1. Analisar caso (entrevista + documentos)"}
+            ? "Analisando entrevista e documentos…"
+            : ocupado === "estrategias"
+              ? "Definindo a estratégia…"
+              : ocupado === "gerar" || redacao
+                ? "Redigindo a petição…"
+                : "Gerar petição agora"}
         </Botao>
       )}
 
