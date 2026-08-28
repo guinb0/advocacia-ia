@@ -8,6 +8,7 @@ import logging
 import os
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
@@ -19,6 +20,8 @@ from . import casos as casos_ocr
 log = logging.getLogger("peticao_local")
 
 ID_LOCAL = "local"
+DOCX_STYLE_VERSION = 2
+LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
     ("FACTS", "Dos fatos"),
@@ -27,6 +30,7 @@ SECOES_PADRAO = (
     ("EVIDENCE", "Das provas"),
     ("VALUE", "Do valor da causa"),
     ("CLOSING", "Fechamento"),
+    ("JURIMETRY", "Análise jurimétrica dos processos similares"),
 )
 
 
@@ -52,6 +56,7 @@ def carregar(caso_id: str) -> dict[str, Any] | None:
 
 def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
     dados["updated_at"] = _agora()
+    dados["docx_style_version"] = DOCX_STYLE_VERSION
     armazenamento.salvar_peticao_local(
         caso_id,
         dados,
@@ -146,40 +151,6 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
                 f'"{str(achado.get("citacao", ""))[:200]}"'
             )
 
-    # A jurisprudência é apoio jurídico, nunca fonte de fatos do cliente. A busca
-    # semântica fica local no Acervo e é melhor-esforço: indisponibilidade da VPN ou do
-    # pgvector não pode impedir a minuta.
-    consulta_juridica = "\n".join(
-        [
-            str(caso.get("categoria") or ""),
-            texto_entrevista[:10_000],
-            *[str(a.get("informacao") or "") for a in achados[:10]],
-        ]
-    )
-    try:
-        precedentes = rag.buscar_similares(
-            consulta_juridica,
-            limite=6,
-            timeout=35,
-            connect_timeout=5,
-            connect_retries=1,
-        )
-    except Exception as erro:
-        log.warning("petição local: jurisprudência indisponível: %s", erro)
-        precedentes = []
-    if precedentes:
-        linhas.append("\n=== PRECEDENTES DO TRIBUNAL (busca por embeddings) ===")
-        for precedente in precedentes:
-            meta = precedente.metadados or {}
-            identificador = (
-                precedente.identificador or meta.get("numero_processo") or ""
-            )
-            linhas.append(
-                f"\n--- {precedente.titulo or 'Precedente'} | {identificador} "
-                f"| similaridade {precedente.similaridade:.3f} ---\n"
-                f"{precedente.texto[:3_500]}"
-            )
-
     obrig = progresso.get("obrigatorios_total")
     entregues = progresso.get("obrigatorios_entregues")
     if obrig is not None:
@@ -250,6 +221,136 @@ def _normalizar_secoes(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return secoes
 
 
+def _analisar_jurimetria_da_minuta(
+    secoes: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str]:
+    """Compara a minuta pronta com decisões reais e gera apêndice auditável."""
+    consulta = "\n\n".join(
+        str(secao.get("content") or "")
+        for secao in secoes
+        if secao.get("code") in {"FACTS", "LEGAL_GROUNDS", "CLAIMS", "EVIDENCE"}
+    ).strip()
+    try:
+        similares = rag.buscar_similares(
+            consulta,
+            limite=30,
+            timeout=40,
+            connect_timeout=5,
+            connect_retries=1,
+        )
+    except Exception as erro:
+        log.warning("petição local: jurimetria indisponível: %s", erro)
+        aviso = (
+            "A base de processos semelhantes não respondeu durante a geração. "
+            "Nenhum percentual ou conclusão jurimétrica foi estimado."
+        )
+        return {"disponivel": False, "aviso": aviso, "precedentes": []}, aviso
+    if not similares:
+        aviso = "Nenhum processo suficientemente semelhante foi localizado."
+        return {"disponivel": False, "aviso": aviso, "precedentes": []}, aviso
+
+    estatisticas = rag._estatisticas_amostra(similares)
+    usados = similares[:10]
+    referencias = {
+        f"P{indice}": trecho.referencia()
+        for indice, trecho in enumerate(usados, start=1)
+    }
+    contexto = []
+    for indice, trecho in enumerate(usados, start=1):
+        ref = referencias[f"P{indice}"]
+        contexto.append(
+            f"[P{indice}] processo={ref.get('processo') or ref.get('identificador')} "
+            f"resultado={ref.get('resultado') or 'INDEFINIDO'} "
+            f"órgão={ref.get('vara') or 'não informado'} "
+            f"tipo={ref.get('tipo_documento') or 'não informado'} "
+            f"similaridade={ref.get('similaridade')}\n{trecho.texto[:2800]}"
+        )
+
+    leitura: dict[str, Any] = {}
+    try:
+        leitura = _llm_json(
+            """Compare a MINUTA somente com as DECISÕES fornecidas. Identifique
+fundamentos recorrentes, distinções e riscos. Não trate frequência como probabilidade
+de êxito nem atribua causa ao desfecho sem texto expresso. Toda conclusão deve citar
+P1, P2 etc. Não invente referência. Responda JSON:
+{"sintese":"...","fundamentos":[{"ponto":"...","impacto":"...","processos":["P1"]}],
+"riscos":[{"ponto":"...","distincao":"...","processos":["P2"]}]}""",
+            f"MINUTA:\n{consulta[:30_000]}\n\nDECISÕES:\n" + "\n\n".join(contexto),
+            timeout=150,
+        )
+    except ErroPeticao as erro:
+        log.warning("petição local: leitura jurimétrica falhou: %s", erro)
+
+    validos = set(referencias)
+
+    def itens_validos(chave: str) -> list[dict[str, Any]]:
+        itens = []
+        for bruto in leitura.get(chave) or []:
+            if not isinstance(bruto, dict):
+                continue
+            refs = [
+                str(ref) for ref in bruto.get("processos") or [] if str(ref) in validos
+            ]
+            if refs:
+                itens.append({**bruto, "processos": refs})
+        return itens[:6]
+
+    fundamentos = itens_validos("fundamentos")
+    riscos = itens_validos("riscos")
+    merito = estatisticas["desfechos_merito"]
+    semelhanca = estatisticas["similaridade_amostra"]
+    linhas = [
+        (
+            f"Amostra: {estatisticas['processos_analisados']} processos; similaridade "
+            f"mediana {semelhanca['mediana']:.3f} (mínima {semelhanca['minima']:.3f}; "
+            f"máxima {semelhanca['maxima']:.3f})."
+        ),
+    ]
+    if merito["processos"]:
+        linhas.append(
+            f"Desfechos de mérito: {merito['processos']}; procedentes ou parcialmente "
+            f"procedentes: {merito['favoraveis']} ({merito['percentual']:.1f}%)."
+        )
+    linhas.extend(
+        [estatisticas["aviso"], "", str(leitura.get("sintese") or "").strip()]
+    )
+    if fundamentos:
+        linhas.extend(["", "Fundamentos que orientaram a minuta:"])
+        for item in fundamentos:
+            linhas.append(
+                f"• {item.get('ponto', '')}: {item.get('impacto', '')} "
+                f"[{', '.join(item['processos'])}]"
+            )
+    if riscos:
+        linhas.extend(["", "Riscos e distinções relevantes:"])
+        for item in riscos:
+            linhas.append(
+                f"• {item.get('ponto', '')}: {item.get('distincao', '')} "
+                f"[{', '.join(item['processos'])}]"
+            )
+    linhas.extend(["", "Decisões consultadas:"])
+    for indice, trecho in enumerate(usados, start=1):
+        ref = referencias[f"P{indice}"]
+        processo = ref.get("processo") or ref.get("identificador") or "não informado"
+        linhas.append(
+            f"[P{indice}] Processo {processo} — {ref.get('resultado') or 'desfecho não informado'}; "
+            f"{ref.get('vara') or 'órgão não informado'}; similaridade {trecho.similaridade:.3f}."
+        )
+    resultado = {
+        "disponivel": True,
+        "estatisticas": estatisticas,
+        "sintese": str(leitura.get("sintese") or "").strip(),
+        "fundamentos": fundamentos,
+        "riscos": riscos,
+        "precedentes": [
+            {"indice": indice, **referencia}
+            for indice, referencia in referencias.items()
+        ],
+        "aviso": estatisticas["aviso"],
+    }
+    return resultado, "\n".join(linhas).strip()
+
+
 def redigir(
     caso_id: str, *, analise: dict[str, Any], texto_entrevista: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -294,8 +395,6 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         """Você é advogado trabalhista e redator de petições iniciais.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
-Os PRECEDENTES DO TRIBUNAL servem apenas de fundamento jurídico: nunca extraia deles
-fatos ou nomes para o caso. Só cite precedente quando houver identificador no material.
 Onde faltar dado indispensável, escreva [PENDENTE: explicação].
 
 Devolva JSON exatamente com:
@@ -341,6 +440,16 @@ Cada content deve conter parágrafos separados por linha em branco.""",
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
+    jurimetria, texto_jurimetria = _analisar_jurimetria_da_minuta(secoes)
+    for secao in secoes:
+        if secao["code"] == "JURIMETRY":
+            secao["content"] = texto_jurimetria
+            secao["cited_precedent_ids"] = [
+                str(item.get("indice"))
+                for item in jurimetria.get("precedentes") or []
+                if item.get("indice")
+            ]
+            break
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     agora = _agora()
     anterior = carregar(caso_id) or {}
@@ -354,6 +463,7 @@ Cada content deve conter parágrafos separados por linha em branco.""",
         "created_at": anterior.get("created_at") or agora,
         "updated_at": agora,
         "analise": analise,
+        "jurimetria": jurimetria,
         "sections": secoes,
         "readiness": {
             "ready": True,
@@ -402,6 +512,7 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "title": dados.get("title", "Petição inicial"),
         "readiness": dados.get("readiness") or {},
         "review": dados.get("review") or {},
+        "jurimetria": dados.get("jurimetria") or {},
         "blocking_findings": dados.get("blocking_findings", 0),
         "model": dados.get("model"),
         "created_at": dados.get("created_at", _agora()),
@@ -466,12 +577,49 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:document xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     {"".join(corpo)}
-    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1701"/></w:sectPr>
+    <w:sectPr>
+      <w:headerReference w:type="default" r:id="rIdHeader"/>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1985" w:right="1417" w:bottom="1417" w:left="1701" w:header="360"/>
+    </w:sectPr>
   </w:body>
 </w:document>"""
+
+    cabecalho_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
+    <wp:inline distT="0" distB="0" distL="0" distR="0">
+      <wp:extent cx="1600200" cy="905010"/><wp:docPr id="1" name="Lara e Melo"/>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+        <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="lara-melo-logo.png"/><pic:cNvPicPr/></pic:nvPicPr>
+          <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1600200" cy="905010"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+        </pic:pic>
+      </a:graphicData></a:graphic>
+    </wp:inline>
+  </w:drawing></w:r></w:p>
+</w:hdr>"""
+
+    estilos_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr>
+      <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+      <w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR"/>
+    </w:rPr></w:rPrDefault>
+    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+</w:styles>"""
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as arquivo:
@@ -481,7 +629,10 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>""",
         )
         arquivo.writestr(
@@ -492,10 +643,23 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
 </Relationships>""",
         )
         arquivo.writestr("word/document.xml", documento_xml)
+        arquivo.writestr("word/header1.xml", cabecalho_xml)
+        arquivo.writestr("word/styles.xml", estilos_xml)
+        arquivo.writestr("word/media/lara-melo-logo.png", LOGO_LARA_MELO.read_bytes())
         arquivo.writestr(
             "word/_rels/document.xml.rels",
             """<?xml version="1.0" encoding="UTF-8"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>""",
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>""",
+        )
+        arquivo.writestr(
+            "word/_rels/header1.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/lara-melo-logo.png"/>
+</Relationships>""",
         )
     return buffer.getvalue()
 
@@ -505,6 +669,8 @@ def ler_docx(caso_id: str) -> bytes:
     if not dados:
         raise ErroPeticao("Petição não encontrada.")
     conteudo = bytes(dados.get("_docx") or b"")
+    if int(dados.get("docx_style_version") or 0) < DOCX_STYLE_VERSION:
+        return montar_docx(dados.get("sections") or [])
     return conteudo or montar_docx(dados.get("sections") or [])
 
 

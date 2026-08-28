@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { obterCobrancaDocumentos, obterPedido, salvarCobrancaDocumentos } from "@/lib/api";
+import {
+  enviarDocumentosWhatsApp,
+  obterCobrancaDocumentos,
+  obterPedido,
+  salvarCobrancaDocumentos,
+} from "@/lib/api";
 import type { CobrancaDocumentos, Pedido, Progresso } from "@/lib/types";
 import { AjudaCampo, Botao, Cartao, Marcacao, RotuloCampo, Vazio } from "@/components/ui/Basicos";
 
@@ -23,6 +28,7 @@ export default function PedidoCliente({
   const [copiado, setCopiado] = useState(false);
   const [cobranca, setCobranca] = useState<CobrancaDocumentos | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
   const [retorno, setRetorno] = useState("");
 
   const chave = `${progresso.obrigatorios_entregues}-${progresso.itens_a_conferir}-${progresso.opcionais_entregues}`;
@@ -73,6 +79,19 @@ export default function PedidoCliente({
     }
   }, [pedido]);
 
+  const enviarWhatsApp = useCallback(async () => {
+    setEnviando(true);
+    setRetorno("");
+    try {
+      await enviarDocumentosWhatsApp(casoId, incluirOpcionais);
+      setRetorno("✓ Link e pedido de documentos enviados pelo WhatsApp.");
+    } catch (e) {
+      setRetorno(e instanceof Error ? e.message : "Não foi possível enviar pelo WhatsApp.");
+    } finally {
+      setEnviando(false);
+    }
+  }, [casoId, incluirOpcionais]);
+
   return (
     <Cartao
       titulo="Pedido para o cliente"
@@ -90,6 +109,13 @@ export default function PedidoCliente({
             {/* A ação principal do bloco é copiar: é para isso que o bloco existe. */}
             <Botao variante="primario" onClick={copiar}>
               {copiado ? "✓ Mensagem copiada" : "Copiar a mensagem"}
+            </Botao>
+            <Botao
+              variante="secundario"
+              onClick={() => void enviarWhatsApp()}
+              disabled={enviando}
+            >
+              {enviando ? "Enviando…" : "Enviar link pelo WhatsApp"}
             </Botao>
             <Marcacao>
               <input
@@ -113,6 +139,8 @@ export default function PedidoCliente({
           <AjudaCampo>
             O texto se refaz sozinho conforme os documentos chegam — não precisa editar aqui.
           </AjudaCampo>
+
+          {retorno && <p className="mt-3 text-xs text-tinta-3">{retorno}</p>}
 
           {cobranca && (
             <div className="mt-5 border-t border-borda pt-4">
@@ -159,7 +187,6 @@ export default function PedidoCliente({
                 <Botao variante="primario" onClick={() => void salvarAutomacao()} disabled={salvando}>
                   {salvando ? "Salvando…" : "Salvar automação"}
                 </Botao>
-                {retorno && <span className="text-xs text-tinta-3">{retorno}</span>}
               </div>
               <AjudaCampo>
                 Cada envio usa a mensagem acima refeita naquele momento. Quando o cliente envia outro arquivo, a próxima cobrança já remove o que chegou e inclui apenas o que continua pendente.
