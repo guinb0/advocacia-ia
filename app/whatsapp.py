@@ -22,10 +22,10 @@ links soltos numa mensagem só o cliente clica no primeiro e acha que acabou.
 
 from __future__ import annotations
 
-import os
-import re
 import hashlib
 import logging
+import os
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -34,11 +34,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-from app import armazenamento, auth, automacoes_whatsapp, casos
+from app import armazenamento, auth, automacoes_whatsapp, casos, portal
 
 roteador = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
 
-LINK_AVALIACAO = os.getenv("GOOGLE_AVALIACAO_URL", "https://share.google/BrQVYGnjqdSz3pEw7")
+LINK_AVALIACAO = os.getenv(
+    "GOOGLE_AVALIACAO_URL", "https://share.google/BrQVYGnjqdSz3pEw7"
+)
 URL_PORTAL = os.getenv("URL_PORTAL", "http://localhost:3000").rstrip("/")
 MENSAGEM_AVALIACAO = (
     "Obrigado por conversar conosco. Sua avaliação ajuda outras pessoas a "
@@ -95,6 +97,10 @@ class ConfiguracaoCobranca(BaseModel):
     incluir_opcionais: bool = False
 
 
+class EnvioDocumentos(BaseModel):
+    incluir_opcionais: bool = False
+
+
 def _numero_brasileiro(valor: str) -> str:
     numero = re.sub(r"\D", "", valor)
     if len(numero) in (10, 11):
@@ -140,13 +146,23 @@ async def _enviar_texto(numero: str, texto: str) -> None:
                     json={"number": numero, "text": texto},
                 )
                 if resposta.status_code == 404 and indice < len(candidatas) - 1:
-                    log.warning("Instância Evolution configurada não existe; tentando a oficial.")
+                    log.warning(
+                        "Instância Evolution configurada não existe; tentando a oficial."
+                    )
                     continue
                 resposta.raise_for_status()
                 return
     except httpx.HTTPError as erro:
-        status = erro.response.status_code if isinstance(erro, httpx.HTTPStatusError) else None
-        log.warning("Falha no envio pela Evolution: status=%s tipo=%s", status, type(erro).__name__)
+        status = (
+            erro.response.status_code
+            if isinstance(erro, httpx.HTTPStatusError)
+            else None
+        )
+        log.warning(
+            "Falha no envio pela Evolution: status=%s tipo=%s",
+            status,
+            type(erro).__name__,
+        )
         raise HTTPException(502, _mensagem_erro_evolution(erro)) from erro
 
 
@@ -160,17 +176,31 @@ def _enviar_texto_sync(numero: str, texto: str) -> None:
         for indice, instancia in enumerate(candidatas):
             resposta = httpx.post(
                 _url_instancia(base, "message/sendText", instancia),
-                headers={"apikey": os.getenv("EVOLUTION_API_KEY", ""), "Content-Type": "application/json"},
-                json={"number": numero, "text": texto}, timeout=20,
+                headers={
+                    "apikey": os.getenv("EVOLUTION_API_KEY", ""),
+                    "Content-Type": "application/json",
+                },
+                json={"number": numero, "text": texto},
+                timeout=20,
             )
             if resposta.status_code == 404 and indice < len(candidatas) - 1:
-                log.warning("Instância Evolution configurada não existe; tentando a oficial.")
+                log.warning(
+                    "Instância Evolution configurada não existe; tentando a oficial."
+                )
                 continue
             resposta.raise_for_status()
             return
     except httpx.HTTPError as erro:
-        status = erro.response.status_code if isinstance(erro, httpx.HTTPStatusError) else None
-        log.warning("Falha no envio pela Evolution: status=%s tipo=%s", status, type(erro).__name__)
+        status = (
+            erro.response.status_code
+            if isinstance(erro, httpx.HTTPStatusError)
+            else None
+        )
+        log.warning(
+            "Falha no envio pela Evolution: status=%s tipo=%s",
+            status,
+            type(erro).__name__,
+        )
         raise RuntimeError(_mensagem_erro_evolution(erro)) from erro
 
 
@@ -179,7 +209,12 @@ async def enviar_avaliacao_google(dados: Destinatario) -> dict[str, bool]:
     numero = _numero_brasileiro(dados.telefone)
     chave = f"avaliacao-google:{numero}"
     reservado = await run_in_threadpool(
-        automacoes_whatsapp.reservar, chave, "avaliacao_google", numero, None, dados.forcar
+        automacoes_whatsapp.reservar,
+        chave,
+        "avaliacao_google",
+        numero,
+        None,
+        dados.forcar,
     )
     if not reservado:
         return {"enviado": False, "ja_enviado": True}
@@ -197,7 +232,7 @@ def _primeiro_nome(nome: str) -> str:
 
 
 def _rotulo_do_documento(nome_registrado: str) -> str:
-    """"Procuração — Fulano de Tal" vira "a procuração".
+    """ "Procuração — Fulano de Tal" vira "a procuração".
 
     O nome guardado carrega o cliente para o advogado distinguir os documentos na
     lista. Repeti-lo para o próprio cliente ("assine Procuração — Fulano") soa a
@@ -222,13 +257,17 @@ async def enviar_link_assinatura(dados: PedidoLinkAssinatura) -> dict[str, bool]
     telefone do signatário. Quem já assinou não recebe nada — reenviar link a
     quem assinou faz o cliente achar que a assinatura não valeu.
     """
-    registro = await run_in_threadpool(armazenamento.obter_assinatura, dados.assinatura_id)
+    registro = await run_in_threadpool(
+        armazenamento.obter_assinatura, dados.assinatura_id
+    )
     if registro is None:
         raise HTTPException(404, "Documento não encontrado.")
 
     signatario = _localizar_signatario(registro, dados.signatario_token)
     if signatario.get("estado") == "assinou":
-        raise HTTPException(409, f"{signatario.get('nome', 'O signatário')} já assinou.")
+        raise HTTPException(
+            409, f"{signatario.get('nome', 'O signatário')} já assinou."
+        )
 
     url = str(signatario.get("url_assinatura") or "").strip()
     if not url:
@@ -240,7 +279,9 @@ async def enviar_link_assinatura(dados: PedidoLinkAssinatura) -> dict[str, bool]
 
     telefone = str(signatario.get("telefone") or "").strip()
     if not telefone:
-        raise HTTPException(422, f"{signatario.get('nome', 'O signatário')} não tem telefone.")
+        raise HTTPException(
+            422, f"{signatario.get('nome', 'O signatário')} não tem telefone."
+        )
 
     texto = (
         f"Olá, {_primeiro_nome(str(signatario.get('nome', '')))}. Aqui é a LARA & MELO. "
@@ -270,7 +311,11 @@ async def enviar_links_assinatura_automaticos(registro: dict[str, Any]) -> int:
         numero = _numero_brasileiro(telefone)
         chave = f"zapsign:{registro['id']}:{token}"
         if not await run_in_threadpool(
-            automacoes_whatsapp.reservar, chave, "zapsign", numero, registro.get("caso_id")
+            automacoes_whatsapp.reservar,
+            chave,
+            "zapsign",
+            numero,
+            registro.get("caso_id"),
         ):
             continue
         texto = (
@@ -289,27 +334,87 @@ async def enviar_links_assinatura_automaticos(registro: dict[str, Any]) -> int:
     return enviados
 
 
-@roteador.get("/casos/{caso_id}/cobranca-documentos", dependencies=[Depends(auth.usuario_atual)])
+@roteador.get(
+    "/casos/{caso_id}/cobranca-documentos", dependencies=[Depends(auth.usuario_atual)]
+)
 async def obter_cobranca_documentos(caso_id: str) -> dict[str, Any]:
     if not await run_in_threadpool(automacoes_whatsapp.caso_existe, caso_id):
         raise HTTPException(404, "Caso não encontrado.")
     return await run_in_threadpool(automacoes_whatsapp.obter_cobranca, caso_id)
 
 
-@roteador.put("/casos/{caso_id}/cobranca-documentos", dependencies=[Depends(auth.usuario_atual)])
+@roteador.put(
+    "/casos/{caso_id}/cobranca-documentos", dependencies=[Depends(auth.usuario_atual)]
+)
 async def configurar_cobranca_documentos(
-    caso_id: str, dados: ConfiguracaoCobranca,
+    caso_id: str,
+    dados: ConfiguracaoCobranca,
 ) -> dict[str, Any]:
     if not await run_in_threadpool(automacoes_whatsapp.caso_existe, caso_id):
         raise HTTPException(404, "Caso não encontrado.")
-    telefone = _numero_brasileiro(dados.telefone) if dados.ativa else (
-        _numero_brasileiro(dados.telefone) if dados.telefone.strip() else ""
+    telefone = (
+        _numero_brasileiro(dados.telefone)
+        if dados.ativa
+        else (_numero_brasileiro(dados.telefone) if dados.telefone.strip() else "")
     )
     return await run_in_threadpool(
-        automacoes_whatsapp.salvar_cobranca, caso_id, ativa=dados.ativa,
-        telefone=telefone, intervalo_dias=dados.intervalo_dias,
+        automacoes_whatsapp.salvar_cobranca,
+        caso_id,
+        ativa=dados.ativa,
+        telefone=telefone,
+        intervalo_dias=dados.intervalo_dias,
         incluir_opcionais=dados.incluir_opcionais,
     )
+
+
+@roteador.post(
+    "/casos/{caso_id}/enviar-documentos",
+    dependencies=[Depends(auth.usuario_atual)],
+)
+async def enviar_documentos_agora(
+    caso_id: str, dados: EnvioDocumentos
+) -> dict[str, bool]:
+    """Envia em um clique o pedido atualizado e o portal seguro do cliente."""
+    caso = await run_in_threadpool(armazenamento.obter_caso_com_segredos, caso_id)
+    if not caso:
+        raise HTTPException(404, "Caso não encontrado.")
+
+    config = await run_in_threadpool(automacoes_whatsapp.obter_cobranca, caso_id)
+    telefone = str(config.get("telefone") or "").strip()
+    if not telefone:
+        raise HTTPException(
+            422,
+            "O caso não possui WhatsApp cadastrado. Informe o número na cobrança de documentos.",
+        )
+    numero = _numero_brasileiro(telefone)
+
+    pedido = await run_in_threadpool(
+        casos.montar_pedido, caso_id, dados.incluir_opcionais
+    )
+    if not pedido:
+        raise HTTPException(404, "Checklist do caso não encontrado.")
+
+    token = str(caso.get("portal_token") or "").strip()
+    senha: str | None = None
+    if not token:
+        token = portal.gerar_token()
+        senha = portal.gerar_senha()
+        senha_hash, sal = portal.hash_senha(senha)
+        await run_in_threadpool(
+            armazenamento.definir_portal, caso_id, token, senha_hash, sal
+        )
+        portal.limpar_tentativas(token)
+
+    mensagem = (
+        f"{pedido['texto']}\n\n"
+        "Envie os documentos com segurança pelo seu portal:\n"
+        f"{URL_PORTAL}/portal/{token}"
+    )
+    if senha:
+        mensagem += f"\nSenha de acesso: {senha}"
+
+    await _enviar_texto(numero, mensagem)
+    return {"enviado": True, "portal_criado": senha is not None}
 
 
 def processar_cobrancas_documentos() -> int:
@@ -320,14 +425,19 @@ def processar_cobrancas_documentos() -> int:
         token_portal = str((caso or {}).get("portal_token") or "").strip()
         if not token_portal:
             automacoes_whatsapp.registrar_resultado_cobranca(
-                config["caso_id"], config["intervalo_dias"], None,
+                config["caso_id"],
+                config["intervalo_dias"],
+                None,
                 "O caso não possui link ativo para o portal do cliente.",
             )
             continue
         pedido = casos.montar_pedido(config["caso_id"], config["incluir_opcionais"])
         if not pedido:
             automacoes_whatsapp.registrar_resultado_cobranca(
-                config["caso_id"], config["intervalo_dias"], None, "Caso ou categoria não encontrado."
+                config["caso_id"],
+                config["intervalo_dias"],
+                None,
+                "Caso ou categoria não encontrado.",
             )
             continue
         pendentes = pedido["faltando_obrigatorios"] or pedido["reenviar"]
