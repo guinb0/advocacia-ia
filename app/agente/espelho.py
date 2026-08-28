@@ -12,14 +12,17 @@ agente nunca escreve no SQLite daqui. Cada lado continua sendo dono do que produ
 O que atravessa a ponte:
 
 - **cliente e caso**, uma vez, na primeira sincronização;
-- **cada extração do OCR**, assim que a leitura termina, com o id da entrega como
-  chave de idempotência — reenviar não duplica documento;
+- **cada extração do OCR**, assim que a leitura termina, com chave
+  `entrega_id:hash_da_extracao` como idempotência — reprocessar o OCR reenvia com
+  payload novo; repetir o mesmo payload não duplica documento;
 - **a qualificação do contrato**, que não vira fato: ela é conferida contra os fatos
   que o agente já apurou, e a divergência é mostrada ao advogado antes da assinatura.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -115,6 +118,23 @@ def _titulo(caso: dict[str, Any]) -> str:
 # -------------------------------------------------------------- documentos
 
 
+def _assinatura_extracao(extracao: dict[str, Any]) -> str:
+    """Hash curto do JSON de extração — muda quando o OCR reprocessa o arquivo."""
+    bruto = json.dumps(extracao, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(bruto.encode()).hexdigest()[:12]
+
+
+def _chave_envio(entrega_id: str, extracao: dict[str, Any]) -> str:
+    """Idempotência por versão da extração, não só pelo id da entrega."""
+    return f"{entrega_id}:{_assinatura_extracao(extracao)}"
+
+
+def _envio_registrado(vinculo: dict[str, Any], entrega_id: str, extracao: dict[str, Any]) -> bool:
+    chave = _chave_envio(entrega_id, extracao)
+    enviados = vinculo.get("enviados") or []
+    return chave in enviados
+
+
 def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) -> bool:
     """Entrega ao agente uma extração já concluída. Silencioso por design.
 
@@ -125,8 +145,6 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
     if vinculo is None:
         return False
-    if entrega_id in vinculo["enviados"]:
-        return True
 
     entrega = armazenamento.obter_entrega(entrega_id)
     if entrega is None or not entrega.get("extracao"):
@@ -136,15 +154,20 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
         # fato; mandar assim faria o agente registrar documento sem campo nenhum.
         return False
 
+    chave = _chave_envio(entrega_id, entrega["extracao"])
+    if _envio_registrado(vinculo, entrega_id, entrega["extracao"]):
+        return True
+
     origem = f"ocr://entregas/{entrega_id}/{entrega.get('arquivo', '')}"
     tipo = str((entrega["extracao"].get("tipo") or {}).get("codigo") or "").strip()
+    evento_externo = chave
 
     try:
         cliente = Cliente()
         if tipo in extractors.ROTULOS_TIPO:
             cliente.enviar_extracao(
                 vinculo["caso_ref"],
-                evento_externo=entrega_id,
+                evento_externo=evento_externo,
                 origem=origem,
                 extracao=entrega["extracao"],
             )
@@ -165,7 +188,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
             generica["tipo"]["detectado"] = "desconhecido"
             cliente.enviar_extracao(
                 vinculo["caso_ref"],
-                evento_externo=entrega_id,
+                evento_externo=evento_externo,
                 origem=origem,
                 extracao=generica,
             )
@@ -197,7 +220,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
             raise
         return False
 
-    armazenamento.marcar_entrega_enviada(caso_id, entrega_id)
+    armazenamento.marcar_entrega_enviada(caso_id, chave)
     return True
 
 
@@ -211,7 +234,9 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     enviados, falhas = 0, 0
 
     for entrega in armazenamento.listar_entregas(caso_id):
-        if entrega["id"] in vinculo["enviados"] or entrega.get("status_proc") != "pronto":
+        if entrega.get("status_proc") != "pronto" or not entrega.get("extracao"):
+            continue
+        if _envio_registrado(vinculo, entrega["id"], entrega["extracao"]):
             continue
         if enviar_entrega(caso_id, entrega["id"]):
             enviados += 1
@@ -590,10 +615,10 @@ def analisar_caso_inteiro(caso_id: str) -> dict[str, Any]:
 
 
 def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
-    """Dispara classificação e pesquisa com embeddings quando faltam.
+    """Enfileira classificação e pesquisa — a espera fica no worker de redação.
 
-    Falta de documento no checklist não impede a petição — vira pendência na minuta. Aqui
-    só garantimos classificação (template aplicável) e pesquisa jurídica quando possível.
+    Responde rápido: não bloqueia o clique em «Gerar petição». O worker classifica,
+    pesquisa com embeddings e só então redige.
     """
     vinculo = garantir_caso(caso_id)
     caso_ref = vinculo["caso_ref"]
@@ -605,6 +630,8 @@ def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
         "pesquisa": False,
     }
 
+    # Documentos novos ou reprocessados entram antes da classificação.
+    sincronizar(caso_id)
     qualificar_reclamante(caso_ref)
 
     try:
@@ -612,21 +639,11 @@ def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
     except ErroDoAgente:
         analise = {}
 
-    if not analise.get("classifications"):
-        cliente.analisar(caso_ref)
-        for _ in range(TENTATIVAS_ANALISE):
-            time.sleep(ESPERA_ANALISE_S)
-            try:
-                analise = cliente.analise(caso_ref)
-            except ErroDoAgente:
-                continue
-            if analise.get("classifications"):
-                break
-
     if analise.get("classifications"):
         resultado["classificacao"] = True
         resultado["classificacoes"] = len(analise["classifications"])
     else:
+        cliente.analisar(caso_ref)
         resultado["analise_enfileirada"] = True
 
     try:
@@ -645,5 +662,5 @@ def garantir_pesquisa_para_peca(caso_id: str) -> dict[str, Any]:
 
     if resultado.get("classificacao"):
         cliente.pesquisar(caso_ref)
-        resultado["pesquisa_enfileirada"] = True
+    resultado["pesquisa_enfileirada"] = True
     return resultado

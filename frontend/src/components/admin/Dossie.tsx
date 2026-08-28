@@ -50,7 +50,6 @@ import {
   resolverContradicao,
   sincronizarComAgente,
   urlDaEntrevista,
-  urlDaPeticao,
   type Contradicao,
   type Dossie as DossieDados,
   type EntrevistaResumo,
@@ -338,10 +337,18 @@ export default function Dossie({
             if (!ativo) return;
             setPeticao(pronta);
             setRedacao(null);
+            try {
+              const arquivo = await baixarArquivoDaPeticao(casoId, pronta.id, "docx");
+              if (ativo) {
+                baixarArquivo(arquivo, `Peticao inicial - v${pronta.version}.docx`);
+              }
+            } catch {
+              /* a peça continua na tela; o advogado pode baixar pelo botão abaixo */
+            }
             setAviso(
               andamento.blocking_findings > 0
-                ? "A minuta ficou pronta, mas a revisão a reteve — o motivo está abaixo."
-                : "A petição ficou pronta e está aberta abaixo.",
+                ? "A minuta ficou pronta e foi baixada. A revisão a reteve — o motivo está abaixo."
+                : "A petição foi baixada e está aberta abaixo.",
             );
             /* Sincroniza também o resumo/lista, sem bloquear a exibição que acabou de
              * receber o documento completo pelo identificador exato. */
@@ -351,6 +358,9 @@ export default function Dossie({
           setRedacao((atual) =>
             atual ? { ...atual, passos: andamento.completed_steps } : atual,
           );
+          if (andamento.completed_steps === 0) {
+            void carregar();
+          }
         } catch {
           /* leitura perdida; a próxima tentativa vem em três segundos */
         }
@@ -421,16 +431,17 @@ export default function Dossie({
    * entre "enfileirada" e "pronta", e era ela que o aviso antigo apagava. */
   async function pedirPeticao() {
     setOcupado("peticao");
-    setAviso("Enfileirando pesquisa com embeddings e a redação da petição…");
+    setAviso("Preparando classificação, pesquisa e redação…");
     setErro(null);
     try {
+      if (dados?.agente.ultimo_erro) {
+        await sincronizarComAgente(casoId);
+      }
       const pedido = await gerarPeticao(casoId);
       setAviso(
         pedido.preparo?.pesquisa
-          ? "Pesquisa pronta. A petição está sendo redigida — aparece aqui quando terminar."
-          : pedido.preparo?.pesquisa_enfileirada || pedido.preparo?.analise_enfileirada
-            ? "Classificação e/ou pesquisa enfileiradas. A redação usa embeddings assim que concluírem."
-            : "Petição enfileirada. A redação começa em instantes.",
+          ? "Pesquisa pronta. Quando terminar, a petição baixa sozinha em .docx."
+          : "Petição enfileirada. Quando ficar pronta, o .docx baixa automaticamente.",
       );
       setRedacao({
         desde: pedido.requested_at,
@@ -1451,6 +1462,7 @@ function motivoLegivel(codigo: string): string {
  * recriaria, em forma de desenho, o mesmo "pronto" falso que ela veio substituir. */
 function BarraDeRedacao({ passos, esperadas }: { passos: number; esperadas: number }) {
   const proporcao = Math.min(0.92, esperadas > 0 ? passos / esperadas : 0);
+  const preparando = passos === 0;
 
   return (
     <div className={INDICADOR} aria-live="polite">
@@ -1459,10 +1471,10 @@ function BarraDeRedacao({ passos, esperadas }: { passos: number; esperadas: numb
           <span aria-hidden className="text-acao font-bold mr-[6px]">
             →
           </span>
-          Redigindo a petição
+          {preparando ? "Preparando a petição" : "Redigindo a petição"}
         </strong>
         <span className={VALOR}>
-          {passos} de ~{esperadas} etapas
+          {preparando ? "Classificando e pesquisando…" : `${passos} de ~${esperadas} etapas`}
         </span>
       </div>
       <div
@@ -1481,8 +1493,9 @@ function BarraDeRedacao({ passos, esperadas }: { passos: number; esperadas: numb
         />
       </div>
       <p className={RAZAO}>
-        Uma chamada de modelo por seção, mais a revisão. A peça aparece aqui sozinha quando
-        terminar — não é preciso recarregar a tela.
+        {preparando
+          ? "O worker classifica o caso, pesquisa jurisprudência com embeddings e só então redige seção a seção."
+          : "Uma chamada de modelo por seção, mais a revisão. A peça aparece aqui sozinha quando terminar — não é preciso recarregar a tela."}
       </p>
     </div>
   );
@@ -1508,8 +1521,22 @@ function VisualizadorPeticao({
 }) {
   const [endereco, setEndereco] = useState<string | null>(null);
   const [falha, setFalha] = useState<string | null>(null);
+  const [baixandoDocx, setBaixandoDocx] = useState(false);
   const nome = useMemo(() => `Peticao inicial - v${versao}.pdf`, [versao]);
+  const nomeDocx = useMemo(() => `Peticao inicial - v${versao}.docx`, [versao]);
   const ancora = useRef<HTMLAnchorElement | null>(null);
+
+  async function baixarDocx() {
+    setBaixandoDocx(true);
+    try {
+      const arquivo = await baixarArquivoDaPeticao(casoId, pecaId, "docx");
+      baixarArquivo(arquivo, nomeDocx);
+    } catch (erro) {
+      setFalha(erro instanceof Error ? erro.message : "Não foi possível baixar o .docx.");
+    } finally {
+      setBaixandoDocx(false);
+    }
+  }
 
   useEffect(() => {
     let ativo = true;
@@ -1558,14 +1585,14 @@ function VisualizadorPeticao({
           >
             Baixar PDF
           </Botao>
-          <LinkBotao
+          <Botao
             variante="secundario"
             pequeno
-            href={urlDaPeticao(casoId, pecaId, "docx")}
-            download
+            disabled={baixandoDocx}
+            onClick={() => void baixarDocx()}
           >
-            Baixar .docx
-          </LinkBotao>
+            {baixandoDocx ? "Baixando…" : "Baixar .docx"}
+          </Botao>
         </div>
       </div>
       {endereco ? (

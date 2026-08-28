@@ -156,9 +156,11 @@ def main() -> int:
 
     armazenamento.concluir_entrega(entrega["id"], extracao_falsa(), True, ["DOC.01"])
     checar(espelho.enviar_entrega(caso_id, entrega["id"]), "entrega pronta é enviada")
+    entrega_db = armazenamento.obter_entrega(entrega["id"])
+    chave = espelho._chave_envio(entrega["id"], entrega_db["extracao"])
     checar(
-        ClienteFalso.enviados == [("case_01J00000000000000000000001", entrega["id"])],
-        "o id da entrega vai como chave de idempotência",
+        ClienteFalso.enviados == [("case_01J00000000000000000000001", chave)],
+        "entrega_id:hash da extração vai como chave de idempotência",
     )
 
     espelho.enviar_entrega(caso_id, entrega["id"])
@@ -188,8 +190,10 @@ def main() -> int:
     checar(not espelho.enviar_entrega(caso_id, entrega2["id"]), "o envio falha sem estourar")
     vinculo = armazenamento.obter_vinculo_agente(caso_id)
     checar(bool(vinculo["ultimo_erro"]), "o motivo fica registrado no vínculo")
+    entrega2_db = armazenamento.obter_entrega(entrega2["id"])
+    chave2 = espelho._chave_envio(entrega2["id"], entrega2_db["extracao"])
     checar(
-        entrega2["id"] not in vinculo["enviados"],
+        chave2 not in vinculo["enviados"],
         "a entrega continua pendente de envio — não é dada como entregue",
     )
 
