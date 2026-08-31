@@ -1139,11 +1139,6 @@ function preencherMarcadores(
     [],
   );
 
-  const idsDaIdentificacao = useMemo(
-    () => new Set<string>(CAMPOS_DA_IDENTIFICACAO.map((c) => c.id)),
-    [CAMPOS_DA_IDENTIFICACAO],
-  );
-
   const faltaParaComecar = useMemo(
     () =>
       CAMPOS_DA_IDENTIFICACAO.filter((campo) =>
@@ -1266,18 +1261,23 @@ function preencherMarcadores(
 
   const temMic = estadoMic !== "sem-audio";
   const identificacaoConcluida = faltaParaComecar.length === 0;
-  const blocosNaTela = escutaEncerrada
-    ? (roteiro?.blocos ?? [])
-    : escutando && identificacaoConcluida
-    // Sem preenchimento ao vivo não há resposta de rastreio para abrir módulos.
-    // Mostra todos de uma vez para o funcionário escolher livremente a ordem.
-    ? (roteiro?.blocos ?? [])
-    : blocosVisiveis
-        .map((bloco) => ({
-          ...bloco,
-          perguntas: bloco.perguntas.filter((p) => idsDaIdentificacao.has(p.id)),
-        }))
-        .filter((bloco) => bloco.perguntas.length > 0);
+  /* O roteiro inteiro na tela, do primeiro instante — não há etapa 1 e etapa 2.
+   *
+   * Até aqui a tela escondia tudo menos os quatro campos da identificação e só
+   * "abria o roteiro completo" quando o município ficava válido. O corte não
+   * ajudava ninguém: quem conduz precisa enxergar para onde a conversa vai
+   * enquanto ainda digita o nome, e o cliente costuma adiantar assunto de
+   * blocos lá de baixo antes de a identificação fechar — com o roteiro
+   * escondido, não havia onde pousar essa resposta.
+   *
+   * Todos os blocos, e não `blocosVisiveis`: sem resposta de rastreio nenhum
+   * módulo condicional estaria aberto, e é melhor deixar o entrevistador
+   * escolher livremente a ordem do que decidir por ele com o formulário vazio.
+   *
+   * O que NÃO mudou é a trava do microfone: a transcrição continua começando só
+   * depois de nome, CPF, UF e município (ver o auto-início, acima). Mostrar o
+   * roteiro é outra coisa que abrir a escuta. */
+  const blocosNaTela = roteiro?.blocos ?? [];
 
   /* Com a identificação concluída e a escuta aberta, o bloco "abertura" sai da
    * lista corrida e passa a viver dentro do cabeçalho recolhível, logo acima
@@ -1482,13 +1482,11 @@ function preencherMarcadores(
         </p>
       )}
 
-      {!identificacaoConcluida && (
-        <section className="mt-5 border-l-4 border-tinta bg-papel-2 px-5 py-4">
-          <span className="text-[10px] font-semibold tracking-[0.14em] text-tinta-3">ETAPA 1 DE 2</span>
-          <h3 className="mt-1 mb-1 text-[20px] font-semibold font-titulo">Identificação do cliente</h3>
-          <p className="m-0 text-[12.5px] leading-[1.55] text-tinta-3">O microfone e a gravação já estão ativos. Preencha os quatro dados; ao concluir o município, o roteiro completo será aberto.</p>
-        </section>
-      )}
+      {/* Sem "etapa 1 de 2": o roteiro inteiro já está na tela, e o que a
+        * identificação decide é só quando o microfone abre. Quem ainda não
+        * preencheu é avisado pelo bloco acima, que diz o que falta e leva ao
+        * campo — dizer duas vezes a mesma coisa, uma delas prometendo uma
+        * segunda etapa que não existe mais, era pior que não dizer. */}
 
       {/* O áudio passou a ser GUARDADO, não só transcrito. A saudação do roteiro
         * promete sigilo e não fala em gravação; enquanto ela não falar, quem

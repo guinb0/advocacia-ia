@@ -327,7 +327,8 @@ CREATE TABLE {SCHEMA}.{PREFIXO}casos (
     portal_criado_em  varchar(40)   NULL,
     case_ref          varchar(80)   NULL,
     cliente_ref       varchar(80)   NULL,
-    agente_ultimo_erro nvarchar(max) NULL
+    agente_ultimo_erro nvarchar(max) NULL,
+    telefone          varchar(30)   NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}entregas') IS NULL
@@ -631,6 +632,19 @@ COLUNAS_NOVAS = (
     (f"{PREFIXO}casos", "agente_ultimo_erro", "nvarchar(max) NULL"),
     # Chave idempotente do envio ao agente (entrega_id:hash da extração).
     (f"{PREFIXO}entregas", "agente_envio_chave", "varchar(120) NULL"),
+    # O WhatsApp do cliente, colhido na entrevista e guardado NO CASO.
+    #
+    # Ele já era pedido no roteiro (`telefone`, obrigatória), mas as respostas
+    # não são gravadas: viviam na tela e iam embora com ela. O único lugar onde
+    # o número sobrevivia era o signatário da assinatura — o que só existe
+    # depois de o contrato ir para a ZapSign. Antes disso, a cobrança
+    # automática de documentos abria com o campo em branco e pedia de novo um
+    # número que o cliente já tinha ditado (ver `automacoes_whatsapp`).
+    (
+        f"{PREFIXO}casos",
+        "telefone",
+        "varchar(30) NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''",
+    ),
 )
 
 

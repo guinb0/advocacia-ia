@@ -128,18 +128,29 @@ def inicializar() -> None:
 # ------------------------------------------------------------------- casos
 
 
-def criar_caso(cliente: str, categoria: str, observacao: str = "") -> dict[str, Any]:
+def criar_caso(
+    cliente: str, categoria: str, observacao: str = "", telefone: str = ""
+) -> dict[str, Any]:
+    """Abre o caso. O `telefone` é o WhatsApp que a entrevista colheu.
+
+    Guardá-lo aqui é o que evita pedir de novo, na cobrança de documentos, um
+    número que o cliente já ditou — as respostas do roteiro não sobrevivem à
+    tela, e até aqui o único lugar onde ele ficava era o signatário da
+    assinatura, que só existe depois do contrato (ver `automacoes_whatsapp`).
+    """
     caso_id = str(uuid.uuid4())
     instante = agora()
     with conectar() as con:
         con.execute(
-            "INSERT INTO casos (id, cliente, categoria, observacao, criado_em, atualizado_em)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO casos"
+            " (id, cliente, categoria, observacao, telefone, criado_em, atualizado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 caso_id,
                 cliente.strip(),
                 categoria,
                 observacao.strip(),
+                telefone.strip(),
                 instante,
                 instante,
             ),
@@ -150,6 +161,7 @@ def criar_caso(cliente: str, categoria: str, observacao: str = "") -> dict[str, 
         "cliente": cliente.strip(),
         "categoria": categoria,
         "observacao": observacao.strip(),
+        "telefone": telefone.strip(),
         "criado_em": instante,
         "atualizado_em": instante,
     }
@@ -222,7 +234,10 @@ def definir_portal(caso_id: str, token: str, senha_hash: str, sal: str) -> bool:
 
 
 def atualizar_caso(
-    caso_id: str, cliente: str | None = None, observacao: str | None = None
+    caso_id: str,
+    cliente: str | None = None,
+    observacao: str | None = None,
+    telefone: str | None = None,
 ) -> bool:
     campos, valores = [], []
     if cliente is not None:
@@ -231,6 +246,9 @@ def atualizar_caso(
     if observacao is not None:
         campos.append("observacao = ?")
         valores.append(observacao.strip())
+    if telefone is not None:
+        campos.append("telefone = ?")
+        valores.append(telefone.strip())
     if not campos:
         return False
 

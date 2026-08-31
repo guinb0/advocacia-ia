@@ -48,8 +48,13 @@ export function useCasos() {
   }, [recarregar]);
 
   const criar = useCallback(
-    async (cliente: string, categoria: string, observacao = ""): Promise<CasoCriado> => {
-      const caso = await api.criarCaso(cliente, categoria, observacao);
+    async (
+      cliente: string,
+      categoria: string,
+      observacao = "",
+      telefone = "",
+    ): Promise<CasoCriado> => {
+      const caso = await api.criarCaso(cliente, categoria, observacao, telefone);
       await recarregar();
       return caso;
     },
