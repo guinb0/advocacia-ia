@@ -327,31 +327,36 @@ export default function PainelContrato({ respostas }: Props) {
           return (
             <li
               key={doc.codigo}
-              className="[&+&]:mt-[10px] [&+&]:border-t [&+&]:border-borda [&+&]:pt-[10px]"
+              className="py-3 first:pt-0 last:pb-0 [&+&]:border-t [&+&]:border-borda"
             >
-              <div className="flex items-center flex-wrap gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_76px_86px] items-center gap-2 max-[560px]:grid-cols-2">
+                <strong className="min-w-0 text-[13px] leading-[1.35] text-tinta max-[560px]:col-span-2">
+                  {doc.rotulo}
+                </strong>
                 <button
                   type="button"
-                  className={BOTAO}
+                  className={`${BOTAO} w-full px-2`}
                   onClick={() => void gerar(doc.codigo, "pdf")}
                   disabled={gerando !== null || requisitosContrato.length > 0}
+                  aria-label={`Baixar ${doc.rotulo} em PDF`}
                 >
                   {gerando === `${doc.codigo}:pdf`
                     ? "Gerando…"
-                    : `Baixar ${doc.rotulo} em PDF`}
+                    : "PDF"}
                 </button>
                 <button
                   type="button"
-                  className={BOTAO_SECUNDARIO}
+                  className={`${BOTAO_SECUNDARIO} w-full px-2`}
                   onClick={() => void gerar(doc.codigo, "docx")}
                   disabled={gerando !== null || requisitosContrato.length > 0}
+                  aria-label={`Baixar ${doc.rotulo} em DOCX`}
                 >
                   {gerando === `${doc.codigo}:docx`
                     ? "Gerando…"
-                    : `Baixar ${doc.rotulo} em DOCX`}
+                    : "DOCX"}
                 </button>
                 {feito && feito.faltando.length === 0 && (
-                  <span className="mt-3 mb-0 font-normal text-[12.5px] leading-[1.5] font-ui text-ok">
+                  <span className="col-span-3 mt-1 font-normal text-[11.5px] leading-[1.5] font-ui text-ok max-[560px]:col-span-2">
                     ✓ sem campo em branco
                   </span>
                 )}
