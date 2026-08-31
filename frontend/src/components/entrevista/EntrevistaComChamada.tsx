@@ -276,44 +276,13 @@ export default function EntrevistaComChamada({
             }}
           />
 
-          {encerrada === null && (
-            <div className="max-w-[860px] mt-4 mb-5 border-t-[3px] border-double border-borda-forte pt-4 flex items-center flex-wrap gap-3">
-              <button
-                type="button"
-                className={CONCLUIR}
-                disabled={fechando}
-                onClick={() => document.getElementById("acao-revisar-entrevista")?.click()}
-              >
-                {fechando ? "Revisando a entrevista…" : resultadoFinal ? "Revisar novamente" : "Revisar entrevista"}
-              </button>
-              {resultadoFinal && (
-                <button
-                  type="button"
-                  className={CONCLUIR}
-                  disabled={fechando}
-                  onClick={() => document.getElementById("acao-avancar-finalizacao")?.click()}
-                >
-                  Avançar para finalizar entrevista
-                </button>
-              )}
-              <span className={ENCERRAR_NOTA}>
-                Revise aqui sem sair da entrevista. Você pode voltar ao roteiro ou avançar para finalizar.
-              </span>
-              {resultadoFinal && (
-                <div className="basis-full w-full">
-                  <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} />
-                </div>
-              )}
-            </div>
-          )}
-
           {/* O atendimento continua aqui embaixo, sem trocar de tela.
             *
             * Na mesma medida do roteiro (860px). Estes painéis foram desenhados
             * para o cartão estreito da tela de casos e não tinham limite de
             * largura própria — soltos aqui, esticavam até o fim da coluna e
             * terminavam num degrau visível em relação às perguntas acima. */}
-          <div className="max-w-[860px]">{depois}</div>
+          {encerrada !== null && <div id="dados-finais-da-entrevista" className="max-w-[860px]">{depois}</div>}
 
           {encerrada === null ? (
             <div className="flex items-center flex-wrap gap-[14px] max-w-[860px] mt-7 mb-2 border-t-[3px] border-double border-borda-forte pt-[18px]">
@@ -377,6 +346,11 @@ export default function EntrevistaComChamada({
               {consolidando && <Aviso tom="neutro" titulo="Lendo o restante da conversa">A revisão já vem adiantada do que foi transcrito durante a entrevista; falta só o trecho final.</Aviso>}
               {erroFecho && <Aviso tom="atencao" titulo="A revisão não foi concluída">{erroFecho}</Aviso>}
               {resultadoFinal && (
+                <div className="basis-full w-full">
+                  <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} />
+                </div>
+              )}
+              {resultadoFinal && (
                 <button
                   id="acao-avancar-finalizacao"
                   type="button"
@@ -386,7 +360,15 @@ export default function EntrevistaComChamada({
                     setFechando(true);
                     setErroFecho(null);
                     void roteiro.current?.encerrarGravacao()
-                      .then((id) => setEncerrada(id))
+                      .then((id) => {
+                        setEncerrada(id);
+                        window.setTimeout(() => {
+                          document.getElementById("dados-finais-da-entrevista")?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start",
+                          });
+                        }, 80);
+                      })
                       .catch((e: unknown) => {
                         setEncerrada("");
                         setErroFecho(e instanceof Error ? e.message : "A gravação não pôde ser fechada.");

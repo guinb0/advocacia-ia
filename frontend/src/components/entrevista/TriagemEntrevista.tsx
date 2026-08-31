@@ -33,6 +33,83 @@ const OPCAO_RESTING = "border-l-transparent hover:bg-papel-3";
 const OPCAO_ESCOLHIDA = "border-l-ok bg-ok-claro";
 const ESTADO_TEXTO = "text-tinta-3 text-xs leading-[1.55]";
 
+const CAMPOS_CADASTRAIS = [
+  { id: "nome", rotulo: "Nome completo", grupo: "essencial" },
+  { id: "cpf", rotulo: "CPF", grupo: "essencial" },
+  { id: "telefone", rotulo: "Telefone / WhatsApp", grupo: "essencial", tipo: "tel" },
+  { id: "email", rotulo: "E-mail", grupo: "essencial", tipo: "email" },
+  { id: "nacionalidade", rotulo: "Nacionalidade", grupo: "qualificacao" },
+  { id: "nascimento", rotulo: "Data de nascimento", grupo: "qualificacao", tipo: "date" },
+  { id: "profissao", rotulo: "Profissão", grupo: "qualificacao" },
+  { id: "estado_civil", rotulo: "Estado civil", grupo: "qualificacao" },
+  { id: "rg", rotulo: "RG (número)", grupo: "documentos" },
+  { id: "rg_orgao", rotulo: "Órgão expedidor", grupo: "documentos" },
+  { id: "rg_uf", rotulo: "UF do RG", grupo: "documentos" },
+  { id: "mae", rotulo: "Nome da mãe", grupo: "documentos" },
+  { id: "pai", rotulo: "Nome do pai", grupo: "documentos" },
+  { id: "cep", rotulo: "CEP", grupo: "endereco" },
+  { id: "endereco", rotulo: "Endereço completo", grupo: "endereco" },
+  { id: "uf", rotulo: "UF onde reside", grupo: "endereco" },
+  { id: "municipio", rotulo: "Município onde reside", grupo: "endereco" },
+  { id: "pis", rotulo: "PIS / PASEP / NIT", grupo: "documentos" },
+] as const;
+
+function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }: {
+  respostas: Record<string, string | string[]>;
+  confirmado: boolean;
+  onAlterar: (id: string, valor: string) => void;
+  onContinuar: () => void;
+}) {
+  const desenhar = (grupo: (typeof CAMPOS_CADASTRAIS)[number]["grupo"]) =>
+    CAMPOS_CADASTRAIS.filter((campo) => campo.grupo === grupo).map((campo) => (
+      <div key={campo.id} className={campo.id === "endereco" ? "sm:col-span-2" : ""}>
+        <RotuloCampo htmlFor={`cadastro-final-${campo.id}`}>{campo.rotulo}</RotuloCampo>
+        <Campo
+          id={`cadastro-final-${campo.id}`}
+          type={("tipo" in campo && campo.tipo) || "text"}
+          value={String(respostas[campo.id] ?? "")}
+          onChange={(evento) => onAlterar(campo.id, evento.target.value)}
+          autoComplete="off"
+        />
+      </div>
+    ));
+
+  return (
+    <section className="mb-5 mt-6 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+      <header className="border-b border-borda bg-papel-2 px-4 py-4 sm:px-5">
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Etapa 1 · fechamento</span>
+        <h3 className="mt-1 text-lg font-semibold text-tinta">Confira os dados cadastrais</h3>
+        <p className="mb-0 mt-1 max-w-[72ch] text-xs leading-[1.55] text-tinta-3">
+          Estes campos não fazem parte do roteiro falado. Digite ou corrija agora; e-mail e WhatsApp serão usados no contato com o cliente.
+        </p>
+      </header>
+
+      <div className="p-4 sm:p-5">
+        <div className="grid gap-4 sm:grid-cols-2">{desenhar("essencial")}</div>
+
+        <details className="mt-5 border-t border-borda pt-4">
+          <summary className="cursor-pointer text-sm font-semibold text-tinta">Qualificação, documentos e endereço</summary>
+          <p className="mb-4 mt-1 text-xs text-tinta-3">Preencha o que estiver disponível. Todos os campos permanecem editáveis.</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {desenhar("qualificacao")}
+            {desenhar("documentos")}
+            {desenhar("endereco")}
+          </div>
+        </details>
+
+        <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-borda pt-4">
+          <Botao variante="primario" onClick={onContinuar}>
+            {confirmado ? "Dados atualizados" : "Salvar e continuar"}
+          </Botao>
+          <span className="text-xs text-tinta-3">
+            Depois disso aparecem avaliação, documentos e criação do caso.
+          </span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* Painel de insights de processos semelhantes: cartões de métrica + faixas de
  * dado + duas colunas de listas — classes reaproveitadas entre os vários
  * blocos de dados e listas deste painel. */
@@ -99,6 +176,7 @@ export default function TriagemEntrevista({
    * caixa dela: voltar ao roteiro desmonta a caixa, e a marcação sumiria junto
    * — dando a etapa por pendente depois de ela ter sido cumprida. */
   const [avaliacaoConcluida, setAvaliacaoConcluida] = useState(false);
+  const [cadastroConfirmado, setCadastroConfirmado] = useState(false);
   /* A conversa como o Whisper a ouviu, guardada aqui pelo mesmo motivo da
    * qualificação: ela sobrevive ao fechamento da tela da entrevista, e é o que
    * vai para o caso. Sem isto, a entrevista conduzida pelo roteiro morria com a
@@ -315,6 +393,24 @@ export default function TriagemEntrevista({
    * as duas cópias divergirem no primeiro ajuste. */
   const etapasDoAtendimento = qualificacao && (
     <>
+      <DadosCadastraisFinais
+        respostas={qualificacao}
+        confirmado={cadastroConfirmado}
+        onAlterar={(id, valor) =>
+          setQualificacao((atuais) => ({ ...(atuais ?? {}), [id]: valor }))
+        }
+        onContinuar={() => {
+          setCadastroConfirmado(true);
+          window.setTimeout(() => {
+            document.getElementById("proximas-etapas-atendimento")?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }, 60);
+        }}
+      />
+
+      {cadastroConfirmado && <div id="proximas-etapas-atendimento">
       <AvaliacaoGoogle
         concluida={avaliacaoConcluida}
         onConcluir={setAvaliacaoConcluida}
@@ -329,7 +425,7 @@ export default function TriagemEntrevista({
       {/* `aberto` aqui, recolhido no `Roteiro`: são momentos diferentes. Lá a
         * entrevista ainda corre e a lista disputaria a atenção; aqui o
         * atendimento já fechou e conferir É o trabalho. */}
-      <RespostasDoRoteiro respostas={qualificacao} aberto />
+      <RespostasDoRoteiro respostas={qualificacao} />
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
         * ainda na linha, e o checklist recebe o que ele já tem em mãos. */}
@@ -370,6 +466,7 @@ export default function TriagemEntrevista({
         emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
         onEncerrarChamada={chamada.desligar}
       />
+      </div>}
     </>
   );
 
