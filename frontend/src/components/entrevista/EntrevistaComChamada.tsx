@@ -78,8 +78,11 @@ type ResultadoFinal = LeituraDaEntrevista & { provisorio: boolean };
 
 function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }: { resultado: ResultadoFinal; onVoltar: () => void; onIrPara: (id: string) => void; podeComplementar?: boolean }) {
   const { processamento, triagem, recomendacao, avisos, provisorio } = resultado;
+  const insights = processamento.insights_entrevista;
   const perguntas = Array.from(new Set([
-    ...(processamento.analise?.perguntas_criticas ?? []),
+    ...(insights?.perguntas_especificas ?? []),
+    // O RAG cru pode recuperar processos de outro assunto. Só entram perguntas
+    // da comparação que passou pelo corte de similaridade da recomendação.
     ...(recomendacao?.analise_comparativa?.perguntas_criticas ?? []),
   ])).slice(0, 8);
   const provas = recomendacao?.analise_comparativa?.provas_prioritarias ?? [];
@@ -119,6 +122,25 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
           {recomendacao && <small className="text-tinta-3">{recomendacao.motivo}</small>}
         </div>
       </div>
+      {insights && (
+        <div className={`mt-3 border-l-[3px] px-3 py-[11px] text-xs leading-[1.6] ${
+          insights.foco === "adequado" ? "border-ok bg-papel" : "border-atencao bg-papel-2"
+        }`}>
+          <strong className="block text-tinta">
+            {insights.foco === "fora_do_assunto"
+              ? "A conversa fugiu do assunto"
+              : insights.foco === "parcial"
+                ? "A conversa perdeu foco em alguns pontos"
+                : "A conversa permaneceu focada"}
+          </strong>
+          {insights.diagnostico && <p className="my-1 text-tinta-2">{insights.diagnostico}</p>}
+          {insights.desvios.length > 0 && (
+            <ul className="mb-0 mt-2 pl-5 text-tinta-2">
+              {insights.desvios.map((desvio) => <li key={desvio}>{desvio}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
       {processamento.faltando.length > 0 && (
         <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que ainda não foi perguntado ({processamento.faltando.length})</summary>
           <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.slice(0, 12).map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
@@ -130,8 +152,8 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
         </details>
       )}
       {perguntas.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Perguntas jurídicas que podem fortalecer o caso</summary>
-          <p className="mt-2 mb-1 text-xs text-tinta-3">Não precisa interpretar juridicamente: leia estas perguntas diretamente para o cliente.</p>
+        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Perguntas específicas para esta conversa</summary>
+          <p className="mt-2 mb-1 text-xs text-tinta-3">Nascem de ambiguidades e fatos realmente mencionados, sem repetir as pendências do roteiro.</p>
           <ol className="mt-2 pl-5 text-xs leading-[1.6]">{perguntas.map((p) => <li key={p}>“{p}”</li>)}</ol>
         </details>
       )}

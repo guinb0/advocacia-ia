@@ -876,11 +876,24 @@ REGRAS
   existir item correspondente em `perguntas_feitas` no mapa.
 - Se foi perguntada mas ficou sem resposta clara, inclua também em `incertas`
   com motivo direto. Ela nunca deve aparecer como "não foi perguntada".
+- Avalie também a QUALIDADE DA CONDUÇÃO em `insights_entrevista`. Compare os
+  fatos e as perguntas feitas com o formulário. Identifique se a conversa fugiu
+  do assunto, ficou presa em conversa lateral, recebeu respostas sem relação com
+  a pergunta ou aprofundou tema que não ajuda a definir o caso. Cite exemplos
+  concretos do mapa; não use observações genéricas como "aprofundar os fatos".
+- `perguntas_especificas` deve nascer de uma ambiguidade, contradição ou detalhe
+  realmente mencionado. Escreva no máximo 5 perguntas prontas para o cliente,
+  cada uma citando o fato concreto que precisa ser esclarecido. Não sugira EPI,
+  insalubridade, recurso, laudo ou pedido se esses assuntos não apareceram nos
+  fatos. Perguntas obrigatórias simplesmente ausentes já aparecem em `faltando`
+  e NÃO devem ser repetidas aqui.
 
 Responda APENAS JSON:
 {"respostas":[{"pergunta_id":"...","valor":"...","trecho":"..."}],
  "perguntadas":["pergunta_id"],
- "incertas":[{"pergunta_id":"...","motivo":"..."}]}"""
+ "incertas":[{"pergunta_id":"...","motivo":"..."}],
+ "insights_entrevista":{"foco":"adequado|parcial|fora_do_assunto",
+  "diagnostico":"...","desvios":["..."],"perguntas_especificas":["..."]}}"""
 
 
 #: Conexão reaproveitada entre chamadas, e não é micro-otimização.
@@ -1554,11 +1567,39 @@ def processar_entrevista(
     ids_incertos = {item["pergunta_id"] for item in incertas}
     faltando = [f for f in faltando if f["pergunta_id"] not in ids_incertos]
 
+    insights_brutos = bruto.get("insights_entrevista")
+    insights: dict[str, Any] | None = None
+    if isinstance(insights_brutos, dict):
+        foco = str(insights_brutos.get("foco") or "").strip().casefold()
+        if foco not in {"adequado", "parcial", "fora_do_assunto"}:
+            foco = "parcial"
+        diagnostico = _texto(insights_brutos.get("diagnostico"), 700)
+        desvios_brutos = insights_brutos.get("desvios")
+        perguntas_brutas = insights_brutos.get("perguntas_especificas")
+        desvios = [
+            _texto(item, 400)
+            for item in (desvios_brutos if isinstance(desvios_brutos, list) else [])
+            if _texto(item, 400)
+        ][:5]
+        perguntas_especificas = [
+            _texto(item, 400)
+            for item in (perguntas_brutas if isinstance(perguntas_brutas, list) else [])
+            if _texto(item, 400)
+        ][:5]
+        if diagnostico or desvios or perguntas_especificas:
+            insights = {
+                "foco": foco,
+                "diagnostico": diagnostico,
+                "desvios": desvios,
+                "perguntas_especificas": perguntas_especificas,
+            }
+
     return {
         "respostas": respostas,
         "preenchidas": extraidas,
         "faltando": faltando,
         "incertas": incertas,
+        "insights_entrevista": insights,
         "transcricao_truncada": transcricao_truncada,
     }
 

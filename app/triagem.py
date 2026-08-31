@@ -341,6 +341,14 @@ COMO DECIDIR:
 - Correios + violência -> categoria 4 (não a 1).
 - Gradual, sem evento único -> categoria 3.
 - O foco é a sequela e o benefício do INSS -> categoria 5.
+- Só escolha uma categoria quando o relato trouxer ao menos um fato jurídico
+  concreto: evento, problema de saúde, violência ou sequela, além da relação
+  com o trabalho/INSS. Palavra isolada, erro de transcrição ou expressão vaga
+  não basta. Ex.: "industrializando" NÃO prova exposição gradual, indústria,
+  agente nocivo nem doença ocupacional.
+- Se a conversa estiver fora do assunto, for quase toda saudação/perguntas do
+  entrevistador, ou não narrar fato suficiente, use `categoria: null` e
+  `insuficiente: true`. É melhor não classificar do que criar checklist errado.
 
 REGRAS DESTE ESCRITÓRIO (prevalecem sobre o critério geral):
 - TERCEIRIZADO acidentado trabalhando dentro dos Correios (centro de
@@ -357,10 +365,11 @@ Marque "duvida": true sempre que o relato não deixar claro o empregador, a
 natureza do evento, ou quando duas categorias forem defensáveis.
 
 Responda APENAS JSON:
-{"categoria": "<código>", "confianca": <0.0 a 1.0>,
+{"categoria": "<código ou null>", "confianca": <0.0 a 1.0>,
  "justificativa": "<uma frase citando o que no relato levou à decisão>",
  "alternativa": "<código da segunda hipótese ou null>",
- "duvida": <true se o relato for ambíguo ou insuficiente>}"""
+ "duvida": <true se o relato for ambíguo>,
+ "insuficiente": <true se não há fato concreto para classificar>}"""
 
 
 def _chave_llm() -> str:
@@ -418,12 +427,21 @@ def classificar_com_llm(texto: str) -> dict[str, Any] | None:
 
     nomes = {c.codigo: c.nome for c in categorias.listar()}
     codigo = str(bruto.get("categoria", "")).strip()
+    justificativa = str(bruto.get("justificativa", "")).strip()
+    if bool(bruto.get("insuficiente")) or codigo.casefold() in {"", "none", "null"}:
+        return {
+            "sugestoes": [],
+            "confiante": False,
+            "motivo": justificativa
+            or "A conversa ainda não trouxe um fato concreto suficiente para classificar o caso.",
+            "metodo": "llm",
+            "fora_do_assunto": True,
+        }
     if codigo not in nomes:
         return None
 
     confianca = float(bruto.get("confianca") or 0)
     duvida = bool(bruto.get("duvida"))
-    justificativa = str(bruto.get("justificativa", "")).strip()
     alternativa = bruto.get("alternativa")
 
     sugestoes = [

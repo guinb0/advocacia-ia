@@ -642,6 +642,14 @@ export interface ProcessamentoEntrevista {
   preenchidas: CampoOuvido[];
   faltando: PerguntaPendente[];
   incertas: Array<{ pergunta_id: string; motivo: string }>;
+  /** Leitura da condução feita sobre fatos e perguntas da conversa inteira,
+   * sem usar precedentes para inventar temas que o cliente não mencionou. */
+  insights_entrevista: null | {
+    foco: "adequado" | "parcial" | "fora_do_assunto";
+    diagnostico: string;
+    desvios: string[];
+    perguntas_especificas: string[];
+  };
   transcricao_truncada: boolean;
   /** Leitura por precedentes feita somente sobre a conversa completa. */
   analise: Estrategia | null;
