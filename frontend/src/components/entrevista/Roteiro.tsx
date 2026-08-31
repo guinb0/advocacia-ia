@@ -417,13 +417,10 @@ export default function Roteiro({
   const [ouvidas, setOuvidas] = useState<CampoOuvido[]>([]);
   const [erroEscuta, setErroEscuta] = useState<string | null>(null);
   const [saudacaoLida, setSaudacaoLida] = useState(false);
-  /* O bloco de identificação (nome, CPF, UF, município) vira um cabeçalho
-   * recolhível assim que os quatro campos ficam válidos — o entrevistador
-   * raramente volta a eles, e aberto empurram o roteiro para baixo. Recolhe
-   * sozinho UMA vez (via `idRecolheuAuto`); reabrir e voltar a recolher fica a
-   * cargo do usuário. Se um campo volta a ficar inválido, reabre e rearma. */
+  /* A identificação começa aberta e permanece editável durante a entrevista.
+   * Pode ser recolhida manualmente para liberar espaço, mas nunca fecha sozinha:
+   * o recolhimento automático fazia parecer que os dados tinham sido travados. */
   const [idExpandida, setIdExpandida] = useState(true);
-  const idRecolheuAuto = useRef(false);
   /* Quando um trecho de fala foi reconhecido pela última vez.
    *
    * É o único sinal que distingue "conversa em silêncio" de "microfone mudo" —
@@ -970,7 +967,13 @@ export default function Roteiro({
         .filter(([perguntaId]) => respostas[perguntaId] === "sim")
         .map(([, modulo]) => modulo),
     );
-    return roteiro.blocos.filter((b) => !b.modulo || positivos.has(b.modulo));
+    return roteiro.blocos.filter(
+      (b) =>
+        // A qualificação cadastral completa pertence à documentação. O filtro
+        // também protege roteiros antigos já salvos no catálogo, que ainda
+        // podem carregar esse bloco mesmo após ele sair do roteiro padrão.
+        b.id !== "identificacao" && (!b.modulo || positivos.has(b.modulo)),
+    );
   }, [roteiro, respostas]);
 
   /* A SEQUÊNCIA — a ordem em que as perguntas são feitas, que é a ordem do
@@ -1221,19 +1224,10 @@ function preencherMarcadores(
     [faltaParaComecar],
   );
 
-  /* Recolhe a identificação sozinho quando os quatro campos ficam válidos, e
-   * uma vez só. Volta a abrir (e rearma) se algum deles perde a validade — aí o
-   * entrevistador precisa vê-lo para corrigir. */
+  /* Se uma edição deixar um dado obrigatório inválido, reabre os campos para a
+   * correção continuar visível. Dados válidos nunca provocam recolhimento. */
   useEffect(() => {
-    if (faltaParaComecar.length === 0) {
-      if (!idRecolheuAuto.current) {
-        idRecolheuAuto.current = true;
-        setIdExpandida(false);
-      }
-    } else {
-      idRecolheuAuto.current = false;
-      setIdExpandida(true);
-    }
+    if (faltaParaComecar.length > 0) setIdExpandida(true);
   }, [faltaParaComecar]);
 
   /* Só começa a transcrever DEPOIS da identificação (nome/CPF/UF/município).
@@ -1946,7 +1940,7 @@ function IdentificacaoRecolhivel({
           </span>
         )}
         <span className="flex-none ml-auto inline-flex items-center gap-[6px] text-[10px] font-semibold uppercase leading-none tracking-[0.1em] text-tinta-3">
-          {aberta ? "Recolher" : "Revisar"}
+          {aberta ? "Recolher" : "Editar dados"}
           <span aria-hidden className={`transition-transform ${aberta ? "rotate-180" : ""}`}>
             ▾
           </span>
