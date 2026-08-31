@@ -305,22 +305,12 @@ export default function PainelContrato({ respostas }: Props) {
         </p>
       )}
 
-      {/* Baixar e assinar, LADO A LADO.
-        *
-        * As duas colunas são a mesma decisão: baixar o .docx para assinar à mão
-        * e mandar para a assinatura eletrônica são os dois caminhos do MESMO
-        * documento, e quem está com o cliente na linha escolhe um deles. Uma
-        * embaixo da outra, a assinatura eletrônica caía fora da tela atrás de
-        * seis botões de download — e o escritório acabava baixando o arquivo
-        * por não ver que havia a outra saída.
-        *
-        * Abaixo de 900px voltam a empilhar: em coluna estreita, duas colunas de
-        * botões com rótulo longo viram duas colunas de texto quebrado. */}
-      <div className="grid grid-cols-2 gap-6 items-start max-[900px]:grid-cols-1 max-[900px]:gap-0">
+      {/* Primeiro os três documentos para baixar: uma linha por documento, com
+        * PDF e DOCX lado a lado. A assinatura é uma etapa diferente e começa
+        * somente depois da lista inteira, ocupando a largura do painel. */}
+      <div className="flex flex-col">
         <div className="min-w-0">
-      {/* Um botão por documento. Eles formam uma papelada só, mas na mesa do
-        * escritório são três arquivos com três destinos — e quase sempre se
-        * quer um deles, não os três. */}
+      {/* Uma linha por documento; cada formato mantém seu próprio download. */}
       <ul className="list-none m-0 p-0">
         {DOCUMENTOS_DO_CLIENTE.map((doc) => {
           const feito = porDocumento[doc.codigo];
@@ -329,34 +319,31 @@ export default function PainelContrato({ respostas }: Props) {
               key={doc.codigo}
               className="py-3 first:pt-0 last:pb-0 [&+&]:border-t [&+&]:border-borda"
             >
-              <div className="grid grid-cols-[minmax(0,1fr)_76px_86px] items-center gap-2 max-[560px]:grid-cols-2">
-                <strong className="min-w-0 text-[13px] leading-[1.35] text-tinta max-[560px]:col-span-2">
-                  {doc.rotulo}
-                </strong>
+              <div className="grid grid-cols-2 items-stretch gap-3 max-[640px]:grid-cols-1">
                 <button
                   type="button"
-                  className={`${BOTAO} w-full px-2`}
+                  className={`${BOTAO} w-full min-h-12 px-3`}
                   onClick={() => void gerar(doc.codigo, "pdf")}
                   disabled={gerando !== null || requisitosContrato.length > 0}
                   aria-label={`Baixar ${doc.rotulo} em PDF`}
                 >
                   {gerando === `${doc.codigo}:pdf`
                     ? "Gerando…"
-                    : "PDF"}
+                    : `Baixar ${doc.rotulo} em PDF`}
                 </button>
                 <button
                   type="button"
-                  className={`${BOTAO_SECUNDARIO} w-full px-2`}
+                  className={`${BOTAO_SECUNDARIO} w-full min-h-12 px-3`}
                   onClick={() => void gerar(doc.codigo, "docx")}
                   disabled={gerando !== null || requisitosContrato.length > 0}
                   aria-label={`Baixar ${doc.rotulo} em DOCX`}
                 >
                   {gerando === `${doc.codigo}:docx`
                     ? "Gerando…"
-                    : "DOCX"}
+                    : `Baixar ${doc.rotulo} em DOCX`}
                 </button>
                 {feito && feito.faltando.length === 0 && (
-                  <span className="col-span-3 mt-1 font-normal text-[11.5px] leading-[1.5] font-ui text-ok max-[560px]:col-span-2">
+                  <span className="col-span-2 mt-1 font-normal text-[11.5px] leading-[1.5] font-ui text-ok max-[640px]:col-span-1">
                     ✓ sem campo em branco
                   </span>
                 )}
@@ -387,7 +374,7 @@ export default function PainelContrato({ respostas }: Props) {
         </div>
 
       {/* ------------------------------------------------ assinatura eletrônica */}
-      <div className="min-w-0 pl-6 border-l border-borda max-[900px]:pl-0 max-[900px]:border-l-0 max-[900px]:mt-[18px] max-[900px]:pt-4 max-[900px]:border-t">
+      <div className="min-w-0 mt-6 border-t border-borda pt-5">
         <span className={ROTULO}>ASSINATURA ELETRÔNICA</span>
 
         {config === null && configErro === null && (
