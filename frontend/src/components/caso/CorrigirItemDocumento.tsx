@@ -25,7 +25,7 @@ export default function CorrigirItemDocumento({
   onReatribuir,
   destacar = false,
   expandidoPorPadrao = false,
-  rotulo = "Mover para outro item",
+  rotulo = "Corrigir classificação",
 }: Props) {
   const [aberto, setAberto] = useState(destacar || expandidoPorPadrao);
   const [destino, setDestino] = useState("");
@@ -37,7 +37,7 @@ export default function CorrigirItemDocumento({
         variante={destacar ? "secundario" : "discreto"}
         pequeno
         onClick={() => setAberto(true)}
-        title="Mover este arquivo para outro item do checklist"
+        title="Corrigir o tipo identificado automaticamente"
       >
         {rotulo}
       </Botao>
@@ -60,12 +60,12 @@ export default function CorrigirItemDocumento({
   return (
     <div className="[flex-basis:100%] mt-2 p-3 border border-borda rounded-campo bg-papel">
       <p className="m-0 mb-2 text-tinta-2 text-xs leading-[1.5]">
-        A leitura automática pode errar (CAT e contracheque às vezes viram carteira de
-        trabalho). Escolha o item correto — o arquivo e o texto lido permanecem os mesmos.
+        A classificação automática pode errar. Escolha o tipo correto: o checklist será
+        ajustado, a sugestão original ficará no histórico e esta correção ajudará nas próximas leituras.
       </p>
       <div className="flex gap-2 items-end flex-wrap">
         <label className="flex-1 min-w-[220px] text-xs text-tinta-3">
-          Item correto
+          Tipo correto do documento
           <select
             className="block w-full min-h-10 mt-1 px-3 border border-borda-campo rounded-campo bg-papel text-tinta text-sm"
             value={destino}
@@ -86,7 +86,7 @@ export default function CorrigirItemDocumento({
           disabled={!destino || salvando}
           onClick={() => void aplicar(destino)}
         >
-          {salvando ? "Salvando…" : "Atribuir"}
+          {salvando ? "Salvando…" : "Salvar classificação"}
         </Botao>
         <Botao variante="secundario" pequeno disabled={salvando} onClick={() => void aplicar(null)}>
           Devolver à triagem

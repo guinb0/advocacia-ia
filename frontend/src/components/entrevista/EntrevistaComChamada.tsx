@@ -9,9 +9,9 @@ import PainelChamada from "@/components/chamada/PainelChamada";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
 import Roteiro from "@/components/entrevista/Roteiro";
 import type { EstadoEscuta, ManipuladorRoteiro } from "@/components/entrevista/Roteiro";
-import { processarEntrevista, recomendarEntrevista, triarEntrevista } from "@/lib/api";
+import { lerEntrevista, usarPreAnalise } from "@/lib/preAnalise";
+import type { LeituraDaEntrevista } from "@/lib/preAnalise";
 import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
-import type { ProcessamentoEntrevista, RecomendacaoEntrevista, Triagem } from "@/lib/types";
 
 /* A tela da entrevista: roteiro à esquerda, chamada à direita.
  *
@@ -69,15 +69,15 @@ const CONCLUIR =
   "disabled:opacity-100 disabled:bg-papel-3 disabled:text-tinta-3 disabled:border-borda-forte disabled:cursor-default";
 const ENCERRAR_NOTA = "max-w-[46ch] italic font-normal text-[12px] leading-[1.5] font-titulo text-tinta-3";
 
-type ResultadoFinal = {
-  processamento: ProcessamentoEntrevista;
-  triagem: Triagem | null;
-  recomendacao: RecomendacaoEntrevista | null;
-  avisos: string[];
-};
+/* A leitura mostrada na tela, e se ela já cobre a conversa inteira.
+ *
+ * `provisorio` é a pré-análise adiantada durante a entrevista (ver
+ * `lib/preAnalise.ts`): ela aparece no ato do clique para a entrevistadora ter
+ * o que ler, e é trocada pela definitiva assim que o fim da conversa é lido. */
+type ResultadoFinal = LeituraDaEntrevista & { provisorio: boolean };
 
 function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }: { resultado: ResultadoFinal; onVoltar: () => void; onIrPara: (id: string) => void; podeComplementar?: boolean }) {
-  const { processamento, triagem, recomendacao, avisos } = resultado;
+  const { processamento, triagem, recomendacao, avisos, provisorio } = resultado;
   const perguntas = Array.from(new Set([
     ...(processamento.analise?.perguntas_criticas ?? []),
     ...(recomendacao?.analise_comparativa?.perguntas_criticas ?? []),
@@ -90,6 +90,15 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
       <p className="mt-1 text-xs leading-[1.55] text-tinta-3">
         Leia as sugestões abaixo e faça ao cliente as perguntas que faltarem. A chamada e a gravação continuam ativas.
       </p>
+      {/* Dizer que é preliminar não é detalhe: o fim da conversa é onde ficam os
+        * valores e o motivo da saída, e uma revisão que parece completa sem eles
+        * faz encerrar a entrevista cedo demais. */}
+      {provisorio && (
+        <p className="mt-2 mb-0 border-l-2 border-atencao pl-[9px] text-[11.5px] leading-[1.5] text-atencao">
+          Leitura preliminar, feita durante a entrevista. O trecho final da conversa
+          está sendo lido agora e esta revisão será atualizada em instantes.
+        </p>
+      )}
       {podeComplementar && <button type="button" className={`${CONCLUIR} mt-3`} onClick={onVoltar}>
           Voltar e complementar a entrevista
         </button>}
@@ -168,6 +177,21 @@ export default function EntrevistaComChamada({
    * chamada. O estado que o alimenta nasce no `Roteiro` e chega por `onEscuta`;
    * é `null` enquanto a escuta não abriu. */
   const [escuta, setEscuta] = useState<EstadoEscuta | null>(null);
+
+  /** A transcrição bruta como ela está agora — a mesma que vai para a revisão. */
+  const transcricaoAtual = () =>
+    roteiro.current?.transcricaoBruta().map((t) => t.texto).join("\n") ?? "";
+
+  /* A revisão adiantada, correndo no fundo enquanto a conversa acontece.
+   *
+   * Desligada durante a própria revisão e depois do encerramento: as duas
+   * disputariam o threadpool do servidor, que é o mesmo que transcreve a fala
+   * ao vivo. Nada dela aparece na tela até o clique. */
+  const preAnalise = usarPreAnalise({
+    lerTranscricao: transcricaoAtual,
+    lerRespostas: () => ultimo.current[0],
+    ativa: encerrada === null && !fechando,
+  });
 
   const voltarAoRoteiro = () => {
     document.getElementById("roteiro-da-entrevista")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -288,27 +312,31 @@ export default function EntrevistaComChamada({
                   }
                   setFechando(true);
                   setErroFecho(null);
-                  setConsolidando(true);
                   void (async () => {
-                    const transcricao = roteiro.current?.transcricaoBruta().map((t) => t.texto).join("\n") ?? "";
+                    const transcricao = transcricaoAtual();
                     if (!transcricao.trim()) throw new Error("A conversa ainda não produziu transcrição. Confira o microfone ou preencha os campos manualmente.");
+
+                    /* O que a pré-análise já leu vai para a tela AGORA.
+                     *
+                     * Ela não preenche o formulário: as respostas que carrega
+                     * são as de alguns minutos atrás, e aplicá-las apagaria o
+                     * que foi respondido desde então. Campo só a definitiva
+                     * mexe, logo abaixo. */
+                    const adiantada = preAnalise.obter();
+                    const completa = adiantada !== null && adiantada.cobertura === transcricao.length;
+                    if (adiantada) setResultadoFinal({ ...adiantada, provisorio: !completa });
+                    if (completa) return;
+
+                    setConsolidando(true);
                     const [respostasAtuais, relatoAtual, entrevistaId, trechos] = ultimo.current;
-                    const processamento = await processarEntrevista(transcricao, respostasAtuais);
-                    // A revisão não pode viver só numa cópia externa: o roteiro
-                    // que permanece na tela precisa exibir a consolidação.
-                    roteiro.current?.atualizarRespostas(processamento.respostas);
-                    ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
-                    onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
-                    const lacunas = processamento.faltando.filter((p) => p.obrigatoria).map((p) => p.pergunta);
-                    const avisos: string[] = [];
-                    const [triagem, recomendacao] = await Promise.all([
-                      triarEntrevista(transcricao).catch(() => { avisos.push("O tipo do caso não pôde ser classificado automaticamente."); return null; }),
-                      transcricao.length >= 40
-                        ? recomendarEntrevista(transcricao, lacunas).catch(() => { avisos.push("A base vetorial não respondeu. Encaminhe para revisão do advogado."); return null; })
-                        : Promise.resolve(null),
-                    ]);
-                    if (processamento.analise_indisponivel) avisos.push("A análise jurídica detalhada ficou indisponível nesta execução.");
-                    setResultadoFinal({ processamento, triagem, recomendacao, avisos });
+                    const leitura = await lerEntrevista(transcricao, respostasAtuais, (processamento) => {
+                      // A revisão não pode viver só numa cópia externa: o roteiro
+                      // que permanece na tela precisa exibir a consolidação.
+                      roteiro.current?.atualizarRespostas(processamento.respostas);
+                      ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
+                      onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
+                    });
+                    setResultadoFinal({ ...leitura, provisorio: false });
                   })()
                     .catch((e: unknown) => setErroFecho(e instanceof Error ? e.message : "Não foi possível revisar a entrevista."))
                     .finally(() => { setFechando(false); setConsolidando(false); });
@@ -319,7 +347,7 @@ export default function EntrevistaComChamada({
               <span className={ENCERRAR_NOTA}>
                 A chamada e a gravação continuam enquanto o sistema confere o que faltou e sugere perguntas.
               </span>
-              {consolidando && <Aviso tom="neutro" titulo="Revisando a entrevista inteira">Conferindo perguntas, lacunas e casos semelhantes da base vetorial…</Aviso>}
+              {consolidando && <Aviso tom="neutro" titulo="Lendo o restante da conversa">A revisão já vem adiantada do que foi transcrito durante a entrevista; falta só o trecho final.</Aviso>}
               {erroFecho && <Aviso tom="atencao" titulo="A revisão não foi concluída">{erroFecho}</Aviso>}
               {resultadoFinal && (
                 <button
