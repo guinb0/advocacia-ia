@@ -384,6 +384,13 @@ export default function Roteiro({
    * servidor, do mesmo PCM que alimenta a transcrição — ver `app/gravacao.py` e
    * `AudioDaEntrevista`, que cuida da conversão e do download. */
   const [escutaEncerrada, setEscutaEncerrada] = useState(false);
+  /* A revisão da entrevista já rodou lá de fora.
+   *
+   * Vale como fim da conversa para efeito de tela: é quando as respostas
+   * consolidadas chegam e quem conduz passa a querer VER o formulário para
+   * completar o que faltou. Sem isto, o "ir ao campo" do painel de revisão
+   * apontaria para uma pergunta que não está renderizada. */
+  const [revisada, setRevisada] = useState(false);
   /* Vídeo gravado e ainda não baixado. Ao contrário do áudio, ele não está em
    * lugar nenhum além desta aba — concluir a entrevista o destrói. */
   const videoPendente = useRef(false);
@@ -760,7 +767,11 @@ export default function Roteiro({
       temVideoPendente: () => videoPendente.current,
       sugestoesPendentes: () => sugestoesRef.current.length,
       irParaPergunta: (perguntaId: string) => irParaRef.current(perguntaId),
-      atualizarRespostas: (novas) => setRespostas((atuais) => ({ ...atuais, ...novas })),
+      atualizarRespostas: (novas) => {
+        setRespostas((atuais) => ({ ...atuais, ...novas }));
+        // A revisão rodou: o roteiro aparece para completar o que faltou.
+        setRevisada(true);
+      },
       encerrarGravacao: async () => {
         await encerrarEscutaRef.current();
         return captura.current?.entrevistaId ?? "";
@@ -1139,6 +1150,11 @@ function preencherMarcadores(
     [],
   );
 
+  const idsDaIdentificacao = useMemo(
+    () => new Set<string>(CAMPOS_DA_IDENTIFICACAO.map((c) => c.id)),
+    [CAMPOS_DA_IDENTIFICACAO],
+  );
+
   const faltaParaComecar = useMemo(
     () =>
       CAMPOS_DA_IDENTIFICACAO.filter((campo) =>
@@ -1261,23 +1277,32 @@ function preencherMarcadores(
 
   const temMic = estadoMic !== "sem-audio";
   const identificacaoConcluida = faltaParaComecar.length === 0;
-  /* O roteiro inteiro na tela, do primeiro instante — não há etapa 1 e etapa 2.
+  /* DURANTE A CONVERSA A TELA É SÓ O TOPO. O formulário vem depois.
    *
-   * Até aqui a tela escondia tudo menos os quatro campos da identificação e só
-   * "abria o roteiro completo" quando o município ficava válido. O corte não
-   * ajudava ninguém: quem conduz precisa enxergar para onde a conversa vai
-   * enquanto ainda digita o nome, e o cliente costuma adiantar assunto de
-   * blocos lá de baixo antes de a identificação fechar — com o roteiro
-   * escondido, não havia onde pousar essa resposta.
+   * Enquanto a escuta corre, o que fica na tela é o que quem conduz usa
+   * falando com o cliente: a saudação para ler, os quatro campos da
+   * identificação e o painel da escuta. As oitenta e seis perguntas do roteiro
+   * NÃO aparecem — elas se preenchem sozinhas atrás da conversa, e enfileiradas
+   * na tela só empurravam a saudação e a condução para fora do campo de visão.
    *
-   * Todos os blocos, e não `blocosVisiveis`: sem resposta de rastreio nenhum
-   * módulo condicional estaria aberto, e é melhor deixar o entrevistador
-   * escolher livremente a ordem do que decidir por ele com o formulário vazio.
+   * Ao terminar, o roteiro inteiro aparece de uma vez, já com o que a escuta
+   * transpôs: aí conferir é o trabalho, e é a hora de ver todos os campos.
    *
-   * O que NÃO mudou é a trava do microfone: a transcrição continua começando só
-   * depois de nome, CPF, UF e município (ver o auto-início, acima). Mostrar o
-   * roteiro é outra coisa que abrir a escuta. */
-  const blocosNaTela = roteiro?.blocos ?? [];
+   * "Terminar" é qualquer um dos dois, e os dois contam: encerrar a escuta, ou
+   * a revisão da entrevista ter rodado lá de fora — quem clicou em "Revisar"
+   * quer completar o que faltou, e o "ir ao campo" precisa achar o campo.
+   *
+   * A trava do microfone não mudou: a transcrição continua começando só depois
+   * de nome, CPF, UF e município (ver o auto-início, acima). */
+  const roteiroRevelado = escutaEncerrada || revisada;
+  const blocosNaTela = roteiroRevelado
+    ? (roteiro?.blocos ?? [])
+    : blocosVisiveis
+        .map((bloco) => ({
+          ...bloco,
+          perguntas: bloco.perguntas.filter((p) => idsDaIdentificacao.has(p.id)),
+        }))
+        .filter((bloco) => bloco.perguntas.length > 0);
 
   /* Com a identificação concluída e a escuta aberta, o bloco "abertura" sai da
    * lista corrida e passa a viver dentro do cabeçalho recolhível, logo acima
