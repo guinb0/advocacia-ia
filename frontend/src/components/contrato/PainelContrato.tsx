@@ -66,11 +66,13 @@ const INTERVALO_MS = 20_000;
 
 const BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
 const BOTAO_SECUNDARIO =
   "border border-borda-forte bg-transparent text-tinta-3 text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
 const ROTULO = "block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3 mb-2";
 /* Campo que ficou em branco no contrato: âmbar, não vermelho. Não é erro do
@@ -662,7 +664,7 @@ function LinhaSignatario({
       {whatsappProprio && signatario.url_assinatura && signatario.estado !== "assinou" && signatario.telefone && (
         <button
           type="button"
-          className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-[1.4] font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta disabled:cursor-wait disabled:opacity-60"
+          className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-[1.4] font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta disabled:cursor-wait disabled:text-tinta-desabilitada"
           disabled={enviando}
           onClick={() => void enviarWhatsApp()}
         >

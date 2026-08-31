@@ -124,15 +124,15 @@ export function Figura({
   const id = useId();
 
   return (
-    <figure className="relative flex flex-col gap-[10px] min-w-0" style={TOKENS_GRAFICO}>
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <div>
-          <figcaption className="font-ui text-sm font-semibold text-tinta tracking-[0.01em]">
+    <figure className="relative flex min-w-0 max-w-full flex-col gap-[10px] overflow-hidden" style={TOKENS_GRAFICO}>
+      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <figcaption className="truncate font-ui text-sm font-semibold tracking-[0.01em] text-tinta" title={titulo}>
             {titulo}
           </figcaption>
-          {descricao && <div className="text-xs text-tinta-3 max-w-[62ch]">{descricao}</div>}
+          {descricao && <div className="max-w-[62ch] text-xs text-tinta-3">{descricao}</div>}
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex shrink-0 items-center gap-2">
           {acoes}
           {tabela && tabela.linhas.length > 0 && (
             <button
@@ -151,21 +151,21 @@ export function Figura({
       {legenda && legenda.length > 1 && (
         <div className={CLASSE_LEGENDA}>
           {legenda.map((item) => (
-            <span key={item.rotulo} className={CLASSE_ITEM_LEGENDA}>
+            <span key={item.rotulo} className={`${CLASSE_ITEM_LEGENDA} min-w-0 max-w-full`}>
               <span
                 className={item.forma === "linha" ? CLASSE_MARCA_LEGENDA_LINHA : CLASSE_MARCA_LEGENDA}
                 style={{ background: item.cor }}
                 aria-hidden
               />
-              {item.rotulo}
+              <span className="min-w-0 truncate" title={item.rotulo}>{item.rotulo}</span>
             </span>
           ))}
         </div>
       )}
 
       {mostrandoTabela && tabela ? (
-        <div className="max-h-[320px] overflow-auto" id={id}>
-          <table className="w-full border-collapse text-xs">
+        <div className="max-h-[320px] max-w-full overflow-auto" id={id}>
+          <table className="min-w-[560px] w-full border-collapse text-xs">
             <thead>
               <tr>
                 {tabela.colunas.map((coluna, indice) => (
@@ -186,9 +186,10 @@ export function Figura({
                   {tabela.colunas.map((coluna, indiceColuna) => (
                     <td
                       key={coluna.chave}
-                      className={`text-left px-2 py-[6px] border-b border-borda text-tinta-2 ${
+                      className={`max-w-[260px] truncate px-2 py-[6px] text-left text-tinta-2 border-b border-borda ${
                         indiceColuna !== 0 ? "text-right tabular-nums" : ""
                       }`}
+                      title={String(linha[coluna.chave] ?? "—")}
                     >
                       {linha[coluna.chave] ?? "—"}
                     </td>

@@ -23,7 +23,7 @@ rota, entrada e saída.
 | Comum às duas telas | `frontend/src/components/RespostaDoAgente.tsx` | Lastro da resposta e cartão de proposta |
 
 O painel do agente dentro do caso (`AjudanteDoCaso.tsx`) mora no **dossiê**
-(`components/admin/Dossie.tsx`), como coluna à direita a partir de `lg`: recolhido vira um
+(`frontend/src/components/admin/Dossie.tsx`), como coluna à direita a partir de `lg`: recolhido vira um
 trilho de 52 px, e o dossiê volta à largura inteira. O caso não sai da tela quando se fala
 com o agente — antes isso era uma aba que o substituía, e a citação da resposta apontava
 para algo que o advogado não estava mais vendo. É também por isso que cada fato do dossiê

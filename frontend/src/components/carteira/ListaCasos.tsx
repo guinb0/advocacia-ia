@@ -60,10 +60,11 @@ export default function ListaCasos({
   const casosVisiveis = casos.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),420px)_minmax(0,1fr)] items-start gap-5 max-[900px]:grid-cols-1">
+    <div className="grid min-w-0 grid-cols-[minmax(280px,380px)_minmax(0,1fr)] items-start gap-5 max-[980px]:grid-cols-1">
       <Cartao
         titulo="Novo caso"
         subtitulo="Escolher o tipo de ação é o que monta o checklist de documentos do cliente."
+        className="min-w-0"
       >
         <form onSubmit={criar}>
           <div className="mb-4">
@@ -140,6 +141,7 @@ export default function ListaCasos({
 
       <Cartao
         titulo="Casos cadastrados"
+        className="min-w-0 overflow-hidden"
         subtitulo={
           casos.length === 0
             ? "Nenhum caso ainda."
@@ -160,54 +162,92 @@ export default function ListaCasos({
           <Vazio>Crie o primeiro caso ao lado para começar a cobrar os documentos do cliente.</Vazio>
         ) : (
           <>
-          <ul className="list-none m-0 p-0">
-            {casosVisiveis.map((caso) => (
-              <li
-                key={caso.id}
-                className="flex items-center gap-[10px] py-2 border-b border-borda flex-wrap last:border-b-0"
-              >
-                <button
-                  type="button"
-                  className="flex-1 min-w-[180px] flex flex-col items-start gap-[2px] px-[10px] py-2 border-none rounded-campo bg-transparent text-inherit [font:inherit] text-left cursor-pointer transition-[background-color] duration-[120ms] ease-[ease] hover:bg-papel-3"
-                  onClick={() => onAbrir(caso.id)}
-                >
-                  <span className="text-tinta text-base font-semibold">{caso.cliente}</span>
-                  <span className="text-tinta-3 text-xs">
-                    {nomeCategoria(caso.categoria)} · {caso.total_entregas ?? 0}{" "}
-                    {(caso.total_entregas ?? 0) === 1 ? "arquivo recebido" : "arquivos recebidos"}
-                  </span>
-                </button>
+          <div className="min-w-0 overflow-hidden rounded-campo border border-borda">
+            <div className="hidden grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_164px] gap-3 border-b border-borda bg-papel-2 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:grid">
+              <span>Cliente</span>
+              <span>Tipo de ação</span>
+              <span>Arquivos</span>
+              <span className="text-right">Ações</span>
+            </div>
 
-                {confirmando === caso.id ? (
-                  <span className="flex items-center gap-2 px-[10px] py-2 border border-critico-borda rounded-campo bg-critico-claro flex-wrap">
-                    <span className="text-tinta-2 text-xs max-w-[30ch]">
-                      Apagar o caso e todos os arquivos enviados? Não há como desfazer.
-                    </span>
-                    <Botao
-                      variante="perigo"
-                      pequeno
-                      onClick={async () => {
-                        await onExcluir(caso.id);
-                        setConfirmando(null);
-                      }}
-                    >
-                      Apagar
-                    </Botao>
-                    <Botao variante="discreto" pequeno onClick={() => setConfirmando(null)}>
-                      Cancelar
-                    </Botao>
-                  </span>
-                ) : (
-                  <Botao variante="discreto" pequeno onClick={() => setConfirmando(caso.id)}>
-                    Excluir
-                  </Botao>
-                )}
-              </li>
-            ))}
-          </ul>
+            <ul className="m-0 list-none divide-y divide-borda p-0">
+              {casosVisiveis.map((caso) => {
+                const totalEntregas = caso.total_entregas ?? 0;
+                const categoriaNome = nomeCategoria(caso.categoria);
+
+                return (
+                  <li key={caso.id} className="min-w-0 bg-papel">
+                    <div className="grid min-w-0 gap-3 px-3 py-3 min-[780px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_164px] min-[780px]:items-center min-[780px]:px-4">
+                      <button
+                        type="button"
+                        className="min-w-0 rounded-campo border-none bg-transparent p-1 text-left text-inherit [font:inherit] transition-colors hover:bg-papel-3"
+                        onClick={() => onAbrir(caso.id)}
+                        title={caso.cliente}
+                      >
+                        <span className="block truncate text-base font-semibold text-tinta">
+                          {caso.cliente}
+                        </span>
+                        <span className="mt-1 block truncate font-codigo text-xs text-tinta-3">
+                          {caso.id}
+                        </span>
+                      </button>
+
+                      <div className="min-w-0">
+                        <span className="mb-1 block text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:hidden">
+                          Tipo de ação
+                        </span>
+                        <span className="block truncate text-sm text-tinta-2" title={categoriaNome}>
+                          {categoriaNome}
+                        </span>
+                      </div>
+
+                      <div className="min-w-0">
+                        <span className="mb-1 block text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:hidden">
+                          Arquivos
+                        </span>
+                        <Selo tom={totalEntregas > 0 ? "info" : "neutro"}>
+                          {totalEntregas} {totalEntregas === 1 ? "arquivo" : "arquivos"}
+                        </Selo>
+                      </div>
+
+                      <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 min-[780px]:justify-end">
+                        <Botao variante="secundario" pequeno onClick={() => onAbrir(caso.id)}>
+                          Abrir
+                        </Botao>
+                        {confirmando === caso.id ? (
+                          <span className="flex min-w-0 max-w-full items-center gap-2 rounded-campo border border-critico-borda bg-critico-claro px-2 py-2">
+                            <span className="min-w-0 max-w-[22ch] truncate text-xs text-tinta-2">
+                              Apagar caso e arquivos?
+                            </span>
+                            <Botao
+                              variante="perigo"
+                              pequeno
+                              onClick={async () => {
+                                await onExcluir(caso.id);
+                                setConfirmando(null);
+                              }}
+                            >
+                              Apagar
+                            </Botao>
+                            <Botao variante="discreto" pequeno onClick={() => setConfirmando(null)}>
+                              Cancelar
+                            </Botao>
+                          </span>
+                        ) : (
+                          <Botao variante="discreto" pequeno onClick={() => setConfirmando(caso.id)}>
+                            Excluir
+                          </Botao>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
 
           {casos.length > POR_PAGINA && (
-            <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-borda">
+            <div className="mt-3 flex min-w-0 items-center justify-between gap-3 border-t border-borda pt-3">
               <Botao
                 variante="discreto"
                 pequeno
@@ -216,7 +256,7 @@ export default function ListaCasos({
               >
                 ← Anterior
               </Botao>
-              <span className="text-tinta-3 text-xs tabular-nums">
+              <span className="min-w-0 truncate text-center text-xs tabular-nums text-tinta-3">
                 Página {paginaAtual} de {totalPaginas}
               </span>
               <Botao

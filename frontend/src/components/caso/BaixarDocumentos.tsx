@@ -26,7 +26,8 @@ interface Props {
 
 const BASE_BOTAO =
   "border border-tinta px-[14px] py-[10px] bg-transparent text-tinta text-[10px] font-semibold leading-none " +
-  "font-ui tracking-[0.06em] uppercase cursor-pointer disabled:opacity-[0.55] disabled:cursor-default";
+  "font-ui tracking-[0.06em] uppercase cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
 
 export default function BaixarDocumentos({ casoId, total, pronto }: Props) {
   const [baixando, setBaixando] = useState(false);

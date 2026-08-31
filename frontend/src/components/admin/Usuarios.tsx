@@ -151,12 +151,10 @@ export default function Usuarios({ onVoltar }: Props) {
 
             <label className="block mb-4">
               <span className="block mb-[5px] font-semibold text-[0.9rem]">Perfil</span>
-              {/* `text-tinta` no select E cor nas `option` não é redundância. O
-                * `globals.css` põe `color: inherit` em todo select, então sem isto
-                * ele herda a cor do rótulo; e no Windows a lista ABERTA de um
-                * select sem cor/fundo próprios herda as do sistema — o resultado
-                * é uma faixa preta sem texto legível. Mesmo defeito já registrado
-                * em `ModelosDePeticao`. */}
+              {/* `text-tinta` no select E cor nas `option` não é redundância. No
+                * Windows a lista ABERTA de um select sem cor/fundo próprios pode
+                * herdar as do sistema — o resultado é uma faixa preta sem texto
+                * legível. Mesmo defeito já registrado em `ModelosDePeticao`. */}
               <select
                 className="w-full px-[11px] py-[9px] border border-borda-forte rounded-[7px] [font:inherit] bg-papel text-tinta [&>option]:bg-papel [&>option]:text-tinta focus:[outline:2px_solid_var(--foco)] focus:outline-offset-[1px] disabled:text-tinta-3"
                 value={form.perfilId || ""}
@@ -197,7 +195,7 @@ export default function Usuarios({ onVoltar }: Props) {
             {/* Só o botão base, sem variante — assim como no CSS original. */}
             <button
               type="submit"
-              className="inline-flex items-center justify-center gap-2 min-h-10 px-4 py-[9px] border border-transparent rounded-campo bg-transparent font-ui text-sm font-semibold text-tinta-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center justify-center gap-2 min-h-10 px-4 py-[9px] border border-transparent rounded-campo bg-transparent font-ui text-sm font-semibold text-tinta-2 cursor-pointer disabled:text-tinta-desabilitada disabled:cursor-not-allowed"
               disabled={salvando || !perfilSelecionado}
             >
               {salvando ? "Cadastrando…" : "Cadastrar usuário"}

@@ -112,7 +112,7 @@ export function LoginPage(props: LoginPageProps) {
               <button
                 type="submit"
                 disabled={entrando}
-                className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-[10px] border border-[#0b57d0] bg-[#0b57d0] px-4 py-3 text-base font-semibold text-white shadow-[0_14px_28px_rgba(11,87,208,0.22)] transition-colors enabled:hover:border-[#0846ad] enabled:hover:bg-[#0846ad] disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#1f6feb] dark:bg-[#1f6feb] dark:enabled:hover:border-[#2f81f7] dark:enabled:hover:bg-[#2f81f7]"
+                className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-[10px] border border-[#0b57d0] bg-[#0b57d0] px-4 py-3 text-base font-semibold text-white shadow-[0_14px_28px_rgba(11,87,208,0.22)] transition-colors enabled:hover:border-[#0846ad] enabled:hover:bg-[#0846ad] disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada dark:border-[#1f6feb] dark:bg-[#1f6feb] dark:enabled:hover:border-[#2f81f7] dark:enabled:hover:bg-[#2f81f7]"
               >
                 {entrando && <Loader2 size={18} className="animate-spin" />}
                 {entrando ? "Entrando…" : "Entrar"}

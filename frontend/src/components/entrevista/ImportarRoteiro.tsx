@@ -24,7 +24,8 @@ import type { RoteiroImportado } from "@/lib/types";
 
 const T_BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
 const T_SECUNDARIO =
   "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +

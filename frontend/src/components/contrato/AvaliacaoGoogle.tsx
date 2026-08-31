@@ -30,10 +30,12 @@ const MENSAGEM =
 
 const PRIMARIO =
   "border border-tinta px-3 py-[9px] bg-tinta text-papel text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.06em] uppercase no-underline cursor-pointer max-[640px]:text-center";
+  "tracking-[0.06em] uppercase no-underline cursor-pointer max-[640px]:text-center " +
+  "disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
 const SECUNDARIO =
   "border border-tinta px-3 py-[9px] bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.06em] uppercase no-underline cursor-pointer max-[640px]:text-center";
+  "tracking-[0.06em] uppercase no-underline cursor-pointer max-[640px]:text-center " +
+  "disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
 const DISCRETO =
   "border border-transparent px-3 py-[9px] bg-transparent text-tinta-3 text-[10px] font-semibold leading-none " +
   "font-ui tracking-[0.06em] uppercase underline underline-offset-[3px] cursor-pointer max-[640px]:text-center";

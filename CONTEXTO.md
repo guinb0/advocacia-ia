@@ -342,6 +342,13 @@ depois obriga a recriar as colunas e reindexar.**
 ## O que está quebrado ou faltando
 
 - **README** ainda é o template do GitLab; não documenta o setup real.
+- **Paginação de listas analíticas ainda é do frontend.** O painel do caso agora
+  limita/pagina visualmente listas longas (fatos, ocorrências, pendências,
+  responsáveis e histórico), para não transformar o dashboard numa rolagem sem
+  fim. Mas a rota `/api/casos/{id}/painel` continua devolvendo tudo. A solução
+  correta é o backend paginar listas longas com `items`, `total`, `page` e
+  `page_size` ou cursor, mantendo agregados/gráficos calculados sobre o conjunto
+  completo quando necessário.
 - **`pytest` não está instalado** no venv — a suíte em `tests/` nunca rodou nesta
   máquina. Só os scripts avulsos foram executados.
 - **Telas antigas não migraram** para a direção visual: `PainelEnvio`,
@@ -1205,7 +1212,7 @@ camada normativa.
 
 `app/agente/` liga o Acervo ao serviço `ia-juridica`, que guarda o **Case State**:
 fato com proveniência, classificação, pendência de playbook e pesquisa de
-jurisprudência. A tela nova é o **Dossiê do caso** (`frontend/components/Dossie.tsx`),
+jurisprudência. A tela nova é o **Dossiê do caso** (`frontend/src/components/admin/Dossie.tsx`),
 alcançada pela barra de abas dentro do caso.
 
 ```

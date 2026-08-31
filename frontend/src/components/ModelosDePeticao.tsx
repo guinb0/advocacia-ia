@@ -33,9 +33,9 @@ const CABECALHO_CELULA =
   "px-[0.4rem] py-2 text-tinta-3 text-xs font-semibold uppercase tracking-[0.03em]";
 const ITEM_TOPO = "flex items-center justify-between gap-[0.6rem]";
 const CAMPO = "flex flex-col gap-[0.28rem] min-w-[220px] flex-1 text-tinta-3 text-xs";
-/* Cor explícita no select E no option não é redundância: o `globals.css` põe
- * `color: inherit` em todo select, e no Windows a lista aberta de um select sem
- * cor própria herda as do sistema — deu faixa preta sem texto legível. */
+/* Cor explícita no select E no option não é redundância: no Windows a lista
+ * aberta de um select sem cor própria pode herdar as do sistema — deu faixa
+ * preta sem texto legível. */
 const SELECT =
   "px-[0.6rem] py-[0.55rem] border border-borda-campo rounded-campo bg-papel text-tinta text-sm " +
   "[&>option]:bg-papel [&>option]:text-tinta";
@@ -88,6 +88,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [filaEnvio, setFilaEnvio] = useState<ItemEnvio[]>([]);
   const [removendo, setRemovendo] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [erroCarregamento, setErroCarregamento] = useState<string | null>(null);
   const [recado, setRecado] = useState<string | null>(null);
   const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
   const [enviandoVisual, setEnviandoVisual] = useState(false);
@@ -184,21 +185,59 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
 
   const recarregar = useCallback(async () => {
     if (!acao) return;
-    const [lista, encontrado, config] = await Promise.all([
-      pecasDeEstilo(acao).catch(() => [] as PecaDeEstilo[]),
-      // 404 aqui é resposta legítima: o grupo ainda não tem padrão. Não é erro de tela.
-      perfilDeEstilo(acao, tipo).catch(() => null),
-      configuracaoDeGeracao(acao, tipo).catch(() => null),
+    setErroCarregamento(null);
+    const [resultadoPecas, resultadoPerfil, resultadoConfig] = await Promise.allSettled([
+      pecasDeEstilo(acao),
+      perfilDeEstilo(acao, tipo),
+      configuracaoDeGeracao(acao, tipo),
     ]);
-    setPecas(lista);
-    setPerfil(encontrado);
-    setConfiguracao(config ?? {
-      taxonomy_code: acao,
-      document_type: tipo,
-      display_name: TIPOS.find((item) => item.codigo === tipo)?.rotulo ?? "Petição",
-      drafting_instructions: "",
-      required_documents: [],
-    });
+    const falhas: string[] = [];
+
+    if (resultadoPecas.status === "fulfilled") {
+      setPecas(resultadoPecas.value);
+    } else {
+      setPecas([]);
+      falhas.push(
+        resultadoPecas.reason instanceof ApiError
+          ? resultadoPecas.reason.message
+          : "Não foi possível carregar as peças cadastradas.",
+      );
+    }
+
+    // 404 é resposta legítima: ainda não existe amostra suficiente nem configuração salva.
+    if (resultadoPerfil.status === "fulfilled") {
+      setPerfil(resultadoPerfil.value);
+    } else if (resultadoPerfil.reason instanceof ApiError && resultadoPerfil.reason.status === 404) {
+      setPerfil(null);
+    } else {
+      setPerfil(null);
+      falhas.push(
+        resultadoPerfil.reason instanceof ApiError
+          ? resultadoPerfil.reason.message
+          : "Não foi possível medir o padrão desta ação.",
+      );
+    }
+
+    if (resultadoConfig.status === "fulfilled") {
+      setConfiguracao(resultadoConfig.value);
+    } else if (resultadoConfig.reason instanceof ApiError && resultadoConfig.reason.status === 404) {
+      setConfiguracao({
+        taxonomy_code: acao,
+        document_type: tipo,
+        display_name: TIPOS.find((item) => item.codigo === tipo)?.rotulo ?? "Petição",
+        drafting_instructions: "",
+        required_documents: [],
+      });
+    } else {
+      setConfiguracao(null);
+      falhas.push(
+        resultadoConfig.reason instanceof ApiError
+          ? resultadoConfig.reason.message
+          : "Não foi possível carregar a configuração desta ação.",
+      );
+    }
+
+    if (falhas.length) setErroCarregamento([...new Set(falhas)].join(" "));
   }, [acao, tipo]);
 
   useEffect(() => {
@@ -379,6 +418,12 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           </div>
         </div>
       </Cartao>
+
+      {erroCarregamento && (
+        <Aviso tom="critico" titulo="Não foi possível carregar esta ação">
+          {erroCarregamento} Tente novamente antes de alterar os modelos ou a configuração.
+        </Aviso>
+      )}
 
       <Cartao titulo="Adicionar peças">
         <p className="mt-2 mb-[0.9rem] text-tinta-3 text-sm leading-[1.5]">

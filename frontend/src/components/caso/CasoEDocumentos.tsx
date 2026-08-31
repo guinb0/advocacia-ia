@@ -254,7 +254,7 @@ export default function CasoEDocumentos({
 
         <button
           type="button"
-          className="border-[1.5px] border-acao bg-acao text-papel text-[11px] font-semibold leading-none font-ui tracking-[0.1em] uppercase px-[15px] py-[11px] cursor-pointer enabled:hover:bg-acao-forte enabled:hover:border-acao-forte disabled:opacity-100 disabled:bg-papel-3 disabled:text-tinta-3 disabled:border-borda-forte disabled:cursor-default"
+          className="border-[1.5px] border-acao bg-acao text-papel text-[11px] font-semibold leading-none font-ui tracking-[0.1em] uppercase px-[15px] py-[11px] cursor-pointer enabled:hover:bg-acao-forte enabled:hover:border-acao-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada disabled:border-borda-forte disabled:cursor-not-allowed"
           onClick={() => void criar()}
           disabled={criando || !cliente.trim() || !escolhida || (editavel && !cpf?.trim())}
         >
