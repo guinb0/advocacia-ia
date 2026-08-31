@@ -221,7 +221,7 @@ VAZIAS = frozenset(
 #:
 #: A lista existe para o caso de o roteiro mudar de forma: campo destes nunca
 #: sai de fala, esteja no bloco que estiver.
-DADOS_DIGITADOS = {"nome", "cpf", "uf", "municipio"}
+DADOS_DIGITADOS = {"nome", "cpf", "estado_civil", "uf", "municipio"}
 
 
 def _binaria_curta(
@@ -1394,6 +1394,7 @@ def processar_entrevista(
         }
         for pergunta in ativas
         if not _respondida(respostas.get(pergunta.id))
+        and pergunta.id not in DADOS_DIGITADOS
         and pergunta.id not in perguntadas
     ]
 
