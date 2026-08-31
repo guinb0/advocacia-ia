@@ -338,7 +338,7 @@ interface Props {
 const BOTAO_PILULA =
   "inline-flex items-center gap-2 px-[14px] py-[7px] border border-borda-campo rounded-pill bg-papel " +
   "text-tinta-2 font-codigo text-xs uppercase tracking-[0.08em] cursor-pointer " +
-  "hover:bg-papel-3 disabled:opacity-50 disabled:cursor-not-allowed";
+  "hover:bg-papel-3 disabled:text-tinta-desabilitada disabled:cursor-not-allowed";
 
 export default function ChecklistRoteiro({
   registro,

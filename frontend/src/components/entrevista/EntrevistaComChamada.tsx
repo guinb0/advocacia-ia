@@ -66,7 +66,7 @@ function baixarTexto(nome: string, conteudo: string): void {
 const CONCLUIR =
   "border-[1.5px] border-acao bg-acao text-papel text-[11px] font-semibold leading-none font-ui " +
   "tracking-[0.1em] uppercase px-4 py-3 cursor-pointer enabled:hover:bg-acao-forte enabled:hover:border-acao-forte " +
-  "disabled:opacity-100 disabled:bg-papel-3 disabled:text-tinta-3 disabled:border-borda-forte disabled:cursor-default";
+  "disabled:bg-papel-3 disabled:text-tinta-desabilitada disabled:border-borda-forte disabled:cursor-not-allowed";
 const ENCERRAR_NOTA = "max-w-[46ch] italic font-normal text-[12px] leading-[1.5] font-titulo text-tinta-3";
 
 /* A leitura mostrada na tela, e se ela já cobre a conversa inteira.
@@ -199,14 +199,19 @@ export default function EntrevistaComChamada({
   const irParaPergunta = (id: string) => roteiro.current?.irParaPergunta(id);
 
   return (
-    <div className="fixed inset-0 z-40 bg-papel overflow-y-auto px-[22px] pt-[18px] pb-10 max-[1080px]:px-[14px] max-[1080px]:pt-[14px] max-[1080px]:pb-8">
-      <div className="flex justify-between items-center gap-4 pb-3 mb-[18px] border-b-[3px] border-double border-borda-forte">
-        <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
-          ENTREVISTA EM ANDAMENTO
-        </span>
+    <div className="fixed inset-0 z-40 overflow-y-auto bg-fundo px-4 pb-10 pt-4 sm:px-5 lg:px-6">
+      <div className="sticky top-0 z-30 mx-auto mb-5 flex max-w-[1500px] min-w-0 items-center justify-between gap-4 rounded-cartao border border-borda-forte bg-papel/95 px-4 py-3 shadow-cartao backdrop-blur">
+        <div className="min-w-0">
+          <span className="block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
+            ENTREVISTA EM ANDAMENTO
+          </span>
+          <strong className="mt-1 block truncate text-sm text-tinta">
+            Roteiro, chamada e fechamento no mesmo fluxo
+          </strong>
+        </div>
         <button
           type="button"
-          className="border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer hover:bg-papel-2"
+          className="shrink-0 rounded-campo border border-borda-forte bg-transparent px-3 py-[9px] font-ui text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-tinta hover:bg-papel-2"
           onClick={() => {
             /* Fechar já se sabe que perde as respostas — o rótulo diz. O que
              * ele não diz é que leva junto o vídeo, que não está guardado em
@@ -227,7 +232,7 @@ export default function EntrevistaComChamada({
         </button>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_460px] max-[1080px]:grid-cols-[minmax(0,1fr)] gap-6 items-start max-w-[1500px] mx-auto">
+      <div className="mx-auto grid max-w-[1500px] grid-cols-[minmax(0,1fr)_minmax(340px,460px)] items-start gap-5 max-[1080px]:grid-cols-[minmax(0,1fr)]">
         <div className="min-w-0">
           {/* Sem `onConcluir`: o roteiro não fecha mais o atendimento sozinho.
             * Ele só reporta o que foi respondido, e quem encerra é o botão lá
@@ -441,7 +446,7 @@ export default function EntrevistaComChamada({
           )}
         </div>
 
-        <div className="min-w-0 sticky top-[18px] self-start max-h-[calc(100vh-36px)] overflow-y-auto max-[1080px]:order-[-1] max-[1080px]:static max-[1080px]:max-h-none max-[1080px]:overflow-visible">
+        <div className="min-w-0 sticky top-[86px] self-start max-h-[calc(100vh-104px)] overflow-y-auto rounded-cartao border border-borda-forte bg-papel p-3 shadow-cartao max-[1080px]:order-[-1] max-[1080px]:static max-[1080px]:max-h-none max-[1080px]:overflow-visible">
           {/* A faixa da chamada alimenta a transcrição: quando o cliente entra,
            * a voz DELE — isolada da do entrevistador — vira a fonte do roteiro,
            * no lugar do microfone da máquina.

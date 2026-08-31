@@ -56,7 +56,15 @@ export function urlApi(caminho: string): string {
   return `${BASE}${caminho}`;
 }
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, options?: ErrorOptions & { status?: number }) {
+    super(message, options);
+    this.name = "ApiError";
+    this.status = options?.status;
+  }
+}
 
 export interface ModeloVisualPeticao {
   arquivo: string;
@@ -219,7 +227,7 @@ async function comoJson<T>(resposta: Response): Promise<T> {
       corpo && typeof corpo === "object" && "detail" in corpo
         ? String((corpo as { detail: unknown }).detail)
         : `Erro ${resposta.status}`;
-    throw new ApiError(detalhe);
+    throw new ApiError(detalhe, { status: resposta.status });
   }
   return corpo as T;
 }

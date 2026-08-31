@@ -24,7 +24,8 @@ import Retratos from "@/components/ui/Retratos";
 
 const BOTAO =
   "mt-5 w-full p-4 border-[1.5px] border-tinta bg-transparent text-tinta text-[13px] font-semibold leading-none " +
-  "font-ui tracking-[0.14em] uppercase cursor-pointer disabled:opacity-[0.45] disabled:cursor-default " +
+  "font-ui tracking-[0.14em] uppercase cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
 /* Dois por linha no celular, e nao quatro empilhados.
  *

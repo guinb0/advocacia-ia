@@ -403,7 +403,7 @@ export async function chamarAgente<T>(caminho: string, init: RequestInit = {}): 
       corpo && typeof corpo === "object" && "detail" in corpo
         ? String((corpo as { detail: unknown }).detail)
         : `Erro ${resposta.status}`;
-    throw new ApiError(detalhe);
+    throw new ApiError(detalhe, { status: resposta.status });
   }
   return corpo as T;
 }

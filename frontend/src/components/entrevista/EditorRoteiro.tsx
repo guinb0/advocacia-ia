@@ -31,14 +31,15 @@ import type { Bloco, Pergunta, RoteiroCompleto, TipoResposta } from "@/lib/types
 
 const T_BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
 const T_SECUNDARIO =
   "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
   "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer enabled:hover:bg-papel-2";
 const T_MINI =
   "border border-borda bg-transparent text-tinta-3 text-[10px] font-semibold leading-none font-ui " +
-  "px-2 py-[5px] cursor-pointer hover:bg-papel-2 hover:text-tinta disabled:opacity-30 disabled:cursor-default";
+  "px-2 py-[5px] cursor-pointer hover:bg-papel-2 hover:text-tinta disabled:cursor-not-allowed disabled:text-tinta-desabilitada";
 const T_ERRO =
   "border-[1.5px] border-critico text-critico p-[10px] font-normal text-[12px] leading-[1.5] font-ui";
 const T_ROTULO =

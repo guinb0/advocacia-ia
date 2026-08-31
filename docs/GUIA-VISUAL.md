@@ -28,10 +28,11 @@ Três regras sustentam todas as decisões abaixo:
 
 | Camada | Arquivo | Conteúdo |
 |---|---|---|
-| Tokens + primitivos globais | `frontend/app/globals.css` | Cores, tipografia, espaçamento, sombra; classes `.botao`, `.campo`, `.cartao`, `.selo`, `.aviso`, `.barraProgresso` |
-| Primitivos em React | `frontend/components/Basicos.tsx` | `<Selo>`, `<Aviso>`, `<Barra>`, `<Stat>`, `<ListaMensagens>` — envolvem as classes globais e garantem símbolo+palavra |
-| Helpers de leitura | `frontend/lib/formato.ts` | `corDoScore`, `leituraDoScore`, `ESTILO_VEREDITO`, `SELO_TOM` |
-| Estilo por tela | `frontend/components/*.module.css` | Layout específico de cada tela — nunca redefine cor, fonte ou botão |
+| Tokens + primitivos globais | `frontend/src/app/globals.css` | Cores, tipografia, espaçamento, sombra; tokens Tailwind e classes legadas de compatibilidade |
+| Primitivos em React | `frontend/src/components/ui/Basicos.tsx` | `<Botao>`, `<Campo>`, `<Selo>`, `<Aviso>`, `<Barra>`, `<Stat>`, `<ListaMensagens>` — aplicam tokens e garantem símbolo+palavra |
+| Primitivos de gráficos | `frontend/src/components/ui/graficos.tsx` | `<Figura>` e gráficos SVG com tabela acessível e rolagem interna |
+| Helpers de leitura | `frontend/src/lib/formato.ts` | `corDoScore`, `leituraDoScore`, `ESTILO_VEREDITO`, `SELO_TOM` |
+| Estilo por tela | `frontend/src/components/*.module.css` | Layout específico de cada tela — nunca redefine cor, fonte ou botão |
 
 Regra prática: **cor, fonte, botão e campo se editam em `globals.css`.**
 Um `*.module.css` de tela só deveria conter grade, espaçamento e composição —
@@ -94,6 +95,11 @@ tela, ilegível para quem via pela primeira vez. Não há mais texto abaixo de
 
 ## Primitivos
 
+O frontend novo usa Tailwind com tokens vindos de `globals.css` e primitivos em
+React (`frontend/src/components/ui/Basicos.tsx`). As classes globais antigas
+continuam existindo para compatibilidade com telas ainda não migradas, mas código
+novo deve preferir os componentes React.
+
 ### Botões (`.botao` + modificador)
 
 ```html
@@ -150,6 +156,20 @@ para toda a aplicação.
 progresso de ação do sistema. Telas com progresso de **documento** (Checklist,
 portal do cliente) usam a variante local em `*.module.css` porque o
 preenchimento muda de cor por contexto (ex.: verde no portal do cliente).
+
+## Listas longas e paginação
+
+Listas operacionais longas não devem empurrar a tela inteira para baixo nem
+estourar o cartão. Enquanto a rota ainda devolve o conjunto completo, a tela deve
+paginar ou limitar localmente dentro do próprio bloco, mostrando intervalo e
+total (`1-7 de 23`) e mantendo rolagem horizontal apenas dentro da tabela quando
+as colunas exigirem.
+
+A solução definitiva é paginação no backend para listas de histórico,
+ocorrências, pendências, precedentes e resultados analíticos: a API deve receber
+`page`/`page_size` ou cursor e devolver `items`, `total`, `page` e `page_size`.
+O frontend não deve buscar milhares de registros para depois esconder quase
+todos, especialmente em painéis que recalculam filtros e gráficos.
 
 ## Vocabulário de estado
 

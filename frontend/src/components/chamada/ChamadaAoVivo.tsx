@@ -40,12 +40,14 @@ const LEGENDA: Record<EstadoChamada, string> = {
 
 const BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-tinta enabled:hover:text-papel";
 /* Transcrevendo: vermelho, porque é estado que precisa saltar aos olhos. */
 const BOTAO_GRAVANDO =
   "border-[1.5px] border-critico bg-transparent text-critico text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:opacity-40 disabled:cursor-default " +
+  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
+  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
   "enabled:hover:bg-critico enabled:hover:text-papel";
 const SECUNDARIO =
   "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
