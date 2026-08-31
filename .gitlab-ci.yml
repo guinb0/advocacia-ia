@@ -41,6 +41,36 @@ include:
       gitlab_variables_environment: "prod"
       gitlab_variables: '["DOMINIO","SQLSERVER_HOST","SQLSERVER_PASSWORD","PGVECTOR_HOST","PGVECTOR_USER","PGVECTOR_PASSWORD","JWT_SECRET","PORTAL_SEGREDO","DEEPSEEK_API_KEY","OPENROUTER_API_KEY","ZAPSIGN_API_TOKEN","DATAJUD_API_KEY","EVOLUTION_API_URL","EVOLUTION_API_KEY","EVOLUTION_INSTANCE","MISTRAL_API_KEY","EMBEDDINGS_API_KEY","DATABASE_URL","AGENTE_API_URL","JITSI_PUBLIC_URL","JITSI_JWT_APP_ID","JITSI_JWT_APP_SECRET","VALKEY_PASSWORD"]'
 
+# Correção local do job do componente 1.1.6. O original usa
+# `git tag ... | head -n 1`; o runner executa com `pipefail`, então o Git recebe
+# SIGPIPE quando o `head` fecha a leitura e o job termina com código 141 antes
+# de criar `version.env`. `sed -n '1p'` consome a entrada inteira e preserva a
+# mesma ordenação sem quebrar o produtor do pipe.
+generate-version:
+  script:
+    - |
+      TAG_PREFIX="release/v"
+      echo "=== Gerando próxima versão (Prefixo: $TAG_PREFIX) ==="
+      git fetch --tags --force
+
+      LATEST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | sed -n '1p')
+      if [ -z "$LATEST_TAG" ]; then
+        NEW_VERSION="0.1.0"
+      else
+        VERSION_STRING=${LATEST_TAG#"$TAG_PREFIX"}
+        MAJOR=$(echo "$VERSION_STRING" | cut -d. -f1)
+        MINOR=$(echo "$VERSION_STRING" | cut -d. -f2)
+        PATCH=$(echo "$VERSION_STRING" | cut -d. -f3)
+        NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+      fi
+
+      FULL_TAG="${TAG_PREFIX}${NEW_VERSION}"
+      echo "Última tag: ${LATEST_TAG:-nenhuma}"
+      echo "Próxima versão: ${NEW_VERSION}"
+      echo "NEW_VERSION=${NEW_VERSION}" > version.env
+      echo "GIT_RELEASE_TAG=${FULL_TAG}" >> version.env
+      echo "IMAGE_TAG_TO_DEPLOY=${NEW_VERSION}" >> version.env
+
 # ============================================================
 # QUALIDADE: roda em toda branch e em todo MR.
 #
