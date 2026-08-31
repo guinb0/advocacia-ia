@@ -84,6 +84,36 @@ BUSCA_SILENCIO_S = 6.0
 
 TAXA = 16_000
 
+#: O DETECTOR DE FALA QUE ESTE MOTOR NÃO TINHA — e a causa da fala inventada.
+#:
+#: O Whisper local roda com `vad_filter=True`: silêncio é cortado antes de chegar
+#: ao decodificador, e trecho sem voz simplesmente não produz texto. Aqui não há
+#: nada disso. O buffer ia inteiro para a OpenRouter, e um modelo de chat, posto
+#: diante de um WAV de sala vazia, não devolve string vazia: ele PREENCHE. Foi de
+#: onde saíram, numa entrevista real, frases que ninguém disse — "Ô mãe, compra
+#: isso pra mim?", "A senhora pode ficar em pé, por favor?" — espalhadas de minuto
+#: em minuto, que é a cadência das janelas caladas.
+#:
+#: A instrução do prompt já mandava devolver vazio no silêncio (ver `INSTRUCAO`).
+#: Não basta: pedir a um modelo generativo que não gere é conselho, não trava. A
+#: trava é não mandar o áudio.
+#:
+#: De quebra, é dinheiro: cada janela silenciosa era uma requisição paga.
+#:
+#: Os dois números são conservadores de propósito. Fala baixa que passe do limiar
+#: continua sendo transcrita; o que se quer barrar é sala vazia e ruído de fundo,
+#: não sussurro. Ajustáveis pelo ambiente porque o piso de ruído muda com o
+#: microfone e com a sala, e quem descobre isso é quem atende, não quem escreve.
+LIMIAR_RMS = ambiente.numero("OPENROUTER_LIMIAR_RMS", 0.012)
+#: Quanto o bloco precisa superar o piso de ruído MEDIDO no próprio trecho. Sala
+#: barulhenta tem piso alto e passaria no limiar absoluto sozinha.
+FATOR_ACIMA_DO_PISO = ambiente.numero("OPENROUTER_FATOR_RUIDO", 2.5)
+#: Quanta fala precisa haver para valer a ida à rede. Menos que isto é estalo,
+#: tosse, porta batendo — coisas que o modelo transforma em frase.
+MINIMO_FALA_MS = ambiente.numero("OPENROUTER_MINIMO_FALA_MS", 300.0)
+#: Granularidade da medida. 50ms é menor que a menor sílaba e maior que um clique.
+BLOCO_MS = 50.0
+
 INSTRUCAO = (
     "Você é um transcritor literal de áudio em português do Brasil. "
     "Devolva SOMENTE a transcrição do que foi falado, como foi falado.\n"
@@ -108,6 +138,38 @@ PEDIDO = "Transcreva este áudio seguindo as regras."
 
 class ErroTranscricao(RuntimeError):
     pass
+
+
+def tem_fala(audio: np.ndarray) -> bool:
+    """Há voz neste trecho, ou é só silêncio e ruído de sala?
+
+    Mede a energia em blocos de 50ms e conta quantos passam do limiar. O limiar
+    é o absoluto (`LIMIAR_RMS`), levantado até o ruído do próprio trecho quando —
+    e SÓ quando — o trecho tem parte calada para medir.
+
+    ESSA RESSALVA É O PONTO DELICADO. O piso relativo (décimo percentil) só
+    significa "o que a sala faz quando ninguém fala" se houver, no trecho, um
+    momento em que ninguém falou. Num trecho UNIFORME o décimo percentil é a
+    própria fala, e o limiar relativo passa a ser 2,5x ela: nada o alcança, e
+    uma resposta longa dita sem pausa nenhuma seria descartada inteira. Perder
+    depoimento é pior que transcrever ruído — então, sem faixa dinâmica, vale o
+    absoluto sozinho.
+
+    Verdadeiro quando os blocos acima do limiar somam `MINIMO_FALA_MS`. Eles não
+    precisam ser seguidos: fala real tem micropausa dentro da palavra, e exigir
+    continuidade recusaria o começo hesitante de uma resposta.
+    """
+    passo = int(TAXA * BLOCO_MS / 1000)
+    blocos = len(audio) // passo
+    if blocos < 2:
+        return False
+    quadro = np.asarray(audio[: blocos * passo], dtype=np.float32).reshape(blocos, passo)
+    energia = np.sqrt(np.mean(np.square(quadro), axis=1))
+    piso = float(np.percentile(energia, 10))
+    alto = float(np.percentile(energia, 90))
+    # Faixa dinâmica: há trecho calado e trecho falado no mesmo pedaço.
+    limiar = max(LIMIAR_RMS, piso * FATOR_ACIMA_DO_PISO) if alto > piso * 2 else LIMIAR_RMS
+    return float(np.count_nonzero(energia > limiar)) * BLOCO_MS >= MINIMO_FALA_MS
 
 
 def configurada() -> bool:
@@ -230,7 +292,15 @@ def transcrever(audio: np.ndarray, tempo_limite: float | None = None) -> str:
             "Transcrição desligada: falta OPENROUTER_API_KEY no .env."
         )
 
-    pedacos = _fatias(audio)
+    # A trava contra fala inventada: trecho sem voz não vai para o modelo.
+    # Antes da fatia, porque é o caso comum — a janela caladinha inteira.
+    if not tem_fala(audio):
+        log.debug("Sem fala em %.1fs de áudio: nada enviado.", len(audio) / TAXA)
+        return ""
+
+    pedacos = [p for p in _fatias(audio) if tem_fala(p)]
+    if not pedacos:
+        return ""
     if len(pedacos) > 1:
         log.info(
             "Áudio de %.0fs vai em %d fatias de até %.0fs.",

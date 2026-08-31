@@ -212,7 +212,17 @@ def post_que_acumula(url, **kwargs):
 
 
 motor.httpx.post = post_que_acumula
-longo = np.zeros(int((motor.LIMITE_SEGUNDOS + 120) * motor.TAXA), dtype=np.float32)
+# Com FALA, e não silêncio: desde o detector de voz (`tem_fala`), áudio calado
+# não vai para o modelo — e um `np.zeros` aqui não testaria o fatiamento, testaria
+# o descarte. O padrão é fala com pausa, que é o que a fatia procura para cortar.
+segundo_falado = np.tile(
+    np.concatenate([
+        np.sin(np.linspace(0, 200, int(0.8 * motor.TAXA))).astype(np.float32) * 0.3,
+        np.zeros(int(0.2 * motor.TAXA), dtype=np.float32),
+    ]),
+    int(motor.LIMITE_SEGUNDOS + 120),
+)
+longo = segundo_falado[: int((motor.LIMITE_SEGUNDOS + 120) * motor.TAXA)]
 texto = motor.transcrever(longo)
 
 checar(len(enviados) == 2, f"o áudio vai em fatias ({len(enviados)} requisição(ões))")
@@ -237,6 +247,44 @@ checar(
     "o corte cai no silêncio, e não no fim nominal",
     f"corte em {corte / motor.TAXA:.1f}s, silêncio em {silencio_em / motor.TAXA:.1f}s",
 )
+
+# ----------------------------------- o detector de voz, que barra a alucinação
+
+print("\nO detector de voz")
+
+# O motivo de existir: um modelo de chat diante de um WAV de sala vazia não
+# devolve string vazia, ele PREENCHE. Numa entrevista real saíram daí frases que
+# ninguém disse, de minuto em minuto — a cadência das janelas caladas.
+um_segundo = motor.TAXA
+checar(not motor.tem_fala(np.zeros(um_segundo, dtype=np.float32)), "silêncio digital não é fala")
+checar(
+    not motor.tem_fala(
+        (np.random.default_rng(0).standard_normal(um_segundo) * 0.002).astype(np.float32)
+    ),
+    "ruído de sala não é fala",
+)
+checar(
+    motor.tem_fala(segundo_falado[:um_segundo]),
+    "fala com pausa é fala",
+)
+# A ressalva que custou uma correção: sem faixa dinâmica o piso relativo vira a
+# própria fala, e uma resposta longa dita sem pausa nenhuma seria descartada.
+checar(
+    motor.tem_fala(np.sin(np.linspace(0, 400, um_segundo)).astype(np.float32) * 0.3),
+    "fala contínua, SEM pausa nenhuma, continua sendo fala",
+)
+checar(
+    not motor.tem_fala(np.zeros(int(0.02 * motor.TAXA), dtype=np.float32)),
+    "trecho curto demais para medir não é fala",
+)
+
+nao_enviados = []
+motor.httpx.post = lambda url, **k: nao_enviados.append(1) or RespostaFalsa(resposta_com("x"))
+checar(
+    motor.transcrever(np.zeros(3 * motor.TAXA, dtype=np.float32)) == "" and not nao_enviados,
+    "trecho calado não vira requisição — nem alucinação, nem gasto",
+)
+
 
 # ------------------------------ o trecho único que o resto do módulo consome
 
@@ -294,7 +342,8 @@ import numpy as _np  # noqa: E402
 esperas.clear()
 sessao = transcricao.AnswerSession(sessao_id="t", pergunta_id="p")
 sessao.estado = transcricao.Estado.LISTENING
-sessao.acrescentar(_np.zeros(3 * motor.TAXA, dtype=_np.float32))
+# Fala, pelo mesmo motivo de cima: silêncio não chega a virar requisição.
+sessao.acrescentar(_np.tile(segundo_falado[: motor.TAXA], 3))
 sessao.transcrever_parcial()
 checar(
     esperas and esperas[-1] == motor.TEMPO_LIMITE_PARCIAL_S,
