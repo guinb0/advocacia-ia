@@ -1567,6 +1567,33 @@ function preencherMarcadores(
                 {comNomes(p)}
               </p>
             ))}
+
+          {/* O ROTEIRO, ESCRITO, LOGO DEPOIS DO "PODEMOS COMEÇAR?".
+            *
+            * Mesma caixa e mesma letra da saudação porque é a mesma tarefa: ler
+            * em voz alta, de relance, com o cliente do outro lado. Quem conduz
+            * desce a página lendo e não para para preencher nada — o que o
+            * cliente responder vai sozinho para o formulário, pela escuta.
+            *
+            * Sem campo, sem botão, sem caixa por pergunta: as oitenta e seis
+            * perguntas como formulário empurravam a saudação para fora da tela
+            * e transformavam a conversa em digitação. O formulário existe, mas
+            * é depois — quando a escuta encerra ou a revisão roda, `blocosNaTela`
+            * abre o roteiro inteiro já preenchido, e aí este texto sai de cena
+            * para não aparecer duas vezes. */}
+          {!roteiroRevelado &&
+            sequencia.map(({ pergunta, bloco }, i) => (
+              <div key={pergunta.id}>
+                {bloco !== sequencia[i - 1]?.bloco && (
+                  <span className="block mt-6 mb-1 text-[10px] font-semibold leading-none font-ui tracking-[0.14em] uppercase text-tinta-3">
+                    {bloco}
+                  </span>
+                )}
+                <p className="mt-3 mb-0 font-normal text-[19px] leading-[1.7] font-titulo max-w-[62ch]">
+                  {comNomes(pergunta.texto)}
+                </p>
+              </div>
+            ))}
         </section>
       )}
 
