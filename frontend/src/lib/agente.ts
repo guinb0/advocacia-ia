@@ -172,6 +172,8 @@ export interface Peticao {
   sections?: SecaoPeticao[];
   jurimetria?: {
     disponivel: boolean;
+    origem?: string;
+    consulta_vetorial?: boolean;
     aviso?: string;
     sintese?: string;
     estatisticas?: {
@@ -746,9 +748,13 @@ export interface PecaDeEstilo {
   created_at: string | null;
 }
 
-export async function pecasDeEstilo(taxonomyCode?: string | null): Promise<PecaDeEstilo[]> {
+export async function pecasDeEstilo(
+  taxonomyCode?: string | null,
+  documentType = "INITIAL_PETITION",
+): Promise<PecaDeEstilo[]> {
   const busca = new URLSearchParams();
   if (taxonomyCode) busca.set("taxonomy_code", taxonomyCode);
+  if (documentType) busca.set("document_type", documentType);
   const dados = await chamar<{ items: PecaDeEstilo[] }>(
     `/api/agente/estilo/pecas${busca.toString() ? `?${busca}` : ""}`,
   );

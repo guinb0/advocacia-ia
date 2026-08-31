@@ -11,6 +11,8 @@ justamente o que o Fast Path proíbe.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import Any
 from urllib.parse import quote
@@ -584,6 +586,53 @@ def salvar_rascunho_peticao(
 # ------------------------------------------------------------------- estilo
 
 
+def _codigo_configuracao_local(taxonomy_code: str, document_type: str) -> str:
+    identidade = f"{taxonomy_code.strip()}|{document_type.strip()}".encode("utf-8")
+    return "style_cfg_" + hashlib.sha256(identidade).hexdigest()[:30]
+
+
+def _configuracao_local(taxonomy_code: str, document_type: str) -> dict[str, Any] | None:
+    registro = armazenamento.obter_modelo(
+        _codigo_configuracao_local(taxonomy_code, document_type)
+    )
+    if not registro:
+        return None
+    try:
+        dados = json.loads(bytes(registro["conteudo"]).decode("utf-8"))
+    except (KeyError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        log.error("configuracao local de estilo corrompida")
+        return None
+    return dados if isinstance(dados, dict) else None
+
+
+def _salvar_configuracao_local(payload: dict[str, Any]) -> dict[str, Any]:
+    taxonomy_code = str(payload.get("taxonomy_code") or "").strip()
+    document_type = str(payload.get("document_type") or "INITIAL_PETITION").strip()
+    if not taxonomy_code:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "A ação vinculada é obrigatória.",
+        )
+    normalizada = {
+        "taxonomy_code": taxonomy_code,
+        "document_type": document_type,
+        "display_name": str(payload.get("display_name") or "Petição inicial").strip(),
+        "drafting_instructions": str(payload.get("drafting_instructions") or "").strip(),
+        "required_documents": [
+            str(item).strip()
+            for item in (payload.get("required_documents") or [])
+            if str(item).strip()
+        ],
+    }
+    armazenamento.salvar_modelo(
+        _codigo_configuracao_local(taxonomy_code, document_type),
+        nome_arquivo=f"configuracao-{document_type}.json",
+        conteudo=json.dumps(normalizada, ensure_ascii=False).encode("utf-8"),
+        enviado_por="advocacia-ia",
+    )
+    return normalizada
+
+
 @roteador.post("/estilo/pecas", status_code=status.HTTP_201_CREATED)
 async def enviar_peca_de_estilo(
     arquivo: UploadFile = File(...),
@@ -679,20 +728,35 @@ def remover_peca_de_estilo(peca_id: str) -> None:
 def configuracao_de_geracao(
     taxonomy_code: str, document_type: str = "INITIAL_PETITION"
 ) -> dict[str, Any]:
+    local = _configuracao_local(taxonomy_code, document_type)
+    if local:
+        return local
     try:
-        return Cliente().configuracao_de_geracao(taxonomy_code, document_type)
+        remota = Cliente().configuracao_de_geracao(taxonomy_code, document_type)
+        return _salvar_configuracao_local(remota)
     except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+        # A configuração pertence ao escritório e não precisa ficar indisponível
+        # só porque a rota equivalente do agente está desatualizada ou sem migração.
+        if erro.status and erro.status < 500 and erro.status != status.HTTP_404_NOT_FOUND:
+            raise _erro(erro) from erro
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Configuração ainda não cadastrada.") from erro
 
 
 @roteador.put("/estilo/configuracao")
 def salvar_configuracao_de_geracao(
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, Any]:
+    salva = _salvar_configuracao_local(payload)
     try:
-        return Cliente().salvar_configuracao_de_geracao(payload)
+        Cliente().salvar_configuracao_de_geracao(salva)
     except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+        # Sincronização é oportunista. A cópia usada pelo Advocacia IA já está
+        # persistida e não deve virar erro 500 para o usuário.
+        log.warning(
+            "configuração de estilo salva localmente; agente não sincronizou: %s",
+            erro,
+        )
+    return salva
 
 
 @roteador.post("/casos/{caso_id}/contrato/conferencia")

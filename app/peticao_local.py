@@ -399,6 +399,8 @@ P1, P2 etc. Não invente referência. Responda JSON:
         )
     resultado = {
         "disponivel": True,
+        "origem": "embeddings_advocacia_ia",
+        "consulta_vetorial": True,
         "estatisticas": estatisticas,
         "sintese": str(leitura.get("sintese") or "").strip(),
         "fundamentos": fundamentos,
