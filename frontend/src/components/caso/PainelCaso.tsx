@@ -107,9 +107,13 @@ const TOM_SELO: Record<Tom, TomSelo> = {
   neutro: "neutro",
 };
 
-const CARTAO = "bg-papel border border-borda rounded-cartao shadow-cartao px-[18px] py-4 min-w-0";
-const TABELA = "w-full border-collapse text-sm";
-const TH = "text-left text-xs text-tinta-3 font-semibold px-[10px] py-[6px] border-b border-borda-forte whitespace-nowrap";
+const PAINEL_SHELL = "flex w-full min-w-0 max-w-full flex-col gap-5";
+const PAINEL_ESTADO = "flex w-full min-w-0 max-w-full flex-col gap-5";
+const CARTAO =
+  "min-w-0 max-w-full overflow-hidden rounded-cartao border border-borda bg-papel px-4 py-4 shadow-cartao sm:px-[18px]";
+const TABELA = "min-w-[640px] w-full border-collapse text-sm";
+const TH =
+  "text-left text-xs text-tinta-3 font-semibold px-[10px] py-[6px] border-b border-borda-forte whitespace-nowrap";
 const TD = "px-[10px] py-[9px] border-b border-borda text-tinta-2 align-top";
 const FILTRO_BASE =
   "border border-borda-campo bg-papel text-tinta-2 rounded-pill px-3 py-1 text-xs font-ui cursor-pointer " +
@@ -117,6 +121,62 @@ const FILTRO_BASE =
 const FILTRO_ATIVO =
   "border border-acao bg-acao text-white rounded-pill px-3 py-1 text-xs font-ui cursor-pointer " +
   "transition-[background-color,border-color,color] duration-[120ms] ease-[ease] hover:bg-acao-forte";
+const ITENS_POR_PAGINA = 7;
+
+function paginar<T>(itens: T[], pagina: number, porPagina = ITENS_POR_PAGINA) {
+  const totalPaginas = Math.max(1, Math.ceil(itens.length / porPagina));
+  const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
+  const inicio = (paginaAtual - 1) * porPagina;
+  return {
+    itens: itens.slice(inicio, inicio + porPagina),
+    inicio,
+    fim: Math.min(inicio + porPagina, itens.length),
+    paginaAtual,
+    totalPaginas,
+    total: itens.length,
+  };
+}
+
+function PaginacaoLista({
+  pagina,
+  totalPaginas,
+  total,
+  inicio,
+  fim,
+  onPagina,
+}: {
+  pagina: number;
+  totalPaginas: number;
+  total: number;
+  inicio: number;
+  fim: number;
+  onPagina: (pagina: number) => void;
+}) {
+  if (total <= ITENS_POR_PAGINA) return null;
+  return (
+    <div className="mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-borda pt-3 text-xs text-tinta-3">
+      <span className="min-w-0 truncate">
+        {inicio + 1}-{fim} de {total}
+      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <Botao variante="secundario" pequeno disabled={pagina <= 1} onClick={() => onPagina(pagina - 1)}>
+          Anterior
+        </Botao>
+        <span className="tabular-nums text-tinta-2">
+          {pagina}/{totalPaginas}
+        </span>
+        <Botao
+          variante="secundario"
+          pequeno
+          disabled={pagina >= totalPaginas}
+          onClick={() => onPagina(pagina + 1)}
+        >
+          Próxima
+        </Botao>
+      </div>
+    </div>
+  );
+}
 
 function Secao({
   numero: indice,
@@ -130,17 +190,19 @@ function Secao({
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-baseline gap-[10px] font-ui text-lg text-tinta font-semibold">
+    <section className="flex min-w-0 max-w-full flex-col gap-3">
+      <h2 className="flex min-w-0 items-baseline gap-[10px] font-ui text-lg text-tinta font-semibold">
         <span
           className="font-codigo text-xs text-tinta-3 border border-borda-forte rounded-pill w-6 h-6 inline-flex items-center justify-center flex-none"
           aria-hidden
         >
           {indice}
         </span>
-        {titulo}
+        <span className="min-w-0 truncate" title={titulo}>
+          {titulo}
+        </span>
       </h2>
-      {explicacao && <p className="text-sm text-tinta-3 max-w-[90ch] -mt-1">{explicacao}</p>}
+      {explicacao && <p className="-mt-1 max-w-[90ch] text-sm text-tinta-3">{explicacao}</p>}
       {children}
     </section>
   );
@@ -164,7 +226,9 @@ function Campo({
           não registrado
         </span>
       ) : (
-        <span className="text-base text-tinta font-semibold [overflow-wrap:anywhere]">{valor}</span>
+        <span className="min-w-0 truncate text-base font-semibold text-tinta" title={typeof valor === "string" ? valor : undefined}>
+          {valor}
+        </span>
       )}
     </div>
   );
@@ -189,9 +253,9 @@ function CartaoIndicador({
 }) {
   const leitura = LEITURA_DO_TOM[tom];
   return (
-    <div className="bg-papel border border-borda rounded-cartao shadow-cartao px-4 py-[14px] flex flex-col gap-1 min-w-0">
-      <span className="text-xs text-tinta-3">{rotulo}</span>
-      <span className="font-ui text-[1.9rem] font-[650] text-tinta leading-[1.1] flex items-baseline gap-[5px]">
+    <div className="flex min-w-0 flex-col gap-1 overflow-hidden rounded-cartao border border-borda bg-papel px-4 py-[14px] shadow-cartao">
+      <span className="truncate text-xs text-tinta-3" title={rotulo}>{rotulo}</span>
+      <span className="flex min-w-0 items-baseline gap-[5px] truncate font-ui text-[1.9rem] font-[650] leading-[1.1] text-tinta">
         {valor === null ? "—" : numero(valor)}
         {unidade && valor !== null && <span className="text-sm font-medium text-tinta-3">{unidade}</span>}
       </span>
@@ -204,7 +268,7 @@ function CartaoIndicador({
           </Selo>
         </span>
       )}
-      <span className="text-xs text-tinta-3 leading-[1.4]">{detalhe}</span>
+      <span className="line-clamp-2 text-xs leading-[1.4] text-tinta-3" title={detalhe}>{detalhe}</span>
       {comparacao && (
         <span className="text-xs text-tinta-2 flex items-center gap-[5px] mt-[2px]">
           <span aria-hidden>
@@ -240,6 +304,10 @@ export default function PainelCaso({
   const [periodo, setPeriodo] = useState<Periodo>(30);
   const [tiposVisiveis, setTiposVisiveis] = useState<string[]>([]);
   const [eventosMostrados, setEventosMostrados] = useState(25);
+  const [paginaFatos, setPaginaFatos] = useState(1);
+  const [paginaOcorrencias, setPaginaOcorrencias] = useState(1);
+  const [paginaPendencias, setPaginaPendencias] = useState(1);
+  const [paginaResponsaveis, setPaginaResponsaveis] = useState(1);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -302,13 +370,13 @@ export default function PainelCaso({
 
   if (carregando && !dados) {
     return (
-      <div className="max-w-[1320px] mx-auto px-6 pt-5 pb-16 flex flex-col gap-[22px]">
+      <div className={PAINEL_ESTADO}>
         <div className="flex gap-2 items-center flex-wrap">
           <Botao variante="secundario" pequeno onClick={onVoltar}>
             ← Voltar para a carteira
           </Botao>
         </div>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-4">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-4">
           <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
           <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
           <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
@@ -323,7 +391,7 @@ export default function PainelCaso({
 
   if (erro || !dados) {
     return (
-      <div className="max-w-[1320px] mx-auto px-6 pt-5 pb-16 flex flex-col gap-[22px]">
+      <div className={PAINEL_ESTADO}>
         <div className="flex gap-2 items-center flex-wrap">
           <Botao variante="secundario" pequeno onClick={onVoltar}>
             ← Voltar para a carteira
@@ -345,10 +413,14 @@ export default function PainelCaso({
 
   const etapasIniciadas = dados.etapas_medidas.filter((etapa) => etapa.iniciada);
   const comparaveis = comparacao.linhas.filter((linha) => linha.realizado_horas !== null);
+  const fatosPaginados = paginar(dados.fatos.itens, paginaFatos);
+  const ocorrenciasPaginadas = paginar(dados.ocorrencias.itens, paginaOcorrencias);
+  const pendenciasPaginadas = paginar(dados.pendencias.itens, paginaPendencias);
+  const responsaveisPaginados = paginar(resumo.responsaveis, paginaResponsaveis, 5);
 
   return (
     <div
-      className={`max-w-[1320px] mx-auto px-6 pt-5 pb-16 flex flex-col gap-[22px] ${
+      className={`${PAINEL_SHELL} ${
         carregando ? "opacity-60 transition-[opacity] duration-[120ms] ease-[ease]" : ""
       }`}
     >
@@ -360,11 +432,11 @@ export default function PainelCaso({
           </Botao>
         </div>
 
-        <div className="flex justify-between items-start gap-5 flex-wrap">
-          <div>
-            <h1 className="font-titulo text-xl text-tinta leading-[1.15]">{caso.cliente}</h1>
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-5">
+          <div className="min-w-0">
+            <h1 className="truncate font-titulo text-xl leading-[1.15] text-tinta" title={caso.cliente}>{caso.cliente}</h1>
             <div className="mt-1 text-tinta-3 text-sm flex gap-2 flex-wrap items-center">
-              <span>{caso.categoria}</span>
+              <span className="max-w-full truncate" title={caso.categoria}>{caso.categoria}</span>
               <span aria-hidden>·</span>
               <span className="font-codigo text-xs text-tinta-3 bg-papel-2 border border-borda rounded-campo px-[6px] py-[1px]">
                 {caso.id.slice(0, 8)}
@@ -393,7 +465,7 @@ export default function PainelCaso({
         </div>
 
         {/* Um filtro só, acima de tudo o que ele governa — nunca dentro de um cartão. */}
-        <div className="flex gap-[6px] items-center flex-wrap bg-papel border border-borda rounded-cartao px-[10px] py-2 shadow-cartao">
+        <div className="flex min-w-0 gap-[6px] items-center flex-wrap bg-papel border border-borda rounded-cartao px-[10px] py-2 shadow-cartao">
           <span className="text-xs text-tinta-3 mr-1">Período</span>
           {PERIODOS.map((opcao) => (
             <button
@@ -422,7 +494,7 @@ export default function PainelCaso({
               {ROTULO_DO_TIPO[tipo]}
             </button>
           ))}
-          <span className="ml-auto text-xs text-tinta-3">
+          <span className="ml-auto min-w-0 truncate text-xs text-tinta-3">
             {eventosFiltrados.length} de {dados.eventos.length} movimentações · painel gerado em{" "}
             {dataHora(dados.gerado_em)}
           </span>
@@ -443,7 +515,7 @@ export default function PainelCaso({
         explicacao="O cadastro do caso e o estado de hoje. Campos que o sistema não guarda aparecem marcados, com o motivo no tooltip."
       >
         <div className={CARTAO}>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-x-5 gap-y-[14px]">
+          <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-x-5 gap-y-[14px]">
             <Campo rotulo="Cliente" valor={caso.cliente} />
             <Campo rotulo="Categoria (produto)" valor={caso.categoria} ausente={undefined} />
             <Campo rotulo="Etapa atual" valor={resumo.etapa_atual?.titulo ?? "—"} />
@@ -472,7 +544,7 @@ export default function PainelCaso({
           </div>
 
           {caso.observacao && (
-            <div className="mt-[14px] px-3 py-[10px] bg-papel-2 rounded-campo text-sm text-tinta-2">
+            <div className="mt-[14px] rounded-campo bg-papel-2 px-3 py-[10px] text-sm text-tinta-2 [overflow-wrap:anywhere]">
               {caso.observacao}
             </div>
           )}
@@ -495,7 +567,7 @@ export default function PainelCaso({
               })),
             }}
           >
-            <div className="flex flex-col gap-[2px]">
+            <div className="flex min-w-0 flex-col gap-[2px]">
               {resumo.etapas.length === 0 ? (
                 <SemDado titulo="Sem linha do processo" motivo="O dossiê não devolveu etapas para este caso." />
               ) : (
@@ -514,7 +586,7 @@ export default function PainelCaso({
                   return (
                     <div
                       key={etapa.codigo}
-                      className="grid grid-cols-[26px_1fr_auto] gap-[10px] items-start px-1 py-[9px] border-b border-borda last:border-b-0"
+                      className="grid min-w-0 grid-cols-[26px_minmax(0,1fr)] gap-[10px] border-b border-borda px-1 py-[9px] last:border-b-0 sm:grid-cols-[26px_minmax(0,1fr)_auto] sm:items-start"
                     >
                       <span
                         className="w-[22px] h-[22px] rounded-full inline-flex items-center justify-center text-xs font-bold border"
@@ -527,11 +599,11 @@ export default function PainelCaso({
                       >
                         {visual.simbolo}
                       </span>
-                      <div>
-                        <div className="text-sm text-tinta font-semibold">{etapa.titulo}</div>
-                        <div className="text-xs text-tinta-3 leading-[1.45]">{etapa.detalhe}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-tinta" title={etapa.titulo}>{etapa.titulo}</div>
+                        <div className="line-clamp-2 text-xs leading-[1.45] text-tinta-3" title={etapa.detalhe}>{etapa.detalhe}</div>
                       </div>
-                      <span className="text-xs text-tinta-2 tabular-nums whitespace-nowrap">{visual.palavra}</span>
+                      <span className="col-start-2 text-xs tabular-nums text-tinta-2 sm:col-start-auto sm:whitespace-nowrap">{visual.palavra}</span>
                     </div>
                   );
                 })
@@ -575,7 +647,7 @@ export default function PainelCaso({
                 motivo="Os fatos nascem da leitura dos documentos e da entrevista pelo agente. Rode a análise para produzi-los."
               />
             ) : (
-              <div className="flex flex-col gap-3">
+                <div className="flex min-w-0 flex-col gap-3">
                 <div className="flex flex-wrap gap-2">
                   {dados.fatos.por_status.map((linha) => {
                     const leitura = ESTADO_DO_FATO[linha.status];
@@ -614,7 +686,7 @@ export default function PainelCaso({
                   )}
                 </div>
 
-                <div className="overflow-x-auto max-w-full">
+                <div className="max-w-full overflow-x-auto">
                   <table className={TABELA}>
                     <thead>
                       <tr>
@@ -626,12 +698,20 @@ export default function PainelCaso({
                       </tr>
                     </thead>
                     <tbody>
-                      {dados.fatos.itens.map((fato) => (
+                      {fatosPaginados.itens.map((fato) => (
                         <LinhaDoFato key={fato.id} fato={fato} />
                       ))}
                     </tbody>
                   </table>
                 </div>
+                <PaginacaoLista
+                  pagina={fatosPaginados.paginaAtual}
+                  totalPaginas={fatosPaginados.totalPaginas}
+                  total={fatosPaginados.total}
+                  inicio={fatosPaginados.inicio}
+                  fim={fatosPaginados.fim}
+                  onPagina={setPaginaFatos}
+                />
               </div>
             )}
           </Figura>
@@ -644,7 +724,7 @@ export default function PainelCaso({
         titulo="Indicadores principais"
         explicacao="Cada número traz o que ele é e de onde saiu. Indicador que depende do agente aparece vazio, e não zerado, quando ele não responde."
       >
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(215px,1fr))] gap-[14px]">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,215px),1fr))] gap-[14px]">
           <div className="bg-papel border border-borda rounded-cartao shadow-cartao px-4 py-[14px] flex flex-col gap-[10px] min-w-0 col-span-2 max-[620px]:col-span-1">
             <span className="text-xs text-tinta-3">Saúde do caso</span>
             <span className="font-ui text-[3.2rem] font-bold text-tinta leading-none">
@@ -662,7 +742,7 @@ export default function PainelCaso({
               {saude.componentes.map((componente) => (
                 <div
                   key={componente.codigo}
-                  className="grid grid-cols-[1fr_auto] gap-x-[10px] gap-y-1 text-xs text-tinta-2 items-center"
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-[10px] gap-y-1 text-xs text-tinta-2"
                   title={componente.base}
                 >
                   <span>
@@ -717,7 +797,7 @@ export default function PainelCaso({
         titulo="Evolução temporal"
         explicacao="Como o caso andou dentro do período escolhido. Dia sem movimentação aparece na série — sem ele, três documentos em três semanas pareceriam um ritmo constante."
       >
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,520px),1fr))] gap-4 items-start">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,520px),1fr))] items-start gap-4">
           <div className={CARTAO}>
             <Figura
               titulo="Documentos recebidos, acumulado"
@@ -848,7 +928,7 @@ export default function PainelCaso({
         titulo="Prazos, referência e atrasos"
         explicacao="Não há SLA contratado no sistema. A referência abaixo é a mediana dos casos anteriores da mesma categoria — medida, não arbitrada — e vem com o tamanho da amostra."
       >
-        <div className="grid grid-cols-[2fr_1fr] max-[900px]:grid-cols-1 gap-4 items-start">
+        <div className="grid min-w-0 grid-cols-[minmax(0,2fr)_minmax(0,1fr)] items-start gap-4 max-[900px]:grid-cols-1">
           <div className={CARTAO}>
             <Figura
               titulo="Consumo do tempo de referência"
@@ -949,7 +1029,7 @@ export default function PainelCaso({
         titulo="Tempo por etapa"
         explicacao="Duração medida entre dois instantes gravados. Etapa ainda em curso conta até agora e vem marcada; etapa que nunca começou não aparece como zero."
       >
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,520px),1fr))] gap-4 items-start">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,520px),1fr))] items-start gap-4">
           <div className={CARTAO}>
             <Figura
               titulo="Duração de cada etapa"
@@ -1104,7 +1184,7 @@ export default function PainelCaso({
         titulo="Ocorrências e pendências"
         explicacao="Tudo que já deu errado no caso, com estado de aberto ou resolvido — documento ilegível que depois foi substituído continua no histórico, porque custou tempo."
       >
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,520px),1fr))] gap-4 items-start">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,520px),1fr))] items-start gap-4">
           <div className={CARTAO}>
             <Figura
               titulo={`Ocorrências (${dados.ocorrencias.abertas} aberta(s), ${dados.ocorrencias.resolvidas} resolvida(s))`}
@@ -1116,6 +1196,7 @@ export default function PainelCaso({
                   motivo="Nenhum documento voltou para conferência e nenhuma leitura falhou neste caso."
                 />
               ) : (
+                <>
                 <div className="overflow-x-auto max-w-full">
                   <table className={TABELA}>
                     <thead>
@@ -1127,12 +1208,16 @@ export default function PainelCaso({
                       </tr>
                     </thead>
                     <tbody>
-                      {dados.ocorrencias.itens.map((ocorrencia, indice) => (
+                      {ocorrenciasPaginadas.itens.map((ocorrencia, indice) => (
                         <tr key={indice} className="last:[&>td]:border-b-0">
                           <td className={TD}>{ocorrencia.quando ? dataHora(ocorrencia.quando) : "—"}</td>
                           <td className={TD}>
-                            <div className="text-tinta font-semibold">{ocorrencia.titulo}</div>
-                            <div className="text-xs text-tinta-3 leading-[1.4]">{ocorrencia.detalhe}</div>
+                            <div className="max-w-[280px] truncate font-semibold text-tinta" title={ocorrencia.titulo}>
+                              {ocorrencia.titulo}
+                            </div>
+                            <div className="line-clamp-2 max-w-[360px] text-xs leading-[1.4] text-tinta-3" title={ocorrencia.detalhe}>
+                              {ocorrencia.detalhe}
+                            </div>
                           </td>
                           <td className={TD}>{ROTULO_DO_TIPO[ocorrencia.tipo] ?? ocorrencia.tipo}</td>
                           <td className={TD}>
@@ -1148,6 +1233,15 @@ export default function PainelCaso({
                     </tbody>
                   </table>
                 </div>
+                <PaginacaoLista
+                  pagina={ocorrenciasPaginadas.paginaAtual}
+                  totalPaginas={ocorrenciasPaginadas.totalPaginas}
+                  total={ocorrenciasPaginadas.total}
+                  inicio={ocorrenciasPaginadas.inicio}
+                  fim={ocorrenciasPaginadas.fim}
+                  onPagina={setPaginaOcorrencias}
+                />
+                </>
               )}
             </Figura>
           </div>
@@ -1169,6 +1263,7 @@ export default function PainelCaso({
                   motivo="O agente ainda não classificou o caso, ou o playbook não exige nada além do que já existe."
                 />
               ) : (
+                <>
                 <div className="overflow-x-auto max-w-full">
                   <table className={TABELA}>
                     <thead>
@@ -1180,12 +1275,16 @@ export default function PainelCaso({
                       </tr>
                     </thead>
                     <tbody>
-                      {dados.pendencias.itens.map((pendencia) => (
+                      {pendenciasPaginadas.itens.map((pendencia) => (
                         <tr key={pendencia.codigo} className="last:[&>td]:border-b-0">
                           <td className={TD}>
-                            <div className="text-tinta font-semibold">{rotuloLegivel(pendencia.rotulo)}</div>
+                            <div className="max-w-[280px] truncate font-semibold text-tinta" title={rotuloLegivel(pendencia.rotulo)}>
+                              {rotuloLegivel(pendencia.rotulo)}
+                            </div>
                             {pendencia.pergunta && (
-                              <div className="text-xs text-tinta-3 leading-[1.4]">{pendencia.pergunta}</div>
+                              <div className="line-clamp-2 max-w-[360px] text-xs leading-[1.4] text-tinta-3" title={pendencia.pergunta}>
+                                {pendencia.pergunta}
+                              </div>
                             )}
                           </td>
                           <td className={TD}>{ROTULO_DA_PENDENCIA[pendencia.tipo] ?? pendencia.tipo}</td>
@@ -1216,6 +1315,15 @@ export default function PainelCaso({
                     </tbody>
                   </table>
                 </div>
+                <PaginacaoLista
+                  pagina={pendenciasPaginadas.paginaAtual}
+                  totalPaginas={pendenciasPaginadas.totalPaginas}
+                  total={pendenciasPaginadas.total}
+                  inicio={pendenciasPaginadas.inicio}
+                  fim={pendenciasPaginadas.fim}
+                  onPagina={setPaginaPendencias}
+                />
+                </>
               )}
             </Figura>
           </div>
@@ -1228,7 +1336,7 @@ export default function PainelCaso({
         titulo="Riscos e insights"
         explicacao="Cada frase é gerada a partir de um número que está nesta tela, e carrega embaixo a conta que a produziu. Sem dado, sem frase."
       >
-        <div className="grid grid-cols-[2fr_1fr] max-[900px]:grid-cols-1 gap-4 items-start">
+        <div className="grid min-w-0 grid-cols-[minmax(0,2fr)_minmax(0,1fr)] items-start gap-4 max-[900px]:grid-cols-1">
           <div className={CARTAO}>
             {dados.insights.length === 0 ? (
               <SemDado
@@ -1236,7 +1344,7 @@ export default function PainelCaso({
                 motivo="O caso ainda não acumulou histórico suficiente para produzir uma leitura com base numérica."
               />
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))] gap-3">
+              <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))] gap-3">
                 {dados.insights.map((insight, indice) => (
                   <div
                     key={indice}
@@ -1352,6 +1460,7 @@ export default function PainelCaso({
                 motivo="Sem entrevista, não há registro de quem conduziu o atendimento."
               />
             ) : (
+              <>
               <div className="overflow-x-auto max-w-full">
                 <table className={TABELA}>
                   <thead>
@@ -1363,17 +1472,28 @@ export default function PainelCaso({
                     </tr>
                   </thead>
                   <tbody>
-                    {resumo.responsaveis.map((pessoa, indice) => (
+                    {responsaveisPaginados.itens.map((pessoa, indice) => (
                       <tr key={indice} className="last:[&>td]:border-b-0">
-                        <td className={`${TD} text-tinta font-semibold`}>{pessoa.nome}</td>
+                        <td className={`${TD} max-w-[220px] truncate font-semibold text-tinta`} title={pessoa.nome}>
+                          {pessoa.nome}
+                        </td>
                         <td className={TD}>{dataHora(pessoa.desde)}</td>
-                        <td className={TD}>{pessoa.arquivo}</td>
+                        <td className={`${TD} max-w-[280px] truncate`} title={pessoa.arquivo}>{pessoa.arquivo}</td>
                         <td className={TD}>{pessoa.lida ? pessoa.fatos_gerados : "não lida"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <PaginacaoLista
+                pagina={responsaveisPaginados.paginaAtual}
+                totalPaginas={responsaveisPaginados.totalPaginas}
+                total={responsaveisPaginados.total}
+                inicio={responsaveisPaginados.inicio}
+                fim={responsaveisPaginados.fim}
+                onPagina={setPaginaResponsaveis}
+              />
+              </>
             )}
           </Figura>
         </div>
@@ -1383,7 +1503,7 @@ export default function PainelCaso({
             titulo="O que este painel não sabe"
             descricao="Campos que um painel de BI costuma trazer e que este sistema não registra. Estão aqui para que a ausência seja lida como ausência."
           >
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-[10px]">
+            <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-[10px]">
               {dados.ausencias.map((item) => (
                 <div key={item.campo} className="border border-dashed border-borda-forte rounded-campo bg-papel-2 px-3 py-[10px]">
                   <div className="text-sm text-tinta-2 font-semibold">{item.campo}</div>
@@ -1407,8 +1527,12 @@ function LinhaDoFato({ fato }: { fato: FatoDoCaso }) {
         fato.vigente ? "" : "[&>td]:text-tinta-3 [&>td]:line-through [&>td]:[text-decoration-color:var(--borda-forte)]"
       }`}
     >
-      <td className={`${TD} text-tinta font-semibold`}>{rotuloLegivel(fato.tipo)}</td>
-      <td className={TD}>{valorDoFato(fato.valor)}</td>
+      <td className={`${TD} max-w-[220px] truncate font-semibold text-tinta`} title={rotuloLegivel(fato.tipo)}>
+        {rotuloLegivel(fato.tipo)}
+      </td>
+      <td className={`${TD} max-w-[280px] truncate`} title={String(valorDoFato(fato.valor))}>
+        {valorDoFato(fato.valor)}
+      </td>
       <td className={TD}>
         <span title={leitura?.explicacao}>
           <Selo tom={TOM_SELO[tom]} simbolo={leitura?.simbolo ?? "•"}>
@@ -1423,9 +1547,9 @@ function LinhaDoFato({ fato }: { fato: FatoDoCaso }) {
         {fato.origens.length === 0 ? (
           <span style={{ color: "var(--critico)" }}>sem origem registrada</span>
         ) : (
-          <div className="flex flex-col gap-[2px]">
+          <div className="flex min-w-0 flex-col gap-[2px]">
             {fato.origens.map((origem, indice) => (
-              <span key={indice} className="text-xs text-tinta-2">
+              <span key={indice} className="max-w-[260px] truncate text-xs text-tinta-2" title={origemLegivel(origem)}>
                 {origemLegivel(origem)}
               </span>
             ))}
@@ -1438,7 +1562,7 @@ function LinhaDoFato({ fato }: { fato: FatoDoCaso }) {
 
 function LinhaDoEvento({ evento }: { evento: EventoDoCaso }) {
   return (
-    <div className="grid grid-cols-[132px_22px_1fr] max-[640px]:grid-cols-[20px_1fr] gap-[10px] items-start py-2 relative">
+    <div className="relative grid min-w-0 grid-cols-[132px_22px_minmax(0,1fr)] items-start gap-[10px] py-2 max-[640px]:grid-cols-[20px_minmax(0,1fr)]">
       <span className="text-xs text-tinta-3 tabular-nums text-right pt-[2px] max-[640px]:[grid-column:1/-1] max-[640px]:text-left">
         {dataHora(evento.quando)}
       </span>
@@ -1449,9 +1573,9 @@ function LinhaDoEvento({ evento }: { evento: EventoDoCaso }) {
       >
         {LEITURA_DO_TOM[evento.tom].simbolo}
       </span>
-      <div>
-        <div className="text-sm text-tinta font-semibold">{evento.titulo}</div>
-        <div className="text-xs text-tinta-3 leading-[1.45] [overflow-wrap:anywhere]">{evento.detalhe}</div>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold text-tinta" title={evento.titulo}>{evento.titulo}</div>
+        <div className="line-clamp-2 text-xs leading-[1.45] text-tinta-3" title={evento.detalhe}>{evento.detalhe}</div>
       </div>
     </div>
   );

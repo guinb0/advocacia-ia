@@ -105,23 +105,24 @@ const ROTULO_FATO: Record<string, string> = {
 /* Classes reutilizadas nos vários blocos de listagem do dossiê (fatos,
  * precedentes, pendências, contradições…) — todas vêm do mesmo desenho de
  * `.item`/`.itemTopo`/`.origem`/`.razao` que existia em Dossie.module.css. */
-const TITULO_CARTAO = "mb-1 text-tinta font-titulo text-lg font-semibold leading-[1.25]";
-const ITEM_TOPO = "flex items-center justify-between gap-[10px] flex-wrap";
-const ITEM = "border border-borda bg-papel p-[12px_14px] grid gap-[6px]";
-const LISTA = "list-none m-0 p-0 grid gap-3";
+const DOSSIE_SHELL = "flex w-full min-w-0 max-w-full flex-col gap-5";
+const TITULO_CARTAO = "mb-1 min-w-0 truncate text-tinta font-titulo text-lg font-semibold leading-[1.25]";
+const ITEM_TOPO = "flex min-w-0 items-center justify-between gap-[10px] flex-wrap";
+const ITEM = "min-w-0 overflow-hidden border border-borda bg-papel p-[12px_14px] grid gap-[6px]";
+const LISTA = "list-none m-0 p-0 grid min-w-0 gap-3";
 const EXPLICACAO = "-mt-1 mb-3 text-tinta-3 text-sm leading-[1.5] max-w-[62ch]";
 const TEXTO_VAZIO = "mt-[6px] text-tinta-3 text-sm";
 const ORIGEM = "text-tinta-3 text-xs";
 const RAZAO = "mt-[2px] text-tinta-2 text-sm leading-[1.55]";
 const VALOR = "font-codigo tabular-nums text-sm text-tinta";
 const TRECHO =
-  "mt-[6px] p-[8px_12px] bg-papel-2 border-l-[3px] border-borda-forte text-tinta-2 text-sm leading-[1.55]";
-const PONTOS = "mt-[2px] p-0 list-none grid gap-1 text-sm leading-[1.5]";
+  "mt-[6px] p-[8px_12px] bg-papel-2 border-l-[3px] border-borda-forte text-tinta-2 text-sm leading-[1.55] [overflow-wrap:anywhere]";
+const PONTOS = "mt-[2px] p-0 list-none grid min-w-0 gap-1 text-sm leading-[1.5]";
 const SECAO_TITULO = "mt-[18px] mb-[6px] font-ui text-sm font-bold tracking-[0.02em] text-tinta first:mt-0";
 const FICHA_LINHA =
   "grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-x-3 gap-y-[2px] bg-papel p-[9px_12px]";
-const INDICADOR = "border border-borda bg-papel-2 p-[12px_14px] mb-[14px] grid gap-2";
-const MINUTA = "mt-[14px] p-[16px_18px] bg-papel-2 border border-borda max-h-[520px] overflow-y-auto";
+const INDICADOR = "min-w-0 overflow-hidden border border-borda bg-papel-2 p-[12px_14px] mb-[14px] grid gap-2";
+const MINUTA = "mt-[14px] p-[16px_18px] bg-papel-2 border border-borda max-h-[520px] overflow-auto";
 const PARAGRAFO_MINUTA = "m-0 mb-2 font-titulo text-base leading-[1.7] text-justify text-tinta-2 max-w-[72ch]";
 const CAMPO_ENTREVISTA = "grid gap-1 text-tinta-2 text-sm";
 const INPUT_ENTREVISTA = "p-[7px_10px] border border-borda rounded-[6px] bg-papel text-tinta";
@@ -333,7 +334,7 @@ export default function Dossie({
 
   if (erro && !dados) {
     return (
-      <div className="max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
+      <div className={DOSSIE_SHELL}>
         <Botao variante="secundario" pequeno onClick={onVoltar}>
           ← Voltar
         </Botao>
@@ -346,7 +347,7 @@ export default function Dossie({
 
   if (!dados)
     return (
-      <div className="max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
+      <div className="rounded-cartao border border-borda bg-papel px-5 py-10 text-center text-tinta-3 shadow-cartao">
         Carregando o dossiê…
       </div>
     );
@@ -369,40 +370,46 @@ export default function Dossie({
      *
      * A coluna só existe a partir de `lg`: em 400px de painel sobre uma tela de celular
      * não sobra dossiê nenhum para a citação apontar, e aí ela não serviria para nada. */
-    <div className="flex items-start">
-      <div className="min-w-0 flex-1 max-w-[1240px] mx-auto px-4 sm:px-7 pt-6 pb-16 grid gap-[18px]">
-      <header className="flex justify-between items-end gap-5 flex-wrap">
-        <div>
-          <Botao variante="secundario" pequeno onClick={onVoltar}>
-            ← Voltar para a carteira
-          </Botao>
-          {onAbrirPainel && (
-            <Botao variante="texto" pequeno onClick={onAbrirPainel}>
-              Painel analítico →
+    <div className={DOSSIE_SHELL}>
+      <header className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+        <div className="flex min-w-0 flex-col gap-4 border-b border-borda bg-papel-2 px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <Botao variante="texto" pequeno onClick={onVoltar}>
+              ← Carteira
             </Botao>
-          )}
-          {onAbrirJurimetria && (
-            <Botao variante="texto" pequeno onClick={onAbrirJurimetria}>
-              Jurisprudência e jurimetria →
-            </Botao>
-          )}
-          <h1 className="mt-2 text-xl tracking-[-0.01em]">{dados.caso.cliente}</h1>
-          <p className="mt-1 text-tinta-3 text-sm">
-            {dados.checklist.categoria ?? dados.caso.categoria} · aberto em{" "}
-            {new Date(dados.caso.criado_em).toLocaleDateString("pt-BR")}
-          </p>
-        </div>
+            <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
+              Dossiê do caso
+            </span>
+            <h1 className="mt-1 truncate text-xl font-semibold tracking-[-0.01em] text-tinta" title={dados.caso.cliente}>
+              {dados.caso.cliente}
+            </h1>
+            <p className="mt-1 truncate text-sm text-tinta-3" title={dados.checklist.categoria ?? dados.caso.categoria}>
+              {dados.checklist.categoria ?? dados.caso.categoria} · aberto em{" "}
+              {new Date(dados.caso.criado_em).toLocaleDateString("pt-BR")}
+            </p>
+          </div>
 
-        <div className="flex gap-2 flex-wrap">
-          <Botao
-            variante="primario"
-            disabled={
-              !geracaoPeticao?.podeGerar || geracaoPeticao?.ocupado || ocupado !== null
-            }
-            onClick={() => geracaoPeticao?.gerar()}
-          >
-            {geracaoPeticao?.rotulo ?? "Gerar análise e petição"}
-          </Botao>
+          <div className="flex min-w-0 flex-wrap gap-2">
+            {onAbrirPainel && (
+              <Botao variante="secundario" pequeno onClick={onAbrirPainel}>
+                Painel
+              </Botao>
+            )}
+            {onAbrirJurimetria && (
+              <Botao variante="secundario" pequeno onClick={onAbrirJurimetria}>
+                Jurimetria
+              </Botao>
+            )}
+            <Botao
+              variante="primario"
+              disabled={
+                !geracaoPeticao?.podeGerar || geracaoPeticao?.ocupado || ocupado !== null
+              }
+              onClick={() => geracaoPeticao?.gerar()}
+            >
+              <span className="min-w-0 truncate">{geracaoPeticao?.rotulo ?? "Gerar análise e petição"}</span>
+            </Botao>
+          </div>
         </div>
       </header>
 
@@ -413,8 +420,8 @@ export default function Dossie({
         </Aviso>
       )}
 
-      <div className="grid min-w-0 grid-cols-1 lg:grid-cols-[minmax(260px,320px)_1fr] items-start gap-[18px]">
-        <div className="grid gap-[18px] content-start order-2 lg:order-1">
+      <div className="grid min-w-0 grid-cols-1 items-start gap-[18px] xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
+        <aside className="grid min-w-0 content-start gap-[18px] order-2 xl:order-1">
           <Cartao titulo="Documentos do checklist">
             <p className={EXPLICACAO}>
               {dados.checklist.progresso?.obrigatorios_entregues ?? 0} de{" "}
@@ -425,7 +432,7 @@ export default function Dossie({
                 .filter((item) => item.obrigatorio && item.status !== "entregue")
                 .slice(0, 6)
                 .map((item) => (
-                  <li key={item.codigo}>
+                  <li key={item.codigo} className="truncate" title={item.rotulo || item.nome || item.codigo}>
                     • {item.rotulo || item.nome || item.codigo}
                   </li>
                 ))}
@@ -441,16 +448,15 @@ export default function Dossie({
             casoId={casoId}
             entrevistas={dados.entrevistas ?? []}
           />
-        </div>
+        </aside>
 
-        <div className="grid gap-[18px] content-start order-1 lg:order-2">
+        <div className="grid min-w-0 content-start gap-[18px] order-1 xl:order-2">
           <FluxoPeticao
             casoId={casoId}
             temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
             onControlesGeracao={setGeracaoPeticao}
           />
         </div>
-      </div>
       </div>
     </div>
   );
@@ -520,7 +526,7 @@ function ResumoDoConjunto({ precedentes }: { precedentes: Precedente[] }) {
   return (
     <div className={INDICADOR}>
       <div className={ITEM_TOPO}>
-        <strong>Resumo do conjunto</strong>
+        <strong className="min-w-0 truncate">Resumo do conjunto</strong>
         <span className={ORIGEM}>
           {dados.total} precedente{dados.total > 1 ? "s" : ""} recuperado
           {dados.total > 1 ? "s" : ""}
@@ -543,7 +549,7 @@ function ResumoDoConjunto({ precedentes }: { precedentes: Precedente[] }) {
       )}
 
       {dados.assuntos.length > 0 && (
-        <p className="m-0 text-tinta-2 text-xs leading-[1.6]">
+        <p className="m-0 text-tinta-2 text-xs leading-[1.6] [overflow-wrap:anywhere]">
           <span className="text-tinta-3">assuntos: </span>
           {dados.assuntos.map(([assunto, quantidade], i) => (
             <span key={assunto}>
@@ -631,14 +637,14 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
               {analise.achados.map((a, i) => (
                 <li key={i} className={ITEM}>
                   <div className={ITEM_TOPO}>
-                    <strong>{a.informacao}</strong>
+                    <strong className="min-w-0 truncate" title={a.informacao}>{a.informacao}</strong>
                     {a.contradiz && (
                       <Selo tom="critico" simbolo="!">
                         contradiz a entrevista
                       </Selo>
                     )}
                   </div>
-                  <div className={ORIGEM}>{a.documento}</div>
+                  <div className={`${ORIGEM} truncate`} title={a.documento}>{a.documento}</div>
                   {a.relevancia && <p className={RAZAO}>{a.relevancia}</p>}
                   <blockquote className={TRECHO}>{a.citacao}</blockquote>
                 </li>
@@ -708,10 +714,10 @@ function PainelJurisprudencia({
                   </Selo>
                 )}
               </div>
-              <div className="grid gap-[6px]">
+              <div className="grid min-w-0 gap-[6px]">
                 {indicadores.indicators.map((item) => (
-                  <div key={item.label} className="grid grid-cols-[1fr_auto] sm:grid-cols-[130px_1fr_auto] items-center gap-[10px] text-xs text-tinta-2">
-                    <span>{item.label.toLowerCase()}</span>
+                  <div key={item.label} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-[10px] text-xs text-tinta-2 sm:grid-cols-[130px_minmax(0,1fr)_auto]">
+                    <span className="truncate" title={item.label.toLowerCase()}>{item.label.toLowerCase()}</span>
                     <span className="block h-2 bg-papel-3 border border-borda">
                       <i className="block h-full bg-acao" style={{ width: `${Math.round(item.share * 100)}%` }} />
                     </span>
@@ -726,7 +732,7 @@ function PainelJurisprudencia({
           )}
 
           {(pesquisa?.precedents ?? []).length > 0 && (
-            <p className="m-0 mb-2 text-tinta-3 text-xs">
+          <p className="m-0 mb-2 text-tinta-3 text-xs">
               Cada precedente abre a análise completa no clique.
             </p>
           )}
@@ -765,8 +771,8 @@ function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
     <li className={ITEM}>
       {/* `grid` no <details>: o espaçamento entre resumo, pontos e trechos vinha
         * do gap de ITEM, e eles deixaram de ser filhos dele ao entrar aqui. */}
-      <details className="group grid gap-[6px]">
-        <summary className="cursor-pointer list-none grid gap-[6px] [&::-webkit-details-marker]:hidden">
+      <details className="group grid min-w-0 gap-[6px]">
+        <summary className="grid min-w-0 cursor-pointer list-none gap-[6px] [&::-webkit-details-marker]:hidden">
           <div className={ITEM_TOPO}>
             <span className="flex items-center gap-[8px] min-w-0">
               <span
@@ -775,7 +781,9 @@ function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
               >
                 ▶
               </span>
-              <strong className="font-codigo tabular-nums">{precedente.process_number}</strong>
+              <strong className="min-w-0 truncate font-codigo tabular-nums" title={precedente.process_number}>
+                {precedente.process_number}
+              </strong>
             </span>
             {visual && (
               <Selo tom={visual.tom} simbolo={visual.simbolo}>
@@ -783,7 +791,9 @@ function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
               </Selo>
             )}
           </div>
-          <div className={ORIGEM}>
+          <div className={`${ORIGEM} truncate`} title={[precedente.court, precedente.judging_body, precedente.document_type, precedente.outcome]
+              .filter(Boolean)
+              .join(" · ")}>
             {[precedente.court, precedente.judging_body, precedente.document_type, precedente.outcome]
               .filter(Boolean)
               .join(" · ")}
@@ -793,7 +803,7 @@ function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
           </div>
           {/* Some ao abrir: repetida acima do resumo inteiro, viraria eco. */}
           {analise && (
-            <p className="m-0 text-tinta-2 text-sm leading-[1.5] group-open:hidden">
+            <p className="m-0 line-clamp-2 text-sm leading-[1.5] text-tinta-2 group-open:hidden" title={primeiraFrase(analise.summary)}>
               {primeiraFrase(analise.summary)}
             </p>
           )}
@@ -833,7 +843,7 @@ function CartaoPrecedente({ precedente }: { precedente: Precedente }) {
           ))}
         </>
       ) : (
-        <p className={RAZAO}>{precedente.excerpt.slice(0, 320)}…</p>
+        <p className={`${RAZAO} line-clamp-3`} title={precedente.excerpt}>{precedente.excerpt.slice(0, 320)}…</p>
       )}
 
       {precedente.rank_reason && (
@@ -992,9 +1002,9 @@ function VisualizadorPeticao({
   }
 
   return (
-    <div className="mt-[14px] border border-borda bg-papel-2">
+    <div className="mt-[14px] max-w-full overflow-hidden border border-borda bg-papel-2">
       <div className={`${ITEM_TOPO} p-[10px_12px] border-b border-borda bg-papel sticky top-0 z-10`}>
-        <strong className="text-sm">Petição em PDF — versão {versao}</strong>
+        <strong className="min-w-0 truncate text-sm">Petição em PDF — versão {versao}</strong>
         <div className="flex gap-2 flex-wrap">
           {/* Baixa o mesmo arquivo que está na tela: o `blob:` já está em memória, e um
             * link para a API abriria outra requisição — e, sendo `inline`, o navegador o
@@ -1189,7 +1199,9 @@ function PainelPeticao({
           {[...bloqueantes, ...avisos].map((achado, indice) => (
             <li key={indice} className={ITEM}>
               <div className={ITEM_TOPO}>
-                <strong>{achado.section || "peça"}</strong>
+                <strong className="min-w-0 truncate" title={achado.section || "peça"}>
+                  {achado.section || "peça"}
+                </strong>
                 <Selo
                   tom={achado.severity === "BLOCKING" ? "critico" : "atencao"}
                   simbolo={achado.severity === "BLOCKING" ? "✕" : "!"}
@@ -1224,15 +1236,15 @@ function PainelPeticao({
       </div>
 
       {aberta && (
-        <div className="grid gap-4 border border-borda p-4 bg-papel-2">
+        <div className="grid min-w-0 gap-4 border border-borda bg-papel-2 p-4">
           <p className="m-0 text-sm text-tinta-3">
             Edite as seções abaixo. A versão gerada pela IA permanece guardada para auditoria.
           </p>
           {(peticao!.sections ?? []).map((secao) => (
-            <label key={secao.code} className="grid gap-2">
-              <strong className="text-sm">{secao.label}</strong>
+            <label key={secao.code} className="grid min-w-0 gap-2">
+              <strong className="truncate text-sm" title={secao.label}>{secao.label}</strong>
               <textarea
-                className="min-h-48 w-full border border-borda bg-papel p-3 text-sm leading-relaxed text-tinta resize-y"
+                className="min-h-48 w-full min-w-0 resize-y border border-borda bg-papel p-3 text-sm leading-relaxed text-tinta"
                 value={edicao[secao.code] ?? secao.content}
                 onChange={(evento) =>
                   setEdicao((atual) => ({ ...atual, [secao.code]: evento.target.value }))
@@ -1459,7 +1471,7 @@ function CartaoHipotese({
   return (
     <li className={ITEM}>
       <div className={ITEM_TOPO}>
-        <strong>{hipotese.statement}</strong>
+        <strong className="min-w-0 truncate" title={hipotese.statement}>{hipotese.statement}</strong>
         <Selo
           tom={
             hipotese.status === "ACCEPTED"
@@ -1484,7 +1496,7 @@ function CartaoHipotese({
 
       {/* O que sustenta e o que enfraquece, lado a lado: mostrar só o primeiro
           transformaria a estratégia em propaganda da própria tese. */}
-      <div className={ORIGEM}>
+      <div className={`${ORIGEM} [overflow-wrap:anywhere]`}>
         {hipotese.supporting_fact_ids.length} fato(s) sustentam
         {hipotese.weakening_fact_ids.length
           ? ` · ${hipotese.weakening_fact_ids.length} enfraquece(m)`
@@ -1576,7 +1588,9 @@ function PainelContradicoes({
           return (
             <li key={item.id} className={ITEM}>
               <div className={ITEM_TOPO}>
-                <strong>{item.possible_resolution?.split(".")[0] ?? item.type}</strong>
+                <strong className="min-w-0 truncate" title={item.possible_resolution?.split(".")[0] ?? item.type}>
+                  {item.possible_resolution?.split(".")[0] ?? item.type}
+                </strong>
                 <Selo
                   tom={decidida ? "ok" : visual.tom}
                   simbolo={decidida ? "✓" : visual.simbolo}
@@ -1732,7 +1746,7 @@ function PainelEntrevista({
         {entrevistas.map((item) => (
           <li key={item.id} className={ITEM}>
             <div className={ITEM_TOPO}>
-              <strong>{item.arquivo}</strong>
+              <strong className="min-w-0 truncate" title={item.arquivo}>{item.arquivo}</strong>
               {item.caracteres > 0 ? (
                 <Selo tom="ok" simbolo="✓">
                   transcrita
@@ -1744,7 +1758,7 @@ function PainelEntrevista({
               )}
             </div>
 
-            <div className={ORIGEM}>
+            <div className={`${ORIGEM} truncate`} title={`${item.realizada_em || "data não informada"}${item.entrevistador ? ` · ${item.entrevistador}` : ""} · ${item.caracteres} caracteres`}>
               {item.realizada_em || "data não informada"}
               {item.entrevistador ? ` · ${item.entrevistador}` : ""} · {item.caracteres}{" "}
               caracteres
@@ -1757,14 +1771,14 @@ function PainelEntrevista({
                 <p className={EXPLICACAO}>A confirmar em documento:</p>
                 <ul className="list-disc mt-1 pl-[18px] text-tinta-2 text-sm leading-[1.55]">
                   {item.perguntas.map((pergunta) => (
-                    <li key={pergunta}>{pergunta}</li>
+                    <li key={pergunta} className="[overflow-wrap:anywhere]">{pergunta}</li>
                   ))}
                 </ul>
               </>
             )}
 
             {lendo === item.id && texto[item.id] && (
-              <blockquote className="mt-2 p-[12px_14px] max-h-[420px] overflow-y-auto bg-papel-2 border-l-[3px] border-borda-forte text-tinta-2 text-sm leading-[1.6] whitespace-pre-wrap">
+              <blockquote className="mt-2 max-h-[420px] overflow-auto whitespace-pre-wrap border-l-[3px] border-borda-forte bg-papel-2 p-[12px_14px] text-sm leading-[1.6] text-tinta-2 [overflow-wrap:anywhere]">
                 {texto[item.id]}
               </blockquote>
             )}
