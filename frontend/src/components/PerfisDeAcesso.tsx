@@ -204,6 +204,8 @@ export default function PerfisDeAcesso() {
                           type="checkbox"
                           checked={marcados(perfil).includes(m.codigo)}
                           onChange={() => alternar(perfil, m.codigo)}
+                          disabled={m.codigo === "agente" && perfil.codigo !== "cliente"}
+                          title={m.codigo === "agente" && perfil.codigo !== "cliente" ? "Acesso padrão para toda a equipe do escritório" : undefined}
                           aria-label={`${perfil.rotulo} acessa ${m.rotulo}`}
                         />
                       </label>
