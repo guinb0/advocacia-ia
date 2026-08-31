@@ -105,6 +105,10 @@ export default function RespostasDoRoteiro({
         .map(([, modulo]) => modulo),
     );
     return roteiro.blocos
+      // Nome, CPF, estado civil e localização já foram coletados na abertura.
+      // Continuam em `respostas` para contrato/caso, mas repeti-los na revisão
+      // fazia o atendente entender que precisava perguntar tudo outra vez.
+      .filter((b) => b.id !== "abertura")
       .filter((b) => !b.modulo || positivos.has(b.modulo))
       .map((b) => ({
         ...b,
