@@ -205,6 +205,7 @@ class Conexao:
 # estavam no SQLite —, e qualificar aqui evita reescrever 58 consultas.
 TABELAS = (
     "casos",
+    "classificacoes_documentos_corrigidas",
     "entregas",
     "entrevistas",
     "peticoes_locais",
@@ -357,6 +358,24 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     agente_envio_chave varchar(120)  NULL,
     CONSTRAINT fk_ocr_entregas_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}classificacoes_documentos_corrigidas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}classificacoes_documentos_corrigidas (
+    id                  varchar(64)    NOT NULL CONSTRAINT pk_acervo_class_doc_corr PRIMARY KEY,
+    entrega_id          varchar(64)    NOT NULL,
+    caso_id             varchar(64)    NOT NULL,
+    categoria           varchar(120)   NOT NULL,
+    tipo_sugerido       nvarchar(160)  NULL,
+    tipo_correto        varchar(80)    NOT NULL,
+    rotulo_correto      nvarchar(200)  NOT NULL,
+    item_codigo         varchar(80)    NOT NULL,
+    corrigido_por       nvarchar(200)  NOT NULL,
+    criado_em           varchar(40)    NOT NULL,
+    CONSTRAINT fk_acervo_class_doc_corr_entrega FOREIGN KEY (entrega_id)
+        REFERENCES {SCHEMA}.{PREFIXO}entregas (id) ON DELETE CASCADE,
+    CONSTRAINT fk_acervo_class_doc_corr_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id)
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}entrevistas') IS NULL

@@ -757,6 +757,119 @@ def reatribuir_entrega(
     return obter_entrega(entrega_id)
 
 
+def corrigir_classificacao_entrega(
+    entrega_id: str,
+    *,
+    item_codigo: str,
+    tipo_correto: str,
+    rotulo_correto: str,
+    categoria: str,
+    corrigido_por: str,
+) -> dict[str, Any] | None:
+    """Aplica a verdade humana e registra um exemplo auditável para o classificador."""
+    instante = agora()
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT caso_id, tipo_detectado, extracao_json FROM entregas WHERE id = ?",
+            (entrega_id,),
+        ).fetchone()
+        if not linha:
+            return None
+        extracao = json.loads(linha["extracao_json"] or "{}")
+        tipo = extracao.setdefault("tipo", {})
+        sugerido = str(
+            (extracao.get("classificacao_semantica") or {}).get("documento")
+            or tipo.get("descricao_detectado")
+            or linha["tipo_detectado"]
+            or ""
+        ).strip()
+        tipo.setdefault(
+            "detectado_original", tipo.get("detectado") or linha["tipo_detectado"]
+        )
+        tipo.setdefault("descricao_detectado_original", tipo.get("descricao_detectado"))
+        tipo.update(
+            {
+                "detectado": tipo_correto,
+                "codigo": tipo_correto,
+                "descricao_detectado": rotulo_correto,
+                "descricao": rotulo_correto,
+                "corrigido_manualmente": True,
+                "corrigido_por": corrigido_por,
+                "corrigido_em": instante,
+            }
+        )
+        semantica = extracao.setdefault("classificacao_semantica", {})
+        semantica.update(
+            {
+                "documento_original": semantica.get("documento") or sugerido,
+                "documento": rotulo_correto,
+                "tipo_semantico": rotulo_correto,
+                "corrigido_manualmente": True,
+                "corrigido_por": corrigido_por,
+                "corrigido_em": instante,
+            }
+        )
+        con.execute(
+            """
+            UPDATE entregas
+               SET tipo_detectado = ?, tipo_confere = 1, itens_atendidos = ?,
+                   item_codigo = ?, roteamento_origem = 'humano',
+                   roteamento_confianca = 100, roteamento_motivo = ?,
+                   extracao_json = ?, agente_envio_chave = NULL
+             WHERE id = ?
+            """,
+            (
+                tipo_correto,
+                json.dumps([item_codigo]),
+                item_codigo,
+                f"Classificação corrigida por {corrigido_por}: {rotulo_correto}."[:600],
+                json.dumps(extracao, ensure_ascii=False),
+                entrega_id,
+            ),
+        )
+        con.execute(
+            """
+            INSERT INTO classificacoes_documentos_corrigidas
+                (id, entrega_id, caso_id, categoria, tipo_sugerido, tipo_correto,
+                 rotulo_correto, item_codigo, corrigido_por, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                entrega_id,
+                linha["caso_id"],
+                categoria,
+                sugerido[:160] or None,
+                tipo_correto,
+                rotulo_correto[:200],
+                item_codigo,
+                corrigido_por[:200],
+                instante,
+            ),
+        )
+        _tocar_caso(con, linha["caso_id"])
+    return obter_entrega(entrega_id)
+
+
+def memoria_correcoes_classificacao(
+    categoria: str, limite: int = 8
+) -> list[dict[str, Any]]:
+    """Confusões recorrentes, agregadas e sem texto/PII de documentos anteriores."""
+    with conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT tipo_sugerido, tipo_correto, rotulo_correto, item_codigo,
+                   COUNT(*) AS quantidade
+              FROM classificacoes_documentos_corrigidas
+             WHERE categoria = ?
+             GROUP BY tipo_sugerido, tipo_correto, rotulo_correto, item_codigo
+             ORDER BY COUNT(*) DESC
+            """,
+            (categoria,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas[:limite]]
+
+
 def falhar_entrega(entrega_id: str, mensagem: str) -> None:
     """Marca a entrega como não lida. O arquivo continua salvo para reprocessar."""
     with conectar() as con:
