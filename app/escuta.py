@@ -765,23 +765,46 @@ Responda APENAS JSON:
  "lembretes":[{"pergunta_id":"...","pergunte":"..."}]}"""
 
 
-INSTRUCAO_PROCESSAMENTO = """Você organiza a transcrição COMPLETA de uma entrevista
-jurídica em um formulário já definido pelo escritório.
+INSTRUCAO_FATOS = """Você lê a transcrição COMPLETA de uma entrevista jurídica.
+Nesta primeira etapa, NÃO preencha formulário e NÃO escolha respostas do roteiro.
+Construa somente um mapa fiel do que aconteceu na conversa.
 
 REGRAS
-- Use somente informações explicitamente presentes na transcrição.
+- Separe rigorosamente CLIENTE e ENTREVISTADOR pelo contexto. Perguntas,
+  alternativas, exemplos e hipóteses lidas pelo entrevistador não são fatos.
+- Cada fato deve ser atômico, autossuficiente e conter todos os detalhes
+  explicitamente falados que pertençam a ele. Não deduza nem complete lacunas.
+- `fato` é uma redação limpa e compreensível; `trecho` é uma sequência COPIADA
+  LITERALMENTE da transcrição. Não corrija ou parafraseie o `trecho`.
+- Registre fatos negativos também: "não recebeu CAT", "não houve testemunha".
+- Se versões se contradisserem, mantenha as duas em fatos separados e registre a
+  contradição em `incertezas`; não escolha uma delas.
+- Em `perguntas_feitas`, registre as perguntas efetivamente feitas pelo
+  entrevistador, mesmo quando não houve resposta clara. O trecho também é literal.
+- Ignore saudações, instruções internas e conversa sem conteúdo para o caso.
+
+Responda APENAS JSON:
+{"fatos":[{"fato":"...","fonte":"cliente","trecho":"...","confianca":0.0}],
+ "perguntas_feitas":[{"pergunta":"...","trecho":"..."}],
+ "incertezas":[{"descricao":"...","trechos":["..."]}]}"""
+
+
+INSTRUCAO_PROCESSAMENTO = """Você preenche um formulário jurídico usando um MAPA
+DE FATOS previamente extraído e conferido contra a transcrição completa.
+
+Você NÃO recebe o áudio nem deve reinterpretar conversa bruta nesta etapa. Cada
+item do mapa contém um fato organizado e sua citação literal. Associe os fatos
+às perguntas do formulário; não crie fatos e não use conhecimento externo.
+
+REGRAS
+- Use somente informações explicitamente presentes no MAPA DE FATOS.
 - Não deduza datas, nomes, números, causas, consequências ou documentos.
 - Se uma informação estiver ambígua, contraditória ou pouco segura, deixe o
   campo sem resposta e registre o motivo em `incertas`.
-- A transcrição mistura entrevistador e cliente. Perguntas, opções lidas e
-  hipóteses apresentadas pelo entrevistador NÃO são respostas do cliente.
-- Um único trecho pode conter várias sequências de PERGUNTA seguida de RESPOSTA.
-  Leia o trecho em ordem e associe cada resposta à pergunta imediatamente
-  anterior. Não descarte o trecho inteiro só porque ele começa com uma pergunta.
-- Primeira pessoa ("eu trabalho", "fui vítima", "nunca sofri") e respostas
-  diretas depois de uma pergunta ("sim", "não") indicam fala do cliente.
-- Fala de acolhimento ("sou da equipe", "Lara & Melo", "vamos começar") é do
-  entrevistador, mesmo em primeira pessoa — nunca trate como resposta do cliente.
+- O mapa separa fatos do cliente e perguntas do entrevistador. Perguntas,
+  opções lidas e hipóteses do entrevistador NÃO são respostas do cliente.
+- Um fato pode responder várias perguntas do formulário e vários fatos podem
+  compor uma única resposta narrativa. Aproveite todos sem duplicar conteúdo.
 - Respostas existentes foram digitadas por uma pessoa e são autoritativas: não
   as altere nem as repita.
 - Nunca extraia CPF, RG, data de nascimento ou número de documento da fala.
@@ -809,7 +832,7 @@ REGRAS
   acrescentou fato. Ex.: "Sim, tenho ansiedade e não durmo" → valor com os
   sintomas (ansiedade, sono…), não apenas "sim". "Ainda trabalho" / "fui
   demitido essa semana" devem ir por extenso no campo `desligamento`.
-- `trecho` deve ser COPIADO LITERALMENTE da transcrição e sustentar o valor.
+- `trecho` deve ser COPIADO LITERALMENTE da citação do fato e sustentar o valor.
   Use uma sequência curta de palavras consecutivas, sem corrigir gramática, sem
   resumir e sem trocar sinônimos. `valor` é o texto organizado; `trecho` é a
   prova literal. Uma paráfrase em `trecho` é recusada e deixa o campo vazio.
@@ -849,8 +872,8 @@ REGRAS
 - Separe COBERTURA de PREENCHIMENTO. Em `perguntadas`, liste toda pergunta do
   formulário que o entrevistador efetivamente fez, mesmo com palavras
   diferentes e mesmo quando o cliente não respondeu de forma aproveitável.
-- Não marque como perguntada apenas porque o cliente falou espontaneamente do
-  assunto. Precisa existir uma pergunta reconhecível na conversa.
+- Não marque como perguntada apenas porque há um fato sobre o assunto. Precisa
+  existir item correspondente em `perguntas_feitas` no mapa.
 - Se foi perguntada mas ficou sem resposta clara, inclua também em `incertas`
   com motivo direto. Ela nunca deve aparecer como "não foi perguntada".
 
@@ -920,8 +943,10 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         raise ErroEscuta("Resposta ilegível do modelo.") from exc
 
 
-def _chamar_modelo_consolidado(mensagem: str) -> dict[str, Any]:
-    """Uma única leitura da entrevista completa, executada após o encerramento."""
+def _chamar_modelo_consolidado(
+    mensagem: str, instrucao: str = INSTRUCAO_PROCESSAMENTO
+) -> dict[str, Any]:
+    """Uma etapa estruturada do processamento executado após o encerramento."""
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
         raise ErroEscuta(
@@ -940,7 +965,7 @@ def _chamar_modelo_consolidado(mensagem: str) -> dict[str, Any]:
                 "response_format": {"type": "json_object"},
                 "max_tokens": 8_000,
                 "messages": [
-                    {"role": "system", "content": INSTRUCAO_PROCESSAMENTO},
+                    {"role": "system", "content": instrucao},
                     {"role": "user", "content": mensagem},
                 ],
             },
@@ -1237,6 +1262,64 @@ def _completar_campos_espelhados(
         _registrar("do_cid", sa_diag, sa_diag)
 
 
+def _mapa_de_fatos_conferido(
+    bruto: dict[str, Any], transcricao_conferivel: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Remove do mapa intermediário tudo que não aponta para a conversa real.
+
+    A segunda chamada nunca vê a transcrição bruta. Esta barreira é, portanto,
+    o ponto em que um fato inventado precisa morrer: só atravessa o que traz uma
+    citação literal encontrada no texto e foi atribuído ao cliente.
+    """
+    fatos: list[dict[str, Any]] = []
+    for item in bruto.get("fatos") or []:
+        if not isinstance(item, dict):
+            continue
+        fato = _texto(item.get("fato"), 800)
+        trecho = _texto(item.get("trecho"), 300)
+        fonte = _chave(_texto(item.get("fonte"), 30))
+        if fonte != "cliente" or not fato or not _citacao_confere(
+            trecho, transcricao_conferivel
+        ):
+            continue
+        fatos.append({"fato": fato, "fonte": "cliente", "trecho": trecho})
+        if len(fatos) >= 160:
+            break
+
+    perguntas: list[dict[str, Any]] = []
+    for item in bruto.get("perguntas_feitas") or []:
+        if not isinstance(item, dict):
+            continue
+        pergunta = _texto(item.get("pergunta"), 600)
+        trecho = _texto(item.get("trecho"), 300)
+        if pergunta and _citacao_confere(trecho, transcricao_conferivel):
+            perguntas.append({"pergunta": pergunta, "trecho": trecho})
+        if len(perguntas) >= 120:
+            break
+
+    incertezas: list[dict[str, Any]] = []
+    for item in bruto.get("incertezas") or []:
+        if not isinstance(item, dict):
+            continue
+        descricao = _texto(item.get("descricao"), 500)
+        trechos_brutos = item.get("trechos")
+        if not isinstance(trechos_brutos, list):
+            continue
+        trechos = [
+            _texto(t, 300)
+            for t in trechos_brutos
+            if _citacao_confere(_texto(t, 300), transcricao_conferivel)
+        ][:4]
+        if descricao and trechos:
+            incertezas.append({"descricao": descricao, "trechos": trechos})
+
+    return {
+        "fatos": fatos,
+        "perguntas_feitas": perguntas,
+        "incertezas": incertezas,
+    }
+
+
 def processar_entrevista(
     transcricao: str,
     respostas_iniciais: dict[str, Any] | None = None,
@@ -1276,12 +1359,25 @@ def processar_entrevista(
         and pergunta.id not in DADOS_DIGITADOS
     ]
 
+    # PRIMEIRA LEITURA: entende a conversa inteira sem a pressão de encaixar
+    # cada frase no roteiro. Isso evita que uma alternativa lida pelo atendente
+    # vire resposta e preserva narrativas que respondem vários campos.
+    bruto_fatos = _chamar_modelo_consolidado(
+        "TRANSCRIÇÃO COMPLETA:\n" + transcricao_limpa,
+        INSTRUCAO_FATOS,
+    )
+    mapa_fatos = _mapa_de_fatos_conferido(bruto_fatos, transcricao_conferivel)
+
+    # SEGUNDA LEITURA: recebe apenas fatos já ancorados em citações literais e o
+    # formulário. Interpretar a conversa e distribuir respostas deixam de ser a
+    # mesma tarefa, sem permitir que a etapa intermediária invente conteúdo.
     mensagem = "\n\n".join(
         [
             "RESPOSTAS JÁ DIGITADAS (não alterar):\n"
             + json.dumps(respostas, ensure_ascii=False),
             "FORMULÁRIO:\n" + "\n".join(f"- {_descrever(p)}" for p in perguntas),
-            "TRANSCRIÇÃO COMPLETA:\n" + transcricao_limpa,
+            "MAPA DE FATOS E PERGUNTAS (citações já conferidas):\n"
+            + json.dumps(mapa_fatos, ensure_ascii=False),
         ]
     )
     bruto = _chamar_modelo_consolidado(mensagem)

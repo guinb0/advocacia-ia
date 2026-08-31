@@ -72,6 +72,21 @@ def instalar_modelo(retorno: dict):
     escuta.httpx.post = falso  # type: ignore[assignment]
 
 
+def instalar_modelos(*retornos: dict):
+    """Uma resposta por etapa, para provar o processamento em duas leituras."""
+    fila = list(retornos)
+    visto["corpos"] = []
+
+    def falso(url, **kwargs):
+        corpo = kwargs.get("json") or {}
+        visto["corpo"] = corpo
+        visto["prompt"] = corpo.get("messages", [{}, {}])[1].get("content", "")
+        visto["corpos"].append(corpo)  # type: ignore[union-attr]
+        return _resposta(fila.pop(0))
+
+    escuta.httpx.post = falso  # type: ignore[assignment]
+
+
 # ------------------------------------------------------------------- testes
 
 
@@ -572,9 +587,21 @@ def cenario_sem_chave() -> int:
 
 
 def cenario_processamento_consolidado() -> int:
-    """A entrevista inteira vira formulário numa chamada, sem sobrescrever dados."""
+    """A entrevista vira fatos e depois formulário, sem sobrescrever dados."""
     falhas = 0
-    instalar_modelo(
+    instalar_modelos(
+        {
+            "fatos": [
+                {"fato": "Trabalha nos Correios há cerca de oito anos.",
+                 "fonte": "cliente", "trecho": "trabalho nos Correios faz uns oito anos"},
+                {"fato": "Foi assaltado duas vezes durante entregas no ano passado.",
+                 "fonte": "cliente", "trecho": "Fui assaltado duas vezes no ano passado entregando"},
+                {"fato": "Depois dos assaltos, passou a dormir mal.",
+                 "fonte": "cliente", "trecho": "depois disso não consigo mais dormir direito"},
+            ],
+            "perguntas_feitas": [],
+            "incertezas": [],
+        },
         {
             "respostas": [
                 {"pergunta_id": "nome", "valor": "Nome inventado", "trecho": "meu nome"},
@@ -611,8 +638,29 @@ def cenario_processamento_consolidado() -> int:
     corpo = visto.get("corpo") or {}
     falhas += not checar(
         isinstance(corpo, dict) and corpo.get("max_tokens") == 8_000,
-        "a conversa completa usa uma única resposta estruturada",
+        "cada etapa usa resposta estruturada suficiente para o roteiro",
     )
+    corpos = visto.get("corpos") or []
+    falhas += not checar(
+        len(corpos) == 2,
+        f"a conversa passa por extração de fatos e preenchimento ({len(corpos)} chamadas)",
+    )
+    if len(corpos) == 2:
+        primeira = corpos[0]["messages"]
+        segunda = corpos[1]["messages"]
+        falhas += not checar(
+            "mapa fiel" in primeira[0]["content"].casefold(),
+            "a primeira chamada interpreta a transcrição inteira",
+        )
+        falhas += not checar(
+            "MAPA DE FATOS" in segunda[1]["content"]
+            and "TRANSCRIÇÃO COMPLETA" not in segunda[1]["content"],
+            "a segunda chamada recebe fatos conferidos, não a conversa bruta",
+        )
+        falhas += not checar(
+            "Trabalha nos Correios" in segunda[1]["content"],
+            "o fato com citação literal chega ao preenchimento",
+        )
 
     return falhas
 
@@ -675,6 +723,30 @@ def cenario_citacao_conferida() -> int:
         "citação copiada da transcrição preenche normalmente",
     )
     return falhas
+
+
+def cenario_mapa_de_fatos_conferido() -> int:
+    """A primeira etapa não consegue entregar invenção à segunda."""
+    mapa = escuta._mapa_de_fatos_conferido(
+        {
+            "fatos": [
+                {"fato": "Trabalha há oito anos.", "fonte": "cliente",
+                 "trecho": "faz uns oito anos"},
+                {"fato": "Recebeu uma CAT.", "fonte": "cliente",
+                 "trecho": "a empresa emitiu a CAT"},
+                {"fato": "É carteiro.", "fonte": "entrevistador",
+                 "trecho": "sou carteiro motociclista"},
+            ],
+            "perguntas_feitas": [],
+            "incertezas": [],
+        },
+        escuta._chave(FALA),
+    )
+    fatos = mapa["fatos"]
+    return 0 if checar(
+        len(fatos) == 1 and fatos[0]["fato"] == "Trabalha há oito anos.",
+        "só fato do cliente com citação literal atravessa para o formulário",
+    ) else 1
 
 
 def cenario_recusada_nao_volta_como_ausente() -> int:
@@ -785,6 +857,7 @@ def main_teste() -> int:
         ("completar o que já foi respondido", cenario_complemento),
         ("a pergunta lida não é resposta", cenario_enunciado_lido),
         ("processamento consolidado pós-entrevista", cenario_processamento_consolidado),
+        ("mapa intermediário confere os fatos", cenario_mapa_de_fatos_conferido),
         ("a citação é conferida contra a transcrição", cenario_citacao_conferida),
         ("recusada não volta como ausente", cenario_recusada_nao_volta_como_ausente),
         ("descarta marcador de ausência", cenario_descarta_nao_informado),
