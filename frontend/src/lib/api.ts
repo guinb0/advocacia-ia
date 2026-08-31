@@ -58,6 +58,30 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {}
 
+export interface ModeloVisualPeticao {
+  arquivo: string;
+  origem: "banco" | "embutido";
+  fonte: string;
+  enviado_por?: string;
+  atualizado_em?: string;
+}
+
+export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/visual"));
+}
+
+export async function enviarModeloVisualPeticao(
+  arquivo: File,
+): Promise<ModeloVisualPeticao> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar("/api/modelos/peticao/visual", { method: "POST", body: form }));
+}
+
+export async function restaurarModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/visual", { method: "DELETE" }));
+}
+
 export async function enviarAvaliacaoGoogle(
   telefone: string,
   forcar = false,
@@ -328,15 +352,23 @@ export async function obterCarteira(pagina: number, tamanho: number): Promise<Pa
   );
 }
 
+/** Abre o caso. O `telefone` é o WhatsApp que a entrevista colheu.
+ *
+ * Vai junto na criação porque é a única passagem em que ele existe: as
+ * respostas do roteiro não são guardadas, e sem isto a cobrança automática de
+ * documentos só encontra o número depois que o contrato vai para a assinatura
+ * (ver `automacoes_whatsapp.telefone_do_caso`). */
 export async function criarCaso(
   cliente: string,
   categoria: string,
   observacao = "",
+  telefone = "",
 ): Promise<CasoCriado> {
   const form = new FormData();
   form.append("cliente", cliente);
   form.append("categoria", categoria);
   form.append("observacao", observacao);
+  form.append("telefone", telefone);
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
 }
 

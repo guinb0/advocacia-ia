@@ -42,21 +42,27 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import casos, valor_documento
+from . import armazenamento, casos, valor_documento
 from .categorias import ITEM_TRIAGEM, Categoria, ItemChecklist
 
 log = logging.getLogger("roteamento")
 
 __all__ = [
-    "ITEM_TRIAGEM", "Destino", "decidir",
-    "ESCOLHA", "DETERMINISTICO", "SEMANTICO", "HUMANO", "TRIAGEM",
+    "ITEM_TRIAGEM",
+    "Destino",
+    "decidir",
+    "ESCOLHA",
+    "DETERMINISTICO",
+    "SEMANTICO",
+    "HUMANO",
+    "TRIAGEM",
 ]
 
-ESCOLHA = "escolha"                # o item veio de quem enviou, e o documento não o desmente
+ESCOLHA = "escolha"  # o item veio de quem enviou, e o documento não o desmente
 DETERMINISTICO = "deterministico"  # o classificador de tipos reconheceu o documento
-SEMANTICO = "semantico"            # só o modelo de linguagem soube dizer
-HUMANO = "humano"                  # alguém do escritório atribuiu à mão
-TRIAGEM = "triagem"                # ninguém soube: espera na fila de triagem
+SEMANTICO = "semantico"  # só o modelo de linguagem soube dizer
+HUMANO = "humano"  # alguém do escritório atribuiu à mão
+TRIAGEM = "triagem"  # ninguém soube: espera na fila de triagem
 
 
 @dataclass(frozen=True)
@@ -136,7 +142,19 @@ def _semantico(
 
     itens = [{"codigo": i.codigo, "nome": i.nome} for i in categoria.itens]
     try:
-        analise = valor_documento.ler(extracao, itens, categoria.nome)
+        correcoes = armazenamento.memoria_correcoes_classificacao(categoria.codigo)
+    except Exception:
+        log.warning(
+            "não foi possível carregar correções de classificação", exc_info=True
+        )
+        correcoes = []
+    try:
+        analise = valor_documento.ler(
+            extracao,
+            itens,
+            categoria.nome,
+            correcoes=correcoes,
+        )
     except valor_documento.ErroValor as exc:
         # Modelo fora do ar, ou texto curto demais: o documento fica em triagem,
         # que é honesto. Derrubar a leitura inteira por isso perderia o OCR.
@@ -159,7 +177,11 @@ def _semantico(
         return None
 
     porque = next(
-        (str(s.get("porque")) for s in analise.get("serve_para", []) if s.get("porque")),
+        (
+            str(s.get("porque"))
+            for s in analise.get("serve_para", [])
+            if s.get("porque")
+        ),
         "",
     )
     documento = analise.get("documento") or "documento"
@@ -179,7 +201,29 @@ def decidir(
     coisa. Ele é respeitado enquanto o documento não o desmentir.
     """
     det = _deterministico(extracao, categoria)
+    sem_aprendido = None
     if det is not None:
+        try:
+            correcoes = armazenamento.memoria_correcoes_classificacao(categoria.codigo)
+        except Exception:
+            correcoes = []
+        tipo = extracao.get("tipo") or {}
+        sugerido = " ".join(
+            str(valor or "").casefold()
+            for valor in (tipo.get("detectado"), tipo.get("descricao_detectado"))
+        )
+        confusao_conhecida = any(
+            str(correcao.get("tipo_sugerido") or "").casefold() in sugerido
+            or sugerido.strip() in str(correcao.get("tipo_sugerido") or "").casefold()
+            for correcao in correcoes
+            if str(correcao.get("tipo_sugerido") or "").strip()
+        )
+        if confusao_conhecida:
+            # O determinístico continua sendo o fallback, mas uma confusão já
+            # corrigida pela equipe ganha uma segunda leitura antes de decidir.
+            sem_aprendido = _semantico(extracao, categoria)
+
+    if det is not None and sem_aprendido is None:
         itens, confianca, motivo = det
         if item_escolhido is None:
             return Destino(itens, DETERMINISTICO, confianca, motivo)
@@ -203,7 +247,11 @@ def decidir(
                     itens_sem, conf_sem, motivo_sem, analise = sem
                     if item_escolhido.codigo in itens_sem:
                         return Destino(
-                            [item_escolhido.codigo], ESCOLHA, conf_sem, motivo_sem, analise
+                            [item_escolhido.codigo],
+                            ESCOLHA,
+                            conf_sem,
+                            motivo_sem,
+                            analise,
                         )
                     if len(itens_sem) == 1 and itens_sem[0] != item_escolhido.codigo:
                         return Destino(
@@ -223,7 +271,7 @@ def decidir(
             f"Enviado em '{item_escolhido.nome}'. {motivo}"[:600],
         )
 
-    sem = _semantico(extracao, categoria)
+    sem = sem_aprendido or _semantico(extracao, categoria)
     if sem is not None:
         itens, confianca, motivo, analise = sem
         if item_escolhido is None:

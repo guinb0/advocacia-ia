@@ -386,6 +386,13 @@ export default function Roteiro({
    * servidor, do mesmo PCM que alimenta a transcrição — ver `app/gravacao.py` e
    * `AudioDaEntrevista`, que cuida da conversão e do download. */
   const [escutaEncerrada, setEscutaEncerrada] = useState(false);
+  /* A revisão da entrevista já rodou lá de fora.
+   *
+   * Vale como fim da conversa para efeito de tela: é quando as respostas
+   * consolidadas chegam e quem conduz passa a querer VER o formulário para
+   * completar o que faltou. Sem isto, o "ir ao campo" do painel de revisão
+   * apontaria para uma pergunta que não está renderizada. */
+  const [revisada, setRevisada] = useState(false);
   /* Vídeo gravado e ainda não baixado. Ao contrário do áudio, ele não está em
    * lugar nenhum além desta aba — concluir a entrevista o destrói. */
   const videoPendente = useRef(false);
@@ -762,7 +769,11 @@ export default function Roteiro({
       temVideoPendente: () => videoPendente.current,
       sugestoesPendentes: () => sugestoesRef.current.length,
       irParaPergunta: (perguntaId: string) => irParaRef.current(perguntaId),
-      atualizarRespostas: (novas) => setRespostas((atuais) => ({ ...atuais, ...novas })),
+      atualizarRespostas: (novas) => {
+        setRespostas((atuais) => ({ ...atuais, ...novas }));
+        // A revisão rodou: o roteiro aparece para completar o que faltou.
+        setRevisada(true);
+      },
       encerrarGravacao: async () => {
         await encerrarEscutaRef.current();
         return captura.current?.entrevistaId ?? "";
@@ -1268,11 +1279,25 @@ function preencherMarcadores(
 
   const temMic = estadoMic !== "sem-audio";
   const identificacaoConcluida = faltaParaComecar.length === 0;
-  const blocosNaTela = escutaEncerrada
-    ? (roteiro?.blocos ?? [])
-    : escutando && identificacaoConcluida
-    // Sem preenchimento ao vivo não há resposta de rastreio para abrir módulos.
-    // Mostra todos de uma vez para o funcionário escolher livremente a ordem.
+  /* DURANTE A CONVERSA A TELA É SÓ O TOPO. O formulário vem depois.
+   *
+   * Enquanto a escuta corre, o que fica na tela é o que quem conduz usa
+   * falando com o cliente: a saudação para ler, os quatro campos da
+   * identificação e o painel da escuta. As oitenta e seis perguntas do roteiro
+   * NÃO aparecem — elas se preenchem sozinhas atrás da conversa, e enfileiradas
+   * na tela só empurravam a saudação e a condução para fora do campo de visão.
+   *
+   * Ao terminar, o roteiro inteiro aparece de uma vez, já com o que a escuta
+   * transpôs: aí conferir é o trabalho, e é a hora de ver todos os campos.
+   *
+   * "Terminar" é qualquer um dos dois, e os dois contam: encerrar a escuta, ou
+   * a revisão da entrevista ter rodado lá de fora — quem clicou em "Revisar"
+   * quer completar o que faltou, e o "ir ao campo" precisa achar o campo.
+   *
+   * A trava do microfone não mudou: a transcrição continua começando só depois
+   * de nome, CPF, UF e município (ver o auto-início, acima). */
+  const roteiroRevelado = escutaEncerrada || revisada;
+  const blocosNaTela = roteiroRevelado
     ? (roteiro?.blocos ?? [])
     : blocosVisiveis
         .map((bloco) => ({
@@ -1486,13 +1511,11 @@ function preencherMarcadores(
         </p>
       )}
 
-      {!identificacaoConcluida && (
-        <section className="mt-5 border-l-4 border-tinta bg-papel-2 px-5 py-4">
-          <span className="text-[10px] font-semibold tracking-[0.14em] text-tinta-3">ETAPA 1 DE 2</span>
-          <h3 className="mt-1 mb-1 text-[20px] font-semibold font-titulo">Identificação do cliente</h3>
-          <p className="m-0 text-[12.5px] leading-[1.55] text-tinta-3">O microfone e a gravação já estão ativos. Preencha os quatro dados; ao concluir o município, o roteiro completo será aberto.</p>
-        </section>
-      )}
+      {/* Sem "etapa 1 de 2": o roteiro inteiro já está na tela, e o que a
+        * identificação decide é só quando o microfone abre. Quem ainda não
+        * preencheu é avisado pelo bloco acima, que diz o que falta e leva ao
+        * campo — dizer duas vezes a mesma coisa, uma delas prometendo uma
+        * segunda etapa que não existe mais, era pior que não dizer. */}
 
       {/* O áudio passou a ser GUARDADO, não só transcrito. A saudação do roteiro
         * promete sigilo e não fala em gravação; enquanto ela não falar, quem

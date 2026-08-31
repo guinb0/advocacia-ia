@@ -16,7 +16,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Aviso, Botao, Cartao, Selo, Tabela, Th } from "@/components/ui/Basicos";
-import { ApiError, listarCategorias } from "@/lib/api";
+import {
+  ApiError,
+  enviarModeloVisualPeticao,
+  listarCategorias,
+  type ModeloVisualPeticao,
+  obterModeloVisualPeticao,
+  restaurarModeloVisualPeticao,
+} from "@/lib/api";
 import type { ItemChecklist } from "@/lib/types";
 
 /* `.tabela th/td` era seletor descendente; sem equivalente no Tailwind, a regra
@@ -82,11 +89,50 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [removendo, setRemovendo] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [recado, setRecado] = useState<string | null>(null);
+  const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
+  const [enviandoVisual, setEnviandoVisual] = useState(false);
 
   // Estado separado do `erro` de propósito. A primeira versão usava o mesmo, e o `setErro(null)`
   // do envio apagava a falha da taxonomia — a tela ficava com o seletor vazio e nenhuma
   // explicação, que foi exatamente como o defeito apareceu.
   const [erroDasAcoes, setErroDasAcoes] = useState<string | null>(null);
+
+  useEffect(() => {
+    void obterModeloVisualPeticao()
+      .then(setModeloVisual)
+      .catch((falha) => setErro(
+        falha instanceof ApiError ? falha.message : "Não foi possível carregar o modelo visual geral.",
+      ));
+  }, []);
+
+  async function trocarModeloVisual(arquivo: File) {
+    setEnviandoVisual(true);
+    setErro(null);
+    setRecado(null);
+    try {
+      const salvo = await enviarModeloVisualPeticao(arquivo);
+      setModeloVisual(salvo);
+      setRecado("Modelo visual geral atualizado. As próximas petições usarão essa logo e fonte.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar o modelo visual.");
+    } finally {
+      setEnviandoVisual(false);
+    }
+  }
+
+  async function restaurarVisual() {
+    if (!window.confirm("Restaurar a logo e a fonte padrão da Lara & Melo?")) return;
+    setEnviandoVisual(true);
+    setErro(null);
+    try {
+      setModeloVisual(await restaurarModeloVisualPeticao());
+      setRecado("Padrão visual Lara & Melo restaurado.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível restaurar o padrão.");
+    } finally {
+      setEnviandoVisual(false);
+    }
+  }
 
   useEffect(() => {
     void taxonomiaDeEstilo()
@@ -293,6 +339,46 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           ← Voltar
         </Botao>
       </div>
+
+      <Cartao titulo="Modelo visual geral dos documentos">
+        <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
+          Envie um documento institucional em <code>.docx</code>. O sistema extrai somente
+          a logo do cabeçalho e a fonte-base e aplica essa identidade às novas petições;
+          o conteúdo jurídico do arquivo não é copiado.
+        </p>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
+          <div className="min-w-0">
+            <div className="font-semibold text-tinta">
+              {modeloVisual?.arquivo ?? "Carregando padrão visual…"}
+            </div>
+            <div className="mt-1 text-xs text-tinta-3">
+              Fonte: {modeloVisual?.fonte ?? "—"}
+              {modeloVisual?.origem === "embutido" ? " · padrão atual Lara & Melo" : " · modelo substituível do escritório"}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <label className="inline-flex cursor-pointer items-center rounded-campo bg-acao px-4 py-2 text-sm font-semibold text-white hover:opacity-90">
+              {enviandoVisual ? "Processando…" : modeloVisual?.origem === "banco" ? "Trocar modelo" : "Enviar novo modelo"}
+              <input
+                className="sr-only"
+                type="file"
+                accept=".docx"
+                disabled={enviandoVisual}
+                onChange={(evento) => {
+                  const arquivo = evento.target.files?.[0];
+                  evento.target.value = "";
+                  if (arquivo) void trocarModeloVisual(arquivo);
+                }}
+              />
+            </label>
+            {modeloVisual?.origem === "banco" && (
+              <Botao variante="texto" disabled={enviandoVisual} onClick={() => void restaurarVisual()}>
+                Restaurar Lara & Melo
+              </Botao>
+            )}
+          </div>
+        </div>
+      </Cartao>
 
       <Cartao titulo="Adicionar peças">
         <p className="mt-2 mb-[0.9rem] text-tinta-3 text-sm leading-[1.5]">

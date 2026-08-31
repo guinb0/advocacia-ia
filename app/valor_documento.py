@@ -61,8 +61,16 @@ TEMPO_MODELO_S = 30.0
 MINIMO_CARACTERES = 60
 
 CODIGOS_DOCUMENTO = {
-    "cpf", "rg", "cin", "cnh", "ctps", "titulo_eleitor", "cartao_sus",
-    "comprovante_residencia", "certidao", "nao_estruturado",
+    "cpf",
+    "rg",
+    "cin",
+    "cnh",
+    "ctps",
+    "titulo_eleitor",
+    "cartao_sus",
+    "comprovante_residencia",
+    "certidao",
+    "nao_estruturado",
 }
 
 
@@ -179,6 +187,7 @@ def ler(
     extracao: dict[str, Any],
     pendencias: list[dict[str, str]] | None = None,
     categoria: str = "",
+    correcoes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Interpreta um documento já processado pelo OCR.
 
@@ -209,6 +218,16 @@ def ler(
         )
     else:
         partes.append("DOCUMENTOS QUE O CASO AINDA ESPERA: nenhum listado.")
+    if correcoes:
+        partes.append(
+            "CORREÇÕES ANTERIORES DA EQUIPE NESTA CATEGORIA:\n"
+            "Use somente como alerta contra confusões recorrentes; o texto atual continua mandando.\n"
+            + "\n".join(
+                f"- {int(c.get('quantidade') or 1)} vez(es): '{c.get('tipo_sugerido') or 'indefinido'}' "
+                f"foi corrigido para '{c.get('rotulo_correto')}' ({c.get('item_codigo')})."
+                for c in correcoes[:8]
+            )
+        )
 
     bruto = _chamar_modelo("\n\n".join(partes))
 
@@ -230,17 +249,21 @@ def ler(
             continue
         campo, valor = _texto(item.get("campo"), 60), _texto(item.get("valor"), 120)
         if campo and valor:
-            achados.append({
-                "campo": campo,
-                "valor": valor,
-                "importancia": _texto(item.get("importancia"), 240),
-                "relevante_para": _texto(item.get("relevante_para"), 240),
-            })
+            achados.append(
+                {
+                    "campo": campo,
+                    "valor": valor,
+                    "importancia": _texto(item.get("importancia"), 240),
+                    "relevante_para": _texto(item.get("relevante_para"), 240),
+                }
+            )
 
     codigo = _texto(bruto.get("codigo_documento"), 40).lower()
     return {
         "documento": _texto(bruto.get("documento"), 80) or "indefinido",
-        "codigo_documento": codigo if codigo in CODIGOS_DOCUMENTO else "nao_estruturado",
+        "codigo_documento": codigo
+        if codigo in CODIGOS_DOCUMENTO
+        else "nao_estruturado",
         "serve_para": serve_para[:4],
         "achados": achados[:8],
         "atencao": _lista(bruto.get("atencao")),

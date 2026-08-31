@@ -82,21 +82,36 @@ def finalizar(chave: str, erro: str | None = None) -> None:
 def telefone_do_caso(caso_id: str) -> str:
     """O WhatsApp que a entrevista colheu, recuperado do caso.
 
-    POR QUE VEM DA ASSINATURA, E NÃO DA ENTREVISTA
+    DOIS LUGARES, NESTA ORDEM
 
-    As respostas do roteiro NÃO são guardadas: elas vivem na tela enquanto o
-    atendimento corre e vão embora com ela. O único lugar onde o telefone do
-    cliente sobrevive é o registro da assinatura — o contrato é montado com as
-    respostas, e `assinatura.montar_signatario` grava `phone_country` e
-    `phone_number` no signatário.
+    1. **A coluna `casos.telefone`**, gravada quando o caso nasce do
+       atendimento: a entrevista pergunta o telefone (obrigatória, no roteiro) e
+       agora ele viaja junto na criação do caso. É a fonte que existe desde o
+       primeiro minuto, antes de haver contrato.
+    2. **O signatário da assinatura**, que era a única fonte até aqui. O
+       contrato é montado com as respostas, e `assinatura.montar_signatario`
+       grava `phone_country` e `phone_number`. Continua valendo para os casos
+       abertos antes desta coluna existir e para os que foram criados à mão pela
+       carteira, sem passar pela entrevista.
 
-    Não é rodeio: é onde o dado está. Pedir de novo um número que o cliente já
-    ditou na entrevista é o tipo de retrabalho que faz a cobrança automática
-    ficar desligada porque ninguém preencheu o campo.
+    A ordem importa: a assinatura só aparece depois que o contrato vai para a
+    ZapSign, e até lá a cobrança automática abria com o campo em branco pedindo
+    um número que o cliente já tinha ditado. Era o tipo de retrabalho que faz o
+    recurso ficar desligado porque ninguém preencheu o campo.
 
-    Vazio quando o caso ainda não tem contrato — aí o campo continua para
-    digitar à mão, como antes.
+    Vazio quando as duas fontes falham — aí o campo continua para digitar à mão,
+    como antes.
     """
+    try:
+        caso = armazenamento.obter_caso(caso_id)
+        do_cadastro = str((caso or {}).get("telefone") or "").strip()
+        if do_cadastro:
+            return do_cadastro
+    except Exception:
+        # Cai para a assinatura: banco antigo, sem a coluna, não pode derrubar a
+        # única fonte que já funcionava.
+        log.debug("Não foi possível ler o telefone do caso %s.", caso_id, exc_info=True)
+
     try:
         assinaturas = armazenamento.listar_assinaturas(caso_id=caso_id)
         if not assinaturas:
