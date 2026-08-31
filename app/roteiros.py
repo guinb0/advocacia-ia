@@ -161,7 +161,7 @@ class Roteiro:
 ABERTURA = Bloco(
     id="abertura",
     titulo="Identificação",
-    objetivo="O mínimo para abrir o atendimento. O resto da qualificação vem depois.",
+    objetivo="Dados mínimos do atendimento, sempre editáveis pela equipe.",
     perguntas=[
         Pergunta("nome", "Nome completo", "dado", obrigatoria=True),
         Pergunta("cpf", "CPF", "dado", obrigatoria=True, validacao="cpf"),
@@ -702,15 +702,13 @@ EMPREGADO_PUBLICO = Roteiro(
     encerramento=FECHAMENTO,
     retomadas=RETOMADAS,
     fechos_por_tipo=FECHOS_POR_TIPO,
-    # A ordem é a do documento, e ela mudou: a qualificação deixou de abrir a
-    # entrevista. Ela permanece no fim e é digitada pelo funcionário depois da
-    # conversa; nome, CPF, UF e município continuam sendo a abertura mínima.
+    # A qualificação cadastral completa pertence à etapa de documentação, não ao
+    # roteiro da conversa. Somente a identificação mínima permanece aqui.
     blocos=[
         ABERTURA, VINCULO, RASTREIO,
         ASSALTO, ACIDENTE, DOENCA,
         HISTORICO, SAUDE, SEQUELAS,
         ENCERRAMENTO,
-        IDENTIFICACAO,
     ],
 )
 
