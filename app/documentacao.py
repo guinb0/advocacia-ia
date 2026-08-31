@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import auth
+from . import armazenamento, auth, casos
 from .banco import PREFIXO, SCHEMA, conectar
 
 roteador = APIRouter(prefix="/api/documentacao", tags=["documentacao"])
@@ -73,6 +73,44 @@ def _linha(l: Any) -> dict[str, Any]:
     )}
 
 
+def _detalhes_documentos(caso_id: str | None) -> dict[str, Any] | None:
+    """Resumo operacional do caso para a fila, sem expor conteúdo dos arquivos."""
+    if not caso_id:
+        return None
+    caso = armazenamento.obter_caso(caso_id)
+    if not caso:
+        return None
+    entregas = armazenamento.listar_entregas(caso_id)
+    situacao = casos.situacao_de(caso, entregas)
+    itens = situacao.get("itens") or []
+    progresso = situacao.get("progresso") or {}
+    pendentes = [
+        str(item.get("nome") or item.get("codigo") or "Documento")
+        for item in itens
+        if item.get("obrigatorio") and item.get("status") == casos.PENDENTE
+    ]
+    conferir = [
+        str(item.get("nome") or item.get("codigo") or "Documento")
+        for item in itens
+        if item.get("status") == casos.CONFERIR
+    ]
+    processando = sum(1 for item in itens if item.get("status") == casos.PROCESSANDO)
+    datas = [str(e.get("criado_em") or "") for e in entregas if e.get("criado_em")]
+    return {
+        "categoria": (situacao.get("categoria") or {}).get("nome") or caso.get("categoria") or "",
+        "arquivos_recebidos": len(entregas),
+        "obrigatorios_total": int(progresso.get("obrigatorios_total") or 0),
+        "obrigatorios_entregues": int(progresso.get("obrigatorios_entregues") or 0),
+        "percentual": int(progresso.get("percentual_obrigatorios") or 0),
+        "pendencias": pendentes,
+        "a_conferir": conferir,
+        "processando": processando,
+        "em_triagem": int(progresso.get("em_triagem") or 0),
+        "pronto": bool(progresso.get("pronto")),
+        "ultima_entrega_em": max(datas) if datas else None,
+    }
+
+
 @roteador.post("/atendimentos")
 def iniciar(dados: Inicio, usuario: auth.Usuario = Depends(auth.usuario_atual)):
     instante = agora()
@@ -118,8 +156,22 @@ def listar():
             ORDER BY CASE status WHEN 'solicitado' THEN 0 WHEN 'assumido' THEN 1 ELSE 2 END,
             iniciado_em""", (limite,)).fetchall()
         online = con.execute(f"SELECT COUNT(*) AS total FROM {TABELA_PRESENCA} WHERE atualizado_em>=?", (limite,)).fetchone()
-    itens = [_linha(l) for l in linhas]
-    return {"entrevistas_ativas": len(itens), "solicitacoes": sum(i["status"] == "solicitado" for i in itens), "documentadores_online": int(online["total"]), "atendimentos": itens}
+    itens = []
+    for linha in linhas:
+        item = _linha(linha)
+        item["documentos"] = _detalhes_documentos(item.get("caso_id"))
+        itens.append(item)
+    resumos = [i["documentos"] for i in itens if i.get("documentos")]
+    return {
+        "entrevistas_ativas": len(itens),
+        "solicitacoes": sum(i["status"] == "solicitado" for i in itens),
+        "documentadores_online": int(online["total"]),
+        "arquivos_recebidos": sum(r["arquivos_recebidos"] for r in resumos),
+        "pendencias_obrigatorias": sum(len(r["pendencias"]) for r in resumos),
+        "itens_a_conferir": sum(len(r["a_conferir"]) + r["em_triagem"] for r in resumos),
+        "casos_prontos": sum(bool(r["pronto"]) for r in resumos),
+        "atendimentos": itens,
+    }
 
 
 @roteador.post("/presenca", dependencies=[PodeDocumentacao])
