@@ -65,7 +65,13 @@ export default function TriagemEntrevista({
   /** Tipos de ação, para criar o caso sem sair do atendimento. */
   categorias: Categoria[];
   /** Cria o caso e devolve o portal do cliente (link + senha). */
-  onCriarCaso: (cliente: string, categoria: string) => Promise<CasoCriado>;
+  onCriarCaso: (
+    cliente: string,
+    categoria: string,
+    observacao?: string,
+    /** O WhatsApp da entrevista, para o caso já nascer com ele. */
+    telefone?: string,
+  ) => Promise<CasoCriado>;
   /** Sai da entrevista direto para a visão completa do caso recém-criado. */
   onAbrirDossie?: (casoId: string) => void;
   onAbrirAnalises?: (casoId: string) => void;
@@ -352,7 +358,13 @@ export default function TriagemEntrevista({
         }}
         categorias={categorias}
         sugerida={escolhida ?? undefined}
-        onCriar={onCriarCaso}
+        /* O telefone entra AQUI, e não dentro do `CasoEDocumentos`: quem tem
+          * as respostas da entrevista é esta tela. Sem ele o caso nasce sem
+          * número e a cobrança de documentos abre com o campo em branco,
+          * pedindo o que o cliente já ditou (ver `telefone_do_caso`). */
+        onCriar={(nome, categoria) =>
+          onCriarCaso(nome, categoria, "", String(qualificacao.telefone ?? ""))
+        }
         onAbrirDossie={onAbrirDossie}
         onAbrirAnalises={onAbrirAnalises}
         emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}

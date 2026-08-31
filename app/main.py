@@ -2059,7 +2059,12 @@ async def estrategia(pedido: PedidoEstrategia):
 
 @app.post("/api/casos", status_code=201)
 def criar_caso(
-    cliente: str = Form(...), categoria: str = Form(...), observacao: str = Form("")
+    cliente: str = Form(...),
+    categoria: str = Form(...),
+    observacao: str = Form(""),
+    #: O WhatsApp que a entrevista colheu. Opcional porque o caso também nasce
+    #: pela carteira, digitado à mão, onde ninguém perguntou telefone ainda.
+    telefone: str = Form(""),
 ):
     """Cria o caso já com o portal do cliente pronto.
 
@@ -2072,7 +2077,7 @@ def criar_caso(
     if categorias.obter(categoria) is None:
         raise HTTPException(400, f"Categoria '{categoria}' não existe.")
 
-    caso = armazenamento.criar_caso(cliente, categoria, observacao)
+    caso = armazenamento.criar_caso(cliente, categoria, observacao, telefone)
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return {**caso, "portal": _criar_portal(caso["id"])}
 

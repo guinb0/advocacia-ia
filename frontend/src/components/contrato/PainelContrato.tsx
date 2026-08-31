@@ -303,6 +303,19 @@ export default function PainelContrato({ respostas }: Props) {
         </p>
       )}
 
+      {/* Baixar e assinar, LADO A LADO.
+        *
+        * As duas colunas são a mesma decisão: baixar o .docx para assinar à mão
+        * e mandar para a assinatura eletrônica são os dois caminhos do MESMO
+        * documento, e quem está com o cliente na linha escolhe um deles. Uma
+        * embaixo da outra, a assinatura eletrônica caía fora da tela atrás de
+        * seis botões de download — e o escritório acabava baixando o arquivo
+        * por não ver que havia a outra saída.
+        *
+        * Abaixo de 900px voltam a empilhar: em coluna estreita, duas colunas de
+        * botões com rótulo longo viram duas colunas de texto quebrado. */}
+      <div className="grid grid-cols-2 gap-6 items-start max-[900px]:grid-cols-1 max-[900px]:gap-0">
+        <div className="min-w-0">
       {/* Um botão por documento. Eles formam uma papelada só, mas na mesa do
         * escritório são três arquivos com três destinos — e quase sempre se
         * quer um deles, não os três. */}
@@ -364,9 +377,10 @@ export default function PainelContrato({ respostas }: Props) {
       </ul>
 
       {erro && <div className={ERRO}>{erro}</div>}
+        </div>
 
       {/* ------------------------------------------------ assinatura eletrônica */}
-      <div className="mt-[18px] pt-4 border-t border-borda">
+      <div className="min-w-0 pl-6 border-l border-borda max-[900px]:pl-0 max-[900px]:border-l-0 max-[900px]:mt-[18px] max-[900px]:pt-4 max-[900px]:border-t">
         <span className={ROTULO}>ASSINATURA ELETRÔNICA</span>
 
         {config === null && configErro === null && (
@@ -471,6 +485,7 @@ export default function PainelContrato({ respostas }: Props) {
             />
           </div>
         ))}
+      </div>
       </div>
 
       {(Object.keys(porDocumento).length > 0 ||
