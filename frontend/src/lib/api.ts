@@ -58,6 +58,30 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {}
 
+export interface ModeloVisualPeticao {
+  arquivo: string;
+  origem: "banco" | "embutido";
+  fonte: string;
+  enviado_por?: string;
+  atualizado_em?: string;
+}
+
+export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/visual"));
+}
+
+export async function enviarModeloVisualPeticao(
+  arquivo: File,
+): Promise<ModeloVisualPeticao> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar("/api/modelos/peticao/visual", { method: "POST", body: form }));
+}
+
+export async function restaurarModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/visual", { method: "DELETE" }));
+}
+
 export async function enviarAvaliacaoGoogle(
   telefone: string,
   forcar = false,

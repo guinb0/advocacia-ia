@@ -470,6 +470,71 @@ def gerar_contrato(pedido: PedidoContrato):
 # `contrato.caminho_modelo` e a tabela em `app/banco.py`.
 
 PodeManterModelos = Depends(auth.exigir_modulo("contratos"))
+PodeManterModeloPeticao = Depends(auth.exigir_modulo("agente"))
+
+
+@app.get("/api/modelos/peticao/visual")
+async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
+    """Modelo global de marca, separado dos exemplos jurídicos do Style Engine."""
+    registro = await run_in_threadpool(
+        armazenamento.obter_modelo, peticao_local.MODELO_VISUAL_GERAL
+    )
+    if not registro:
+        return {
+            "arquivo": "Padrão Lara & Melo",
+            "origem": "embutido",
+            "fonte": "Arial",
+            "enviado_por": "",
+            "atualizado_em": "",
+        }
+    _logo, fonte, _extensao = await run_in_threadpool(
+        peticao_local.extrair_identidade_visual, registro["conteudo"]
+    )
+    return {
+        "arquivo": registro["nome_arquivo"],
+        "origem": "banco",
+        "fonte": fonte,
+        "enviado_por": registro["enviado_por"],
+        "atualizado_em": registro["atualizado_em"],
+    }
+
+
+@app.post("/api/modelos/peticao/visual", status_code=201)
+async def enviar_modelo_visual_peticao(
+    arquivo: UploadFile = File(...),
+    usuario: auth.Usuario = PodeManterModeloPeticao,
+):
+    """Substitui o timbre geral usado nos .docx de petição."""
+    nome = arquivo.filename or "modelo-visual-geral.docx"
+    if Path(nome).suffix.lower() != ".docx":
+        raise HTTPException(400, "O modelo visual precisa ser um arquivo .docx.")
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > MAX_BYTES:
+        raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
+    try:
+        _logo, fonte, _extensao = await run_in_threadpool(
+            peticao_local.extrair_identidade_visual, conteudo
+        )
+    except peticao_local.ErroPeticao as exc:
+        raise HTTPException(400, str(exc)) from exc
+    registro = await run_in_threadpool(
+        armazenamento.salvar_modelo,
+        peticao_local.MODELO_VISUAL_GERAL,
+        nome_arquivo=nome,
+        conteudo=conteudo,
+        enviado_por=usuario.nome,
+    )
+    return {"arquivo": nome, "origem": "banco", "fonte": fonte, **registro}
+
+
+@app.delete("/api/modelos/peticao/visual")
+async def excluir_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
+    await run_in_threadpool(
+        armazenamento.excluir_modelo, peticao_local.MODELO_VISUAL_GERAL
+    )
+    return {"arquivo": "Padrão Lara & Melo", "origem": "embutido", "fonte": "Arial"}
 
 
 #: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.

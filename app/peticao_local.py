@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
+from xml.etree import ElementTree
 
 import httpx
 
@@ -20,8 +21,9 @@ from . import casos as casos_ocr
 log = logging.getLogger("peticao_local")
 
 ID_LOCAL = "local"
-DOCX_STYLE_VERSION = 3
+DOCX_STYLE_VERSION = 4
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
+MODELO_VISUAL_GERAL = "peticao_visual_geral"
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
     ("FACTS", "Dos fatos"),
@@ -35,6 +37,66 @@ SECOES_PADRAO = (
 
 class ErroPeticao(RuntimeError):
     pass
+
+
+def extrair_identidade_visual(conteudo: bytes) -> tuple[bytes, str, str]:
+    """Extrai logo e fonte do modelo geral sem copiar fatos ou texto da peça."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
+            nomes = set(arquivo.namelist())
+            imagens = [
+                nome
+                for nome in nomes
+                if nome.startswith("word/media/")
+                and nome.lower().endswith((".png", ".jpg", ".jpeg"))
+            ]
+            if not imagens:
+                raise ErroPeticao("O modelo geral precisa ter uma logo PNG ou JPEG.")
+
+            # Logos normalmente estão no cabeçalho. Se houver mais imagens no
+            # documento, prioriza a que está relacionada por um header.
+            alvos_cabecalho: list[str] = []
+            for nome in sorted(nomes):
+                if not nome.startswith("word/_rels/header") or not nome.endswith(".rels"):
+                    continue
+                raiz = ElementTree.fromstring(arquivo.read(nome))
+                for relacao in raiz:
+                    alvo = relacao.attrib.get("Target", "")
+                    if "image" in relacao.attrib.get("Type", "") and alvo:
+                        alvos_cabecalho.append("word/" + alvo.lstrip("/"))
+            candidatos = [nome for nome in alvos_cabecalho if nome in nomes] or imagens
+            logo_nome = candidatos[0]
+            logo = arquivo.read(logo_nome)
+
+            fonte = "Arial"
+            if "word/styles.xml" in nomes:
+                raiz = ElementTree.fromstring(arquivo.read("word/styles.xml"))
+                ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+                for fontes in raiz.iter(f"{ns}rFonts"):
+                    encontrada = fontes.attrib.get(f"{ns}ascii") or fontes.attrib.get(f"{ns}hAnsi")
+                    if encontrada and len(encontrada) <= 80:
+                        fonte = encontrada
+                        break
+            logo_nome_minusculo = logo_nome.lower()
+            extensao = ".jpg" if logo_nome_minusculo.endswith((".jpg", ".jpeg")) else ".png"
+            return logo, fonte, extensao
+    except ErroPeticao:
+        raise
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError) as erro:
+        raise ErroPeticao("Não foi possível ler a identidade visual deste .docx.") from erro
+
+
+def identidade_visual() -> tuple[bytes, str, str, str]:
+    """Identidade vigente: banco em produção; Lara & Melo como reserva segura."""
+    try:
+        registro = armazenamento.obter_modelo(MODELO_VISUAL_GERAL)
+    except Exception:
+        log.warning("modelo visual indisponível no banco; usando Lara & Melo", exc_info=True)
+        registro = None
+    if registro:
+        logo, fonte, extensao = extrair_identidade_visual(registro["conteudo"])
+        return logo, fonte, extensao, registro["nome_arquivo"]
+    return LOGO_LARA_MELO.read_bytes(), "Arial", ".png", "Padrão Lara & Melo"
 
 
 def _agora() -> str:
@@ -565,6 +627,10 @@ def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
 
 
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
+    logo, fonte, logo_extensao, _origem_visual = identidade_visual()
+    fonte_xml = escape(fonte, {'"': "&quot;"})
+    logo_arquivo = f"logo-escritorio{logo_extensao}"
+    logo_content_type = "image/jpeg" if logo_extensao == ".jpg" else "image/png"
     corpo: list[str] = []
     for secao in secoes:
         if secao.get("code") == "JURIMETRY":
@@ -598,9 +664,9 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
   <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
     <wp:inline distT="0" distB="0" distL="0" distR="0">
-      <wp:extent cx="1600200" cy="905010"/><wp:docPr id="1" name="Lara e Melo"/>
+      <wp:extent cx="1600200" cy="905010"/><wp:docPr id="1" name="Logo do escritório"/>
       <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
-        <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="lara-melo-logo.png"/><pic:cNvPicPr/></pic:nvPicPr>
+        <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo-escritorio"/><pic:cNvPicPr/></pic:nvPicPr>
           <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
           <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1600200" cy="905010"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
@@ -610,11 +676,11 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
   </w:drawing></w:r></w:p>
 </w:hdr>"""
 
-    estilos_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    estilos_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:docDefaults>
     <w:rPrDefault><w:rPr>
-      <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>
+      <w:rFonts w:ascii="{fonte_xml}" w:hAnsi="{fonte_xml}" w:eastAsia="{fonte_xml}" w:cs="{fonte_xml}"/>
       <w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR"/>
     </w:rPr></w:rPrDefault>
     <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>
@@ -626,11 +692,11 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as arquivo:
         arquivo.writestr(
             "[Content_Types].xml",
-            """<?xml version="1.0" encoding="UTF-8"?>
+            f"""<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
-  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="{logo_extensao.lstrip('.')}" ContentType="{logo_content_type}"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
@@ -646,7 +712,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         arquivo.writestr("word/document.xml", documento_xml)
         arquivo.writestr("word/header1.xml", cabecalho_xml)
         arquivo.writestr("word/styles.xml", estilos_xml)
-        arquivo.writestr("word/media/lara-melo-logo.png", LOGO_LARA_MELO.read_bytes())
+        arquivo.writestr(f"word/media/{logo_arquivo}", logo)
         arquivo.writestr(
             "word/_rels/document.xml.rels",
             """<?xml version="1.0" encoding="UTF-8"?>
@@ -657,9 +723,9 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         )
         arquivo.writestr(
             "word/_rels/header1.xml.rels",
-            """<?xml version="1.0" encoding="UTF-8"?>
+            f"""<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/lara-melo-logo.png"/>
+  <Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/{logo_arquivo}"/>
 </Relationships>""",
         )
     return buffer.getvalue()
