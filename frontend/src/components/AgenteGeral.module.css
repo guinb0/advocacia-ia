@@ -11,7 +11,7 @@
 .pagina {
   display: flex;
   align-items: stretch;
-  height: 100vh;
+  height: 100dvh;
   background: var(--papel);
 }
 
@@ -241,7 +241,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px 16px;
+  /* Em tela estreita o título e o seletor "responder sobre" não cabem na mesma
+   * linha — sem a quebra os botões e o select se sobrepunham. Quebrando, o
+   * seletor desce inteiro para a segunda linha. */
+  flex-wrap: wrap;
   padding: 11px 24px;
   border-bottom: 1px solid var(--borda);
 }
@@ -581,8 +585,15 @@
     padding: 11px 16px;
   }
 
+  /* Já quebrado para a segunda linha (ver `flex-wrap` em `.cabecalho`): ocupa a
+   * largura toda em vez de espremer o select num canto. */
+  .escolhaDeCaso {
+    flex: 1 1 100%;
+  }
+
   .escolhaDeCaso select {
-    max-width: 150px;
+    flex: 1;
+    max-width: none;
   }
 }
 
