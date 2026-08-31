@@ -155,7 +155,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         # escritório — importa do documento, corrige pergunta, desfaz edição —
         # sem necessariamente conduzir atendimento. São trabalhos diferentes, e
         # dar um não obriga a dar o outro.
-        "modulos": ("casos", "documentos", "supervisao", "metricas", "usuarios", "roteiros"),
+        "modulos": ("casos", "documentos", "supervisao", "metricas", "agente", "usuarios", "roteiros"),
     },
     {
         "codigo": "cliente",
@@ -172,7 +172,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "rotulo": "Documentação",
         "descricao": "Assume chamadas e coleta os dados e documentos finais do cliente.",
         "sistema": True,
-        "modulos": ("documentacao", "casos", "documentos"),
+        "modulos": ("documentacao", "casos", "documentos", "agente"),
     },
 )
 
@@ -469,6 +469,29 @@ def _garantir_matriz_completa(con: Any) -> None:
             _definir_permissao(con, perfil["nome"], modulo, False, sobrescrever=False)
 
 
+def _liberar_agente_para_perfis_internos(con: Any) -> None:
+    """Agente jurídico é ferramenta comum do escritório, não permissão opcional.
+
+    Vale também para perfis personalizados já existentes. ``cliente`` fica fora:
+    ele usa apenas o portal público e nunca deve ganhar acesso ao backoffice.
+    """
+    perfis = con.execute(
+        f"SELECT nome FROM {_TABELA_PERFIS_NOVA} WHERE ativo = 1 AND nome <> 'cliente'"
+    ).fetchall()
+    for perfil in perfis:
+        nome = str(perfil["nome"])
+        existe_legado = con.execute(
+            f"SELECT 1 FROM {_TABELA_ACESSOS} WHERE perfil_codigo = ? AND modulo = 'agente'",
+            (nome,),
+        ).fetchone()
+        if not existe_legado:
+            con.execute(
+                f"INSERT INTO {_TABELA_ACESSOS} (perfil_codigo, modulo) VALUES (?, 'agente')",
+                (nome,),
+            )
+        _definir_permissao(con, nome, "agente", True)
+
+
 def inicializar() -> None:
     """Cria as tabelas e garante os perfis de sistema. Idempotente."""
     with conectar() as con:
@@ -486,6 +509,7 @@ def inicializar() -> None:
         _sincronizar_perfis(con, agora)
         _migrar_acessos_legados(con)
         _garantir_matriz_completa(con)
+        _liberar_agente_para_perfis_internos(con)
 
 
 def catalogo() -> list[dict[str, Any]]:
@@ -566,6 +590,8 @@ def salvar(
     """
     ativos = _codigos_modulos_ativos()
     limpo = [m for m in modulos if m in ativos]
+    if codigo != "cliente" and "agente" in ativos and "agente" not in limpo:
+        limpo.append("agente")
     descartados = [m for m in modulos if m not in ativos]
     if descartados:
         log.warning("Módulos desconhecidos ignorados em %r: %s", codigo, descartados)

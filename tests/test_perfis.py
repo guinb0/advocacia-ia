@@ -27,7 +27,7 @@ class Resultado:
 class ConexaoFalsa:
     def __init__(self):
         self.perfis = {"advogado": 1}
-        self.modulos = {"usuarios": 10, "casos": 20}
+        self.modulos = {"usuarios": 10, "casos": 20, "agente": 30}
         self.permissoes = {(1, 10): {"id": 99, "hasPermissao": "n"}}
         self.inseridos = []
         self.atualizados = []
@@ -36,6 +36,8 @@ class ConexaoFalsa:
         self.perfis_atualizados = []
 
     def execute(self, sql, params=()):
+        if "SELECT nome FROM dbo.acervo_tb_perfis WHERE ativo = 1 AND nome <> 'cliente'" in sql:
+            return Resultado([{"nome": "advogado"}])
         if "SELECT codigo, rotulo, descricao, sistema, criado_em" in sql:
             return Resultado(
                 [
@@ -122,6 +124,14 @@ def main() -> int:
         all("ativo = 1" not in sql for sql, _ in con_catalogo.perfis_atualizados),
         "sincronizacao de perfis nao reativa perfil novo existente",
         str(con_catalogo.perfis_atualizados),
+    )
+
+    con_agente = ConexaoFalsa()
+    perfis._liberar_agente_para_perfis_internos(con_agente)
+    checar(
+        (30, 1, "s") in con_agente.inseridos,
+        "agente juridico e liberado para perfil interno existente",
+        str(con_agente.inseridos),
     )
     return falhas
 
