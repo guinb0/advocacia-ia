@@ -64,6 +64,12 @@ function texto(valor: string | string[] | undefined): string {
  * requisições da conta do escritório sem antecipar nada. */
 const INTERVALO_MS = 20_000;
 
+/* Integração preservada, mas fora do fluxo enquanto o escritório não dispõe da
+ * API da ZapSign. A flag também impede consultas e polling em segundo plano —
+ * esconder só o HTML continuaria chamando uma API que não existe. Quando a
+ * integração oficial estiver disponível, basta reativar este ponto. */
+const ASSINATURA_ELETRONICA_ATIVA = false;
+
 const BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
   "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
@@ -162,6 +168,7 @@ export default function PainelContrato({ respostas }: Props) {
   }
 
   useEffect(() => {
+    if (!ASSINATURA_ELETRONICA_ATIVA) return;
     let vivo = true;
     void configAssinatura()
       .then((c) => {
@@ -183,6 +190,7 @@ export default function PainelContrato({ respostas }: Props) {
    * página deixaria o contrato tramitando na ZapSign sem nada na tela — e o
    * advogado o mandaria assinar de novo, criando um segundo documento. */
   useEffect(() => {
+    if (!ASSINATURA_ELETRONICA_ATIVA) return;
     if (!cliente || !cpf || requisitosContrato.length > 0) return;
     let vivo = true;
     void listarAssinaturas({ cliente, cpf })
@@ -216,6 +224,7 @@ export default function PainelContrato({ respostas }: Props) {
   const chavePendentes = pendentes.join(",");
 
   useEffect(() => {
+    if (!ASSINATURA_ELETRONICA_ATIVA) return;
     if (!chavePendentes) return;
     const ids = chavePendentes.split(",");
     const id = setInterval(() => {
@@ -373,7 +382,9 @@ export default function PainelContrato({ respostas }: Props) {
       {erro && <div className={ERRO}>{erro}</div>}
         </div>
 
-      {/* ------------------------------------------------ assinatura eletrônica */}
+      {/* Integração mantida no código, mas deliberadamente fora da tela até o
+        * escritório possuir uma API de assinatura. */}
+      {ASSINATURA_ELETRONICA_ATIVA && (
       <div className="min-w-0 mt-6 border-t border-borda pt-5">
         <span className={ROTULO}>ASSINATURA ELETRÔNICA</span>
 
@@ -480,13 +491,13 @@ export default function PainelContrato({ respostas }: Props) {
           </div>
         ))}
       </div>
+      )}
       </div>
 
-      {(Object.keys(porDocumento).length > 0 ||
-        assinaturas.some((a) => a.estado === "assinado")) && (
+      {Object.keys(porDocumento).length > 0 && (
         <p className="mt-[14px] mb-0 pt-3 border-t border-borda font-normal text-[12px] leading-[1.6] font-ui text-tinta-3">
-          Assinada a papelada, crie o caso abaixo: é ele que abre o checklist e o portal
-          para o cliente enviar os documentos.
+          Gerada a papelada, crie o caso abaixo: é ele que abre o checklist e o portal
+          para o cliente enviar os demais documentos.
         </p>
       )}
     </div>
