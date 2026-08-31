@@ -1390,6 +1390,33 @@ async def consultar_cep(cep: str):
         raise HTTPException(422, str(exc)) from exc
 
 
+class PedidoCpf(BaseModel):
+    """O CPF a consultar. Vai no CORPO, e não na URL, de propósito: caminho de
+    URL entra em log de acesso, histórico de proxy e referer — e isto é dado
+    pessoal de cidadão identificado, diferente do CEP."""
+
+    cpf: str = Field(min_length=11, max_length=14)
+
+
+@app.post("/api/cpf", dependencies=[Depends(auth.usuario_atual)])
+async def consultar_cpf(pedido: PedidoCpf):
+    """Qualificação do cidadão pela Receita, para adiantar a entrevista.
+
+    Fecha o buraco que o `app/consultas.py` documenta desde o começo: nome, nome
+    da mãe, nascimento, endereço e telefone deixam de ser datilografados (ou
+    ouvidos errado) e vêm da fonte. Devolve os campos já nos ids das perguntas
+    do roteiro; quem preenche o formulário é a tela, e só onde estiver vazio.
+
+    Exige login — ao contrário do CEP, que é dado público e roda solto. Aqui
+    cada consulta é um acesso a dado pessoal amparado pelo Termo de
+    Responsabilidade do Conecta, e acesso sem autor identificado não se audita.
+    """
+    try:
+        return await consultas.buscar_cpf(pedido.cpf)
+    except consultas.ErroConsulta as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @app.get("/api/roteiros/{codigo}")
 def obter_roteiro(codigo: str):
     """Roteiro completo: blocos, perguntas e quais delas abrem o gravador."""

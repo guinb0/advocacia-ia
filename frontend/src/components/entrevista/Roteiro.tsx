@@ -12,7 +12,7 @@ import type { ReactNode, Ref } from "react";
 
 import { useSessao } from "@/lib/auth";
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, escutarTrecho, listarMunicipios, obterRoteiro, recomendarEntrevista, registrarAtendimentoDocumentacao } from "@/lib/api";
+import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, escutarTrecho, listarMunicipios, obterRoteiro, recomendarEntrevista, registrarAtendimentoDocumentacao } from "@/lib/api";
 import type { MunicipioLocalidade } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
 import type {
@@ -1150,6 +1150,55 @@ function preencherMarcadores(
     [],
   );
 
+  /* CPF VÁLIDO PUXA A QUALIFICAÇÃO DA RECEITA.
+   *
+   * É o que o `app/consultas.py` chama de fechar o buraco: nome, nome da mãe,
+   * nascimento, endereço e telefone param de ser datilografados (ou ouvidos
+   * errado pela transcrição) e vêm da fonte. Só dispara com o dígito
+   * verificador conferido — errar o CPF e consultar assim mesmo é acesso a dado
+   * de outro cidadão.
+   *
+   * PREENCHE SÓ O QUE ESTÁ EM BRANCO. Quem digitou tinha o cliente na linha, e a
+   * Receita envelhece: o endereço de dois anos atrás não vale mais que o que o
+   * cliente acabou de ditar.
+   *
+   * Falha em silêncio de propósito. Sem convênio com o Conecta a rota responde
+   * "não configurada", que é o estado normal hoje — e um erro vermelho na tela a
+   * cada CPF digitado seria ruído sobre uma coisa que o atendente não conserta.
+   * O aviso de situação cadastral (óbito, CPF nulo, suspenso), esse aparece:
+   * ninguém quer descobrir isso depois do contrato assinado. */
+  const [avisoReceita, setAvisoReceita] = useState("");
+  const cpfConsultado = useRef("");
+
+  useEffect(() => {
+    const digitos = String(respostas.cpf ?? "").replace(/\D/g, "");
+    if (digitos.length !== 11 || !conferirCpf(digitos).valido) return;
+    if (cpfConsultado.current === digitos) return;
+    cpfConsultado.current = digitos;
+
+    let cancelado = false;
+    void consultarCpf(digitos)
+      .then((consulta) => {
+        if (cancelado) return;
+        setAvisoReceita(consulta.aviso || "");
+        setRespostas((atuais) => {
+          const novas = { ...atuais };
+          for (const [id, valor] of Object.entries(consulta.campos)) {
+            if (!respondida(novas[id]) && valor) novas[id] = valor;
+          }
+          return novas;
+        });
+      })
+      .catch(() => {
+        // Sem credencial, ou base fora: a entrevista segue como sempre seguiu.
+        // Rearma para o caso de a credencial entrar no meio do expediente.
+        if (!cancelado) cpfConsultado.current = "";
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [respostas.cpf]);
+
   const idsDaIdentificacao = useMemo(
     () => new Set<string>(CAMPOS_DA_IDENTIFICACAO.map((c) => c.id)),
     [CAMPOS_DA_IDENTIFICACAO],
@@ -1472,6 +1521,19 @@ function preencherMarcadores(
       />
 
       {erro && <div className={T_ERRO}>{erro}</div>}
+
+      {/* O que a Receita diz do CPF, quando não é "regular".
+        *
+        * Óbito, inscrição nula, CPF suspenso ou cancelado mudam quem pode
+        * assinar e o que a petição pode afirmar — e hoje isso só aparece no
+        * cartório, com o contrato já assinado. Não bloqueia nada: quem decide se
+        * segue é quem está atendendo, com o cliente na linha. */}
+      {avisoReceita && (
+        <p className={T_AVISO}>
+          <strong>{avisoReceita}</strong> Confirme com o cliente antes de gerar o
+          contrato e a procuração.
+        </p>
+      )}
 
       {aviso && (
         <p className={T_AVISO} aria-live="polite">

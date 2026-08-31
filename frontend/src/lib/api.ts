@@ -372,6 +372,37 @@ export async function criarCaso(
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
 }
 
+/** Qualificação do cidadão pelo CPF, na base da Receita (Conecta gov.br).
+ *
+ * Devolve os campos já nos ids das perguntas do roteiro. Vai por POST porque o
+ * CPF no caminho da URL entraria em log de acesso e histórico de proxy — e isto
+ * é dado pessoal, diferente do CEP.
+ *
+ * Lança quando não há credencial configurada, e é o caso comum enquanto o
+ * convênio com o Conecta não sai: quem chama trata como silêncio. */
+export async function consultarCpf(cpf: string): Promise<ConsultaCpf> {
+  return comoJson<ConsultaCpf>(
+    await buscar("/api/cpf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cpf }),
+    }),
+  );
+}
+
+export interface ConsultaCpf {
+  /** Já nos ids das perguntas: `nome`, `mae`, `nascimento`, `uf`, `municipio`,
+   *  `endereco`, `telefone`, `nacionalidade`. Só o que veio preenchido. */
+  campos: Record<string, string>;
+  /** "regular", "suspensa", "titular falecido"… */
+  situacao: string;
+  /** Vazio quando regular; senão, o que dizer na tela antes de assinar. */
+  aviso: string;
+  /** O nome de registro, que o contrato usa mesmo havendo nome social. */
+  nome_registro: string;
+  fonte: string;
+}
+
 export async function obterCaso(casoId: string): Promise<SituacaoCaso> {
   return comoJson<SituacaoCaso>(await buscar(`/api/casos/${casoId}`));
 }
