@@ -725,8 +725,15 @@ de fazer em voz alta. Ela mudou tudo o que vem a seguir.
   cliente, mas só as que respondem: sem repetir o enunciado, sem "ah", "então",
   "né", e sem dizer duas vezes a mesma coisa. Pergunta de relato aceita frase
   inteira; pergunta de dado objetivo quer o dado, curto.
-- `trecho` é a citação literal do que sustenta o preenchimento, para o
-  entrevistador conferir de relance.
+- Em pergunta de RELATO, entregue texto autossuficiente e compreensível para
+  quem não ouviu a conversa. Preserve todos os fatos úteis do trecho (o que
+  ocorreu, contexto, consequência e reação), organizados em uma ou mais frases.
+  Não reduza uma narrativa a "sim", palavras-chave ou fragmentos como "foi lá".
+  Organizar o que foi dito é obrigatório; acrescentar o que não foi dito é
+  proibido.
+- `trecho` é uma citação COPIADA LITERALMENTE do que sustenta o preenchimento,
+  para o entrevistador conferir de relance. Não corrija, resuma nem parafraseie
+  o trecho: a resposta organizada fica em `valor`.
 - `lembretes` é o que ficou pela metade: o cliente tocou no assunto mas faltou
   data, nome, número ou documento. Escreva como PERGUNTA pronta para ser lida em
   voz alta, na segunda pessoa.
@@ -786,11 +793,26 @@ REGRAS
 - Para `documentos`, devolva uma lista apenas com opções que o cliente afirmou
   possuir ou conseguir enviar.
 - `valor` deve conter a resposta limpa, sem repetir o enunciado ou muletas.
+- O `valor` será exibido DIRETAMENTE no formulário e depois usado por um
+  advogado. Escreva uma resposta autossuficiente, clara e gramatical, que faça
+  sentido sem ouvir o áudio e sem precisar reler a pergunta. Preserve TODOS os
+  fatos úteis falados (quem, o quê, quando, onde, como, consequência e reação),
+  mas remova hesitações, palavras repetidas, falsos começos e conversa lateral.
+  Não devolva fragmentos soltos como "foi isso", "lá mesmo", "mais ou menos" ou
+  uma sequência de palavras-chave quando a fala permite uma frase completa.
+- Interpretar melhor NÃO autoriza completar lacunas. Organize e conecte apenas
+  os fatos expressos pelo cliente. Se ele disser "caí da moto na rota, quebrei o
+  pé e meu chefe não chamou ninguém", um bom `valor` é "Caí da moto durante a
+  rota de entrega, quebrei o pé e meu superior não providenciou atendimento.";
+  não acrescente data, local, diagnóstico ou culpa que não foram falados.
 - Em perguntas `relato` / `dado`: NÃO devolva só "sim" ou "não" se o cliente
   acrescentou fato. Ex.: "Sim, tenho ansiedade e não durmo" → valor com os
   sintomas (ansiedade, sono…), não apenas "sim". "Ainda trabalho" / "fui
   demitido essa semana" devem ir por extenso no campo `desligamento`.
-- `trecho` deve ser uma citação curta da transcrição que sustenta o valor.
+- `trecho` deve ser COPIADO LITERALMENTE da transcrição e sustentar o valor.
+  Use uma sequência curta de palavras consecutivas, sem corrigir gramática, sem
+  resumir e sem trocar sinônimos. `valor` é o texto organizado; `trecho` é a
+  prova literal. Uma paráfrase em `trecho` é recusada e deixa o campo vazio.
 - NUNCA preencha com marcador de ausência. "não informado", "não mencionado",
   "não especificado", "não consta", "sem informação", "n/a", "—" e similares
   NÃO são respostas. Se o cliente não falou do assunto, OMITA o campo — não
