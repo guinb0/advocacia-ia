@@ -365,19 +365,20 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
 
   return (
     <div className="flex flex-col gap-[1.1rem] max-w-[980px] mx-auto px-4 pt-[1.4rem] pb-12">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="m-0 font-titulo text-[1.45rem] leading-[1.2] text-tinta">Modelos de petição do escritório</h1>
-          <p className="mt-[0.45rem] mb-0 max-w-[62ch] text-tinta-3 text-sm leading-[1.5]">
-            Quanto mais petições reais e revisões finais você cadastrar, melhor o sistema
-            mede o vocabulário, a estrutura, o tamanho e o ritmo do escritório. Com poucas
-            peças ele usa um perfil aproximado; a resposta melhora progressivamente conforme
-            recebe exemplos variados da mesma ação.
-          </p>
-        </div>
+      {/* "Voltar" acima do título, como nos demais módulos: ao lado do `<h1>`,
+        * numa tela estreita, o título quebrava em duas linhas e o botão sentava
+        * por cima. */}
+      <div>
         <Botao variante="texto" onClick={onVoltar}>
           ← Voltar
         </Botao>
+        <h1 className="mt-[0.45rem] mb-0 font-titulo text-[1.45rem] leading-[1.2] text-tinta">Modelos de petição do escritório</h1>
+        <p className="mt-[0.45rem] mb-0 max-w-[62ch] text-tinta-3 text-sm leading-[1.5]">
+          Quanto mais petições reais e revisões finais você cadastrar, melhor o sistema
+          mede o vocabulário, a estrutura, o tamanho e o ritmo do escritório. Com poucas
+          peças ele usa um perfil aproximado; a resposta melhora progressivamente conforme
+          recebe exemplos variados da mesma ação.
+        </p>
       </div>
 
       <Cartao titulo="Modelo visual geral dos documentos">
