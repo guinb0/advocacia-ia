@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Aviso, Botao, Cartao, Selo, Tabela, Th } from "@/components/ui/Basicos";
+import { Aviso, Botao, Cartao, Paginacao, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
 import {
   ApiError,
   enviarModeloVisualPeticao,
@@ -28,16 +28,16 @@ import type { ItemChecklist } from "@/lib/types";
 
 /* `.tabela th/td` era seletor descendente; sem equivalente no Tailwind, a regra
  * vira constante e cada célula a carrega. */
-const CELULA = "px-[0.4rem] py-2 text-left border-b border-borda";
+const CELULA = "px-3 py-2 text-left border-b border-borda";
 const CABECALHO_CELULA =
-  "px-[0.4rem] py-2 text-tinta-3 text-xs font-semibold uppercase tracking-[0.03em]";
-const ITEM_TOPO = "flex items-center justify-between gap-[0.6rem]";
-const CAMPO = "flex flex-col gap-[0.28rem] min-w-[220px] flex-1 text-tinta-3 text-xs";
+  "px-3 py-2 text-tinta-3 text-xs font-semibold uppercase tracking-[0.03em] whitespace-nowrap";
+const ITEM_TOPO = "flex min-w-0 items-center justify-between gap-[0.6rem]";
+const CAMPO = "flex min-w-0 flex-1 flex-col gap-[0.28rem] text-xs text-tinta-3";
 /* Cor explícita no select E no option não é redundância: no Windows a lista
  * aberta de um select sem cor própria pode herdar as do sistema — deu faixa
  * preta sem texto legível. */
 const SELECT =
-  "px-[0.6rem] py-[0.55rem] border border-borda-campo rounded-campo bg-papel text-tinta text-sm " +
+  "min-h-10 min-w-0 px-[0.6rem] py-[0.55rem] border border-borda-campo rounded-campo bg-papel text-tinta text-sm " +
   "[&>option]:bg-papel [&>option]:text-tinta";
 
 import {
@@ -55,6 +55,7 @@ import {
 } from "@/lib/agente";
 
 const TIPOS = [{ codigo: "INITIAL_PETITION", rotulo: "Petição inicial" }];
+const ITENS_POR_PAGINA = 8;
 
 /** Como cada estado da segmentação se explica para quem cadastrou a peça. */
 const SEGMENTACAO: Record<string, { texto: string; tom: "ok" | "atencao" | "critico" }> = {
@@ -92,6 +93,9 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [recado, setRecado] = useState<string | null>(null);
   const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
   const [enviandoVisual, setEnviandoVisual] = useState(false);
+  const [paginaPecas, setPaginaPecas] = useState(1);
+  const [totalPecas, setTotalPecas] = useState(0);
+  const [totalPaginasPecas, setTotalPaginasPecas] = useState(1);
 
   // Estado separado do `erro` de propósito. A primeira versão usava o mesmo, e o `setErro(null)`
   // do envio apagava a falha da taxonomia — a tela ficava com o seletor vazio e nenhuma
@@ -183,20 +187,35 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     };
   }, [acao]);
 
+  useEffect(() => {
+    setPaginaPecas(1);
+  }, [acao, tipo]);
+
   const recarregar = useCallback(async () => {
     if (!acao) return;
     setErroCarregamento(null);
     const [resultadoPecas, resultadoPerfil, resultadoConfig] = await Promise.allSettled([
-      pecasDeEstilo(acao),
+      pecasDeEstilo(acao, {
+        documentType: tipo,
+        pagina: paginaPecas,
+        tamanho: ITENS_POR_PAGINA,
+      }),
       perfilDeEstilo(acao, tipo),
       configuracaoDeGeracao(acao, tipo),
     ]);
     const falhas: string[] = [];
 
     if (resultadoPecas.status === "fulfilled") {
-      setPecas(resultadoPecas.value);
+      setPecas(resultadoPecas.value.items);
+      setTotalPecas(resultadoPecas.value.total);
+      setTotalPaginasPecas(resultadoPecas.value.paginas);
+      if (paginaPecas > resultadoPecas.value.paginas) {
+        setPaginaPecas(resultadoPecas.value.paginas);
+      }
     } else {
       setPecas([]);
+      setTotalPecas(0);
+      setTotalPaginasPecas(1);
       falhas.push(
         resultadoPecas.reason instanceof ApiError
           ? resultadoPecas.reason.message
@@ -238,7 +257,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     }
 
     if (falhas.length) setErroCarregamento([...new Set(falhas)].join(" "));
-  }, [acao, tipo]);
+  }, [acao, paginaPecas, tipo]);
 
   useEffect(() => {
     void recarregar();
@@ -361,36 +380,60 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     () => pecas.filter((peca) => !peca.eligibility.eligible_for_section_profile).length,
     [pecas],
   );
+  const acaoSelecionada = acoes.find((item) => item.code === acao);
+  const documentosObrigatorios = configuracao?.required_documents.length ?? 0;
+  const inicioPecas = totalPecas ? (paginaPecas - 1) * ITENS_POR_PAGINA : 0;
+  const fimPecas = Math.min(inicioPecas + pecas.length, totalPecas);
 
   return (
-    <div className="flex flex-col gap-[1.1rem] max-w-[980px] mx-auto px-4 pt-[1.4rem] pb-12">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="m-0 font-titulo text-[1.45rem] leading-[1.2] text-tinta">Modelos de petição do escritório</h1>
-          <p className="mt-[0.45rem] mb-0 max-w-[62ch] text-tinta-3 text-sm leading-[1.5]">
-            Quanto mais petições reais e revisões finais você cadastrar, melhor o sistema
-            mede o vocabulário, a estrutura, o tamanho e o ritmo do escritório. Com poucas
-            peças ele usa um perfil aproximado; a resposta melhora progressivamente conforme
-            recebe exemplos variados da mesma ação.
-          </p>
+    <div className="flex min-w-0 max-w-full flex-col gap-5">
+      <section className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-borda bg-papel-2 px-5 py-4">
+          <div className="min-w-0">
+            <Botao variante="texto" onClick={onVoltar}>
+              ← Voltar
+            </Botao>
+            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-tinta-3">
+              Produção jurídica
+            </p>
+            <h1 className="m-0 truncate font-titulo text-[1.7rem] font-semibold leading-[1.15] text-tinta">
+              Modelos de petição do escritório
+            </h1>
+            <p className="mt-2 mb-0 max-w-[72ch] text-sm leading-[1.55] text-tinta-3">
+              Configure o padrão de escrita por ação, mantenha documentos exigidos e acompanhe a qualidade das amostras cadastradas.
+            </p>
+          </div>
+          <div className="grid min-w-[220px] grid-cols-3 gap-2 rounded-campo border border-borda bg-papel p-2 text-center">
+            <div className="min-w-0 px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Amostras</span>
+              <strong className="block font-codigo text-lg text-tinta">{totalPecas}</strong>
+            </div>
+            <div className="min-w-0 border-x border-borda px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Sem seções</span>
+              <strong className="block font-codigo text-lg text-tinta">{semSecoes}</strong>
+            </div>
+            <div className="min-w-0 px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Docs</span>
+              <strong className="block font-codigo text-lg text-tinta">{documentosObrigatorios}</strong>
+            </div>
+          </div>
         </div>
-        <Botao variante="texto" onClick={onVoltar}>
-          ← Voltar
-        </Botao>
-      </div>
+      </section>
 
-      <Cartao titulo="Modelo visual geral dos documentos">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)] items-start gap-4 max-[980px]:grid-cols-1">
+      <div className="flex min-w-0 flex-col gap-4">
+      <Cartao titulo="Modelo visual geral dos documentos" className="min-w-0 overflow-hidden">
         <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
           Envie um documento institucional em <code>.docx</code>. O sistema extrai somente
           a logo do cabeçalho e a fonte-base e aplica essa identidade às novas petições;
           o conteúdo jurídico do arquivo não é copiado.
         </p>
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
           <div className="min-w-0">
-            <div className="font-semibold text-tinta">
+            <div className="truncate font-semibold text-tinta" title={modeloVisual?.arquivo ?? undefined}>
               {modeloVisual?.arquivo ?? "Carregando padrão visual…"}
             </div>
-            <div className="mt-1 text-xs text-tinta-3">
+            <div className="mt-1 truncate text-xs text-tinta-3">
               Fonte: {modeloVisual?.fonte ?? "—"}
               {modeloVisual?.origem === "embutido" ? " · padrão atual Lara & Melo" : " · modelo substituível do escritório"}
             </div>
@@ -425,14 +468,14 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         </Aviso>
       )}
 
-      <Cartao titulo="Adicionar peças">
+      <Cartao titulo="Adicionar peças" className="min-w-0 overflow-hidden">
         <p className="mt-2 mb-[0.9rem] text-tinta-3 text-sm leading-[1.5]">
           Cada peça adicionada atualiza o perfil de escrita. As correções feitas pelo
           advogado ao aprovar uma minuta também viram aprendizado supervisionado: o sistema
           compara o texto gerado com a versão final, sem copiar fatos de um processo para outro.
         </p>
 
-        <div className="flex flex-wrap gap-[0.9rem] mb-[0.9rem]">
+        <div className="mb-[0.9rem] grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-[0.9rem]">
           <label className={CAMPO}>
             <span>Ação</span>
             <select className={SELECT}
@@ -555,12 +598,12 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       </Cartao>
 
       {configuracao && (
-        <Cartao titulo="Configuração da peça">
+        <Cartao titulo="Configuração da peça" className="min-w-0 overflow-hidden">
           <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
             Configure este tipo de documento para a ação escolhida. As regras e a checklist
             acompanham o estilo aprendido e entram diretamente na geração da IA Jurídica.
           </p>
-          <div className="flex flex-wrap gap-[0.9rem]">
+          <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-[0.9rem]">
             <label className={CAMPO}>
               <span>Nome do tipo de documento</span>
               <input className={SELECT} value={configuracao.display_name}
@@ -568,7 +611,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             </label>
             <label className={CAMPO}>
               <span>Ação vinculada</span>
-              <input className={SELECT} value={acoes.find((item) => item.code === acao)?.label ?? acao} disabled />
+              <input className={SELECT} value={acaoSelecionada?.label ?? acao} disabled />
             </label>
           </div>
           <label className="mt-4 flex flex-col gap-2 text-tinta-3 text-xs">
@@ -614,9 +657,9 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               </div>
             )}
 
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex min-w-0 flex-wrap gap-2">
               <input
-                className={`${SELECT} flex-1`}
+                className={`${SELECT} min-w-[220px] flex-1`}
                 value={documentoNovo}
                 placeholder="Ex.: laudo médico, CNIS, procuração"
                 onChange={(evento) => setDocumentoNovo(evento.target.value)}
@@ -637,9 +680,9 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                 {configuracao.required_documents.map((documento) => (
                   <li
                     key={documento}
-                    className="flex items-center gap-2 rounded-pill border border-borda bg-papel px-3 py-1.5 text-xs text-tinta"
+                    className="flex max-w-full items-center gap-2 rounded-pill border border-borda bg-papel px-3 py-1.5 text-xs text-tinta"
                   >
-                    {documento}
+                    <span className="min-w-0 truncate" title={documento}>{documento}</span>
                     <button
                       type="button"
                       className="text-critico cursor-pointer"
@@ -685,12 +728,15 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         </Cartao>
       )}
 
-      <PainelPerfil perfil={perfil} total={pecas.length} />
+      </div>
 
-      <Cartao>
+      <aside className="flex min-w-0 flex-col gap-4">
+      <PainelPerfil perfil={perfil} total={totalPecas} />
+
+      <Cartao className="min-w-0 overflow-hidden">
         <div className={ITEM_TOPO}>
-          <h2 className="m-0 text-tinta font-titulo text-lg font-semibold">Peças cadastradas nesta ação</h2>
-          <span className="px-2 py-[0.1rem] rounded-pill bg-papel-3 text-tinta-2 text-xs tabular-nums">{pecas.length}</span>
+          <h2 className="m-0 min-w-0 truncate text-tinta font-titulo text-lg font-semibold">Peças cadastradas nesta ação</h2>
+          <span className="px-2 py-[0.1rem] rounded-pill bg-papel-3 text-tinta-2 text-xs tabular-nums">{totalPecas}</span>
         </div>
 
         {semSecoes > 0 && (
@@ -702,19 +748,21 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         )}
 
         {pecas.length === 0 ? (
-          <p className="mt-[0.6rem] mb-0 text-tinta-3 text-sm leading-[1.5]">
+          <Vazio className="mt-3">
             Nenhuma peça nesta ação ainda. O sistema não mistura amostras de outras ações;
             enquanto não houver exemplos próprios, escreve sem um padrão medido para esta ação.
-          </p>
+          </Vazio>
         ) : (
           <ul className="list-none mt-[0.7rem] mb-0 p-0 flex flex-col gap-2">
             {pecas.map((peca) => {
               const seg = SEGMENTACAO[peca.segmentation.quality];
               return (
-                <li key={peca.id} className="px-3 py-[0.65rem] border border-borda rounded-campo">
-                  <div className={ITEM_TOPO}>
-                    <strong className="overflow-hidden text-ellipsis whitespace-nowrap text-sm text-tinta">{peca.filename ?? "(sem nome)"}</strong>
-                    <div className="flex items-center gap-2">
+                <li key={peca.id} className="min-w-0 rounded-campo border border-borda px-3 py-[0.65rem]">
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <strong className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-tinta" title={peca.filename ?? "(sem nome)"}>
+                      {peca.filename ?? "(sem nome)"}
+                    </strong>
+                    <div className="flex shrink-0 items-center gap-2">
                       <Selo tom={seg.tom} simbolo={peca.segmentation.quality === "FULL" ? "✓" : "!"}>
                         {seg.texto}
                       </Selo>
@@ -723,7 +771,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                       </Botao>
                     </div>
                   </div>
-                  <div className="mt-1 text-tinta-3 text-xs tabular-nums">
+                  <div className="mt-1 truncate text-tinta-3 text-xs tabular-nums">
                     {peca.word_count.toLocaleString("pt-BR")} palavras
                     {peca.document_format ? ` · ${peca.document_format}` : ""}
                     {peca.source === "LAWYER_EDITED_GENERATION"
@@ -735,7 +783,18 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             })}
           </ul>
         )}
+        <Paginacao
+          pagina={paginaPecas}
+          totalPaginas={totalPaginasPecas}
+          total={totalPecas}
+          inicio={inicioPecas}
+          fim={fimPecas}
+          rotulo="peças"
+          onPagina={setPaginaPecas}
+        />
       </Cartao>
+      </aside>
+      </div>
     </div>
   );
 }
@@ -750,7 +809,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
 function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total: number }) {
   if (!perfil) {
     return (
-      <Cartao titulo="Padrão medido">
+      <Cartao titulo="Padrão medido" className="min-w-0 overflow-hidden">
         <p className="mt-[0.6rem] mb-0 text-tinta-3 text-sm leading-[1.5]">
           {total < 5
             ? `Há ${total} de 5 petições necessárias nesta ação. Até completar a amostra mínima, os textos ficam cadastrados, mas não orientam novas peças.`
@@ -768,9 +827,9 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
   ];
 
   return (
-    <Cartao>
+    <Cartao className="min-w-0 overflow-hidden">
       <div className={ITEM_TOPO}>
-        <h2 className="m-0 text-tinta font-titulo text-lg font-semibold">Padrão medido</h2>
+        <h2 className="m-0 min-w-0 truncate text-tinta font-titulo text-lg font-semibold">Padrão medido</h2>
         <Selo tom={proprias >= 5 ? "ok" : "atencao"} simbolo={proprias >= 5 ? "✓" : "!"}>
           {proprias} peça(s) desta ação
         </Selo>
@@ -786,8 +845,12 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
         <p className="my-2">
           As petições desta ação <strong>serão redigidas conforme este padrão do escritório</strong>:
         </p>
-        <ul className="my-2 pl-5">
-          {diretrizesDoPadrao(perfil).map((diretriz) => <li key={diretriz}>{diretriz}</li>)}
+        <ul className="my-2 flex list-none flex-col gap-2 p-0">
+          {diretrizesDoPadrao(perfil).map((diretriz) => (
+            <li key={diretriz} className="line-clamp-2 rounded-campo bg-papel px-3 py-2 text-xs" title={diretriz}>
+              {diretriz}
+            </li>
+          ))}
         </ul>
         <p className="mb-0 mt-2">
           No caso concreto, o sistema manterá essa forma de escrever e adaptará o conteúdo aos
@@ -797,7 +860,8 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
         </p>
       </div>
 
-      <Tabela className="text-tinta-2">
+      <div className="max-w-full overflow-x-auto">
+      <Tabela className="min-w-[460px] text-tinta-2">
         <thead>
           <tr>
             <Th className={CABECALHO_CELULA}>
@@ -830,6 +894,7 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
           })}
         </tbody>
       </Tabela>
+      </div>
 
       <p className="mt-[0.8rem] mb-0 text-tinta-3 text-xs leading-[1.5]">
         A coluna da direita é a que entra na geração e usa somente esta ação. São {total}

@@ -746,13 +746,41 @@ export interface PecaDeEstilo {
   created_at: string | null;
 }
 
-export async function pecasDeEstilo(taxonomyCode?: string | null): Promise<PecaDeEstilo[]> {
-  const busca = new URLSearchParams();
+export interface PaginaPecasDeEstilo {
+  items: PecaDeEstilo[];
+  total: number;
+  limit: number;
+  offset: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+}
+
+export async function pecasDeEstilo(
+  taxonomyCode?: string | null,
+  opcoes: { pagina?: number; tamanho?: number; documentType?: string | null } = {},
+): Promise<PaginaPecasDeEstilo> {
+  const tamanho = opcoes.tamanho ?? 20;
+  const pagina = opcoes.pagina ?? 1;
+  const offset = (Math.max(1, pagina) - 1) * tamanho;
+  const busca = new URLSearchParams({ limit: String(tamanho), offset: String(offset) });
   if (taxonomyCode) busca.set("taxonomy_code", taxonomyCode);
-  const dados = await chamar<{ items: PecaDeEstilo[] }>(
-    `/api/agente/estilo/pecas${busca.toString() ? `?${busca}` : ""}`,
+  if (opcoes.documentType) busca.set("document_type", opcoes.documentType);
+  const dados = await chamar<{ items: PecaDeEstilo[]; total?: number; limit?: number; offset?: number }>(
+    `/api/agente/estilo/pecas?${busca}`,
   );
-  return dados.items ?? [];
+  const total = dados.total ?? dados.items?.length ?? 0;
+  const limite = dados.limit ?? tamanho;
+  const deslocamento = dados.offset ?? offset;
+  return {
+    items: dados.items ?? [],
+    total,
+    limit: limite,
+    offset: deslocamento,
+    pagina: Math.floor(deslocamento / limite) + 1,
+    tamanho: limite,
+    paginas: Math.max(1, Math.ceil(total / limite)),
+  };
 }
 
 /** Sobe uma peça pronta do escritório para o corpus de estilo. */

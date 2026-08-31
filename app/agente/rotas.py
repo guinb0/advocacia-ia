@@ -656,11 +656,17 @@ def taxonomia_de_estilo() -> dict[str, Any]:
 
 @roteador.get("/estilo/pecas")
 def pecas_de_estilo(
-    taxonomy_code: str | None = None, document_type: str | None = None
+    taxonomy_code: str | None = None,
+    document_type: str | None = None,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     try:
         return Cliente().pecas_de_estilo(
-            taxonomy_code=taxonomy_code, document_type=document_type
+            taxonomy_code=taxonomy_code,
+            document_type=document_type,
+            limit=limit,
+            offset=offset,
         )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro

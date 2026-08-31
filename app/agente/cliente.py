@@ -786,16 +786,20 @@ class Cliente:
         return self._ler(caminho)
 
     def pecas_de_estilo(
-        self, *, taxonomy_code: str | None = None, document_type: str | None = None
+        self,
+        *,
+        taxonomy_code: str | None = None,
+        document_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
     ) -> dict[str, Any]:
         caminho = "/api/v1/style/documents"
-        filtros = []
+        filtros = [f"limit={limit}", f"offset={offset}"]
         if taxonomy_code:
             filtros.append(f"taxonomy_code={quote(taxonomy_code)}")
         if document_type:
             filtros.append(f"document_type={quote(document_type)}")
-        if filtros:
-            caminho += "?" + "&".join(filtros)
+        caminho += "?" + "&".join(filtros)
         return self._ler(caminho)
 
     def remover_peca_de_estilo(self, peca_id: str) -> None:

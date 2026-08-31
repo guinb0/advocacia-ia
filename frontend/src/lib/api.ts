@@ -435,6 +435,48 @@ export async function listarRoteiros(): Promise<RoteiroResumo[]> {
   return dados.roteiros;
 }
 
+export interface PaginaRoteiros {
+  roteiros: RoteiroResumo[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+  importados: number;
+  originais: number;
+}
+
+export async function listarRoteirosPaginado(
+  pagina: number,
+  tamanho: number,
+): Promise<PaginaRoteiros> {
+  const dados = await comoJson<Partial<PaginaRoteiros> & { roteiros?: RoteiroResumo[] }>(
+    await buscar(`/api/roteiros?pagina=${pagina}&tamanho=${tamanho}`),
+  );
+  const numeroSeguro = (valor: unknown, fallback: number) =>
+    typeof valor === "number" && Number.isFinite(valor) ? valor : fallback;
+  const roteiros = dados.roteiros ?? [];
+  const total = numeroSeguro(dados.total, roteiros.length);
+  const paginaAtual = numeroSeguro(dados.pagina, pagina);
+  const tamanhoAtual = numeroSeguro(dados.tamanho, tamanho);
+  const paginas = numeroSeguro(
+    dados.paginas,
+    Math.max(1, Math.ceil(total / Math.max(1, tamanhoAtual))),
+  );
+  const importados = numeroSeguro(
+    dados.importados,
+    roteiros.filter((roteiro) => roteiro.importado).length,
+  );
+  return {
+    roteiros,
+    total,
+    pagina: paginaAtual,
+    tamanho: tamanhoAtual,
+    paginas,
+    importados,
+    originais: numeroSeguro(dados.originais, total - importados),
+  };
+}
+
 /** Lê o documento anexado e monta um roteiro a partir dele.
  *
  * São de dez segundos a dois minutos: o arquivo pode precisar de OCR e a
