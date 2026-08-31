@@ -153,7 +153,7 @@ export default function TriagemEntrevista({
    * atendimento em curso, e não como "voltou para a tela de casos". */
   const fase = mostrarRoteiro
     ? "entrevista"
-    : qualificacao !== null
+    : qualificacao !== null && !encerrado
       ? "pos-entrevista"
       : "nenhum";
   const avisar = useRef(onAtendimento);
@@ -429,6 +429,11 @@ export default function TriagemEntrevista({
             setTranscricao(trechos);
           }}
           onConcluir={(respostas, relato, entrevistaId, trechos) => {
+            /* Finalizar é diferente de apenas avançar para documentação.
+             * A tela prometia "chamada desligada", mas só escondia o roteiro:
+             * o provedor global continuava conectado e remontava o vídeo, em
+             * largura total, embaixo do formulário genérico. */
+            chamada.desligar();
             setTexto(relato);
             setQualificacao(respostas);
             setAudioEntrevista(entrevistaId);
@@ -487,13 +492,20 @@ export default function TriagemEntrevista({
         * aqui, porque continuam por fazer. */}
       {!encerrado && !mostrarRoteiro && etapasDoAtendimento}
 
-      <span className="block mb-1 text-tinta text-sm font-bold">Validação após a entrevista — quais ações cabem</span>
-      <p className="mb-3 mt-0 max-w-[64ch] text-tinta-3 text-xs leading-[1.55]">
-        Analise o relato antes de pedir a avaliação ao cliente. O sistema sugere as ações cabíveis,
-        mostra o que sustenta cada uma e compara o caso com a base vetorial. A decisão final é da equipe jurídica.
-      </p>
+      {/* O importador abaixo também serve para análise avulsa, antes de começar
+        * uma entrevista. Depois de FINALIZAR, porém, a conversa já foi lida em
+        * duas etapas e revisada dentro do roteiro. Mostrá-lo novamente fazia a
+        * tela parecer ter voltado ao início e convidava a analisar tudo duas
+        * vezes. */}
+      {!encerrado && (
+        <>
+          <span className="block mb-1 text-tinta text-sm font-bold">Validação após a entrevista — quais ações cabem</span>
+          <p className="mb-3 mt-0 max-w-[64ch] text-tinta-3 text-xs leading-[1.55]">
+            Analise o relato antes de pedir a avaliação ao cliente. O sistema sugere as ações cabíveis,
+            mostra o que sustenta cada uma e compara o caso com a base vetorial. A decisão final é da equipe jurídica.
+          </p>
 
-      <div
+          <div
         className={`rounded-campo border-2 border-dashed p-3 transition-colors ${
           arrastandoArquivo ? "border-tinta bg-papel-2" : "border-transparent"
         }`}
@@ -557,14 +569,16 @@ export default function TriagemEntrevista({
       <p className="mb-0 mt-2 text-[11px] leading-[1.5] text-tinta-3">
         Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual.
       </p>
-      </div>
+          </div>
 
-      {erro && (
-        <div className="mt-3">
-          <Aviso tom="critico" titulo="Não foi possível analisar">
-            {erro}
-          </Aviso>
-        </div>
+          {erro && (
+            <div className="mt-3">
+              <Aviso tom="critico" titulo="Não foi possível analisar">
+                {erro}
+              </Aviso>
+            </div>
+          )}
+        </>
       )}
 
       {resultado && (

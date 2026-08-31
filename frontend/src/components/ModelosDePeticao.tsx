@@ -23,6 +23,7 @@ import {
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
   restaurarModeloVisualPeticao,
+  urlApi,
 } from "@/lib/api";
 import type { ItemChecklist } from "@/lib/types";
 
@@ -386,13 +387,43 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           o conteúdo jurídico do arquivo não é copiado.
         </p>
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-4">
+            {/* A LOGO QUE VAI SAIR NA PETIÇÃO, à vista.
+              *
+              * O cartão dizia o nome do arquivo e a fonte, e mais nada — quem
+              * trocava o modelo só descobria qual imagem o extrator escolheu ao
+              * abrir a primeira petição pronta. E há o que escolher: um .docx
+              * institucional costuma ter várias imagens, e a heurística prefere
+              * a que está relacionada por um cabeçalho.
+              *
+              * A chave força o navegador a rebuscar quando o modelo muda; sem
+              * ela a logo antiga ficaria na tela justamente no momento em que
+              * ela existe para confirmar a troca. */}
+            {modeloVisual && (
+              /* eslint-disable-next-line @next/next/no-img-element -- vem da
+                 API com `no-store`, e o otimizador do Next a cachearia. */
+              <img
+                key={modeloVisual.atualizado_em ?? modeloVisual.arquivo}
+                className="h-14 w-auto max-w-[180px] flex-none rounded-campo border border-borda bg-papel object-contain p-1"
+                src={urlApi(
+                  `/api/modelos/peticao/visual/logo?v=${encodeURIComponent(
+                    modeloVisual.atualizado_em ?? modeloVisual.arquivo,
+                  )}`,
+                )}
+                alt={`Logo de ${modeloVisual.arquivo}, como sairá no cabeçalho das petições`}
+              />
+            )}
+            <div className="min-w-0">
             <div className="font-semibold text-tinta">
               {modeloVisual?.arquivo ?? "Carregando padrão visual…"}
             </div>
             <div className="mt-1 text-xs text-tinta-3">
               Fonte: {modeloVisual?.fonte ?? "—"}
               {modeloVisual?.origem === "embutido" ? " · padrão atual Lara & Melo" : " · modelo substituível do escritório"}
+            </div>
+            <div className="mt-1 text-[11px] text-tinta-3">
+              É esta logo que será carimbada no cabeçalho das próximas petições.
+            </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">

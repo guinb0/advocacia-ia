@@ -499,6 +499,35 @@ async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
     }
 
 
+@app.get("/api/modelos/peticao/visual/logo")
+async def logo_do_modelo_visual(_autorizado=PodeManterModeloPeticao):
+    """A logo que será carimbada nas petições, para conferir ANTES de gerar uma.
+
+    O cartão dizia o nome do arquivo e a fonte, e mais nada — quem trocava o
+    modelo descobria qual imagem o extrator escolheu só quando abria a primeira
+    petição pronta. E há o que escolher: um .docx institucional costuma ter
+    várias imagens, e a heurística prefere a que está relacionada por um
+    cabeçalho (ver `extrair_identidade_visual`). Mostrar o resultado é o que
+    separa "trocou o timbre" de "achou que trocou".
+
+    Serve tanto o modelo do escritório quanto o Lara & Melo embutido: quem olha
+    quer ver o que vai sair, não saber de onde veio.
+    """
+    try:
+        logo, _fonte, extensao, _nome = await run_in_threadpool(
+            peticao_local.identidade_visual
+        )
+    except peticao_local.ErroPeticao as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return Response(
+        content=logo,
+        media_type="image/jpeg" if extensao == ".jpg" else "image/png",
+        # Sem cache: trocar o modelo e continuar vendo a logo antiga faria a
+        # tela mentir justamente no momento em que ela existe para confirmar.
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/api/modelos/peticao/visual", status_code=201)
 async def enviar_modelo_visual_peticao(
     arquivo: UploadFile = File(...),

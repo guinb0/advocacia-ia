@@ -2083,8 +2083,11 @@ function BlocoRoteiro({
                 </span>
               )}
               {p.transcrever && (
-                <span className="flex-none self-center text-[9px] font-semibold leading-none font-ui tracking-[0.1em] text-atencao border border-atencao px-[5px] py-[3px]">
-                  VOZ
+                <span
+                  className="flex-none self-center text-[9px] font-semibold leading-none font-ui tracking-[0.1em] text-atencao border border-atencao px-[5px] py-[3px]"
+                  title="A resposta ouvida preenche o campo automaticamente, mas também pode ser digitada ou corrigida."
+                >
+                  VOZ OU TEXTO
                 </span>
               )}
             </div>
@@ -2567,6 +2570,12 @@ function CampoResposta({
         </div>
       )}
 
+      {pergunta.transcrever && (
+        <span className="block mb-2 font-normal text-[11.5px] leading-[1.45] font-ui text-tinta-3">
+          O que for ouvido aparece automaticamente abaixo. Você também pode digitar, completar ou corrigir a resposta.
+        </span>
+      )}
+
       <textarea
         className="w-full min-h-[88px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[10px] font-normal text-[13px] leading-[1.6] font-ui resize-y"
         value={gravando && parcial ? `${texto}${texto ? " " : ""}${parcial}` : texto}
@@ -2578,7 +2587,9 @@ function CampoResposta({
           if (pergunta.transcrever && !emCurso) onConferir(pergunta.id, e.target.value);
         }}
         placeholder={
-          pergunta.transcrever ? "Grave pelo microfone ou digite aqui." : "Digite a resposta."
+          pergunta.transcrever
+            ? "A resposta ouvida aparece aqui — ou digite e edite manualmente."
+            : "Digite a resposta."
         }
         readOnly={gravando}
       />
