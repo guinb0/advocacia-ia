@@ -194,10 +194,9 @@ export default function Checklist({
       <EnvioEmLote onEnviar={onEnviarLote} enviando={enviando === "__lote__"} />
 
       {dentroDoAtendimento && (
-        <Aviso tom="info" titulo="Documento no item errado?">
-          Em cada arquivo recebido, use <strong>Mover para outro item</strong> para corrigir a
-          leitura automática (por exemplo, CAT que caiu em carteira de trabalho). O arquivo e
-          os dados lidos permanecem os mesmos.
+        <Aviso tom="info" titulo="Classificação automática incorreta?">
+          Em cada arquivo recebido, use <strong>Corrigir classificação</strong>. A correção
+          ajusta o checklist e passa a orientar as próximas classificações do escritório.
         </Aviso>
       )}
 
