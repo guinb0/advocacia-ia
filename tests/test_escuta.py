@@ -620,6 +620,14 @@ def cenario_processamento_consolidado() -> int:
             "incertas": [
                 {"pergunta_id": "funcao", "motivo": "A função não ficou clara."},
             ],
+            "insights_entrevista": {
+                "foco": "parcial",
+                "diagnostico": "A conversa mencionou o assalto, mas não esclareceu a função.",
+                "desvios": ["A função foi perguntada e ficou sem resposta clara."],
+                "perguntas_especificas": [
+                    "Quando ocorreram os dois assaltos mencionados no ano passado?"
+                ],
+            },
         }
     )
 
@@ -631,6 +639,11 @@ def cenario_processamento_consolidado() -> int:
     falhas += not checar(r["respostas"]["as_ocorrencias"] == "duas vezes no ano passado", "rastreio positivo mantém o módulo")
     falhas += not checar("doenca" not in r["respostas"], "campo de módulo fechado é descartado")
     falhas += not checar(len(r["incertas"]) == 1, "informação insegura fica em aberto para revisão")
+    falhas += not checar(
+        r["insights_entrevista"]["foco"] == "parcial"
+        and "dois assaltos" in r["insights_entrevista"]["perguntas_especificas"][0],
+        "a revisão devolve foco e pergunta específica baseada na conversa",
+    )
     falhas += not checar(
         "funcao" not in {item["pergunta_id"] for item in r["faltando"]},
         "pergunta feita sem resposta vai para confirmação, não para não perguntadas",
