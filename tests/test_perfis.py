@@ -36,7 +36,7 @@ class ConexaoFalsa:
         self.perfis_atualizados = []
 
     def execute(self, sql, params=()):
-        if "SELECT nome FROM dbo.acervo_tb_perfis WHERE ativo = 1 AND nome <> 'cliente'" in sql:
+        if "SELECT nome FROM dbo.tb_perfis WHERE ativo = 1 AND nome <> 'cliente'" in sql:
             return Resultado([{"nome": "advogado"}])
         if "SELECT codigo, rotulo, descricao, sistema, criado_em" in sql:
             return Resultado(
@@ -57,28 +57,28 @@ class ConexaoFalsa:
                     {"perfil_codigo": "advogado", "modulo": "casos"},
                 ]
             )
-        if "FROM dbo.acervo_tb_perfis" in sql and "WHERE nome = ?" in sql:
+        if "FROM dbo.tb_perfis" in sql and "WHERE nome = ?" in sql:
             perfil = self.perfis.get(params[0])
             return Resultado([{"id": perfil}] if perfil else [])
-        if "FROM dbo.acervo_tb_modulos_web" in sql and "WHERE nome_modulo = ?" in sql:
+        if "FROM dbo.tb_modulos_web" in sql and "WHERE nome_modulo = ?" in sql:
             modulo = self.modulos.get(params[0])
             return Resultado([{"id": modulo}] if modulo else [])
-        if "FROM dbo.acervo_tb_permissoes" in sql and "WHERE perfil = ? AND modulo = ?" in sql:
+        if "FROM dbo.tb_permissoes" in sql and "WHERE perfil = ? AND modulo = ?" in sql:
             permissao = self.permissoes.get((params[0], params[1]))
             return Resultado([permissao] if permissao else [])
-        if sql.strip().startswith("UPDATE dbo.acervo_tb_permissoes"):
+        if sql.strip().startswith("UPDATE dbo.tb_permissoes"):
             self.atualizados.append(params)
             return Resultado([])
-        if sql.strip().startswith("INSERT INTO dbo.acervo_tb_permissoes"):
+        if sql.strip().startswith("INSERT INTO dbo.tb_permissoes"):
             self.inseridos.append(params)
             return Resultado([])
-        if sql.strip().startswith("UPDATE dbo.acervo_tb_modulos_web"):
+        if sql.strip().startswith("UPDATE dbo.tb_modulos_web"):
             self.modulos_atualizados.append(params)
             return Resultado([])
-        if sql.strip().startswith("INSERT INTO dbo.acervo_tb_modulos_web"):
+        if sql.strip().startswith("INSERT INTO dbo.tb_modulos_web"):
             self.modulos_inseridos.append(params)
             return Resultado([])
-        if sql.strip().startswith("UPDATE dbo.acervo_tb_perfis"):
+        if sql.strip().startswith("UPDATE dbo.tb_perfis"):
             self.perfis_atualizados.append((sql, params))
             return Resultado([])
         return Resultado([])

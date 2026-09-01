@@ -1,7 +1,7 @@
 # Build + deploy vem do componente compartilhado guinb0/ci-cd.
 # Os testes (qualidade em MR) sao proprios do projeto.
 include:
-  - component: gitlab.com/guinb0/ci-cd/deploy@1.0.3
+  - component: gitlab.com/guinb0/ci-cd/deploy@1.0.2
     inputs:
       stack_name: forense-flow
       deploy_when: manual

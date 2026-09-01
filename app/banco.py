@@ -55,13 +55,36 @@ schemas com nome parecido, três deles vazios, custavam mais em confusão do que
 separação. Quem precisa distinguir os dois sistemas lê o prefixo da tabela.
 """
 
-PREFIXO = "acervo_"
-"""Prefixo das tabelas do Acervo dentro do `dbo`.
+PREFIXO = ""
+"""As tabelas usam nomes diretos dentro do schema ``dbo`` (``dbo.casos`` etc.)."""
 
-Sem ele, `casos` (Acervo) ficaria ao lado de `cases` (agente) guardando coisas diferentes,
-e `entregas` ao lado de `documents`, que são o mesmo documento visto por cada lado. O
-prefixo é o que substitui o schema separado na hora de saber de quem é cada tabela.
-"""
+# Nomes que existiam com o prefixo ``acervo_``. A lista inclui tabelas inicializadas
+# fora deste módulo para que uma instalação existente seja renomeada inteira no mesmo
+# boot, antes de qualquer DDL tentar criar uma tabela vazia com o nome novo.
+TABELAS_COM_PREFIXO_LEGADO = (
+    "casos",
+    "classificacoes_documentos_corrigidas",
+    "entregas",
+    "entrevistas",
+    "peticoes_locais",
+    "assinaturas",
+    "roteiros",
+    "ufs",
+    "municipios",
+    "conversa_mensagens",
+    "conversas",
+    "automacoes_whatsapp",
+    "cobrancas_documentos",
+    "modelos_documento",
+    "usuarios",
+    "perfis",
+    "perfil_modulos",
+    "tb_perfis",
+    "tb_modulos_web",
+    "tb_permissoes",
+    "atendimentos_documentacao",
+    "documentadores_online",
+)
 
 _ENV = ambiente.CAMINHO
 
@@ -253,7 +276,7 @@ def _adaptar_sql(sql: str) -> str:
     texto = sql.strip()
     texto = re.sub(
         r"IF\s+SCHEMA_ID\([^\n]+\)\s+IS\s+NULL\s+EXEC\([^\n]+\)\s*;?",
-        f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}",
+        f"CREATE SCHEMA IF NOT EXISTS {SCHEMA};",
         texto,
         flags=re.I | re.S,
     )
@@ -349,7 +372,7 @@ def sessao() -> Iterator[Conexao]:
 
 # ---------------------------------------------------------------------------- schema
 
-ESQUEMA_POSTGRES = f"""
+ESQUEMA_POSTGRES = _adaptar_sql(f"""
 IF SCHEMA_ID('{SCHEMA}') IS NULL EXEC('CREATE SCHEMA {SCHEMA}');
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}casos') IS NULL
@@ -590,7 +613,7 @@ CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
 IF COL_LENGTH('{SCHEMA}.{PREFIXO}roteiros', 'origem') IS NULL
 ALTER TABLE {SCHEMA}.{PREFIXO}roteiros
     ADD origem nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_origem DEFAULT N'';
-"""
+""")
 
 # As constraints criadas antes da faxina mantêm o nome `pk_ocr_*` / `fk_ocr_*`. Renomear
 # constraint exige `sp_rename` em cada uma e não muda comportamento nenhum — o custo do
@@ -692,6 +715,19 @@ def inicializar_schema() -> None:
     bruta = psycopg.connect(dsn(), connect_timeout=30, autocommit=True)
     try:
         cursor = bruta.cursor()
+        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
+        for tabela in TABELAS_COM_PREFIXO_LEGADO:
+            antiga = f"acervo_{tabela}"
+            cursor.execute("SELECT to_regclass(%s), to_regclass(%s)",
+                           (f"{SCHEMA}.{antiga}", f"{SCHEMA}.{tabela}"))
+            existe_antiga, existe_nova = cursor.fetchone()
+            if existe_antiga is not None and existe_nova is not None:
+                raise RuntimeError(
+                    f"Migração ambígua: {SCHEMA}.{antiga} e {SCHEMA}.{tabela} existem."
+                )
+            if existe_antiga is not None and existe_nova is None:
+                # Os identificadores vêm de uma tupla fechada acima, não de entrada externa.
+                cursor.execute(f"ALTER TABLE {SCHEMA}.{antiga} RENAME TO {tabela}")
         for lote in ESQUEMA_POSTGRES.split(";\n"):
             if lote.strip():
                 cursor.execute(_adaptar_sql(lote))
