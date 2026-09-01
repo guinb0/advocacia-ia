@@ -102,7 +102,11 @@ export const CABECALHO: Record<
  * atendimento.
  */
 export const useHomeModel = () => {
-  const [tela, setTela] = useState<Tela>("entrevista");
+  // A carteira é a porta de entrada do escritório. A entrevista é um módulo de
+  // trabalho, não um redirecionamento: iniciar por ela fazia qualquer recarga
+  // abandonar o contexto em que a pessoa estava e, em perfis sem esse módulo,
+  // parecia deixar a aplicação sem saída.
+  const [tela, setTela] = useState<Tela>("carteira");
   const sessao = useSessao();
   const [casoAberto, setCasoAberto] = useState<string | null>(null);
 
