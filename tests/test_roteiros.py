@@ -173,20 +173,8 @@ def main_teste() -> int:
         "e ela pede nome, CPF, UF e município",
     )
     falhas += not checar(
-        ordem[-1] == "identificacao" and ordem.index("rastreio") < ordem.index("identificacao"),
-        "a qualificação completa foi para o fim, depois do rastreio",
-    )
-    qualificacao = next(b for b in corpo["blocos"] if b["id"] == "identificacao")
-    falhas += not checar(
-        qualificacao["delegado_a"] == "Departamento de Documentação",
-        "e está marcada como de outra equipe",
-    )
-    falhas += not checar(
-        not any(
-            p["id"] in ("nome", "cpf", "uf", "municipio")
-            for p in qualificacao["perguntas"]
-        ),
-        "os quatro dados de abertura não ficaram duplicados nos dois blocos",
+        "identificacao" not in ordem,
+        "a qualificação completa fica fora do roteiro da entrevista",
     )
 
     # --- as retomadas ------------------------------------------------------

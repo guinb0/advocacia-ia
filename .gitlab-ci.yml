@@ -47,6 +47,20 @@ include:
 # de criar `version.env`. `sed -n '1p'` consome a entrada inteira e preserva a
 # mesma ordenação sem quebrar o produtor do pipe.
 generate-version:
+  # `stage` e `rules` REPETIDOS AQUI, e não é redundância.
+  #
+  # Este bloco sobrescreve um job do componente — mas o componente só entra na
+  # branch `production` (ver o `rules` do `include`, acima). Nas outras branches
+  # não há job para mesclar: este vira um job NOVO, herda o stage padrão do
+  # GitLab (`test`), e `test` não está na lista de `stages` deste arquivo. O
+  # resultado não é um job que falha, é o pipeline inteiro que não chega a ser
+  # criado: "chosen stage test does not exist".
+  #
+  # Com a mesma condição do `include`, ele existe exatamente onde há o que
+  # sobrescrever, e com o stage declarado não depende de herança para ser válido.
+  stage: version
+  rules:
+    - if: $CI_COMMIT_BRANCH == "production"
   script:
     - |
       TAG_PREFIX="release/v"

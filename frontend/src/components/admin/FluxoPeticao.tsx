@@ -271,7 +271,8 @@ function ModuloJurimetria({
       <header className="grid gap-1">
         <h3 className="text-sm font-semibold m-0">Jurimetria da minuta</h3>
         <p className={SUB}>
-          Módulo interno de apoio à decisão. Não integra o texto nem o arquivo da petição.
+          Busca vetorial pelos embeddings do acervo do Advocacia IA. Módulo interno de apoio
+          à decisão; não integra o texto nem o arquivo da petição.
         </p>
       </header>
 

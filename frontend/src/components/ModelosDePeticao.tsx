@@ -23,6 +23,7 @@ import {
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
   restaurarModeloVisualPeticao,
+  urlApi,
 } from "@/lib/api";
 import type { ItemChecklist } from "@/lib/types";
 
@@ -225,7 +226,16 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
 
     // 404 é resposta legítima: ainda não existe amostra suficiente nem configuração salva.
     if (resultadoPerfil.status === "fulfilled") {
-      setPerfil(resultadoPerfil.value);
+      // Algumas versões antigas do serviço ignoravam `taxonomy_code` e
+      // devolviam o perfil global. Isso produzia a contradição "8 desta ação"
+      // e "0 cadastradas" logo abaixo. Perfil de outro escopo não é exibido
+      // como se pertencesse à ação selecionada.
+      setPerfil(
+        resultadoPerfil.value.taxonomy_code === acao &&
+        resultadoPerfil.value.document_type === tipo
+          ? resultadoPerfil.value
+          : null,
+      );
     } else if (resultadoPerfil.reason instanceof ApiError && resultadoPerfil.reason.status === 404) {
       setPerfil(null);
     } else {
@@ -437,6 +447,10 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               Fonte: {modeloVisual?.fonte ?? "—"}
               {modeloVisual?.origem === "embutido" ? " · padrão atual Lara & Melo" : " · modelo substituível do escritório"}
             </div>
+            <div className="mt-1 text-[11px] text-tinta-3">
+              É esta logo que será carimbada no cabeçalho das próximas petições.
+            </div>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <label className="inline-flex cursor-pointer items-center rounded-campo bg-acao px-4 py-2 text-sm font-semibold text-white hover:opacity-90">
@@ -460,6 +474,48 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             )}
           </div>
         </div>
+
+        {modeloVisual && (
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <strong className="text-sm text-tinta">Prévia do documento</strong>
+              <span className="text-[11px] text-tinta-3">Cabeçalho e fonte aplicados às novas petições</span>
+            </div>
+            <div className="overflow-x-auto rounded-campo border border-borda bg-papel-3 p-3 sm:p-5">
+              <article
+                className="mx-auto min-h-[430px] w-full max-w-[610px] bg-white px-[9%] py-[7%] text-[#202020] shadow-cartao"
+                style={{ fontFamily: `"${modeloVisual.fonte || "Arial"}", Arial, sans-serif` }}
+                aria-label="Prévia do modelo visual do escritório"
+              >
+                <header className="mb-10 border-b border-[#d7d7d7] pb-4">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- mesma imagem
+                     dinâmica e sem cache exibida acima. */}
+                  <img
+                    className="h-16 max-w-[220px] object-contain object-left"
+                    src={urlApi(
+                      `/api/modelos/peticao/visual/logo?v=${encodeURIComponent(
+                        modeloVisual.atualizado_em ?? modeloVisual.arquivo,
+                      )}`,
+                    )}
+                    alt="Logo no cabeçalho da prévia"
+                  />
+                </header>
+                <p className="mb-8 text-center text-[11px] font-bold uppercase leading-relaxed">
+                  Excelentíssimo(a) Senhor(a) Doutor(a) Juiz(a) da Vara do Trabalho
+                </p>
+                <h4 className="mb-4 text-center text-sm font-bold uppercase">Petição inicial</h4>
+                <p className="mb-3 text-justify text-[11px] leading-[1.75]">
+                  Nome do cliente, já qualificado nos autos, por seus advogados, apresenta a
+                  presente petição conforme os fatos, fundamentos e documentos do caso.
+                </p>
+                <p className="text-justify text-[11px] leading-[1.75]">
+                  Esta é somente uma prévia visual. Nenhum conteúdo jurídico deste exemplo será
+                  incluído nas peças geradas.
+                </p>
+              </article>
+            </div>
+          </div>
+        )}
       </Cartao>
 
       {erroCarregamento && (

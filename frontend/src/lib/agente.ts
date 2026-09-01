@@ -172,6 +172,8 @@ export interface Peticao {
   sections?: SecaoPeticao[];
   jurimetria?: {
     disponivel: boolean;
+    origem?: string;
+    consulta_vetorial?: boolean;
     aviso?: string;
     sintese?: string;
     estatisticas?: {

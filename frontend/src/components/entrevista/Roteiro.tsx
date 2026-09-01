@@ -417,13 +417,10 @@ export default function Roteiro({
   const [ouvidas, setOuvidas] = useState<CampoOuvido[]>([]);
   const [erroEscuta, setErroEscuta] = useState<string | null>(null);
   const [saudacaoLida, setSaudacaoLida] = useState(false);
-  /* O bloco de identificação (nome, CPF, UF, município) vira um cabeçalho
-   * recolhível assim que os quatro campos ficam válidos — o entrevistador
-   * raramente volta a eles, e aberto empurram o roteiro para baixo. Recolhe
-   * sozinho UMA vez (via `idRecolheuAuto`); reabrir e voltar a recolher fica a
-   * cargo do usuário. Se um campo volta a ficar inválido, reabre e rearma. */
+  /* A identificação começa aberta e permanece editável durante a entrevista.
+   * Pode ser recolhida manualmente para liberar espaço, mas nunca fecha sozinha:
+   * o recolhimento automático fazia parecer que os dados tinham sido travados. */
   const [idExpandida, setIdExpandida] = useState(true);
-  const idRecolheuAuto = useRef(false);
   /* Quando um trecho de fala foi reconhecido pela última vez.
    *
    * É o único sinal que distingue "conversa em silêncio" de "microfone mudo" —
@@ -970,7 +967,13 @@ export default function Roteiro({
         .filter(([perguntaId]) => respostas[perguntaId] === "sim")
         .map(([, modulo]) => modulo),
     );
-    return roteiro.blocos.filter((b) => !b.modulo || positivos.has(b.modulo));
+    return roteiro.blocos.filter(
+      (b) =>
+        // A qualificação cadastral completa pertence à documentação. O filtro
+        // também protege roteiros antigos já salvos no catálogo, que ainda
+        // podem carregar esse bloco mesmo após ele sair do roteiro padrão.
+        b.id !== "identificacao" && (!b.modulo || positivos.has(b.modulo)),
+    );
   }, [roteiro, respostas]);
 
   /* A SEQUÊNCIA — a ordem em que as perguntas são feitas, que é a ordem do
@@ -1221,19 +1224,10 @@ function preencherMarcadores(
     [faltaParaComecar],
   );
 
-  /* Recolhe a identificação sozinho quando os quatro campos ficam válidos, e
-   * uma vez só. Volta a abrir (e rearma) se algum deles perde a validade — aí o
-   * entrevistador precisa vê-lo para corrigir. */
+  /* Se uma edição deixar um dado obrigatório inválido, reabre os campos para a
+   * correção continuar visível. Dados válidos nunca provocam recolhimento. */
   useEffect(() => {
-    if (faltaParaComecar.length === 0) {
-      if (!idRecolheuAuto.current) {
-        idRecolheuAuto.current = true;
-        setIdExpandida(false);
-      }
-    } else {
-      idRecolheuAuto.current = false;
-      setIdExpandida(true);
-    }
+    if (faltaParaComecar.length > 0) setIdExpandida(true);
   }, [faltaParaComecar]);
 
   /* Só começa a transcrever DEPOIS da identificação (nome/CPF/UF/município).
@@ -1946,7 +1940,7 @@ function IdentificacaoRecolhivel({
           </span>
         )}
         <span className="flex-none ml-auto inline-flex items-center gap-[6px] text-[10px] font-semibold uppercase leading-none tracking-[0.1em] text-tinta-3">
-          {aberta ? "Recolher" : "Revisar"}
+          {aberta ? "Recolher" : "Editar dados"}
           <span aria-hidden className={`transition-transform ${aberta ? "rotate-180" : ""}`}>
             ▾
           </span>
@@ -2083,8 +2077,11 @@ function BlocoRoteiro({
                 </span>
               )}
               {p.transcrever && (
-                <span className="flex-none self-center text-[9px] font-semibold leading-none font-ui tracking-[0.1em] text-atencao border border-atencao px-[5px] py-[3px]">
-                  VOZ
+                <span
+                  className="flex-none self-center text-[9px] font-semibold leading-none font-ui tracking-[0.1em] text-atencao border border-atencao px-[5px] py-[3px]"
+                  title="A resposta ouvida preenche o campo automaticamente, mas também pode ser digitada ou corrigida."
+                >
+                  VOZ OU TEXTO
                 </span>
               )}
             </div>
@@ -2567,6 +2564,12 @@ function CampoResposta({
         </div>
       )}
 
+      {pergunta.transcrever && (
+        <span className="block mb-2 font-normal text-[11.5px] leading-[1.45] font-ui text-tinta-3">
+          O que for ouvido aparece automaticamente abaixo. Você também pode digitar, completar ou corrigir a resposta.
+        </span>
+      )}
+
       <textarea
         className="w-full min-h-[88px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[10px] font-normal text-[13px] leading-[1.6] font-ui resize-y"
         value={gravando && parcial ? `${texto}${texto ? " " : ""}${parcial}` : texto}
@@ -2578,7 +2581,9 @@ function CampoResposta({
           if (pergunta.transcrever && !emCurso) onConferir(pergunta.id, e.target.value);
         }}
         placeholder={
-          pergunta.transcrever ? "Grave pelo microfone ou digite aqui." : "Digite a resposta."
+          pergunta.transcrever
+            ? "A resposta ouvida aparece aqui — ou digite e edite manualmente."
+            : "Digite a resposta."
         }
         readOnly={gravando}
       />
