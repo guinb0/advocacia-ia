@@ -476,9 +476,16 @@ PodeManterModeloPeticao = Depends(auth.exigir_modulo("agente"))
 @app.get("/api/modelos/peticao/visual")
 async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
     """Modelo global de marca, separado dos exemplos jurídicos do Style Engine."""
-    registro = await run_in_threadpool(
-        armazenamento.obter_modelo, peticao_local.MODELO_VISUAL_GERAL
-    )
+    try:
+        registro = await run_in_threadpool(
+            armazenamento.obter_modelo, peticao_local.MODELO_VISUAL_GERAL
+        )
+    except Exception:
+        # O Lara & Melo já é o fallback usado na geração. A tela deve mostrar o
+        # mesmo padrão mesmo se a cópia substituível estiver temporariamente
+        # inacessível, em vez de morrer com 500 antes de renderizar o preview.
+        log.exception("modelo visual não pôde ser lido; usando padrão embutido")
+        registro = None
     if not registro:
         return {
             "arquivo": "Padrão Lara & Melo",
