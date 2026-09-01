@@ -1,4 +1,4 @@
-"""Conexão com o SQL Server, com a mesma interface que o SQLite oferecia.
+"""Conexão com o PostgreSQL, com a mesma interface que o SQLite oferecia.
 
 O Acervo nasceu em SQLite (`dados/casos.db`), um arquivo na máquina do advogado. Isso
 serve enquanto é uma pessoa só: o arquivo não é alcançável de outro computador, não tem
@@ -14,12 +14,11 @@ com `?`, e linhas acessíveis por nome de coluna:
 
 O que muda de verdade, e por que:
 
-- **`?` continua sendo o marcador**, porque o pyodbc usa o mesmo do sqlite3. Foi sorte, e é
-  o que permitiu manter as consultas como estavam;
-- **`INSERT OR REPLACE` não existe** no SQL Server. Vira `MERGE`, escrito nas duas funções
-  que o usavam;
+- **`?` continua sendo o marcador** na interface da aplicação; o adaptador o converte
+  para `%s`, usado pelo psycopg;
+- **upserts usam `ON CONFLICT`**, a forma nativa do PostgreSQL;
 - **função Python registrada na conexão** (`normalizar_nome_cliente`) não tem equivalente:
-  o SQL Server não roda Python dentro da query. A normalização passou a ser feita antes,
+  o PostgreSQL não roda Python dentro da query. A normalização é feita antes,
   em Python, com o valor já normalizado sendo gravado na coluna;
 - **`COLLATE NOCASE`** some: o banco usa `Latin1_General_CI_AS`, que já ignora maiúsculas.
 """
@@ -28,19 +27,18 @@ from __future__ import annotations
 
 import os
 import re
-import urllib.parse
 from pathlib import Path
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-import pyodbc
+import psycopg
 
 from . import ambiente
 
 __all__ = [
-    "ESQUEMA_SQLSERVER",
+    "ESQUEMA_POSTGRES",
     "Conexao",
     "Linha",
     "conectar",
@@ -65,9 +63,6 @@ e `entregas` ao lado de `documents`, que são o mesmo documento visto por cada l
 prefixo é o que substitui o schema separado na hora de saber de quem é cada tabela.
 """
 
-DRIVER_PADRAO = "ODBC Driver 17 for SQL Server"
-
-
 _ENV = ambiente.CAMINHO
 
 #: Mantido como nome local porque metade do módulo (e os testes) já o chamam assim.
@@ -76,46 +71,33 @@ _carregar_env = ambiente.carregar
 
 
 def dsn() -> str:
-    """String de conexão ODBC, montada a partir do ambiente.
-
-    Segredo não mora em código. Sem `SQLSERVER_*` no ambiente nem no `.env`, falha aqui —
-    no boot — em vez de na primeira consulta, quando o advogado já está com o caso aberto
-    na tela.
-    """
+    """URL PostgreSQL. Aceita ``DATABASE_URL`` ou as variáveis ``POSTGRES_*``."""
     _carregar_env()
-    servidor = os.getenv("SQLSERVER_HOST")
-    senha = os.getenv("SQLSERVER_PASSWORD")
+    if url := os.getenv("DATABASE_URL"):
+        return url.replace("postgres://", "postgresql://", 1)
+    servidor = os.getenv("POSTGRES_HOST")
+    senha = os.getenv("POSTGRES_PASSWORD")
     if not servidor or not senha:
         raise RuntimeError(
-            "Faltam SQLSERVER_HOST e SQLSERVER_PASSWORD no ambiente (.env da raiz)."
+            "Falta DATABASE_URL ou POSTGRES_HOST/POSTGRES_PASSWORD no ambiente."
         )
-    return (
-        f"DRIVER={{{os.getenv('SQLSERVER_DRIVER', DRIVER_PADRAO)}}};"
-        f"SERVER={servidor},{os.getenv('SQLSERVER_PORT', '1433')};"
-        f"DATABASE={os.getenv('SQLSERVER_DATABASE', 'advocacia')};"
-        f"UID={os.getenv('SQLSERVER_USER', 'advocacia')};"
-        f"PWD={senha};"
-        "TrustServerCertificate=yes;"
-    )
+    from urllib.parse import quote_plus
+    usuario = quote_plus(os.getenv("POSTGRES_USER", "forense_flow"))
+    senha_url = quote_plus(senha)
+    banco = os.getenv("POSTGRES_DB", "forense_flow")
+    porta = os.getenv("POSTGRES_PORT", "5432")
+    return f"postgresql://{usuario}:{senha_url}@{servidor}:{porta}/{banco}"
 
 
 def url_sqlalchemy() -> str:
     """A mesma conexão em forma de URL, para quem precisa de SQLAlchemy."""
-    senha = urllib.parse.quote_plus(os.environ["SQLSERVER_PASSWORD"])
-    usuario = os.getenv("SQLSERVER_USER", "advocacia")
-    servidor = os.environ["SQLSERVER_HOST"]
-    porta = os.getenv("SQLSERVER_PORT", "1433")
-    banco = os.getenv("SQLSERVER_DATABASE", "advocacia")
-    driver = urllib.parse.quote_plus(os.getenv("SQLSERVER_DRIVER", DRIVER_PADRAO))
-    return (
-        f"mssql+pyodbc://{usuario}:{senha}@{servidor}:{porta}/{banco}?driver={driver}"
-    )
+    return dsn().replace("postgresql://", "postgresql+psycopg://", 1)
 
 
 class Linha:
     """Linha acessível por nome de coluna, como a `sqlite3.Row` era.
 
-    O `pyodbc` devolve tuplas com atributos, e o código do Acervo lê `linha["campo"]` em
+    O psycopg devolve tuplas, e o código do Acervo lê `linha["campo"]` em
     dezenas de lugares. Este envelope evita reescrever tudo isso.
     """
 
@@ -173,23 +155,19 @@ class _Resultado:
 
 
 class Conexao:
-    """Envelope fino sobre a conexão pyodbc, com a interface que o Acervo já usa."""
+    """Envelope fino sobre psycopg, preservando a interface antiga do Acervo."""
 
-    def __init__(self, bruta: pyodbc.Connection) -> None:
+    def __init__(self, bruta: psycopg.Connection) -> None:
         self._bruta = bruta
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> _Resultado:
         cursor = self._bruta.cursor()
-        cursor.execute(_qualificar(sql), tuple(params))
+        cursor.execute(_adaptar_sql(_qualificar(sql)), tuple(params))
         return _Resultado(cursor)
 
     def executemany(self, sql: str, seq: Sequence[Sequence[Any]]) -> None:
         cursor = self._bruta.cursor()
-        # A base de municípios tem milhares de linhas. Sem o envio em lote do
-        # pyodbc, cada linha paga uma viagem completa até o SQL Server remoto.
-        if hasattr(cursor, "fast_executemany"):
-            cursor.fast_executemany = True
-        cursor.executemany(_qualificar(sql), [tuple(p) for p in seq])
+        cursor.executemany(_adaptar_sql(_qualificar(sql)), [tuple(p) for p in seq])
 
     def commit(self) -> None:
         self._bruta.commit()
@@ -248,6 +226,67 @@ def _qualificar(sql: str) -> str:
     return resultado
 
 
+def _tipos_postgres(sql: str) -> str:
+    """Converte os poucos tipos T-SQL que ainda aparecem nos DDL legados."""
+    sql = re.sub(r"\bnvarchar\s*\(\s*max\s*\)", "text", sql, flags=re.I)
+    sql = re.sub(r"\bnvarchar\s*\((\d+)\)", r"varchar(\1)", sql, flags=re.I)
+    sql = re.sub(r"\bvarbinary\s*\(\s*max\s*\)", "bytea", sql, flags=re.I)
+    # O legado grava 0/1 e compara com 0/1 em muitas consultas; smallint preserva
+    # esse contrato sem os casts implícitos que PostgreSQL recusa para boolean.
+    sql = re.sub(r"\bbit\b", "smallint", sql, flags=re.I)
+    sql = re.sub(
+        r"\bint\s+IDENTITY\s*\(\s*1\s*,\s*1\s*\)",
+        "integer GENERATED BY DEFAULT AS IDENTITY",
+        sql,
+        flags=re.I,
+    )
+    return re.sub(r"\bN'", "'", sql)
+
+
+def _adaptar_sql(sql: str) -> str:
+    """Adapta marcadores e o pequeno resíduo T-SQL para PostgreSQL.
+
+    Consultas novas devem ser escritas diretamente em SQL PostgreSQL. Esta camada existe
+    para manter as centenas de consultas antigas com marcador ``?`` enquanto o restante
+    da aplicação não precisa conhecer o driver.
+    """
+    texto = sql.strip()
+    texto = re.sub(
+        r"IF\s+SCHEMA_ID\([^\n]+\)\s+IS\s+NULL\s+EXEC\([^\n]+\)\s*;?",
+        f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}",
+        texto,
+        flags=re.I | re.S,
+    )
+    texto = re.sub(
+        r"IF\s+OBJECT_ID\([^\n]+\)\s+IS\s+NULL\s*\n\s*CREATE\s+TABLE\s+",
+        "CREATE TABLE IF NOT EXISTS ",
+        texto,
+        flags=re.I,
+    )
+    texto = re.sub(
+        r"IF\s+COL_LENGTH\([^\n]+\)\s+IS\s+NULL\s*\n?\s*ALTER\s+TABLE\s+([^\s]+)\s+(?:ADD\s+)(.+)$",
+        r"ALTER TABLE \1 ADD COLUMN IF NOT EXISTS \2",
+        texto,
+        flags=re.I | re.S,
+    )
+    texto = re.sub(
+        r"CONVERT\s*\(\s*varchar\s*\(\s*(\d+)\s*\)\s*,\s*([^\)]+)\)",
+        r"CAST(\2 AS varchar(\1))",
+        texto,
+        flags=re.I,
+    )
+    limite: str | None = None
+    topo = re.match(r"(?is)^SELECT\s+TOP\s+(\d+)\s+", texto)
+    if topo:
+        limite = topo.group(1)
+        texto = "SELECT " + texto[topo.end():]
+    texto = _tipos_postgres(texto)
+    texto = texto.replace("?", "%s")
+    if limite:
+        texto = texto.rstrip().rstrip(";") + f" LIMIT {limite}"
+    return texto
+
+
 #: Conexão emprestada pelo escopo em curso, quando há um (ver `sessao`).
 _emprestada: ContextVar[Conexao | None] = ContextVar("conexao_emprestada", default=None)
 
@@ -267,7 +306,7 @@ def conectar() -> Iterator[Conexao]:
         yield ja_aberta
         return
 
-    bruta = pyodbc.connect(dsn(), timeout=15, autocommit=False)
+    bruta = psycopg.connect(dsn(), connect_timeout=15, autocommit=False)
     conexao = Conexao(bruta)
     try:
         yield conexao
@@ -283,7 +322,7 @@ def conectar() -> Iterator[Conexao]:
 def sessao() -> Iterator[Conexao]:
     """Uma conexão só para tudo que rodar dentro deste bloco.
 
-    O banco é remoto: cada `pyodbc.connect` custa a viagem de rede do handshake e do
+    O banco é remoto: cada `psycopg.connect` custa a viagem de rede do handshake e do
     login, medida em ~135 ms daqui. Telas como o painel do caso chamavam trinta e três
     funções de leitura independentes e pagavam essa viagem trinta e três vezes — cinco
     segundos gastos abrindo conexão para consultas que somadas não leem 100 kB.
@@ -293,7 +332,7 @@ def sessao() -> Iterator[Conexao]:
     que `conectar()` faça sozinho por toda a aplicação.
 
     Não atravessa thread: `ContextVar` não é herdada por thread de `ThreadPoolExecutor`,
-    então cada uma abre a sua. É o que se quer — conexão pyodbc não é para ser
+    então cada uma abre a sua. É o que se quer — conexão psycopg não é para ser
     compartilhada entre threads.
     """
     with conectar() as con:
@@ -310,7 +349,7 @@ def sessao() -> Iterator[Conexao]:
 
 # ---------------------------------------------------------------------------- schema
 
-ESQUEMA_SQLSERVER = f"""
+ESQUEMA_POSTGRES = f"""
 IF SCHEMA_ID('{SCHEMA}') IS NULL EXEC('CREATE SCHEMA {SCHEMA}');
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}casos') IS NULL
@@ -650,25 +689,21 @@ COLUNAS_NOVAS = (
 
 def inicializar_schema() -> None:
     """Cria as tabelas do Acervo, se ainda não existirem. Idempotente."""
-    bruta = pyodbc.connect(dsn(), timeout=30, autocommit=True)
+    bruta = psycopg.connect(dsn(), connect_timeout=30, autocommit=True)
     try:
         cursor = bruta.cursor()
-        for lote in ESQUEMA_SQLSERVER.split(";\n"):
+        for lote in ESQUEMA_POSTGRES.split(";\n"):
             if lote.strip():
-                cursor.execute(lote)
+                cursor.execute(_adaptar_sql(lote))
         for tabela, coluna, tipo in COLUNAS_NOVAS:
             cursor.execute(
-                f"IF COL_LENGTH('{SCHEMA}.{tabela}', '{coluna}') IS NULL "
-                f"ALTER TABLE {SCHEMA}.{tabela} ADD {coluna} {tipo}"
+                _tipos_postgres(
+                    f"ALTER TABLE {SCHEMA}.{tabela} ADD COLUMN IF NOT EXISTS {coluna} {tipo}"
+                )
             )
         for indice in INDICES:
             nome = indice.split()[2]
-            cursor.execute(
-                f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '{nome}') {indice}"
-            )
-        cursor.execute(
-            f"IF OBJECT_ID('{SCHEMA}.{PREFIXO}vinculos_agente') IS NOT NULL "
-            f"DROP TABLE {SCHEMA}.{PREFIXO}vinculos_agente"
-        )
+            cursor.execute(indice.replace("CREATE INDEX", "CREATE INDEX IF NOT EXISTS", 1))
+        cursor.execute(f"DROP TABLE IF EXISTS {SCHEMA}.{PREFIXO}vinculos_agente")
     finally:
         bruta.close()

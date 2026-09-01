@@ -53,16 +53,13 @@ def sincronizar() -> dict[str, int]:
 
     with banco.conectar() as con:
         con.executemany(
-            """MERGE ufs AS alvo USING (SELECT ? id, ? sigla, ? nome, ? regiao_id, ? atualizado_em) AS fonte
-            ON alvo.id=fonte.id WHEN MATCHED THEN UPDATE SET sigla=fonte.sigla,nome=fonte.nome,
-            regiao_id=fonte.regiao_id,atualizado_em=fonte.atualizado_em WHEN NOT MATCHED THEN
-            INSERT (id,sigla,nome,regiao_id,atualizado_em) VALUES
-            (fonte.id,fonte.sigla,fonte.nome,fonte.regiao_id,fonte.atualizado_em);""", ufs)
+            """INSERT INTO ufs (id,sigla,nome,regiao_id,atualizado_em) VALUES (?,?,?,?,?)
+            ON CONFLICT (id) DO UPDATE SET sigla=EXCLUDED.sigla,nome=EXCLUDED.nome,
+            regiao_id=EXCLUDED.regiao_id,atualizado_em=EXCLUDED.atualizado_em""", ufs)
         con.executemany(
-            """MERGE municipios AS alvo USING (SELECT ? id, ? uf_id, ? nome, ? atualizado_em) AS fonte
-            ON alvo.id=fonte.id WHEN MATCHED THEN UPDATE SET uf_id=fonte.uf_id,nome=fonte.nome,
-            atualizado_em=fonte.atualizado_em WHEN NOT MATCHED THEN INSERT (id,uf_id,nome,atualizado_em)
-            VALUES (fonte.id,fonte.uf_id,fonte.nome,fonte.atualizado_em);""", cidades)
+            """INSERT INTO municipios (id,uf_id,nome,atualizado_em) VALUES (?,?,?,?)
+            ON CONFLICT (id) DO UPDATE SET uf_id=EXCLUDED.uf_id,nome=EXCLUDED.nome,
+            atualizado_em=EXCLUDED.atualizado_em""", cidades)
     return {"ufs": len(ufs), "municipios": len(cidades)}
 
 

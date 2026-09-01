@@ -1,4 +1,4 @@
-"""Persistência do Acervo, no SQL Server.
+"""Persistência do Acervo, no PostgreSQL.
 
 Este módulo fala SQL e nada mais: a conexão, o schema e as diferenças de dialeto vivem
 em `banco.py`. É o que permitiu trocar o motor sem reescrever as 44 funções daqui.
@@ -46,7 +46,7 @@ def agora() -> str:
 
 
 def obter_peticao_local(caso_id: str) -> dict[str, Any] | None:
-    """Minuta persistida no SQL Server, compartilhada por todas as instâncias."""
+    """Minuta persistida no PostgreSQL, compartilhada por todas as instâncias."""
     with conectar() as con:
         linha = con.execute(
             "SELECT dados_json, docx FROM peticoes_locais WHERE caso_id = ?", (caso_id,)
@@ -71,22 +71,17 @@ def salvar_peticao_local(caso_id: str, dados: dict[str, Any], docx: bytes) -> No
     with conectar() as con:
         con.execute(
             """
-            MERGE peticoes_locais AS alvo
-            USING (SELECT ? AS caso_id) AS origem
-               ON alvo.caso_id = origem.caso_id
-            WHEN MATCHED THEN UPDATE SET
-                 versao = ?, status = ?, dados_json = ?, docx = ?, atualizado_em = ?
-            WHEN NOT MATCHED THEN INSERT
-                 (caso_id, versao, status, dados_json, docx, criado_em, atualizado_em)
-                 VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO peticoes_locais
+                (caso_id, versao, status, dados_json, docx, criado_em, atualizado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (caso_id) DO UPDATE SET
+                versao = EXCLUDED.versao,
+                status = EXCLUDED.status,
+                dados_json = EXCLUDED.dados_json,
+                docx = EXCLUDED.docx,
+                atualizado_em = EXCLUDED.atualizado_em
             """,
             (
-                caso_id,
-                int(dados.get("version") or 1),
-                str(dados.get("status") or "IN_REVIEW"),
-                json.dumps(payload, ensure_ascii=False),
-                docx,
-                atualizado,
                 caso_id,
                 int(dados.get("version") or 1),
                 str(dados.get("status") or "IN_REVIEW"),
@@ -496,15 +491,16 @@ def _enriquecer_extracao_do_agente(registro: dict[str, Any]) -> None:
         with conectar() as con:
             doc = con.execute(
                 """
-                SELECT TOP 1 CONVERT(varchar(64), id) AS id,
+                SELECT CAST(id AS varchar(64)) AS id,
                        document_type, detected_type, status, verdict,
-                       CONVERT(varchar(40), processed_at, 126) AS processed_at
+                       CAST(processed_at AS varchar(40)) AS processed_at
                   FROM documents
                  WHERE source_reference = ? OR source_reference LIKE ?
                  ORDER BY
                        CASE WHEN document_type LIKE 'DOCUMENT.%' THEN 0 ELSE 1 END,
                        CASE WHEN status = 'PROCESSED' THEN 0 ELSE 1 END,
                        updated_at DESC
+                 LIMIT 1
                 """,
                 refs,
             ).fetchone()
@@ -514,10 +510,11 @@ def _enriquecer_extracao_do_agente(registro: dict[str, Any]) -> None:
             doc_id = doc["id"]
             payload_linha = con.execute(
                 """
-                SELECT TOP 1 payload
+                SELECT payload
                   FROM document_extractions
-                 WHERE CONVERT(varchar(64), document_id) = ?
+                 WHERE CAST(document_id AS varchar(64)) = ?
                  ORDER BY received_at DESC
+                 LIMIT 1
                 """,
                 (doc_id,),
             ).fetchone()
@@ -525,7 +522,7 @@ def _enriquecer_extracao_do_agente(registro: dict[str, Any]) -> None:
                 """
                 SELECT number, legibility_score, legible, text
                   FROM document_pages
-                 WHERE CONVERT(varchar(64), document_id) = ?
+                 WHERE CAST(document_id AS varchar(64)) = ?
                  ORDER BY number
                 """,
                 (doc_id,),
@@ -1616,7 +1613,7 @@ def listar_resumo_supervisao() -> list[dict[str, Any]]:
             SELECT e.id, e.caso_id, c.cliente, e.arquivo, e.realizada_em,
                    e.entrevistador, e.fatos_gerados, e.enviada_em,
                    e.avaliacao_google_em, e.gravacao_id, e.criado_em,
-                   LEN(e.texto) AS caracteres
+                   LENGTH(e.texto) AS caracteres
               FROM entrevistas e
               JOIN casos c ON c.id = e.caso_id
              ORDER BY e.criado_em DESC
@@ -1961,7 +1958,7 @@ def registrar_mensagem(
         # As duas colunas vão com APELIDO: sem ele o driver devolve nome vazio para as
         # duas, e a linha (que é um dicionário por nome de coluna) fica com uma só.
         atual = con.execute(
-            "SELECT ISNULL(MAX(ordem), 0) AS maior, COUNT(*) AS total"
+            "SELECT COALESCE(MAX(ordem), 0) AS maior, COUNT(*) AS total"
             " FROM conversa_mensagens WHERE conversa_id = ?",
             (conversa_id,),
         ).fetchone()

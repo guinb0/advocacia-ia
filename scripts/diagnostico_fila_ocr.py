@@ -52,8 +52,9 @@ def main() -> int:
 
     _titulo("Para onde este processo aponta")
     print(f"  broker Celery : {broker}")
-    print(f"  SQL Server    : {os.getenv('SQLSERVER_HOST')}:{os.getenv('SQLSERVER_PORT', '1433')}"
-          f" / {os.getenv('SQLSERVER_DATABASE', 'advocacia')}")
+    banco_url = os.getenv("DATABASE_URL", "")
+    destino_banco = banco_url.rsplit("@", 1)[-1] if "@" in banco_url else "não configurado"
+    print(f"  PostgreSQL    : {destino_banco}")
     print(f"  MISTRAL_API_KEY: {'definida' if os.getenv('MISTRAL_API_KEY') else 'AUSENTE — nenhuma leitura funciona'}")
     print("  (compare estas linhas entre o container da API e o do worker de OCR:")
     print("   brokers diferentes = a API publica num Redis e o worker escuta outro)")
@@ -121,8 +122,8 @@ def main() -> int:
             ).fetchall()
             recentes = con.execute(
                 """
-                SELECT TOP 5 arquivo, status_proc, erro_proc, criado_em
-                  FROM entregas ORDER BY criado_em DESC
+                SELECT arquivo, status_proc, erro_proc, criado_em
+                  FROM entregas ORDER BY criado_em DESC LIMIT 5
                 """
             ).fetchall()
     except Exception as exc:  # noqa: BLE001

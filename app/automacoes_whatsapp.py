@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import pyodbc
+import psycopg
 
 from . import armazenamento
 from .banco import conectar
@@ -64,7 +64,7 @@ def reservar(
                     (chave, tipo, caso_id, destino, instante, instante),
                 )
         return True
-    except pyodbc.IntegrityError:
+    except psycopg.IntegrityError:
         return False
 
 

@@ -19,15 +19,8 @@ foreach ($linha in Get-Content $origem -Encoding UTF8) {
     $dados[$nome.Trim()] = $valor.Trim().Trim('"').Trim("'")
 }
 
-foreach ($obrigatoria in @("SQLSERVER_HOST", "SQLSERVER_USER", "SQLSERVER_PASSWORD", "SQLSERVER_DATABASE")) {
-    if (-not $dados[$obrigatoria]) { throw "Falta $obrigatoria no .env da raiz." }
-}
-
-$usuario = [uri]::EscapeDataString($dados.SQLSERVER_USER)
-$senha = [uri]::EscapeDataString($dados.SQLSERVER_PASSWORD)
-$porta = if ($dados.SQLSERVER_PORT) { $dados.SQLSERVER_PORT } else { "1433" }
-$banco = $dados.SQLSERVER_DATABASE
-$urlBanco = "mssql://${usuario}:${senha}@$($dados.SQLSERVER_HOST):${porta}/${banco}"
+if (-not $dados.DATABASE_URL) { throw "Falta DATABASE_URL no .env da raiz." }
+$urlBanco = $dados.DATABASE_URL
 
 $linhas = @(
     "APP_NAME=legal-agent",

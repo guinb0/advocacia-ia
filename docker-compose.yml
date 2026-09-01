@@ -5,7 +5,7 @@
 # O LOGIN NÃO ESTÁ AQUI. Havia um Keycloak neste arquivo; ele saiu quando a
 # autenticação passou a ser um JWT assinado pelo próprio backend (ver
 # `app/auth.py`). Não há mais container de identidade para subir, nem realm para
-# importar — as contas vivem na tabela `acervo_usuarios` do SQL Server.
+# importar — as contas vivem na tabela PostgreSQL `acervo_usuarios`.
 services:
   jobs-db:
     image: postgres:16-alpine

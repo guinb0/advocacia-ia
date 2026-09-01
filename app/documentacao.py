@@ -17,27 +17,25 @@ TABELA = f"{SCHEMA}.{PREFIXO}atendimentos_documentacao"
 TABELA_PRESENCA = f"{SCHEMA}.{PREFIXO}documentadores_online"
 
 ESQUEMA = f"""
-IF OBJECT_ID('{TABELA}') IS NULL
-CREATE TABLE {TABELA} (
+CREATE TABLE IF NOT EXISTS {TABELA} (
     entrevista_id varchar(64) NOT NULL CONSTRAINT pk_acervo_atend_doc PRIMARY KEY,
     caso_id varchar(64) NULL,
-    cliente nvarchar(200) NOT NULL CONSTRAINT df_acervo_atend_cliente DEFAULT N'',
+    cliente varchar(200) NOT NULL CONSTRAINT df_acervo_atend_cliente DEFAULT '',
     sala varchar(120) NULL,
     status varchar(30) NOT NULL CONSTRAINT df_acervo_atend_status DEFAULT 'entrevista',
     entrevistador_id varchar(64) NOT NULL,
-    entrevistador_nome nvarchar(160) NOT NULL,
+    entrevistador_nome varchar(160) NOT NULL,
     documentador_id varchar(64) NULL,
-    documentador_nome nvarchar(160) NULL,
+    documentador_nome varchar(160) NULL,
     iniciado_em varchar(40) NOT NULL,
     solicitado_em varchar(40) NULL,
     assumido_em varchar(40) NULL,
     atualizado_em varchar(40) NOT NULL
 );
 
-IF OBJECT_ID('{TABELA_PRESENCA}') IS NULL
-CREATE TABLE {TABELA_PRESENCA} (
+CREATE TABLE IF NOT EXISTS {TABELA_PRESENCA} (
     usuario_id varchar(64) NOT NULL CONSTRAINT pk_acervo_doc_online PRIMARY KEY,
-    nome nvarchar(160) NOT NULL,
+    nome varchar(160) NOT NULL,
     atualizado_em varchar(40) NOT NULL
 );
 """

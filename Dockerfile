@@ -72,7 +72,7 @@ ENV PYTHONUNBUFFERED=1 \
 # (gera PDF/docx) e libglib/libgomp/libgl (opencv/paddle em slim).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libglib2.0-0 libgomp1 libgl1 \
-        unixodbc libgssapi-krb5-2 libreoffice-writer fonts-liberation \
+        libreoffice-writer fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # So o binario. O standalone do Next carrega os proprios node_modules minimos.

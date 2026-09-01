@@ -51,7 +51,7 @@ _REPASSADOS = frozenset(
     {
         status.HTTP_404_NOT_FOUND,
         status.HTTP_409_CONFLICT,
-        status.HTTP_422_UNPROCESSABLE_CONTENT,
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
     }
 )
 
@@ -719,13 +719,19 @@ def pecas_de_estilo(
         raise _erro(erro) from erro
 
 
-@roteador.delete("/estilo/pecas/{peca_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remover_peca_de_estilo(peca_id: str) -> None:
+@roteador.delete(
+    "/estilo/pecas/{peca_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
+def remover_peca_de_estilo(peca_id: str) -> Response:
     """Remove uma amostra; o agente confere organização e recalcula na próxima leitura."""
     try:
         Cliente().remover_peca_de_estilo(peca_id)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @roteador.get("/estilo/configuracao")
@@ -910,12 +916,18 @@ def fixar_caso_da_conversa(
     return conversa
 
 
-@roteador.delete("/conversas/{conversa_id}", status_code=status.HTTP_204_NO_CONTENT)
+@roteador.delete(
+    "/conversas/{conversa_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 def apagar_conversa(
     conversa_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
-) -> None:
+) -> Response:
     if not conversas.apagar(conversa_id, usuario.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, _SEM_CONVERSA)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _caso_ref(caso_id: str) -> str:
