@@ -1,0 +1,28 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Atendente.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: 6 anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim, ainda trabalho.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Sim.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: O que aconteceu, passo a passo?
+Entrevistado: Em novembro de 2023, moto derrapou na chuva. Eu estava no trabalho.
+Entrevistador: Onde ocorreu?
+Entrevistado: No avenida, durante o expediente.
+Entrevistador: Foi emitida a CAT?
+Entrevistado: Sim.
+Entrevistador: Como foi o atendimento?
+Entrevistado: Sim, no mesmo dia. Precisei de internação um dia.
+Entrevistador: Tem laudos?
+Entrevistado: Sim.
+Entrevistador: Afastado pelo INSS?
+Entrevistado: dois meses.

@@ -1,0 +1,22 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Atendente.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: vinte anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Não, saí em 2024.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Sim, quebrei o braço no trabalho em 2022..
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Sim, já entrei com ação trabalhista..
+Entrevistador: Qual o número do processo e se já recebeu?
+Entrevistado: Processo 0001234-56.2023.5.01.0001, já transitou e eu já recebi os valores.
+Entrevistador: CAT?
+Entrevistado: Sim.
+Entrevistador: Como foi o acidente?
+Entrevistado: Caí da escada da agência e quebrei o braço direito.

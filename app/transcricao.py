@@ -1,0 +1,664 @@
+"""Transcrição incremental da resposta do entrevistado (faster-whisper).
+
+Dois níveis de sessão, como o roteiro da entrevista pede:
+
+    CaptureSession   o áudio compartilhado do Meet, aberto a entrevista inteira
+        └── AnswerSession   uma resposta, entre "iniciar" e "finalizar"
+
+A captura nunca fecha; o que liga e desliga é o envio. Isso evita pedir a
+seleção da aba a cada pergunta, que é o incômodo que motivou tudo isto.
+
+O chunk é só transporte: transcrever cada pedaço isolado picaria a frase e
+perderia contexto ("fui" viraria "foi"). O áudio é acumulado e o modelo roda
+sobre a janela, não sobre o fragmento.
+
+Modelo `small` int8 medido nesta máquina: carrega em ~85s, transcreve a 3,6x
+o tempo real. `base` é 3x mais rápido mas erra pessoa verbal; num relato que
+vira peça processual, isso não compensa.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+import numpy as np
+
+from . import ambiente, transcricao_openrouter
+
+log = logging.getLogger("transcricao")
+
+# ATENÇÃO — a ordem deste import não é decorativa.
+#
+# No Windows, PaddlePaddle e CTranslate2 trazem cada um a sua cópia de MKL/
+# OpenMP. Quem carregar primeiro define quais símbolos ficam no processo, e o
+# segundo quebra. Medido:
+#
+#     ctranslate2 -> paddle   ambos carregam
+#     paddle -> ctranslate2   OSError [WinError 127]
+#
+# O PaddleOCR sobe na thread de aquecimento (main.ciclo_de_vida), depois dos
+# imports, então trazer o CTranslate2 já aqui garante que ele chegue antes.
+# Sem isto o WebSocket de transcrição morre com "Falha na transcrição" assim
+# que o primeiro parcial tenta rodar.
+try:
+    import ctranslate2 as _ct2  # noqa: F401  (importado pelo efeito colateral)
+except Exception as _exc:  # pragma: no cover
+    log.warning("CTranslate2 indisponível — a transcrição não vai funcionar: %s", _exc)
+
+#: Qual motor transcreve: "openrouter" (padrão) ou "whisper" (local).
+#:
+#: A OpenRouter é o motor escolhido pelo escritório. O Whisper local continua no
+#: código e a um `MOTOR_TRANSCRICAO=whisper` de distância, por dois motivos
+#: práticos: ele é o único caminho quando a chave estoura a cota ou a rede cai no
+#: meio de uma entrevista, e é o único que transcreve sem o áudio sair da máquina.
+#: Manter a alternativa não custa nada — o código já existia e o acoplamento com o
+#: resto do módulo é uma função só, `_segmentos_sem_trava`.
+MOTOR = (os.getenv("MOTOR_TRANSCRICAO", "").strip() or "openrouter").lower()
+
+
+def usando_openrouter() -> bool:
+    return MOTOR == "openrouter"
+
+
+TAXA = 16_000                    # 16 kHz mono nos dois motores
+
+#: Cadência do texto provisório na tela, e ela depende do motor.
+#:
+#: No Whisper local o parcial é CPU e sai de graça, então roda duas vezes por
+#: segundo e o texto acompanha a fala quase palavra a palavra. Na OpenRouter cada
+#: parcial é uma requisição paga: na mesma cadência seriam ~120 por minuto POR
+#: ENTREVISTA, o que estoura custo e limite de taxa antes do fim da primeira
+#: pergunta.
+#:
+#: Seis segundos foi medido, não estimado. Numa entrevista de 49s de fala real
+#: (gemini-3.7-flash, janela de ~6s): 5 parciais, 2 trechos congelados, e a ida à
+#: rede levando 4,6s a 5,8s. O efeito prático é que o PRIMEIRO texto aparece por
+#: volta dos 20s de conversa, e daí em diante a tela anda a cada ~6s, sempre uns
+#: 11s atrás da fala. Baixar este número não adianta: a cadência já é da ordem do
+#: tempo de resposta, e `parcial_em_curso` descartaria as rodadas sobrepostas.
+#:
+#: O congelamento (o `trecho`, que é o que alimenta o roteiro) continua
+#: acontecendo — mais espaçado, e é esse o preço da troca.
+SEGUNDOS_ENTRE_PARCIAIS = ambiente.numero(
+    "SEGUNDOS_ENTRE_PARCIAIS", 6.0 if MOTOR == "openrouter" else 0.5
+)
+LIMITE_CAUDA_S = 8.0             # cauda máxima antes de cortar à força
+MARGEM_CAUDA_S = 1.5             # o que ainda pode mudar com o que vem depois
+SOBREPOSICAO_PARCIAL_S = 1.0     # emenda quando o corte é forçado
+
+#: A partir de quanto áudio a sessão passa a soltar o que já virou texto.
+#:
+#: Abaixo disto nada é descartado, e o texto final continua saindo de
+#: retranscrever a resposta inteira. Dez minutos cobre com folga uma resposta de
+#: pergunta única; o que passa disso é entrevista contínua, onde segurar tudo
+#: custava 115 MB e fazia cada parcial concatenar a entrevista inteira só para
+#: recortar os últimos segundos (4,6 ms com 1 min, 78,6 ms com 30 — duas vezes
+#: por segundo).
+MEMORIA_MAXIMA_S = 60 * 10
+
+# O QUE MANTÉM O TEXTO COLADO NA FALA
+#
+# O custo de um parcial é proporcional ao áudio que ele transcreve. Medido nesta
+# máquina (RTX 4050, small float16), transcrevendo o mesmo relato:
+#
+#      2s -> 0,12s      8s -> 0,23s      30s -> 0,93s      60s -> 1,89s
+#
+# Com janela de 30s, cada parcial custava 0,93s contra uma cadência de 1s: metade
+# das rodadas era descartada por já haver outra em curso, e o texto chegava um
+# segundo atrás da fala. Era o "não está em tempo real".
+#
+# Agora só a CAUDA é transcrita: o trecho desde a última pausa. Quando o Whisper
+# fecha um segmento (ele fecha nas pausas, por causa do VAD) e esse segmento já
+# está longe do fim, o texto dele é congelado no prefixo e a cauda recomeça dali.
+# A cauda fica quase sempre em 2-4s, então cada parcial custa décimos e o custo
+# para de crescer com o tamanho da resposta.
+#
+#     [-------- prefixo congelado --------][- cauda -]
+#      transcrito uma vez, não muda mais    retranscrita a cada rodada
+#
+# A margem existe para não congelar cedo demais: a última palavra antes de uma
+# pausa curta ainda pode mudar quando chega a próxima frase. E o texto final é
+# transcrito do áudio inteiro, de uma vez — nada disto contamina o registro.
+
+def _preparar_cuda() -> bool:
+    """Deixa as DLLs do CUDA visíveis e diz se dá para usar a GPU.
+
+    O CTranslate2 carrega `cublas64_12.dll` por LoadLibrary comum, que ignora
+    `os.add_dll_directory` — só enxerga o que está no PATH. As DLLs vêm nos
+    pacotes `nvidia-cublas-cu12` / `nvidia-cudnn-cu12`, dentro do site-packages,
+    então o caminho precisa entrar no PATH ANTES de importar o modelo.
+
+    Vale muito a pena: medido nesta máquina (RTX 4050), o mesmo áudio de 11,4s
+    leva 3,0s na CPU e 0,47s na GPU — 3,8x contra 24x o tempo real.
+    """
+    import glob
+    import sysconfig
+
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() < 1:
+            return False
+    except Exception:
+        return False
+
+    sp = sysconfig.get_paths()["purelib"]
+    dirs = [d for d in glob.glob(os.path.join(sp, "nvidia", "*", "bin")) if os.path.isdir(d)]
+    if not dirs:
+        return False
+
+    os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
+    return True
+
+
+_TEM_GPU = _preparar_cuda()
+
+#: `medium`, e não `small`, por medição no áudio real da entrevista.
+#:
+#: O `small` destruía nome próprio — e nome próprio é o dado que abre o
+#: contrato, a procuração e a declaração. Medido no mesmo arquivo de 96,8s:
+#:
+#:     small    "Guilherme Inunes"            "o CIDA de Mando Tensão Industrial"
+#:     medium   "Guilherme Nunes"             "auxiliar de manutenção industrial"
+#:
+#: A escuta then se recusava a sugerir o nome — corretamente, porque a instrução
+#: dela manda não preencher o que veio ilegível. O sintoma na tela era "não
+#: preenche nada", e a causa estava três camadas abaixo.
+#:
+#: E não custa tempo: 31,5x o tempo real contra 27,1x do `small` na mesma
+#: máquina (RTX 4050, float16). O que custa é VRAM — ~1,5 GB contra ~0,5 GB, num
+#: cartão de 6 GB dividido com o PaddleOCR. Se um dia faltar, `WHISPER_MODELO=small`
+#: no `.env` volta atrás sem tocar em código.
+MODELO = os.getenv("WHISPER_MODELO", "medium")
+# GPU quando houver: float16 na GPU é 6x mais rápido que int8 na CPU, com a
+# mesma saída. `WHISPER_DISPOSITIVO=cpu` força o contrário.
+DISPOSITIVO = os.getenv("WHISPER_DISPOSITIVO") or ("cuda" if _TEM_GPU else "cpu")
+COMPUTE = os.getenv("WHISPER_COMPUTE") or ("float16" if DISPOSITIVO == "cuda" else "int8")
+
+_modelo = None
+_trava_modelo = threading.Lock()
+
+# O CTranslate2 não é reentrante: duas transcrições simultâneas na mesma
+# instância corrompem a saída. Como o PaddleOCR já disputa CPU nesta máquina,
+# serializar aqui também evita que as duas cargas briguem.
+_trava_inferencia = threading.Lock()
+
+
+def carregar_modelo():
+    """Carrega uma vez e reusa. ~85s na primeira chamada."""
+    global _modelo
+    with _trava_modelo:
+        if _modelo is None:
+            from faster_whisper import WhisperModel
+
+            inicio = time.perf_counter()
+            log.info("Carregando Whisper (%s, %s, %s)…", MODELO, DISPOSITIVO, COMPUTE)
+            try:
+                _modelo = WhisperModel(MODELO, device=DISPOSITIVO, compute_type=COMPUTE)
+            except Exception as exc:
+                # GPU sem VRAM livre, driver antigo, DLL faltando: a entrevista
+                # não pode parar por isso — cai na CPU, só mais devagar.
+                if DISPOSITIVO != "cpu":
+                    log.warning("GPU indisponível (%s); usando CPU.", str(exc)[:120])
+                    _modelo = WhisperModel(MODELO, device="cpu", compute_type="int8")
+                else:
+                    raise
+            log.info("Whisper pronto em %.1fs (%s)", time.perf_counter() - inicio, DISPOSITIVO)
+        return _modelo
+
+
+def aquecer_modelo() -> None:
+    """Carrega os pesos E roda uma inferência de mentira.
+
+    Carregar não é estar pronto. A PRIMEIRA `transcribe` de verdade compila os
+    kernels CUDA e aloca os caches do cuDNN, e nesta máquina isso custou **30
+    segundos numa fala de 2,3s** — com o entrevistador olhando um painel que
+    dizia "ouvindo — nada reconhecido ainda" e o cliente esperando. Depois de
+    aquecido, o mesmo trecho sai em ~1s.
+
+    Duas decisões que parecem detalhe e não são:
+
+    - o áudio é ruído baixo, não silêncio, e o VAD sai DESLIGADO. Com o VAD
+      ligado o silêncio é cortado inteiro, nenhum segmento chega ao decodificador
+      e metade dos kernels continua fria — justamente a metade cara;
+    - o `transcribe` devolve um gerador preguiçoso. Sem consumir a lista, nada
+      roda de fato e o aquecimento seria uma linha de log mentindo.
+
+    Roda na trava de inferência como qualquer outra: se uma entrevista começar
+    no meio do aquecimento, ela espera este segundo em vez de disputar a GPU.
+    """
+    modelo = carregar_modelo()
+    inicio = time.perf_counter()
+    # 2s a 16 kHz, que é a taxa que o navegador manda. Amplitude baixa: é para
+    # exercitar o caminho, não para reconhecer nada.
+    ruido = (np.random.default_rng(0).standard_normal(16_000 * 2) * 0.01).astype(np.float32)
+    try:
+        with _trava_inferencia:
+            segmentos, _ = modelo.transcribe(
+                ruido,
+                language="pt",
+                beam_size=1,
+                vad_filter=False,
+                condition_on_previous_text=False,
+            )
+            list(segmentos)
+    except Exception as exc:
+        # Aquecimento é otimização: falhar aqui não pode impedir a entrevista,
+        # que vai carregar o modelo de novo pelo caminho normal.
+        log.warning("Aquecimento do Whisper falhou (%s); segue sem ele.", str(exc)[:120])
+        return
+    log.info("Whisper aquecido em %.1fs — a primeira fala já sai rápida.",
+             time.perf_counter() - inicio)
+
+
+def modelo_carregado() -> bool:
+    return _modelo is not None
+
+
+@dataclass(frozen=True)
+class Trecho:
+    """Um segmento do Whisper: onde começa, onde termina e o que foi dito."""
+
+    inicio: float
+    fim: float
+    texto: str
+
+
+class Estado(str, Enum):
+    IDLE = "IDLE"
+    LISTENING = "LISTENING"
+    FINISHING = "FINISHING"
+    COMPLETED = "COMPLETED"
+
+
+@dataclass
+class AnswerSession:
+    """Uma resposta. Acumula áudio e devolve texto provisório e final."""
+
+    sessao_id: str
+    pergunta_id: str
+    estado: Estado = Estado.IDLE
+    audio: list[np.ndarray] = field(default_factory=list)
+    amostras: int = 0
+    #: Transcrição da janela atual — a parte do texto que ainda pode mudar.
+    texto_parcial: str = ""
+    #: O que já saiu da janela e foi congelado. Ver `transcrever_parcial`.
+    prefixo_parcial: str = ""
+    texto_final: str = ""
+    #: Um parcial rodando por vez, por sessão. Quem controla é o serviço.
+    parcial_em_curso: bool = False
+    _amostras_ultima_parcial: int = 0
+    _inicio_cauda: int = 0
+    #: Relógio da primeira amostra, para medir se o áudio chega em tempo real.
+    _t0: float = 0.0
+    #: Quanto do prefixo já foi ENTREGUE ao cliente como trecho confirmado.
+    _prefixo_entregue: int = 0
+    #: Amostras já DESCARTADAS do início do buffer. `audio` guarda só o que vem
+    #: depois disto, então índice absoluto menos `_base` dá o índice na lista.
+    _base: int = 0
+
+    def acrescentar(self, pcm: np.ndarray) -> None:
+        """Recebe áudio. Nunca recusa — ver `_descartar_congelado` para o teto.
+
+        Antes havia aqui um teto de 30 minutos que RECUSAVA áudio, e ele era o
+        defeito: a escuta contínua abre UMA sessão para a entrevista inteira
+        (`iniciarEntrevista` chama `iniciarResposta("entrevista")`), então passados
+        30 minutos toda fala nova era jogada fora EM SILÊNCIO. O roteiro parava de
+        preencher e o painel dizia que não estava ouvindo — numa entrevista de 28 a
+        42 perguntas isso acontece no meio do atendimento.
+
+        O teto existia para a memória não crescer sem fim, e essa preocupação
+        continua válida. Só que a resposta certa é soltar o que já foi congelado,
+        não recusar o que está chegando: o que passou da cauda já virou texto e
+        nunca mais é retranscrito.
+        """
+        if self._t0 == 0.0:
+            self._t0 = time.monotonic()
+        self.audio.append(pcm)
+        self.amostras += len(pcm)
+
+    def _descartar_congelado(self) -> None:
+        """Solta os blocos que ficaram para trás da cauda.
+
+        A cauda anda para frente a cada congelamento, e o que fica atrás dela não
+        é lido de novo por nenhum parcial. Segurar isso custava duas coisas: 115 MB
+        de RAM aos 30 minutos, e — pior — o `_juntar` concatenava a entrevista
+        INTEIRA a cada parcial só para recortar os últimos segundos. Medido: 4,6 ms
+        de cauda com 1 minuto de entrevista, 78,6 ms com 30 — duas vezes por
+        segundo, numa máquina que já disputa CPU com o OCR.
+
+        Só age depois de `MEMORIA_MAXIMA_S`, e isso é essencial: numa RESPOSTA
+        (o "Gravar / Finalizar" pergunta a pergunta) o texto definitivo vem de
+        retranscrever o áudio inteiro de uma vez, que é o de melhor contexto.
+        Soltar áudio de uma resposta de dois minutos trocaria esse texto por uma
+        emenda de parciais, sem necessidade nenhuma — a memória ali é pequena.
+        Quem precisa do descarte é a entrevista contínua, que roda por horas.
+
+        Guarda uma folga antes da cauda porque `_congelar` pode recuar o início
+        quando corta à força (ver SOBREPOSICAO_PARCIAL_S).
+        """
+        if self.amostras < MEMORIA_MAXIMA_S * TAXA:
+            return
+        folga = int(2 * SOBREPOSICAO_PARCIAL_S * TAXA)
+        alvo = self._inicio_cauda - folga
+        if alvo <= self._base:
+            return
+        soltar = 0
+        consumido = self._base
+        for bloco in self.audio:
+            if consumido + len(bloco) > alvo:
+                break
+            consumido += len(bloco)
+            soltar += 1
+        if soltar:
+            del self.audio[:soltar]
+            self._base = consumido
+
+    def fator_chegada(self) -> float:
+        """Quantos segundos de áudio chegam por segundo de relógio.
+
+        1,0 é tempo real. Abaixo disso a transcrição não tem como acompanhar a
+        fala — não adianta acelerar o modelo se o áudio não chega. Acima de 1,0
+        é gravação sendo despejada de uma vez, não entrevista ao vivo.
+        """
+        decorrido = time.monotonic() - self._t0
+        return (self.amostras / TAXA) / decorrido if decorrido > 0.1 else 0.0
+
+    @property
+    def duracao_s(self) -> float:
+        return self.amostras / TAXA
+
+    def hora_de_parcial(self) -> bool:
+        novas = self.amostras - self._amostras_ultima_parcial
+        return novas >= SEGUNDOS_ENTRE_PARCIAIS * TAXA
+
+    def iniciar_parcial(self) -> bool:
+        """Reserva a vez do próximo parcial. `False` se não é hora ou já há um.
+
+        A reserva marca o relógio AQUI, e não quando a transcrição termina: o
+        modelo pode levar mais que a cadência, e medir na saída faria a próxima
+        rodada disparar imediatamente, empilhando trabalho que ninguém vê.
+        """
+        if self.parcial_em_curso or not self.hora_de_parcial():
+            return False
+        self.parcial_em_curso = True
+        self._amostras_ultima_parcial = self.amostras
+        return True
+
+    def texto_em_construcao(self) -> str:
+        """O que a tela mostra enquanto a pessoa fala: congelado + janela atual."""
+        return " ".join(p for p in (self.prefixo_parcial, self.texto_parcial) if p).strip()
+
+    def trecho_confirmado(self) -> str:
+        """O que foi congelado desde a última vez que alguém perguntou.
+
+        É o que sustenta a entrevista de microfone aberto: em vez de esperar o
+        fim da resposta para ter texto, o cliente recebe cada trecho assim que
+        ele para de mudar, e o manda para a escuta preencher o roteiro.
+
+        Só sai do PREFIXO, nunca da cauda: o prefixo é o que já passou de uma
+        pausa e não muda mais. Entregar a cauda faria o roteiro ser preenchido
+        com texto que a frase seguinte ainda vai corrigir.
+        """
+        novo = self.prefixo_parcial[self._prefixo_entregue :].strip()
+        self._prefixo_entregue = len(self.prefixo_parcial)
+        return novo
+
+    def _juntar(self) -> np.ndarray:
+        """O áudio AINDA EM MEMÓRIA. Começa em `_base`, não no zero da sessão."""
+        if not self.audio:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self.audio)
+
+    def _desde(self, inicio_absoluto: int) -> np.ndarray:
+        """Recorta a partir de um índice absoluto, concatenando só o necessário.
+
+        Concatenar tudo para depois fatiar era o que ficava caro conforme a
+        entrevista andava. Aqui os blocos anteriores ao corte são pulados, então o
+        custo acompanha o TAMANHO DA CAUDA e não o da entrevista.
+        """
+        alvo = max(inicio_absoluto, self._base)
+        pedacos: list[np.ndarray] = []
+        posicao = self._base
+        for bloco in self.audio:
+            fim = posicao + len(bloco)
+            if fim > alvo:
+                pedacos.append(bloco[max(0, alvo - posicao) :] if posicao < alvo else bloco)
+            posicao = fim
+        if not pedacos:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(pedacos)
+
+    def transcrever_parcial(self) -> str:
+        """Texto provisório da cauda, congelando o que já passou de uma pausa.
+
+        Descarta a rodada se já houver uma transcrição em curso. Enfileirar
+        parciais fazia a fila crescer mais rápido que o processamento: os
+        parciais chegavam com 11s, 19s, 27s de atraso e o WebSocket morria por
+        keepalive. Parcial é aproximação para a tela — perder um não custa
+        nada, porque o próximo já traz o texto acumulado.
+        """
+        cauda = self._desde(self._inicio_cauda)
+        if len(cauda) < TAXA * 0.5:  # menos de meio segundo não vale rodar
+            return self.texto_em_construcao()
+
+        inicio = time.perf_counter()
+        if usando_openrouter():
+            # Sem trava: não há GPU nem modelo local a disputar, e serializar
+            # chamadas de rede faria duas entrevistas simultâneas esperarem uma
+            # pela outra. Quem impede o empilhamento é `parcial_em_curso`, que é
+            # por sessão. Falha de rede não pode derrubar a resposta — o parcial
+            # é descartável, e o próximo já vem com o texto acumulado.
+            try:
+                trechos = _segmentos_sem_trava(
+                    cauda, transcricao_openrouter.TEMPO_LIMITE_PARCIAL_S
+                )
+            except transcricao_openrouter.ErroTranscricao as erro:
+                log.warning("Parcial descartado: %s", erro)
+                return self.texto_em_construcao()
+        else:
+            if not _trava_inferencia.acquire(blocking=False):
+                return self.texto_em_construcao()
+            try:
+                from .gpu_lock import gpu_exclusiva
+                try:
+                    with gpu_exclusiva(espera=1):
+                        trechos = _segmentos_sem_trava(cauda)
+                except TimeoutError:
+                    # Parcial é descartável; o final espera a GPU sem perder áudio.
+                    return self.texto_em_construcao()
+            finally:
+                _trava_inferencia.release()
+
+        # Uma linha por parcial, com os quatro números que separam as causas de
+        # "está demorando": inferência lenta, áudio chegando devagar, microfone
+        # mudo, ou cauda que não congela. Sem isto o diagnóstico vira palpite.
+        nivel = float(np.sqrt(np.mean(np.square(cauda)))) if len(cauda) else 0.0
+        log.info(
+            "parcial: cauda=%.1fs inferencia=%dms nivel=%.4f chegada=%.2fx segmentos=%d",
+            len(cauda) / TAXA,
+            int((time.perf_counter() - inicio) * 1000),
+            nivel,
+            self.fator_chegada(),
+            len(trechos),
+        )
+
+        self.texto_parcial = " ".join(t.texto for t in trechos).strip()
+        self._congelar(trechos, len(cauda) / TAXA)
+        # Logo depois de congelar, e não em `acrescentar`: é aqui que a cauda
+        # anda, e é o que ficou atrás dela que pode ser solto.
+        self._descartar_congelado()
+        return self.texto_em_construcao()
+
+    def _congelar(self, trechos: list[Trecho], duracao_cauda: float) -> None:
+        """Tira da cauda o que já não vai mudar, encurtando a próxima rodada."""
+        corte = 0.0
+        for t in trechos:
+            if t.fim > duracao_cauda - MARGEM_CAUDA_S:
+                break
+            corte = t.fim
+
+        if corte > 0:
+            confirmados = [t.texto for t in trechos if t.fim <= corte]
+            self.prefixo_parcial = " ".join(
+                p for p in (self.prefixo_parcial, *confirmados) if p
+            ).strip()
+            self.texto_parcial = " ".join(t.texto for t in trechos if t.fim > corte).strip()
+            # O corte cai numa pausa, então não parte palavra: o áudio
+            # congelado acaba exatamente onde o segmento acabou.
+            self._inicio_cauda += int(corte * TAXA)
+            return
+
+        if duracao_cauda > LIMITE_CAUDA_S:
+            # Fala longa sem pausa nenhuma (ou VAD que não fechou segmento).
+            # Corta assim mesmo, senão o custo do parcial volta a crescer sem
+            # limite. Aqui a emenda pode repetir ou comer uma palavra — é o
+            # preço de não ter onde cortar, e vale só para o texto na tela.
+            self.prefixo_parcial = self.texto_em_construcao()
+            self.texto_parcial = ""
+            self._inicio_cauda = max(0, self.amostras - int(SOBREPOSICAO_PARCIAL_S * TAXA))
+
+    def transcrever_final(self) -> str:
+        """Texto definitivo do que ainda está em memória, emendado ao congelado.
+
+        Numa resposta curta — o caso do "Gravar / Finalizar" pergunta a pergunta —
+        nada foi descartado, `_base` é zero, e isto continua sendo exatamente o que
+        era: o áudio inteiro transcrito de uma vez, que é o de melhor contexto.
+
+        Numa sessão longa, parte do áudio já foi solta da memória depois de virar
+        texto. Aí o definitivo é o congelado + o que sobrou. Vale notar que
+        retranscrever trinta minutos de uma vez nunca foi viável de verdade: a
+        entrevista contínua se sustenta nos TRECHOS, que é o que alimenta o
+        roteiro enquanto a conversa acontece.
+        """
+        self.estado = Estado.FINISHING
+        if self._base == 0:
+            # Nada foi solto: transcreve tudo de uma vez, como sempre foi.
+            completo = self._desde(0)
+            self.texto_final = (
+                _transcrever(completo) if len(completo) >= TAXA * 0.3 else ""
+            )
+        else:
+            # Parte já virou texto e saiu da memória. Transcreve da CAUDA, e não
+            # de `_base`: entre os dois há a folga que `_descartar_congelado`
+            # deixa de propósito, e ela já está contada no prefixo — recomeçar
+            # dali repetiria as últimas palavras no texto final.
+            cauda = self._desde(self._inicio_cauda)
+            texto_cauda = _transcrever(cauda) if len(cauda) >= TAXA * 0.3 else ""
+            self.texto_final = " ".join(
+                p for p in (self.prefixo_parcial, texto_cauda) if p
+            ).strip()
+        self.estado = Estado.COMPLETED
+        return self.texto_final
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sessionId": self.sessao_id,
+            "questionId": self.pergunta_id,
+            "status": self.estado.value,
+            "duracao_s": round(self.duracao_s, 1),
+            "texto": self.texto_final or self.texto_em_construcao(),
+        }
+
+
+def _transcrever(audio: np.ndarray) -> str:
+    """Transcrição garantida — espera a vez. Usada no texto final.
+
+    As travas são do Whisper: um modelo local, um processo, uma GPU. A OpenRouter
+    é rede, e serializar chamadas de rede atrás de uma trava global faria duas
+    entrevistas simultâneas esperarem uma pela outra sem nenhum recurso disputado.
+    """
+    if usando_openrouter():
+        return _transcrever_sem_trava(audio)
+    from .gpu_lock import gpu_exclusiva
+    with _trava_inferencia:
+        with gpu_exclusiva():
+            return _transcrever_sem_trava(audio)
+
+
+def _transcrever_sem_trava(audio: np.ndarray) -> str:
+    """O texto corrido. Quem chama garante a exclusão mútua."""
+    return " ".join(t.texto for t in _segmentos_sem_trava(audio)).strip()
+
+
+def _segmentos_openrouter(audio: np.ndarray, tempo_limite: float | None = None) -> list[Trecho]:
+    """A janela inteira como UM trecho, porque é só isso que a API devolve.
+
+    A OpenRouter transcreve por chat/completions e volta texto puro — sem tempos
+    de segmento. O parcial usava esses tempos para achar a pausa e congelar ali,
+    sem partir palavra; sem eles, o trecho único cobre a janela toda e o
+    `_congelar` cai no corte forçado por `LIMITE_CAUDA_S`, que já existia para
+    fala longa sem pausa nenhuma. A emenda pode repetir ou comer uma palavra, e
+    isso vale só para o texto provisório na tela: o definitivo sai de
+    `transcrever_final`, que manda o áudio inteiro de uma vez.
+    """
+    texto = transcricao_openrouter.transcrever(audio, tempo_limite)
+    if not texto:
+        return []
+    return [Trecho(0.0, len(audio) / TAXA, texto)]
+
+
+def _segmentos_sem_trava(audio: np.ndarray, tempo_limite: float | None = None) -> list[Trecho]:
+    """O trabalho em si, com as fronteiras que o VAD encontrou.
+
+    `tempo_limite` só vale para a OpenRouter, e existe porque parcial e final têm
+    urgências opostas: o parcial é descartável e precisa desistir rápido para não
+    travar a tela; o final não pode se perder e espera o quanto for.
+
+    Os tempos importam tanto quanto o texto: é neles que o parcial descobre
+    onde houve pausa, e é na pausa que dá para congelar sem cortar palavra.
+    Com `vad_filter`, o faster-whisper já devolve os tempos referentes ao áudio
+    original, não ao áudio comprimido — então servem para fatiar o buffer.
+    """
+    if usando_openrouter():
+        return _segmentos_openrouter(audio, tempo_limite)
+    modelo = carregar_modelo()
+    segmentos, _ = modelo.transcribe(
+        audio,
+        language="pt",
+        beam_size=1,          # ganho de qualidade não paga o custo em CPU
+        vad_filter=True,      # corta silêncio: o entrevistado pensa antes de falar
+        vad_parameters={"min_silence_duration_ms": 500},
+        condition_on_previous_text=False,  # evita repetir frase da janela anterior
+    )
+    return [Trecho(s.start, s.end, s.text.strip()) for s in segmentos if s.text.strip()]
+
+
+def pcm_de_bytes(dados: bytes) -> np.ndarray:
+    """Float32 little-endian vindo do AudioWorklet, já em 16 kHz mono.
+
+    A conversão de taxa acontece no navegador (AudioContext a 16 kHz), que é
+    mais barato que reamostrar no servidor e evita dependência de ffmpeg.
+    """
+    if len(dados) % 4:
+        dados = dados[: len(dados) - (len(dados) % 4)]
+    return np.frombuffer(dados, dtype=np.float32).copy()
+
+
+class Sessoes:
+    """Registro das respostas em andamento, por conexão WebSocket."""
+
+    def __init__(self) -> None:
+        self._itens: dict[str, AnswerSession] = {}
+        self._trava = threading.Lock()
+
+    def abrir(self, sessao_id: str, pergunta_id: str) -> AnswerSession:
+        with self._trava:
+            s = AnswerSession(sessao_id=sessao_id, pergunta_id=pergunta_id)
+            s.estado = Estado.LISTENING
+            self._itens[sessao_id] = s
+            return s
+
+    def obter(self, sessao_id: str) -> AnswerSession | None:
+        with self._trava:
+            return self._itens.get(sessao_id)
+
+    def fechar(self, sessao_id: str) -> AnswerSession | None:
+        with self._trava:
+            return self._itens.pop(sessao_id, None)

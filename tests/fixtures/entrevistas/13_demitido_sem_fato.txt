@@ -1,0 +1,16 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Atendente.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: três anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Fui demitido em março de 2025.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.

@@ -1,0 +1,32 @@
+Entrevistador: Qual a sua função nos Correios?
+Entrevistado: Sou carteiro motorizado.
+Entrevistador: Há quanto tempo trabalha?
+Entrevistado: Faz uns oito anos.
+Entrevistador: Ainda trabalha?
+Entrevistado: Sim, ainda trabalho.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Sim. Fui assaltado duas vezes no ano passado entregando na periferia.
+Entrevistador: O assalto ocorreu durante a jornada de trabalho?
+Entrevistado: Sim, eu estava na rota de entrega.
+Entrevistador: Qual era sua função na época?
+Entrevistado: Carteiro motorizado.
+Entrevistador: Tem acesso às CATs?
+Entrevistado: Sim, tenho as duas CATs.
+Entrevistador: Depois do assalto, passou a ter ansiedade, depressão, pânico, insônia?
+Entrevistado: Sim, depois disso não consigo mais dormir direito, tenho ansiedade e medo de sair na rua.
+Entrevistador: Procurou atendimento médico, psicológico ou psiquiátrico?
+Entrevistado: Sim, estou em acompanhamento psicológico.
+Entrevistador: Ficou afastado pelo INSS em razão do assalto?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não, só os sintomas depois do assalto.
+Entrevistador: Sofreu acidente fora do trabalho com sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios?
+Entrevistado: Não.
+Entrevistador: Existem testemunhas do assalto?
+Entrevistado: Sim, um colega de rota.
+Entrevistador: Quais documentos você possui?
+Entrevistado: Tenho boletim de ocorrência, CAT e relatórios psicológicos.

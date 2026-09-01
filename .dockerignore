@@ -1,0 +1,27 @@
+# O contexto de build sem o que e da maquina de quem desenvolve. Sem isto o
+# docker build arrasta .venv (GBs), node_modules e ate dados de caso real —
+# que jamais podem parar dentro de uma imagem no registry.
+.git
+.venv
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+
+frontend/node_modules
+frontend/.next
+
+# Estado local e segredo: nunca em imagem.
+.env
+.env.*
+dados/
+logs/
+tmp/
+
+# Só desenvolvimento.
+tests/
+observability/
+ocr-extrator/
+iniciar.ps1
+*.md
+!docs/**

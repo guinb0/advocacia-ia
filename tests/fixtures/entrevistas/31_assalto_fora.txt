@@ -1,0 +1,18 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: OTT.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: sete anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não. Nunca fui assaltado no trabalho. Só um furto de celular em casa..
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: O assalto foi na jornada de trabalho?
+Entrevistado: Não.

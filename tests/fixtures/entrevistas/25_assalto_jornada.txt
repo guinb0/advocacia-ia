@@ -1,0 +1,30 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Carteiro motorizado.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: 9 anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim, ainda trabalho.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Sim.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: Quantas vezes e em que anos?
+Entrevistado: Fui assaltado uma vez em 2024, na rota de entrega.
+Entrevistador: Ocorreu durante a jornada?
+Entrevistado: Sim, eu estava trabalhando na entrega.
+Entrevistador: Tem acesso às CATs?
+Entrevistado: Não.
+Entrevistador: Passou a ter sintomas depois?
+Entrevistado: Sim, ansiedade.
+Entrevistador: Procurou atendimento psicológico?
+Entrevistado: Sim.
+Entrevistador: Afastado pelo INSS por causa do assalto?
+Entrevistado: Não.
+Entrevistador: Existem testemunhas?
+Entrevistado: Sim, um colega de rota.

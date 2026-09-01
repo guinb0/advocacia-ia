@@ -1,0 +1,26 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: OTT.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: quatorze anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Sim, LER nos dois punhos..
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: Diagnóstico CID?
+Entrevistado: M65, tendinite.
+Entrevistador: Havia pressão e metas?
+Entrevistado: Sim, metas abusivas e pressão diária do supervisor.
+Entrevistador: EPI?
+Entrevistado: Forneciam luva, mas quase não fiscalizavam.
+Entrevistador: Afastamento?
+Entrevistado: Fiquei afastado quatro meses pelo INSS.
+Entrevistador: Laudos?
+Entrevistado: Sim.

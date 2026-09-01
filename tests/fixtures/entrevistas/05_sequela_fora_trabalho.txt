@@ -1,0 +1,22 @@
+Entrevistador: Bom dia, sou da equipe de acolhimento da Lara e Melo. Vamos começar? Como é seu nome?
+Entrevistado: Maria da Silva.
+Entrevistador: Qual a função?
+Entrevistado: Atendente.
+Entrevistador: Há quanto tempo?
+Entrevistado: Quinze anos.
+Entrevistador: Ainda trabalha?
+Entrevistado: Pedi demissão em janeiro de 2026 por acordo.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Doença pelo trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Sim. Em 2022 eu sofri um acidente de carro fora do horário de trabalho e fiquei com sequela no joelho esquerdo, permanente.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: A empresa fornecia EPI?
+Entrevistado: Sim, fornecia e era obrigatório usar. Eu usava calçado de segurança.
+Entrevistador: Havia pressão, metas abusivas, assédio?
+Entrevistado: Sim, havia cobrança de metas diárias e pressão do supervisor.

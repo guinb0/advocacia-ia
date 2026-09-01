@@ -1,0 +1,22 @@
+Entrevistador: Qual a função?
+Entrevistado: Carteiro pedestre.
+Entrevistador: Tempo de casa?
+Entrevistado: Cinco anos.
+Entrevistador: Ainda trabalha?
+Entrevistado: Sim.
+Entrevistador: Então você sofreu assalto no trabalho, certo?
+Entrevistado: Não. Nunca fui assaltado no trabalho. Assaltaram minha esposa no shopping, mas eu não.
+Entrevistador: Sofreu acidente de trabalho?
+Entrevistado: Sim. Em junho de 2024, por volta das quinze horas, eu escorreguei na escada do centro de distribuição e torci o tornozelo.
+Entrevistador: Foi no estacionamento, fora da empresa?
+Entrevistado: Não, foi dentro do CD, na escada do depósito, durante o expediente.
+Entrevistador: Emitiram CAT?
+Entrevistado: Sim.
+Entrevistador: Doença ocupacional?
+Entrevistado: Não.
+Entrevistador: Sequela de acidente fora do trabalho?
+Entrevistado: Não.
+Entrevistador: Já ajuizou ação?
+Entrevistado: Não.
+Entrevistador: Tem laudos do acidente?
+Entrevistado: Sim, tenho RX e atestado.

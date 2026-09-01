@@ -1,0 +1,564 @@
+"""Regras do caso: status de cada item do checklist e o pedido para o cliente.
+
+A tela do advogado responde três perguntas: o que já chegou, o que falta e o que
+chegou com problema. Tudo aqui é derivado das entregas — nada de status guardado
+à mão, que sairia do lugar assim que alguém apagasse uma entrega.
+"""
+
+from __future__ import annotations
+
+import zipfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+from . import armazenamento, categorias
+from .categorias import ItemChecklist
+from .extractors import ROTULOS_TIPO
+
+# Status possíveis de um item do checklist.
+PENDENTE = "pendente"          # nada foi enviado
+PROCESSANDO = "processando"    # chegou e está sendo lido pelo OCR
+CONFERIR = "conferir"          # chegou, mas com ressalva (ilegível ou tipo trocado)
+ENTREGUE = "entregue"          # chegou e passou na validação
+
+#: A partir daqui a espera não é mais fila, é problema.
+#:
+#: Uma leitura leva de 4 a 30 segundos. Passados dez minutos no mesmo estado, o
+#: que existe não é um documento na frente na fila — é o leitor fora do ar ou uma
+#: mensagem perdida. `tasks.manutencao.recuperar_entregas_travadas` usa o mesmo
+#: número para ir buscar essas entregas, e o alerta abaixo para parar de dizer
+#: que está tudo normal enquanto não está.
+MINUTOS_ESPERA_ANORMAL = 10
+
+
+def _esta_pronta(entrega: dict[str, Any]) -> bool:
+    return entrega.get("status_proc", "pronto") == "pronto"
+
+
+def _aproveitavel(entrega: dict[str, Any]) -> bool:
+    """A entrega cumpre o item, ou só ocupa espaço?
+
+    `dados_utilizaveis` responde por documento CADASTRAL: ele vale quando os
+    campos esperados saíram e passaram na validação. Só que o extrator conhece
+    nove tipos de identidade, e o checklist tem trinta itens — CAT, laudo,
+    atestado, contracheque, CNIS e procuração não têm campo estruturado nenhum,
+    então `dados_utilizaveis` nasce False neles SEMPRE. Enquanto essa era a
+    única pergunta, o arquivo certo, legível e no item certo mantinha o item em
+    "a conferir" para todo o sempre, e o cliente lia "precisa reenviar".
+
+    `texto_utilizavel` é o sinal que o pipeline calcula para esses: a imagem é
+    legível e o OCR extraiu texto de verdade. É o que o advogado usaria para
+    dizer "chegou" — ele abre o laudo e lê.
+    """
+    return bool(
+        entrega.get("dados_utilizaveis")
+        or entrega.get("confirmado_manual", False)
+        or entrega.get("texto_utilizavel")
+    )
+
+
+def _status_do_item(entregas: list[dict[str, Any]]) -> str:
+    if not entregas:
+        return PENDENTE
+
+    prontas = [e for e in entregas if _esta_pronta(e)]
+
+    # Basta uma entrega boa: "atestados médicos" pode ter 5 arquivos e 1 ruim.
+    if any(_aproveitavel(e) and e["tipo_confere"] is not False for e in prontas):
+        return ENTREGUE
+
+    # Nenhuma boa ainda, mas há leitura em curso: não é pendência nem ressalva.
+    if any(e.get("status_proc") in {"na_fila", "processando"} for e in entregas):
+        return PROCESSANDO
+
+    # Sobrou o que chegou e não presta: lido com ressalva ou falho na leitura.
+    # Em ambos o arquivo existe, então é "conferir" — nunca "pendente", que
+    # significaria que o cliente não mandou nada.
+    return CONFERIR
+
+
+def _esperando_ha_muito(entrega: dict[str, Any]) -> bool:
+    """A entrega passou de `MINUTOS_ESPERA_ANORMAL` sem ser lida?
+
+    Medido por `criado_em`, que é o único carimbo que a entrega tem — não há
+    coluna de "última tentativa". Como só é consultado para entrega ainda não
+    lida, `criado_em` é justamente o momento em que ela entrou na fila.
+
+    `criado_em` ausente ou ilegível responde `False`: um formato inesperado não
+    pode virar alarme numa entrega que acabou de chegar.
+    """
+    bruto = entrega.get("criado_em")
+    if not bruto:
+        return False
+    try:
+        criado = datetime.fromisoformat(str(bruto))
+    except ValueError:
+        return False
+    if criado.tzinfo is None:
+        criado = criado.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - criado > timedelta(minutes=MINUTOS_ESPERA_ANORMAL)
+
+
+def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[str]:
+    alertas: list[str] = []
+
+    # Ainda sem leitura: os campos de validação estão vazios, e lê-los produziria
+    # o alerta de "não foi possível extrair" para um arquivo que só está na fila.
+    estado = entrega.get("status_proc", "pronto")
+    if estado in {"na_fila", "processando"}:
+        if _esperando_ha_muito(entrega):
+            # A mensagem antiga ("aguardando a vez na fila") continuava serena
+            # depois de horas paradas, e era o único sinal que o advogado tinha.
+            # Quem repara é `recuperar_entregas_travadas`, a cada 5 minutos.
+            return [
+                "Este documento está há mais de "
+                f"{MINUTOS_ESPERA_ANORMAL} minutos esperando para ser lido — mais que o "
+                "normal. O sistema tenta de novo sozinho; se não sair daqui, o leitor "
+                "de documentos está fora do ar."
+            ]
+        if estado == "na_fila":
+            return ["Documento recebido e aguardando a vez na fila de leitura."]
+        return ["Documento recebido. A leitura está em andamento."]
+    if estado == "erro":
+        return [
+            "Não foi possível ler este arquivo: "
+            + (entrega.get("erro_proc") or "falha no processamento.")
+        ]
+
+    if entrega["tipo_confere"] is False:
+        codigo = entrega.get("tipo_detectado")
+        # ROTULOS_TIPO traduz "cnh" -> "CNH (Carteira Nacional de Habilitação)".
+        legivel = ROTULOS_TIPO.get(codigo, codigo) if codigo else "algo não identificado"
+        alertas.append(
+            f"Enviado como '{item.nome}', mas o documento parece ser {legivel}. "
+            "Confira se não houve troca de arquivo."
+        )
+    if len(entrega.get("itens_atendidos") or []) > 1 and not entrega.get("confirmado_manual"):
+        rotulo = ROTULOS_TIPO.get(entrega.get("tipo_detectado"), entrega.get("tipo_detectado"))
+        alertas.append(
+            f"Este arquivo foi reconhecido como {rotulo} e traz RG e CPF, "
+            "então vale para os dois itens do checklist."
+        )
+    if entrega.get("confirmado_manual"):
+        alertas.append("Identidade unificada confirmada manualmente para RG e CPF.")
+    elif not entrega["dados_utilizaveis"] and item.tipo_ocr is not None:
+        # Só para item cadastral: cobrar "campos extraídos" de um laudo médico é
+        # cobrar o que o extrator nunca teve como dar (ver `_aproveitavel`).
+        score = entrega.get("score_legibilidade")
+        sufixo = f" (legibilidade {score}%)" if score is not None else ""
+        alertas.append(f"Não foi possível extrair os dados com segurança{sufixo}.")
+    elif not entrega["dados_utilizaveis"] and not entrega.get("texto_utilizavel"):
+        score = entrega.get("score_legibilidade")
+        sufixo = f" (legibilidade {score}%)" if score is not None else ""
+        alertas.append(f"Não foi possível extrair texto aproveitável deste arquivo{sufixo}.")
+
+    origem = entrega.get("roteamento_origem")
+    motivo = (entrega.get("roteamento_motivo") or "").strip()
+    if origem == "deterministico":
+        alertas.append(
+            "Este arquivo foi encaminhado a este item pela leitura do documento"
+            + (f": {motivo}" if motivo else ".")
+        )
+        if entrega.get("tipo_detectado") == "ctps":
+            alertas.append(
+                "Se não for carteira de trabalho (por exemplo CAT ou contracheque), "
+                "use «Mover para outro item» abaixo e escolha o documento certo."
+            )
+    elif origem == "semantico":
+        # Vem de modelo de linguagem, e a tela precisa dizer isso com todas as
+        # letras: é a única fonte que existe para CAT, laudo e contracheque.
+        alertas.append(
+            "Classificado automaticamente pela leitura do texto — confira"
+            + (f": {motivo}" if motivo else ".")
+        )
+    elif origem == "humano" and motivo:
+        alertas.append(f"Movido para este item por: {motivo}")
+    elif origem == "escolha" and motivo:
+        # Formatos sem OCR continuam aceitos no item escolhido. A tela interna
+        # precisa deixar claro que o original foi preservado, mas não lido.
+        alertas.append(motivo)
+
+    return alertas
+
+
+def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
+    """O que dizer sobre um arquivo que chegou sem destino."""
+    estado = entrega.get("status_proc", "pronto")
+    if estado in {"na_fila", "processando"}:
+        return ["Documento recebido. A leitura está em andamento."]
+    if estado == "erro":
+        return [
+            "Não foi possível ler este arquivo: "
+            + (entrega.get("erro_proc") or "falha no processamento.")
+        ]
+    motivo = (entrega.get("roteamento_motivo") or "").strip()
+    return [
+        "Este documento foi lido, mas não foi possível dizer a que item do "
+        "checklist ele responde. Escolha o item certo aqui ao lado."
+        + (f" ({motivo})" if motivo else "")
+    ]
+
+
+def montar_situacao(caso_id: str) -> dict[str, Any] | None:
+    """Caso + checklist com o status de cada item + contagens de progresso."""
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        return None
+    return situacao_de(caso, armazenamento.listar_entregas(caso_id))
+
+
+def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[str, Any]:
+    """A mesma situação, a partir de dados já em mãos — sem tocar no banco.
+
+    Existe para quem já leu caso e entregas em lote. O painel compara o caso aberto
+    com os anteriores da categoria, e buscar as entregas de cada um deles de novo,
+    um por um, custava uma ida ao banco por caso da amostra.
+    """
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        # A categoria saiu do código mas o caso continua no banco.
+        return {
+            "caso": caso,
+            "categoria": None,
+            "erro": f"Categoria '{caso['categoria']}' não existe mais no sistema.",
+            "itens": [],
+        }
+
+    por_item: dict[str, list[dict[str, Any]]] = {}
+    # Chegou e ninguém soube dizer a que item responde. Fica aqui, visível, com o
+    # arquivo guardado — nunca marcado num item por chute (ver `app/roteamento.py`).
+    em_triagem: list[dict[str, Any]] = []
+    for entrega in entregas:
+        if not entrega["itens_atendidos"]:
+            em_triagem.append(entrega)
+            continue
+        # Uma CIN pode ter sido marcada para atender RG e CPF com o mesmo arquivo.
+        for item_codigo in entrega["itens_atendidos"]:
+            por_item.setdefault(item_codigo, []).append(entrega)
+
+    itens = []
+    for item in categoria.itens:
+        do_item = por_item.get(item.codigo, [])
+        status = _status_do_item(do_item)
+        itens.append(
+            {
+                **item.to_dict(),
+                "status": status,
+                "entregas": [
+                    {**e, "alertas": _alertas_da_entrega(e, item)} for e in do_item
+                ],
+            }
+        )
+
+    obrigatorios = [i for i in itens if i["obrigatorio"]]
+    entregues_obrig = [i for i in obrigatorios if i["status"] == ENTREGUE]
+    pendentes_obrig = [i for i in obrigatorios if i["status"] == PENDENTE]
+    conferir = [i for i in itens if i["status"] == CONFERIR]
+
+    return {
+        "caso": caso,
+        "categoria": {
+            "codigo": categoria.codigo,
+            "nome": categoria.nome,
+            "descricao": categoria.descricao,
+        },
+        "itens": itens,
+        "triagem": [
+            {**e, "alertas": _alertas_da_triagem(e)} for e in em_triagem
+        ],
+        "progresso": {
+            "obrigatorios_total": len(obrigatorios),
+            "obrigatorios_entregues": len(entregues_obrig),
+            "obrigatorios_pendentes": len(pendentes_obrig),
+            "opcionais_total": len(itens) - len(obrigatorios),
+            "opcionais_entregues": sum(
+                1 for i in itens if not i["obrigatorio"] and i["status"] == ENTREGUE
+            ),
+            "itens_a_conferir": len(conferir),
+            "em_triagem": len(em_triagem),
+            "percentual_obrigatorios": (
+                round(len(entregues_obrig) / len(obrigatorios) * 100) if obrigatorios else 100
+            ),
+            # Documento na triagem ainda pode ser o obrigatório que falta: dizer
+            # "está tudo pronto" com arquivo por identificar seria promessa vazia.
+            "pronto": not pendentes_obrig and not conferir and not em_triagem,
+        },
+    }
+
+
+# Documentos que provam identidade e CPF no mesmo arquivo. A CIN traz o CPF como
+# número principal e substitui o RG por lei; a CNH imprime os dois. Um cartão de
+# CPF NÃO entra aqui: ele não carrega RG nenhum, e aceitá-lo marcaria a
+# identidade como entregue sem que exista documento de identidade no caso.
+TIPOS_IDENTIDADE_UNIFICADA = {"cin", "cnh"}
+
+
+def _campo_valido(extracao: dict[str, Any], nome: str) -> bool:
+    campo = next((c for c in extracao.get("campos", []) if c["nome"] == nome), None)
+    return bool(
+        campo and str(campo.get("valor", "")).strip() and campo.get("valido") is not False
+    )
+
+
+def cobre_rg_e_cpf(extracao: dict[str, Any]) -> bool:
+    """O arquivo comprova identidade E CPF de uma vez?
+
+    Decidido pelos dados extraídos, não só pelo tipo: uma CNH ilegível em que o
+    CPF não saiu não pode dar o item CPF por entregue.
+    """
+    tipo = extracao.get("tipo", {}).get("detectado")
+    if tipo not in TIPOS_IDENTIDADE_UNIFICADA:
+        return False
+    if not _campo_valido(extracao, "cpf"):
+        return False
+    # Na CIN não há número de RG a conferir — o próprio documento é a identidade.
+    return True if tipo == "cin" else _campo_valido(extracao, "rg")
+
+
+def tipo_confere(
+    item: ItemChecklist,
+    tipo_detectado: str | None,
+    identidade_unificada: bool = False,
+) -> bool | None:
+    """O arquivo enviado é mesmo o documento pedido?
+
+    `None` quando não dá para afirmar: ou o item não tem classificador, ou o OCR
+    não reconheceu o tipo. Só devolve False quando o classificador reconheceu com
+    confiança um tipo diferente do esperado — aí houve troca de arquivo mesmo.
+    """
+    if item.tipo_ocr is None:
+        return None
+    if not tipo_detectado or tipo_detectado == "desconhecido":
+        return None
+    if identidade_unificada and item.tipo_ocr in {"rg", "cpf"}:
+        # Antes só a CIN valia; a CNH entrou porque imprime RG e CPF juntos.
+        return tipo_detectado in TIPOS_IDENTIDADE_UNIFICADA
+    return tipo_detectado == item.tipo_ocr
+
+
+def itens_para_identidade_unificada(categoria: categorias.Categoria, item: ItemChecklist) -> list[str]:
+    """Itens atendidos por uma CIN ou CNH: RG e CPF, uma única vez cada.
+
+    Fora dos documentos que trazem os dois, RG e CPF continuam independentes,
+    como nos documentos antigos.
+    """
+    if item.tipo_ocr not in {"rg", "cpf"}:
+        raise ValueError("A identidade unificada só pode ser usada nos itens RG ou CPF.")
+
+    itens = [i.codigo for i in categoria.itens if i.tipo_ocr in {"rg", "cpf"}]
+    if len(itens) != 2:
+        raise ValueError("Este checklist não possui os itens RG e CPF para vincular.")
+    return itens
+
+
+# ------------------------------------------------------- pedido ao cliente
+
+
+def _linha_do_item(item: dict[str, Any]) -> str:
+    observacao = item.get("observacao", "").strip()
+    complemento = f" — {observacao}" if observacao else ""
+    return f"- {item['nome']}{complemento}"
+
+
+def _motivo_para_o_cliente(item: dict[str, Any]) -> str:
+    """Por que reenviar, em linguagem de cliente.
+
+    Os alertas de `_alertas_da_entrega` são para a tela do advogado e citam nome
+    de classificador ("o sistema leu como 'cpf'"). Isso não vai numa mensagem de
+    WhatsApp para o cliente.
+    """
+    entregas = item["entregas"]
+
+    if any(e["tipo_confere"] is False for e in entregas):
+        return "o arquivo enviado parece ser de outro documento"
+    if any(not e["dados_utilizaveis"] for e in entregas):
+        return "a foto não ficou legível o suficiente"
+    return "precisamos de uma nova cópia"
+
+
+def visao_do_cliente(situacao: dict[str, Any]) -> dict[str, Any]:
+    """O checklist como o cliente deve vê-lo, no portal.
+
+    Recorte deliberado. Fica de fora:
+      - os alertas de `_alertas_da_entrega`, escritos para o advogado e cheios de
+        termo de classificador ("o sistema leu como 'cpf'");
+      - a extração (CPF, RG, nome lidos), que é dado pessoal que o cliente já
+        tem e que não precisa trafegar de volta;
+      - o caminho dos arquivos e os identificadores internos das entregas.
+
+    Fica o que o cliente precisa para agir: o que já chegou, o que falta e, para
+    o que precisa refazer, o motivo em português de gente.
+    """
+    itens = []
+    for item in situacao["itens"]:
+        entregas = item["entregas"]
+        precisa_refazer = item["status"] == CONFERIR
+        itens.append(
+            {
+                "codigo": item["codigo"],
+                "nome": item["nome"],
+                "observacao": item.get("observacao", ""),
+                "obrigatorio": item["obrigatorio"],
+                "status": item["status"],
+                "enviados": len(entregas),
+                "motivo": _motivo_para_o_cliente(item) if precisa_refazer else "",
+            }
+        )
+
+    progresso = situacao["progresso"]
+    triagem = situacao.get("triagem") or []
+    return {
+        "cliente": situacao["caso"]["cliente"],
+        "categoria": (situacao.get("categoria") or {}).get("nome", ""),
+        "itens": itens,
+        # Quantos arquivos o cliente mandou que o escritório ainda está
+        # identificando. Sem isto o portal engolia o envio: o arquivo não
+        # aparecia em item nenhum, e a tela ficava igual a antes de enviar.
+        "em_analise": len([e for e in triagem if e.get("status_proc") != "erro"]),
+        "processando": len(
+            [e for e in triagem if e.get("status_proc") in {"na_fila", "processando"}]
+        ),
+        "progresso": {
+            "obrigatorios_total": progresso["obrigatorios_total"],
+            "obrigatorios_entregues": progresso["obrigatorios_entregues"],
+            "percentual": progresso["percentual_obrigatorios"],
+            "pronto": progresso["pronto"],
+        },
+    }
+
+
+def montar_pedido(caso_id: str, incluir_opcionais: bool = False) -> dict[str, Any] | None:
+    """Texto pronto para o advogado mandar ao cliente com o que ainda falta."""
+    situacao = montar_situacao(caso_id)
+    if situacao is None or situacao.get("categoria") is None:
+        return None
+
+    itens = situacao["itens"]
+    faltando_obrig = [i for i in itens if i["obrigatorio"] and i["status"] == PENDENTE]
+    faltando_opc = [i for i in itens if not i["obrigatorio"] and i["status"] == PENDENTE]
+    reenviar = [i for i in itens if i["status"] == CONFERIR]
+
+    cliente = situacao["caso"]["cliente"]
+    partes = [f"Olá, {cliente}!", ""]
+
+    if not faltando_obrig and not reenviar:
+        partes.append(
+            "Recebemos todos os documentos obrigatórios do seu processo. Obrigado!"
+        )
+    else:
+        partes.append(
+            "Para dar andamento ao seu processo, precisamos dos documentos abaixo."
+        )
+
+    if faltando_obrig:
+        partes += ["", "DOCUMENTOS OBRIGATÓRIOS QUE AINDA FALTAM:"]
+        partes += [_linha_do_item(i) for i in faltando_obrig]
+
+    if reenviar:
+        partes += ["", "DOCUMENTOS QUE PRECISAM SER REENVIADOS:"]
+        partes += [f"- {i['nome']} — {_motivo_para_o_cliente(i)}" for i in reenviar]
+
+    if incluir_opcionais and faltando_opc:
+        partes += ["", "SE VOCÊ TIVER, ENVIE TAMBÉM (opcionais, mas ajudam no processo):"]
+        partes += [_linha_do_item(i) for i in faltando_opc]
+
+    partes += [
+        "",
+        "Dicas para a foto sair legível:",
+        "- Coloque o documento sobre uma superfície de cor contrastante;",
+        "- Fotografe em local bem iluminado, sem sombra e sem flash;",
+        "- Enquadre o documento inteiro, preenchendo a maior parte da tela;",
+        "- Confira se dá para ler todos os números antes de enviar.",
+    ]
+
+    return {
+        "texto": "\n".join(partes),
+        "faltando_obrigatorios": [i["nome"] for i in faltando_obrig],
+        "faltando_opcionais": [i["nome"] for i in faltando_opc],
+        "reenviar": [i["nome"] for i in reenviar],
+        "progresso": situacao["progresso"],
+    }
+
+
+# ------------------------------------------------- dossiê em ZIP
+
+
+#: Caracteres que o Windows recusa em nome de arquivo. Um documento chamado
+#: "RG (frente/verso).jpg" quebra o unzip do outro lado, e quem recebe o pacote
+#: é o escritório — não dá para pedir que renomeie na mão.
+_PROIBIDOS = str.maketrans({c: "-" for c in '\\/:*?"<>|'})
+
+
+def _nome_no_pacote(indice: int, item_nome: str, arquivo: str) -> str:
+    """`03 - Laudos medicos - foto.jpg`.
+
+    O número vem primeiro porque o descompactador ordena por nome, e a ordem
+    que interessa é a do checklist — quem abre o pacote está conferindo contra
+    a lista de documentos, não procurando um arquivo específico.
+    """
+    limpo = str(item_nome or "Sem categoria").translate(_PROIBIDOS).strip()
+    return f"{indice:02d} - {limpo} - {Path(arquivo).name.translate(_PROIBIDOS)}"
+
+
+def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
+    """Junta num ZIP tudo que o cliente enviou. `None` se o caso não existe.
+
+    O escritório baixava documento por documento, clicando em cada linha do
+    checklist — trinta arquivos, trinta cliques, e a certeza de esquecer um.
+    O pacote sai na ordem do checklist e com o nome do item em cada arquivo,
+    porque do outro lado alguém vai conferir contra a mesma lista.
+
+    Escreve em disco em vez de montar na memória: são fotos e PDFs de
+    digitalização, e um caso instruído passa fácil de cem megabytes — segurar
+    isso em RAM por requisição derruba o servidor no dia em que dois
+    atendentes baixarem ao mesmo tempo.
+
+    O que não existir mais no disco é PULADO e contado, nunca inventado: um ZIP
+    silenciosamente incompleto é pior que um erro, porque ninguém confere o que
+    não sabe que faltou.
+    """
+    situacao = montar_situacao(caso_id)
+    if situacao is None:
+        return None
+
+    # A ordem é a do checklist, e cada entrega entra UMA vez — uma CIN que
+    # atende RG e CPF é um arquivo só, e duplicá-lo faria o conferente procurar
+    # diferença entre duas cópias idênticas.
+    incluidos: dict[str, tuple[int, str]] = {}
+    for item in situacao["itens"]:
+        for entrega in item["entregas"]:
+            incluidos.setdefault(entrega["id"], (item["numero"], item["nome"]))
+
+    guardados: list[str] = []
+    faltando: list[str] = []
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
+        usados: set[str] = set()
+        for entrega_id, (numero, item_nome) in incluidos.items():
+            entrega = armazenamento.obter_entrega(entrega_id)
+            if entrega is None:
+                continue
+            caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+            if caminho is None:
+                faltando.append(entrega["arquivo"])
+                continue
+
+            nome = _nome_no_pacote(numero, item_nome, entrega["arquivo"])
+            # Dois arquivos com o mesmo nome no mesmo item: o ZIP aceita e o
+            # descompactador sobrescreve um com o outro, calado.
+            if nome in usados:
+                base, ponto, ext = nome.rpartition(".")
+                nome = f"{base} ({len(usados)}){ponto}{ext}" if ponto else f"{nome} ({len(usados)})"
+            usados.add(nome)
+
+            pacote.write(caminho, arcname=nome)
+            guardados.append(nome)
+
+    return {
+        "arquivos": len(guardados),
+        "faltando": faltando,
+        "cliente": situacao["caso"]["cliente"],
+        "pronto": situacao["progresso"]["pronto"],
+    }

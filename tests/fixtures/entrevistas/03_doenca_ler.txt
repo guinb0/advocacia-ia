@@ -1,0 +1,26 @@
+Entrevistador: Função atual?
+Entrevistado: OTT.
+Entrevistador: Tempo de casa?
+Entrevistado: Doze anos nos Correios.
+Entrevistador: Ainda trabalha?
+Entrevistado: Sim.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu doença em razão do trabalho?
+Entrevistado: Sim. Tenho LER no ombro e no punho direito por causa da repetição no trabalho.
+Entrevistador: Quais médicos consultou?
+Entrevistado: Ortopedista e fisioterapeuta.
+Entrevistador: Qual o diagnóstico oficial, o CID?
+Entrevistado: O médico falou em tendinite no manguito rotador, CID M75.
+Entrevistador: Fez fisioterapia, cirurgia ou outro tratamento?
+Entrevistado: Fiz fisioterapia por seis meses, ainda faço duas vezes por semana.
+Entrevistador: Foi afastado do trabalho?
+Entrevistado: Sim, fiquei afastado pelo INSS por quatro meses.
+Entrevistador: Sofreu acidente fora do trabalho com sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios?
+Entrevistado: Não.
+Entrevistador: Tem laudos, prontuários e exames?
+Entrevistado: Sim, tenho laudos e exames de imagem.

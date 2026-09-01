@@ -1,0 +1,28 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Carteiro ciclista.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: 5 anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Fui demitido depois do acidente.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Sim.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: O que aconteceu, passo a passo?
+Entrevistado: Em abril de 2025, tropecei na calçada entregando. Eu estava no trabalho.
+Entrevistador: Onde ocorreu?
+Entrevistado: No entrega, durante o expediente.
+Entrevistador: Foi emitida a CAT?
+Entrevistado: Sim.
+Entrevistador: Como foi o atendimento?
+Entrevistado: Sim, no mesmo dia. Precisei de atestado.
+Entrevistador: Tem laudos?
+Entrevistado: Sim.
+Entrevistador: Afastado pelo INSS?
+Entrevistado: quinze dias.

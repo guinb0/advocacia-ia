@@ -1,0 +1,28 @@
+Entrevistador: Bom dia. Qual a sua função?
+Entrevistado: Carteiro motociclista.
+Entrevistador: Há quanto tempo trabalha nos Correios?
+Entrevistado: doze anos.
+Entrevistador: Ainda trabalha na empresa?
+Entrevistado: Sim.
+Entrevistador: Foi vítima de assalto durante o trabalho?
+Entrevistado: Não.
+Entrevistador: Sofreu algum acidente de trabalho?
+Entrevistado: Não.
+Entrevistador: Desenvolveu alguma doença em razão do trabalho?
+Entrevistado: Sim.
+Entrevistador: Sofreu acidente fora do trabalho que deixou sequela permanente?
+Entrevistado: Não.
+Entrevistador: Já entrou com ação judicial contra os Correios sobre esses assuntos?
+Entrevistado: Não.
+Entrevistador: Quais sintomas e diagnóstico?
+Entrevistado: Tenho túnel do carpo por causa da repetição no trabalho. CID G56.
+Entrevistador: Quais médicos consultou?
+Entrevistado: Neurologista.
+Entrevistador: Fez tratamento?
+Entrevistado: Fiz cirurgia e fisioterapia.
+Entrevistador: Foi afastado?
+Entrevistado: Sim, pelo INSS por cinco meses.
+Entrevistador: Tem laudos?
+Entrevistado: Sim.
+Entrevistador: Já tinha isso antes de entrar nos Correios?
+Entrevistado: Não.
