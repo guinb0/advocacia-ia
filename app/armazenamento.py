@@ -1445,7 +1445,7 @@ def salvar_refs_agente(caso_id: str, case_ref: str, cliente_ref: str) -> dict[st
         )
         if trocou:
             con.execute(
-                "UPDATE dbo.acervo_entrevistas SET enviada_em = NULL WHERE caso_id = ?",
+                "UPDATE dbo.entrevistas SET enviada_em = NULL WHERE caso_id = ?",
                 (caso_id,),
             )
             con.execute(

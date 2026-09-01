@@ -55,13 +55,36 @@ schemas com nome parecido, três deles vazios, custavam mais em confusão do que
 separação. Quem precisa distinguir os dois sistemas lê o prefixo da tabela.
 """
 
-PREFIXO = "acervo_"
-"""Prefixo das tabelas do Acervo dentro do `dbo`.
+PREFIXO = ""
+"""As tabelas usam nomes diretos dentro do schema ``dbo`` (``dbo.casos`` etc.)."""
 
-Sem ele, `casos` (Acervo) ficaria ao lado de `cases` (agente) guardando coisas diferentes,
-e `entregas` ao lado de `documents`, que são o mesmo documento visto por cada lado. O
-prefixo é o que substitui o schema separado na hora de saber de quem é cada tabela.
-"""
+# Nomes que existiam com o prefixo ``acervo_``. A lista inclui tabelas inicializadas
+# fora deste módulo para que uma instalação existente seja renomeada inteira no mesmo
+# boot, antes de qualquer DDL tentar criar uma tabela vazia com o nome novo.
+TABELAS_COM_PREFIXO_LEGADO = (
+    "casos",
+    "classificacoes_documentos_corrigidas",
+    "entregas",
+    "entrevistas",
+    "peticoes_locais",
+    "assinaturas",
+    "roteiros",
+    "ufs",
+    "municipios",
+    "conversa_mensagens",
+    "conversas",
+    "automacoes_whatsapp",
+    "cobrancas_documentos",
+    "modelos_documento",
+    "usuarios",
+    "perfis",
+    "perfil_modulos",
+    "tb_perfis",
+    "tb_modulos_web",
+    "tb_permissoes",
+    "atendimentos_documentacao",
+    "documentadores_online",
+)
 
 _ENV = ambiente.CAMINHO
 
@@ -692,6 +715,19 @@ def inicializar_schema() -> None:
     bruta = psycopg.connect(dsn(), connect_timeout=30, autocommit=True)
     try:
         cursor = bruta.cursor()
+        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
+        for tabela in TABELAS_COM_PREFIXO_LEGADO:
+            antiga = f"acervo_{tabela}"
+            cursor.execute("SELECT to_regclass(%s), to_regclass(%s)",
+                           (f"{SCHEMA}.{antiga}", f"{SCHEMA}.{tabela}"))
+            existe_antiga, existe_nova = cursor.fetchone()
+            if existe_antiga is not None and existe_nova is not None:
+                raise RuntimeError(
+                    f"Migração ambígua: {SCHEMA}.{antiga} e {SCHEMA}.{tabela} existem."
+                )
+            if existe_antiga is not None and existe_nova is None:
+                # Os identificadores vêm de uma tupla fechada acima, não de entrada externa.
+                cursor.execute(f"ALTER TABLE {SCHEMA}.{antiga} RENAME TO {tabela}")
         for lote in ESQUEMA_POSTGRES.split(";\n"):
             if lote.strip():
                 cursor.execute(_adaptar_sql(lote))
