@@ -1,36 +1,79 @@
 # Build + deploy vem do componente compartilhado guinb0/ci-cd.
 # Os testes (qualidade em MR) sao proprios do projeto.
 include:
-  - component: gitlab.com/guinb0/ci-cd/deploy@1.0.5
+  - component: gitlab.com/guinb0/ci-cd/deploy@1.1.0
     inputs:
       stack_name: forense-flow
       deploy_when: manual
       environment_url: https://app.forenseflow.com.br
+      # se essa URL nao devolver 200 depois do deploy, o job reverte sozinho
+      smoke_url: https://app.forenseflow.com.br/api/saude
+  # varredura de segredos vazados (gratuito no plano Free)
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
 
 stages: [test, build, deploy]
 
 workflow:
+  # push em cima de push cancela o pipeline anterior (so jobs interruptible)
+  auto_cancel:
+    on_new_commit: interruptible
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
+default:
+  interruptible: true
+
 # ---- qualidade: roda em MR; nao bloqueia deploy, bloqueia merge ----
+# needs: [] tira os testes da fila de estagios: comecam no segundo 0.
+# rules:changes evita rodar teste de python quando so o frontend mudou (e vice-versa).
+
 testes-python:
   stage: test
   image: python:3.11-slim
+  needs: []
+  timeout: 10m
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - app/**/*
+        - tests/**/*
+        - requirements*.txt
+  cache:
+    key:
+      files: [requirements.txt]
+    paths: [.cache/pip]
+    policy: pull-push
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   before_script:
-    - pip install --no-cache-dir fastapi httpx "pyjwt[crypto]" python-multipart
+    - pip install fastapi httpx "pyjwt[crypto]" python-multipart
   script:
     - python -m tests.test_whatsapp
 
 typecheck-frontend:
   stage: test
   image: node:22-slim
+  needs: []
+  timeout: 10m
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - frontend/**/*
+  cache:
+    key:
+      files: [frontend/package-lock.json]
+    paths: [frontend/.npm]
+    policy: pull-push
   before_script:
-    - cd frontend && npm ci
+    - cd frontend && npm ci --cache .npm --prefer-offline
   script:
     - npx tsc --noEmit
+
+# ---- seguranca: so em MR, pra nao gastar minutos em todo push na main ----
+secret_detection:
+  stage: test
+  needs: []
+  timeout: 10m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
