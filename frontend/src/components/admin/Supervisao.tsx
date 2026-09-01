@@ -19,20 +19,23 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, ClipboardCheck, Headphones, UsersRound } from "lucide-react";
 
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import ChecklistRoteiro from "@/components/admin/ChecklistRoteiro";
 import PainelSupervisao from "@/components/admin/PainelSupervisao";
-import { Aviso, BarraAbas, Botao, BotaoAba, Selo, Vazio } from "@/components/ui/Basicos";
+import { Aviso, BarraAbas, Botao, BotaoAba, Cartao, Paginacao, Selo, Vazio } from "@/components/ui/Basicos";
 import {
   ApiError,
   auditarEntrevista,
   corrigirAvaliacaoGoogle,
-  listarSupervisao,
+  listarSupervisaoPaginada,
   obterChecklist,
   obterTranscricao,
   type Auditoria,
   type ChecklistRegistro,
+  type EntrevistaResumo,
+  type EntrevistasSupervisaoPaginadas,
   type PendenciasSupervisao,
   type PessoaSupervisao,
 } from "@/lib/api";
@@ -54,11 +57,22 @@ const ITEM_BASE =
   "[font:inherit] text-left cursor-pointer";
 const ITEM_RESTING = "bg-transparent hover:bg-papel-3";
 const ITEM_ABERTO = "bg-acao-clara border-acao-borda";
+const ENTREVISTAS_POR_PAGINA = 8;
+const SEM_ENTREVISTAS: EntrevistasSupervisaoPaginadas = {
+  entrevistador: "",
+  itens: [],
+  total: 0,
+  pagina: 1,
+  tamanho: ENTREVISTAS_POR_PAGINA,
+  paginas: 1,
+};
 
 export default function Supervisao({ onVoltar }: Props) {
   const [pessoas, setPessoas] = useState<PessoaSupervisao[]>([]);
   const [totais, setTotais] = useState({ entrevistas: 0, pessoas: 0, sem: 0 });
   const [pendencias, setPendencias] = useState<PendenciasSupervisao>(SEM_PENDENCIAS);
+  const [entrevistas, setEntrevistas] =
+    useState<EntrevistasSupervisaoPaginadas>(SEM_ENTREVISTAS);
   /* Quem está aberto na tabela do painel. `null` = ninguém, e aí a coluna da
    * esquerda mostra todos — é o estado em que a tela abre, porque escolher uma
    * pessoa por padrão esconderia as outras quatro sem o secretário ter pedido. */
@@ -80,10 +94,18 @@ export default function Supervisao({ onVoltar }: Props) {
   const [auditando, setAuditando] = useState(false);
   const [erroAuditoria, setErroAuditoria] = useState<string | null>(null);
 
-  const carregar = useCallback(async () => {
+  const carregar = useCallback(async (entrevistador?: string | null, pagina = 1) => {
     try {
-      const d = await listarSupervisao();
+      const d = await listarSupervisaoPaginada({
+        entrevistador,
+        pagina,
+        tamanho: ENTREVISTAS_POR_PAGINA,
+      });
       setPessoas(d.itens);
+      setEntrevistas(d.entrevistas);
+      if (d.entrevistas.entrevistador) {
+        setPessoaAberta(d.entrevistas.entrevistador);
+      }
       setPendencias(d.pendencias ?? SEM_PENDENCIAS);
       setTotais({
         entrevistas: d.total_entrevistas,
@@ -100,6 +122,17 @@ export default function Supervisao({ onVoltar }: Props) {
 
   useEffect(() => {
     void carregar();
+  }, [carregar]);
+
+  const carregarEntrevistas = useCallback((entrevistador: string, pagina = 1) => {
+    setCarregando(true);
+    setAberta(null);
+    setTexto("");
+    setRegistro(null);
+    setRelatorio(null);
+    setErroRegistro(null);
+    setErroAuditoria(null);
+    void carregar(entrevistador, pagina);
   }, [carregar]);
 
   async function abrir(id: string) {
@@ -150,7 +183,7 @@ export default function Supervisao({ onVoltar }: Props) {
       setRegistro(await corrigirAvaliacaoGoogle(id, concluida));
       // A lista à esquerda mostra o mesmo sinal; deixá-la desatualizada faria o
       // secretário achar que a correção não pegou.
-      await carregar();
+      await carregar(pessoaAberta, entrevistas.pagina);
     } catch (e) {
       setErroRegistro(
         e instanceof ApiError ? e.message : "Não foi possível gravar a marcação.",
@@ -160,19 +193,53 @@ export default function Supervisao({ onVoltar }: Props) {
     }
   }
 
+  const pessoaSelecionada = pessoas.find((p) => p.entrevistador === pessoaAberta);
+  const listaVaziaInesperada =
+    !carregando &&
+    Boolean(pessoaSelecionada) &&
+    (pessoaSelecionada?.quantidade ?? 0) > 0 &&
+    entrevistas.total === 0;
+
   return (
-    <div className="min-w-0">
-      <Botao variante="secundario" onClick={onVoltar}>
-        ← Voltar para a carteira
+    <div className="min-w-0 space-y-5">
+      <Botao variante="texto" onClick={onVoltar} className="inline-flex items-center gap-2">
+        <ArrowLeft size={16} aria-hidden />
+        Voltar para a carteira
       </Botao>
 
-      <header className="my-5">
-        <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">Supervisão</h1>
-        <p className="m-0 text-tinta-3 max-w-[66ch] leading-[1.5]">
-          As entrevistas do escritório por quem as conduziu. Abra uma para conferir o
-          checklist do roteiro — assinaturas, avaliação no Google, perguntas — e para
-          ler a transcrição.
-        </p>
+      <header className="flex min-w-0 flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <p className="mb-2 mt-0 font-ui text-xs font-bold uppercase tracking-[0.12em] text-tinta-3">
+            Gestão operacional
+          </p>
+          <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">
+            Supervisão
+          </h1>
+          <p className="m-0 max-w-[66ch] text-tinta-3 leading-[1.5]">
+            Entrevistas por condução, pendências verificáveis e conferência de roteiro.
+            Abra um atendimento para ver checklist, áudio e transcrição quando existirem.
+          </p>
+        </div>
+        <div className="grid min-w-[260px] grid-cols-2 gap-2 max-[560px]:w-full">
+          <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-tinta-3">
+              <Headphones size={14} aria-hidden />
+              Entrevistas
+            </div>
+            <div className="mt-1 font-titulo text-lg font-semibold text-tinta tabular-nums">
+              {totais.entrevistas}
+            </div>
+          </div>
+          <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-tinta-3">
+              <UsersRound size={14} aria-hidden />
+              Pessoas
+            </div>
+            <div className="mt-1 font-titulo text-lg font-semibold text-tinta tabular-nums">
+              {totais.pessoas}
+            </div>
+          </div>
+        </div>
       </header>
 
       {erro && (
@@ -202,39 +269,61 @@ export default function Supervisao({ onVoltar }: Props) {
             pendencias={pendencias}
             total={totais.entrevistas}
             pessoaAberta={pessoaAberta}
-            onEscolherPessoa={(nome) =>
-              setPessoaAberta((atual) => (atual === nome ? null : nome))
-            }
+            onEscolherPessoa={(nome) => carregarEntrevistas(nome, 1)}
           />
         </div>
       )}
 
-      <div className="mt-5 grid min-w-0 grid-cols-[minmax(min(100%,280px),340px)_minmax(0,1fr)] items-start gap-6 max-[900px]:grid-cols-1">
+      <div className="grid min-w-0 grid-cols-[minmax(min(100%,280px),360px)_minmax(0,1fr)] items-start gap-5 max-[960px]:grid-cols-1">
         {/* ------------------------------------------- funcionário e entrevistas */}
-        <section className="border border-borda-forte rounded-cartao bg-papel shadow-cartao p-4">
+        <Cartao
+          titulo={
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <ClipboardCheck size={18} className="text-acao" aria-hidden />
+              <span className="truncate">Atendimentos</span>
+            </span>
+          }
+          subtitulo="Escolha uma entrevista para conferir o roteiro."
+          className="min-w-0 overflow-hidden"
+        >
           {carregando ? (
             <p className="m-0 text-tinta-3">Carregando…</p>
           ) : pessoas.length === 0 ? (
             <Vazio>Nenhuma entrevista registrada ainda.</Vazio>
+          ) : listaVaziaInesperada ? (
+            <Aviso tom="atencao" titulo="Não foi possível listar as entrevistas">
+              O painel encontrou entrevistas para {pessoaAberta}, mas a página não retornou
+              itens. Tente abrir essa pessoa novamente; se persistir, há divergência no nome
+              gravado da entrevista.
+              <div className="mt-3">
+                <Botao
+                  variante="secundario"
+                  pequeno
+                  onClick={() => pessoaAberta && carregarEntrevistas(pessoaAberta, 1)}
+                >
+                  Recarregar lista
+                </Botao>
+              </div>
+            </Aviso>
+          ) : entrevistas.itens.length === 0 ? (
+            <Vazio>Nenhuma entrevista encontrada para esta pessoa.</Vazio>
           ) : (
-            /* Escolher alguém na tabela do painel FILTRA esta coluna em vez de
-             * rolar até ele. Com cinco pessoas rolar bastava; com trinta, a lista
-             * inteira é um muro, e o clique na tabela viraria promessa não
-             * cumprida. Clicar de novo no mesmo nome mostra todos outra vez. */
-            pessoas
-              .filter((p) => !pessoaAberta || p.entrevistador === pessoaAberta)
-              .map((p) => {
-              const semAvaliacao = p.entrevistas.filter((e) => !e.avaliacao_google).length;
+            (() => {
+              const pessoa = pessoaSelecionada;
+              const semAvaliacao = entrevistas.itens.filter((e) => !e.avaliacao_google).length;
+              const inicio = entrevistas.total === 0 ? 0 : (entrevistas.pagina - 1) * entrevistas.tamanho;
+              const fim = Math.min(inicio + entrevistas.itens.length, entrevistas.total);
 
               return (
                 <div
-                  key={p.entrevistador}
-                  className="[&+&]:mt-[18px] [&+&]:pt-[18px] [&+&]:border-t [&+&]:border-borda"
+                  key={entrevistas.entrevistador}
                 >
-                  <h2 className="flex justify-between items-baseline gap-[10px] mb-1 mt-0 text-tinta font-titulo text-md font-semibold">
-                    {p.entrevistador}
-                    <span className="font-ui font-normal text-xs text-tinta-3 whitespace-nowrap">
-                      {p.quantidade} entrevista{p.quantidade === 1 ? "" : "s"}
+                  <h2 className="flex min-w-0 justify-between items-baseline gap-[10px] mb-1 mt-0 text-tinta font-titulo text-md font-semibold">
+                    <span className="min-w-0 truncate" title={entrevistas.entrevistador}>
+                      {entrevistas.entrevistador}
+                    </span>
+                    <span className="shrink-0 font-ui font-normal text-xs text-tinta-3 whitespace-nowrap">
+                      {pessoa?.quantidade ?? entrevistas.total} entrevista{(pessoa?.quantidade ?? entrevistas.total) === 1 ? "" : "s"}
                     </span>
                   </h2>
 
@@ -243,16 +332,16 @@ export default function Supervisao({ onVoltar }: Props) {
                     * consegue conferir sem ir ao modelo — e é o mais frágil deles. */}
                   <p className="mt-0 mb-2 text-xs leading-[1.5]">
                     {semAvaliacao === 0 ? (
-                      <span className="text-ok">✓ avaliação do Google em todas</span>
+                      <span className="text-ok">✓ avaliação do Google nos itens desta página</span>
                     ) : (
                       <span className="text-atencao">
-                        ! {semAvaliacao} sem avaliação do Google registrada
+                        ! {semAvaliacao} nesta página sem avaliação do Google registrada
                       </span>
                     )}
                   </p>
 
-                  <ul className="list-none m-0 p-0 flex flex-col gap-[2px]">
-                    {p.entrevistas.map((e) => (
+                  <ul className="list-none m-0 flex flex-col gap-[2px] p-0">
+                    {entrevistas.itens.map((e: EntrevistaResumo) => (
                       <li key={e.id}>
                         <button
                           type="button"
@@ -261,11 +350,12 @@ export default function Supervisao({ onVoltar }: Props) {
                         >
                           <span className="flex justify-between items-baseline gap-[10px] w-full">
                             <span
-                              className={`text-tinta text-sm truncate ${aberta === e.id ? "font-semibold" : ""}`}
+                              className={`min-w-0 text-tinta text-sm truncate ${aberta === e.id ? "font-semibold" : ""}`}
+                              title={e.cliente || "cliente não informado"}
                             >
                               {e.cliente || "cliente não informado"}
                             </span>
-                            <span className="text-tinta-3 text-xs whitespace-nowrap">
+                            <span className="shrink-0 text-tinta-3 text-xs whitespace-nowrap">
                               {e.realizada_em || e.criado_em?.slice(0, 10) || "sem data"}
                             </span>
                           </span>
@@ -289,20 +379,29 @@ export default function Supervisao({ onVoltar }: Props) {
                       </li>
                     ))}
                   </ul>
+                  <Paginacao
+                    pagina={entrevistas.pagina}
+                    totalPaginas={entrevistas.paginas}
+                    total={entrevistas.total}
+                    inicio={inicio}
+                    fim={fim}
+                    rotulo="entrevistas"
+                    onPagina={(proxima) => carregarEntrevistas(entrevistas.entrevistador, proxima)}
+                  />
                 </div>
               );
-            })
+            })()
           )}
-        </section>
+        </Cartao>
 
         {/* --------------------------------------------------- checklist e texto */}
         <section className="min-w-0">
           {!aberta ? (
-            <Vazio>
+            <Vazio className="min-h-[240px] content-center">
               Escolha uma entrevista à esquerda para abrir o checklist do roteiro.
             </Vazio>
           ) : (
-            <div className="flex flex-col gap-4">
+            <div className="flex min-w-0 flex-col gap-4">
               <BarraAbas className="self-start">
                 <BotaoAba ativa={aba === "checklist"} onClick={() => setAba("checklist")}>
                   Checklist do roteiro

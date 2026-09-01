@@ -22,7 +22,10 @@
  *    se dá nota e não se compara pessoa.
  */
 
+import type { ReactNode } from "react";
+
 import type { PendenciasSupervisao, PessoaSupervisao } from "@/lib/api";
+import { AlertTriangle, Archive, ClipboardList, UserRoundCheck } from "lucide-react";
 
 /** Barra de proporção com a leitura em palavra ao lado — cor nunca vai sozinha. */
 function Proporcao({ feitos, total }: { feitos: number; total: number }) {
@@ -48,11 +51,13 @@ function Indicador({
   rotulo,
   ajuda,
   tom,
+  icone,
 }: {
   numero: number;
   rotulo: string;
   ajuda: string;
   tom: "critico" | "atencao" | "neutro";
+  icone: ReactNode;
 }) {
   // Zero pendência é notícia boa e tem de parecer notícia boa. Um "0" grande em
   // vermelho, ao lado de outros vermelhos, lê-se como mais um problema.
@@ -73,12 +78,17 @@ function Indicador({
         : "border-borda bg-papel-2";
 
   return (
-    <div className={`px-[14px] py-3 border rounded-campo ${borda}`} title={ajuda}>
-      <div className={`font-titulo text-xl font-semibold tabular-nums leading-none ${cor}`}>
-        {numero}
+    <div className={`min-w-0 px-[14px] py-3 border rounded-campo ${borda}`} title={ajuda}>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className={`font-titulo text-xl font-semibold tabular-nums leading-none ${cor}`}>
+          {numero}
+        </div>
+        <span className={`grid size-8 shrink-0 place-items-center rounded-campo border bg-papel/70 ${cor}`}>
+          {icone}
+        </span>
       </div>
-      <div className="mt-[6px] text-tinta text-xs font-semibold">{rotulo}</div>
-      <div className="mt-[2px] text-tinta-3 text-xs leading-[1.45]">{ajuda}</div>
+      <div className="mt-[6px] truncate text-tinta text-xs font-semibold">{rotulo}</div>
+      <div className="mt-[2px] line-clamp-2 text-tinta-3 text-xs leading-[1.45]">{ajuda}</div>
     </div>
   );
 }
@@ -123,25 +133,33 @@ export default function PainelSupervisao({
           rotulo="Sem avaliação no Google"
           ajuda="A etapa do roteiro que não tem segunda chance depois que o cliente desliga."
           tom="critico"
+          icone={<AlertTriangle size={15} aria-hidden />}
         />
         <Indicador
           numero={pendencias.sem_dossie}
           rotulo="Sem dossiê"
           ajuda="A conversa não foi lida pelo agente: os fatos dela não estão no caso."
           tom="atencao"
+          icone={<Archive size={15} aria-hidden />}
         />
         <Indicador
           numero={pendencias.sem_quem_conduziu}
           rotulo="Sem quem conduziu"
           ajuda="Gravadas antes de o sistema atribuir a entrevista. Ausência de dado, não de trabalho."
           tom="neutro"
+          icone={<UserRoundCheck size={15} aria-hidden />}
         />
-        <div className="px-[14px] py-3 border border-borda rounded-campo bg-papel-2">
-          <div className="font-titulo text-xl font-semibold tabular-nums leading-none text-tinta">
-            {total}
+        <div className="min-w-0 px-[14px] py-3 border border-borda rounded-campo bg-papel-2">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="font-titulo text-xl font-semibold tabular-nums leading-none text-tinta">
+              {total}
+            </div>
+            <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao">
+              <ClipboardList size={15} aria-hidden />
+            </span>
           </div>
-          <div className="mt-[6px] text-tinta text-xs font-semibold">Entrevistas no acervo</div>
-          <div className="mt-[2px] text-tinta-3 text-xs leading-[1.45]">
+          <div className="mt-[6px] truncate text-tinta text-xs font-semibold">Entrevistas no acervo</div>
+          <div className="mt-[2px] line-clamp-2 text-tinta-3 text-xs leading-[1.45]">
             {pendencias.ao_vivo} conduzida(s) pelo roteiro · {pendencias.anexadas} anexada(s)
           </div>
         </div>
@@ -179,8 +197,10 @@ export default function PainelSupervisao({
                     className={`cursor-pointer ${aberta ? "bg-acao-clara" : "hover:bg-papel-3"}`}
                     onClick={() => onEscolherPessoa(p.entrevistador)}
                   >
-                    <td className={`${TD} text-tinta text-sm font-semibold`}>
-                      {p.entrevistador}
+                    <td className={`${TD} max-w-[220px] text-tinta text-sm font-semibold`}>
+                      <span className="block truncate" title={p.entrevistador}>
+                        {p.entrevistador}
+                      </span>
                     </td>
                     <td className={`${TD} text-tinta-2 text-sm tabular-nums`}>{p.quantidade}</td>
                     <td className={TD}>

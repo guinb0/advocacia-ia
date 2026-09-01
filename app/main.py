@@ -373,8 +373,8 @@ def listar_roteiros(
     total = len(todos)
     importados = sum(1 for r in todos if r["importado"])
     tamanho_real = tamanho or total or 1
-    pagina_real = pagina or 1
     paginas = max(1, (total + tamanho_real - 1) // tamanho_real)
+    pagina_real = min(pagina or 1, paginas)
 
     if pagina is not None or tamanho is not None:
         inicio = (pagina_real - 1) * tamanho_real

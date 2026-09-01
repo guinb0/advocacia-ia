@@ -14,6 +14,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  FileText,
+  PenLine,
+  RotateCcw,
+  Upload,
+} from "lucide-react";
 
 import { Aviso, Botao, Cartao, Paginacao, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
 import {
@@ -93,6 +101,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [erroCarregamento, setErroCarregamento] = useState<string | null>(null);
   const [recado, setRecado] = useState<string | null>(null);
   const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
+  const [carregandoModeloVisual, setCarregandoModeloVisual] = useState(true);
   const [enviandoVisual, setEnviandoVisual] = useState(false);
   const [paginaPecas, setPaginaPecas] = useState(1);
   const [totalPecas, setTotalPecas] = useState(0);
@@ -108,7 +117,8 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       .then(setModeloVisual)
       .catch((falha) => setErro(
         falha instanceof ApiError ? falha.message : "Não foi possível carregar o modelo visual geral.",
-      ));
+      ))
+      .finally(() => setCarregandoModeloVisual(false));
   }, []);
 
   async function trocarModeloVisual(arquivo: File) {
@@ -401,14 +411,19 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-borda bg-papel-2 px-5 py-4">
           <div className="min-w-0">
             <Botao variante="texto" onClick={onVoltar}>
-              ← Voltar
+              <ArrowLeft size={15} aria-hidden /> Voltar
             </Botao>
             <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-tinta-3">
               Produção jurídica
             </p>
-            <h1 className="m-0 truncate font-titulo text-[1.7rem] font-semibold leading-[1.15] text-tinta">
-              Modelos de petição do escritório
-            </h1>
+            <div className="mt-1 flex min-w-0 items-center gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+                <PenLine size={20} aria-hidden />
+              </span>
+              <h1 className="m-0 min-w-0 truncate font-titulo text-[1.7rem] font-semibold leading-[1.15] text-tinta">
+                Modelos de petição do escritório
+              </h1>
+            </div>
             <p className="mt-2 mb-0 max-w-[72ch] text-sm leading-[1.55] text-tinta-3">
               Configure o padrão de escrita por ação, mantenha documentos exigidos e acompanhe a qualidade das amostras cadastradas.
             </p>
@@ -419,8 +434,10 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               <strong className="block font-codigo text-lg text-tinta">{totalPecas}</strong>
             </div>
             <div className="min-w-0 border-x border-borda px-2 py-1">
-              <span className="block truncate text-[11px] text-tinta-3">Sem seções</span>
-              <strong className="block font-codigo text-lg text-tinta">{semSecoes}</strong>
+              <span className="block truncate text-[11px] text-tinta-3">Padrão</span>
+              <strong className="block truncate text-sm leading-7 text-tinta">
+                {perfil ? "Medido" : "Em formação"}
+              </strong>
             </div>
             <div className="min-w-0 px-2 py-1">
               <span className="block truncate text-[11px] text-tinta-3">Docs</span>
@@ -430,30 +447,45 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         </div>
       </section>
 
+      {erro && (
+        <Aviso tom="critico" titulo="A ação não foi concluída">
+          {erro}
+        </Aviso>
+      )}
+      {recado && <Aviso tom="ok">{recado}</Aviso>}
+
       <div className="grid min-w-0 grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)] items-start gap-4 max-[980px]:grid-cols-1">
       <div className="flex min-w-0 flex-col gap-4">
-      <Cartao titulo="Modelo visual geral dos documentos" className="min-w-0 overflow-hidden">
+      <Cartao titulo="Identidade dos documentos" className="min-w-0 overflow-hidden">
         <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
-          Envie um documento institucional em <code>.docx</code>. O sistema extrai somente
-          a logo do cabeçalho e a fonte-base e aplica essa identidade às novas petições;
-          o conteúdo jurídico do arquivo não é copiado.
+          Logo e fonte aplicadas às próximas petições. O conteúdo jurídico do arquivo de
+          referência não é copiado.
         </p>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
-          <div className="min-w-0">
-            <div className="truncate font-semibold text-tinta" title={modeloVisual?.arquivo ?? undefined}>
-              {modeloVisual?.arquivo ?? "Carregando padrão visual…"}
-            </div>
-            <div className="mt-1 truncate text-xs text-tinta-3">
-              Fonte: {modeloVisual?.fonte ?? "—"}
-              {modeloVisual?.origem === "embutido" ? " · padrão atual Lara & Melo" : " · modelo substituível do escritório"}
-            </div>
-            <div className="mt-1 text-[11px] text-tinta-3">
-              É esta logo que será carimbada no cabeçalho das próximas petições.
-            </div>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao">
+              <FileText size={18} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-tinta" title={modeloVisual?.arquivo ?? undefined}>
+                {carregandoModeloVisual ? "Carregando padrão visual…" : modeloVisual?.arquivo ?? "Padrão indisponível"}
+              </div>
+              <div className="mt-1 truncate text-xs text-tinta-3">
+                Fonte: {modeloVisual?.fonte ?? "—"}
+                {modeloVisual
+                  ? modeloVisual.origem === "embutido"
+                    ? " · padrão atual Lara & Melo"
+                    : " · modelo substituível do escritório"
+                  : ""}
+              </div>
+              <div className="mt-1 text-[11px] text-tinta-3">
+                É esta logo que será carimbada no cabeçalho das próximas petições.
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <label className="inline-flex cursor-pointer items-center rounded-campo bg-acao px-4 py-2 text-sm font-semibold text-white hover:opacity-90">
+            <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-campo bg-acao px-4 py-2 text-sm font-semibold text-white hover:bg-acao-forte">
+              <Upload size={16} aria-hidden />
               {enviandoVisual ? "Processando…" : modeloVisual?.origem === "banco" ? "Trocar modelo" : "Enviar novo modelo"}
               <input
                 className="sr-only"
@@ -469,18 +501,18 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             </label>
             {modeloVisual?.origem === "banco" && (
               <Botao variante="texto" disabled={enviandoVisual} onClick={() => void restaurarVisual()}>
-                Restaurar Lara & Melo
+                <RotateCcw size={15} aria-hidden /> Restaurar Lara & Melo
               </Botao>
             )}
           </div>
         </div>
 
         {modeloVisual && (
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <strong className="text-sm text-tinta">Prévia do documento</strong>
-              <span className="text-[11px] text-tinta-3">Cabeçalho e fonte aplicados às novas petições</span>
-            </div>
+          <details className="group mt-4 overflow-hidden rounded-campo border border-borda bg-papel-2">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold text-tinta marker:content-none">
+              Conferir prévia do documento
+              <ChevronDown className="shrink-0 text-tinta-3 transition-transform group-open:rotate-180" size={17} aria-hidden />
+            </summary>
             <div className="overflow-x-auto rounded-campo border border-borda bg-papel-3 p-3 sm:p-5">
               <article
                 className="mx-auto min-h-[430px] w-full max-w-[610px] bg-white px-[9%] py-[7%] text-[#202020] shadow-cartao"
@@ -514,7 +546,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                 </p>
               </article>
             </div>
-          </div>
+          </details>
         )}
       </Cartao>
 
@@ -564,7 +596,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           className={
             "block p-[1.1rem] border-[1.5px] border-dashed rounded-cartao text-center cursor-pointer " +
             "transition-[border-color,background-color,transform,box-shadow] duration-200 " +
-            "[&>input]:block [&>input]:mx-auto [&>input]:mb-[0.6rem] [&>span]:block [&>span]:text-sm " +
+            "[&>span]:block [&>span]:text-sm " +
             "[&>span]:text-tinta-2 [&>small]:block [&>small]:mt-[0.35rem] [&>small]:max-w-[54ch] " +
             "[&>small]:mx-auto [&>small]:text-tinta-3 [&>small]:text-xs [&>small]:leading-[1.45] " +
             (arrastando
@@ -584,6 +616,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           }}
         >
           <input
+            className="sr-only"
             type="file"
             accept=".docx,.pdf"
             multiple
@@ -596,7 +629,8 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               receberArquivos(arquivos);
             }}
           />
-          <span>
+          <span className="flex flex-col items-center">
+            <Upload className="mb-2 text-acao" size={24} aria-hidden />
             {enviando
               ? "Enviando os arquivos…"
               : arrastando
@@ -631,7 +665,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                     {item.estado === "concluido" ? "✓" : item.estado === "recusado" ? "×" : item.estado === "repetido" ? "!" : "•"}
                   </span>
                   <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-tinta">{item.nome}</span>
-                  <small className="text-right text-[11px] text-tinta-3">
+                  <small className="max-w-[45%] truncate text-right text-[11px] text-tinta-3" title={item.detalhe}>
                     {item.detalhe ?? ({ aguardando: "aguardando", enviando: "analisando…", concluido: "adicionada", repetido: "repetida", recusado: "recusada" }[item.estado])}
                   </small>
                 </li>
@@ -643,12 +677,6 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         {erroDasAcoes && (
           <Aviso tom="critico" titulo="Sem a lista de ações não dá para enviar">
             {erroDasAcoes}
-          </Aviso>
-        )}
-        {recado && <p className="mt-[0.8rem] mb-0 text-tinta-2 text-sm">{recado}</p>}
-        {erro && (
-          <Aviso tom="critico" titulo="Alguns arquivos não entraram">
-            {erro}
           </Aviso>
         )}
       </Cartao>
@@ -767,11 +795,6 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             )}
           </div>
           <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-            {erro && (
-              <Aviso tom="critico" titulo="Não salvou">
-                {erro}
-              </Aviso>
-            )}
             <div className="flex justify-end sm:ml-auto">
               <Botao
                 onClick={() => void salvarConfiguracao()}
@@ -814,11 +837,11 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               const seg = SEGMENTACAO[peca.segmentation.quality];
               return (
                 <li key={peca.id} className="min-w-0 rounded-campo border border-borda px-3 py-[0.65rem]">
-                  <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 max-[520px]:grid-cols-1">
                     <strong className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-tinta" title={peca.filename ?? "(sem nome)"}>
                       {peca.filename ?? "(sem nome)"}
                     </strong>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2 max-[520px]:justify-start">
                       <Selo tom={seg.tom} simbolo={peca.segmentation.quality === "FULL" ? "✓" : "!"}>
                         {seg.texto}
                       </Selo>

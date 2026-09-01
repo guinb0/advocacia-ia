@@ -24,6 +24,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, BookOpenText, FilePenLine, RotateCcw, Upload } from "lucide-react";
 
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
@@ -73,8 +74,8 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
         importados: paginaRecebida.importados,
         originais: paginaRecebida.originais,
       });
-      if (pagina > paginaRecebida.paginas) {
-        setPagina(paginaRecebida.paginas);
+      if (pagina !== paginaRecebida.pagina) {
+        setPagina(paginaRecebida.pagina);
       }
       setErro(null);
     } catch (e) {
@@ -130,14 +131,19 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-borda bg-papel-2 px-5 py-4">
           <div className="min-w-0">
             <Botao variante="texto" onClick={onVoltar}>
-              ← Voltar
+              <ArrowLeft size={15} aria-hidden /> Voltar
             </Botao>
             <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-tinta-3">
               Roteiros
             </p>
-            <h1 className="m-0 truncate text-[26px] font-semibold leading-[1.15] font-titulo text-tinta">
-              Roteiros de entrevista
-            </h1>
+            <div className="mt-1 flex min-w-0 items-center gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+                <BookOpenText size={20} aria-hidden />
+              </span>
+              <h1 className="m-0 min-w-0 truncate text-[26px] font-semibold leading-[1.15] font-titulo text-tinta">
+                Roteiros de entrevista
+              </h1>
+            </div>
             <p className="mt-2 mb-0 max-w-[70ch] text-tinta-3 text-sm leading-[1.55]">
               Mantenha os roteiros fora do atendimento, revise perguntas com calma e preserve a entrevista progressiva.
             </p>
@@ -171,20 +177,24 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
           <Selo tom="info">{totalRoteiros} roteiro(s)</Selo>
         </div>
 
-        {carregando && <p className="mt-3 text-tinta-3 text-sm">Carregando…</p>}
+        {carregando && (
+          <div className="mt-3 rounded-campo border border-borda bg-papel-2 px-4 py-5 text-center text-sm text-tinta-3" aria-live="polite">
+            Carregando roteiros…
+          </div>
+        )}
 
         {!carregando && totalRoteiros === 0 && (
           <Vazio className="mt-3">Nenhum roteiro cadastrado.</Vazio>
         )}
 
-        <div className="mt-3 flex min-w-0 flex-col gap-2">
+        <div className="mt-3 flex min-w-0 flex-col gap-2" aria-busy={carregando}>
           {roteiros.map((r) => (
             <div
               key={r.codigo}
               className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-4 rounded-campo border border-borda bg-papel px-3 py-3 max-[720px]:grid-cols-1"
             >
               <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <strong className="min-w-0 truncate text-tinta text-sm" title={r.nome}>{r.nome}</strong>
                   {/* Dizer de onde veio é o que separa "o roteiro do escritório"
                       de "aquele que alguém importou na terça". */}
@@ -197,6 +207,9 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                 {r.descricao && (
                   <p className="mt-1 mb-0 line-clamp-2 text-tinta-3 text-xs leading-[1.5]" title={r.descricao}>{r.descricao}</p>
                 )}
+                <p className="mt-1 mb-0 truncate font-codigo text-[11px] text-tinta-3" title={r.codigo}>
+                  {r.codigo}
+                </p>
                 {r.importado && (
                   <p className="mt-1 mb-0 truncate text-tinta-3 text-xs leading-[1.5]">
                     {[quando(r.atualizado_em), r.criado_por].filter(Boolean).join(" · ")}
@@ -210,6 +223,7 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                   onClick={() => void abrirEditor(r)}
                   disabled={abrindo === r.codigo}
                 >
+                  <FilePenLine size={14} aria-hidden />
                   {abrindo === r.codigo ? "Abrindo…" : "Editar"}
                 </Botao>
                 {/* Só em quem TEM versão salva: num roteiro que nunca foi
@@ -222,7 +236,8 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                     onClick={() => void reverter(r)}
                     disabled={revertendo === r.codigo}
                   >
-                    {revertendo === r.codigo ? "…" : "Voltar ao original"}
+                    <RotateCcw size={14} aria-hidden />
+                    {revertendo === r.codigo ? "Revertendo…" : "Voltar ao original"}
                   </Botao>
                 )}
               </div>
@@ -247,7 +262,7 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
           className="min-w-0 overflow-hidden"
         >
           <Botao variante="primario" onClick={() => setImportando(true)} bloco>
-            Importar documento
+            <Upload size={16} aria-hidden /> Importar documento
           </Botao>
         </Cartao>
 
@@ -255,11 +270,11 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
           <div className="flex flex-col gap-2 text-sm leading-[1.5] text-tinta-2">
             <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
               <strong className="block text-tinta">Editar</strong>
-              <span className="line-clamp-2">Abre o roteiro completo sem carregar perguntas na listagem.</span>
+              <span className="line-clamp-2">Abra perguntas e blocos somente quando precisar revisar.</span>
             </div>
             <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
               <strong className="block text-tinta">Voltar ao original</strong>
-              <span className="line-clamp-2">Aparece apenas quando existe versão importada ou salva.</span>
+              <span className="line-clamp-2">Recupere o padrão do sistema quando houver uma versão salva.</span>
             </div>
           </div>
         </Cartao>

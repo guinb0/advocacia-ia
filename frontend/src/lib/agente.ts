@@ -762,20 +762,25 @@ export async function pecasDeEstilo(
   taxonomyCode?: string | null,
   opcoes: { pagina?: number; tamanho?: number; documentType?: string | null } = {},
 ): Promise<PaginaPecasDeEstilo> {
-  const tamanho = opcoes.tamanho ?? 20;
-  const pagina = opcoes.pagina ?? 1;
-  const offset = (Math.max(1, pagina) - 1) * tamanho;
+  const tamanho = Number.isFinite(opcoes.tamanho)
+    ? Math.max(1, Math.floor(opcoes.tamanho ?? 20))
+    : 20;
+  const pagina = Number.isFinite(opcoes.pagina)
+    ? Math.max(1, Math.floor(opcoes.pagina ?? 1))
+    : 1;
+  const offset = (pagina - 1) * tamanho;
   const busca = new URLSearchParams({ limit: String(tamanho), offset: String(offset) });
   if (taxonomyCode) busca.set("taxonomy_code", taxonomyCode);
   if (opcoes.documentType) busca.set("document_type", opcoes.documentType);
   const dados = await chamar<{ items: PecaDeEstilo[]; total?: number; limit?: number; offset?: number }>(
     `/api/agente/estilo/pecas?${busca}`,
   );
-  const total = dados.total ?? dados.items?.length ?? 0;
-  const limite = dados.limit ?? tamanho;
-  const deslocamento = dados.offset ?? offset;
+  const items = Array.isArray(dados.items) ? dados.items : [];
+  const total = Number.isFinite(dados.total) ? Math.max(0, dados.total ?? 0) : items.length;
+  const limite = Number.isFinite(dados.limit) ? Math.max(1, dados.limit ?? tamanho) : tamanho;
+  const deslocamento = Number.isFinite(dados.offset) ? Math.max(0, dados.offset ?? offset) : offset;
   return {
-    items: dados.items ?? [],
+    items,
     total,
     limit: limite,
     offset: deslocamento,

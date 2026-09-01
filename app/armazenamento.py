@@ -1618,11 +1618,73 @@ def listar_resumo_supervisao() -> list[dict[str, Any]]:
                    e.avaliacao_google_em, e.gravacao_id, e.criado_em,
                    LEN(e.texto) AS caracteres
               FROM entrevistas e
-              JOIN casos c ON c.id = e.caso_id
+         LEFT JOIN casos c ON c.id = e.caso_id
              ORDER BY e.criado_em DESC
             """
         ).fetchall()
     return [_normalizar_entrevista(linha) for linha in linhas]
+
+
+def listar_resumo_supervisao_paginado(
+    *,
+    entrevistador: str,
+    pagina: int,
+    tamanho: int,
+) -> dict[str, Any]:
+    """Página de entrevistas de uma pessoa, sem carregar a supervisão inteira.
+
+    O resumo geral continua em `listar_resumo_supervisao`; esta função existe
+    para a coluna de detalhes. Ela filtra e pagina no SQL, mantendo a transcrição
+    fora da viagem e tolerando entrevista antiga sem caso associado.
+    """
+    nome = " ".join(str(entrevistador or "").split())
+    sem_nome = nome.casefold() == "não identificado"
+    tamanho_real = max(1, min(int(tamanho or 8), 30))
+    pagina_pedida = max(1, int(pagina or 1))
+
+    if sem_nome:
+        filtro = "NULLIF(LTRIM(RTRIM(COALESCE(e.entrevistador, ''))), '') IS NULL"
+        parametros: tuple[Any, ...] = ()
+    else:
+        nome_sql = (
+            "LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+            "LTRIM(RTRIM(COALESCE(e.entrevistador, ''))), "
+            "'  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '))"
+        )
+        filtro = f"{nome_sql} = ?"
+        parametros = (nome.casefold(),)
+
+    with conectar() as con:
+        total_linha = con.execute(
+            f"SELECT COUNT(*) AS n FROM entrevistas e WHERE {filtro}",
+            parametros,
+        ).fetchone()
+        total = int(total_linha["n"] if total_linha else 0)
+        paginas = max(1, (total + tamanho_real - 1) // tamanho_real)
+        pagina_real = min(pagina_pedida, paginas)
+        offset = (pagina_real - 1) * tamanho_real
+        linhas = con.execute(
+            f"""
+            SELECT e.id, e.caso_id, c.cliente, e.arquivo, e.realizada_em,
+                   e.entrevistador, e.fatos_gerados, e.enviada_em,
+                   e.avaliacao_google_em, e.gravacao_id, e.criado_em,
+                   LEN(e.texto) AS caracteres
+              FROM entrevistas e
+         LEFT JOIN casos c ON c.id = e.caso_id
+             WHERE {filtro}
+             ORDER BY e.criado_em DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+            """,
+            (*parametros, offset, tamanho_real),
+        ).fetchall()
+
+    return {
+        "itens": [_normalizar_entrevista(linha) for linha in linhas],
+        "total": total,
+        "pagina": pagina_real,
+        "tamanho": tamanho_real,
+        "paginas": paginas,
+    }
 
 
 def obter_entrevista(entrevista_id: str) -> dict[str, Any] | None:
