@@ -1,10 +1,12 @@
 # Build + deploy vem do componente compartilhado guinb0/ci-cd.
 # Os testes (qualidade em MR) sao proprios do projeto.
 include:
-  - component: gitlab.com/guinb0/ci-cd/deploy@1.1.0
+  - component: gitlab.com/guinb0/ci-cd/deploy@1.2.0
     inputs:
       stack_name: forense-flow
-      deploy_when: manual
+      # a main so builda; produzir = merge main -> production
+      deploy_ref: production
+      deploy_when: on_success
       environment_url: https://app.forenseflow.com.br
       # se essa URL nao devolver 200 depois do deploy, o job reverte sozinho
       smoke_url: https://app.forenseflow.com.br/api/saude
@@ -20,6 +22,7 @@ workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "production"
 
 default:
   interruptible: true
