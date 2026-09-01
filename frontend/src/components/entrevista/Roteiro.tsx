@@ -1339,7 +1339,11 @@ function preencherMarcadores(
    *
    * A trava do microfone não mudou: a transcrição continua começando só depois
    * de nome, CPF, UF e município (ver o auto-início, acima). */
-  const roteiroRevelado = escutaEncerrada || revisada;
+  // A identificação abre o atendimento, mas não deve esconder de quem conduz
+  // as perguntas que precisa fazer. A transcrição continua preenchendo as
+  // respostas em segundo plano; o roteiro completo fica disponível assim que
+  // os dados mínimos foram confirmados.
+  const roteiroRevelado = escutaEncerrada || revisada || identificacaoConcluida;
   const blocosNaTela = roteiroRevelado
     ? (roteiro?.blocos ?? [])
     : blocosVisiveis

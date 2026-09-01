@@ -163,7 +163,7 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
       );
       if (!reservado.caso_id) throw new Error("O atendimento ainda não possui um caso vinculado.");
       setAlerta(null);
-      document.title = "Acervo";
+      document.title = "Forense";
       onAbrirDocumentos(reservado.caso_id);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível assumir a chamada.");

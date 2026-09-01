@@ -129,7 +129,7 @@ function TelaSenha({
   return (
     <div className="min-h-screen px-4 pt-5 pb-12 bg-fundo text-md">
       <div className="w-[min(680px,100%)] mx-auto">
-        <span className="block text-tinta font-titulo text-[1.25rem] font-bold">Acervo</span>
+        <span className="block text-tinta font-titulo text-[1.25rem] font-bold">Forense</span>
         <span className="block mt-[1px] text-tinta-3 text-xs">Envio de documentos</span>
         <hr className="mt-4 mb-5 border-none border-t border-borda" />
 
@@ -256,7 +256,7 @@ function Checklist({
   return (
     <div className="min-h-screen px-4 pt-5 pb-12 bg-fundo text-md">
       <div className="w-[min(680px,100%)] mx-auto">
-        <span className="block text-tinta font-titulo text-[1.25rem] font-bold">Acervo</span>
+        <span className="block text-tinta font-titulo text-[1.25rem] font-bold">Forense</span>
         <span className="block mt-[1px] text-tinta-3 text-xs">Envio de documentos</span>
         <hr className="mt-4 mb-5 border-none border-t border-borda" />
 

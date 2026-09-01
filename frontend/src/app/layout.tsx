@@ -9,7 +9,7 @@ import Toaster from "./Toaster";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Acervo — carteira de casos",
+  title: "Forense — carteira de casos",
   description:
     "Casos trabalhistas e previdenciários: checklist de documentos por categoria, entregas validadas por OCR e pedido ao cliente.",
 };

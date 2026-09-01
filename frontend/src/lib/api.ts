@@ -39,17 +39,31 @@ import type {
  */
 /* Mesma regra do `global/services/api.ts`, e pelo mesmo motivo: a API precisa
  * ficar no host da página, senão o cookie de sessão não alcança o `proxy.ts` e o
- * login entra em laço. O default acompanha de onde o app foi aberto — `origin`
- * inteiro, protocolo E porta.
+ * login entra em laço. Em desenvolvimento preservamos o host da página e
+ * apontamos para a porta 8100 do FastAPI; usar o `origin` inteiro chamava o
+ * próprio Next (:3000/:3002), que não possui estas rotas e respondia 404.
  *
  * NÃO cravar `:8100` aqui. Em produção o backend fica atrás de um proxy na 443 e
  * a porta 8100 não é publicada: `https://host:8100` vira `ERR_CONNECTION_REFUSED`
  * em todas as telas que usam este cliente. Em desenvolvimento, quando o front
  * roda numa porta diferente do backend, defina `NEXT_PUBLIC_OCR_API`
  * (ou `OCR_API_PUBLIC_URL`, que o `iniciar.sh`/`iniciar.ps1` propagam). */
-const BASE =
-  process.env.NEXT_PUBLIC_OCR_API ||
-  (typeof window !== "undefined" ? window.location.origin : "http://localhost:8100");
+function baseDaApi(): string {
+  const configurada = process.env.NEXT_PUBLIC_OCR_API;
+  if (configurada) return configurada;
+  if (typeof window === "undefined") return "http://localhost:8100";
+
+  const { hostname, origin, protocol } = window.location;
+  const hostLocal =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    /^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(hostname);
+
+  return hostLocal ? `${protocol}//${hostname}:8100` : origin;
+}
+
+const BASE = baseDaApi();
 
 /** Monta a URL absoluta da API a partir de um caminho tipo "/api/temp/x.json". */
 export function urlApi(caminho: string): string {

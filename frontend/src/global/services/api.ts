@@ -33,12 +33,14 @@ function baseDaApi(): string {
   if (typeof window === "undefined") return definida || `http://localhost:${PORTA_API}`;
 
   const doNavegador = window.location.origin;
-  if (!definida) return doNavegador;
+  // Preserva o host do navegador, mas usa a porta do FastAPI. A origem da
+  // página é o Next (:3000), que não possui as rotas /api do backend.
+  if (!definida) return `${window.location.protocol}//${window.location.hostname}:${PORTA_API}`;
 
   try {
     if (new URL(definida).hostname !== window.location.hostname) {
       console.error(
-        `[Acervo] A API está configurada em ${definida}, mas a página foi aberta em ` +
+        `[Forense] A API está configurada em ${definida}, mas a página foi aberta em ` +
           `${window.location.origin}. São hosts diferentes: o cookie de sessão não ` +
           `alcança o guarda de rota e o login entra em laço. Ajuste OCR_API_PUBLIC_URL ` +
           `e APP_PUBLIC_URL no .env para o mesmo host.`,

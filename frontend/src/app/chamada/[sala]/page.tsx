@@ -87,7 +87,7 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
   return (
     <div className="min-h-screen bg-papel px-2 pt-4 pb-8 sm:px-4 sm:pt-6 sm:pb-12 flex items-center">
       <div className="w-[min(820px,100%)] mx-auto">
-        <span className="font-bold text-[14px] leading-none font-titulo tracking-[0.02em]">ACERVO</span>
+        <span className="font-bold text-[14px] leading-none font-titulo tracking-[0.02em]">FORENSE</span>
         <div className="mt-3 mb-[22px] border-t-[3px] border-double border-borda-forte" />
 
         <div className="border border-borda-forte p-4 sm:p-[26px]">

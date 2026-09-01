@@ -262,7 +262,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
           {aberta ? <X size={20} aria-hidden /> : <Menu size={20} aria-hidden />}
         </button>
         <div className="min-w-0 flex-1">
-          <span className="block truncate font-titulo text-lg font-bold leading-none">Acervo</span>
+          <span className="block truncate font-titulo text-lg font-bold leading-none">Forense</span>
           <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
             Escritório jurídico
           </span>
@@ -320,7 +320,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
               <FileText size={20} aria-hidden />
             </span>
             <div className="min-w-0">
-              <span className="block truncate font-titulo text-xl font-bold leading-none text-nav-texto">Acervo</span>
+              <span className="block truncate font-titulo text-xl font-bold leading-none text-nav-texto">Forense</span>
               <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
                 Escritório jurídico
               </span>
