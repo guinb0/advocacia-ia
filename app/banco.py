@@ -276,7 +276,7 @@ def _adaptar_sql(sql: str) -> str:
     texto = sql.strip()
     texto = re.sub(
         r"IF\s+SCHEMA_ID\([^\n]+\)\s+IS\s+NULL\s+EXEC\([^\n]+\)\s*;?",
-        f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}",
+        f"CREATE SCHEMA IF NOT EXISTS {SCHEMA};",
         texto,
         flags=re.I | re.S,
     )
@@ -372,7 +372,7 @@ def sessao() -> Iterator[Conexao]:
 
 # ---------------------------------------------------------------------------- schema
 
-ESQUEMA_POSTGRES = f"""
+ESQUEMA_POSTGRES = _adaptar_sql(f"""
 IF SCHEMA_ID('{SCHEMA}') IS NULL EXEC('CREATE SCHEMA {SCHEMA}');
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}casos') IS NULL
@@ -613,7 +613,7 @@ CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
 IF COL_LENGTH('{SCHEMA}.{PREFIXO}roteiros', 'origem') IS NULL
 ALTER TABLE {SCHEMA}.{PREFIXO}roteiros
     ADD origem nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_origem DEFAULT N'';
-"""
+""")
 
 # As constraints criadas antes da faxina mantêm o nome `pk_ocr_*` / `fk_ocr_*`. Renomear
 # constraint exige `sp_rename` em cada uma e não muda comportamento nenhum — o custo do
