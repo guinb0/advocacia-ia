@@ -93,7 +93,7 @@ export default function Carteira({
   onNovoCaso,
   onNavegar,
 }: Props) {
-  const { linhas, triagem, chegandoAgora, pedidos, carregando, erro, paginacao, irPara } =
+  const { linhas, triagem, chegandoAgora, pedidos, carregando, erro, recarregar, paginacao, irPara } =
     useCarteira();
   const estadoModelo = useModelo();
   const sessao = useSessao();
@@ -296,6 +296,15 @@ export default function Carteira({
               <Aviso tom="critico" titulo="Não foi possível carregar a carteira">
                 {erro}
               </Aviso>
+              <Botao
+                variante="secundario"
+                pequeno
+                className="mt-3"
+                onClick={() => void recarregar()}
+                disabled={carregando}
+              >
+                Tentar novamente
+              </Botao>
             </div>
           )}
 

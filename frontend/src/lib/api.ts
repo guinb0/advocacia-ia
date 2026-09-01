@@ -64,6 +64,11 @@ function baseDaApi(): string {
 }
 
 const BASE = baseDaApi();
+/** Consultas de tela precisam falhar de forma visível se o backend ou o banco
+ * parar de responder. Processamentos longos usam endpoints assíncronos; deixar
+ * o `fetch` comum sem prazo fazia a carteira permanecer em "Carregando" para
+ * sempre quando a conexão com o PostgreSQL ficava pendurada. */
+const PRAZO_REQUISICAO_MS = 30_000;
 
 /** Monta a URL absoluta da API a partir de um caminho tipo "/api/temp/x.json". */
 export function urlApi(caminho: string): string {
@@ -209,15 +214,25 @@ export function cabecalhos(extra?: HeadersInit): HeadersInit | undefined {
  * original segue em `cause`, para o console não perder o rastro. */
 async function buscar(caminho: string, init: RequestInit = {}): Promise<Response> {
   const url = urlApi(caminho);
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), PRAZO_REQUISICAO_MS);
   let resposta: Response;
   try {
-    resposta = await fetch(url, { ...init, credentials: CREDENCIAIS });
+    resposta = await fetch(url, { ...init, credentials: CREDENCIAIS, signal: controller.signal });
   } catch (erro) {
+    if (erro instanceof DOMException && erro.name === "AbortError") {
+      throw new ApiError(
+        "O servidor demorou mais de 30 segundos para responder. Verifique a conexão com o banco de dados e tente novamente.",
+        { cause: erro },
+      );
+    }
     throw new ApiError(
       `Não foi possível falar com o servidor em ${url}. ` +
         "Confira se ele está no ar e se o endereço está certo.",
       { cause: erro },
     );
+  } finally {
+    globalThis.clearTimeout(timeout);
   }
   if (resposta.status === 401 && typeof window !== "undefined") {
     // A sessão venceu. A carteira não deve fingir que é falha de dados: limpa o

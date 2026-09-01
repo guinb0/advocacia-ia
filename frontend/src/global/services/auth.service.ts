@@ -53,6 +53,8 @@ export async function LogoutService(): Promise<void> {
 }
 
 export async function MyAccountService(): Promise<SessaoUsuario | null> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
   try {
     /* NÃO usa o `api` global: ele redireciona para `/` ao receber 401, e esta
      * chamada roda em TODAS as páginas — inclusive as públicas (`/portal/[token]`,
@@ -61,12 +63,15 @@ export async function MyAccountService(): Promise<SessaoUsuario | null> {
     const resposta = await fetch(urlApi("/api/user/my-account"), {
       cache: "no-store",
       credentials: "include",
+      signal: controller.signal,
     });
     if (!resposta.ok) return null;
     const corpo = (await resposta.json()) as Envelope<SessaoUsuario>;
     return corpo?.data ?? null;
   } catch {
     return null;
+  } finally {
+    globalThis.clearTimeout(timeout);
   }
 }
 
