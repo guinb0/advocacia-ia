@@ -1617,7 +1617,6 @@ def saude(fila: bool = False):
     inclusive de fora do servidor, que é o ponto: `/metrics` mora fora de `/api/`
     e o proxy o devolve como 404.
     """
-    raise RuntimeError("TESTE DE ROLLBACK DO PIPELINE - este commit deve ser revertido")
     from . import ocr_engine
 
     ocr_via_worker = os.getenv("OCR_AQUECER_API", "0") != "1"
