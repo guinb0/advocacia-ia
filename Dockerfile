@@ -67,15 +67,12 @@ ENV PYTHONUNBUFFERED=1 \
 # apontando para o .so do driver, que esta la — quem falta e esta biblioteca
 # que ele carrega. Listada aqui, o apt a marca como manual e o autoremove nao
 # toca nela. Medido: sem esta linha, `pyodbc.connect` falha na imagem.
+# Postgres-only: driver do SQL Server (msodbcsql18 + repo da Microsoft) REMOVIDO.
+# Mantidos unixodbc (import do pyodbc nao quebra ate o codigo migrar), LibreOffice
+# (gera PDF/docx) e libglib/libgomp/libgl (opencv/paddle em slim).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl gnupg2 ca-certificates libglib2.0-0 libgomp1 libgl1 \
-    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-        | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
-        > /etc/apt/sources.list.d/mssql.list \
-    && apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
-        msodbcsql18 unixodbc libgssapi-krb5-2 libreoffice-writer fonts-liberation \
-    && apt-get purge -y curl gnupg2 && apt-get autoremove -y \
+        ca-certificates libglib2.0-0 libgomp1 libgl1 \
+        unixodbc libgssapi-krb5-2 libreoffice-writer fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # So o binario. O standalone do Next carrega os proprios node_modules minimos.
