@@ -27,7 +27,11 @@ workflow:
 default:
   interruptible: true
 
-# ---- qualidade: roda em MR; nao bloqueia deploy, bloqueia merge ----
+# ---- qualidade: roda em MR e em push na main ----
+# So em MR nao basta: push direto na main pulava os testes inteiros, e a imagem
+# era buildada sem nada ter sido verificado. Rodando tambem na main, um teste
+# vermelho barra o estagio build - ou seja, nem chega a existir imagem pra
+# promover pra production.
 # needs: [] tira os testes da fila de estagios: comecam no segundo 0.
 # rules:changes evita rodar teste de python quando so o frontend mudou (e vice-versa).
 
@@ -38,10 +42,12 @@ testes-python:
   timeout: 10m
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
+      changes: &muda_backend
         - app/**/*
         - tests/**/*
         - requirements*.txt
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: *muda_backend
   cache:
     key:
       files: [requirements.txt]
@@ -61,8 +67,10 @@ typecheck-frontend:
   timeout: 10m
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
+      changes: &muda_frontend
         - frontend/**/*
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: *muda_frontend
   cache:
     key:
       files: [frontend/package-lock.json]
@@ -73,10 +81,12 @@ typecheck-frontend:
   script:
     - npx tsc --noEmit
 
-# ---- seguranca: so em MR, pra nao gastar minutos em todo push na main ----
+# ---- seguranca: MR e main. Nao roda na production (fast-forward da main,
+#      ja verificada) pra nao pagar minutos duas vezes pelo mesmo commit. ----
 secret_detection:
   stage: test
   needs: []
   timeout: 10m
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
