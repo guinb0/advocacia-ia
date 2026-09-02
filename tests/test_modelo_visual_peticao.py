@@ -1,4 +1,5 @@
 import io
+import asyncio
 import zipfile
 
 from app import armazenamento, peticao_local
@@ -121,3 +122,19 @@ def test_salvar_modelo_nao_reabre_o_banco_depois_de_gravar(monkeypatch):
     assert registro["nome_arquivo"] == "marca.png"
     assert registro["enviado_por"] == "Mariana"
     assert registro["atualizado_em"]
+
+
+def test_rotas_da_identidade_visual_carregam_o_modelo_embutido(monkeypatch):
+    # Import tardio: `app.main` inicializa o schema ao carregar e os outros testes
+    # deste arquivo não precisam pagar esse custo.
+    from app import main
+
+    monkeypatch.setattr(armazenamento, "obter_modelo", lambda _codigo: None)
+
+    modelo = asyncio.run(main.obter_modelo_visual_peticao(None))
+    logo = asyncio.run(main.logo_do_modelo_visual(None))
+
+    assert modelo["origem"] == "embutido"
+    assert logo.status_code == 200
+    assert logo.media_type == "image/png"
+    assert logo.body.startswith(b"\x89PNG\r\n\x1a\n")

@@ -65,6 +65,7 @@ from . import (
     perfis,
     painel as painel_do_caso,
     panorama,
+    peticao_local,
     pipeline,
     portal,
     rag,
