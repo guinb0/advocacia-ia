@@ -15,6 +15,7 @@ import type {
   OpcoesEntrada,
   PapelChamada,
   Participante,
+  MensagemChamada,
 } from "./chamadaJitsi";
 
 /* A chamada que sobrevive à navegação.
@@ -49,6 +50,7 @@ interface ValorChamada {
    *  isto para não oferecer um botão que só levaria a um erro. */
   telaDisponivel: boolean;
   erro: string | null;
+  mensagens: MensagemChamada[];
   /** Há chamada de pé. */
   ativa: boolean;
   /** Mostrar o painel flutuante: só quando a chamada existe E nenhuma tela já a
@@ -65,6 +67,7 @@ interface ValorChamada {
   alternarCamera: () => Promise<void>;
   alternarTela: () => Promise<void>;
   limparErro: () => void;
+  enviarMensagem: (texto: string) => void;
   /** Assina a voz do outro lado — é o que alimenta a transcrição do escritório.
    *  Devolve o cancelamento. Se a faixa já chegou, chama o retorno na hora. */
   aoReceberFaixa: (retorno: (trilha: MediaStreamTrack) => void) => () => void;
@@ -86,6 +89,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
    * React descartaria a árvore hidratada com um aviso. */
   const [telaDisponivel, setTelaDisponivel] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [mensagens, setMensagens] = useState<MensagemChamada[]>([]);
   // Quantas telas mostram a chamada por inteiro agora. Enquanto > 0, o painel
   // flutuante fica recolhido — não há por que repetir a chamada num canto.
   const [paineis, setPaineis] = useState(0);
@@ -109,6 +113,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     setTemCamera(false);
     setParticipantes([]);
     setEstado("fora");
+    setMensagens([]);
   }, []);
 
   const entrar = useCallback(
@@ -127,6 +132,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
           assinantes.current.forEach((cb) => cb(trilha));
         },
         onErro: setErro,
+        onMensagem: (mensagem) => setMensagens((atuais) => [...atuais, mensagem]),
       });
       chamada.current = instancia;
       salaRef.current = novaSala;
@@ -174,6 +180,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
   }, []);
 
   const limparErro = useCallback(() => setErro(null), []);
+  const enviarMensagem = useCallback((texto: string) => chamada.current?.enviarMensagem(texto), []);
 
   const aoReceberFaixa = useCallback((retorno: (t: MediaStreamTrack) => void) => {
     assinantes.current.add(retorno);
@@ -202,6 +209,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     compartilhandoTela,
     telaDisponivel,
     erro,
+    mensagens,
     ativa: estado !== "fora",
     mostrarDock: estado !== "fora" && paineis === 0,
     registrarPainel,
@@ -211,6 +219,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     alternarCamera,
     alternarTela,
     limparErro,
+    enviarMensagem,
     aoReceberFaixa,
   };
 

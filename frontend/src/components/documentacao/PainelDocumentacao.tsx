@@ -104,9 +104,6 @@ export default function PainelDocumentacao({ onVoltar, onAbrirDocumentos }: Prop
     <main className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-5">
       <header className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
         <div className="border-b border-borda bg-papel-2 px-4 py-4 sm:px-5">
-          <Botao variante="texto" pequeno onClick={onVoltar}>
-            ← Carteira
-          </Botao>
           <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
             Central de atendimento
           </span>

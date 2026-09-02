@@ -34,21 +34,18 @@ import {
   Activity,
   BarChart3,
   BookOpen,
-  Bot,
   BriefcaseBusiness,
   ClipboardCheck,
   Database,
   FileSearch,
   FileText,
   FolderKanban,
-  HeartPulse,
   LayoutDashboard,
   LibraryBig,
   LogOut,
   Menu,
   MessageSquareText,
   PenLine,
-  Search,
   Users,
   X,
   type LucideIcon,
@@ -84,10 +81,6 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // Acendem a carteira para a barra não ficar sem resposta quando o advogado
       // está dentro de um caso.
       { tela: "carteira", rotulo: "Carteira", relacionadas: ["caso", "dossie", "painel", "jurimetria"] },
-      // Fica em Atendimento, e não em Análise, porque a pergunta que ele responde é a de
-      // ANTES de saber qual caso abrir — o vizinho certo dela é a carteira, não o painel
-      // de dados.
-      { tela: "agente", rotulo: "Agente" },
       { tela: "casos", rotulo: "Casos" },
       { tela: "documentacao", rotulo: "Documentação" },
     ],
@@ -96,7 +89,6 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
     titulo: "Análise",
     itens: [
       { tela: "avulso", rotulo: "Ler um documento" },
-      { tela: "investigacao", rotulo: "Investigar" },
       { tela: "dados", rotulo: "Dados" },
       { tela: "panorama", rotulo: "Panorama" },
     ],
@@ -110,8 +102,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
       { tela: "catalogoRoteiros", rotulo: "Roteiros" },
       { tela: "usuarios", rotulo: "Usuários" },
-      { tela: "saudeAgente", rotulo: "Saúde do agente" },
-      { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
+      { tela: "modelosDePeticao", rotulo: "Identidade visual" },
     ],
   },
 ];
@@ -129,17 +120,14 @@ const GRUPO_TITULO =
 export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   entrevista: MessageSquareText,
   carteira: LayoutDashboard,
-  agente: Bot,
   casos: BriefcaseBusiness,
   documentacao: LibraryBig,
   avulso: FileSearch,
-  investigacao: Search,
   dados: Database,
   panorama: BarChart3,
   supervisao: Activity,
   catalogoRoteiros: BookOpen,
   usuarios: Users,
-  saudeAgente: HeartPulse,
   modelosDePeticao: PenLine,
   caso: ClipboardCheck,
   dossie: FolderKanban,

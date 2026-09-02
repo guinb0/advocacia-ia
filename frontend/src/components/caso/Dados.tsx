@@ -290,9 +290,6 @@ export default function Dados({ onVoltar }: Props) {
 
   return (
     <div className="min-w-0">
-      <Botao variante="secundario" onClick={onVoltar}>
-        ← Voltar para a carteira
-      </Botao>
 
       <header className="mt-5 mb-[18px]">
         <h1 className="mb-[6px] mt-0 text-[1.6rem]">Dados do acervo</h1>

@@ -207,7 +207,99 @@ function EditorIdentidadeVisual({ modelo, enviando, salvando, onChange, onEnviar
   );
 }
 
+/** Tela ativa: a instalação não usa o serviço ia-juridica. A manutenção de
+ * amostras por ação permanece fora do fluxo e nenhuma chamada ao agente é
+ * disparada. A identidade visual pertence ao backend principal. */
 export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void }) {
+  const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
+  const [enviandoVisual, setEnviandoVisual] = useState(false);
+  const [salvandoVisual, setSalvandoVisual] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [recado, setRecado] = useState<string | null>(null);
+
+  useEffect(() => {
+    void obterModeloVisualPeticao()
+      .then(setModeloVisual)
+      .catch((falha) => setErro(
+        falha instanceof ApiError ? falha.message : "Não foi possível carregar a identidade visual.",
+      ));
+  }, []);
+
+  async function trocarModeloVisual(arquivo: File) {
+    setEnviandoVisual(true);
+    setErro(null);
+    setRecado(null);
+    try {
+      setModeloVisual(await enviarModeloVisualPeticao(arquivo));
+      setRecado("Logo atualizada. As próximas petições usarão esta identidade.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar a logo.");
+    } finally {
+      setEnviandoVisual(false);
+    }
+  }
+
+  async function restaurarVisual() {
+    if (!window.confirm("Restaurar a identidade visual padrão?")) return;
+    setEnviandoVisual(true);
+    setErro(null);
+    try {
+      setModeloVisual(await restaurarModeloVisualPeticao());
+      setRecado("Identidade visual padrão restaurada.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível restaurar o padrão.");
+    } finally {
+      setEnviandoVisual(false);
+    }
+  }
+
+  async function salvarVisual() {
+    if (!modeloVisual) return;
+    setSalvandoVisual(true);
+    setErro(null);
+    setRecado(null);
+    try {
+      const { arquivo: _arquivo, origem: _origem, enviado_por: _por,
+        atualizado_em: _em, ...configuracaoVisual } = modeloVisual;
+      setModeloVisual(await salvarConfiguracaoVisualPeticao(configuracaoVisual));
+      setRecado("Identidade visual salva. As próximas petições usarão este padrão.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar a identidade visual.");
+    } finally {
+      setSalvandoVisual(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto flex max-w-[1120px] flex-col gap-4 px-4 pb-12 pt-6">
+      <div>
+        <span className="mt-5 block text-[11px] font-bold uppercase tracking-[0.13em] text-tinta-3">Configuração do escritório</span>
+        <h1 className="mb-0 mt-1 font-titulo text-[1.65rem] leading-[1.2] text-tinta">Identidade visual dos documentos</h1>
+        <p className="mb-0 mt-2 max-w-[70ch] text-sm leading-[1.55] text-tinta-3">
+          Padronize a logo, a tipografia e a apresentação das petições geradas pelo sistema.
+          As configurações ficam salvas para todo o escritório.
+        </p>
+      </div>
+
+      {erro && <Aviso tom="critico" titulo="Não foi possível concluir">{erro}</Aviso>}
+      {recado && <Aviso tom="ok" titulo="Configuração atualizada">{recado}</Aviso>}
+
+      <Cartao titulo="Padrão institucional">
+        <EditorIdentidadeVisual
+          modelo={modeloVisual}
+          enviando={enviandoVisual}
+          salvando={salvandoVisual}
+          onChange={setModeloVisual}
+          onEnviar={trocarModeloVisual}
+          onSalvar={salvarVisual}
+          onRestaurar={restaurarVisual}
+        />
+      </Cartao>
+    </div>
+  );
+}
+
+function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => void }) {
   const [acoes, setAcoes] = useState<NoDaTaxonomia[]>([]);
   const [acao, setAcao] = useState("");
   const [tipo, setTipo] = useState(TIPOS[0].codigo);

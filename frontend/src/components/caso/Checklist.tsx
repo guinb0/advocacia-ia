@@ -71,9 +71,6 @@ export default function Checklist({
   if (!categoria) {
     return (
       <>
-        <Botao variante="secundario" className="mb-4" onClick={onVoltar}>
-          ← Voltar para a carteira
-        </Botao>
         <Aviso tom="critico" titulo="Categoria indisponível">
           {situacao.erro ?? "O tipo de ação deste caso não pôde ser carregado."}
         </Aviso>
@@ -99,10 +96,6 @@ export default function Checklist({
 
   return (
     <>
-      <Botao variante="secundario" className="mb-4" onClick={onVoltar}>
-        ← Voltar para a carteira
-      </Botao>
-
       <div className="px-6 py-[22px] mb-5 border border-borda-forte rounded-cartao bg-papel shadow-cartao">
         <div className="flex justify-between items-center gap-[14px] mb-[14px] flex-wrap">
           <Selo tom="info">{categoria.nome}</Selo>

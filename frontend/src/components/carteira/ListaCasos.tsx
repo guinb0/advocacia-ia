@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
@@ -29,6 +29,11 @@ export default function ListaCasos({
   const [categoria, setCategoria] = useState("");
   const [criando, setCriando] = useState(false);
   const [confirmando, setConfirmando] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
+  const [tipoFiltro, setTipoFiltro] = useState("");
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
+  const [ordem, setOrdem] = useState<"recentes" | "antigos" | "nome">("recentes");
   /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
    * de 5 em 5 só para exibição — nada é buscado por página. `pagina` pode ficar
    * maior que o total depois de uma exclusão; `paginaAtual` reancora. */
@@ -55,9 +60,29 @@ export default function ListaCasos({
   const nomeCategoria = (codigo: string) =>
     categorias.find((c) => c.codigo === codigo)?.nome ?? codigo;
 
-  const totalPaginas = Math.max(1, Math.ceil(casos.length / POR_PAGINA));
+  const casosFiltrados = useMemo(() => {
+    const termo = busca.trim().toLocaleLowerCase("pt-BR").replace(/\D/g, "") || busca.trim().toLocaleLowerCase("pt-BR");
+    const somenteNumeros = busca.trim() && /^\D*\d[\d.\-/\s]*$/.test(busca);
+    return casos
+      .filter((caso) => {
+        const texto = `${caso.cliente} ${caso.id} ${caso.observacao ?? ""}`.toLocaleLowerCase("pt-BR");
+        const corresponde = !busca.trim() || (somenteNumeros ? texto.replace(/\D/g, "").includes(termo) : texto.includes(termo));
+        const dia = (caso.criado_em ?? "").slice(0, 10);
+        return corresponde && (!tipoFiltro || caso.categoria === tipoFiltro)
+          && (!dataInicial || dia >= dataInicial) && (!dataFinal || dia <= dataFinal);
+      })
+      .sort((a, b) => ordem === "nome"
+        ? a.cliente.localeCompare(b.cliente, "pt-BR")
+        : ordem === "antigos"
+          ? a.criado_em.localeCompare(b.criado_em)
+          : b.criado_em.localeCompare(a.criado_em));
+  }, [casos, busca, tipoFiltro, dataInicial, dataFinal, ordem]);
+
+  useEffect(() => setPagina(1), [busca, tipoFiltro, dataInicial, dataFinal, ordem]);
+
+  const totalPaginas = Math.max(1, Math.ceil(casosFiltrados.length / POR_PAGINA));
   const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
-  const casosVisiveis = casos.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
+  const casosVisiveis = casosFiltrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(280px,380px)_minmax(0,1fr)] items-start gap-5 max-[980px]:grid-cols-1">
@@ -162,6 +187,20 @@ export default function ListaCasos({
           <Vazio>Crie o primeiro caso ao lado para começar a cobrar os documentos do cliente.</Vazio>
         ) : (
           <>
+          <div className="mb-4 grid gap-3 rounded-campo border border-borda bg-papel-2 p-3 sm:grid-cols-2 xl:grid-cols-5">
+            <input className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm xl:col-span-2" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome, CPF ou ID" aria-label="Buscar casos" />
+            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value)} aria-label="Filtrar por tipo de caso">
+              <option value="">Todos os tipos</option>
+              {categorias.map((c) => <option key={c.codigo} value={c.codigo}>{c.nome}</option>)}
+            </select>
+            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={ordem} onChange={(e) => setOrdem(e.target.value as typeof ordem)} aria-label="Ordenar casos">
+              <option value="recentes">Mais recentes</option><option value="antigos">Mais antigos</option><option value="nome">Nome A–Z</option>
+            </select>
+            <button type="button" className="min-h-10 rounded-campo border border-borda-forte px-3 text-sm font-semibold" onClick={() => { setBusca(""); setTipoFiltro(""); setDataInicial(""); setDataFinal(""); setOrdem("recentes"); }}>Limpar filtros</button>
+            <label className="text-xs text-tinta-3">De<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataInicial} onChange={(e) => setDataInicial(e.target.value)} /></label>
+            <label className="text-xs text-tinta-3">Até<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataFinal} onChange={(e) => setDataFinal(e.target.value)} /></label>
+            <p className="m-0 self-end text-xs text-tinta-3 sm:col-span-2">{casosFiltrados.length} resultado(s)</p>
+          </div>
           <div className="min-w-0 overflow-hidden rounded-campo border border-borda">
             <div className="hidden grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_164px] gap-3 border-b border-borda bg-papel-2 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:grid">
               <span>Cliente</span>
@@ -246,7 +285,7 @@ export default function ListaCasos({
             </ul>
           </div>
 
-          {casos.length > POR_PAGINA && (
+          {casosFiltrados.length > POR_PAGINA && (
             <div className="mt-3 flex min-w-0 items-center justify-between gap-3 border-t border-borda pt-3">
               <Botao
                 variante="discreto"

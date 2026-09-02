@@ -162,9 +162,6 @@ export default function Supervisao({ onVoltar }: Props) {
 
   return (
     <div className="min-w-0">
-      <Botao variante="secundario" onClick={onVoltar}>
-        ← Voltar para a carteira
-      </Botao>
 
       <header className="my-5">
         <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">Supervisão</h1>

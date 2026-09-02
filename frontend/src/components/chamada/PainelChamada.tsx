@@ -6,6 +6,7 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
+import ChatChamada from "./ChatChamada";
 
 /* A chamada ao lado do roteiro — a coluna da direita da entrevista.
  *
@@ -191,6 +192,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
           )}
 
           <Retratos participantes={chamada.participantes} tamanho="coluna" />
+          <ChatChamada />
 
           <div className="flex gap-2 flex-wrap mt-[10px]">
             <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.alternarCamera()}>

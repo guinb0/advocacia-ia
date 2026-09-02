@@ -113,9 +113,6 @@ export default function Panorama({ onVoltar, onAbrirCaso }: Props) {
   return (
     <div className="max-w-[1180px] mx-auto px-7 pt-6 pb-16 max-[720px]:px-[14px] max-[720px]:pt-4 max-[720px]:pb-12 flex flex-col gap-6">
       <div className="flex">
-        <Botao variante="secundario" pequeno onClick={onVoltar}>
-          ← Voltar para a carteira
-        </Botao>
       </div>
 
       <header className="flex flex-col gap-[6px]">

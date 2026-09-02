@@ -6,6 +6,7 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
+import ChatChamada from "@/components/chamada/ChatChamada";
 
 /* A chamada do lado de quem é entrevistado.
  *
@@ -150,6 +151,8 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
               </p>
 
               <Retratos participantes={chamada.participantes} tamanho="grande" />
+
+              <ChatChamada />
 
               <div className="flex gap-[10px] mt-5 flex-wrap">
                 <button type="button" className={SECUNDARIO} onClick={() => void chamada.alternarCamera()}>

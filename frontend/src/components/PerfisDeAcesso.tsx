@@ -82,6 +82,7 @@ export default function PerfisDeAcesso() {
   /* O que mudou desde a última leitura, por perfil. Só o que está aqui é
    * enviado — e é o que acende o botão "Salvar" de cada linha. */
   const [rascunho, setRascunho] = useState<Record<string, string[]>>({});
+  const [detalhes, setDetalhes] = useState<Record<string, { rotulo: string; descricao: string }>>({});
   const [novoRotulo, setNovoRotulo] = useState("");
 
   const carregar = useCallback(async () => {
@@ -91,6 +92,7 @@ export default function PerfisDeAcesso() {
       setPerfis(r.perfis);
       setModulos(r.modulos);
       setRascunho({});
+      setDetalhes({});
       setErro(null);
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : "Não foi possível ler os perfis.");
@@ -104,7 +106,10 @@ export default function PerfisDeAcesso() {
   }, [carregar]);
 
   const marcados = (perfil: PerfilComAcesso) => rascunho[perfil.codigo] ?? perfil.modulos;
-  const mudou = (perfil: PerfilComAcesso) => rascunho[perfil.codigo] !== undefined;
+  const mudou = (perfil: PerfilComAcesso) =>
+    rascunho[perfil.codigo] !== undefined || detalhes[perfil.codigo] !== undefined;
+  const detalhe = (perfil: PerfilComAcesso) =>
+    detalhes[perfil.codigo] ?? { rotulo: perfil.rotulo, descricao: perfil.descricao };
 
   function alternar(perfil: PerfilComAcesso, modulo: string) {
     const atual = marcados(perfil);
@@ -117,7 +122,8 @@ export default function PerfisDeAcesso() {
   async function salvar(perfil: PerfilComAcesso) {
     setSalvando(perfil.codigo);
     try {
-      await salvarPerfil(perfil.codigo, perfil.rotulo, perfil.descricao, marcados(perfil));
+      const dados = detalhe(perfil);
+      await salvarPerfil(perfil.codigo, dados.rotulo, dados.descricao, marcados(perfil));
       await carregar();
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : "Não foi possível salvar.");
@@ -192,9 +198,28 @@ export default function PerfisDeAcesso() {
               {perfis.map((perfil) => (
                 <tr key={perfil.codigo} className={mudou(perfil) ? "bg-atencao-claro" : ""}>
                   <th scope="row" className={`${CELULA_MATRIZ} ${COLUNA_FIXA} [&>strong]:block [&>strong]:text-sm [&>strong]:font-semibold [&>strong]:leading-[1.3] [&>small]:block [&>small]:mt-[3px] [&>small]:text-tinta-3 [&>small]:text-xs [&>small]:leading-[1.4]`}>
-                    <strong>{perfil.rotulo}</strong>
+                    <input
+                      value={detalhe(perfil).rotulo}
+                      onChange={(e) => setDetalhes((atual) => ({
+                        ...atual,
+                        [perfil.codigo]: { ...detalhe(perfil), rotulo: e.target.value },
+                      }))}
+                      className="block w-full border border-transparent bg-transparent px-1 py-1 text-sm font-semibold text-tinta hover:border-borda-forte focus:border-tinta focus:outline-none"
+                      aria-label={`Nome do perfil ${perfil.rotulo}`}
+                      maxLength={120}
+                    />
                     {perfil.sistema && <span className="inline-block ml-[6px] border border-borda-forte px-[6px] py-px text-tinta-3 text-xs font-semibold leading-[1.4] align-middle">sistema</span>}
-                    {perfil.descricao && <small>{perfil.descricao}</small>}
+                    <textarea
+                      value={detalhe(perfil).descricao}
+                      onChange={(e) => setDetalhes((atual) => ({
+                        ...atual,
+                        [perfil.codigo]: { ...detalhe(perfil), descricao: e.target.value },
+                      }))}
+                      className="mt-1 block min-h-12 w-full resize-y border border-transparent bg-transparent px-1 py-1 text-xs font-normal text-tinta-3 hover:border-borda-forte focus:border-tinta focus:outline-none"
+                      placeholder="Descreva o que este perfil faz"
+                      aria-label={`Descrição do perfil ${perfil.rotulo}`}
+                      maxLength={400}
+                    />
                   </th>
 
                   {modulos.map((m) => (
@@ -204,8 +229,6 @@ export default function PerfisDeAcesso() {
                           type="checkbox"
                           checked={marcados(perfil).includes(m.codigo)}
                           onChange={() => alternar(perfil, m.codigo)}
-                          disabled={m.codigo === "agente" && perfil.codigo !== "cliente"}
-                          title={m.codigo === "agente" && perfil.codigo !== "cliente" ? "Acesso padrão para toda a equipe do escritório" : undefined}
                           aria-label={`${perfil.rotulo} acessa ${m.rotulo}`}
                         />
                       </label>
