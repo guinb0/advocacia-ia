@@ -21,9 +21,16 @@ from . import casos as casos_ocr
 log = logging.getLogger("peticao_local")
 
 ID_LOCAL = "local"
-DOCX_STYLE_VERSION = 4
+DOCX_STYLE_VERSION = 5
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 MODELO_VISUAL_GERAL = "peticao_visual_geral"
+CONFIG_VISUAL_GERAL = "peticao_visual_config"
+CONFIG_VISUAL_PADRAO: dict[str, Any] = {
+    "fonte": "Arial", "tamanho_fonte": 12, "tamanho_titulo": 14,
+    "espacamento": 1.5, "alinhamento_logo": "center", "largura_logo_cm": 4.5,
+    "cor_texto": "#202020", "cor_destaque": "#1E3A56",
+    "mostrar_linha_cabecalho": True,
+}
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
     ("FACTS", "Dos fatos"),
@@ -94,9 +101,52 @@ def identidade_visual() -> tuple[bytes, str, str, str]:
         log.warning("modelo visual indisponível no banco; usando Lara & Melo", exc_info=True)
         registro = None
     if registro:
-        logo, fonte, extensao = extrair_identidade_visual(registro["conteudo"])
+        extensao_arquivo = Path(registro["nome_arquivo"]).suffix.lower()
+        if extensao_arquivo in (".png", ".jpg", ".jpeg"):
+            logo = registro["conteudo"]
+            fonte = configuracao_visual()["fonte"]
+            extensao = ".jpg" if extensao_arquivo in (".jpg", ".jpeg") else ".png"
+        else:
+            logo, fonte, extensao = extrair_identidade_visual(registro["conteudo"])
         return logo, fonte, extensao, registro["nome_arquivo"]
     return LOGO_LARA_MELO.read_bytes(), "Arial", ".png", "Padrão Lara & Melo"
+
+
+def configuracao_visual(fonte_padrao: str | None = None) -> dict[str, Any]:
+    """Configuração explícita da papelaria; defaults mantêm documentos antigos iguais."""
+    config = dict(CONFIG_VISUAL_PADRAO)
+    if fonte_padrao:
+        config["fonte"] = fonte_padrao
+    try:
+        registro = armazenamento.obter_modelo(CONFIG_VISUAL_GERAL)
+        if registro:
+            salvo = json.loads(registro["conteudo"].decode("utf-8"))
+            if isinstance(salvo, dict):
+                config.update({chave: salvo[chave] for chave in config if chave in salvo})
+    except Exception:
+        log.warning("configuração visual indisponível; usando padrão", exc_info=True)
+    return config
+
+
+def validar_configuracao_visual(dados: dict[str, Any]) -> dict[str, Any]:
+    config = dict(CONFIG_VISUAL_PADRAO)
+    config.update({chave: dados[chave] for chave in config if chave in dados})
+    if config["fonte"] not in {"Arial", "Aptos", "Calibri", "Garamond", "Georgia", "Times New Roman"}:
+        raise ErroPeticao("Fonte não permitida.")
+    for chave in ("tamanho_fonte", "tamanho_titulo", "espacamento", "largura_logo_cm"):
+        config[chave] = float(config[chave])
+    if not 9 <= config["tamanho_fonte"] <= 14: raise ErroPeticao("O texto deve ter entre 9 e 14 pt.")
+    if not 11 <= config["tamanho_titulo"] <= 22: raise ErroPeticao("O título deve ter entre 11 e 22 pt.")
+    if not 1 <= config["espacamento"] <= 2: raise ErroPeticao("O espaçamento deve ficar entre 1 e 2.")
+    if not 2 <= config["largura_logo_cm"] <= 8: raise ErroPeticao("A logo deve ter entre 2 e 8 cm.")
+    if config["alinhamento_logo"] not in ("left", "center", "right"): raise ErroPeticao("Alinhamento da logo inválido.")
+    for chave in ("cor_texto", "cor_destaque"):
+        valor = str(config[chave]).upper()
+        if len(valor) != 7 or not valor.startswith("#") or any(c not in "0123456789ABCDEF" for c in valor[1:]):
+            raise ErroPeticao(f"{chave.replace('_', ' ').capitalize()} inválida.")
+        config[chave] = valor
+    config["mostrar_linha_cabecalho"] = bool(config["mostrar_linha_cabecalho"])
+    return config
 
 
 def _agora() -> str:
@@ -608,7 +658,9 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
     }
 
 
-def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
+def _paragrafo_xml(
+    texto: str, *, negrito: bool = False, tamanho: int | None = None, cor: str | None = None
+) -> str:
     linhas = texto.split("\n")
     partes: list[str] = []
     for linha in linhas:
@@ -617,9 +669,14 @@ def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
             continue
         texto_xml = escape(linha)
         if negrito:
+            estilo = "<w:b/>"
+            if tamanho is not None:
+                estilo += f'<w:sz w:val="{tamanho}"/><w:szCs w:val="{tamanho}"/>'
+            if cor:
+                estilo += f'<w:color w:val="{cor.lstrip("#")}"/>'
             partes.append(
                 f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
-                f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+                f'<w:r><w:rPr>{estilo}</w:rPr><w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
             )
         else:
             partes.append(
@@ -630,7 +687,19 @@ def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
 
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
+    config = configuracao_visual(fonte)
+    fonte = str(config["fonte"] or fonte)
     fonte_xml = escape(fonte, {'"': "&quot;"})
+    tamanho = round(float(config["tamanho_fonte"]) * 2)
+    largura_logo = round(float(config["largura_logo_cm"]) * 360000)
+    altura_logo = round(largura_logo * 0.5655)
+    alinhamento = str(config["alinhamento_logo"])
+    entrelinha = round(float(config["espacamento"]) * 240)
+    tamanho_titulo = round(float(config["tamanho_titulo"]) * 2)
+    linha_cabecalho = (
+        '<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="8" w:color="D5D8DC"/></w:pBdr>'
+        if config["mostrar_linha_cabecalho"] else ""
+    )
     logo_arquivo = f"logo-escritorio{logo_extensao}"
     logo_content_type = "image/jpeg" if logo_extensao == ".jpg" else "image/png"
     corpo: list[str] = []
@@ -640,7 +709,10 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         rotulo = str(secao.get("label") or secao.get("code") or "").strip()
         conteudo = str(secao.get("content") or "").strip()
         if rotulo and secao.get("code") not in ("HEADING",):
-            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True))
+            corpo.append(_paragrafo_xml(
+                rotulo.upper(), negrito=True, tamanho=tamanho_titulo,
+                cor=str(config["cor_destaque"]),
+            ))
         if conteudo:
             corpo.append(_paragrafo_xml(conteudo))
         corpo.append("<w:p/>")
@@ -658,19 +730,19 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
   </w:body>
 </w:document>"""
 
-    cabecalho_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    cabecalho_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
-  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
+  <w:p><w:pPr><w:jc w:val="{alinhamento}"/>{linha_cabecalho}</w:pPr><w:r><w:drawing>
     <wp:inline distT="0" distB="0" distL="0" distR="0">
-      <wp:extent cx="1600200" cy="905010"/><wp:docPr id="1" name="Logo do escritório"/>
+      <wp:extent cx="{largura_logo}" cy="{altura_logo}"/><wp:docPr id="1" name="Logo do escritório"/>
       <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
         <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo-escritorio"/><pic:cNvPicPr/></pic:nvPicPr>
           <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
-          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1600200" cy="905010"/></a:xfrm>
+          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{largura_logo}" cy="{altura_logo}"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
         </pic:pic>
       </a:graphicData></a:graphic>
@@ -683,9 +755,9 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
   <w:docDefaults>
     <w:rPrDefault><w:rPr>
       <w:rFonts w:ascii="{fonte_xml}" w:hAnsi="{fonte_xml}" w:eastAsia="{fonte_xml}" w:cs="{fonte_xml}"/>
-      <w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR"/>
+      <w:sz w:val="{tamanho}"/><w:szCs w:val="{tamanho}"/><w:color w:val="{str(config['cor_texto'])[1:]}"/><w:lang w:val="pt-BR"/>
     </w:rPr></w:rPrDefault>
-    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="{entrelinha}" w:lineRule="auto"/></w:pPr></w:pPrDefault>
   </w:docDefaults>
   <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
 </w:styles>"""

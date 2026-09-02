@@ -473,6 +473,28 @@ PodeManterModelos = Depends(auth.exigir_modulo("contratos"))
 PodeManterModeloPeticao = Depends(auth.exigir_modulo("agente"))
 
 
+class ConfiguracaoVisualPeticao(BaseModel):
+    fonte: str = "Arial"
+    tamanho_fonte: float = Field(12, ge=9, le=14)
+    tamanho_titulo: float = Field(14, ge=11, le=22)
+    espacamento: float = Field(1.5, ge=1, le=2)
+    alinhamento_logo: str = "center"
+    largura_logo_cm: float = Field(4.5, ge=2, le=8)
+    cor_texto: str = "#202020"
+    cor_destaque: str = "#1E3A56"
+    mostrar_linha_cabecalho: bool = True
+
+
+def _resposta_modelo_visual(registro=None) -> dict[str, Any]:
+    config = peticao_local.configuracao_visual()
+    if not registro:
+        return {"arquivo": "Padrão Lara & Melo", "origem": "embutido", **config,
+                "enviado_por": "", "atualizado_em": ""}
+    return {"arquivo": registro["nome_arquivo"], "origem": "banco", **config,
+            "enviado_por": registro.get("enviado_por", ""),
+            "atualizado_em": registro.get("atualizado_em", "")}
+
+
 @app.get("/api/modelos/peticao/visual")
 async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
     """Modelo global de marca, separado dos exemplos jurídicos do Style Engine."""
@@ -487,23 +509,8 @@ async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
         log.exception("modelo visual não pôde ser lido; usando padrão embutido")
         registro = None
     if not registro:
-        return {
-            "arquivo": "Padrão Lara & Melo",
-            "origem": "embutido",
-            "fonte": "Arial",
-            "enviado_por": "",
-            "atualizado_em": "",
-        }
-    _logo, fonte, _extensao = await run_in_threadpool(
-        peticao_local.extrair_identidade_visual, registro["conteudo"]
-    )
-    return {
-        "arquivo": registro["nome_arquivo"],
-        "origem": "banco",
-        "fonte": fonte,
-        "enviado_por": registro["enviado_por"],
-        "atualizado_em": registro["atualizado_em"],
-    }
+        return await run_in_threadpool(_resposta_modelo_visual)
+    return await run_in_threadpool(_resposta_modelo_visual, registro)
 
 
 @app.get("/api/modelos/peticao/visual/logo")
@@ -541,20 +548,33 @@ async def enviar_modelo_visual_peticao(
     usuario: auth.Usuario = PodeManterModeloPeticao,
 ):
     """Substitui o timbre geral usado nos .docx de petição."""
-    nome = arquivo.filename or "modelo-visual-geral.docx"
-    if Path(nome).suffix.lower() != ".docx":
-        raise HTTPException(400, "O modelo visual precisa ser um arquivo .docx.")
+    nome = arquivo.filename or "logo-escritorio.png"
+    extensao = Path(nome).suffix.lower()
+    if extensao not in (".docx", ".png", ".jpg", ".jpeg"):
+        raise HTTPException(400, "Envie uma logo PNG/JPG ou um modelo .docx.")
     conteudo = await arquivo.read()
     if not conteudo:
         raise HTTPException(400, "Arquivo vazio.")
     if len(conteudo) > MAX_BYTES:
         raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
-    try:
-        _logo, fonte, _extensao = await run_in_threadpool(
-            peticao_local.extrair_identidade_visual, conteudo
-        )
-    except peticao_local.ErroPeticao as exc:
-        raise HTTPException(400, str(exc)) from exc
+    if extensao == ".png" and not conteudo.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(400, "O arquivo informado não é uma imagem PNG válida.")
+    if extensao in (".jpg", ".jpeg") and not conteudo.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(400, "O arquivo informado não é uma imagem JPEG válida.")
+    if extensao == ".docx":
+        try:
+            _logo, fonte, _extensao = await run_in_threadpool(
+                peticao_local.extrair_identidade_visual, conteudo
+            )
+            config = await run_in_threadpool(peticao_local.configuracao_visual)
+            config["fonte"] = fonte
+            await run_in_threadpool(
+                armazenamento.salvar_modelo, peticao_local.CONFIG_VISUAL_GERAL,
+                nome_arquivo="configuracao-visual.json",
+                conteudo=json.dumps(config).encode("utf-8"), enviado_por=usuario.nome,
+            )
+        except peticao_local.ErroPeticao as exc:
+            raise HTTPException(400, str(exc)) from exc
     registro = await run_in_threadpool(
         armazenamento.salvar_modelo,
         peticao_local.MODELO_VISUAL_GERAL,
@@ -562,7 +582,31 @@ async def enviar_modelo_visual_peticao(
         conteudo=conteudo,
         enviado_por=usuario.nome,
     )
-    return {"arquivo": nome, "origem": "banco", "fonte": fonte, **registro}
+    return await run_in_threadpool(
+        _resposta_modelo_visual,
+        {"nome_arquivo": nome, **registro},
+    )
+
+
+@app.put("/api/modelos/peticao/visual")
+async def configurar_modelo_visual_peticao(
+    pedido: ConfiguracaoVisualPeticao,
+    usuario: auth.Usuario = PodeManterModeloPeticao,
+):
+    try:
+        config = peticao_local.validar_configuracao_visual(pedido.model_dump())
+    except (peticao_local.ErroPeticao, TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await run_in_threadpool(
+        armazenamento.salvar_modelo, peticao_local.CONFIG_VISUAL_GERAL,
+        nome_arquivo="configuracao-visual.json",
+        conteudo=json.dumps(config, ensure_ascii=False).encode("utf-8"),
+        enviado_por=usuario.nome,
+    )
+    registro = await run_in_threadpool(
+        armazenamento.obter_modelo, peticao_local.MODELO_VISUAL_GERAL
+    )
+    return await run_in_threadpool(_resposta_modelo_visual, registro)
 
 
 @app.delete("/api/modelos/peticao/visual")
@@ -570,7 +614,10 @@ async def excluir_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
     await run_in_threadpool(
         armazenamento.excluir_modelo, peticao_local.MODELO_VISUAL_GERAL
     )
-    return {"arquivo": "Padrão Lara & Melo", "origem": "embutido", "fonte": "Arial"}
+    await run_in_threadpool(
+        armazenamento.excluir_modelo, peticao_local.CONFIG_VISUAL_GERAL
+    )
+    return await run_in_threadpool(_resposta_modelo_visual)
 
 
 #: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.

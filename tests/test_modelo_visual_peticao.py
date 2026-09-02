@@ -40,3 +40,41 @@ def test_extrai_logo_do_cabecalho_e_fonte_do_modelo(monkeypatch):
     assert logo == peticao_local.LOGO_LARA_MELO.read_bytes()
     assert fonte == "Arial"
     assert extensao == ".png"
+
+
+def test_docx_aplica_configuracao_visual_explicita(monkeypatch):
+    logo = peticao_local.LOGO_LARA_MELO.read_bytes()
+    monkeypatch.setattr(
+        peticao_local,
+        "identidade_visual",
+        lambda: (logo, "Arial", ".png", "logo.png"),
+    )
+    config = {
+        **peticao_local.CONFIG_VISUAL_PADRAO,
+        "fonte": "Garamond",
+        "tamanho_fonte": 11,
+        "tamanho_titulo": 16,
+        "espacamento": 1.15,
+        "alinhamento_logo": "right",
+        "largura_logo_cm": 6,
+        "cor_texto": "#252525",
+        "cor_destaque": "#1E3A56",
+        "mostrar_linha_cabecalho": True,
+    }
+    monkeypatch.setattr(peticao_local, "configuracao_visual", lambda _fonte=None: config)
+
+    conteudo = peticao_local.montar_docx(
+        [{"code": "FACTS", "label": "Dos fatos", "content": "Conteúdo."}]
+    )
+
+    with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
+        estilos = arquivo.read("word/styles.xml")
+        documento = arquivo.read("word/document.xml")
+        cabecalho = arquivo.read("word/header1.xml")
+        assert b'Garamond' in estilos
+        assert b'w:sz w:val="22"' in estilos
+        assert b'w:line="276"' in estilos
+        assert b'w:sz w:val="32"' in documento
+        assert b'w:color w:val="1E3A56"' in documento
+        assert b'w:jc w:val="right"' in cabecalho
+        assert b'w:pBdr' in cabecalho

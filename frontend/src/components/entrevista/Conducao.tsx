@@ -27,7 +27,7 @@ import type { CampoOuvido, Pergunta } from "@/lib/types";
  * escuta aproveita de qualquer jeito. */
 
 /** Passado disto sem a pergunta atual respondida, a tela cobra a condução. */
-const SEGUNDOS_PARA_COBRAR = 10;
+const SEGUNDOS_PARA_COBRAR = 30;
 
 /* Quando trocar a frase de retomada, em segundos na mesma pergunta.
  *
@@ -38,7 +38,7 @@ const SEGUNDOS_PARA_COBRAR = 10;
  *
  * Se um dia o escritório escrever mais retomadas do que degraus, a última vale
  * daí em diante; se escrever menos, os degraus extras não têm o que mostrar. */
-const DEGRAUS_S = [SEGUNDOS_PARA_COBRAR, 25, 45, 70];
+const DEGRAUS_S = [SEGUNDOS_PARA_COBRAR, 60, 90, 120];
 
 interface Props {
   /** A próxima pergunta em aberto, na ordem do roteiro. `null` = acabou. */
@@ -48,6 +48,8 @@ interface Props {
   /** Posição dela na sequência, contando a partir de 1. */
   posicao: number;
   total: number;
+  /** A seguinte, só para o entrevistador antecipar mentalmente a transição. */
+  proxima?: string;
   /** Quantas foram deixadas para depois. Ficam à vista para não sumirem. */
   puladas: number;
   /* O que a escuta ouviu e depende de um clique — nome e CPF.
@@ -88,6 +90,7 @@ export default function Conducao({
   bloco,
   posicao,
   total,
+  proxima,
   puladas,
   sugestoes,
   retomadas,
@@ -216,17 +219,20 @@ export default function Conducao({
 
   return (
     <section
-      className="sticky top-0 z-[5] mt-4 mb-1 py-3 px-4 border border-l-4"
+      className="sticky top-0 z-[8] mt-4 mb-5 overflow-hidden rounded-[10px] border bg-papel shadow-[0_8px_28px_rgba(20,39,61,0.10)]"
       style={
         cobrando
           ? {
-              background: "color-mix(in srgb, var(--critico) 5%, var(--papel))",
+              background: "color-mix(in srgb, var(--atencao) 5%, var(--papel))",
               borderColor: "var(--critico)",
-              borderLeftColor: "var(--critico)",
             }
-          : { background: "var(--papel)", borderColor: "var(--borda-forte)", borderLeftColor: "var(--tinta)" }
+          : { background: "var(--papel)", borderColor: "var(--borda-forte)" }
       }
     >
+      <div className="h-1 bg-papel-3" aria-hidden>
+        <div className="h-full bg-acao transition-[width] duration-500" style={{ width: `${total ? Math.max(2, ((posicao - 1) / total) * 100) : 0}%` }} />
+      </div>
+      <div className="px-4 py-4 sm:px-5">
       {/* A placa de PARE.
         *
         * Vem ANTES de tudo e atravessa a barra de ponta a ponta porque não é
@@ -254,17 +260,16 @@ export default function Conducao({
           </p>
         ) : (
           <p
-            className="flex items-center gap-[14px] -mx-4 -mt-3 mb-3 bg-critico px-4 py-[11px] text-white max-[720px]:items-start max-[720px]:flex-col max-[720px]:gap-[9px]"
+            className="mb-3 flex items-start gap-3 rounded-[7px] border border-atencao bg-atencao-claro px-3 py-2.5 text-atencao"
             aria-live="polite"
           >
-            <strong className="flex-none border-2 border-white px-[11px] py-[6px] font-bold text-[20px] leading-none font-ui tracking-[0.14em]">
-              PARE
+            <strong className="flex-none rounded-[5px] bg-atencao px-2 py-1 font-bold text-[10px] leading-none font-ui tracking-[0.1em] text-white">
+              RETOME
             </strong>
             <span className="font-bold text-[13px] leading-[1.3] font-ui tracking-[0.05em]">
-              DIRECIONE A PERGUNTA — NÃO PERCA TEMPO
-              <em className="block mt-[5px] max-w-[62ch] font-normal text-[12px] leading-[1.5] font-ui not-italic tracking-normal text-white/90">
-                {segundos}s nesta pergunta e nada entrando em campo nenhum. Corte com
-                educação e traga o cliente de volta ao roteiro.
+              Esta pergunta continua aberta
+              <em className="block mt-1 max-w-[62ch] font-normal text-[12px] leading-[1.45] font-ui not-italic tracking-normal text-tinta-2">
+                Há {segundos}s neste ponto. Quando o cliente concluir a ideia, use a frase abaixo para voltar ao roteiro.
               </em>
             </span>
           </p>
@@ -316,7 +321,7 @@ export default function Conducao({
 
       {/* O enunciado grande, palavra por palavra: é para ser LIDO ao cliente,
         * não interpretado. O roteiro é do escritório e o texto é dele. */}
-      <p className="mt-2 mb-0 max-w-[62ch] font-medium text-[19px] leading-[1.35] font-titulo text-tinta">
+      <p className="mt-3 mb-0 max-w-[64ch] font-semibold text-[22px] leading-[1.35] font-titulo text-tinta sm:text-[24px]">
         {pergunta.texto}
       </p>
 
@@ -356,6 +361,13 @@ export default function Conducao({
             retomar {puladas} pulada(s)
           </button>
         )}
+      </div>
+      {proxima && (
+        <div className="mt-4 border-t border-borda pt-3 text-[11px] leading-[1.45] text-tinta-3">
+          <span className="mr-2 font-bold uppercase tracking-[0.1em]">Depois</span>
+          <span className="font-titulo text-[13px] text-tinta-2">{proxima}</span>
+        </div>
+      )}
       </div>
     </section>
   );

@@ -91,7 +91,20 @@ export interface ModeloVisualPeticao {
   fonte: string;
   enviado_por?: string;
   atualizado_em?: string;
+  tamanho_fonte: number;
+  tamanho_titulo: number;
+  espacamento: number;
+  alinhamento_logo: "left" | "center" | "right";
+  largura_logo_cm: number;
+  cor_texto: string;
+  cor_destaque: string;
+  mostrar_linha_cabecalho: boolean;
 }
+
+export type ConfiguracaoVisualPeticao = Omit<
+  ModeloVisualPeticao,
+  "arquivo" | "origem" | "enviado_por" | "atualizado_em"
+>;
 
 export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
   return comoJson(await buscar("/api/modelos/peticao/visual"));
@@ -107,6 +120,16 @@ export async function enviarModeloVisualPeticao(
 
 export async function restaurarModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
   return comoJson(await buscar("/api/modelos/peticao/visual", { method: "DELETE" }));
+}
+
+export async function salvarConfiguracaoVisualPeticao(
+  configuracao: ConfiguracaoVisualPeticao,
+): Promise<ModeloVisualPeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/visual", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(configuracao),
+  }));
 }
 
 export async function enviarAvaliacaoGoogle(

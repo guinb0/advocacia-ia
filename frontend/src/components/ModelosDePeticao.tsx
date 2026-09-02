@@ -23,6 +23,7 @@ import {
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
   restaurarModeloVisualPeticao,
+  salvarConfiguracaoVisualPeticao,
   urlApi,
 } from "@/lib/api";
 import type { ItemChecklist } from "@/lib/types";
@@ -71,6 +72,141 @@ type ItemEnvio = {
   detalhe?: string;
 };
 
+function EditorIdentidadeVisual({ modelo, enviando, salvando, onChange, onEnviar, onSalvar, onRestaurar }: {
+  modelo: ModeloVisualPeticao | null;
+  enviando: boolean;
+  salvando: boolean;
+  onChange: (modelo: ModeloVisualPeticao) => void;
+  onEnviar: (arquivo: File) => Promise<void>;
+  onSalvar: () => Promise<void>;
+  onRestaurar: () => Promise<void>;
+}) {
+  if (!modelo) return <div className="h-72 animate-pulse rounded-campo bg-papel-3" />;
+  const logoUrl = urlApi(`/api/modelos/peticao/visual/logo?v=${encodeURIComponent(modelo.atualizado_em || modelo.arquivo)}`);
+  const alterar = <K extends keyof ModeloVisualPeticao>(chave: K, valor: ModeloVisualPeticao[K]) =>
+    onChange({ ...modelo, [chave]: valor });
+
+  return (
+    <div className="mt-3 grid min-w-0 gap-5 xl:grid-cols-[minmax(310px,390px)_minmax(0,1fr)]">
+      <section className="rounded-[10px] border border-borda bg-papel-2 p-4 sm:p-5">
+        <div className="mb-5">
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">Identidade do escritório</span>
+          <h3 className="mt-1 font-titulo text-lg text-tinta">Papelaria dos documentos</h3>
+          <p className="mt-1 text-xs leading-[1.55] text-tinta-3">Defina uma vez. O padrão será aplicado às novas petições e documentos gerados.</p>
+        </div>
+
+        <div className="mb-5 rounded-[8px] border border-borda bg-papel p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element -- imagem dinâmica da API. */}
+            <img src={logoUrl} alt="Logo vigente do escritório" className="h-16 w-24 shrink-0 rounded-[6px] border border-borda bg-white object-contain p-1.5" />
+            <div className="min-w-0 flex-1">
+              <strong className="block truncate text-sm text-tinta">{modelo.arquivo}</strong>
+              <span className="mt-1 block text-[11px] leading-[1.4] text-tinta-3">
+                PNG ou JPG transparente é o formato recomendado. Também aceitamos um .docx institucional.
+              </span>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label className="inline-flex min-h-9 cursor-pointer items-center rounded-campo bg-acao px-3 text-xs font-semibold text-white hover:bg-acao-forte">
+              {enviando ? "Processando…" : modelo.origem === "banco" ? "Trocar logo" : "Enviar logo"}
+              <input className="sr-only" type="file" accept=".png,.jpg,.jpeg,.docx" disabled={enviando}
+                onChange={(e) => { const arquivo = e.target.files?.[0]; e.target.value = ""; if (arquivo) void onEnviar(arquivo); }} />
+            </label>
+            {modelo.origem === "banco" && <Botao pequeno variante="texto" disabled={enviando} onClick={() => void onRestaurar()}>Restaurar padrão</Botao>}
+          </div>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+          <label className="text-xs font-semibold text-tinta">Fonte do documento
+            <select className={`${SELECT} mt-1.5 w-full`} value={modelo.fonte} onChange={(e) => alterar("fonte", e.target.value)}>
+              {["Arial", "Aptos", "Calibri", "Garamond", "Georgia", "Times New Roman"].map((fonte) => <option key={fonte}>{fonte}</option>)}
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs font-semibold text-tinta">Texto
+              <select className={`${SELECT} mt-1.5 w-full`} value={modelo.tamanho_fonte} onChange={(e) => alterar("tamanho_fonte", Number(e.target.value))}>
+                {[9, 10, 11, 12, 13, 14].map((n) => <option key={n} value={n}>{n} pt</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-tinta">Títulos
+              <select className={`${SELECT} mt-1.5 w-full`} value={modelo.tamanho_titulo} onChange={(e) => alterar("tamanho_titulo", Number(e.target.value))}>
+                {[11, 12, 14, 16, 18, 20, 22].map((n) => <option key={n} value={n}>{n} pt</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs font-semibold text-tinta">Entrelinhas
+              <select className={`${SELECT} mt-1.5 w-full`} value={modelo.espacamento} onChange={(e) => alterar("espacamento", Number(e.target.value))}>
+                {[1, 1.15, 1.5, 2].map((n) => <option key={n} value={n}>{String(n).replace(".", ",")}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-tinta">Logo
+              <select className={`${SELECT} mt-1.5 w-full`} value={modelo.alinhamento_logo} onChange={(e) => alterar("alinhamento_logo", e.target.value as ModeloVisualPeticao["alinhamento_logo"])}>
+                <option value="left">À esquerda</option><option value="center">Centralizada</option><option value="right">À direita</option>
+              </select>
+            </label>
+          </div>
+          <label className="text-xs font-semibold text-tinta">Largura da logo: {modelo.largura_logo_cm.toFixed(1).replace(".", ",")} cm
+            <input className="mt-2 w-full accent-acao" type="range" min="2" max="8" step="0.5" value={modelo.largura_logo_cm} onChange={(e) => alterar("largura_logo_cm", Number(e.target.value))} />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs font-semibold text-tinta">Cor do texto
+              <span className="mt-1.5 flex h-10 items-center gap-2 rounded-campo border border-borda-campo bg-papel px-2">
+                <input type="color" value={modelo.cor_texto} onChange={(e) => alterar("cor_texto", e.target.value)} className="h-6 w-7 cursor-pointer border-0 bg-transparent p-0" />
+                <span className="font-codigo text-[11px] text-tinta-3">{modelo.cor_texto}</span>
+              </span>
+            </label>
+            <label className="text-xs font-semibold text-tinta">Cor de destaque
+              <span className="mt-1.5 flex h-10 items-center gap-2 rounded-campo border border-borda-campo bg-papel px-2">
+                <input type="color" value={modelo.cor_destaque} onChange={(e) => alterar("cor_destaque", e.target.value)} className="h-6 w-7 cursor-pointer border-0 bg-transparent p-0" />
+                <span className="font-codigo text-[11px] text-tinta-3">{modelo.cor_destaque}</span>
+              </span>
+            </label>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-tinta">
+            <input type="checkbox" className="size-4 accent-acao" checked={modelo.mostrar_linha_cabecalho} onChange={(e) => alterar("mostrar_linha_cabecalho", e.target.checked)} />
+            Separar o cabeçalho com uma linha
+          </label>
+        </div>
+        <Botao className="mt-5" variante="primario" bloco disabled={salvando || enviando} onClick={() => void onSalvar()}>
+          {salvando ? "Salvando padrão…" : "Salvar identidade visual"}
+        </Botao>
+      </section>
+
+      <section className="min-w-0 rounded-[10px] border border-borda bg-[#dfe3e7] p-3 sm:p-6">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div><strong className="block text-sm text-[#243241]">Prévia do documento</strong><span className="text-[11px] text-[#5f6b76]">Folha A4 · visualização aproximada</span></div>
+          <span className="rounded-full border border-[#bcc5cd] bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[#4c5965]">Atualização instantânea</span>
+        </div>
+        <div className="overflow-auto pb-2">
+          <article className="mx-auto aspect-[210/297] min-h-[590px] w-full max-w-[620px] bg-white shadow-[0_10px_35px_rgba(20,39,61,0.16)]"
+            style={{ fontFamily: `"${modelo.fonte}", Arial, sans-serif`, color: modelo.cor_texto }} aria-label="Prévia A4 da identidade visual">
+            <div className="flex h-full flex-col px-[10%] pb-[8%] pt-[7%]">
+              <header className={`mb-[9%] pb-[3.5%] ${modelo.mostrar_linha_cabecalho ? "border-b border-[#d5d8dc]" : ""}`} style={{ textAlign: modelo.alinhamento_logo }}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- imagem dinâmica da API. */}
+                <img src={logoUrl} alt="Logo no cabeçalho" className="inline-block h-auto max-h-[92px] object-contain" style={{ width: `${(modelo.largura_logo_cm / 8) * 48}%` }} />
+              </header>
+              <p className="mb-[7%] text-center font-bold uppercase" style={{ fontSize: `${Math.max(9, modelo.tamanho_fonte * .8)}px`, lineHeight: 1.45 }}>
+                Excelentíssimo(a) Senhor(a) Doutor(a) Juiz(a) da Vara do Trabalho
+              </p>
+              <div className="mb-[6%] h-[3px] w-10" style={{ backgroundColor: modelo.cor_destaque }} />
+              <h4 className="mb-[4%] font-bold uppercase tracking-[0.035em]" style={{ color: modelo.cor_destaque, fontSize: `${modelo.tamanho_titulo}px` }}>Petição inicial</h4>
+              <p className="mb-[3%] text-justify" style={{ fontSize: `${modelo.tamanho_fonte}px`, lineHeight: modelo.espacamento }}>
+                <strong>Nome do cliente</strong>, já qualificado nos autos, por seus advogados, vem respeitosamente apresentar a presente petição, conforme os fatos e fundamentos a seguir.
+              </p>
+              <h5 className="mb-[2%] mt-[3%] font-bold uppercase" style={{ color: modelo.cor_destaque, fontSize: `${Math.max(10, modelo.tamanho_titulo * .82)}px` }}>I — Dos fatos</h5>
+              <p className="text-justify" style={{ fontSize: `${modelo.tamanho_fonte}px`, lineHeight: modelo.espacamento }}>
+                Este texto demonstra a tipografia, o espaçamento e a hierarquia aplicados aos documentos. O conteúdo é apenas ilustrativo e não será incluído nas peças geradas.
+              </p>
+              <footer className="mt-auto border-t border-[#e1e3e5] pt-3 text-center text-[8px] text-[#7a838c]">Documento padronizado pelo escritório</footer>
+            </div>
+          </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void }) {
   const [acoes, setAcoes] = useState<NoDaTaxonomia[]>([]);
   const [acao, setAcao] = useState("");
@@ -93,6 +229,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [recado, setRecado] = useState<string | null>(null);
   const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
   const [enviandoVisual, setEnviandoVisual] = useState(false);
+  const [salvandoVisual, setSalvandoVisual] = useState(false);
 
   // Estado separado do `erro` de propósito. A primeira versão usava o mesmo, e o `setErro(null)`
   // do envio apagava a falha da taxonomia — a tela ficava com o seletor vazio e nenhuma
@@ -133,6 +270,22 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       setErro(falha instanceof ApiError ? falha.message : "Não foi possível restaurar o padrão.");
     } finally {
       setEnviandoVisual(false);
+    }
+  }
+
+  async function salvarVisual() {
+    if (!modeloVisual) return;
+    setSalvandoVisual(true);
+    setErro(null);
+    try {
+      const { arquivo: _arquivo, origem: _origem, enviado_por: _por,
+        atualizado_em: _em, ...configuracaoVisual } = modeloVisual;
+      setModeloVisual(await salvarConfiguracaoVisualPeticao(configuracaoVisual));
+      setRecado("Identidade visual salva. As próximas petições usarão este padrão.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar a identidade visual.");
+    } finally {
+      setSalvandoVisual(false);
     }
   }
 
@@ -391,115 +544,15 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       </div>
 
       <Cartao titulo="Modelo visual geral dos documentos">
-        <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
-          Envie um documento institucional em <code>.docx</code>. O sistema extrai somente
-          a logo do cabeçalho e a fonte-base e aplica essa identidade às novas petições;
-          o conteúdo jurídico do arquivo não é copiado.
-        </p>
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
-          <div className="flex min-w-0 items-center gap-4">
-            {/* A LOGO QUE VAI SAIR NA PETIÇÃO, à vista.
-              *
-              * O cartão dizia o nome do arquivo e a fonte, e mais nada — quem
-              * trocava o modelo só descobria qual imagem o extrator escolheu ao
-              * abrir a primeira petição pronta. E há o que escolher: um .docx
-              * institucional costuma ter várias imagens, e a heurística prefere
-              * a que está relacionada por um cabeçalho.
-              *
-              * A chave força o navegador a rebuscar quando o modelo muda; sem
-              * ela a logo antiga ficaria na tela justamente no momento em que
-              * ela existe para confirmar a troca. */}
-            {modeloVisual && (
-              /* eslint-disable-next-line @next/next/no-img-element -- vem da
-                 API com `no-store`, e o otimizador do Next a cachearia. */
-              <img
-                key={modeloVisual.atualizado_em ?? modeloVisual.arquivo}
-                className="h-14 w-auto max-w-[180px] flex-none rounded-campo border border-borda bg-papel object-contain p-1"
-                src={urlApi(
-                  `/api/modelos/peticao/visual/logo?v=${encodeURIComponent(
-                    modeloVisual.atualizado_em ?? modeloVisual.arquivo,
-                  )}`,
-                )}
-                alt={`Logo de ${modeloVisual.arquivo}, como sairá no cabeçalho das petições`}
-              />
-            )}
-            <div className="min-w-0">
-            <div className="font-semibold text-tinta">
-              {modeloVisual?.arquivo ?? "Carregando padrão visual…"}
-            </div>
-            <div className="mt-1 text-xs text-tinta-3">
-              Fonte: {modeloVisual?.fonte ?? "—"}
-              {modeloVisual?.origem === "embutido" ? " · padrão atual Lara & Melo" : " · modelo substituível do escritório"}
-            </div>
-            <div className="mt-1 text-[11px] text-tinta-3">
-              É esta logo que será carimbada no cabeçalho das próximas petições.
-            </div>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <label className="inline-flex cursor-pointer items-center rounded-campo bg-acao px-4 py-2 text-sm font-semibold text-white hover:opacity-90">
-              {enviandoVisual ? "Processando…" : modeloVisual?.origem === "banco" ? "Trocar modelo" : "Enviar novo modelo"}
-              <input
-                className="sr-only"
-                type="file"
-                accept=".docx"
-                disabled={enviandoVisual}
-                onChange={(evento) => {
-                  const arquivo = evento.target.files?.[0];
-                  evento.target.value = "";
-                  if (arquivo) void trocarModeloVisual(arquivo);
-                }}
-              />
-            </label>
-            {modeloVisual?.origem === "banco" && (
-              <Botao variante="texto" disabled={enviandoVisual} onClick={() => void restaurarVisual()}>
-                Restaurar Lara & Melo
-              </Botao>
-            )}
-          </div>
-        </div>
-
-        {modeloVisual && (
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <strong className="text-sm text-tinta">Prévia do documento</strong>
-              <span className="text-[11px] text-tinta-3">Cabeçalho e fonte aplicados às novas petições</span>
-            </div>
-            <div className="overflow-x-auto rounded-campo border border-borda bg-papel-3 p-3 sm:p-5">
-              <article
-                className="mx-auto min-h-[430px] w-full max-w-[610px] bg-white px-[9%] py-[7%] text-[#202020] shadow-cartao"
-                style={{ fontFamily: `"${modeloVisual.fonte || "Arial"}", Arial, sans-serif` }}
-                aria-label="Prévia do modelo visual do escritório"
-              >
-                <header className="mb-10 border-b border-[#d7d7d7] pb-4">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- mesma imagem
-                     dinâmica e sem cache exibida acima. */}
-                  <img
-                    className="h-16 max-w-[220px] object-contain object-left"
-                    src={urlApi(
-                      `/api/modelos/peticao/visual/logo?v=${encodeURIComponent(
-                        modeloVisual.atualizado_em ?? modeloVisual.arquivo,
-                      )}`,
-                    )}
-                    alt="Logo no cabeçalho da prévia"
-                  />
-                </header>
-                <p className="mb-8 text-center text-[11px] font-bold uppercase leading-relaxed">
-                  Excelentíssimo(a) Senhor(a) Doutor(a) Juiz(a) da Vara do Trabalho
-                </p>
-                <h4 className="mb-4 text-center text-sm font-bold uppercase">Petição inicial</h4>
-                <p className="mb-3 text-justify text-[11px] leading-[1.75]">
-                  Nome do cliente, já qualificado nos autos, por seus advogados, apresenta a
-                  presente petição conforme os fatos, fundamentos e documentos do caso.
-                </p>
-                <p className="text-justify text-[11px] leading-[1.75]">
-                  Esta é somente uma prévia visual. Nenhum conteúdo jurídico deste exemplo será
-                  incluído nas peças geradas.
-                </p>
-              </article>
-            </div>
-          </div>
-        )}
+        <EditorIdentidadeVisual
+          modelo={modeloVisual}
+          enviando={enviandoVisual}
+          salvando={salvandoVisual}
+          onChange={setModeloVisual}
+          onEnviar={trocarModeloVisual}
+          onSalvar={salvarVisual}
+          onRestaurar={restaurarVisual}
+        />
       </Cartao>
 
       {erroCarregamento && (

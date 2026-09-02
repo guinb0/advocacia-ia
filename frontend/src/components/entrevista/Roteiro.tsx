@@ -1069,6 +1069,7 @@ export default function Roteiro({
 
   const posicaoAtual = posicaoSegurada >= 0 ? posicaoSegurada : posicaoNatural;
   const atual = posicaoAtual >= 0 ? sequencia[posicaoAtual] : null;
+  const proxima = posicaoAtual >= 0 ? sequencia[posicaoAtual + 1]?.pergunta ?? null : null;
   atualRef.current = atual?.pergunta.id ?? "";
   /** O cliente está desenvolvendo a resposta desta pergunta agora mesmo. */
   const respondendo = posicaoSegurada >= 0;
@@ -1728,11 +1729,12 @@ function preencherMarcadores(
             * não por cima do painel: os dois grudam ao rolar, e um passaria por
             * cima do outro. Enquanto a escuta não abriu ela só aponta por onde
             * começar — sem relógio, porque não há entrevista para cobrar ainda. */}
-          {false && <Conducao
-            pergunta={atual?.pergunta ?? null}
+          {identificacaoConcluida && <Conducao
+            pergunta={atual ? { ...atual.pergunta, texto: comNomes(atual.pergunta.texto) } : null}
             bloco={atual?.bloco ?? ""}
             posicao={posicaoAtual + 1}
             total={total}
+            proxima={proxima ? comNomes(proxima.texto) : undefined}
             puladas={puladas.length}
             sugestoes={sugestoes}
             retomadas={roteiro?.retomadas ?? []}
@@ -1761,7 +1763,7 @@ function preencherMarcadores(
                 bloco={aberturaBloco}
                 compacto
                 respostas={respostas}
-                perguntaAtual={escutando ? "" : (atual?.pergunta.id ?? "")}
+                perguntaAtual={atual?.pergunta.id ?? ""}
                 puladas={puladas}
                 aguardando={aguardandoConfirmacao}
                 onResponder={responder}
@@ -1788,7 +1790,7 @@ function preencherMarcadores(
               key={bloco.id}
               bloco={bloco}
               respostas={respostas}
-              perguntaAtual={escutando ? "" : (atual?.pergunta.id ?? "")}
+              perguntaAtual={atual?.pergunta.id ?? ""}
               puladas={puladas}
               aguardando={aguardandoConfirmacao}
               onResponder={responder}
