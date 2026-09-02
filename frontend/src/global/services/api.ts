@@ -11,50 +11,11 @@
  * navegador RECUSA a resposta quando há credencial em jogo — o erro que aparece
  * é um CORS genérico que não menciona cookie nenhum.
  */
+import { urlApi } from "@/lib/api";
 
-/* A base da API tem de ficar no MESMO HOST da página, e isso não é preferência.
- *
- * O cookie de sessão é gravado pelo host que responde. Se a página vem de
- * `192.168.5.241:3000` e a API de `localhost:8100`, o cookie nasce em
- * `localhost`: a API passa a enxergá-lo e o `proxy.ts` — que roda no servidor do
- * Next, em `192.168.5.241` — NÃO. Aí a API diz "autenticado", o guarda de rota
- * diz "não autenticado", e os dois se empurram num laço infinito de
- * /home -> / -> /home. Foi exatamente o que aconteceu.
- *
- * Por isso o default deriva do host da própria página em vez de cravar
- * `localhost`: assim ele acompanha de onde o app foi aberto, seja localhost, IP
- * da rede ou domínio publicado. `NEXT_PUBLIC_OCR_API` continua vencendo quando
- * definido — e quando o que ele define não bate com a página, o aviso abaixo
- * grita, em vez de deixar o laço acontecer em silêncio. */
-const PORTA_API = "8100";
-
-function baseDaApi(): string {
-  const definida = process.env.API_URL || process.env.NEXT_PUBLIC_OCR_API;
-  if (typeof window === "undefined") return definida || `http://localhost:${PORTA_API}`;
-
-  const doNavegador = window.location.origin;
-  // Preserva o host do navegador, mas usa a porta do FastAPI. A origem da
-  // página é o Next (:3000), que não possui as rotas /api do backend.
-  if (!definida) return `${window.location.protocol}//${window.location.hostname}:${PORTA_API}`;
-
-  try {
-    if (new URL(definida).hostname !== window.location.hostname) {
-      console.error(
-        `[Forense] A API está configurada em ${definida}, mas a página foi aberta em ` +
-          `${window.location.origin}. São hosts diferentes: o cookie de sessão não ` +
-          `alcança o guarda de rota e o login entra em laço. Ajuste OCR_API_PUBLIC_URL ` +
-          `e APP_PUBLIC_URL no .env para o mesmo host.`,
-      );
-    }
-  } catch {
-    // Valor inválido no .env: o `||` abaixo devolve o do navegador.
-  }
-  return definida;
-}
-
-const API_URL = baseDaApi();
-
-
+/* A resolução da base fica em `lib/api.ts`, compartilhada com as demais telas.
+ * Em desenvolvimento ela aponta ao FastAPI na 8100; em produção usa a origem
+ * HTTPS atual, onde o proxy de borda encaminha `/api` ao backend. */
 export class AuthError extends Error {
   constructor(message = "Authentication required") {
     super(message);
@@ -69,11 +30,6 @@ export class HttpError extends Error {
     this.name = "HttpError";
     this.status = status;
   }
-}
-
-/** Monta a URL absoluta da API a partir de um caminho tipo "/api/casos". */
-export function urlApi(caminho: string): string {
-  return `${API_URL}${caminho}`;
 }
 
 /* O prazo é longo (10 min) porque o OCR de um documento leva de 3 a 30s e a
