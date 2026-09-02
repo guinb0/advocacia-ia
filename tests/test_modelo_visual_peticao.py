@@ -1,7 +1,7 @@
 import io
 import zipfile
 
-from app import peticao_local
+from app import armazenamento, peticao_local
 
 
 def test_docx_da_peticao_usa_identidade_visual_trocavel(monkeypatch):
@@ -78,3 +78,46 @@ def test_docx_aplica_configuracao_visual_explicita(monkeypatch):
         assert b'w:color w:val="1E3A56"' in documento
         assert b'w:jc w:val="right"' in cabecalho
         assert b'w:pBdr' in cabecalho
+
+
+def test_salvar_modelo_nao_reabre_o_banco_depois_de_gravar(monkeypatch):
+    class Resultado:
+        rowcount = 0
+
+    class Conexao:
+        def __init__(self):
+            self.comandos = []
+
+        def execute(self, sql, parametros):
+            self.comandos.append((sql, parametros))
+            return Resultado()
+
+    class Contexto:
+        def __init__(self, conexao):
+            self.conexao = conexao
+
+        def __enter__(self):
+            return self.conexao
+
+        def __exit__(self, *_args):
+            return False
+
+    conexao = Conexao()
+    monkeypatch.setattr(armazenamento, "conectar", lambda: Contexto(conexao))
+    monkeypatch.setattr(
+        armazenamento,
+        "obter_modelo",
+        lambda _codigo: (_ for _ in ()).throw(AssertionError("leitura redundante")),
+    )
+
+    registro = armazenamento.salvar_modelo(
+        peticao_local.MODELO_VISUAL_GERAL,
+        nome_arquivo="marca.png",
+        conteudo=b"imagem",
+        enviado_por="Mariana",
+    )
+
+    assert len(conexao.comandos) == 2
+    assert registro["nome_arquivo"] == "marca.png"
+    assert registro["enviado_por"] == "Mariana"
+    assert registro["atualizado_em"]

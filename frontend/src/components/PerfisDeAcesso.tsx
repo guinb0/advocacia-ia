@@ -197,7 +197,7 @@ export default function PerfisDeAcesso() {
             <tbody>
               {perfis.map((perfil) => (
                 <tr key={perfil.codigo} className={mudou(perfil) ? "bg-atencao-claro" : ""}>
-                  <th scope="row" className={`${CELULA_MATRIZ} ${COLUNA_FIXA} [&>strong]:block [&>strong]:text-sm [&>strong]:font-semibold [&>strong]:leading-[1.3] [&>small]:block [&>small]:mt-[3px] [&>small]:text-tinta-3 [&>small]:text-xs [&>small]:leading-[1.4]`}>
+                  <th scope="row" className={`${CELULA_MATRIZ} ${COLUNA_FIXA}`}>
                     <input
                       value={detalhe(perfil).rotulo}
                       onChange={(e) => setDetalhes((atual) => ({
@@ -209,17 +209,6 @@ export default function PerfisDeAcesso() {
                       maxLength={120}
                     />
                     {perfil.sistema && <span className="inline-block ml-[6px] border border-borda-forte px-[6px] py-px text-tinta-3 text-xs font-semibold leading-[1.4] align-middle">sistema</span>}
-                    <textarea
-                      value={detalhe(perfil).descricao}
-                      onChange={(e) => setDetalhes((atual) => ({
-                        ...atual,
-                        [perfil.codigo]: { ...detalhe(perfil), descricao: e.target.value },
-                      }))}
-                      className="mt-1 block min-h-12 w-full resize-y border border-transparent bg-transparent px-1 py-1 text-xs font-normal text-tinta-3 hover:border-borda-forte focus:border-tinta focus:outline-none"
-                      placeholder="Descreva o que este perfil faz"
-                      aria-label={`Descrição do perfil ${perfil.rotulo}`}
-                      maxLength={400}
-                    />
                   </th>
 
                   {modulos.map((m) => (

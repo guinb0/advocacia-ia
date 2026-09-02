@@ -2111,7 +2111,13 @@ def excluir_roteiro(codigo: str) -> bool:
 def salvar_modelo(
     codigo: str, *, nome_arquivo: str, conteudo: bytes, enviado_por: str = ""
 ) -> dict[str, Any]:
-    """Grava (ou regrava) o modelo daquele código. Idempotente."""
+    """Grava (ou regrava) o modelo daquele código. Idempotente.
+
+    A resposta usa os mesmos valores que acabaram de ser persistidos. Antes esta
+    função abria uma segunda conexão para reler a linha; no upload da identidade
+    visual isso podia transformar uma gravação concluída em erro 500 apenas porque
+    a consulta redundante falhou logo depois do commit.
+    """
     instante = agora()
     with conectar() as con:
         atualizadas = con.execute(
@@ -2131,9 +2137,12 @@ def salvar_modelo(
                 """,
                 (codigo, nome_arquivo, conteudo, enviado_por, instante, instante),
             )
-    registro = obter_modelo(codigo) or {}
-    registro.pop("conteudo", None)
-    return registro
+    return {
+        "codigo": codigo,
+        "nome_arquivo": nome_arquivo,
+        "enviado_por": enviado_por,
+        "atualizado_em": instante,
+    }
 
 
 def obter_modelo(codigo: str) -> dict[str, Any] | None:
