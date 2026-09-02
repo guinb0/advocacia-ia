@@ -27,19 +27,19 @@ export function LoginPage(props: LoginPageProps) {
   } = form;
 
   return (
-    <main className="relative flex min-h-screen overflow-hidden bg-[#e4e9ed] px-3 py-3 text-[#33465c] sm:px-6 sm:py-6 lg:px-8">
+    <main className="relative flex min-h-screen overflow-hidden bg-[#182933] px-3 py-3 text-[#dbe7ee] sm:px-6 sm:py-6 lg:px-8">
       <div
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.72),transparent_36%),radial-gradient(circle_at_88%_82%,rgba(86,123,148,0.14),transparent_32%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_16%,rgba(91,139,161,0.16),transparent_36%),radial-gradient(circle_at_88%_82%,rgba(8,18,25,0.24),transparent_34%)]"
         aria-hidden
       />
-      <div className="relative mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-[1120px] items-center overflow-hidden rounded-[28px] border border-white/60 bg-[#eef2f5] shadow-[0_30px_75px_rgba(25,45,61,0.20)] lg:min-h-[620px] lg:grid-cols-2 lg:items-stretch xl:min-h-[680px]">
+      <div className="relative mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-[1120px] items-center overflow-hidden rounded-[28px] border border-[#426274] bg-[#203340] shadow-[0_30px_75px_rgba(4,14,21,0.36)] lg:min-h-[620px] lg:grid-cols-2 lg:items-stretch xl:min-h-[680px]">
         <LoginVisualPanel />
 
-        <section className="mx-auto flex min-h-[620px] w-full flex-col justify-center bg-[#1b2936] p-7 text-[#dbe7ee] shadow-[-16px_0_34px_rgba(22,39,52,0.12)] sm:p-10 lg:min-h-0 lg:rounded-r-[28px] lg:p-12">
+        <section className="mx-auto flex min-h-[620px] w-full flex-col justify-center bg-[#203340] p-7 text-[#dbe7ee] sm:p-10 lg:min-h-0 lg:rounded-r-[28px] lg:p-12">
           <div className="mx-auto w-full max-w-[350px] motion-safe:animate-[loginFloat_0.7s_ease-out_1]">
             <div className="mb-10">
               <div className="flex items-center gap-3">
-                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-[#31536b] text-white shadow-[0_10px_22px_rgba(0,0,0,0.18)]">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#567589] bg-[#2e4b5e] text-[#e9f2f5] shadow-[0_10px_22px_rgba(7,20,29,0.24)]">
                   <FileText size={20} aria-hidden />
                 </span>
                 <div className="min-w-0">
@@ -51,7 +51,7 @@ export function LoginPage(props: LoginPageProps) {
               </div>
             </div>
 
-            <p className="text-[11px] font-bold uppercase tracking-[0.17em] text-[#80a8bc]">Acesso seguro</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.17em] text-[#91b8c9]">Acesso seguro</p>
             <h1 className="mt-3 font-titulo text-[1.7rem] !text-white">Entrar no sistema</h1>
             <p className="mt-2 text-sm leading-6 text-[#adc0cb]">
               Acesse sua mesa de trabalho e acompanhe os próximos passos de cada caso.
@@ -68,7 +68,7 @@ export function LoginPage(props: LoginPageProps) {
                   autoComplete="username"
                   autoFocus
                   {...register("email")}
-                  className="min-h-[46px] rounded-xl border border-[#4c6678] bg-[#202f3c] px-3.5 py-2.5 text-base text-white outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#7f98a8] focus:border-[#83b0c5] focus:bg-[#243643] focus:ring-2 focus:ring-[#83b0c5]/20"
+                  className="min-h-[46px] rounded-xl border border-[#4c6b7e] bg-[#203744] px-3.5 py-2.5 text-base text-white outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#7f98a8] focus:border-[#83b0c5] focus:bg-[#243e4d] focus:ring-2 focus:ring-[#83b0c5]/20"
                   aria-invalid={Boolean(errors.email)}
                   aria-describedby={errors.email ? "erro-email" : undefined}
                 />
@@ -89,7 +89,7 @@ export function LoginPage(props: LoginPageProps) {
                     type={mostrarSenha ? "text" : "password"}
                     autoComplete="current-password"
                     {...register("senha")}
-                    className="min-h-[46px] w-full rounded-xl border border-[#4c6678] bg-[#202f3c] px-3.5 py-2.5 pr-11 text-base text-white outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#7f98a8] focus:border-[#83b0c5] focus:bg-[#243643] focus:ring-2 focus:ring-[#83b0c5]/20"
+                    className="min-h-[46px] w-full rounded-xl border border-[#4c6b7e] bg-[#203744] px-3.5 py-2.5 pr-11 text-base text-white outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#7f98a8] focus:border-[#83b0c5] focus:bg-[#243e4d] focus:ring-2 focus:ring-[#83b0c5]/20"
                     aria-invalid={Boolean(errors.senha)}
                     aria-describedby={errors.senha ? "erro-senha" : undefined}
                   />
