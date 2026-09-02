@@ -305,6 +305,14 @@ def _entregar_modulos_ineditos(con: Any) -> None:
 
 
 def _sincronizar_modulos(con: Any) -> None:
+    # O catálogo em código é a fonte da verdade. Quando um módulo sai do
+    # produto, ele precisa deixar de aparecer também nas instalações que já o
+    # gravaram no banco; manter a linha ativa faria a matriz ressuscitá-lo.
+    marcadores = ",".join("?" for _ in CODIGOS_MODULOS)
+    con.execute(
+        f"UPDATE {_TABELA_MODULOS} SET ativo = 0 WHERE nome_modulo NOT IN ({marcadores})",
+        tuple(CODIGOS_MODULOS),
+    )
     for modulo in MODULOS:
         existe = con.execute(
             f"SELECT id FROM {_TABELA_MODULOS} WHERE nome_modulo = ?",
