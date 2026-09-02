@@ -187,8 +187,9 @@ def testar_texto_do_ocr() -> int:
     )
     grande = {"texto_linhas": [{"texto": "x" * 200} for _ in range(100)]}
     falhas += not checar(
-        len(valor_documento.texto_do_ocr(grande)) <= valor_documento.MAXIMO_CARACTERES,
-        "e corta o prontuário de internação no teto",
+        len(valor_documento.texto_do_ocr(grande)) == 100 * 200 + 99,
+        "e entrega o prontuário de internação inteiro — o teto saiu de propósito, "
+        "a DeepSeek recebe o que a Mistral conseguiu ler",
     )
     return falhas
 

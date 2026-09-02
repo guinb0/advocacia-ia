@@ -86,6 +86,10 @@ TABELAS_COM_PREFIXO_LEGADO = (
     "documentadores_online",
 )
 
+# Instalações anteriores gravavam essas mesmas entidades em ``public`` com o
+# prefixo ``acervo_``. O backend atual lê exclusivamente ``dbo``.
+TABELAS_MIGRACAO_PUBLIC_LEGADO = TABELAS_COM_PREFIXO_LEGADO
+
 _ENV = ambiente.CAMINHO
 
 #: Mantido como nome local porque metade do módulo (e os testes) já o chamam assim.
@@ -737,9 +741,59 @@ def inicializar_schema() -> None:
                     f"ALTER TABLE {SCHEMA}.{tabela} ADD COLUMN IF NOT EXISTS {coluna} {tipo}"
                 )
             )
+        _migrar_publico_legado(cursor)
         for indice in INDICES:
             nome = indice.split()[2]
             cursor.execute(indice.replace("CREATE INDEX", "CREATE INDEX IF NOT EXISTS", 1))
         cursor.execute(f"DROP TABLE IF EXISTS {SCHEMA}.{PREFIXO}vinculos_agente")
     finally:
         bruta.close()
+
+
+def _migrar_publico_legado(cursor: Any) -> None:
+    """Mescla os registros ``public.acervo_*`` no schema atual.
+
+    A troca de schema criou, em algumas instalações, uma cópia parcialmente
+    preenchida em ``dbo``. A cópia é feita por chave ou índice único, portanto
+    pode rodar a cada inicialização: registros já presentes não são alterados e
+    somente os ausentes no schema novo são incluídos.
+    """
+    for tabela in TABELAS_MIGRACAO_PUBLIC_LEGADO:
+        origem = f"acervo_{tabela}"
+        cursor.execute(
+            "SELECT to_regclass(%s), to_regclass(%s)",
+            (f"public.{origem}", f"{SCHEMA}.{tabela}"),
+        )
+        existe_origem, existe_destino = cursor.fetchone()
+        if existe_origem is None or existe_destino is None:
+            continue
+
+        # Só projetamos as colunas compartilhadas. Assim, campos introduzidos
+        # depois (como telefone do caso) recebem o default do schema novo.
+        cursor.execute(
+            """
+            SELECT origem.column_name
+              FROM information_schema.columns AS origem
+              JOIN information_schema.columns AS destino
+                ON destino.column_name = origem.column_name
+             WHERE origem.table_schema = 'public'
+               AND origem.table_name = %s
+               AND destino.table_schema = %s
+               AND destino.table_name = %s
+             ORDER BY origem.ordinal_position
+            """,
+            (origem, SCHEMA, tabela),
+        )
+        colunas = [linha[0] for linha in cursor.fetchall()]
+        if not colunas:
+            continue
+        if not all(re.fullmatch(r"[a-z_][a-z0-9_]*", coluna) for coluna in colunas):
+            raise RuntimeError(f"Coluna inesperada na migração de {tabela}.")
+        lista_colunas = ", ".join(colunas)
+        # As tabelas vêm da tupla fechada acima; não há entrada de usuário no
+        # SQL. ON CONFLICT preserva alterações já realizadas no schema novo.
+        cursor.execute(
+            f"INSERT INTO {SCHEMA}.{tabela} ({lista_colunas}) "
+            f"SELECT {lista_colunas} FROM public.{origem} "
+            "ON CONFLICT DO NOTHING"
+        )
