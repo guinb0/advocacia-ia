@@ -187,7 +187,7 @@ export default function PerfisDeAcesso() {
                 {modulos.map((m) => (
                   // O `title` carrega a descrição do módulo: a coluna é estreita
                   // e o rótulo sozinho não diz o que "Entrevistas no geral" cobre.
-                  <th key={m.codigo} title={m.descricao} className={`${CELULA_MATRIZ} min-w-[46px] align-bottom pb-3 [&>span]:inline-block [&>span]:[writing-mode:vertical-rl] [&>span]:rotate-180 [&>span]:max-h-[148px] [&>span]:text-tinta [&>span]:text-xs [&>span]:font-semibold [&>span]:leading-[1.2] [&>span]:cursor-help`}>
+                  <th key={m.codigo} title={m.descricao} className={`${CELULA_MATRIZ} min-w-[150px] px-3 py-3 text-left align-middle text-xs font-semibold leading-[1.35] text-tinta cursor-help`}>
                     <span>{m.rotulo}</span>
                   </th>
                 ))}

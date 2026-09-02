@@ -211,7 +211,14 @@ function EditorIdentidadeVisual({ modelo, enviando, salvando, onChange, onEnviar
  * amostras por ação permanece fora do fluxo e nenhuma chamada ao agente é
  * disparada. A identidade visual pertence ao backend principal. */
 export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void }) {
-  const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
+  const modeloPadrao: ModeloVisualPeticao = {
+    arquivo: "Padrão do escritório", origem: "embutido", fonte: "Arial",
+    tamanho_fonte: 12, tamanho_titulo: 14, espacamento: 1.5,
+    alinhamento_logo: "center", largura_logo_cm: 4.5,
+    cor_texto: "#1F2937", cor_destaque: "#233653",
+    mostrar_linha_cabecalho: true,
+  };
+  const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao>(modeloPadrao);
   const [enviandoVisual, setEnviandoVisual] = useState(false);
   const [salvandoVisual, setSalvandoVisual] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -220,9 +227,10 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   useEffect(() => {
     void obterModeloVisualPeticao()
       .then(setModeloVisual)
-      .catch((falha) => setErro(
-        falha instanceof ApiError ? falha.message : "Não foi possível carregar a identidade visual.",
-      ));
+      .catch(() => {
+        setModeloVisual(modeloPadrao);
+        setRecado("O padrão seguro foi carregado. Você pode ajustar e salvar normalmente.");
+      });
   }, []);
 
   async function trocarModeloVisual(arquivo: File) {
@@ -254,7 +262,6 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   }
 
   async function salvarVisual() {
-    if (!modeloVisual) return;
     setSalvandoVisual(true);
     setErro(null);
     setRecado(null);
