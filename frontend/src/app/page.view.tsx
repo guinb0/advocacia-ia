@@ -27,36 +27,39 @@ export function LoginPage(props: LoginPageProps) {
   } = form;
 
   return (
-    <main className="flex min-h-screen bg-[#f4f8fc] px-4 py-6 text-[#33465c] dark:bg-[#07111d] sm:px-6 lg:px-8">
-      <div className="mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-[1180px] items-center gap-6 lg:min-h-[600px] lg:grid-cols-2 lg:items-stretch xl:min-h-[680px]">
+    <main className="relative flex min-h-screen overflow-hidden bg-[#e4e9ed] px-3 py-3 text-[#33465c] sm:px-6 sm:py-6 lg:px-8">
+      <div
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.72),transparent_36%),radial-gradient(circle_at_88%_82%,rgba(86,123,148,0.14),transparent_32%)]"
+        aria-hidden
+      />
+      <div className="relative mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-[1120px] items-center overflow-hidden rounded-[28px] border border-white/60 bg-[#eef2f5] shadow-[0_30px_75px_rgba(25,45,61,0.20)] lg:min-h-[620px] lg:grid-cols-2 lg:items-stretch xl:min-h-[680px]">
         <LoginVisualPanel />
 
-        <section className="mx-auto flex w-full max-w-[520px] flex-col justify-center rounded-[24px] border border-[#d7e2ef] bg-white p-6 shadow-[0_22px_70px_rgba(16,32,51,0.11)] dark:border-[#2e4259] dark:bg-[#111c2a] dark:shadow-[0_28px_80px_rgba(0,0,0,0.42)] sm:p-8 lg:h-full lg:max-w-none lg:p-10">
-          <div className="mx-auto w-full max-w-[390px]">
-            <div className="mb-8">
+        <section className="mx-auto flex min-h-[620px] w-full flex-col justify-center bg-[#1b2936] p-7 text-[#dbe7ee] shadow-[-16px_0_34px_rgba(22,39,52,0.12)] sm:p-10 lg:min-h-0 lg:rounded-r-[28px] lg:p-12">
+          <div className="mx-auto w-full max-w-[350px] motion-safe:animate-[loginFloat_0.7s_ease-out_1]">
+            <div className="mb-10">
               <div className="flex items-center gap-3">
-                <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-[#002a47] text-white shadow-[0_10px_24px_rgba(0,42,71,0.22)] dark:bg-[#1f6feb]">
-                  <FileText size={22} aria-hidden />
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-[#31536b] text-white shadow-[0_10px_22px_rgba(0,0,0,0.18)]">
+                  <FileText size={20} aria-hidden />
                 </span>
                 <div className="min-w-0">
-                  <span className="block truncate font-titulo text-xl leading-none text-[#102033] dark:text-white">
-                    Forense
-                  </span>
-                  <span className="mt-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#65758a] dark:text-[#9fb3ca]">
+                  <span className="block truncate font-titulo text-xl leading-none text-white">Forense</span>
+                  <span className="mt-1 block text-[11px] font-semibold uppercase tracking-[0.15em] text-[#9cb3c1]">
                     Escritório jurídico
                   </span>
                 </div>
               </div>
             </div>
 
-            <h1 className="font-titulo text-xl !text-[#102033] dark:!text-white">Entrar no sistema</h1>
-            <p className="mt-2 text-sm leading-6 text-[#33465c] dark:text-[#c8d6e5]">
-              A carteira de casos e os documentos dos clientes exigem identificação.
+            <p className="text-[11px] font-bold uppercase tracking-[0.17em] text-[#80a8bc]">Acesso seguro</p>
+            <h1 className="mt-3 font-titulo text-[1.7rem] !text-white">Entrar no sistema</h1>
+            <p className="mt-2 text-sm leading-6 text-[#adc0cb]">
+              Acesse sua mesa de trabalho e acompanhe os próximos passos de cada caso.
             </p>
 
-            <form onSubmit={handleSubmit(onSubmit)} className="mt-7 flex flex-col gap-4" noValidate>
+            <form onSubmit={handleSubmit(onSubmit)} className="mt-8 flex flex-col gap-4" noValidate>
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="email" className="text-sm font-semibold text-[#20334a] dark:text-[#dce8f5]">
+                <label htmlFor="email" className="text-sm font-medium text-[#d7e3e9]">
                   E-mail
                 </label>
                 <input
@@ -65,22 +68,19 @@ export function LoginPage(props: LoginPageProps) {
                   autoComplete="username"
                   autoFocus
                   {...register("email")}
-                  className="min-h-[46px] rounded-[10px] border border-[#8fa1b5] bg-white px-3 py-2.5 text-base text-[#102033] outline-none transition-[border-color,box-shadow] focus:border-[#1f6feb] focus:ring-2 focus:ring-[#1f6feb]/25 dark:border-[#5f7893] dark:bg-[#0d1724] dark:text-white dark:focus:border-[#79b8ff] dark:focus:ring-[#79b8ff]/25"
-                  /* `aria-invalid` e o `id` do erro: quem usa leitor de tela ouve
-                   * "campo inválido" e o motivo junto, em vez de só encontrar um
-                   * texto vermelho solto depois do campo. */
+                  className="min-h-[46px] rounded-xl border border-[#4c6678] bg-[#202f3c] px-3.5 py-2.5 text-base text-white outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#7f98a8] focus:border-[#83b0c5] focus:bg-[#243643] focus:ring-2 focus:ring-[#83b0c5]/20"
                   aria-invalid={Boolean(errors.email)}
                   aria-describedby={errors.email ? "erro-email" : undefined}
                 />
                 {errors.email && (
-                  <span id="erro-email" className="text-xs text-critico dark:text-[#ffb4ad]">
+                  <span id="erro-email" className="text-xs text-[#ffb4ad]">
                     {errors.email.message}
                   </span>
                 )}
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="senha" className="text-sm font-semibold text-[#20334a] dark:text-[#dce8f5]">
+                <label htmlFor="senha" className="text-sm font-medium text-[#d7e3e9]">
                   Senha
                 </label>
                 <div className="relative">
@@ -89,21 +89,21 @@ export function LoginPage(props: LoginPageProps) {
                     type={mostrarSenha ? "text" : "password"}
                     autoComplete="current-password"
                     {...register("senha")}
-                    className="min-h-[46px] w-full rounded-[10px] border border-[#8fa1b5] bg-white px-3 py-2.5 pr-11 text-base text-[#102033] outline-none transition-[border-color,box-shadow] focus:border-[#1f6feb] focus:ring-2 focus:ring-[#1f6feb]/25 dark:border-[#5f7893] dark:bg-[#0d1724] dark:text-white dark:focus:border-[#79b8ff] dark:focus:ring-[#79b8ff]/25"
+                    className="min-h-[46px] w-full rounded-xl border border-[#4c6678] bg-[#202f3c] px-3.5 py-2.5 pr-11 text-base text-white outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#7f98a8] focus:border-[#83b0c5] focus:bg-[#243643] focus:ring-2 focus:ring-[#83b0c5]/20"
                     aria-invalid={Boolean(errors.senha)}
                     aria-describedby={errors.senha ? "erro-senha" : undefined}
                   />
                   <button
                     type="button"
                     onClick={() => setMostrarSenha(!mostrarSenha)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-[8px] p-1.5 text-[#65758a] transition-colors hover:bg-[#e6ecf2] hover:text-[#102033] dark:text-[#a8bcd2] dark:hover:bg-[#1d2b3b] dark:hover:text-white"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-[#9db3bf] transition-colors hover:bg-white/10 hover:text-white"
                     aria-label={mostrarSenha ? "Ocultar a senha" : "Mostrar a senha"}
                   >
                     {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
                 {errors.senha && (
-                  <span id="erro-senha" className="text-xs text-critico dark:text-[#ffb4ad]">
+                  <span id="erro-senha" className="text-xs text-[#ffb4ad]">
                     {errors.senha.message}
                   </span>
                 )}
@@ -112,22 +112,20 @@ export function LoginPage(props: LoginPageProps) {
               <button
                 type="submit"
                 disabled={entrando}
-                className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-[10px] border border-[#0b57d0] bg-[#0b57d0] px-4 py-3 text-base font-semibold text-white shadow-[0_14px_28px_rgba(11,87,208,0.22)] transition-colors enabled:hover:border-[#0846ad] enabled:hover:bg-[#0846ad] disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada dark:border-[#1f6feb] dark:bg-[#1f6feb] dark:enabled:hover:border-[#2f81f7] dark:enabled:hover:bg-[#2f81f7]"
+                className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border border-[#80aabd] bg-[#80aabd] px-4 py-3 text-base font-semibold text-[#162631] shadow-[0_12px_25px_rgba(0,0,0,0.20)] transition-[transform,background-color,box-shadow] enabled:hover:-translate-y-0.5 enabled:hover:bg-[#9abfce] enabled:hover:shadow-[0_16px_28px_rgba(0,0,0,0.26)] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-[#3a4e5c] disabled:text-[#94a5af]"
               >
                 {entrando && <Loader2 size={18} className="animate-spin" />}
                 {entrando ? "Entrando…" : "Entrar"}
               </button>
             </form>
 
-            <p className="mt-7 text-center text-xs leading-5 text-[#65758a] dark:text-[#98acc3]">
+            <p className="mt-8 text-center text-xs leading-5 text-[#8fa7b4]">
               O acesso aos módulos continua definido pelo perfil cadastrado no escritório.
             </p>
           </div>
         </section>
       </div>
 
-      {/* O aviso de erro não fica aqui: o `useMutateLogin` já o mostra em toast.
-        * Repeti-lo na tela daria duas mensagens para a mesma falha. */}
       <ChangePasswordModal
         aberto={trocaDeSenhaAberta}
         salvando={trocandoSenha}
