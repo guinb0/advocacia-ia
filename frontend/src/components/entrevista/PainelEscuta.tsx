@@ -191,12 +191,9 @@ export default function PainelEscuta({
         </span>
       </div>
 
-      <section className="mb-[18px] border-b border-borda pb-4" aria-live="polite">
-        <span className="block mb-2 text-[9.5px] font-semibold tracking-[0.13em] uppercase text-tinta-3">Transcrição em tempo real</span>
-        <p className="mt-0 mb-2 text-[10.5px] leading-[1.45] text-tinta-3">
-          O falante é identificado pela faixa da chamada ou inferido pelo texto. Quando não houver sinal suficiente, o trecho fica sem atribuição.
-        </p>
-        <div className="min-h-[180px] max-h-[42vh] overflow-y-auto bg-papel-2 border border-borda px-3 py-2 text-[12.5px] leading-[1.6] font-ui">
+      <details open className="mb-[18px] border-b border-borda pb-4" aria-live="polite">
+        <summary className="mb-2 cursor-pointer text-[9.5px] font-semibold uppercase tracking-[0.13em] text-tinta-3">Transcrição em tempo real</summary>
+        <div className="min-h-[130px] max-h-[30vh] overflow-y-auto rounded-[6px] bg-papel-2 border border-borda px-3 py-2 text-[12.5px] leading-[1.6] font-ui">
           {transcricao.length === 0 && !parcial && <p className="m-0 italic text-tinta-3">A fala reconhecida aparecerá aqui.</p>}
           {transcricao.map((trecho) => (
             <p key={`${trecho.quando}-${trecho.texto}`} className="my-2">
@@ -209,7 +206,7 @@ export default function PainelEscuta({
           ))}
           {parcial && <p className="my-2 text-tinta-3"><span className="mr-2 text-[10px] uppercase">ouvindo</span>{parcial}</p>}
         </div>
-      </section>
+      </details>
 
       {/* Este não é sobre o microfone: é áudio que o navegador não conseguiu
         * entregar. Some fala ANTES do reconhecimento, então nenhum ajuste no
@@ -233,7 +230,7 @@ export default function PainelEscuta({
       )}
 
       {/* 1. O que aprofundar — depois da pergunta da vez, nunca no lugar dela. */}
-      <div className="hidden">
+      <div>
       {lembretes.length > 0 && (
         <section className="mb-[18px] last:mb-0">
           <span className="block mb-[7px] text-[9.5px] font-semibold leading-[1.4] font-ui tracking-[0.13em] uppercase text-tinta-3">

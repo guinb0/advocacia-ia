@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { processarEntrevista, recomendarEntrevista, triarEntrevista } from "@/lib/api";
 import type { ProcessamentoEntrevista, RecomendacaoEntrevista, Triagem } from "@/lib/types";
@@ -24,10 +24,10 @@ import type { ProcessamentoEntrevista, RecomendacaoEntrevista, Triagem } from "@
  *   como leitura preliminar e é substituído quando a passada definitiva chega.
  *   Esconder a diferença faria a revisão parecer completa faltando o fim da
  *   conversa — que é justamente onde ficam os valores e a saída;
- * - **pré-análise não mexe no formulário.** A consolidação preliminar carrega
- *   as respostas como elas estavam há alguns minutos; aplicá-las apagaria o
- *   que foi respondido desde então. Quem preenche campo é só a passada
- *   definitiva (ver `aoConsolidar`). */
+ * - **pré-análise só mexe no que é automático.** Cada checkpoint pode atualizar
+ *   respostas extraídas pela IA, mas o roteiro mantém um registro separado das
+ *   edições humanas. Uma correção feita pelo advogado nunca é sobrescrita por
+ *   checkpoint nem pela revisão final. */
 
 export interface LeituraDaEntrevista {
   processamento: ProcessamentoEntrevista;
@@ -113,17 +113,23 @@ interface Opcoes {
    *  duas disputariam o mesmo threadpool do servidor, que é o que transcreve
    *  a conversa ao vivo. */
   ativa: boolean;
+  /** Aplica apenas consolidações maduras; o roteiro preserva edições humanas. */
+  aoCheckpoint?: (processamento: ProcessamentoEntrevista) => void;
 }
 
 /** Mantém uma leitura recente da entrevista pronta, sem mostrar nada. */
-export function usarPreAnalise({ lerTranscricao, lerRespostas, ativa }: Opcoes): {
+export function usarPreAnalise({ lerTranscricao, lerRespostas, ativa, aoCheckpoint }: Opcoes): {
   obter: () => LeituraDaEntrevista | null;
+  estado: "aguardando" | "analisando" | "consolidado";
+  cobertura: number;
 } {
   const pronta = useRef<LeituraDaEntrevista | null>(null);
   const emCurso = useRef(false);
   const ultimaPassada = useRef(0);
-  const entradas = useRef({ lerTranscricao, lerRespostas });
-  entradas.current = { lerTranscricao, lerRespostas };
+  const [estado, setEstado] = useState<"aguardando" | "analisando" | "consolidado">("aguardando");
+  const [cobertura, setCobertura] = useState(0);
+  const entradas = useRef({ lerTranscricao, lerRespostas, aoCheckpoint });
+  entradas.current = { lerTranscricao, lerRespostas, aoCheckpoint };
 
   useEffect(() => {
     if (!ativa) return;
@@ -139,15 +145,20 @@ export function usarPreAnalise({ lerTranscricao, lerRespostas, ativa }: Opcoes):
       }
 
       emCurso.current = true;
+      setEstado("analisando");
       ultimaPassada.current = Date.now();
       void lerEntrevista(transcricao, entradas.current.lerRespostas())
         .then((leitura) => {
           pronta.current = leitura;
+          setCobertura(leitura.cobertura);
+          setEstado("consolidado");
+          entradas.current.aoCheckpoint?.(leitura.processamento);
         })
         .catch(() => {
           /* Silêncio de propósito: isto é adiantamento, e falhar aqui não muda
            * nada para quem conduz — o clique refaz a leitura do zero e é lá
            * que o erro aparece, com o cliente ainda na sala. */
+          setEstado(pronta.current ? "consolidado" : "aguardando");
         })
         .finally(() => {
           emCurso.current = false;
@@ -156,5 +167,5 @@ export function usarPreAnalise({ lerTranscricao, lerRespostas, ativa }: Opcoes):
     return () => window.clearInterval(id);
   }, [ativa]);
 
-  return { obter: () => pronta.current };
+  return { obter: () => pronta.current, estado, cobertura };
 }
