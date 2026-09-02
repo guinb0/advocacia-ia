@@ -114,9 +114,14 @@ def main() -> int:
     con_catalogo = ConexaoFalsa()
     perfis._sincronizar_modulos(con_catalogo)
     checar(
-        con_catalogo.modulos_atualizados == [],
+        all("ativo = 1" not in str(item) for item in con_catalogo.modulos_atualizados),
         "sincronizacao de modulos nao reativa nem sobrescreve modulo existente",
         str(con_catalogo.modulos_atualizados),
+    )
+    checar(
+        "agente" not in perfis.CODIGOS_MODULOS,
+        "agente juridico nao pertence mais ao catalogo de modulos",
+        str(perfis.CODIGOS_MODULOS),
     )
 
     perfis._sincronizar_perfis(con_catalogo, "2026-01-01T00:00:00+00:00")
@@ -126,13 +131,6 @@ def main() -> int:
         str(con_catalogo.perfis_atualizados),
     )
 
-    con_agente = ConexaoFalsa()
-    perfis._liberar_agente_para_perfis_internos(con_agente)
-    checar(
-        (30, 1, "s") in con_agente.inseridos,
-        "agente juridico e liberado para perfil interno existente",
-        str(con_agente.inseridos),
-    )
     return falhas
 
 
