@@ -14,8 +14,10 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Aviso, Botao } from "@/components/ui/Basicos";
+import PerfisDeAcesso from "@/components/PerfisDeAcesso";
 import {
   ApiError,
+  atualizarUsuario,
   criarUsuario,
   listarPerfis,
   listarUsuarios,
@@ -27,12 +29,13 @@ interface Props {
   onVoltar: () => void;
 }
 
-const VAZIO = { nome: "", email: "", perfilId: 0, senha: "" };
+const VAZIO = { nome: "", email: "", perfilId: 0, senha: "", ativo: true };
 
 export default function Usuarios({ onVoltar }: Props) {
   const [perfis, setPerfis] = useState<Perfil[]>([]);
   const [itens, setItens] = useState<UsuarioCadastrado[]>([]);
   const [form, setForm] = useState(VAZIO);
+  const [editando, setEditando] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -87,12 +90,19 @@ export default function Usuarios({ onVoltar }: Props) {
     setErro(null);
     setFeito(null);
     try {
-      const novo = await criarUsuario(form);
+      const novo = editando
+        ? await atualizarUsuario(editando, form)
+        : await criarUsuario(form);
       // O e-mail é o login; dizê-lo de volta evita a dúvida de quem digitou
       // rápido e não sabe com o que a pessoa vai entrar.
-      setFeito(`${novo.nome} cadastrado. Entra com ${novo.usuario}.`);
+      setFeito(
+        editando
+          ? `${novo.nome} atualizado com sucesso.`
+          : `${novo.nome} cadastrado. Entra com ${novo.usuario}.`,
+      );
       const perfilInicial = perfis.find((perfil) => perfil.codigo === "advogado") ?? perfis[0];
       setForm({ ...VAZIO, perfilId: perfilInicial?.id ?? 0 });
+      setEditando(null);
       await recarregar();
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : "Não foi possível cadastrar.");
@@ -104,12 +114,29 @@ export default function Usuarios({ onVoltar }: Props) {
   const perfilSelecionado = perfis.find((p) => p.id === form.perfilId);
   const descricaoPerfil = perfilSelecionado?.descricao;
 
+  function editar(usuario: UsuarioCadastrado) {
+    const perfil = perfis.find((item) => item.id === usuario.perfilId)
+      ?? perfis.find((item) => usuario.perfis.includes(item.codigo));
+    setEditando(usuario.id);
+    setForm({
+      nome: usuario.nome,
+      email: usuario.email ?? usuario.usuario,
+      perfilId: perfil?.id ?? 0,
+      senha: "",
+      ativo: usuario.ativo,
+    });
+    setErro(null);
+    setFeito(null);
+  }
+
+  function cancelarEdicao() {
+    const perfilInicial = perfis.find((perfil) => perfil.codigo === "advogado") ?? perfis[0];
+    setEditando(null);
+    setForm({ ...VAZIO, perfilId: perfilInicial?.id ?? 0 });
+  }
+
   return (
     <div className="min-w-0">
-      <Botao variante="secundario" onClick={onVoltar}>
-        ← Voltar para a carteira
-      </Botao>
-
       <header className="my-5 mb-6">
         <h1 className="mb-[6px] mt-0 text-[1.6rem]">Usuários</h1>
         <p className="m-0 text-tinta-3 max-w-[62ch] leading-[1.5]">
@@ -120,13 +147,15 @@ export default function Usuarios({ onVoltar }: Props) {
 
       <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),420px)_minmax(0,1fr)] items-start gap-7 max-[860px]:grid-cols-1">
         <section className="border border-borda-forte rounded-[10px] p-[18px] bg-papel">
-          <h2 className="mb-4 mt-0 text-base uppercase tracking-[0.04em] text-tinta-3">Cadastrar</h2>
+          <h2 className="mb-4 mt-0 text-base uppercase tracking-[0.04em] text-tinta-3">
+            {editando ? "Editar usuário" : "Cadastrar"}
+          </h2>
           <form onSubmit={enviar}>
             <label className="block mb-4">
               <span className="block mb-[5px] font-semibold text-[0.9rem]">Nome completo</span>
               <input
                 className="w-full px-[11px] py-[9px] border border-borda-forte rounded-[7px] [font:inherit] bg-papel focus:[outline:2px_solid_var(--foco)] focus:outline-offset-[1px]"
-                required
+                required={!editando}
                 minLength={3}
                 value={form.nome}
                 onChange={(e) => setForm({ ...form, nome: e.target.value })}
@@ -185,12 +214,26 @@ export default function Usuarios({ onVoltar }: Props) {
                 minLength={8}
                 value={form.senha}
                 onChange={(e) => setForm({ ...form, senha: e.target.value })}
-                placeholder="ao menos 8 caracteres"
+                placeholder={editando ? "deixe vazio para manter a atual" : "ao menos 8 caracteres"}
               />
               <small className="block mt-[5px] text-tinta-3 leading-[1.4]">
-                Vale já no primeiro acesso; a pessoa troca depois se quiser.
+                {editando
+                  ? "Preencha somente se quiser definir uma nova senha."
+                  : "Vale já no primeiro acesso; a pessoa troca depois se quiser."}
               </small>
             </label>
+
+            {editando && (
+              <label className="mb-4 flex min-h-10 items-center gap-2 text-sm font-semibold">
+                <input
+                  type="checkbox"
+                  checked={form.ativo}
+                  onChange={(e) => setForm({ ...form, ativo: e.target.checked })}
+                  className="h-4 w-4 accent-acao"
+                />
+                Conta ativa
+              </label>
+            )}
 
             {/* Só o botão base, sem variante — assim como no CSS original. */}
             <button
@@ -198,8 +241,13 @@ export default function Usuarios({ onVoltar }: Props) {
               className="inline-flex items-center justify-center gap-2 min-h-10 px-4 py-[9px] border border-transparent rounded-campo bg-transparent font-ui text-sm font-semibold text-tinta-2 cursor-pointer disabled:text-tinta-desabilitada disabled:cursor-not-allowed"
               disabled={salvando || !perfilSelecionado}
             >
-              {salvando ? "Cadastrando…" : "Cadastrar usuário"}
+              {salvando ? "Salvando…" : editando ? "Salvar alterações" : "Cadastrar usuário"}
             </button>
+            {editando && (
+              <button type="button" className="ml-2 px-3 py-2 text-sm text-tinta-3 underline" onClick={cancelarEdicao}>
+                Cancelar
+              </button>
+            )}
           </form>
 
           {erro && (
@@ -264,6 +312,13 @@ export default function Usuarios({ onVoltar }: Props) {
                         inativo
                       </span>
                     )}
+                    <button
+                      type="button"
+                      className="ml-1 rounded-md border border-borda-forte bg-papel px-2.5 py-1 text-xs font-semibold text-tinta hover:border-tinta"
+                      onClick={() => editar(u)}
+                    >
+                      Editar
+                    </button>
                   </div>
                 </li>
               ))}
@@ -271,6 +326,7 @@ export default function Usuarios({ onVoltar }: Props) {
           )}
         </section>
       </div>
+      <PerfisDeAcesso />
     </div>
   );
 }

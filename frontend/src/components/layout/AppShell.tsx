@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { LogOut } from "lucide-react";
+import { ArrowLeft, LogOut } from "lucide-react";
 
 import type { Tela } from "@/app/home/home.model";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
@@ -10,21 +10,18 @@ import BarraLateral from "./BarraLateral";
 
 const ROTULO_TELA: Record<Tela, string> = {
   carteira: "Carteira",
-  agente: "Agente",
   caso: "Checklist do caso",
   dossie: "Dossiê do caso",
   painel: "Painel analítico",
   jurimetria: "Jurimetria",
   casos: "Casos",
   avulso: "Ler documento",
-  investigacao: "Investigação",
   usuarios: "Usuários",
   panorama: "Panorama",
   entrevista: "Entrevista guiada",
   supervisao: "Supervisão",
   dados: "Dados",
-  saudeAgente: "Saúde do agente",
-  modelosDePeticao: "Modelos de petição",
+  modelosDePeticao: "Identidade visual",
   catalogoRoteiros: "Roteiros",
   documentacao: "Documentação",
 };
@@ -84,6 +81,22 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
 
         <div className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden">
           <div className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pb-16 pt-5 sm:px-6 lg:px-7 [&>*]:min-w-0">
+            {tela !== "carteira" && (
+              <nav className="mb-4 flex min-w-0 items-center gap-2" aria-label="Navegação de retorno">
+                <button
+                  type="button"
+                  onClick={() => onNavegar("carteira")}
+                  className="group inline-flex min-h-11 items-center gap-2 rounded-[10px] border border-borda-forte bg-papel px-3.5 text-sm font-semibold text-tinta shadow-sm transition hover:border-acao hover:bg-acao-clara hover:text-acao focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-acao"
+                  aria-label={`Voltar de ${ROTULO_TELA[tela]} para a Carteira`}
+                >
+                  <ArrowLeft size={18} className="transition-transform group-hover:-translate-x-0.5" aria-hidden />
+                  <span>Voltar</span>
+                </button>
+                <span className="min-w-0 truncate text-xs text-tinta-3" aria-hidden="true">
+                  Carteira <span className="px-1.5">›</span> {ROTULO_TELA[tela]}
+                </span>
+              </nav>
+            )}
             {children}
           </div>
         </div>

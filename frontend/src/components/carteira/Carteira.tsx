@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   type LucideIcon,
@@ -104,15 +104,40 @@ export default function Carteira({
   const [hoje, setHoje] = useState("");
   useEffect(() => setHoje(HOJE_FORMATO.format(new Date())), []);
   const [filtro, setFiltro] = useState<Filtro>("todos");
+  const [busca, setBusca] = useState("");
+  const [tipoFiltro, setTipoFiltro] = useState("");
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
+  const [ordem, setOrdem] = useState<"prioridade" | "recentes" | "antigos" | "nome">("prioridade");
   const [selecionado, setSelecionado] = useState(0);
   const listaRef = useRef<HTMLUListElement>(null);
 
-  const visiveis = linhas.filter((linha) => {
-    if (filtro === "todos") return true;
-    if (filtro === "pedido") return linha.situacao.progresso.obrigatorios_pendentes > 0;
-    if (filtro === "pronto") return linha.situacao.progresso.pronto;
-    return linha.severidade === filtro;
-  });
+  const tiposDisponiveis = useMemo(() =>
+    [...new Map(linhas.map((linha) => [linha.caso.categoria, linha.categoriaNome])).entries()]
+      .sort((a, b) => a[1].localeCompare(b[1], "pt-BR")), [linhas]);
+
+  const visiveis = useMemo(() => {
+    const buscaLimpa = busca.trim().toLocaleLowerCase("pt-BR");
+    const numerica = buscaLimpa && /^\D*\d[\d.\-/\s]*$/.test(buscaLimpa);
+    const termo = numerica ? buscaLimpa.replace(/\D/g, "") : buscaLimpa;
+    return linhas.filter((linha) => {
+      const passaSituacao = filtro === "todos"
+        || (filtro === "pedido" && linha.situacao.progresso.obrigatorios_pendentes > 0)
+        || (filtro === "pronto" && linha.situacao.progresso.pronto)
+        || linha.severidade === filtro;
+      const texto = `${linha.caso.cliente} ${linha.caso.id} ${linha.caso.observacao ?? ""}`.toLocaleLowerCase("pt-BR");
+      const passaBusca = !termo || (numerica ? texto.replace(/\D/g, "").includes(termo) : texto.includes(termo));
+      const dia = (linha.caso.criado_em ?? "").slice(0, 10);
+      return passaSituacao && passaBusca && (!tipoFiltro || linha.caso.categoria === tipoFiltro)
+        && (!dataInicial || dia >= dataInicial) && (!dataFinal || dia <= dataFinal);
+    }).sort((a, b) => ordem === "nome"
+      ? a.caso.cliente.localeCompare(b.caso.cliente, "pt-BR")
+      : ordem === "recentes"
+        ? b.caso.criado_em.localeCompare(a.caso.criado_em)
+        : ordem === "antigos"
+          ? a.caso.criado_em.localeCompare(b.caso.criado_em)
+          : a.peso - b.peso);
+  }, [linhas, filtro, busca, tipoFiltro, dataInicial, dataFinal, ordem]);
 
   // Um filtro que encolhe a lista pode deixar o cursor fora dela.
   useEffect(() => {
@@ -276,6 +301,20 @@ export default function Carteira({
                 {paginacao.primeiro}–{paginacao.ultimo} de {paginacao.total}
               </span>
             )}
+          </div>
+
+          <div className="grid gap-3 border-b border-borda bg-papel-2 px-[18px] py-4 sm:grid-cols-2 xl:grid-cols-5">
+            <input className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm xl:col-span-2" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome, CPF ou ID" aria-label="Buscar na carteira" />
+            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value)} aria-label="Filtrar por tipo de caso">
+              <option value="">Todos os tipos</option>{tiposDisponiveis.map(([codigo, nome]) => <option key={codigo} value={codigo}>{nome}</option>)}
+            </select>
+            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={ordem} onChange={(e) => setOrdem(e.target.value as typeof ordem)} aria-label="Ordenar carteira">
+              <option value="prioridade">Prioridade</option><option value="recentes">Mais recentes</option><option value="antigos">Mais antigos</option><option value="nome">Nome A–Z</option>
+            </select>
+            <button type="button" className="min-h-10 rounded-campo border border-borda-forte px-3 text-sm font-semibold" onClick={() => { setBusca(""); setTipoFiltro(""); setDataInicial(""); setDataFinal(""); setOrdem("prioridade"); setFiltro("todos"); }}>Limpar filtros</button>
+            <label className="text-xs text-tinta-3">De<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataInicial} onChange={(e) => setDataInicial(e.target.value)} /></label>
+            <label className="text-xs text-tinta-3">Até<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataFinal} onChange={(e) => setDataFinal(e.target.value)} /></label>
+            <p className="m-0 self-end text-xs text-tinta-3 sm:col-span-2">{visiveis.length} resultado(s) nesta página</p>
           </div>
 
           {/* Filtro aplicado dito em palavras, com o desfazer ao lado. */}
@@ -517,17 +556,14 @@ function Tecla({ children }: { children: React.ReactNode }) {
 const APOIO_POR_TELA: Partial<Record<Tela, string>> = {
   entrevista: "iniciar atendimento",
   carteira: "mesa do dia",
-  agente: "assistente geral",
   casos: "cadastro e lista",
   documentacao: "apoio documental",
   avulso: "análise avulsa",
-  investigacao: "fontes e indícios",
   dados: "acervo indexado",
   panorama: "visão analítica",
   supervisao: "entrevistas",
   catalogoRoteiros: "roteiros guiados",
   usuarios: "acessos",
-  saudeAgente: "integrações",
   modelosDePeticao: "petições",
 };
 

@@ -6,6 +6,7 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import { CapturaEntrevista } from "@/lib/transcricao";
+import ChatChamada from "./ChatChamada";
 
 /* Entrevista por chamada de voz, do lado do advogado — na tela do checklist.
  *
@@ -259,6 +260,8 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
           que ele entrar, o áudio conecta sozinho.
         </p>
       )}
+
+      {naChamada && <ChatChamada />}
 
       {(falas.length > 0 || parcial) && (
         <div

@@ -371,11 +371,6 @@ export default function PainelCaso({
   if (carregando && !dados) {
     return (
       <div className={PAINEL_ESTADO}>
-        <div className="flex gap-2 items-center flex-wrap">
-          <Botao variante="secundario" pequeno onClick={onVoltar}>
-            ← Voltar para a carteira
-          </Botao>
-        </div>
         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-4">
           <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
           <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
@@ -392,11 +387,6 @@ export default function PainelCaso({
   if (erro || !dados) {
     return (
       <div className={PAINEL_ESTADO}>
-        <div className="flex gap-2 items-center flex-wrap">
-          <Botao variante="secundario" pequeno onClick={onVoltar}>
-            ← Voltar para a carteira
-          </Botao>
-        </div>
         <Aviso tom="critico" titulo="Não foi possível montar o painel">
           {erro}
         </Aviso>
@@ -426,12 +416,6 @@ export default function PainelCaso({
     >
       {/* ------------------------------------------------------------ topo */}
       <header className="flex flex-col gap-3">
-        <div className="flex gap-2 items-center flex-wrap">
-          <Botao variante="secundario" pequeno onClick={onVoltar}>
-            ← Voltar para a carteira
-          </Botao>
-        </div>
-
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-5">
           <div className="min-w-0">
             <h1 className="truncate font-titulo text-xl leading-[1.15] text-tinta" title={caso.cliente}>{caso.cliente}</h1>

@@ -10,6 +10,7 @@ import type { TomSelo } from "@/lib/formato";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
+import ChatChamada from "@/components/chamada/ChatChamada";
 
 /* Cada estado com símbolo, palavra e tom. O cliente lê "Recebido" e "Precisa
  * reenviar" — não "ENTREGUE" e "CONFERIR", que eram o vocabulário interno do
@@ -472,6 +473,7 @@ function Chamada({ token }: { token: string }) {
               Sair da chamada
             </Botao>
           </div>
+          <ChatChamada />
         </>
       )}
 

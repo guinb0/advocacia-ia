@@ -162,6 +162,7 @@ export default function TriagemEntrevista({
   onAtendimento?: (fase: "nenhum" | "entrevista" | "pos-entrevista") => void;
 }) {
   const [texto, setTexto] = useState("");
+  const [modoEntrada, setModoEntrada] = useState<"guiada" | "transcricao" | null>(null);
   const [mostrarRoteiro, setMostrarRoteiro] = useState(false);
   /* A qualificação fica guardada depois que a entrevista fecha: é ela que
    * preenche o contrato, e o relato corrido já não a tem em campos separados. */
@@ -499,7 +500,7 @@ export default function TriagemEntrevista({
             </p>
           </div>
 
-          <div className="flex min-w-0 flex-wrap gap-2">
+          {(modoEntrada || qualificacao || resultado) && <div className="flex min-w-0 flex-wrap gap-2">
             <Selo tom={mostrarRoteiro ? "info" : qualificacao ? "ok" : "neutro"}>
               Roteiro
             </Selo>
@@ -509,11 +510,47 @@ export default function TriagemEntrevista({
             <Selo tom={casoCriado || casoTxtId ? "ok" : "neutro"}>
               Caso
             </Selo>
-          </div>
+          </div>}
         </div>
       </header>
 
       <div className="min-w-0 p-4 sm:p-5">
+      {!modoEntrada && !qualificacao && !encerrado && (
+        <div className="mx-auto max-w-[860px] py-3 sm:py-6">
+          <div className="mb-5 text-center">
+            <h3 className="m-0 text-xl font-semibold text-tinta">Como você quer começar?</h3>
+            <p className="mx-auto mb-0 mt-2 max-w-[58ch] text-sm leading-[1.6] text-tinta-3">
+              Escolha o caminho do atendimento. Você poderá revisar e criar o caso ao final.
+            </p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <button
+              type="button"
+              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left transition hover:border-acao hover:bg-acao-clara focus:outline-none focus:ring-2 focus:ring-acao"
+              onClick={() => { setModoEntrada("guiada"); setMostrarRoteiro(true); }}
+            >
+              <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-acao-clara text-lg font-bold text-acao">1</span>
+              <strong className="block text-lg text-tinta">Iniciar entrevista do zero</strong>
+              <span className="mt-2 block text-sm leading-[1.55] text-tinta-3">
+                Abra o roteiro organizado, conduza as perguntas e transcreva a conversa durante a chamada.
+              </span>
+              <span className="mt-4 block text-sm font-semibold text-acao">Abrir roteiro →</span>
+            </button>
+            <button
+              type="button"
+              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left transition hover:border-acao hover:bg-acao-clara focus:outline-none focus:ring-2 focus:ring-acao"
+              onClick={() => setModoEntrada("transcricao")}
+            >
+              <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-papel-3 text-lg font-bold text-tinta-2">2</span>
+              <strong className="block text-lg text-tinta">Já tenho a transcrição</strong>
+              <span className="mt-2 block text-sm leading-[1.55] text-tinta-3">
+                Cole o texto ou envie um arquivo para identificar os dados e validar os tipos de ação.
+              </span>
+              <span className="mt-4 block text-sm font-semibold text-acao">Importar transcrição →</span>
+            </button>
+          </div>
+        </div>
+      )}
       {mostrarRoteiro ? (
         <EntrevistaComChamada
           /* As respostas sobem a cada mudança: é o que deixa as etapas abaixo
@@ -547,7 +584,7 @@ export default function TriagemEntrevista({
           onFechar={() => setMostrarRoteiro(false)}
           depois={etapasDoAtendimento}
         />
-      ) : (
+      ) : (modoEntrada === "guiada" || qualificacao) ? (
         <Botao
           variante="secundario"
           className="mb-[14px]"
@@ -555,12 +592,13 @@ export default function TriagemEntrevista({
             // Voltar é continuar: o atendimento deixa de estar encerrado e as
             // etapas voltam a ficar à mão, dentro e fora da tela.
             setEncerrado(false);
+            setModoEntrada("guiada");
             setMostrarRoteiro(true);
           }}
         >
           {qualificacao ? "Voltar ao roteiro" : "Começar entrevista guiada"}
         </Botao>
-      )}
+      ) : null}
 
       {/* O áudio do que acabou de ser conduzido, antes do contrato: quem sai da
         * entrevista costuma querer conferir uma fala antes de seguir. */}
@@ -594,13 +632,21 @@ export default function TriagemEntrevista({
         * duas etapas e revisada dentro do roteiro. Mostrá-lo novamente fazia a
         * tela parecer ter voltado ao início e convidava a analisar tudo duas
         * vezes. */}
-      {!encerrado && (
+      {!encerrado && (modoEntrada === "transcricao" || (!!qualificacao && !mostrarRoteiro)) && (
         <>
-          <span className="block mb-1 text-tinta text-sm font-bold">Validação após a entrevista — quais ações cabem</span>
-          <p className="mb-3 mt-0 max-w-[64ch] text-tinta-3 text-xs leading-[1.55]">
-            Analise o relato antes de pedir a avaliação ao cliente. O sistema sugere as ações cabíveis,
-            mostra o que sustenta cada uma e compara o caso com a base vetorial. A decisão final é da equipe jurídica.
-          </p>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="block mb-1 text-tinta text-sm font-bold">Validação da transcrição — quais ações cabem</span>
+              <p className="mb-0 mt-0 max-w-[64ch] text-tinta-3 text-xs leading-[1.55]">
+                Cole o relato ou envie um arquivo. O sistema organiza os dados e sugere as ações para conferência jurídica.
+              </p>
+            </div>
+            {modoEntrada === "transcricao" && !resultado && (
+              <button type="button" className="text-xs font-semibold text-tinta-3 underline" onClick={() => { setModoEntrada(null); setTexto(""); }}>
+                Trocar forma de início
+              </button>
+            )}
+          </div>
 
           <div
         className={`rounded-campo border-2 border-dashed p-3 transition-colors ${

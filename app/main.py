@@ -54,7 +54,6 @@ from . import (
     chamada,
     consultas,
     conversao_pdf,
-    investigacao,
     localidades,
     usuarios,
     supervisao,
@@ -267,7 +266,6 @@ LIVRES_SEM_ADVOGADO = {
 # restarem funções mortas espalhadas por este arquivo.
 app.include_router(agente.roteador)
 app.include_router(advbox.roteador)
-app.include_router(investigacao.roteador)
 app.include_router(localidades.roteador)
 app.include_router(usuarios.roteador)
 app.include_router(usuarios.roteador_sessao)
@@ -470,7 +468,9 @@ def gerar_contrato(pedido: PedidoContrato):
 # `contrato.caminho_modelo` e a tabela em `app/banco.py`.
 
 PodeManterModelos = Depends(auth.exigir_modulo("contratos"))
-PodeManterModeloPeticao = Depends(auth.exigir_modulo("agente"))
+# A identidade visual é uma configuração documental do escritório. Ela não
+# depende de integração ou permissão de um agente jurídico externo.
+PodeManterModeloPeticao = Depends(auth.exigir_modulo("casos"))
 
 
 class ConfiguracaoVisualPeticao(BaseModel):
@@ -2682,13 +2682,6 @@ def reatribuir_entrega(
         categoria=categoria.codigo,
         corrigido_por=usuario.nome or usuario.usuario or usuario.id or "escritório",
     )
-    if corrigida:
-        threading.Thread(
-            target=_entregar_ao_agente,
-            args=(entrega["caso_id"], entrega_id),
-            name=f"agente-correcao-{entrega_id[:8]}",
-            daemon=True,
-        ).start()
     return corrigida
 
 
@@ -2758,13 +2751,6 @@ async def enviar_documento_de_teste(
         conteudo=caminho.read_bytes(),
     )
 
-    threading.Thread(
-        target=_entregar_ao_agente,
-        args=(caso_id, entrega["id"]),
-        name=f"agente-teste-{entrega['id'][:8]}",
-        daemon=True,
-    ).start()
-
     return entrega
 
 
@@ -2828,13 +2814,6 @@ async def enviar_entrevista(
         realizada_em=realizada_em.strip(),
         entrevistador=entrevistador.strip() or _quem_conduziu(request),
     )
-
-    threading.Thread(
-        target=_ler_entrevista_no_agente,
-        args=(caso_id, entrevista["id"]),
-        name=f"agente-entrevista-{entrevista['id'][:8]}",
-        daemon=True,
-    ).start()
 
     return entrevista
 
@@ -2951,17 +2930,6 @@ async def gravar_entrevista_ao_vivo(
     # aconteceu — que é o único momento em que ela significa o que afirma. A
     # supervisão pode corrigi-la depois, mas não é ela quem deveria criá-la.
     armazenamento.marcar_avaliacao_google(entrevista["id"], dados.avaliacao_google)
-
-    # O agente só lê a entrevista ENCERRADA. Mandar a conversa pela metade geraria
-    # fatos a partir de um relato que ainda ia mudar, e o dossiê guarda fato, não
-    # rascunho. `enviada` evita reenviar quando o atendente volta ao roteiro.
-    if dados.concluida and texto and not entrevista.get("enviada"):
-        threading.Thread(
-            target=_ler_entrevista_no_agente,
-            args=(caso_id, entrevista["id"]),
-            name=f"agente-entrevista-{entrevista['id'][:8]}",
-            daemon=True,
-        ).start()
 
     return armazenamento.obter_entrevista(entrevista["id"]) or entrevista
 

@@ -668,6 +668,23 @@ class NovoUsuario(BaseModel):
     senha: Annotated[str, Field(max_length=128)] = ""
 
 
+class AtualizarUsuario(BaseModel):
+    """Campos que o administrador pode corrigir numa conta existente."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nome: Annotated[str, Field(min_length=3, max_length=120)]
+    email: Annotated[
+        str, Field(min_length=5, max_length=160, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+    ]
+    perfil_id: Annotated[
+        int | None,
+        Field(validation_alias=AliasChoices("perfilId", "perfil_id"), gt=0),
+    ] = None
+    senha: Annotated[str, Field(max_length=128)] = ""
+    ativo: bool = True
+
+
 @roteador.get("", dependencies=[PodeGerir])
 def listar_usuarios() -> dict[str, Any]:
     """Quem já existe, com o perfil de cada um.
@@ -744,6 +761,53 @@ def criar_usuario(pedido: NovoUsuario) -> dict[str, Any]:
         "perfis": [perfil],
         "ativo": True,
         "senhaPadrao": hash_senha == auth.SENHA_PADRAO_MD5,
+    }
+
+
+@roteador.put("/{codigo}", dependencies=[PodeGerir])
+def atualizar_usuario(codigo: int, pedido: AtualizarUsuario, request: Request) -> dict[str, Any]:
+    """Edita cadastro, perfil, estado e, quando informada, a senha da conta."""
+    email = pedido.email.strip().lower()
+    senha = pedido.senha.strip()
+    if senha and not _parece_md5(senha) and len(senha) < 8:
+        raise HTTPException(400, "A senha precisa de pelo menos 8 caracteres.")
+
+    usuario_atual = auth.usuario_atual(request)
+    if auth.ATIVA and str(codigo) == usuario_atual.id and not pedido.ativo:
+        raise HTTPException(400, "Você não pode desativar a própria conta.")
+
+    with conectar() as con:
+        existente = con.execute(
+            f"SELECT codigo FROM {_TABELA} WHERE codigo = ?", (codigo,)
+        ).fetchone()
+        if existente is None:
+            raise HTTPException(404, "Usuário não encontrado.")
+        duplicado = con.execute(
+            f"SELECT 1 FROM {_TABELA} WHERE email = ? AND codigo <> ?", (email, codigo)
+        ).fetchone()
+        if duplicado:
+            raise HTTPException(409, f"Já existe usuário com o e-mail {email}.")
+        perfil_id, perfil = _resolver_perfil_usuario(con, pedido.perfil_id, None)
+        if senha:
+            con.execute(
+                f"UPDATE {_TABELA} SET nome = ?, email = ?, perfil = ?, perfil_id = ?, ativo = ?, senha_md5 = ? WHERE codigo = ?",
+                (pedido.nome.strip(), email, perfil, perfil_id, int(pedido.ativo), _hash_de(senha), codigo),
+            )
+        else:
+            con.execute(
+                f"UPDATE {_TABELA} SET nome = ?, email = ?, perfil = ?, perfil_id = ?, ativo = ? WHERE codigo = ?",
+                (pedido.nome.strip(), email, perfil, perfil_id, int(pedido.ativo), codigo),
+            )
+
+    return {
+        "id": str(codigo),
+        "usuario": email,
+        "nome": pedido.nome.strip(),
+        "email": email,
+        "perfil": perfil,
+        "perfilId": perfil_id,
+        "perfis": [perfil],
+        "ativo": pedido.ativo,
     }
 
 

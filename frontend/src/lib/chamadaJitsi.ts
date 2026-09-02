@@ -60,12 +60,21 @@ export interface Participante {
   souEu: boolean;
 }
 
+export interface MensagemChamada {
+  id: string;
+  autor: string;
+  texto: string;
+  minha: boolean;
+  enviadaEm: number;
+}
+
 export interface EventosChamada {
   onEstado?: (estado: EstadoChamada) => void;
   /** A voz do outro lado. No advogado, é o que alimenta o Whisper. */
   onFaixaRemota?: (trilha: MediaStreamTrack) => void;
   /** A sala inteira mudou: alguém entrou, saiu, ligou câmera ou trocou de nome. */
   onParticipantes?: (lista: Participante[]) => void;
+  onMensagem?: (mensagem: MensagemChamada) => void;
   onErro?: (mensagem: string) => void;
 }
 
@@ -107,6 +116,7 @@ interface ConferenciaJitsi {
   join(senha?: string): void;
   leave(): Promise<void>;
   getParticipantCount(): number;
+  sendTextMessage(mensagem: string): void;
 }
 
 interface ConexaoJitsi {
@@ -220,6 +230,19 @@ export class ChamadaJitsi {
 
   get compartilhandoTela(): boolean {
     return this.minhaTela !== null;
+  }
+
+  enviarMensagem(texto: string): void {
+    const mensagem = texto.trim();
+    if (!mensagem || !this.sala) return;
+    this.sala.sendTextMessage(mensagem);
+    this.eventos.onMensagem?.({
+      id: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      autor: this.meuNome || "Você",
+      texto: mensagem,
+      minha: true,
+      enviadaEm: Date.now(),
+    });
   }
 
   /** O navegador sabe capturar tela?
@@ -486,6 +509,20 @@ export class ChamadaJitsi {
 
     sala.on(ev.USER_JOINED, () => this.anunciarParticipantes());
     sala.on(ev.DISPLAY_NAME_CHANGED, () => this.anunciarParticipantes());
+
+    sala.on(ev.MESSAGE_RECEIVED, (...args: unknown[]) => {
+      const participanteId = String(args[0] ?? "");
+      const texto = String(args[1] ?? "").trim();
+      if (!texto) return;
+      const participante = sala.getParticipants().find((item) => item.getId() === participanteId);
+      this.eventos.onMensagem?.({
+        id: `remota-${participanteId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        autor: (participante?.getDisplayName() || "Participante").trim(),
+        texto,
+        minha: false,
+        enviadaEm: Date.now(),
+      });
+    });
 
     sala.on(ev.USER_LEFT, (...args: unknown[]) => {
       this.videos.delete(String(args[0]));

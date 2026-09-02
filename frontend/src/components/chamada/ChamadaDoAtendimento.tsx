@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
+import ChatChamada from "./ChatChamada";
 
 /* A chamada DEPOIS da entrevista, no atendimento.
  *
@@ -75,6 +76,8 @@ export default function ChamadaDoAtendimento({ modo = "avaliacao" }: { modo?: "a
       </div>
 
       <Retratos participantes={chamada.participantes} tamanho="coluna" />
+
+      <ChatChamada />
 
       {chamada.erro && (
         <p className="mt-[9px] mb-0 font-normal text-[11.5px] leading-[1.45] font-ui text-critico">

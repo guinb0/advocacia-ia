@@ -1323,6 +1323,19 @@ export async function criarUsuario(dados: {
   );
 }
 
+export async function atualizarUsuario(
+  id: string,
+  dados: { nome: string; email: string; perfilId: number; senha: string; ativo: boolean },
+): Promise<UsuarioCadastrado> {
+  return comoJson<UsuarioCadastrado>(
+    await buscar(`/api/usuarios/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
 // ------------------------------------------------- supervisão (secretário)
 
 export interface EntrevistaResumo {

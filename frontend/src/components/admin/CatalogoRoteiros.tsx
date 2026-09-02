@@ -118,9 +118,6 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
             blocos, e desfaça edição que não deu certo.
           </p>
         </div>
-        <Botao variante="texto" onClick={onVoltar}>
-          ← Voltar
-        </Botao>
       </div>
 
       {erro && <Aviso tom="critico">{erro}</Aviso>}
