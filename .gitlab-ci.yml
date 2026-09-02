@@ -18,14 +18,21 @@
 # E o preco de nao ter pipeline no fluxo do dia a dia.
 # ---------------------------------------------------------------------------
 include:
-  - component: gitlab.com/guinb0/ci-cd/deploy@1.3.0
+  - component: gitlab.com/guinb0/ci-cd/deploy@1.5.0
     inputs:
       stack_name: forense-flow
-      # O Next embute NEXT_PUBLIC_* NO BUILD. A chamada de video carrega a
-      # lib-jitsi-meet e abre o websocket a partir DESTA URL; com ela vazia o
-      # frontend pedia /libs/lib-jitsi-meet.min.js no proprio dominio e levava
-      # 404 — era por isso que a chamada nao funcionava.
-      build_args: "NEXT_PUBLIC_JITSI_URL=https://meet.forenseflow.com.br"
+      # O .env do servidor e GERADO a cada deploy a partir das CI/CD variables
+      # APPENV_*. Este arquivo lista quais chaves entram; chave sem variavel
+      # correspondente e OMITIDA, nunca escrita vazia.
+      #
+      # O prefixo APPENV_ nao e enfeite: variavel de PROJETO vence a declarada
+      # no .gitlab-ci.yml, entao um DATABASE_URL de projeto sobrescreveria o do
+      # job de teste e a suite passaria a apontar pro banco de producao.
+      env_keys_file: deploy/env.chaves
+      # O Next embute NEXT_PUBLIC_* NO BUILD, entao a URL do Jitsi tem de chegar
+      # como build-arg — no compose, em runtime, nao muda o bundle. Sai da mesma
+      # variable que alimenta o .env, pra nao ter duas fontes.
+      build_args: "NEXT_PUBLIC_JITSI_URL=$APPENV_NEXT_PUBLIC_JITSI_URL"
       # so a production produz; a main nem cria pipeline
       deploy_ref: production
       deploy_when: on_success
