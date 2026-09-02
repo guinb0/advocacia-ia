@@ -1318,7 +1318,16 @@ export async function criarUsuario(dados: {
     await buscar("/api/usuarios", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(dados),
+      // O estado do formulário também carrega `ativo`, usado somente na
+      // edição. Objetos vindos de variáveis podem ter propriedades extras sem
+      // o TypeScript reclamar; montar o contrato aqui impede que esse campo
+      // chegue ao `NovoUsuario`, que corretamente rejeita extras com 422.
+      body: JSON.stringify({
+        nome: dados.nome,
+        email: dados.email,
+        perfilId: dados.perfilId,
+        senha: dados.senha,
+      }),
     }),
   );
 }
