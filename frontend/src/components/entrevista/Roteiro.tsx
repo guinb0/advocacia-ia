@@ -12,7 +12,7 @@ import type { ReactNode, Ref } from "react";
 
 import { useSessao } from "@/lib/auth";
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, escutarTrecho, listarMunicipios, obterRoteiro, recomendarEntrevista, registrarAtendimentoDocumentacao } from "@/lib/api";
+import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, listarMunicipios, obterRoteiro, recomendarEntrevista, registrarAtendimentoDocumentacao } from "@/lib/api";
 import type { MunicipioLocalidade } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
 import type {
@@ -24,6 +24,7 @@ import type {
   Pergunta,
   PerguntaPendente,
   RecomendacaoEntrevista,
+  ProcessamentoEntrevista,
   RoteiroCompleto,
 } from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
@@ -212,6 +213,10 @@ export interface ManipuladorRoteiro {
   irParaPergunta: (perguntaId: string) => void;
   /** Aplica ao roteiro as respostas consolidadas pela revisão final. */
   atualizarRespostas: (respostas: Record<string, string | string[]>) => void;
+  /** Somente o que uma pessoa digitou/corrigiu; é fonte de verdade para a IA. */
+  respostasHumanas: () => Record<string, string | string[]>;
+  /** Resultado de checkpoint, sem permissão para sobrescrever edição humana. */
+  aplicarCheckpoint: (processamento: ProcessamentoEntrevista) => void;
   /** Fecha a gravação e espera o áudio inteiro chegar ao disco.
    *
    * Só no FIM do atendimento: a gravação corre durante a avaliação, os
@@ -406,6 +411,10 @@ export default function Roteiro({
    *
    * `escutando` é o estado que substitui os 86 ciclos de gravar/finalizar. */
   const [escutando, setEscutando] = useState(false);
+  const [mostrarRoteiroCompleto, setMostrarRoteiroCompleto] = useState(false);
+  const idsHumanos = useRef(new Set<string>());
+  const idsAutomaticos = useRef(new Set<string>());
+  const incertasAutomaticas = useRef(new Set<string>());
   const [ouvindo, setOuvindo] = useState(false);
   const [sugestoes, setSugestoes] = useState<CampoOuvido[]>([]);
   // Lido pelo `useImperativeHandle`, que é fixado na montagem e não enxergaria
@@ -445,8 +454,6 @@ export default function Roteiro({
    * duas rodadas simultâneas mandariam o mesmo `respostas` desatualizado e a
    * segunda desfaria o preenchimento da primeira. A fila serializa, e o trecho
    * que chega enquanto uma roda espera a vez. */
-  const filaTrechos = useRef<string[]>([]);
-  const escutaEmCurso = useRef(false);
   /* A conversa inteira, como o Whisper a devolveu, na ordem.
    *
    * Num ref e não em estado: cresce a cada frase de uma conversa de trinta
@@ -545,92 +552,6 @@ export default function Roteiro({
   const conferirRef = useRef(conferir);
   conferirRef.current = conferir;
 
-  /* A interpretação por trecho foi removida do caminho ao vivo.
-   *
-   * Cada volta manda o trecho e o estado ATUAL das respostas: é assim que a
-   * escuta sabe o que já foi respondido e não repete pergunta. Por isso a
-   * serialização importa — mandar duas em paralelo é mandar duas vezes o mesmo
-   * estado velho. */
-  const consumirFila = useCallback(async () => {
-    if (escutaEmCurso.current) return;
-    escutaEmCurso.current = true;
-    setOuvindo(true);
-    try {
-      while (filaTrechos.current.length > 0) {
-        // Junta o que se acumulou: se três trechos entraram enquanto a chamada
-        // anterior rodava, eles são uma frase só para quem vai interpretá-los.
-        const trecho = filaTrechos.current.join(" ").trim();
-        filaTrechos.current = [];
-        if (!trecho) continue;
-
-        const r = await escutarTrecho(
-          trecho,
-          respostasRef.current,
-          roteiroRef.current?.codigo ?? codigo,
-          atualRef.current,
-        );
-        setErroEscuta(null);
-        setFaltando(r.faltando);
-        setLembretes(r.lembretes);
-        if (r.sugestoes.length) {
-          // Sugestão nova de um campo substitui a anterior daquele campo: o
-          // cliente que repete o CPF está corrigindo, não acrescentando.
-          setSugestoes((atuais) => [
-            ...atuais.filter((s) => !r.sugestoes.some((n) => n.pergunta_id === s.pergunta_id)),
-            ...r.sugestoes,
-          ]);
-        }
-        if (r.preenchidas.length) {
-          /* Caiu trecho NA pergunta da vez: ele está respondendo ESTA, e a
-           * condução espera ele terminar. Cair em outra pergunta não segura
-           * nada — é resposta adiantada, e adiantar é justamente o que faz a
-           * entrevista encurtar. */
-          if (r.preenchidas.some((p) => p.pergunta_id === atualRef.current)) {
-            setRespondendoAgora((anterior) => {
-              const agora = Date.now();
-              // Só preserva o `desde` se ainda for a MESMA pergunta; trocou de
-              // pergunta, o teto recomeça, senão a segunda herdaria o relógio
-              // gasto pela primeira e nem chegaria a segurar.
-              return anterior && anterior.id === atualRef.current
-                ? { ...anterior, em: agora }
-                : { id: atualRef.current, em: agora, desde: agora };
-            });
-          }
-          // Caiu em qualquer pergunta: a entrevista está andando, e a cobrança
-          // recolhe enquanto isso durar.
-          setUltimoPreenchimento(Date.now());
-          setRespostas((atuais) => {
-            const novo = { ...atuais };
-            for (const p of r.preenchidas) {
-              const anterior = String(novo[p.pergunta_id] ?? "").trim();
-              // Acrescenta em vez de substituir: o cliente volta ao assunto
-              // várias vezes numa conversa, e o segundo trecho complementa o
-              // primeiro em vez de apagá-lo.
-              novo[p.pergunta_id] = anterior ? `${anterior} ${p.valor}` : p.valor;
-            }
-            return novo;
-          });
-          setOuvidas((atuais) => [
-            ...atuais.filter((o) => !r.preenchidas.some((n) => n.pergunta_id === o.pergunta_id)),
-            ...r.preenchidas,
-          ]);
-        }
-      }
-    } catch (e) {
-      // A escuta falhando não pode parar a entrevista: a conversa continua e os
-      // campos seguem editáveis à mão.
-      setErroEscuta(
-        e instanceof Error ? e.message : "A escuta automática falhou. Digite à mão.",
-      );
-    } finally {
-      escutaEmCurso.current = false;
-      setOuvindo(false);
-    }
-  }, [codigo]);
-
-  const consumirFilaRef = useRef(consumirFila);
-  consumirFilaRef.current = consumirFila;
-
   if (captura.current === null && typeof window !== "undefined") {
     captura.current = new CapturaEntrevista({
       onParcial: (texto) => {
@@ -685,9 +606,11 @@ export default function Roteiro({
         /* Trecho do entrevistador (leitura do roteiro / saudação) não vai para
          * a escuta: o modelo já confunde pergunta com resposta, e mandar a
          * fala de quem conduz piora. Na faixa da chamada tudo é Entrevistado. */
-        if (quem === "Entrevistador") return;
-        filaTrechos.current.push(texto.trim());
-        void consumirFilaRef.current();
+        /* A transcrição é contínua, mas a interpretação não acontece mais a
+         * cada frase. A pré-análise relê janelas maduras da conversa e aplica
+         * uma consolidação coerente; no fim, a entrevista inteira é relida.
+         * Isso evita que um fragmento provisório faça o formulário saltar ou
+         * que uma afirmação posterior seja apenas concatenada à anterior. */
       },
       onFinal: (texto) => {
         const id = emGravacao.current;
@@ -767,9 +690,44 @@ export default function Roteiro({
       sugestoesPendentes: () => sugestoesRef.current.length,
       irParaPergunta: (perguntaId: string) => irParaRef.current(perguntaId),
       atualizarRespostas: (novas) => {
-        setRespostas((atuais) => ({ ...atuais, ...novas }));
+        setRespostas((atuais) => {
+          const resultado = { ...atuais, ...novas };
+          for (const id of idsHumanos.current) resultado[id] = atuais[id];
+          return resultado;
+        });
         // A revisão rodou: o roteiro aparece para completar o que faltou.
         setRevisada(true);
+      },
+      respostasHumanas: () => Object.fromEntries(
+        [...idsHumanos.current]
+          .filter((id) => respondida(respostasRef.current[id]))
+          .map((id) => [id, respostasRef.current[id]]),
+      ),
+      aplicarCheckpoint: (processamento) => {
+        const recebidos = new Set(processamento.preenchidas.map((item) => item.pergunta_id));
+        const incertos = new Set(processamento.incertas.map((item) => item.pergunta_id));
+        setRespostas((atuais) => {
+          const novas = { ...atuais };
+          // Uma releitura pode descobrir contradição: retira a conclusão automática
+          // anterior, mas jamais toca no que uma pessoa corrigiu.
+          for (const id of idsAutomaticos.current) {
+            if (!recebidos.has(id) && !idsHumanos.current.has(id)) delete novas[id];
+          }
+          for (const [id, valor] of Object.entries(processamento.respostas)) {
+            if (!idsHumanos.current.has(id)) novas[id] = valor;
+          }
+          return novas;
+        });
+        idsAutomaticos.current = recebidos;
+        incertasAutomaticas.current = incertos;
+        setOuvidas(processamento.preenchidas.filter(
+          (item) => !idsHumanos.current.has(item.pergunta_id),
+        ));
+        setFaltando(processamento.faltando);
+        setLembretes(processamento.incertas.map((item) => ({
+          pergunta_id: item.pergunta_id,
+          pergunte: item.motivo,
+        })));
       },
       encerrarGravacao: async () => {
         await encerrarEscutaRef.current();
@@ -845,8 +803,6 @@ export default function Roteiro({
         void registrarAtendimentoDocumentacao(entrevistaId, String(respostasRef.current.nome ?? ""))
           .catch(() => undefined);
       }
-      // Fila limpa no início: trechos da sessão anterior não contaminam esta.
-      filaTrechos.current = [];
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível abrir o microfone.";
       setErro(/NotAllowedError|denied/i.test(m) ? "Permissão de microfone negada." : m);
@@ -880,6 +836,8 @@ export default function Roteiro({
   encerrarEscutaRef.current = encerrarEscuta;
 
   const aceitarSugestao = useCallback((perguntaId: string, valor: string) => {
+    idsHumanos.current.add(perguntaId);
+    idsAutomaticos.current.delete(perguntaId);
     setRespostas((r) => ({ ...r, [perguntaId]: valor }));
     setSugestoes((s) => s.filter((x) => x.pergunta_id !== perguntaId));
   }, []);
@@ -890,11 +848,14 @@ export default function Roteiro({
 
   /** Rola até o campo e o destaca — o painel é índice, não só relatório. */
   const irPara = useCallback((perguntaId: string) => {
-    const alvo = document.getElementById(`pergunta-${perguntaId}`);
-    if (!alvo) return;
-    alvo.scrollIntoView({ behavior: "smooth", block: "center" });
-    alvo.querySelector("textarea,input,select,button")?.setAttribute("data-realce", "1");
-    (alvo.querySelector("textarea,input") as HTMLElement | null)?.focus();
+    setMostrarRoteiroCompleto(true);
+    window.setTimeout(() => {
+      const alvo = document.getElementById(`pergunta-${perguntaId}`);
+      if (!alvo) return;
+      alvo.scrollIntoView({ behavior: "smooth", block: "center" });
+      alvo.querySelector("textarea,input,select,button")?.setAttribute("data-realce", "1");
+      (alvo.querySelector("textarea,input") as HTMLElement | null)?.focus();
+    }, 40);
   }, []);
 
   /* Tira a pergunta da vez sem respondê-la. Ela continua pendente: o painel a
@@ -917,6 +878,10 @@ export default function Roteiro({
   }, []);
 
   const responder = useCallback((id: string, valor: string | string[]) => {
+    idsHumanos.current.add(id);
+    idsAutomaticos.current.delete(id);
+    incertasAutomaticas.current.delete(id);
+    setOuvidas((atuais) => atuais.filter((item) => item.pergunta_id !== id));
     setRespostas((r) => id === "uf" && r.uf !== valor
       ? { ...r, uf: valor, municipio: "" }
       : { ...r, [id]: valor });
@@ -1421,8 +1386,19 @@ function preencherMarcadores(
           <h2 className="m-0 truncate font-semibold text-[22px] leading-[1.15] font-titulo" title={roteiro.nome}>
             {roteiro.nome}
           </h2>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-tinta-3">
+            <span><strong className="text-tinta">{feitas}</strong> de {total} consolidadas</span>
+            <span aria-hidden>·</span>
+            <span>{Math.max(total - feitas, 0)} pendentes</span>
+            {puladas.length > 0 && <><span aria-hidden>·</span><span className="text-atencao">{puladas.length} para retomar</span></>}
+          </div>
         </div>
         <div className={T_ACOES}>
+          {escutando && (
+            <button type="button" className={T_SECUNDARIO} onClick={() => setMostrarRoteiroCompleto((atual) => !atual)}>
+              {mostrarRoteiroCompleto ? "Voltar à condução" : "Revisar roteiro completo"}
+            </button>
+          )}
           {/* Fica ao lado do título, disponível o atendimento inteiro.
               A pergunta que não serve para este cliente, a que faltou, a opção
               que ninguém listou — tudo isso aparece com o cliente na linha, e
@@ -1753,7 +1729,29 @@ function preencherMarcadores(
             onDescartar={descartarSugestao}
           />}
 
-          {aberturaBloco && (
+          {escutando && !mostrarRoteiroCompleto && (
+            <section className="mb-5 rounded-[10px] border border-borda bg-papel-2 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <strong className="block text-sm text-tinta">Modo condução</strong>
+                  {resumoIdentificacao && <span className="mt-1 block font-codigo text-[11px] text-tinta-2">{resumoIdentificacao}</span>}
+                  <p className="mb-0 mt-1 max-w-[58ch] text-xs leading-[1.5] text-tinta-3">
+                    Fique na conversa. A IA consolida respostas em checkpoints; abra o roteiro completo apenas para corrigir ou conferir um campo.
+                  </p>
+                </div>
+                <button type="button" className={T_SECUNDARIO} onClick={() => setMostrarRoteiroCompleto(true)}>
+                  Abrir campos
+                </button>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 max-[620px]:grid-cols-1">
+                <div className="rounded-[7px] border border-borda bg-papel px-3 py-2"><strong className="block font-titulo text-lg text-ok">{feitas}</strong><span className="text-[10px] uppercase tracking-[0.08em] text-tinta-3">Consolidadas</span></div>
+                <div className="rounded-[7px] border border-borda bg-papel px-3 py-2"><strong className="block font-titulo text-lg text-tinta">{Math.max(total - feitas, 0)}</strong><span className="text-[10px] uppercase tracking-[0.08em] text-tinta-3">Ainda abertas</span></div>
+                <div className="rounded-[7px] border border-borda bg-papel px-3 py-2"><strong className="block font-titulo text-lg text-atencao">{incertasAutomaticas.current.size}</strong><span className="text-[10px] uppercase tracking-[0.08em] text-tinta-3">A confirmar</span></div>
+              </div>
+            </section>
+          )}
+
+          {aberturaBloco && (mostrarRoteiroCompleto || !escutando) && (
             <IdentificacaoRecolhivel
               resumo={resumoIdentificacao}
               aberta={idExpandida}
@@ -1766,6 +1764,8 @@ function preencherMarcadores(
                 perguntaAtual={atual?.pergunta.id ?? ""}
                 puladas={puladas}
                 aguardando={aguardandoConfirmacao}
+                fontes={ouvidas}
+                incertas={incertasAutomaticas.current}
                 onResponder={responder}
                 gravandoId={gravandoId}
                 pausado={estadoMic === "pausado"}
@@ -1785,7 +1785,7 @@ function preencherMarcadores(
             </IdentificacaoRecolhivel>
           )}
 
-          {blocosNoCorpo.map((bloco) => (
+          {(mostrarRoteiroCompleto || !escutando || escutaEncerrada || revisada) && blocosNoCorpo.map((bloco) => (
             <BlocoRoteiro
               key={bloco.id}
               bloco={bloco}
@@ -1793,6 +1793,8 @@ function preencherMarcadores(
               perguntaAtual={atual?.pergunta.id ?? ""}
               puladas={puladas}
               aguardando={aguardandoConfirmacao}
+              fontes={ouvidas}
+              incertas={incertasAutomaticas.current}
               onResponder={responder}
               gravandoId={gravandoId}
               pausado={estadoMic === "pausado"}
@@ -1963,6 +1965,8 @@ function BlocoRoteiro({
   perguntaAtual,
   puladas,
   aguardando,
+  fontes,
+  incertas,
   onResponder,
   gravandoId,
   pausado,
@@ -1992,6 +1996,8 @@ function BlocoRoteiro({
    *  vez, mas não estão respondidas — e o valor aparece para o entrevistador
    *  VER que o sistema pegou, sem ter de parar a conversa para confirmar. */
   aguardando: Map<string, string>;
+  fontes: CampoOuvido[];
+  incertas: Set<string>;
   onResponder: (id: string, valor: string | string[]) => void;
   gravandoId: string | null;
   pausado: boolean;
@@ -2119,6 +2125,26 @@ function BlocoRoteiro({
                 municipios={municipios}
                 carregandoMunicipios={carregandoMunicipios}
               />
+
+              {(() => {
+                const fonte = fontes.find((item) => item.pergunta_id === p.id);
+                if (!fonte && !incertas.has(p.id) && !respostas[p.id]) return null;
+                const humana = respondida(respostas[p.id]) && !fonte;
+                return (
+                  <div className={`mt-2 rounded-[6px] border px-3 py-2 text-[11px] leading-[1.5] ${
+                    incertas.has(p.id)
+                      ? "border-atencao bg-atencao-claro text-atencao"
+                      : humana
+                        ? "border-acao-borda bg-acao-clara text-acao"
+                      : "border-ok-borda bg-ok-claro text-tinta-2"
+                  }`}>
+                    <strong className="mr-2 font-ui text-[10px] uppercase tracking-[0.08em]">
+                      {incertas.has(p.id) ? "Não confirmado" : humana ? "Confirmado pelo advogado" : "Confirmado pela IA"}
+                    </strong>
+                    {fonte?.trecho && <span className="font-titulo italic">Fonte: “{fonte.trecho}”</span>}
+                  </div>
+                );
+              })()}
 
               {/* O que a escuta ouviu, à mostra no próprio campo.
                 *

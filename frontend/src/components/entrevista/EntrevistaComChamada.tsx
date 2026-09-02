@@ -105,6 +105,8 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
       {podeComplementar && <button type="button" className={`${CONCLUIR} mt-3`} onClick={onVoltar}>
           Voltar e complementar a entrevista
         </button>}
+      <h3 className="mb-0 mt-4 font-titulo text-base text-tinta">Avaliação inicial do caso</h3>
+      <p className="mb-0 mt-1 text-[11.5px] leading-[1.5] text-tinta-3">Apoio à análise do advogado, nunca decisão automática.</p>
       <div className="grid grid-cols-2 max-[700px]:grid-cols-1 gap-3 mt-3">
         <div className="border border-borda bg-papel p-3">
           <strong className="text-xs">Tipo provável do caso</strong>
@@ -142,7 +144,7 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
         </div>
       )}
       {processamento.faltando.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que ainda não foi perguntado ({processamento.faltando.length})</summary>
+        <details open className="mt-4 rounded-[7px] border border-atencao bg-atencao-claro px-3 py-2.5"><summary className="cursor-pointer text-xs font-bold text-atencao">O que ainda falta perguntar ({processamento.faltando.length})</summary>
           <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.slice(0, 12).map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
@@ -211,8 +213,9 @@ export default function EntrevistaComChamada({
    * ao vivo. Nada dela aparece na tela até o clique. */
   const preAnalise = usarPreAnalise({
     lerTranscricao: transcricaoAtual,
-    lerRespostas: () => ultimo.current[0],
+    lerRespostas: () => roteiro.current?.respostasHumanas() ?? {},
     ativa: encerrada === null && !fechando,
+    aoCheckpoint: (processamento) => roteiro.current?.aplicarCheckpoint(processamento),
   });
 
   const voltarAoRoteiro = () => {
@@ -230,6 +233,13 @@ export default function EntrevistaComChamada({
           <strong className="mt-1 block truncate text-sm text-tinta">
             Roteiro, chamada e fechamento no mesmo fluxo
           </strong>
+          <span className="mt-1 block text-[10.5px] text-tinta-3" aria-live="polite">
+            {preAnalise.estado === "analisando"
+              ? "IA revisando a conversa até aqui…"
+              : preAnalise.estado === "consolidado"
+                ? `Último checkpoint consolidado · ${preAnalise.cobertura.toLocaleString("pt-BR")} caracteres analisados`
+                : "A IA aguardará informação suficiente antes de consolidar respostas"}
+          </span>
         </div>
         <button
           type="button"
@@ -324,8 +334,10 @@ export default function EntrevistaComChamada({
                     if (completa) return;
 
                     setConsolidando(true);
-                    const [respostasAtuais, relatoAtual, entrevistaId, trechos] = ultimo.current;
-                    const leitura = await lerEntrevista(transcricao, respostasAtuais, (processamento) => {
+                    const [, relatoAtual, entrevistaId, trechos] = ultimo.current;
+                    const respostasHumanas = roteiro.current?.respostasHumanas() ?? {};
+                    const leitura = await lerEntrevista(transcricao, respostasHumanas, (processamento) => {
+                      roteiro.current?.aplicarCheckpoint(processamento);
                       // A revisão não pode viver só numa cópia externa: o roteiro
                       // que permanece na tela precisa exibir a consolidação.
                       roteiro.current?.atualizarRespostas(processamento.respostas);
@@ -450,7 +462,7 @@ export default function EntrevistaComChamada({
           )}
         </div>
 
-        <div className="min-w-0 sticky top-[86px] self-start max-h-[calc(100vh-104px)] overflow-y-auto rounded-cartao border border-borda-forte bg-papel p-3 shadow-cartao max-[1080px]:order-[-1] max-[1080px]:static max-[1080px]:max-h-none max-[1080px]:overflow-visible">
+        <div className="min-w-0 sticky top-[86px] self-start max-h-[calc(100vh-104px)] overflow-y-auto rounded-cartao border border-borda-forte bg-papel p-3 shadow-cartao max-[1080px]:static max-[1080px]:max-h-none max-[1080px]:overflow-visible">
           {/* A faixa da chamada alimenta a transcrição: quando o cliente entra,
            * a voz DELE — isolada da do entrevistador — vira a fonte do roteiro,
            * no lugar do microfone da máquina.
