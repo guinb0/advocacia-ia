@@ -4,6 +4,7 @@ import { Eye, EyeOff, FileText, Loader2 } from "lucide-react";
 
 import ChangePasswordModal from "./ChangePasswordModal";
 import LoginVisualPanel from "./LoginVisualPanel";
+import Turnstile from "./Turnstile";
 import type { usePageModel } from "./page.model";
 
 type LoginPageProps = ReturnType<typeof usePageModel>;
@@ -18,6 +19,9 @@ export function LoginPage(props: LoginPageProps) {
     trocaDeSenhaAberta,
     aoTrocarSenha,
     trocandoSenha,
+    captchaVersao,
+    aoValidarCaptcha,
+    captchaConcluido,
   } = props;
 
   const {
@@ -109,9 +113,11 @@ export function LoginPage(props: LoginPageProps) {
                 )}
               </div>
 
+              <Turnstile key={captchaVersao} onToken={aoValidarCaptcha} />
+
               <button
                 type="submit"
-                disabled={entrando}
+                disabled={entrando || !captchaConcluido}
                 className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border border-[#80aabd] bg-[#80aabd] px-4 py-3 text-base font-semibold text-[#162631] shadow-[0_12px_25px_rgba(0,0,0,0.20)] transition-[transform,background-color,box-shadow] enabled:hover:-translate-y-0.5 enabled:hover:bg-[#9abfce] enabled:hover:shadow-[0_16px_28px_rgba(0,0,0,0.26)] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-[#3a4e5c] disabled:text-[#94a5af]"
               >
                 {entrando && <Loader2 size={18} className="animate-spin" />}

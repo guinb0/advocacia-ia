@@ -32,7 +32,7 @@ include:
       # O Next embute NEXT_PUBLIC_* NO BUILD, entao a URL do Jitsi tem de chegar
       # como build-arg — no compose, em runtime, nao muda o bundle. Sai da mesma
       # variable que alimenta o .env, pra nao ter duas fontes.
-      build_args: "NEXT_PUBLIC_JITSI_URL=$APPENV_NEXT_PUBLIC_JITSI_URL"
+      build_args: "NEXT_PUBLIC_JITSI_URL=$APPENV_NEXT_PUBLIC_JITSI_URL NEXT_PUBLIC_TURNSTILE_SITE_KEY=$APPENV_NEXT_PUBLIC_TURNSTILE_SITE_KEY"
       # so a production produz; a main nem cria pipeline
       deploy_ref: production
       deploy_when: on_success

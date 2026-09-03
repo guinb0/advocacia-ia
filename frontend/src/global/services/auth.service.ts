@@ -21,6 +21,7 @@ import type { SessaoUsuario } from "@/app/page.interface";
 type LoginPayload = {
   email: string;
   senha: string;
+  turnstileToken?: string;
 };
 
 type Envelope<T> = { flag: boolean; message?: string; data: T };
@@ -34,6 +35,7 @@ export async function LoginService(payload: LoginPayload): Promise<SessaoUsuario
       email: btoa(payload.email.trim().toLowerCase()),
       senha: Md5.hashStr(payload.senha),
       TipoLogin: "email",
+      turnstileToken: payload.turnstileToken ?? "",
     },
     { porta: true },
   );

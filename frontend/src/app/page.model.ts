@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -13,6 +13,7 @@ import { useMutateChangePassword, useMutateLogin } from "@/global/hooks/useMutat
 const loginSchema = z.object({
   email: z.string().min(1, "Informe o e-mail.").email("E-mail inválido."),
   senha: z.string().min(1, "Senha é obrigatória."),
+  turnstileToken: z.string(),
 });
 
 export type LoginFormValues = z.infer<typeof loginSchema>;
@@ -22,16 +23,29 @@ export const usePageModel = () => {
   const { setCookieLoggedUser } = useUser();
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [trocaDeSenhaAberta, setTrocaDeSenhaAberta] = useState(false);
+  const [captchaVersao, setCaptchaVersao] = useState(0);
 
-  const { data: sessao, isPending: entrando, mutate: entrar } = useMutateLogin();
+  const { data: sessao, isPending: entrando, mutate: entrar, failureCount } = useMutateLogin();
   const { isPending: trocandoSenha, mutate: trocarSenha } = useMutateChangePassword();
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", senha: "" },
+    defaultValues: { email: "", senha: "", turnstileToken: "" },
   });
 
   const onSubmit = (dados: LoginFormValues) => entrar(dados);
+  const captchaAtivo = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
+  const tokenTurnstile = form.watch("turnstileToken");
+  const aoValidarCaptcha = useCallback(
+    (token: string) => form.setValue("turnstileToken", token),
+    [form],
+  );
+
+  useEffect(() => {
+    if (!failureCount) return;
+    form.setValue("turnstileToken", "");
+    setCaptchaVersao((atual) => atual + 1);
+  }, [failureCount, form]);
 
   useEffect(() => {
     if (!sessao) return;
@@ -69,5 +83,8 @@ export const usePageModel = () => {
     aoTrocarSenha,
     trocandoSenha,
     nomeDeQuemEntrou: sessao?.nome ?? "",
+    captchaVersao,
+    aoValidarCaptcha,
+    captchaConcluido: !captchaAtivo || Boolean(tokenTurnstile),
   };
 };

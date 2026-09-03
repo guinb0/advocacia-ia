@@ -49,9 +49,11 @@ import binascii
 import hashlib
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -366,10 +368,67 @@ class PedidoLogin(BaseModel):
     email: str = ""
     senha: str
     TipoLogin: str = "email"
+    turnstile_token: Annotated[
+        str,
+        Field(default="", validation_alias=AliasChoices("turnstileToken", "turnstile_token"), max_length=2048),
+    ] = ""
+
+
+TURNSTILE_SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+
+async def _validar_turnstile(token: str, request: Request) -> None:
+    """Valida uma prova de login no servidor; o widget sozinho não protege nada."""
+    segredo = _env("TURNSTILE_SECRET_KEY")
+    site_key = _env("NEXT_PUBLIC_TURNSTILE_SITE_KEY")
+    # As duas variáveis formam uma configuração única. Exigir o captcha com
+    # apenas a chave secreta bloquearia todo login porque o navegador não teria
+    # widget capaz de produzir um token.
+    if not segredo or not site_key:
+        return
+    if not token:
+        raise HTTPException(400, "Confirme que você não é um robô.")
+
+    payload = {
+        "secret": segredo,
+        "response": token,
+        "idempotency_key": str(uuid.uuid4()),
+    }
+    if request.client and request.client.host:
+        payload["remoteip"] = request.client.host
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as cliente:
+            resposta = await cliente.post(TURNSTILE_SITEVERIFY, json=payload)
+            resposta.raise_for_status()
+            resultado = resposta.json()
+    except (httpx.HTTPError, ValueError) as erro:
+        log.exception("Turnstile indisponível durante o login")
+        raise HTTPException(
+            503, "Não foi possível confirmar o acesso seguro. Tente novamente."
+        ) from erro
+
+    hostnames = {
+        item.strip().lower()
+        for item in _env("TURNSTILE_HOSTNAMES").split(",")
+        if item.strip()
+    }
+    hostname = str(resultado.get("hostname") or "").lower()
+    if (
+        not resultado.get("success")
+        or resultado.get("action") != "login"
+        or (hostnames and hostname not in hostnames)
+    ):
+        log.warning(
+            "Turnstile recusou login: erros=%s hostname=%s action=%s",
+            resultado.get("error-codes", []), hostname, resultado.get("action"),
+        )
+        raise HTTPException(400, "A verificação de segurança expirou ou foi recusada. Tente novamente.")
 
 
 @roteador_sessao.post("/authenticate")
-def autenticar(pedido: PedidoLogin, resposta: Response) -> dict[str, Any]:
+async def autenticar(
+    pedido: PedidoLogin, resposta: Response, request: Request
+) -> dict[str, Any]:
     """Confere a credencial, assina o token e o grava no cookie `HttpOnly`.
 
     A resposta vem no envelope `{flag, message, data}` do DFLegal, e o `data`
@@ -381,6 +440,8 @@ def autenticar(pedido: PedidoLogin, resposta: Response) -> dict[str, Any]:
     O token NÃO vai no corpo. Devolvê-lo ali desfaria toda a proteção do
     `HttpOnly`: bastaria um XSS ler a resposta do login.
     """
+    await _validar_turnstile(pedido.turnstile_token, request)
+
     email = _decodificar(pedido.email).strip().lower()
     if not email or not pedido.senha:
         raise HTTPException(400, "Informe e-mail e senha.")
