@@ -277,6 +277,20 @@ app.include_router(whatsapp.roteador)
 
 
 @app.middleware("http")
+async def cabecalhos_de_seguranca(request: Request, call_next):
+    resposta = await call_next(request)
+    resposta.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resposta.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resposta.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resposta.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    resposta.headers.setdefault(
+        "Permissions-Policy", "geolocation=(), payment=(), usb=(), browsing-topics=()"
+    )
+    resposta.headers.setdefault("Cache-Control", "no-store")
+    return resposta
+
+
+@app.middleware("http")
 async def exigir_autenticacao(request: Request, call_next):
     caminho = request.url.path
     # O preflight não carrega credencial nenhuma; recusá-lo quebraria todo o CORS.

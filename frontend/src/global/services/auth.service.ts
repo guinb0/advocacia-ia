@@ -13,6 +13,10 @@ import type { SessaoUsuario } from "@/app/page.interface";
  * evita que a senha em claro apareça no corpo e no log do servidor, mas NÃO
  * protege a tabela — se ela vazar, os hashes caem numa tabela pronta.
  *
+ * O servidor não guarda este MD5: ele aplica PBKDF2 com salt e migra hashes
+ * antigos no primeiro login válido. O MD5 aqui permanece apenas como contrato
+ * de transporte compatível com as contas existentes.
+ *
  * O TOKEN NÃO PASSA POR AQUI. Ele chega em cookie `HttpOnly`, que este código
  * não consegue ler nem escrever — e é justamente essa impossibilidade que o
  * protege de um XSS. O que volta no corpo são os dados de exibição da sessão.
