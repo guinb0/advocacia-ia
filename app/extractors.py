@@ -129,12 +129,21 @@ PALAVRAS_TIPO: dict[str, list[tuple[str, int]]] = {
         ("CARTAO NACIONAL DE SAUDE", 14), ("SISTEMA UNICO DE SAUDE", 10), ("SUS", 5),
         ("MINISTERIO DA SAUDE", 8), ("CNS", 4),
     ],
+    # Comprovante de residência é CONTA DE CONCESSIONÁRIA — não "qualquer papel com
+    # CEP e total a pagar". Os termos genéricos de antes (NOTA FISCAL, TOTAL A
+    # PAGAR, CLIENTE, CODIGO DE BARRAS, CEP) casavam recibo de Uber, nota de
+    # hospital e boleto qualquer, e enchiam o item de comprovante com o que não é.
+    # Agora cada sinal FORTE (conta de luz/água/gás, ou o nome da concessionária)
+    # sozinho já cruza o limiar; os fracos só reforçam quando o forte já está lá.
     "comprovante_residencia": [
-        ("FATURA", 6), ("CONTA DE LUZ", 8), ("CONTA DE ENERGIA", 8), ("ENERGIA ELETRICA", 8),
-        ("VENCIMENTO", 4), ("INSTALACAO", 5), ("CONSUMO", 4), ("KWH", 6), ("CEMIG", 8),
-        ("ENEL", 8), ("COPASA", 8), ("SABESP", 8), ("LIGHT", 5), ("EQUATORIAL", 8),
-        ("NOTA FISCAL", 4), ("CODIGO DE BARRAS", 3), ("TOTAL A PAGAR", 5), ("CEP", 3),
-        ("CLIENTE", 2), ("UNIDADE CONSUMIDORA", 8),
+        ("CONTA DE LUZ", 10), ("CONTA DE ENERGIA", 10), ("ENERGIA ELETRICA", 10),
+        ("CONTA DE AGUA", 10), ("CONTA DE GAS", 10), ("UNIDADE CONSUMIDORA", 10),
+        ("CEMIG", 10), ("ENEL", 10), ("COPASA", 10), ("SABESP", 10), ("EQUATORIAL", 10),
+        ("COELBA", 10), ("CPFL", 10), ("NEOENERGIA", 10), ("CELPE", 10), ("CELESC", 10),
+        ("COMGAS", 10), ("SANEPAR", 10), ("LIGHT SA", 10), ("CAESB", 10), ("SANEAGO", 10),
+        # Reforços: só ajudam a somar; sozinhos não classificam.
+        ("KWH", 6), ("LEITURA ANTERIOR", 4), ("LEITURA ATUAL", 4), ("CONSUMO FATURADO", 4),
+        ("INSTALACAO", 3), ("FATURA", 2), ("VENCIMENTO", 2), ("CONSUMO", 2),
     ],
     "certidao": [
         ("CERTIDAO", 10), ("REGISTRO CIVIL", 8), ("NASCIMENTO", 4), ("CASAMENTO", 4),
@@ -186,6 +195,14 @@ def classificar(texto_norm: str) -> tuple[str, int, dict[str, int]]:
         if not pontos:
             return "desconhecido", 0, {}
 
+    # Recibo de corrida (Uber, 99, táxi) casa termos genéricos de conta — "nota
+    # fiscal", "total a pagar", "cliente", "CEP" — e virava comprovante de
+    # residência. Não é: não prova onde a pessoa mora. Fora da disputa.
+    if pontos.get("comprovante_residencia") and _e_recibo_de_transporte(texto_norm):
+        pontos.pop("comprovante_residencia", None)
+        if not pontos:
+            return "desconhecido", 0, {}
+
     tipo = max(pontos, key=lambda k: pontos[k])
     return (tipo, pontos[tipo], pontos) if pontos[tipo] >= 10 else ("desconhecido", pontos[tipo], pontos)
 
@@ -231,6 +248,32 @@ def _evita_classificacao_ctps(texto_norm: str) -> bool:
         "LIQUIDO A RECEBER",
     )
     return any(s in texto_norm for s in sinais_holerite)
+
+
+def _e_recibo_de_transporte(texto_norm: str) -> bool:
+    """True quando o texto é recibo de corrida (Uber, 99, táxi) — não conta de casa."""
+    if not texto_norm:
+        return False
+    # Marca do app basta: uma conta de luz jamais diz "Uber".
+    marcas = ("UBER", "CABIFY", "99POP", "99 POP", "99 TAXI", "INDRIVER", "IN DRIVER")
+    if any(m in texto_norm for m in marcas):
+        return True
+    # Sem a marca, dois sinais de corrida para não pegar uma conta que cite "viagem".
+    sinais = (
+        "MOTORISTA",
+        "CORRIDA",
+        "VIAGEM",
+        "TARIFA DINAMICA",
+        "PONTO DE PARTIDA",
+        "PONTO DE DESTINO",
+        "EMBARQUE",
+        "TRAJETO",
+        "KM RODADO",
+        "RESUMO DA VIAGEM",
+        "DETALHES DA VIAGEM",
+        "RECIBO DA VIAGEM",
+    )
+    return sum(1 for s in sinais if s in texto_norm) >= 2
 
 
 # -------------------------------------------------------- geometria da página

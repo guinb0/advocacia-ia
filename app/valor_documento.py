@@ -116,6 +116,17 @@ REGRAS
   truncada. Interprete com isso em mente e NÃO invente o que não está legível.
 - `documento`: o que o texto revela ser, em poucas palavras ("CAT", "Laudo
   médico — ortopedia", "Boletim de ocorrência"). Não sabendo, diga "indefinido".
+  NÃO CONFUNDA documentos parecidos — são coisas diferentes:
+  • CAT (Comunicação de Acidente de Trabalho): formulário sobre o ACIDENTE em si,
+    emitido pela empresa/sindicato/médico; traz data e hora do acidente, agente
+    causador, parte do corpo atingida, CID da lesão. Fala do EVENTO.
+  • Comunicação de Decisão / Carta de Concessão do INSS: a decisão do INSS que
+    CONCEDE ou INDEFERE um benefício (auxílio-doença B31, auxílio-acidente B94,
+    aposentadoria); traz número do benefício, espécie, DIB/DCB, "deferido" ou
+    "indeferido". Fala da DECISÃO sobre o benefício, não do acidente. Se o texto
+    fala em conceder/negar benefício, é decisão do INSS — NUNCA "CAT".
+  • Atestado/Laudo médico: descreve o estado de saúde e o afastamento; não é
+    nenhum dos dois acima.
 - `serve_para`: a que itens da lista de pendências ele responde. Use o CÓDIGO do
   item como veio na lista. Só inclua item de que você tem evidência no texto.
 - `achados`: os dados que um advogado procuraria neste tipo de documento — CID,
