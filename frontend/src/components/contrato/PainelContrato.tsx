@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   baixarContratoAssinado,
   configAssinatura,
   DOCUMENTOS_DO_CLIENTE,
+  enviarAssinaturaPeloSite,
   enviarLinkAssinatura,
   enviarParaAssinatura,
   gerarContrato,
@@ -492,6 +493,14 @@ export default function PainelContrato({ respostas }: Props) {
         ))}
       </div>
       )}
+
+      {config?.navegador && (
+        <EnvioPeloSiteZapSign
+          clienteNome={cliente}
+          clienteEmail={email}
+          clienteTelefone={telefone}
+        />
+      )}
       </div>
 
       {Object.keys(porDocumento).length > 0 && (
@@ -499,6 +508,120 @@ export default function PainelContrato({ respostas }: Props) {
           Gerada a papelada, crie o caso abaixo: é ele que abre o checklist e o portal
           para o cliente enviar os demais documentos.
         </p>
+      )}
+    </div>
+  );
+}
+
+/* Envio pelo SITE do ZapSign (plano sem API). Sobe um PDF já pronto (o contrato
+ * baixado, a procuração, ou qualquer documento) e a automação entra na conta do
+ * escritório, cria o documento e dispara o convite por e-mail; havendo telefone,
+ * o link também vai pela nossa Evolution. Ver app/assinatura_navegador.py. */
+function EnvioPeloSiteZapSign({
+  clienteNome,
+  clienteEmail,
+  clienteTelefone,
+}: {
+  clienteNome: string;
+  clienteEmail: string;
+  clienteTelefone: string;
+}) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [email, setEmail] = useState(clienteEmail);
+  const [whatsapp, setWhatsapp] = useState(clienteTelefone);
+  const [enviando, setEnviando] = useState(false);
+  const [resultado, setResultado] = useState<{ link: string; whatsapp_enviado: boolean } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const CAMPO =
+    "w-full rounded-[6px] border border-borda bg-papel px-3 py-2 text-sm text-tinta placeholder:text-tinta-3";
+
+  async function enviar() {
+    if (!arquivo || !email.trim() || enviando) return;
+    setEnviando(true);
+    setErro(null);
+    setResultado(null);
+    try {
+      const r = await enviarAssinaturaPeloSite({
+        arquivo,
+        clienteNome,
+        clienteEmail: email.trim(),
+        clienteWhatsapp: whatsapp.trim(),
+      });
+      setResultado({ link: r.link, whatsapp_enviado: r.whatsapp_enviado });
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível enviar pelo site do ZapSign.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-[10px] border border-borda-forte bg-papel-2 p-4">
+      <h3 className="m-0 text-sm font-semibold text-tinta">Enviar pela conta ZapSign (site)</h3>
+      <p className="mt-1 mb-3 text-xs leading-[1.55] text-tinta-3">
+        Para o plano sem API: sobe o documento na conta do escritório e dispara o convite por
+        e-mail; havendo telefone, o link também vai pelo WhatsApp. Envie o PDF já pronto
+        (baixe o contrato/procuração acima e selecione aqui).
+      </p>
+
+      <div className="grid gap-2">
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={enviando}
+          className="rounded-[6px] border border-dashed border-acao-borda bg-papel px-3 py-3 text-sm text-tinta-2 hover:border-acao hover:text-acao"
+        >
+          {arquivo ? `Documento: ${arquivo.name}` : "Escolher o PDF a assinar"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf"
+          hidden
+          onChange={(e) => {
+            setArquivo(e.target.files?.[0] ?? null);
+            e.target.value = "";
+          }}
+        />
+        <input
+          className={CAMPO}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="E-mail do cliente"
+          type="email"
+        />
+        <input
+          className={CAMPO}
+          value={whatsapp}
+          onChange={(e) => setWhatsapp(e.target.value)}
+          placeholder="WhatsApp do cliente (opcional)"
+        />
+        <button
+          type="button"
+          onClick={() => void enviar()}
+          disabled={enviando || !arquivo || !email.trim()}
+          className="rounded-[6px] bg-acao px-4 py-2 text-sm font-semibold text-white hover:bg-acao-forte disabled:opacity-50"
+        >
+          {enviando ? "Enviando pelo site do ZapSign…" : "Enviar para assinatura"}
+        </button>
+      </div>
+
+      {erro && <p className="mt-2 mb-0 text-sm text-critico">{erro}</p>}
+      {resultado && (
+        <div className="mt-2 rounded-[6px] border border-ok-borda bg-ok-claro p-3 text-sm text-tinta">
+          <p className="m-0 font-semibold text-ok">Enviado ✓</p>
+          {resultado.link ? (
+            <p className="mt-1 mb-0 [overflow-wrap:anywhere]">
+              Link de assinatura: <a href={resultado.link} target="_blank" rel="noreferrer">{resultado.link}</a>
+            </p>
+          ) : (
+            <p className="mt-1 mb-0 text-tinta-3">O convite por e-mail saiu; o site não expôs o link direto.</p>
+          )}
+          <p className="mt-1 mb-0 text-tinta-3">
+            WhatsApp: {resultado.whatsapp_enviado ? "link enviado ao cliente" : "não enviado"}
+          </p>
+        </div>
       )}
     </div>
   );

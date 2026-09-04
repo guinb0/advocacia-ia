@@ -901,6 +901,22 @@ export async function configAssinatura(): Promise<ConfigAssinatura> {
   return comoJson<ConfigAssinatura>(await buscar("/api/assinatura/config"));
 }
 
+/** Envia um documento à assinatura pelo SITE do ZapSign (plano sem API), via
+ *  navegador, e — havendo telefone e link — manda o link pela Evolution. */
+export async function enviarAssinaturaPeloSite(dados: {
+  arquivo: File;
+  clienteNome: string;
+  clienteEmail: string;
+  clienteWhatsapp?: string;
+}): Promise<{ ok: boolean; link: string; whatsapp_enviado: boolean }> {
+  const form = new FormData();
+  form.append("arquivo", dados.arquivo);
+  form.append("cliente_nome", dados.clienteNome);
+  form.append("cliente_email", dados.clienteEmail);
+  form.append("cliente_whatsapp", dados.clienteWhatsapp ?? "");
+  return comoJson(await buscar("/api/assinatura/navegador", { method: "POST", body: form }));
+}
+
 /** Gera o contrato e o manda assinar. O .docx é o mesmo de `gerarContrato`. */
 export async function enviarParaAssinatura(
   respostas: Record<string, string | string[]>,
