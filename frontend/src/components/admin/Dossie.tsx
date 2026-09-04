@@ -24,6 +24,7 @@ import {
   gerarContratoDoCaso as solicitarContratoDoCaso,
   requisitosDoContrato,
   analisarDocumentosDoCaso,
+  enviarTranscricaoEntrevista,
   type AnaliseDocumentos,
 } from "@/lib/api";
 import type { TomSelo } from "@/lib/formato";
@@ -452,6 +453,7 @@ export default function Dossie({
           <PainelEntrevista
             casoId={casoId}
             entrevistas={dados.entrevistas ?? []}
+            onAtualizar={carregar}
           />
         </aside>
 
@@ -1731,12 +1733,38 @@ function PainelContradicoes({
 function PainelEntrevista({
   casoId,
   entrevistas,
+  onAtualizar,
 }: {
   casoId: string;
   entrevistas: EntrevistaResumo[];
+  onAtualizar: () => void | Promise<void>;
 }) {
   const [lendo, setLendo] = useState<string | null>(null);
   const [texto, setTexto] = useState<Record<string, string>>({});
+  const [transcricao, setTranscricao] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [erroEnvio, setErroEnvio] = useState<string | null>(null);
+  const arquivoRef = useRef<HTMLInputElement>(null);
+
+  async function adicionar(arquivo: File) {
+    setEnviando(true);
+    setErroEnvio(null);
+    try {
+      await enviarTranscricaoEntrevista(casoId, arquivo);
+      setTranscricao("");
+      await onAtualizar();
+    } catch (e) {
+      setErroEnvio(e instanceof Error ? e.message : "Não foi possível adicionar a transcrição.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  function adicionarTextoColado() {
+    const t = transcricao.trim();
+    if (!t) return;
+    void adicionar(new File([t], "transcricao.txt", { type: "text/plain" }));
+  }
 
   async function abrirTexto(entrevistaId: string) {
     if (texto[entrevistaId]) {
@@ -1817,6 +1845,59 @@ function PainelEntrevista({
       {entrevistas.length === 0 && (
         <p className={TEXTO_VAZIO}>Nenhuma entrevista registrada neste caso.</p>
       )}
+
+      {/* Sempre disponível: um caso pode chegar sem entrevista gravada (contato
+       * por telefone, atendimento antigo). Colar ou subir a transcrição aqui é o
+       * que destrava a análise e a petição. */}
+      <div className="mt-4 border-t border-borda pt-4">
+        <h4 className="m-0 mb-2 text-sm font-semibold text-tinta">
+          {entrevistas.length === 0 ? "Adicionar transcrição" : "Adicionar outra transcrição"}
+        </h4>
+        <p className={EXPLICACAO}>
+          Cole o texto do atendimento ou envie um arquivo (.txt, .docx, .pdf). Ele passa a valer
+          como entrevista deste caso.
+        </p>
+        <textarea
+          value={transcricao}
+          onChange={(e) => setTranscricao(e.target.value)}
+          placeholder="Cole aqui a transcrição do atendimento…"
+          rows={5}
+          disabled={enviando}
+          className="mt-2 w-full rounded-campo border border-borda bg-papel p-3 text-sm text-tinta placeholder:text-tinta-3"
+        />
+        {erroEnvio && (
+          <p className="mt-2 mb-0 text-sm text-critico">{erroEnvio}</p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Botao
+            variante="primario"
+            pequeno
+            onClick={adicionarTextoColado}
+            disabled={enviando || !transcricao.trim()}
+          >
+            {enviando ? "Enviando…" : "Adicionar transcrição colada"}
+          </Botao>
+          <Botao
+            variante="secundario"
+            pequeno
+            onClick={() => arquivoRef.current?.click()}
+            disabled={enviando}
+          >
+            Enviar arquivo
+          </Botao>
+          <input
+            ref={arquivoRef}
+            type="file"
+            accept=".txt,.docx,.pdf,.md,.rtf"
+            hidden
+            onChange={(e) => {
+              const arquivo = e.target.files?.[0];
+              e.target.value = "";
+              if (arquivo) void adicionar(arquivo);
+            }}
+          />
+        </div>
+      </div>
     </Cartao>
   );
 }
