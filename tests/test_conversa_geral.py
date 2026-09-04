@@ -146,7 +146,7 @@ checar(
 )
 
 
-print("\n9. Acervo vazio não quebra nem inventa")
+print("\n9. Forense vazio não quebra nem inventa")
 checar(cg.rotear("Resuma o caso da Maria Silva", []).natureza == cg.ACERVO, "sem casos -> ACERVO")
 checar(cg.casos_citados("", ACERVO_DE_TESTE) == [], "pergunta vazia não cita ninguém")
 checar(

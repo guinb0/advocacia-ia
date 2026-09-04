@@ -5,7 +5,7 @@ e guarda a transcrição.
 
 Quem é dono do quê:
 
-- **a conversa é do Acervo.** Ela começa antes de haver caso, e pode nunca ter um. A
+- **a conversa é do Forense.** Ela começa antes de haver caso, e pode nunca ter um. A
   transcrição inteira mora em `dbo.acervo_conversas` / `dbo.acervo_conversa_mensagens`,
   porque só ela mistura o que o agente respondeu sobre um caso, o que o glossário
   explicou sobre o sistema e a recusa honesta de uma pergunta sobre o acervo. Nenhum dos

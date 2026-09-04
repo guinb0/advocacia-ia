@@ -4,7 +4,7 @@
  * corpus de jurisprudência) e o cache, mais quanto cada agente de IA (estratégia,
  * pesquisa, redação...) tem demorado e acertado nas últimas 24h.
  *
- * Fala só com `/api/agente/saude`, que é o Acervo repassando o `/health/inspection`
+ * Fala só com `/api/agente/saude`, que é o Forense repassando o `/health/inspection`
  * do agente — a tela nunca conhece o endereço nem o token dele.
  */
 

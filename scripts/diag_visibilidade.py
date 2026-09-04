@@ -2,7 +2,7 @@
 
 Ponto em que o diagnóstico chegou: `POST /cases` devolve 201, os workers processam aquele
 caso (a saúde mostra `case_classifier` e `strategy` subindo), e mesmo assim a leitura
-seguinte responde 404 — o Acervo conclui "vínculo órfão" e cria outro caso. Isso se repete
+seguinte responde 404 — o Forense conclui "vínculo órfão" e cria outro caso. Isso se repete
 a cada requisição, então documento, fato e classificação nunca se acumulam no mesmo caso.
 
 Sobram duas causas com tratamentos opostos, e este script separa as duas:

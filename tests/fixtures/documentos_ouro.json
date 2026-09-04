@@ -1,0 +1,30 @@
+[
+  {
+    "id": "certidao-ocorrencia-policial-001",
+    "texto": "SERVIÇO PÚBLICO FEDERAL POLÍCIA FEDERAL SUPERINTENDÊNCIA REGIONAL CERTIDÃO DE OCORRÊNCIA POLICIAL. OCORRÊNCIA Nº 2024.0913.080700.0049. REGISTRO DO HISTÓRICO DE PLANTÃO de 13/09/2024. Compareceu o senhor Tarzan Sales Galvão.",
+    "esperado": {
+      "tipo": "certidao_ocorrencia_policial",
+      "pessoas": ["Tarzan Sales Galvão"],
+      "nao_pessoas": ["SUPERINTENDÊNCIA REGIONAL"],
+      "campos": ["numero_ocorrencia", "data_ocorrencia"]
+    }
+  },
+  {
+    "id": "atestado-medico-001",
+    "texto": "ATESTADO MÉDICO. Atesto para os devidos fins que a paciente Maria da Silva necessita de 15 dias de afastamento. CID M54.5. CRM-SP 123456. São Paulo, 20/08/2026.",
+    "esperado": {
+      "tipo": "atestado_medico",
+      "pessoas": ["Maria da Silva"],
+      "campos": ["paciente", "data_documento", "medico"]
+    }
+  },
+  {
+    "id": "cat-001",
+    "texto": "COMUNICAÇÃO DE ACIDENTE DE TRABALHO - CAT. INFORMAÇÕES DO ACIDENTADO: João Alves. DATA DO ACIDENTE: 14/07/2026. NÚMERO DA CAT: 20260714001.",
+    "esperado": {
+      "tipo": "cat",
+      "pessoas": ["João Alves"],
+      "campos": ["trabalhador", "data_acidente"]
+    }
+  }
+]

@@ -1,4 +1,4 @@
-# Guia visual do front-end (Acervo)
+# Guia visual do front-end (Forense)
 
 Este documento descreve o sistema visual do `frontend/`, adotado em substituição
 à antiga direção "AUTOS" (fundo quase preto, filetes duplos, carimbos girados,

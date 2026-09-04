@@ -1063,6 +1063,9 @@ export async function enviarDocumento(
 
 export interface RespostaLote {
   lote_id: string;
+  /** Quantos arquivos foram aceitos e serão registrados em segundo plano. */
+  total?: number;
+  /** Vazio nas rotas assíncronas — as entregas surgem no checklist pelo polling. */
   recebidos: Array<{ arquivo: string; entrega_id: string }>;
   recusados: Array<{ arquivo: string; motivo: string }>;
   processando: boolean;
@@ -1079,6 +1082,86 @@ export async function enviarDocumentosEmLote(
   form.append("idioma", idioma);
   return comoJson<RespostaLote>(
     await buscar(`/api/casos/${casoId}/documentos/lote`, { method: "POST", body: form }),
+  );
+}
+
+/** Mesma coisa que `enviarDocumentosEmLote`, mas a partir de uma pasta .zip:
+ * o backend descompacta e cada arquivo dentro segue a mesma triagem automática. */
+export async function enviarDocumentosZip(
+  casoId: string,
+  arquivo: File,
+  idioma = "pt",
+): Promise<RespostaLote> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  form.append("idioma", idioma);
+  return comoJson<RespostaLote>(
+    await buscar(`/api/casos/${casoId}/documentos/zip`, { method: "POST", body: form }),
+  );
+}
+
+export interface DocumentoLido {
+  nome?: string;
+  tipo_detectado?: string | null;
+}
+
+export interface SugestaoCategoria {
+  codigo: string;
+  nome: string;
+  pontos: number;
+  confianca: number;
+  evidencias: string[];
+}
+
+export interface SugestaoCategoriaPorDocumentos {
+  sugestoes: SugestaoCategoria[];
+  confiante: boolean;
+  motivo: string;
+  metodo?: string;
+  documentos: DocumentoLido[];
+}
+
+/** Antes de o caso existir: que tipo de ação os documentos do cliente sugerem? */
+export async function sugerirCategoriaPorDocumentos(
+  arquivos: File[],
+  idioma = "pt",
+): Promise<SugestaoCategoriaPorDocumentos> {
+  const form = new FormData();
+  arquivos.forEach((arquivo) => form.append("arquivos", arquivo));
+  form.append("idioma", idioma);
+  return comoJson<SugestaoCategoriaPorDocumentos>(
+    await buscar("/api/categorias/sugerir/lote", { method: "POST", body: form }),
+  );
+}
+
+/** A mesma sugestão, a partir de uma pasta .zip. */
+export async function sugerirCategoriaPorZip(
+  arquivo: File,
+  idioma = "pt",
+): Promise<SugestaoCategoriaPorDocumentos> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  form.append("idioma", idioma);
+  return comoJson<SugestaoCategoriaPorDocumentos>(
+    await buscar("/api/categorias/sugerir/zip", { method: "POST", body: form }),
+  );
+}
+
+/** Política do escritório: a revisão humana de documentos é obrigatória? */
+export async function obterPoliticaRevisao(): Promise<{ obrigatoria: boolean }> {
+  return comoJson(await buscar("/api/configuracoes/revisao-humana"));
+}
+
+/** Liga/desliga a revisão humana obrigatória para TODOS os casos. */
+export async function definirPoliticaRevisao(
+  obrigatoria: boolean,
+): Promise<{ obrigatoria: boolean }> {
+  return comoJson(
+    await buscar("/api/configuracoes/revisao-humana", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ obrigatoria }),
+    }),
   );
 }
 
@@ -1114,6 +1197,27 @@ export async function excluirEntrega(entregaId: string): Promise<void> {
 /** A entrega com a extração completa — os campos que o visor mostra. */
 export async function obterEntrega(entregaId: string): Promise<EntregaDetalhe> {
   return comoJson<EntregaDetalhe>(await buscar(`/api/entregas/${entregaId}`));
+}
+
+export interface RevisaoDocumento {
+  aceito: boolean;
+  tipo_documento?: string;
+  itens: string[];
+  observacao?: string;
+}
+
+/** Registra a palavra final do profissional e alimenta a memória de correções. */
+export async function revisarAnaliseDocumento(
+  entregaId: string,
+  revisao: RevisaoDocumento,
+): Promise<EntregaDetalhe["analise_documental"]> {
+  return comoJson(
+    await buscar(`/api/entregas/${entregaId}/analise/revisao`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(revisao),
+    }),
+  );
 }
 
 export interface PacoteDocumentos {

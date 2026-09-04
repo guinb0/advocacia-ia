@@ -34,6 +34,68 @@ export interface Validacao {
   erros?: string[];
   avisos?: string[];
   sugestoes?: string[];
+  revisao_necessaria?: boolean;
+  motivos_revisao?: string[];
+  estados?: EstadosAnaliseDocumento;
+  /** Pessoas citadas no documento, com o papel que a leitura deu a cada uma. */
+  partes?: ParteDocumento[];
+  /** O sujeito principal do documento (paciente, autor, titular...). */
+  pessoa_principal?: ParteDocumento | null;
+  /** Se o nome da pessoa principal bate com o cliente do caso. `false` não é erro
+   * — é sinal de que o documento fala de outra parte (vítima, agressor, etc.). */
+  pessoa_principal_confere?: boolean | null;
+}
+
+export interface ParteDocumento {
+  nome: string;
+  papel: string;
+  /** Vínculo com o cliente (esposa, filho, chefe, agressor). Vem do próprio
+   * documento quando ele o declara, ou da entrevista do caso quando não. */
+  relacao_com_cliente?: string;
+  /** De onde saiu o vínculo. "documento" é prova; "entrevista" é o que o cliente
+   * contou — mais fraco, e a tela precisa dizer qual dos dois é. */
+  relacao_origem?: "documento" | "entrevista";
+  /** A passagem da entrevista que sustenta o vínculo, quando veio de lá. */
+  relacao_citacao?: string;
+  pagina?: number | null;
+}
+
+export interface EstadosAnaliseDocumento {
+  arquivo_legivel?: boolean;
+  tipo_confirmado?: boolean;
+  campos_validados?: boolean;
+  atende_checklist?: boolean;
+  evidencias_extraidas?: boolean;
+}
+
+export interface EtapaAnaliseDocumento {
+  etapa: string;
+  ordem: number;
+  status: "PENDENTE" | "PROCESSANDO" | "CONCLUIDA" | "FALHOU" | "IGNORADA" | "AGUARDANDO_REVISAO";
+  tentativas: number;
+  modelo?: string | null;
+  versao?: string;
+  erro?: string | null;
+  duracao_ms?: number | null;
+  iniciado_em?: string | null;
+  finalizado_em?: string | null;
+}
+
+export interface AnaliseDocumento {
+  id: string;
+  entrega_id: string;
+  status: "NA_FILA" | "PROCESSANDO" | "REVISAO_NECESSARIA" | "CONCLUIDA" | "FALHOU";
+  etapa_atual: string;
+  revisao_necessaria: boolean;
+  motivo_revisao?: string | null;
+  versao_pipeline: string;
+  etapas: EtapaAnaliseDocumento[];
+  resumo?: {
+    tipo?: string;
+    finalidade?: string;
+    pontos_principais?: string[];
+    alertas?: string[];
+  };
 }
 
 export interface Metrica {
@@ -96,6 +158,10 @@ export interface Documento {
     serve_para?: Array<{ item: string; porque: string }>;
     atencao?: string[];
     sugere_pedir?: string[];
+    pessoas?: Array<{ nome: string; papel: string; citacao?: string; pagina?: number }>;
+    organizacoes?: Array<{ nome: string; papel: string; citacao?: string; pagina?: number }>;
+    evidencias?: Array<{ categoria: string; fato: string; citacao: string; pagina: number; sensivel?: boolean }>;
+    dados_sensiveis?: string[];
   };
   /** Entregas antigas podem ter sido salvas antes deste bloco existir. */
   qualidade_imagem?: QualidadeImagem;
@@ -108,6 +174,11 @@ export interface Documento {
   };
   texto_linhas?: LinhaTexto[];
   texto_completo: string;
+  analise_documental?: {
+    versao: string;
+    estados: EstadosAnaliseDocumento;
+    revisao_necessaria: boolean;
+  };
   arquivos_temporarios?: {
     json: string;
     xml: string;
@@ -166,6 +237,9 @@ export interface Entrega {
   id: string;
   /** Estado real da fila/leitura; 'erro' indica que o arquivo foi preservado. */
   status_proc?: "na_fila" | "processando" | "pronto" | "erro";
+  /** Estado leve do pipeline de análise; não contém OCR ou dados sensíveis. */
+  analise_status?: "NA_FILA" | "PROCESSANDO" | "REVISAO_NECESSARIA" | "CONCLUIDA" | "FALHOU" | null;
+  analise_etapa?: string | null;
   erro_proc?: string | null;
   caso_id: string;
   item_codigo: string;
@@ -195,6 +269,7 @@ export interface Entrega {
  * (a coluna `extracao_json`), que é de onde saem os campos exibidos no visor. */
 export interface EntregaDetalhe extends Entrega {
   extracao?: Documento;
+  analise_documental?: AnaliseDocumento;
 }
 
 export interface ItemSituacao extends ItemChecklist {
@@ -211,6 +286,7 @@ export interface Progresso {
   itens_a_conferir: number;
   /** Ausente enquanto o frontend conversa com uma versão anterior da API. */
   em_triagem?: number;
+  em_processamento?: number;
   percentual_obrigatorios: number;
   pronto: boolean;
 }
@@ -221,6 +297,8 @@ export interface SituacaoCaso {
   itens: ItemSituacao[];
   /** Arquivos preservados cuja leitura ainda não encontrou um item seguro. */
   triagem?: Entrega[];
+  /** Arquivos únicos que ainda passam pela pipeline ou aguardam conferência. */
+  em_processamento?: Entrega[];
   progresso: Progresso;
   erro?: string;
 }
@@ -377,11 +455,32 @@ export interface PrecedenteEstrategia {
   url?: string;
 }
 
+/** Uma pessoa do caso como o parecer a enxerga: papel no processo E vínculo com
+ *  o cliente. Só vem no parecer do caso (`POST /api/casos/{id}/parecer`), que é o
+ *  único que enxerga todos os documentos de uma vez. */
+export interface ParteParecer {
+  nome: string;
+  relacao: string;
+  relacao_com_cliente: string;
+  documentos: string[];
+  relevancia: string;
+  acoes: string;
+}
+
 export interface Estrategia {
   resumo: string;
-  acoes: Array<{ acao: string; porque: string; aplicabilidade?: string; contrapontos?: string; forca?: string; precedentes: string[] }>;
-  riscos: Array<{ risco: string; aplicabilidade?: string; contrapontos?: string; forca?: string; precedentes: string[] }>;
+  acoes: Array<{ acao: string; porque: string; documentos?: string[]; aplicabilidade?: string; contrapontos?: string; forca?: string; precedentes: string[] }>;
+  riscos: Array<{ risco: string; documentos?: string[]; aplicabilidade?: string; contrapontos?: string; forca?: string; precedentes: string[] }>;
   divergencias?: Array<{ ponto: string; precedentes_favoraveis: string[]; precedentes_contrarios: string[] }>;
+  /** Abaixo, só o parecer do caso preenche — a análise da entrevista não os traz. */
+  partes?: ParteParecer[];
+  oportunidades?: Array<{ oportunidade: string; porque: string; documentos: string[]; precedentes: string[] }>;
+  /** Como as varas e magistrados da amostra vêm decidindo. Não é o juiz deste caso:
+   *  na captação o processo ainda não foi distribuído. */
+  perfil_foro?: string;
+  contradicoes?: Array<{ ponto: string; documentos: string[] }>;
+  pontos_sensiveis?: Array<{ ponto: string; documento: string }>;
+  com_precedentes?: boolean;
   lacunas: string[];
   perguntas_criticas?: string[];
   aviso: string;

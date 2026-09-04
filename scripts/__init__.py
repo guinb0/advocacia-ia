@@ -1,1 +1,1 @@
-"""Scripts operacionais do Acervo."""
+"""Scripts operacionais do Forense."""

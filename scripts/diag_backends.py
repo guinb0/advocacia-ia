@@ -6,10 +6,10 @@ do MESMO identificador responde 404. Uma linha não pode existir para o worker e
 existir para a API se os dois olharem o mesmo banco.
 
 A hipótese que sobra é DNS: se duas pilhas atendem pelo alias `ia-juridica` na rede
-`traefik-public`, cada requisição do Acervo cai numa delas, com bancos diferentes. Criar
+`traefik-public`, cada requisição do Forense cai numa delas, com bancos diferentes. Criar
 num backend e ler no outro dá exatamente 404 alternado.
 
-O teste é de leitura pura: bate N vezes em `/api/agente/saude`, que o Acervo repassa ao
+O teste é de leitura pura: bate N vezes em `/api/agente/saude`, que o Forense repassa ao
 agente, e compara um contador que só cresce (execuções por agente). Um backend só produz
 uma sequência monotônica. Dois backends produzem valores que **alternam para trás**.
 

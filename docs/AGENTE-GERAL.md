@@ -262,7 +262,7 @@ Duas tabelas novas, criadas pelo mesmo DDL idempotente das demais (`app/banco.py
 - **`dbo.acervo_conversa_mensagens`** — `id`, `conversa_id` (cascata), `papel`, `conteudo`,
   `natureza`, `payload` (JSON), `criado_em`.
 
-A conversa é do **Acervo**, e não do agente: ela começa antes de haver caso e pode nunca ter
+A conversa é do **Forense**, e não do agente: ela começa antes de haver caso e pode nunca ter
 um. Só ela mistura o que o agente respondeu sobre um caso, o que o glossário explicou e a
 recusa honesta — nenhum dos outros lados tem a transcrição inteira, e é ela que a tela
 reabre. O `conversa_ref` guarda o `conversation_id` do agente para a segunda pergunta

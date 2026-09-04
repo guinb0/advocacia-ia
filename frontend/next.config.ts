@@ -22,6 +22,10 @@ import type { NextConfig } from "next";
  * motivo. O Dockerfile liga a variavel; a maquina de ninguem precisa. */
 const nextConfig: NextConfig = {
   output: process.env.BUILD_STANDALONE === "1" ? "standalone" : undefined,
+  // Há outro package-lock no perfil do Windows. Sem uma raiz explícita o
+  // Turbopack sobe até C:\Users\Windows10 e o build falha ao varrer pastas do
+  // sistema às quais o processo não tem acesso.
+  turbopack: { root: process.cwd() },
 };
 
 export default nextConfig;

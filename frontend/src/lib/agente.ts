@@ -1,7 +1,7 @@
 /**
  * Cliente do módulo do agente jurídico.
  *
- * Fala com `/api/agente/*` do próprio backend do Acervo, que por sua vez conversa
+ * Fala com `/api/agente/*` do próprio backend do Forense, que por sua vez conversa
  * com o serviço `ia-juridica`. A tela nunca chama o agente direto: assim o token, a
  * organização e o vínculo entre os dois casos ficam num lugar só, no servidor.
  *

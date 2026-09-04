@@ -469,7 +469,7 @@ class Cliente:
         Leitura direta: do outro lado são agregações no acervo, sem chamada de modelo.
         Prender a tela num 202 aqui seria burocracia sem ganho.
 
-        O `orgao` é opcional porque o Acervo não guarda a vara em campo próprio. Quando o
+        O `orgao` é opcional porque o Forense não guarda a vara em campo próprio. Quando o
         advogado informa, a comparação deixa de ser com a jurisdição inteira e passa a ser
         com quem vai julgar.
         """

@@ -48,7 +48,7 @@ __all__ = ["ESTAGIOS", "compor", "estagio_do_caso", "montar"]
 
 
 # Os utilitários de tempo vêm do painel do caso mesmo sendo privados, e é de propósito:
-# as datas do Acervo são `varchar` em três formatos diferentes, e uma segunda conversão
+# as datas do Forense são `varchar` em três formatos diferentes, e uma segunda conversão
 # escrita aqui produziria um segundo valor para o mesmo marco.
 _instante = painel._instante
 _iso = painel._iso
@@ -83,7 +83,7 @@ _TETO_PARADOS = 12
 # --------------------------------------------------------------------- estágios
 
 
-#: Onde o caso está, decidido **só** pelo que o Acervo grava. A linha do processo do
+#: Onde o caso está, decidido **só** pelo que o Forense grava. A linha do processo do
 #: dossiê tem mais etapas do que estas — as que dependem do agente jurídico —, e por
 #: isso as duas telas não mostram a mesma contagem de etapas. A diferença está escrita
 #: na descrição de cada uma.
@@ -118,7 +118,7 @@ ESTAGIOS = (
     {
         "codigo": "instruido",
         "titulo": "Instruído",
-        "descricao": "Checklist completo e contrato assinado. É o fim do que o Acervo mede.",
+        "descricao": "Checklist completo e contrato assinado. É o fim do que o Forense mede.",
         "tom": OK,
     },
     {
@@ -170,7 +170,7 @@ AUSENCIAS = painel.AUSENCIAS + (
     {
         "campo": "Caso encerrado ou arquivado",
         "motivo": (
-            "O Acervo não tem status de encerramento. O estágio final medido é "
+            "O Forense não tem status de encerramento. O estágio final medido é "
             "'instruído' — checklist completo e contrato assinado —, que é o fim do "
             "trabalho deste sistema, não o fim do processo."
         ),
@@ -185,7 +185,7 @@ AUSENCIAS = painel.AUSENCIAS + (
     },
     {
         "campo": "Faturamento e honorários",
-        "motivo": "Nenhum valor é registrado no Acervo, nem contratado nem recebido.",
+        "motivo": "Nenhum valor é registrado no Forense, nem contratado nem recebido.",
     },
 )
 
@@ -314,7 +314,7 @@ def montar_indicadores(
             "Casos em andamento",
             len(andando),
             "casos",
-            f"De {total} no Acervo. {len(instruidos)} já estão instruídos.",
+            f"De {total} no Forense. {len(instruidos)} já estão instruídos.",
             INFO if andando else NEUTRO,
         ),
         _indicador(
@@ -599,7 +599,7 @@ def montar_movimento(linhas: list[dict[str, Any]], agora: datetime) -> dict[str,
     """Entradas e desfechos mês a mês, nos últimos doze meses.
 
     Três marcos reais, nenhum derivado: caso aberto, entrevista anexada e contrato
-    assinado. "Casos encerrados" não existe aqui porque o Acervo não grava encerramento
+    assinado. "Casos encerrados" não existe aqui porque o Forense não grava encerramento
     (ver `ausencias`) — e o contrato assinado é o marco mais próximo do fim que é
     gravado de verdade.
 

@@ -1399,7 +1399,7 @@ export default function PainelCaso({
       <Secao
         numero={9}
         titulo="Histórico completo"
-        explicacao="Todo evento com instante gravado, dos dois lados: Acervo (caso, portal, documentos, entrevista, contrato) e agente jurídico (fatos, classificação, pesquisa, estratégia, petição)."
+        explicacao="Todo evento com instante gravado, dos dois lados: Forense (caso, portal, documentos, entrevista, contrato) e agente jurídico (fatos, classificação, pesquisa, estratégia, petição)."
       >
         <div className={CARTAO}>
           <Figura

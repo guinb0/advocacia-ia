@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 import random
 import time
@@ -15,6 +15,10 @@ from typing import Any
 import httpx
 import psycopg
 from psycopg.rows import dict_row
+
+from . import llm
+
+log = logging.getLogger("rag")
 
 BASE = Path(__file__).resolve().parent.parent
 
@@ -309,17 +313,35 @@ Responda apenas JSON no formato:
 """
 
 
-def _normalizar_resultado(resultado: dict[str, Any], validos: set[str]) -> dict[str, Any]:
-    """Descarta referências inventadas e recomendações sem precedente verificável."""
+def _normalizar_resultado(
+    resultado: dict[str, Any],
+    validos: set[str],
+    documentos_validos: set[str] | None = None,
+) -> dict[str, Any]:
+    """Descarta referências inventadas e recomendações sem lastro verificável.
+
+    Lastro é precedente OU documento do caso — `sintetizar_estrategia_caso` passa
+    `documentos_validos` (os arquivos que realmente entraram no pacote) para que
+    uma ação fundamentada só nos fatos do caso, sem precedente, não seja
+    descartada; `sugerir_acoes` não passa nada e mantém a exigência antiga de
+    sempre ter precedente, porque é tudo que ela tem para se apoiar.
+    """
     for chave in ("acoes", "riscos"):
         limpos = []
         for item in resultado.get(chave) or []:
             if not isinstance(item, dict):
                 continue
             refs = [str(r) for r in (item.get("precedentes") or []) if str(r) in validos]
-            if not refs:
+            docs = (
+                [str(d) for d in (item.get("documentos") or []) if str(d) in documentos_validos]
+                if documentos_validos is not None
+                else []
+            )
+            if not refs and not docs:
                 continue
             item["precedentes"] = refs
+            if documentos_validos is not None:
+                item["documentos"] = docs
             forca = str(item.get("forca") or "baixa").casefold()
             item["forca"] = forca if forca in {"alta", "media", "média", "baixa"} else "baixa"
             if item["forca"] == "alta" and len(set(refs)) < 2:
@@ -337,6 +359,188 @@ def _normalizar_resultado(resultado: dict[str, Any], validos: set[str]) -> dict[
     resultado["divergencias"] = divergencias[:4]
     resultado["lacunas"] = [str(x).strip() for x in (resultado.get("lacunas") or []) if str(x).strip()][:8]
     resultado["perguntas_criticas"] = [str(x).strip() for x in (resultado.get("perguntas_criticas") or []) if str(x).strip()][:8]
+
+    if documentos_validos is not None:
+        contradicoes = []
+        for item in resultado.get("contradicoes") or []:
+            if not isinstance(item, dict):
+                continue
+            docs = [str(d) for d in (item.get("documentos") or []) if str(d) in documentos_validos]
+            if len(docs) < 2:
+                continue
+            item["documentos"] = docs
+            contradicoes.append(item)
+        resultado["contradicoes"] = contradicoes[:6]
+
+        sensiveis = []
+        for item in resultado.get("pontos_sensiveis") or []:
+            if not isinstance(item, dict):
+                continue
+            doc = str(item.get("documento") or "")
+            if doc not in documentos_validos:
+                continue
+            item["documento"] = doc
+            sensiveis.append(item)
+        resultado["pontos_sensiveis"] = sensiveis[:8]
+
+        partes = []
+        for item in resultado.get("partes") or []:
+            if not isinstance(item, dict) or not str(item.get("nome") or "").strip():
+                continue
+            partes.append(
+                {
+                    "nome": str(item.get("nome") or "").strip()[:120],
+                    "relacao": str(item.get("relacao") or "").strip()[:80],
+                    "relacao_com_cliente": str(item.get("relacao_com_cliente") or "").strip()[:80]
+                    or "não estabelecido",
+                    # Vínculo lido no arquivo pesa mais que vínculo ouvido na
+                    # entrevista, e o advogado precisa ver de qual se trata sem
+                    # abrir o documento. Fonte fora do vocabulário vira o valor
+                    # mais fraco: o modelo não decide sozinho que algo é documental.
+                    "vinculo_fonte": (
+                        str(item.get("vinculo_fonte") or "").strip().casefold()
+                        if str(item.get("vinculo_fonte") or "").strip().casefold()
+                        in {"documento", "entrevista"}
+                        else "não estabelecido"
+                    ),
+                    "documentos": [
+                        str(d) for d in (item.get("documentos") or []) if str(d) in documentos_validos
+                    ],
+                    "relevancia": str(item.get("relevancia") or "").strip()[:400],
+                    "acoes": str(item.get("acoes") or "").strip()[:400],
+                }
+            )
+        resultado["partes"] = partes[:12]
+
+        # Mesma exigência de lastro das ações: oportunidade que não aponta documento
+        # do caso nem precedente recuperado é palpite, e palpite não vai para o
+        # parecer que o advogado usa para decidir a tese.
+        oportunidades = []
+        for item in resultado.get("oportunidades") or []:
+            if not isinstance(item, dict) or not str(item.get("oportunidade") or "").strip():
+                continue
+            refs = [str(r) for r in (item.get("precedentes") or []) if str(r) in validos]
+            docs = [str(d) for d in (item.get("documentos") or []) if str(d) in documentos_validos]
+            if not refs and not docs:
+                continue
+            oportunidades.append(
+                {
+                    "oportunidade": str(item.get("oportunidade") or "").strip()[:400],
+                    "porque": str(item.get("porque") or "").strip()[:400],
+                    "documentos": docs,
+                    "precedentes": refs,
+                }
+            )
+        resultado["oportunidades"] = oportunidades[:6]
+        resultado["perfil_foro"] = str(resultado.get("perfil_foro") or "").strip()[:1500]
+
+    return resultado
+
+
+def _precedentes_para_contexto(
+    texto_consulta: str,
+    *,
+    limite: int,
+    embedding_timeout: float,
+    connect_timeout: int,
+    connect_retries: int | None,
+) -> tuple[list[Any], list[Any]]:
+    """Busca os precedentes mais próximos e devolve (amostra completa, recorte pro modelo).
+
+    Compartilhado por `sugerir_acoes` e `sintetizar_estrategia_caso`: as duas
+    fundamentam a resposta nos MESMOS precedentes reais, só muda o que entra
+    junto no prompt (relato puro vs. fatos do caso + relato).
+    """
+    similares = buscar_similares(
+        texto_consulta,
+        limite=max(limite, 30),
+        timeout=embedding_timeout,
+        connect_timeout=connect_timeout,
+        connect_retries=connect_retries,
+    )
+    if not similares:
+        raise ErroRAG("nenhum precedente vetorizado foi localizado")
+    return similares, similares[:limite]
+
+
+def _formatar_perfil_foro(estatisticas: dict[str, Any]) -> str:
+    """O retrato de varas e magistrados da amostra, em texto, para ENTRAR no prompt.
+
+    Estes números já eram calculados, mas só depois da chamada ao modelo — iam
+    para a tela sem nunca terem passado pelo raciocínio de quem escreveu o
+    parecer. O modelo lia os precedentes um a um e não enxergava o padrão do
+    conjunto: "nesta vara, 8 de 10 casos como este foram procedentes".
+
+    Não diz "o juiz do caso" de propósito: na captação o processo ainda não foi
+    distribuído. É perfil da amostra semelhante, e o prompt exige que seja
+    apresentado assim.
+    """
+    varas = estatisticas.get("varas") or []
+    magistrados = estatisticas.get("magistrados") or []
+    if not varas and not magistrados:
+        return ""
+
+    linhas = [
+        f"Amostra: {estatisticas.get('processos_analisados', 0)} processos semelhantes já julgados."
+    ]
+    merito = estatisticas.get("desfechos_merito") or {}
+    if merito.get("processos"):
+        linhas.append(
+            f"Desfecho de mérito na amostra: {merito.get('favoraveis', 0)} de "
+            f"{merito['processos']} favoráveis ({merito.get('percentual', 0)}%) — "
+            f"critério: {merito.get('criterio', '')}."
+        )
+    if varas:
+        linhas.append("Varas/órgãos que mais julgaram casos assim:")
+        linhas += [
+            f"- {v['nome']}: {v['quantidade']} processo(s) ({v['percentual']}% da amostra)"
+            for v in varas
+        ]
+    if magistrados:
+        linhas.append("Magistrados que mais assinaram essas decisões:")
+        linhas += [
+            f"- {m['nome']}: {m['quantidade']} decisão(ões) ({m['percentual']}% da amostra)"
+            for m in magistrados
+        ]
+    linhas.append(
+        "Estes números descrevem a amostra recuperada, não preveem o resultado deste caso "
+        "e não indicam quem o julgará."
+    )
+    return "\n".join(linhas)
+
+
+def _formatar_precedentes(contexto_modelo: list[Any]) -> str:
+    partes = []
+    for indice, trecho in enumerate(contexto_modelo, 1):
+        ref = trecho.referencia()
+        partes.append(
+            f"[P{indice}] processo={ref['processo']} resultado={ref['resultado']} "
+            f"fonte={ref['fonte']} tipo={ref['tipo_documento']} "
+            f"similaridade={ref['similaridade']}\n{trecho.texto[:3500]}"
+        )
+    return "\n\n".join(partes)
+
+
+def _fechar_resultado(
+    resultado: dict[str, Any],
+    similares: list[Any],
+    contexto_modelo: list[Any],
+    documentos_validos: set[str] | None = None,
+) -> dict[str, Any]:
+    resultado = _normalizar_resultado(
+        resultado, {f"P{i}" for i in range(1, len(contexto_modelo) + 1)}, documentos_validos
+    )
+    resultado["precedentes"] = [
+        {"indice": f"P{i}", **trecho.referencia()}
+        for i, trecho in enumerate(contexto_modelo, 1)
+    ]
+    if similares:
+        resultado["estatisticas"] = _estatisticas_amostra(similares)
+        resultado["metodologia"] = (
+            "Busca vetorial com corte relativo de similaridade, um trecho por processo "
+            "e prioridade para sentenças/acórdãos do TRT8/TST/DJEN/DEJT; referências "
+            "inexistentes são descartadas antes da resposta."
+        )
     return resultado
 
 
@@ -349,57 +553,171 @@ def sugerir_acoes(
     connect_retries: int | None = None,
     model_timeout: float = 120,
 ) -> dict[str, Any]:
-    # Uma amostra maior sustenta os padrões descritivos. Apenas os precedentes
-    # mais próximos entram no contexto do modelo para limitar custo e ruído.
-    similares = buscar_similares(
+    similares, contexto_modelo = _precedentes_para_contexto(
         relato,
-        limite=max(limite, 30),
-        timeout=embedding_timeout,
+        limite=limite,
+        embedding_timeout=embedding_timeout,
         connect_timeout=connect_timeout,
         connect_retries=connect_retries,
     )
-    if not similares:
-        raise ErroRAG("nenhum precedente vetorizado foi localizado")
-    contexto_modelo = similares[:limite]
-    contexto = []
-    for indice, trecho in enumerate(contexto_modelo, 1):
-        ref = trecho.referencia()
-        contexto.append(
-            f"[P{indice}] processo={ref['processo']} resultado={ref['resultado']} "
-            f"fonte={ref['fonte']} tipo={ref['tipo_documento']} "
-            f"similaridade={ref['similaridade']}\n{trecho.texto[:3500]}"
+    try:
+        resultado = llm.chamar(
+            INSTRUCAO_ESTRATEGIA,
+            f"RELATO:\n{relato[:12000]}\n\nPRECEDENTES:\n" + _formatar_precedentes(contexto_modelo),
+            temperatura=0,
+            timeout=model_timeout,
         )
-    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
-    resposta = httpx.post(
-        base_url + "/chat/completions",
-        headers={"Authorization": f"Bearer {_obrigatoria('DEEPSEEK_API_KEY')}"},
-        json={
-            "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": INSTRUCAO_ESTRATEGIA},
-                {
-                    "role": "user",
-                    "content": f"RELATO:\n{relato[:12000]}\n\nPRECEDENTES:\n" + "\n\n".join(contexto),
-                },
-            ],
-        },
-        timeout=model_timeout,
-    )
-    resposta.raise_for_status()
-    resultado = json.loads(resposta.json()["choices"][0]["message"]["content"])
-    resultado = _normalizar_resultado(
-        resultado, {f"P{i}" for i in range(1, len(contexto_modelo) + 1)}
-    )
-    resultado["precedentes"] = [
-        {"indice": f"P{i}", **trecho.referencia()}
-        for i, trecho in enumerate(contexto_modelo, 1)
-    ]
-    resultado["estatisticas"] = _estatisticas_amostra(similares)
-    resultado["metodologia"] = (
-        "Busca vetorial com corte relativo de similaridade, um trecho por processo "
-        "e prioridade para sentenças/acórdãos do TRT8/TST/DJEN/DEJT; referências "
-        "inexistentes são descartadas antes da resposta."
-    )
+    except llm.ErroLLM as exc:
+        raise ErroRAG(str(exc)) from exc
+    return _fechar_resultado(resultado, similares, contexto_modelo)
+
+
+INSTRUCAO_ESTRATEGIA_CASO = """Você auxilia um advogado trabalhista brasileiro a preparar o
+parecer de UM CASO ESPECÍFICO — não uma pesquisa genérica.
+
+Você recebe até quatro blocos: (1) FATOS DO CASO — evidências extraídas dos documentos que o
+cliente entregou, cada uma com a citação literal e a página de onde saiu, e a lista de
+PESSOAS CITADAS com seus papéis; (2) RELATO da entrevista, quando houver; (3) PRECEDENTES de
+processos semelhantes já julgados; (4) PERFIL DO FORO — como as varas e os magistrados que
+julgam casos semelhantes vêm decidindo, medido sobre esses mesmos precedentes.
+
+REGRAS
+- O `resumo` deve CONTEXTUALIZAR o caso inteiro NOMEANDO EXPLICITAMENTE cada pessoa envolvida,
+  os documentos que ela apresentou, e a dupla relação dela: com o CASO (vítima,
+  agressor/assaltante, empregador/chefe, motorista, perito, médico, testemunha) e com o
+  CLIENTE (esposa, filho, pai, chefe, colega, desconhecido). Não escreva "a parte" nem "o
+  terceiro": escreva o nome. Diga também o que ainda falta e o que o foro sugere.
+- `partes`: uma entrada por pessoa relevante citada nos documentos. `relacao` é o papel no
+  CASO; `relacao_com_cliente` é o vínculo pessoal/profissional com o cliente do escritório;
+  `documentos` são os arquivos em que ela aparece.
+- **CRUZE OS DOCUMENTOS COM O RELATO PARA ESTABELECER O VÍNCULO.** Um documento quase nunca
+  diz de quem a pessoa é parente — um resumo de alta traz "Paciente: Artur Nunes" e nada
+  mais. Mas o cliente costuma dizer isso na entrevista ("meu filho Artur se acidentou"). Ao
+  encontrar um nome sem vínculo nos documentos, PROCURE esse nome no RELATO e use o vínculo
+  que o cliente declarou. Preencha `relacao_com_cliente` com ele e registre em
+  `vinculo_fonte` de onde veio: "documento" (o arquivo declara), "entrevista" (o cliente
+  disse no relato) ou "não estabelecido". Quando vier da entrevista, cite em `relevancia` a
+  passagem que sustenta o vínculo.
+- Nunca invente parentesco, e NÃO deduza vínculo por sobrenome igual — sobrenome coincidente
+  não é prova de filiação. Sem documento nem relato que diga, use "não estabelecido".
+- Toda ação, risco ou contradição que citar um fato do caso precisa apontar de qual
+  documento ele veio, em `documentos`. Fato sem essa origem não pode aparecer na resposta.
+  NÃO invente fato nem pessoa que não esteja nas evidências ou no relato.
+- `contradicoes`: quando dois documentos do PRÓPRIO caso divergem entre si (data, nome,
+  empregador, valor, função) — cite os dois arquivos e o que diverge. Vazio se não houver.
+- `pontos_sensiveis`: dado de saúde física/mental, violência sofrida, ou informação que a
+  parte contrária poderia usar contra o cliente — para o advogado ter cuidado ao usar,
+  não para reforçar pedido.
+- `lacunas` inclui tanto o que falta PROVAR quanto item obrigatório do checklist ainda sem
+  documento (virá listado, quando houver).
+- `oportunidades`: brechas e pontos de alavancagem concretos deste caso — tese que a vara já
+  vem acolhendo, prova que o adversário dificilmente produz, prazo/preclusão a explorar,
+  cumulação de pedidos que os precedentes sustentam. Cada uma amarrada a `documentos` e/ou
+  `precedentes`. Oportunidade sem lastro não entra.
+- `perfil_foro`: leitura do bloco PERFIL DO FORO — o que os números dizem sobre onde causas
+  como esta são julgadas e por quem, e o que isso muda na condução. Use SOMENTE as varas e
+  magistrados que aparecem naquele bloco, com os números que vieram. NÃO afirme que este caso
+  será julgado por eles: o processo ainda não foi distribuído, e a amostra é dos precedentes
+  semelhantes. Se o bloco não vier, deixe vazio.
+- Precedente sustenta ação/risco do mesmo jeito que numa pesquisa comum: força "alta" nunca
+  com um único precedente, sempre citando o número [P1], [P2] etc.
+- Não avalie chance de êxito, não estime valor de causa, não decida se um item do checklist
+  está cumprido — isso é sempre do advogado.
+
+Responda apenas JSON no formato:
+{"resumo":"...",
+ "partes":[{"nome":"...","relacao":"cliente|vítima|agressor|empregador|motorista|perito|médico|testemunha|...","relacao_com_cliente":"esposa|filho|chefe|colega|agressor|não estabelecido|...","vinculo_fonte":"documento|entrevista|não estabelecido","documentos":["arquivo.pdf"],"relevancia":"...","acoes":"..."}],
+ "oportunidades":[{"oportunidade":"...","porque":"...","documentos":["arquivo.pdf"],"precedentes":["P1"]}],
+ "perfil_foro":"...",
+ "acoes":[{"acao":"...","porque":"...","documentos":["arquivo.pdf"],"aplicabilidade":"...","contrapontos":"...","forca":"alta|media|baixa","precedentes":["P1"]}],
+ "riscos":[{"risco":"...","documentos":["arquivo.pdf"],"aplicabilidade":"...","contrapontos":"...","forca":"alta|media|baixa","precedentes":["P2"]}],
+ "contradicoes":[{"ponto":"...","documentos":["a.pdf","b.pdf"]}],
+ "pontos_sensiveis":[{"ponto":"...","documento":"arquivo.pdf"}],
+ "divergencias":[{"ponto":"...","precedentes_favoraveis":["P1"],"precedentes_contrarios":["P2"]}],
+ "lacunas":["..."],"perguntas_criticas":["..."],
+ "aviso":"Análise assistiva; requer revisão do advogado."}
+"""
+
+
+def sintetizar_estrategia_caso(
+    caso_id: str,
+    *,
+    relato: str = "",
+    limite: int = 8,
+    embedding_timeout: float = 120,
+    connect_timeout: int = 10,
+    connect_retries: int | None = None,
+    model_timeout: float = 120,
+) -> dict[str, Any]:
+    """A mesma síntese de `sugerir_acoes`, fundamentada nos documentos do caso.
+
+    `conciliacao.montar_pacote_caso` já reduziu cada documento a evidências com
+    citação e página — aqui isso só é achatado em texto e mandado junto do
+    relato (quando houver) e dos precedentes recuperados pela MESMA busca
+    vetorial de `sugerir_acoes`.
+    """
+    from . import conciliacao
+
+    pacote = conciliacao.montar_pacote_caso(caso_id)
+    if not pacote["documentos"] and not relato.strip():
+        raise ErroRAG(
+            "O caso não tem documentos lidos nem relato informado — nada para analisar."
+        )
+
+    texto_fatos = conciliacao.texto_para_modelo(pacote)
+    consulta = (relato.strip() + "\n\n" + texto_fatos)[:8000] if relato.strip() else texto_fatos
+
+    # Precedente é ENRIQUECIMENTO, não requisito: os documentos do caso são o
+    # material principal. Se o banco vetorial não responde (remoto, compartilhado,
+    # já saiu do ar — ver CONTEXTO.md) ou os embeddings não estão configurados, o
+    # parecer ainda sai, marcado `com_precedentes: false`. É a mesma degradação
+    # honesta que a análise de resposta da entrevista já faz.
+    try:
+        similares, contexto_modelo = _precedentes_para_contexto(
+            consulta,
+            limite=limite,
+            embedding_timeout=embedding_timeout,
+            connect_timeout=connect_timeout,
+            connect_retries=connect_retries,
+        )
+        com_precedentes = True
+    except Exception as exc:  # noqa: BLE001 - fronteira com o banco de precedentes
+        log.warning("parecer sem precedentes: %s", str(exc)[:160])
+        similares, contexto_modelo, com_precedentes = [], [], False
+
+    mensagem = f"FATOS DO CASO:\n{texto_fatos[:12000]}\n\n"
+    if relato.strip():
+        mensagem += f"RELATO DA ENTREVISTA:\n{relato[:6000]}\n\n"
+    if contexto_modelo:
+        mensagem += "PRECEDENTES:\n" + _formatar_precedentes(contexto_modelo)
+        # O perfil sai da amostra INTEIRA (`similares`), não do recorte que foi
+        # para o prompt: a estatística fica mais estável com 30 processos do que
+        # com os 8 citáveis, e é a mesma que a tela mostra depois — os números do
+        # texto e os do painel não podem divergir.
+        perfil_foro = _formatar_perfil_foro(_estatisticas_amostra(similares))
+        if perfil_foro:
+            mensagem += "\n\nPERFIL DO FORO (amostra dos precedentes acima):\n" + perfil_foro
+    else:
+        mensagem += (
+            "PRECEDENTES: nenhum disponível nesta análise. Baseie ações e riscos "
+            "apenas nos fatos do caso; NÃO invente número de processo nem cite "
+            "precedente. Deixe `precedentes` vazio em cada item. Não há PERFIL DO "
+            "FORO nesta análise: deixe `perfil_foro` vazio."
+        )
+
+    try:
+        resultado = llm.chamar(
+            INSTRUCAO_ESTRATEGIA_CASO, mensagem, temperatura=0, timeout=model_timeout
+        )
+    except llm.ErroLLM as exc:
+        raise ErroRAG(str(exc)) from exc
+
+    documentos_validos = {d["arquivo"] for d in pacote["documentos"]}
+    resultado = _fechar_resultado(resultado, similares, contexto_modelo, documentos_validos)
+    resultado["com_precedentes"] = com_precedentes
+    resultado["pacote"] = {
+        "documentos": sorted(documentos_validos),
+        "pendentes": pacote["pendentes"],
+        "lacunas_checklist": pacote["lacunas_checklist"],
+    }
     return resultado

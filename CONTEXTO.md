@@ -1,4 +1,4 @@
-# Acervo — onde o projeto está
+# Forense — onde o projeto está
 
 ## Vetorização CONCLUÍDA — 13/08/2026, 17h06
 
@@ -218,6 +218,86 @@ tests/avaliar_triagem.py           mede a triagem com relatos gerados por LLM
 ---
 
 ## Decisões que não são óbvias no código
+
+**O produto chama-se Forense, e "acervo" virou palavra comum — 03/09/2026.** O nome
+"Acervo" saiu do projeto. A troca foi feita só no `Acervo` CAPITALIZADO, que é como o
+nome do produto aparecia, e NÃO no `acervo` minúsculo: este é substantivo comum e
+continua certo em "o acervo de decisões do TRT8" ou "consultando o acervo" — trocar
+produziria "o forense de decisões". Também ficaram de fora, de propósito:
+
+- as tabelas legadas `dbo.acervo_casos`, `acervo_usuarios`, `acervo_conversas` — o
+  `app/banco.py` ainda migra pelo nome antigo, e renomear aqui derruba a persistência;
+- `jurimetria_do_acervo` e vizinhos, que são **contrato com o repositório irmão**
+  `ia-juridica`: mudar de um lado só quebra a ponte;
+- o enum `"ACERVO"` de `conversas.ts`, trocado com o backend pelo mesmo motivo;
+- `ACERVO_ADMIN_EMAIL`/`_SENHA`, já preenchidos no `.env` de quem usa.
+
+Ou seja: encontrar "acervo" no código não significa que passou algo despercebido —
+verifique antes se é o nome do produto ou a palavra do dicionário.
+
+**O OCR da Mistral ia para a fila do Paddle — 03/09/2026.** `enfileirar_entrega`
+fazia `.set(queue="gpu_background")` no primeiro elo do chain. Rota explícita vence
+`task_routes`, então a leitura caía no worker `--pool=solo --concurrency=1` que existe
+por causa da afinidade de thread do PaddleOCR — restrição que uma chamada HTTP não
+tem. O worker `mistral` (6 threads) ficava ocioso e uma pasta de vinte arquivos era
+lida em fila indiana. Pior: o `iniciar.sh` **não subia worker nenhum** em `mistral_ocr`,
+então corrigir só a rota teria travado o Linux para sempre. Os dois scripts agora
+sobem a mesma topologia. Ao mexer em fila, confira sempre os TRÊS lugares:
+`task_routes`, o `.set()` do chain e os dois scripts de inicialização.
+
+**`documents` saiu de cima da fila `ai`.** As cinco etapas pós-OCR dividiam um worker
+solo com `ai`, `default` e `low`. Um parecer de LLM ali leva até 120s, e todo documento
+enviado nesse intervalo esperava por ele. Agora `documents` tem worker próprio com
+threads (as etapas são I/O: banco e, na validação, a chamada de vínculo), e o worker
+solo ficou só com `ai,default,low`.
+
+**Todas as etapas ganharam retentativa.** Só o `ocr_mistral` tinha `autoretry_for`; as
+outras cinco morriam na primeira oscilação de rede ou de banco — com a leitura paga da
+Mistral já feita e jogada fora. Como as etapas seguintes leem o OCR salvo, repetir não
+recobra a Mistral. `FALHAS_TRANSITORIAS` cobre rede/timeout/conexão de propósito, e não
+`ValueError`: repetir erro de lógica não conserta e só atrasa a fila.
+
+**"✓ válido" agora fala do valor, não da citação — e o `validators.py` voltou ao jogo.**
+O pipeline Mistral nasceu sem conferir dígito verificador: `valido` e `confianca: 1.0`
+vinham de `evidencia_verificada`, que significa apenas "a citação existe no OCR" — isto
+é, que o modelo não inventou o trecho. Um CPF com um dígito trocado exibia o mesmo selo
+verde de um CPF correto, e o README seguia prometendo "CPF: dígitos verificadores
+(módulo 11)". Agora `documentos_juridicos.conferir_campo` roda os validadores
+determinísticos e o campo tem TRÊS estados: `True` passou, `False` reprovou, `None` não
+tem regra nacional (nome, RG, endereço) e segue para conferência humana. Colapsar `None`
+em `False` faria toda certidão com nome de mãe cair em revisão, que é o oposto do
+objetivo. Dígito que não fecha derruba `dados_utilizaveis`: um CPF errado não pode
+preencher contrato.
+
+**Documento de outra parte não é erro — 03/09/2026.** Um resumo de alta em nome do
+filho do cliente saía com "o nome da pessoa principal não coincide com o cliente do
+caso" na lista vermelha de *erros*, como se o arquivo estivesse trocado. Num acidente
+de trabalho o normal é o contrário: o caso tem vítima, agressor, empregador, perito e
+médico, cada um com documento próprio. A divergência de nome virou **aviso amarelo**
+com o nome e o papel da pessoa (`VisorEntrega.tsx`), e `divergencias` em
+`documentos_juridicos.validar()` nasce vazia de propósito — se algum dia voltar a ser
+preenchida, o vermelho volta junto. Travado por
+`tests/test_pipeline_documental_mistral.py::test_documento_de_terceiro_nao_vira_erro_e_expoe_o_vinculo`.
+
+**O vínculo com o cliente tem duas camadas, e isso é deliberado.** No documento,
+`relacao_com_cliente` só é preenchida quando o próprio arquivo afirma o vínculo
+(filiação, cônjuge, responsável, empregador) — é a mesma regra de citação literal que
+governa o resto do pipeline Mistral. Um resumo de alta não diz de quem o paciente é
+parente; preencher ali seria afirmar parentesco sem prova. Quem infere é o **parecer do
+caso** (`rag.sintetizar_estrategia_caso`), único ponto que enxerga todos os documentos
+mais a entrevista de uma vez — e mesmo lá o prompt exige marcar em `relevancia` quando
+o vínculo é inferência, não vínculo documentado.
+
+**As estatísticas de vara e magistrado agora entram no prompt, não só na tela.** Elas
+já eram calculadas por `_estatisticas_amostra`, mas **depois** da chamada ao modelo:
+iam para o painel sem nunca terem passado pelo raciocínio de quem escreveu o parecer. O
+modelo lia os precedentes um a um e não enxergava o padrão do conjunto ("nesta vara, 8
+de 10 casos como este foram procedentes"). Agora `_formatar_perfil_foro` monta o bloco
+PERFIL DO FORO antes da chamada. Ele sai da amostra inteira (~30 processos), não do
+recorte de 8 que vai citado no prompt: a estatística fica mais estável, e é a MESMA que
+a tela mostra depois — os números do texto e os do painel não podem divergir. O prompt
+proíbe dizer que este caso será julgado por aquelas varas: na captação o processo ainda
+não foi distribuído.
 
 **Direção visual.** Escura, tipografia editorial (Newsreader/Archivo/IBM Plex
 Mono), cantos retos, elevação por borda. É a direção "AUTOS" do `GUIA-LAYOUT.md`
@@ -1210,7 +1290,7 @@ camada normativa.
 
 ## Módulo do agente jurídico — implementado em 13/08/2026
 
-`app/agente/` liga o Acervo ao serviço `ia-juridica`, que guarda o **Case State**:
+`app/agente/` liga o Forense ao serviço `ia-juridica`, que guarda o **Case State**:
 fato com proveniência, classificação, pendência de playbook e pesquisa de
 jurisprudência. A tela nova é o **Dossiê do caso** (`frontend/src/components/admin/Dossie.tsx`),
 alcançada pela barra de abas dentro do caso.
@@ -1258,7 +1338,7 @@ Dossiê do advogado             ◀──read── classificação, pendência,
   na entrevista contra o CPF lido da CTPS. Divergência antes da assinatura custa uma
   conferência; depois, um aditivo.
 
-**Medido em 13/08**, com os dois no ar: caso criado no Acervo, CTPS entregue, e o
+**Medido em 13/08**, com os dois no ar: caso criado no Forense, CTPS entregue, e o
 agente devolveu 3 fatos com origem rastreável (`ocr_document, página 1, campo pis`).
 A ficha do cliente do dossiê é montada a partir desses fatos, não de digitação.
 

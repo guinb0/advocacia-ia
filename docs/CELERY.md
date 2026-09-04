@@ -30,8 +30,8 @@ grava o upload temporário, cria uma linha em `jobs`, publica na fila
 - Grafana: <http://localhost:3001>
 - Métricas da API: <http://127.0.0.1:8100/metrics>
 
-Variáveis obrigatórias: `DATABASE_URL` (ou `JOBS_DATABASE_URL`) e as
-credenciais `SQLSERVER_*` exigidas pelo Acervo. Redis usa localhost por padrão.
+Variáveis obrigatórias: `DATABASE_URL` e `JOBS_DATABASE_URL` — os dois são
+PostgreSQL. Redis usa localhost por padrão.
 Sentry e OTLP só são ligados quando seus respectivos endpoints são definidos.
 
 ## Filas e prioridade

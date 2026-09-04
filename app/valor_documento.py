@@ -44,13 +44,11 @@ de vetores é compartilhado com outros sistemas.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
 from typing import Any
 
-import httpx
+from . import llm
 
 log = logging.getLogger("valor-documento")
 
@@ -133,41 +131,13 @@ e qualquer tipo livre, use nao_estruturado:
 
 
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
-    chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if not chave:
-        raise ErroValor(
-            "Leitura do documento desligada: falta DEEPSEEK_API_KEY no .env. "
-            "O documento foi guardado e o checklist funciona normalmente."
-        )
-
-    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     try:
-        resposta = httpx.post(
-            base_url + "/chat/completions",
-            headers={"Authorization": f"Bearer {chave}"},
-            json={
-                "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                "max_tokens": 800,
-                "messages": [
-                    {"role": "system", "content": INSTRUCAO},
-                    {"role": "user", "content": mensagem},
-                ],
-            },
-            timeout=TEMPO_MODELO_S,
-        )
-        resposta.raise_for_status()
-    except httpx.HTTPError as exc:
+        return llm.chamar(INSTRUCAO, mensagem, temperatura=0, max_tokens=800, timeout=TEMPO_MODELO_S)
+    except llm.ErroLLM as exc:
         log.warning("Leitura do documento falhou: %s", str(exc)[:160])
         raise ErroValor(
-            "O modelo não respondeu. O documento está guardado; tente a leitura de novo."
+            f"{exc} O documento foi guardado; o checklist funciona normalmente."
         ) from exc
-
-    try:
-        return json.loads(resposta.json()["choices"][0]["message"]["content"])
-    except Exception as exc:
-        raise ErroValor("Resposta ilegível do modelo.") from exc
 
 
 def _texto(valor: Any, limite: int = 200) -> str:

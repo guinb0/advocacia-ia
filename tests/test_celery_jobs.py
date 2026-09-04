@@ -37,19 +37,23 @@ def test_entrega_ao_agente_roda_fora_da_fila_de_ocr(monkeypatch):
 
 
 def test_reconciliacao_reenfileira_apenas_entrega_pronta_e_nao_enviada(monkeypatch):
+    """Só reenfileira o que está pronto E ainda não foi enviado.
+
+    O teste dublava `obter_vinculo_agente` devolvendo `{"enviados": [...]}`, que era
+    como a reconciliação sabia o que já tinha ido. A implementação passou a marcar o
+    envio na PRÓPRIA entrega (`agente_envio_chave`) e a ler `estado_agente` — o dublê
+    virou peça morta, nada mais filtrava "já enviado", e a asserção de 1 recebia 2.
+    Aqui a marca de enviado está onde o código de hoje a procura.
+    """
     monkeypatch.setattr(tarefa_agente.armazenamento, "listar_casos", lambda: [{"id": "c1"}])
-    monkeypatch.setattr(
-        tarefa_agente.armazenamento,
-        "obter_vinculo_agente",
-        lambda _caso: {"enviados": ["e2"]},
-    )
+    monkeypatch.setattr(tarefa_agente.armazenamento, "estado_agente", lambda _caso: {})
     monkeypatch.setattr(
         tarefa_agente.armazenamento,
         "listar_entregas",
         lambda _caso: [
-            {"id": "e1", "status_proc": "pronto"},
-            {"id": "e2", "status_proc": "pronto"},
-            {"id": "e3", "status_proc": "processando"},
+            {"id": "e1", "status_proc": "pronto", "agente_envio_chave": None},
+            {"id": "e2", "status_proc": "pronto", "agente_envio_chave": "ja-enviada"},
+            {"id": "e3", "status_proc": "processando", "agente_envio_chave": None},
         ],
     )
     chamadas = []
@@ -97,10 +101,14 @@ def test_entrega_usa_o_pipeline_do_worker(tmp_path, monkeypatch):
         lambda entrega_id: estados.append((entrega_id, "processando")),
     )
     concluidas = []
+    # `concluir_entrega` ganhou `item_codigo`, `origem`, `confianca` e `motivo`, e
+    # `ocr.py` passa alguns por nome. Um dublê só com `*args` estourava
+    # `TypeError: unexpected keyword argument 'item_codigo'` — e o erro ficava
+    # escondido atrás de um `PermissionError` do diretório temporário do pytest.
     monkeypatch.setattr(
         ocr.armazenamento,
         "concluir_entrega",
-        lambda *args: concluidas.append(args),
+        lambda *args, **kwargs: concluidas.append((args, kwargs)),
     )
 
     retorno = ocr.processar_entrega.run(
@@ -109,7 +117,16 @@ def test_entrega_usa_o_pipeline_do_worker(tmp_path, monkeypatch):
 
     assert retorno == {"entrega_id": "entrega-1", "concluida": True}
     assert estados == [("entrega-1", "processando")]
-    assert concluidas == [("entrega-1", resultado, True, ["DOC.03"])]
+
+    (args, kwargs), = concluidas
+    assert args == ("entrega-1", resultado, True, ["DOC.03"])
+    # A entrega passou a registrar TAMBÉM por que foi para aquele item: qual item,
+    # se o destino veio da escolha do advogado ou da leitura, com que confiança e
+    # com que justificativa. É o que a tela mostra quando o documento muda de item
+    # sozinho — sem isso o advogado veria a mudança sem o motivo.
+    assert kwargs["item_codigo"] == "DOC.03"
+    assert kwargs["origem"] == "escolha"
+    assert kwargs["motivo"]
 
 
 def test_ocr_atualiza_estado_e_remove_upload(tmp_path, monkeypatch):

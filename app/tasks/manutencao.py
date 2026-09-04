@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .. import armazenamento, casos, jobs, pipeline
+from .. import analise_documental, armazenamento, casos, jobs, pipeline
 from ..celery_app import celery_app
 from pathlib import Path
 import logging
@@ -64,13 +64,22 @@ def _leitor_de_documentos_ativo() -> tuple[bool, set[str]]:
     consumindo = any(
         q.get("name") == "gpu_background" for fila in filas.values() for q in fila
     )
-    # O primeiro argumento de `processar_entrega` é o id da entrega.
-    em_leitura = {
-        str(tarefa["args"][0])
-        for tarefas in ativas.values()
-        for tarefa in tarefas
-        if tarefa.get("name", "").endswith("processar_entrega") and tarefa.get("args")
-    }
+    em_leitura: set[str] = set()
+    for tarefas in ativas.values():
+        for tarefa in tarefas:
+            args = tarefa.get("args") or []
+            nome = tarefa.get("name", "")
+            if not args:
+                continue
+            if nome.endswith("processar_entrega"):
+                em_leitura.add(str(args[0]))
+            elif nome.endswith("ocr_mistral"):
+                try:
+                    analise = analise_documental.obter(str(args[0]))
+                    if analise:
+                        em_leitura.add(str(analise["entrega_id"]))
+                except Exception:
+                    log.warning("não foi possível resolver análise ativa", exc_info=True)
     return consumindo, em_leitura
 
 
@@ -105,7 +114,7 @@ def recuperar_entregas_travadas() -> int:
         )
         return 0
 
-    from .ocr import processar_entrega
+    from .pipeline_documentos import enfileirar_entrega
 
     reenfileiradas = 0
     for entrega in travadas:
@@ -131,19 +140,13 @@ def recuperar_entregas_travadas() -> int:
             )
             continue
 
-        processar_entrega.apply_async(
-            args=(
-                entrega["id"],
-                entrega["caso_id"],
-                str(caminho),
-                entrega["arquivo"],
-                entrega["item_codigo"],
-                entrega["categoria"],
-                "pt",
-                len(entrega["itens_atendidos"]) > 1,
-            ),
-            queue="gpu_background",
-            priority=7,
+        enfileirar_entrega(
+            entrega["id"],
+            entrega["caso_id"],
+            item_codigo=entrega["item_codigo"],
+            categoria_codigo=entrega["categoria"],
+            idioma="pt",
+            usar_para_rg_e_cpf=len(entrega["itens_atendidos"]) > 1,
         )
         reenfileiradas += 1
         log.warning(

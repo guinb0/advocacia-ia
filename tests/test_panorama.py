@@ -238,7 +238,7 @@ def main() -> int:
     print("== cobertura ==")
     checar(
         montado["cobertura"]["casos_no_acervo"] == 9,
-        "a cobertura declara os nove casos do Acervo",
+        "a cobertura declara os nove casos do Forense",
         str(montado["cobertura"]),
     )
     checar(

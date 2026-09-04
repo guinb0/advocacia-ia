@@ -236,11 +236,11 @@ function Funil({
       titulo="Onde os casos estão"
       explicacao={
         "Cada caso conta uma vez só, no estágio em que está travado. O estágio sai do que o " +
-        "Acervo grava — a linha do processo do dossiê tem etapas a mais, que dependem do agente."
+        "Forense grava — a linha do processo do dossiê tem etapas a mais, que dependem do agente."
       }
     >
       {comCaso.length === 0 ? (
-        <SemDado titulo="Nenhum caso medido" motivo="Não há caso cadastrado no Acervo." />
+        <SemDado titulo="Nenhum caso medido" motivo="Não há caso cadastrado no Forense." />
       ) : (
         <div className="flex flex-col gap-[6px]">
           {comCaso.map((faixa) => {
@@ -461,7 +461,7 @@ function Categorias({ categorias }: { categorias: Dados["categorias"] }) {
       }
     >
       {categorias.length === 0 ? (
-        <SemDado titulo="Nenhuma categoria" motivo="Não há caso cadastrado no Acervo." />
+        <SemDado titulo="Nenhuma categoria" motivo="Não há caso cadastrado no Forense." />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">

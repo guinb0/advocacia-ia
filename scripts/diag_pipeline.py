@@ -1,4 +1,4 @@
-"""Diagnóstico do pipeline jurídico contra um Acervo no ar.
+"""Diagnóstico do pipeline jurídico contra um Forense no ar.
 
 Existe por um sintoma que só aparece em produção: o dossiê mostra "Falta fazer" em
 classificação, jurisprudência, estratégia e petição, e o log da IA Jurídica responde
@@ -6,11 +6,11 @@ classificação, jurisprudência, estratégia e petição, e o log da IA Jurídi
 rota devolve 204 nesse caso. É a dependência `require_case` dizendo que o **caso** não
 existe no banco do agente. Este script mede exatamente isso, de fora, sem adivinhação:
 
-  1. o Acervo enxerga o agente? (`GET /api/agente/saude`)
+  1. o Forense enxerga o agente? (`GET /api/agente/saude`)
   2. qual `caso_ref` o dossiê carrega agora?
   3. o `caso_ref` continua o MESMO depois de sincronizar e analisar?
 
-O passo 3 é o teste que interessa. Se o `caso_ref` mudar entre as chamadas, o Acervo
+O passo 3 é o teste que interessa. Se o `caso_ref` mudar entre as chamadas, o Forense
 está recriando o caso a cada ação — `garantir_caso` pergunta `caso_existe`, leva 404,
 conclui "vínculo órfão" e cria outro. Documento, entrevista e fato nunca acumulam no
 mesmo caso, e toda etapa morre em 404 antes de enfileirar qualquer trabalho.
@@ -100,7 +100,7 @@ def ref_do_dossie(corpo: Any) -> str | None:
 
 def main() -> int:
     analisador = argparse.ArgumentParser(description=__doc__)
-    analisador.add_argument("caso_id", help="UUID do caso no Acervo")
+    analisador.add_argument("caso_id", help="UUID do caso no Forense")
     analisador.add_argument("--base", default="https://advocacia.levelhom.com.br")
     argumentos = analisador.parse_args()
 

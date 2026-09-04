@@ -1,6 +1,6 @@
-# Publicação do Acervo
+# Publicação do Forense
 
-Para quem vai colocar o Acervo no ar. O repositório já traz `Dockerfile`, os
+Para quem vai colocar o Forense no ar. O repositório já traz `Dockerfile`, os
 compose e o `.gitlab-ci.yml` no padrão da casa — componente
 `components/ci-platform/pipeline-generic`, roteamento por Traefik, sem porta
 publicada, como no **vig-agent**.
@@ -79,14 +79,9 @@ stacks de deploy têm nome próprio, declarado em `compose_file` no
 
 - **Python 3.11 é teto, não preferência.** O `paddlepaddle` não publica wheel
   para 3.13+. Mesmo motivo do `uv venv --python 3.11` no `iniciar.ps1`.
-- **`libgssapi-krb5-2` está listada explicitamente** e não pode sair. Ela entra
-  como dependência do `curl`, e o `autoremove` a levava embora *depois* de o
-  driver ODBC estar instalado. O sintoma engana: o unixODBC diz `file not found`
-  apontando para o `.so` do driver, que está lá — quem falta é a biblioteca que
-  ele carrega. Medido: sem ela, `pyodbc.connect` falha dentro da imagem.
-- **`msodbcsql18` é instalado à mão.** Não há wheel que traga o driver. O Driver
-  18 liga criptografia por padrão e o servidor não tem certificado emitido;
-  funciona porque `app/banco.py` já fixa `TrustServerCertificate=yes`.
+- **Não há mais driver ODBC na imagem.** A migração para PostgreSQL tirou o SQL
+  Server, o `pyodbc` e o `msodbcsql18` do sistema por inteiro — os pacotes que a
+  imagem instala hoje são só o que o PaddleOCR/opencv e o LibreOffice pedem.
 - **`docs/` entra na imagem.** Não é documentação morta: os `.docx` oficiais
   (contrato, procuração, declaração) são lidos dali por `app/contrato.py`. Sem
   eles a geração da papelada quebra.
@@ -107,13 +102,17 @@ Precisam existir em **Settings → CI/CD → Variables**, com o *environment sco
 
 ```
 DOMINIO             (só em produção — ver abaixo)
-SQLSERVER_HOST      SQLSERVER_PASSWORD
+DATABASE_URL        JOBS_DATABASE_URL    JURIMETRIA_DATABASE_URL
 PGVECTOR_HOST       PGVECTOR_USER        PGVECTOR_PASSWORD
 JWT_SECRET          PORTAL_SEGREDO
 DEEPSEEK_API_KEY    OPENROUTER_API_KEY
 ZAPSIGN_API_TOKEN   DATAJUD_API_KEY
 EVOLUTION_API_KEY   EVOLUTION_INSTANCE
 ```
+
+Postgres-only: os três bancos (casos, jobs, jurimetria) são PostgreSQL. Não há
+mais `SQLSERVER_HOST`/`SQLSERVER_PASSWORD` — a migração para PostgreSQL saiu o
+SQL Server do sistema por inteiro (driver ODBC incluído, ver `Dockerfile`).
 
 Todas usam a forma `${VAR?VAR is required}` no compose: **faltando qualquer
 uma, a stack recusa subir em vez de subir quebrada.**

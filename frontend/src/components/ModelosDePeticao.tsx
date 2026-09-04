@@ -81,7 +81,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [configuracao, setConfiguracao] = useState<ConfiguracaoDeGeracao | null>(null);
   const [documentoNovo, setDocumentoNovo] = useState("");
   const [salvandoConfiguracao, setSalvandoConfiguracao] = useState(false);
-  /** Checklist do Acervo para a ação escolhida — sugestões clicáveis. */
+  /** Checklist do Forense para a ação escolhida — sugestões clicáveis. */
   const [checklistAcao, setChecklistAcao] = useState<ItemChecklist[]>([]);
 
   const [enviando, setEnviando] = useState(false);
@@ -158,7 +158,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     // Uma vez só: a taxonomia é YAML versionado, não muda entre requisições.
   }, []);
 
-  /* O checklist do caso (Acervo) e a taxonomia do agente usam o mesmo código de
+  /* O checklist do caso (Forense) e a taxonomia do agente usam o mesmo código de
    * ação (`auxilio_acidente`, etc.). Quando bate, oferecemos os documentos do
    * checklist como atalho — em vez de digitar "CNIS" / "laudo" à mão. */
   useEffect(() => {

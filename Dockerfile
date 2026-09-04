@@ -7,7 +7,7 @@
 # distintos e o compose, trocando o `command`. E assim no dflegal e nos sidaf,
 # e este arquivo segue o mesmo contrato em vez de inventar outro.
 #
-# Aqui dentro moram os quatro processos do Acervo:
+# Aqui dentro moram os quatro processos do Forense:
 #   - API (uvicorn app.main)             — porta 8100
 #   - transcricao (app.servico_transcricao) — porta 8200
 #   - worker + beat (celery)             — sem porta
@@ -55,21 +55,11 @@ ENV PYTHONUNBUFFERED=1 \
     AMBIENTE=${environment} \
     VERSION=${VERSION}
 
-# msodbcsql18: o registro dos casos vive num SQL Server e o pyodbc precisa do
-# driver da Microsoft — nao ha wheel que o traga. O Driver 18 liga criptografia
-# por padrao e o servidor atual nao tem certificado; o compose resolve com
-# SQLSERVER_DRIVER, sem tocar em codigo (app/banco.py ja le a variavel).
-# libglib/libgomp/libgl: o que paddle e opencv-headless pedem em slim.
-#
-# `libgssapi-krb5-2` aparece explicito, e nao por tabela, porque ela entra como
-# dependencia do curl e o `autoremove` la embaixo a levava embora DEPOIS de o
-# driver ja estar instalado. O sintoma engana: o unixODBC diz "file not found"
-# apontando para o .so do driver, que esta la — quem falta e esta biblioteca
-# que ele carrega. Listada aqui, o apt a marca como manual e o autoremove nao
-# toca nela. Medido: sem esta linha, `pyodbc.connect` falha na imagem.
-# Postgres-only: driver do SQL Server (msodbcsql18 + repo da Microsoft) REMOVIDO.
-# Mantidos unixodbc (import do pyodbc nao quebra ate o codigo migrar), LibreOffice
-# (gera PDF/docx) e libglib/libgomp/libgl (opencv/paddle em slim).
+# Postgres-only: o registro dos casos e o de precedentes vivem os dois em
+# PostgreSQL — nao ha SQL Server, driver ODBC nem pyodbc na imagem (removidos
+# junto com a migracao; ver CONTEXTO.md). O que resta e so o que o resto do
+# sistema pede: libglib/libgomp/libgl (paddle e opencv-headless em slim) e
+# LibreOffice (gera o PDF/docx dos contratos).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libglib2.0-0 libgomp1 libgl1 \
         libreoffice-writer fonts-liberation \

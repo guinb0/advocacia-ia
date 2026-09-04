@@ -36,6 +36,17 @@ def _esta_pronta(entrega: dict[str, Any]) -> bool:
     return entrega.get("status_proc", "pronto") == "pronto"
 
 
+def esta_em_processamento(entrega: dict[str, Any]) -> bool:
+    """Ainda há trabalho técnico ou conferência pendente para este arquivo."""
+    if entrega.get("status_proc") in {"na_fila", "processando"}:
+        return True
+    # A projeção da entrega fica "pronto" depois de salvar os dados lidos; o
+    # pipeline, porém, pode ainda estar resumindo ou esperando o profissional.
+    return entrega.get("analise_status") in {
+        "NA_FILA", "PROCESSANDO", "REVISAO_NECESSARIA",
+    }
+
+
 def _aproveitavel(entrega: dict[str, Any]) -> bool:
     """A entrega cumpre o item, ou só ocupa espaço?
 
@@ -255,6 +266,7 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
     entregues_obrig = [i for i in obrigatorios if i["status"] == ENTREGUE]
     pendentes_obrig = [i for i in obrigatorios if i["status"] == PENDENTE]
     conferir = [i for i in itens if i["status"] == CONFERIR]
+    em_processamento = [e for e in entregas if esta_em_processamento(e)]
 
     return {
         "caso": caso,
@@ -267,6 +279,9 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
         "triagem": [
             {**e, "alertas": _alertas_da_triagem(e)} for e in em_triagem
         ],
+        # Lista por ARQUIVO, não por item: uma CIN pode atender RG e CPF e não
+        # deve aparecer duas vezes na aba de acompanhamento.
+        "em_processamento": em_processamento,
         "progresso": {
             "obrigatorios_total": len(obrigatorios),
             "obrigatorios_entregues": len(entregues_obrig),
@@ -277,6 +292,7 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
             ),
             "itens_a_conferir": len(conferir),
             "em_triagem": len(em_triagem),
+            "em_processamento": len(em_processamento),
             "percentual_obrigatorios": (
                 round(len(entregues_obrig) / len(obrigatorios) * 100) if obrigatorios else 100
             ),

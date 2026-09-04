@@ -55,7 +55,11 @@ export default function CorrigirItemDocumento({
     }
   }
 
-  const opcoes = itens.filter((item) => item.codigo !== itemAtual);
+  // A própria linha pode estar correta e exigir somente a confirmação humana
+  // (por exemplo, uma certidão policial que atende o item "BO"). Excluí-la
+  // daqui deixava o usuário sem como concluir a revisão sem escolher um item
+  // errado. A opção atual é uma confirmação explícita, não uma reatribuição.
+  const opcoes = itens;
 
   return (
     <div className="[flex-basis:100%] mt-2 p-3 border border-borda rounded-campo bg-papel">
@@ -75,7 +79,7 @@ export default function CorrigirItemDocumento({
             <option value="">Escolha o documento…</option>
             {opcoes.map((item) => (
               <option key={item.codigo} value={item.codigo}>
-                {item.nome} ({item.codigo})
+                {item.codigo === itemAtual ? `Manter: ${item.nome} (${item.codigo})` : `${item.nome} (${item.codigo})`}
               </option>
             ))}
           </select>

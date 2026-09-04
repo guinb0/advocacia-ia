@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sobe o Acervo no macOS/Linux: Docker de apoio, agente, API, workers, transcrição e Next.
+# Sobe o Forense no macOS/Linux: Docker de apoio, agente, API, workers, transcrição e Next.
 #
 #   ./iniciar.sh              -> modo desenvolvimento
 #   ./iniciar.sh --prod       -> usa build de produção do Next
@@ -22,6 +22,8 @@ SEM_JITSI=0
 BACKEND_PID=""
 TRANSCRICAO_PID=""
 WORKER_OCR_PID=""
+WORKER_MISTRAL_PID=""
+WORKER_DOCUMENTOS_PID=""
 WORKER_BACKGROUND_PID=""
 BEAT_PID=""
 AGENTE_API_PID=""
@@ -174,6 +176,8 @@ cleanup() {
     "$BACKEND_PID" \
     "$TRANSCRICAO_PID" \
     "$WORKER_OCR_PID" \
+    "$WORKER_MISTRAL_PID" \
+    "$WORKER_DOCUMENTOS_PID" \
     "$WORKER_BACKGROUND_PID" \
     "$BEAT_PID" \
     "$AGENTE_API_PID" \
@@ -181,7 +185,7 @@ cleanup() {
   do
     kill_if_running "$pid"
   done
-  wait "$BACKEND_PID" "$TRANSCRICAO_PID" "$WORKER_OCR_PID" "$WORKER_BACKGROUND_PID" "$BEAT_PID" "$AGENTE_API_PID" "$AGENTE_WORKER_PID" 2>/dev/null || true
+  wait "$BACKEND_PID" "$TRANSCRICAO_PID" "$WORKER_OCR_PID" "$WORKER_MISTRAL_PID" "$WORKER_DOCUMENTOS_PID" "$WORKER_BACKGROUND_PID" "$BEAT_PID" "$AGENTE_API_PID" "$AGENTE_WORKER_PID" 2>/dev/null || true
   echo
   echo "Backend, workers e transcrição encerrados."
 }
@@ -244,9 +248,10 @@ fi
 
 echo "Subindo Redis, banco de jobs e observabilidade..."
 docker compose up -d --wait --wait-timeout 60 redis jobs-db flower prometheus grafana
-export REDIS_URL="redis://127.0.0.1:6380/0"
-export CELERY_BROKER_URL="redis://127.0.0.1:6380/0"
-export CELERY_RESULT_BACKEND="redis://127.0.0.1:6380/1"
+REDIS_PORTA="${REDIS_PORTA:-6380}"
+export REDIS_URL="redis://127.0.0.1:${REDIS_PORTA}/0"
+export CELERY_BROKER_URL="redis://127.0.0.1:${REDIS_PORTA}/0"
+export CELERY_RESULT_BACKEND="redis://127.0.0.1:${REDIS_PORTA}/1"
 export JOBS_DATABASE_URL="${JOBS_DATABASE_URL:-postgresql://advocacia:advocacia_local@127.0.0.1:5434/advocacia_jobs}"
 
 export NEXT_PUBLIC_OCR_API="${OCR_API_PUBLIC_URL:+$URL_API}"
@@ -311,7 +316,7 @@ PY
 )"
   # Dá tempo ao agente vizinho de responder antes de concluir que ele não existe.
   # Um único teste de 2s dava falso-negativo quando o ia-juridica ainda estava
-  # subindo, e o Acervo abria um SEGUNDO uvicorn no mesmo porto.
+  # subindo, e o Forense abria um SEGUNDO uvicorn no mesmo porto.
   agente_no_ar=0
   for _ in {1..5}; do
     if http_ok "$URL_AGENTE/api/health" 2; then agente_no_ar=1; break; fi
@@ -336,7 +341,7 @@ PY
       (cd "$RAIZ_AGENTE" && uv sync --python 3.12)
     fi
     echo "Aplicando migrations do Agente Jurídico..."
-    # Não aborta o Acervo se a migration falhar: o iniciar.ps1 nem roda migrations do
+    # Não aborta o Forense se a migration falhar: o iniciar.ps1 nem roda migrations do
     # agente, e o caso mais comum de falha aqui é o banco do agente estar numa revisão
     # de outra branch (ex.: "Can't locate revision identified by '0018'"). Nesse caso o
     # schema já existe; o que falta é o alembic concordar com a branch atual.
@@ -401,7 +406,19 @@ WORKER_OCR_NAME="ocr@${HOST_CELERY}-${INSTANCIA_CELERY}"
 
 .venv/bin/python -m celery -A app.celery_app:celery_app worker --pool=solo --concurrency=1 -Q gpu_background -n "$WORKER_OCR_NAME" &
 WORKER_OCR_PID=$!
-.venv/bin/python -m celery -A app.celery_app:celery_app worker --pool=solo --concurrency=1 -Q ai,documents,default,low -n "background@${HOST_CELERY}-${INSTANCIA_CELERY}" &
+# A fila `mistral_ocr` não tinha worker NENHUM aqui — só o `iniciar.ps1` a subia.
+# Enquanto a leitura era roteada (erradamente) para `gpu_background`, isso não
+# aparecia; corrigida a rota, um documento enviado neste ambiente ficaria
+# enfileirado para sempre. Os dois scripts precisam subir a mesma topologia.
+MISTRAL_CONC="${MISTRAL_OCR_WORKER_CONCORRENCIA:-6}"
+.venv/bin/python -m celery -A app.celery_app:celery_app worker --pool=threads --concurrency="$MISTRAL_CONC" -Q mistral_ocr -n "mistral@${HOST_CELERY}-${INSTANCIA_CELERY}" &
+WORKER_MISTRAL_PID=$!
+# `documents` fora da fila `ai`: as etapas do documento não podem esperar um
+# parecer de LLM de 120s terminar (ver o comentário equivalente no iniciar.ps1).
+DOCS_CONC="${DOCS_WORKER_CONCORRENCIA:-4}"
+.venv/bin/python -m celery -A app.celery_app:celery_app worker --pool=threads --concurrency="$DOCS_CONC" -Q documents -n "documentos@${HOST_CELERY}-${INSTANCIA_CELERY}" &
+WORKER_DOCUMENTOS_PID=$!
+.venv/bin/python -m celery -A app.celery_app:celery_app worker --pool=solo --concurrency=1 -Q ai,default,low -n "background@${HOST_CELERY}-${INSTANCIA_CELERY}" &
 WORKER_BACKGROUND_PID=$!
 .venv/bin/python -m celery -A app.celery_app:celery_app beat &
 BEAT_PID=$!

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import mimetypes
 import os
 import time
 
@@ -13,6 +15,7 @@ import numpy as np
 
 from . import ambiente
 from .extractors import Linha
+from . import documentos_juridicos
 
 # Pelo mesmo motivo do `transcricao_openrouter`: este módulo lê `MISTRAL_API_KEY`
 # do ambiente, e nem todo processo que o importa passou pelo `iniciar.ps1` — um
@@ -28,15 +31,52 @@ def configurada() -> bool:
     return bool(os.getenv("MISTRAL_API_KEY", "").strip())
 
 
-def _linhas_da_resposta(dados: dict) -> list[Linha]:
-    linhas: list[Linha] = []
-    y = 0.0
-    for pagina in dados.get("pages") or []:
-        scores = pagina.get("confidence_scores") or {}
+def _confianca(dados: dict | None, *chaves: str) -> float | None:
+    for chave in chaves:
+        valor = (dados or {}).get(chave)
         try:
-            confianca = min(1.0, max(0.0, float(scores.get("average_page_confidence_score", 1.0))))
+            if valor is not None:
+                return min(1.0, max(0.0, float(valor)))
         except (TypeError, ValueError):
-            confianca = 1.0
+            continue
+    return None
+
+
+def _linhas_da_resposta(dados: dict) -> list[Linha]:
+    """Converte blocos reais em ``Linha`` sem fabricar geometria.
+
+    OCR 4 devolve blocos em ordem de leitura com bounding boxes. O código antigo
+    ignorava ``blocks`` e transformava cada linha de Markdown em uma caixa de
+    altura 1 — o extrator geométrico então tratava cabeçalhos como valores.
+    """
+    linhas: list[Linha] = []
+    for pagina in dados.get("pages") or []:
+        blocos = pagina.get("blocks") or []
+        if blocos:
+            for bloco in blocos:
+                texto = str(bloco.get("content") or bloco.get("text") or "").strip()
+                if not texto:
+                    continue
+                scores = bloco.get("confidence_scores") or {}
+                confianca = _confianca(
+                    scores,
+                    "average_content_confidence_score",
+                    "minimum_content_confidence_score",
+                )
+                linhas.append(
+                    Linha(
+                        texto,
+                        confianca if confianca is not None else 0.0,
+                        float(bloco.get("top_left_y") or 0.0),
+                        float(bloco.get("top_left_x") or 0.0),
+                        max(0.0, float(bloco.get("bottom_right_x") or 0.0) - float(bloco.get("top_left_x") or 0.0)),
+                        max(0.0, float(bloco.get("bottom_right_y") or 0.0) - float(bloco.get("top_left_y") or 0.0)),
+                    )
+                )
+            continue
+        scores = pagina.get("confidence_scores") or {}
+        confianca = _confianca(scores, "average_page_confidence_score") or 0.0
+        y = 0.0
         for texto in str(pagina.get("markdown") or "").splitlines():
             texto = texto.strip().lstrip("#").strip()
             if not texto:
@@ -45,6 +85,139 @@ def _linhas_da_resposta(dados: dict) -> list[Linha]:
             y += 1.0
         y += 10.0
     return linhas
+
+
+def _mime(nome: str) -> str:
+    sugerido = mimetypes.guess_type(nome)[0]
+    return sugerido or "application/octet-stream"
+
+
+def _documento_base64(conteudo: bytes, nome: str) -> dict[str, str]:
+    mime = _mime(nome)
+    dados = base64.b64encode(conteudo).decode("ascii")
+    if mime == "application/pdf" or nome.lower().endswith(".pdf"):
+        return {
+            "type": "document_url",
+            "document_url": f"data:application/pdf;base64,{dados}",
+        }
+    return {
+        "type": "image_url",
+        "image_url": f"data:{mime};base64,{dados}",
+    }
+
+
+def _anotacao(dados: dict) -> dict:
+    bruto = dados.get("document_annotation")
+    if isinstance(bruto, dict):
+        return bruto
+    if isinstance(bruto, str) and bruto.strip():
+        try:
+            valor = json.loads(bruto)
+            return valor if isinstance(valor, dict) else {}
+        except json.JSONDecodeError:
+            log.warning("Mistral devolveu document_annotation fora do JSON esperado.")
+    return {}
+
+
+def _pagina_estruturada(pagina: dict, indice: int) -> dict:
+    scores = pagina.get("confidence_scores") or {}
+    blocos = []
+    for posicao, bloco in enumerate(pagina.get("blocks") or []):
+        confianca = _confianca(
+            bloco.get("confidence_scores") or {},
+            "average_content_confidence_score",
+            "minimum_content_confidence_score",
+        )
+        blocos.append(
+            {
+                "id": f"p{indice + 1}-b{posicao + 1}",
+                "tipo": str(bloco.get("type") or "text"),
+                "texto": str(bloco.get("content") or bloco.get("text") or ""),
+                "bbox": [
+                    float(bloco.get("top_left_x") or 0),
+                    float(bloco.get("top_left_y") or 0),
+                    float(bloco.get("bottom_right_x") or 0),
+                    float(bloco.get("bottom_right_y") or 0),
+                ],
+                "confianca": confianca,
+            }
+        )
+    dimensoes = pagina.get("dimensions") or {}
+    return {
+        "numero": int(pagina.get("index") if pagina.get("index") is not None else indice) + 1,
+        "markdown": str(pagina.get("markdown") or ""),
+        "cabecalho": str(pagina.get("header") or ""),
+        "rodape": str(pagina.get("footer") or ""),
+        "largura": dimensoes.get("width"),
+        "altura": dimensoes.get("height"),
+        "confianca": _confianca(scores, "average_page_confidence_score"),
+        "blocos": blocos,
+        "tabelas": pagina.get("tables") or [],
+    }
+
+
+def ler_documento(
+    conteudo: bytes,
+    nome: str,
+    *,
+    categoria: str = "",
+    checklist: list[dict[str, str]] | None = None,
+    anotar: bool = True,
+    tempo_limite: float | None = None,
+) -> dict:
+    """OCR nativo do arquivo, preservando páginas, blocos e anotação universal."""
+    chave = os.getenv("MISTRAL_API_KEY", "").strip()
+    if not chave:
+        raise RuntimeError("MISTRAL_API_KEY não configurada")
+    modelo = os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-4-1")
+    payload: dict = {
+        "model": modelo,
+        "document": _documento_base64(conteudo, nome),
+        "include_blocks": True,
+        "confidence_scores_granularity": "block",
+        "include_image_base64": False,
+        "table_format": "markdown",
+        "extract_header": True,
+        "extract_footer": True,
+    }
+    if anotar:
+        payload["document_annotation_prompt"] = documentos_juridicos.prompt_anotacao(
+            categoria, checklist or []
+        )
+        payload["document_annotation_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": documentos_juridicos.VERSAO_SCHEMA,
+                "strict": True,
+                "schema": documentos_juridicos.schema_anotacao(),
+            },
+        }
+
+    inicio = time.perf_counter()
+    url_base = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai").rstrip("/")
+    with httpx.Client(timeout=tempo_limite or float(os.getenv("MISTRAL_OCR_TIMEOUT_DOC", "300"))) as cliente:
+        resposta = cliente.post(
+            f"{url_base}/v1/ocr",
+            headers={"Authorization": f"Bearer {chave}"},
+            json=payload,
+        )
+    resposta.raise_for_status()
+    bruto = resposta.json()
+    paginas = [_pagina_estruturada(p, i) for i, p in enumerate(bruto.get("pages") or [])]
+    texto = "\n\n".join(
+        f"--- Página {p['numero']} ---\n{p['markdown']}" for p in paginas if p["markdown"].strip()
+    )
+    duracao = time.perf_counter() - inicio
+    log.info("Mistral OCR estruturado: %s, %d página(s), %.2fs.", nome, len(paginas), duracao)
+    return {
+        "modelo": modelo,
+        "schema_anotacao": documentos_juridicos.VERSAO_SCHEMA if anotar else None,
+        "paginas": paginas,
+        "texto_completo": texto,
+        "anotacao": _anotacao(bruto),
+        "uso": bruto.get("usage_info") or bruto.get("usage") or {},
+        "tempo_s": round(duracao, 3),
+    }
 
 
 def rodar_ocr_com_tempo(
@@ -61,13 +234,13 @@ def rodar_ocr_com_tempo(
 
     inicio = time.perf_counter()
     payload = {
-        "model": os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest"),
+        "model": os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-4-1"),
         "document": {
             "type": "image_url",
             "image_url": "data:image/jpeg;base64," + base64.b64encode(codificada.tobytes()).decode("ascii"),
         },
         "include_blocks": True,
-        "confidence_scores_granularity": "page",
+        "confidence_scores_granularity": "block",
         "include_image_base64": False,
     }
     url_base = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai").rstrip("/")
@@ -120,7 +293,7 @@ def markdown_do_pdf(conteudo: bytes, tempo_limite: float | None = None) -> str:
             f"{url_base}/v1/ocr",
             headers={"Authorization": f"Bearer {chave}"},
             json={
-                "model": os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest"),
+                "model": os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-4-1"),
                 "document": {
                     "type": "document_url",
                     "document_url": "data:application/pdf;base64," + dados,

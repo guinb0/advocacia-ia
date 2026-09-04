@@ -114,7 +114,7 @@ def saude_do_agente() -> dict[str, Any]:
 
 @roteador.get("/casos/{caso_id}")
 def dossie_do_caso(caso_id: str) -> dict[str, Any]:
-    """Tudo que o escritório sabe do caso — Acervo + entrevista + OCR (sem agente)."""
+    """Tudo que o escritório sabe do caso — Forense + entrevista + OCR (sem agente)."""
     montado = dossie.montar(caso_id, recuperar=False, sem_agente=True)
     if montado is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Caso não encontrado.")
@@ -174,7 +174,7 @@ def sincronizar(
 
 @roteador.post("/casos/{caso_id}/entrevista/{entrevista_id}")
 def enviar_entrevista(caso_id: str, entrevista_id: str) -> dict[str, Any]:
-    """Manda a entrevista guardada no Acervo para o agente ler.
+    """Manda a entrevista guardada no Forense para o agente ler.
 
     Síncrona de propósito: é uma chamada de modelo, e quem clicou está olhando a tela
     esperando os fatos aparecerem no dossiê.

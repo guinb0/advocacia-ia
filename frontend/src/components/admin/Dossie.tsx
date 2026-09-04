@@ -3,7 +3,7 @@
 /**
  * Dossiê do caso — a tela onde o advogado acompanha o processo inteiro.
  *
- * Reúne o que o Acervo apurou (cliente, checklist, contrato) e o que o agente
+ * Reúne o que o Forense apurou (cliente, checklist, contrato) e o que o agente
  * jurídico concluiu (fatos com origem, leitura jurídica, pendências do playbook,
  * jurisprudência). É leitura: nenhuma conclusão nasce aqui.
  *

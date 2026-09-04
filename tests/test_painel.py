@@ -359,7 +359,7 @@ def main() -> int:
     titulos = [e["titulo"] for e in eventos]
     checar(
         "Entrevista lida pelo agente" in titulos and "Caso enviado ao agente jurídico" in titulos,
-        "a linha do tempo junta os dois lados (Acervo e agente)",
+        "a linha do tempo junta os dois lados (Forense e agente)",
         str(titulos),
     )
     fatos_em_lote = [e for e in eventos if e["titulo"] == "Fatos apurados"]
