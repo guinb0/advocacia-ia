@@ -66,12 +66,21 @@ export class ApiError extends Error {
   }
 }
 
+export interface AtributosModeloVisual {
+  tamanho_fonte_pt?: number;
+  espacamento_linha?: number;
+  alinhamento?: string;
+  margens_cm?: { top?: number | null; right?: number | null; bottom?: number | null; left?: number | null };
+}
+
 export interface ModeloVisualPeticao {
   arquivo: string;
   origem: "banco" | "embutido";
   fonte: string;
   enviado_por?: string;
   atualizado_em?: string;
+  /** O que o sistema captou do padrão do .docx além da logo e da fonte. */
+  atributos?: AtributosModeloVisual;
 }
 
 export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
@@ -452,6 +461,53 @@ export async function obterRoteiro(codigo: string): Promise<RoteiroCompleto> {
 export async function listarRoteiros(): Promise<RoteiroResumo[]> {
   const dados = await comoJson<{ roteiros: RoteiroResumo[] }>(await buscar("/api/roteiros"));
   return dados.roteiros;
+}
+
+export interface PaginaRoteiros {
+  roteiros: RoteiroResumo[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+  importados: number;
+  originais: number;
+}
+
+export async function listarRoteirosPaginado(
+  pagina: number,
+  tamanho: number,
+): Promise<PaginaRoteiros> {
+  const paginaSolicitada = Number.isFinite(pagina) ? Math.max(1, Math.floor(pagina)) : 1;
+  const tamanhoSolicitado = Number.isFinite(tamanho) ? Math.max(1, Math.floor(tamanho)) : 10;
+  const dados = await comoJson<Partial<PaginaRoteiros> & { roteiros?: RoteiroResumo[] }>(
+    await buscar(`/api/roteiros?pagina=${paginaSolicitada}&tamanho=${tamanhoSolicitado}`),
+  );
+  const numeroSeguro = (valor: unknown, fallback: number) =>
+    typeof valor === "number" && Number.isFinite(valor) ? valor : fallback;
+  const roteiros = dados.roteiros ?? [];
+  const total = Math.max(0, numeroSeguro(dados.total, roteiros.length));
+  const paginaAtual = Math.max(1, numeroSeguro(dados.pagina, paginaSolicitada));
+  const tamanhoAtual = Math.max(1, numeroSeguro(dados.tamanho, tamanhoSolicitado));
+  const paginas = Math.max(
+    1,
+    numeroSeguro(dados.paginas, Math.max(1, Math.ceil(total / tamanhoAtual))),
+  );
+  const importados = Math.min(
+    total,
+    Math.max(
+      0,
+      numeroSeguro(dados.importados, roteiros.filter((roteiro) => roteiro.importado).length),
+    ),
+  );
+  return {
+    roteiros,
+    total,
+    pagina: paginaAtual,
+    tamanho: tamanhoAtual,
+    paginas,
+    importados,
+    originais: Math.max(0, numeroSeguro(dados.originais, total - importados)),
+  };
 }
 
 /** Lê o documento anexado e monta um roteiro a partir dele.
@@ -1230,6 +1286,14 @@ export interface UsuarioCadastrado {
   perfilId?: number | null;
 }
 
+export interface UsuariosPaginados {
+  itens: UsuarioCadastrado[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+}
+
 /** Os perfis que o cadastro oferece. Vêm do servidor para a tela não manter uma
  *  segunda lista que envelhece sozinha quando um perfil for criado ou renomeado. */
 export async function listarPerfis(): Promise<Perfil[]> {
@@ -1276,9 +1340,48 @@ export async function removerPerfil(codigo: string): Promise<void> {
   await buscar(`/api/usuarios/perfis/${encodeURIComponent(codigo)}`, { method: "DELETE" });
 }
 
+function normalizarPaginacaoUsuarios(
+  resposta: Partial<UsuariosPaginados>,
+  paginaPedida: number,
+  tamanhoPedido: number,
+): UsuariosPaginados {
+  const itens = Array.isArray(resposta.itens) ? resposta.itens : [];
+  const tamanho = Number.isFinite(resposta.tamanho)
+    ? Math.max(1, Math.floor(resposta.tamanho ?? tamanhoPedido))
+    : Math.max(1, Math.floor(tamanhoPedido));
+  const total = Number.isFinite(resposta.total)
+    ? Math.max(0, Math.floor(resposta.total ?? itens.length))
+    : itens.length;
+  const paginas = Number.isFinite(resposta.paginas)
+    ? Math.max(1, Math.floor(resposta.paginas ?? 1))
+    : Math.max(1, Math.ceil(total / tamanho));
+  const pagina = Number.isFinite(resposta.pagina)
+    ? Math.min(Math.max(1, Math.floor(resposta.pagina ?? paginaPedida)), paginas)
+    : Math.min(Math.max(1, Math.floor(paginaPedida)), paginas);
+
+  return { itens, total, pagina, tamanho, paginas };
+}
+
+export async function listarUsuariosPaginado(
+  pagina = 1,
+  tamanho = 12,
+): Promise<UsuariosPaginados> {
+  const paginaSegura = Number.isFinite(pagina) ? Math.max(1, Math.floor(pagina)) : 1;
+  const tamanhoSeguro = Number.isFinite(tamanho)
+    ? Math.min(Math.max(1, Math.floor(tamanho)), 50)
+    : 12;
+  const params = new URLSearchParams({
+    pagina: String(paginaSegura),
+    tamanho: String(tamanhoSeguro),
+  });
+  const r = await comoJson<Partial<UsuariosPaginados>>(
+    await buscar(`/api/usuarios?${params.toString()}`),
+  );
+  return normalizarPaginacaoUsuarios(r, paginaSegura, tamanhoSeguro);
+}
+
 export async function listarUsuarios(): Promise<UsuarioCadastrado[]> {
-  const r = await comoJson<{ itens: UsuarioCadastrado[] }>(await buscar("/api/usuarios"));
-  return r.itens;
+  return (await listarUsuariosPaginado()).itens;
 }
 
 export async function criarUsuario(dados: {
@@ -1328,6 +1431,15 @@ export interface PessoaSupervisao {
   ultima_em: string;
 }
 
+export interface EntrevistasSupervisaoPaginadas {
+  entrevistador: string;
+  itens: EntrevistaResumo[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+}
+
 /** O que o escritório deve, em número. Pendências, não acertos — ver `app/supervisao.py`. */
 export interface PendenciasSupervisao {
   sem_avaliacao: number;
@@ -1375,8 +1487,79 @@ export async function listarSupervisao(): Promise<{
   total_pessoas: number;
   sem_atribuicao: number;
   pendencias: PendenciasSupervisao;
+  entrevistas: EntrevistasSupervisaoPaginadas;
 }> {
   return comoJson(await buscar("/api/supervisao/entrevistas"));
+}
+
+export async function listarSupervisaoPaginada({
+  entrevistador,
+  pagina = 1,
+  tamanho = 8,
+}: {
+  entrevistador?: string | null;
+  pagina?: number;
+  tamanho?: number;
+} = {}): Promise<{
+  itens: PessoaSupervisao[];
+  total_entrevistas: number;
+  total_pessoas: number;
+  sem_atribuicao: number;
+  pendencias: PendenciasSupervisao;
+  entrevistas: EntrevistasSupervisaoPaginadas;
+}> {
+  const paginaSegura = Number.isFinite(pagina) ? Math.max(1, Math.floor(pagina)) : 1;
+  const tamanhoSeguro = Number.isFinite(tamanho) ? Math.min(Math.max(1, Math.floor(tamanho)), 30) : 8;
+  const params = new URLSearchParams({
+    pagina: String(paginaSegura),
+    tamanho: String(tamanhoSeguro),
+  });
+  if (entrevistador) params.set("entrevistador", entrevistador);
+
+  const dados = await comoJson<{
+    itens?: PessoaSupervisao[];
+    total_entrevistas?: number;
+    total_pessoas?: number;
+    sem_atribuicao?: number;
+    pendencias?: PendenciasSupervisao;
+    entrevistas?: Partial<EntrevistasSupervisaoPaginadas>;
+  }>(await buscar(`/api/supervisao/entrevistas?${params.toString()}`));
+
+  const entrevistas = dados.entrevistas ?? {};
+  const itens = Array.isArray(dados.itens) ? dados.itens : [];
+  const lista = Array.isArray(entrevistas.itens) ? entrevistas.itens : [];
+  const total = Number.isFinite(entrevistas.total) ? Math.max(0, Math.floor(entrevistas.total ?? 0)) : lista.length;
+  const tamanhoReal = Number.isFinite(entrevistas.tamanho)
+    ? Math.max(1, Math.floor(entrevistas.tamanho ?? tamanhoSeguro))
+    : tamanhoSeguro;
+  const paginas = Number.isFinite(entrevistas.paginas)
+    ? Math.max(1, Math.floor(entrevistas.paginas ?? 1))
+    : Math.max(1, Math.ceil(total / tamanhoReal));
+  const paginaReal = Number.isFinite(entrevistas.pagina)
+    ? Math.min(Math.max(1, Math.floor(entrevistas.pagina ?? paginaSegura)), paginas)
+    : Math.min(paginaSegura, paginas);
+
+  return {
+    itens,
+    total_entrevistas: dados.total_entrevistas ?? 0,
+    total_pessoas: dados.total_pessoas ?? 0,
+    sem_atribuicao: dados.sem_atribuicao ?? 0,
+    pendencias: dados.pendencias ?? {
+      sem_avaliacao: 0,
+      sem_dossie: 0,
+      sem_quem_conduziu: 0,
+      ao_vivo: 0,
+      anexadas: 0,
+    },
+    entrevistas: {
+      entrevistador: entrevistas.entrevistador ?? entrevistador ?? "",
+      itens: lista,
+      total,
+      pagina: paginaReal,
+      tamanho: tamanhoReal,
+      paginas,
+    },
+  };
 }
 
 export async function obterTranscricao(id: string): Promise<{

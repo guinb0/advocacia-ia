@@ -300,6 +300,66 @@ export function ObservacaoTabela({ className, ...props }: React.ComponentPropsWi
   return <div className={cn("mt-1 text-tinta-3 text-xs leading-[1.5]", className)} {...props} />;
 }
 
+export function Paginacao({
+  pagina,
+  totalPaginas,
+  total,
+  inicio,
+  fim,
+  onPagina,
+  rotulo = "itens",
+  className,
+}: {
+  pagina: number;
+  totalPaginas: number;
+  total: number;
+  inicio: number;
+  fim: number;
+  onPagina: (pagina: number) => void;
+  rotulo?: string;
+  className?: string;
+}) {
+  const totalSeguro = Number.isFinite(total) ? Math.max(0, Math.floor(total)) : 0;
+  const paginasSeguro = Number.isFinite(totalPaginas)
+    ? Math.max(1, Math.floor(totalPaginas))
+    : 1;
+  if (totalSeguro === 0 || paginasSeguro <= 1) return null;
+
+  const paginaSeguro = Number.isFinite(pagina)
+    ? Math.min(Math.max(1, Math.floor(pagina)), paginasSeguro)
+    : 1;
+  const inicioSeguro = Number.isFinite(inicio)
+    ? Math.min(Math.max(0, Math.floor(inicio)), Math.max(0, totalSeguro - 1))
+    : 0;
+  const fimSeguro = Number.isFinite(fim)
+    ? Math.min(Math.max(inicioSeguro + 1, Math.floor(fim)), totalSeguro)
+    : Math.min(inicioSeguro + 1, totalSeguro);
+
+  return (
+    <div
+      className={cn(
+        "mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-borda pt-3 text-xs text-tinta-3",
+        className,
+      )}
+    >
+      <span className="min-w-0 truncate">
+        {inicioSeguro + 1}-{fimSeguro} de {totalSeguro} {rotulo}
+      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <Botao variante="secundario" pequeno disabled={paginaSeguro <= 1} onClick={() => onPagina(paginaSeguro - 1)}>
+          Anterior
+        </Botao>
+        <span className="tabular-nums text-tinta-2">
+          {paginaSeguro}/{paginasSeguro}
+        </span>
+        <Botao variante="secundario" pequeno disabled={paginaSeguro >= paginasSeguro} onClick={() => onPagina(paginaSeguro + 1)}>
+          Próxima
+        </Botao>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- cartão -- */
 
 interface CartaoProps extends React.ComponentPropsWithoutRef<"div"> {

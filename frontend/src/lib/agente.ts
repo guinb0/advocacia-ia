@@ -748,17 +748,46 @@ export interface PecaDeEstilo {
   created_at: string | null;
 }
 
+export interface PaginaPecasDeEstilo {
+  items: PecaDeEstilo[];
+  total: number;
+  limit: number;
+  offset: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+}
+
 export async function pecasDeEstilo(
   taxonomyCode?: string | null,
-  documentType = "INITIAL_PETITION",
-): Promise<PecaDeEstilo[]> {
-  const busca = new URLSearchParams();
+  opcoes: { pagina?: number; tamanho?: number; documentType?: string | null } = {},
+): Promise<PaginaPecasDeEstilo> {
+  const tamanho = Number.isFinite(opcoes.tamanho)
+    ? Math.max(1, Math.floor(opcoes.tamanho ?? 20))
+    : 20;
+  const pagina = Number.isFinite(opcoes.pagina)
+    ? Math.max(1, Math.floor(opcoes.pagina ?? 1))
+    : 1;
+  const offset = (pagina - 1) * tamanho;
+  const busca = new URLSearchParams({ limit: String(tamanho), offset: String(offset) });
   if (taxonomyCode) busca.set("taxonomy_code", taxonomyCode);
-  if (documentType) busca.set("document_type", documentType);
-  const dados = await chamar<{ items: PecaDeEstilo[] }>(
-    `/api/agente/estilo/pecas${busca.toString() ? `?${busca}` : ""}`,
+  if (opcoes.documentType) busca.set("document_type", opcoes.documentType);
+  const dados = await chamar<{ items: PecaDeEstilo[]; total?: number; limit?: number; offset?: number }>(
+    `/api/agente/estilo/pecas?${busca}`,
   );
-  return dados.items ?? [];
+  const items = Array.isArray(dados.items) ? dados.items : [];
+  const total = Number.isFinite(dados.total) ? Math.max(0, dados.total ?? 0) : items.length;
+  const limite = Number.isFinite(dados.limit) ? Math.max(1, dados.limit ?? tamanho) : tamanho;
+  const deslocamento = Number.isFinite(dados.offset) ? Math.max(0, dados.offset ?? offset) : offset;
+  return {
+    items,
+    total,
+    limit: limite,
+    offset: deslocamento,
+    pagina: Math.floor(deslocamento / limite) + 1,
+    tamanho: limite,
+    paginas: Math.max(1, Math.ceil(total / limite)),
+  };
 }
 
 /** Sobe uma peça pronta do escritório para o corpus de estilo. */

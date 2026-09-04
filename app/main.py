@@ -29,6 +29,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     WebSocket,
@@ -374,7 +375,10 @@ def tipos():
 
 
 @app.get("/api/roteiros")
-def listar_roteiros():
+def listar_roteiros(
+    pagina: int | None = Query(None, ge=1),
+    tamanho: int | None = Query(None, ge=1, le=100),
+):
     """Roteiros de entrevista disponíveis, sem as perguntas.
 
     `importado` diz se aquele roteiro tem uma versão salva no catálogo. É o que
@@ -382,19 +386,36 @@ def listar_roteiros():
     original para voltar.
     """
     salvos = {r["codigo"]: r for r in _roteiros_salvos()}
+    todos = [
+        {
+            "codigo": r.codigo,
+            "nome": r.nome,
+            "descricao": r.descricao,
+            "importado": r.codigo in salvos,
+            "origem": salvos.get(r.codigo, {}).get("origem", ""),
+            "criado_por": salvos.get(r.codigo, {}).get("criado_por", ""),
+            "atualizado_em": salvos.get(r.codigo, {}).get("atualizado_em", ""),
+        }
+        for r in roteiros.listar()
+    ]
+    total = len(todos)
+    importados = sum(1 for r in todos if r["importado"])
+    tamanho_real = tamanho or total or 1
+    paginas = max(1, (total + tamanho_real - 1) // tamanho_real)
+    pagina_real = min(pagina or 1, paginas)
+
+    if pagina is not None or tamanho is not None:
+        inicio = (pagina_real - 1) * tamanho_real
+        todos = todos[inicio : inicio + tamanho_real]
+
     return {
-        "roteiros": [
-            {
-                "codigo": r.codigo,
-                "nome": r.nome,
-                "descricao": r.descricao,
-                "importado": r.codigo in salvos,
-                "origem": salvos.get(r.codigo, {}).get("origem", ""),
-                "criado_por": salvos.get(r.codigo, {}).get("criado_por", ""),
-                "atualizado_em": salvos.get(r.codigo, {}).get("atualizado_em", ""),
-            }
-            for r in roteiros.listar()
-        ]
+        "roteiros": todos,
+        "total": total,
+        "pagina": pagina_real,
+        "tamanho": tamanho_real,
+        "paginas": paginas,
+        "importados": importados,
+        "originais": total - importados,
     }
 
 
@@ -521,9 +542,15 @@ async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
             "fonte": "Arial",
             "enviado_por": "",
             "atualizado_em": "",
+            "atributos": {},
         }
     _logo, fonte, _extensao = await run_in_threadpool(
         peticao_local.extrair_identidade_visual, registro["conteudo"]
+    )
+    # O que mais o .docx revela do padrão do escritório — tamanho, espaçamento,
+    # margens, alinhamento — para a tela mostrar tudo que foi captado.
+    atributos = await run_in_threadpool(
+        peticao_local.analisar_estilo, registro["conteudo"]
     )
     return {
         "arquivo": registro["nome_arquivo"],
@@ -531,6 +558,7 @@ async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
         "fonte": fonte,
         "enviado_por": registro["enviado_por"],
         "atualizado_em": registro["atualizado_em"],
+        "atributos": atributos,
     }
 
 

@@ -12,13 +12,29 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, Mail, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
 
-import { Aviso, Botao } from "@/components/ui/Basicos";
+import {
+  AjudaCampo,
+  Aviso,
+  Botao,
+  Campo,
+  CampoSeletor,
+  Cartao,
+  Paginacao,
+  RotuloCampo,
+  Selo,
+  Tabela,
+  Td,
+  Th,
+  TrZebra,
+  Vazio,
+} from "@/components/ui/Basicos";
 import {
   ApiError,
   criarUsuario,
   listarPerfis,
-  listarUsuarios,
+  listarUsuariosPaginado,
   type Perfil,
   type UsuarioCadastrado,
 } from "@/lib/api";
@@ -28,10 +44,14 @@ interface Props {
 }
 
 const VAZIO = { nome: "", email: "", perfilId: 0, senha: "" };
+const TAMANHO_PAGINA = 12;
 
 export default function Usuarios({ onVoltar }: Props) {
   const [perfis, setPerfis] = useState<Perfil[]>([]);
   const [itens, setItens] = useState<UsuarioCadastrado[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pagina, setPagina] = useState(1);
+  const [totalPaginas, setTotalPaginas] = useState(1);
   const [form, setForm] = useState(VAZIO);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -41,9 +61,14 @@ export default function Usuarios({ onVoltar }: Props) {
   const [erroPerfis, setErroPerfis] = useState<string | null>(null);
   const [feito, setFeito] = useState<string | null>(null);
 
-  const recarregar = useCallback(async () => {
+  const recarregar = useCallback(async (paginaSolicitada = 1) => {
+    const paginaSegura = Number.isFinite(paginaSolicitada) ? Math.max(1, paginaSolicitada) : 1;
     try {
-      setItens(await listarUsuarios());
+      const resposta = await listarUsuariosPaginado(paginaSegura, TAMANHO_PAGINA);
+      setItens(resposta.itens);
+      setTotal(resposta.total);
+      setPagina(resposta.pagina);
+      setTotalPaginas(resposta.paginas);
       setErro(null);
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : "Não foi possível carregar os usuários.");
@@ -78,7 +103,7 @@ export default function Usuarios({ onVoltar }: Props) {
             : "Não foi possível carregar os perfis. O servidor respondeu?",
         );
       });
-    void recarregar();
+    void recarregar(1);
   }, [recarregar]);
 
   async function enviar(evento: React.FormEvent) {
@@ -93,7 +118,7 @@ export default function Usuarios({ onVoltar }: Props) {
       setFeito(`${novo.nome} cadastrado. Entra com ${novo.usuario}.`);
       const perfilInicial = perfis.find((perfil) => perfil.codigo === "advogado") ?? perfis[0];
       setForm({ ...VAZIO, perfilId: perfilInicial?.id ?? 0 });
-      await recarregar();
+      await recarregar(1);
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : "Não foi possível cadastrar.");
     } finally {
@@ -103,60 +128,102 @@ export default function Usuarios({ onVoltar }: Props) {
 
   const perfilSelecionado = perfis.find((p) => p.id === form.perfilId);
   const descricaoPerfil = perfilSelecionado?.descricao;
+  const inicio = total === 0 ? 0 : (pagina - 1) * TAMANHO_PAGINA;
+  const fim = Math.min(inicio + itens.length, total);
+  const ativos = itens.filter((usuario) => usuario.ativo).length;
+  const semPerfil = itens.filter((usuario) => usuario.perfis.length === 0).length;
 
   return (
-    <div className="min-w-0">
-      <Botao variante="secundario" onClick={onVoltar}>
-        ← Voltar para a carteira
+    <div className="min-w-0 space-y-5">
+      <Botao variante="texto" onClick={onVoltar} className="inline-flex items-center gap-2">
+        <ArrowLeft size={16} aria-hidden />
+        Voltar para a carteira
       </Botao>
 
-      <header className="my-5 mb-6">
-        <h1 className="mb-[6px] mt-0 text-[1.6rem]">Usuários</h1>
-        <p className="m-0 text-tinta-3 max-w-[62ch] leading-[1.5]">
-          Quem pode entrar no sistema, e com qual perfil. O cadastro é o mesmo login
-          usado em todas as máquinas do escritório.
-        </p>
+      <header className="flex min-w-0 flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <p className="mb-2 mt-0 font-ui text-xs font-bold uppercase tracking-[0.12em] text-tinta-3">
+            Administração
+          </p>
+          <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">
+            Usuários
+          </h1>
+          <p className="m-0 max-w-[66ch] text-tinta-3 leading-[1.5]">
+            Quem pode entrar no sistema, com qual perfil e em que situação. O e-mail
+            continua sendo o login oficial do escritório.
+          </p>
+        </div>
+        <div className="grid min-w-[220px] grid-cols-2 gap-2 max-[520px]:w-full">
+          <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+            <div className="text-xs font-semibold text-tinta-3">Nesta página</div>
+            <div className="mt-1 font-titulo text-lg font-semibold text-tinta tabular-nums">
+              {itens.length}
+            </div>
+          </div>
+          <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+            <div className="text-xs font-semibold text-tinta-3">Ativos</div>
+            <div className="mt-1 font-titulo text-lg font-semibold text-ok tabular-nums">
+              {ativos}
+            </div>
+          </div>
+        </div>
       </header>
 
-      <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),420px)_minmax(0,1fr)] items-start gap-7 max-[860px]:grid-cols-1">
-        <section className="border border-borda-forte rounded-[10px] p-[18px] bg-papel">
-          <h2 className="mb-4 mt-0 text-base uppercase tracking-[0.04em] text-tinta-3">Cadastrar</h2>
-          <form onSubmit={enviar}>
-            <label className="block mb-4">
-              <span className="block mb-[5px] font-semibold text-[0.9rem]">Nome completo</span>
-              <input
-                className="w-full px-[11px] py-[9px] border border-borda-forte rounded-[7px] [font:inherit] bg-papel focus:[outline:2px_solid_var(--foco)] focus:outline-offset-[1px]"
+      {(erro || feito) && (
+        <div className="space-y-3">
+          {erro && (
+            <Aviso tom="critico" titulo="Não deu para cadastrar ou carregar">
+              {erro}
+            </Aviso>
+          )}
+          {feito && (
+            <Aviso tom="ok" titulo="Usuário cadastrado">
+              {feito}
+            </Aviso>
+          )}
+        </div>
+      )}
+
+      <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),400px)_minmax(0,1fr)] items-start gap-5 max-[920px]:grid-cols-1">
+        <Cartao
+          titulo={
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <UserPlus size={18} className="text-acao" aria-hidden />
+              <span className="truncate">Cadastrar acesso</span>
+            </span>
+          }
+          subtitulo="Dados mínimos para liberar entrada no sistema."
+          className="min-w-0 overflow-hidden"
+        >
+          <form onSubmit={enviar} className="grid gap-4">
+            <div>
+              <RotuloCampo>Nome completo</RotuloCampo>
+              <Campo
                 required
                 minLength={3}
                 value={form.nome}
                 onChange={(e) => setForm({ ...form, nome: e.target.value })}
                 placeholder="Mariana Alves Souza"
               />
-            </label>
+            </div>
 
-            <label className="block mb-4">
-              <span className="block mb-[5px] font-semibold text-[0.9rem]">E-mail</span>
-              <input
-                className="w-full px-[11px] py-[9px] border border-borda-forte rounded-[7px] [font:inherit] bg-papel focus:[outline:2px_solid_var(--foco)] focus:outline-offset-[1px]"
+            <div>
+              <RotuloCampo>E-mail</RotuloCampo>
+              <Campo
                 required
                 type="email"
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 placeholder="mariana@escritorio.adv.br"
               />
-              <small className="block mt-[5px] text-tinta-3 leading-[1.4]">
+              <AjudaCampo>
                 É com ele que a pessoa entra — não há usuário separado.
-              </small>
-            </label>
+              </AjudaCampo>
+            </div>
 
-            <label className="block mb-4">
-              <span className="block mb-[5px] font-semibold text-[0.9rem]">Perfil</span>
-              {/* `text-tinta` no select E cor nas `option` não é redundância. No
-                * Windows a lista ABERTA de um select sem cor/fundo próprios pode
-                * herdar as do sistema — o resultado é uma faixa preta sem texto
-                * legível. Mesmo defeito já registrado em `ModelosDePeticao`. */}
-              <select
-                className="w-full px-[11px] py-[9px] border border-borda-forte rounded-[7px] [font:inherit] bg-papel text-tinta [&>option]:bg-papel [&>option]:text-tinta focus:[outline:2px_solid_var(--foco)] focus:outline-offset-[1px] disabled:text-tinta-3"
+            <div>
+              <RotuloCampo>Perfil</RotuloCampo>
+              <CampoSeletor
                 value={form.perfilId || ""}
                 onChange={(e) => setForm({ ...form, perfilId: Number(e.target.value) })}
                 disabled={perfis.length === 0}
@@ -167,19 +234,18 @@ export default function Usuarios({ onVoltar }: Props) {
                     {p.rotulo}
                   </option>
                 ))}
-              </select>
+              </CampoSeletor>
               {erroPerfis && (
                 <small className="block mt-[5px] text-critico leading-[1.4]">{erroPerfis}</small>
               )}
               {descricaoPerfil && (
-                <small className="block mt-[5px] text-tinta-3 leading-[1.4]">{descricaoPerfil}</small>
+                <AjudaCampo className="line-clamp-3">{descricaoPerfil}</AjudaCampo>
               )}
-            </label>
+            </div>
 
-            <label className="block mb-4">
-              <span className="block mb-[5px] font-semibold text-[0.9rem]">Senha</span>
-              <input
-                className="w-full px-[11px] py-[9px] border border-borda-forte rounded-[7px] [font:inherit] bg-papel focus:[outline:2px_solid_var(--foco)] focus:outline-offset-[1px]"
+            <div>
+              <RotuloCampo>Senha</RotuloCampo>
+              <Campo
                 required
                 type="password"
                 minLength={8}
@@ -187,89 +253,134 @@ export default function Usuarios({ onVoltar }: Props) {
                 onChange={(e) => setForm({ ...form, senha: e.target.value })}
                 placeholder="ao menos 8 caracteres"
               />
-              <small className="block mt-[5px] text-tinta-3 leading-[1.4]">
+              <AjudaCampo>
                 Vale já no primeiro acesso; a pessoa troca depois se quiser.
-              </small>
-            </label>
+              </AjudaCampo>
+            </div>
 
-            {/* Só o botão base, sem variante — assim como no CSS original. */}
-            <button
+            <Botao
               type="submit"
-              className="inline-flex items-center justify-center gap-2 min-h-10 px-4 py-[9px] border border-transparent rounded-campo bg-transparent font-ui text-sm font-semibold text-tinta-2 cursor-pointer disabled:text-tinta-desabilitada disabled:cursor-not-allowed"
+              variante="primario"
+              bloco
               disabled={salvando || !perfilSelecionado}
             >
+              <UserPlus size={16} aria-hidden />
               {salvando ? "Cadastrando…" : "Cadastrar usuário"}
-            </button>
+            </Botao>
           </form>
-
-          {erro && (
-            <Aviso tom="critico" titulo="Não deu para cadastrar">
-              {erro}
-            </Aviso>
-          )}
-          {feito && (
-            <p className="mt-[14px] mb-0 px-3 py-[10px] rounded-[7px] bg-ok-claro text-ok">{feito}</p>
-          )}
 
           {/* O perfil Cliente existe, mas o caminho do cliente é o portal do
             * caso, com a senha dele. Dizer isto aqui evita cadastrar cliente
             * achando que é assim que ele acompanha o processo. */}
           {perfilSelecionado?.codigo === "cliente" && (
+            <div className="mt-4">
             <Aviso tom="atencao" titulo="Antes de cadastrar um cliente">
               O cliente acompanha o caso pelo <strong>portal</strong>, com o link e a
               senha do próprio caso — não precisa de conta aqui. Uma conta com perfil
               Cliente entra no sistema, mas não alcança casos, documentos nem
               entrevistas.
             </Aviso>
+            </div>
           )}
-        </section>
+        </Cartao>
 
-        <section className="border border-borda-forte rounded-[10px] p-[18px] bg-papel">
-          <h2 className="mb-4 mt-0 text-base uppercase tracking-[0.04em] text-tinta-3">
-            Já cadastrados{" "}
-            {itens.length > 0 && <span className="normal-case tracking-normal">({itens.length})</span>}
-          </h2>
+        <Cartao
+          titulo={
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <UsersRound size={18} className="text-acao" aria-hidden />
+              <span className="truncate">Acessos cadastrados</span>
+            </span>
+          }
+          subtitulo={
+            total > 0
+              ? `${total.toLocaleString("pt-BR")} conta(s) no cadastro.`
+              : "A lista aparece assim que houver contas cadastradas."
+          }
+          className="min-w-0 overflow-hidden"
+        >
           {carregando ? (
             <p className="m-0 text-tinta-3">Carregando…</p>
           ) : itens.length === 0 ? (
-            <p className="m-0 text-tinta-3">Ninguém cadastrado ainda.</p>
+            <Vazio>Ninguém cadastrado ainda.</Vazio>
           ) : (
-            <ul className="list-none m-0 p-0">
-              {itens.map((u) => (
-                <li
-                  key={u.id}
-                  className="flex justify-between items-center gap-3 py-[11px] border-b border-borda last:border-b-0"
-                >
-                  <div className="flex flex-col min-w-0">
-                    <strong>{u.nome}</strong>
-                    <span className="text-tinta-3 text-[0.85rem] [overflow-wrap:anywhere]">{u.usuario}</span>
-                  </div>
-                  <div className="flex gap-[6px] flex-shrink-0">
-                    {u.perfis.length === 0 ? (
-                      <span className="px-[9px] py-[2px] rounded-pill text-[0.78rem] whitespace-nowrap bg-critico-claro text-critico">
-                        sem perfil
-                      </span>
-                    ) : (
-                      u.perfis.map((p) => (
-                        <span
-                          key={p}
-                          className="px-[9px] py-[2px] rounded-pill text-[0.78rem] whitespace-nowrap bg-acao-clara text-acao"
-                        >
-                          {p}
-                        </span>
-                      ))
-                    )}
-                    {!u.ativo && (
-                      <span className="px-[9px] py-[2px] rounded-pill text-[0.78rem] whitespace-nowrap bg-papel-3 text-tinta-3">
-                        inativo
-                      </span>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <>
+              {semPerfil > 0 && (
+                <Aviso tom="atencao" titulo="Conta sem perfil nesta página">
+                  {semPerfil} conta(s) precisam de ajuste de perfil antes de operar.
+                </Aviso>
+              )}
+              <div className="mt-4 max-w-full overflow-x-auto rounded-campo border border-borda">
+                <Tabela className="min-w-[720px]">
+                  <thead>
+                    <tr>
+                      <Th>Usuário</Th>
+                      <Th>Login</Th>
+                      <Th>Perfil</Th>
+                      <Th>Situação</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itens.map((u) => (
+                      <TrZebra key={u.id}>
+                        <Td>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+                              <ShieldCheck size={15} aria-hidden />
+                            </span>
+                            <span className="min-w-0">
+                              <strong className="block truncate">{u.nome}</strong>
+                              <span className="block text-xs text-tinta-3 tabular-nums">ID {u.id}</span>
+                            </span>
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <Mail size={14} className="shrink-0 text-tinta-3" aria-hidden />
+                            <span className="min-w-0 truncate" title={u.usuario}>
+                              {u.usuario}
+                            </span>
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="flex max-w-[260px] flex-wrap gap-1">
+                            {u.perfis.length === 0 ? (
+                              <Selo tom="critico" simbolo="!">
+                                sem perfil
+                              </Selo>
+                            ) : (
+                              u.perfis.map((p) => (
+                                <Selo key={p} tom="info">
+                                  {p}
+                                </Selo>
+                              ))
+                            )}
+                          </span>
+                        </Td>
+                        <Td>
+                          <Selo tom={u.ativo ? "ok" : "neutro"} simbolo={u.ativo ? "✓" : "•"}>
+                            {u.ativo ? "ativo" : "inativo"}
+                          </Selo>
+                        </Td>
+                      </TrZebra>
+                    ))}
+                  </tbody>
+                </Tabela>
+              </div>
+              <Paginacao
+                pagina={pagina}
+                totalPaginas={totalPaginas}
+                total={total}
+                inicio={inicio}
+                fim={fim}
+                rotulo="usuários"
+                onPagina={(proxima) => {
+                  setCarregando(true);
+                  void recarregar(proxima);
+                }}
+              />
+            </>
           )}
-        </section>
+        </Cartao>
       </div>
     </div>
   );
