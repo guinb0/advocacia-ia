@@ -17,6 +17,7 @@ segue responsável pelo texto exibido. Aqui ela existe só para ordenar e contar
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 
@@ -66,7 +67,42 @@ def _peso(severidade: str, progresso: dict[str, Any], dias: int) -> int:
     return base - dias
 
 
-def montar(pagina: int = 1, tamanho: int = TAMANHO_PADRAO) -> dict[str, Any]:
+def _normalizar(texto: str) -> str:
+    """Minúsculas, sem acento — para buscar 'joão' achando 'JOAO' e vice-versa."""
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or "")) if unicodedata.category(c) != "Mn"
+    )
+    return " ".join(sem_acento.lower().split())
+
+
+def _passa_situacao(medido: dict[str, Any], filtro: str) -> bool:
+    """O mesmo vocabulário dos chips da tela (`useCarteira.ts`), agora no servidor.
+
+    `pedido` e `pronto` olham o progresso; os demais são a própria severidade.
+    """
+    if filtro in ("", "todos"):
+        return True
+    progresso = medido["situacao"]["progresso"]
+    if filtro == "pedido":
+        return progresso["obrigatorios_pendentes"] > 0
+    if filtro == "pronto":
+        return bool(progresso["pronto"])
+    return medido["severidade"] == filtro
+
+
+#: Como ordenar a fila. "risco" é o padrão histórico (o que pode travar primeiro).
+ORDENS = ("risco", "recente", "parado", "nome")
+
+
+def montar(
+    pagina: int = 1,
+    tamanho: int = TAMANHO_PADRAO,
+    *,
+    busca: str = "",
+    categoria: str = "",
+    situacao: str = "",
+    ordenar: str = "risco",
+) -> dict[str, Any]:
     """A página pedida da fila, mais os números que valem para a carteira toda.
 
     Duas consultas numa conexão só — o banco é remoto e o handshake custa mais que as
@@ -75,7 +111,16 @@ def montar(pagina: int = 1, tamanho: int = TAMANHO_PADRAO) -> dict[str, Any]:
     with banco.sessao():
         cadastro = armazenamento.listar_casos()
         entregas_por_caso = armazenamento.entregas_de_todos_os_casos()
-    return compor(cadastro, entregas_por_caso, pagina=pagina, tamanho=tamanho)
+    return compor(
+        cadastro,
+        entregas_por_caso,
+        pagina=pagina,
+        tamanho=tamanho,
+        busca=busca,
+        categoria=categoria,
+        situacao=situacao,
+        ordenar=ordenar,
+    )
 
 
 def compor(
@@ -83,15 +128,25 @@ def compor(
     entregas_por_caso: dict[str, list[dict[str, Any]]],
     pagina: int = 1,
     tamanho: int = TAMANHO_PADRAO,
+    *,
+    busca: str = "",
+    categoria: str = "",
+    situacao: str = "",
+    ordenar: str = "risco",
 ) -> dict[str, Any]:
-    """A mesma fila, a partir de dados já em mãos — sem tocar no banco (assim é testada)."""
+    """A mesma fila, a partir de dados já em mãos — sem tocar no banco (assim é testada).
+
+    Os filtros (`busca`, `categoria`, `situacao`) recortam a LISTA e a paginação; os
+    contadores do topo e os painéis laterais continuam medindo a carteira inteira, para
+    não mentir sobre o tamanho do escritório quando um filtro está ativo.
+    """
     pagina = max(1, pagina)
     tamanho = max(1, min(100, tamanho))
 
     medidos: list[dict[str, Any]] = []
     for caso in cadastro:
-        situacao = casos_ocr.situacao_de(caso, entregas_por_caso.get(str(caso["id"]), []))
-        progresso = situacao.get("progresso")
+        situacao_caso = casos_ocr.situacao_de(caso, entregas_por_caso.get(str(caso["id"]), []))
+        progresso = situacao_caso.get("progresso")
         if not progresso:
             # Categoria que saiu do código: sem checklist não há progresso a medir.
             continue
@@ -99,19 +154,50 @@ def compor(
         severidade = _severidade(progresso, dias)
         medidos.append(
             {
-                "situacao": situacao,
+                "situacao": situacao_caso,
                 "severidade": severidade,
                 "peso": _peso(severidade, progresso, dias),
+                "dias": dias,
             }
         )
 
     medidos.sort(key=lambda m: m["peso"])
 
-    total = len(medidos)
+    # Vocabulário das categorias presentes, para a tela oferecer só o que existe.
+    categorias_presentes = _categorias_presentes(medidos)
+
+    # ---- filtragem: recorta a lista, preserva a medição da carteira inteira ----
+    filtrados = list(medidos)
+    if situacao:
+        filtrados = [m for m in filtrados if _passa_situacao(m, situacao)]
+    if categoria:
+        filtrados = [
+            m for m in filtrados if str(m["situacao"]["caso"].get("categoria") or "") == categoria
+        ]
+    alvo = _normalizar(busca)
+    if alvo:
+        def casa(m: dict[str, Any]) -> bool:
+            caso = m["situacao"]["caso"]
+            campos = " ".join(
+                _normalizar(v)
+                for v in (
+                    caso.get("cliente"),
+                    caso.get("observacao"),
+                    (m["situacao"].get("categoria") or {}).get("nome"),
+                    caso.get("categoria"),
+                )
+            )
+            return all(termo in campos for termo in alvo.split())
+
+        filtrados = [m for m in filtrados if casa(m)]
+
+    _ordenar(filtrados, ordenar)
+
+    total = len(filtrados)
     paginas = max(1, -(-total // tamanho))
     pagina = min(pagina, paginas)
     inicio = (pagina - 1) * tamanho
-    da_pagina = medidos[inicio : inicio + tamanho]
+    da_pagina = filtrados[inicio : inicio + tamanho]
 
     return {
         "situacoes": [m["situacao"] for m in da_pagina],
@@ -119,10 +205,34 @@ def compor(
         "pagina": pagina,
         "tamanho": tamanho,
         "paginas": paginas,
+        "categorias": categorias_presentes,
         "triagem": _triagem(medidos),
         "chegando_agora": _chegando_agora(medidos),
         "pedidos": _pedidos(medidos),
     }
+
+
+def _ordenar(medidos: list[dict[str, Any]], ordenar: str) -> None:
+    """Reordena no lugar. Já vem ordenado por risco; só mexe se pedirem outra ordem."""
+    if ordenar == "recente":
+        medidos.sort(key=lambda m: m["dias"])  # menos dias parado = mais recente
+    elif ordenar == "parado":
+        medidos.sort(key=lambda m: m["dias"], reverse=True)
+    elif ordenar == "nome":
+        medidos.sort(key=lambda m: _normalizar(m["situacao"]["caso"].get("cliente")))
+    # "risco" (ou desconhecido): mantém a ordem por peso já aplicada.
+
+
+def _categorias_presentes(medidos: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Categorias que aparecem na carteira, com código e nome, sem repetir."""
+    vistas: dict[str, str] = {}
+    for m in medidos:
+        caso = m["situacao"]["caso"]
+        codigo = str(caso.get("categoria") or "")
+        if not codigo or codigo in vistas:
+            continue
+        vistas[codigo] = (m["situacao"].get("categoria") or {}).get("nome") or codigo
+    return [{"codigo": c, "nome": n} for c, n in sorted(vistas.items(), key=lambda kv: _normalizar(kv[1]))]
 
 
 def _triagem(medidos: list[dict[str, Any]]) -> dict[str, int]:
