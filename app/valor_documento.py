@@ -60,6 +60,13 @@ TEMPO_MODELO_S = 30.0
 #: ilegível, página em branco, verso de documento.
 MINIMO_CARACTERES = 60
 
+#: Teto do texto que vai para o modelo de leitura. Um laudo ou uma CAT cabem
+#: folgados aqui; o que estoura este limite é prontuário de internação de dezenas
+#: de páginas, que não precisa ir inteiro para o classificador — a transcrição
+#: integral continua guardada em `texto_linhas` na entrega. Corta em fronteira de
+#: linha para não partir um CID ou uma data no meio.
+MAXIMO_CARACTERES = 12000
+
 CODIGOS_DOCUMENTO = {
     "cpf",
     "rg",
@@ -88,8 +95,14 @@ def texto_do_ocr(extracao: dict[str, Any]) -> str:
     linhas = extracao.get("texto_linhas") or []
     partes = [str(l.get("texto", "")).strip() for l in linhas if isinstance(l, dict)]
     # Diagnóstico, assinatura e conclusão podem estar nas páginas finais; a
-    # DeepSeek recebe o conteúdo integral que a Mistral conseguiu ler.
-    return "\n".join(p for p in partes if p)
+    # DeepSeek recebe o conteúdo integral que a Mistral conseguiu ler, até o teto.
+    texto = "\n".join(p for p in partes if p)
+    if len(texto) <= MAXIMO_CARACTERES:
+        return texto
+    # Corta na última quebra de linha antes do teto para não partir um dado no
+    # meio; se não houver quebra, corta seco no teto.
+    corte = texto.rfind("\n", 0, MAXIMO_CARACTERES)
+    return texto[: corte if corte > 0 else MAXIMO_CARACTERES]
 
 
 INSTRUCAO = """Você assessora um advogado trabalhista brasileiro. Recebe o TEXTO BRUTO

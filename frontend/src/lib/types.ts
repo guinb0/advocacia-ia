@@ -189,6 +189,11 @@ export interface Entrega {
   criado_em: string;
   /** Mensagens para o advogado — não são o texto que vai ao cliente. */
   alertas: string[];
+  /** Os mesmos avisos com um tom: "info" é nota de rotina (mostrada quieta),
+   *  "atencao"/"critico" são problemas (mostrados em destaque). A tela usa isto
+   *  para não pintar de amarelo o que é só informação. Ausente em respostas
+   *  antigas — caia em `alertas` como fallback. */
+  avisos?: { texto: string; tom: "info" | "atencao" | "critico" }[];
 }
 
 /** `GET /api/entregas/{id}` devolve a entrega com a extração completa anexada

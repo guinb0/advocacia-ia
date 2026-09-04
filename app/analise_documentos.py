@@ -71,8 +71,18 @@ Cada achado:
   "documento": "nome exato do arquivo, como veio na lista",
   "citacao": "trecho LITERAL e contínuo do documento, copiado caractere a caractere",
   "relevancia": "por que isto importa para o caso, em uma frase",
+  "parte": "de quem é esta informação — um de: titular, terceiro, empresa, indefinido",
+  "papel": "o envolvimento dessa pessoa no caso, em poucas palavras (ex.: reclamante, empregadora, médico, perito, testemunha, preposto, sindicato). Vazio se não der para saber.",
   "contradiz": true se o documento contradiz o que a entrevista registrou, senão false
 }
+
+COMO PREENCHER "parte" E "papel":
+- "titular": o cliente do escritório, autor da ação — o dono do RG/CPF do caso.
+- "empresa": a empregadora / reclamada.
+- "terceiro": qualquer outra pessoa citada (médico que assinou o laudo, perito,
+  testemunha, preposto, colega, familiar). Em "papel", diga qual é o envolvimento.
+- "indefinido": não dá para saber de quem é a informação. Na dúvida, use este —
+  atribuir errado é pior que admitir que não se sabe.
 
 REGRAS QUE NÃO SE NEGOCIAM:
 
@@ -87,6 +97,18 @@ REGRAS QUE NÃO SE NEGOCIAM:
 5. Nenhum achado é melhor que achado duvidoso. Lista vazia é resposta válida.
 
 Máximo 12 achados, os mais relevantes primeiro."""
+
+
+#: Vocabulário fechado de "de quem é a informação". Fechá-lo é o que permite ao
+#: painel agrupar e colorir sem adivinhar sinônimo; o texto livre do envolvimento
+#: fica em `papel`. Valor fora da lista vira "indefinido" — atribuir errado a
+#: prova a uma parte é pior que dizer que não se sabe.
+PARTES_VALIDAS = {"titular", "terceiro", "empresa", "indefinido"}
+
+
+def _normalizar_parte(bruto: Any) -> str:
+    valor = str(bruto or "").strip().lower()
+    return valor if valor in PARTES_VALIDAS else "indefinido"
 
 
 def _normalizar(texto: str) -> str:
@@ -242,6 +264,10 @@ def analisar(caso_id: str) -> dict[str, Any]:
                 "entrega_id": id_por_arquivo[arquivo],
                 "citacao": citacao[:400],
                 "relevancia": str(item.get("relevancia") or "").strip()[:300],
+                # De quem é a informação e qual o envolvimento dessa pessoa: é o
+                # que separa, no painel, o dado do cliente do dado de um terceiro.
+                "parte": _normalizar_parte(item.get("parte")),
+                "papel": str(item.get("papel") or "").strip()[:80],
                 "contradiz": bool(item.get("contradiz")),
             }
         )

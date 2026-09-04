@@ -127,6 +127,11 @@ const PARAGRAFO_MINUTA = "m-0 mb-2 font-titulo text-base leading-[1.7] text-just
 const CAMPO_ENTREVISTA = "grid gap-1 text-tinta-2 text-sm";
 const INPUT_ENTREVISTA = "p-[7px_10px] border border-borda rounded-[6px] bg-papel text-tinta";
 
+/** De quem é o achado, em palavra que o advogado lê sem decifrar código. */
+function rotuloParte(parte: "titular" | "terceiro" | "empresa" | "indefinido"): string {
+  return { titular: "cliente", empresa: "empresa", terceiro: "terceiro", indefinido: "" }[parte];
+}
+
 function cpfCanonicoDoFato(valor: string): string | null {
   const normalizado = valor.normalize("NFKC");
   if (!/^[0-9.\-\s]+$/.test(normalizado)) return null;
@@ -644,7 +649,16 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
                       </Selo>
                     )}
                   </div>
-                  <div className={`${ORIGEM} truncate`} title={a.documento}>{a.documento}</div>
+                  <div className={`${ORIGEM} truncate`} title={a.documento}>
+                    {a.documento}
+                    {a.parte && a.parte !== "indefinido" && (
+                      <span className="text-tinta-3">
+                        {" · "}
+                        {rotuloParte(a.parte)}
+                        {a.papel ? ` (${a.papel})` : ""}
+                      </span>
+                    )}
+                  </div>
                   {a.relevancia && <p className={RAZAO}>{a.relevancia}</p>}
                   <blockquote className={TRECHO}>{a.citacao}</blockquote>
                 </li>
