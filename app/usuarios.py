@@ -52,7 +52,7 @@ import os
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from . import auth
@@ -705,14 +705,25 @@ class NovoUsuario(BaseModel):
 
 
 @roteador.get("", dependencies=[PodeGerir])
-def listar_usuarios() -> dict[str, Any]:
+def listar_usuarios(
+    pagina: Annotated[int, Query(ge=1)] = 1,
+    tamanho: Annotated[int, Query(ge=1, le=50)] = 12,
+) -> dict[str, Any]:
     """Quem já existe, com o perfil de cada um.
 
     A forma da resposta é a mesma da época do Keycloak — `usuario`, `perfis` no
     plural — porque `components/Usuarios.tsx` a consome assim, e trocar os nomes
     aqui só renomearia o mesmo dado em dois lugares.
     """
+    tamanho_real = max(1, min(int(tamanho or 12), 50))
+    pagina_pedida = max(1, int(pagina or 1))
+
     with conectar() as con:
+        total_linha = con.execute(f"SELECT COUNT(*) AS n FROM {_TABELA}").fetchone()
+        total = int(total_linha["n"] if total_linha else 0)
+        paginas = max(1, (total + tamanho_real - 1) // tamanho_real)
+        pagina_real = min(pagina_pedida, paginas)
+        offset = (pagina_real - 1) * tamanho_real
         linhas = con.execute(
             f"""SELECT u.codigo, u.nome, u.email, u.perfil, u.ativo,
                        COALESCE(p_id.id, p_nome.id) AS perfil_id,
@@ -720,7 +731,9 @@ def listar_usuarios() -> dict[str, Any]:
                   FROM {_TABELA} u
              LEFT JOIN {_TABELA_PERFIS_NOVA} p_id ON p_id.id = u.perfil_id
              LEFT JOIN {_TABELA_PERFIS_NOVA} p_nome ON p_nome.nome = u.perfil
-              ORDER BY u.nome"""
+              ORDER BY u.nome
+                OFFSET ? ROWS FETCH NEXT ? ROWS ONLY""",
+            (offset, tamanho_real),
         ).fetchall()
 
     itens = [
@@ -735,7 +748,13 @@ def listar_usuarios() -> dict[str, Any]:
         }
         for linha in linhas
     ]
-    return {"itens": itens, "total": len(itens)}
+    return {
+        "itens": itens,
+        "total": total,
+        "pagina": pagina_real,
+        "tamanho": tamanho_real,
+        "paginas": paginas,
+    }
 
 
 @roteador.post("", status_code=201, dependencies=[PodeGerir])

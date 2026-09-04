@@ -261,18 +261,24 @@ for bruto, esperado, o_que in [
     checar(supervisao._data_curta(bruto) == esperado, o_que,
            f"{bruto!r} -> {supervisao._data_curta(bruto)!r}")
 
+# A fonte da supervisão passou a ser `listar_resumo_supervisao` (a paginada
+# alimenta só a lista da pessoa selecionada, que este teste não afere).
 _guardados2 = (
-    supervisao.armazenamento.listar_todas_entrevistas,
+    supervisao.armazenamento.listar_resumo_supervisao,
+    supervisao.armazenamento.listar_resumo_supervisao_paginado,
     supervisao.armazenamento.listar_casos,
 )
 supervisao.armazenamento.listar_casos = lambda: [{"id": "c1", "cliente": "Ana"}]
-supervisao.armazenamento.listar_todas_entrevistas = lambda: [
+supervisao.armazenamento.listar_resumo_supervisao = lambda: [
     entrevista(id="a", entrevistador="Helena", avaliacao_google=True, enviada=True,
                gravacao_id="g1", realizada_em="2026-08-20"),
     entrevista(id="b", entrevistador="Helena", avaliacao_google=False, enviada=True,
                realizada_em="19/08/2026"),
     entrevista(id="c", entrevistador="", avaliacao_google=False, enviada=False),
 ]
+supervisao.armazenamento.listar_resumo_supervisao_paginado = lambda **_: {
+    "itens": [], "total": 0, "pagina": 1, "tamanho": 8, "paginas": 1,
+}
 try:
     d = supervisao.por_entrevistador()
     pend = d["pendencias"]
@@ -293,7 +299,8 @@ try:
     )
 finally:
     (
-        supervisao.armazenamento.listar_todas_entrevistas,
+        supervisao.armazenamento.listar_resumo_supervisao,
+        supervisao.armazenamento.listar_resumo_supervisao_paginado,
         supervisao.armazenamento.listar_casos,
     ) = _guardados2
 

@@ -24,14 +24,15 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, BookOpenText, FilePenLine, RotateCcw, Upload } from "lucide-react";
 
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
-import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
+import { Aviso, Botao, Cartao, Paginacao, Selo, Vazio } from "@/components/ui/Basicos";
 import {
   ApiError,
   excluirRoteiroSalvo,
-  listarRoteiros,
+  listarRoteirosPaginado,
   obterRoteiro,
 } from "@/lib/api";
 import type { RoteiroCompleto, RoteiroResumo } from "@/lib/types";
@@ -43,8 +44,13 @@ function quando(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("pt-BR");
 }
 
+const ITENS_POR_PAGINA = 10;
+
 export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void }) {
   const [roteiros, setRoteiros] = useState<RoteiroResumo[]>([]);
+  const [totalRoteiros, setTotalRoteiros] = useState(0);
+  const [totalPaginas, setTotalPaginas] = useState(1);
+  const [resumo, setResumo] = useState({ importados: 0, originais: 0 });
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [recado, setRecado] = useState<string | null>(null);
@@ -55,18 +61,29 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
   const [abrindo, setAbrindo] = useState<string | null>(null);
   const [importando, setImportando] = useState(false);
   const [revertendo, setRevertendo] = useState<string | null>(null);
+  const [pagina, setPagina] = useState(1);
 
   const recarregar = useCallback(async () => {
     setCarregando(true);
     try {
-      setRoteiros(await listarRoteiros());
+      const paginaRecebida = await listarRoteirosPaginado(pagina, ITENS_POR_PAGINA);
+      setRoteiros(paginaRecebida.roteiros);
+      setTotalRoteiros(paginaRecebida.total);
+      setTotalPaginas(paginaRecebida.paginas);
+      setResumo({
+        importados: paginaRecebida.importados,
+        originais: paginaRecebida.originais,
+      });
+      if (pagina !== paginaRecebida.pagina) {
+        setPagina(paginaRecebida.pagina);
+      }
       setErro(null);
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : String(e));
     } finally {
       setCarregando(false);
     }
-  }, []);
+  }, [pagina]);
 
   useEffect(() => {
     void recarregar();
@@ -105,54 +122,80 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
     }
   }
 
+  const inicio = totalRoteiros ? (pagina - 1) * ITENS_POR_PAGINA : 0;
+  const fim = Math.min(inicio + roteiros.length, totalRoteiros);
+
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="m-0 text-[26px] font-semibold leading-[1.15] font-titulo">
-            Roteiros de entrevista
-          </h1>
-          <p className="mt-2 mb-0 max-w-[70ch] text-tinta-3 text-sm leading-[1.55]">
-            O roteiro é o que a entrevista inteira segue. Aqui ele é mantido fora do
-            atendimento: importe o documento de uma categoria nova, corrija perguntas e
-            blocos, e desfaça edição que não deu certo.
-          </p>
+    <div className="flex min-w-0 max-w-full flex-col gap-5">
+      <section className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-borda bg-papel-2 px-5 py-4">
+          <div className="min-w-0">
+            <Botao variante="texto" onClick={onVoltar}>
+              <ArrowLeft size={15} aria-hidden /> Voltar
+            </Botao>
+            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-tinta-3">
+              Roteiros
+            </p>
+            <div className="mt-1 flex min-w-0 items-center gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+                <BookOpenText size={20} aria-hidden />
+              </span>
+              <h1 className="m-0 min-w-0 truncate text-[26px] font-semibold leading-[1.15] font-titulo text-tinta">
+                Roteiros de entrevista
+              </h1>
+            </div>
+            <p className="mt-2 mb-0 max-w-[70ch] text-tinta-3 text-sm leading-[1.55]">
+              Mantenha os roteiros fora do atendimento, revise perguntas com calma e preserve a entrevista progressiva.
+            </p>
+          </div>
+          <div className="grid min-w-[240px] grid-cols-3 gap-2 rounded-campo border border-borda bg-papel p-2 text-center">
+            <div className="min-w-0 px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Total</span>
+              <strong className="block font-codigo text-lg text-tinta">{totalRoteiros}</strong>
+            </div>
+            <div className="min-w-0 border-x border-borda px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Importados</span>
+              <strong className="block font-codigo text-lg text-tinta">{resumo.importados}</strong>
+            </div>
+            <div className="min-w-0 px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Originais</span>
+              <strong className="block font-codigo text-lg text-tinta">{resumo.originais}</strong>
+            </div>
+          </div>
         </div>
-        <Botao variante="texto" onClick={onVoltar}>
-          ← Voltar
-        </Botao>
-      </div>
+      </section>
 
       {erro && <Aviso tom="critico">{erro}</Aviso>}
       {recado && <Aviso tom="ok">{recado}</Aviso>}
 
-      <Cartao
-        titulo="Novo roteiro a partir de um documento"
-        subtitulo="Anexe o roteiro do escritório em .docx, PDF ou foto. O texto é lido — por OCR, se preciso — e vira uma proposta que abre no editor."
-      >
-        <div className="mt-3">
-          <Botao variante="primario" onClick={() => setImportando(true)}>
-            Importar documento
-          </Botao>
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(280px,360px)] items-start gap-4 max-[920px]:grid-cols-1">
+      <Cartao titulo="No catálogo" className="min-w-0 overflow-hidden">
+        <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-3">
+          <p className="m-0 text-sm leading-[1.5] text-tinta-3">
+            Lista paginada dos roteiros disponíveis para manutenção do escritório.
+          </p>
+          <Selo tom="info">{totalRoteiros} roteiro(s)</Selo>
         </div>
-      </Cartao>
 
-      <Cartao titulo="No catálogo">
-        {carregando && <p className="mt-3 text-tinta-3 text-sm">Carregando…</p>}
-
-        {!carregando && roteiros.length === 0 && (
-          <Vazio>Nenhum roteiro cadastrado.</Vazio>
+        {carregando && (
+          <div className="mt-3 rounded-campo border border-borda bg-papel-2 px-4 py-5 text-center text-sm text-tinta-3" aria-live="polite">
+            Carregando roteiros…
+          </div>
         )}
 
-        <div className="mt-3 flex flex-col gap-2">
+        {!carregando && totalRoteiros === 0 && (
+          <Vazio className="mt-3">Nenhum roteiro cadastrado.</Vazio>
+        )}
+
+        <div className="mt-3 flex min-w-0 flex-col gap-2" aria-busy={carregando}>
           {roteiros.map((r) => (
             <div
               key={r.codigo}
-              className="flex items-start justify-between gap-4 flex-wrap p-3 border border-borda rounded-campo bg-papel"
+              className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-4 rounded-campo border border-borda bg-papel px-3 py-3 max-[720px]:grid-cols-1"
             >
-              <div className="min-w-[240px] flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <strong className="text-tinta text-sm">{r.nome}</strong>
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <strong className="min-w-0 truncate text-tinta text-sm" title={r.nome}>{r.nome}</strong>
                   {/* Dizer de onde veio é o que separa "o roteiro do escritório"
                       de "aquele que alguém importou na terça". */}
                   {r.importado ? (
@@ -162,21 +205,25 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                   )}
                 </div>
                 {r.descricao && (
-                  <p className="mt-1 mb-0 text-tinta-3 text-xs leading-[1.5]">{r.descricao}</p>
+                  <p className="mt-1 mb-0 line-clamp-2 text-tinta-3 text-xs leading-[1.5]" title={r.descricao}>{r.descricao}</p>
                 )}
+                <p className="mt-1 mb-0 truncate font-codigo text-[11px] text-tinta-3" title={r.codigo}>
+                  {r.codigo}
+                </p>
                 {r.importado && (
-                  <p className="mt-1 mb-0 text-tinta-3 text-xs leading-[1.5]">
+                  <p className="mt-1 mb-0 truncate text-tinta-3 text-xs leading-[1.5]">
                     {[quando(r.atualizado_em), r.criado_por].filter(Boolean).join(" · ")}
                   </p>
                 )}
               </div>
 
-              <div className="flex gap-2 items-center flex-wrap">
+              <div className="flex shrink-0 gap-2 items-center flex-wrap max-[720px]:justify-end">
                 <Botao
                   pequeno
                   onClick={() => void abrirEditor(r)}
                   disabled={abrindo === r.codigo}
                 >
+                  <FilePenLine size={14} aria-hidden />
                   {abrindo === r.codigo ? "Abrindo…" : "Editar"}
                 </Botao>
                 {/* Só em quem TEM versão salva: num roteiro que nunca foi
@@ -189,14 +236,50 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                     onClick={() => void reverter(r)}
                     disabled={revertendo === r.codigo}
                   >
-                    {revertendo === r.codigo ? "…" : "Voltar ao original"}
+                    <RotateCcw size={14} aria-hidden />
+                    {revertendo === r.codigo ? "Revertendo…" : "Voltar ao original"}
                   </Botao>
                 )}
               </div>
             </div>
           ))}
         </div>
+        <Paginacao
+          pagina={pagina}
+          totalPaginas={totalPaginas}
+          total={totalRoteiros}
+          inicio={inicio}
+          fim={fim}
+          rotulo="roteiros"
+          onPagina={setPagina}
+        />
       </Cartao>
+
+      <aside className="flex min-w-0 flex-col gap-4">
+        <Cartao
+          titulo="Novo roteiro"
+          subtitulo="Importe um documento do escritório. A proposta abre no editor para revisão antes de virar padrão."
+          className="min-w-0 overflow-hidden"
+        >
+          <Botao variante="primario" onClick={() => setImportando(true)} bloco>
+            <Upload size={16} aria-hidden /> Importar documento
+          </Botao>
+        </Cartao>
+
+        <Cartao titulo="Uso no atendimento" className="min-w-0 overflow-hidden">
+          <div className="flex flex-col gap-2 text-sm leading-[1.5] text-tinta-2">
+            <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+              <strong className="block text-tinta">Editar</strong>
+              <span className="line-clamp-2">Abra perguntas e blocos somente quando precisar revisar.</span>
+            </div>
+            <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+              <strong className="block text-tinta">Voltar ao original</strong>
+              <span className="line-clamp-2">Recupere o padrão do sistema quando houver uma versão salva.</span>
+            </div>
+          </div>
+        </Cartao>
+      </aside>
+      </div>
 
       {importando && (
         <ImportarRoteiro
