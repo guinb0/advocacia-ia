@@ -31,3 +31,7 @@ opentelemetry-exporter-otlp>=1.29,<2
 opentelemetry-instrumentation-fastapi>=0.50b0,<1
 opentelemetry-instrumentation-celery>=0.50b0,<1
 faster-whisper>=1.1,<2
+# Envio de assinatura pelo SITE do ZapSign (plano sem API): a automação entra na
+# conta pelo navegador. O Chromium em si é instalado no Dockerfile. Ver
+# app/assinatura_navegador.py — recurso opcional, desligado sem ZAPSIGN_LOGIN_*.
+playwright>=1.47,<2
