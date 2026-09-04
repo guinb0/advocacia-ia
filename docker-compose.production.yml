@@ -120,6 +120,12 @@ services:
       # `1` manda o convite tambem pelo WhatsApp da ZapSign e consome credito
       # do plano — o link ja sai pela nossa Evolution, de graca.
       ZAPSIGN_WHATSAPP: "0"
+      # Envio pelo SITE do ZapSign (plano sem API), via navegador. OPCIONAIS: sem
+      # eles o recurso fica desligado e nada muda. Crie os valores em
+      # GitLab > Settings > CI/CD > Variables (escopo prod) e liste-os em
+      # `gitlab_variables` no .gitlab-ci.yml. Ver app/assinatura_navegador.py.
+      ZAPSIGN_LOGIN_EMAIL: ${ZAPSIGN_LOGIN_EMAIL:-}
+      ZAPSIGN_LOGIN_SENHA: ${ZAPSIGN_LOGIN_SENHA:-}
 
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-https://evolution.level33lab.cloud}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY?EVOLUTION_API_KEY is required}

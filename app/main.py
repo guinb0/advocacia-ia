@@ -48,6 +48,7 @@ from . import (
     analise_resposta,
     armazenamento,
     assinatura,
+    assinatura_navegador,
     auth,
     carteira,
     casos,
@@ -1155,7 +1156,60 @@ def config_assinatura():
     a instância do escritório está pareada. Enquanto não estiver, a tela não
     oferece o botão — mas o cliente continua recebendo o convite por e-mail.
     """
-    return {**assinatura.configuracao(), "whatsapp_proprio": whatsapp.configurado()}
+    return {
+        **assinatura.configuracao(),
+        "whatsapp_proprio": whatsapp.configurado(),
+        # Envio pelo SITE do ZapSign (Playwright), para o plano sem API. A tela só
+        # oferece o botão quando há login configurado no ambiente.
+        "navegador": assinatura_navegador.configurado(),
+    }
+
+
+@app.post("/api/assinatura/navegador", status_code=201)
+async def enviar_assinatura_pelo_site(
+    arquivo: UploadFile = File(...),
+    cliente_nome: str = Form(...),
+    cliente_email: str = Form(...),
+    cliente_whatsapp: str = Form(""),
+):
+    """Manda o documento à assinatura pelo SITE do ZapSign, e o link pelo WhatsApp.
+
+    Existe para o plano do escritório, que não tem API do ZapSign: a automação
+    entra na conta (Playwright), sobe o PDF e dispara o convite por e-mail. Se o
+    site devolver o link e houver telefone, ele também vai ao cliente pela nossa
+    Evolution. Ver `app/assinatura_navegador.py`.
+    """
+    if not assinatura_navegador.configurado():
+        raise HTTPException(
+            503,
+            "O envio pelo site do ZapSign não está configurado: falta o login "
+            "(ZAPSIGN_LOGIN_EMAIL/ZAPSIGN_LOGIN_SENHA) no ambiente.",
+        )
+    pdf = await _ler_upload(arquivo)
+    resultado = await run_in_threadpool(
+        assinatura_navegador.enviar_para_assinatura,
+        pdf,
+        arquivo.filename or "documento.pdf",
+        cliente_nome.strip(),
+        cliente_email.strip(),
+    )
+    if not resultado["ok"]:
+        raise HTTPException(502, resultado["erro"])
+
+    whatsapp_enviado = False
+    if resultado["link"] and cliente_whatsapp.strip() and whatsapp.configurado():
+        try:
+            numero = whatsapp._numero_brasileiro(cliente_whatsapp)
+            texto = (
+                f"Olá! Segue o documento para assinatura digital: {resultado['link']}\n"
+                "Qualquer dúvida, estamos à disposição."
+            )
+            await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)
+            whatsapp_enviado = True
+        except Exception:  # noqa: BLE001 - o e-mail do ZapSign já saiu; WhatsApp é reforço
+            log.warning("Falha ao enviar link de assinatura pelo WhatsApp", exc_info=True)
+
+    return {"ok": True, "link": resultado["link"], "whatsapp_enviado": whatsapp_enviado}
 
 
 @app.post("/api/contrato/assinatura", status_code=201)

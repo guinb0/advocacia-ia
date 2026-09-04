@@ -85,6 +85,16 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Chromium do Playwright para o envio de assinatura pelo SITE do ZapSign (plano
+# sem API — ver app/assinatura_navegador.py). Fica num caminho fixo e legível por
+# todos para o processo do runtime (appuser) achar o navegador. `--with-deps`
+# traz as libs de sistema do headless. O recurso é OPCIONAL e desligado por
+# padrão: sem ZAPSIGN_LOGIN_* no ambiente, nada disto é exercido.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN python -m playwright install --with-deps chromium \
+    && chmod -R a+rx /opt/playwright \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY app ./app
 COPY scripts ./scripts
 COPY sql ./sql
