@@ -124,6 +124,77 @@ def configurado() -> bool:
     )
 
 
+def _headers_evolution() -> dict[str, str]:
+    return {"apikey": os.getenv("EVOLUTION_API_KEY", ""), "Content-Type": "application/json"}
+
+
+def estado_conexao() -> dict[str, Any]:
+    """Estado da instância do WhatsApp: conectado (`open`), conectando ou caído.
+
+    É o que o painel de saúde lê para acender verde ou vermelho — e para decidir
+    se oferece o QR de reconexão. Nunca levanta: uma Evolution fora do ar é um
+    estado a mostrar, não um 500 na tela.
+    """
+    if not configurado():
+        return {"configurado": False, "conectado": False, "estado": "desconfigurado"}
+    base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+    ultimo_erro = ""
+    for instancia in _instancias_candidatas():
+        try:
+            resposta = httpx.get(
+                _url_instancia(base, "instance/connectionState", instancia),
+                headers=_headers_evolution(),
+                timeout=15,
+            )
+            if resposta.status_code == 404:
+                continue
+            resposta.raise_for_status()
+            dados = resposta.json()
+            bloco = dados.get("instance") if isinstance(dados.get("instance"), dict) else dados
+            estado = str(bloco.get("state") or dados.get("state") or "").lower()
+            return {
+                "configurado": True,
+                "conectado": estado == "open",
+                "estado": estado or "desconhecido",
+                "instancia": instancia,
+            }
+        except httpx.HTTPError as erro:
+            ultimo_erro = _mensagem_erro_evolution(erro)
+            continue
+    return {"configurado": True, "conectado": False, "estado": "indisponivel", "erro": ultimo_erro}
+
+
+def abrir_conexao_qrcode() -> dict[str, Any]:
+    """Pede à Evolution um QR novo para reconectar a instância caída.
+
+    Devolve o QR em base64 (para desenhar) e o código de pareamento, quando a
+    versão da Evolution o expõe. É o que dá autonomia ao escritório para religar
+    o próprio WhatsApp — ou trocar de número — sem passar pela infra.
+    """
+    if not configurado():
+        raise RuntimeError("O WhatsApp (Evolution) não está configurado no servidor.")
+    base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+    ultimo_erro = "A instância do WhatsApp configurada no servidor não foi encontrada."
+    for instancia in _instancias_candidatas():
+        try:
+            resposta = httpx.get(
+                _url_instancia(base, "instance/connect", instancia),
+                headers=_headers_evolution(),
+                timeout=20,
+            )
+            if resposta.status_code == 404:
+                continue
+            resposta.raise_for_status()
+            dados = resposta.json()
+            qr = dados.get("qrcode") if isinstance(dados.get("qrcode"), dict) else {}
+            base64 = dados.get("base64") or qr.get("base64") or ""
+            codigo = dados.get("code") or dados.get("pairingCode") or qr.get("code") or ""
+            return {"qrcode": base64, "codigo": codigo, "instancia": instancia}
+        except httpx.HTTPError as erro:
+            raise RuntimeError(_mensagem_erro_evolution(erro)) from erro
+    raise RuntimeError(ultimo_erro)
+
+
 async def _enviar_texto(numero: str, texto: str) -> None:
     """Uma mensagem de texto pela instância do escritório.
 
@@ -225,6 +296,21 @@ async def enviar_avaliacao_google(dados: Destinatario) -> dict[str, bool]:
         raise
     await run_in_threadpool(automacoes_whatsapp.finalizar, chave)
     return {"enviado": True, "ja_enviado": False}
+
+
+@roteador.get("/status", dependencies=[Depends(auth.usuario_atual)])
+async def status_conexao():
+    """Se o WhatsApp do escritório está conectado — para o painel de saúde."""
+    return await run_in_threadpool(estado_conexao)
+
+
+@roteador.post("/conectar", dependencies=[Depends(auth.usuario_atual)])
+async def conectar_whatsapp():
+    """Um QR novo para religar a instância caída (ou trocar de número)."""
+    try:
+        return await run_in_threadpool(abrir_conexao_qrcode)
+    except RuntimeError as erro:
+        raise HTTPException(503, str(erro)) from erro
 
 
 def _primeiro_nome(nome: str) -> str:

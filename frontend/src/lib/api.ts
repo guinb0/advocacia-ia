@@ -87,6 +87,37 @@ export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
   return comoJson(await buscar("/api/modelos/peticao/visual"));
 }
 
+export interface StatusWhatsapp {
+  configurado: boolean;
+  conectado: boolean;
+  /** "open" (conectado), "connecting", "close" (caído), "indisponivel"… */
+  estado: string;
+  instancia?: string;
+  erro?: string;
+}
+
+/** Se o WhatsApp do escritório (Evolution) está conectado — para o painel. */
+export async function statusWhatsapp(): Promise<StatusWhatsapp> {
+  return comoJson(await buscar("/api/whatsapp/status"));
+}
+
+/** Pede um QR novo para religar a instância caída ou trocar de número. */
+export async function conectarWhatsapp(): Promise<{ qrcode: string; codigo: string; instancia: string }> {
+  return comoJson(await buscar("/api/whatsapp/conectar", { method: "POST" }));
+}
+
+/** Guarda uma transcrição de atendimento como entrevista do caso. Aceita um
+ *  arquivo (.txt, .docx, .pdf); texto colado vira um .txt no cliente. É o que
+ *  destrava a análise/petição quando o caso ainda não tem entrevista gravada. */
+export async function enviarTranscricaoEntrevista(
+  casoId: string,
+  arquivo: File,
+): Promise<{ id: string; arquivo?: string }> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar(`/api/casos/${casoId}/entrevista`, { method: "POST", body: form }));
+}
+
 export async function enviarModeloVisualPeticao(
   arquivo: File,
 ): Promise<ModeloVisualPeticao> {
