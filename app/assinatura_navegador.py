@@ -82,41 +82,75 @@ def enviar_para_assinatura(
             "screenshot": "",
         }
 
-    base = _env("ZAPSIGN_WEB_URL", "https://app.zapsign.com.br")
+    # Dois subdomínios, medidos na conta real: a autenticação vive em `app2` e o
+    # painel em `app`. O login é em ETAPAS — primeiro o e-mail, "Entrar", depois a
+    # senha, "Entrar". Os ids dos campos são gerados (não estáveis); por isso os
+    # seletores vão por placeholder/tipo, e cada um é sobrescrevível por env.
+    url_auth = _env("ZAPSIGN_AUTH_URL", "https://app2.zapsign.com.br")
+    url_app = _env("ZAPSIGN_WEB_URL", "https://app.zapsign.com.br")
     espera = int(_env("ZAPSIGN_TIMEOUT_MS", "45000") or "45000")
+    ua = _env(
+        "ZAPSIGN_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    )
     caminho_pdf = Path(tempfile.gettempdir()) / f"zapsign-{int(time.time())}-{Path(nome_arquivo).name}"
     caminho_pdf.write_bytes(pdf)
     screenshot = ""
 
     try:
         with sync_playwright() as p:
-            navegador = p.chromium.launch(headless=_env("ZAPSIGN_HEADLESS", "1") != "0")
-            pagina = navegador.new_page()
+            navegador = p.chromium.launch(
+                headless=_env("ZAPSIGN_HEADLESS", "1") != "0",
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            contexto = navegador.new_context(user_agent=ua, viewport={"width": 1400, "height": 950})
+            pagina = contexto.new_page()
             pagina.set_default_timeout(espera)
             try:
-                # 1) Login
-                pagina.goto(f"{base}/login", wait_until="domcontentloaded")
-                pagina.fill(_sel("EMAIL", "input[type='email'], input[name='email']"), _env("ZAPSIGN_LOGIN_EMAIL"))
-                pagina.fill(_sel("SENHA", "input[type='password'], input[name='password']"), _env("ZAPSIGN_LOGIN_SENHA"))
-                pagina.click(_sel("ENTRAR", "button[type='submit']"))
-                pagina.wait_for_load_state("networkidle")
+                # 1) Login em etapas (e-mail → Entrar → senha → Entrar).
+                pagina.goto(f"{url_auth}/access/sign-in", wait_until="networkidle")
+                pagina.fill(_sel("EMAIL", "input[placeholder='Digite seu e-mail']"), _env("ZAPSIGN_LOGIN_EMAIL"))
+                pagina.click(_sel("ENTRAR", "button:has-text('Entrar')"))
+                pagina.fill(
+                    _sel("SENHA", "input[type='password']"),
+                    _env("ZAPSIGN_LOGIN_SENHA"),
+                    timeout=int(espera / 2),
+                )
+                pagina.click(_sel("ENTRAR", "button:has-text('Entrar')"))
+                # Sucesso = saiu da área /access/ e entrou em /conta/.
+                pagina.wait_for_url("**/conta/**", timeout=espera)
 
-                # 2) Novo documento + upload do PDF
-                pagina.goto(f"{base}/doc/new", wait_until="domcontentloaded")
+                # 2) Novo documento + upload do PDF.
+                pagina.goto(f"{url_app}/conta/documentos/novo", wait_until="networkidle")
                 pagina.set_input_files(_sel("UPLOAD", "input[type='file']"), str(caminho_pdf))
                 pagina.wait_for_load_state("networkidle")
 
-                # 3) Signatário: nome + e-mail do cliente
-                pagina.fill(_sel("SIGNATARIO_NOME", "input[name='name'], input[placeholder*='ome']"), cliente_nome)
-                pagina.fill(_sel("SIGNATARIO_EMAIL", "input[name='email'], input[placeholder*='mail']"), cliente_email)
+                # 3) Signatário: nome/e-mail do cliente. A tela usa uma busca de
+                # contatos; digitar o e-mail e o nome cobre o caso novo. Best-effort:
+                # o layout exato do signatário é o ponto a calibrar na conta real.
+                for seletor, valor in (
+                    (_sel("SIGNATARIO_BUSCA", "input[placeholder*='nome'], input[placeholder*='e-mail']"), cliente_email),
+                    (_sel("SIGNATARIO_NOME", "input[placeholder*='ome do signat'], input[name='name']"), cliente_nome),
+                    (_sel("SIGNATARIO_EMAIL", "input[placeholder*='mail do signat'], input[type='email']"), cliente_email),
+                ):
+                    try:
+                        campo = pagina.query_selector(seletor)
+                        if campo:
+                            campo.fill(valor)
+                    except Exception:  # noqa: BLE001 - campo ausente não interrompe
+                        continue
 
-                # 4) Enviar para assinatura
-                pagina.click(_sel("ENVIAR", "button:has-text('Enviar'), button:has-text('assinatura')"))
-                pagina.wait_for_load_state("networkidle")
+                # 4) Avançar/enviar. "CONTINUAR" leva ao envio; o botão final varia.
+                for rotulo in ("CONTINUAR", "Enviar", "Finalizar", "Enviar para assinatura"):
+                    alvo = pagina.query_selector(f"button:has-text('{rotulo}')")
+                    if alvo and alvo.is_enabled():
+                        alvo.click()
+                        pagina.wait_for_load_state("networkidle")
 
                 # 5) Captura o link de assinatura, quando a UI o expõe.
                 link = ""
-                seletor_link = _sel("LINK", "a[href*='/verificar/'], a[href*='/sign/'], input[value*='http']")
+                seletor_link = _sel("LINK", "a[href*='/verificar/'], a[href*='/sign/'], a[href*='zapsign'], input[value*='http']")
                 try:
                     el = pagina.wait_for_selector(seletor_link, timeout=int(espera / 3))
                     link = (el.get_attribute("href") or el.get_attribute("value") or "").strip()
