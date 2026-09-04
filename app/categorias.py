@@ -144,7 +144,7 @@ ACIDENTE_TRABALHO_GERAL = Categoria(
         ItemChecklist("DOC.28", 28, "Fotos e vídeos do local do acidente, máquinas, ferramentas, veículos, posto de trabalho ou condições ambientais", False),
         ItemChecklist("DOC.29", 29, "Comprovantes de despesas médicas, farmacêuticas, hospitalares e de reabilitação", False),
         ItemChecklist("DOC.30", 30, "Documentos sobre jornada, escalas, ponto, excesso de labor, acúmulo de funções ou sobrecarga", False),
-        ItemChecklist("DOC.31", 31, "Documentos sobre exposição a risco e agentes insalubres, perigosos, biológicos, químicos, físicos ou ergonômicos", False),
+        ItemChecklist("DOC.31", 31, "Documentos sobre atividades de risco e exposição a agentes insalubres, biológicos, químicos, físicos ou ergonômicos", False),
         ItemChecklist("DOC.32", 32, "Nomes, telefones e endereços de testemunhas", False),
         ItemChecklist("DOC.33", 33, "Contrato de trabalho, aditivos, regulamentos internos e normas empresariais aplicáveis", False),
         ItemChecklist("DOC.34", 34, "TRCT, chave de conectividade, extrato do FGTS e documentos rescisórios, se houver dispensa", False),

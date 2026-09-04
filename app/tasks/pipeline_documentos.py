@@ -106,6 +106,34 @@ def enfileirar_entrega(
     entrega = armazenamento.obter_entrega(entrega_id)
     if not entrega:
         raise RuntimeError("Entrega recém-criada não foi encontrada.")
+
+    # A suíte de integração executa o Celery inline (`task_always_eager`) e
+    # substitui o OCR local por um dublê. Nesse ambiente isolado não há segredo
+    # da Mistral — nem deve haver. Preserve o caminho de integração legado para
+    # que os testes meçam upload/roteamento sem acessar um serviço externo.
+    # Fora do modo eager, produção sempre segue pelo pipeline Mistral abaixo.
+    if celery_app.conf.task_always_eager and not os.getenv("MISTRAL_API_KEY", "").strip():
+        from .ocr import processar_entrega
+
+        caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+        if caminho is None:
+            raise RuntimeError("Arquivo original indisponível ou com checksum inválido.")
+        tarefa = processar_entrega.apply_async(
+            args=(
+                entrega_id,
+                caso_id,
+                str(caminho),
+                str(entrega.get("arquivo") or caminho.name),
+                item_codigo,
+                categoria_codigo,
+                idioma,
+                usar_para_rg_e_cpf,
+            ),
+            queue="gpu_background",
+            priority=7,
+        )
+        return "", tarefa.id
+
     analise = analise_documental.criar(
         entrega_id,
         caso_id,

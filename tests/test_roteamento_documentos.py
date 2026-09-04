@@ -254,8 +254,11 @@ def testar_api() -> int:
                 ("arquivos", ("ilegivel.jpg", PDF, "image/jpeg")),
             ],
         )
-        falhas += not checar(lote.status_code == 201, "o lote é aceito", str(lote.status_code))
-        falhas += not checar(len(lote.json()["recebidos"]) == 3, "os três arquivos entram")
+        # 202, e não 201: o registro dos arquivos corre em segundo plano, então a
+        # resposta traz só a contagem aceita (`total`); `recebidos` chega vazio e as
+        # entregas aparecem no checklist depois, conferidas logo abaixo.
+        falhas += not checar(lote.status_code == 202, "o lote é aceito", str(lote.status_code))
+        falhas += not checar(lote.json()["total"] == 3, "os três arquivos entram", str(lote.json()))
 
         with patch.object(roteamento.valor_documento, "ler", lambda *a, **k: (_ for _ in ()).throw(
             valor_documento.ErroValor("modelo desligado no teste")

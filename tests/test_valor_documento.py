@@ -9,12 +9,13 @@ Rodar: .venv\\Scripts\\python.exe -m tests.test_valor_documento
 
 from __future__ import annotations
 
-import json
 import os
 
-import httpx
-
 from app import valor_documento
+
+#: A chamada real ao provedor. `testar_sem_chave` a reinstala para exercitar a
+#: recusa de produção, que hoje vive em `llm.chamar` e não mais no `httpx.post`.
+CHAMAR_REAL = valor_documento.llm.chamar
 
 
 def checar(condicao: bool, descricao: str) -> bool:
@@ -46,16 +47,11 @@ visto: dict[str, object] = {}
 
 
 def instalar_modelo(retorno: dict):
-    def falso(url, **kwargs):
-        visto["corpo"] = kwargs.get("json")
-        visto["prompt"] = kwargs["json"]["messages"][1]["content"]
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": json.dumps(retorno)}}]},
-            request=httpx.Request("POST", url),
-        )
+    def falso(_instrucao, mensagem, **_kwargs):
+        visto["prompt"] = mensagem
+        return retorno
 
-    valor_documento.httpx.post = falso  # type: ignore[assignment]
+    valor_documento.llm.chamar = falso  # type: ignore[assignment]
 
 
 # ------------------------------------------------------------------- testes
@@ -135,11 +131,11 @@ def testar_texto_curto() -> int:
     falhas = 0
     chamou = {"n": 0}
 
-    def contando(url, **kwargs):
+    def contando(*_args, **_kwargs):
         chamou["n"] += 1
-        return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+        return {}
 
-    valor_documento.httpx.post = contando  # type: ignore[assignment]
+    valor_documento.llm.chamar = contando  # type: ignore[assignment]
 
     try:
         valor_documento.ler({"texto_linhas": [{"texto": "borrado"}]}, PENDENCIAS)
@@ -161,6 +157,7 @@ def testar_sem_chave() -> int:
     falhas = 0
     guardada = os.environ.get("DEEPSEEK_API_KEY")
     os.environ["DEEPSEEK_API_KEY"] = ""
+    valor_documento.llm.chamar = CHAMAR_REAL  # type: ignore[assignment]
     try:
         valor_documento.ler(LAUDO, PENDENCIAS)
         falhas += not checar(False, "sem chave, recusa explicando")
@@ -198,7 +195,7 @@ def main_teste() -> int:
     guardada = os.environ.get("DEEPSEEK_API_KEY")
     if not guardada:
         os.environ["DEEPSEEK_API_KEY"] = "chave-de-teste"
-    original = valor_documento.httpx.post
+    original = valor_documento.llm.chamar
 
     falhas = 0
     for titulo, teste in (
@@ -211,7 +208,7 @@ def main_teste() -> int:
         print(f"\n{titulo}")
         falhas += teste()
 
-    valor_documento.httpx.post = original
+    valor_documento.llm.chamar = original
     if guardada is None:
         os.environ.pop("DEEPSEEK_API_KEY", None)
     else:
