@@ -137,16 +137,29 @@ export const useHomeModel = () => {
     if (sessao.carregando) return;
     /* O atalho de entrada, UMA vez. Sem o `jaDirecionado`, `tela` está nas
      * dependências e este ramo redispara a cada navegação: a pessoa clica em
-     * Casos, o efeito roda porque `tela` mudou, e ela volta para a Documentação
-     * antes de a tela aparecer. */
-    if (
-      !jaDirecionado.current &&
-      sessao.papeis.includes("documentacao") &&
-      podeAbrirTela("documentacao", modulos)
-    ) {
+     * Casos, o efeito roda porque `tela` mudou, e ela volta para a tela de
+     * entrada antes de a tela aparecer.
+     *
+     * A tela de entrada varia com o trabalho da pessoa, decidida por MÓDULO (e
+     * não por nome de perfil, que o escritório edita — ver `app/perfis.py`):
+     *   - Documentação → a central da documentação (fila + status dos clientes);
+     *   - perfil de escritório (secretário/analista): tem visão geral mas NÃO
+     *     conduz atendimento → o painel de andamento do escritório;
+     *   - advogado/entrevistador e os demais → a entrevista guiada (padrão).
+     * É só atalho de conveniência: `podeAbrirTela` é quem de fato autoriza. */
+    if (!jaDirecionado.current) {
       jaDirecionado.current = true;
-      setTela("documentacao");
-      return;
+      if (
+        sessao.papeis.includes("documentacao") &&
+        podeAbrirTela("documentacao", modulos)
+      ) {
+        setTela("documentacao");
+        return;
+      }
+      if (!modulos.includes("entrevista") && podeAbrirTela("panorama", modulos)) {
+        setTela("panorama");
+        return;
+      }
     }
     /* Esta parte SEGUE valendo sempre, e é a que de fato guarda: tela que o
      * perfil não alcança devolve para a primeira que ele alcança. */
