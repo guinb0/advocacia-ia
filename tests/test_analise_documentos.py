@@ -120,12 +120,55 @@ def cenario_o_que_o_modelo_recebe() -> int:
     return falhas
 
 
+def cenario_atribuicao_de_parte() -> int:
+    """Cada achado diz de quem é a informação; valor estranho vira 'indefinido'."""
+    falhas = 0
+    instalar(
+        {
+            "achados": [
+                # Terceiro: o médico que assinou o laudo, com papel descrito.
+                {"informacao": "Laudo assinado por psiquiatra",
+                 "documento": "laudo.pdf", "citacao": "CID F43.1",
+                 "relevancia": "sustenta o nexo", "contradiz": False,
+                 "parte": "terceiro", "papel": "médico que assinou o laudo"},
+                # Titular, mas o modelo mandou a parte em maiúsculas — normaliza.
+                {"informacao": "Vínculo do cliente com a empresa",
+                 "documento": "cnis.png", "citacao": "Afastamento de 12/03/2026",
+                 "relevancia": "prova o afastamento", "contradiz": False,
+                 "parte": "TITULAR", "papel": "reclamante"},
+                # Parte inválida: precisa cair em 'indefinido', não vazar o lixo.
+                {"informacao": "Vínculo EMPRESA X",
+                 "documento": "cnis.png", "citacao": "Vinculo EMPRESA X",
+                 "relevancia": "identifica a empregadora", "contradiz": False,
+                 "parte": "chute", "papel": ""},
+            ]
+        }
+    )
+    r = ad.analisar("caso-1")
+    por_info = {a["informacao"]: a for a in r["achados"]}
+    falhas += not checar(
+        por_info.get("Laudo assinado por psiquiatra", {}).get("parte") == "terceiro"
+        and "médico" in por_info.get("Laudo assinado por psiquiatra", {}).get("papel", ""),
+        "achado de terceiro guarda a parte e o papel",
+    )
+    falhas += not checar(
+        por_info.get("Vínculo do cliente com a empresa", {}).get("parte") == "titular",
+        "parte em maiúsculas é normalizada para 'titular'",
+    )
+    falhas += not checar(
+        por_info.get("Vínculo EMPRESA X", {}).get("parte") == "indefinido",
+        "parte fora do vocabulário vira 'indefinido'",
+    )
+    return falhas
+
+
 def main_teste() -> int:
     falhas = 0
     for titulo, teste in (
         ("citação é conferida contra o documento apontado", cenario_citacao_conferida),
         ("OCR imperfeito não recusa citação honesta", cenario_ocr_imperfeito),
         ("o que o modelo recebe", cenario_o_que_o_modelo_recebe),
+        ("cada achado diz de quem é a informação", cenario_atribuicao_de_parte),
     ):
         print(f"\n{titulo}")
         falhas += teste()

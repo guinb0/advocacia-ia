@@ -244,21 +244,50 @@ export default function ItemChecklistLinha({
                 />
               )}
 
-              {entrega.alertas.length > 0 && (
-                <ul className="[flex-basis:100%] list-none mt-[6px] p-0">
-                  {entrega.alertas.map((alerta, i) => (
-                    <li
-                      key={i}
-                      className="flex gap-2 px-[11px] py-2 mt-[5px] border border-atencao-borda border-l-4 rounded-campo bg-atencao-claro text-tinta-2 text-xs leading-[1.55]"
-                    >
-                      <span className="flex-none text-atencao font-bold" aria-hidden>
-                        !
-                      </span>
-                      {alerta}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {(() => {
+                // Prefere `avisos` (com tom); cai em `alertas` (só texto, tratado
+                // como nota) para respostas antigas do servidor. Nota de rotina
+                // aparece quieta; só problema real ganha borda colorida.
+                const avisos =
+                  entrega.avisos ??
+                  entrega.alertas.map((texto) => ({ texto, tom: "info" as const }));
+                if (avisos.length === 0) return null;
+                const ESTILO = {
+                  info: {
+                    caixa: "border-borda bg-papel-2 text-tinta-3",
+                    marca: "text-tinta-3",
+                    simbolo: "·",
+                  },
+                  atencao: {
+                    caixa: "border-atencao-borda border-l-4 bg-atencao-claro text-tinta-2",
+                    marca: "text-atencao font-bold",
+                    simbolo: "!",
+                  },
+                  critico: {
+                    caixa: "border-critico-borda border-l-4 bg-critico-claro text-tinta-2",
+                    marca: "text-critico font-bold",
+                    simbolo: "✕",
+                  },
+                } as const;
+                return (
+                  <ul className="[flex-basis:100%] list-none mt-[6px] p-0">
+                    {avisos.map((aviso, i) => {
+                      const estilo = ESTILO[aviso.tom] ?? ESTILO.info;
+                      return (
+                        <li
+                          key={i}
+                          className={`flex gap-2 px-[11px] py-2 mt-[5px] border rounded-campo text-xs leading-[1.55] ${estilo.caixa}`}
+                        >
+                          <span className={`flex-none ${estilo.marca}`} aria-hidden>
+                            {estilo.simbolo}
+                          </span>
+                          {aviso.texto}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
             </li>
           ))}
         </ul>

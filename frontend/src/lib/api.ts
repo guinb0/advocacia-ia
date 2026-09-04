@@ -588,6 +588,12 @@ export interface AchadoDocumento {
    *  achado cuja citação não existe no documento apontado não chega até aqui. */
   citacao: string;
   relevancia: string;
+  /** De quem é a informação: o cliente (titular), a empregadora (empresa), um
+   *  terceiro (médico, perito, testemunha…) ou indefinido quando não dá para
+   *  saber. Fechado no servidor; valor estranho vira "indefinido". */
+  parte?: "titular" | "terceiro" | "empresa" | "indefinido";
+  /** O envolvimento dessa pessoa no caso, em texto livre curto. */
+  papel?: string;
   /** O documento contradiz o que a entrevista registrou. */
   contradiz: boolean;
 }

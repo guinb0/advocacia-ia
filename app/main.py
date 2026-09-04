@@ -278,6 +278,34 @@ app.include_router(whatsapp.roteador)
 
 
 @app.middleware("http")
+async def rede_de_seguranca(request: Request, call_next):
+    """Último anteparo: nenhuma falha inesperada vira tela vermelha de 500.
+
+    Registrado ANTES da autenticação para virar a camada mais interna entre os
+    middlewares deste app — assim envolve as rotas e ainda fica por dentro do
+    CORS (adicionado depois), garantindo cabeçalho CORS até na resposta de erro.
+    HTTPException e as respostas já tratadas passam intactas; o que cai aqui é o
+    imprevisto, que vira um 503 legível em vez de traceback cru no navegador.
+    """
+    try:
+        return await call_next(request)
+    except HTTPException:
+        # Tratada pelo próprio FastAPI mais acima na pilha; não é imprevisto.
+        raise
+    except Exception:  # noqa: BLE001 — a rede de segurança precisa pegar tudo.
+        log.exception("Falha não tratada em %s %s", request.method, request.url.path)
+        return JSONResponse(
+            {
+                "detail": (
+                    "Este recurso está indisponível no momento. Nada foi perdido; "
+                    "tente de novo em instantes."
+                )
+            },
+            status_code=503,
+        )
+
+
+@app.middleware("http")
 async def exigir_autenticacao(request: Request, call_next):
     caminho = request.url.path
     # O preflight não carrega credencial nenhuma; recusá-lo quebraria todo o CORS.

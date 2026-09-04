@@ -100,8 +100,31 @@ def _esperando_ha_muito(entrega: dict[str, Any]) -> bool:
     return datetime.now(timezone.utc) - criado > timedelta(minutes=MINUTOS_ESPERA_ANORMAL)
 
 
-def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[str]:
-    alertas: list[str] = []
+def _avisos_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[dict[str, str]]:
+    """Cada aviso da tela do advogado, com um `tom` que diz se é problema ou nota.
+
+    Nem todo aviso é alerta. "Classificado pela leitura do texto", "traz RG e
+    CPF", "identidade confirmada" são NOTAS — o advogado lê e segue. Pintá-las de
+    amarelo, como problema, foi o que encheu a tela de aviso e treinou o olho a
+    ignorar todos, inclusive a troca de arquivo que importa. Por isso o `tom`:
+
+      - "info": nota de rotina, mostrada quieta (sem amarelo).
+      - "atencao": problema que pede conferência (foto ilegível, possível troca).
+      - "critico": falha dura (não deu para ler o arquivo).
+
+    `_alertas_da_entrega` continua devolvendo só os textos, para quem só quer a
+    lista antiga de strings.
+    """
+    def info(texto: str) -> dict[str, str]:
+        return {"texto": texto, "tom": "info"}
+
+    def atencao(texto: str) -> dict[str, str]:
+        return {"texto": texto, "tom": "atencao"}
+
+    def critico(texto: str) -> dict[str, str]:
+        return {"texto": texto, "tom": "critico"}
+
+    avisos: list[dict[str, str]] = []
 
     # Ainda sem leitura: os campos de validação estão vazios, e lê-los produziria
     # o alerta de "não foi possível extrair" para um arquivo que só está na fila.
@@ -112,74 +135,96 @@ def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[st
             # depois de horas paradas, e era o único sinal que o advogado tinha.
             # Quem repara é `recuperar_entregas_travadas`, a cada 5 minutos.
             return [
-                "Este documento está há mais de "
-                f"{MINUTOS_ESPERA_ANORMAL} minutos esperando para ser lido — mais que o "
-                "normal. O sistema tenta de novo sozinho; se não sair daqui, o leitor "
-                "de documentos está fora do ar."
+                atencao(
+                    "Este documento está há mais de "
+                    f"{MINUTOS_ESPERA_ANORMAL} minutos esperando para ser lido — mais que o "
+                    "normal. O sistema tenta de novo sozinho; se não sair daqui, o leitor "
+                    "de documentos está fora do ar."
+                )
             ]
         if estado == "na_fila":
-            return ["Documento recebido e aguardando a vez na fila de leitura."]
-        return ["Documento recebido. A leitura está em andamento."]
+            return [info("Documento recebido e aguardando a vez na fila de leitura.")]
+        return [info("Documento recebido. A leitura está em andamento.")]
     if estado == "erro":
         return [
-            "Não foi possível ler este arquivo: "
-            + (entrega.get("erro_proc") or "falha no processamento.")
+            critico(
+                "Não foi possível ler este arquivo: "
+                + (entrega.get("erro_proc") or "falha no processamento.")
+            )
         ]
 
     if entrega["tipo_confere"] is False:
         codigo = entrega.get("tipo_detectado")
         # ROTULOS_TIPO traduz "cnh" -> "CNH (Carteira Nacional de Habilitação)".
         legivel = ROTULOS_TIPO.get(codigo, codigo) if codigo else "algo não identificado"
-        alertas.append(
-            f"Enviado como '{item.nome}', mas o documento parece ser {legivel}. "
-            "Confira se não houve troca de arquivo."
+        avisos.append(
+            atencao(
+                f"Enviado como '{item.nome}', mas o documento parece ser {legivel}. "
+                "Confira se não houve troca de arquivo."
+            )
         )
     if len(entrega.get("itens_atendidos") or []) > 1 and not entrega.get("confirmado_manual"):
         rotulo = ROTULOS_TIPO.get(entrega.get("tipo_detectado"), entrega.get("tipo_detectado"))
-        alertas.append(
-            f"Este arquivo foi reconhecido como {rotulo} e traz RG e CPF, "
-            "então vale para os dois itens do checklist."
+        avisos.append(
+            info(
+                f"Este arquivo foi reconhecido como {rotulo} e traz RG e CPF, "
+                "então vale para os dois itens do checklist."
+            )
         )
     if entrega.get("confirmado_manual"):
-        alertas.append("Identidade unificada confirmada manualmente para RG e CPF.")
+        avisos.append(info("Identidade unificada confirmada manualmente para RG e CPF."))
     elif not entrega["dados_utilizaveis"] and item.tipo_ocr is not None:
         # Só para item cadastral: cobrar "campos extraídos" de um laudo médico é
         # cobrar o que o extrator nunca teve como dar (ver `_aproveitavel`).
         score = entrega.get("score_legibilidade")
         sufixo = f" (legibilidade {score}%)" if score is not None else ""
-        alertas.append(f"Não foi possível extrair os dados com segurança{sufixo}.")
+        avisos.append(atencao(f"Não foi possível extrair os dados com segurança{sufixo}."))
     elif not entrega["dados_utilizaveis"] and not entrega.get("texto_utilizavel"):
         score = entrega.get("score_legibilidade")
         sufixo = f" (legibilidade {score}%)" if score is not None else ""
-        alertas.append(f"Não foi possível extrair texto aproveitável deste arquivo{sufixo}.")
+        avisos.append(
+            atencao(f"Não foi possível extrair texto aproveitável deste arquivo{sufixo}.")
+        )
 
     origem = entrega.get("roteamento_origem")
     motivo = (entrega.get("roteamento_motivo") or "").strip()
     if origem == "deterministico":
-        alertas.append(
-            "Este arquivo foi encaminhado a este item pela leitura do documento"
-            + (f": {motivo}" if motivo else ".")
+        avisos.append(
+            info(
+                "Este arquivo foi encaminhado a este item pela leitura do documento"
+                + (f": {motivo}" if motivo else ".")
+            )
         )
         if entrega.get("tipo_detectado") == "ctps":
-            alertas.append(
-                "Se não for carteira de trabalho (por exemplo CAT ou contracheque), "
-                "use «Mover para outro item» abaixo e escolha o documento certo."
+            avisos.append(
+                atencao(
+                    "Se não for carteira de trabalho (por exemplo CAT ou contracheque), "
+                    "use «Mover para outro item» abaixo e escolha o documento certo."
+                )
             )
     elif origem == "semantico":
         # Vem de modelo de linguagem, e a tela precisa dizer isso com todas as
-        # letras: é a única fonte que existe para CAT, laudo e contracheque.
-        alertas.append(
-            "Classificado automaticamente pela leitura do texto — confira"
-            + (f": {motivo}" if motivo else ".")
+        # letras: é a única fonte que existe para CAT, laudo e contracheque. É
+        # nota de rotina, não problema — fica em tom "info".
+        avisos.append(
+            info(
+                "Classificado automaticamente pela leitura do texto — confira"
+                + (f": {motivo}" if motivo else ".")
+            )
         )
     elif origem == "humano" and motivo:
-        alertas.append(f"Movido para este item por: {motivo}")
+        avisos.append(info(f"Movido para este item por: {motivo}"))
     elif origem == "escolha" and motivo:
         # Formatos sem OCR continuam aceitos no item escolhido. A tela interna
         # precisa deixar claro que o original foi preservado, mas não lido.
-        alertas.append(motivo)
+        avisos.append(info(motivo))
 
-    return alertas
+    return avisos
+
+
+def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[str]:
+    """Só os textos dos avisos — compatível com quem espera lista de strings."""
+    return [aviso["texto"] for aviso in _avisos_da_entrega(entrega, item)]
 
 
 def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
@@ -246,7 +291,15 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
                 **item.to_dict(),
                 "status": status,
                 "entregas": [
-                    {**e, "alertas": _alertas_da_entrega(e, item)} for e in do_item
+                    {
+                        **e,
+                        # `avisos` traz o tom (info/atencao/critico) para a tela
+                        # pintar só o que é problema; `alertas` fica como a lista
+                        # de strings que o resto do código já consumia.
+                        "avisos": (avisos := _avisos_da_entrega(e, item)),
+                        "alertas": [a["texto"] for a in avisos],
+                    }
+                    for e in do_item
                 ],
             }
         )
