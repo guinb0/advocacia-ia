@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useCasos, useCategorias, useSituacao } from "@/lib/useCasos";
 import { useSessao } from "@/lib/auth";
+import { useChamada } from "@/lib/ChamadaContexto";
 
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
 export type Tela =
@@ -104,11 +105,16 @@ export const CABECALHO: Record<
 export const useHomeModel = () => {
   const [tela, setTela] = useState<Tela>("entrevista");
   const sessao = useSessao();
+  const chamada = useChamada();
   const [casoAberto, setCasoAberto] = useState<string | null>(null);
 
   const categorias = useCategorias();
   const listaCasos = useCasos();
-  const situacaoCaso = useSituacao(casoAberto);
+  const documentadorEmChamada =
+    sessao.modulos.includes("documentacao") &&
+    chamada.estado !== "fora" &&
+    chamada.estado !== "encerrada";
+  const situacaoCaso = useSituacao(casoAberto, documentadorEmChamada);
   const modulos = sessao.modulos;
 
   /* Quem é da Documentação CAI na tela da Documentação — uma vez, ao entrar.

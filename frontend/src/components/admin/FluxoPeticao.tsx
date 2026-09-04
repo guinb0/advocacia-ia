@@ -52,6 +52,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [ocupado, setOcupado] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [mostrarPrevia, setMostrarPrevia] = useState(true);
 
   const recarregar = useCallback(async () => {
     try {
@@ -199,6 +200,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </h3>
             <div className="flex gap-2 flex-wrap">
               <Botao
+                variante="texto"
+                pequeno
+                onClick={() => setMostrarPrevia((atual) => !atual)}
+              >
+                {mostrarPrevia ? "Ocultar prévia" : "Mostrar prévia"}
+              </Botao>
+              <Botao
                 variante="secundario"
                 pequeno
                 disabled={salvando || ocupado}
@@ -223,29 +231,84 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </Aviso>
           )}
 
-          <div className="grid gap-4">
-            {(peticao.sections ?? []).map((secao: SecaoPeticao) => (
-              <div key={secao.code} className="grid gap-1">
-                <RotuloCampo htmlFor={`secao-${secao.code}`}>
-                  {secao.label || secao.code}
-                </RotuloCampo>
-                <Campo
-                  area
-                  id={`secao-${secao.code}`}
-                  value={edicao[secao.code] ?? secao.content}
-                  onChange={(e) =>
-                    setEdicao((atual) => ({ ...atual, [secao.code]: e.target.value }))
-                  }
-                  rows={10}
-                />
-              </div>
-            ))}
+          <div className={mostrarPrevia ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "grid gap-4"}>
+            <div className="grid gap-4">
+              {(peticao.sections ?? []).map((secao: SecaoPeticao) => (
+                <div key={secao.code} className="grid gap-1">
+                  <RotuloCampo htmlFor={`secao-${secao.code}`}>
+                    {secao.label || secao.code}
+                  </RotuloCampo>
+                  <Campo
+                    area
+                    id={`secao-${secao.code}`}
+                    value={edicao[secao.code] ?? secao.content}
+                    onChange={(e) =>
+                      setEdicao((atual) => ({ ...atual, [secao.code]: e.target.value }))
+                    }
+                    rows={10}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {mostrarPrevia && (
+              <PreviaPeticao
+                titulo={peticao.title}
+                secoes={peticao.sections ?? []}
+                edicao={edicao}
+              />
+            )}
           </div>
         </section>
       )}
 
       {peticao?.jurimetria && <ModuloJurimetria dados={peticao.jurimetria} />}
     </Cartao>
+  );
+}
+
+/**
+ * Prévia ao vivo: lê o mesmo estado `edicao` dos textareas, então cada tecla
+ * digitada aparece aqui sem round-trip com a API. É só leitura — quem edita
+ * de verdade é o textarea ao lado; isto simula como a peça fica montada.
+ */
+function PreviaPeticao({
+  titulo,
+  secoes,
+  edicao,
+}: {
+  titulo: string;
+  secoes: SecaoPeticao[];
+  edicao: Record<string, string>;
+}) {
+  return (
+    <div className="lg:sticky lg:top-4 grid gap-2">
+      <p className="text-xs font-semibold text-tinta-3 m-0 uppercase tracking-wide">
+        Prévia da petição
+      </p>
+      <div className="font-titulo border border-borda-forte bg-papel shadow-sm p-8 max-h-[80vh] overflow-y-auto">
+        <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-6">
+          {titulo || "Petição inicial"}
+        </h1>
+        <div className="grid gap-4">
+          {secoes.map((secao) => {
+            const conteudo = edicao[secao.code] ?? secao.content;
+            return (
+              <section key={secao.code} className="grid gap-2">
+                {secao.label && (
+                  <h2 className="text-center text-xs font-bold uppercase tracking-wide text-tinta">
+                    {secao.label}
+                  </h2>
+                )}
+                <p className="text-sm leading-relaxed text-justify text-tinta-2 whitespace-pre-wrap m-0">
+                  {conteudo || "—"}
+                </p>
+              </section>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 

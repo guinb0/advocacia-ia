@@ -73,7 +73,7 @@ export function useCasos() {
 }
 
 /** Situação de um caso: checklist com status, progresso e envio de documentos. */
-export function useSituacao(casoId: string | null) {
+export function useSituacao(casoId: string | null, atualizarAoVivo = false) {
   const [situacao, setSituacao] = useState<SituacaoCaso | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -152,10 +152,20 @@ export function useSituacao(casoId: string | null) {
     false;
 
   useEffect(() => {
-    if (!processando) return;
-    const id = setInterval(() => void recarregar(), 3000);
-    return () => clearInterval(id);
-  }, [processando, recarregar]);
+    if (!processando && !atualizarAoVivo) return;
+    const intervalo = atualizarAoVivo ? 2_000 : 3_000;
+    const atualizarVisivel = () => {
+      if (document.visibilityState === "visible") void recarregar();
+    };
+    const id = window.setInterval(atualizarVisivel, intervalo);
+    window.addEventListener("focus", atualizarVisivel);
+    document.addEventListener("visibilitychange", atualizarVisivel);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", atualizarVisivel);
+      document.removeEventListener("visibilitychange", atualizarVisivel);
+    };
+  }, [atualizarAoVivo, processando, recarregar]);
 
   const removerEntrega = useCallback(
     async (entregaId: string) => {

@@ -592,9 +592,13 @@ def _codigo_configuracao_local(taxonomy_code: str, document_type: str) -> str:
 
 
 def _configuracao_local(taxonomy_code: str, document_type: str) -> dict[str, Any] | None:
-    registro = armazenamento.obter_modelo(
-        _codigo_configuracao_local(taxonomy_code, document_type)
-    )
+    try:
+        registro = armazenamento.obter_modelo(
+            _codigo_configuracao_local(taxonomy_code, document_type)
+        )
+    except Exception:
+        log.exception("configuração local de estilo indisponível")
+        return None
     if not registro:
         return None
     try:
@@ -739,7 +743,13 @@ def configuracao_de_geracao(
         # só porque a rota equivalente do agente está desatualizada ou sem migração.
         if erro.status and erro.status < 500 and erro.status != status.HTTP_404_NOT_FOUND:
             raise _erro(erro) from erro
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Configuração ainda não cadastrada.") from erro
+        return {
+            "taxonomy_code": taxonomy_code,
+            "document_type": document_type,
+            "display_name": "Petição inicial",
+            "drafting_instructions": "",
+            "required_documents": [],
+        }
 
 
 @roteador.put("/estilo/configuracao")
