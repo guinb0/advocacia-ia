@@ -529,6 +529,9 @@ export interface ConfigAssinatura {
   /** O WhatsApp do escritório (Evolution) está pareado. Sem isto o convite sai
    *  só por e-mail, e a tela não oferece o botão de reenviar por WhatsApp. */
   whatsapp_proprio: boolean;
+  /** Há login do ZapSign para enviar pelo SITE (plano sem API). Liga o botão de
+   *  envio pela conta ZapSign via navegador. */
+  navegador?: boolean;
   signatario_escritorio: { nome: string; email: string; papel: string } | null;
 }
 
