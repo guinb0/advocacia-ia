@@ -351,13 +351,32 @@ export interface PaginaCarteira {
   };
   chegando_agora: { entrega: Entrega; cliente: string }[];
   pedidos: { casoId: string; cliente: string; faltantes: number; reenvios: number }[];
+  /** Categorias presentes na carteira, para a tela oferecer só o que existe. */
+  categorias: { codigo: string; nome: string }[];
 }
 
-/** A fila da carteira já montada e paginada pelo servidor (ver `app/carteira.py`). */
-export async function obterCarteira(pagina: number, tamanho: number): Promise<PaginaCarteira> {
-  return comoJson<PaginaCarteira>(
-    await buscar(`/api/carteira?pagina=${pagina}&tamanho=${tamanho}`),
-  );
+/** Filtros da carteira. Vazio/omesso significa "sem filtro". `situacao` usa o
+ *  mesmo vocabulário dos chips: critico, atencao, pedido, pronto. */
+export interface FiltrosCarteira {
+  busca?: string;
+  categoria?: string;
+  situacao?: string;
+  ordenar?: "risco" | "recente" | "parado" | "nome";
+}
+
+/** A fila da carteira já montada e paginada pelo servidor (ver `app/carteira.py`).
+ *  Os filtros vão ao servidor para valerem na carteira inteira, não só na página. */
+export async function obterCarteira(
+  pagina: number,
+  tamanho: number,
+  filtros: FiltrosCarteira = {},
+): Promise<PaginaCarteira> {
+  const params = new URLSearchParams({ pagina: String(pagina), tamanho: String(tamanho) });
+  if (filtros.busca?.trim()) params.set("busca", filtros.busca.trim());
+  if (filtros.categoria) params.set("categoria", filtros.categoria);
+  if (filtros.situacao) params.set("situacao", filtros.situacao);
+  if (filtros.ordenar && filtros.ordenar !== "risco") params.set("ordenar", filtros.ordenar);
+  return comoJson<PaginaCarteira>(await buscar(`/api/carteira?${params.toString()}`));
 }
 
 /** Abre o caso. O `telefone` é o WhatsApp que a entrevista colheu.

@@ -5,6 +5,11 @@ import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import type { Caso, CasoCriado, Categoria, SituacaoCaso } from "./types";
 
+/** Quantos arquivos por request no envio em massa. Uma pasta grande é enviada em
+ *  blocos deste tamanho, em sequência: mantém cada request rápido e garante que
+ *  todo arquivo seja analisado, sem o teto do servidor recusar o lote inteiro. */
+const TAMANHO_LOTE_ENVIO = 40;
+
 export function useCategorias() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
 
@@ -125,12 +130,31 @@ export function useSituacao(casoId: string | null, atualizarAoVivo = false) {
       setEnviando("__lote__");
       setErro(null);
       try {
-        const resultado = await api.enviarDocumentosEmLote(casoId, arquivos);
-        await recarregar();
-        if (resultado.recusados.length > 0) {
+        // Em blocos: uma pasta com centenas de arquivos entra INTEIRA, sem
+        // estourar um único request e sem deixar nenhum arquivo de fora. Um
+        // bloco que falha não impede os demais — todo arquivo é tentado.
+        let recebidos = 0;
+        const recusados: { arquivo: string; motivo: string }[] = [];
+        for (let i = 0; i < arquivos.length; i += TAMANHO_LOTE_ENVIO) {
+          const bloco = arquivos.slice(i, i + TAMANHO_LOTE_ENVIO);
+          try {
+            const r = await api.enviarDocumentosEmLote(casoId, bloco);
+            recebidos += r.recebidos.length;
+            recusados.push(...r.recusados);
+          } catch (e) {
+            const motivo = e instanceof Error ? e.message : "falha no envio";
+            for (const f of bloco) recusados.push({ arquivo: f.name, motivo });
+          }
+          await recarregar();
+        }
+        if (recusados.length > 0) {
+          const amostra = recusados
+            .slice(0, 10)
+            .map((item) => `${item.arquivo}: ${item.motivo}`)
+            .join("; ");
+          const resto = recusados.length > 10 ? ` … e mais ${recusados.length - 10}` : "";
           setErro(
-            `${resultado.recebidos.length} arquivo(s) recebido(s), mas ${resultado.recusados.length} não entraram: ` +
-              resultado.recusados.map((item) => `${item.arquivo}: ${item.motivo}`).join("; "),
+            `${recebidos} arquivo(s) recebido(s), mas ${recusados.length} não entraram: ${amostra}${resto}`,
           );
         }
       } catch (e) {

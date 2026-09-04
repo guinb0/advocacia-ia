@@ -2245,15 +2245,32 @@ def listar_casos():
 
 
 @app.get("/api/carteira")
-def fila_da_carteira(pagina: int = 1, tamanho: int = carteira.TAMANHO_PADRAO):
+def fila_da_carteira(
+    pagina: int = 1,
+    tamanho: int = carteira.TAMANHO_PADRAO,
+    busca: str = "",
+    categoria: str = "",
+    situacao: str = "",
+    ordenar: str = "risco",
+):
     """A fila de casos da carteira, uma página por vez.
 
     Substitui o `GET /api/casos` seguido de um `GET /api/casos/{id}` por caso que a tela
     fazia: eram N+1 requisições e a carteira inteira no navegador. Aqui são duas consultas
     e só a página pedida no payload — mas a ordem por risco e os contadores do topo são
     medidos sobre a carteira toda (ver `app/carteira.py`).
+
+    `busca`, `categoria` e `situacao` recortam a lista no servidor, para o filtro valer
+    na carteira inteira e não só na página aberta; `ordenar` troca a ordem da fila.
     """
-    return carteira.montar(pagina=pagina, tamanho=tamanho)
+    return carteira.montar(
+        pagina=pagina,
+        tamanho=tamanho,
+        busca=busca,
+        categoria=categoria,
+        situacao=situacao,
+        ordenar=ordenar,
+    )
 
 
 @app.get("/api/casos/{caso_id}")
@@ -2531,8 +2548,88 @@ async def enviar_documento(
 
 #: Teto de arquivos por envio em massa. Não é limite de tamanho — é para o
 #: cliente não despejar a galeria inteira do celular numa requisição só e ficar
-#: sem resposta enquanto duzentas fotos são gravadas antes do primeiro 201.
-MAX_ARQUIVOS_POR_LOTE = 30
+#: Teto por request já EXPANDIDO — um ZIP conta pelos arquivos de dentro. A tela
+#: parte uma pasta grande em blocos menores (ver `TAMANHO_LOTE_ENVIO`), então
+#: aqui o teto existe para o ZIP: casa com `MAX_ITENS_ZIP` para que um pacote de
+#: até 200 arquivos entre inteiro, sem nenhum ficar de fora.
+MAX_ARQUIVOS_POR_LOTE = int(os.getenv("MAX_ARQUIVOS_POR_LOTE", "200"))
+
+#: Guardas contra ZIP malicioso (zip bomb): teto de itens e de bytes já
+#: descomprimidos. Um ZIP acima disto é recusado inteiro, com o motivo.
+MAX_ITENS_ZIP = int(os.getenv("MAX_ITENS_ZIP", "200"))
+MAX_BYTES_ZIP = int(os.getenv("MAX_BYTES_ZIP_DESCOMPRIMIDO", str(200 * 1024 * 1024)))
+
+
+class _ArquivoEmMemoria:
+    """Imita o mínimo de `UploadFile` que o registro usa: `filename` e `read()`.
+
+    É o que um arquivo tirado de dentro de um ZIP vira, para seguir pelo MESMO
+    caminho de um upload solto — mesma validação, mesmo OCR, mesma triagem.
+    """
+
+    def __init__(self, filename: str, conteudo: bytes):
+        self.filename = filename
+        self._conteudo = conteudo
+
+    async def read(self) -> bytes:
+        return self._conteudo
+
+
+def _e_lixo_de_zip(nome: str) -> bool:
+    """Entradas que todo desktop enfia no ZIP e que não são documento."""
+    base = nome.rsplit("/", 1)[-1]
+    return (
+        not base
+        or nome.endswith("/")
+        or nome.startswith("__MACOSX/")
+        or base in {".DS_Store", "Thumbs.db"}
+        or base.startswith("._")
+    )
+
+
+async def _expandir_zips(arquivos: list[Any]) -> list[Any]:
+    """Troca cada `.zip` pelos arquivos que ele contém; deixa os demais intactos.
+
+    Um envio pode misturar arquivos soltos e ZIPs — todos saem daqui como itens
+    individuais. Subpasta dentro do ZIP vira parte do nome, para o escritório
+    reconhecer de onde veio cada arquivo. ZIP dentro de ZIP não é aberto.
+    """
+    saida: list[Any] = []
+    for arquivo in arquivos:
+        nome = getattr(arquivo, "filename", "") or ""
+        if not nome.lower().endswith(".zip"):
+            saida.append(arquivo)
+            continue
+        bruto = await arquivo.read()
+        try:
+            with zipfile.ZipFile(io.BytesIO(bruto)) as z:
+                itens = [
+                    i for i in z.infolist()
+                    if not i.is_dir() and not _e_lixo_de_zip(i.filename)
+                ]
+                if len(itens) > MAX_ITENS_ZIP:
+                    raise HTTPException(
+                        400,
+                        f"O ZIP '{nome}' tem mais de {MAX_ITENS_ZIP} arquivos. "
+                        "Divida em partes menores.",
+                    )
+                if sum(i.file_size for i in itens) > MAX_BYTES_ZIP:
+                    raise HTTPException(
+                        413,
+                        f"O conteúdo de '{nome}' passa de "
+                        f"{MAX_BYTES_ZIP // (1024 * 1024)}MB descomprimido.",
+                    )
+                for info in itens:
+                    if info.filename.lower().endswith(".zip"):
+                        continue  # ZIP aninhado não é aberto (evita bomba/loop).
+                    dados = z.read(info)
+                    if dados:
+                        saida.append(_ArquivoEmMemoria(info.filename.replace("\\", "/"), dados))
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(
+                400, f"'{nome}' não é um ZIP válido ou está corrompido."
+            ) from exc
+    return saida
 
 
 async def _registrar_lote(
@@ -2544,15 +2641,20 @@ async def _registrar_lote(
 
     Um arquivo que falha não derruba os outros: o lote devolve o que entrou e o
     que não entrou, com o motivo, porque quem mandou doze fotos precisa saber
-    qual das doze precisa repetir.
+    qual das doze precisa repetir. Um ZIP é aberto antes: cada arquivo de dentro
+    entra como se tivesse sido enviado solto.
     """
     if not arquivos:
         raise HTTPException(400, "Nenhum arquivo foi enviado.")
+
+    arquivos = await _expandir_zips(arquivos)
+    if not arquivos:
+        raise HTTPException(400, "O ZIP não tinha nenhum arquivo aproveitável.")
     if len(arquivos) > MAX_ARQUIVOS_POR_LOTE:
         raise HTTPException(
             400,
-            f"São aceitos até {MAX_ARQUIVOS_POR_LOTE} arquivos por envio. "
-            "Divida em partes menores.",
+            f"São aceitos até {MAX_ARQUIVOS_POR_LOTE} arquivos por envio "
+            "(contando os de dentro de um ZIP). Divida em partes menores.",
         )
 
     lote_id = uuid.uuid4().hex

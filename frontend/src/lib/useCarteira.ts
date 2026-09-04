@@ -183,10 +183,35 @@ export function useCarteira() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
+  // Filtros aplicados no servidor (valem na carteira inteira, não só na página).
+  const [busca, setBusca] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [situacao, setSituacao] = useState("");
+  const [ordenar, setOrdenar] = useState<NonNullable<api.FiltrosCarteira["ordenar"]>>("risco");
+
+  // Digitar não pode disparar uma requisição por tecla: a busca só vai ao
+  // servidor depois de uma pausa curta.
+  const [buscaEfetiva, setBuscaEfetiva] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setBuscaEfetiva(busca), 300);
+    return () => clearTimeout(t);
+  }, [busca]);
+
+  // Qualquer filtro que muda o conjunto reinicia na primeira página — senão o
+  // usuário fica preso numa página que o novo filtro talvez nem tenha.
+  useEffect(() => {
+    setPagina(1);
+  }, [buscaEfetiva, categoria, situacao, ordenar]);
+
   const recarregar = useCallback(async () => {
     setCarregando(true);
     try {
-      const resposta = await api.obterCarteira(pagina, CASOS_POR_PAGINA);
+      const resposta = await api.obterCarteira(pagina, CASOS_POR_PAGINA, {
+        busca: buscaEfetiva,
+        categoria,
+        situacao,
+        ordenar,
+      });
       setDados(resposta);
       // O servidor prende a página ao total: apagar o último caso de uma página
       // deixaria o cursor além do fim e a lista viria vazia sem explicação.
@@ -197,7 +222,7 @@ export function useCarteira() {
     } finally {
       setCarregando(false);
     }
-  }, [pagina]);
+  }, [pagina, buscaEfetiva, categoria, situacao, ordenar]);
 
   useEffect(() => {
     void recarregar();
@@ -261,6 +286,18 @@ export function useCarteira() {
     },
     [dados],
   );
+  const categorias = useMemo(() => dados?.categorias ?? [], [dados]);
+
+  const filtros = { busca, categoria, situacao, ordenar };
+  const setFiltros = { setBusca, setCategoria, setSituacao, setOrdenar };
+  const algumFiltroAtivo = Boolean(buscaEfetiva || categoria || situacao || ordenar !== "risco");
+  const limparFiltros = useCallback(() => {
+    setBusca("");
+    setCategoria("");
+    setSituacao("");
+    setOrdenar("risco");
+  }, []);
+
   return {
     linhas,
     triagem,
@@ -271,5 +308,10 @@ export function useCarteira() {
     recarregar,
     paginacao,
     irPara,
+    categorias,
+    filtros,
+    setFiltros,
+    algumFiltroAtivo,
+    limparFiltros,
   };
 }

@@ -28,6 +28,43 @@ def configurada() -> bool:
     return bool(os.getenv("MISTRAL_API_KEY", "").strip())
 
 
+#: Teto do payload de imagem (bytes do arquivo, antes do base64). Acima disto,
+#: PNG sem perda dá lugar a JPEG de alta qualidade: o ganho de nitidez não paga
+#: um upload de dezenas de MB, e a API tem limite de tamanho. Configurável para
+#: quem quiser forçar sempre-PNG (teto alto) ou sempre-JPEG (teto zero).
+_TETO_PNG_BYTES = int(os.getenv("OCR_PNG_MAX_BYTES", str(8 * 1024 * 1024)))
+
+
+def _codificar_para_ocr(img_bgr: np.ndarray) -> tuple[str, bytes]:
+    """Codifica a imagem para o OCR preferindo SEM PERDA.
+
+    A imagem que chega aqui já foi decodificada de um JPEG do celular ou
+    rasterizada de um PDF. Reencodá-la em JPEG acrescenta uma SEGUNDA compressão
+    com perda, e é justamente na borda do glifo pequeno — o dígito do CPF, o
+    código do CID — que o artefato de JPEG come a informação que o OCR precisa.
+    PNG não tem esse custo. Só quando o PNG estoura o teto de tamanho é que vale
+    voltar ao JPEG, aí com qualidade alta e sem subamostragem de croma (4:4:4),
+    que é o que preserva a borda do texto.
+    """
+    # Teto: 0 força sempre-JPEG; negativo força sempre-PNG; positivo é o limite.
+    if _TETO_PNG_BYTES != 0:
+        ok, png = cv2.imencode(".png", img_bgr, [cv2.IMWRITE_PNG_COMPRESSION, 6])
+        if ok and (_TETO_PNG_BYTES < 0 or len(png) <= _TETO_PNG_BYTES):
+            return "image/png", png.tobytes()
+
+    # Fallback JPEG: qualidade alta e, quando a build do OpenCV expõe o fator de
+    # amostragem, 4:4:4 (sem subamostrar croma) para não borrar a borda do texto.
+    params = [cv2.IMWRITE_JPEG_QUALITY, int(os.getenv("OCR_JPEG_QUALITY", "95"))]
+    fator_444 = getattr(cv2, "IMWRITE_JPEG_SAMPLING_FACTOR", None)
+    valor_444 = getattr(cv2, "IMWRITE_JPEG_SAMPLING_FACTOR_444", None)
+    if fator_444 is not None and valor_444 is not None:
+        params += [fator_444, valor_444]
+    ok, jpg = cv2.imencode(".jpg", img_bgr, params)
+    if not ok:
+        raise RuntimeError("Não foi possível preparar a imagem para o OCR da Mistral")
+    return "image/jpeg", jpg.tobytes()
+
+
 def _linhas_da_resposta(dados: dict) -> list[Linha]:
     linhas: list[Linha] = []
     y = 0.0
@@ -55,16 +92,14 @@ def rodar_ocr_com_tempo(
     chave = os.getenv("MISTRAL_API_KEY", "").strip()
     if not chave:
         raise RuntimeError("MISTRAL_API_KEY não configurada")
-    ok, codificada = cv2.imencode(".jpg", img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 94])
-    if not ok:
-        raise RuntimeError("Não foi possível preparar a imagem para o OCR da Mistral")
+    mime, dados_img = _codificar_para_ocr(img_bgr)
 
     inicio = time.perf_counter()
     payload = {
         "model": os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest"),
         "document": {
             "type": "image_url",
-            "image_url": "data:image/jpeg;base64," + base64.b64encode(codificada.tobytes()).decode("ascii"),
+            "image_url": f"data:{mime};base64," + base64.b64encode(dados_img).decode("ascii"),
         },
         "include_blocks": True,
         "confidence_scores_granularity": "page",
