@@ -86,6 +86,66 @@ def extrair_identidade_visual(conteudo: bytes) -> tuple[bytes, str, str]:
         raise ErroPeticao("Não foi possível ler a identidade visual deste .docx.") from erro
 
 
+_NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _primeiro_val(raiz, tag: str, attr: str = "val") -> str | None:
+    for el in raiz.iter(f"{_NS_W}{tag}"):
+        v = el.attrib.get(f"{_NS_W}{attr}")
+        if v:
+            return v
+    return None
+
+
+def analisar_estilo(conteudo: bytes) -> dict[str, Any]:
+    """O que dá para captar do padrão do escritório, além de logo e fonte.
+
+    Tamanho da fonte, espaçamento entre linhas, alinhamento e margens — é o que a
+    tela mostra como "identificamos isto no seu documento". Tudo best-effort: o
+    atributo que não estiver no arquivo simplesmente não entra, e nada aqui
+    interrompe o cadastro do modelo.
+    """
+    atributos: dict[str, Any] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
+            nomes = set(arquivo.namelist())
+            if "word/styles.xml" in nomes:
+                estilos = ElementTree.fromstring(arquivo.read("word/styles.xml"))
+                sz = _primeiro_val(estilos, "sz")  # em meios-pontos
+                if sz and sz.isdigit():
+                    atributos["tamanho_fonte_pt"] = round(int(sz) / 2, 1)
+                linha = None
+                for sp in estilos.iter(f"{_NS_W}spacing"):
+                    linha = sp.attrib.get(f"{_NS_W}line")
+                    if linha:
+                        break
+                if linha and linha.isdigit():
+                    # 240 = simples, 360 = 1,5, 480 = duplo.
+                    atributos["espacamento_linha"] = round(int(linha) / 240, 2)
+                jc = _primeiro_val(estilos, "jc")
+                if jc:
+                    atributos["alinhamento"] = {
+                        "both": "justificado",
+                        "left": "à esquerda",
+                        "center": "centralizado",
+                        "right": "à direita",
+                    }.get(jc, jc)
+            if "word/document.xml" in nomes:
+                doc = ElementTree.fromstring(arquivo.read("word/document.xml"))
+                for mar in doc.iter(f"{_NS_W}pgMar"):
+                    def cm(lado: str) -> float | None:
+                        v = mar.attrib.get(f"{_NS_W}{lado}")
+                        return round(int(v) / 1440 * 2.54, 1) if v and v.lstrip("-").isdigit() else None
+
+                    margens = {lado: cm(lado) for lado in ("top", "right", "bottom", "left")}
+                    if any(v is not None for v in margens.values()):
+                        atributos["margens_cm"] = margens
+                    break
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError):
+        return atributos
+    return atributos
+
+
 def identidade_visual() -> tuple[bytes, str, str, str]:
     """Identidade vigente: banco em produção; Lara & Melo como reserva segura."""
     try:

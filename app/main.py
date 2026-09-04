@@ -542,9 +542,15 @@ async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
             "fonte": "Arial",
             "enviado_por": "",
             "atualizado_em": "",
+            "atributos": {},
         }
     _logo, fonte, _extensao = await run_in_threadpool(
         peticao_local.extrair_identidade_visual, registro["conteudo"]
+    )
+    # O que mais o .docx revela do padrão do escritório — tamanho, espaçamento,
+    # margens, alinhamento — para a tela mostrar tudo que foi captado.
+    atributos = await run_in_threadpool(
+        peticao_local.analisar_estilo, registro["conteudo"]
     )
     return {
         "arquivo": registro["nome_arquivo"],
@@ -552,6 +558,7 @@ async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
         "fonte": fonte,
         "enviado_por": registro["enviado_por"],
         "atualizado_em": registro["atualizado_em"],
+        "atributos": atributos,
     }
 
 

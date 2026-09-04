@@ -66,12 +66,21 @@ export class ApiError extends Error {
   }
 }
 
+export interface AtributosModeloVisual {
+  tamanho_fonte_pt?: number;
+  espacamento_linha?: number;
+  alinhamento?: string;
+  margens_cm?: { top?: number | null; right?: number | null; bottom?: number | null; left?: number | null };
+}
+
 export interface ModeloVisualPeticao {
   arquivo: string;
   origem: "banco" | "embutido";
   fonte: string;
   enviado_por?: string;
   atualizado_em?: string;
+  /** O que o sistema captou do padrão do .docx além da logo e da fonte. */
+  atributos?: AtributosModeloVisual;
 }
 
 export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {

@@ -37,6 +37,16 @@ import type { ItemChecklist } from "@/lib/types";
 
 /* `.tabela th/td` era seletor descendente; sem equivalente no Tailwind, a regra
  * vira constante e cada célula a carrega. */
+/** Um atributo captado do modelo do escritório: rótulo em cima, valor abaixo. */
+function ItemIdentificado({ rotulo, valor }: { rotulo: string; valor: string }) {
+  return (
+    <div className="grid min-w-0 gap-[2px]">
+      <dt className="text-[11px] font-medium uppercase tracking-wide text-tinta-3">{rotulo}</dt>
+      <dd className="m-0 text-sm font-semibold text-tinta [overflow-wrap:anywhere]">{valor}</dd>
+    </div>
+  );
+}
+
 const CELULA = "px-3 py-2 text-left border-b border-borda";
 const CABECALHO_CELULA =
   "px-3 py-2 text-tinta-3 text-xs font-semibold uppercase tracking-[0.03em] whitespace-nowrap";
@@ -458,8 +468,9 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       <div className="flex min-w-0 flex-col gap-4">
       <Cartao titulo="Identidade dos documentos" className="min-w-0 overflow-hidden">
         <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
-          Logo e fonte aplicadas às próximas petições. O conteúdo jurídico do arquivo de
-          referência não é copiado.
+          Selecione um documento com a logo e o padrão do seu escritório que vamos captar o
+          modelo — logo, fonte, tamanho, espaçamento, alinhamento e margens. O conteúdo
+          jurídico do arquivo de referência não é copiado.
         </p>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -506,6 +517,44 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             )}
           </div>
         </div>
+
+        {modeloVisual && (
+          <div className="mt-4 rounded-campo border border-borda bg-papel-2 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-ok-claro text-ok" aria-hidden>
+                ✓
+              </span>
+              <h4 className="m-0 text-sm font-semibold text-tinta">O que identificamos no seu modelo</h4>
+            </div>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 max-[560px]:grid-cols-1">
+              <ItemIdentificado rotulo="Fonte" valor={modeloVisual.fonte || "—"} />
+              {modeloVisual.atributos?.tamanho_fonte_pt != null && (
+                <ItemIdentificado rotulo="Tamanho" valor={`${modeloVisual.atributos.tamanho_fonte_pt} pt`} />
+              )}
+              {modeloVisual.atributos?.espacamento_linha != null && (
+                <ItemIdentificado rotulo="Espaçamento" valor={`${modeloVisual.atributos.espacamento_linha} linha(s)`} />
+              )}
+              {modeloVisual.atributos?.alinhamento && (
+                <ItemIdentificado rotulo="Alinhamento" valor={modeloVisual.atributos.alinhamento} />
+              )}
+              {modeloVisual.atributos?.margens_cm &&
+                Object.values(modeloVisual.atributos.margens_cm).some((v) => v != null) && (
+                  <ItemIdentificado
+                    rotulo="Margens (cm)"
+                    valor={(["top", "right", "bottom", "left"] as const)
+                      .map((l) => {
+                        const v = modeloVisual.atributos?.margens_cm?.[l];
+                        const nome = { top: "sup", right: "dir", bottom: "inf", left: "esq" }[l];
+                        return v != null ? `${nome} ${v}` : null;
+                      })
+                      .filter(Boolean)
+                      .join(" · ")}
+                  />
+                )}
+              <ItemIdentificado rotulo="Logo" valor="captada do cabeçalho (veja a prévia)" />
+            </dl>
+          </div>
+        )}
 
         {modeloVisual && (
           <details className="group mt-4 overflow-hidden rounded-campo border border-borda bg-papel-2">
