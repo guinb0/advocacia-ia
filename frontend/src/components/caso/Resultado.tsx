@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { ESTILO_VEREDITO, porcentagem } from "@/lib/formato";
+import { capitalizacaoNatural, ESTILO_VEREDITO, porcentagem } from "@/lib/formato";
 import type { Documento } from "@/lib/types";
 import { Aviso, BarraAbas, BotaoAba, Stat } from "@/components/ui/Basicos";
 import { PainelJson, PainelXml } from "@/components/caso/PainelDados";
@@ -55,7 +55,7 @@ export default function Resultado({ doc }: { doc: Documento }) {
       <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-[10px] mb-5">
         <Stat
           chave="Tipo detectado"
-          valor={tipoDescricao.split(" (")[0]}
+          valor={capitalizacaoNatural(tipoDescricao.split(" (")[0])}
           titulo={tipoDescricao}
         />
         <Stat

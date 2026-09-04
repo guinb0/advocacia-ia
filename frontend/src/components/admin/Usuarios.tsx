@@ -137,7 +137,8 @@ export default function Usuarios({ onVoltar }: Props) {
 
   return (
     <div className="min-w-0">
-      <header className="my-5 mb-6">
+      <header className="mb-6 rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
+        <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Administração</span>
         <h1 className="mb-[6px] mt-0 text-[1.6rem]">Usuários</h1>
         <p className="m-0 text-tinta-3 max-w-[62ch] leading-[1.5]">
           Quem pode entrar no sistema, e com qual perfil. O cadastro é o mesmo login
@@ -146,7 +147,7 @@ export default function Usuarios({ onVoltar }: Props) {
       </header>
 
       <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),420px)_minmax(0,1fr)] items-start gap-7 max-[860px]:grid-cols-1">
-        <section className="border border-borda-forte rounded-[10px] p-[18px] bg-papel">
+        <section className="rounded-cartao border border-borda-forte bg-papel p-5 shadow-cartao lg:sticky lg:top-6">
           <h2 className="mb-4 mt-0 text-base uppercase tracking-[0.04em] text-tinta-3">
             {editando ? "Editar usuário" : "Cadastrar"}
           </h2>

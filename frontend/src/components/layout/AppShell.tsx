@@ -26,6 +26,24 @@ const ROTULO_TELA: Record<Tela, string> = {
   documentacao: "Documentação",
 };
 
+const DESCRICAO_TELA: Record<Tela, string> = {
+  carteira: "Prioridades, pendências e próximos passos do escritório.",
+  caso: "Documentos, validações e andamento deste atendimento.",
+  dossie: "Visão consolidada dos fatos e materiais do caso.",
+  painel: "Indicadores e qualidade da análise documental.",
+  jurimetria: "Precedentes e padrões úteis para a estratégia.",
+  casos: "Crie, localize e organize os casos do escritório.",
+  avulso: "Extraia e confira dados de um documento isolado.",
+  usuarios: "Pessoas, perfis e permissões de acesso.",
+  panorama: "Leitura geral da operação e dos atendimentos.",
+  entrevista: "Conduza a conversa com roteiro e registro assistido.",
+  supervisao: "Acompanhe atendimentos e pontos que exigem atenção.",
+  dados: "Consulte as informações estruturadas do acervo.",
+  modelosDePeticao: "Padronize a apresentação dos documentos jurídicos.",
+  catalogoRoteiros: "Organize as perguntas usadas nos atendimentos.",
+  documentacao: "Acompanhe pedidos, arquivos e entregas documentais.",
+};
+
 interface AppShellProps {
   tela: Tela;
   onNavegar: (tela: Tela) => void;
@@ -45,16 +63,18 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
      * grudava. No celular o fluxo é o do documento: a página rola pelo `<body>`
      * (que já tem `overflow-x:hidden` e `max-width:100vw` em globals.css, o que
      * mata a rolagem horizontal), e a topbar `sticky top-0` gruda de verdade. */
-    <div className="min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[236px_minmax(0,1fr)]">
+    <div className="min-h-dvh bg-transparent lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[252px_minmax(0,1fr)]">
       <BarraLateral tela={tela} onNavegar={onNavegar} />
       <main className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-hidden">
-        <div className="hidden shrink-0 border-b border-borda bg-papel/[0.88] px-6 py-3 shadow-[0_1px_0_rgba(16,32,51,0.03)] backdrop-blur lg:block">
-          <div className="mx-auto flex max-w-[1440px] min-w-0 items-center justify-between gap-6">
+        <div className="hidden shrink-0 border-b border-borda bg-papel/[0.82] px-7 py-3.5 shadow-[0_1px_0_rgba(16,32,51,0.03)] backdrop-blur-xl lg:block">
+          <div className="mx-auto flex max-w-[1440px] min-w-0 items-center justify-between gap-8">
             <div className="min-w-0">
-              <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
-                Área atual
-              </span>
-              <strong className="mt-0.5 block truncate text-sm text-tinta">{ROTULO_TELA[tela]}</strong>
+              <div className="flex min-w-0 items-baseline gap-3">
+                <h1 className="truncate font-titulo text-[1.35rem] font-semibold tracking-[-0.02em] text-tinta">
+                  {ROTULO_TELA[tela]}
+                </h1>
+                <span className="hidden truncate text-xs text-tinta-3 xl:block">{DESCRICAO_TELA[tela]}</span>
+              </div>
             </div>
             <div className="flex min-w-0 shrink-0 items-center gap-3">
               <span className="hidden h-8 w-px bg-borda sm:block" aria-hidden />
@@ -80,13 +100,13 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
         </div>
 
         <div className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden">
-          <div className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pb-16 pt-5 sm:px-6 lg:px-7 [&>*]:min-w-0">
+          <div className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pb-20 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pt-8 [&>*]:min-w-0">
             {tela !== "carteira" && (
-              <nav className="mb-4 flex min-w-0 items-center gap-2" aria-label="Navegação de retorno">
+              <nav className="mb-5 flex min-w-0 items-center gap-2" aria-label="Navegação de retorno">
                 <button
                   type="button"
                   onClick={() => onNavegar("carteira")}
-                  className="group inline-flex min-h-11 items-center gap-2 rounded-[10px] border border-borda-forte bg-papel px-3.5 text-sm font-semibold text-tinta shadow-sm transition hover:border-acao hover:bg-acao-clara hover:text-acao focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-acao"
+                  className="group inline-flex min-h-10 items-center gap-2 rounded-campo border border-borda-forte bg-papel/90 px-3.5 text-sm font-semibold text-tinta shadow-cartao transition hover:border-acao hover:bg-acao-clara hover:text-acao focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-acao"
                   aria-label={`Voltar de ${ROTULO_TELA[tela]} para a Carteira`}
                 >
                   <ArrowLeft size={18} className="transition-transform group-hover:-translate-x-0.5" aria-hidden />

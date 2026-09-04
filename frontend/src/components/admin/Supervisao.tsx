@@ -163,7 +163,8 @@ export default function Supervisao({ onVoltar }: Props) {
   return (
     <div className="min-w-0">
 
-      <header className="my-5">
+      <header className="mb-6 overflow-hidden rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
+        <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Gestão da equipe</span>
         <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">Supervisão</h1>
         <p className="m-0 text-tinta-3 max-w-[66ch] leading-[1.5]">
           As entrevistas do escritório por quem as conduziu. Abra uma para conferir o
@@ -206,7 +207,7 @@ export default function Supervisao({ onVoltar }: Props) {
         </div>
       )}
 
-      <div className="mt-5 grid min-w-0 grid-cols-[minmax(min(100%,280px),340px)_minmax(0,1fr)] items-start gap-6 max-[900px]:grid-cols-1">
+      <div className="mt-6 grid min-w-0 grid-cols-[minmax(min(100%,280px),350px)_minmax(0,1fr)] items-start gap-6 max-[900px]:grid-cols-1">
         {/* ------------------------------------------- funcionário e entrevistas */}
         <section className="border border-borda-forte rounded-cartao bg-papel shadow-cartao p-4">
           {carregando ? (

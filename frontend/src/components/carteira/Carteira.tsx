@@ -207,14 +207,15 @@ export default function Carteira({
     }));
 
   return (
-    <div className="space-y-5">
-      <header className="rounded-cartao border border-borda-forte bg-papel p-5 shadow-cartao">
+    <div className="space-y-6">
+      <header className="relative overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
+        <div className="pointer-events-none absolute -right-14 -top-20 h-56 w-56 rounded-full border-[34px] border-white/40" aria-hidden />
         <div className="flex flex-wrap items-start justify-between gap-5">
-          <div className="min-w-0">
+          <div className="relative min-w-0">
             <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
               Carteira
             </span>
-            <h1 className="mb-0 mt-2 text-xl tracking-[-0.01em]">Mesa do dia</h1>
+            <h1 className="mb-0 mt-2 text-[2rem] tracking-[-0.025em]">Mesa do dia</h1>
             <p className="mt-[6px] max-w-[68ch] text-base text-tinta-2">
               {triagem.travados > 0
                 ? `${triagem.travados} ${triagem.travados === 1 ? "caso exige" : "casos exigem"} uma decisão sua hoje. Os demais seguem andando sozinhos.`
@@ -222,7 +223,7 @@ export default function Carteira({
             </p>
           </div>
 
-          <div className="flex flex-col items-start gap-3 sm:items-end">
+          <div className="relative flex flex-col items-start gap-3 sm:items-end">
             <Botao variante="primario" onClick={onNovoCaso}>
               <Plus size={16} aria-hidden />
               Novo caso
@@ -622,8 +623,8 @@ function CartaoTriagem({
   return (
     <button
       type="button"
-      className={`flex items-start gap-3 px-4 py-[14px] border rounded-cartao text-left cursor-pointer transition-[box-shadow,background-color] duration-[120ms] ease-[ease] ${
-        ativo ? "bg-acao-clara shadow-cartao-forte" : "bg-papel shadow-cartao hover:shadow-cartao-forte"
+      className={`flex items-start gap-3 px-4 py-4 border rounded-cartao text-left cursor-pointer transition-[box-shadow,background-color,transform] duration-150 ease-out active:translate-y-px ${
+        ativo ? "bg-acao-clara shadow-cartao-forte" : "bg-papel shadow-cartao hover:-translate-y-0.5 hover:shadow-cartao-forte"
       }`}
       style={
         ativo

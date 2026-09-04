@@ -50,8 +50,8 @@ export default function CasoWorkspaceTabs({
   categoria,
 }: CasoWorkspaceTabsProps) {
   return (
-    <section className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
-      <div className="flex min-w-0 flex-col gap-3 border-b border-borda bg-papel-2 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+    <section className="sticky top-0 z-20 overflow-hidden rounded-cartao border border-borda-forte bg-papel/95 shadow-cartao backdrop-blur-xl">
+      <div className="flex min-w-0 flex-col gap-3 border-b border-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
             Caso aberto
@@ -82,7 +82,7 @@ export default function CasoWorkspaceTabs({
               aria-selected={ativa}
               onClick={() => onNavegar(destino)}
               className={[
-                "flex min-w-[156px] items-center gap-3 rounded-campo border px-3 py-2 text-left transition-colors",
+                "flex min-w-[156px] items-center gap-3 rounded-campo border px-3 py-2 text-left transition-[background-color,border-color,transform] active:translate-y-px",
                 ativa
                   ? "border-acao-borda bg-acao-clara text-acao"
                   : "border-transparent bg-transparent text-tinta-2 hover:border-borda hover:bg-papel-2 hover:text-tinta",

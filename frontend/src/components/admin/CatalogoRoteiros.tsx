@@ -107,8 +107,9 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <header className="flex flex-wrap items-start justify-between gap-4 rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
         <div>
+          <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Padronização do atendimento</span>
           <h1 className="m-0 text-[26px] font-semibold leading-[1.15] font-titulo">
             Roteiros de entrevista
           </h1>
@@ -118,7 +119,7 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
             blocos, e desfaça edição que não deu certo.
           </p>
         </div>
-      </div>
+      </header>
 
       {erro && <Aviso tom="critico">{erro}</Aviso>}
       {recado && <Aviso tom="ok">{recado}</Aviso>}

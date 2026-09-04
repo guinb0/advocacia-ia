@@ -31,15 +31,15 @@ type BotaoVariante = "primario" | "secundario" | "discreto" | "perigo" | "texto"
 const BASE_BOTAO =
   "inline-flex items-center justify-center gap-2 border " +
   "rounded-campo font-ui text-sm font-semibold leading-tight " +
-  "text-center no-underline cursor-pointer transition-[background-color,border-color,color] " +
-  "duration-[120ms] ease-out disabled:cursor-not-allowed";
+  "text-center no-underline cursor-pointer transition-[background-color,border-color,color,box-shadow,transform] " +
+  "duration-150 ease-out enabled:active:translate-y-px disabled:cursor-not-allowed";
 
 /* Ação principal: preenchimento sólido — é o que faz o olho achá-la sem
  * procurar. Só uma por bloco (ver GUIA-VISUAL.md). */
 const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
   primario:
-    "bg-acao border-acao text-white " +
-    "enabled:hover:bg-acao-forte enabled:hover:border-acao-forte " +
+    "bg-acao border-acao text-white shadow-[0_5px_14px_rgba(0,42,71,0.16)] " +
+    "enabled:hover:bg-acao-forte enabled:hover:border-acao-forte enabled:hover:shadow-[0_8px_20px_rgba(0,42,71,0.22)] " +
     "enabled:focus-visible:bg-acao-forte enabled:focus-visible:border-acao-forte " +
     "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada",
   secundario:
@@ -311,11 +311,11 @@ interface CartaoProps extends React.ComponentPropsWithoutRef<"div"> {
 export function Cartao({ titulo, subtitulo, className, children, ...props }: CartaoProps) {
   return (
     <div
-      className={cn("border border-borda-forte rounded-cartao bg-papel shadow-cartao p-5", className)}
+      className={cn("border border-borda-forte rounded-cartao bg-papel shadow-cartao p-4 sm:p-5", className)}
       {...props}
     >
-      {titulo && <h2 className="mb-1 text-tinta font-titulo text-lg font-semibold leading-[1.25]">{titulo}</h2>}
-      {subtitulo && <p className="mb-4 text-tinta-3 text-sm leading-[1.5]">{subtitulo}</p>}
+      {titulo && <h2 className="mb-1 text-tinta font-titulo text-lg font-semibold leading-[1.2] tracking-[-0.012em]">{titulo}</h2>}
+      {subtitulo && <p className="mb-5 max-w-[72ch] text-tinta-3 text-sm leading-[1.55]">{subtitulo}</p>}
       {children}
     </div>
   );

@@ -96,8 +96,8 @@ export default function Jurimetria({
 
   return (
     <div className={JURIMETRIA_SHELL}>
-      <header className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
-        <div className="flex min-w-0 flex-col gap-3 border-b border-borda bg-papel-2 px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
+      <header className="overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] shadow-cartao">
+        <div className="flex min-w-0 flex-col gap-3 px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
               Acervo jurisprudencial

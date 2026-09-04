@@ -291,7 +291,8 @@ export default function Dados({ onVoltar }: Props) {
   return (
     <div className="min-w-0">
 
-      <header className="mt-5 mb-[18px]">
+      <header className="mb-6 rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
+        <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Base de conhecimento</span>
         <h1 className="mb-[6px] mt-0 text-[1.6rem]">Dados do acervo</h1>
         <p className="m-0 text-tinta-3 max-w-[74ch] leading-[1.55]">
           Tudo que foi alimentado no banco de precedentes, em números e em detalhe. É daqui
@@ -312,7 +313,7 @@ export default function Dados({ onVoltar }: Props) {
       ) : panorama ? (
         <>
           {/* ------------------------------------------------------- painel */}
-          <div className="flex gap-3 flex-wrap">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
             <Kpi rotulo="documentos" valor={N(panorama.fontes)} />
             <Kpi rotulo="trechos indexados" valor={N(panorama.trechos)} />
             <Kpi rotulo="com vetor" valor={N(panorama.vetorizados)} />

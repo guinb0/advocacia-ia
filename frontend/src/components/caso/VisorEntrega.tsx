@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { baixarArquivoEntregaPdf, obterEntrega } from "@/lib/api";
-import { ESTILO_VEREDITO } from "@/lib/formato";
+import { capitalizacaoNatural, ESTILO_VEREDITO } from "@/lib/formato";
 import type { EntregaDetalhe } from "@/lib/types";
 import { useArquivoEntrega } from "@/lib/useArquivo";
 import { Aviso, LinkBotao, Selo } from "@/components/ui/Basicos";
@@ -74,9 +74,7 @@ function formatarTipoDocumento(tipo: string): string {
     .trim();
   if (!limpo || limpo === "—") return "—";
   if (limpo.toLowerCase() === "desconhecido") return "Desconhecido";
-  return limpo
-    .toLowerCase()
-    .replace(/\b\p{L}/gu, (letra) => letra.toLocaleUpperCase("pt-BR"));
+  return capitalizacaoNatural(limpo);
 }
 
 interface Props {

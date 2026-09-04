@@ -105,7 +105,8 @@ export default function Checklist({
 
   return (
     <>
-      <div className="px-6 py-[22px] mb-5 border border-borda-forte rounded-cartao bg-papel shadow-cartao">
+      <div className="relative mb-5 overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] px-5 py-5 shadow-cartao sm:px-6">
+        <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full border-[28px] border-white/35" aria-hidden />
         <div className="flex justify-between items-center gap-[14px] mb-[14px] flex-wrap">
           <Selo tom="info">{categoria.nome}</Selo>
           <span className="text-tinta-3 text-xs tabular-nums">
@@ -113,7 +114,7 @@ export default function Checklist({
           </span>
         </div>
 
-        <div className="flex justify-between items-end gap-6 flex-wrap">
+        <div className="relative flex flex-wrap items-end justify-between gap-6">
           <div>
             <h2 className="m-0 text-xl tracking-[-0.01em]">{caso.cliente}</h2>
             <p className="mt-[6px] mb-0 max-w-[68ch] text-tinta-2 text-sm leading-[1.55]">

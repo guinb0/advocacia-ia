@@ -485,8 +485,8 @@ export default function TriagemEntrevista({
   )[gravacaoEstado];
 
   return (
-    <section className="mb-5 min-w-0 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
-      <header className="border-b border-borda bg-papel-2 px-4 py-4 sm:px-5">
+    <section className="mb-5 min-w-0 overflow-hidden rounded-cartao border border-acao-borda bg-papel shadow-cartao">
+      <header className="border-b border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] px-4 py-5 sm:px-6">
         <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
@@ -526,7 +526,7 @@ export default function TriagemEntrevista({
           <div className="grid gap-4 md:grid-cols-2">
             <button
               type="button"
-              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left transition hover:border-acao hover:bg-acao-clara focus:outline-none focus:ring-2 focus:ring-acao"
+              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left shadow-cartao transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-1 hover:border-acao hover:bg-acao-clara hover:shadow-cartao-forte focus:outline-none focus:ring-2 focus:ring-acao"
               onClick={() => { setModoEntrada("guiada"); setMostrarRoteiro(true); }}
             >
               <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-acao-clara text-lg font-bold text-acao">1</span>
@@ -538,7 +538,7 @@ export default function TriagemEntrevista({
             </button>
             <button
               type="button"
-              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left transition hover:border-acao hover:bg-acao-clara focus:outline-none focus:ring-2 focus:ring-acao"
+              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left shadow-cartao transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-1 hover:border-acao hover:bg-acao-clara hover:shadow-cartao-forte focus:outline-none focus:ring-2 focus:ring-acao"
               onClick={() => setModoEntrada("transcricao")}
             >
               <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-papel-3 text-lg font-bold text-tinta-2">2</span>

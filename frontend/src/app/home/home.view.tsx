@@ -240,10 +240,10 @@ const Telas = (props: HomeViewProps) => {
   return (
     <ModuleFrame variant={tela === "casos" ? "compact" : "wide"}>
     <div>
-      {tela !== "entrevista" && <div className="flex justify-between items-end gap-5 mb-[22px] flex-wrap">
+      {tela !== "entrevista" && <div className="mb-5 flex flex-wrap items-end justify-between gap-5 lg:hidden">
         <div>
-          <h1 className="mt-[6px] mb-0 text-xl tracking-[-0.01em]">{cabecalho.titulo}</h1>
-          <p className="mt-[5px] mb-0 max-w-[66ch] text-tinta-2 text-base">{cabecalho.subtitulo}</p>
+          <h1 className="mb-0 mt-1 text-xl tracking-[-0.02em]">{cabecalho.titulo}</h1>
+          <p className="mb-0 mt-1.5 max-w-[66ch] text-sm leading-relaxed text-tinta-2">{cabecalho.subtitulo}</p>
         </div>
       </div>}
 

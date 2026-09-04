@@ -116,11 +116,11 @@ export default function ListaCasos({
   const casosVisiveis = casosFiltrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(280px,380px)_minmax(0,1fr)] items-start gap-5 max-[980px]:grid-cols-1">
+    <div className="grid min-w-0 grid-cols-[minmax(300px,400px)_minmax(0,1fr)] items-start gap-6 max-[980px]:grid-cols-1">
       <Cartao
         titulo="Novo caso"
         subtitulo="Escolher o tipo de ação é o que monta o checklist de documentos do cliente."
-        className="min-w-0"
+        className="min-w-0 lg:sticky lg:top-6"
       >
         <form onSubmit={criar}>
           <div className="mb-4">

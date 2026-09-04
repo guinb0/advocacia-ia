@@ -111,11 +111,10 @@ export default function Panorama({ onVoltar, onAbrirCaso }: Props) {
   }, []);
 
   return (
-    <div className="max-w-[1180px] mx-auto px-7 pt-6 pb-16 max-[720px]:px-[14px] max-[720px]:pt-4 max-[720px]:pb-12 flex flex-col gap-6">
-      <div className="flex">
-      </div>
+    <div className="mx-auto flex max-w-[1180px] flex-col gap-6 pb-16">
 
-      <header className="flex flex-col gap-[6px]">
+      <header className="flex flex-col gap-[6px] rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Visão executiva</span>
         <h1 className="m-0 text-tinta font-titulo text-xl font-bold tracking-[-0.01em]">Panorama do escritório</h1>
         <p className="m-0 max-w-[82ch] text-tinta-2 text-base leading-[1.55]">
           Todos os casos somados: em que estágio estão, onde o tempo é gasto e o que está

@@ -278,15 +278,15 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   }
 
   return (
-    <div className="mx-auto flex max-w-[1120px] flex-col gap-4 px-4 pb-12 pt-6">
-      <div>
+    <div className="mx-auto flex max-w-[1120px] flex-col gap-5 pb-12">
+      <header className="rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
         <span className="mt-5 block text-[11px] font-bold uppercase tracking-[0.13em] text-tinta-3">Configuração do escritório</span>
         <h1 className="mb-0 mt-1 font-titulo text-[1.65rem] leading-[1.2] text-tinta">Identidade visual dos documentos</h1>
         <p className="mb-0 mt-2 max-w-[70ch] text-sm leading-[1.55] text-tinta-3">
           Padronize a logo, a tipografia e a apresentação das petições geradas pelo sistema.
           As configurações ficam salvas para todo o escritório.
         </p>
-      </div>
+      </header>
 
       {erro && <Aviso tom="critico" titulo="Não foi possível concluir">{erro}</Aviso>}
       {recado && <Aviso tom="ok" titulo="Configuração atualizada">{recado}</Aviso>}

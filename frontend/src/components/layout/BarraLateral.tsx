@@ -108,12 +108,12 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
 ];
 
 const ITEM =
-  "group relative flex w-full items-center gap-3 rounded-[10px] border border-transparent px-3 py-2.5 " +
+  "group relative flex w-full items-center gap-3 rounded-campo border border-transparent px-3 py-2.5 " +
   "text-left text-sm font-semibold text-nav-texto-2 cursor-pointer transition-colors duration-[120ms] " +
   "hover:bg-nav-fundo-hover hover:text-nav-texto";
 const ITEM_ATIVO =
-  "relative flex w-full items-center gap-3 rounded-[10px] border border-white/10 bg-nav-fundo-ativo px-3 py-2.5 " +
-  "text-left text-sm font-semibold text-nav-texto shadow-[inset_3px_0_0_var(--marca-ouro)] cursor-pointer";
+  "relative flex w-full items-center gap-3 rounded-campo border border-white/10 bg-nav-fundo-ativo px-3 py-2.5 " +
+  "text-left text-sm font-semibold text-nav-texto shadow-[inset_3px_0_0_var(--marca-ouro),0_8px_20px_rgba(0,0,0,0.10)] cursor-pointer";
 const GRUPO_TITULO =
   "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-nav-texto-3 first:mt-0";
 
@@ -219,6 +219,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
                     className={acesa ? ITEM_ATIVO : ITEM}
                     aria-current={acesa ? "page" : undefined}
                     onClick={() => navegar(item.tela)}
+                    title={item.rotulo}
                   >
                     <Icone
                       size={17}
@@ -238,7 +239,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
   return (
     <>
       {/* ------------------------------------------------- topo só do celular */}
-      <div className="sticky top-0 z-30 flex h-[65px] shrink-0 items-center gap-3 border-b border-nav-borda bg-nav-fundo px-4 py-3 text-nav-texto shadow-[0_12px_30px_rgba(0,42,71,0.18)] lg:hidden">
+      <div className="sticky top-0 z-30 flex h-[68px] shrink-0 items-center gap-3 border-b border-nav-borda bg-nav-fundo/95 px-4 py-3 text-nav-texto shadow-[0_12px_30px_rgba(0,42,71,0.18)] backdrop-blur-xl lg:hidden">
         <button
           type="button"
           className="inline-flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-[10px] border border-white/[0.16] bg-white/[0.08] text-nav-texto transition-colors hover:bg-white/[0.14]"
@@ -252,7 +253,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
         <div className="min-w-0 flex-1">
           <span className="block truncate font-titulo text-lg font-bold leading-none">Forense</span>
           <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
-            Escritório jurídico
+            {GRUPOS_NAVEGACAO.flatMap((grupo) => grupo.itens).find((item) => ativa(item, tela))?.rotulo ?? "Escritório jurídico"}
           </span>
         </div>
         <div className="ml-auto flex min-w-0 items-center gap-2">
@@ -302,9 +303,10 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
           "lg:shrink-0"
         }
       >
+        <div className="h-1 bg-gradient-to-r from-marca-ouro via-[#e4c889] to-transparent" aria-hidden />
         <div className="hidden px-5 pb-4 pt-5 lg:block">
           <div className="flex items-center gap-3">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-[12px] bg-white/[0.10] text-marca-ouro ring-1 ring-white/[0.12]">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-[14px] bg-white/[0.10] text-marca-ouro shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 ring-white/[0.14]">
               <FileText size={20} aria-hidden />
             </span>
             <div className="min-w-0">

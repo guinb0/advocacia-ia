@@ -30,6 +30,21 @@ export function semUnderscore(texto: string): string {
   return texto.replace(/_/g, " ");
 }
 
+/** Capitalização natural para rótulos produzidos por OCR/LLM.
+ * "LAUDO MÉDICO" e "Laudo MÉDico" viram "Laudo médico", enquanto siglas
+ * jurídicas e documentais continuam reconhecíveis. */
+export function capitalizacaoNatural(texto: string): string {
+  const limpo = texto.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!limpo || limpo === "—") return "—";
+
+  const minusculo = limpo.toLocaleLowerCase("pt-BR");
+  const frase = minusculo.replace(/^\p{L}/u, (letra) => letra.toLocaleUpperCase("pt-BR"));
+  return frase.replace(
+    /\b(cpf|cnpj|rg|cin|cnh|ctps|cnis|cat|inss|ppp|aso|cns|pis|pasep)\b/giu,
+    (sigla) => sigla.toLocaleUpperCase("pt-BR"),
+  );
+}
+
 /* Veredito da validação. `tom` é o tom do <Aviso> (ver components/ui/Basicos)
  * e `rotulo` é a leitura em português corrente: "APROVADO_COM_RESSALVAS" com o
  * underscore trocado por espaço não era uma frase que alguém de fora leria

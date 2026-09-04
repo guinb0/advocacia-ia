@@ -29,10 +29,10 @@
 
 :root {
   /* ------------------------------------------------------------ superfícies */
-  --fundo: #f1f6fb; /* fundo da aplicação */
+  --fundo: #f3f6f9; /* fundo da aplicação */
   --papel: #ffffff; /* cartão, painel, modal */
-  --papel-2: #f7f9fc; /* área rebaixada: campo, bloco de código, zona de envio */
-  --papel-3: #e6ecf2; /* hover de linha e de item selecionado */
+  --papel-2: #f7f9fb; /* área rebaixada: campo, bloco de código, zona de envio */
+  --papel-3: #e9eef4; /* hover de linha e de item selecionado */
 
   /* ----------------------------------------------------------------- tinta */
   --tinta: #102033; /* títulos e números */
@@ -41,9 +41,9 @@
   --tinta-desabilitada: #56677a; /* texto inativo sem depender de opacity */
 
   /* -------------------------------------------------- navegação sobre azul */
-  --nav-fundo: #002a47;
-  --nav-fundo-ativo: #123d66;
-  --nav-fundo-hover: #0c385f;
+  --nav-fundo: #082c46;
+  --nav-fundo-ativo: #174a70;
+  --nav-fundo-hover: #103d5d;
   --nav-texto: #f4f8fd;
   --nav-texto-2: #d6e6f7;
   --nav-texto-3: #aac8e8;
@@ -56,8 +56,8 @@
   --borda-campo: #7a8b9f; /* contorno de campo e de botão — precisa dos 3:1 */
 
   /* ------------------------------------------------- ação (só o que se clica) */
-  --acao: #002a47;
-  --acao-forte: #0b3a63; /* hover/active */
+  --acao: #0a426b;
+  --acao-forte: #063453; /* hover/active */
   --acao-clara: #ebf2fa; /* fundo de destaque informativo */
   --acao-borda: #bad2ea;
 
@@ -104,12 +104,12 @@
   --t-xl: 1.75rem; /* 28px — título de página */
 
   /* -------------------------------------------------------- forma e sombra */
-  --raio: 10px; /* cartão, painel */
-  --raio-sm: 8px; /* campo, botão */
+  --raio: 14px; /* cartão, painel */
+  --raio-sm: 10px; /* campo, botão */
   --raio-pill: 999px; /* selo de estado */
 
-  --sombra-1: 0 1px 2px rgba(20, 32, 46, 0.06), 0 1px 3px rgba(20, 32, 46, 0.05);
-  --sombra-2: 0 4px 12px rgba(20, 32, 46, 0.08), 0 1px 3px rgba(20, 32, 46, 0.06);
+  --sombra-1: 0 1px 2px rgba(20, 32, 46, 0.04), 0 8px 24px rgba(20, 32, 46, 0.045);
+  --sombra-2: 0 2px 5px rgba(20, 32, 46, 0.06), 0 16px 38px rgba(20, 32, 46, 0.09);
   --sombra-modal: 0 24px 60px rgba(20, 32, 46, 0.24);
 
   --transicao: 120ms ease;
@@ -275,13 +275,23 @@ body {
 }
 
 body {
-  background: var(--fundo);
+  background:
+    radial-gradient(circle at 78% -10%, color-mix(in srgb, var(--acao-clara) 72%, transparent) 0, transparent 34rem),
+    var(--fundo);
   color: var(--tinta-2);
   font-family: var(--fonte-ui);
   font-size: var(--t-base);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
 }
 
 h1,
