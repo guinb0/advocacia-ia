@@ -4,7 +4,9 @@ import { useRef, useState } from "react";
 
 import { Botao, Selo } from "@/components/ui/Basicos";
 
-const LIMITE = 30;
+// Mesmo teto do backend (`MAX_ARQUIVOS_POR_LOTE` em `app/main.py`) — os dois
+// precisam concordar, senão a tela deixa escolher mais do que o servidor aceita.
+const LIMITE = 500;
 
 interface Props {
   onEnviar: (arquivos: File[]) => Promise<void> | void;
@@ -51,8 +53,9 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
             Enviar vários documentos de uma vez
           </h2>
           <p className="mt-1 mb-0 max-w-[70ch] text-tinta-2 text-sm leading-[1.55]">
-            Selecione arquivos de qualquer tipo sem escolher o documento. Imagens e PDFs serão
-            lidos automaticamente; os demais formatos serão preservados para conferência.
+            Selecione arquivos de qualquer tipo sem escolher o documento, ou uma única pasta
+            compactada em <strong>.zip</strong> — o sistema descompacta sozinho. Imagens e PDFs
+            serão lidos automaticamente; os demais formatos serão preservados para conferência.
           </p>
         </div>
         <Selo tom="info">até {LIMITE} arquivos</Selo>

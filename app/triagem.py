@@ -27,7 +27,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import categorias
+from . import categorias, llm
 
 # --------------------------------------------------------------- pistas
 
@@ -220,11 +220,21 @@ def classificar_entrevista(texto: str) -> dict[str, Any]:
     if not texto or not texto.strip():
         return {"sugestoes": [], "confiante": False, "motivo": "Nenhum texto informado."}
 
+    # Só as categorias ativas competem. `ASSALTO_CARTEIRO` fica no catálogo mas
+    # fora de `listar()` (ver `categorias.py`) enquanto não houver caso real
+    # dela — pontuá-la aqui e descartá-la só depois de somar o total inflava o
+    # denominador com uma categoria que o advogado nunca vê como opção: um
+    # "BOLETIM DE OCORRENCIA" comum a QUALQUER acidente derrubava a confiança
+    # de casos que não tinham nada a ver com assalto.
+    nomes = {c.codigo: c.nome for c in categorias.listar()}
+
     norm = normalizar(texto)
     pontos: dict[str, int] = {}
     evidencias: dict[str, list[str]] = {}
 
     for codigo, pistas in PISTAS.items():
+        if codigo not in nomes:
+            continue
         for termo, peso in pistas:
             # Uma vez por termo, como antes: repetir a mesma expressão não é
             # mais evidência, é a pessoa repetindo a mesma coisa.
@@ -236,6 +246,8 @@ def classificar_entrevista(texto: str) -> dict[str, Any]:
                 break
 
     for d in DESEMPATES:
+        if d.categoria not in nomes:
+            continue
         if re.search(d.padrao, norm, re.S):
             pontos[d.categoria] = pontos.get(d.categoria, 0) + d.peso
             evidencias.setdefault(d.categoria, []).append(d.porque)
@@ -247,7 +259,6 @@ def classificar_entrevista(texto: str) -> dict[str, Any]:
             "motivo": "O texto não menciona nada que aponte para uma das categorias.",
         }
 
-    nomes = {c.codigo: c.nome for c in categorias.listar()}
     total = sum(pontos.values()) or 1
 
     ranking = sorted(pontos.items(), key=lambda kv: kv[1], reverse=True)
@@ -301,12 +312,11 @@ palavra. Um relato que diga "entrego correspondência para a estatal" sem nunca
 escrever "Correios" o modelo entende; a lista de pistas, não.
 
 ATENÇÃO — dado sensível sai da máquina. O relato tem CPF, nome e histórico
-médico, e vai para a API do DeepSeek. Foi decisão do escritório usar o modelo;
-sem chave configurada nada é enviado e a triagem cai nas pistas locais.
+médico, e vai para o modelo configurado em `LLM_PROVEDOR` (ver `app/llm.py`).
+Foi decisão do escritório usar o modelo; sem chave configurada nada é enviado
+e a triagem cai nas pistas locais.
 """
 
-URL_LLM = "https://api.deepseek.com/chat/completions"
-MODELO_LLM = "deepseek-chat"
 TIMEOUT_LLM = 60
 
 INSTRUCAO = """Você é um advogado trabalhista brasileiro fazendo a triagem de uma
@@ -372,58 +382,21 @@ Responda APENAS JSON:
  "insuficiente": <true se não há fato concreto para classificar>}"""
 
 
-def _chave_llm() -> str:
-    """Chave do ambiente ou de `dados/.env.local` (fora do versionamento)."""
-    import os
-    from pathlib import Path
-
-    chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if chave:
-        return chave
-    env = Path(__file__).resolve().parent.parent / "dados" / ".env.local"
-    if env.is_file():
-        for linha in env.read_text(encoding="utf-8").splitlines():
-            if linha.startswith("DEEPSEEK_API_KEY="):
-                return linha.split("=", 1)[1].strip()
-    return ""
-
-
 def llm_disponivel() -> bool:
-    return bool(_chave_llm())
+    return llm.disponivel()
 
 
 def classificar_com_llm(texto: str) -> dict[str, Any] | None:
     """Classifica pelo modelo. Devolve `None` se não der — quem chama cai nas pistas."""
-    chave = _chave_llm()
-    if not chave or not texto.strip():
+    if not texto.strip():
         return None
 
-    import json
-
-    import httpx
-
     try:
-        r = httpx.post(
-            URL_LLM,
-            headers={"Authorization": f"Bearer {chave}", "Content-Type": "application/json"},
-            json={
-                "model": MODELO_LLM,
-                "messages": [
-                    {"role": "system", "content": INSTRUCAO},
-                    {"role": "user", "content": texto[:12000]},
-                ],
-                # Triagem precisa ser reproduzível: o mesmo relato deve dar a
-                # mesma categoria em duas leituras seguidas.
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=TIMEOUT_LLM,
-        )
-        r.raise_for_status()
-        bruto = json.loads(r.json()["choices"][0]["message"]["content"])
-    except Exception as exc:
-        log_erro = f"{type(exc).__name__}: {exc}"
-        return {"_erro": log_erro}
+        # Triagem precisa ser reproduzível: o mesmo relato deve dar a mesma
+        # categoria em duas leituras seguidas — daí `temperatura=0` fixo.
+        bruto = llm.chamar(INSTRUCAO, texto[:12000], temperatura=0, timeout=TIMEOUT_LLM)
+    except llm.ErroLLM as exc:
+        return {"_erro": str(exc)}
 
     nomes = {c.codigo: c.nome for c in categorias.listar()}
     codigo = str(bruto.get("categoria", "")).strip()

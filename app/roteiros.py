@@ -1069,7 +1069,7 @@ def _salvo_em(codigo: str) -> str:
     """Quando aquele roteiro foi salvo no catálogo. String vazia se não foi.
 
     Comparação de texto ISO-8601 em UTC é comparação cronológica — é assim que o
-    resto do Acervo guarda data (ver `armazenamento.agora`), e converter para
+    resto do Forense guarda data (ver `armazenamento.agora`), e converter para
     `datetime` aqui só acrescentaria um lugar onde fuso horário pode errar.
     """
     try:

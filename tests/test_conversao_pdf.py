@@ -32,7 +32,7 @@ def main() -> int:
         convertido = conversao_pdf.converter_para_pdf(multipagina, multipagina.name, raiz / "duas.pdf")
         assert convertido.caminho.read_bytes().startswith(b"%PDF-")
 
-        # Foto de celular: o PDF gerado pelo próprio Acervo precisa caber de
+        # Foto de celular: o PDF gerado pelo próprio Forense precisa caber de
         # volta no limite de upload (20 MB), sem carregar a resolução integral.
         grande = raiz / "foto-celular.png"
         Image.effect_noise((4000, 3000), 80).convert("RGB").save(grande)

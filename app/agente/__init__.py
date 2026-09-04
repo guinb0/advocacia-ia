@@ -1,4 +1,4 @@
-"""Módulo do agente jurídico dentro do Acervo.
+"""Módulo do agente jurídico dentro do Forense.
 
 O agente é o serviço `ia-juridica`: ele guarda o Case State (fato com proveniência,
 classificação, pendência do playbook, jurisprudência) e roda os modelos. Este pacote

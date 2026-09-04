@@ -324,7 +324,7 @@ def _uma_requisicao(audio: np.ndarray, chave: str, tempo_limite: float) -> str:
                 "Content-Type": "application/json",
                 # A OpenRouter usa estes dois para atribuição no painel dela.
                 "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "http://localhost:3000"),
-                "X-Title": "Acervo - transcricao de entrevista",
+                "X-Title": "Forense - transcricao de entrevista",
             },
             json={
                 "model": MODELO,

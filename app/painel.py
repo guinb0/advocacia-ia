@@ -198,7 +198,7 @@ def _limitar(valor: float, minimo: float = 0.0, maximo: float = 100.0) -> float:
 # ------------------------------------------------------------------------- marcos
 
 
-#: Os instantes que o Acervo grava por conta própria — os que existem para **todo** caso
+#: Os instantes que o Forense grava por conta própria — os que existem para **todo** caso
 #: e por isso servem de base de comparação entre casos. O que depende do agente jurídico
 #: fica fora daqui de propósito: comparar contra ele exigiria uma chamada HTTP por caso
 #: histórico, e a referência passaria a variar conforme o agente esteja no ar.
@@ -275,7 +275,7 @@ def marcos_do_caso(
 
 #: Etapas com duração medida. Cada uma é um par de marcos; a etapa só existe quando o
 #: marco de início existe. `comparavel` marca as que entram na referência histórica —
-#: são as que dependem apenas do que o Acervo grava.
+#: são as que dependem apenas do que o Forense grava.
 ETAPAS = (
     {
         "codigo": "atendimento",
@@ -283,7 +283,7 @@ ETAPAS = (
         "inicio": "abertura",
         "fim": "entrevista_anexada",
         "comparavel": True,
-        "descricao": "Do cadastro do caso até a entrevista ser anexada ao Acervo.",
+        "descricao": "Do cadastro do caso até a entrevista ser anexada ao Forense.",
     },
     {
         "codigo": "leitura_entrevista",
@@ -1958,7 +1958,7 @@ AUSENCIAS = (
     },
     {
         "campo": "Valor da causa",
-        "motivo": "O Acervo não registra valor; a estratégia do agente também não o calcula.",
+        "motivo": "O Forense não registra valor; a estratégia do agente também não o calcula.",
     },
 )
 

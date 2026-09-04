@@ -84,21 +84,19 @@ def test_reenfileira_a_entrega_orfa_quando_o_leitor_esta_no_ar(monkeypatch, tmp_
     monkeypatch.setattr(
         manutencao.armazenamento, "falhar_entrega", lambda *a: envios.append(("erro", a))
     )
-    from app.tasks import ocr
+    from app.tasks import pipeline_documentos
 
     monkeypatch.setattr(
-        ocr.processar_entrega,
-        "apply_async",
-        lambda **kwargs: envios.append(("fila", kwargs)),
+        pipeline_documentos,
+        "enfileirar_entrega",
+        lambda *args, **kwargs: envios.append(("fila", args, kwargs)),
     )
 
     assert manutencao.recuperar_entregas_travadas.run() == 1
-    tipo, kwargs = envios[0]
+    tipo, args, kwargs = envios[0]
     assert tipo == "fila"
-    assert kwargs["queue"] == "gpu_background"
-    assert kwargs["args"][0] == "e1"
-    assert kwargs["args"][2] == str(arquivo)  # o caminho restaurado, não o da API
-    assert kwargs["args"][5] == "cat"  # a categoria vem do caso, não do chute
+    assert args == ("e1", "c1")
+    assert kwargs["categoria_codigo"] == "cat"
 
 
 def test_sem_worker_consumindo_nao_empilha_mensagem(monkeypatch, tmp_path):

@@ -235,7 +235,7 @@ export default function PerfisDeAcesso() {
                         {salvando === perfil.codigo ? "Salvando…" : "Salvar"}
                       </button>
                     )}
-                    {/* Perfil de sistema não some: um Acervo sem ninguém capaz de
+                    {/* Perfil de sistema não some: um Forense sem ninguém capaz de
                       * administrar usuários só se conserta no banco, à mão. */}
                     {!perfil.sistema && !mudou(perfil) && (
                       <button

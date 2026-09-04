@@ -1,7 +1,7 @@
 """Tradução do checklist do escritório para o vocabulário jurídico do agente.
 
 Os dois lados nomeiam a mesma pasta de papéis de formas diferentes, e por bons motivos: o
-Acervo numera o que o cliente precisa entregar (`DOC.09 — CAT`), porque é isso que vai no
+Forense numera o que o cliente precisa entregar (`DOC.09 — CAT`), porque é isso que vai no
 e-mail e no portal; o agente nomeia o que o playbook exige (`DOCUMENT.CAT`), porque é isso
 que decide se a peça pode ser escrita.
 

@@ -45,6 +45,24 @@ const ROTULOS_TIPO_DOCUMENTO: Record<string, string> = {
   DESCONHECIDO: "Desconhecido",
 };
 
+const ROTULOS_ETAPA: Record<string, string> = {
+  ocr_mistral: "Leitura OCR",
+  classificar_documento: "Identificação",
+  extrair_schema_especifico: "Dados e pessoas",
+  validar_e_conciliar: "Validação",
+  extrair_evidencias: "Evidências",
+  revisao_humana: "Revisão humana",
+  resumo_do_caso: "Resumo",
+};
+
+const ROTULOS_ESTADO: Array<[string, string]> = [
+  ["arquivo_legivel", "Arquivo legível"],
+  ["tipo_confirmado", "Tipo confirmado"],
+  ["campos_validados", "Campos validados"],
+  ["atende_checklist", "Atende ao checklist"],
+  ["evidencias_extraidas", "Evidências extraídas"],
+];
+
 function formatarTipoDocumento(tipo: string): string {
   const chave = tipo.trim().toUpperCase();
   const rotuloConhecido = ROTULOS_TIPO_DOCUMENTO[chave];
@@ -139,6 +157,8 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
   const textoCompleto =
     extracao?.texto_completo ||
     (extracao?.texto_linhas ?? []).map((linha) => linha.texto).join("\n");
+  const analise = detalhe?.analise_documental;
+  const estados = validacao?.estados ?? extracao?.analise_documental?.estados;
 
   async function baixarPdf() {
     setBaixandoPdf(true);
@@ -234,6 +254,45 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                   <Aviso tom={veredito.tom} titulo={veredito.rotulo}>
                     {validacao.resumo}
                   </Aviso>
+                )}
+
+                {analise && (
+                  <section className="my-3 p-3 border border-borda rounded-campo bg-papel-2" aria-label="Etapas da análise documental">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <strong className="text-sm text-tinta">Análise por etapas</strong>
+                      <Selo tom={analise.revisao_necessaria ? "atencao" : analise.status === "FALHOU" ? "critico" : "info"}>
+                        {analise.revisao_necessaria ? "Revisão necessária" : analise.status.toLowerCase().replaceAll("_", " ")}
+                      </Selo>
+                    </div>
+                    <ol className="grid grid-cols-[repeat(auto-fit,minmax(115px,1fr))] gap-1 list-none m-0 p-0">
+                      {analise.etapas.map((etapa) => {
+                        const concluida = etapa.status === "CONCLUIDA" || etapa.status === "IGNORADA";
+                        const falhou = etapa.status === "FALHOU";
+                        return (
+                          <li key={etapa.etapa} className={`px-2 py-2 rounded-campo border text-xs ${falhou ? "border-critico-borda bg-critico-claro" : concluida ? "border-ok-borda bg-ok-claro" : "border-borda bg-papel"}`}>
+                            <span className="block font-semibold text-tinta">{ROTULOS_ETAPA[etapa.etapa] ?? etapa.etapa}</span>
+                            <span className="block mt-1 text-tinta-3">{etapa.status.toLowerCase().replaceAll("_", " ")}</span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                    {analise.motivo_revisao && (
+                      <p className="mt-2 mb-0 text-xs leading-relaxed text-tinta-2">{analise.motivo_revisao}</p>
+                    )}
+                  </section>
+                )}
+
+                {estados && (
+                  <div className="flex flex-wrap gap-2 my-3" aria-label="Estados técnicos da leitura">
+                    {ROTULOS_ESTADO.map(([chave, rotulo]) => {
+                      const valor = estados[chave as keyof typeof estados];
+                      return (
+                        <Selo key={chave} tom={valor ? "ok" : "atencao"} simbolo={valor ? "✓" : "!"}>
+                          {rotulo}
+                        </Selo>
+                      );
+                    })}
+                  </div>
                 )}
 
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-2 my-[14px] mb-[18px]">
@@ -360,6 +419,43 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
                     </tbody>
                   </table>
                 )}
+
+                {validacao?.pessoa_principal?.nome &&
+                  validacao.pessoa_principal_confere === false && (
+                    <div className="mt-[18px] mb-[6px] flex gap-2 px-3 py-[10px] border border-atencao-borda border-l-4 rounded-campo bg-atencao-claro text-tinta-2 text-sm leading-[1.55]">
+                      <span className="flex-none text-atencao font-bold" aria-hidden>
+                        !
+                      </span>
+                      <span>
+                        Este documento fala de{" "}
+                        <strong>{validacao.pessoa_principal.nome}</strong>
+                        {validacao.pessoa_principal.papel &&
+                        validacao.pessoa_principal.papel !== "não informado"
+                          ? ` — ${validacao.pessoa_principal.papel} no caso`
+                          : ""}
+                        {validacao.pessoa_principal.relacao_com_cliente
+                          ? `, ${validacao.pessoa_principal.relacao_com_cliente} do cliente. `
+                          : ", não do cliente. "}
+                        Isso é esperado quando o caso envolve outras partes (vítima,
+                        agressor, empregador, perito).{" "}
+                        {!validacao.pessoa_principal.relacao_com_cliente
+                          ? "Nem este documento nem a entrevista dizem o vínculo dela com o cliente — o parecer do caso tenta estabelecê-lo com todos os documentos à vista."
+                          : validacao.pessoa_principal.relacao_origem === "entrevista"
+                            ? "Esse vínculo não está no documento: veio da entrevista do caso, onde o cliente o declarou."
+                            : "Esse vínculo está declarado no próprio documento."}
+                      </span>
+                    </div>
+                  )}
+
+                {/* A passagem da entrevista fica à vista porque o vínculo dito em
+                    conversa é mais fraco que o escrito no documento: quem confere
+                    tem que poder ler a frase que o sustenta sem sair da tela. */}
+                {validacao?.pessoa_principal?.relacao_origem === "entrevista" &&
+                  validacao.pessoa_principal.relacao_citacao && (
+                    <div className="mb-[6px] px-3 py-2 border-l-2 border-borda-forte bg-fundo-2 text-tinta-3 text-xs leading-[1.55] italic">
+                      Na entrevista: “{validacao.pessoa_principal.relacao_citacao}”
+                    </div>
+                  )}
 
                 {errosValidacao.length > 0 && (
                   <>

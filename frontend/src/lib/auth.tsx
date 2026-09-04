@@ -28,7 +28,7 @@ export interface Sessao {
   /** O perfil, em lista — a forma que os componentes já consumiam quando o
    *  perfil era papel de realm e podia haver mais de um. */
   papeis: string[];
-  /** Os módulos do Acervo que este perfil alcança (ver `app/perfis.py`). */
+  /** Os módulos do Forense que este perfil alcança (ver `app/perfis.py`). */
   modulos: string[];
   erro: string | null;
   entrar: () => void;

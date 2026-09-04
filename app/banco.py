@@ -1,6 +1,6 @@
 """Conexão com o PostgreSQL, com a mesma interface que o SQLite oferecia.
 
-O Acervo nasceu em SQLite (`dados/casos.db`), um arquivo na máquina do advogado. Isso
+O Forense nasceu em SQLite (`dados/casos.db`), um arquivo na máquina do advogado. Isso
 serve enquanto é uma pessoa só: o arquivo não é alcançável de outro computador, não tem
 backup e não aceita duas escritas ao mesmo tempo.
 
@@ -50,7 +50,7 @@ __all__ = [
 SCHEMA = "dbo"
 """Schema único do banco `advocacia` — o mesmo do agente jurídico.
 
-O Acervo teve schema próprio (`ocr`) por um tempo. Voltou para o `dbo` porque quatro
+O Forense teve schema próprio (`ocr`) por um tempo. Voltou para o `dbo` porque quatro
 schemas com nome parecido, três deles vazios, custavam mais em confusão do que rendiam em
 separação. Quem precisa distinguir os dois sistemas lê o prefixo da tabela.
 """
@@ -124,7 +124,7 @@ def url_sqlalchemy() -> str:
 class Linha:
     """Linha acessível por nome de coluna, como a `sqlite3.Row` era.
 
-    O psycopg devolve tuplas, e o código do Acervo lê `linha["campo"]` em
+    O psycopg devolve tuplas, e o código do Forense lê `linha["campo"]` em
     dezenas de lugares. Este envelope evita reescrever tudo isso.
     """
 
@@ -182,7 +182,7 @@ class _Resultado:
 
 
 class Conexao:
-    """Envelope fino sobre psycopg, preservando a interface antiga do Acervo."""
+    """Envelope fino sobre psycopg, preservando a interface antiga do Forense."""
 
     def __init__(self, bruta: psycopg.Connection) -> None:
         self._bruta = bruta
@@ -206,11 +206,14 @@ class Conexao:
         self._bruta.close()
 
 
-# Tabelas do Acervo. O SQL do módulo `armazenamento` as nomeia sem schema — é assim que
+# Tabelas do Forense. O SQL do módulo `armazenamento` as nomeia sem schema — é assim que
 # estavam no SQLite —, e qualificar aqui evita reescrever 58 consultas.
 TABELAS = (
     "casos",
     "classificacoes_documentos_corrigidas",
+    "analise_documento_feedback",
+    "analise_documento_etapas",
+    "analises_documento",
     "entregas",
     "entrevistas",
     "peticoes_locais",
@@ -225,6 +228,7 @@ TABELAS = (
     "automacoes_whatsapp",
     "cobrancas_documentos",
     "modelos_documento",
+    "configuracoes",
 )
 
 
@@ -525,7 +529,7 @@ CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
 );
 
 -- A conversa do agente geral. `caso_id` NÃO tem chave estrangeira de propósito: a
--- conversa é do Acervo, começa antes de haver caso e sobrevive ao caso apagado — a
+-- conversa é do Forense, começa antes de haver caso e sobrevive ao caso apagado — a
 -- transcrição continua sendo o registro do que foi perguntado e respondido. Quem lê
 -- trata o caso sumido como estado ("esse caso não está mais no acervo"), e não como
 -- linha órfã.
@@ -617,6 +621,84 @@ CREATE TABLE {SCHEMA}.{PREFIXO}roteiros (
 IF COL_LENGTH('{SCHEMA}.{PREFIXO}roteiros', 'origem') IS NULL
 ALTER TABLE {SCHEMA}.{PREFIXO}roteiros
     ADD origem nvarchar(400) NOT NULL CONSTRAINT df_acervo_rot_origem DEFAULT N'';
+
+-- Uma execução durável por documento. O resultado final continua espelhado em
+-- `entregas.extracao_json` para compatibilidade, mas o histórico de cada etapa
+-- vive aqui e permite reprocessar classificação/validação sem pagar OCR de novo.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}analises_documento') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}analises_documento (
+    id                  varchar(64)   NOT NULL CONSTRAINT pk_acervo_analise_doc PRIMARY KEY,
+    entrega_id          varchar(64)   NOT NULL CONSTRAINT uq_acervo_analise_doc_entrega UNIQUE,
+    caso_id             varchar(64)   NOT NULL,
+    status              varchar(40)   NOT NULL,
+    etapa_atual         varchar(60)   NOT NULL,
+    revisao_necessaria  int           NOT NULL CONSTRAINT df_acervo_analise_revisao DEFAULT 0,
+    motivo_revisao      nvarchar(1200) NULL,
+    versao_pipeline     varchar(40)   NOT NULL,
+    modelo_ocr          varchar(80)   NULL,
+    hash_conteudo       char(64)      NULL,
+    contexto_json       nvarchar(max) NOT NULL CONSTRAINT df_acervo_analise_ctx DEFAULT N'{{}}',
+    resultado_json      nvarchar(max) NOT NULL CONSTRAINT df_acervo_analise_res DEFAULT N'{{}}',
+    resumo_json         nvarchar(max) NOT NULL CONSTRAINT df_acervo_analise_sum DEFAULT N'{{}}',
+    criado_em           varchar(40)   NOT NULL,
+    atualizado_em       varchar(40)   NOT NULL,
+    finalizado_em       varchar(40)   NULL,
+    CONSTRAINT fk_acervo_analise_entrega FOREIGN KEY (entrega_id)
+        REFERENCES {SCHEMA}.{PREFIXO}entregas (id) ON DELETE CASCADE,
+    CONSTRAINT fk_acervo_analise_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}analise_documento_etapas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}analise_documento_etapas (
+    id                  varchar(64)   NOT NULL CONSTRAINT pk_acervo_analise_etapa PRIMARY KEY,
+    analise_id          varchar(64)   NOT NULL,
+    etapa               varchar(60)   NOT NULL,
+    ordem               int           NOT NULL,
+    status              varchar(40)   NOT NULL,
+    tentativas          int           NOT NULL CONSTRAINT df_acervo_etapa_tent DEFAULT 0,
+    entrada_hash        char(64)      NULL,
+    modelo              varchar(80)   NULL,
+    versao              varchar(40)   NOT NULL,
+    resultado_json      nvarchar(max) NOT NULL CONSTRAINT df_acervo_etapa_res DEFAULT N'{{}}',
+    erro                nvarchar(1600) NULL,
+    duracao_ms          int           NULL,
+    criado_em           varchar(40)   NOT NULL,
+    iniciado_em         varchar(40)   NULL,
+    finalizado_em       varchar(40)   NULL,
+    CONSTRAINT uq_acervo_analise_etapa UNIQUE (analise_id, etapa),
+    CONSTRAINT fk_acervo_etapa_analise FOREIGN KEY (analise_id)
+        REFERENCES {SCHEMA}.{PREFIXO}analises_documento (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}analise_documento_feedback') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}analise_documento_feedback (
+    id                  varchar(64)   NOT NULL CONSTRAINT pk_acervo_analise_feedback PRIMARY KEY,
+    analise_id          varchar(64)   NOT NULL,
+    entrega_id          varchar(64)   NOT NULL,
+    etapa               varchar(60)   NOT NULL,
+    campo               varchar(120)  NOT NULL,
+    valor_anterior      nvarchar(800) NULL,
+    valor_correto       nvarchar(800) NULL,
+    motivo              nvarchar(800) NULL,
+    corrigido_por       nvarchar(200) NOT NULL,
+    criado_em           varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_feedback_analise FOREIGN KEY (analise_id)
+        REFERENCES {SCHEMA}.{PREFIXO}analises_documento (id) ON DELETE CASCADE,
+    CONSTRAINT fk_acervo_feedback_entrega FOREIGN KEY (entrega_id)
+        REFERENCES {SCHEMA}.{PREFIXO}entregas (id) ON DELETE CASCADE
+);
+
+-- Chave-valor das preferências do escritório (política, não dado de caso). Hoje
+-- guarda só se a revisão humana de documentos é obrigatória; nasceu tabela, e não
+-- variável de ambiente, porque o worker e a API precisam ler o MESMO valor e ele
+-- muda por um botão na tela, sem reiniciar processo.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}configuracoes') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}configuracoes (
+    chave         varchar(80)   NOT NULL CONSTRAINT pk_acervo_config PRIMARY KEY,
+    valor         nvarchar(max) NOT NULL CONSTRAINT df_acervo_config_val DEFAULT N'',
+    atualizado_em varchar(40)   NOT NULL
+);
 """)
 
 # As constraints criadas antes da faxina mantêm o nome `pk_ocr_*` / `fk_ocr_*`. Renomear
@@ -625,6 +707,12 @@ ALTER TABLE {SCHEMA}.{PREFIXO}roteiros
 INDICES = (
     f"CREATE INDEX idx_acervo_entregas_caso ON {SCHEMA}.{PREFIXO}entregas (caso_id)",
     f"CREATE INDEX idx_acervo_entregas_item ON {SCHEMA}.{PREFIXO}entregas (caso_id, item_codigo)",
+    f"CREATE INDEX idx_acervo_analises_doc_caso ON {SCHEMA}.{PREFIXO}analises_documento"
+    f" (caso_id, atualizado_em DESC)",
+    f"CREATE INDEX idx_acervo_etapas_analise ON {SCHEMA}.{PREFIXO}analise_documento_etapas"
+    f" (analise_id, ordem)",
+    f"CREATE INDEX idx_acervo_feedback_tipo ON {SCHEMA}.{PREFIXO}analise_documento_feedback"
+    f" (etapa, campo, criado_em DESC)",
     f"CREATE INDEX idx_acervo_entrevistas_caso ON {SCHEMA}.{PREFIXO}entrevistas (caso_id)",
     # A rota do atendimento ao vivo procura por esta coluna a cada gravação de
     # transcrição, e ela roda duas vezes por atendimento.
@@ -715,7 +803,7 @@ COLUNAS_NOVAS = (
 
 
 def inicializar_schema() -> None:
-    """Cria as tabelas do Acervo, se ainda não existirem. Idempotente."""
+    """Cria as tabelas do Forense, se ainda não existirem. Idempotente."""
     bruta = psycopg.connect(dsn(), connect_timeout=30, autocommit=True)
     try:
         cursor = bruta.cursor()

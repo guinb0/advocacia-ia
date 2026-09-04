@@ -208,6 +208,7 @@ const Telas = (props: HomeViewProps) => {
           <>
             <Checklist
               mostrarPrazos
+              gerenciarPolitica
               situacao={situacao}
               enviando={situacaoCaso.enviando}
               erro={situacaoCaso.erro}

@@ -1,4 +1,4 @@
-# Serviços de apoio do Acervo: fila, banco de jobs e observabilidade.
+# Serviços de apoio do Forense: fila, banco de jobs e observabilidade.
 #
 #   docker compose up -d redis jobs-db flower prometheus grafana
 #
@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6380:6379"
+      - "${REDIS_PORTA:-6380}:6379"
     volumes:
       - redis_data:/data
     healthcheck:

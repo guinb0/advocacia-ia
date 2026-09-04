@@ -1,4 +1,4 @@
-"""Petição inicial gerada no Acervo — entrevista + OCR, sem agente."""
+"""Petição inicial gerada no Forense — entrevista + OCR, sem agente."""
 
 from __future__ import annotations
 

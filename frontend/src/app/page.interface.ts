@@ -11,7 +11,7 @@ export interface SessaoUsuario {
   perfil: string;
   perfilId?: number | null;
   senhaPadrao: boolean;
-  /** Os módulos do Acervo que este perfil alcança (ver `app/perfis.py`).
+  /** Os módulos do Forense que este perfil alcança (ver `app/perfis.py`).
    *
    * Vem junto do login para o menu não oferecer botão que a rota vai recusar
    * depois — e para não custar uma segunda ida ao servidor só para montá-lo. */

@@ -1,7 +1,7 @@
 /**
  * Cliente do agente geral — o chat que não começa dentro de um caso.
  *
- * Fala com `/api/agente/conversas*` do backend do Acervo, que é quem decide para onde vai
+ * Fala com `/api/agente/conversas*` do backend do Forense, que é quem decide para onde vai
  * cada pergunta. A decisão é dele, e não daqui, por um motivo prático: ela é
  * determinística e precisa ser a mesma para qualquer tela que venha a existir depois.
  *

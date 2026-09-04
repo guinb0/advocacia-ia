@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import io
 import logging
@@ -44,6 +45,7 @@ from . import (
     agente,
     advbox,
     analise_documentos,
+    analise_documental,
     analise_resposta,
     armazenamento,
     assinatura,
@@ -55,10 +57,13 @@ from . import (
     consultas,
     conversao_pdf,
     localidades,
+    mistral_ocr,
     usuarios,
     supervisao,
     dados,
     documentacao,
+    documentos_juridicos,
+    extracao_office,
     docx_pdf,
     contrato,
     escuta,
@@ -74,6 +79,7 @@ from . import (
     roteamento,
     roteiros,
     triagem,
+    triagem_documental,
     valor_documento,
     whatsapp,
 )
@@ -85,8 +91,10 @@ from .agente import dossie as dossie_agente
 from .celery_app import celery_app
 from .extractors import ROTULOS_TIPO
 from .tasks.ocr import processar_documento, processar_entrega
+from .tasks import pipeline_documentos as pipeline_documentos_tasks
 from .tasks.documentos import gerar_relatorio as gerar_relatorio_job
 from .tasks.ia import gerar_estrategia as gerar_estrategia_job
+from .tasks.ia import gerar_parecer_caso as gerar_parecer_caso_job
 from .tasks.roteiro import importar_roteiro as importar_roteiro_task
 
 # Onde o frontend atende — é o que monta o link enviado ao cliente.
@@ -100,7 +108,41 @@ log = logging.getLogger("api")
 BASE = Path(__file__).resolve().parent.parent
 STATIC = BASE / "static"
 
+# Limite geral para anexos administrativos (modelos, roteiros etc.).  Os
+# documentos de casos têm limites próprios mais generosos logo abaixo: eles são
+# processados em fila e podem ser PDFs de processo bem maiores.
 MAX_BYTES = 20 * 1024 * 1024
+
+
+def _limite_do_ambiente(nome: str, padrao: int) -> int:
+    """Lê limites operacionais sem deixar uma configuração inválida abrir tudo.
+
+    Os limites ficam em bytes para não haver ambiguidade entre MB decimais e
+    MiB. O piso evita que uma variável vazia/negativa torne o endpoint inútil.
+    """
+    try:
+        valor = int(os.getenv(nome, str(padrao)))
+    except ValueError:
+        return padrao
+    return max(1, valor)
+
+
+# Um PDF processual ou um pacote de fotos pode ultrapassar 20 MB sem ser
+# anormal. Não usamos "ilimitado": UploadFile é materializado antes de entrar
+# na fila e um limite finito protege memória, disco, PostgreSQL e custo da API.
+# Postos altos de propósito (escritório pediu "o maior possível"): o teto real
+# na prática é o disco e a paciência de quem está esperando o OCR, não este
+# número — mas ele continua existindo para um upload não travar o processo.
+MAX_BYTES_DOCUMENTO = _limite_do_ambiente("DOCUMENTO_MAX_BYTES", 500 * 1024 * 1024)
+MAX_BYTES_LOTE = _limite_do_ambiente("DOCUMENTO_LOTE_MAX_BYTES", 3 * 1024 * 1024 * 1024)
+MAX_BYTES_ZIP = _limite_do_ambiente("DOCUMENTO_ZIP_MAX_BYTES", 3 * 1024 * 1024 * 1024)
+# ÚNICA fonte da verdade para quantos arquivos cabem num envio em massa (lote OU
+# zip). Chegou a existir uma segunda definição hardcoded mais abaixo, no valor
+# antigo de 30, que SOBRESCREVIA esta e derrubava a tela em "até 30 arquivos"
+# mesmo com a variável de ambiente configurada — por isso só há uma agora.
+MAX_ARQUIVOS_POR_LOTE = _limite_do_ambiente("DOCUMENTO_LOTE_MAX_ARQUIVOS", 1000)
+MAX_ARQUIVOS_POR_ZIP = _limite_do_ambiente("DOCUMENTO_ZIP_MAX_ARQUIVOS", 1000)
+MAX_TAXA_COMPACTACAO_ZIP = 100
 _ocr_aquecido = threading.Event()
 
 
@@ -1668,6 +1710,138 @@ def obter_categoria(codigo: str):
     return categoria.to_dict()
 
 
+class PoliticaRevisao(BaseModel):
+    obrigatoria: bool
+
+
+@app.get("/api/configuracoes/revisao-humana")
+def obter_politica_revisao(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """A revisão humana de documentos é obrigatória? Política do escritório inteiro."""
+    return {"obrigatoria": armazenamento.revisao_humana_obrigatoria()}
+
+
+@app.put("/api/configuracoes/revisao-humana")
+def definir_politica_revisao(
+    pedido: PoliticaRevisao,
+    _usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    """Liga/desliga a revisão humana obrigatória. Vale para TODOS os casos.
+
+    Desligada, documentos com ressalva não param em revisão: seguem para a
+    análise da LLM e o item fica verde (ver `pipeline_documentos`).
+    """
+    armazenamento.definir_configuracao(
+        armazenamento.CONFIG_REVISAO_HUMANA, "1" if pedido.obrigatoria else "0"
+    )
+    return {"obrigatoria": pedido.obrigatoria}
+
+
+#: Quantas chamadas ao Mistral OCR ficam abertas ao mesmo tempo nesta rota.
+#:
+#: Diferente do PaddleOCR (preso a UMA thread por afinidade nativa, ver
+#: `ocr_engine.py`), o Mistral é uma chamada HTTP: não há razão técnica para
+#: serializar. O teto aqui não é sobre capacidade do processo, é para não
+#: disparar uma rajada de centenas de requisições simultâneas contra a conta
+#: da Mistral quando alguém solta uma pasta inteira nesta rota.
+_CONCORRENCIA_MISTRAL_SUGESTAO = asyncio.Semaphore(
+    int(os.getenv("MISTRAL_SUGESTAO_CONCORRENCIA", "5"))
+)
+
+
+async def _ler_para_sugestao(arquivo: UploadFile) -> dict[str, Any] | None:
+    """OCR de um arquivo para a sugestão de categoria, sem gravar nada em `tmp/`.
+
+    Não existe caso ainda — não há onde persistir a leitura, e não precisa: só
+    o texto e o tipo detectado importam aqui. Um arquivo ruim não derruba a
+    sugestão dos demais, então erro vira `None` e o chamador segue em frente.
+
+    Usa o MESMO motor do checklist (`mistral_ocr` + `documentos_juridicos`),
+    não o PaddleOCR do `/api/extrair` legado — a leitura que alimenta a
+    sugestão de categoria precisa ser tão boa quanto a que decide o checklist.
+    """
+    nome = arquivo.filename or "sem-nome"
+    try:
+        conteudo = await _ler_upload(arquivo)
+    except HTTPException:
+        return None
+
+    extensao = Path(nome).suffix.lower()
+    try:
+        if extensao in extracao_office.EXTENSOES_TEXTO:
+            # DOCX/TXT já são texto digital: não tem imagem para OCR nenhum,
+            # e mandar isso à Mistral só gastaria uma chamada paga à toa.
+            texto = await run_in_threadpool(extracao_office.extrair_texto, conteudo, extensao)
+            ocr = {"texto_completo": texto, "anotacao": {}}
+        else:
+            async with _CONCORRENCIA_MISTRAL_SUGESTAO:
+                ocr = await run_in_threadpool(mistral_ocr.ler_documento, conteudo, nome)
+        classificacao = documentos_juridicos.classificar(ocr)
+    except Exception:
+        log.warning("falha ao ler %s para sugestão de categoria", nome, exc_info=True)
+        return None
+
+    return {
+        "nome": nome,
+        "texto_completo": ocr.get("texto_completo", ""),
+        "tipo": {
+            "detectado": classificacao.get("tipo"),
+            "descricao_detectado": classificacao.get("rotulo"),
+        },
+    }
+
+
+async def _sugerir_categoria(arquivos: list[UploadFile], idioma: str) -> dict[str, Any]:
+    if not arquivos:
+        raise HTTPException(400, "Nenhum arquivo foi enviado.")
+    if len(arquivos) > MAX_ARQUIVOS_POR_LOTE:
+        raise HTTPException(
+            400,
+            f"São aceitos até {MAX_ARQUIVOS_POR_LOTE} arquivos por envio. "
+            "Divida em partes menores.",
+        )
+    # `idioma` não tem efeito no Mistral (a API não pede o idioma de entrada) —
+    # o parâmetro sobrevive só para manter a mesma assinatura de formulário do
+    # `/documentos/lote`, que o front reutiliza.
+    del idioma
+    lidos_ou_none = await asyncio.gather(*(_ler_para_sugestao(a) for a in arquivos))
+    lidos = [l for l in lidos_ou_none if l is not None]
+    if not lidos:
+        raise HTTPException(
+            400, "Nenhum dos arquivos enviados pôde ser lido para sugerir a categoria."
+        )
+    return await run_in_threadpool(triagem_documental.sugerir_por_documentos, lidos)
+
+
+@app.post("/api/categorias/sugerir/lote")
+async def sugerir_categoria_por_documentos(
+    arquivos: list[UploadFile] = File(...),
+    idioma: str = Form("pt"),
+):
+    """Antes de existir caso: que categoria os documentos do cliente sugerem?
+
+    Cada arquivo passa pelo MESMO OCR do checklist; o texto lido de todos eles
+    junto é o que alimenta `triagem.triar` — as mesmas pistas por palavra-chave
+    e a mesma chamada ao modelo que já classificam uma entrevista, aplicadas
+    aqui sobre os documentos em vez do relato falado. Só sugere: quem cria o
+    caso escolhe a categoria à mão, e pode usar ou ignorar a sugestão.
+
+    OCR é lento e roda numa única thread (ver `ocr_engine.py`): um lote de
+    algumas dezenas de arquivos pode levar minutos para responder.
+    """
+    return await _sugerir_categoria(arquivos, idioma)
+
+
+@app.post("/api/categorias/sugerir/zip")
+async def sugerir_categoria_por_zip(
+    arquivo: UploadFile = File(...),
+    idioma: str = Form("pt"),
+):
+    """A mesma sugestão de `/api/categorias/sugerir/lote`, a partir de um .zip."""
+    conteudo_zip = await _ler_pacote_zip(arquivo)
+    arquivos = _uploadfiles_do_zip(conteudo_zip)
+    return await _sugerir_categoria(arquivos, idioma)
+
+
 @app.get("/api/saude")
 def saude(fila: bool = False):
     """Sonda de saúde. `?fila=1` acrescenta o estado da leitura de documentos.
@@ -1886,9 +2060,72 @@ async def _ler_upload(arquivo: UploadFile) -> bytes:
     conteudo = await arquivo.read()
     if not conteudo:
         raise HTTPException(400, "Arquivo vazio.")
-    if len(conteudo) > MAX_BYTES:
-        raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
+    if len(conteudo) > MAX_BYTES_DOCUMENTO:
+        raise HTTPException(
+            413,
+            f"Arquivo maior que {MAX_BYTES_DOCUMENTO // (1024 * 1024)}MB.",
+        )
     return conteudo
+
+
+async def _ler_pacote_zip(arquivo: UploadFile) -> bytes:
+    """Lê o ZIP bruto com um limite separado do documento interno."""
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo ZIP vazio.")
+    if len(conteudo) > MAX_BYTES_ZIP:
+        raise HTTPException(
+            413,
+            f"Arquivo ZIP maior que {MAX_BYTES_ZIP // (1024 * 1024)}MB.",
+        )
+    return conteudo
+
+
+def _arquivos_do_zip(conteudo: bytes) -> list[zipfile.ZipInfo]:
+    """Valida o índice do pacote antes de descompactar qualquer conteúdo.
+
+    Nunca extraímos o ZIP para o disco. Isso evita path traversal e, ao validar
+    tamanho descompactado, quantidade e razão de compressão, também evita uma
+    bomba ZIP consumir o servidor antes de os jobs começarem.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as pacote:
+            arquivos = [info for info in pacote.infolist() if not info.is_dir()]
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(400, "O arquivo .zip está corrompido ou é inválido.") from exc
+
+    if not arquivos:
+        raise HTTPException(400, "O arquivo .zip não possui documentos.")
+    if len(arquivos) > MAX_ARQUIVOS_POR_ZIP:
+        raise HTTPException(
+            400,
+            f"O arquivo .zip contém {len(arquivos)} arquivos; o limite é "
+            f"{MAX_ARQUIVOS_POR_ZIP}.",
+        )
+
+    tamanho_total = sum(info.file_size for info in arquivos)
+    if tamanho_total > MAX_BYTES_LOTE:
+        raise HTTPException(
+            413,
+            "O conteúdo descompactado do ZIP passa de "
+            f"{MAX_BYTES_LOTE // (1024 * 1024)}MB.",
+        )
+    for info in arquivos:
+        if info.file_size > MAX_BYTES_DOCUMENTO:
+            raise HTTPException(
+                413,
+                f"'{Path(info.filename).name or 'arquivo'}' passa de "
+                f"{MAX_BYTES_DOCUMENTO // (1024 * 1024)}MB.",
+            )
+        # Um arquivo de zero byte comprimido também é seguro. Para os demais,
+        # a razão exagerada é sinal típico de ZIP bomb.
+        if info.compress_size and info.file_size / info.compress_size > MAX_TAXA_COMPACTACAO_ZIP:
+            raise HTTPException(
+                400,
+                f"'{Path(info.filename).name or 'arquivo'}' possui compressão "
+                "incompatível com um envio seguro.",
+            )
+    return arquivos
 
 
 async def _processar(
@@ -2247,6 +2484,34 @@ async def estrategia(pedido: PedidoEstrategia):
         ) from exc
 
 
+class PedidoParecerCaso(BaseModel):
+    #: Opcional de propósito — nem todo caso tem relato de entrevista salvo à
+    #: mão em algum lugar consultável; o parecer roda só com os documentos.
+    relato: str = Field(default="", max_length=50_000)
+    limite_precedentes: int = Field(default=8, ge=3, le=15)
+
+
+@app.post("/api/casos/{caso_id}/parecer", status_code=202)
+async def enfileirar_parecer_caso(caso_id: str, pedido: PedidoParecerCaso = PedidoParecerCaso()):
+    """Sob demanda: concilia os documentos do caso e sintetiza ações, riscos, lacunas.
+
+    202 porque busca precedentes e chama o modelo — o mesmo motivo de
+    `/api/estrategia/jobs`. Poll em `GET /api/jobs/{job_id}`.
+    """
+    caso = await run_in_threadpool(armazenamento.obter_caso, caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    await run_in_threadpool(jobs.inicializar)
+    job_id = await run_in_threadpool(jobs.criar, "PARECER_CASO", caso_id=caso_id)
+    tarefa = gerar_parecer_caso_job.apply_async(
+        args=(job_id, caso_id, pedido.relato, pedido.limite_precedentes),
+        queue="ai",
+        priority=5,
+    )
+    await run_in_threadpool(jobs.vincular_tarefa, job_id, tarefa.id)
+    return {"job_id": job_id, "task_id": tarefa.id, "status": "QUEUED", "progresso": 0}
+
+
 @app.post("/api/casos", status_code=201)
 def criar_caso(
     cliente: str = Form(...),
@@ -2503,11 +2768,36 @@ async def _registrar_documento(
 
     conteudo = await _ler_upload(arquivo)
     nome = arquivo.filename or "sem-nome"
-
     item_codigo = item or categorias.ITEM_TRIAGEM
 
-    # O arquivo vai para o disco e a entrega é criada antes de entrar na fila.
-    # Assim o upload responde sem manter a conexão aberta durante a inferência.
+    # A gravação no disco e as INSERTs no PostgreSQL remoto são I/O bloqueante;
+    # fora do event loop para não travar o servidor durante o registro.
+    return await run_in_threadpool(
+        _gravar_e_enfileirar,
+        caso_id, categoria, item_codigo, nome, conteudo, idioma, usar_para_rg_e_cpf, lote_id,
+    )
+
+
+def _gravar_e_enfileirar(
+    caso_id: str,
+    categoria: Any,
+    item_codigo: str,
+    nome: str,
+    conteudo: bytes,
+    idioma: str,
+    usar_para_rg_e_cpf: bool,
+    lote_id: str | None,
+) -> dict[str, Any]:
+    """Grava o arquivo, cria a entrega pendente e enfileira o OCR. Bloqueante.
+
+    Extraído de `_registrar_documento` para ser reusado pelo registro em lote
+    em segundo plano (`_processar_registro_lote`), onde roda uma vez por arquivo
+    fora da requisição HTTP.
+
+    O arquivo vai para o disco e a entrega nasce ANTES da fila; o OCR corre no
+    worker Celery já aquecido, então nem o upload avulso nem o lote seguram a
+    conexão durante a inferência.
+    """
     destino = armazenamento.DIR_ARQUIVOS / caso_id
     destino.mkdir(parents=True, exist_ok=True)
     caminho = destino / f"{item_codigo}_{uuid.uuid4()}{Path(nome).suffix.lower()}"
@@ -2516,24 +2806,14 @@ async def _registrar_documento(
     entrega = armazenamento.registrar_entrega_pendente(
         caso_id, item_codigo, nome, caminho, conteudo=conteudo, lote_id=lote_id
     )
-
-    # O checklist antes abria uma thread na API e carregava outra cópia do
-    # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
-    # único dono do modelo; a requisição continua voltando imediatamente.
     try:
-        tarefa = processar_entrega.apply_async(
-            args=(
-                entrega["id"],
-                caso_id,
-                str(caminho),
-                nome,
-                item_codigo,
-                categoria.codigo,
-                idioma,
-                usar_para_rg_e_cpf,
-            ),
-            queue="gpu_background",
-            priority=7,
+        analise_id, tarefa_id = pipeline_documentos_tasks.enfileirar_entrega(
+            entrega["id"],
+            caso_id,
+            item_codigo=item_codigo,
+            categoria_codigo=categoria.codigo,
+            idioma=idioma,
+            usar_para_rg_e_cpf=usar_para_rg_e_cpf,
         )
     except Exception as exc:
         armazenamento.falhar_entrega(entrega["id"], "Fila de OCR indisponível.")
@@ -2542,7 +2822,12 @@ async def _registrar_documento(
             503, "Fila de leitura indisponível. Tente novamente."
         ) from exc
 
-    return {"entrega": entrega, "processando": True, "task_id": tarefa.id}
+    return {
+        "entrega": entrega,
+        "processando": True,
+        "task_id": tarefa_id,
+        "analise_id": analise_id,
+    }
 
 
 @app.post("/api/casos/{caso_id}/documentos", status_code=201)
@@ -2563,22 +2848,51 @@ async def enviar_documento(
     return await _registrar_documento(caso, item, arquivo, idioma, usar_para_rg_e_cpf)
 
 
-#: Teto de arquivos por envio em massa. Não é limite de tamanho — é para o
-#: cliente não despejar a galeria inteira do celular numa requisição só e ficar
-#: sem resposta enquanto duzentas fotos são gravadas antes do primeiro 201.
-MAX_ARQUIVOS_POR_LOTE = 30
+def _processar_registro_lote(
+    caso: dict[str, Any],
+    categoria_codigo: str,
+    itens: list[tuple[str, bytes]],
+    idioma: str,
+    lote_id: str,
+) -> None:
+    """Registra cada arquivo do lote — roda em segundo plano, fora da requisição.
+
+    POR QUE FORA DA REQUISIÇÃO: registrar um arquivo é uma gravação em disco mais
+    3–4 idas ao PostgreSQL REMOTO (a entrega, a análise e as etapas) e o envio do
+    binário. Para dezenas de arquivos isso passa dos 30 s que o navegador espera,
+    e o upload estourava com "o servidor demorou a responder" mesmo estando tudo
+    funcionando — o OCR nem tinha começado. Aqui o endpoint devolve na hora e as
+    entregas aparecem no checklist (em `na_fila`) à medida que são gravadas; o
+    polling da tela já reage a isso.
+
+    Um arquivo que falha não derruba os outros — o registro é por arquivo.
+    """
+    categoria = categorias.obter(categoria_codigo)
+    if categoria is None:
+        log.error("categoria '%s' sumiu antes do registro do lote %s", categoria_codigo, lote_id)
+        return
+    for nome, conteudo in itens:
+        try:
+            _gravar_e_enfileirar(
+                caso["id"], categoria, categorias.ITEM_TRIAGEM,
+                nome, conteudo, idioma, False, lote_id,
+            )
+        except Exception:  # noqa: BLE001 - um arquivo ruim não perde o lote
+            log.exception("falha ao registrar %s no lote %s", nome, lote_id)
 
 
 async def _registrar_lote(
     caso: dict[str, Any],
     arquivos: list[UploadFile],
     idioma: str,
+    tarefas: BackgroundTasks,
 ) -> dict[str, Any]:
-    """Vários documentos de uma vez, cada um achando o próprio item.
+    """Aceita vários documentos e responde na hora; o registro corre em segundo plano.
 
-    Um arquivo que falha não derruba os outros: o lote devolve o que entrou e o
-    que não entrou, com o motivo, porque quem mandou doze fotos precisa saber
-    qual das doze precisa repetir.
+    A validação barata (lote vazio, arquivo vazio, tamanho) sai já como erro ou
+    como `recusados`. A parte cara — disco + PostgreSQL remoto — vai para
+    `_processar_registro_lote`, para o navegador não esperar dezenas de idas ao
+    banco dentro do prazo de uma requisição.
     """
     if not arquivos:
         raise HTTPException(400, "Nenhum arquivo foi enviado.")
@@ -2588,47 +2902,111 @@ async def _registrar_lote(
             f"São aceitos até {MAX_ARQUIVOS_POR_LOTE} arquivos por envio. "
             "Divida em partes menores.",
         )
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
 
-    lote_id = uuid.uuid4().hex
-    aceitos: list[dict[str, Any]] = []
+    bons: list[tuple[str, bytes]] = []
     recusados: list[dict[str, str]] = []
     for arquivo in arquivos:
         nome = arquivo.filename or "sem-nome"
-        try:
-            registro = await _registrar_documento(
-                caso, None, arquivo, idioma, False, lote_id
+        conteudo = await arquivo.read()
+        if not conteudo:
+            recusados.append({"arquivo": nome, "motivo": "Arquivo vazio."})
+            continue
+        if len(conteudo) > MAX_BYTES_DOCUMENTO:
+            recusados.append(
+                {"arquivo": nome, "motivo": f"Arquivo maior que {MAX_BYTES_DOCUMENTO // (1024 * 1024)}MB."}
             )
-            aceitos.append({"arquivo": nome, "entrega_id": registro["entrega"]["id"]})
-        except HTTPException as exc:
-            recusados.append({"arquivo": nome, "motivo": str(exc.detail)})
-        except Exception as exc:  # noqa: BLE001 - um arquivo ruim não perde o lote
-            log.exception("falha ao registrar %s no lote %s", nome, lote_id)
-            recusados.append({"arquivo": nome, "motivo": str(exc)[:200]})
+            continue
+        bons.append((nome, conteudo))
 
-    if not aceitos:
+    if not bons:
         raise HTTPException(
             400, recusados[0]["motivo"] if recusados else "Nenhum arquivo aceito."
         )
 
+    lote_id = uuid.uuid4().hex
+    tarefas.add_task(_processar_registro_lote, caso, categoria.codigo, bons, idioma, lote_id)
+
     return {
         "lote_id": lote_id,
-        "recebidos": aceitos,
+        "total": len(bons),
+        "recebidos": [],
         "recusados": recusados,
         "processando": True,
     }
 
 
-@app.post("/api/casos/{caso_id}/documentos/lote", status_code=201)
+@app.post("/api/casos/{caso_id}/documentos/lote", status_code=202)
 async def enviar_documentos_em_lote(
     caso_id: str,
+    tarefas: BackgroundTasks,
     arquivos: list[UploadFile] = File(...),
     idioma: str = Form("pt"),
 ):
-    """Envio em massa: N documentos, sem escolher item para nenhum deles."""
+    """Envio em massa: N documentos, sem escolher item para nenhum deles.
+
+    202: o registro roda em segundo plano e as entregas surgem no checklist à
+    medida que são gravadas (ver `_processar_registro_lote`).
+    """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         raise HTTPException(404, "Caso não encontrado.")
-    return await _registrar_lote(caso, arquivos, idioma)
+    return await _registrar_lote(caso, arquivos, idioma, tarefas)
+
+
+def _uploadfiles_do_zip(conteudo: bytes) -> list[UploadFile]:
+    """Descompacta em memória e devolve cada entrada como se fosse um upload solto.
+
+    Nunca toca o disco com o ZIP: `_arquivos_do_zip` já validou índice, tamanho
+    total, tamanho por arquivo e razão de compressão (ver o comentário lá sobre
+    ZIP bomb) antes de qualquer bytes ser lido. Pastas dentro do ZIP (comum num
+    "exportar pasta" do Explorer/Finder) viram nomes soltos — o caminho interno
+    não importa para o roteamento, que decide pelo CONTEÚDO do documento, não
+    pelo nome da subpasta onde ele estava.
+    """
+    infos = _arquivos_do_zip(conteudo)
+    arquivos: list[UploadFile] = []
+    with zipfile.ZipFile(io.BytesIO(conteudo)) as pacote:
+        for info in infos:
+            nome = Path(info.filename).name
+            # Lixo que ferramentas de zip no Mac deixam para trás; não é documento.
+            if not nome or nome.startswith(".") or "__MACOSX" in info.filename:
+                continue
+            dados = pacote.read(info)
+            arquivos.append(UploadFile(io.BytesIO(dados), filename=nome, size=len(dados)))
+    if not arquivos:
+        raise HTTPException(400, "O arquivo .zip não possui documentos aproveitáveis.")
+    return arquivos
+
+
+@app.post("/api/casos/{caso_id}/documentos/zip", status_code=202)
+async def enviar_documentos_zip(
+    caso_id: str,
+    tarefas: BackgroundTasks,
+    arquivo: UploadFile = File(...),
+    idioma: str = Form("pt"),
+):
+    """Envio em massa a partir de uma pasta zipada: mesmo caminho do `/lote`.
+
+    Existia a validação (`_ler_pacote_zip`, `_arquivos_do_zip`) sem nenhuma rota
+    que a chamasse — o advogado precisava extrair a pasta antes de mandar. Esta
+    rota fecha o caminho: descompacta em memória, e cada arquivo segue pela
+    MESMA triagem automática do `/lote` (`roteamento.decidir`), documento por
+    documento — o registro em segundo plano, para o navegador não esperar.
+    """
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    conteudo_zip = await _ler_pacote_zip(arquivo)
+    arquivos = _uploadfiles_do_zip(conteudo_zip)
+    if len(arquivos) > MAX_ARQUIVOS_POR_ZIP:
+        raise HTTPException(
+            400,
+            f"O .zip contém {len(arquivos)} arquivos; o limite é {MAX_ARQUIVOS_POR_ZIP}.",
+        )
+    return await _registrar_lote(caso, arquivos, idioma, tarefas)
 
 
 @app.patch("/api/entregas/{entrega_id}/itens")
@@ -2676,6 +3054,30 @@ def reatribuir_entrega(
         )
 
     item_correto = validos[escolhidos[0]]
+    analise = analise_documental.obter_por_entrega(entrega_id)
+    if analise and analise.get("revisao_necessaria"):
+        # O seletor da triagem já é a palavra final do advogado. Além de mover a
+        # entrega, ele precisa concluir o job humano e alimentar a memória de
+        # correções; caso contrário a linha do tempo ficaria pendente para sempre.
+        tipo_humano = item_correto.tipo_ocr
+        pipeline_documentos_tasks.concluir_revisao(
+            analise["id"],
+            itens=escolhidos,
+            tipo_documento=tipo_humano,
+            aceito=True,
+            observacao=f"Destino confirmado no checklist: {item_correto.nome}.",
+            corrigido_por=usuario.nome or usuario.usuario or usuario.id or "escritório",
+        )
+        revisada = armazenamento.obter_entrega(entrega_id)
+        if revisada:
+            threading.Thread(
+                target=_entregar_ao_agente,
+                args=(entrega["caso_id"], entrega_id),
+                name=f"agente-revisao-{entrega_id[:8]}",
+                daemon=True,
+            ).start()
+        return revisada
+
     if len(escolhidos) > 1:
         detectado = entrega.get("tipo_detectado")
         confere = casos.tipo_confere(item_correto, detectado, True)
@@ -3127,19 +3529,21 @@ async def portal_enviar(
     return casos.visao_do_cliente(situacao) if situacao else {}
 
 
-@app.post("/api/portal/{token}/documentos/lote", status_code=201)
+@app.post("/api/portal/{token}/documentos/lote", status_code=202)
 async def portal_enviar_lote(
     token: str,
     request: Request,
+    tarefas: BackgroundTasks,
     arquivos: list[UploadFile] = File(...),
 ):
     """Envio em massa pelo cliente: manda tudo, o sistema separa.
 
     É o caminho que tira do cliente a tarefa de saber o que é cada papel — ele
     fotografa a pilha inteira e cada arquivo acha o próprio item do checklist.
+    Registro em segundo plano, como no lado do advogado.
     """
     caso = _caso_do_portal(token, request)
-    resultado = await _registrar_lote(caso, arquivos, "pt")
+    resultado = await _registrar_lote(caso, arquivos, "pt", tarefas)
 
     situacao = casos.montar_situacao(caso["id"])
     return {
@@ -3148,11 +3552,105 @@ async def portal_enviar_lote(
     }
 
 
+class RevisaoAnaliseDocumento(BaseModel):
+    aceito: bool = True
+    tipo_documento: str | None = None
+    itens: list[str] = Field(default_factory=list)
+    observacao: str = Field(default="", max_length=800)
+
+
+class ReprocessarAnaliseDocumento(BaseModel):
+    desde: str = "classificar_documento"
+
+
+@app.get("/api/analise-documental/taxonomia")
+def taxonomia_documental():
+    return {
+        "versao": documentos_juridicos.VERSAO_SCHEMA,
+        "tipos": [
+            {"codigo": codigo, **config}
+            for codigo, config in documentos_juridicos.TIPOS.items()
+        ],
+    }
+
+
+@app.get("/api/entregas/{entrega_id}/analise")
+def obter_analise_entrega(entrega_id: str):
+    if armazenamento.obter_entrega(entrega_id) is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+    analise = analise_documental.obter_por_entrega(entrega_id)
+    if analise is None:
+        raise HTTPException(404, "Esta entrega ainda não possui análise por etapas.")
+    return analise
+
+
+@app.post("/api/entregas/{entrega_id}/analise/revisao")
+def revisar_analise_entrega(
+    entrega_id: str,
+    pedido: RevisaoAnaliseDocumento,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+    analise = analise_documental.obter_por_entrega(entrega_id)
+    if analise is None:
+        raise HTTPException(409, "Esta entrega não possui análise por etapas.")
+    caso = armazenamento.obter_caso(entrega["caso_id"])
+    categoria = categorias.obter(caso["categoria"]) if caso else None
+    if categoria is None:
+        raise HTTPException(409, "Categoria do caso indisponível.")
+    validos = {item.codigo for item in categoria.itens}
+    itens = list(dict.fromkeys(i.strip() for i in pedido.itens if i.strip()))
+    invalidos = [i for i in itens if i not in validos]
+    if invalidos:
+        raise HTTPException(400, f"Item(ns) fora do checklist: {', '.join(invalidos)}.")
+    if pedido.aceito and not itens:
+        raise HTTPException(400, "Informe ao menos um item do checklist ao aprovar.")
+    if pedido.tipo_documento:
+        normalizado = documentos_juridicos.normalizar_tipo(pedido.tipo_documento)
+        if normalizado == "outro" and pedido.tipo_documento.strip().lower() != "outro":
+            raise HTTPException(400, "Tipo documental não reconhecido pela taxonomia.")
+    try:
+        return pipeline_documentos_tasks.concluir_revisao(
+            analise["id"],
+            itens=itens,
+            tipo_documento=pedido.tipo_documento,
+            aceito=pedido.aceito,
+            observacao=pedido.observacao,
+            corrigido_por=usuario.nome or usuario.usuario or usuario.id or "escritório",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/entregas/{entrega_id}/analise/reprocessar", status_code=202)
+def reprocessar_analise_entrega(
+    entrega_id: str,
+    pedido: ReprocessarAnaliseDocumento,
+    _: auth.Usuario = Depends(auth.usuario_atual),
+):
+    analise = analise_documental.obter_por_entrega(entrega_id)
+    if analise is None:
+        raise HTTPException(404, "Esta entrega não possui análise por etapas.")
+    try:
+        tarefa_id = pipeline_documentos_tasks.enfileirar_reprocessamento(
+            analise["id"], pedido.desde
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"analise_id": analise["id"], "task_id": tarefa_id, "desde": pedido.desde}
+
+
 @app.get("/api/entregas/{entrega_id}")
 def obter_entrega(entrega_id: str):
     entrega = armazenamento.obter_entrega(entrega_id)
     if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
+    try:
+        entrega["analise_documental"] = analise_documental.obter_por_entrega(entrega_id)
+    except Exception:
+        log.warning("não foi possível anexar o estado da análise %s", entrega_id, exc_info=True)
     entrega.pop("caminho", None)  # caminho no disco não interessa ao cliente HTTP
     entrega.pop("conteudo", None)
     entrega.pop("conteudo_sha256", None)

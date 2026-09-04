@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
+import {
+  sugerirCategoriaPorDocumentos,
+  sugerirCategoriaPorZip,
+  type SugestaoCategoriaPorDocumentos,
+} from "@/lib/api";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
 
@@ -34,6 +39,10 @@ export default function ListaCasos({
   const [dataInicial, setDataInicial] = useState("");
   const [dataFinal, setDataFinal] = useState("");
   const [ordem, setOrdem] = useState<"recentes" | "antigos" | "nome">("recentes");
+  const [sugerindo, setSugerindo] = useState(false);
+  const [sugestao, setSugestao] = useState<SugestaoCategoriaPorDocumentos | null>(null);
+  const [erroSugestao, setErroSugestao] = useState<string | null>(null);
+  const inputSugestaoRef = useRef<HTMLInputElement>(null);
   /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
    * de 5 em 5 só para exibição — nada é buscado por página. `pagina` pode ficar
    * maior que o total depois de uma exclusão; `paginaAtual` reancora. */
@@ -80,6 +89,28 @@ export default function ListaCasos({
 
   useEffect(() => setPagina(1), [busca, tipoFiltro, dataInicial, dataFinal, ordem]);
 
+  async function sugerirPelosDocumentos(arquivos: File[]) {
+    if (!arquivos.length) return;
+    setSugerindo(true);
+    setErroSugestao(null);
+    setSugestao(null);
+    try {
+      const resultado =
+        arquivos.length === 1 && arquivos[0].name.toLowerCase().endsWith(".zip")
+          ? await sugerirCategoriaPorZip(arquivos[0])
+          : await sugerirCategoriaPorDocumentos(arquivos);
+      setSugestao(resultado);
+      const melhor = resultado.sugestoes[0];
+      if (melhor && categorias.some((c) => c.codigo === melhor.codigo)) {
+        setCategoria(melhor.codigo);
+      }
+    } catch (e) {
+      setErroSugestao(e instanceof Error ? e.message : "Falha ao ler os documentos.");
+    } finally {
+      setSugerindo(false);
+    }
+  }
+
   const totalPaginas = Math.max(1, Math.ceil(casosFiltrados.length / POR_PAGINA));
   const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
   const casosVisiveis = casosFiltrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
@@ -101,6 +132,77 @@ export default function ListaCasos({
               placeholder="Ex.: Maria Aparecida da Silva"
               autoComplete="off"
             />
+          </div>
+
+          <div className="mb-4 px-[14px] py-[13px] border border-borda rounded-campo bg-papel-2">
+            <div className="flex justify-between items-center gap-3 flex-wrap">
+              <div>
+                <strong className="block text-tinta text-sm">Não sabe o tipo de ação?</strong>
+                <p className="mt-1 mb-0 text-tinta-2 text-xs leading-[1.5]">
+                  Envie os documentos do cliente (ou um .zip da pasta) e o sistema lê e sugere.
+                  A escolha final continua sendo sua.
+                </p>
+              </div>
+              <Botao
+                type="button"
+                variante="secundario"
+                pequeno
+                disabled={sugerindo}
+                onClick={() => inputSugestaoRef.current?.click()}
+              >
+                {sugerindo ? "Lendo…" : "Escolher documentos"}
+              </Botao>
+              <input
+                ref={inputSugestaoRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  void sugerirPelosDocumentos(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+            </div>
+
+            {sugerindo && (
+              <p className="mt-[10px] mb-0 text-tinta-3 text-xs">
+                Lendo os documentos por OCR — um lote com várias dezenas de arquivos pode levar
+                alguns minutos.
+              </p>
+            )}
+
+            {erroSugestao && (
+              <div className="mt-[10px]">
+                <Aviso tom="critico" titulo="Não foi possível sugerir">
+                  {erroSugestao}
+                </Aviso>
+              </div>
+            )}
+
+            {sugestao && (
+              <div className="mt-[10px]">
+                {sugestao.sugestoes.length === 0 ? (
+                  <p className="m-0 text-tinta-2 text-xs leading-[1.5]">{sugestao.motivo}</p>
+                ) : (
+                  <>
+                    <p className="m-0 text-tinta-2 text-xs leading-[1.5]">
+                      {sugestao.confiante ? "Sugestão: " : "Sugestão (confira antes de aceitar): "}
+                      <strong>{sugestao.sugestoes[0].nome}</strong> — {sugestao.motivo}
+                    </p>
+                    {sugestao.sugestoes[0].evidencias.length > 0 && (
+                      <ul className="mt-[6px] mb-0 pl-4 text-tinta-3 text-xs leading-[1.5]">
+                        {sugestao.sugestoes[0].evidencias.slice(0, 3).map((ev, i) => (
+                          <li key={i}>{ev}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+                <p className="mt-[6px] mb-0 text-tinta-3 text-xs">
+                  {sugestao.documentos.length} documento(s) lido(s).
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mb-4">

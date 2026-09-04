@@ -59,6 +59,18 @@ def _ler_anexo(entrega_id: str, caminho: str) -> bytes:
     return restaurado.read_bytes()
 
 
+def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
+    """Enfileira a integracao sem manter o worker pesado esperando HTTP."""
+    try:
+        from .agente import enviar_entrega_ao_agente
+
+        enviar_entrega_ao_agente.apply_async(
+            args=(caso_id, entrega_id), queue="agent_integration", priority=4
+        )
+    except Exception:
+        log.warning("nao foi possivel enfileirar entrega ao agente", exc_info=True)
+
+
 @worker_ready.connect
 def aquecer_worker_ocr(sender=None, **_kwargs):
     """Carrega o modelo no worker, sem prender o boot numa inferência completa."""
@@ -304,6 +316,7 @@ def processar_entrega(
                 # Upload e OCR já estão persistidos; indisponibilidade de OpenRouter
                 # ou PGVector não pode transformar uma entrega válida em erro.
                 log.warning("indexação vetorial falhou para %s", entrega_id, exc_info=True)
+        _entregar_ao_agente(caso_id, entrega_id)
         return {"entrega_id": entrega_id, "concluida": True}
     except Exception as exc:
         log.exception("Falha ao ler o documento da entrega %s", entrega_id)

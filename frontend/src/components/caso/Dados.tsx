@@ -302,7 +302,7 @@ export default function Dados({ onVoltar }: Props) {
       </header>
 
       {erro && (
-        <Aviso tom="critico" titulo="Acervo indisponível">
+        <Aviso tom="critico" titulo="Forense indisponível">
           {erro}
         </Aviso>
       )}

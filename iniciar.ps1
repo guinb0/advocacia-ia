@@ -235,9 +235,10 @@ docker compose up -d --wait --wait-timeout 60 redis jobs-db flower prometheus gr
 # IPv6 ::1, e o encaminhamento IPv6 do Docker Desktop reseta as conexoes do
 # redis-py/kombu (WinError 10054) enquanto o IPv4 funciona. Fixar o loopback
 # IPv4 mantem os workers Celery e o beat conectados ao broker.
-$env:REDIS_URL = "redis://127.0.0.1:6380/0"
-$env:CELERY_BROKER_URL = "redis://127.0.0.1:6380/0"
-$env:CELERY_RESULT_BACKEND = "redis://127.0.0.1:6380/1"
+$PortaRedis = if ($env:REDIS_PORTA) { $env:REDIS_PORTA } else { "6380" }
+$env:REDIS_URL = "redis://127.0.0.1:$PortaRedis/0"
+$env:CELERY_BROKER_URL = "redis://127.0.0.1:$PortaRedis/0"
+$env:CELERY_RESULT_BACKEND = "redis://127.0.0.1:$PortaRedis/1"
 if (-not $env:JOBS_DATABASE_URL) {
     $env:JOBS_DATABASE_URL = "postgresql://advocacia:advocacia_local@127.0.0.1:5434/advocacia_jobs"
 }
@@ -419,7 +420,7 @@ if (-not $SemAgente) {
         }
 
         # O worker do agente depende de Redis. Primeiro reaproveita a instancia
-        # local que o Acervo ja pode ter iniciado; isso evita colisao da porta
+        # local que o Forense ja pode ter iniciado; isso evita colisao da porta
         # 6379 e deixa reinicios praticamente instantaneos.
         $redisPronto = $false
         try {
@@ -442,7 +443,7 @@ if (-not $SemAgente) {
             # Qualquer variável com o mesmo nome vence a .env no Pydantic. A
             # máquina já teve DEBUG=release global, suficiente para impedir o
             # boot. Limpa exatamente as chaves declaradas pelo agente, inicia
-            # os filhos e restaura o ambiente do Acervo em seguida.
+            # os filhos e restaura o ambiente do Forense em seguida.
             $nomesAgente = Get-Content (Join-Path $raizAgente ".env") -Encoding UTF8 |
                 ForEach-Object { if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') { $Matches[1] } }
             foreach ($nome in @($nomesAgente) + @("PYTHONPATH")) {
@@ -520,10 +521,30 @@ $workerOcr = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
                   "--pool=solo", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@$hostCelery-$instanciaCelery"
+# O Mistral OCR é HTTP, não predictor nativo: não herda a trava de thread do
+# Paddle. `--pool=threads` dá concorrência de verdade no Windows (prefork não
+# funciona aqui, e `solo` processaria um documento por vez à toa). O teto vem
+# de `MISTRAL_OCR_WORKER_CONCORRENCIA` para poder ajustar sem editar o script
+# se a conta da Mistral esbarrar em rate limit.
+$concorrenciaMistral = if ($env:MISTRAL_OCR_WORKER_CONCORRENCIA) { $env:MISTRAL_OCR_WORKER_CONCORRENCIA } else { "6" }
+$workerMistral = Start-Process -PassThru -NoNewWindow `
+    -FilePath ".\.venv\Scripts\python.exe" `
+    -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
+                  "--pool=threads", "--concurrency=$concorrenciaMistral", "-Q", "mistral_ocr", "-n", "mistral@$hostCelery-$instanciaCelery"
+# As etapas do documento (classificar, extrair, validar, evidências) tinham que
+# disputar UM worker solo com a fila `ai` — e um parecer de LLM ali leva até 120s.
+# Uma pasta com vinte arquivos ficava parada atrás de um parecer. `documents` agora
+# tem worker próprio, com threads: as etapas são I/O (banco e, na validação, uma
+# chamada de vínculo), não CPU presa por lock nativo como o Paddle.
+$concorrenciaDocs = if ($env:DOCS_WORKER_CONCORRENCIA) { $env:DOCS_WORKER_CONCORRENCIA } else { "4" }
+$workerDocumentos = Start-Process -PassThru -NoNewWindow `
+    -FilePath ".\.venv\Scripts\python.exe" `
+    -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
+                  "--pool=threads", "--concurrency=$concorrenciaDocs", "-Q", "documents", "-n", "documentos@$hostCelery-$instanciaCelery"
 $workerBackground = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "worker",
-                  "--pool=solo", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@$hostCelery-$instanciaCelery"
+                  "--pool=solo", "--concurrency=1", "-Q", "ai,default,low", "-n", "background@$hostCelery-$instanciaCelery"
 $beat = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "celery", "-A", "app.celery_app:celery_app", "beat"
@@ -563,17 +584,16 @@ try {
     Write-Host "Whisper pronto." -ForegroundColor Green
 
     Push-Location .\frontend
-    # PORT em vez de "npm run dev -- -p $Porta": o npm.ps1 do Windows PowerShell
-    # descarta o nome da flag (-p ou --port) ao repassar argumentos depois do
-    # "--", entregando ao next so o numero solto, que ele le como diretorio do
-    # projeto ("next dev 3000" -> "Invalid project directory"). O next le PORT
-    # nativamente, sem passar pelo parser de args do npm. O "--" ainda repassa
-    # o host, que nao tem esse problema de parsing.
+    # PORT evita repassar a porta pelo parser do npm.ps1. O host também fica
+    # implícito: versões recentes do npm no Windows deixam de encaminhar `-H`
+    # após `--` e exibem somente a ajuda do npm, derrubando toda a pilha no
+    # `finally`. O Next atende localhost por padrão, que é o endereço local
+    # configurado para este projeto.
     $env:PORT = $Porta
-    if ($Prod) { npm run start -- -H $HostEscuta } else { npm run dev -- -H $HostEscuta }
+    if ($Prod) { npm run start } else { npm run dev }
 } finally {
     Pop-Location -ErrorAction SilentlyContinue
-    foreach ($p in @($backend, $transcricao, $workerOcr, $workerBackground, $beat, $agenteApi, $agenteWorker)) {
+    foreach ($p in @($backend, $transcricao, $workerOcr, $workerMistral, $workerDocumentos, $workerBackground, $beat, $agenteApi, $agenteWorker)) {
         if ($p -and -not $p.HasExited) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         }

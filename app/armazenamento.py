@@ -1,4 +1,4 @@
-"""Persistência do Acervo, no PostgreSQL.
+"""Persistência do Forense, no PostgreSQL.
 
 Este módulo fala SQL e nada mais: a conexão, o schema e as diferenças de dialeto vivem
 em `banco.py`. É o que permitiu trocar o motor sem reescrever as 44 funções daqui.
@@ -40,6 +40,45 @@ CAMINHO_BANCO = DIR_DADOS / "casos.db"
 
 def agora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ------------------------------------------------------ configurações do escritório
+
+#: Política do escritório: a revisão humana de documentos é obrigatória? Quando
+#: "0", o documento com ressalva não trava em revisão — segue para a análise da
+#: LLM e é aceito. Chave lida tanto pela API quanto pelo worker Celery.
+CONFIG_REVISAO_HUMANA = "revisao_humana_obrigatoria"
+
+
+def obter_configuracao(chave: str, padrao: str = "") -> str:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT valor FROM configuracoes WHERE chave = ?", (chave,)
+        ).fetchone()
+    if not linha:
+        return padrao
+    valor = linha["valor"] if hasattr(linha, "keys") else linha[0]
+    return padrao if valor is None else str(valor)
+
+
+def definir_configuracao(chave: str, valor: str) -> None:
+    """Grava (ou troca) uma preferência do escritório. Upsert em dois passos para
+    não depender de sintaxe específica de um banco."""
+    with conectar() as con:
+        atualizadas = con.execute(
+            "UPDATE configuracoes SET valor = ?, atualizado_em = ? WHERE chave = ?",
+            (valor, agora(), chave),
+        )
+        if atualizadas.rowcount == 0:
+            con.execute(
+                "INSERT INTO configuracoes (chave, valor, atualizado_em) VALUES (?, ?, ?)",
+                (chave, valor, agora()),
+            )
+
+
+def revisao_humana_obrigatoria() -> bool:
+    """Padrão ligado: sem preferência gravada, a revisão humana continua exigida."""
+    return obter_configuracao(CONFIG_REVISAO_HUMANA, "1") != "0"
 
 
 # ---------------------------------------------------------- petições locais
@@ -1018,18 +1057,24 @@ def registrar_entrega(
 
 
 def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
-    """Entregas do caso, sem o JSON completo da extração (que é grande)."""
+    """Entregas do caso, com o estado leve da análise documental.
+
+    O JSON de OCR continua fora desta consulta; a tela do checklist só precisa
+    saber se o arquivo ainda está passando pelas etapas ou aguarda o advogado.
+    """
     with conectar() as con:
         linhas = con.execute(
             """
-            SELECT id, caso_id, item_codigo, arquivo, tipo_detectado, tipo_confere,
-                   veredito, dados_utilizaveis, confirmado_manual, score_legibilidade,
-                   itens_atendidos, texto_utilizavel, lote_id, roteamento_origem,
-                   roteamento_confianca, roteamento_motivo,
-                   status_proc, erro_proc, criado_em
-              FROM entregas
-             WHERE caso_id = ?
-             ORDER BY criado_em
+            SELECT e.id, e.caso_id, e.item_codigo, e.arquivo, e.tipo_detectado, e.tipo_confere,
+                   e.veredito, e.dados_utilizaveis, e.confirmado_manual, e.score_legibilidade,
+                   e.itens_atendidos, e.texto_utilizavel, e.lote_id, e.roteamento_origem,
+                   e.roteamento_confianca, e.roteamento_motivo,
+                   e.status_proc, e.erro_proc, e.criado_em,
+                   a.status AS analise_status, a.etapa_atual AS analise_etapa
+              FROM entregas e
+              LEFT JOIN analises_documento a ON a.entrega_id = e.id
+             WHERE e.caso_id = ?
+             ORDER BY e.criado_em
             """,
             (caso_id,),
         ).fetchall()
@@ -1758,7 +1803,7 @@ def entregas_de_todos_os_casos() -> dict[str, list[dict[str, Any]]]:
 
 # --------------------------------------------------- conversas do agente geral
 #
-# A conversa é do Acervo, e não do agente jurídico: ela começa antes de haver caso e pode
+# A conversa é do Forense, e não do agente jurídico: ela começa antes de haver caso e pode
 # nunca ter um. Só ela mistura o que o agente respondeu sobre um caso, o que o glossário
 # explicou sobre o sistema e a recusa honesta de uma pergunta sobre o acervo inteiro —
 # nenhum dos outros lados guarda essa transcrição, e é ela que a tela reabre.

@@ -1,4 +1,4 @@
-# Frontend — Acervo
+# Frontend — Forense
 
 Next.js 16 (App Router) + React 19, na estrutura MVVM usada nos demais projetos da
 Level (SIDAF/DFLegal).

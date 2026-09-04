@@ -68,6 +68,8 @@ const cabecalhosSeguranca = [
 const nextConfig: NextConfig = {
   output: process.env.BUILD_STANDALONE === "1" ? "standalone" : undefined,
   poweredByHeader: false,
+  // Impede o Turbopack de subir ate outro package-lock existente no perfil do Windows.
+  turbopack: { root: process.cwd() },
   async headers() {
     return [
       { source: "/(.*)", headers: cabecalhosSeguranca },

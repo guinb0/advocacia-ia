@@ -125,14 +125,25 @@ export function useSituacao(casoId: string | null) {
       setEnviando("__lote__");
       setErro(null);
       try {
-        const resultado = await api.enviarDocumentosEmLote(casoId, arquivos);
-        await recarregar();
+        // Uma pasta zipada chega aqui como um único arquivo .zip: descompactar
+        // é trabalho do backend (`/documentos/zip`), não do navegador.
+        const resultado =
+          arquivos.length === 1 && arquivos[0].name.toLowerCase().endsWith(".zip")
+            ? await api.enviarDocumentosZip(casoId, arquivos[0])
+            : await api.enviarDocumentosEmLote(casoId, arquivos);
         if (resultado.recusados.length > 0) {
           setErro(
-            `${resultado.recebidos.length} arquivo(s) recebido(s), mas ${resultado.recusados.length} não entraram: ` +
+            `${resultado.recusados.length} arquivo(s) não entraram: ` +
               resultado.recusados.map((item) => `${item.arquivo}: ${item.motivo}`).join("; "),
           );
         }
+        // O servidor responde na hora e grava as entregas em segundo plano
+        // (evita o timeout de 30s do navegador num lote grande). Elas surgem no
+        // checklist aos poucos, em `na_fila`; a releitura curta abaixo garante
+        // que o polling engate mesmo se a primeira releitura pegou o caso ainda
+        // sem nenhuma entrega gravada.
+        await recarregar();
+        globalThis.setTimeout(() => void recarregar(), 2500);
       } catch (e) {
         setErro(e instanceof Error ? e.message : "Falha ao enviar os documentos.");
       } finally {
@@ -146,6 +157,7 @@ export function useSituacao(casoId: string | null) {
    * assim que nada mais está em processamento — sem timer eterno rodando. */
   const processando =
     situacao?.itens.some((i) => i.status === "processando") ||
+    Boolean(situacao?.em_processamento?.length) ||
     situacao?.triagem?.some(
       (e) => e.status_proc === "na_fila" || e.status_proc === "processando",
     ) ||

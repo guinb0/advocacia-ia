@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-O Acervo passou a ter um fluxo novo de permissões compatível com o padrão de
+O Forense passou a ter um fluxo novo de permissões compatível com o padrão de
 módulos e perfis usado nos demais projetos da Level. A mudança é incremental:
 nenhuma tabela antiga foi removida, porque versões anteriores ainda podem
 depender delas.

@@ -35,6 +35,7 @@ celery_app = Celery(
     backend=BACKEND,
     include=(
         "app.tasks.ocr",
+        "app.tasks.pipeline_documentos",
         "app.tasks.agente",
         "app.tasks.documentos",
         "app.tasks.ia",
@@ -65,7 +66,18 @@ celery_app.conf.update(
     },
     task_default_queue="default",
     task_routes={
+        # PaddleOCR tem afinidade de thread nativa (ver `ocr_engine.py`): a fila
+        # `gpu_background` só existe para ele, servida por um worker `--pool=solo
+        # --concurrency=1` de propósito, senão o predictor derruba com
+        # `RuntimeError: Unknown exception`.
         "app.tasks.ocr.*": {"queue": "gpu_background"},
+        # O Mistral OCR é uma chamada HTTP, sem essa restrição — colocá-lo na
+        # MESMA fila do Paddle herdava o teto de 1 documento por vez sem
+        # nenhuma razão técnica, só porque as duas filas nasceram juntas.
+        # `mistral_ocr` roda num worker próprio, com `--pool=threads` e
+        # concorrência real (ver `iniciar.ps1`).
+        "app.tasks.pipeline_documentos.ocr_mistral": {"queue": "mistral_ocr"},
+        "app.tasks.pipeline_documentos.*": {"queue": "documents"},
         "app.tasks.agente.*": {"queue": "default"},
         "app.tasks.transcricao.*": {"queue": "gpu_realtime"},
         "app.tasks.ia.*": {"queue": "ai"},

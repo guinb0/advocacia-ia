@@ -1,4 +1,4 @@
-"""O agente analista do acervo: pensa, consulta e responde com o que mediu.
+"""O agente analista do forense: pensa, consulta e responde com o que mediu.
 
 O que ele é: um modelo com um catálogo de consultas (`ferramentas.py`) e permissão para
 escolher quais usar, em que ordem, quantas vezes. Pergunta aberta ("temos algum caso

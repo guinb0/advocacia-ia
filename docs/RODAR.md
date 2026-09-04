@@ -14,7 +14,7 @@ outro: é o que permite subir, testar e reverter um sem parar o outro.
         └──────── AGENTE_API_URL (push) ───────────────┘
 ```
 
-O Acervo **empurra** o que apurou e **lê** o que o agente concluiu
+O Forense **empurra** o que apurou e **lê** o que o agente concluiu
 (`app/agente/espelho.py`). Nunca o contrário.
 
 ## Subir tudo
@@ -59,7 +59,7 @@ confirma que o Docker Desktop responde. Assim a inicialização para na causa, e
 vez de deixar metade dos serviços no ar e falhar muitos minutos depois.
 
 O agente lê **somente** `ia-juridica/.env`. Em especial, não herda a
-`DATABASE_URL` do Acervo, que aponta para o corpus pgvector e seria o banco
+`DATABASE_URL` do Forense, que aponta para o corpus pgvector e seria o banco
 errado para o Case State.
 
 ## Endereços por ambiente

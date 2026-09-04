@@ -260,7 +260,7 @@ def enviar_entrega(caso_id: str, entrega_id: str, *, silencioso: bool = True) ->
             )
         else:
             # CNIS, CAT, PPP, ASO e outros documentos jurídicos não pertencem ao
-            # contrato do OCR de identificação do agente. O Acervo sabe que o arquivo
+            # contrato do OCR de identificação do agente. O Forense sabe que o arquivo
             # chegou pelo item do checklist; portanto envia apenas essa declaração,
             # sem inventar campos extraídos nem ampliar artificialmente o OCR.
             caso = armazenamento.obter_caso(caso_id) or {}
@@ -399,7 +399,7 @@ def _retomar_pipeline_juridico(caso_ref: str, *, caso_id: str | None = None) -> 
     """Enfileira a primeira etapa jurídica ausente de um caso já sincronizado.
 
     Cada worker encadeia o seguinte no agente (análise -> pesquisa -> estratégia).
-    Casos antigos podem ter parado antes desse encadeamento existir; por isso o Acervo
+    Casos antigos podem ter parado antes desse encadeamento existir; por isso o Forense
     retoma explicitamente a primeira lacuna sempre que o dossiê é aberto.
     """
     agora = time.monotonic()
@@ -499,7 +499,7 @@ def declarar_itens_entregues(caso_id: str, caso_ref: str) -> int:
 
     O OCR classifica nove tipos de imagem; o playbook exige dezesseis documentos. CAT, CNIS,
     PPP, ASO e laudo pericial entram por aqui — pela **declaração** de que foram entregues,
-    que é o que o Acervo sabe com certeza. Sem isso o caso mantinha as pendências
+    que é o que o Forense sabe com certeza. Sem isso o caso mantinha as pendências
     indispensáveis abertas para sempre e a petição jamais era liberada.
 
     Declarar não é ler: nenhum fato nasce daqui. O que muda é o checklist.

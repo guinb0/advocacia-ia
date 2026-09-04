@@ -31,7 +31,7 @@ const ABAS: Array<{
   {
     tela: "jurimetria",
     titulo: "Jurimetria",
-    apoio: "Acervo",
+    apoio: "Forense",
     Icone: Scale,
   },
 ];

@@ -381,7 +381,7 @@ def _recuperar_vinculo(erro: ErroDoAgente, caso_id: str | None) -> str | None:
 
 
 def _agente_local() -> dict[str, Any]:
-    """Dossiê só com Acervo — sem HTTP ao agente jurídico."""
+    """Dossiê só com Forense — sem HTTP ao agente jurídico."""
     return {
         "ligado": False,
         "disponivel": False,
@@ -634,7 +634,7 @@ def _etapas(
 def _etapa_entrevista(entrevistas: list[dict[str, Any]]) -> dict[str, Any]:
     """O atendimento: primeira etapa do caso e a única que não depende do agente.
 
-    Entrevista guardada mas **não lida** não é "pronto": o arquivo está no Acervo e nada
+    Entrevista guardada mas **não lida** não é "pronto": o arquivo está no Forense e nada
     dele chegou ao Case State, que é a diferença entre ter a conversa e ter o caso.
     """
     if not entrevistas:
@@ -811,7 +811,7 @@ def _etapa_pesquisa(agente: dict[str, Any]) -> dict[str, Any]:
     cobertura = recente.get("corpus_coverage") or {}
     ressalva = ""
     if cobertura and not cobertura.get("complete"):
-        ressalva = f" Acervo {round((cobertura.get('ratio') or 0) * 100)}% vetorizado."
+        ressalva = f" Forense {round((cobertura.get('ratio') or 0) * 100)}% vetorizado."
     return {
         "codigo": "pesquisa",
         "titulo": "Jurisprudência",

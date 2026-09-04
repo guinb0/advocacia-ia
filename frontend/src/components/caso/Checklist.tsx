@@ -10,10 +10,12 @@ import ItemChecklistLinha from "@/components/caso/ItemChecklistLinha";
 import PainelPortal from "@/components/portal/PainelPortal";
 import PedidoCliente from "@/components/caso/PedidoCliente";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
+import PoliticaRevisao from "@/components/caso/PoliticaRevisao";
 import ResumoDocumentos from "@/components/caso/ResumoDocumentos";
 import TriagemDocumentos from "@/components/caso/TriagemDocumentos";
+import DocumentosEmProcessamento from "@/components/caso/DocumentosEmProcessamento";
 
-type Filtro = "todos" | "obrigatorios" | "falta";
+type Filtro = "todos" | "obrigatorios" | "falta" | "processando";
 
 interface Props {
   situacao: SituacaoCaso;
@@ -39,6 +41,9 @@ interface Props {
    * recurso e duração de processo do escritório não são informação dele — além
    * de a rota exigir papel de advogado, o que renderia um bloco quebrado. */
   mostrarPrazos?: boolean;
+  /** Mostra o interruptor da política de revisão humana (visão do advogado).
+   * Fora do portal do cliente — a política é do escritório, e a rota exige sessão. */
+  gerenciarPolitica?: boolean;
 }
 
 /** "há 2 h", "há 3 dias" — a mesma leitura do cabeçalho no desenho. */
@@ -64,6 +69,7 @@ export default function Checklist({
   onReatribuir,
   dentroDoAtendimento = false,
   mostrarPrazos = false,
+  gerenciarPolitica = false,
 }: Props) {
   const [filtro, setFiltro] = useState<Filtro>("obrigatorios");
   const { caso, categoria, progresso, itens } = situacao;
@@ -79,10 +85,12 @@ export default function Checklist({
   }
 
   const naoResolvidos = itens.filter((i) => i.status !== "entregue").length;
+  const emProcessamento = situacao.em_processamento ?? [];
 
   const visiveis = itens.filter((item) => {
     if (filtro === "obrigatorios") return item.obrigatorio;
     if (filtro === "falta") return item.status !== "entregue";
+    if (filtro === "processando") return false;
     return true;
   });
 
@@ -90,6 +98,7 @@ export default function Checklist({
     { id: "obrigatorios", nome: `Obrigatórios (${progresso.obrigatorios_total})` },
     { id: "falta", nome: `Falta resolver (${naoResolvidos})` },
     { id: "todos", nome: `Todos os documentos (${itens.length})` },
+    { id: "processando", nome: `Documentos em processamento (${emProcessamento.length})` },
   ];
 
   const pct = Math.max(0, Math.min(100, progresso.percentual_obrigatorios));
@@ -184,6 +193,8 @@ export default function Checklist({
         </div>
       )}
 
+      {gerenciarPolitica && <PoliticaRevisao />}
+
       <EnvioEmLote onEnviar={onEnviarLote} enviando={enviando === "__lote__"} />
 
       {dentroDoAtendimento && (
@@ -208,7 +219,9 @@ export default function Checklist({
         ))}
       </BarraAbas>
 
-      {visiveis.length === 0 ? (
+      {filtro === "processando" ? (
+        <DocumentosEmProcessamento entregas={emProcessamento} itens={itens} />
+      ) : visiveis.length === 0 ? (
         <Vazio className="mt-4">Nada aqui — tudo resolvido neste filtro.</Vazio>
       ) : (
         <div className="mt-4 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">

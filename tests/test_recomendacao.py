@@ -1,5 +1,14 @@
+import pytest
+
 from app import recomendacao
 from app.rag import TrechoSimilar
+
+
+@pytest.fixture(autouse=True)
+def _cache_isolado():
+    recomendacao.limpar_cache()
+    yield
+    recomendacao.limpar_cache()
 
 
 def trecho(rotulo: str, similaridade: float = 0.74) -> TrechoSimilar:

@@ -1,7 +1,7 @@
 # Plano — sair dos bancos locais para os bancos de verdade
 
 Escrito em 13/08/2026, com os números medidos **ao vivo** nesta data. Cobre os dois
-sistemas: o Acervo (este repositório) e o agente jurídico (`ia-juridica`), que passou
+sistemas: o Forense (este repositório) e o agente jurídico (`ia-juridica`), que passou
 a ser consumido daqui pelo módulo `app/agente/`.
 
 Nada abaixo foi executado. É a sequência proposta, com o que cada passo exige de
@@ -77,7 +77,7 @@ CREATE SCHEMA IF NOT EXISTS agente AUTHORIZATION legal_agent_app;
 GRANT USAGE ON SCHEMA public TO legal_agent_app;
 GRANT SELECT ON public.knowledge_chunks, public.fontes TO legal_agent_app;
 
--- Leitor do corpus, usado pela pesquisa jurídica e pelo RAG do Acervo.
+-- Leitor do corpus, usado pela pesquisa jurídica e pelo RAG do Forense.
 CREATE ROLE corpus_reader LOGIN PASSWORD '<segredo forte>';
 GRANT USAGE ON SCHEMA public TO corpus_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO corpus_reader;
@@ -137,7 +137,7 @@ precisa marcar `0007`.
 
 O banco Docker `legal_agent` tem apenas casos de desenvolvimento e os dois casos que
 a validação da ponte criou em 13/08. **Recomendação: não migrar nada.** Começar
-limpo no destino, e recriar os casos reais pelo Acervo — que é a origem deles.
+limpo no destino, e recriar os casos reais pelo Forense — que é a origem deles.
 
 Se um dia precisar migrar de verdade, a ordem é a das chaves estrangeiras
 (`organizations → clients → cases → …`), com `pg_dump --data-only --schema=public`
@@ -157,7 +157,7 @@ o dia anterior e **não consumia a fila** — cinco documentos ficaram esperando
 tudo. Antes de mover infraestrutura, vale um alarme simples de fila parada; caso
 contrário o sintoma será "o dossiê não mostra os fatos" e ninguém vai olhar a fila.
 
-### Passo 6 — os casos do Acervo (SQLite)
+### Passo 6 — os casos do Forense (SQLite)
 
 **Fica para depois, e a decisão é do escritório.** O SQLite é local por um motivo
 declarado no código: os arquivos são de clientes e não devem sair da máquina. Trocar
@@ -175,7 +175,7 @@ mora ao mesmo tempo.
 ### Passo 7 — autenticação entre os dois sistemas
 
 Hoje o agente roda com `AUTH_ENABLED=false` e a ponte não manda token. Para ligar a
-autenticação de verdade, faltam duas coisas no token que o Acervo assina
+autenticação de verdade, faltam duas coisas no token que o Forense assina
 (`app/auth.py`) — e o agente precisa passar a aceitar a mesma chave:
 
 1. **mapper de `organization_id`** — o agente exige essa claim para escopar o tenant.
@@ -198,7 +198,7 @@ dentro da rede do escritório.
 | 3 | `alembic upgrade head` no schema `agente` | passos 1 e 2 | sim (`downgrade`) |
 | 4 | Apontar `.env` do agente para o servidor real | passo 3 | sim (troca de variável) |
 | 5 | Alarme de fila parada | — | sim |
-| 6 | Casos do Acervo para Postgres | HTTPS + decisão LGPD | não trivial |
+| 6 | Casos do Forense para Postgres | HTTPS + decisão LGPD | não trivial |
 | 7 | Autenticação ponta a ponta | claim `organization_id` no token | sim |
 
 Os passos 1 a 4 são de uma tarde. O 6 é um projeto à parte, e não deve ser embutido
@@ -213,7 +213,7 @@ Não por "subiu sem erro", e sim por estas quatro conferências:
 1. `SELECT count(*) FROM agente.cases;` responde no servidor real, e o mesmo número
    aparece na lista de casos do agente;
 2. `corpus_reader` **não** consegue escrever em `public` (o `INSERT` do passo 1 falha);
-3. um documento enviado pelo Acervo vira fato no agente e aparece no dossiê — foi
+3. um documento enviado pelo Forense vira fato no agente e aparece no dossiê — foi
    exatamente esse caminho que a validação de 13/08 percorreu contra o banco local;
 4. a pesquisa jurídica continua devolvendo precedente do TRT8 com a cobertura
    declarada (84,9% em 13/08) — se ela passar a falhar, é sinal de que a credencial

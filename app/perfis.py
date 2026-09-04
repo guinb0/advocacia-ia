@@ -1,4 +1,4 @@
-"""Perfis de acesso: quem enxerga qual módulo do Acervo.
+"""Perfis de acesso: quem enxerga qual módulo do Forense.
 
 O fluxo novo segue o desenho relacional usado nos outros sistemas da Level:
 perfil, módulo e permissão se ligam por IDs. As tabelas antigas continuam vivas
@@ -116,7 +116,7 @@ MODULOS: tuple[dict[str, str], ...] = (
 )
 CODIGOS_MODULOS = tuple(m["codigo"] for m in MODULOS)
 
-#: Perfis que o sistema garante existir. Não podem ser apagados: um Acervo sem
+#: Perfis que o sistema garante existir. Não podem ser apagados: um Forense sem
 #: nenhum perfil que administre usuários fica sem ninguém capaz de consertá-lo —
 #: e a única saída seria mexer no banco à mão.
 SEMENTE: tuple[dict[str, Any], ...] = (
@@ -146,7 +146,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "rotulo": "Cliente",
         "descricao": "Acompanha o próprio caso e envia documentos pelo portal.",
         "sistema": True,
-        # Nenhum módulo do Acervo: o cliente vive no portal, que tem porta
+        # Nenhum módulo do Forense: o cliente vive no portal, que tem porta
         # própria e sessão própria. Marcar qualquer caixa aqui lhe daria acesso
         # ao escritório inteiro.
         "modulos": (),
