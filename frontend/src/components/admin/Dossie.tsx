@@ -377,45 +377,26 @@ export default function Dossie({
      * A coluna só existe a partir de `lg`: em 400px de painel sobre uma tela de celular
      * não sobra dossiê nenhum para a citação apontar, e aí ela não serviria para nada. */
     <div className={DOSSIE_SHELL}>
+      {/* A identidade do caso (cliente, categoria, data) e a navegação entre áreas
+        * já vivem no cabeçalho de abas logo acima — repeti-las aqui só empilhava
+        * "CASO 1" duas vezes. Este cabeçalho fica só com a ação que é do dossiê:
+        * gerar a análise e a petição. */}
       <header className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
-        <div className="flex min-w-0 flex-col gap-4 border-b border-borda bg-papel-2 px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-b border-borda bg-papel-2 px-4 py-3 sm:px-5">
+          <div className="min-w-0 flex-1">
             <Botao variante="texto" pequeno onClick={onVoltar}>
               ← Carteira
             </Botao>
-            <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
-              Dossiê do caso
-            </span>
-            <h1 className="mt-1 truncate text-xl font-semibold tracking-[-0.01em] text-tinta" title={dados.caso.cliente}>
-              {dados.caso.cliente}
-            </h1>
-            <p className="mt-1 truncate text-sm text-tinta-3" title={dados.checklist.categoria ?? dados.caso.categoria}>
-              {dados.checklist.categoria ?? dados.caso.categoria} · aberto em{" "}
-              {new Date(dados.caso.criado_em).toLocaleDateString("pt-BR")}
-            </p>
           </div>
-
-          <div className="flex min-w-0 flex-wrap gap-2">
-            {onAbrirPainel && (
-              <Botao variante="secundario" pequeno onClick={onAbrirPainel}>
-                Painel
-              </Botao>
-            )}
-            {onAbrirJurimetria && (
-              <Botao variante="secundario" pequeno onClick={onAbrirJurimetria}>
-                Jurimetria
-              </Botao>
-            )}
-            <Botao
-              variante="primario"
-              disabled={
-                !geracaoPeticao?.podeGerar || geracaoPeticao?.ocupado || ocupado !== null
-              }
-              onClick={() => geracaoPeticao?.gerar()}
-            >
-              <span className="min-w-0 truncate">{geracaoPeticao?.rotulo ?? "Gerar análise e petição"}</span>
-            </Botao>
-          </div>
+          <Botao
+            variante="primario"
+            disabled={
+              !geracaoPeticao?.podeGerar || geracaoPeticao?.ocupado || ocupado !== null
+            }
+            onClick={() => geracaoPeticao?.gerar()}
+          >
+            <span className="min-w-0 truncate">{geracaoPeticao?.rotulo ?? "Gerar análise e petição"}</span>
+          </Botao>
         </div>
       </header>
 

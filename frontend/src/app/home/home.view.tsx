@@ -73,6 +73,7 @@ const Telas = (props: HomeViewProps) => {
       onNavegar={setTela}
       cliente={dadosDoCasoAberto?.caso.cliente}
       categoria={dadosDoCasoAberto?.categoria?.nome}
+      abertoEm={dadosDoCasoAberto?.caso.criado_em}
     />
   );
 
