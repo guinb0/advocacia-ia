@@ -150,6 +150,7 @@ class TrechoSimilar:
 def buscar_similares(
     consulta: str, *, limite: int = 8, timeout: float = 120,
     connect_timeout: int = 10, connect_retries: int | None = None,
+    tribunais: list[str] | None = None,
 ) -> list[TrechoSimilar]:
     """`timeout`/`connect_timeout` curtos para quem chama durante a entrevista.
 
@@ -157,22 +158,33 @@ def buscar_similares(
     CONTEXTO.md). Com os prazos longos da ingestão, cada resposta analisada
     pagaria 10s parada antes de descobrir que o banco não responde — com o
     cliente esperando do outro lado da mesa.
+
+    `tribunais` restringe a busca aos regionais dados (ex.: `["TRT8"]`) — é como
+    a análise fica sobre o estado do caso. Vazio/`None` = acervo inteiro.
     """
     if not consulta.strip():
         return []
     embedding = vetor_literal(gerar_embeddings([consulta[:12000]], timeout=timeout)[0])
-    sql = """
+    # O tribunal fica no metadados do chunk (`tribunal`, ex.: "TRT8"). Filtra por
+    # ele; o que não tem a etiqueta é alcançado pela camada nacional do fallback.
+    filtro_tribunal = ""
+    params: list[Any] = [embedding]
+    if tribunais:
+        filtro_tribunal = " AND upper(k.metadados->>'tribunal') = ANY(%s)"
+        params.append([t.upper() for t in tribunais])
+    params += [embedding, limite * 24]
+    sql = f"""
         SELECT k.texto, 1 - (k.embedding <=> %s::vector) AS similaridade,
                f.titulo, f.identificador, f.url, k.metadados
           FROM knowledge_chunks k
           JOIN fontes f ON f.id = k.fonte_id
          WHERE k.embedding IS NOT NULL
-           AND f.tipo = 'jurisprudencia'
+           AND f.tipo = 'jurisprudencia'{filtro_tribunal}
          ORDER BY k.embedding <=> %s::vector
          LIMIT %s
     """
     linhas = _consultar_pgvector(
-        sql, (embedding, embedding, limite * 24), connect_timeout=connect_timeout,
+        sql, tuple(params), connect_timeout=connect_timeout,
         tentativas_maximas=connect_retries,
     )
     candidatos = [

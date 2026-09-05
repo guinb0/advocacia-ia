@@ -34,7 +34,7 @@ function Barra({ nome, percentual, quantidade }: { nome: string; percentual: num
   );
 }
 
-export default function PainelJurimetriaCaso({ casoId }: { casoId: string }) {
+export default function PainelJurimetriaCaso({ casoId, uf = "" }: { casoId: string; uf?: string }) {
   const [dados, setDados] = useState<JurimetriaCaso | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -43,13 +43,13 @@ export default function PainelJurimetriaCaso({ casoId }: { casoId: string }) {
     setCarregando(true);
     setErro(null);
     try {
-      setDados(await jurimetriaDoCaso(casoId));
+      setDados(await jurimetriaDoCaso(casoId, uf));
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível cruzar com o acervo.");
     } finally {
       setCarregando(false);
     }
-  }, [casoId]);
+  }, [casoId, uf]);
 
   useEffect(() => {
     void carregar();
@@ -62,6 +62,14 @@ export default function PainelJurimetriaCaso({ casoId }: { casoId: string }) {
       titulo="Seu caso × as decisões do acervo"
       subtitulo="Os fatos do caso — entrevista e o que o OCR extraiu — cruzados com decisões semelhantes. Retrato da amostra parecida, não previsão de resultado."
     >
+      {/* De qual jurisdição vieram os números — o foco no TRT do estado do caso. */}
+      {dados?.disponivel && dados.jurisdicao && (
+        <p className="mb-3 mt-0 text-xs text-tinta-3">
+          Medido sobre <strong className="text-tinta-2">{dados.jurisdicao}</strong>
+          {dados.sinais?.uf ? ` (estado: ${dados.sinais.uf})` : ""}.
+        </p>
+      )}
+
       {/* Sinais do caso que alimentaram a busca — deixa claro o que puxou os precedentes. */}
       {dados?.sinais && (dados.sinais.categoria || dados.sinais.achados.length > 0) && (
         <div className="mb-4 flex flex-wrap items-center gap-2">

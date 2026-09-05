@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import analise_documentos, armazenamento, categorias, rag
+from . import analise_documentos, armazenamento, categorias, rag, tribunais
 
 log = logging.getLogger("jurimetria-caso")
 
@@ -64,35 +64,67 @@ def _consulta(sinais: dict[str, Any]) -> str:
     return "\n\n".join(partes).strip()
 
 
-def cruzar(caso_id: str, *, limite_precedentes: int = 12) -> dict[str, Any]:
+#: Abaixo disto a camada do estado é rasa demais para ler tendência — cai para a
+#: vizinhança (mesma região) e, por fim, para o acervo nacional.
+MINIMO_AMOSTRA = 8
+
+
+def _buscar_por_jurisdicao(consulta: str, uf: str) -> tuple[list[Any], str]:
+    """Busca no TRT do estado; sem amostra, abre para a região e depois o país.
+
+    Devolve os trechos e a jurisdição de fato usada, para a tela dizer de onde
+    vieram os números ("TRT8", "Região Norte", "acervo nacional").
+    """
+    camadas = tribunais.tribunais_por_prioridade(uf)
+    ultimo: list[Any] = []
+    for indice, trts in enumerate(camadas):
+        achados = rag.buscar_similares(
+            consulta, limite=30, timeout=40, connect_timeout=5, connect_retries=1,
+            tribunais=trts or None,
+        )
+        ultimo = achados
+        if len(achados) >= MINIMO_AMOSTRA or indice == len(camadas) - 1:
+            if trts:
+                jur = " + ".join(trts) if len(trts) <= 2 else f"{len(trts)} regionais da região"
+            else:
+                jur = "acervo nacional" if uf else "acervo nacional (sem estado informado)"
+            return achados, jur
+    return ultimo, "acervo nacional"
+
+
+def cruzar(caso_id: str, *, uf: str = "", limite_precedentes: int = 12) -> dict[str, Any]:
     """Precedentes semelhantes ao caso + a distribuição de desfechos da amostra.
 
-    Nunca levanta para o chamador: uma base fora do ar é um estado a mostrar, não
-    um 500 — o painel diz que a jurimetria não respondeu e o resto do dossiê segue.
+    `uf` foca a análise no TRT daquele estado (com fallback para a região e o
+    país). Nunca levanta: base fora do ar é um estado a mostrar, não um 500.
     """
     sinais = _sinais_do_caso(caso_id)
     consulta = _consulta(sinais)
+    jurisdicao = ""
     resumo_sinais = {
         "categoria": sinais["categoria"],
         "tem_entrevista": bool(sinais["entrevista"]),
         "achados": sinais["achados"][:8],
+        "uf": tribunais.normalizar_uf(uf),
     }
     if not consulta:
         return {
             "disponivel": False,
             "aviso": "Ainda não há entrevista nem dados extraídos para cruzar com a jurimetria.",
             "sinais": resumo_sinais,
+            "jurisdicao": jurisdicao,
             "precedentes": [],
             "estatisticas": None,
         }
     try:
-        similares = rag.buscar_similares(consulta, limite=30, timeout=40, connect_timeout=5, connect_retries=1)
+        similares, jurisdicao = _buscar_por_jurisdicao(consulta, uf)
     except Exception as erro:  # noqa: BLE001 - base remota pode estar fora do ar
         log.warning("jurimetria do caso %s indisponível: %s", caso_id, str(erro)[:160])
         return {
             "disponivel": False,
             "aviso": "A base de decisões não respondeu agora. Nada foi estimado; tente de novo.",
             "sinais": resumo_sinais,
+            "jurisdicao": jurisdicao,
             "precedentes": [],
             "estatisticas": None,
         }
@@ -101,6 +133,7 @@ def cruzar(caso_id: str, *, limite_precedentes: int = 12) -> dict[str, Any]:
             "disponivel": False,
             "aviso": "Nenhuma decisão suficientemente semelhante foi encontrada no acervo.",
             "sinais": resumo_sinais,
+            "jurisdicao": jurisdicao,
             "precedentes": [],
             "estatisticas": None,
         }
@@ -123,6 +156,7 @@ def cruzar(caso_id: str, *, limite_precedentes: int = 12) -> dict[str, Any]:
         "disponivel": True,
         "aviso": "",
         "sinais": resumo_sinais,
+        "jurisdicao": jurisdicao,
         "precedentes": precedentes,
         "estatisticas": rag._estatisticas_amostra(similares),
     }
