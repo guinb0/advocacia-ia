@@ -721,6 +721,36 @@ export async function analisarDocumentosDoCaso(casoId: string): Promise<AnaliseD
   );
 }
 
+export interface JurimetriaCaso {
+  disponivel: boolean;
+  aviso: string;
+  sinais: { categoria: string; tem_entrevista: boolean; achados: string[] };
+  precedentes: {
+    processo: string | null;
+    resultado: string;
+    vara: string;
+    tipo_documento?: string | null;
+    similaridade: number | null;
+    url?: string | null;
+    trecho: string;
+  }[];
+  estatisticas: {
+    processos_analisados: number;
+    resultados: { nome: string; quantidade: number; percentual: number }[];
+    varas: { nome: string; quantidade: number; percentual: number }[];
+    desfechos_favoraveis_amplos: { quantidade: number; percentual: number; criterio: string };
+    desfechos_merito: { processos: number; favoraveis: number; percentual: number; criterio: string };
+    similaridade_amostra: { maxima: number; mediana: number; minima: number };
+    aviso: string;
+  } | null;
+}
+
+/** Cruza os fatos do caso (entrevista + achados do OCR) com o acervo de decisões:
+ *  precedentes semelhantes e a distribuição de desfechos por vara. Descritivo. */
+export async function jurimetriaDoCaso(casoId: string): Promise<JurimetriaCaso> {
+  return comoJson(await buscar(`/api/casos/${encodeURIComponent(casoId)}/jurimetria`));
+}
+
 /** Sorteia uma sala nova, ou pega o token para ENTRAR numa que já existe.
  *
  * São duas rotas porque são dois atos com donos diferentes. Sortear sala é do

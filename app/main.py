@@ -50,6 +50,7 @@ from . import (
     assinatura,
     assinatura_navegador,
     auth,
+    jurimetria_caso,
     carteira,
     casos,
     categorias,
@@ -2176,6 +2177,19 @@ def analisar_documentos_do_caso(caso_id: str):
         return analise_documentos.analisar(caso_id)
     except analise_documentos.ErroAnaliseDocumentos as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+@app.get("/api/casos/{caso_id}/jurimetria")
+async def jurimetria_do_caso(caso_id: str):
+    """Cruza os fatos do caso (entrevista + achados do OCR) com o acervo de decisões.
+
+    Entrega os precedentes semelhantes e a distribuição de desfechos POR VARA da
+    amostra — o "seu caso × os números" num lugar só. Descritivo, não preditivo.
+    Nunca dá 500: base fora do ar vira `disponivel: false` com aviso.
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return await run_in_threadpool(jurimetria_caso.cruzar, caso_id)
 
 
 @app.post("/api/chamada/sala/{sala_id}/token", status_code=201)

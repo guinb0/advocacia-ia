@@ -42,6 +42,7 @@ import {
   type Proporcao,
   type Ranking,
 } from "@/lib/jurimetria";
+import PainelJurimetriaCaso from "@/components/caso/PainelJurimetriaCaso";
 
 /* Cor por desfecho, fixa: a mesma fatia precisa ter a mesma cor no gráfico de rosca, na
  * série anual e em cada ranking. Cor que muda de significado entre seções é pior que
@@ -118,6 +119,10 @@ export default function Jurimetria({
           </Botao>
         </div>
       </header>
+
+      {/* Primeiro o cruzamento DESTE caso com o acervo; o painel agregado do
+        * recorte vem depois, como contexto mais amplo. */}
+      <PainelJurimetriaCaso casoId={casoId} />
 
       {carregando && (
         <div className="rounded-cartao border border-borda bg-papel px-5 py-10 text-center text-tinta-3 shadow-cartao">
