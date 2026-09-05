@@ -141,7 +141,33 @@ export default function Jurimetria({
         </Aviso>
       )}
 
-      {dados && !carregando && <Painel dados={dados} />}
+      {/* A estatística detalhada do acervo (desfechos por ano, por vara, por
+        * assunto, margens de confiança…) é rigorosa mas densa. Fica recolhida:
+        * o advogado vê primeiro o cruzamento simples do caso, e abre isto só
+        * quando quiser o aprofundamento. */}
+      {dados && !carregando && (
+        <details className="group rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 sm:px-5 [&::-webkit-details-marker]:hidden">
+            <div className="min-w-0">
+              <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
+                Aprofundar
+              </span>
+              <span className="mt-1 block font-titulo text-base font-semibold text-tinta">
+                Análise completa do acervo (números detalhados)
+              </span>
+              <span className="mt-1 block text-xs text-tinta-3">
+                Desfechos por ano, por vara, por assunto e por classe — com margens de confiança.
+              </span>
+            </div>
+            <span className="flex-none text-tinta-3 transition-transform group-open:rotate-90" aria-hidden>
+              ▸
+            </span>
+          </summary>
+          <div className="border-t border-borda px-4 py-4 sm:px-5">
+            <Painel dados={dados} />
+          </div>
+        </details>
+      )}
     </div>
   );
 }

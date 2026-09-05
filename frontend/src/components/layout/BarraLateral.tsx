@@ -84,10 +84,9 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // Acendem a carteira para a barra não ficar sem resposta quando o advogado
       // está dentro de um caso.
       { tela: "carteira", rotulo: "Carteira", relacionadas: ["caso", "dossie", "painel", "jurimetria"] },
-      // Fica em Atendimento, e não em Análise, porque a pergunta que ele responde é a de
-      // ANTES de saber qual caso abrir — o vizinho certo dela é a carteira, não o painel
-      // de dados.
-      { tela: "agente", rotulo: "Agente" },
+      // O "Agente" (conversa geral) saiu do menu enquanto ainda não funciona — depende
+      // do serviço ia-juridica. A tela e a rota continuam existindo; só não aparece na
+      // navegação. Basta devolver a linha abaixo quando o serviço estiver de pé.
       { tela: "casos", rotulo: "Casos" },
       { tela: "documentacao", rotulo: "Documentação" },
     ],

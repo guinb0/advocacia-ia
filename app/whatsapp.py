@@ -152,16 +152,90 @@ def estado_conexao() -> dict[str, Any]:
             dados = resposta.json()
             bloco = dados.get("instance") if isinstance(dados.get("instance"), dict) else dados
             estado = str(bloco.get("state") or dados.get("state") or "").lower()
-            return {
+            resultado = {
                 "configurado": True,
                 "conectado": estado == "open",
                 "estado": estado or "desconhecido",
                 "instancia": instancia,
+                "numero": "",
+                "perfil": "",
             }
+            if estado == "open":
+                # O número aparado só quando conectado — a lista traz o dono da
+                # instância. Best-effort: se a Evolution não devolver, fica vazio.
+                numero, perfil = _numero_conectado(base, instancia)
+                resultado["numero"] = numero
+                resultado["perfil"] = perfil
+            return resultado
         except httpx.HTTPError as erro:
             ultimo_erro = _mensagem_erro_evolution(erro)
             continue
     return {"configurado": True, "conectado": False, "estado": "indisponivel", "erro": ultimo_erro}
+
+
+def _numero_conectado(base: str, instancia: str) -> tuple[str, str]:
+    """Número e nome de perfil do WhatsApp pareado, quando a Evolution os expõe."""
+    try:
+        resposta = httpx.get(
+            f"{base}/instance/fetchInstances",
+            headers=_headers_evolution(),
+            params={"instanceName": instancia},
+            timeout=15,
+        )
+        resposta.raise_for_status()
+        dados = resposta.json()
+        lista = dados if isinstance(dados, list) else dados.get("instances") or [dados]
+        alvo = _chave(instancia)
+        for item in lista:
+            ins = item.get("instance") if isinstance(item.get("instance"), dict) else item
+            nome = str(ins.get("instanceName") or ins.get("name") or "")
+            if lista and (len(lista) == 1 or _chave(nome) == alvo):
+                bruto = str(ins.get("ownerJid") or ins.get("owner") or ins.get("number") or "")
+                numero = bruto.split("@", 1)[0]
+                return _formatar_numero(numero), str(ins.get("profileName") or "")
+    except (httpx.HTTPError, ValueError, KeyError):
+        pass
+    return "", ""
+
+
+def _chave(nome: str) -> str:
+    return "".join(ch for ch in str(nome).lower() if ch.isalnum())
+
+
+def _formatar_numero(digitos: str) -> str:
+    """55DDDNNNNNNNNN -> +55 (DD) 9XXXX-XXXX, o quanto der; senão devolve como veio."""
+    d = "".join(ch for ch in digitos if ch.isdigit())
+    if len(d) >= 12 and d.startswith("55"):
+        ddd, resto = d[2:4], d[4:]
+        meio = resto[:-4], resto[-4:]
+        return f"+55 ({ddd}) {meio[0]}-{meio[1]}"
+    return digitos
+
+
+def desconectar() -> dict[str, Any]:
+    """Desliga o WhatsApp da instância (logout) — o número deixa de estar pareado.
+
+    Não apaga a instância: depois é só escanear um QR novo para reconectar (o
+    mesmo número ou outro). Autonomia do escritório para trocar de aparelho/número.
+    """
+    if not configurado():
+        raise RuntimeError("O WhatsApp (Evolution) não está configurado no servidor.")
+    base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+    ultimo_erro = "A instância do WhatsApp configurada no servidor não foi encontrada."
+    for instancia in _instancias_candidatas():
+        try:
+            resposta = httpx.delete(
+                _url_instancia(base, "instance/logout", instancia),
+                headers=_headers_evolution(),
+                timeout=20,
+            )
+            if resposta.status_code == 404:
+                continue
+            resposta.raise_for_status()
+            return {"desconectado": True, "instancia": instancia}
+        except httpx.HTTPError as erro:
+            raise RuntimeError(_mensagem_erro_evolution(erro)) from erro
+    raise RuntimeError(ultimo_erro)
 
 
 def abrir_conexao_qrcode() -> dict[str, Any]:
@@ -309,6 +383,15 @@ async def conectar_whatsapp():
     """Um QR novo para religar a instância caída (ou trocar de número)."""
     try:
         return await run_in_threadpool(abrir_conexao_qrcode)
+    except RuntimeError as erro:
+        raise HTTPException(503, str(erro)) from erro
+
+
+@roteador.post("/desconectar", dependencies=[Depends(auth.usuario_atual)])
+async def desconectar_whatsapp():
+    """Desliga o número do WhatsApp (logout) — depois é só escanear outro QR."""
+    try:
+        return await run_in_threadpool(desconectar)
     except RuntimeError as erro:
         raise HTTPException(503, str(erro)) from erro
 
