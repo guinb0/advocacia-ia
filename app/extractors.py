@@ -203,6 +203,15 @@ def classificar(texto_norm: str) -> tuple[str, int, dict[str, int]]:
         if not pontos:
             return "desconhecido", 0, {}
 
+    # Boletim de ocorrência CITA o CPF e a CNH do envolvido — e por isso caía em
+    # "cnh". Mas é documento narrativo, não a foto de um documento de identidade:
+    # nenhum tipo cadastral serve. Fora todos; a leitura semântica o nomeia.
+    if _e_documento_policial(texto_norm):
+        for cadastral in PALAVRAS_TIPO:
+            pontos.pop(cadastral, None)
+        if not pontos:
+            return "desconhecido", 0, {}
+
     tipo = max(pontos, key=lambda k: pontos[k])
     return (tipo, pontos[tipo], pontos) if pontos[tipo] >= 10 else ("desconhecido", pontos[tipo], pontos)
 
@@ -248,6 +257,32 @@ def _evita_classificacao_ctps(texto_norm: str) -> bool:
         "LIQUIDO A RECEBER",
     )
     return any(s in texto_norm for s in sinais_holerite)
+
+
+def _e_documento_policial(texto_norm: str) -> bool:
+    """True para boletim/registro de ocorrência — narrativo, não documento de ID.
+
+    Ele traz o CPF e a CNH do envolvido no corpo do relato, o que fazia o
+    classificador achar que era a carteira em si. Um sinal forte de BO basta.
+    """
+    if not texto_norm:
+        return False
+    sinais = (
+        "BOLETIM DE OCORRENCIA",
+        "REGISTRO DE OCORRENCIA",
+        "OCORRENCIA POLICIAL",
+        "TALAO DE OCORRENCIA",
+        "POLICIA MILITAR",
+        "POLICIA CIVIL",
+        "POLICIA RODOVIARIA",
+        "BOPM",
+        "AUTORIDADE POLICIAL",
+        "DELEGACIA",
+        "GUARNICAO",
+        "SECRETARIA DE ESTADO DE POLICIA",
+        "SECRETARIA DE SEGURANCA",
+    )
+    return any(s in texto_norm for s in sinais)
 
 
 def _e_recibo_de_transporte(texto_norm: str) -> bool:
