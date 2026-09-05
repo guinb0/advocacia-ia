@@ -126,6 +126,47 @@ def _registro(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _coletar_tribunal(
+    cliente: httpx.Client,
+    tribunal: str,
+    inicio: date,
+    fim: date,
+    *,
+    todos: bool,
+    limite: int | None,
+    intervalo: float,
+) -> list[dict[str, Any]]:
+    vistos: set[str] = set()
+    saida: list[dict[str, Any]] = []
+    for di, df in _janelas(inicio, fim):
+        pagina = 1
+        while True:
+            try:
+                total, itens = _pagina(cliente, tribunal, di, df, pagina)
+            except _JanelaFalhou as erro:
+                print(f"  ! pulando {erro}")
+                break
+            time.sleep(intervalo)
+            if not itens:
+                break
+            for item in itens:
+                if not todos and not _e_substantiva(item):
+                    continue
+                if len(str(item.get("texto") or "").strip()) < 100:
+                    continue
+                chave = f"{item.get('numero_processo')}:{hash(str(item.get('texto')))}"
+                if chave in vistos:
+                    continue
+                vistos.add(chave)
+                saida.append(_registro(item))
+            if limite and len(saida) >= limite:
+                return saida
+            if pagina * 100 >= min(total, 10_000):
+                break
+            pagina += 1
+    return saida
+
+
 def coletar(
     tribunais: list[str],
     inicio: date,
@@ -134,45 +175,31 @@ def coletar(
     todos: bool,
     limite_por_tribunal: int | None,
     req_por_segundo: float,
-) -> list[dict[str, Any]]:
+    saida_dir: Path,
+    continuar: bool,
+) -> int:
+    """Coleta por tribunal, gravando UM arquivo por TRT ao terminar cada um.
+
+    Assim uma varredura de horas que caia retoma de onde parou (`--continuar`
+    pula os TRTs já gravados) e nunca perde o que já baixou.
+    """
     intervalo = 1.0 / max(req_por_segundo, 0.05)
-    vistos: set[str] = set()
-    saida: list[dict[str, Any]] = []
+    saida_dir.mkdir(parents=True, exist_ok=True)
+    total_geral = 0
     with httpx.Client(timeout=60.0, follow_redirects=True) as cliente:
         for tribunal in tribunais:
-            do_tribunal = 0
-            for di, df in _janelas(inicio, fim):
-                pagina = 1
-                while True:
-                    try:
-                        total, itens = _pagina(cliente, tribunal, di, df, pagina)
-                    except _JanelaFalhou as erro:
-                        print(f"  ! pulando {erro}")
-                        break
-                    time.sleep(intervalo)
-                    if not itens:
-                        break
-                    for item in itens:
-                        if not todos and not _e_substantiva(item):
-                            continue
-                        texto = str(item.get("texto") or "").strip()
-                        if len(texto) < 100:
-                            continue
-                        chave = f"{item.get('numero_processo')}:{hash(texto)}"
-                        if chave in vistos:
-                            continue
-                        vistos.add(chave)
-                        saida.append(_registro(item))
-                        do_tribunal += 1
-                    if limite_por_tribunal and do_tribunal >= limite_por_tribunal:
-                        break
-                    if pagina * 100 >= min(total, 10_000):
-                        break
-                    pagina += 1
-                if limite_por_tribunal and do_tribunal >= limite_por_tribunal:
-                    break
-            print(f"  {tribunal}: {do_tribunal:,} publicações")
-    return saida
+            arquivo = saida_dir / f"{tribunal}.json"
+            if continuar and arquivo.exists():
+                print(f"  {tribunal}: já coletado, pulando")
+                continue
+            registros = _coletar_tribunal(
+                cliente, tribunal, inicio, fim,
+                todos=todos, limite=limite_por_tribunal, intervalo=intervalo,
+            )
+            arquivo.write_text(json.dumps(registros, ensure_ascii=False), encoding="utf-8")
+            total_geral += len(registros)
+            print(f"  {tribunal}: {len(registros):,} publicações -> {arquivo}")
+    return total_geral
 
 
 def main() -> int:
@@ -183,22 +210,27 @@ def main() -> int:
     p.add_argument("--todos", action="store_true", help="não filtra só decisões; guarda toda publicação")
     p.add_argument("--limite-por-tribunal", type=int, default=None, help="amostra por tribunal")
     p.add_argument("--req-por-segundo", type=float, default=2.0)
-    p.add_argument("--saida", default="decisoes_djen_trts.json")
+    p.add_argument("--saida-dir", default="decisoes_djen", help="pasta; um arquivo por TRT")
+    p.add_argument("--continuar", action="store_true", help="pula TRTs já coletados (retoma)")
     args = p.parse_args()
 
     inicio = hoje - timedelta(days=int(args.meses * 30.44))
-    print(f"DJEN — {len(args.tribunais)} tribunal(is), de {inicio} a {hoje}")
-    registros = coletar(
+    saida_dir = Path(args.saida_dir)
+    print(f"DJEN — {len(args.tribunais)} tribunal(is), de {inicio} a {hoje} -> {saida_dir}/")
+    total = coletar(
         [t.upper() for t in args.tribunais],
         inicio,
         hoje,
         todos=args.todos,
         limite_por_tribunal=args.limite_por_tribunal,
         req_por_segundo=args.req_por_segundo,
+        saida_dir=saida_dir,
+        continuar=args.continuar,
     )
-    Path(args.saida).write_text(json.dumps(registros, ensure_ascii=False), encoding="utf-8")
-    print(f"\n{len(registros):,} registros gravados em {args.saida}")
-    print("Agora: python -m scripts.ingerir_jurimetria_geral --arquivo " + args.saida)
+    print(f"\n{total:,} registros gravados em {saida_dir}/ (um arquivo por TRT)")
+    print("Agora, para cada arquivo:")
+    print(f"  for f in {saida_dir}/*.json; do python -m scripts.ingerir_jurimetria_geral --arquivo \"$f\"; done")
+    print("  python -m scripts.vetorizar_pendentes")
     return 0
 
 
