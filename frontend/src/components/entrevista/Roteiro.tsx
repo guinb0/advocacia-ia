@@ -2342,16 +2342,51 @@ function CampoResposta({
   }
 
   if (pergunta.id === "municipio") {
+    // Input + datalist: dá para DIGITAR e filtrar na hora, muito mais rápido que
+    // rolar centenas de municípios num select.
     return (
-      <select
-        className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui disabled:bg-papel-3 disabled:text-tinta-desabilitada"
-        value={texto}
-        disabled={carregandoMunicipios || municipios.length === 0}
-        onChange={(e) => onResponder(pergunta.id, e.target.value)}
-      >
-        <option value="">{carregandoMunicipios ? "Carregando municípios…" : municipios.length ? "Selecione o município" : "Escolha a UF primeiro"}</option>
-        {municipios.map((municipio) => <option key={municipio.id} value={municipio.nome}>{municipio.nome}</option>)}
-      </select>
+      <>
+        <input
+          list="lista-municipios"
+          className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui disabled:bg-papel-3 disabled:text-tinta-desabilitada"
+          value={texto}
+          disabled={carregandoMunicipios || municipios.length === 0}
+          placeholder={
+            carregandoMunicipios
+              ? "Carregando municípios…"
+              : municipios.length
+                ? "Digite para filtrar o município"
+                : "Escolha a UF primeiro"
+          }
+          onChange={(e) => onResponder(pergunta.id, e.target.value)}
+        />
+        <datalist id="lista-municipios">
+          {municipios.map((municipio) => (
+            <option key={municipio.id} value={municipio.nome} />
+          ))}
+        </datalist>
+      </>
+    );
+  }
+
+  if (pergunta.id === "uf") {
+    // Mesmo motivo do município: digitar "SP" filtra na hora, sem rolar 27 estados.
+    return (
+      <>
+        <input
+          list="lista-ufs"
+          className="w-full max-w-[220px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui"
+          value={texto}
+          placeholder="Digite a UF (ex.: SP)"
+          maxLength={pergunta.opcoes.length ? undefined : 2}
+          onChange={(e) => onResponder(pergunta.id, e.target.value)}
+        />
+        <datalist id="lista-ufs">
+          {(pergunta.opcoes.length ? pergunta.opcoes : []).map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      </>
     );
   }
 

@@ -2180,16 +2180,17 @@ def analisar_documentos_do_caso(caso_id: str):
 
 
 @app.get("/api/casos/{caso_id}/jurimetria")
-async def jurimetria_do_caso(caso_id: str):
+async def jurimetria_do_caso(caso_id: str, uf: str = ""):
     """Cruza os fatos do caso (entrevista + achados do OCR) com o acervo de decisões.
 
-    Entrega os precedentes semelhantes e a distribuição de desfechos POR VARA da
-    amostra — o "seu caso × os números" num lugar só. Descritivo, não preditivo.
-    Nunca dá 500: base fora do ar vira `disponivel: false` com aviso.
+    `uf` foca a análise no TRT daquele estado — com fallback para os regionais da
+    mesma região e, por fim, o acervo nacional. Entrega os precedentes semelhantes
+    e a distribuição de desfechos POR VARA — o "seu caso × os números" num lugar só.
+    Descritivo, não preditivo. Nunca dá 500: base fora do ar vira `disponivel:false`.
     """
     if armazenamento.obter_caso(caso_id) is None:
         raise HTTPException(404, "Caso não encontrado.")
-    return await run_in_threadpool(jurimetria_caso.cruzar, caso_id)
+    return await run_in_threadpool(lambda: jurimetria_caso.cruzar(caso_id, uf=uf))
 
 
 @app.post("/api/chamada/sala/{sala_id}/token", status_code=201)

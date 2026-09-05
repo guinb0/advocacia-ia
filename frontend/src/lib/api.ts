@@ -733,7 +733,9 @@ export async function analisarDocumentosDoCaso(casoId: string): Promise<AnaliseD
 export interface JurimetriaCaso {
   disponivel: boolean;
   aviso: string;
-  sinais: { categoria: string; tem_entrevista: boolean; achados: string[] };
+  /** De onde vieram os números: "TRT8", "TRT2 + TRT15", "acervo nacional"… */
+  jurisdicao?: string;
+  sinais: { categoria: string; tem_entrevista: boolean; achados: string[]; uf?: string };
   precedentes: {
     processo: string | null;
     resultado: string;
@@ -755,9 +757,11 @@ export interface JurimetriaCaso {
 }
 
 /** Cruza os fatos do caso (entrevista + achados do OCR) com o acervo de decisões:
- *  precedentes semelhantes e a distribuição de desfechos por vara. Descritivo. */
-export async function jurimetriaDoCaso(casoId: string): Promise<JurimetriaCaso> {
-  return comoJson(await buscar(`/api/casos/${encodeURIComponent(casoId)}/jurimetria`));
+ *  precedentes semelhantes e a distribuição de desfechos por vara. Descritivo.
+ *  `uf` foca no TRT do estado (com fallback para a região e o país). */
+export async function jurimetriaDoCaso(casoId: string, uf = ""): Promise<JurimetriaCaso> {
+  const q = uf ? `?uf=${encodeURIComponent(uf)}` : "";
+  return comoJson(await buscar(`/api/casos/${encodeURIComponent(casoId)}/jurimetria${q}`));
 }
 
 /** Sorteia uma sala nova, ou pega o token para ENTRAR numa que já existe.
