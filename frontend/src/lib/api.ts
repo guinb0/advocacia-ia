@@ -93,6 +93,10 @@ export interface StatusWhatsapp {
   /** "open" (conectado), "connecting", "close" (caído), "indisponivel"… */
   estado: string;
   instancia?: string;
+  /** Número pareado, formatado (+55 (DD) 9XXXX-XXXX), quando conectado. */
+  numero?: string;
+  /** Nome do perfil do WhatsApp conectado, quando a Evolution o expõe. */
+  perfil?: string;
   erro?: string;
 }
 
@@ -104,6 +108,11 @@ export async function statusWhatsapp(): Promise<StatusWhatsapp> {
 /** Pede um QR novo para religar a instância caída ou trocar de número. */
 export async function conectarWhatsapp(): Promise<{ qrcode: string; codigo: string; instancia: string }> {
   return comoJson(await buscar("/api/whatsapp/conectar", { method: "POST" }));
+}
+
+/** Desliga o número do WhatsApp (logout) — depois é só escanear outro QR. */
+export async function desconectarWhatsapp(): Promise<{ desconectado: boolean; instancia: string }> {
+  return comoJson(await buscar("/api/whatsapp/desconectar", { method: "POST" }));
 }
 
 /** Guarda uma transcrição de atendimento como entrevista do caso. Aceita um

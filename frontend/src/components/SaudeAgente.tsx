@@ -12,7 +12,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowLeft, Database, Gauge, RefreshCcw, ServerCog } from "lucide-react";
 
 import { Aviso, Botao, Cartao, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
-import { ApiError, conectarWhatsapp, statusWhatsapp, type StatusWhatsapp } from "@/lib/api";
+import {
+  ApiError,
+  conectarWhatsapp,
+  desconectarWhatsapp,
+  statusWhatsapp,
+  type StatusWhatsapp,
+} from "@/lib/api";
 import {
   saudeDoAgente,
   type DependenciaAgente,
@@ -115,6 +121,7 @@ function CartaoWhatsapp() {
   const [status, setStatus] = useState<StatusWhatsapp | null>(null);
   const [qr, setQr] = useState<{ qrcode: string; codigo: string } | null>(null);
   const [pedindoQr, setPedindoQr] = useState(false);
+  const [desconectando, setDesconectando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
@@ -151,6 +158,22 @@ function CartaoWhatsapp() {
     }
   }
 
+  async function desconectar() {
+    if (!window.confirm("Desconectar o WhatsApp do escritório? Para voltar, será preciso escanear um novo QR.")) return;
+    setDesconectando(true);
+    setErro(null);
+    try {
+      await desconectarWhatsapp();
+      const s = await statusWhatsapp();
+      setStatus(s);
+      setQr(null);
+    } catch (e) {
+      setErro(e instanceof ApiError ? e.message : "Não foi possível desconectar.");
+    } finally {
+      setDesconectando(false);
+    }
+  }
+
   const conectado = status?.conectado;
   const conectando = status?.estado === "connecting";
   const selo = !status
@@ -178,10 +201,22 @@ function CartaoWhatsapp() {
             aria-hidden
           />
           <Selo tom={selo.tom} simbolo={conectado ? "✓" : "!"}>{selo.texto}</Selo>
-          {status?.instancia && (
-            <span className="text-xs text-tinta-3">instância “{status.instancia}”</span>
+          {conectado && status?.numero ? (
+            <span className="text-sm font-semibold tabular-nums text-tinta">
+              {status.numero}
+              {status.perfil && <span className="ml-1 font-normal text-tinta-3">· {status.perfil}</span>}
+            </span>
+          ) : (
+            status?.instancia && (
+              <span className="text-xs text-tinta-3">instância “{status.instancia}”</span>
+            )
           )}
         </div>
+        {status && status.configurado && conectado && (
+          <Botao variante="secundario" pequeno onClick={() => void desconectar()} disabled={desconectando}>
+            {desconectando ? "Desconectando…" : "Desconectar número"}
+          </Botao>
+        )}
         {status && status.configurado && !conectado && (
           <Botao variante="primario" pequeno onClick={() => void pedirQr()} disabled={pedindoQr}>
             {pedindoQr ? "Gerando QR…" : qr ? "Gerar outro QR" : "Conectar / trocar número"}
