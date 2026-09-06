@@ -42,6 +42,11 @@ def instalar(resposta: dict) -> list[str]:
     ad._chamar_modelo = falso  # type: ignore[assignment]
     ad._documentos_do_caso = lambda _id: list(DOCUMENTOS)  # type: ignore[assignment]
     ad._fatos_conhecidos = lambda _id: ["Ficou afastado pelo INSS?: não"]  # type: ignore[assignment]
+    # `analisar` cacheia por `atualizado_em` do caso; aqui não há banco, e cada
+    # cenário troca o modelo por outro — sem limpar, o 2º cenário receberia o
+    # resultado cacheado do 1º e o mock novo nunca seria chamado.
+    ad.armazenamento.obter_caso = lambda _id: {"atualizado_em": "teste"}  # type: ignore[assignment]
+    ad._analisar_cacheado.limpar_cache()  # type: ignore[attr-defined]
     return enviadas
 
 
