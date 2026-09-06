@@ -16,11 +16,36 @@ probabilidade de êxito. As estatísticas e o aviso vêm de `rag._estatisticas_a
 from __future__ import annotations
 
 import logging
+import re
+from collections import Counter
 from typing import Any
 
 from . import analise_documentos, armazenamento, categorias, rag, tribunais
 
 log = logging.getLogger("jurimetria-caso")
+
+#: Sigla de UF como palavra isolada — para achar o estado no endereço que o OCR
+#: extraiu ("Nova Iguaçu - RJ"). Só as 27 válidas; a mais frequente vence.
+_RE_UF = re.compile(r"(?<![A-Z0-9])(" + "|".join(tribunais.UF_PARA_TRT) + r")(?![A-Z0-9])")
+
+
+def _detectar_uf(texto: str) -> str:
+    """Best-effort: o estado do caso a partir do endereço lido nos documentos.
+
+    Prefere a sigla mais repetida no texto. Sem sigla, tenta o nome por extenso.
+    Serve só para FOCAR a busca; erro aqui degrada para a região/nacional, não
+    inventa dado no dossiê.
+    """
+    if not texto:
+        return ""
+    achados = _RE_UF.findall(texto.upper())
+    if achados:
+        return Counter(achados).most_common(1)[0][0]
+    for pedaco in re.split(r"[,\-/\n]", texto):
+        sigla = tribunais.normalizar_uf(pedaco.strip())
+        if sigla:
+            return sigla
+    return ""
 
 
 def _sinais_do_caso(caso_id: str) -> dict[str, Any]:
@@ -101,11 +126,16 @@ def cruzar(caso_id: str, *, uf: str = "", limite_precedentes: int = 12) -> dict[
     sinais = _sinais_do_caso(caso_id)
     consulta = _consulta(sinais)
     jurisdicao = ""
+    # UF do parâmetro vence; sem ela, tenta descobrir pelo endereço extraído.
+    uf_efetiva = tribunais.normalizar_uf(uf) or _detectar_uf(
+        f"{sinais['entrevista']} {' '.join(sinais['achados'])}"
+    )
     resumo_sinais = {
         "categoria": sinais["categoria"],
         "tem_entrevista": bool(sinais["entrevista"]),
         "achados": sinais["achados"][:8],
-        "uf": tribunais.normalizar_uf(uf),
+        "uf": uf_efetiva,
+        "uf_automatica": bool(uf_efetiva and not tribunais.normalizar_uf(uf)),
     }
     if not consulta:
         return {
@@ -117,7 +147,7 @@ def cruzar(caso_id: str, *, uf: str = "", limite_precedentes: int = 12) -> dict[
             "estatisticas": None,
         }
     try:
-        similares, jurisdicao = _buscar_por_jurisdicao(consulta, uf)
+        similares, jurisdicao = _buscar_por_jurisdicao(consulta, uf_efetiva)
     except Exception as erro:  # noqa: BLE001 - base remota pode estar fora do ar
         log.warning("jurimetria do caso %s indisponível: %s", caso_id, str(erro)[:160])
         return {
