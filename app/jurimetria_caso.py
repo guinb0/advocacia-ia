@@ -117,6 +117,21 @@ def _buscar_por_jurisdicao(consulta: str, uf: str) -> tuple[list[Any], str]:
     return ultimo, "acervo nacional"
 
 
+def buscar_focada(
+    consulta: str, *, uf: str = "", texto_para_uf: str = ""
+) -> tuple[list[Any], str, str]:
+    """Busca em camadas focada no estado do caso — reutilizável fora do painel.
+
+    `uf` explícita vence; sem ela, infere pelo endereço lido nos documentos
+    (`texto_para_uf`). É o mesmo foco estado→região→país que o painel usa, para
+    a petição gerada citar precedentes do TRT do caso, não do país inteiro.
+    Devolve (trechos, jurisdicao_usada, uf_efetiva).
+    """
+    uf_efetiva = tribunais.normalizar_uf(uf) or _detectar_uf(texto_para_uf)
+    similares, jurisdicao = _buscar_por_jurisdicao(consulta, uf_efetiva)
+    return similares, jurisdicao, uf_efetiva
+
+
 def cruzar(caso_id: str, *, uf: str = "", limite_precedentes: int = 12) -> dict[str, Any]:
     """Precedentes semelhantes ao caso + a distribuição de desfechos da amostra.
 
