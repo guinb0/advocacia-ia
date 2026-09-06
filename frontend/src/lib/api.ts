@@ -735,7 +735,7 @@ export interface JurimetriaCaso {
   aviso: string;
   /** De onde vieram os números: "TRT8", "TRT2 + TRT15", "acervo nacional"… */
   jurisdicao?: string;
-  sinais: { categoria: string; tem_entrevista: boolean; achados: string[]; uf?: string };
+  sinais: { categoria: string; tem_entrevista: boolean; achados: string[]; uf?: string; uf_automatica?: boolean };
   precedentes: {
     processo: string | null;
     resultado: string;

@@ -66,7 +66,10 @@ export default function PainelJurimetriaCaso({ casoId, uf = "" }: { casoId: stri
       {dados?.disponivel && dados.jurisdicao && (
         <p className="mb-3 mt-0 text-xs text-tinta-3">
           Medido sobre <strong className="text-tinta-2">{dados.jurisdicao}</strong>
-          {dados.sinais?.uf ? ` (estado: ${dados.sinais.uf})` : ""}.
+          {dados.sinais?.uf
+            ? ` (estado ${dados.sinais.uf}${dados.sinais.uf_automatica ? ", detectado dos documentos" : ""})`
+            : ""}
+          .
         </p>
       )}
 
