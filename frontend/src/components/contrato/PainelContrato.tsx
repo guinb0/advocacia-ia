@@ -12,6 +12,7 @@ import {
   gerarContrato,
   listarAssinaturas,
   obterAssinatura,
+  reenviarLinkAssinaturaSite,
   requisitosDoContrato,
 } from "@/lib/api";
 import type {
@@ -532,6 +533,10 @@ function EnvioPeloSiteZapSign({
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<{ link: string; whatsapp_enviado: boolean } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  /* Reenvio manual do link pelo WhatsApp, separado do envio inicial: o convite
+   * cai no spam, ou o telefone só aparece depois de o documento já ter subido. */
+  const [reenviandoWa, setReenviandoWa] = useState(false);
+  const [envioWa, setEnvioWa] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const CAMPO =
     "w-full rounded-[6px] border border-borda bg-papel px-3 py-2 text-sm text-tinta placeholder:text-tinta-3";
@@ -553,6 +558,22 @@ function EnvioPeloSiteZapSign({
       setErro(e instanceof Error ? e.message : "Não foi possível enviar pelo site do ZapSign.");
     } finally {
       setEnviando(false);
+    }
+  }
+
+  /* Manda (ou reenvia) só o link de assinatura pelo WhatsApp — sem recriar o
+   * documento na ZapSign. Usa o número digitado no campo acima. */
+  async function enviarLinkWhatsapp() {
+    if (!resultado?.link || !whatsapp.trim() || reenviandoWa) return;
+    setReenviandoWa(true);
+    setEnvioWa(null);
+    try {
+      await reenviarLinkAssinaturaSite(whatsapp.trim(), resultado.link);
+      setEnvioWa({ tom: "ok", texto: "Link enviado pelo WhatsApp." });
+    } catch (e) {
+      setEnvioWa({ tom: "erro", texto: e instanceof Error ? e.message : "Falha ao enviar pelo WhatsApp." });
+    } finally {
+      setReenviandoWa(false);
     }
   }
 
@@ -621,6 +642,36 @@ function EnvioPeloSiteZapSign({
           <p className="mt-1 mb-0 text-tinta-3">
             WhatsApp: {resultado.whatsapp_enviado ? "link enviado ao cliente" : "não enviado"}
           </p>
+          {resultado.link && (
+            <div className="mt-3 border-t border-ok-borda pt-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                <input
+                  className={CAMPO}
+                  value={whatsapp}
+                  onChange={(e) => setWhatsapp(e.target.value)}
+                  placeholder="WhatsApp do cliente (com DDD)"
+                  inputMode="tel"
+                />
+                <button
+                  type="button"
+                  onClick={() => void enviarLinkWhatsapp()}
+                  disabled={reenviandoWa || !whatsapp.trim()}
+                  className="rounded-[6px] bg-acao px-4 py-2 text-sm font-semibold text-white hover:bg-acao-forte disabled:opacity-50"
+                >
+                  {reenviandoWa
+                    ? "Enviando…"
+                    : resultado.whatsapp_enviado
+                      ? "Reenviar link por WhatsApp"
+                      : "Enviar link por WhatsApp"}
+                </button>
+              </div>
+              {envioWa && (
+                <p className={`mt-2 mb-0 text-sm ${envioWa.tom === "ok" ? "text-ok" : "text-critico"}`}>
+                  {envioWa.texto}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

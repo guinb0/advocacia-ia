@@ -1213,6 +1213,46 @@ async def enviar_assinatura_pelo_site(
     return {"ok": True, "link": resultado["link"], "whatsapp_enviado": whatsapp_enviado}
 
 
+class PedidoLinkAssinaturaSite(BaseModel):
+    telefone: str = Field(..., min_length=8, max_length=20)
+    link: str = Field(..., min_length=8, max_length=500)
+
+
+@app.post("/api/assinatura/navegador/whatsapp", status_code=201)
+async def reenviar_link_assinatura_site(pedido: PedidoLinkAssinaturaSite) -> dict[str, bool]:
+    """(Re)envia ao cliente, pelo WhatsApp, o link de assinatura já criado no ZapSign.
+
+    O envio pelo site já dispara o link uma vez, mas o convite cai no spam e o
+    cliente jura que não recebeu — ou o telefone não estava à mão na criação.
+    Este botão manda o MESMO link, sem recriar o documento na ZapSign. Aceita só
+    um link http(s), não texto livre: não é um canal para mandar qualquer coisa a
+    qualquer número (ver o cabeçalho de `app/whatsapp.py`).
+    """
+    if not whatsapp.configurado():
+        raise HTTPException(
+            503,
+            "O WhatsApp do escritório não está conectado. Conecte a Evolution para enviar o link.",
+        )
+    link = pedido.link.strip()
+    if not (link.startswith("http://") or link.startswith("https://")):
+        raise HTTPException(422, "Link de assinatura inválido.")
+    numero = whatsapp._numero_brasileiro(pedido.telefone)
+    texto = (
+        f"Olá! Segue o documento para assinatura digital: {link}\n"
+        "Qualquer dúvida, estamos à disposição."
+    )
+    try:
+        await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a Evolution pode oscilar; a tela reoferece o botão
+        log.warning("Falha ao reenviar link de assinatura pelo WhatsApp", exc_info=True)
+        raise HTTPException(
+            502, "A Evolution não enviou a mensagem agora. Tente novamente."
+        ) from exc
+    return {"enviado": True}
+
+
 @app.post("/api/contrato/assinatura", status_code=201)
 async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
     """Gera a papelada INTEIRA e a manda para assinatura eletrônica.
