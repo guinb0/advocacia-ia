@@ -2415,6 +2415,9 @@ def obter_caso(caso_id: str):
     situacao = casos.montar_situacao(caso_id)
     if situacao is None:
         raise HTTPException(404, "Caso não encontrado.")
+    # "Nada passa despercebido": item de carteira que falta, mas cujo dado (CTPS,
+    # PIS) aparece em outro anexo, ganha a observação de onde foi encontrado.
+    casos.anexar_observacoes_cruzadas(caso_id, situacao)
     return situacao
 
 

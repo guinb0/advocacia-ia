@@ -205,6 +205,9 @@ export interface EntregaDetalhe extends Entrega {
 export interface ItemSituacao extends ItemChecklist {
   status: StatusItem;
   entregas: Entrega[];
+  /** Item que falta, mas cujo dado (ex.: CTPS/PIS) apareceu em OUTRO documento.
+   *  Indício de que a informação já está no caso — não dá o item por entregue. */
+  encontrado_em?: { arquivo: string; dado: string }[];
 }
 
 export interface Progresso {
