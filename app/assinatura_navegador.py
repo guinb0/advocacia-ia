@@ -149,29 +149,76 @@ def _diagnostico_pagina(pagina: Any) -> str:
     return " || ".join(partes)[:1600]
 
 
-def _enviar_um(
-    pagina: Any, caminho_pdf: Path, cliente_nome: str, cliente_email: str, url_app: str, espera: int
-) -> str:
-    """Sobe UM PDF já logado e devolve o link de assinatura (vazio se não achar)."""
-    pagina.goto(f"{url_app}/conta/documentos/novo", wait_until="networkidle")
-    pagina.set_input_files(_sel("UPLOAD", "input[type='file']"), str(caminho_pdf))
-    pagina.wait_for_load_state("networkidle")
-    for seletor, valor in (
-        (_sel("SIGNATARIO_BUSCA", "input[placeholder*='nome'], input[placeholder*='e-mail']"), cliente_email),
-        (_sel("SIGNATARIO_NOME", "input[placeholder*='ome do signat'], input[name='name']"), cliente_nome),
-        (_sel("SIGNATARIO_EMAIL", "input[placeholder*='mail do signat'], input[type='email']"), cliente_email),
-    ):
+def _clicar(pagina: Any, textos: tuple[str, ...], espera: int) -> bool:
+    """Clica o primeiro botão/link visível e habilitado cujo texto casa.
+
+    `:has-text` é substring e ignora caixa, então "Continuar" acha "CONTINUAR".
+    Devolve se clicou — o assistente do ZapSign é um SPA (a URL não muda entre as
+    etapas), então cada avanço é um clique como este, não uma navegação.
+    """
+    for t in textos:
         try:
-            campo = pagina.query_selector(seletor)
-            if campo:
-                campo.fill(valor)
-        except Exception:  # noqa: BLE001 - campo ausente não interrompe
-            continue
-    for rotulo in ("CONTINUAR", "Enviar", "Finalizar", "Enviar para assinatura"):
-        alvo = pagina.query_selector(f"button:has-text('{rotulo}')")
+            alvo = pagina.wait_for_selector(
+                f"button:has-text('{t}'), a:has-text('{t}')",
+                timeout=int(espera / 4),
+                state="visible",
+            )
+        except Exception:  # noqa: BLE001 - este rótulo não está nesta etapa
+            alvo = None
         if alvo and alvo.is_enabled():
             alvo.click()
             pagina.wait_for_load_state("networkidle")
+            return True
+    return False
+
+
+def _enviar_um(
+    pagina: Any, caminho_pdf: Path, cliente_nome: str, cliente_email: str, url_app: str, espera: int
+) -> str:
+    """Percorre o assistente de 4 etapas do ZapSign e devolve o link de assinatura.
+
+    Etapas (calibradas contra a conta real, ver prints em docs/):
+      1. Selecionar documento — subir o PDF → "Continuar".
+      2. Adicionar signatários — "Nome do signatário" (+ e-mail) → "Continuar".
+      3. Posicionar assinaturas (opcional) — "Continuar sem posicionar".
+      4. Enviar documento — "Enviar" → o link `/verificar/` aparece.
+    """
+    pagina.goto(f"{url_app}/conta/documentos/novo", wait_until="networkidle")
+
+    # 1) Subir o PDF e avançar.
+    pagina.set_input_files(_sel("UPLOAD", "input[type='file']"), str(caminho_pdf))
+    pagina.wait_for_load_state("networkidle")
+    _clicar(pagina, ("Continuar",), espera)
+
+    # 2) Signatário: nome e, quando o campo aparece, e-mail. O nome é obrigatório;
+    # o e-mail costuma surgir depois de digitado o nome (ou já está visível).
+    try:
+        campo_nome = pagina.wait_for_selector(
+            _sel("SIGNATARIO_NOME", "input[placeholder*='signat'], input[placeholder*='Nome do signat']"),
+            timeout=espera,
+            state="visible",
+        )
+        campo_nome.fill(cliente_nome)
+    except Exception:  # noqa: BLE001 - sem o campo, o diagnóstico dirá o porquê
+        pass
+    try:
+        campo_email = pagina.wait_for_selector(
+            _sel("SIGNATARIO_EMAIL", "input[type='email'], input[placeholder*='mail']"),
+            timeout=int(espera / 3),
+            state="visible",
+        )
+        campo_email.fill(cliente_email)
+    except Exception:  # noqa: BLE001 - e-mail pode não ser exigido nesta conta
+        pass
+    _clicar(pagina, ("Continuar",), espera)
+
+    # 3) Posicionar assinaturas é OPCIONAL — seguir sem posicionar.
+    _clicar(pagina, ("Continuar sem posicionar", "Salvar e continuar", "Continuar"), espera)
+
+    # 4) Enviar de fato.
+    _clicar(pagina, ("Enviar documento", "Enviar", "Finalizar", "Enviar para assinatura"), espera)
+    pagina.wait_for_load_state("networkidle")
+
     return _extrair_link(pagina, espera)
 
 
