@@ -145,6 +145,9 @@ async def executar() -> int:
                  "bairro": "Centro", "cidade": "São Paulo", "uf": "SP", "cep": "01001000"}
             ],
             "emails": [{"enderecoEmail": "maria@exemplo.com"}],
+            "sexo": "F",
+            "rendaEstimada": "3000",
+            "rendaFaixaSalarial": "2-5 SM",
         }
     }
     token_antes = consultas.DIRECTD_TOKEN
@@ -159,6 +162,8 @@ async def executar() -> int:
         falhas += not checar(campos.get("email") == "maria@exemplo.com", "traz o e-mail (campo que faltava)")
         falhas += not checar("CEP 01001-000" in campos.get("endereco", ""), "endereço montado com CEP formatado")
         falhas += not checar(campos.get("uf") == "SP" and campos.get("municipio") == "São Paulo", "UF e município do endereço")
+        falhas += not checar(campos.get("sexo") == "Feminino", "sexo F vira 'Feminino' (campo novo)")
+        falhas += not checar("R$ 3000" in campos.get("renda_estimada", "") and "2-5 SM" in campos.get("renda_estimada", ""), "renda estimada + faixa (campo novo)")
     finally:
         consultas.DIRECTD_TOKEN = token_antes
 

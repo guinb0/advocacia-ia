@@ -192,6 +192,14 @@ IDENTIFICACAO = Bloco(
     perguntas=[
         Pergunta("nacionalidade", "Nacionalidade", "dado"),
         Pergunta("nascimento", "Data de nascimento", "data"),
+        # Preenchidos pela consulta por CPF (DirectD); editáveis à mão.
+        Pergunta("sexo", "Sexo", "dado"),
+        Pergunta(
+            "renda_estimada",
+            "Renda estimada",
+            "dado",
+            dica="Estimativa da base de dados por CPF — confirmar com o cliente.",
+        ),
         Pergunta("profissao", "Profissão", "dado"),
         # Três campos, não um: o contrato pede o número num lugar e o órgão
         # noutro ("portador(a) do RG nº ___, expedido por ___"). Perguntando
