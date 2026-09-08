@@ -74,6 +74,7 @@ from . import (
     rag,
     recomendacao,
     relatorio,
+    revisao,
     roteamento,
     roteiros,
     triagem,
@@ -130,6 +131,10 @@ async def ciclo_de_vida(_: FastAPI):
         await run_in_threadpool(perfis.inicializar)
     except Exception:
         log.exception("Não foi possível inicializar os perfis de acesso")
+    try:
+        await run_in_threadpool(revisao.inicializar)
+    except Exception:
+        log.exception("Não foi possível inicializar a tabela de revisões")
     try:
         # Cria a tabela de contas e garante que exista pelo menos uma, senão um
         # ambiente novo sobe com a autenticação ligada e nenhum jeito de entrar.
@@ -2576,6 +2581,53 @@ def obter_caso(caso_id: str):
     # PIS) aparece em outro anexo, ganha a observação de onde foi encontrado.
     casos.anexar_observacoes_cruzadas(caso_id, situacao)
     return situacao
+
+
+# --------------------------------------------------------- REVISÃO DE PETIÇÕES
+# Perfil Revisor: fila de petições a revisar, aprovação e métricas de atividade.
+PodeRevisar = Depends(auth.exigir_modulo("revisao"))
+
+
+def _quem_revisa(usuario: auth.Usuario) -> str:
+    return usuario.usuario or getattr(usuario, "nome", "") or usuario.id or "revisor"
+
+
+class PedidoConclusaoRevisao(BaseModel):
+    #: "aprovada" (segue para assinatura) ou "ajustes" (volta ao redator).
+    resultado: str
+
+
+@app.get("/api/revisao/fila")
+def revisao_fila(_usuario: auth.Usuario = PodeRevisar):
+    """As petições que precisam de revisão, da mais antiga para a mais nova."""
+    return {"pendentes": revisao.fila_pendentes()}
+
+
+@app.post("/api/revisao/{caso_id}/iniciar", status_code=201)
+def revisao_iniciar(caso_id: str, usuario: auth.Usuario = PodeRevisar):
+    """Marca o início da revisão desta petição por este revisor (idempotente)."""
+    if not peticao_local.existe(caso_id):
+        raise HTTPException(404, "Não há petição para revisar neste caso.")
+    return revisao.iniciar(caso_id, _quem_revisa(usuario))
+
+
+@app.post("/api/revisao/{caso_id}/concluir")
+def revisao_concluir(
+    caso_id: str, pedido: PedidoConclusaoRevisao, usuario: auth.Usuario = PodeRevisar
+):
+    """Aprova a petição ou a devolve para ajustes, fechando a contagem do tempo."""
+    if not peticao_local.existe(caso_id):
+        raise HTTPException(404, "Não há petição para revisar neste caso.")
+    try:
+        return revisao.concluir(caso_id, _quem_revisa(usuario), pedido.resultado.strip())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/revisao/metricas")
+def revisao_metricas(minhas: bool = False, usuario: auth.Usuario = PodeRevisar):
+    """Métricas de revisão. `minhas=true` recorta para o próprio revisor."""
+    return revisao.metricas(_quem_revisa(usuario) if minhas else None)
 
 
 @app.get("/api/casos/{caso_id}/painel")
