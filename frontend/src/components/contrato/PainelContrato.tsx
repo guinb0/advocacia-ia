@@ -170,7 +170,11 @@ export default function PainelContrato({ respostas }: Props) {
   }
 
   useEffect(() => {
-    if (!ASSINATURA_ELETRONICA_ATIVA) return;
+    // A config precisa ser buscada SEMPRE: o envio pela conta ZapSign (site) só
+    // depende de `config.navegador`, e é independente do fluxo de API (desligado
+    // por `ASSINATURA_ELETRONICA_ATIVA`). Travar a busca atrás dessa flag deixava
+    // `config` nulo e ESCONDIA o botão de enviar para assinatura — o escritório
+    // via só os downloads e nenhum jeito de mandar o cliente assinar.
     let vivo = true;
     void configAssinatura()
       .then((c) => {
@@ -579,11 +583,12 @@ function EnvioPeloSiteZapSign({
 
   return (
     <div className="mt-4 rounded-[10px] border border-borda-forte bg-papel-2 p-4">
-      <h3 className="m-0 text-sm font-semibold text-tinta">Enviar pela conta ZapSign (site)</h3>
+      <h3 className="m-0 text-sm font-semibold text-tinta">Enviar para o cliente assinar (ZapSign + WhatsApp)</h3>
       <p className="mt-1 mb-3 text-xs leading-[1.55] text-tinta-3">
-        Para o plano sem API: sobe o documento na conta do escritório e dispara o convite por
-        e-mail; havendo telefone, o link também vai pelo WhatsApp. Envie o PDF já pronto
-        (baixe o contrato/procuração acima e selecione aqui).
+        Baixe acima o documento (contrato, procuração ou declaração), selecione o PDF aqui e
+        envie: o escritório sobe na ZapSign e dispara o convite por e-mail; havendo telefone,
+        o link de assinatura também vai pelo <strong>WhatsApp</strong> do cliente. Depois de
+        enviar, dá para reenviar o link por WhatsApp com um clique.
       </p>
 
       <div className="grid gap-2">
