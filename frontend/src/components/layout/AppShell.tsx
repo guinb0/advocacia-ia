@@ -27,6 +27,7 @@ const ROTULO_TELA: Record<Tela, string> = {
   modelosDePeticao: "Modelos de petição",
   catalogoRoteiros: "Roteiros",
   revisao: "Revisão de petições",
+  followup: "Follow-up",
   documentacao: "Documentação",
 };
 

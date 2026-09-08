@@ -2572,6 +2572,16 @@ def fila_da_carteira(
     )
 
 
+@app.get("/api/follow-up")
+def relatorio_follow_up(_usuario: auth.Usuario = Depends(auth.exigir_modulo("casos"))):
+    """Relatório operacional: clientes com documento obrigatório pendente.
+
+    Nome, telefone, documentos faltantes e alerta de quando o follow-up por
+    WhatsApp não resolve e é preciso LIGAR (ver `carteira.relatorio_follow_up`).
+    """
+    return carteira.relatorio_follow_up()
+
+
 @app.get("/api/casos/{caso_id}")
 def obter_caso(caso_id: str):
     situacao = casos.montar_situacao(caso_id)

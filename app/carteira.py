@@ -27,6 +27,10 @@ from . import casos as casos_ocr
 #: Dias parados a partir dos quais um caso sem documento vira cobrança.
 DIAS_PARA_COBRAR = 7
 
+#: A partir daqui, mesmo COM follow-up automático ligado, o silêncio já pede uma
+#: ligação: o WhatsApp não trouxe os documentos e a espera virou risco.
+DIAS_PARA_LIGAR = 10
+
 #: Casos por página. O mesmo valor é o padrão da rota.
 TAMANHO_PADRAO = 10
 
@@ -283,3 +287,94 @@ def _pedidos(medidos: list[dict[str, Any]], quantos: int = 4) -> list[dict[str, 
         if len(saida) == quantos:
             break
     return saida
+
+
+# ---------------------------------------------------- RELATÓRIO DE FOLLOW-UP
+# Visão operacional para o atendimento: quem tem documento obrigatório pendente
+# e — pela regra abaixo — precisa de LIGAÇÃO, porque o follow-up automático por
+# WhatsApp não está trazendo os documentos.
+
+
+def _cobrancas_por_caso() -> dict[str, dict[str, Any]]:
+    """Estado do follow-up automático (cobrança) de cada caso, em uma consulta."""
+    with banco.conectar() as con:
+        linhas = con.execute(
+            "SELECT caso_id, ativa, telefone, ultimo_envio_em, ultimo_erro FROM cobrancas_documentos"
+        ).fetchall()
+    return {str(l["caso_id"]): dict(l) for l in linhas}
+
+
+def _precisa_ligar(telefone: str, cobranca: dict[str, Any] | None, dias: int) -> tuple[bool, str]:
+    """Quando o follow-up por WhatsApp não resolve e um humano tem de ligar.
+
+    Regra (operacional, não é ranking de cliente):
+      - sem telefone → só dá para ligar;
+      - último envio do follow-up falhou → o WhatsApp não está chegando;
+      - follow-up desligado e caso parado além do prazo de cobrança;
+      - follow-up ligado, mas parado tempo demais mesmo assim.
+    """
+    if not telefone:
+        return True, "Sem telefone cadastrado — contato só por ligação."
+    if cobranca and str(cobranca.get("ultimo_erro") or "").strip():
+        return True, "O follow-up por WhatsApp falhou no último envio."
+    ativa = bool(cobranca and cobranca.get("ativa"))
+    if not ativa and dias >= DIAS_PARA_COBRAR:
+        return True, f"Sem follow-up automático e {dias} dias sem movimento."
+    if ativa and dias >= DIAS_PARA_LIGAR:
+        return True, f"{dias} dias sem os documentos, apesar do follow-up."
+    return False, ""
+
+
+def relatorio_follow_up() -> dict[str, Any]:
+    """Clientes com documento obrigatório pendente, com telefone, faltantes e alerta.
+
+    Só entra quem tem pendência OBRIGATÓRIA. Ordena os que precisam de ligação
+    primeiro e, entre eles, o que está parado há mais tempo. É o retrato do
+    follow-up; a decisão de ligar é de quem atende.
+    """
+    with banco.sessao():
+        cadastro = armazenamento.listar_casos()
+        entregas_por_caso = armazenamento.entregas_de_todos_os_casos()
+        cobrancas = _cobrancas_por_caso()
+
+    clientes: list[dict[str, Any]] = []
+    for caso in cadastro:
+        situacao_caso = casos_ocr.situacao_de(caso, entregas_por_caso.get(str(caso["id"]), []))
+        progresso = situacao_caso.get("progresso")
+        if not progresso or progresso.get("obrigatorios_pendentes", 0) == 0:
+            continue
+        faltantes = [
+            i["nome"]
+            for i in situacao_caso.get("itens", [])
+            if i.get("obrigatorio") and i.get("status") == casos_ocr.PENDENTE
+        ]
+        dias = _dias_desde(caso.get("atualizado_em") or caso.get("criado_em"))
+        telefone = str(caso.get("telefone") or "").strip()
+        cobranca = cobrancas.get(str(caso["id"]))
+        precisa, motivo = _precisa_ligar(telefone, cobranca, dias)
+        clientes.append(
+            {
+                "caso_id": str(caso["id"]),
+                "cliente": str(caso.get("cliente") or ""),
+                "telefone": telefone,
+                "documentos_faltantes": faltantes,
+                "faltantes_total": len(faltantes),
+                "dias_parado": dias,
+                "follow_up_ativo": bool(cobranca and cobranca.get("ativa")),
+                "precisa_ligar": precisa,
+                "motivo_ligacao": motivo,
+            }
+        )
+
+    clientes.sort(key=lambda c: (not c["precisa_ligar"], -c["dias_parado"]))
+    return {
+        "clientes": clientes,
+        "total": len(clientes),
+        "precisam_ligar": sum(1 for c in clientes if c["precisa_ligar"]),
+        "regra": (
+            f"Liga quando: sem telefone; ou WhatsApp do follow-up falhou; ou sem "
+            f"follow-up e {DIAS_PARA_COBRAR}+ dias parado; ou {DIAS_PARA_LIGAR}+ dias "
+            f"parado mesmo com follow-up."
+        ),
+        "aviso": "Retrato operacional do follow-up; a decisão de ligar é de quem atende.",
+    }

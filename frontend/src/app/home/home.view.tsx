@@ -24,6 +24,7 @@ import Supervisao from "@/components/admin/Supervisao";
 import SaudeAgente from "@/components/SaudeAgente";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
 import Revisao from "@/components/admin/Revisao";
+import FollowUp from "@/components/admin/FollowUp";
 import Usuarios from "@/components/admin/Usuarios";
 import Resultado from "@/components/caso/Resultado";
 import CentralDocumentacao from "@/components/documentacao/CentralDocumentacao";
@@ -208,6 +209,14 @@ const Telas = (props: HomeViewProps) => {
     return (
       <ModuleFrame variant="wide">
         <Revisao />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "followup") {
+    return (
+      <ModuleFrame variant="wide">
+        <FollowUp />
       </ModuleFrame>
     );
   }
