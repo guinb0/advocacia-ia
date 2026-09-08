@@ -78,7 +78,12 @@ _RE_URL = re.compile(r"https?://[^\s\"'<>)]+", re.I)
 
 
 def _login(pagina: Any, url_auth: str, espera: int) -> None:
-    """Login em etapas (e-mail → Entrar → senha → Entrar). Levanta se não entrar."""
+    """Login em etapas (e-mail → Entrar → senha → Entrar). Levanta se não entrar.
+
+    Versão que FUNCIONA em produção (o diagnóstico prova que passa daqui e chega
+    ao assistente). `networkidle` dá tempo do reCAPTCHA v3 da página de login
+    carregar antes do submit; não é o SPA do wizard, então não trava aqui.
+    """
     pagina.goto(f"{url_auth}/access/sign-in", wait_until="networkidle")
     pagina.fill(_sel("EMAIL", "input[placeholder='Digite seu e-mail']"), _env("ZAPSIGN_LOGIN_EMAIL"))
     pagina.click(_sel("ENTRAR", "button:has-text('Entrar')"))
@@ -167,26 +172,87 @@ def _diagnostico_pagina(pagina: Any) -> str:
 
 
 def _clicar(pagina: Any, textos: tuple[str, ...], espera: int) -> bool:
-    """Clica o primeiro botão/link visível e habilitado cujo texto casa.
+    """Clica o primeiro botão/link cujo texto casa, esperando ele ficar clicável.
 
     `:has-text` é substring e ignora caixa, então "Continuar" acha "CONTINUAR".
-    Devolve se clicou — o assistente do ZapSign é um SPA (a URL não muda entre as
-    etapas), então cada avanço é um clique como este, não uma navegação.
+    `.first.click()` AUTO-ESPERA a ação: se o botão está visível mas ainda
+    desabilitado (upload em curso), aguarda habilitar — sem isto, ao tirar o
+    `networkidle`, o clique caía num botão desabilitado e a etapa não avançava.
+    `.first` também evita erro de múltiplos matches ("Continuar" casa também com
+    "Continuar sem posicionar"). Devolve se clicou; SPA, cada avanço é um clique.
     """
+    limite = min(int(espera / 2), 10000)
     for t in textos:
+        loc = pagina.locator(f"button:has-text('{t}'), a:has-text('{t}')")
         try:
-            alvo = pagina.wait_for_selector(
-                f"button:has-text('{t}'), a:has-text('{t}')",
-                timeout=int(espera / 4),
-                state="visible",
-            )
-        except Exception:  # noqa: BLE001 - este rótulo não está nesta etapa
-            alvo = None
-        if alvo and alvo.is_enabled():
-            alvo.click()
-            pagina.wait_for_load_state("networkidle")
+            # `count()` é instantâneo: rótulo ausente é pulado na hora, sem gastar
+            # o timeout inteiro. Presente, `click()` auto-espera ficar clicável.
+            if loc.count() == 0:
+                continue
+            loc.first.click(timeout=limite)
             return True
+        except Exception:  # noqa: BLE001 - este rótulo não avançou; tenta o próximo
+            continue
     return False
+
+
+def _shot(pagina: Any, nome: str) -> None:
+    """Screenshot de calibração, só quando `ZAPSIGN_DEBUG_DIR` está setado.
+
+    No-op em produção (a env fica vazia). Serve para VER cada etapa do assistente
+    ao ajustar seletores em dev — cada passo do SPA vira um PNG numerado.
+    """
+    destino = _env("ZAPSIGN_DEBUG_DIR", "")
+    if not destino:
+        return
+    try:
+        Path(destino).mkdir(parents=True, exist_ok=True)
+        pagina.screenshot(path=str(Path(destino) / f"{nome}.png"), full_page=True)
+    except Exception:  # noqa: BLE001 - debug nunca atrapalha o envio
+        pass
+
+
+def _preencher_campo(
+    pagina: Any, valor: str, seletores: tuple[str, ...], rotulo: str, espera: int
+) -> bool:
+    """Preenche um campo tentando CSS e, por fim, o RÓTULO (label flutuante).
+
+    Os campos do ZapSign usam Material com rótulo flutuante — não há atributo
+    `placeholder`, então casar por placeholder falha (foi o que travou o passo do
+    signatário). `get_by_label` acha pelo texto do rótulo, que é o que se enxerga.
+    """
+    limite = min(int(espera / 3), 8000)
+    validos = tuple(s for s in seletores if s)
+    # Espera QUALQUER uma das estratégias aparecer (o passo renderiza após o
+    # clique anterior); depois o `count()` escolhe a que existe, sem esperar o
+    # timeout de cada seletor morto.
+    if validos:
+        try:
+            pagina.wait_for_selector(", ".join(validos), state="visible", timeout=espera)
+        except Exception:  # noqa: BLE001 - segue para o rótulo, abaixo
+            pass
+    for s in validos:
+        loc = pagina.locator(s)
+        try:
+            if loc.count() == 0:
+                continue
+            loc.first.fill(valor, timeout=limite)
+            return True
+        except Exception:  # noqa: BLE001 - tenta a próxima estratégia
+            continue
+    try:
+        pagina.get_by_label(re.compile(rotulo, re.I)).first.fill(valor, timeout=limite)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+#: Input de texto visível que NÃO é arquivo/checkbox/oculto/busca/recaptcha — o
+#: campo do signatário quando nada mais o identifica (sem placeholder nem name).
+_INPUT_TEXTO_VISIVEL = (
+    "input:visible:not([type='file']):not([type='checkbox']):not([type='hidden'])"
+    ":not([type='search']):not([name='g-recaptcha-response'])"
+)
 
 
 def _enviar_um(
@@ -200,48 +266,62 @@ def _enviar_um(
       3. Posicionar assinaturas (opcional) — "Continuar sem posicionar".
       4. Enviar documento — "Enviar" → o link `/verificar/` aparece.
     """
-    pagina.goto(f"{url_app}/conta/documentos/novo", wait_until="networkidle")
+    pagina.goto(f"{url_app}/conta/documentos/novo", wait_until="domcontentloaded")
 
-    # 1) Subir o PDF e avançar.
+    # 1) Subir o PDF e avançar. Não espera "networkidle" (trava em SPA); o clique
+    # em "Continuar" já espera o botão ficar visível/habilitado.
     pagina.set_input_files(_sel("UPLOAD", "input[type='file']"), str(caminho_pdf))
-    pagina.wait_for_load_state("networkidle")
+    pagina.wait_for_timeout(600)
+    _shot(pagina, "01-apos-upload")
     _clicar(pagina, ("Continuar",), espera)
 
-    # 2) Signatário: nome e, quando o campo aparece, e-mail. O nome é obrigatório;
-    # o e-mail costuma surgir depois de digitado o nome (ou já está visível).
-    try:
-        campo_nome = pagina.wait_for_selector(
-            _sel("SIGNATARIO_NOME", "input[placeholder*='signat'], input[placeholder*='Nome do signat']"),
-            timeout=espera,
-            state="visible",
-        )
-        campo_nome.fill(cliente_nome)
-    except Exception:  # noqa: BLE001 - sem o campo, o diagnóstico dirá o porquê
-        pass
-    try:
-        campo_email = pagina.wait_for_selector(
-            _sel("SIGNATARIO_EMAIL", "input[type='email'], input[placeholder*='mail']"),
-            timeout=int(espera / 3),
-            state="visible",
-        )
-        campo_email.fill(cliente_email)
-    except Exception:  # noqa: BLE001 - e-mail pode não ser exigido nesta conta
-        pass
+    # 2) Signatário: SÓ O NOME nesta etapa (o e-mail é pedido na tela de envio).
+    # O campo tem rótulo flutuante (sem placeholder) — daí as várias estratégias.
+    pagina.wait_for_timeout(600)  # o passo 2 renderiza após o clique anterior
+    _preencher_campo(
+        pagina,
+        cliente_nome,
+        (
+            _sel("SIGNATARIO_NOME", ""),
+            "input[placeholder*='signat' i]",
+            "input[aria-label*='signat' i]",
+            _INPUT_TEXTO_VISIVEL,
+        ),
+        "signat",
+        espera,
+    )
+    _shot(pagina, "02-signatario-nome")
     _clicar(pagina, ("Continuar",), espera)
 
     # 3) Posicionar assinaturas é OPCIONAL — seguir sem posicionar.
+    pagina.wait_for_timeout(600)
+    _shot(pagina, "03-posicionar")
     _clicar(pagina, ("Continuar sem posicionar", "Salvar e continuar", "Continuar"), espera)
 
-    # 4) Na tela de envio o link JÁ está à vista (o token do signatário é
-    # permanente). Captura ANTES de finalizar; depois clica "Enviar e finalizar"
-    # para o documento sair de fato (o convite por e-mail do ZapSign).
+    # 4) Tela de envio: informa o E-MAIL do signatário; o link `/verificar/` já
+    # aparece (o token é permanente). Captura o link ANTES de finalizar.
+    pagina.wait_for_timeout(600)
+    _preencher_campo(
+        pagina,
+        cliente_email,
+        (
+            _sel("SIGNATARIO_EMAIL", ""),
+            "input[type='email']",
+            "input[placeholder*='mail' i]",
+            "input[aria-label*='mail' i]",
+        ),
+        "mail",
+        espera,
+    )
+    _shot(pagina, "04-envio")
     link = _extrair_link(pagina, espera)
     _clicar(
         pagina,
         ("Enviar e finalizar", "Enviar documento", "Enviar para assinatura", "Finalizar", "Enviar"),
         espera,
     )
-    pagina.wait_for_load_state("networkidle")
+    _shot(pagina, "05-apos-enviar")
+    pagina.wait_for_timeout(1500)  # deixa o envio registrar, sem travar em networkidle
     return link or _extrair_link(pagina, espera)
 
 
