@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -71,6 +72,11 @@ def _e_link_de_assinatura(url: str) -> bool:
     return u.startswith("http") and any(p in u for p in PADROES_LINK)
 
 
+#: URL solta no meio do texto — o link de assinatura do ZapSign aparece como
+#: TEXTO na tela (ao lado de "Copiar link"), não como `<a href>`.
+_RE_URL = re.compile(r"https?://[^\s\"'<>)]+", re.I)
+
+
 def _login(pagina: Any, url_auth: str, espera: int) -> None:
     """Login em etapas (e-mail → Entrar → senha → Entrar). Levanta se não entrar."""
     pagina.goto(f"{url_auth}/access/sign-in", wait_until="networkidle")
@@ -99,6 +105,7 @@ def _extrair_link(pagina: Any, espera: int) -> str:
         pagina.wait_for_selector(seletor, timeout=int(espera / 3))
     except Exception:  # noqa: BLE001 - sem link à vista; segue para a varredura manual
         pass
+    # 1) Âncora ou campo cujo destino é um link de assinatura.
     for el in pagina.query_selector_all("a, input"):
         try:
             valor = (el.get_attribute("href") or el.get_attribute("value") or "").strip()
@@ -106,6 +113,16 @@ def _extrair_link(pagina: Any, espera: int) -> str:
             continue
         if _e_link_de_assinatura(valor):
             return valor
+    # 2) O link no ZapSign vem como TEXTO na tela de envio (ao lado de "Copiar
+    # link"), não num href — então varre o texto visível da página por uma URL
+    # de assinatura. É isto que pega o `app.zapsign.com.br/verificar/<token>`.
+    try:
+        texto = pagina.inner_text("body")
+    except Exception:  # noqa: BLE001
+        texto = ""
+    for url in _RE_URL.findall(texto):
+        if _e_link_de_assinatura(url):
+            return url.rstrip(".,;)")
     return ""
 
 
@@ -215,11 +232,17 @@ def _enviar_um(
     # 3) Posicionar assinaturas é OPCIONAL — seguir sem posicionar.
     _clicar(pagina, ("Continuar sem posicionar", "Salvar e continuar", "Continuar"), espera)
 
-    # 4) Enviar de fato.
-    _clicar(pagina, ("Enviar documento", "Enviar", "Finalizar", "Enviar para assinatura"), espera)
+    # 4) Na tela de envio o link JÁ está à vista (o token do signatário é
+    # permanente). Captura ANTES de finalizar; depois clica "Enviar e finalizar"
+    # para o documento sair de fato (o convite por e-mail do ZapSign).
+    link = _extrair_link(pagina, espera)
+    _clicar(
+        pagina,
+        ("Enviar e finalizar", "Enviar documento", "Enviar para assinatura", "Finalizar", "Enviar"),
+        espera,
+    )
     pagina.wait_for_load_state("networkidle")
-
-    return _extrair_link(pagina, espera)
+    return link or _extrair_link(pagina, espera)
 
 
 def _navegador(sync_playwright: Any):
