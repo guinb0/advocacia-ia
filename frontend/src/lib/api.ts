@@ -960,6 +960,27 @@ export async function enviarAssinaturaPeloSite(dados: {
   return comoJson(await buscar("/api/assinatura/navegador", { method: "POST", body: form }));
 }
 
+/** Gera um documento no servidor e o manda assinar pela conta ZapSign (site),
+ *  num clique — sem baixar o PDF e reanexar. O convite sai por e-mail e, havendo
+ *  telefone, o link também vai pelo WhatsApp. Demora o tempo da automação. */
+export async function enviarDocumentoParaAssinaturaSite(dados: {
+  respostas: Record<string, string | string[]>;
+  documento: string;
+  municipio?: string;
+  clienteWhatsapp?: string;
+}): Promise<{ ok: boolean; link: string; whatsapp_enviado: boolean }> {
+  return comoJson(await buscar("/api/assinatura/navegador/documento", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      respostas: dados.respostas,
+      municipio: dados.municipio ?? "",
+      documento: dados.documento,
+      cliente_whatsapp: dados.clienteWhatsapp ?? "",
+    }),
+  }));
+}
+
 /** (Re)envia ao cliente, pelo WhatsApp, o link de assinatura já criado no ZapSign.
  *  Serve quando o convite caiu no spam ou o telefone não estava à mão na criação. */
 export async function reenviarLinkAssinaturaSite(
