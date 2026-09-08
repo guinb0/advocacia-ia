@@ -78,8 +78,13 @@ _RE_URL = re.compile(r"https?://[^\s\"'<>)]+", re.I)
 
 
 def _login(pagina: Any, url_auth: str, espera: int) -> None:
-    """Login em etapas (e-mail → Entrar → senha → Entrar). Levanta se não entrar."""
-    pagina.goto(f"{url_auth}/access/sign-in", wait_until="networkidle")
+    """Login em etapas (e-mail → Entrar → senha → Entrar). Levanta se não entrar.
+
+    `domcontentloaded` em vez de `networkidle`: o ZapSign é um SPA que mantém
+    conexão viva (polling/analytics), e esperar a rede "silenciar" era o grosso
+    da demora — cada passo ficava parado até estourar o timeout.
+    """
+    pagina.goto(f"{url_auth}/access/sign-in", wait_until="domcontentloaded")
     pagina.fill(_sel("EMAIL", "input[placeholder='Digite seu e-mail']"), _env("ZAPSIGN_LOGIN_EMAIL"))
     pagina.click(_sel("ENTRAR", "button:has-text('Entrar')"))
     pagina.fill(
@@ -167,25 +172,22 @@ def _diagnostico_pagina(pagina: Any) -> str:
 
 
 def _clicar(pagina: Any, textos: tuple[str, ...], espera: int) -> bool:
-    """Clica o primeiro botão/link visível e habilitado cujo texto casa.
+    """Clica o primeiro botão/link cujo texto casa, esperando ele ficar clicável.
 
     `:has-text` é substring e ignora caixa, então "Continuar" acha "CONTINUAR".
-    Devolve se clicou — o assistente do ZapSign é um SPA (a URL não muda entre as
-    etapas), então cada avanço é um clique como este, não uma navegação.
+    `.first.click()` AUTO-ESPERA a ação: se o botão está visível mas ainda
+    desabilitado (upload em curso), aguarda habilitar — sem isto, ao tirar o
+    `networkidle`, o clique caía num botão desabilitado e a etapa não avançava.
+    `.first` também evita erro de múltiplos matches ("Continuar" casa também com
+    "Continuar sem posicionar"). Devolve se clicou; SPA, cada avanço é um clique.
     """
+    limite = min(int(espera / 2), 10000)
     for t in textos:
         try:
-            alvo = pagina.wait_for_selector(
-                f"button:has-text('{t}'), a:has-text('{t}')",
-                timeout=int(espera / 4),
-                state="visible",
-            )
-        except Exception:  # noqa: BLE001 - este rótulo não está nesta etapa
-            alvo = None
-        if alvo and alvo.is_enabled():
-            alvo.click()
-            pagina.wait_for_load_state("networkidle")
+            pagina.locator(f"button:has-text('{t}'), a:has-text('{t}')").first.click(timeout=limite)
             return True
+        except Exception:  # noqa: BLE001 - este rótulo não está nesta etapa; tenta o próximo
+            continue
     return False
 
 
@@ -200,11 +202,11 @@ def _enviar_um(
       3. Posicionar assinaturas (opcional) — "Continuar sem posicionar".
       4. Enviar documento — "Enviar" → o link `/verificar/` aparece.
     """
-    pagina.goto(f"{url_app}/conta/documentos/novo", wait_until="networkidle")
+    pagina.goto(f"{url_app}/conta/documentos/novo", wait_until="domcontentloaded")
 
-    # 1) Subir o PDF e avançar.
+    # 1) Subir o PDF e avançar. Não espera "networkidle" (trava em SPA); o clique
+    # em "Continuar" já espera o botão ficar visível/habilitado.
     pagina.set_input_files(_sel("UPLOAD", "input[type='file']"), str(caminho_pdf))
-    pagina.wait_for_load_state("networkidle")
     _clicar(pagina, ("Continuar",), espera)
 
     # 2) Signatário: nome e, quando o campo aparece, e-mail. O nome é obrigatório;
@@ -241,7 +243,7 @@ def _enviar_um(
         ("Enviar e finalizar", "Enviar documento", "Enviar para assinatura", "Finalizar", "Enviar"),
         espera,
     )
-    pagina.wait_for_load_state("networkidle")
+    pagina.wait_for_timeout(1500)  # deixa o envio registrar, sem travar em networkidle
     return link or _extrair_link(pagina, espera)
 
 
