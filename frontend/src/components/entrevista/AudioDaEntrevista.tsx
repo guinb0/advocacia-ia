@@ -29,32 +29,51 @@ export default function AudioDaEntrevista({
 }: Props) {
   const [gravacao, setGravacao] = useState<Gravacao | null>(null);
   const [preparando, setPreparando] = useState(true);
+  const [finalizando, setFinalizando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  const preparar = useCallback(async () => {
+  // Ao abrir a tela SÓ CONSULTA — nunca encerra a gravação por conta própria.
+  // Enquanto a entrevista não é finalizada, o áudio segue sendo gravado no
+  // servidor; liberar o download aqui entregaria um arquivo cortado no meio.
+  const consultar = useCallback(async () => {
     if (!entrevistaId) return;
     setErro(null);
     setPreparando(true);
     try {
-      const atual = await consultarGravacao(entrevistaId);
-      // Já convertido: voltar a esta tela não pode reconverter a entrevista
-      // inteira só porque alguém clicou de novo.
-      setGravacao(atual?.pronto ? atual : await encerrarGravacao(entrevistaId));
+      setGravacao(await consultarGravacao(entrevistaId));
     } catch (e) {
-      // A entrevista já acabou e o texto está salvo; o que falhou foi a
-      // conversão — e o áudio continua no disco. Daí "tentar de novo", em vez
-      // de um aviso que só comunica a perda.
       setErro(
-        e instanceof Error ? e.message : "Não foi possível preparar o áudio da entrevista.",
+        e instanceof Error ? e.message : "Não foi possível consultar o áudio da entrevista.",
       );
     } finally {
       setPreparando(false);
     }
   }, [entrevistaId]);
 
+  // Só aqui, no clique explícito, a gravação é fechada e convertida — é o que
+  // "finalizar a entrevista" significa para o áudio. Depois disso o download fica
+  // disponível (e continua disponível ao voltar, sem reconverter).
+  const finalizar = useCallback(async () => {
+    if (!entrevistaId) return;
+    setErro(null);
+    setFinalizando(true);
+    try {
+      const pronta = await encerrarGravacao(entrevistaId);
+      if (pronta) setGravacao(pronta);
+    } catch (e) {
+      // A entrevista já acabou e o texto está salvo; o que falhou foi a
+      // conversão — e o áudio continua no disco. Daí "tentar de novo".
+      setErro(
+        e instanceof Error ? e.message : "Não foi possível preparar o áudio da entrevista.",
+      );
+    } finally {
+      setFinalizando(false);
+    }
+  }, [entrevistaId]);
+
   useEffect(() => {
-    void preparar();
-  }, [preparar]);
+    void consultar();
+  }, [consultar]);
 
   // Entrevista sem áudio nenhum — microfone nunca aberto, roteiro preenchido à
   // mão. Um painel vazio dizendo "não há áudio" seria ruído no fim da tela.
@@ -68,7 +87,7 @@ export default function AudioDaEntrevista({
 
       {preparando && (
         <p className="mt-[10px] mb-0 italic font-normal text-[13px] leading-[1.5] font-titulo text-tinta-3" aria-live="polite">
-          Preparando o arquivo — leva alguns segundos por hora de conversa.
+          Verificando o áudio da entrevista…
         </p>
       )}
 
@@ -78,11 +97,31 @@ export default function AudioDaEntrevista({
           <button
             type="button"
             className="border-none bg-transparent p-0 text-inherit [font:inherit] underline underline-offset-[3px] cursor-pointer"
-            onClick={preparar}
+            onClick={() => void consultar()}
           >
             tentar de novo
           </button>
         </p>
+      )}
+
+      {/* Existe áudio, mas a entrevista ainda não foi finalizada: NADA de download
+        * — o arquivo sairia cortado. Um botão explícito finaliza e libera. */}
+      {!preparando && !erro && gravacao?.existe && !gravacao.pronto && (
+        <div className="mt-3">
+          <button
+            type="button"
+            className="inline-block border-[1.5px] border-tinta bg-transparent text-tinta font-semibold text-[11px] leading-none font-ui tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer hover:bg-tinta hover:text-papel disabled:cursor-wait disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada"
+            onClick={() => void finalizar()}
+            disabled={finalizando}
+          >
+            {finalizando ? "Preparando o áudio…" : "Finalizar entrevista e liberar áudio (.mp4)"}
+          </button>
+          <p className="mt-[10px] mb-0 font-normal text-[12px] leading-[1.55] font-ui text-tinta-3 max-w-[68ch]">
+            {finalizando
+              ? "Fechando e convertendo — leva alguns segundos por hora de conversa."
+              : "Enquanto a entrevista não é finalizada, o áudio segue sendo gravado. O download é liberado só depois de finalizar, para o arquivo sair completo."}
+          </p>
+        </div>
       )}
 
       {gravacao?.pronto && (
