@@ -289,8 +289,25 @@ def _qualificacao_directd(retorno: dict[str, Any]) -> dict[str, Any]:
         "endereco": _endereco_directd(endereco0) if endereco0 else "",
         "telefone": str(tel.get("telefoneComDDD") or "").strip(),
         "email": (emails[0].get("enderecoEmail") or "").strip() if emails else "",
+        # Dados que a DirectD traz e o roteiro não tinha — agora com campo próprio.
+        "sexo": _sexo_por_extenso(str(retorno.get("sexo") or "")),
+        "renda_estimada": _renda_directd(retorno),
     }
     return {chave: valor for chave, valor in campos.items() if valor}
+
+
+def _sexo_por_extenso(bruto: str) -> str:
+    s = (bruto or "").strip().upper()
+    return {"F": "Feminino", "M": "Masculino"}.get(s, bruto.strip())
+
+
+def _renda_directd(retorno: dict[str, Any]) -> str:
+    """Renda estimada + faixa salarial num texto só, como a DirectD as entrega."""
+    valor = str(retorno.get("rendaEstimada") or "").strip()
+    faixa = str(retorno.get("rendaFaixaSalarial") or "").strip()
+    if valor and not valor.upper().startswith("R$") and valor.replace(".", "").replace(",", "").isdigit():
+        valor = f"R$ {valor}"
+    return " · ".join(p for p in (valor, f"faixa {faixa}" if faixa else "") if p)
 
 
 async def _buscar_cpf_directd(d: str, http: httpx.AsyncClient) -> dict[str, Any]:
