@@ -49,6 +49,7 @@ import {
   Menu,
   MessageSquareText,
   PenLine,
+  PhoneCall,
   Search,
   Users,
   X,
@@ -89,6 +90,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // do serviço ia-juridica. A tela e a rota continuam existindo; só não aparece na
       // navegação. Basta devolver a linha abaixo quando o serviço estiver de pé.
       { tela: "casos", rotulo: "Casos" },
+      { tela: "followup", rotulo: "Follow-up" },
       { tela: "documentacao", rotulo: "Documentação" },
     ],
   },
@@ -139,6 +141,7 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   panorama: BarChart3,
   supervisao: Activity,
   revisao: FileCheck2,
+  followup: PhoneCall,
   catalogoRoteiros: BookOpen,
   usuarios: Users,
   saudeAgente: HeartPulse,

@@ -1975,3 +1975,30 @@ export async function concluirRevisao(
 export async function metricasDeRevisao(minhas = false): Promise<MetricasRevisao> {
   return comoJson(await buscar(`/api/revisao/metricas${minhas ? "?minhas=true" : ""}`));
 }
+
+// ------------------------------------------------- Relatório de follow-up
+
+export interface ClienteFollowUp {
+  caso_id: string;
+  cliente: string;
+  telefone: string;
+  documentos_faltantes: string[];
+  faltantes_total: number;
+  dias_parado: number;
+  follow_up_ativo: boolean;
+  precisa_ligar: boolean;
+  motivo_ligacao: string;
+}
+
+export interface RelatorioFollowUp {
+  clientes: ClienteFollowUp[];
+  total: number;
+  precisam_ligar: number;
+  regra: string;
+  aviso: string;
+}
+
+/** Clientes com documento obrigatório pendente, com alerta de necessidade de ligação. */
+export async function relatorioFollowUp(): Promise<RelatorioFollowUp> {
+  return comoJson(await buscar("/api/follow-up"));
+}
