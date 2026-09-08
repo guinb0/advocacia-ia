@@ -216,6 +216,120 @@ CONECTA_CPF_USUARIO = re.sub(r"\D", "", os.getenv("CONECTA_CPF_USUARIO", ""))
 
 TEMPO_LIMITE_CPF_S = 8.0
 
+# ----------------------------------------------------- DirectD (CPF → cadastro)
+#
+# O escritório tem conta na DirectD (apiv3), que devolve o cadastro de PF a partir
+# do CPF: nome, nascimento, nome da mãe, telefones, endereços, e-mails e renda
+# estimada. É a fonte que, na prática, preenche a qualificação — o Conecta acima
+# fica de reserva para quando a credencial da Receita existir.
+#
+# TOKEN NO AMBIENTE, NUNCA NO CÓDIGO. Vai em `DIRECTD_TOKEN` (no `.env` em dev, em
+# variável de CI em produção). Sem ele, este caminho fica inerte, como o Conecta.
+DIRECTD_TOKEN = os.getenv("DIRECTD_TOKEN", "").strip()
+DIRECTD_URL = os.getenv(
+    "DIRECTD_CPF_URL", "https://apiv3.directd.com.br/api/CadastroPessoaFisica"
+).rstrip("/")
+
+
+def _data_flexivel(bruto: str) -> str:
+    """Data em qualquer formato comum vira `dd/mm/aaaa`, que é como o roteiro usa.
+
+    A DirectD documenta a data como "string" sem fixar o formato — então cobre-se
+    ISO (`aaaa-mm-dd`), `dd/mm/aaaa` (devolve como está) e `aaaammdd`.
+    """
+    s = (bruto or "").strip()
+    if not s:
+        return ""
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)  # ISO, com ou sem hora
+    if m:
+        return f"{m.group(3)}/{m.group(2)}/{m.group(1)}"
+    if re.match(r"^\d{2}/\d{2}/\d{4}$", s):
+        return s
+    return _data_br(s)  # aaaammdd
+
+
+def _endereco_directd(endereco: dict[str, Any]) -> str:
+    """O endereço da DirectD num campo só, no mesmo formato do resto do sistema."""
+    via = (endereco.get("logradouro") or "").strip()
+    numero = str(endereco.get("numero") or "").strip()
+    inicio = ", ".join(p for p in (via, f"nº {numero}" if numero else "") if p)
+    resto = [
+        (endereco.get("complemento") or "").strip(),
+        (endereco.get("bairro") or "").strip(),
+        "/".join(
+            p
+            for p in ((endereco.get("cidade") or "").strip(), (endereco.get("uf") or "").strip())
+            if p
+        ),
+        f"CEP {formatar_cep(str(endereco.get('cep') or ''))}" if endereco.get("cep") else "",
+    ]
+    return ", ".join(p for p in (inicio, *resto) if p)
+
+
+def _qualificacao_directd(retorno: dict[str, Any]) -> dict[str, Any]:
+    """A resposta da DirectD já nos ids das perguntas do roteiro.
+
+    Preenche os mesmos campos que a Receita e ACRESCENTA o que a DirectD tem e o
+    roteiro pede e faltava: o e-mail (que o contrato exige). Só campo com valor
+    entra — vazio não sobrescreve o que quem atende já digitou.
+    """
+    enderecos = retorno.get("enderecos") or []
+    telefones = retorno.get("telefones") or []
+    emails = retorno.get("emails") or []
+    endereco0 = enderecos[0] if enderecos else {}
+    # Prefere um telefone de WhatsApp quando houver — é o canal do escritório.
+    tel = next((t for t in telefones if t.get("whatsApp")), telefones[0] if telefones else {})
+
+    campos = {
+        "nome": (retorno.get("nome") or "").strip(),
+        "mae": (retorno.get("nomeMae") or "").strip(),
+        "nascimento": _data_flexivel(str(retorno.get("dataNascimento") or "")),
+        "uf": (endereco0.get("uf") or "").strip(),
+        "municipio": (endereco0.get("cidade") or "").strip(),
+        "endereco": _endereco_directd(endereco0) if endereco0 else "",
+        "telefone": str(tel.get("telefoneComDDD") or "").strip(),
+        "email": (emails[0].get("enderecoEmail") or "").strip() if emails else "",
+    }
+    return {chave: valor for chave, valor in campos.items() if valor}
+
+
+async def _buscar_cpf_directd(d: str, http: httpx.AsyncClient) -> dict[str, Any]:
+    """Cadastro de PF pela DirectD. `d` já normalizado (11 dígitos)."""
+    try:
+        resposta = await http.get(
+            DIRECTD_URL, params={"TOKEN": DIRECTD_TOKEN, "CPF": d}
+        )
+        if resposta.status_code == 403:
+            raise ErroConsulta(
+                "A DirectD recusou a consulta: sem saldo ou sem autorização. "
+                "Confira o saldo da conta."
+            )
+        if resposta.status_code == 401:
+            raise ErroConsulta("A DirectD recusou o token. Confira a credencial (DIRECTD_TOKEN).")
+        if resposta.status_code == 400:
+            raise ErroConsulta("CPF inválido ou não encontrado na base.")
+        resposta.raise_for_status()
+        corpo = resposta.json()
+    except ErroConsulta:
+        raise
+    except Exception as exc:  # noqa: BLE001 - sem o CPF na mensagem: log não guarda dado pessoal
+        log.warning("Consulta de CPF (DirectD) falhou: %s", str(exc)[:160])
+        raise ErroConsulta(
+            "A base de cadastro não respondeu. A entrevista continua normalmente "
+            "e os campos podem ser preenchidos à mão."
+        ) from exc
+
+    retorno = corpo.get("retorno") if isinstance(corpo, dict) else None
+    if not retorno or not (retorno.get("nome") or retorno.get("dataNascimento")):
+        raise ErroConsulta("A base não encontrou dados para este CPF.")
+    return {
+        "campos": _qualificacao_directd(retorno),
+        "situacao": "regular",
+        "aviso": "",
+        "nome_registro": (retorno.get("nome") or "").strip(),
+        "fonte": "DirectD",
+    }
+
 #: Situação cadastral: o que ela é, e o que dizer na tela quando não for regular.
 #: Não bloqueia nada — quem decide se segue é quem está atendendo.
 SITUACAO_CADASTRAL = {
@@ -231,7 +345,7 @@ SITUACAO_CADASTRAL = {
 
 def cpf_configurado() -> bool:
     """Há credencial para consultar. Sem isto o caminho inteiro fica inerte."""
-    return bool(CONECTA_TOKEN or (CONECTA_TOKEN_URL and CONECTA_CLIENT_ID))
+    return bool(DIRECTD_TOKEN or CONECTA_TOKEN or (CONECTA_TOKEN_URL and CONECTA_CLIENT_ID))
 
 
 def normalizar_cpf(cpf: str) -> str:
@@ -346,8 +460,8 @@ async def buscar_cpf(cpf: str, http: httpx.AsyncClient | None = None) -> dict[st
     """
     if not cpf_configurado():
         raise ErroConsulta(
-            "A consulta à Receita não está configurada: falta a credencial do "
-            "Conecta gov.br no .env (CONECTA_CPF_TOKEN ou CONECTA_CLIENT_ID)."
+            "A consulta de CPF não está configurada: falta a credencial no .env "
+            "(DIRECTD_TOKEN, ou CONECTA_CPF_TOKEN/CONECTA_CLIENT_ID)."
         )
     d = normalizar_cpf(cpf)
     if len(d) != 11:
@@ -356,6 +470,9 @@ async def buscar_cpf(cpf: str, http: httpx.AsyncClient | None = None) -> dict[st
     proprio = http is None
     http = http or httpx.AsyncClient(timeout=TEMPO_LIMITE_CPF_S)
     try:
+        # DirectD é a fonte do escritório; a Receita (Conecta) fica de reserva.
+        if DIRECTD_TOKEN:
+            return await _buscar_cpf_directd(d, http)
         token = await _token_conecta(http)
         resposta = await http.post(
             f"{CONECTA_BASE}/consulta/cpf",

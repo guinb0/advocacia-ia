@@ -130,6 +130,38 @@ async def executar() -> int:
             recusou = True
     falhas += not checar(recusou and chamadas == [], "CEP incompleto nem chega a ser consultado")
 
+    # --- DirectD: CPF -> qualificação nos ids do roteiro ---------------
+    exemplo = {
+        "retorno": {
+            "nome": "MARIA DA SILVA",
+            "nomeMae": "JOANA DA SILVA",
+            "dataNascimento": "1985-03-12T00:00:00",
+            "telefones": [
+                {"telefoneComDDD": "1133334444", "whatsApp": False},
+                {"telefoneComDDD": "11988887777", "whatsApp": True},
+            ],
+            "enderecos": [
+                {"logradouro": "Rua das Flores", "numero": "123", "complemento": "apto 4",
+                 "bairro": "Centro", "cidade": "São Paulo", "uf": "SP", "cep": "01001000"}
+            ],
+            "emails": [{"enderecoEmail": "maria@exemplo.com"}],
+        }
+    }
+    token_antes = consultas.DIRECTD_TOKEN
+    consultas.DIRECTD_TOKEN = "TESTE"  # liga o caminho DirectD
+    try:
+        async with cliente({"directd": httpx.Response(200, json=exemplo)}) as http:
+            r = await consultas.buscar_cpf("111.444.777-35", http)
+        campos = r["campos"]
+        falhas += not checar(r["fonte"] == "DirectD", "a fonte é a DirectD")
+        falhas += not checar(campos.get("nascimento") == "12/03/1985", "nascimento ISO vira dd/mm/aaaa")
+        falhas += not checar(campos.get("telefone") == "11988887777", "prefere o telefone de WhatsApp")
+        falhas += not checar(campos.get("email") == "maria@exemplo.com", "traz o e-mail (campo que faltava)")
+        falhas += not checar("CEP 01001-000" in campos.get("endereco", ""), "endereço montado com CEP formatado")
+        falhas += not checar(campos.get("uf") == "SP" and campos.get("municipio") == "São Paulo", "UF e município do endereço")
+    finally:
+        consultas.DIRECTD_TOKEN = token_antes
+
     return falhas
 
 
