@@ -114,18 +114,27 @@ def main() -> int:
     sem = dossie._etapa_entrevista([])
     checar(sem["estado"] == "pendente", "caso sem entrevista aparece como pendente")
 
-    nao_lida = dossie._etapa_entrevista([dossie._entrevista_resumida(registro)])
+    # Áudio anexado, mas ainda SEM transcrição: em andamento, não pronto.
+    so_audio = dict(registro)
+    so_audio["texto"] = ""
+    aguardando = dossie._etapa_entrevista([dossie._entrevista_resumida(so_audio)])
     checar(
-        nao_lida["estado"] == "andamento",
-        "entrevista anexada mas não lida não é 'pronto' — nada dela chegou ao caso",
+        aguardando["estado"] == "andamento",
+        "entrevista anexada sem transcrição fica em 'andamento'",
     )
 
-    lida = dossie._etapa_entrevista([dossie._entrevista_resumida(relida)])
-    checar(lida["estado"] == "pronto" and "7 fato" in lida["detalhe"], "entrevista lida mostra quantos fatos gerou")
+    # Com transcrição já dá para redigir (fluxo local): pronto.
+    com_texto = dossie._etapa_entrevista([dossie._entrevista_resumida(registro)])
+    checar(
+        com_texto["estado"] == "pronto" and "transcrição" in com_texto["detalhe"],
+        "entrevista com transcrição fica pronta para redigir",
+    )
 
-    vazia = dict(relida)
-    vazia["fatos_gerados"] = 0
-    sem_fato = dossie._etapa_entrevista([dossie._entrevista_resumida(vazia)])
+    # Fluxo do agente: lida (enviada), sem texto e sem nenhum fato → atenção.
+    lida_sem_fato = dict(relida)
+    lida_sem_fato["texto"] = ""
+    lida_sem_fato["fatos_gerados"] = 0
+    sem_fato = dossie._etapa_entrevista([dossie._entrevista_resumida(lida_sem_fato)])
     checar(
         sem_fato["estado"] == "atencao",
         "entrevista lida sem nenhum fato aproveitado é atenção, não sucesso",

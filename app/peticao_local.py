@@ -15,7 +15,7 @@ from xml.etree import ElementTree
 
 import httpx
 
-from . import analise_documentos, armazenamento, rag
+from . import analise_documentos, armazenamento, jurimetria_caso, rag
 from . import casos as casos_ocr
 
 log = logging.getLogger("peticao_local")
@@ -343,21 +343,23 @@ def _normalizar_secoes(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _analisar_jurimetria_da_minuta(
-    secoes: list[dict[str, Any]],
+    secoes: list[dict[str, Any]], *, texto_para_uf: str = ""
 ) -> tuple[dict[str, Any], str]:
-    """Compara a minuta pronta com decisões reais e gera apêndice auditável."""
+    """Compara a minuta pronta com decisões reais e gera apêndice auditável.
+
+    `texto_para_uf` foca a busca no TRT do estado do caso (mesmo critério do
+    painel), para o apêndice da peça citar precedentes daquela jurisdição — e
+    não do acervo nacional — quando o estado é identificável nos documentos.
+    """
     consulta = "\n\n".join(
         str(secao.get("content") or "")
         for secao in secoes
         if secao.get("code") in {"FACTS", "LEGAL_GROUNDS", "CLAIMS", "EVIDENCE"}
     ).strip()
+    jurisdicao = ""
     try:
-        similares = rag.buscar_similares(
-            consulta,
-            limite=30,
-            timeout=40,
-            connect_timeout=5,
-            connect_retries=1,
+        similares, jurisdicao, _uf = jurimetria_caso.buscar_focada(
+            consulta, texto_para_uf=texto_para_uf
         )
     except Exception as erro:
         log.warning("petição local: jurimetria indisponível: %s", erro)
@@ -461,6 +463,7 @@ P1, P2 etc. Não invente referência. Responda JSON:
         "disponivel": True,
         "origem": "embeddings_advocacia_ia",
         "consulta_vetorial": True,
+        "jurisdicao": jurisdicao,
         "estatisticas": estatisticas,
         "sintese": str(leitura.get("sintese") or "").strip(),
         "fundamentos": fundamentos,
@@ -563,7 +566,7 @@ Cada content deve conter parágrafos separados por linha em branco.""",
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
-    jurimetria, _ = _analisar_jurimetria_da_minuta(secoes)
+    jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     agora = _agora()
     anterior = carregar(caso_id) or {}

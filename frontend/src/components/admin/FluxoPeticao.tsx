@@ -337,6 +337,11 @@ function ModuloJurimetria({
           Busca vetorial pelos embeddings do acervo do Advocacia IA. Módulo interno de apoio
           à decisão; não integra o texto nem o arquivo da petição.
         </p>
+        {dados.jurisdicao && (
+          <p className="text-xs text-tinta-3 m-0">
+            Focada em <strong className="text-tinta-2">{dados.jurisdicao}</strong>.
+          </p>
+        )}
       </header>
 
       {estatisticas && (

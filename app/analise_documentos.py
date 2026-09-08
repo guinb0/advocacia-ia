@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from . import armazenamento
+from . import armazenamento, cache_leitura
 
 log = logging.getLogger("analise_documentos")
 
@@ -193,7 +193,11 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
                 "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
-                "max_tokens": 2000,
+                # 12 achados com citação LITERAL passam de 1900 tokens — 2000 de
+                # teto truncava a resposta no meio e o JSON inteiro virava
+                # "ilegível", perdendo TODOS os achados de uma vez (não só o
+                # último). Folga larga; DeepSeek cobra pelo que gera, não pelo teto.
+                "max_tokens": 8000,
                 "messages": [
                     {"role": "system", "content": INSTRUCAO},
                     {"role": "user", "content": mensagem},
@@ -216,7 +220,21 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
 
 
 def analisar(caso_id: str) -> dict[str, Any]:
-    """Lê os anexos do caso e devolve o que eles dizem e a entrevista não pegou."""
+    """Lê os anexos do caso e devolve o que eles dizem e a entrevista não pegou.
+
+    A leitura é cara (uma volta na DeepSeek) e o mesmo caso a pede em dois pontos
+    quase juntos — o painel de jurimetria e o contexto da petição. Sem cache, cada
+    um paga a volta e, pior, podem divergir (o modelo não é 100% determinístico):
+    o painel mostraria um conjunto de achados e a peça citaria outro. A assinatura
+    é o `atualizado_em` do caso, que `_tocar_caso` bumpa a cada nova entrega ou
+    entrevista — documento novo invalida sozinho; nada muda, reaproveita.
+    """
+    caso = armazenamento.obter_caso(caso_id) or {}
+    return _analisar_cacheado(caso_id, str(caso.get("atualizado_em") or ""))
+
+
+@cache_leitura.por_alguns_segundos(300)
+def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
     documentos = _documentos_do_caso(caso_id)
     if not documentos:
         return {

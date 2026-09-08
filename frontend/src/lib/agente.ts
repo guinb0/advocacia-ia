@@ -174,6 +174,7 @@ export interface Peticao {
     disponivel: boolean;
     origem?: string;
     consulta_vetorial?: boolean;
+    jurisdicao?: string;
     aviso?: string;
     sintese?: string;
     estatisticas?: {

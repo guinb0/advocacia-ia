@@ -634,8 +634,10 @@ def _etapas(
 def _etapa_entrevista(entrevistas: list[dict[str, Any]]) -> dict[str, Any]:
     """O atendimento: primeira etapa do caso e a única que não depende do agente.
 
-    Entrevista guardada mas **não lida** não é "pronto": o arquivo está no Acervo e nada
-    dele chegou ao Case State, que é a diferença entre ter a conversa e ter o caso.
+    Com **transcrição** já dá para redigir (fluxo local do DeepSeek), então é
+    "pronto" mesmo sem o agente ter lido — a transcrição É o que chega ao caso.
+    Áudio anexado mas ainda **sem transcrição** fica em "andamento". No fluxo do
+    agente, a entrevista lida sem nenhum fato aproveitado vira "atenção".
     """
     if not entrevistas:
         return {

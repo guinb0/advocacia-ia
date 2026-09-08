@@ -960,6 +960,19 @@ export async function enviarAssinaturaPeloSite(dados: {
   return comoJson(await buscar("/api/assinatura/navegador", { method: "POST", body: form }));
 }
 
+/** (Re)envia ao cliente, pelo WhatsApp, o link de assinatura já criado no ZapSign.
+ *  Serve quando o convite caiu no spam ou o telefone não estava à mão na criação. */
+export async function reenviarLinkAssinaturaSite(
+  telefone: string,
+  link: string,
+): Promise<{ enviado: boolean }> {
+  return comoJson(await buscar("/api/assinatura/navegador/whatsapp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ telefone, link }),
+  }));
+}
+
 /** Gera o contrato e o manda assinar. O .docx é o mesmo de `gerarContrato`. */
 export async function enviarParaAssinatura(
   respostas: Record<string, string | string[]>,
