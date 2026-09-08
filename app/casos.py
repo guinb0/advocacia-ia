@@ -7,14 +7,16 @@ chegou com problema. Tudo aqui é derivado das entregas — nada de status guard
 
 from __future__ import annotations
 
+import re
+import unicodedata
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import armazenamento, categorias
+from . import armazenamento, cache_leitura, categorias
 from .categorias import ItemChecklist
-from .extractors import ROTULOS_TIPO
+from .extractors import RE_PIS, ROTULOS_TIPO
 
 # Status possíveis de um item do checklist.
 PENDENTE = "pendente"          # nada foi enviado
@@ -251,6 +253,100 @@ def montar_situacao(caso_id: str) -> dict[str, Any] | None:
     if caso is None:
         return None
     return situacao_de(caso, armazenamento.listar_entregas(caso_id))
+
+
+# ------------------------------------------------------------------ ---------
+# "NADA PASSA DESPERCEBIDO": dado de item que falta, encontrado em OUTRO documento
+#
+# A carteira de trabalho é o caso clássico: o cliente não traz a CTPS, mas o
+# número e o PIS dela aparecem no CNIS, no holerite, no TRCT, no contrato. O item
+# fica "pendente" e ninguém percebe que a informação já está no caso — só em outro
+# arquivo. Aqui, para o item que falta, varre-se o texto dos DEMAIS documentos e
+# avisa-se onde o dado apareceu, sem dar o item por entregue (é indício, não a
+# carteira em si — quem confere é o advogado).
+
+
+def _norm_busca(texto: str) -> str:
+    sem = "".join(
+        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    )
+    return re.sub(r"\s+", " ", sem.upper())
+
+
+_RE_CTPS_KW = re.compile(r"\bCTPS\b|CARTEIRA DE TRABALHO")
+#: "CTPS nº 12345 série 678", "Carteira 12345/00678" — o número perto do rótulo.
+_RE_CTPS_NUM = re.compile(r"(?:CTPS|CARTEIRA(?: DE TRABALHO)?)\D{0,25}(\d[\d./ -]{2,}\d)")
+_RE_PIS_KW = re.compile(r"\bPIS\b|\bPASEP\b|\bNIT\b")
+
+
+def _carteira_no_texto(texto: str) -> str | None:
+    """Descreve o dado de carteira/PIS achado no texto, ou `None` se não houver."""
+    t = _norm_busca(texto)
+    partes: list[str] = []
+    achou_numero = _RE_CTPS_NUM.search(t)
+    if achou_numero:
+        partes.append("CTPS nº " + achou_numero.group(1).strip()[:24])
+    elif _RE_CTPS_KW.search(t):
+        partes.append("menção à Carteira de Trabalho")
+    # PIS só conta com o rótulo por perto: um número de 11 dígitos solto é tão
+    # provável ser CPF quanto PIS, e indício errado é pior que indício nenhum.
+    if _RE_PIS_KW.search(t):
+        numero = RE_PIS.search(texto) or RE_PIS.search(t)
+        partes.append("PIS " + numero.group(0).strip() if numero else "menção ao PIS/PASEP")
+    # Mantém a ordem e remove repetição.
+    return "; ".join(dict.fromkeys(partes)) or None
+
+
+def _item_e_carteira(nome: str) -> bool:
+    n = _norm_busca(nome)
+    return "CTPS" in n or "CARTEIRA DE TRABALHO" in n
+
+
+@cache_leitura.por_alguns_segundos(300)
+def _carteira_em_outros_docs(caso_id: str, _assinatura: str) -> list[dict[str, str]]:
+    """Onde a carteira/PIS aparece nos documentos do caso (fora uma CTPS própria).
+
+    Lê o texto de cada entrega — caro, por isso cacheado pela assinatura do caso
+    (o `atualizado_em`, que muda a cada documento novo). `_assinatura` entra na
+    chave do cache; documento novo invalida sozinho.
+    """
+    achados: list[dict[str, str]] = []
+    for entrega in armazenamento.listar_entregas(caso_id):
+        detalhe = armazenamento.obter_entrega(entrega["id"])
+        if not detalhe:
+            continue
+        extracao = detalhe.get("extracao") or {}
+        # Uma CTPS de verdade não é "outro documento" — é a própria carteira.
+        if (extracao.get("tipo") or {}).get("detectado") == "ctps":
+            continue
+        texto = str(extracao.get("texto_completo") or "").strip()
+        if not texto:
+            continue
+        dado = _carteira_no_texto(texto)
+        if dado:
+            achados.append(
+                {"arquivo": str(entrega.get("arquivo") or detalhe.get("arquivo") or "documento"), "dado": dado}
+            )
+    return achados
+
+
+def anexar_observacoes_cruzadas(caso_id: str, situacao: dict[str, Any]) -> dict[str, Any]:
+    """Para cada item PENDENTE de carteira, aponta em que documento o dado apareceu.
+
+    Enriquece a situação NO LUGAR e a devolve. Só roda quando há de fato um item
+    de carteira faltando — caso com a CTPS entregue nem toca no texto dos anexos.
+    """
+    itens = situacao.get("itens") or []
+    pendentes = [i for i in itens if i.get("status") == PENDENTE and _item_e_carteira(i.get("nome", ""))]
+    if not pendentes:
+        return situacao
+    caso = situacao.get("caso") or {}
+    achados = _carteira_em_outros_docs(caso_id, str(caso.get("atualizado_em") or ""))
+    if not achados:
+        return situacao
+    for item in pendentes:
+        item["encontrado_em"] = achados
+    return situacao
 
 
 def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[str, Any]:

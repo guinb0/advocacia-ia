@@ -160,6 +160,24 @@ export default function ItemChecklistLinha({
         )}
       </div>
 
+      {/* "Nada passa despercebido": o item falta como arquivo próprio, mas o dado
+        * dele (CTPS, PIS) apareceu em outro documento. Indício, não entrega — o
+        * advogado confere antes de dar por resolvido. */}
+      {item.status === "pendente" && (item.encontrado_em?.length ?? 0) > 0 && (
+        <div className="mt-2 ml-9 max-w-[74ch] border-l-[3px] border-atencao bg-papel-2 px-3 py-2 text-xs leading-[1.55] text-tinta-2">
+          <strong className="text-tinta">Encontrado em outro documento.</strong>{" "}
+          Não foi enviada em separado, mas apareceu:
+          <ul className="mt-1 mb-0 list-disc pl-5">
+            {item.encontrado_em!.map((achado, i) => (
+              <li key={i}>
+                <span className="text-tinta">{achado.dado}</span>{" "}
+                <span className="text-tinta-3">em “{achado.arquivo}”</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {(enviando || item.status === "processando") && (
         <ProgressoOcr modeloPronto={estadoModelo === "pronto"} naFila={!enviando && aguardandoNaFila} />
       )}
