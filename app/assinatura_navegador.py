@@ -109,6 +109,46 @@ def _extrair_link(pagina: Any, espera: int) -> str:
     return ""
 
 
+def _diagnostico_pagina(pagina: Any) -> str:
+    """O que a página oferece AGORA: textos de botões e campos de formulário.
+
+    Sem enxergar a UI do ZapSign, é isto que permite descobrir o seletor certo do
+    passo em que a automação travou — os rótulos reais dos botões e os
+    placeholders/nomes dos campos, na tela onde ela parou.
+    """
+    partes: list[str] = []
+    try:
+        rotulos: list[str] = []
+        for b in pagina.query_selector_all("button, a[role='button'], [type='submit']")[:60]:
+            try:
+                txt = (b.inner_text() or "").strip().replace("\n", " ")
+                estado = "" if b.is_enabled() else " (desabilitado)"
+                if txt:
+                    rotulos.append(txt[:40] + estado)
+            except Exception:  # noqa: BLE001
+                continue
+        if rotulos:
+            partes.append("BOTÕES: " + " | ".join(dict.fromkeys(rotulos)))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        campos: list[str] = []
+        for i in pagina.query_selector_all("input, textarea, select")[:60]:
+            try:
+                ph = i.get_attribute("placeholder") or ""
+                nm = i.get_attribute("name") or ""
+                tp = i.get_attribute("type") or "campo"
+                desc = f"{tp}[{ph or nm}]" if (ph or nm) else tp
+                campos.append(desc[:44])
+            except Exception:  # noqa: BLE001
+                continue
+        if campos:
+            partes.append("CAMPOS: " + " | ".join(dict.fromkeys(campos)))
+    except Exception:  # noqa: BLE001
+        pass
+    return " || ".join(partes)[:1600]
+
+
 def _enviar_um(
     pagina: Any, caminho_pdf: Path, cliente_nome: str, cliente_email: str, url_app: str, espera: int
 ) -> str:
@@ -228,7 +268,9 @@ def enviar_varios_para_assinatura(
             )
 
         achou_algum = any(r["link"] for r in resultados)
+        diagnostico = ""
         if not achou_algum:
+            diagnostico = _diagnostico_pagina(pagina)
             try:
                 screenshot = str(_dir_screenshots() / f"sem-link-{int(time.time())}.png")
                 pagina.screenshot(path=screenshot, full_page=True)
@@ -239,10 +281,12 @@ def enviar_varios_para_assinatura(
             "documentos": resultados,
             "erro": "" if achou_algum else (
                 "Os documentos subiram, mas a automação não achou o link de assinatura na tela "
-                f"(parou em {url_final}). Os seletores do ZapSign precisam de calibração."
+                f"(parou em {url_final}). O que a tela oferece agora — {diagnostico} — "
+                "diz quais seletores calibrar."
             ),
             "screenshot": screenshot,
             "url_final": url_final,
+            "diagnostico": diagnostico,
         }
     except Exception as exc:  # noqa: BLE001 - falha de UI vira mensagem + print
         try:
