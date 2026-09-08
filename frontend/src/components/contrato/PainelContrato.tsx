@@ -9,6 +9,7 @@ import {
   enviarAssinaturaPeloSite,
   enviarLinkAssinatura,
   enviarParaAssinatura,
+  enviarDocumentoParaAssinaturaSite,
   gerarContrato,
   listarAssinaturas,
   obterAssinatura,
@@ -114,6 +115,14 @@ export default function PainelContrato({ respostas }: Props) {
    * o que já foi enviado vale, e reenviar tudo duplicaria convites. */
   const [parcial, setParcial] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  /* Envio direto (um clique) por documento: gera o PDF no servidor e sobe pela
+   * automação do site, sem baixar/reanexar. `enviandoAssin` guarda o código do
+   * documento em curso; `resultadoAssin` o link devolvido, por documento. */
+  const [enviandoAssin, setEnviandoAssin] = useState<string | null>(null);
+  const [resultadoAssin, setResultadoAssin] = useState<
+    Partial<Record<DocumentoDoCliente, { link: string; whatsapp_enviado: boolean }>>
+  >({});
+  const [reenviandoWaDoc, setReenviandoWaDoc] = useState<string | null>(null);
   const [baixandoAssinado, setBaixandoAssinado] = useState(false);
   const [erroAssinatura, setErroAssinatura] = useState<string | null>(null);
   /* Separado do erro: a ZapSign não respondeu, mas o que está na tela continua
@@ -166,6 +175,47 @@ export default function PainelContrato({ respostas }: Props) {
       setErro(e instanceof Error ? e.message : "Não foi possível gerar o documento.");
     } finally {
       setGerando(null);
+    }
+  }
+
+  /* Um clique: gera o documento no servidor e o manda assinar pela conta ZapSign
+   * (site), sem baixar o PDF e reanexar. Havendo telefone, o link vai por WhatsApp. */
+  async function enviarAssinatura(codigo: DocumentoDoCliente) {
+    if (requisitosContrato.length > 0) {
+      setErro(`Não é possível enviar: informe ${requisitosContrato.join(" e ")}.`);
+      return;
+    }
+    if (!email) {
+      setErro("A ZapSign precisa do e-mail do cliente para enviar o convite. Preencha o e-mail na entrevista.");
+      return;
+    }
+    setEnviandoAssin(codigo);
+    setErro(null);
+    try {
+      const r = await enviarDocumentoParaAssinaturaSite({
+        respostas,
+        documento: codigo,
+        clienteWhatsapp: telefone,
+      });
+      setResultadoAssin((atuais) => ({ ...atuais, [codigo]: { link: r.link, whatsapp_enviado: r.whatsapp_enviado } }));
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível enviar para assinatura.");
+    } finally {
+      setEnviandoAssin(null);
+    }
+  }
+
+  async function reenviarWaDoc(codigo: DocumentoDoCliente) {
+    const link = resultadoAssin[codigo]?.link;
+    if (!link || !telefone.trim()) return;
+    setReenviandoWaDoc(codigo);
+    try {
+      await reenviarLinkAssinaturaSite(telefone.trim(), link);
+      setResultadoAssin((atuais) => ({ ...atuais, [codigo]: { ...atuais[codigo]!, whatsapp_enviado: true } }));
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Falha ao reenviar por WhatsApp.");
+    } finally {
+      setReenviandoWaDoc(null);
     }
   }
 
@@ -363,6 +413,59 @@ export default function PainelContrato({ respostas }: Props) {
                   </span>
                 )}
               </div>
+
+              {/* Envio direto para assinatura, num clique: gera o PDF no servidor
+                * e sobe pela conta ZapSign, sem baixar/reanexar. Só aparece quando
+                * o login do site está configurado. */}
+              {config?.navegador && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    className={`${BOTAO} w-full min-h-11 px-3`}
+                    onClick={() => void enviarAssinatura(doc.codigo)}
+                    disabled={enviandoAssin !== null || requisitosContrato.length > 0}
+                    aria-label={`Enviar ${doc.rotulo} para o cliente assinar`}
+                  >
+                    {enviandoAssin === doc.codigo
+                      ? "Enviando para assinatura… (pode levar até 1 min)"
+                      : `Enviar ${doc.rotulo} para assinatura (ZapSign + WhatsApp)`}
+                  </button>
+
+                  {resultadoAssin[doc.codigo] && (
+                    <div className="mt-2 border-l-[3px] border-ok bg-papel-2 px-3 py-2 text-[12px] leading-[1.5] text-tinta-2">
+                      <strong className="text-ok">Enviado para assinatura ✓</strong>
+                      <span className="block mt-1 text-tinta-3">
+                        Convite por e-mail para {email}.{" "}
+                        {resultadoAssin[doc.codigo]!.whatsapp_enviado
+                          ? "Link também enviado pelo WhatsApp."
+                          : telefone
+                            ? "O link por WhatsApp não saiu — dá para reenviar abaixo."
+                            : "Sem telefone: convite só por e-mail."}
+                      </span>
+                      {resultadoAssin[doc.codigo]!.link && (
+                        <a
+                          href={resultadoAssin[doc.codigo]!.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 inline-block text-acao underline [overflow-wrap:anywhere]"
+                        >
+                          abrir link de assinatura
+                        </a>
+                      )}
+                      {telefone && resultadoAssin[doc.codigo]!.link && (
+                        <button
+                          type="button"
+                          className="mt-2 block border-none bg-transparent p-0 text-[11px] font-semibold uppercase tracking-[0.1em] text-tinta-3 underline underline-offset-[3px] cursor-pointer hover:text-tinta disabled:cursor-wait"
+                          onClick={() => void reenviarWaDoc(doc.codigo)}
+                          disabled={reenviandoWaDoc === doc.codigo}
+                        >
+                          {reenviandoWaDoc === doc.codigo ? "reenviando…" : "reenviar link por WhatsApp"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* O que falta é DESTE modelo: o contrato pede telefone e e-mail,
                 * a procuração não. Somar os três sugeriria buraco onde não há. */}
