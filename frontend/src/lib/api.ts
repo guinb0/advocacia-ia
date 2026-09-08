@@ -960,6 +960,25 @@ export async function enviarAssinaturaPeloSite(dados: {
   return comoJson(await buscar("/api/assinatura/navegador", { method: "POST", body: form }));
 }
 
+/** Gera os TRÊS documentos e os manda assinar de uma vez pela conta ZapSign
+ *  (site), num login só. Cada um volta com o seu link; havendo telefone, cada
+ *  link vai pelo WhatsApp. Demora o tempo da automação (~1 min por documento). */
+export async function enviarTodosParaAssinaturaSite(dados: {
+  respostas: Record<string, string | string[]>;
+  municipio?: string;
+  clienteWhatsapp?: string;
+}): Promise<{ ok: boolean; documentos: { rotulo: string; link: string }[]; whatsapp_enviado: boolean }> {
+  return comoJson(await buscar("/api/assinatura/navegador/todos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      respostas: dados.respostas,
+      municipio: dados.municipio ?? "",
+      cliente_whatsapp: dados.clienteWhatsapp ?? "",
+    }),
+  }));
+}
+
 /** Gera um documento no servidor e o manda assinar pela conta ZapSign (site),
  *  num clique — sem baixar o PDF e reanexar. O convite sai por e-mail e, havendo
  *  telefone, o link também vai pelo WhatsApp. Demora o tempo da automação. */

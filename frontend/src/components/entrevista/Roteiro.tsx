@@ -682,10 +682,12 @@ export default function Roteiro({
         );
         ultimoFalante.current = quem;
         setTranscricaoVisivel((atuais) => [...atuais, { ...trecho, quem }].slice(-60));
-        /* Trecho do entrevistador (leitura do roteiro / saudação) não vai para
-         * a escuta: o modelo já confunde pergunta com resposta, e mandar a
-         * fala de quem conduz piora. Na faixa da chamada tudo é Entrevistado. */
-        if (quem === "Entrevistador") return;
+        /* TUDO vai para a LLM — pergunta E resposta. Antes a fala classificada
+         * como "Entrevistador" era descartada aqui; mas a classificação erra, e
+         * cada trecho descartado é interação que nunca chega ao modelo. O rótulo
+         * `quem` fica só para colorir a tela; a extração recebe a conversa
+         * inteira, como texto único, e interpreta o que é pergunta e o que é
+         * resposta. */
         filaTrechos.current.push(texto.trim());
         void consumirFilaRef.current();
       },
