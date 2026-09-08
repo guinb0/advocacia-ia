@@ -93,6 +93,14 @@ MODULOS: tuple[dict[str, str], ...] = (
         "ordem": 70,
     },
     {
+        "codigo": "revisao",
+        "rotulo": "Revisão de petições",
+        "descricao": "Fila de petições a revisar, aprovação e métricas de revisão.",
+        "rota": "revisao",
+        "grupo": "Análise",
+        "ordem": 65,
+    },
+    {
         "codigo": "contratos",
         "rotulo": "Contratos e assinatura",
         "descricao": "Geração do contrato e envio para assinatura eletrônica.",
@@ -143,7 +151,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "sistema": True,
         "modulos": (
             "entrevista", "casos", "documentos", "agente", "contratos",
-            "investigacao", "usuarios", "roteiros",
+            "investigacao", "usuarios", "roteiros", "revisao",
         ),
     },
     {
@@ -155,7 +163,16 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         # escritório — importa do documento, corrige pergunta, desfaz edição —
         # sem necessariamente conduzir atendimento. São trabalhos diferentes, e
         # dar um não obriga a dar o outro.
-        "modulos": ("casos", "documentos", "supervisao", "metricas", "agente", "usuarios", "roteiros"),
+        "modulos": ("casos", "documentos", "supervisao", "metricas", "agente", "usuarios", "roteiros", "revisao"),
+    },
+    {
+        "codigo": "revisor",
+        "rotulo": "Revisor",
+        "descricao": "Revisa e aprova as petições; vê a própria fila e as métricas de revisão.",
+        "sistema": True,
+        # Só a revisão: o revisor não conduz entrevista nem cadastra usuário. A
+        # métrica é atividade operacional, não avaliação de qualidade (ver issue).
+        "modulos": ("revisao",),
     },
     {
         "codigo": "cliente",

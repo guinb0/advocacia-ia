@@ -38,6 +38,7 @@ import {
   BriefcaseBusiness,
   ClipboardCheck,
   Database,
+  FileCheck2,
   FileSearch,
   FileText,
   FolderKanban,
@@ -95,6 +96,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
     titulo: "Análise",
     itens: [
       { tela: "avulso", rotulo: "Ler um documento" },
+      { tela: "revisao", rotulo: "Revisão" },
       { tela: "investigacao", rotulo: "Investigar" },
       { tela: "dados", rotulo: "Dados" },
       { tela: "panorama", rotulo: "Panorama" },
@@ -136,6 +138,7 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   dados: Database,
   panorama: BarChart3,
   supervisao: Activity,
+  revisao: FileCheck2,
   catalogoRoteiros: BookOpen,
   usuarios: Users,
   saudeAgente: HeartPulse,

@@ -25,6 +25,7 @@ export type Tela =
   | "saudeAgente"
   | "modelosDePeticao"
   | "catalogoRoteiros"
+  | "revisao"
   | "documentacao";
 
 export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
@@ -45,6 +46,7 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   supervisao: "supervisao",
   dados: "metricas",
   saudeAgente: "agente",
+  revisao: "revisao",
   documentacao: "documentacao",
   /* Sem esta linha a tela seria LIVRE, não restrita: `podeAbrirTela` libera o
    * que não está mapeado. O catálogo de roteiros pertence ao módulo `roteiros`,

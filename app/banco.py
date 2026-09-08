@@ -209,6 +209,7 @@ TABELAS = (
     "entregas",
     "entrevistas",
     "peticoes_locais",
+    "revisoes",
     "assinaturas",
     "roteiros",
     "ufs",
