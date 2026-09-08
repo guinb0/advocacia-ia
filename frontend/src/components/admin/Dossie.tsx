@@ -648,6 +648,30 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
               ))}
             </ul>
           )}
+
+          {/* Gastos comprovados nos documentos, EM ORDEM CRONOLÓGICA, cada um
+            * ligado ao arquivo de origem. O servidor já ordena e confere a
+            * citação — aqui só se apresenta. */}
+          {(analise.gastos?.length ?? 0) > 0 && (
+            <div className="mt-4 border-t border-borda pt-3">
+              <p className={ORIGEM}>Gastos nos documentos, em ordem cronológica</p>
+              <ul className={LISTA}>
+                {analise.gastos!.map((g, i) => (
+                  <li key={i} className={ITEM}>
+                    <div className={ITEM_TOPO}>
+                      <strong className="tabular-nums">{g.valor}</strong>
+                      <span className="text-tinta-3 tabular-nums">{g.data || "sem data"}</span>
+                    </div>
+                    {g.descricao && <p className={RAZAO}>{g.descricao}</p>}
+                    <div className={`${ORIGEM} truncate`} title={g.documento}>
+                      {g.documento}
+                    </div>
+                    <blockquote className={TRECHO}>{g.citacao}</blockquote>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </>
       )}
     </Cartao>

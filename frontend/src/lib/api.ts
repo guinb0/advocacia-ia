@@ -713,8 +713,22 @@ export interface AchadoDocumento {
   contradiz: boolean;
 }
 
+/** Um gasto comprovado num documento (nota, recibo, comprovante). A lista vem
+ *  do servidor JÁ em ordem cronológica e com a citação conferida. */
+export interface GastoDocumento {
+  valor: string;
+  /** Data do gasto (DD/MM/AAAA); pode vir vazia quando o documento não a traz. */
+  data: string;
+  descricao: string;
+  documento: string;
+  entrega_id: string;
+  citacao: string;
+}
+
 export interface AnaliseDocumentos {
   achados: AchadoDocumento[];
+  /** Gastos dos documentos, em ordem cronológica, ligados ao arquivo de origem. */
+  gastos?: GastoDocumento[];
   documentos_lidos: number;
   /** Quantos achados o servidor recusou por citação não conferida. Aparece na
    *  tela de propósito: silenciar esconderia um modelo alucinando com

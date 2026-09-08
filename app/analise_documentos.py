@@ -63,7 +63,19 @@ TEMPO_MODELO_S = 60.0
 INSTRUCAO = """Você lê documentos de um processo trabalhista e aponta o que eles
 dizem e o caso ainda NÃO registrou.
 
-Devolva APENAS JSON: {"achados": [...]}
+Devolva APENAS JSON: {"achados": [...], "gastos": [...]}
+
+Cada gasto (despesa que o documento comprova — nota fiscal, recibo, comprovante
+de farmácia, transporte, consulta, exame, honorário etc.):
+{
+  "valor": "o valor em reais como está no documento, ex.: R$ 123,45",
+  "data": "a data DO GASTO no formato DD/MM/AAAA (a data da compra/serviço; se só
+           houver mês/ano, use 01 no dia; se não houver data, deixe vazio)",
+  "descricao": "o que foi pago, em poucas palavras (ex.: 'medicamentos', 'corrida
+                de aplicativo', 'consulta')",
+  "documento": "nome exato do arquivo, como veio na lista",
+  "citacao": "trecho LITERAL e contínuo do documento onde o valor aparece"
+}
 
 Cada achado:
 {
@@ -95,8 +107,11 @@ REGRAS QUE NÃO SE NEGOCIAM:
 4. Não deduza. "O laudo é de psiquiatra, então há transtorno mental" não é
    achado; "CID F43.1" escrito no laudo é.
 5. Nenhum achado é melhor que achado duvidoso. Lista vazia é resposta válida.
+6. Um GASTO também tem citação literal conferível, pela mesma regra. Registre
+   todo valor pago que o documento comprovar — cada nota/recibo pode ter vários.
+   O que não tiver valor em reais não é gasto. Não invente data.
 
-Máximo 12 achados, os mais relevantes primeiro."""
+Máximo 12 achados, os mais relevantes primeiro. Gastos: todos os que houver."""
 
 
 #: Vocabulário fechado de "de quem é a informação". Fechá-lo é o que permite ao
@@ -239,6 +254,7 @@ def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
     if not documentos:
         return {
             "achados": [],
+            "gastos": [],
             "documentos_lidos": 0,
             "aviso": (
                 "Nenhum anexo deste caso tem texto lido ainda. Envie os documentos "
@@ -293,10 +309,68 @@ def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
     if recusados:
         log.info("análise do caso %s: %d achado(s) recusados na conferência", caso_id, recusados)
 
+    gastos = _extrair_gastos(bruto, texto_por_arquivo, id_por_arquivo)
+
     return {
         "achados": achados[:12],
+        # Gastos comprovados nos documentos, EM ORDEM CRONOLÓGICA, cada um ligado
+        # ao arquivo de origem (issue "Organizar gastos em ordem cronológica").
+        "gastos": gastos,
         "documentos_lidos": len(documentos),
         # Contado e mostrado de propósito: silenciar a recusa esconderia um
         # modelo alucinando com frequência, que é o que precisa aparecer.
         "recusados": recusados,
     }
+
+
+#: A data do gasto para ordenar: "DD/MM/AAAA" vira "AAAAMMDD"; sem data, vai para
+#: o fim (a tupla começa com 1, e as datadas com 0).
+def _chave_data(bruto: str) -> tuple[int, str]:
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", str(bruto or ""))
+    if not m:
+        return (1, "")
+    dia, mes, ano = m.groups()
+    ano = ("20" + ano) if len(ano) == 2 else ano
+    try:
+        return (0, f"{int(ano):04d}{int(mes):02d}{int(dia):02d}")
+    except ValueError:
+        return (1, "")
+
+
+def _extrair_gastos(
+    bruto: dict[str, Any],
+    texto_por_arquivo: dict[str, str],
+    id_por_arquivo: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Gastos comprovados nos documentos, conferidos pela citação e ordenados.
+
+    Mesma regra dos achados: a citação tem de existir LITERALMENTE no documento
+    apontado — gasto sem prova conferível não entra. Cada gasto guarda o
+    `entrega_id` de origem para a tela/peça rastrear de onde veio. A ordenação é
+    pela data do gasto; sem data, vai para o fim (mantém, mas não some).
+    """
+    gastos: list[dict[str, Any]] = []
+    for item in bruto.get("gastos") or []:
+        if not isinstance(item, dict):
+            continue
+        arquivo = str(item.get("documento") or "").strip()
+        citacao = str(item.get("citacao") or "").strip()
+        valor = str(item.get("valor") or "").strip()
+        if not (arquivo and citacao and valor):
+            continue
+        corpo = texto_por_arquivo.get(arquivo)
+        if corpo is None or _normalizar(citacao) not in corpo:
+            continue
+        data = str(item.get("data") or "").strip()
+        gastos.append(
+            {
+                "valor": valor[:40],
+                "data": data[:20],
+                "descricao": str(item.get("descricao") or "").strip()[:120],
+                "documento": arquivo,
+                "entrega_id": id_por_arquivo[arquivo],
+                "citacao": citacao[:400],
+            }
+        )
+    gastos.sort(key=lambda g: _chave_data(g["data"]))
+    return gastos
