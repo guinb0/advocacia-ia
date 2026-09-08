@@ -1330,6 +1330,86 @@ async def enviar_documento_para_assinatura_site(pedido: PedidoAssinaturaDireta):
     return {"ok": True, "link": resultado["link"], "whatsapp_enviado": whatsapp_enviado}
 
 
+class PedidoAssinaturaTodos(BaseModel):
+    """Manda os TRÊS documentos à assinatura de uma vez, num login só."""
+
+    respostas: dict[str, Any]
+    municipio: str = ""
+    cliente_whatsapp: str = ""
+
+
+@app.post("/api/assinatura/navegador/todos", status_code=201)
+async def enviar_todos_para_assinatura_site(pedido: PedidoAssinaturaTodos):
+    """Gera contrato + procuração + declaração e os manda assinar num clique.
+
+    Os três sobem na MESMA sessão do navegador (um login só) pela conta ZapSign;
+    cada um volta com o seu link de assinatura e, havendo telefone, cada link vai
+    ao cliente pelo WhatsApp — um por documento, para ele não achar que acabou no
+    primeiro.
+    """
+    if not assinatura_navegador.configurado():
+        raise HTTPException(
+            503,
+            "O envio pelo site do ZapSign não está configurado: falta o login "
+            "(ZAPSIGN_LOGIN_EMAIL/ZAPSIGN_LOGIN_SENHA) no ambiente.",
+        )
+    nome = str(pedido.respostas.get("nome") or "").strip()
+    email = str(pedido.respostas.get("email") or "").strip()
+    if not email:
+        raise HTTPException(
+            422,
+            "A ZapSign exige um e-mail para enviar o convite. Preencha o e-mail do "
+            "cliente na entrevista e tente de novo.",
+        )
+    try:
+        gerados = await run_in_threadpool(
+            contrato.gerar_todos, pedido.respostas, pedido.municipio
+        )
+        documentos = []
+        for item in gerados:
+            pdf = await run_in_threadpool(docx_pdf.converter, item["docx"])
+            documentos.append(
+                {
+                    "pdf": pdf,
+                    "nome": f"{item['rotulo']} - {nome or 'cliente'}.pdf".replace("/", "-"),
+                    "rotulo": item["rotulo"],
+                }
+            )
+    except docx_pdf.ErroConversaoDocx as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except contrato.ErroContrato as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    resultado = await run_in_threadpool(
+        assinatura_navegador.enviar_varios_para_assinatura, documentos, nome, email
+    )
+    if not resultado["ok"]:
+        raise HTTPException(502, resultado["erro"])
+
+    docs_saida = resultado.get("documentos") or []
+    whatsapp_enviado = False
+    if pedido.cliente_whatsapp.strip() and whatsapp.configurado():
+        try:
+            numero = whatsapp._numero_brasileiro(pedido.cliente_whatsapp)
+            for doc in docs_saida:
+                if not doc.get("link"):
+                    continue
+                texto = (
+                    f"Olá! Segue {doc.get('rotulo', 'o documento')} para assinatura digital: "
+                    f"{doc['link']}\nQualquer dúvida, estamos à disposição."
+                )
+                await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)
+                whatsapp_enviado = True
+        except Exception:  # noqa: BLE001 - o e-mail já saiu; WhatsApp é reforço
+            log.warning("Falha ao enviar links de assinatura pelo WhatsApp", exc_info=True)
+
+    return {
+        "ok": True,
+        "documentos": [{"rotulo": d.get("rotulo", ""), "link": d.get("link", "")} for d in docs_saida],
+        "whatsapp_enviado": whatsapp_enviado,
+    }
+
+
 @app.post("/api/contrato/assinatura", status_code=201)
 async def enviar_contrato_para_assinatura(pedido: PedidoAssinatura):
     """Gera a papelada INTEIRA e a manda para assinatura eletrônica.
