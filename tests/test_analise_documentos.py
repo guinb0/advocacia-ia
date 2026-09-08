@@ -167,6 +167,31 @@ def cenario_atribuicao_de_parte() -> int:
     return falhas
 
 
+def cenario_gastos() -> int:
+    """Gastos: em ordem cronológica, ligados ao documento, com citação conferida."""
+    falhas = 0
+    instalar(
+        {
+            "achados": [],
+            "gastos": [
+                {"valor": "R$ 50,00", "data": "10/06/2025", "descricao": "medicamentos",
+                 "documento": "laudo.pdf", "citacao": "CID F43.1"},
+                {"valor": "R$ 22,90", "data": "15/03/2025", "descricao": "corrida",
+                 "documento": "cnis.png", "citacao": "Afastamento de 12/03/2026"},
+                # Citação que não existe no documento: recusada, como nos achados.
+                {"valor": "R$ 9,99", "data": "01/01/2020", "descricao": "inventado",
+                 "documento": "laudo.pdf", "citacao": "compra que ninguém escreveu"},
+            ],
+        }
+    )
+    r = ad.analisar("caso-1")
+    g = r["gastos"]
+    falhas += not checar(len(g) == 2, "gasto com citação inexistente é recusado")
+    falhas += not checar([x["data"] for x in g] == ["15/03/2025", "10/06/2025"], "gastos em ordem cronológica")
+    falhas += not checar(g[0]["entrega_id"] == "e2", "gasto ligado ao documento de origem (entrega_id)")
+    return falhas
+
+
 def main_teste() -> int:
     falhas = 0
     for titulo, teste in (
@@ -174,6 +199,7 @@ def main_teste() -> int:
         ("OCR imperfeito não recusa citação honesta", cenario_ocr_imperfeito),
         ("o que o modelo recebe", cenario_o_que_o_modelo_recebe),
         ("cada achado diz de quem é a informação", cenario_atribuicao_de_parte),
+        ("gastos em ordem cronológica, com origem e citação", cenario_gastos),
     ):
         print(f"\n{titulo}")
         falhas += teste()
