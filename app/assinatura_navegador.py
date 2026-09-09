@@ -172,27 +172,49 @@ def _diagnostico_pagina(pagina: Any) -> str:
 
 
 def _clicar(pagina: Any, textos: tuple[str, ...], espera: int) -> bool:
-    """Clica o primeiro botão/link cujo texto casa, esperando ele ficar clicável.
+    """Clica o primeiro botão/link VISÍVEL cujo texto casa. Insiste — a etapa
+    do assistente leva um instante pra estabilizar depois do clique anterior.
 
-    `:has-text` é substring e ignora caixa, então "Continuar" acha "CONTINUAR".
-    `.first.click()` AUTO-ESPERA a ação: se o botão está visível mas ainda
-    desabilitado (upload em curso), aguarda habilitar — sem isto, ao tirar o
-    `networkidle`, o clique caía num botão desabilitado e a etapa não avançava.
-    `.first` também evita erro de múltiplos matches ("Continuar" casa também com
-    "Continuar sem posicionar"). Devolve se clicou; SPA, cada avanço é um clique.
+    Duas armadilhas descobertas calibrando contra a conta real (ver
+    `docs/DIAGNOSTICO-zapsign-navegador.md`), nenhuma delas visível no HTML
+    estático — só rodando de verdade:
+
+    1. **`.first` sozinho não basta.** Depois de avançar de etapa, o ZapSign
+       deixa no DOM um botão fantasma da etapa anterior (mesmo texto
+       "Continuar", `data-cy="continuarBtn"`, mas invisível/fora da tela).
+       `pagina.locator(...).first` obedece ORDEM NO DOM, não posição na tela —
+       se o fantasma vem antes do botão de verdade, o clique "funciona" (sem
+       erro) e a etapa não avança, porque caiu no elemento errado. Por isso
+       aqui a filtragem é por `elemento.is_visible()` de verdade, elemento a
+       elemento — não por pseudo-seletor, que teve o mesmo problema.
+    2. **Uma tentativa só é insuficiente.** O Angular do assistente troca de
+       etapa em mais de um passo (o botão certo pode levar até ~1s pra virar
+       clicável depois de renderizar) — sem repetir, a automação clica cedo
+       demais e erra por uma corrida, não por seletor errado.
+
+    `.first.click()` com `timeout` grande e um seletor só, como era antes,
+    ESCONDIA a corrida: parecia funcionar quando a sorte de timing colaborava,
+    e travava direto quando não. Aqui a espera vira tentativas curtas e
+    repetidas — mais parecido com como um seletor humano tenta de novo.
     """
-    limite = min(int(espera / 2), 10000)
-    for t in textos:
-        loc = pagina.locator(f"button:has-text('{t}'), a:has-text('{t}')")
-        try:
-            # `count()` é instantâneo: rótulo ausente é pulado na hora, sem gastar
-            # o timeout inteiro. Presente, `click()` auto-espera ficar clicável.
-            if loc.count() == 0:
-                continue
-            loc.first.click(timeout=limite)
-            return True
-        except Exception:  # noqa: BLE001 - este rótulo não avançou; tenta o próximo
-            continue
+    tentativas = max(1, int(espera / 700))
+    for _ in range(tentativas):
+        for t in textos:
+            for el in pagina.query_selector_all("button, a"):
+                try:
+                    texto_el = (el.inner_text() or "").strip()
+                except Exception:  # noqa: BLE001
+                    continue
+                if t.lower() not in texto_el.lower():
+                    continue
+                try:
+                    if not (el.is_visible() and el.is_enabled()):
+                        continue
+                    el.click(timeout=5000)
+                    return True
+                except Exception:  # noqa: BLE001 - este candidato não clicou; tenta o próximo
+                    continue
+        pagina.wait_for_timeout(700)
     return False
 
 
