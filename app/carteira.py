@@ -304,7 +304,30 @@ def _cobrancas_por_caso() -> dict[str, dict[str, Any]]:
     return {str(l["caso_id"]): dict(l) for l in linhas}
 
 
-def _precisa_ligar(telefone: str, cobranca: dict[str, Any] | None, dias: int) -> tuple[bool, str]:
+def _ultimas_ligacoes_por_caso() -> dict[str, dict[str, Any]]:
+    with banco.conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT caso_id, id, atendente_id, atendente_nome, realizada_em, criado_em
+              FROM (
+                    SELECT caso_id, id, atendente_id, atendente_nome, realizada_em, criado_em,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY caso_id ORDER BY realizada_em DESC, id DESC
+                           ) AS posicao
+                      FROM ligacoes
+                   ) AS ordenadas
+             WHERE posicao = 1
+            """
+        ).fetchall()
+    return {str(linha["caso_id"]): dict(linha) for linha in linhas}
+
+
+def _precisa_ligar(
+    telefone: str,
+    cobranca: dict[str, Any] | None,
+    dias: int,
+    ultima_ligacao: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
     """Quando o follow-up por WhatsApp não resolve e um humano tem de ligar.
 
     Regra (operacional, não é ranking de cliente):
@@ -313,6 +336,8 @@ def _precisa_ligar(telefone: str, cobranca: dict[str, Any] | None, dias: int) ->
       - follow-up desligado e caso parado além do prazo de cobrança;
       - follow-up ligado, mas parado tempo demais mesmo assim.
     """
+    if ultima_ligacao:
+        return False, "Ligação registrada."
     if not telefone:
         return True, "Sem telefone cadastrado — contato só por ligação."
     if cobranca and str(cobranca.get("ultimo_erro") or "").strip():
@@ -336,6 +361,7 @@ def relatorio_follow_up() -> dict[str, Any]:
         cadastro = armazenamento.listar_casos()
         entregas_por_caso = armazenamento.entregas_de_todos_os_casos()
         cobrancas = _cobrancas_por_caso()
+        ligacoes = _ultimas_ligacoes_por_caso()
 
     clientes: list[dict[str, Any]] = []
     for caso in cadastro:
@@ -351,7 +377,8 @@ def relatorio_follow_up() -> dict[str, Any]:
         dias = _dias_desde(caso.get("atualizado_em") or caso.get("criado_em"))
         telefone = str(caso.get("telefone") or "").strip()
         cobranca = cobrancas.get(str(caso["id"]))
-        precisa, motivo = _precisa_ligar(telefone, cobranca, dias)
+        ultima_ligacao = ligacoes.get(str(caso["id"]))
+        precisa, motivo = _precisa_ligar(telefone, cobranca, dias, ultima_ligacao)
         clientes.append(
             {
                 "caso_id": str(caso["id"]),
@@ -363,6 +390,7 @@ def relatorio_follow_up() -> dict[str, Any]:
                 "follow_up_ativo": bool(cobranca and cobranca.get("ativa")),
                 "precisa_ligar": precisa,
                 "motivo_ligacao": motivo,
+                "ultima_ligacao": ultima_ligacao,
             }
         )
 

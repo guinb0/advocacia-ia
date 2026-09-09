@@ -2045,8 +2045,7 @@ export interface ClienteFollowUp {
   follow_up_ativo: boolean;
   precisa_ligar: boolean;
   motivo_ligacao: string;
-  /** A ligação mais recente registrada para o caso, ou null se ninguém ligou. */
-  ultima_ligacao: { usuario: string; quando: string; dias_atras: number } | null;
+  ultima_ligacao: Call | null;
 }
 
 export interface RelatorioFollowUp {
@@ -2057,16 +2056,24 @@ export interface RelatorioFollowUp {
   aviso: string;
 }
 
+export interface Call {
+  id: string;
+  caso_id: string;
+  atendente_id: string;
+  atendente_nome: string;
+  realizada_em: string;
+  criado_em: string;
+}
+
 /** Clientes com documento obrigatório pendente, com alerta de necessidade de ligação. */
 export async function relatorioFollowUp(): Promise<RelatorioFollowUp> {
   return comoJson(await buscar("/api/follow-up"));
 }
 
-/** Registra que o usuário logado ligou para o cliente do caso (log do follow-up). */
-export async function registrarLigacao(
-  casoId: string,
-): Promise<{ id: string; caso_id: string; usuario: string; criado_em: string }> {
-  return comoJson(
-    await buscar(`/api/casos/${encodeURIComponent(casoId)}/ligacao`, { method: "POST" }),
-  );
+export async function callHistory(caseId: string): Promise<{ calls: Call[] }> {
+  return comoJson(await buscar(`/api/casos/${encodeURIComponent(caseId)}/ligacoes`));
+}
+
+export async function registerCall(caseId: string): Promise<Call> {
+  return comoJson(await buscar(`/api/casos/${encodeURIComponent(caseId)}/ligacoes`, { method: "POST" }));
 }
