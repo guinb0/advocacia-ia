@@ -4,7 +4,7 @@ __pycache__/
 *.log
 .pytest_cache/
 tmp/
-tests/amostras/
+**/tests/amostras/
 .paddlex/
 run.stdout.log
 run.stderr.log
@@ -23,7 +23,7 @@ dados/
 # tabela de honorarios, CNPJ e as inscricoes na OAB. Para gerar contrato, ponha
 # o .docx oficial em docs/ — o codigo pega qualquer CONTRATO*.docx, o mais
 # recente primeiro (ver app/contrato.py).
-docs/CONTRATO*.docx
+**/docs/CONTRATO*.docx
 
 # Saida do script de vetorizacao: barulho de execucao, nao codigo.
 vetorizacao-*.log
@@ -48,3 +48,18 @@ frontend/.next/
 # processo roda e nunca devem fazer parte de commit ou merge.
 celerybeat-schedule
 celerybeat-schedule.*
+
+# Dependencia do Next: baixada por `npm install`, nunca versionada. A ausencia desta
+# linha ja custou caro uma vez — um `git add .` na raiz pos 10.022 arquivos do
+# `node_modules` no indice, junto com o contrato do escritorio.
+node_modules/
+
+# Sobra da migracao feita por `migrar-raiz.ps1`: o projeto morava em `ocr-extrator/` e
+# subiu para a raiz. O que ficou la e copia exata do que esta aqui (`dados/`, o contrato,
+# as amostras) mais os gerados que o script nao conseguiu apagar porque havia processo
+# segurando o arquivo. O `.dockerignore` ja a excluia do build; esta linha faz o mesmo
+# pelo repositorio, para que ela nao volte ao indice enquanto a pasta nao for apagada.
+ocr-extrator/
+
+# Cache incremental do TypeScript: gerado a cada build.
+*.tsbuildinfo

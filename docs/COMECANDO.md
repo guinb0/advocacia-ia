@@ -172,6 +172,13 @@ Get-NetTCPConnection -LocalPort 3000,8100,8200 -State Listen |
 sessão. Gere um com `python -c "import secrets; print(secrets.token_urlsafe(48))"`
 ou rode com `-SemAuth` para subir sem autenticação.
 
+**O login para em "Confirme o acesso" e o código não chega** — o segundo fator
+está ligado e o SMTP não. Em desenvolvimento, `-SemAuth` pula isso junto com a
+autenticação; para exercitar o fluxo de verdade, preencha o `SMTP_*` do `.env`
+(ver [ACESSO-CAPTCHA-2FA.md](ACESSO-CAPTCHA-2FA.md)). Se o SMTP estiver vazio e
+`DOIS_FATORES_OBRIGATORIO=0`, o login passa direto e o log registra
+`SEGUNDO FATOR PULADO`.
+
 **Entra no login e volta para o login** — o cookie de sessão não chegou. Quase
 sempre é o frontend em `localhost` falando com a API em `127.0.0.1`: para o
 navegador são hosts diferentes, e o cookie não atravessa. Confira que
