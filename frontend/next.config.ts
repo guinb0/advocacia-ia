@@ -22,6 +22,21 @@ import type { NextConfig } from "next";
  * motivo. O Dockerfile liga a variavel; a maquina de ninguem precisa. */
 const nextConfig: NextConfig = {
   output: process.env.BUILD_STANDALONE === "1" ? "standalone" : undefined,
+
+  /* A raiz é ESTA pasta, e precisa ser dita em voz alta.
+   *
+   * Sem esta linha o Turbopack sobe a árvore de diretórios procurando um `package.json` ou
+   * lockfile que sirva de raiz de workspace, e acaba encontrando os de um projeto solto no
+   * PERFIL do usuário (`C:\Users\<voce>\package.json`, do `bolao-copa-2026`). A partir daí
+   * ele considera `C:\Users\<voce>` a raiz e passa a varrer o perfil inteiro — Documents,
+   * Downloads, AppData, OneDrive. O `next dev` anuncia "Ready" e nunca responde: medido
+   * aqui, o processo queimou 3.159 segundos de CPU e 966 MB sem servir uma requisição.
+   *
+   * Apagar o `package.json` do perfil também resolveria, mas depende de a máquina de cada
+   * um estar limpa. Isto não depende. */
+  turbopack: {
+    root: __dirname,
+  },
 };
 
 export default nextConfig;

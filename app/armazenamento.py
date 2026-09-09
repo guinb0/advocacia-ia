@@ -402,6 +402,44 @@ def atualizar_caso(
     return cur.rowcount > 0
 
 
+def register_call(case_id: str, attendant_id: str, attendant_name: str) -> dict[str, Any]:
+    call_id = str(uuid.uuid4())
+    timestamp = agora()
+    record = {
+        "id": call_id,
+        "caso_id": case_id,
+        "atendente_id": attendant_id.strip(),
+        "atendente_nome": attendant_name.strip(),
+        "realizada_em": timestamp,
+        "criado_em": timestamp,
+    }
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO ligacoes"
+            " (id, caso_id, atendente_id, atendente_nome, realizada_em, criado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                record["id"],
+                record["caso_id"],
+                record["atendente_id"],
+                record["atendente_nome"],
+                record["realizada_em"],
+                record["criado_em"],
+            ),
+        )
+    return record
+
+
+def list_calls(case_id: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, caso_id, atendente_id, atendente_nome, realizada_em, criado_em "
+            "FROM ligacoes WHERE caso_id = ? ORDER BY realizada_em DESC, id DESC",
+            (case_id,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
 def excluir_caso(caso_id: str) -> bool:
     """Apaga o caso, suas entregas e os arquivos enviados."""
     with conectar() as con:

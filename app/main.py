@@ -51,6 +51,7 @@ from . import (
     assinatura_navegador,
     auth,
     jurimetria_caso,
+    captcha,
     carteira,
     casos,
     categorias,
@@ -64,6 +65,7 @@ from . import (
     dados,
     documentacao,
     docx_pdf,
+    dois_fatores,
     contrato,
     escuta,
     perfis,
@@ -221,6 +223,15 @@ PUBLICAS = {
     "/api/chamada/config",
     "/api/chamada/sala",
     "/api/user/authenticate",
+    # Os dois passos seguintes do login TAMBEM sao anteriores a sessao. Quem esta
+    # confirmando o codigo do segundo fator, por definicao, ainda nao tem cookie:
+    # ele so nasce depois do `verify`. Sem estas duas linhas o middleware devolve
+    # "Autenticacao necessaria" antes de a rota rodar, e o login com segundo fator
+    # fica impossivel de concluir -- com o agravante de nao deixar rastro: o
+    # contador de tentativas do desafio nem chega a ser tocado, entao a tabela
+    # mostra `tentativas = 0` e parece que ninguem tentou.
+    "/api/user/authenticate/verify",
+    "/api/user/authenticate/resend",
     "/api/user/logout",
     "/docs",
     "/openapi.json",
@@ -2145,8 +2156,19 @@ def config():
 
     Sobrou pouco depois que o Keycloak saiu: não há mais URL de servidor de
     identidade nem client_id para o navegador descobrir. O que fica é o que a
-    tela decide com base nisto — mostrar ou não a tela de login."""
-    return {"auth": auth.configuracao_publica()}
+    tela decide com base nisto — mostrar ou não a tela de login, desenhar ou não
+    o widget do captcha, e com que chave.
+
+    A `site key` do Turnstile é pública por definição (o navegador precisa dela)
+    e mesmo assim vem por aqui em vez de `NEXT_PUBLIC_TURNSTILE_SITE_KEY`: o
+    `.env.example` já registra o estrago que variável embutida no bundle fez
+    quando o sistema foi aberto de outro computador. Servida daqui, ela acompanha
+    o servidor que respondeu."""
+    return {
+        "auth": auth.configuracao_publica(),
+        "captcha": captcha.configuracao_publica(),
+        "doisFatores": dois_fatores.configuracao_publica(),
+    }
 
 
 @app.get("/api/eu")
@@ -2672,20 +2694,24 @@ def relatorio_follow_up(_usuario: auth.Usuario = Depends(auth.exigir_modulo("cas
     return carteira.relatorio_follow_up()
 
 
-@app.post("/api/casos/{caso_id}/ligacao")
-def registrar_ligacao_followup(
-    caso_id: str, usuario: auth.Usuario = Depends(auth.exigir_modulo("casos"))
+@app.get("/api/casos/{caso_id}/ligacoes")
+def list_case_calls(
+    caso_id: str,
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
 ):
-    """Registra que o usuário logado LIGOU para o cliente do caso (follow-up).
-
-    Log de atividade para o relatório: o atendimento não liga duas vezes e a
-    supervisão vê quem tocou a pendência. Grava o NOME (é o que a tela lê);
-    sem autenticação, fica vazio, como no registro de entrevista.
-    """
     if armazenamento.obter_caso(caso_id) is None:
         raise HTTPException(404, "Caso não encontrado.")
-    quem = (usuario.nome or usuario.usuario or "").strip()
-    return armazenamento.registrar_ligacao(caso_id, quem)
+    return {"calls": armazenamento.list_calls(caso_id)}
+
+
+@app.post("/api/casos/{caso_id}/ligacoes", status_code=201)
+def register_case_call(
+    caso_id: str,
+    usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return armazenamento.register_call(caso_id, usuario.id, usuario.nome)
 
 
 @app.get("/api/casos/{caso_id}")

@@ -310,6 +310,7 @@ nova nasce fechada (ver `PUBLICAS` em `main.py`).
 | `GET` | `/api/categorias` · `/api/categorias/{codigo}` | categorias e seus checklists |
 | `POST` `GET` | `/api/casos` | cria (`cliente`, `categoria`) e lista |
 | `GET` `PATCH` `DELETE` | `/api/casos/{id}` | checklist com status; renomear; apagar caso **e arquivos** |
+| `GET` `POST` | `/api/casos/{id}/ligacoes` | histórico e confirmação de ligação realizada |
 | `GET` | `/api/casos/{id}/pedido` | texto pronto para mandar ao cliente |
 | `POST` | `/api/casos/{id}/documentos` | envia um documento para um item |
 | `POST` | `/api/casos/{id}/identidade-unificada` | uma CNH/CIN vale por RG **e** CPF |

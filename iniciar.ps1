@@ -24,6 +24,8 @@ Set-Location $PSScriptRoot
 
 # A máquina da infra não deve depender de variáveis deixadas por outro shell.
 # Variável já definida pelo ambiente vence o arquivo (útil em CI/produção).
+$script:EnvDoAmbiente = @{}
+
 function Importar-Env([string]$Caminho) {
     if (-not (Test-Path $Caminho)) {
         throw "Arquivo de ambiente ausente: $Caminho. Copie .env.example para .env e preencha os segredos."
@@ -33,13 +35,30 @@ function Importar-Env([string]$Caminho) {
         if (-not $texto -or $texto.StartsWith("#") -or -not $texto.Contains("=")) { continue }
         $nome, $valor = $texto.Split("=", 2)
         $nome = $nome.Trim(); $valor = $valor.Trim().Trim('"').Trim("'")
-        if (-not [Environment]::GetEnvironmentVariable($nome, "Process")) {
+        $jaDefinida = [Environment]::GetEnvironmentVariable($nome, "Process")
+        if (-not $jaDefinida) {
             [Environment]::SetEnvironmentVariable($nome, $valor, "Process")
+        } elseif ($jaDefinida -ne $valor) {
+            # A variavel do ambiente vence de proposito (linha acima), mas quando ela
+            # DIVERGE do arquivo isso vira armadilha: quem acabou de editar o .env roda o
+            # script de novo, na mesma janela, e continua com o valor velho -- que veio da
+            # execucao anterior, quando o arquivo ainda tinha outro conteudo. O erro que
+            # aparece depois aponta para o .env, que a essa altura ja esta certo. Registrar
+            # a divergencia deixa isso visivel em vez de silencioso.
+            $script:EnvDoAmbiente[$nome] = $jaDefinida
         }
     }
 }
 
 Importar-Env ".\.env"
+if ($script:EnvDoAmbiente.Count -gt 0) {
+    Write-Host "Atencao: estas variaveis ja estavam nesta janela do PowerShell e venceram o .env:" -ForegroundColor Yellow
+    foreach ($nome in ($script:EnvDoAmbiente.Keys | Sort-Object)) {
+        Write-Host ("  {0} = {1}" -f $nome, $script:EnvDoAmbiente[$nome]) -ForegroundColor Yellow
+    }
+    Write-Host "Se nao era essa a intencao, abra um PowerShell novo (ou limpe com:" -ForegroundColor Yellow
+    Write-Host '  Get-Content .\.env | % { if ($_ -match ''^\s*([A-Z_0-9]+)='') { Remove-Item "env:$($Matches[1])" -EA SilentlyContinue } }' -ForegroundColor DarkGray
+}
 
 
 # Uma janela fechada à força deixa os filhos do `uv` vivos no Windows. Dois
@@ -103,8 +122,17 @@ function Diagnostico-Jitsi([string]$Url, [double]$Segundos = 120) {
     try { $locais += (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop).IPAddress } catch {}
 
     if ($alvo -match "^\d+\.\d+\.\d+\.\d+$" -and $locais -notcontains $alvo) {
-        $causa = "O endereco $alvo nao pertence a esta maquina. O JITSI_PUBLIC_URL do seu .env veio " +
-                 "do computador de outra pessoa. Troque por http://localhost:8081 e rode de novo."
+        if ($script:EnvDoAmbiente.ContainsKey("JITSI_PUBLIC_URL")) {
+            # O .env pode estar certo: quem mandou este endereco foi a propria janela, de
+            # uma execucao anterior. Mandar editar o arquivo aqui faria a pessoa procurar
+            # um valor que ja nao esta la.
+            $causa = "O endereco $alvo nao pertence a esta maquina, e ele NAO veio do .env: " +
+                     "estava preso nesta janela do PowerShell desde uma execucao anterior. " +
+                     "Abra um PowerShell novo e rode outra vez."
+        } else {
+            $causa = "O endereco $alvo nao pertence a esta maquina. O JITSI_PUBLIC_URL do seu .env veio " +
+                     "do computador de outra pessoa. Troque por http://localhost:8081 e rode de novo."
+        }
     } elseif (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         $causa = "O Docker nao esta instalado (ou nao esta no PATH). O Jitsi roda em containers."
     } else {
