@@ -3,7 +3,12 @@ param(
     [string]$Versao = "stable",
     [int]$PortaHttp = 8081,
     [string]$UrlPublica = "http://localhost:8081",
-    [string]$IpsAnunciados = "127.0.0.1"
+    [string]$IpsAnunciados = "127.0.0.1",
+    # A interface de debug do JVB (colibri) nasce em 127.0.0.1:8080 no compose oficial
+    # do Jitsi, e 8080 e porta disputada -- um Apache/XAMPP em 0.0.0.0:8080 e suficiente
+    # para o `jvb` nao subir, com um erro de permissao de socket que nao diz o nome dele.
+    # Nada nosso consome essa porta: mover para 8090 so tira o Jitsi do caminho.
+    [int]$PortaColibri = 8090
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +57,7 @@ foreach ($linha in Get-Content $arquivoEnv -Encoding UTF8) { $linhas.Add($linha)
 Definir-Env $linhas "CONFIG" "./.jitsi-meet-cfg"
 Definir-Env $linhas "HTTP_PORT" "$PortaHttp"
 Definir-Env $linhas "HTTPS_PORT" "8444"
+Definir-Env $linhas "JVB_COLIBRI_PORT" "$PortaColibri"
 Definir-Env $linhas "PUBLIC_URL" $UrlPublica
 Definir-Env $linhas "JVB_ADVERTISE_IPS" $IpsAnunciados
 Definir-Env $linhas "JITSI_IMAGE_VERSION" $Versao

@@ -113,6 +113,8 @@ JWT_SECRET          PORTAL_SEGREDO
 DEEPSEEK_API_KEY    OPENROUTER_API_KEY
 ZAPSIGN_API_TOKEN   DATAJUD_API_KEY
 EVOLUTION_API_KEY   EVOLUTION_INSTANCE
+TURNSTILE_SITE_KEY  TURNSTILE_SECRET_KEY
+SMTP_HOST           SMTP_USUARIO         SMTP_SENHA
 ```
 
 Todas usam a forma `${VAR?VAR is required}` no compose: **faltando qualquer
@@ -131,6 +133,18 @@ Duas merecem atenção:
   `iniciar.ps1 -SemAuth` faz em desenvolvimento.
 - **`PORTAL_SEGREDO` vazio** faz o servidor sortear uma chave por processo, e as
   sessões do portal do cliente caem a cada restart.
+
+As da porta de entrada seguem a mesma regra de "vazio desliga", e por isso valem
+uma conferência antes de cada go-live (detalhes em
+[ACESSO-CAPTCHA-2FA.md](ACESSO-CAPTCHA-2FA.md)):
+
+- **`TURNSTILE_SECRET_KEY` vazio desliga o captcha** e o login volta a aceitar
+  tentativa automatizada sem filtro nenhum. O log grita, mas a stack sobe.
+- **`SMTP_HOST` vazio deixa o segundo fator sem canal de entrega.** Os composes
+  de produção e homologação já sobem com `DOIS_FATORES_OBRIGATORIO=1`, então o
+  efeito é o login ser **recusado** (503) em vez de passar só com a senha —
+  escolha deliberada: melhor ninguém entrar do que todo mundo entrar com um
+  fator a menos sem perceber.
 
 `PGVECTOR_HOST` aponta hoje para `10.200.1.1`, endereço de VPN. Se o cluster não
 alcançar, o sistema sobe e funciona, mas a busca de precedentes volta vazia.

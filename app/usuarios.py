@@ -55,7 +55,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from . import auth
+from . import auth, captcha, dois_fatores
 from . import perfis as perfis_lib
 from .banco import PREFIXO, SCHEMA, conectar
 
@@ -238,6 +238,11 @@ def inicializar() -> None:
         _sincronizar_perfis_dos_usuarios(con)
         con.execute(GATILHO_SINCRONIZAR_PERFIL)
 
+    # Fora do `with`: `dois_fatores.inicializar` abre a própria conexão, e
+    # aninhar duas contra o mesmo banco não rende nada além de risco de trava.
+    dois_fatores.inicializar()
+
+    with conectar() as con:
         email = (_env("ACERVO_ADMIN_EMAIL") or "admin@acervo.local").lower()
         ja_tem = con.execute(f"SELECT TOP 1 codigo FROM {_TABELA}").fetchone()
         if ja_tem:
@@ -338,6 +343,16 @@ def _por_email(email: str) -> dict[str, Any] | None:
     return _linha_usuario(linha)
 
 
+def por_email(email: str) -> dict[str, Any] | None:
+    """A conta, por e-mail. Versão pública de `_por_email`.
+
+    Existe porque `app/dois_fatores.py` precisa do nome de quem vai receber o
+    código para escrever a mensagem, e importar um `_privado` de outro módulo é
+    o tipo de acoplamento que ninguém enxerga quando renomeia.
+    """
+    return _por_email(email)
+
+
 def papeis_ativos_de_email(email: str) -> tuple[str, ...]:
     """Perfil atual da conta, consultado do banco para autorizacao."""
     pessoa = _por_email(email)
@@ -403,36 +418,53 @@ class PedidoLogin(BaseModel):
     senha: str
     TipoLogin: str = "email"
 
+    #: O token que o widget do Turnstile produz no navegador. Vazio quando o
+    #: captcha está desligado (`TURNSTILE_SECRET_KEY` ausente) — e aí
+    #: `captcha.verificar` passa direto. Tem valor padrão para o `curl` de
+    #: depuração continuar funcionando num ambiente sem captcha.
+    captcha: str = ""
 
-@roteador_sessao.post("/authenticate")
-def autenticar(pedido: PedidoLogin, resposta: Response) -> dict[str, Any]:
-    """Confere a credencial, assina o token e o grava no cookie `HttpOnly`.
 
-    A resposta vem no envelope `{flag, message, data}` do DFLegal, e o `data`
-    repete os dados de sessão que o token já carrega. Não é redundância à toa: o
-    cookie é `HttpOnly`, então o JavaScript NÃO consegue ler o token para
-    descobrir quem entrou — sem este corpo a tela não teria como saber o nome de
-    quem acabou de logar.
+class PedidoCodigo(BaseModel):
+    """O segundo passo: o código de seis dígitos que chegou por e-mail."""
 
-    O token NÃO vai no corpo. Devolvê-lo ali desfaria toda a proteção do
-    `HttpOnly`: bastaria um XSS ler a resposta do login.
+    model_config = ConfigDict(extra="ignore")
+
+    #: O identificador do desafio devolvido pelo primeiro passo. É ele que diz de
+    #: QUEM é o código — a rota não aceita e-mail no corpo, senão bastaria ter um
+    #: código válido qualquer para escolher em que conta entrar.
+    desafio: Annotated[str, Field(min_length=8, max_length=64)]
+    codigo: Annotated[str, Field(min_length=4, max_length=10)]
+
+
+class PedidoReenvio(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    desafio: Annotated[str, Field(min_length=8, max_length=64)]
+
+
+def _ip_do_pedido(request: Request) -> str:
+    """De onde veio a requisição, para o Turnstile conferir.
+
+    `X-Forwarded-For` primeiro porque em produção a API responde atrás de proxy,
+    e ali `request.client.host` é o IP do proxy — igual para todo mundo, o que
+    tornaria a checagem inútil. Só o PRIMEIRO endereço da lista é lido: os
+    seguintes são anexados pelos saltos e podem ser forjados pelo cliente.
     """
-    email = _decodificar(pedido.email).strip().lower()
-    if not email or not pedido.senha:
-        raise HTTPException(400, "Informe e-mail e senha.")
+    encaminhado = request.headers.get("x-forwarded-for", "")
+    if encaminhado:
+        return encaminhado.split(",")[0].strip()
+    return request.client.host if request.client else ""
 
-    pessoa = _por_email(email)
-    informado = _hash_de(pedido.senha)
 
-    # Uma resposta só para "não existe" e para "senha errada", de propósito:
-    # respostas diferentes contam a quem tenta quais e-mails têm conta aqui.
-    if pessoa is None or pessoa["senha_md5"] != informado:
-        log.warning("login recusado para %s", email)
-        raise HTTPException(401, "E-mail ou senha incorretos.")
-    if not pessoa["ativo"]:
-        raise HTTPException(403, "Esta conta está desativada. Procure quem administra.")
-    _exigir_perfil_ativo(pessoa)
+def _emitir_sessao(pessoa: dict[str, Any], resposta: Response) -> dict[str, Any]:
+    """Assina o token, grava o cookie e devolve o envelope da sessão.
 
+    Existe como função porque agora há DOIS caminhos que terminam em sessão
+    aberta — o login direto (perfil isento de segundo fator) e a confirmação do
+    código. Duplicar isto seria duplicar a emissão de credencial, que é
+    exatamente o lugar onde dois trechos parecidos divergem sem ninguém notar.
+    """
     senha_padrao = pessoa["senha_md5"] == auth.SENHA_PADRAO_MD5
     token = auth.gerar_token(
         codigo=pessoa["codigo"],
@@ -442,15 +474,134 @@ def autenticar(pedido: PedidoLogin, resposta: Response) -> dict[str, Any]:
         senha_padrao=senha_padrao,
     )
     auth.definir_cookie(resposta, token)
-    log.info("login: %s (%s)", email, pessoa["perfil"])
-
+    log.info("login: %s (%s)", pessoa["email"], pessoa["perfil"])
     return {
         "flag": True,
         "message": "Autenticado.",
         # Os módulos que este perfil alcança vão junto para a tela montar o menu
         # sem uma segunda ida ao servidor — e para o menu não oferecer botão que
         # a rota vai recusar depois.
-        "data": _sessao_da_pessoa(pessoa),
+        "data": {**_sessao_da_pessoa(pessoa), "etapa": "sessao"},
+    }
+
+
+def _conferir_credencial(email: str, senha: str) -> dict[str, Any]:
+    """E-mail e senha. Levanta na credencial errada, na conta desativada e no
+    perfil morto; devolve a pessoa quando passa."""
+    pessoa = _por_email(email)
+    informado = _hash_de(senha)
+
+    # Uma resposta só para "não existe" e para "senha errada", de propósito:
+    # respostas diferentes contam a quem tenta quais e-mails têm conta aqui.
+    if pessoa is None or pessoa["senha_md5"] != informado:
+        log.warning("login recusado para %s", email)
+        raise HTTPException(401, "E-mail ou senha incorretos.")
+    if not pessoa["ativo"]:
+        raise HTTPException(403, "Esta conta está desativada. Procure quem administra.")
+    _exigir_perfil_ativo(pessoa)
+    return pessoa
+
+
+@roteador_sessao.post("/authenticate")
+def autenticar(pedido: PedidoLogin, request: Request, resposta: Response) -> dict[str, Any]:
+    """Primeiro passo do login: captcha, senha e — quando o perfil exige — o
+    código por e-mail.
+
+    A ORDEM DAS TRÊS CHECAGENS NÃO É ARBITRÁRIA. O captcha vem antes da senha
+    porque é ele que impede a conferência de senha de ser chamada mil vezes por
+    minuto; conferir a senha primeiro deixaria a força bruta acontecer e só
+    depois recusaria a resposta. E o segundo fator vem por último porque só faz
+    sentido mandar código a quem já provou saber a senha — senão a rota vira um
+    jeito de disparar e-mail em nome do sistema para qualquer endereço.
+
+    A RESPOSTA TEM DUAS FORMAS, e o campo `etapa` diz qual:
+
+    - `"sessao"`: acabou aqui. O cookie foi gravado e o `data` traz a sessão. É o
+      caso do perfil isento (`cliente`) e o de quando o segundo fator está
+      desligado;
+    - `"dois_fatores"`: falta um passo. NENHUM cookie foi gravado — quem tem só a
+      senha não recebe credencial nenhuma daqui — e o `data` traz o identificador
+      do desafio, o e-mail mascarado e os prazos. A sessão nasce em
+      `POST /api/user/authenticate/verify`.
+
+    O token NÃO vai no corpo em nenhuma das duas. Devolvê-lo ali desfaria toda a
+    proteção do `HttpOnly`: bastaria um XSS ler a resposta do login.
+    """
+    captcha.verificar(pedido.captcha, _ip_do_pedido(request))
+
+    email = _decodificar(pedido.email).strip().lower()
+    if not email or not pedido.senha:
+        raise HTTPException(400, "Informe e-mail e senha.")
+
+    pessoa = _conferir_credencial(email, pedido.senha)
+
+    if not dois_fatores.exigido_para(pessoa["perfil"]):
+        return _emitir_sessao(pessoa, resposta)
+
+    if not dois_fatores.ATIVO:
+        # SMTP faltando. Recusar ou deixar passar é escolha de quem implanta, e
+        # ela está no `.env` — ver DOIS_FATORES_OBRIGATORIO. O que não pode é o
+        # sistema decidir isto em silêncio: as duas saídas gritam no log.
+        if dois_fatores.OBRIGATORIO:
+            log.error(
+                "login de %s recusado: segundo fator obrigatório e SMTP não configurado",
+                email,
+            )
+            raise HTTPException(
+                503,
+                "O segundo fator de autenticação está indisponível. Procure quem "
+                "administra o sistema.",
+            )
+        log.warning(
+            "SEGUNDO FATOR PULADO para %s: SMTP não configurado. Preencha SMTP_HOST "
+            "ou ligue DOIS_FATORES_OBRIGATORIO=1 para recusar em vez de deixar passar.",
+            email,
+        )
+        return _emitir_sessao(pessoa, resposta)
+
+    desafio = dois_fatores.abrir_desafio(email=pessoa["email"], nome=pessoa["nome"])
+    return {
+        "flag": True,
+        "message": "Enviamos um código de acesso para o seu e-mail.",
+        "data": {"etapa": "dois_fatores", **desafio},
+    }
+
+
+@roteador_sessao.post("/authenticate/verify")
+def confirmar_codigo(pedido: PedidoCodigo, resposta: Response) -> dict[str, Any]:
+    """Segundo passo: confere o código e só então abre a sessão.
+
+    O captcha NÃO se repete aqui. Ele já filtrou o robô na porta, e o desafio tem
+    limite próprio de tentativas (`dois_fatores.TENTATIVAS_MAXIMAS`) — pedir uma
+    segunda verificação da Cloudflare cobraria mais um obstáculo de quem já provou
+    duas coisas, sem fechar buraco nenhum.
+
+    A conta é RELIDA do banco em vez de vir guardada junto do desafio: entre o
+    primeiro passo e este alguém pode ter desativado a conta ou trocado o perfil,
+    e a sessão tem de nascer com o que vale agora.
+    """
+    email = dois_fatores.conferir(pedido.desafio, pedido.codigo)
+    pessoa = _por_email(email)
+    if pessoa is None:
+        raise HTTPException(401, "Esta conta não existe mais. Procure quem administra.")
+    if not pessoa["ativo"]:
+        raise HTTPException(403, "Esta conta está desativada. Procure quem administra.")
+    _exigir_perfil_ativo(pessoa)
+    return _emitir_sessao(pessoa, resposta)
+
+
+@roteador_sessao.post("/authenticate/resend")
+def reenviar_codigo(pedido: PedidoReenvio) -> dict[str, Any]:
+    """Manda um código novo para o mesmo desafio.
+
+    O corpo traz só o identificador do desafio — nunca o e-mail. Aceitar um
+    endereço aqui transformaria a rota num disparador de e-mail para qualquer
+    destinatário, em nome do escritório, sem ninguém precisar de senha.
+    """
+    return {
+        "flag": True,
+        "message": "Novo código enviado.",
+        "data": {"etapa": "dois_fatores", **dois_fatores.reenviar(pedido.desafio)},
     }
 
 

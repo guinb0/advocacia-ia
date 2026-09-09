@@ -51,6 +51,7 @@ from . import (
     assinatura_navegador,
     auth,
     jurimetria_caso,
+    captcha,
     carteira,
     casos,
     categorias,
@@ -64,6 +65,7 @@ from . import (
     dados,
     documentacao,
     docx_pdf,
+    dois_fatores,
     contrato,
     escuta,
     perfis,
@@ -221,6 +223,15 @@ PUBLICAS = {
     "/api/chamada/config",
     "/api/chamada/sala",
     "/api/user/authenticate",
+    # Os dois passos seguintes do login TAMBEM sao anteriores a sessao. Quem esta
+    # confirmando o codigo do segundo fator, por definicao, ainda nao tem cookie:
+    # ele so nasce depois do `verify`. Sem estas duas linhas o middleware devolve
+    # "Autenticacao necessaria" antes de a rota rodar, e o login com segundo fator
+    # fica impossivel de concluir -- com o agravante de nao deixar rastro: o
+    # contador de tentativas do desafio nem chega a ser tocado, entao a tabela
+    # mostra `tentativas = 0` e parece que ninguem tentou.
+    "/api/user/authenticate/verify",
+    "/api/user/authenticate/resend",
     "/api/user/logout",
     "/docs",
     "/openapi.json",
@@ -2145,8 +2156,19 @@ def config():
 
     Sobrou pouco depois que o Keycloak saiu: não há mais URL de servidor de
     identidade nem client_id para o navegador descobrir. O que fica é o que a
-    tela decide com base nisto — mostrar ou não a tela de login."""
-    return {"auth": auth.configuracao_publica()}
+    tela decide com base nisto — mostrar ou não a tela de login, desenhar ou não
+    o widget do captcha, e com que chave.
+
+    A `site key` do Turnstile é pública por definição (o navegador precisa dela)
+    e mesmo assim vem por aqui em vez de `NEXT_PUBLIC_TURNSTILE_SITE_KEY`: o
+    `.env.example` já registra o estrago que variável embutida no bundle fez
+    quando o sistema foi aberto de outro computador. Servida daqui, ela acompanha
+    o servidor que respondeu."""
+    return {
+        "auth": auth.configuracao_publica(),
+        "captcha": captcha.configuracao_publica(),
+        "doisFatores": dois_fatores.configuracao_publica(),
+    }
 
 
 @app.get("/api/eu")

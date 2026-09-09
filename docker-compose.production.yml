@@ -109,6 +109,25 @@ services:
       # do cliente caem a cada restart.
       PORTAL_SEGREDO: ${PORTAL_SEGREDO:-}
 
+      # ------------------------------------------- porta de entrada (login)
+      # Captcha do login. SECRET vazio DESLIGA o captcha e o login volta a
+      # aceitar tentativa automatizada sem filtro (ver app/captcha.py). A SITE_KEY
+      # e publica e chega ao navegador pelo /api/config.
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+
+      # Segundo fator por e-mail, exigido de todos os perfis internos. Depende do
+      # SMTP abaixo: sem ele, OBRIGATORIO=1 RECUSA o login em vez de deixar
+      # passar so com a senha.
+      DOIS_FATORES_OBRIGATORIO: ${DOIS_FATORES_OBRIGATORIO:-1}
+      DOIS_FATORES_PERFIS_ISENTOS: cliente
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORTA: ${SMTP_PORTA:-587}
+      SMTP_USUARIO: ${SMTP_USUARIO:-}
+      SMTP_SENHA: ${SMTP_SENHA:-}
+      SMTP_SEGURANCA: ${SMTP_SEGURANCA:-starttls}
+      SMTP_REMETENTE: ${SMTP_REMETENTE:-}
+
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY?DEEPSEEK_API_KEY is required}
       DEEPSEEK_BASE_URL: https://api.deepseek.com
       DEEPSEEK_MODEL: deepseek-chat
