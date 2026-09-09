@@ -69,6 +69,8 @@ from . import (
     perfis,
     painel as painel_do_caso,
     panorama,
+    peticao_local,
+    peticao_skills,
     pipeline,
     portal,
     rag,
@@ -634,6 +636,63 @@ async def excluir_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
         armazenamento.excluir_modelo, peticao_local.MODELO_VISUAL_GERAL
     )
     return {"arquivo": "Padrão Lara & Melo", "origem": "embutido", "fonte": "Arial"}
+
+
+# --------------------------------------- skill de redação por categoria de petição
+#
+# Instrução extra que o escritório dá para a IA redigir cada categoria (ação) de um
+# jeito próprio — issue "Configurar skill por modelo de petição". Fica no Postgres
+# do pgvector (`app/peticao_skills.py`), não no SQL Server: é insumo da geração por
+# IA, e é lá que mora o resto do que alimenta o RAG. `PodeManterModeloPeticao` é o
+# mesmo gate desta tela inteira — só quem administra modelos de petição edita.
+
+
+class SkillPeticaoEntrada(BaseModel):
+    instrucoes: str = Field(default="", max_length=8000)
+
+
+@app.get("/api/modelos/peticao/skills")
+async def listar_skills_de_peticao(_autorizado=PodeManterModeloPeticao):
+    """Uma linha por categoria — as sem skill cadastrada vêm com instruções vazias."""
+    await run_in_threadpool(peticao_skills.inicializar)
+    salvas = {
+        registro["categoria"]: registro
+        for registro in await run_in_threadpool(peticao_skills.listar)
+    }
+    return [
+        {
+            "categoria": cat.codigo,
+            "nome": cat.nome,
+            "instrucoes": salvas.get(cat.codigo, {}).get("instrucoes", ""),
+            "atualizado_por": salvas.get(cat.codigo, {}).get("atualizado_por", ""),
+            "atualizado_em": salvas.get(cat.codigo, {}).get("atualizado_em", ""),
+        }
+        for cat in categorias.listar()
+    ]
+
+
+@app.put("/api/modelos/peticao/skills/{categoria}")
+async def salvar_skill_de_peticao(
+    categoria: str,
+    corpo: SkillPeticaoEntrada,
+    usuario: auth.Usuario = PodeManterModeloPeticao,
+):
+    """Grava a skill desta categoria. Nunca toca nas demais — a chave é a categoria."""
+    if categorias.obter(categoria) is None:
+        raise HTTPException(404, f"Categoria '{categoria}' não existe.")
+    await run_in_threadpool(peticao_skills.inicializar)
+    registro = await run_in_threadpool(
+        peticao_skills.salvar,
+        categoria,
+        instrucoes=corpo.instrucoes.strip(),
+        atualizado_por=usuario.nome,
+    )
+    return {
+        "categoria": categoria,
+        "instrucoes": registro.get("instrucoes", ""),
+        "atualizado_por": registro.get("atualizado_por", ""),
+        "atualizado_em": registro.get("atualizado_em", ""),
+    }
 
 
 #: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.
@@ -2613,6 +2672,22 @@ def relatorio_follow_up(_usuario: auth.Usuario = Depends(auth.exigir_modulo("cas
     return carteira.relatorio_follow_up()
 
 
+@app.post("/api/casos/{caso_id}/ligacao")
+def registrar_ligacao_followup(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.exigir_modulo("casos"))
+):
+    """Registra que o usuário logado LIGOU para o cliente do caso (follow-up).
+
+    Log de atividade para o relatório: o atendimento não liga duas vezes e a
+    supervisão vê quem tocou a pendência. Grava o NOME (é o que a tela lê);
+    sem autenticação, fica vazio, como no registro de entrevista.
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    quem = (usuario.nome or usuario.usuario or "").strip()
+    return armazenamento.registrar_ligacao(caso_id, quem)
+
+
 @app.get("/api/casos/{caso_id}")
 def obter_caso(caso_id: str):
     situacao = casos.montar_situacao(caso_id)
@@ -2809,6 +2884,22 @@ def _ler_entrevista_no_agente(caso_id: str, entrevista_id: str) -> None:
             caso_id,
             exc_info=True,
         )
+
+
+def _resumir_entrevista_em_fundo(entrevista_id: str, texto: str) -> None:
+    """Gera o resumo da entrevista por IA e o grava, fora do ciclo da requisição.
+
+    Roda numa thread de fundo, como a leitura no agente: quem encerrou o
+    atendimento não espera o modelo. É independente do agente jurídico — sai do
+    DeepSeek direto. Falhar não desfaz nada: a transcrição bruta já está salva, e
+    `entrevista.gerar_resumo` devolve "" em vez de levantar.
+    """
+    try:
+        resumo = entrevista_lib.gerar_resumo(texto)
+        if resumo:
+            armazenamento.atualizar_resumo_entrevista(entrevista_id, resumo)
+    except Exception:  # noqa: BLE001 - enriquecimento, nunca derruba o atendimento
+        log.warning("não foi possível resumir a entrevista %s", entrevista_id, exc_info=True)
 
 
 def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
@@ -3309,6 +3400,16 @@ async def enviar_entrevista(
         daemon=True,
     ).start()
 
+    # O arquivo é uma entrevista completa: gera o resumo por IA junto, à parte do
+    # agente (ver a rota do atendimento ao vivo).
+    if texto:
+        threading.Thread(
+            target=_resumir_entrevista_em_fundo,
+            args=(entrevista["id"], texto),
+            name=f"resumo-entrevista-{entrevista['id'][:8]}",
+            daemon=True,
+        ).start()
+
     return entrevista
 
 
@@ -3433,6 +3534,16 @@ async def gravar_entrevista_ao_vivo(
             target=_ler_entrevista_no_agente,
             args=(caso_id, entrevista["id"]),
             name=f"agente-entrevista-{entrevista['id'][:8]}",
+            daemon=True,
+        ).start()
+
+    # O resumo por IA sai no encerramento, à parte do agente: não depende do
+    # serviço externo, então acontece mesmo quando o caso não está ligado a ele.
+    if dados.concluida and texto:
+        threading.Thread(
+            target=_resumir_entrevista_em_fundo,
+            args=(entrevista["id"], texto),
+            name=f"resumo-entrevista-{entrevista['id'][:8]}",
             daemon=True,
         ).start()
 

@@ -206,10 +206,12 @@ class Conexao:
 TABELAS = (
     "casos",
     "qualificacao",
+    "ligacoes_followup",
     "classificacoes_documentos_corrigidas",
     "entregas",
     "entrevistas",
     "peticoes_locais",
+    "peticao_versoes",
     "revisoes",
     "assinaturas",
     "roteiros",
@@ -350,6 +352,16 @@ CREATE TABLE {SCHEMA}.{PREFIXO}qualificacao (
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}ligacoes_followup') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}ligacoes_followup (
+    id         varchar(64)   NOT NULL CONSTRAINT pk_ocr_ligacoes_followup PRIMARY KEY,
+    caso_id    varchar(64)   NOT NULL,
+    usuario    nvarchar(200) NOT NULL CONSTRAINT df_ocr_ligacoes_user DEFAULT N'',
+    criado_em  varchar(40)   NOT NULL,
+    CONSTRAINT fk_ocr_ligacoes_followup_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}entregas') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     id                 varchar(64)   NOT NULL CONSTRAINT pk_ocr_entregas PRIMARY KEY,
@@ -428,6 +440,24 @@ CREATE TABLE {SCHEMA}.{PREFIXO}peticoes_locais (
     criado_em     varchar(40)    NOT NULL,
     atualizado_em varchar(40)    NOT NULL,
     CONSTRAINT fk_acervo_peticao_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+-- Histórico das versões anteriores da petição — `peticoes_locais` guarda só a
+-- ATUAL (chave é `caso_id`); cada revisão por prompt (issue "Permitir alteração
+-- da petição por prompt com rastreabilidade") grava aqui a versão que estava
+-- valendo ANTES de ser sobrescrita. O prompt em si (a crítica) mora no Postgres,
+-- em `peticao_criticas` — é insumo de IA; isto aqui é o conteúdo da peça, que é
+-- estado do caso, junto do resto (`entregas`, `entrevistas`).
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}peticao_versoes') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}peticao_versoes (
+    id            varchar(64)    NOT NULL CONSTRAINT pk_acervo_peticao_versoes PRIMARY KEY,
+    caso_id       varchar(64)    NOT NULL,
+    versao        int            NOT NULL,
+    status        varchar(40)    NOT NULL,
+    dados_json    nvarchar(max)  NOT NULL,
+    criado_em     varchar(40)    NOT NULL,
+    CONSTRAINT fk_acervo_peticao_versoes_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
@@ -583,6 +613,7 @@ INDICES = (
     # transcrição, e ela roda duas vezes por atendimento.
     f"CREATE INDEX idx_acervo_entrevistas_gravacao ON {SCHEMA}.{PREFIXO}entrevistas (gravacao_id)",
     f"CREATE INDEX idx_acervo_assinaturas_caso ON {SCHEMA}.{PREFIXO}assinaturas (caso_id)",
+    f"CREATE INDEX idx_acervo_peticao_versoes_caso ON {SCHEMA}.{PREFIXO}peticao_versoes (caso_id, versao)",
     f"CREATE INDEX idx_acervo_municipios_uf_nome ON {SCHEMA}.{PREFIXO}municipios (uf_id, nome)",
     # O histórico é de quem perguntou, e abre ordenado pela conversa mais recente.
     f"CREATE INDEX idx_acervo_conversas_usuario ON {SCHEMA}.{PREFIXO}conversas"

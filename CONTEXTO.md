@@ -320,10 +320,14 @@ depois obriga a recriar as colunas e reindexar.**
 **Pendente**
 - **Credenciais a rotacionar**: o banco de produção `Visarj` (SES-RJ), o
   `JWT_SECRET` do vig-agent, as chaves DeepSeek e OpenRouter, a senha do
-  PGVector e o **token da ZapSign** (`ZAPSIGN_API_TOKEN`, posto em 13/08/2026).
-  Todas passaram por chat. O da ZapSign é o mais sensível da lista: com ele se
-  cria e se lê **qualquer** documento da conta do escritório — contrato de
-  cliente, com CPF e qualificação — e se gasta o plano de assinaturas.
+  PGVector, o **token da ZapSign** (`ZAPSIGN_API_TOKEN`, posto em 13/08/2026) e
+  o **login do SITE da ZapSign** (`ZAPSIGN_LOGIN_EMAIL`/`ZAPSIGN_LOGIN_SENHA`,
+  posto em 09/09/2026, para calibrar `app/assinatura_navegador.py`). Todas
+  passaram por chat. O login do site é o MAIS sensível da lista inteira — não é
+  um token de API com escopo, é a senha da conta inteira do dr. Gustavo Lara:
+  quem a tem entra no ZapSign como ele, cria e lê qualquer documento da conta
+  do escritório — contrato de cliente, com CPF e qualificação —, gasta o plano
+  de assinaturas e pode até trocar a própria senha, derrubando o acesso dele.
 - **Senhas de desenvolvimento estão no repositório público**: `guinb/123` no
   `keycloak/realm-advocacia.json` e `admin/admin` no `docker-compose.yml`.
   Decisão consciente do dono, mas o repo `guinb0/advocacia-ia` é público.
