@@ -167,6 +167,51 @@ def criar_caso(
     }
 
 
+#: Campos da qualificação do cliente que a consulta por CPF — ou a digitação —
+#: preenche. Vivem numa tabela à parte, 1:1 com o caso: o `casos` segue enxuto e
+#: o cadastro completo tem onde morar. `nome` e `telefone` ficam no próprio caso.
+CAMPOS_QUALIFICACAO = (
+    "cpf", "nascimento", "sexo", "nome_mae", "cep", "endereco", "email",
+    "renda_estimada",
+)
+
+
+def salvar_qualificacao(caso_id: str, campos: dict[str, Any]) -> None:
+    """Grava ou atualiza a qualificação do cliente do caso.
+
+    Só os campos conhecidos entram, e string vazia vira NULL: o cadastro é
+    OPCIONAL, e "não informado" não é o mesmo que "" para quem for ler depois. É
+    upsert porque o caso nasce no meio da entrevista e pode ser completado adiante.
+    """
+    valores = [str(campos.get(c) or "").strip() or None for c in CAMPOS_QUALIFICACAO]
+    if all(v is None for v in valores):
+        return  # nada informado: não cria uma linha só de nulos
+    instante = agora()
+    atribuicoes = ", ".join(f"{coluna} = ?" for coluna in CAMPOS_QUALIFICACAO)
+    colunas = ", ".join(CAMPOS_QUALIFICACAO)
+    marcadores = ", ".join("?" for _ in CAMPOS_QUALIFICACAO)
+    with conectar() as con:
+        atualizou = con.execute(
+            f"UPDATE qualificacao SET {atribuicoes}, atualizado_em = ? WHERE caso_id = ?",
+            [*valores, instante, caso_id],
+        ).rowcount
+        if not atualizou:
+            con.execute(
+                f"INSERT INTO qualificacao (caso_id, {colunas}, criado_em, atualizado_em)"
+                f" VALUES (?, {marcadores}, ?, ?)",
+                [caso_id, *valores, instante, instante],
+            )
+
+
+def obter_qualificacao(caso_id: str) -> dict[str, Any] | None:
+    """A qualificação gravada do caso, ou None se nunca foi preenchida."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM qualificacao WHERE caso_id = ?", (caso_id,)
+        ).fetchone()
+    return dict(linha) if linha is not None else None
+
+
 def listar_casos() -> list[dict[str, Any]]:
     with conectar() as con:
         linhas = con.execute(
