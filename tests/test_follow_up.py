@@ -44,6 +44,17 @@ def main_teste() -> int:
     precisa, _ = liga("21999998888", {"ativa": 1}, carteira.DIAS_PARA_LIGAR)
     falhas += checar(precisa, "follow-up ativo mas parado demais precisa ligar")
 
+    precisa, motivo = liga(
+        "",
+        {"ativa": 1, "ultimo_erro": "timeout"},
+        carteira.DIAS_PARA_LIGAR,
+        {"id": "call-1"},
+    )
+    falhas += checar(
+        not precisa and motivo == "Ligação registrada.",
+        "ligação registrada resolve qualquer alerta pendente",
+    )
+
     print("TODOS OS TESTES PASSARAM" if not falhas else f"{falhas} FALHA(S)")
     return 1 if falhas else 0
 

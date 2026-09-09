@@ -223,6 +223,7 @@ TABELAS = (
     "conversas",
     "automacoes_whatsapp",
     "cobrancas_documentos",
+    "ligacoes",
     "modelos_documento",
 )
 
@@ -507,6 +508,18 @@ CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}ligacoes') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}ligacoes (
+    id             varchar(64)   NOT NULL CONSTRAINT pk_acervo_ligacoes PRIMARY KEY,
+    caso_id        varchar(64)   NOT NULL,
+    atendente_id   varchar(160)  NOT NULL,
+    atendente_nome nvarchar(200) NOT NULL,
+    realizada_em   varchar(40)   NOT NULL,
+    criado_em      varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_ligacoes_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
 -- A conversa do agente geral. `caso_id` NÃO tem chave estrangeira de propósito: a
 -- conversa é do Acervo, começa antes de haver caso e sobrevive ao caso apagado — a
 -- transcrição continua sendo o registro do que foi perguntado e respondido. Quem lê
@@ -613,6 +626,8 @@ INDICES = (
     # transcrição, e ela roda duas vezes por atendimento.
     f"CREATE INDEX idx_acervo_entrevistas_gravacao ON {SCHEMA}.{PREFIXO}entrevistas (gravacao_id)",
     f"CREATE INDEX idx_acervo_assinaturas_caso ON {SCHEMA}.{PREFIXO}assinaturas (caso_id)",
+    f"CREATE INDEX idx_acervo_ligacoes_caso_realizada ON {SCHEMA}.{PREFIXO}ligacoes"
+    f" (caso_id, realizada_em DESC)",
     f"CREATE INDEX idx_acervo_peticao_versoes_caso ON {SCHEMA}.{PREFIXO}peticao_versoes (caso_id, versao)",
     f"CREATE INDEX idx_acervo_municipios_uf_nome ON {SCHEMA}.{PREFIXO}municipios (uf_id, nome)",
     # O histórico é de quem perguntou, e abre ordenado pela conversa mais recente.

@@ -2672,20 +2672,24 @@ def relatorio_follow_up(_usuario: auth.Usuario = Depends(auth.exigir_modulo("cas
     return carteira.relatorio_follow_up()
 
 
-@app.post("/api/casos/{caso_id}/ligacao")
-def registrar_ligacao_followup(
-    caso_id: str, usuario: auth.Usuario = Depends(auth.exigir_modulo("casos"))
+@app.get("/api/casos/{caso_id}/ligacoes")
+def list_case_calls(
+    caso_id: str,
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
 ):
-    """Registra que o usuário logado LIGOU para o cliente do caso (follow-up).
-
-    Log de atividade para o relatório: o atendimento não liga duas vezes e a
-    supervisão vê quem tocou a pendência. Grava o NOME (é o que a tela lê);
-    sem autenticação, fica vazio, como no registro de entrevista.
-    """
     if armazenamento.obter_caso(caso_id) is None:
         raise HTTPException(404, "Caso não encontrado.")
-    quem = (usuario.nome or usuario.usuario or "").strip()
-    return armazenamento.registrar_ligacao(caso_id, quem)
+    return {"calls": armazenamento.list_calls(caso_id)}
+
+
+@app.post("/api/casos/{caso_id}/ligacoes", status_code=201)
+def register_case_call(
+    caso_id: str,
+    usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return armazenamento.register_call(caso_id, usuario.id, usuario.nome)
 
 
 @app.get("/api/casos/{caso_id}")
