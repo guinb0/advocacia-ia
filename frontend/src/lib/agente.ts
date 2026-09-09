@@ -625,6 +625,57 @@ export function salvarRascunhoPeticao(
   });
 }
 
+/** Uma crítica registrada — issue "Permitir alteração da petição por prompt
+ *  com rastreabilidade". `versao_origem`/`versao_resultado` amarram a crítica
+ *  às duas pontas da revisão que ela gerou. */
+export interface CriticaDePeticao {
+  id: string;
+  caso_id: string;
+  categoria: string;
+  versao_origem: number;
+  versao_resultado: number;
+  prompt: string;
+  usuario: string;
+  criado_em: string;
+}
+
+/** Uma versão anterior da petição, guardada antes de uma revisão sobrescrevê-la. */
+export interface VersaoDePeticao {
+  versao: number;
+  status: string;
+  criado_em: string;
+  dados: Peticao;
+}
+
+export interface HistoricoDePeticao {
+  criticas: CriticaDePeticao[];
+  versoes: VersaoDePeticao[];
+}
+
+/**
+ * Pede à IA que reescreva a petição a partir de uma crítica em texto livre.
+ *
+ * Não gera do zero: aplica só o que a crítica pede sobre a minuta atual. A
+ * versão anterior fica preservada (`historicoDePeticao`), a crítica em si é
+ * registrada com autor e data, e a nova versão SEMPRE volta para "em revisão"
+ * — mesmo que a anterior já estivesse aprovada, é preciso aprovar de novo.
+ */
+export function revisarPeticaoComPrompt(
+  casoId: string,
+  pecaId: string,
+  prompt: string,
+): Promise<{ peticao: Peticao; criticas: CriticaDePeticao[] }> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/revisar`, {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+/** A rastreabilidade completa desta petição: toda crítica feita e toda versão anterior. */
+export function historicoDePeticao(casoId: string, pecaId: string): Promise<HistoricoDePeticao> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/historico`);
+}
+
 /**
  * Aprovar ou rejeitar — a revisão humana que o `§2.10` exige antes de qualquer uso.
  *

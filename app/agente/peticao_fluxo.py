@@ -17,6 +17,8 @@ __all__ = [
     "estado",
     "gerar_completo",
     "gerar_peticao",
+    "historico_de_peticao",
+    "revisar_peticao",
     "transcricao",
 ]
 
@@ -120,4 +122,26 @@ def gerar_completo(caso_id: str) -> dict[str, Any]:
         "pipeline": "local",
         "analise": analise_limpa,
         "peticao": peticao_local.para_api(dados),
+    }
+
+
+def revisar_peticao(caso_id: str, *, prompt: str, usuario: str) -> dict[str, Any]:
+    """Issue "Permitir alteração da petição por prompt com rastreabilidade"."""
+    try:
+        dados = peticao_local.revisar_com_prompt(
+            caso_id, prompt_critica=prompt, usuario=usuario
+        )
+    except peticao_local.ErroPeticao as erro:
+        raise _erro_peticao(erro) from erro
+    return {
+        "peticao": peticao_local.para_api(dados),
+        "criticas": peticao_local.historico_de_criticas(caso_id),
+    }
+
+
+def historico_de_peticao(caso_id: str) -> dict[str, Any]:
+    """Rastreabilidade completa: críticas feitas e versões anteriores da petição."""
+    return {
+        "criticas": peticao_local.historico_de_criticas(caso_id),
+        "versoes": peticao_local.historico_de_versoes(caso_id),
     }

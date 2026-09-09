@@ -13,8 +13,11 @@ import {
   buscarPeticao,
   estadoPeticaoFluxo,
   gerarAnaliseEPeticao,
+  historicoDePeticao,
+  revisarPeticaoComPrompt,
   salvarRascunhoPeticao,
   type EstadoPeticaoFluxo,
+  type HistoricoDePeticao,
   type Peticao,
   type SecaoPeticao,
 } from "@/lib/agente";
@@ -54,6 +57,15 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [erro, setErro] = useState<string | null>(null);
   const [mostrarPrevia, setMostrarPrevia] = useState(true);
 
+  // Revisão por prompt — issue "Permitir alteração da petição por prompt com
+  // rastreabilidade". `historico` fica separado de `peticao` porque uma falha
+  // ao carregar o histórico não pode esconder a petição, que é o que importa
+  // primeiro.
+  const [promptRevisao, setPromptRevisao] = useState("");
+  const [revisando, setRevisando] = useState(false);
+  const [historico, setHistorico] = useState<HistoricoDePeticao | null>(null);
+  const [mostrarHistorico, setMostrarHistorico] = useState(false);
+
   const recarregar = useCallback(async () => {
     try {
       const dados = await estadoPeticaoFluxo(casoId);
@@ -61,6 +73,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       if (dados.peticao_pronta) {
         const pronta = await buscarPeticao(casoId, "local");
         setPeticao(pronta);
+        try {
+          setHistorico(await historicoDePeticao(casoId, "local"));
+        } catch {
+          /* rastreabilidade é complementar — a petição continua utilizável sem ela */
+        }
       }
     } catch {
       /* primeiro uso */
@@ -133,6 +150,26 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       setErro(e instanceof Error ? e.message : "Não foi possível salvar.");
     } finally {
       setSalvando(false);
+    }
+  }
+
+  async function revisar() {
+    if (!peticao || !promptRevisao.trim()) return;
+    setRevisando(true);
+    setErro(null);
+    try {
+      const resultado = await revisarPeticaoComPrompt(casoId, peticao.id, promptRevisao.trim());
+      setPeticao(resultado.peticao);
+      setPromptRevisao("");
+      setHistorico((atual) => ({
+        criticas: resultado.criticas,
+        versoes: atual?.versoes ?? [],
+      }));
+      await recarregar();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível aplicar a revisão.");
+    } finally {
+      setRevisando(false);
     }
   }
 
@@ -231,6 +268,44 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </Aviso>
           )}
 
+          <div className="grid gap-2 border border-borda-forte bg-papel p-3">
+            <RotuloCampo htmlFor="prompt-revisao">
+              Pedir uma revisão por prompt
+            </RotuloCampo>
+            <p className="text-xs text-tinta-3 m-0">
+              Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
+              pedidos&quot;). A IA aplica só o que você pedir e preserva o resto do texto. A
+              versão atual fica guardada no histórico, e a revisão volta para
+              &quot;em revisão&quot; — precisa aprovar de novo.
+            </p>
+            <Campo
+              area
+              id="prompt-revisao"
+              value={promptRevisao}
+              onChange={(e) => setPromptRevisao(e.target.value)}
+              rows={3}
+              placeholder="O que deve mudar nesta petição?"
+            />
+            <div>
+              <Botao
+                variante="secundario"
+                pequeno
+                disabled={revisando || salvando || ocupado || !promptRevisao.trim()}
+                onClick={() => void revisar()}
+              >
+                {revisando ? "Revisando…" : "Aplicar revisão"}
+              </Botao>
+            </div>
+          </div>
+
+          {historico && (historico.criticas.length > 0 || historico.versoes.length > 0) && (
+            <HistoricoDeCriticas
+              historico={historico}
+              aberto={mostrarHistorico}
+              onAlternar={() => setMostrarHistorico((atual) => !atual)}
+            />
+          )}
+
           <div className={mostrarPrevia ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "grid gap-4"}>
             <div className="grid gap-4">
               {(peticao.sections ?? []).map((secao: SecaoPeticao) => (
@@ -308,6 +383,57 @@ function PreviaPeticao({
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A rastreabilidade que a issue pede: quem pediu cada revisão, quando, sobre
+ * qual versão — visível, não só guardada no banco. Fechado por padrão porque
+ * a maioria das visitas à tela não precisa dela; abre com um clique quando
+ * alguém precisa auditar o que mudou e por quê.
+ */
+function HistoricoDeCriticas({
+  historico,
+  aberto,
+  onAlternar,
+}: {
+  historico: HistoricoDePeticao;
+  aberto: boolean;
+  onAlternar: () => void;
+}) {
+  return (
+    <div className="grid gap-2 border border-borda p-3 bg-papel">
+      <button
+        type="button"
+        className="flex items-center justify-between gap-2 text-left text-xs font-semibold text-tinta-3 uppercase tracking-wide bg-transparent border-0 p-0 cursor-pointer"
+        onClick={onAlternar}
+      >
+        <span>
+          Histórico de revisões ({historico.criticas.length} crítica
+          {historico.criticas.length === 1 ? "" : "s"})
+        </span>
+        <span aria-hidden>{aberto ? "▲" : "▼"}</span>
+      </button>
+      {aberto && (
+        <ul className="grid gap-3 m-0 p-0 list-none">
+          {historico.criticas.length === 0 && (
+            <li className="text-xs text-tinta-3">Nenhuma crítica registrada ainda.</li>
+          )}
+          {[...historico.criticas].reverse().map((critica) => (
+            <li key={critica.id} className="grid gap-1 border-l-2 border-borda pl-3">
+              <div className="flex flex-wrap items-baseline gap-x-2 text-xs text-tinta-3">
+                <strong className="text-tinta-2">{critica.usuario || "usuário não identificado"}</strong>
+                <span>
+                  v{critica.versao_origem} → v{critica.versao_resultado}
+                </span>
+                <span>{new Date(critica.criado_em).toLocaleString("pt-BR")}</span>
+              </div>
+              <p className="text-sm text-tinta-2 m-0 whitespace-pre-wrap">{critica.prompt}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -583,6 +583,43 @@ def salvar_rascunho_peticao(
         raise _erro(erro) from erro
 
 
+@roteador.post("/casos/{caso_id}/peticao/{peca_ref}/revisar")
+def revisar_peticao_com_prompt(
+    caso_id: str,
+    peca_ref: str,
+    prompt: str = Body(..., embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Issue "Permitir alteração da petição por prompt com rastreabilidade".
+
+    Mesma permissão de `decidir_peticao`/`salvar_rascunho_peticao` — quem já
+    pode gerar e aprovar a petição já pode pedir uma revisão por prompt; não
+    existe papel "gestor" separado no sistema hoje.
+    """
+    if not _peca_local(peca_ref):
+        # Ainda não existe equivalente no `ia-juridica` — melhor recusar
+        # explicando do que fingir que a revisão aconteceu.
+        raise HTTPException(
+            501, "Revisão por prompt ainda não é suportada nas petições do agente."
+        )
+    try:
+        return peticao_fluxo.revisar_peticao(
+            caso_id, prompt=prompt, usuario=usuario.nome
+        )
+    except peticao_local.ErroPeticao as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/peticao/{peca_ref}/historico")
+def historico_de_peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
+    """A rastreabilidade que a issue pede: críticas feitas e versões anteriores."""
+    if not _peca_local(peca_ref):
+        return {"criticas": [], "versoes": []}
+    return peticao_fluxo.historico_de_peticao(caso_id)
+
+
 # ------------------------------------------------------------------- estilo
 
 

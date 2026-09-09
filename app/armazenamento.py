@@ -98,6 +98,65 @@ def salvar_peticao_local(caso_id: str, dados: dict[str, Any], docx: bytes) -> No
         )
 
 
+def registrar_versao_peticao(caso_id: str, dados: dict[str, Any]) -> None:
+    """Guarda a versão da petição ANTES de ela ser sobrescrita.
+
+    Issue "Permitir alteração da petição por prompt com rastreabilidade" — cada
+    revisão precisa deixar a versão anterior recuperável, e `peticoes_locais`
+    só guarda a atual (chave é `caso_id`, sem histórico). Sempre um INSERT novo,
+    nunca um UPDATE: é histórico, não estado corrente.
+    """
+    payload = {chave: valor for chave, valor in dados.items() if chave != "_docx"}
+    id_versao = f"{caso_id}:{int(dados.get('version') or 1)}"
+    with conectar() as con:
+        # MERGE, não INSERT puro: `id` é determinístico (`caso_id:versao`), então uma
+        # tentativa repetida (ex.: falha de rede depois de já ter gravado) atualiza a
+        # mesma linha em vez de estourar violação de chave primária.
+        con.execute(
+            """
+            MERGE peticao_versoes AS alvo
+            USING (SELECT ? AS id) AS origem
+               ON alvo.id = origem.id
+            WHEN MATCHED THEN UPDATE SET
+                 status = ?, dados_json = ?
+            WHEN NOT MATCHED THEN INSERT
+                 (id, caso_id, versao, status, dados_json, criado_em)
+                 VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                id_versao,
+                str(dados.get("status") or "IN_REVIEW"),
+                json.dumps(payload, ensure_ascii=False),
+                id_versao,
+                caso_id,
+                int(dados.get("version") or 1),
+                str(dados.get("status") or "IN_REVIEW"),
+                json.dumps(payload, ensure_ascii=False),
+                agora(),
+            ),
+        )
+
+
+def listar_versoes_peticao(caso_id: str) -> list[dict[str, Any]]:
+    """Histórico de versões anteriores desta petição, da mais antiga à mais nova."""
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT versao, status, dados_json, criado_em FROM peticao_versoes"
+            " WHERE caso_id = ? ORDER BY versao",
+            (caso_id,),
+        ).fetchall()
+    resultado = []
+    for linha in linhas:
+        item = dict(linha)
+        try:
+            item["dados"] = json.loads(item.pop("dados_json"))
+        except (TypeError, json.JSONDecodeError):
+            item["dados"] = {}
+            item.pop("dados_json", None)
+        resultado.append(item)
+    return resultado
+
+
 def _normalizar_nome_cliente(cliente: object) -> str:
     """Chave estável para reencontrar contratos criados antes do caso."""
     return " ".join(str(cliente or "").split())
@@ -210,6 +269,44 @@ def obter_qualificacao(caso_id: str) -> dict[str, Any] | None:
             "SELECT * FROM qualificacao WHERE caso_id = ?", (caso_id,)
         ).fetchone()
     return dict(linha) if linha is not None else None
+
+
+def registrar_ligacao(caso_id: str, usuario: str) -> dict[str, Any]:
+    """Registra que ALGUÉM ligou para o cliente do caso, no relatório de follow-up.
+
+    É log de atividade, não estado: cada ligação é uma linha, e o relatório mostra
+    a mais recente. Serve para o atendimento não ligar duas vezes para o mesmo
+    cliente e para a supervisão ver quem está tocando as pendências.
+    """
+    reg_id = str(uuid.uuid4())
+    instante = agora()
+    quem = (usuario or "").strip()[:200]
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO ligacoes_followup (id, caso_id, usuario, criado_em)"
+            " VALUES (?, ?, ?, ?)",
+            (reg_id, caso_id, quem, instante),
+        )
+    return {"id": reg_id, "caso_id": caso_id, "usuario": quem, "criado_em": instante}
+
+
+def ultimas_ligacoes_por_caso() -> dict[str, dict[str, Any]]:
+    """A ligação MAIS RECENTE de cada caso — quem ligou e quando —, numa consulta.
+
+    Espelha `carteira._cobrancas_por_caso`: o relatório de follow-up cruza os dois
+    para todos os casos de uma vez, sem uma ida ao banco por linha.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT caso_id, usuario, criado_em FROM ligacoes_followup ORDER BY criado_em DESC"
+        ).fetchall()
+    ultimas: dict[str, dict[str, Any]] = {}
+    for linha in linhas:
+        caso_id = str(linha["caso_id"])
+        # ORDER BY criado_em DESC: a primeira que aparece por caso é a mais recente.
+        if caso_id not in ultimas:
+            ultimas[caso_id] = {"usuario": linha["usuario"], "quando": linha["criado_em"]}
+    return ultimas
 
 
 def listar_casos() -> list[dict[str, Any]]:
@@ -1752,17 +1849,34 @@ def marcar_entrevista_lida(
     Guardar o resumo aqui — e não só do lado do agente — é o que faz o dossiê continuar
     explicando a entrevista quando o agente está fora do ar.
     """
+    # O resumo só é sobrescrito quando o agente devolve um não-vazio: a IA local
+    # (ver `entrevista.gerar_resumo`) já pode ter gravado um no encerramento, e um
+    # `summary` vazio do agente não deve apagá-lo.
     with conectar() as con:
         con.execute(
-            "UPDATE entrevistas SET resumo = ?, perguntas = ?, fatos_gerados = ?,"
-            " enviada_em = ? WHERE id = ?",
+            "UPDATE entrevistas SET resumo = CASE WHEN ? <> N'' THEN ? ELSE resumo END,"
+            " perguntas = ?, fatos_gerados = ?, enviada_em = ? WHERE id = ?",
             (
+                resumo[:4000],
                 resumo[:4000],
                 json.dumps(perguntas[:15]),
                 fatos_gerados,
                 agora(),
                 entrevista_id,
             ),
+        )
+
+
+def atualizar_resumo_entrevista(entrevista_id: str, resumo: str) -> None:
+    """Grava o resumo da entrevista gerado pela IA local (ver `entrevista.gerar_resumo`).
+
+    Separado do registro do agente porque não depende dele: o resumo sai no
+    encerramento, com o DeepSeek, esteja o agente jurídico ligado ou não.
+    """
+    with conectar() as con:
+        con.execute(
+            "UPDATE entrevistas SET resumo = ? WHERE id = ?",
+            (resumo[:4000], entrevista_id),
         )
 
 
