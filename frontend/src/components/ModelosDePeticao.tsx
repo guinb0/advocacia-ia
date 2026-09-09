@@ -28,9 +28,12 @@ import {
   ApiError,
   enviarModeloVisualPeticao,
   listarCategorias,
+  listarSkillsDePeticao,
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
   restaurarModeloVisualPeticao,
+  salvarSkillDePeticao,
+  type SkillDePeticao,
   urlApi,
 } from "@/lib/api";
 import type { ItemChecklist } from "@/lib/types";
@@ -60,10 +63,12 @@ const SELECT =
   "[&>option]:bg-papel [&>option]:text-tinta";
 
 import {
+  type ConfigAgente,
   type ConfiguracaoDeGeracao,
   type NoDaTaxonomia,
   type PecaDeEstilo,
   type PerfilDeEstilo,
+  configDoAgente,
   configuracaoDeGeracao,
   enviarPecaDeEstilo,
   pecasDeEstilo,
@@ -112,6 +117,19 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [recado, setRecado] = useState<string | null>(null);
   const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
   const [carregandoModeloVisual, setCarregandoModeloVisual] = useState(true);
+  // Ligado, desligado ou ainda não sabemos — três estados, não dois: enquanto `null`, a
+  // tela não decide nada (nem chama a taxonomia, nem mostra o aviso de "não ativado").
+  const [configAgente, setConfigAgente] = useState<ConfigAgente | null>(null);
+
+  // Skill/prompt por categoria de petição — local ao Acervo, funciona com ou sem o
+  // agente jurídico ligado (issue "Configurar skill por modelo de petição").
+  const [skills, setSkills] = useState<SkillDePeticao[]>([]);
+  const [categoriaSkill, setCategoriaSkill] = useState("");
+  const [instrucoesSkill, setInstrucoesSkill] = useState("");
+  const [carregandoSkills, setCarregandoSkills] = useState(true);
+  const [salvandoSkill, setSalvandoSkill] = useState(false);
+  const [erroSkill, setErroSkill] = useState<string | null>(null);
+  const [recadoSkill, setRecadoSkill] = useState<string | null>(null);
   const [enviandoVisual, setEnviandoVisual] = useState(false);
   const [paginaPecas, setPaginaPecas] = useState(1);
   const [totalPecas, setTotalPecas] = useState(0);
@@ -161,6 +179,51 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   }
 
   useEffect(() => {
+    void listarSkillsDePeticao()
+      .then((itens) => {
+        setSkills(itens);
+        setCategoriaSkill((atual) => atual || itens[0]?.categoria || "");
+      })
+      .catch((falha) =>
+        setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível carregar as categorias."),
+      )
+      .finally(() => setCarregandoSkills(false));
+  }, []);
+
+  // Troca de categoria: o texto do campo acompanha o que já está salvo para ELA —
+  // sem isto, editar uma categoria e trocar de select levaria o rascunho junto.
+  useEffect(() => {
+    setInstrucoesSkill(skills.find((item) => item.categoria === categoriaSkill)?.instrucoes ?? "");
+  }, [categoriaSkill, skills]);
+
+  async function salvarSkill() {
+    if (!categoriaSkill) return;
+    setSalvandoSkill(true);
+    setErroSkill(null);
+    setRecadoSkill(null);
+    try {
+      const salvo = await salvarSkillDePeticao(categoriaSkill, instrucoesSkill);
+      setSkills((atual) => atual.map((item) => (item.categoria === categoriaSkill ? { ...item, ...salvo } : item)));
+      setRecadoSkill("Skill salva. As próximas petições desta categoria já usam esta orientação.");
+    } catch (falha) {
+      setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível salvar a skill.");
+    } finally {
+      setSalvandoSkill(false);
+    }
+  }
+
+  useEffect(() => {
+    void configDoAgente()
+      .then(setConfigAgente)
+      // Falha na própria checagem também é "não ligado": sem isso a tela tentaria a
+      // taxonomia mesmo assim e trocaria um aviso calmo por um erro vermelho.
+      .catch(() => setConfigAgente({ ligado: false, disponivel: false, url: "", jurisdicao_padrao: "" }));
+  }, []);
+
+  useEffect(() => {
+    // Sem o agente ligado não há taxonomia para buscar — e chamar mesmo assim só
+    // trocaria "não ativado ainda" por um aviso de erro que não é esse o caso.
+    if (!configAgente?.ligado) return;
     void taxonomiaDeEstilo()
       .then((itens) => {
         setAcoes(itens);
@@ -179,8 +242,8 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             : "Não foi possível carregar as ações. O agente jurídico está no ar?",
         ),
       );
-    // Uma vez só: a taxonomia é YAML versionado, não muda entre requisições.
-  }, []);
+    // Uma vez por sessão de "ligado": a taxonomia é YAML versionado, não muda entre requisições.
+  }, [configAgente?.ligado]);
 
   /* O checklist do caso (Acervo) e a taxonomia do agente usam o mesmo código de
    * ação (`auxilio_acidente`, etc.). Quando bate, oferecemos os documentos do
@@ -599,12 +662,80 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         )}
       </Cartao>
 
-      {erroCarregamento && (
+      <Cartao titulo="Skill de redação por categoria" className="min-w-0 overflow-hidden">
+        <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
+          Uma orientação extra que a IA segue ao analisar e redigir a petição desta categoria de
+          caso — o que destacar, como abordar a tese, o que nunca pode faltar. Funciona
+          independente do agente jurídico e vale para toda petição gerada a partir de agora
+          nesta categoria; as demais categorias não são afetadas.
+        </p>
+
+        {erroSkill && (
+          <Aviso tom="critico" titulo="Não foi possível carregar ou salvar">
+            {erroSkill}
+          </Aviso>
+        )}
+        {recadoSkill && <Aviso tom="ok">{recadoSkill}</Aviso>}
+
+        <label className={CAMPO}>
+          <span>Categoria (ação)</span>
+          <select
+            className={SELECT}
+            value={categoriaSkill}
+            disabled={carregandoSkills || !skills.length}
+            onChange={(evento) => setCategoriaSkill(evento.target.value)}
+          >
+            {carregandoSkills && <option value="">carregando…</option>}
+            {skills.map((item) => (
+              <option key={item.categoria} value={item.categoria}>
+                {item.nome}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="mt-4 flex flex-col gap-2 text-tinta-3 text-xs">
+          <span>Instruções de redação para esta categoria</span>
+          <textarea
+            className={`${SELECT} min-h-32 resize-y`}
+            value={instrucoesSkill}
+            disabled={!categoriaSkill}
+            placeholder="Ex.: dar ênfase ao nexo causal entre a doença e a função exercida, sempre pedir dano moral em separado do material."
+            onChange={(evento) => setInstrucoesSkill(evento.target.value)}
+          />
+        </label>
+
+        {skills.find((item) => item.categoria === categoriaSkill)?.atualizado_por && (
+          <p className="mt-2 mb-0 text-[11px] text-tinta-3">
+            Última alteração por{" "}
+            <strong>{skills.find((item) => item.categoria === categoriaSkill)?.atualizado_por}</strong>.
+          </p>
+        )}
+
+        <div className="mt-4 flex justify-end">
+          <Botao onClick={() => void salvarSkill()} disabled={salvandoSkill || !categoriaSkill}>
+            {salvandoSkill ? "Salvando…" : "Salvar skill desta categoria"}
+          </Botao>
+        </div>
+      </Cartao>
+
+      {configAgente && !configAgente.ligado && (
+        <Aviso tom="atencao" titulo="Padrão de escrita por ação ainda não ativado">
+          O aprendizado do estilo do escritório por ação (peças de exemplo, padrão medido e
+          orientações de redação) depende do agente jurídico, que ainda não está ativo neste
+          ambiente. A logo e a fonte acima continuam funcionando normalmente — só esta parte
+          fica pendente até a integração ser ligada.
+        </Aviso>
+      )}
+
+      {configAgente?.ligado && erroCarregamento && (
         <Aviso tom="critico" titulo="Não foi possível carregar esta ação">
           {erroCarregamento} Tente novamente antes de alterar os modelos ou a configuração.
         </Aviso>
       )}
 
+      {configAgente?.ligado && (
+      <>
       <Cartao titulo="Adicionar peças" className="min-w-0 overflow-hidden">
         <p className="mt-2 mb-[0.9rem] text-tinta-3 text-sm leading-[1.5]">
           Cada peça adicionada atualiza o perfil de escrita. As correções feitas pelo
@@ -855,9 +986,12 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           </div>
         </Cartao>
       )}
+      </>
+      )}
 
       </div>
 
+      {configAgente?.ligado && (
       <aside className="flex min-w-0 flex-col gap-4">
       <PainelPerfil perfil={perfil} total={totalPecas} />
 
@@ -922,6 +1056,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         />
       </Cartao>
       </aside>
+      )}
       </div>
     </div>
   );

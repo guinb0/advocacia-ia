@@ -139,6 +139,34 @@ export async function restaurarModeloVisualPeticao(): Promise<ModeloVisualPetica
   return comoJson(await buscar("/api/modelos/peticao/visual", { method: "DELETE" }));
 }
 
+/** Skill/prompt que o escritório configura por categoria de petição — issue
+ *  "Configurar skill por modelo de petição". Local ao Acervo, não depende do
+ *  agente jurídico (`ia-juridica`) estar ativo. */
+export interface SkillDePeticao {
+  categoria: string;
+  nome: string;
+  instrucoes: string;
+  atualizado_por?: string;
+  atualizado_em?: string;
+}
+
+export async function listarSkillsDePeticao(): Promise<SkillDePeticao[]> {
+  return comoJson(await buscar("/api/modelos/peticao/skills"));
+}
+
+export async function salvarSkillDePeticao(
+  categoria: string,
+  instrucoes: string,
+): Promise<SkillDePeticao> {
+  return comoJson(
+    await buscar(`/api/modelos/peticao/skills/${encodeURIComponent(categoria)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instrucoes }),
+    }),
+  );
+}
+
 export async function enviarAvaliacaoGoogle(
   telefone: string,
   forcar = false,
@@ -2017,6 +2045,8 @@ export interface ClienteFollowUp {
   follow_up_ativo: boolean;
   precisa_ligar: boolean;
   motivo_ligacao: string;
+  /** A ligação mais recente registrada para o caso, ou null se ninguém ligou. */
+  ultima_ligacao: { usuario: string; quando: string; dias_atras: number } | null;
 }
 
 export interface RelatorioFollowUp {
@@ -2030,4 +2060,13 @@ export interface RelatorioFollowUp {
 /** Clientes com documento obrigatório pendente, com alerta de necessidade de ligação. */
 export async function relatorioFollowUp(): Promise<RelatorioFollowUp> {
   return comoJson(await buscar("/api/follow-up"));
+}
+
+/** Registra que o usuário logado ligou para o cliente do caso (log do follow-up). */
+export async function registrarLigacao(
+  casoId: string,
+): Promise<{ id: string; caso_id: string; usuario: string; criado_em: string }> {
+  return comoJson(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/ligacao`, { method: "POST" }),
+  );
 }
