@@ -1143,13 +1143,13 @@ function preencherMarcadores(
   const CAMPOS_DA_IDENTIFICACAO = useMemo(
     () =>
       [
-        { id: "nome", rotulo: "o nome completo" },
         {
           id: "cpf",
           rotulo: "um CPF válido",
           completo: (v: string | string[] | undefined) =>
             conferirCpf(String(v ?? "")).valido === true,
         },
+        { id: "nome", rotulo: "o nome completo" },
         { id: "estado_civil", rotulo: "o estado civil" },
         { id: "uf", rotulo: "a UF" },
         { id: "municipio", rotulo: "o município" },
@@ -1175,9 +1175,57 @@ function preencherMarcadores(
    * O aviso de situação cadastral (óbito, CPF nulo, suspenso), esse aparece:
    * ninguém quer descobrir isso depois do contrato assinado. */
   const [avisoReceita, setAvisoReceita] = useState("");
+  /* Os ids que a consulta por CPF trouxe preenchidos. Guardados para que a fase
+   * de identificação mostre TODOS eles (mãe, nascimento, endereço, telefone…) e
+   * não só os cinco campos fixos: quem digita o CPF quer conferir o que a base
+   * devolveu, não descobrir depois que metade veio escondida no bloco de baixo. */
+  const [camposPuxados, setCamposPuxados] = useState<Set<string>>(new Set());
   const cpfConsultado = useRef("");
 
+  /* PREENCHIMENTO AUTOMÁTICO POR CPF — o liga/desliga.
+   *
+   * DESLIGADO por padrão: é opt-in. Sem ninguém ligar, a identificação é
+   * exatamente o que era antes — CPF, nome, estado civil, UF e município, tudo à
+   * mão, sem consultar base nenhuma. Ligado, digitar um CPF válido consulta a
+   * base e traz o cadastro (nome, mãe, nascimento, endereço, telefone…). A
+   * escolha fica no navegador de quem atende, valendo para o expediente inteiro. */
+  const CAMPOS_AUTO_CPF = useMemo(
+    () =>
+      new Set<string>([
+        "nascimento", "sexo", "mae", "cep", "endereco", "telefone", "email",
+        "renda_estimada",
+      ]),
+    [],
+  );
+  const [preenchimentoAuto, setPreenchimentoAuto] = useState(false);
   useEffect(() => {
+    try {
+      const salvo = localStorage.getItem("preenchimento_auto_cpf");
+      if (salvo !== null) setPreenchimentoAuto(salvo === "1");
+    } catch {
+      /* localStorage bloqueado (aba anônima, política): fica no padrão ligado. */
+    }
+  }, []);
+  const alternarPreenchimentoAuto = useCallback(() => {
+    setPreenchimentoAuto((ligado) => {
+      const novo = !ligado;
+      try {
+        localStorage.setItem("preenchimento_auto_cpf", novo ? "1" : "0");
+      } catch {
+        /* sem persistência: vale para esta sessão mesmo assim. */
+      }
+      if (!novo) {
+        // Desligou: esquece o que já foi revelado, para a tela voltar ao mínimo.
+        setCamposPuxados(new Set());
+        setAvisoReceita("");
+        cpfConsultado.current = "";
+      }
+      return novo;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!preenchimentoAuto) return;
     const digitos = String(respostas.cpf ?? "").replace(/\D/g, "");
     if (digitos.length !== 11 || !conferirCpf(digitos).valido) return;
     if (cpfConsultado.current === digitos) return;
@@ -1188,13 +1236,18 @@ function preencherMarcadores(
       .then((consulta) => {
         if (cancelado) return;
         setAvisoReceita(consulta.aviso || "");
+        const preenchidos: string[] = [];
         setRespostas((atuais) => {
           const novas = { ...atuais };
           for (const [id, valor] of Object.entries(consulta.campos)) {
+            if (valor) preenchidos.push(id);
             if (!respondida(novas[id]) && valor) novas[id] = valor;
           }
           return novas;
         });
+        // Tudo que veio com valor entra na tela da identificação, mesmo o que
+        // já estava preenchido: é o que deixa a conferência visível de uma vez.
+        setCamposPuxados(new Set(preenchidos));
       })
       .catch(() => {
         // Sem credencial, ou base fora: a entrevista segue como sempre seguiu.
@@ -1204,7 +1257,7 @@ function preencherMarcadores(
     return () => {
       cancelado = true;
     };
-  }, [respostas.cpf]);
+  }, [respostas.cpf, preenchimentoAuto]);
 
   const idsDaIdentificacao = useMemo(
     () => new Set<string>(CAMPOS_DA_IDENTIFICACAO.map((c) => c.id)),
@@ -1342,14 +1395,40 @@ function preencherMarcadores(
    * A trava do microfone não mudou: a transcrição continua começando só depois
    * de nome, CPF, UF e município (ver o auto-início, acima). */
   const roteiroRevelado = escutaEncerrada || revisada;
+  /* Antes da escuta, a tela é a identificação MAIS o que o CPF acabou de puxar.
+   *
+   * Os cinco campos fixos nunca somem; os demais (mãe, nascimento, endereço,
+   * telefone, e-mail, renda…) entram só quando a consulta os trouxe, e saem se
+   * a base não devolveu — assim a conferência aparece inteira sem transformar o
+   * topo num formulário de catorze campos quando não há o que conferir. Durante
+   * a escuta o topo volta a ser só a identificação (o roteiro ao vivo é guia de
+   * leitura, não formulário). */
+  const idsVisiveis = escutando || !preenchimentoAuto
+    ? idsDaIdentificacao
+    : new Set([...idsDaIdentificacao, ...camposPuxados]);
+  /* Com o preenchimento automático desligado, os campos que ele acrescentou ao
+   * roteiro (endereço, telefone, e-mail, renda…) saem da tela em TODAS as fases,
+   * inclusive na revisão final — é o que faz "desligar" devolver a entrevista ao
+   * formato de antes, com a qualificação de volta ao Departamento de Documentação. */
+  const ocultarAuto = (blocos: Bloco[]): Bloco[] =>
+    preenchimentoAuto
+      ? blocos
+      : blocos
+          .map((bloco) => ({
+            ...bloco,
+            perguntas: bloco.perguntas.filter((p) => !CAMPOS_AUTO_CPF.has(p.id)),
+          }))
+          .filter((bloco) => bloco.perguntas.length > 0);
   const blocosNaTela = roteiroRevelado
-    ? (roteiro?.blocos ?? [])
-    : blocosVisiveis
-        .map((bloco) => ({
-          ...bloco,
-          perguntas: bloco.perguntas.filter((p) => idsDaIdentificacao.has(p.id)),
-        }))
-        .filter((bloco) => bloco.perguntas.length > 0);
+    ? ocultarAuto(roteiro?.blocos ?? [])
+    : ocultarAuto(
+        blocosVisiveis
+          .map((bloco) => ({
+            ...bloco,
+            perguntas: bloco.perguntas.filter((p) => idsVisiveis.has(p.id)),
+          }))
+          .filter((bloco) => bloco.perguntas.length > 0),
+      );
 
   /* Com a identificação concluída e a escuta aberta, o bloco "abertura" sai da
    * lista corrida e passa a viver dentro do cabeçalho recolhível, logo acima
@@ -1521,6 +1600,27 @@ function preencherMarcadores(
       />
 
       {erro && <div className={T_ERRO}>{erro}</div>}
+
+      {/* Liga/desliga do preenchimento por CPF. Só na fase de identificação: é
+        * quando o CPF é digitado e a escolha ainda faz diferença. Desligado, a
+        * entrevista volta ao formato manual de antes. */}
+      {!escutando && (
+        <label className="flex items-center gap-2 mb-2 font-normal text-[12px] leading-[1.4] font-ui text-tinta-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={preenchimentoAuto}
+            onChange={alternarPreenchimentoAuto}
+          />
+          <span>
+            Preencher automaticamente pelo CPF{" "}
+            <em className="not-italic">
+              {preenchimentoAuto
+                ? "— digite o CPF e o cadastro vem da base"
+                : "— desligado: preenchimento à mão, como antes"}
+            </em>
+          </span>
+        </label>
+      )}
 
       {/* O que a Receita diz do CPF, quando não é "regular".
         *
@@ -2213,6 +2313,12 @@ function CampoCep({
         if (!alvo.current.trim()) {
           responder.current(pergunta.preenche, endereco.endereco_formatado);
         }
+        // O CEP também identifica município e UF — e é por aqui que o município
+        // se preenche quando o cadastro por CPF não o trouxe. UF primeiro: mudar
+        // a UF limpa o município (ver o onResponder), então o município tem de
+        // vir depois para não ser apagado.
+        if (endereco.uf) responder.current("uf", endereco.uf);
+        if (endereco.cidade) responder.current("municipio", endereco.cidade);
       })
       .catch((e) => {
         if (!cancelado) setErro(e instanceof Error ? e.message : "Não foi possível consultar o CEP.");

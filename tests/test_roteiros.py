@@ -56,9 +56,16 @@ def main_teste() -> int:
 
         abertura = next(bloco for bloco in resposta.json()["blocos"] if bloco["id"] == "abertura")
         ids_abertura = [pergunta["id"] for pergunta in abertura["perguntas"]]
+        # O CPF abre a identificação: é ele que dispara a consulta à base e traz o
+        # resto preenchido. Depois vêm os campos que a consulta por CPF devolve
+        # (nascimento, mãe, endereço…), para conferência já na identificação.
         falhas += not checar(
-            ids_abertura == ["nome", "cpf", "uf", "municipio"],
-            "a abertura pede nome, CPF, UF e município nesta ordem",
+            ids_abertura[:5] == ["cpf", "nome", "estado_civil", "uf", "municipio"],
+            f"a abertura começa por CPF, nome, estado civil, UF e município ({ids_abertura[:5]})",
+        )
+        falhas += not checar(
+            {"nascimento", "mae", "endereco", "telefone", "email"} <= set(ids_abertura),
+            "a abertura traz os campos que a consulta por CPF preenche",
         )
         uf_residencia = next((p for p in perguntas if p["id"] == "uf"), None)
         municipio = next((p for p in perguntas if p["id"] == "municipio"), None)
@@ -169,8 +176,9 @@ def main_teste() -> int:
     )
     abertura = next(b for b in corpo["blocos"] if b["id"] == "abertura")
     falhas += not checar(
-        [p["id"] for p in abertura["perguntas"]] == ["nome", "cpf", "uf", "municipio"],
-        "e ela pede nome, CPF, UF e município",
+        [p["id"] for p in abertura["perguntas"]][:5]
+        == ["cpf", "nome", "estado_civil", "uf", "municipio"],
+        "e ela abre por CPF, nome, estado civil, UF e município",
     )
     falhas += not checar(
         "identificacao" not in ordem,
