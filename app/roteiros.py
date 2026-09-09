@@ -163,8 +163,11 @@ ABERTURA = Bloco(
     titulo="Identificação",
     objetivo="Dados mínimos do atendimento, sempre editáveis pela equipe.",
     perguntas=[
-        Pergunta("nome", "Nome completo", "dado", obrigatoria=True),
+        # CPF primeiro: é o que abre a consulta à base (DirectD) e traz o resto
+        # preenchido. Digitar o CPF antes do nome economiza datilografia — nome,
+        # nascimento, mãe, endereço, telefone e e-mail vêm da fonte.
         Pergunta("cpf", "CPF", "dado", obrigatoria=True, validacao="cpf"),
+        Pergunta("nome", "Nome completo", "dado", obrigatoria=True),
         Pergunta(
             "estado_civil",
             "Estado civil",
@@ -181,6 +184,35 @@ ABERTURA = Bloco(
         ),
         Pergunta("uf", "UF onde reside", "lista", opcoes=UFS, obrigatoria=True),
         Pergunta("municipio", "Município onde reside", "dado", obrigatoria=True),
+        # Puxados pela consulta por CPF (DirectD) e editáveis à mão. Ficam aqui,
+        # e não no bloco "Qualificação completa" (delegado à documentação), para
+        # aparecerem já na identificação: quem digita o CPF confere na hora o que
+        # a base devolveu, em vez de descobrir depois que veio escondido.
+        # Texto, não "data": a consulta e o contrato usam dd/mm/aaaa, e um
+        # <input type="date"> só aceita aaaa-mm-dd — a data puxada não apareceria.
+        Pergunta("nascimento", "Data de nascimento", "dado", dica="dd/mm/aaaa"),
+        Pergunta("sexo", "Sexo", "dado"),
+        Pergunta("mae", "Nome da mãe", "dado"),
+        # O CEP puxa endereço, município e UF de uma vez. Vem preenchido pela
+        # consulta por CPF (a base devolve o CEP) e também aceita digitação: é o
+        # caminho de preencher o município quando o cadastro não o trouxe pronto.
+        Pergunta(
+            "cep",
+            "CEP",
+            "dado",
+            busca="cep",
+            preenche="endereco",
+            dica="Digitado o CEP, endereço, município e UF vêm sozinhos — falta o número.",
+        ),
+        Pergunta("endereco", "Endereço completo, com CEP", "dado"),
+        Pergunta("telefone", "Telefone / WhatsApp", "dado"),
+        Pergunta("email", "E-mail", "dado"),
+        Pergunta(
+            "renda_estimada",
+            "Renda estimada",
+            "dado",
+            dica="Estimativa da base de dados por CPF — confirmar com o cliente.",
+        ),
     ],
 )
 

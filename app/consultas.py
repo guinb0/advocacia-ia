@@ -286,6 +286,7 @@ def _qualificacao_directd(retorno: dict[str, Any]) -> dict[str, Any]:
         "nascimento": _data_flexivel(str(retorno.get("dataNascimento") or "")),
         "uf": (endereco0.get("uf") or "").strip(),
         "municipio": (endereco0.get("cidade") or "").strip(),
+        "cep": formatar_cep(str(endereco0.get("cep") or "")) if endereco0.get("cep") else "",
         "endereco": _endereco_directd(endereco0) if endereco0 else "",
         "telefone": str(tel.get("telefoneComDDD") or "").strip(),
         "email": (emails[0].get("enderecoEmail") or "").strip() if emails else "",
@@ -452,6 +453,7 @@ def _qualificacao(dados: dict[str, Any]) -> dict[str, Any]:
         "nascimento": _data_br(str(dados.get("dataNascimento") or "")),
         "uf": (dados.get("uf") or "").strip(),
         "municipio": (dados.get("municipio") or "").strip(),
+        "cep": formatar_cep(dados.get("cep", "")) if dados.get("cep") else "",
         "endereco": _endereco_da_receita(dados),
         "telefone": _telefone_da_receita(dados),
     }
