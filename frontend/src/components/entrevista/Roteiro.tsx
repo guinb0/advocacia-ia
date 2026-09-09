@@ -55,6 +55,15 @@ const T_SECUNDARIO =
   "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer enabled:hover:bg-papel-2";
 const T_ERRO = "mt-3 border-[1.5px] border-critico text-critico p-[10px] font-normal text-[12px] leading-[1.5] font-ui";
 const T_AVISO = "mt-[10px] mb-0 font-normal text-[11.5px] leading-[1.5] font-ui text-atencao";
+/* Mesmo padrão de banner de aviso já usado mais abaixo neste arquivo (borda
+ * esquerda + fundo) — reaproveitado aqui porque "falta preencher X para
+ * começar" é o aviso mais importante da tela (é o que trava o atendimento) e
+ * andava discreto demais dentro de T_AVISO: fácil de não notar com o cliente
+ * já na linha, principalmente quando o preenchimento automático por CPF deixa
+ * a maioria dos campos prontos e só um ou dois (tipicamente estado civil)
+ * ficam faltando sem chamar atenção. */
+const T_AVISO_BLOQUEIO =
+  "mt-3 border-l-4 border-atencao bg-atencao-claro px-3 py-[10px] font-normal text-[13px] leading-[1.5] font-ui text-tinta";
 const T_ACOES = "flex gap-[10px] items-center flex-wrap";
 
 /* Bloco "vale abrir este caso?" — cartão de recomendação com veredito colorido
@@ -1647,14 +1656,15 @@ function preencherMarcadores(
         * cinza sem explicação — que é como o entrevistador descobriria a regra,
         * com o cliente esperando. */}
       {!escutando && faltaParaComecar.length > 0 && (
-        <p className={T_AVISO}>
-          <strong>Digite {rotulosPendentes.join(" e ")} para começar.</strong> São os
-          dados que abrem o atendimento e que o contrato, a procuração e a declaração
-          exigem — e os que não se colhem de ouvido, porque número, nome próprio e nome
-          de cidade a transcrição erra.{" "}
+        <p className={T_AVISO_BLOQUEIO}>
+          <strong>Falta preencher {rotulosPendentes.join(" e ")} para começar.</strong>{" "}
+          O preenchimento automático do CPF não traz isso sozinho. São os dados que
+          abrem o atendimento e que o contrato, a procuração e a declaração exigem — e
+          os que não se colhem de ouvido, porque número, nome próprio e nome de cidade
+          a transcrição erra.{" "}
           <button
             type="button"
-            className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta"
+            className="border-none bg-transparent p-0 text-tinta font-semibold text-[13px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-acao"
             onClick={() => irPara(faltaParaComecar[0].id)}
           >
             ir ao campo
