@@ -205,6 +205,7 @@ class Conexao:
 # estavam no SQLite —, e qualificar aqui evita reescrever 58 consultas.
 TABELAS = (
     "casos",
+    "qualificacao",
     "classificacoes_documentos_corrigidas",
     "entregas",
     "entrevistas",
@@ -330,6 +331,23 @@ CREATE TABLE {SCHEMA}.{PREFIXO}casos (
     cliente_ref       varchar(80)   NULL,
     agente_ultimo_erro nvarchar(max) NULL,
     telefone          varchar(30)   NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}qualificacao') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}qualificacao (
+    caso_id        varchar(64)   NOT NULL CONSTRAINT pk_ocr_qualificacao PRIMARY KEY,
+    cpf            varchar(14)   NULL,
+    nascimento     varchar(10)   NULL,
+    sexo           varchar(20)   NULL,
+    nome_mae       nvarchar(200) NULL,
+    cep            varchar(9)    NULL,
+    endereco       nvarchar(400) NULL,
+    email          nvarchar(200) NULL,
+    renda_estimada varchar(80)   NULL,
+    criado_em      varchar(40)   NOT NULL,
+    atualizado_em  varchar(40)   NOT NULL,
+    CONSTRAINT fk_ocr_qualificacao_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}entregas') IS NULL

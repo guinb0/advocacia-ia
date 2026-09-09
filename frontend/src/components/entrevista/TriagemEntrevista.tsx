@@ -6,6 +6,7 @@ import {
   analisarEstrategia,
   gravarEntrevistaAoVivo,
   listarAssinaturas,
+  salvarQualificacaoDoCaso,
   triarEntrevista,
   vincularAssinaturaAoCaso,
 } from "@/lib/api";
@@ -437,6 +438,14 @@ export default function TriagemEntrevista({
           // Grava já, sem esperar o encerramento: se a aba morrer daqui para a
           // frente, a entrevista conduzida até aqui não se perde.
           await guardarEntrevista(casoId, transcricao, audioEntrevista, encerrado);
+          // O cadastro que o CPF puxou (e o que foi digitado) vira linha na
+          // tabela de qualificação. Falhar aqui não desfaz o caso: o cadastro se
+          // regrava, mas o atendimento com o cliente na linha não recomeça.
+          try {
+            await salvarQualificacaoDoCaso(casoId, qualificacao);
+          } catch (e) {
+            console.error("Não foi possível gravar a qualificação do caso.", e);
+          }
           const nome = String(qualificacao.nome ?? "");
           const cpf = String(qualificacao.cpf ?? "");
           if (nome && cpf) {

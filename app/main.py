@@ -2537,6 +2537,37 @@ def criar_caso(
     return {**caso, "portal": _criar_portal(caso["id"])}
 
 
+class QualificacaoCliente(BaseModel):
+    """A qualificação do cliente colhida na entrevista — consulta por CPF ou à mão.
+
+    Toda opcional: o campo em branco vira NULL na tabela `qualificacao`, porque
+    "não informado" não é o mesmo que "" para quem for ler o cadastro depois.
+    """
+
+    cpf: str = ""
+    nascimento: str = ""
+    sexo: str = ""
+    nome_mae: str = ""
+    cep: str = ""
+    endereco: str = ""
+    email: str = ""
+    renda_estimada: str = ""
+
+
+@app.put("/api/casos/{caso_id}/qualificacao")
+def gravar_qualificacao(caso_id: str, dados: QualificacaoCliente):
+    """Grava (upsert) a qualificação do cliente numa tabela à parte, 1:1 com o caso.
+
+    Fica separada de `casos` de propósito: o caso segue enxuto e o cadastro
+    completo — o que a consulta por CPF traz e o que a atendente digita — tem
+    onde morar. Campo vazio não vira "", vira ausência (NULL).
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    armazenamento.salvar_qualificacao(caso_id, dados.model_dump())
+    return {"ok": True}
+
+
 @app.get("/api/casos")
 @por_alguns_segundos(5)
 def listar_casos():

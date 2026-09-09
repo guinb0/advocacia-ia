@@ -448,6 +448,35 @@ export async function criarCaso(
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
 }
 
+/** Grava a qualificação do cliente (o que o CPF puxou + o que foi digitado) no caso.
+ *
+ * Vai só o cadastro — nome e telefone já vivem no próprio caso. Campo vazio segue
+ * vazio e o backend o grava como NULL: o cadastro é opcional. Fica numa tabela à
+ * parte (`qualificacao`), 1:1 com o caso. */
+export async function salvarQualificacaoDoCaso(
+  casoId: string,
+  respostas: Record<string, string | string[]>,
+): Promise<void> {
+  const texto = (id: string) =>
+    typeof respostas[id] === "string" ? (respostas[id] as string).trim() : "";
+  await comoJson(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/qualificacao`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cpf: texto("cpf"),
+        nascimento: texto("nascimento"),
+        sexo: texto("sexo"),
+        nome_mae: texto("mae"),
+        cep: texto("cep"),
+        endereco: texto("endereco"),
+        email: texto("email"),
+        renda_estimada: texto("renda_estimada"),
+      }),
+    }),
+  );
+}
+
 /** Qualificação do cidadão pelo CPF, na base da Receita (Conecta gov.br).
  *
  * Devolve os campos já nos ids das perguntas do roteiro. Vai por POST porque o
