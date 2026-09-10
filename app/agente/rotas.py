@@ -588,6 +588,10 @@ def revisar_peticao_com_prompt(
     caso_id: str,
     peca_ref: str,
     prompt: str = Body(..., embed=True),
+    # Padrão `True` porque é o caso comum — a crítica quase sempre é uma lição
+    # do escritório — e porque é o que os clientes antigos, que não mandam o
+    # campo, já faziam.
+    generaliza: bool = Body(True, embed=True),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> dict[str, Any]:
     """Issue "Permitir alteração da petição por prompt com rastreabilidade".
@@ -604,7 +608,7 @@ def revisar_peticao_com_prompt(
         )
     try:
         return peticao_fluxo.revisar_peticao(
-            caso_id, prompt=prompt, usuario=usuario.nome
+            caso_id, prompt=prompt, usuario=usuario.nome, generaliza=generaliza
         )
     except peticao_local.ErroPeticao as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro

@@ -636,6 +636,8 @@ export interface CriticaDePeticao {
   versao_resultado: number;
   prompt: string;
   usuario: string;
+  /** `false` = valeu só para este caso; não instrui as próximas petições. */
+  generaliza?: boolean;
   criado_em: string;
 }
 
@@ -664,10 +666,12 @@ export function revisarPeticaoComPrompt(
   casoId: string,
   pecaId: string,
   prompt: string,
+  /** `false` = lição só deste caso: entra na rastreabilidade e NÃO ensina a IA. */
+  generaliza = true,
 ): Promise<{ peticao: Peticao; criticas: CriticaDePeticao[] }> {
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/revisar`, {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, generaliza }),
   });
 }
 

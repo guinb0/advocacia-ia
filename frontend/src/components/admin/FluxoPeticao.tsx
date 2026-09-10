@@ -62,6 +62,10 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   // ao carregar o histórico não pode esconder a petição, que é o que importa
   // primeiro.
   const [promptRevisao, setPromptRevisao] = useState("");
+  /* Marcado por padrão: a crítica quase sempre é uma lição do escritório, e é
+   * dela que a IA aprende. Desmarcar é o que impede um ajuste pontual — "troque
+   * o nome do cliente" — de virar regra de todas as petições da categoria. */
+  const [ensinarIA, setEnsinarIA] = useState(true);
   const [revisando, setRevisando] = useState(false);
   const [historico, setHistorico] = useState<HistoricoDePeticao | null>(null);
   const [mostrarHistorico, setMostrarHistorico] = useState(false);
@@ -158,7 +162,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setRevisando(true);
     setErro(null);
     try {
-      const resultado = await revisarPeticaoComPrompt(casoId, peticao.id, promptRevisao.trim());
+      const resultado = await revisarPeticaoComPrompt(
+        casoId,
+        peticao.id,
+        promptRevisao.trim(),
+        ensinarIA,
+      );
       setPeticao(resultado.peticao);
       setPromptRevisao("");
       setHistorico((atual) => ({
@@ -327,6 +336,23 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               rows={3}
               placeholder="O que deve mudar nesta petição?"
             />
+            <label className="flex items-start gap-2 text-xs text-tinta-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-[2px]"
+                checked={ensinarIA}
+                onChange={(e) => setEnsinarIA(e.target.checked)}
+              />
+              <span>
+                Ensinar a IA com esta correção
+                <span className="block text-tinta-3">
+                  Marcado, ela passa a valer para as próximas petições desta mesma
+                  categoria de caso. Desmarque quando o ajuste for só deste cliente
+                  (um nome, um valor, uma data) — a correção continua no histórico
+                  deste caso de qualquer jeito.
+                </span>
+              </span>
+            </label>
             <div>
               <Botao
                 variante="secundario"
@@ -432,6 +458,23 @@ function HistoricoDeCriticas({
                   v{critica.versao_origem} → v{critica.versao_resultado}
                 </span>
                 <span>{new Date(critica.criado_em).toLocaleString("pt-BR")}</span>
+                {/* Qual crítica está ensinando a IA e qual valeu só aqui — sem
+                  * isto não há como saber por que a próxima petição saiu
+                  * diferente. */}
+                <span
+                  className={
+                    critica.generaliza === false
+                      ? "text-tinta-3"
+                      : "text-ok font-semibold"
+                  }
+                  title={
+                    critica.generaliza === false
+                      ? "Valeu só neste caso — não instrui as próximas petições."
+                      : "Esta correção instrui as próximas petições desta categoria."
+                  }
+                >
+                  {critica.generaliza === false ? "só neste caso" : "ensina a IA"}
+                </span>
               </div>
               <p className="text-sm text-tinta-2 m-0 whitespace-pre-wrap">{critica.prompt}</p>
             </li>
