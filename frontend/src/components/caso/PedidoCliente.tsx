@@ -3,13 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  dispararTesteCobrancaDocumentos,
   enviarDocumentosWhatsApp,
   obterCobrancaDocumentos,
   obterPedido,
   salvarCobrancaDocumentos,
+  statusWhatsapp,
 } from "@/lib/api";
+import type { StatusWhatsapp } from "@/lib/api";
 import type { CobrancaDocumentos, Pedido, Progresso } from "@/lib/types";
 import { AjudaCampo, Botao, Cartao, Marcacao, RotuloCampo, Vazio } from "@/components/ui/Basicos";
+import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 
 /** Painel que gera o texto pronto para o advogado mandar ao cliente. */
 export default function PedidoCliente({
@@ -27,11 +31,15 @@ export default function PedidoCliente({
   const [incluirOpcionais, setIncluirOpcionais] = useState(false);
   const [copiado, setCopiado] = useState(false);
   const [cobranca, setCobranca] = useState<CobrancaDocumentos | null>(null);
+  const [statusWa, setStatusWa] = useState<StatusWhatsapp | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [testandoAutomacao, setTestandoAutomacao] = useState(false);
   const [retorno, setRetorno] = useState("");
 
   const chave = `${progresso.obrigatorios_entregues}-${progresso.itens_a_conferir}-${progresso.opcionais_entregues}`;
+  const telefoneCobranca = cobranca?.telefone ?? "";
+  const cobrancaSemTelefone = cobranca ? !telefonePreenchido(telefoneCobranca) : false;
 
   useEffect(() => {
     let cancelado = false;
@@ -50,6 +58,20 @@ export default function PedidoCliente({
   useEffect(() => {
     obterCobrancaDocumentos(casoId).then(setCobranca).catch(() => setCobranca(null));
   }, [casoId]);
+
+  useEffect(() => {
+    let cancelado = false;
+    statusWhatsapp()
+      .then((status) => {
+        if (!cancelado) setStatusWa(status);
+      })
+      .catch(() => {
+        if (!cancelado) setStatusWa(null);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, []);
 
   const salvarAutomacao = useCallback(async () => {
     if (!cobranca) return;
@@ -80,6 +102,10 @@ export default function PedidoCliente({
   }, [pedido]);
 
   const enviarWhatsApp = useCallback(async () => {
+    if (cobrancaSemTelefone) {
+      setRetorno("Informe o telefone/WhatsApp do cliente no caso antes de enviar mensagem.");
+      return;
+    }
     setEnviando(true);
     setRetorno("");
     try {
@@ -90,7 +116,30 @@ export default function PedidoCliente({
     } finally {
       setEnviando(false);
     }
-  }, [casoId, incluirOpcionais]);
+  }, [casoId, cobrancaSemTelefone, incluirOpcionais]);
+
+  const dispararTesteAutomacao = useCallback(async () => {
+    if (!cobranca) return;
+    if (cobrancaSemTelefone) {
+      setRetorno("Informe o telefone/WhatsApp do cliente no caso antes de testar a automação.");
+      return;
+    }
+    setTestandoAutomacao(true);
+    setRetorno("");
+    try {
+      const r = await dispararTesteCobrancaDocumentos(casoId, cobranca);
+      setRetorno(
+        r.enviado
+          ? "✓ Teste temporário enviado pelo mesmo fluxo do timer."
+          : r.ultimo_erro || "Teste temporário processado; nenhuma mensagem saiu pelas regras atuais.",
+      );
+      obterCobrancaDocumentos(casoId).then(setCobranca).catch(() => {});
+    } catch (e) {
+      setRetorno(e instanceof Error ? e.message : "Não foi possível disparar o teste da automação.");
+    } finally {
+      setTestandoAutomacao(false);
+    }
+  }, [casoId, cobranca, cobrancaSemTelefone]);
 
   return (
     <Cartao
@@ -153,26 +202,57 @@ export default function PedidoCliente({
                   />
                   <span>Cobrar documentos automaticamente pelo WhatsApp</span>
                 </Marcacao>
+                {statusWa && (
+                  <span className={`text-xs font-semibold ${statusWa.conectado ? "text-ok" : "text-atencao"}`}>
+                    Evolution: {statusWa.conectado ? "conectado" : statusWa.configurado ? "desconectado" : "não configurado"}
+                  </span>
+                )}
               </div>
-              <div className="grid grid-cols-[minmax(220px,1fr)_150px] gap-3 mt-3 max-[640px]:grid-cols-1">
+              <div className="grid grid-cols-[minmax(220px,1fr)_170px_170px] gap-3 mt-3 max-[780px]:grid-cols-1">
                 <label className="text-xs text-tinta-3">
-                  WhatsApp do cliente
+                  Destino automático
                   <input
-                    className="block w-full mt-1 p-2 border border-borda-campo rounded-campo bg-papel text-tinta"
-                    value={cobranca.telefone}
-                    onChange={(e) => setCobranca({ ...cobranca, telefone: e.target.value })}
-                    placeholder="(61) 99999-9999"
+                    className="block w-full mt-1 p-2 border border-borda-campo rounded-campo bg-papel-2 text-tinta"
+                    value={telefonePreenchido(cobranca.telefone) ? formatarTelefone(cobranca.telefone) : "Sem telefone no cadastro do caso"}
+                    readOnly
                   />
+                  {cobrancaSemTelefone && (
+                    <span className="mt-1 block text-[11.5px] leading-[1.4] text-atencao">
+                      Preencha o telefone do caso para usar a cobrança por WhatsApp.
+                    </span>
+                  )}
                 </label>
                 <label className="text-xs text-tinta-3">
-                  Repetir a cada
+                  Intervalo mínimo
                   <select
                     className="block w-full mt-1 p-2 border border-borda-campo rounded-campo bg-papel text-tinta"
-                    value={cobranca.intervalo_dias}
-                    onChange={(e) => setCobranca({ ...cobranca, intervalo_dias: Number(e.target.value) })}
+                    value={cobranca.intervalo_horas}
+                    onChange={(e) => {
+                      const horas = Number(e.target.value);
+                      setCobranca({
+                        ...cobranca,
+                        intervalo_horas: horas,
+                        intervalo_dias: Math.max(1, Math.ceil(horas / 24)),
+                      });
+                    }}
                   >
-                    {[1, 2, 3, 5, 7, 14].map((dias) => <option key={dias} value={dias}>{dias} {dias === 1 ? "dia" : "dias"}</option>)}
+                    {[6, 12, 24, 48, 72, 168].map((horas) => (
+                      <option key={horas} value={horas}>
+                        {horas < 24 ? `${horas} horas` : `${horas / 24} ${horas === 24 ? "dia" : "dias"}`}
+                      </option>
+                    ))}
                   </select>
+                </label>
+                <label className="text-xs text-tinta-3">
+                  Máximo por dia
+                  <input
+                    className="block w-full mt-1 p-2 border border-borda-campo rounded-campo bg-papel text-tinta"
+                    type="number"
+                    min={1}
+                    max={6}
+                    value={cobranca.max_envios_dia}
+                    onChange={(e) => setCobranca({ ...cobranca, max_envios_dia: Number(e.target.value) })}
+                  />
                 </label>
               </div>
               <Marcacao className="mt-3">
@@ -187,9 +267,16 @@ export default function PedidoCliente({
                 <Botao variante="primario" onClick={() => void salvarAutomacao()} disabled={salvando}>
                   {salvando ? "Salvando…" : "Salvar automação"}
                 </Botao>
+                <Botao
+                  variante="secundario"
+                  onClick={() => void dispararTesteAutomacao()}
+                  disabled={testandoAutomacao || salvando || !cobranca.ativa || cobrancaSemTelefone}
+                >
+                  {testandoAutomacao ? "Testando…" : "Teste temporário: disparar agora"}
+                </Botao>
               </div>
               <AjudaCampo>
-                Cada envio usa a mensagem acima refeita naquele momento. Quando o cliente envia outro arquivo, a próxima cobrança já remove o que chegou e inclui apenas o que continua pendente.
+                Usa a mesma conexão Evolution do módulo Saúde do agente. O destinatário é o WhatsApp do cliente no cadastro/entrevista do caso; o gestor não precisa informar número aqui. O botão de teste é temporário e será removido do produto final.
               </AjudaCampo>
             </div>
           )}

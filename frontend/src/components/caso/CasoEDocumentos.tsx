@@ -10,6 +10,7 @@ import Checklist from "@/components/caso/Checklist";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
 import { obterAtendimentoDocumentacao, criarSalaChamada, solicitarDocumentacao } from "@/lib/api";
 import type { AtendimentoDocumentacao } from "@/lib/api";
+import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 
 /* A última etapa do atendimento, e ela acontece COM O CLIENTE NA LINHA.
  *
@@ -30,7 +31,7 @@ interface Props {
   cliente: string;
   entrevistaId: string;
   categorias: Categoria[];
-  onCriar: (cliente: string, categoria: string) => Promise<CasoCriado>;
+  onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string) => Promise<CasoCriado>;
   /** A categoria que a triagem sugeriu, quando houve. Em modo `editavel` é o
    *  valor atual do seletor, controlado por quem chama. */
   sugerida?: string;
@@ -46,6 +47,9 @@ interface Props {
   /** CPF do cliente — obrigatório para criar no modo `editavel`. */
   cpf?: string;
   onCpf?: (valor: string) => void;
+  /** WhatsApp do cliente — usado pela cobrança automática de documentos. */
+  telefone?: string;
+  onTelefone?: (valor: string) => void;
   /** Troca a categoria escolhida no seletor (só em `editavel`). */
   onCategoria?: (codigo: string) => void;
   /** O caso nasceu — quem chama guarda no caso a entrevista já conduzida.
@@ -73,6 +77,8 @@ export default function CasoEDocumentos({
   onCliente,
   cpf,
   onCpf,
+  telefone,
+  onTelefone,
   onCategoria,
   onCasoCriado,
   onAbrirDossie,
@@ -82,6 +88,7 @@ export default function CasoEDocumentos({
 }: Props) {
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [tentouCriar, setTentouCriar] = useState(false);
   const [criado, setCriado] = useState<CasoCriado | null>(null);
   const [mostrarCredenciais, setMostrarCredenciais] = useState(true);
   /* Em que sala a conversa estava ANTES de o caso nascer.
@@ -97,6 +104,8 @@ export default function CasoEDocumentos({
 
   const escolhida = sugerida || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((c) => c.codigo === escolhida);
+  const telefoneAtual = telefone ?? "";
+  const telefoneVazio = !telefonePreenchido(telefoneAtual);
 
   /* Criar o caso já coloca o ADVOGADO na sala dele.
    *
@@ -116,12 +125,18 @@ export default function CasoEDocumentos({
     // então ele é obrigatório antes de criar — diferente do ao vivo, onde vem
     // pronto da entrevista.
     if (editavel && !cpf?.trim()) return;
+    if (telefoneVazio && !tentouCriar) {
+      setTentouCriar(true);
+      setErro("Telefone vazio. Clique em criar novamente para seguir sem WhatsApp automático.");
+      return;
+    }
     setCriando(true);
     setErro(null);
     try {
       const salaEmCurso = chamada.sala;
-      const novo = await onCriar(cliente.trim(), escolhida);
+      const novo = await onCriar(cliente.trim(), escolhida, "", formatarTelefone(telefoneAtual));
       setCriado(novo);
+      setTentouCriar(false);
       // Antes da sala e da documentação: é a primeira coisa que pode ser feita
       // com o caso na mão, e a que se perde para sempre se a aba fechar.
       await onCasoCriado?.(novo.id);
@@ -212,6 +227,24 @@ export default function CasoEDocumentos({
                 inputMode="numeric"
                 autoComplete="off"
               />
+            </div>
+            <div>
+              <RotuloCampo htmlFor="triagem-telefone">Telefone / WhatsApp</RotuloCampo>
+              <Campo
+                id="triagem-telefone"
+                type="tel"
+                inputMode="tel"
+                value={formatarTelefone(telefoneAtual)}
+                onChange={(e) => onTelefone?.(formatarTelefone(e.target.value))}
+                placeholder="(61) 98180-8863"
+                className={tentouCriar && telefoneVazio ? "border-atencao" : undefined}
+                aria-invalid={tentouCriar && telefoneVazio}
+              />
+              {tentouCriar && telefoneVazio && (
+                <p className="mt-[6px] text-xs leading-[1.5] text-atencao">
+                  Telefone vazio. Clique em criar novamente para seguir sem WhatsApp automático.
+                </p>
+              )}
             </div>
             <div>
               <RotuloCampo htmlFor="triagem-categoria">Tipo de ação (checklist)</RotuloCampo>

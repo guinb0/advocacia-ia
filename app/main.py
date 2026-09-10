@@ -2723,6 +2723,8 @@ def obter_caso(caso_id: str):
         raise HTTPException(404, "Caso não encontrado.")
     # "Nada passa despercebido": item de carteira que falta, mas cujo dado (CTPS,
     # PIS) aparece em outro anexo, ganha a observação de onde foi encontrado.
+    # A leitura agora é feita em lote sobre as extrações persistidas, sem abrir
+    # cada entrega nem consultar o agente jurídico uma vez por arquivo.
     casos.anexar_observacoes_cruzadas(caso_id, situacao)
     return situacao
 
@@ -2809,9 +2811,12 @@ def panorama_do_escritorio():
 
 @app.patch("/api/casos/{caso_id}")
 def atualizar_caso(
-    caso_id: str, cliente: str | None = Form(None), observacao: str | None = Form(None)
+    caso_id: str,
+    cliente: str | None = Form(None),
+    observacao: str | None = Form(None),
+    telefone: str | None = Form(None),
 ):
-    if not armazenamento.atualizar_caso(caso_id, cliente, observacao):
+    if not armazenamento.atualizar_caso(caso_id, cliente, observacao, telefone):
         raise HTTPException(404, "Caso não encontrado ou nada para atualizar.")
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return armazenamento.obter_caso(caso_id)
@@ -2862,6 +2867,15 @@ def pedido_do_caso(caso_id: str, incluir_opcionais: bool = False):
     if pedido is None:
         raise HTTPException(404, "Caso não encontrado.")
     return pedido
+
+
+@app.get("/api/casos/{caso_id}/documentos/pendentes")
+def documentos_pendentes_do_caso(caso_id: str, incluir_opcionais: bool = False):
+    """Documentos que ainda exigem ação do cliente, sem montar texto de WhatsApp."""
+    pendentes = casos.documentos_pendentes_do_caso(caso_id, incluir_opcionais)
+    if pendentes is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return pendentes
 
 
 # O antigo `_ler_documento` (OCR do checklist numa thread da API) saiu daqui: quem

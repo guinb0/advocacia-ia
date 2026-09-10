@@ -1310,6 +1310,32 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
     return [_normalizar_entrega(l) for l in linhas]
 
 
+def listar_extracoes_do_caso(caso_id: str) -> list[dict[str, Any]]:
+    """Extrações persistidas em uma consulta, sem enriquecimento externo.
+
+    Serve a leituras cruzadas do próprio checklist. `obter_entrega` também
+    consulta o agente jurídico e, chamado uma vez por arquivo, tornava a abertura
+    de casos grandes proporcionalmente lenta.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT arquivo, extracao_json
+                 FROM entregas
+                WHERE caso_id = ? AND extracao_json IS NOT NULL
+                ORDER BY criado_em""",
+            (caso_id,),
+        ).fetchall()
+    saida: list[dict[str, Any]] = []
+    for linha in linhas:
+        try:
+            extracao = json.loads(linha["extracao_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(extracao, dict):
+            saida.append({"arquivo": linha["arquivo"], "extracao": extracao})
+    return saida
+
+
 def marcos_por_caso(caso_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Entregas, entrevistas, assinaturas e vínculo de vários casos, em quatro consultas.
 

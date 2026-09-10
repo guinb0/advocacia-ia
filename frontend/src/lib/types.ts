@@ -150,6 +150,7 @@ export interface Caso {
   cliente: string;
   categoria: string;
   observacao: string;
+  telefone: string;
   criado_em: string;
   atualizado_em: string;
   total_entregas?: number;
@@ -208,6 +209,16 @@ export interface ItemSituacao extends ItemChecklist {
   /** Item que falta, mas cujo dado (ex.: CTPS/PIS) apareceu em OUTRO documento.
    *  Indício de que a informação já está no caso — não dá o item por entregue. */
   encontrado_em?: { arquivo: string; dado: string }[];
+}
+
+export interface DocumentoPendente {
+  codigo: string;
+  numero: number;
+  nome: string;
+  obrigatorio: boolean;
+  status: Extract<StatusItem, "pendente" | "conferir">;
+  observacao: string;
+  motivo: string;
 }
 
 export interface Progresso {
@@ -435,6 +446,16 @@ export interface Pedido {
   progresso: Progresso;
 }
 
+export interface DocumentosPendentesCaso {
+  caso: Pick<Caso, "id" | "cliente" | "categoria"> & {
+    telefone: string;
+    portal_ativo: boolean;
+  };
+  categoria: { codigo: string; nome: string; descricao: string };
+  pendentes: DocumentoPendente[];
+  progresso: Progresso;
+}
+
 export interface RespostaEnvio {
   entrega: Entrega;
   extracao: Documento;
@@ -445,6 +466,8 @@ export interface CobrancaDocumentos {
   ativa: boolean;
   telefone: string;
   intervalo_dias: number;
+  intervalo_horas: number;
+  max_envios_dia: number;
   incluir_opcionais: boolean;
   proximo_envio_em: string | null;
   ultimo_envio_em: string | null;

@@ -86,8 +86,8 @@ def _detalhes_documentos(caso_id: str | None) -> dict[str, Any] | None:
     progresso = situacao.get("progresso") or {}
     pendentes = [
         str(item.get("nome") or item.get("codigo") or "Documento")
-        for item in itens
-        if item.get("obrigatorio") and item.get("status") == casos.PENDENTE
+        for item in casos.documentos_pendentes_da_situacao(situacao)
+        if item.get("status") == casos.PENDENTE
     ]
     conferir = [
         str(item.get("nome") or item.get("codigo") or "Documento")
