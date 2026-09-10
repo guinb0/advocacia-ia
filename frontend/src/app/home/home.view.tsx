@@ -16,6 +16,7 @@ import Jurimetria from "@/components/admin/Jurimetria";
 import ListaCasos from "@/components/carteira/ListaCasos";
 import PainelCaso from "@/components/caso/PainelCaso";
 import Panorama from "@/components/Panorama";
+import Operacao from "@/components/operacao/Operacao";
 import PainelEnvio from "@/components/caso/PainelEnvio";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import ChamadaDoAtendimento from "@/components/chamada/ChamadaDoAtendimento";
@@ -193,6 +194,14 @@ const Telas = (props: HomeViewProps) => {
     return (
       <ModuleFrame variant="wide">
         <Panorama onVoltar={voltarParaCarteira} onAbrirCaso={abrirCaso} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "operacao") {
+    return (
+      <ModuleFrame variant="wide">
+        <Operacao />
       </ModuleFrame>
     );
   }

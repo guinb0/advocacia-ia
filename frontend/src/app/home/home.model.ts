@@ -19,6 +19,7 @@ export type Tela =
   | "investigacao"
   | "usuarios"
   | "panorama"
+  | "operacao"
   | "entrevista"
   | "supervisao"
   | "dados"
@@ -43,6 +44,7 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   investigacao: "investigacao",
   usuarios: "usuarios",
   panorama: "metricas",
+  operacao: "operacao",
   entrevista: "entrevista",
   supervisao: "supervisao",
   dados: "metricas",

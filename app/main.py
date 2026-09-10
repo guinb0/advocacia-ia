@@ -70,6 +70,7 @@ from . import (
     escuta,
     perfis,
     painel as painel_do_caso,
+    operacao,
     panorama,
     peticao_local,
     peticao_skills,
@@ -295,6 +296,7 @@ app.include_router(usuarios.roteador_sessao)
 app.include_router(supervisao.roteador)
 app.include_router(dados.roteador)
 app.include_router(documentacao.roteador)
+app.include_router(operacao.roteador)
 app.include_router(whatsapp.roteador)
 
 
@@ -2750,7 +2752,7 @@ def revisao_iniciar(caso_id: str, usuario: auth.Usuario = PodeRevisar):
     """Marca o início da revisão desta petição por este revisor (idempotente)."""
     if not peticao_local.existe(caso_id):
         raise HTTPException(404, "Não há petição para revisar neste caso.")
-    return revisao.iniciar(caso_id, _quem_revisa(usuario))
+    return revisao.iniciar(caso_id, _quem_revisa(usuario), usuario.id)
 
 
 @app.post("/api/revisao/{caso_id}/concluir")
@@ -2761,7 +2763,7 @@ def revisao_concluir(
     if not peticao_local.existe(caso_id):
         raise HTTPException(404, "Não há petição para revisar neste caso.")
     try:
-        return revisao.concluir(caso_id, _quem_revisa(usuario), pedido.resultado.strip())
+        return revisao.concluir(caso_id, _quem_revisa(usuario), pedido.resultado.strip(), usuario.id)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -3417,6 +3419,7 @@ async def enviar_entrevista(
         texto=texto,
         realizada_em=realizada_em.strip(),
         entrevistador=entrevistador.strip() or _quem_conduziu(request),
+        entrevistador_id=_id_de_quem_conduziu(request),
     )
 
     threading.Thread(
@@ -3451,6 +3454,13 @@ def _quem_conduziu(request: Request) -> str:
     if usuario is None or usuario is auth.USUARIO_ABERTO:
         return ""
     return (usuario.nome or usuario.usuario or "").strip()[:120]
+
+
+def _id_de_quem_conduziu(request: Request) -> str:
+    usuario = getattr(request.state, "usuario", None)
+    if usuario is None or usuario is auth.USUARIO_ABERTO:
+        return ""
+    return str(usuario.id or "").strip()[:160]
 
 
 class TranscricaoAoVivo(BaseModel):
@@ -3544,6 +3554,7 @@ async def gravar_entrevista_ao_vivo(
             texto=texto,
             realizada_em=dados.realizada_em or date.today().isoformat(),
             entrevistador=_quem_conduziu(request),
+            entrevistador_id=_id_de_quem_conduziu(request),
             gravacao_id=dados.gravacao_id,
         )
 

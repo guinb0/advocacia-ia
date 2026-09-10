@@ -20,6 +20,7 @@ const ROTULO_TELA: Record<Tela, string> = {
   investigacao: "Investigação",
   usuarios: "Usuários",
   panorama: "Panorama",
+  operacao: "Operação",
   entrevista: "Entrevista guiada",
   supervisao: "Supervisão",
   dados: "Dados",
