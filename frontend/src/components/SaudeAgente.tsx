@@ -227,8 +227,17 @@ function CartaoWhatsapp() {
       {!conectado && status?.configurado && (
         <p className="mt-2 mb-0 text-sm text-atencao">
           O WhatsApp do escritório está fora do ar — os avisos e links não estão saindo.
-          Escaneie o QR abaixo com o aparelho para religar.
+          {qr ? " Escaneie o QR abaixo com o aparelho para religar." : " Gere um QR novo para religar."}
         </p>
+      )}
+
+      {status?.erro && !erro && (
+        <Aviso tom="critico" titulo="Diagnóstico da Evolution">
+          {status.erro}
+          {status.diagnostico && (
+            <span className="mt-1 block text-xs">Diagnóstico do serviço: {status.diagnostico}</span>
+          )}
+        </Aviso>
       )}
 
       {erro && (

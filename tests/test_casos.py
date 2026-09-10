@@ -250,6 +250,35 @@ def main() -> int:
     checar("REENVIADOS" in texto, "o texto tem a seção de reenvio")
     checar("flash" in texto, "o texto traz as dicas de foto")
 
+    priorizados = casos.ordenar_itens_para_listagem(situacao["itens"])
+    primeira_entregue = next(
+        indice for indice, item in enumerate(priorizados) if item["status"] == casos.ENTREGUE
+    )
+    checar(
+        all(item["status"] != casos.ENTREGUE for item in priorizados[:primeira_entregue]),
+        "listagem priorizada deixa pendências antes dos entregues",
+    )
+    checar(
+        priorizados[0]["status"] == casos.PENDENTE
+        and priorizados[0]["obrigatorio"]
+        and priorizados[0]["numero"] < priorizados[1]["numero"],
+        "pendências obrigatórias respeitam a ordem do checklist dentro da prioridade",
+    )
+
+    pendentes = casos.documentos_pendentes_do_caso(caso_id)
+    nomes_pendentes = [item["nome"] for item in pendentes["pendentes"]]
+    checar(
+        "RG" in nomes_pendentes
+        and "CPF" not in nomes_pendentes
+        and "Contracheque do último mês trabalhado" in nomes_pendentes,
+        "resumo pendente reutilizável traz só itens que exigem ação do cliente",
+        str(nomes_pendentes),
+    )
+    checar(
+        all(item["status"] in {casos.PENDENTE, casos.CONFERIR} for item in pendentes["pendentes"]),
+        "resumo pendente não cobra documento que só está processando ou já entregue",
+    )
+
     sem_opcionais = casos.montar_pedido(caso_id, incluir_opcionais=False)["texto"]
     com_opcionais = casos.montar_pedido(caso_id, incluir_opcionais=True)["texto"]
     checar(len(com_opcionais) > len(sem_opcionais), "incluir_opcionais aumenta o pedido")

@@ -8,6 +8,7 @@ import type {
   Categoria,
   ConfigAssinatura,
   Documento,
+  DocumentosPendentesCaso,
   DocumentoDoCliente,
   EnderecoCep,
   Entrega,
@@ -98,6 +99,8 @@ export interface StatusWhatsapp {
   /** Nome do perfil do WhatsApp conectado, quando a Evolution o expõe. */
   perfil?: string;
   erro?: string;
+  /** Identifica a versão do diagnóstico e denuncia backend antigo no deploy. */
+  diagnostico?: string;
 }
 
 /** Se o WhatsApp do escritório (Evolution) está conectado — para o painel. */
@@ -184,7 +187,10 @@ export async function obterCobrancaDocumentos(casoId: string): Promise<CobrancaD
 
 export async function salvarCobrancaDocumentos(
   casoId: string,
-  config: Pick<CobrancaDocumentos, "ativa" | "telefone" | "intervalo_dias" | "incluir_opcionais">,
+  config: Pick<
+    CobrancaDocumentos,
+    "ativa" | "telefone" | "intervalo_dias" | "intervalo_horas" | "max_envios_dia" | "incluir_opcionais"
+  >,
 ): Promise<CobrancaDocumentos> {
   return comoJson(await buscar(`/api/whatsapp/casos/${encodeURIComponent(casoId)}/cobranca-documentos`, {
     method: "PUT",
@@ -203,6 +209,23 @@ export async function enviarDocumentosWhatsApp(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ incluir_opcionais: incluirOpcionais }),
+    },
+  ));
+}
+
+export async function dispararTesteCobrancaDocumentos(
+  casoId: string,
+  config?: Pick<
+    CobrancaDocumentos,
+    "ativa" | "telefone" | "intervalo_dias" | "intervalo_horas" | "max_envios_dia" | "incluir_opcionais"
+  >,
+): Promise<{ enviado: boolean; teste_temporario: boolean; ultimo_erro?: string }> {
+  return comoJson(await buscar(
+    `/api/whatsapp/casos/${encodeURIComponent(casoId)}/cobranca-documentos/teste-disparo`,
+    {
+      method: "POST",
+      headers: config ? { "Content-Type": "application/json" } : undefined,
+      body: config ? JSON.stringify(config) : undefined,
     },
   ));
 }
@@ -547,6 +570,16 @@ export async function excluirCaso(casoId: string): Promise<void> {
 export async function obterPedido(casoId: string, incluirOpcionais: boolean): Promise<Pedido> {
   const query = incluirOpcionais ? "?incluir_opcionais=true" : "";
   return comoJson<Pedido>(await buscar(`/api/casos/${casoId}/pedido${query}`));
+}
+
+export async function obterDocumentosPendentes(
+  casoId: string,
+  incluirOpcionais = false,
+): Promise<DocumentosPendentesCaso> {
+  const query = incluirOpcionais ? "?incluir_opcionais=true" : "";
+  return comoJson<DocumentosPendentesCaso>(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos/pendentes${query}`),
+  );
 }
 
 // ------------------------------------------------------ roteiro de entrevista

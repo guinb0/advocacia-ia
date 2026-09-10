@@ -499,6 +499,8 @@ CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
     ativa              int           NOT NULL CONSTRAINT df_acervo_cobranca_ativa DEFAULT 0,
     telefone           varchar(20)   NOT NULL CONSTRAINT df_acervo_cobranca_telefone DEFAULT '',
     intervalo_dias     int           NOT NULL CONSTRAINT df_acervo_cobranca_intervalo DEFAULT 3,
+    intervalo_horas    int           NULL,
+    max_envios_dia     int           NOT NULL CONSTRAINT df_acervo_cobranca_max_dia DEFAULT 1,
     incluir_opcionais  int           NOT NULL CONSTRAINT df_acervo_cobranca_opcionais DEFAULT 0,
     proximo_envio_em   varchar(40)   NULL,
     ultimo_envio_em    varchar(40)   NULL,
@@ -743,6 +745,19 @@ COLUNAS_NOVAS = (
         f"{PREFIXO}casos",
         "telefone",
         "varchar(30) NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''",
+    ),
+    # Ritmo da cobrança automática de documentos por WhatsApp. O limite diário
+    # segura excesso de contato; o intervalo em horas permite cadência dentro do
+    # dia sem trocar a regra antiga de `intervalo_dias` para clientes já salvos.
+    (
+        f"{PREFIXO}cobrancas_documentos",
+        "intervalo_horas",
+        "int NULL",
+    ),
+    (
+        f"{PREFIXO}cobrancas_documentos",
+        "max_envios_dia",
+        "int NOT NULL CONSTRAINT df_acervo_cobranca_max_dia DEFAULT 1",
     ),
 )
 
