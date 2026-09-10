@@ -268,36 +268,6 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </Aviso>
           )}
 
-          <div className="grid gap-2 border border-borda-forte bg-papel p-3">
-            <RotuloCampo htmlFor="prompt-revisao">
-              Pedir uma revisão por prompt
-            </RotuloCampo>
-            <p className="text-xs text-tinta-3 m-0">
-              Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
-              pedidos&quot;). A IA aplica só o que você pedir e preserva o resto do texto. A
-              versão atual fica guardada no histórico, e a revisão volta para
-              &quot;em revisão&quot; — precisa aprovar de novo.
-            </p>
-            <Campo
-              area
-              id="prompt-revisao"
-              value={promptRevisao}
-              onChange={(e) => setPromptRevisao(e.target.value)}
-              rows={3}
-              placeholder="O que deve mudar nesta petição?"
-            />
-            <div>
-              <Botao
-                variante="secundario"
-                pequeno
-                disabled={revisando || salvando || ocupado || !promptRevisao.trim()}
-                onClick={() => void revisar()}
-              >
-                {revisando ? "Revisando…" : "Aplicar revisão"}
-              </Botao>
-            </div>
-          </div>
-
           {historico && (historico.criticas.length > 0 || historico.versoes.length > 0) && (
             <HistoricoDeCriticas
               historico={historico}
@@ -333,6 +303,40 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                 edicao={edicao}
               />
             )}
+          </div>
+
+          {/* A revisão por prompt vem DEPOIS do texto: ela age sobre o que está
+            * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
+            * o advogado abria a tela num campo em branco e precisava rolar para
+            * descobrir o que iria alterar. */}
+          <div className="grid gap-2 border border-borda-forte bg-papel p-3">
+            <RotuloCampo htmlFor="prompt-revisao">
+              Pedir uma revisão por prompt
+            </RotuloCampo>
+            <p className="text-xs text-tinta-3 m-0">
+              Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
+              pedidos&quot;). A IA aplica só o que você pedir e preserva o resto do texto. A
+              versão atual fica guardada no histórico, e a revisão volta para
+              &quot;em revisão&quot; — precisa aprovar de novo.
+            </p>
+            <Campo
+              area
+              id="prompt-revisao"
+              value={promptRevisao}
+              onChange={(e) => setPromptRevisao(e.target.value)}
+              rows={3}
+              placeholder="O que deve mudar nesta petição?"
+            />
+            <div>
+              <Botao
+                variante="secundario"
+                pequeno
+                disabled={revisando || salvando || ocupado || !promptRevisao.trim()}
+                onClick={() => void revisar()}
+              >
+                {revisando ? "Revisando…" : "Aplicar revisão"}
+              </Botao>
+            </div>
           </div>
         </section>
       )}
