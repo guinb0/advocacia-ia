@@ -112,8 +112,8 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
   }, []);
 
   const gravando = estado === "gravando";
-  const pausado = estado === "pausado";
-  const emCurso = gravando || pausado;
+  const reconectando = estado === "reconectando";
+  const emCurso = gravando || reconectando;
   const temAudio = estado !== "sem-audio";
 
   const [ponto, textoPonto]: [React.ReactNode, string] = {
@@ -138,9 +138,15 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
       />,
       "gravando resposta",
     ],
-    // Pausado ainda é uma resposta aberta: o ponto não pode voltar a "microfone
-    // aberto", que é o estado de entre perguntas.
-    pausado: [<i key="p" className="w-2 h-2 flex-none bg-ok" />, "pausado — a resposta continua aberta"],
+    // A conexão caiu e está religando. A resposta continua aberta, e o que for
+    // dito agora não entra no arquivo — por isso o ponto é de atenção, não verde.
+    reconectando: [
+      <i
+        key="p"
+        className="w-2 h-2 flex-none bg-atencao animate-[respirar_2s_ease-in-out_infinite] motion-reduce:animate-none"
+      />,
+      "religando a transcrição…",
+    ],
   }[estado] as [React.ReactNode, string];
 
   return (
@@ -164,15 +170,9 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
           </button>
         ) : (
           <>
-            <button
-              type="button"
-              className={SECUNDARIO}
-              onClick={() =>
-                pausado ? capturaRef.current?.retomar() : capturaRef.current?.pausar()
-              }
-            >
-              {pausado ? "Retomar" : "Pausar"}
-            </button>
+            {/* O "Pausar" saiu daqui: pausar abria buraco no áudio, e o
+              * arquivo deixava de ser o registro do atendimento. Ver
+              * `transcricao.ts`. */}
             <button type="button" className={gravando ? BOTAO_GRAVANDO : BOTAO} onClick={finalizar}>
               Finalizar resposta
             </button>

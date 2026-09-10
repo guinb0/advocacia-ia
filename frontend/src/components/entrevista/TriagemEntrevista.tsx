@@ -486,7 +486,7 @@ export default function TriagemEntrevista({
     {
       gravando: { tom: "ok", titulo: "Gravando o atendimento" },
       capturando: { tom: "info", titulo: "Microfone ligado — aguardando fala" },
-      pausado: { tom: "info", titulo: "Gravação pausada" },
+      reconectando: { tom: "atencao", titulo: "Religando a transcrição…" },
       recuperando: { tom: "atencao", titulo: "Reconectando o microfone…" },
       "sem-audio": { tom: "neutro", titulo: "Gravação encerrada" },
     } as const

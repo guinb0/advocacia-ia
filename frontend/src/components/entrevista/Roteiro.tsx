@@ -31,7 +31,7 @@ import type { EstadoCaptura } from "@/lib/transcricao";
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
-import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
+import VideoDaEntrevista, { type ControlesVideo } from "@/components/entrevista/VideoDaEntrevista";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import SeletorDeRoteiro from "@/components/entrevista/SeletorDeRoteiro";
@@ -135,7 +135,7 @@ export interface EstadoEscuta {
   faltando: PerguntaPendente[];
   interpretando: boolean;
   captando: boolean;
-  pausado: boolean;
+  reconectando: boolean;
   ultimaFala: number | null;
   ultimoSom: number | null;
   nivelTipico: number | null;
@@ -405,6 +405,10 @@ export default function Roteiro({
   /* Vídeo gravado e ainda não baixado. Ao contrário do áudio, ele não está em
    * lugar nenhum além desta aba — concluir a entrevista o destrói. */
   const videoPendente = useRef(false);
+  /* O comando de fechar e baixar o vídeo, entregue pelo painel. É o
+   * `encerrarGravacao` que o aciona: o vídeo só existe nesta aba, e sair sem
+   * baixar o perdia. */
+  const controlesVideo = useRef<ControlesVideo | null>(null);
   const irParaRef = useRef<(perguntaId: string) => void>(() => undefined);
 
   /* ---------------------------------------------------- escuta contínua
@@ -784,6 +788,11 @@ export default function Roteiro({
       },
       encerrarGravacao: async () => {
         await encerrarEscutaRef.current();
+        // O vídeo vem DEPOIS do áudio: o `encerrarEscuta` espera os últimos
+        // blocos de PCM chegarem ao servidor, e é o áudio que sustenta a
+        // transcrição. Se o download do vídeo falhar, o atendimento já está
+        // salvo — por isso ele não interrompe o encerramento.
+        await controlesVideo.current?.pararEBaixar();
         return captura.current?.entrevistaId ?? "";
       },
       transcricaoBruta: () => [...transcricaoBruta.current],
@@ -917,8 +926,6 @@ export default function Roteiro({
 
   const retomarPuladas = useCallback(() => setPuladas([]), []);
 
-  const pausar = useCallback(() => captura.current?.pausar(), []);
-  const retomar = useCallback(() => captura.current?.retomar(), []);
   const finalizar = useCallback(() => {
     // Marca ANTES de mandar parar: o servidor pode levar segundos para devolver
     // o texto, e é essa marca que troca os botões por "Transcrevendo…" em vez
@@ -954,7 +961,7 @@ export default function Roteiro({
       faltando,
       interpretando: ouvindo,
       captando: escutando && estadoMic !== "sem-audio",
-      pausado: estadoMic === "pausado",
+      reconectando: estadoMic === "reconectando",
       ultimaFala,
       ultimoSom,
       nivelTipico,
@@ -1606,6 +1613,9 @@ function preencherMarcadores(
         onPendente={(pendente) => {
           videoPendente.current = pendente;
         }}
+        onControles={(c) => {
+          controlesVideo.current = c;
+        }}
       />
 
       {erro && <div className={T_ERRO}>{erro}</div>}
@@ -1849,7 +1859,7 @@ function preencherMarcadores(
              * cobrança é para quem não responde, não para quem está no meio da
              * resposta. Falar de OUTRA coisa não conta — o relógio segue, que é
              * a regra do escritório. */
-            ativo={escutando && estadoMic !== "pausado" && !respondendo}
+            ativo={escutando && estadoMic !== "reconectando" && !respondendo}
             respondendo={respondendo}
             fluindo={fluindo}
             onIrPara={irPara}
@@ -1874,14 +1884,12 @@ function preencherMarcadores(
                 aguardando={aguardandoConfirmacao}
                 onResponder={responder}
                 gravandoId={gravandoId}
-                pausado={estadoMic === "pausado"}
+                reconectando={estadoMic === "reconectando"}
                 finalizando={finalizando}
                 parcial={parcial}
                 temMic={temMic}
                 escutando={escutando && identificacaoConcluida}
                 onGravar={gravar}
-                onPausar={pausar}
-                onRetomar={retomar}
                 onFinalizar={finalizar}
                 conferencias={conferencias}
                 onConferir={conferir}
@@ -1901,14 +1909,12 @@ function preencherMarcadores(
               aguardando={aguardandoConfirmacao}
               onResponder={responder}
               gravandoId={gravandoId}
-              pausado={estadoMic === "pausado"}
+              reconectando={estadoMic === "reconectando"}
               finalizando={finalizando}
               parcial={parcial}
               temMic={temMic}
               escutando={escutando && identificacaoConcluida}
               onGravar={gravar}
-              onPausar={pausar}
-              onRetomar={retomar}
               onFinalizar={finalizar}
               conferencias={conferencias}
               onConferir={conferir}
@@ -2071,14 +2077,12 @@ function BlocoRoteiro({
   aguardando,
   onResponder,
   gravandoId,
-  pausado,
+  reconectando,
   finalizando,
   parcial,
   temMic,
   escutando,
   onGravar,
-  onPausar,
-  onRetomar,
   onFinalizar,
   conferencias,
   onConferir,
@@ -2100,15 +2104,13 @@ function BlocoRoteiro({
   aguardando: Map<string, string>;
   onResponder: (id: string, valor: string | string[]) => void;
   gravandoId: string | null;
-  pausado: boolean;
+  reconectando: boolean;
   finalizando: boolean;
   parcial: string;
   temMic: boolean;
   /** A entrevista está com o microfone aberto: os botões por pergunta somem. */
   escutando: boolean;
   onGravar: (id: string) => void;
-  onPausar: () => void;
-  onRetomar: () => void;
   onFinalizar: () => void;
   conferencias: Record<string, EstadoConferencia>;
   onConferir: (id: string, texto: string, forcar?: boolean) => void;
@@ -2211,15 +2213,13 @@ function BlocoRoteiro({
                 valorAlvo={p.preenche ? respostas[p.preenche] : undefined}
                 onResponder={onResponder}
                 gravando={gravandoId === p.id}
-                pausado={gravandoId === p.id && pausado}
+                reconectando={gravandoId === p.id && reconectando}
                 finalizando={gravandoId === p.id && finalizando}
                 parcial={gravandoId === p.id ? parcial : ""}
                 temMic={temMic}
                 escutando={escutando}
                 ocupado={gravandoId !== null && gravandoId !== p.id}
                 onGravar={onGravar}
-                onPausar={onPausar}
-                onRetomar={onRetomar}
                 onFinalizar={onFinalizar}
                 onConferir={onConferir}
                 municipios={municipios}
@@ -2392,15 +2392,13 @@ function CampoResposta({
   valorAlvo,
   onResponder,
   gravando,
-  pausado,
+  reconectando,
   finalizando,
   parcial,
   temMic,
   escutando,
   ocupado,
   onGravar,
-  onPausar,
-  onRetomar,
   onFinalizar,
   onConferir,
   municipios,
@@ -2412,7 +2410,8 @@ function CampoResposta({
   valorAlvo?: string | string[];
   onResponder: (id: string, valor: string | string[]) => void;
   gravando: boolean;
-  pausado: boolean;
+  /** A conexão caiu e está religando sozinha. */
+  reconectando: boolean;
   /** Esperando o texto final voltar do servidor. */
   finalizando: boolean;
   parcial: string;
@@ -2422,8 +2421,6 @@ function CampoResposta({
   /** Outra pergunta está gravando — o microfone é um só para a entrevista. */
   ocupado: boolean;
   onGravar: (id: string) => void;
-  onPausar: () => void;
-  onRetomar: () => void;
   onFinalizar: () => void;
   onConferir: (id: string, texto: string, forcar?: boolean) => void;
   municipios: MunicipioLocalidade[];
@@ -2646,7 +2643,7 @@ function CampoResposta({
   }
 
   // relato — com gravador quando marcado, sempre editável por teclado.
-  const emCurso = gravando || pausado;
+  const emCurso = gravando || reconectando;
 
   return (
     <>
@@ -2682,16 +2679,7 @@ function CampoResposta({
 
           {emCurso && (
             <>
-              <button
-                type="button"
-                className={T_SECUNDARIO}
-                onClick={pausado ? onRetomar : onPausar}
-                // Depois de finalizar não há o que pausar: a captura já parou.
-                // Desabilitar é o que faz o botão parar de mentir.
-                disabled={finalizando}
-              >
-                {pausado ? "Retomar" : "Pausar"}
-              </button>
+              {/* Sem "Pausar": a gravação do atendimento não tem buraco. */}
               <button
                 type="button"
                 className={gravando && !finalizando ? T_BOTAO_GRAVANDO : T_BOTAO}
@@ -2703,9 +2691,9 @@ function CampoResposta({
             </>
           )}
 
-          {pausado && !finalizando && (
+          {reconectando && !finalizando && (
             <span className="font-normal text-[11.5px] leading-[1.4] font-ui text-atencao self-center">
-              pausado — o que for dito agora não entra na resposta
+              religando a transcrição — estes segundos não entram no arquivo
             </span>
           )}
 

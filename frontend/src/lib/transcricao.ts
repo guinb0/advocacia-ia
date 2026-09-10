@@ -45,7 +45,12 @@ export type EstadoCaptura =
   | "sem-audio"
   | "capturando"
   | "gravando"
-  | "pausado"
+  /* A CONEXÃO caiu e está sendo religada, com o atendimento em curso.
+   *
+   * Distinto de "recuperando" (que é a fonte de áudio): aqui o microfone está
+   * bom e é o WebSocket que voltou. A tela precisa dizer isso, porque durante a
+   * religação o que for falado não entra no arquivo. */
+  | "reconectando"
   /* A FONTE caiu, a SESSÃO continua.
    *
    * É a diferença que faltava. Antes, microfone trocado e faixa da chamada
@@ -206,8 +211,14 @@ export class CapturaEntrevista {
    * mandar bytes é, para ele, um trecho de silêncio que nunca aconteceu. Quem
    * fala durante a pausa não entra na resposta, que é o ponto: a pausa serve
    * para o advogado conversar sem que aquilo vire transcrição. */
-  private pausado = false;
   private sessaoAtual: string | null = null;
+  /* O que a sessão atual estava gravando — é o que permite REFAZÊ-LA depois de
+   * uma queda, com o mesmo `entrevistaId`, em vez de desistir do resto do
+   * atendimento. */
+  private perguntaEmCurso: string | null = null;
+  private reconectando = false;
+  /** Encerramento pedido pela tela: aí a queda é esperada e não se reconecta. */
+  private encerrado = false;
   /** Contador para medir o nível a cada dois blocos, não a cada um. */
   private blocosDesdeNivel = 0;
   /* De ONDE veio a fonte atual, e com qual dispositivo.
@@ -230,10 +241,6 @@ export class CapturaEntrevista {
 
   get estaGravando(): boolean {
     return this.gravando;
-  }
-
-  get estaPausado(): boolean {
-    return this.gravando && this.pausado;
   }
 
   /** Lista os microfones. Só traz nome depois da primeira permissão concedida. */
@@ -355,9 +362,7 @@ export class CapturaEntrevista {
           this.recuperando = false;
           this.eventos.onAviso?.("Áudio reaberto. A entrevista continua.");
           // O estado volta ao que era: gravando, se a resposta estava em curso.
-          this.eventos.onEstado?.(
-            this.gravando ? (this.pausado ? "pausado" : "gravando") : "capturando",
-          );
+          this.eventos.onEstado?.(this.gravando ? "gravando" : "capturando");
           return;
         } catch {
           // Dispositivo exato sumiu (desconectado de vez): a volta do laço tenta
@@ -461,10 +466,10 @@ export class CapturaEntrevista {
         this.eventos.onNivel(Math.sqrt(soma / e.data.length));
       }
 
-      // O filtro de gravação é aqui, e é o que mantém a captura aberta sem
-      // transmitir nada entre perguntas — e o que faz a pausa funcionar sem
-      // mexer no protocolo.
-      if (!this.gravando || this.pausado || this.ws?.readyState !== WebSocket.OPEN) return;
+      // O filtro de gravação é aqui: mantém a captura aberta sem transmitir
+      // nada antes do "podemos começar?". Depois disso não há mais filtro — não
+      // existe pausa, e o áudio corre até o encerramento do atendimento.
+      if (!this.gravando || this.ws?.readyState !== WebSocket.OPEN) return;
       this.ws.send(e.data.buffer as ArrayBuffer);
     };
 
@@ -518,16 +523,24 @@ export class CapturaEntrevista {
      * e clicar nos botões não fazia nada. */
     ws.onclose = () => {
       const gravava = this.gravando;
+      const pergunta = this.perguntaEmCurso;
       this.gravando = false;
-      this.pausado = false;
       this.sessaoAtual = null;
       this.ws = null;
-      if (gravava) {
-        this.eventos.onErro?.(
-          "A conexão de transcrição caiu no meio da resposta. O trecho não gravado " +
-            "se perdeu — grave de novo ou digite.",
-        );
-      }
+      /* AQUI SE PERDIA O RESTO DO ATENDIMENTO.
+       *
+       * Antes o `onclose` zerava a sessão, avisava o erro e parava por aí. O
+       * atendimento continuava na sala, mas o navegador não mandava mais um
+       * byte: o áudio terminava no instante da queda e ninguém percebia até
+       * abrir o arquivo e achar dois minutos de uma conversa de quarenta. E
+       * queda acontece pelo mundo real — reinício do serviço de transcrição,
+       * wi-fi oscilando, proxy cortando conexão ociosa.
+       *
+       * Agora a queda no meio da entrevista é um contratempo, não o fim: a
+       * sessão é REFEITA com o mesmo `entrevistaId`, e o servidor reabre a
+       * mesma gravação em modo de acréscimo (`Gravacao._abrir`). Perde-se o
+       * que foi dito durante a religação, alguns segundos — não o resto. */
+      if (gravava && !this.encerrado) void this.reconectar(pergunta);
     };
 
     await new Promise<void>((ok, falhou) => {
@@ -537,6 +550,39 @@ export class CapturaEntrevista {
 
     this.ws = ws;
     return ws;
+  }
+
+  /** Refaz a sessão depois de uma queda, sem perder o resto do atendimento.
+   *
+   * Tenta em intervalos crescentes (1s, 2s, 4s… até 15s) e não desiste enquanto
+   * o atendimento não for encerrado: numa entrevista de uma hora, desistir na
+   * terceira tentativa é o mesmo que não tentar. O `entrevistaId` é o mesmo, e
+   * é o que faz o áudio voltar para o MESMO arquivo em vez de começar outro.
+   */
+  private async reconectar(pergunta: string | null): Promise<void> {
+    if (this.reconectando || this.encerrado) return;
+    this.reconectando = true;
+    this.eventos.onEstado?.("reconectando");
+    this.eventos.onAviso?.(
+      "A conexão de transcrição caiu. Religando — o atendimento pode continuar, " +
+        "a gravação recomeça sozinha.",
+    );
+    let espera = 1_000;
+    try {
+      while (!this.encerrado) {
+        await new Promise((ok) => setTimeout(ok, espera));
+        if (this.encerrado) return;
+        try {
+          await this.iniciarResposta(pergunta ?? "entrevista");
+          this.eventos.onAviso?.("Conexão restabelecida. A gravação continua no mesmo arquivo.");
+          return;
+        } catch {
+          espera = Math.min(espera * 2, 15_000);
+        }
+      }
+    } finally {
+      this.reconectando = false;
+    }
   }
 
   /** Abre a escuta da entrevista INTEIRA, do "podemos começar?" ao fim.
@@ -579,34 +625,28 @@ export class CapturaEntrevista {
       }),
     );
     this.gravando = true;
-    this.pausado = false;
+    this.perguntaEmCurso = perguntaId;
+    this.encerrado = false;
     this.eventos.onEstado?.("gravando");
   }
 
-  /** Segura o envio sem fechar a resposta.
+  /* NÃO HÁ MAIS PAUSA.
    *
-   * Para quando o entrevistador precisa falar sem entrar na transcrição —
-   * explicar um termo, atender o telefone, ler a análise na tela. O que for dito
-   * enquanto pausado não existe para o Whisper. */
-  pausar(): void {
-    if (!this.gravando || this.pausado) return;
-    this.pausado = true;
-    this.eventos.onEstado?.("pausado");
-  }
-
-  retomar(): void {
-    if (!this.gravando || !this.pausado) return;
-    this.pausado = false;
-    this.eventos.onEstado?.("gravando");
-  }
+   * A pausa existia para o entrevistador falar fora da transcrição, e o preço
+   * dela era um buraco no áudio — o arquivo deixava de ser o registro do
+   * atendimento. O escritório escolheu o registro: a gravação começa no
+   * "podemos começar?" e só termina no encerramento. Quem precisar falar
+   * reservadamente encerra o atendimento.
+   */
 
   /** Encerra a resposta. O microfone continua aberto para a próxima pergunta. */
   finalizarResposta(): void {
     if (!this.gravando) return;
     this.gravando = false; // para o envio ANTES de avisar o servidor
-    this.pausado = false;
+    this.encerrado = true; // queda daqui em diante é esperada: não reconecta
     const sessao = this.sessaoAtual;
     this.sessaoAtual = null;
+    this.perguntaEmCurso = null;
     this.eventos.onEstado?.("capturando");
 
     /* `send` em socket fechado LEVANTA exceção, e essa exceção subia até o
@@ -669,8 +709,9 @@ export class CapturaEntrevista {
     this.origem = null;
     this.recuperando = false;
     this.gravando = false;
-    this.pausado = false;
+    this.encerrado = true;
     this.sessaoAtual = null;
+    this.perguntaEmCurso = null;
     this.ws?.close();
     this.ws = null;
     this.desmontar();

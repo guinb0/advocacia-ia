@@ -359,17 +359,29 @@ async def ws_transcricao(ws: WebSocket):
                     await ws.send_json({"type": "pong"})
 
             elif (dados := msg.get("bytes")) is not None:
-                sessao = _sessoes.obter(atual) if atual else None
-                if sessao is None:
-                    continue  # áudio fora de resposta ativa: descartado
                 pcm = transcricao.pcm_de_bytes(dados)
-                sessao.acrescentar(pcm)
-                # A gravação recebe o MESMO PCM, e não uma cópia do fluxo: é o
-                # que garante que o arquivo seja exatamente o que foi
-                # transcrito. Ela não tem o teto de 30 min da sessão — aquele
-                # protege memória, e isto vai para o disco.
+
+                # A GRAVAÇÃO VEM PRIMEIRO, E FORA DO `if` DA SESSÃO.
+                #
+                # Antes o áudio sem sessão ativa era descartado no topo deste
+                # ramo, e a gravação só recebia o que estivesse dentro de uma
+                # resposta aberta. O arquivo saía menor que o atendimento: nos
+                # manifestos, 920s de áudio para 1060s de relógio, em trechos
+                # com buracos — e, quando a sessão morria no meio (queda de
+                # conexão), o arquivo terminava ali, com o atendimento ainda
+                # correndo. O que o escritório pediu é o oposto: o áudio do
+                # atendimento INTEIRO, do "podemos começar?" ao encerramento.
+                #
+                # É o mesmo PCM que vai para o Whisper, não uma cópia do fluxo —
+                # o arquivo continua sendo exatamente o que foi transcrito, e
+                # agora também o que não coube em nenhuma sessão.
                 if grav is not None:
                     grav.acrescentar(pcm)
+
+                sessao = _sessoes.obter(atual) if atual else None
+                if sessao is None:
+                    continue  # sem resposta aberta: grava, mas não transcreve
+                sessao.acrescentar(pcm)
 
                 if sessao.iniciar_parcial():
                     tarefa = asyncio.create_task(_enviar_parcial(ws, sessao))
