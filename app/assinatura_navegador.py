@@ -69,7 +69,32 @@ PADROES_LINK = ("/verificar/", "/sign/", "/signatario/", "/assinar/", "/doc-toke
 
 def _e_link_de_assinatura(url: str) -> bool:
     u = (url or "").strip().lower()
-    return u.startswith("http") and any(p in u for p in PADROES_LINK)
+    if not u.startswith("http") or not any(p in u for p in PADROES_LINK):
+        return False
+    # O botão "Enviar por WhatsApp" da tela de envio é uma âncora para
+    # `api.whatsapp.com/send?text=…%0a<link de assinatura>` — ela CONTÉM
+    # "/verificar/", então passava por link de assinatura e ia para o cliente
+    # embrulhada. Mandar isso pelo WhatsApp abre a tela de compartilhar, não a
+    # de assinar. O link de dentro se aproveita (`_desembrulhar`); a âncora
+    # crua, não.
+    return "api.whatsapp.com" not in u
+
+
+def _desembrulhar(url: str) -> str:
+    """O link de assinatura de dentro de um `api.whatsapp.com/send?text=…`.
+
+    Devolve a própria URL quando ela já é o link direto. A tela de envio expõe
+    as duas formas; só a de dentro serve para mandar ao cliente.
+    """
+    bruto = (url or "").strip()
+    if "api.whatsapp.com" not in bruto.lower():
+        return bruto
+    from urllib.parse import unquote
+
+    for candidato in _RE_URL.findall(unquote(bruto)):
+        if _e_link_de_assinatura(candidato):
+            return candidato.rstrip(".,;)")
+    return ""
 
 
 #: URL solta no meio do texto — o link de assinatura do ZapSign aparece como
@@ -110,17 +135,31 @@ def _extrair_link(pagina: Any, espera: int) -> str:
         pagina.wait_for_selector(seletor, timeout=int(espera / 3))
     except Exception:  # noqa: BLE001 - sem link à vista; segue para a varredura manual
         pass
-    # 1) Âncora ou campo cujo destino é um link de assinatura.
+    # 1) O campo que o ZapSign usa para o link do signatário (`input.signer_link`,
+    # o que fica ao lado de "Copiar link"). É a fonte mais confiável: já vem como
+    # `https://app.zapsign.com.br/verificar/<token>`, limpo. Antes esta varredura
+    # começava por `a`, e a primeira âncora com "/verificar/" no href era o botão
+    # "Enviar por WhatsApp" — o link saía embrulhado em `api.whatsapp.com/send`.
+    for el in pagina.query_selector_all("input.signer_link, input[class*='signer_link']"):
+        try:
+            # `input_value()` lê a PROPRIEDADE (o que o Angular setou); o atributo
+            # `value` do HTML costuma vir vazio nesse campo.
+            valor = (el.input_value() or el.get_attribute("value") or "").strip()
+        except Exception:  # noqa: BLE001
+            continue
+        if _e_link_de_assinatura(valor):
+            return valor
+    # 2) Qualquer âncora ou campo cujo destino seja um link de assinatura —
+    # desembrulhando o do WhatsApp, que é embrulho de um link bom.
     for el in pagina.query_selector_all("a, input"):
         try:
             valor = (el.get_attribute("href") or el.get_attribute("value") or "").strip()
         except Exception:  # noqa: BLE001
             continue
-        if _e_link_de_assinatura(valor):
-            return valor
-    # 2) O link no ZapSign vem como TEXTO na tela de envio (ao lado de "Copiar
-    # link"), não num href — então varre o texto visível da página por uma URL
-    # de assinatura. É isto que pega o `app.zapsign.com.br/verificar/<token>`.
+        direto = _desembrulhar(valor)
+        if _e_link_de_assinatura(direto):
+            return direto
+    # 3) Último recurso: o link como TEXTO visível na tela de envio.
     try:
         texto = pagina.inner_text("body")
     except Exception:  # noqa: BLE001
@@ -256,15 +295,32 @@ def _preencher_campo(
     for s in validos:
         loc = pagina.locator(s)
         try:
-            if loc.count() == 0:
-                continue
-            loc.first.fill(valor, timeout=limite)
-            return True
-        except Exception:  # noqa: BLE001 - tenta a próxima estratégia
+            total = loc.count()
+        except Exception:  # noqa: BLE001
             continue
+        # O MESMO fantasma que atrapalhava `_clicar` existe nos campos: o passo
+        # anterior deixa no DOM o input dele (`#signer-name-field-test-id` fica
+        # invisível, `bounding_box` fora da tela) e `.first` obedece ordem de DOM,
+        # não o que está na tela. Preencher o fantasma "funciona" sem erro e deixa
+        # o campo de verdade vazio — foi assim que o e-mail do signatário ia em
+        # branco e o convite nunca saía. Aqui procura-se o primeiro VISÍVEL.
+        for i in range(min(total, 10)):
+            alvo = loc.nth(i)
+            try:
+                if not alvo.is_visible():
+                    continue
+                alvo.fill(valor, timeout=limite)
+                # Confirma que o valor entrou: `fill` num campo que o Angular
+                # rejeita não levanta, e um "preenchi" falso aqui vale menos que
+                # nada — é o que fazia a automação declarar sucesso sem convite.
+                if (alvo.input_value() or "").strip() == valor.strip():
+                    return True
+            except Exception:  # noqa: BLE001 - tenta o próximo candidato
+                continue
     try:
-        pagina.get_by_label(re.compile(rotulo, re.I)).first.fill(valor, timeout=limite)
-        return True
+        alvo = pagina.get_by_label(re.compile(rotulo, re.I)).first
+        alvo.fill(valor, timeout=limite)
+        return (alvo.input_value() or "").strip() == valor.strip()
     except Exception:  # noqa: BLE001
         return False
 
@@ -300,18 +356,25 @@ def _enviar_um(
     # 2) Signatário: SÓ O NOME nesta etapa (o e-mail é pedido na tela de envio).
     # O campo tem rótulo flutuante (sem placeholder) — daí as várias estratégias.
     pagina.wait_for_timeout(600)  # o passo 2 renderiza após o clique anterior
-    _preencher_campo(
+    if not _preencher_campo(
         pagina,
         cliente_nome,
         (
             _sel("SIGNATARIO_NOME", ""),
+            # O ZapSign dá um `id` de teste estável a este campo — mais confiável
+            # que placeholder (não tem) ou rótulo flutuante (Material).
+            "input#signer-name-field-test-id",
+            "input[id*='signer-name' i]",
             "input[placeholder*='signat' i]",
             "input[aria-label*='signat' i]",
             _INPUT_TEXTO_VISIVEL,
         ),
         "signat",
         espera,
-    )
+    ):
+        raise ErroNavegador(
+            "Não consegui preencher o nome do signatário na etapa 2 do ZapSign."
+        )
     _shot(pagina, "02-signatario-nome")
     _clicar(pagina, ("Continuar",), espera)
 
@@ -323,25 +386,42 @@ def _enviar_um(
     # 4) Tela de envio: informa o E-MAIL do signatário; o link `/verificar/` já
     # aparece (o token é permanente). Captura o link ANTES de finalizar.
     pagina.wait_for_timeout(600)
-    _preencher_campo(
+    # O campo do e-mail é `input[type=text][name=email]` com `id` de sufixo
+    # aleatório (`signer-email-158792783`) e SEM placeholder nem aria-label —
+    # `input[type='email']` e as buscas por placeholder/rótulo casavam com ZERO
+    # elementos. O e-mail ia em branco, o convite nunca saía, e a automação
+    # ainda assim devolvia `ok` porque ninguém olhava o resultado deste
+    # preenchimento. Agora casa por `name=email` e a falha interrompe o envio.
+    if not _preencher_campo(
         pagina,
         cliente_email,
         (
             _sel("SIGNATARIO_EMAIL", ""),
+            "input[name='email']",
+            "input[id*='signer-email' i]",
             "input[type='email']",
             "input[placeholder*='mail' i]",
             "input[aria-label*='mail' i]",
         ),
         "mail",
         espera,
-    )
+    ):
+        raise ErroNavegador(
+            "Não consegui preencher o e-mail do signatário na tela de envio do "
+            "ZapSign — sem ele o convite não sai. Confira o seletor "
+            "ZAPSIGN_SEL_SIGNATARIO_EMAIL."
+        )
     _shot(pagina, "04-envio")
     link = _extrair_link(pagina, espera)
-    _clicar(
+    if not _clicar(
         pagina,
         ("Enviar e finalizar", "Enviar documento", "Enviar para assinatura", "Finalizar", "Enviar"),
         espera,
-    )
+    ):
+        raise ErroNavegador(
+            "O documento subiu e o link saiu, mas não achei o botão de enviar na "
+            "última etapa do ZapSign — o convite não foi disparado."
+        )
     _shot(pagina, "05-apos-enviar")
     pagina.wait_for_timeout(1500)  # deixa o envio registrar, sem travar em networkidle
     return link or _extrair_link(pagina, espera)

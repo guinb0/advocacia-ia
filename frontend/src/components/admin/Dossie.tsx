@@ -358,24 +358,7 @@ export default function Dossie({
       </div>
     );
 
-  const { agente } = dados;
-  const pendencias = agente.pendencias.filter((item) => item.status === "OPEN");
-  const requisitosContrato = requisitosDoContrato(respostasDoDossie(dados));
-  const alertasIdentificacaoContrato = alertasIdentificacaoDoDossie(dados);
-  const temAlertaCpf = alertasIdentificacaoContrato.some((alerta) => alerta.includes("CPF"));
-  const requisitosVisiveis = temAlertaCpf
-    ? requisitosContrato.filter((requisito) => requisito !== "CPF válido")
-    : requisitosContrato;
-  const bloqueantes = pendencias.filter((item) => item.severity === "BLOCKING");
-
   return (
-    /* Duas colunas: o dossiê e o agente. O caso NÃO sai da tela quando se fala com ele —
-     * antes isso era uma aba que substituía o dossiê inteiro, e a citação da resposta
-     * ("Entrevista · falta fazer") apontava para algo que o advogado não estava mais
-     * vendo. Ao lado, ela vira caminho de ida e volta.
-     *
-     * A coluna só existe a partir de `lg`: em 400px de painel sobre uma tela de celular
-     * não sobra dossiê nenhum para a citação apontar, e aí ela não serviria para nada. */
     <div className={DOSSIE_SHELL}>
       {/* A identidade do caso (cliente, categoria, data) e a navegação entre áreas
         * já vivem no cabeçalho de abas logo acima — repeti-las aqui só empilhava
@@ -407,45 +390,23 @@ export default function Dossie({
         </Aviso>
       )}
 
-      <div className="grid min-w-0 grid-cols-1 items-start gap-[18px] xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
-        <aside className="grid min-w-0 content-start gap-[18px] order-2 xl:order-1">
-          <Cartao titulo="Documentos do checklist">
-            <p className={EXPLICACAO}>
-              {dados.checklist.progresso?.obrigatorios_entregues ?? 0} de{" "}
-              {dados.checklist.progresso?.obrigatorios_total ?? "?"} itens obrigatórios entregues.
-            </p>
-            <ul className="m-0 p-0 list-none grid gap-1 text-sm text-tinta-2">
-              {(dados.checklist.itens ?? [])
-                .filter((item) => item.obrigatorio && item.status !== "entregue")
-                .slice(0, 6)
-                .map((item) => (
-                  <li key={item.codigo} className="truncate" title={item.rotulo || item.nome || item.codigo}>
-                    • {item.rotulo || item.nome || item.codigo}
-                  </li>
-                ))}
-            </ul>
-            {(dados.checklist.itens ?? []).filter(
-              (item) => item.obrigatorio && item.status !== "entregue",
-            ).length === 0 && (
-              <p className={TEXTO_VAZIO}>Todos os obrigatórios entregues.</p>
-            )}
-          </Cartao>
+      {/* Uma coluna só. Antes a entrevista dividia a largura com a petição em uma
+        * barra lateral fixa, e a petição — que é o trabalho desta tela — ficava
+        * espremida ao lado de um texto que já foi lido. Agora a entrevista fica em
+        * cima, recolhida, e abre quando alguém precisa reler; a petição usa a
+        * largura inteira, com editor e prévia lado a lado. */}
+      <PainelEntrevista
+        casoId={casoId}
+        entrevistas={dados.entrevistas ?? []}
+        onAtualizar={carregar}
+      />
 
-          <PainelEntrevista
-            casoId={casoId}
-            entrevistas={dados.entrevistas ?? []}
-            onAtualizar={carregar}
-          />
-        </aside>
+      <FluxoPeticao
+        casoId={casoId}
+        temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
+        onControlesGeracao={setGeracaoPeticao}
+      />
 
-        <div className="grid min-w-0 content-start gap-[18px] order-1 xl:order-2">
-          <FluxoPeticao
-            casoId={casoId}
-            temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
-            onControlesGeracao={setGeracaoPeticao}
-          />
-        </div>
-      </div>
     </div>
   );
 }
@@ -1744,6 +1705,10 @@ function PainelEntrevista({
   entrevistas: EntrevistaResumo[];
   onAtualizar: () => void | Promise<void>;
 }) {
+  /* Recolhida por padrão: a entrevista é o insumo, não o trabalho da tela. Quem
+   * chega aqui vem redigir a petição, e o resumo do cabeçalho já diz se existe
+   * transcrição e qual é. Abre com um clique quando alguém precisa reler. */
+  const [aberto, setAberto] = useState(false);
   const [lendo, setLendo] = useState<string | null>(null);
   const [texto, setTexto] = useState<Record<string, string>>({});
   const [transcricao, setTranscricao] = useState("");
@@ -1781,8 +1746,33 @@ function PainelEntrevista({
     setLendo(entrevistaId);
   }
 
+  const transcritas = entrevistas.filter((item) => item.caracteres > 0).length;
+  const resumoFechado =
+    entrevistas.length === 0
+      ? "Nenhuma entrevista registrada"
+      : `${entrevistas.length} arquivo${entrevistas.length > 1 ? "s" : ""} · ${transcritas} transcrit${transcritas === 1 ? "a" : "as"}`;
+
   return (
-    <Cartao titulo="Entrevista do atendimento">
+    <Cartao className="grid gap-3">
+      <button
+        type="button"
+        aria-expanded={aberto}
+        className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-3 border-0 bg-transparent p-0 text-left"
+        onClick={() => setAberto((atual) => !atual)}
+      >
+        <span className="min-w-0">
+          <span className="block text-tinta font-titulo text-lg font-semibold leading-[1.25]">
+            Entrevista do atendimento
+          </span>
+          {!aberto && <span className={`${EXPLICACAO} block`}>{resumoFechado}</span>}
+        </span>
+        <span className="shrink-0 text-sm text-tinta-3" aria-hidden>
+          {aberto ? "▲ recolher" : "▼ abrir"}
+        </span>
+      </button>
+
+      {!aberto ? null : (
+      <>
       <p className={EXPLICACAO}>
         O que o cliente contou. Os fatos que saem daqui entram como <strong>alegados</strong>:
         ninguém conferiu ainda, e a petição não os afirma até um documento confirmar. O
@@ -1903,6 +1893,8 @@ function PainelEntrevista({
           />
         </div>
       </div>
+      </>
+      )}
     </Cartao>
   );
 }

@@ -44,9 +44,9 @@ interface Props {
   faltando: PerguntaPendente[];
   /** Uma chamada à escuta está em curso — o modelo interpretando um trecho. */
   interpretando: boolean;
-  /** O microfone está captando (e não pausado). */
+  /** O microfone está captando (e a conexão não está sendo religada). */
   captando: boolean;
-  pausado: boolean;
+  reconectando: boolean;
   /** `Date.now()` do último trecho reconhecido; `null` se ainda não houve. */
   ultimaFala: number | null;
   /** `Date.now()` da última vez que o microfone captou SOM (não fala). */
@@ -89,18 +89,20 @@ const ESTADO_SILENCIO = `${ESTADO_BASE} font-normal text-atencao`;
 
 function situacao(
   captando: boolean,
-  pausado: boolean,
+  reconectando: boolean,
   interpretando: boolean,
   ultimaFala: number | null,
   ultimoSom: number | null,
   nivelTipico: number | null,
 ): { texto: string; classe: string; titulo: string } {
 
-  if (pausado) {
+  if (reconectando) {
     return {
-      texto: "pausado",
+      texto: "religando",
       classe: ESTADO_PAUSADO,
-      titulo: "O que for dito agora não entra na entrevista.",
+      titulo:
+        "A conexão caiu e está voltando sozinha. O que for dito nestes segundos " +
+        "não entra no arquivo; o resto do atendimento continua sendo gravado.",
     };
   }
   if (!captando) {
@@ -146,7 +148,7 @@ export default function PainelEscuta({
   faltando,
   interpretando,
   captando,
-  pausado,
+  reconectando,
   ultimaFala,
   ultimoSom,
   nivelTipico,
@@ -162,20 +164,20 @@ export default function PainelEscuta({
    * pouco o bastante para não redesenhar a lista o tempo todo. */
   const [, tique] = useState(0);
   useEffect(() => {
-    if (!captando || pausado) return;
+    if (!captando || reconectando) return;
     const id = setInterval(() => tique((n) => n + 1), 5000);
     return () => clearInterval(id);
-  }, [captando, pausado]);
+  }, [captando, reconectando]);
 
   const estado = situacao(
     captando,
-    pausado,
+    reconectando,
     interpretando,
     ultimaFala,
     ultimoSom,
     nivelTipico,
   );
-  const atrasado = captando && !pausado && chegada !== null && chegada < CHEGADA_MINIMA;
+  const atrasado = captando && !reconectando && chegada !== null && chegada < CHEGADA_MINIMA;
 
   return (
     /* Fica embaixo do cartão CHAMADA, na mesma coluna. A coluna já é `sticky` e
