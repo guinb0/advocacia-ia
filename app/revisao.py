@@ -37,6 +37,7 @@ CREATE TABLE {SCHEMA}.{PREFIXO}{_TABELA} (
     caso_id      varchar(64)  NOT NULL,
     versao       int          NOT NULL CONSTRAINT df_acervo_revisoes_versao DEFAULT 1,
     revisor      varchar(200) NOT NULL,
+    revisor_id   varchar(160) NULL,
     iniciada_em  varchar(40)  NOT NULL,
     concluida_em varchar(40)  NULL,
     resultado    varchar(20)  NULL,
@@ -53,6 +54,18 @@ def inicializar() -> None:
     """Cria a tabela de revisões se ainda não existir. Chamado no start (main)."""
     with conectar() as con:
         con.execute(ESQUEMA)
+        con.execute(
+            f"IF COL_LENGTH('{SCHEMA}.{PREFIXO}{_TABELA}', 'revisor_id') IS NULL "
+            f"ALTER TABLE {SCHEMA}.{PREFIXO}{_TABELA} ADD revisor_id varchar(160) NULL"
+        )
+        con.execute(
+            f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_acervo_revisoes_iniciada') "
+            f"CREATE INDEX idx_acervo_revisoes_iniciada ON {SCHEMA}.{PREFIXO}{_TABELA} (iniciada_em DESC)"
+        )
+        con.execute(
+            f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_acervo_revisoes_concluida') "
+            f"CREATE INDEX idx_acervo_revisoes_concluida ON {SCHEMA}.{PREFIXO}{_TABELA} (concluida_em DESC)"
+        )
         con.commit()
 
 
@@ -89,7 +102,7 @@ def _versao_atual(con: Any, caso_id: str) -> int:
     return int(linha["versao"]) if linha else 1
 
 
-def iniciar(caso_id: str, revisor: str) -> dict[str, Any]:
+def iniciar(caso_id: str, revisor: str, revisor_id: str = "") -> dict[str, Any]:
     """Registra o início da revisão desta versão por este revisor (idempotente).
 
     Abrir de novo a mesma versão não cria uma segunda contagem: reaproveita a
@@ -109,16 +122,16 @@ def iniciar(caso_id: str, revisor: str) -> dict[str, Any]:
             return {"caso_id": caso_id, "versao": versao, "iniciada_em": str(aberta["iniciada_em"]), "reaberta": True}
         con.execute(
             """
-            INSERT INTO revisoes (caso_id, versao, revisor, iniciada_em, criado_em)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO revisoes (caso_id, versao, revisor, revisor_id, iniciada_em, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (caso_id, versao, revisor, agora, agora),
+            (caso_id, versao, revisor, revisor_id.strip(), agora, agora),
         )
         con.commit()
     return {"caso_id": caso_id, "versao": versao, "iniciada_em": agora, "reaberta": False}
 
 
-def concluir(caso_id: str, revisor: str, resultado: str) -> dict[str, Any]:
+def concluir(caso_id: str, revisor: str, resultado: str, revisor_id: str = "") -> dict[str, Any]:
     """Fecha a revisão aberta e move a petição para aprovada ou em ajustes.
 
     `resultado`: "aprovada" ou "ajustes". Sem revisão aberta (o revisor concluiu
@@ -146,10 +159,10 @@ def concluir(caso_id: str, revisor: str, resultado: str) -> dict[str, Any]:
         else:
             con.execute(
                 """
-                INSERT INTO revisoes (caso_id, versao, revisor, iniciada_em, concluida_em, resultado, criado_em)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO revisoes (caso_id, versao, revisor, revisor_id, iniciada_em, concluida_em, resultado, criado_em)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (caso_id, versao, revisor, agora, agora, resultado, agora),
+                (caso_id, versao, revisor, revisor_id.strip(), agora, agora, resultado, agora),
             )
             iniciada = agora
         con.execute(
@@ -228,3 +241,13 @@ def metricas(revisor: str | None = None) -> dict[str, Any]:
             "qualidade da revisão e não devem ser usadas isoladamente para avaliá-la."
         ),
     }
+
+
+def listar_por_periodo(desde: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT revisor, revisor_id, iniciada_em, concluida_em, resultado FROM revisoes "
+            "WHERE iniciada_em >= ? OR concluida_em >= ?",
+            (desde, desde),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]

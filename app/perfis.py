@@ -85,6 +85,14 @@ MODULOS: tuple[dict[str, str], ...] = (
         "ordem": 60,
     },
     {
+        "codigo": "operacao",
+        "rotulo": "Operação",
+        "descricao": "Distribuição de atendimentos em curso e ligações registradas.",
+        "rota": "operacao",
+        "grupo": "Escritório",
+        "ordem": 55,
+    },
+    {
         "codigo": "agente",
         "rotulo": "Agente jurídico",
         "descricao": "Análise do caso, jurimetria, estratégia e petição.",
@@ -150,7 +158,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "descricao": "Conduz entrevistas, gera documentos e cadastra usuários.",
         "sistema": True,
         "modulos": (
-            "entrevista", "casos", "documentos", "agente", "contratos",
+            "entrevista", "casos", "documentos", "operacao", "agente", "contratos",
             "investigacao", "usuarios", "roteiros", "revisao",
         ),
     },
@@ -163,7 +171,10 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         # escritório — importa do documento, corrige pergunta, desfaz edição —
         # sem necessariamente conduzir atendimento. São trabalhos diferentes, e
         # dar um não obriga a dar o outro.
-        "modulos": ("casos", "documentos", "supervisao", "metricas", "agente", "usuarios", "roteiros", "revisao"),
+        "modulos": (
+            "casos", "documentos", "supervisao", "metricas", "operacao", "agente", "usuarios",
+            "roteiros", "revisao",
+        ),
     },
     {
         "codigo": "revisor",
@@ -509,6 +520,18 @@ def _liberar_agente_para_perfis_internos(con: Any) -> None:
         _definir_permissao(con, nome, "agente", True)
 
 
+def _liberar_operacao_para_advogado(con: Any) -> None:
+    existe = con.execute(
+        f"SELECT 1 FROM {_TABELA_ACESSOS} WHERE perfil_codigo = 'advogado' AND modulo = 'operacao'"
+    ).fetchone()
+    if existe:
+        return
+    con.execute(
+        f"INSERT INTO {_TABELA_ACESSOS} (perfil_codigo, modulo) VALUES ('advogado', 'operacao')"
+    )
+    _definir_permissao(con, "advogado", "operacao", True)
+
+
 def inicializar() -> None:
     """Cria as tabelas e garante os perfis de sistema. Idempotente."""
     with conectar() as con:
@@ -527,6 +550,7 @@ def inicializar() -> None:
         _migrar_acessos_legados(con)
         _garantir_matriz_completa(con)
         _liberar_agente_para_perfis_internos(con)
+        _liberar_operacao_para_advogado(con)
 
 
 def catalogo() -> list[dict[str, Any]]:

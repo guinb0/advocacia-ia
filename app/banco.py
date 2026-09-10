@@ -224,6 +224,8 @@ TABELAS = (
     "automacoes_whatsapp",
     "cobrancas_documentos",
     "ligacoes",
+    "auditorias_entrevista",
+    "solicitacoes_peticao",
     "modelos_documento",
 )
 
@@ -520,6 +522,31 @@ CREATE TABLE {SCHEMA}.{PREFIXO}ligacoes (
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}auditorias_entrevista') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}auditorias_entrevista (
+    entrevista_id varchar(64)   NOT NULL CONSTRAINT pk_acervo_auditorias_entrevista PRIMARY KEY,
+    resultado     nvarchar(max) NOT NULL,
+    auditado_por  nvarchar(200) NOT NULL CONSTRAINT df_acervo_aud_entrevista_por DEFAULT N'',
+    auditado_em   varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_auditorias_entrevista_entrevista FOREIGN KEY (entrevista_id)
+        REFERENCES {SCHEMA}.{PREFIXO}entrevistas (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}solicitacoes_peticao') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}solicitacoes_peticao (
+    id               varchar(64)   NOT NULL CONSTRAINT pk_acervo_solicitacoes_peticao PRIMARY KEY,
+    caso_id          varchar(64)   NOT NULL,
+    solicitante_id   varchar(160)  NOT NULL,
+    solicitante_nome nvarchar(200) NOT NULL,
+    origem           varchar(80)   NOT NULL,
+    status           varchar(20)   NOT NULL,
+    solicitada_em    varchar(40)   NOT NULL,
+    concluida_em     varchar(40)   NULL,
+    erro             nvarchar(1000) NULL,
+    CONSTRAINT fk_acervo_solicitacoes_peticao_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
 -- A conversa do agente geral. `caso_id` NÃO tem chave estrangeira de propósito: a
 -- conversa é do Acervo, começa antes de haver caso e sobrevive ao caso apagado — a
 -- transcrição continua sendo o registro do que foi perguntado e respondido. Quem lê
@@ -628,6 +655,12 @@ INDICES = (
     f"CREATE INDEX idx_acervo_assinaturas_caso ON {SCHEMA}.{PREFIXO}assinaturas (caso_id)",
     f"CREATE INDEX idx_acervo_ligacoes_caso_realizada ON {SCHEMA}.{PREFIXO}ligacoes"
     f" (caso_id, realizada_em DESC)",
+    f"CREATE INDEX idx_acervo_ligacoes_realizada ON {SCHEMA}.{PREFIXO}ligacoes (realizada_em DESC)",
+    f"CREATE INDEX idx_acervo_entrevistas_criado ON {SCHEMA}.{PREFIXO}entrevistas (criado_em DESC)",
+    f"CREATE INDEX idx_acervo_auditorias_entrevista_em ON {SCHEMA}.{PREFIXO}auditorias_entrevista"
+    f" (auditado_em DESC)",
+    f"CREATE INDEX idx_acervo_solicitacoes_peticao_em ON {SCHEMA}.{PREFIXO}solicitacoes_peticao"
+    f" (solicitada_em DESC)",
     f"CREATE INDEX idx_acervo_peticao_versoes_caso ON {SCHEMA}.{PREFIXO}peticao_versoes (caso_id, versao)",
     f"CREATE INDEX idx_acervo_municipios_uf_nome ON {SCHEMA}.{PREFIXO}municipios (uf_id, nome)",
     # O histórico é de quem perguntou, e abre ordenado pela conversa mais recente.
@@ -666,6 +699,7 @@ COLUNAS_NOVAS = (
     # atendimento gravaria a MESMA entrevista duas vezes, e a supervisão passaria a
     # contar o dobro do trabalho de quem a conduziu.
     (f"{PREFIXO}entrevistas", "gravacao_id", "varchar(64) NULL"),
+    (f"{PREFIXO}entrevistas", "entrevistador_id", "varchar(160) NULL"),
     # A ordem da mensagem dentro da conversa. `criado_em` tem precisão de SEGUNDOS, e
     # pergunta e resposta caem no mesmo segundo com facilidade — quando isso acontecia,
     # o desempate ia para o `id` (um UUID) e a conversa reabria com a resposta ANTES da

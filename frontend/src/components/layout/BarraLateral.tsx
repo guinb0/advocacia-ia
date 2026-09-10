@@ -107,6 +107,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
   {
     titulo: "Escritório",
     itens: [
+      { tela: "operacao", rotulo: "Operação" },
       { tela: "supervisao", rotulo: "Supervisão" },
       // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
       // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
@@ -139,6 +140,7 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   investigacao: Search,
   dados: Database,
   panorama: BarChart3,
+  operacao: Activity,
   supervisao: Activity,
   revisao: FileCheck2,
   followup: PhoneCall,

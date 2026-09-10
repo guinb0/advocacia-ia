@@ -111,6 +111,22 @@ def _detalhes_documentos(caso_id: str | None) -> dict[str, Any] | None:
     }
 
 
+def listar_entrevistas_ativas(desde: str) -> list[dict[str, Any]]:
+    """Entrevistas com batida recente, sem carregar dados de documentação do caso."""
+    with conectar() as con:
+        linhas = con.execute(
+            f"""
+            SELECT entrevista_id, cliente, entrevistador_id, entrevistador_nome,
+                   iniciado_em, atualizado_em
+              FROM {TABELA}
+             WHERE status = 'entrevista' AND atualizado_em >= ?
+             ORDER BY atualizado_em DESC, entrevista_id DESC
+            """,
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
 @roteador.post("/atendimentos")
 def iniciar(dados: Inicio, usuario: auth.Usuario = Depends(auth.usuario_atual)):
     instante = agora()

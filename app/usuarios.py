@@ -908,6 +908,14 @@ def listar_usuarios(
     }
 
 
+def listar_colaboradores_ativos() -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            f"SELECT codigo, nome FROM {_TABELA} WHERE ativo = 1 ORDER BY nome"
+        ).fetchall()
+    return [{"id": str(linha["codigo"]), "nome": str(linha["nome"])} for linha in linhas]
+
+
 @roteador.post("", status_code=201, dependencies=[PodeGerir])
 def criar_usuario(pedido: NovoUsuario) -> dict[str, Any]:
     """Cria a conta e já deixa entrar — sem etapa de ativação.
