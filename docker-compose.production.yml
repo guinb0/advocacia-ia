@@ -116,17 +116,31 @@ services:
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
 
-      # Segundo fator por e-mail, exigido de todos os perfis internos. Depende do
-      # SMTP abaixo: sem ele, OBRIGATORIO=1 RECUSA o login em vez de deixar
-      # passar so com a senha.
-      DOIS_FATORES_OBRIGATORIO: ${DOIS_FATORES_OBRIGATORIO:-1}
+      # Segundo fator por e-mail, exigido de todos os perfis internos.
+      #
+      # O padrao aqui era OBRIGATORIO=1 e derrubou o login de producao em
+      # 10/09/2026: o recurso subiu sem SMTP cadastrado, e o par
+      # "sem SMTP" + "obrigatorio" faz a rota responder 503 para TODO perfil
+      # interno -- escritorio inteiro trancado do lado de fora. Agora o SMTP
+      # existe (abaixo), entao o segundo fator funciona de verdade; o padrao
+      # passa a 0 para que uma queda do SMTP volte a custar um aviso no log
+      # ("SEGUNDO FATOR PULADO") em vez de custar o acesso de todo mundo.
+      # Para exigir de novo, basta cadastrar DOIS_FATORES_OBRIGATORIO=1.
+      DOIS_FATORES_OBRIGATORIO: ${DOIS_FATORES_OBRIGATORIO:-0}
       DOIS_FATORES_PERFIS_ISENTOS: cliente
-      SMTP_HOST: ${SMTP_HOST:-}
+      # Host, porta e remetente nao sao segredo: ficam fixos aqui, onde se leem
+      # junto com o contexto. So o par usuario+senha vem das variaveis de CI
+      # (criterio do cabecalho do .gitlab-ci.yml). A senha e uma "app password"
+      # do Gmail -- a conta exige 2FA e nao aceita a senha normal via SMTP.
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORTA: ${SMTP_PORTA:-587}
       SMTP_USUARIO: ${SMTP_USUARIO:-}
       SMTP_SENHA: ${SMTP_SENHA:-}
       SMTP_SEGURANCA: ${SMTP_SEGURANCA:-starttls}
+      # Vazio cai no SMTP_USUARIO (ver correio.py) -- que e o endereco certo, e
+      # poupa uma variavel que teria de ser mantida em sincronia com ele.
       SMTP_REMETENTE: ${SMTP_REMETENTE:-}
+      SMTP_REMETENTE_NOME: ${SMTP_REMETENTE_NOME:-Acervo — LARA & MELO Advogados}
 
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY?DEEPSEEK_API_KEY is required}
       DEEPSEEK_BASE_URL: https://api.deepseek.com
