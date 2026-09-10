@@ -2046,6 +2046,8 @@ export interface ClienteFollowUp {
   precisa_ligar: boolean;
   motivo_ligacao: string;
   ultima_ligacao: Call | null;
+  /** Dias corridos desde a última ligação — `null` quando nunca ligaram. */
+  dias_desde_ligacao: number | null;
 }
 
 export interface RelatorioFollowUp {

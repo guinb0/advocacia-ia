@@ -44,7 +44,13 @@ import {
   Vazio,
 } from "@/components/ui/Basicos";
 
-type Filtro = "ligar" | "sem_telefone" | "todos";
+/* "ligados" existe porque a fila os ESCONDIA.
+ *
+ * Registrar a ligação tira o caso da aba "Ligar" — é o objetivo —, mas antes ele
+ * não reaparecia em lugar nenhum reconhecível: sumia da fila e, em "Todos", o
+ * cartão não dizia que alguém já tinha ligado nem quando. Quem trabalhou a fila
+ * de manhã não conseguia ver à tarde o que já tinha feito. */
+type Filtro = "ligar" | "ligados" | "sem_telefone" | "todos";
 type Ordem = "parado" | "faltantes" | "nome";
 
 export default function FollowUp() {
@@ -92,6 +98,7 @@ export default function FollowUp() {
 
   const clientes = useMemo(() => dados?.clientes ?? [], [dados]);
   const semTelefone = useMemo(() => clientes.filter((c) => !c.telefone).length, [clientes]);
+  const jaLigados = useMemo(() => clientes.filter((c) => c.ultima_ligacao).length, [clientes]);
 
   /* A média entra na terceira caixa do topo. Só dos que TÊM pendência — que é a
    * lista inteira aqui —, e arredondada: "12,4 dias parado" sugere uma precisão
@@ -106,6 +113,7 @@ export default function FollowUp() {
     const termo = busca.trim().toLocaleLowerCase();
     const filtrada = clientes.filter((c) => {
       if (filtro === "ligar" && !c.precisa_ligar) return false;
+      if (filtro === "ligados" && !c.ultima_ligacao) return false;
       if (filtro === "sem_telefone" && c.telefone) return false;
       if (!termo) return true;
       // Busca por cliente OU por documento: quem procura "CNIS" quer ver de quem
@@ -194,6 +202,9 @@ export default function FollowUp() {
           <BotaoAba ativa={filtro === "ligar"} onClick={() => setFiltro("ligar")}>
             Precisa ligar <span className="tabular-nums opacity-70">{dados?.precisam_ligar ?? 0}</span>
           </BotaoAba>
+          <BotaoAba ativa={filtro === "ligados"} onClick={() => setFiltro("ligados")}>
+            Já ligados <span className="tabular-nums opacity-70">{jaLigados}</span>
+          </BotaoAba>
           <BotaoAba ativa={filtro === "sem_telefone"} onClick={() => setFiltro("sem_telefone")}>
             Sem telefone <span className="tabular-nums opacity-70">{semTelefone}</span>
           </BotaoAba>
@@ -256,9 +267,11 @@ export default function FollowUp() {
             ? `Nenhum cliente encontrado para “${busca.trim()}”.`
             : filtro === "ligar"
               ? "Nenhum cliente precisa de ligação agora."
-              : filtro === "sem_telefone"
-                ? "Todo cliente com pendência tem telefone cadastrado."
-                : "Nenhum cliente com pendência agora."}
+              : filtro === "ligados"
+                ? "Nenhuma ligação registrada ainda."
+                : filtro === "sem_telefone"
+                  ? "Todo cliente com pendência tem telefone cadastrado."
+                  : "Nenhum cliente com pendência agora."}
         </Vazio>
       ) : (
         <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.6fr)]">
@@ -395,6 +408,24 @@ function ItemDaFila({
               {cliente.motivo_ligacao && (
                 <span className="text-xs leading-[1.45] text-tinta-3">{cliente.motivo_ligacao}</span>
               )}
+            </>
+          ) : cliente.ultima_ligacao ? (
+            /* O que a fila escondia: houve ligação, quem fez e quando. Antes o
+              * cartão caía no selo genérico "no prazo" e o trabalho já feito
+              * ficava invisível. */
+            <>
+              <Selo tom="ok">
+                {cliente.dias_desde_ligacao === 0
+                  ? "ligado hoje"
+                  : cliente.dias_desde_ligacao === 1
+                    ? "ligado ontem"
+                    : cliente.dias_desde_ligacao != null
+                      ? `ligado há ${cliente.dias_desde_ligacao} dias`
+                      : "ligado"}
+              </Selo>
+              <span className="text-xs leading-[1.45] text-tinta-3">
+                por {cliente.ultima_ligacao.atendente_nome || "atendente não identificado"}
+              </span>
             </>
           ) : (
             <Selo tom={cliente.follow_up_ativo ? "ok" : "neutro"}>
