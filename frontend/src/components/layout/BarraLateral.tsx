@@ -100,7 +100,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
     titulo: "Análise",
     itens: [
       { tela: "avulso", rotulo: "Ler um documento" },
-      { tela: "revisao", rotulo: "Revisão" },
+      { tela: "revisao", rotulo: "Revisão do roteiro" },
       { tela: "investigacao", rotulo: "Investigar" },
       { tela: "dados", rotulo: "Dados" },
       { tela: "panorama", rotulo: "Panorama" },
