@@ -29,7 +29,7 @@ const ROTULO_TELA: Record<Tela, string> = {
   configuracaoAssinatura: "Assinatura eletrônica",
   catalogoRoteiros: "Roteiros",
   glossarioDocumentos: "Glossário de documentos",
-  revisao: "Revisão de petições",
+  revisao: "Revisão do roteiro",
   followup: "Follow-up",
   documentacao: "Documentação",
 };
