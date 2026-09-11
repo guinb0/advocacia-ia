@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import { Selo } from "@/components/ui/Basicos";
+import { Botao, LinkBotao, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import { enviarAvaliacaoGoogle } from "@/lib/api";
 
 /* Google Meu Negócio — a etapa que acontece COM O CLIENTE AINDA NA CHAMADA.
@@ -28,18 +29,6 @@ const LINK_AVALIACAO = "https://share.google/BrQVYGnjqdSz3pEw7";
 const MENSAGEM =
   "Obrigado por conversar conosco. Sua avaliação ajuda outras pessoas a encontrarem nosso trabalho. Se puder, avalie a LARA & MELO no Google: ";
 
-const PRIMARIO =
-  "border border-tinta px-3 py-[9px] bg-tinta text-papel text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.06em] uppercase no-underline cursor-pointer max-[640px]:text-center " +
-  "disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
-const SECUNDARIO =
-  "border border-tinta px-3 py-[9px] bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.06em] uppercase no-underline cursor-pointer max-[640px]:text-center " +
-  "disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
-const DISCRETO =
-  "border border-transparent px-3 py-[9px] bg-transparent text-tinta-3 text-[10px] font-semibold leading-none " +
-  "font-ui tracking-[0.06em] uppercase underline underline-offset-[3px] cursor-pointer max-[640px]:text-center";
-
 interface Props {
   /** A etapa está cumprida. Mora no atendimento, não aqui: voltar ao roteiro
    *  desmonta esta caixa, e uma marcação que se perdesse nisso não é registro. */
@@ -50,7 +39,9 @@ interface Props {
 
 export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Props) {
   const [copiado, setCopiado] = useState(false);
-  const [enviando, setEnviando] = useState(false);
+  /** Qual envio está em curso — o primeiro ou o reenvio pedido pelo atendente —
+   *  para só o botão clicado mostrar o andamento. */
+  const [enviando, setEnviando] = useState<"envio" | "reenvio" | null>(null);
   const [retorno, setRetorno] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
   // O link já foi mandado antes: em vez de deixar a mensagem num beco sem saída,
   // abre a opção de reenviar quando o atendente pede, com o cliente na chamada.
@@ -63,7 +54,7 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
   }
 
   async function enviar(forcar = false) {
-    setEnviando(true);
+    setEnviando(forcar ? "reenvio" : "envio");
     setRetorno(null);
     try {
       const resultado = await enviarAvaliacaoGoogle(telefone, forcar);
@@ -79,9 +70,11 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
     } catch (e) {
       setRetorno({ tom: "erro", texto: e instanceof Error ? e.message : "Não foi possível enviar o link." });
     } finally {
-      setEnviando(false);
+      setEnviando(null);
     }
   }
+
+  const semTelefone = telefone.trim() ? null : "Informe o telefone do cliente antes de enviar.";
 
   /* QUEM APERTA O BOTÃO É O ADVOGADO, e isto já foi automático uma vez.
    *
@@ -113,31 +106,39 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
           houver dificuldade. Só o link vai para o cliente; nada mais é enviado.
         </p>
 
-        <div className="flex items-center flex-wrap gap-[9px] mt-[13px] max-[640px]:items-stretch max-[640px]:flex-col">
-          <button type="button" className={PRIMARIO} disabled={enviando || !telefone.trim()} onClick={() => void enviar()}>
-            {enviando ? "Enviando…" : "Enviar pelo WhatsApp"}
-          </button>
-          <button type="button" className={SECUNDARIO} onClick={() => void copiar()}>
-            {copiado ? "Convite copiado ✓" : "Copiar convite"}
-          </button>
-          <a className={DISCRETO} href={LINK_AVALIACAO} target="_blank" rel="noopener noreferrer">
+        <div className="flex items-start flex-wrap gap-[9px] mt-[13px] max-[640px]:items-stretch max-[640px]:flex-col">
+          <BotaoProcesso
+            variante="primario"
+            onClick={() => enviar()}
+            processando={enviando === "envio"}
+            textoProcessando="Enviando…"
+            pendencia={semTelefone}
+            aguardando={enviando === "reenvio"}
+            erro={retorno?.tom === "erro" ? retorno.texto : null}
+            concluido={retorno?.tom === "ok" ? retorno.texto : null}
+          >
+            Enviar pelo WhatsApp
+          </BotaoProcesso>
+          <Botao variante="secundario" onClick={() => void copiar()}>
+            {copiado ? "✓ Convite copiado" : "Copiar convite"}
+          </Botao>
+          <LinkBotao variante="texto" className="h-10" href={LINK_AVALIACAO} target="_blank" rel="noopener noreferrer">
             Abrir página de avaliação
-          </a>
+          </LinkBotao>
         </div>
-        {!telefone.trim() && <p className="mt-2 text-xs text-atencao">Informe o telefone do cliente antes de enviar.</p>}
-        {retorno && (
-          <div className="mt-2 flex items-center flex-wrap gap-x-3 gap-y-1">
-            <p className={`m-0 text-xs ${retorno.tom === "ok" ? "text-ok" : "text-critico"}`}>{retorno.texto}</p>
-            {jaEnviado && (
-              <button
-                type="button"
-                className={DISCRETO}
-                disabled={enviando || !telefone.trim()}
-                onClick={() => void enviar(true)}
-              >
-                {enviando ? "Reenviando…" : "Enviar novamente"}
-              </button>
-            )}
+        {jaEnviado && (
+          <div className="mt-2">
+            <BotaoProcesso
+              variante="texto"
+              pequeno
+              onClick={() => enviar(true)}
+              processando={enviando === "reenvio"}
+              textoProcessando="Reenviando…"
+              pendencia={semTelefone}
+              aguardando={enviando === "envio"}
+            >
+              Enviar novamente
+            </BotaoProcesso>
           </div>
         )}
 

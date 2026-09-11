@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import { criarSalaChamada } from "@/lib/api";
 import * as portal from "@/lib/apiPortal";
 import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
@@ -164,16 +165,21 @@ function TelaSenha({
             </div>
           )}
 
-          <Botao
+          <BotaoProcesso
             type="submit"
             variante="primario"
             bloco
-            className="mt-[14px] text-base"
+            className="mt-[14px]"
+            classeBotao="text-base"
             style={{ minHeight: 48 }}
-            disabled={entrando || !senha.trim()}
+            processando={entrando}
+            textoProcessando="Verificando…"
+            pendencia={senha.trim() ? null : "Digite a senha que o escritório enviou."}
+            pendenciaAoClicar
+            onPendencia={() => document.getElementById("senha-portal")?.focus()}
           >
-            {entrando ? "Verificando…" : "Ver meus documentos"}
-          </Botao>
+            Ver meus documentos
+          </BotaoProcesso>
         </form>
       </div>
     </div>
@@ -454,9 +460,15 @@ function Chamada({ token }: { token: string }) {
             Se o escritório combinou uma conversa por voz, toque abaixo. Você fala pelo
             próprio celular, sem instalar nada.
           </p>
-          <Botao variante="primario" className="mt-[14px]" onClick={entrar} disabled={entrando}>
-            {entrando ? "Abrindo…" : "Entrar na chamada"}
-          </Botao>
+          <BotaoProcesso
+            variante="primario"
+            className="mt-[14px]"
+            onClick={entrar}
+            processando={entrando}
+            textoProcessando="Abrindo a chamada…"
+          >
+            Entrar na chamada
+          </BotaoProcesso>
         </>
       ) : (
         <>
@@ -531,9 +543,10 @@ function Linha({
         className="flex-none"
         style={{ minHeight: 44 }}
         onClick={() => inputRef.current?.click()}
-        disabled={enviando}
+        carregando={enviando}
+        textoCarregando="Enviando…"
       >
-        {enviando ? "Enviando…" : item.enviados > 0 ? "Enviar outra foto" : "Enviar foto ou PDF"}
+        {item.enviados > 0 ? "Enviar outra foto" : "Enviar foto ou PDF"}
       </Botao>
 
       <input

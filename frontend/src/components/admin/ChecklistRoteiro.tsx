@@ -27,7 +27,8 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 
-import { Aviso, Selo } from "@/components/ui/Basicos";
+import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import type {
   Auditoria,
   ChecklistRegistro,
@@ -335,11 +336,6 @@ interface Props {
   corrigindoAvaliacao: boolean;
 }
 
-const BOTAO_PILULA =
-  "inline-flex items-center gap-2 px-[14px] py-[7px] border border-borda-campo rounded-pill bg-papel " +
-  "text-tinta-2 font-codigo text-xs uppercase tracking-[0.08em] cursor-pointer " +
-  "hover:bg-papel-3 disabled:text-tinta-desabilitada disabled:cursor-not-allowed";
-
 export default function ChecklistRoteiro({
   registro,
   auditoria,
@@ -420,31 +416,20 @@ export default function ChecklistRoteiro({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-[10px] mt-4">
-          <button
-            type="button"
-            className={BOTAO_PILULA}
+        <div className="flex flex-wrap items-start gap-[10px] mt-4">
+          <BotaoProcesso
+            variante="primario"
+            pequeno
             onClick={onAuditar}
-            disabled={auditando}
+            processando={auditando}
+            textoProcessando="Lendo a conversa…"
+            dica="A leitura da conversa inteira leva alguns segundos."
           >
-            {auditando
-              ? "Lendo a conversa…"
-              : auditoria
-                ? "Conferir de novo"
-                : "Conferir contra o roteiro"}
-          </button>
-          <button
-            type="button"
-            className={BOTAO_PILULA}
-            onClick={() => setOcultarFeitos((v) => !v)}
-          >
+            {auditoria ? "Conferir de novo" : "Conferir contra o roteiro"}
+          </BotaoProcesso>
+          <Botao variante="discreto" pequeno onClick={() => setOcultarFeitos((v) => !v)}>
             {ocultarFeitos ? "Mostrar o que está feito" : "Ocultar o que está feito"}
-          </button>
-          {auditando && (
-            <span className="text-tinta-3 text-xs leading-[1.5]">
-              A leitura da conversa inteira leva alguns segundos.
-            </span>
-          )}
+          </Botao>
         </div>
 
         {/* O resumo em palavras, para quem não vai descer a lista inteira. */}
@@ -535,18 +520,15 @@ export default function ChecklistRoteiro({
                      * sobre por que as outras não são. */
                     acao={
                       linha.id === "avaliacao-confirmada" ? (
-                        <button
-                          type="button"
-                          className={BOTAO_PILULA}
-                          disabled={corrigindoAvaliacao}
+                        <Botao
+                          variante="secundario"
+                          pequeno
+                          carregando={corrigindoAvaliacao}
+                          textoCarregando="Gravando…"
                           onClick={() => onCorrigirAvaliacao(linha.situacao !== "feito")}
                         >
-                          {corrigindoAvaliacao
-                            ? "Gravando…"
-                            : linha.situacao === "feito"
-                              ? "Desfazer marcação"
-                              : "Marcar como avaliada"}
-                        </button>
+                          {linha.situacao === "feito" ? "Desfazer marcação" : "Marcar como avaliada"}
+                        </Botao>
                       ) : undefined
                     }
                   />

@@ -118,6 +118,35 @@ vermelho de erro) que a paleta antiga tinha.
 Modificadores de tamanho: `botao--pequeno` (dentro de linha de lista),
 `botao--bloco` (100% da largura).
 
+### Botões que iniciam um processo (`<BotaoProcesso>`)
+
+Ler documento, analisar, gerar, enviar, criar caso: todo botão que dispara
+trabalho no servidor usa `BotaoProcesso` (`components/ui/BotaoProcesso.tsx`), e
+não `<Botao disabled>`. O motivo é uma reclamação real dos usuários: quase todos
+esses botões ficavam **cinza**, e cinza respondia três perguntas diferentes com
+a mesma cor — "está indisponível?", "o clique foi?", "é para esperar?".
+
+| Situação | Como aparece | Prop |
+|---|---|---|
+| Falta algo para começar | Botão **com a cor da ação**; abaixo, `→ o que falta`. Clicar não dispara nada e realça em âmbar `! o que falta` (e pode levar o foco ao campo) | `pendencia` (+ `pendenciaAoClicar` quando a tela já diz ao lado; `onPendencia`) |
+| Em andamento | Giro no botão, rótulo do que acontece ("Lendo o documento…"), `◌ … · 12 s` depois de 2 s. Cliques repetidos são ignorados | `processando`, ou `onClick` que devolve Promise; `textoProcessando`, `dica` |
+| Outra ação da tela em curso | Cor mantida, cursor de espera; o clique explica | `aguardando` |
+| Deu errado | `✕ mensagem`, junto do botão que falhou | `erro` |
+| Terminou | `✓ o que foi feito` | `concluido` |
+
+Regras:
+
+- `erro` e `concluido` vêm de quem chama. Não se deduz sucesso da Promise: a
+  maioria dos handlers captura a própria falha e resolve mesmo quando falhou.
+- A ação principal do bloco é `variante="primario"` — o preenchimento sólido é
+  o que faz o olho achá-la.
+- `<Botao disabled>` (cinza) fica só para o que de fato não se usa, como
+  "Próxima" na última página. Para ação curta dentro de lista, sem linha de
+  estado, use `<Botao carregando textoCarregando="…">`: giro, cor mantida e
+  clique bloqueado.
+- `className` do `BotaoProcesso` vai para o contêiner (que também leva a linha
+  de estado); classes do `<button>` em si vão em `classeBotao`.
+
 ### Campos (`.campo` + modificador)
 
 `.campo`, `.campo--area` (textarea), `.campo--seletor` (select com seta SVG).

@@ -6,6 +6,7 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* A chamada ao lado do roteiro — a coluna da direita da entrevista.
  *
@@ -136,14 +137,16 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
               ? "Crie a chamada no Jitsi Meet e mande o link ao cliente. Você continua na aba de documentos, e a conversa entra na mesma gravação do atendimento."
               : "Abra a chamada e mande o link ao entrevistado. A voz dele chega separada da sua — é ela, e só ela, que vira texto no roteiro."}
           </p>
-          <button
-            type="button"
-            className="w-full border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui tracking-[0.1em] uppercase px-[14px] py-3 cursor-pointer disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada enabled:hover:bg-tinta enabled:hover:text-papel"
+          <BotaoProcesso
+            variante="primario"
+            bloco
             onClick={abrir}
-            disabled={abrindo}
+            processando={abrindo}
+            textoProcessando="Abrindo a chamada…"
+            erro={erro}
           >
-            {abrindo ? "Abrindo…" : modo === "documentos" ? "Criar chamada no Jitsi Meet" : "Abrir Jitsi Meet"}
-          </button>
+            {modo === "documentos" ? "Criar chamada no Jitsi Meet" : "Abrir Jitsi Meet"}
+          </BotaoProcesso>
         </>
       ) : (
         <>

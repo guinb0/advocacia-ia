@@ -2,9 +2,10 @@
 
 import { useRef, useState } from "react";
 
-import type { ItemSituacao } from "@/lib/types";
+import type { ItemSituacao, OpcoesReclassificacao } from "@/lib/types";
 import { useModelo } from "@/lib/useExtracao";
 import { Botao, Marcacao, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import VisorEntrega from "@/components/caso/VisorEntrega";
 import CorrigirItemDocumento from "@/components/caso/CorrigirItemDocumento";
@@ -63,7 +64,11 @@ interface Props {
   onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
   onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
-  onReatribuir: (entregaId: string, itens: string[]) => Promise<void> | void;
+  onReatribuir: (
+    entregaId: string,
+    itens: string[],
+    opcoes?: OpcoesReclassificacao,
+  ) => Promise<void> | void;
   dentroDoAtendimento?: boolean;
 }
 
@@ -134,8 +139,9 @@ export default function ItemChecklistLinha({
         <Botao
           variante={item.entregas.length ? "secundario" : "primario"}
           pequeno
+          carregando={enviando}
+          textoCarregando="Enviando…"
           onClick={() => inputRef.current?.click()}
-          disabled={enviando}
         >
           {item.entregas.length ? "Enviar outro arquivo" : "Enviar arquivo"}
         </Botao>
@@ -231,15 +237,15 @@ export default function ItemChecklistLinha({
               </Botao>
 
               {podeUsarParaAmbos && (entrega.itens_atendidos?.length ?? 1) === 1 && (
-                <Botao
+                <BotaoProcesso
                   variante="discreto"
                   pequeno
                   onClick={() => onVincularIdentidade(entrega.id, item.codigo)}
-                  disabled={enviando}
+                  aguardando={enviando ? "Aguarde: o arquivo novo ainda está sendo enviado." : false}
                   title="Confirme somente se este for um documento de identidade unificado"
                 >
                   Usar também como {item.tipo_ocr === "rg" ? "CPF" : "RG"}
-                </Botao>
+                </BotaoProcesso>
               )}
 
               <Botao variante="perigo" pequeno onClick={() => onRemover(entrega.id)}>

@@ -13,7 +13,7 @@ tipo — o documento é aceito, mas a conferência fica por conta do usuário.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 #: Código sentinela do documento que chegou SEM destino, à espera de triagem.
 #:
@@ -33,9 +33,26 @@ class ItemChecklist:
     obrigatorio: bool
     tipo_ocr: str | None = None
     observacao: str = ""
+    #: Código do tipo no glossário (`app/tipos_documento.py`), quando o item não tem
+    #: classificador. Com `tipo_ocr` preenchido o tipo já é ele — ver `tipo_documento`.
+    tipo: str | None = None
+    #: Item que não está no checklist do escritório: entrou porque alguém marcou este
+    #: tipo de caso no glossário (ver `_com_itens_do_glossario`).
+    do_glossario: bool = False
+
+    @property
+    def tipo_documento(self) -> str | None:
+        """O tipo do glossário que este item pede.
+
+        Os códigos do classificador são os mesmos do glossário, então um item com
+        `tipo_ocr` não precisa repetir o tipo.
+        """
+        return self.tipo or self.tipo_ocr
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        dados = asdict(self)
+        dados["tipo_documento"] = self.tipo_documento
+        return dados
 
 
 @dataclass(frozen=True)
@@ -519,6 +536,183 @@ AUXILIO_ACIDENTE = Categoria(
 )
 
 
+# ------------------------------------------------ o tipo de cada item no glossário
+#
+# Um mapa por categoria, e não um `tipo=` em cada linha acima: os itens seguem
+# conferidos contra o .docx do escritório (`tests/test_categorias.py`), e o vínculo
+# com o glossário é outra decisão, que se revisa melhor lida de uma vez. Itens com
+# `tipo_ocr` ficam de fora — o código do classificador já é o tipo.
+#
+# Vários itens podem apontar para o mesmo tipo (raio X e ressonância são exames de
+# imagem). O contrário não: cada item pede um tipo só.
+
+
+def _tipificar(categoria: Categoria, tipos: dict[str, str]) -> Categoria:
+    """A mesma categoria, com o tipo do glossário em cada item."""
+    sobrando = set(tipos) - {item.codigo for item in categoria.itens}
+    if sobrando:
+        raise ValueError(
+            f"Itens inexistentes no mapa de tipos de {categoria.codigo}: {sorted(sobrando)}"
+        )
+    return replace(
+        categoria,
+        itens=tuple(
+            replace(item, tipo=tipos.get(item.codigo, item.tipo)) for item in categoria.itens
+        ),
+    )
+
+
+ACIDENTE_TRABALHO_CORREIOS = _tipificar(
+    ACIDENTE_TRABALHO_CORREIOS,
+    {
+        "DOC.01": "procuracao",
+        "DOC.02": "declaracao_hipossuficiencia",
+        "DOC.07": "contracheque",
+        "DOC.08": "cnis",
+        "DOC.09": "ficha_funcional",
+        "DOC.10": "cat",
+        "DOC.11": "boletim_ocorrencia",
+        "DOC.12": "atendimento_emergencia",
+        "DOC.13": "atestado_medico",
+        "DOC.14": "laudo_medico",
+        "DOC.15": "relatorio_medico",
+        "DOC.16": "exame_imagem",
+        "DOC.17": "laudo_exame",
+        "DOC.18": "exame_imagem",
+        "DOC.19": "laudo_exame",
+        "DOC.20": "receituario",
+        "DOC.21": "comprovante_tratamento",
+        "DOC.22": "comprovante_tratamento",
+        "DOC.23": "decisao_inss",
+        "DOC.24": "carta_concessao",
+        "DOC.25": "decisao_inss",
+        "DOC.26": "laudo_pericial_inss",
+        "DOC.27": "processo_inss",
+        "DOC.28": "aso",
+        "DOC.29": "laudo_pericial_particular",
+        "DOC.30": "fotos",
+        "DOC.31": "fotos",
+        "DOC.32": "ppp",
+        "DOC.33": "programa_ocupacional",
+    },
+)
+
+ACIDENTE_TRABALHO_GERAL = _tipificar(
+    ACIDENTE_TRABALHO_GERAL,
+    {
+        "DOC.01": "procuracao",
+        "DOC.02": "declaracao_hipossuficiencia",
+        "DOC.07": "contracheque",
+        "DOC.08": "cnis",
+        "DOC.09": "ficha_funcional",
+        "DOC.10": "cat",
+        "DOC.11": "boletim_ocorrencia",
+        "DOC.12": "atendimento_emergencia",
+        "DOC.13": "atestado_medico",
+        "DOC.14": "laudo_medico",
+        "DOC.15": "relatorio_medico",
+        "DOC.16": "exame_imagem",
+        "DOC.17": "laudo_exame",
+        "DOC.18": "receituario",
+        "DOC.19": "comprovante_tratamento",
+        "DOC.20": "decisao_inss",
+        "DOC.21": "carta_concessao",
+        "DOC.22": "historico_beneficios",
+        "DOC.23": "laudo_pericial_inss",
+        "DOC.24": "processo_inss",
+        "DOC.25": "aso",
+        "DOC.26": "ppp",
+        "DOC.27": "programa_ocupacional",
+        "DOC.28": "fotos",
+        "DOC.29": "comprovante_despesas",
+        "DOC.30": "controle_jornada",
+        "DOC.31": "prova_condicoes_trabalho",
+        "DOC.32": "testemunhas",
+        "DOC.33": "contrato_trabalho",
+        "DOC.34": "documentos_rescisorios",
+        "DOC.35": "laudo_pericial_particular",
+    },
+)
+
+DOENCA_OCUPACIONAL = _tipificar(
+    DOENCA_OCUPACIONAL,
+    {
+        "DOC.01": "procuracao",
+        "DOC.02": "declaracao_hipossuficiencia",
+        "DOC.07": "contracheque",
+        "DOC.08": "cnis",
+        "DOC.09": "cat",
+        "DOC.10": "contrato_trabalho",
+        "DOC.11": "ficha_funcional",
+        "DOC.12": "documentos_rescisorios",
+        "DOC.13": "extrato_fgts",
+        "DOC.14": "relatorio_medico",
+        "DOC.15": "atestado_medico",
+        "DOC.16": "exame_imagem",
+        "DOC.17": "laudo_exame",
+        "DOC.18": "receituario",
+        "DOC.19": "laudo_medico",
+        "DOC.20": "comprovante_tratamento",
+        "DOC.21": "prontuario",
+        "DOC.22": "laudo_pericial_particular",
+        "DOC.23": "decisao_inss",
+        "DOC.24": "carta_concessao",
+        "DOC.25": "decisao_inss",
+        "DOC.26": "historico_beneficios",
+        "DOC.27": "laudo_pericial_inss",
+        "DOC.28": "processo_inss",
+        "DOC.29": "ppp",
+        "DOC.30": "aso",
+        "DOC.31": "programa_ocupacional",
+        "DOC.32": "programa_ocupacional",
+        "DOC.33": "controle_jornada",
+        "DOC.34": "prova_condicoes_trabalho",
+        "DOC.35": "fotos",
+        "DOC.36": "testemunhas",
+        "DOC.37": "comprovante_despesas",
+    },
+)
+
+ASSALTO_CARTEIRO = _tipificar(
+    ASSALTO_CARTEIRO,
+    {
+        "DOC.01": "procuracao",
+        "DOC.02": "declaracao_hipossuficiencia",
+        "DOC.06": "contracheque",
+        "DOC.08": "cat",
+        "DOC.09": "boletim_ocorrencia",
+        "DOC.10": "atestado_medico",
+        "DOC.11": "prontuario",
+        "DOC.12": "laudo_medico",
+        "DOC.13": "receituario",
+        "DOC.14": "carta_concessao",
+        "DOC.15": "laudo_pericial_inss",
+        "DOC.16": "laudo_pericial_inss",
+        "DOC.18": "comprovante_despesas",
+        "DOC.19": "cnis",
+        "DOC.20": "regulamento_empresa",
+    },
+)
+
+AUXILIO_ACIDENTE = _tipificar(
+    AUXILIO_ACIDENTE,
+    {
+        # "RG ou CNH": o item pede identidade, e é como RG que ele entra no glossário.
+        # Uma CNH enviada aqui continua reconhecida como CNH pelo classificador.
+        "DOC.01": "rg",
+        "DOC.03": "contracheque",
+        "DOC.04": "laudo_medico",
+        "DOC.05": "atestado_medico",
+        "DOC.06": "receituario",
+        "DOC.07": "prontuario",
+        "DOC.08": "processo_inss",
+        "DOC.09": "decisao_inss",
+        "DOC.10": "cnis",
+        "DOC.11": "laudo_pericial_inss",
+    },
+)
+
+
 CATEGORIAS: dict[str, Categoria] = {
     ACIDENTE_TRABALHO_CORREIOS.codigo: ACIDENTE_TRABALHO_CORREIOS,
     ACIDENTE_TRABALHO_GERAL.codigo: ACIDENTE_TRABALHO_GERAL,
@@ -538,9 +732,63 @@ _CATEGORIAS_ATIVAS = (
 )
 
 
+# -------------------------------------------- itens acrescentados pelo glossário
+#
+# O checklist acima é o do escritório, conferido contra o .docx. Um tipo criado depois
+# no glossário não estava em nenhum deles e, por isso, não era pedido em caso nenhum:
+# quem o cria marca em que tipos de caso ele deve aparecer, e `obter` e `listar` o
+# acrescentam ao fim do checklist. `CATEGORIAS` continua só com o fixo — é contra ele
+# que os testes conferem o .docx.
+
+#: Prefixo do código dos itens acrescentados. O código do item fica gravado em cada
+#: entrega (`entregas.item_codigo`); derivá-lo do código do tipo, que não muda, é o que
+#: mantém o documento no mesmo item quando outros tipos são marcados ou desmarcados.
+PREFIXO_ITEM_GLOSSARIO = "GLOS."
+
+
+def codigo_item_do_glossario(tipo_codigo: str) -> str:
+    return f"{PREFIXO_ITEM_GLOSSARIO}{tipo_codigo}"
+
+
+def _com_itens_do_glossario(categoria: Categoria) -> Categoria:
+    """A categoria com os tipos marcados no glossário no fim do checklist.
+
+    Entram como opcionais: marcar um tipo de caso não pode, sozinho, deixar incompletos
+    os casos que já estavam completos. Tipo que o checklist fixo já pede não ganha um
+    segundo item — as entregas se dividiriam entre os dois.
+    """
+    # Import tardio: `tipos_documento` importa este módulo.
+    from . import tipos_documento
+
+    marcados = tipos_documento.tipos_marcados(categoria.codigo)
+    if not marcados:
+        return categoria
+    ja_pedidos = {item.tipo_documento for item in categoria.itens}
+    numero = max((item.numero for item in categoria.itens), default=0)
+    novos: list[ItemChecklist] = []
+    for tipo in marcados:
+        if tipo["codigo"] in ja_pedidos:
+            continue
+        ja_pedidos.add(tipo["codigo"])
+        numero += 1
+        novos.append(
+            ItemChecklist(
+                codigo_item_do_glossario(tipo["codigo"]),
+                numero,
+                tipo["nome"],
+                False,
+                observacao=tipo["descricao"],
+                tipo=tipo["codigo"],
+                do_glossario=True,
+            )
+        )
+    return replace(categoria, itens=categoria.itens + tuple(novos)) if novos else categoria
+
+
 def listar() -> list[Categoria]:
-    return [CATEGORIAS[codigo] for codigo in _CATEGORIAS_ATIVAS]
+    return [_com_itens_do_glossario(CATEGORIAS[codigo]) for codigo in _CATEGORIAS_ATIVAS]
 
 
 def obter(codigo: str) -> Categoria | None:
-    return CATEGORIAS.get(codigo)
+    categoria = CATEGORIAS.get(codigo)
+    return _com_itens_do_glossario(categoria) if categoria else None

@@ -13,7 +13,11 @@ import {
 import type { StatusWhatsapp } from "@/lib/api";
 import type { CobrancaDocumentos, Pedido, Progresso } from "@/lib/types";
 import { AjudaCampo, Botao, Cartao, Marcacao, RotuloCampo, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
+
+/** Resultado de uma ação, mostrado junto do botão que a disparou. */
+type Retorno = { tom: "ok" | "erro"; texto: string } | null;
 
 /** Painel que gera o texto pronto para o advogado mandar ao cliente. */
 export default function PedidoCliente({
@@ -35,7 +39,11 @@ export default function PedidoCliente({
   const [salvando, setSalvando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [testandoAutomacao, setTestandoAutomacao] = useState(false);
-  const [retorno, setRetorno] = useState("");
+  /* Um retorno por ação: antes era uma frase só, embaixo do texto, e "salvo"
+   * de um aparecia longe do botão do outro. */
+  const [retornoAutomacao, setRetornoAutomacao] = useState<Retorno>(null);
+  const [retornoWhatsApp, setRetornoWhatsApp] = useState<Retorno>(null);
+  const [retornoTeste, setRetornoTeste] = useState<Retorno>(null);
 
   const chave = `${progresso.obrigatorios_entregues}-${progresso.itens_a_conferir}-${progresso.opcionais_entregues}`;
   const telefoneCobranca = cobranca?.telefone ?? "";
@@ -76,13 +84,19 @@ export default function PedidoCliente({
   const salvarAutomacao = useCallback(async () => {
     if (!cobranca) return;
     setSalvando(true);
-    setRetorno("");
+    setRetornoAutomacao(null);
     try {
       const atualizada = await salvarCobrancaDocumentos(casoId, cobranca);
       setCobranca(atualizada);
-      setRetorno(atualizada.ativa ? "Cobrança automática ativada." : "Cobrança automática desativada.");
+      setRetornoAutomacao({
+        tom: "ok",
+        texto: atualizada.ativa ? "Cobrança automática ativada." : "Cobrança automática desativada.",
+      });
     } catch (e) {
-      setRetorno(e instanceof Error ? e.message : "Não foi possível salvar a automação.");
+      setRetornoAutomacao({
+        tom: "erro",
+        texto: e instanceof Error ? e.message : "Não foi possível salvar a automação.",
+      });
     } finally {
       setSalvando(false);
     }
@@ -103,16 +117,22 @@ export default function PedidoCliente({
 
   const enviarWhatsApp = useCallback(async () => {
     if (cobrancaSemTelefone) {
-      setRetorno("Informe o telefone/WhatsApp do cliente no caso antes de enviar mensagem.");
+      setRetornoWhatsApp({
+        tom: "erro",
+        texto: "Informe o telefone/WhatsApp do cliente no caso antes de enviar mensagem.",
+      });
       return;
     }
     setEnviando(true);
-    setRetorno("");
+    setRetornoWhatsApp(null);
     try {
       await enviarDocumentosWhatsApp(casoId, incluirOpcionais);
-      setRetorno("✓ Link e pedido de documentos enviados pelo WhatsApp.");
+      setRetornoWhatsApp({ tom: "ok", texto: "Link e pedido de documentos enviados pelo WhatsApp." });
     } catch (e) {
-      setRetorno(e instanceof Error ? e.message : "Não foi possível enviar pelo WhatsApp.");
+      setRetornoWhatsApp({
+        tom: "erro",
+        texto: e instanceof Error ? e.message : "Não foi possível enviar pelo WhatsApp.",
+      });
     } finally {
       setEnviando(false);
     }
@@ -121,21 +141,32 @@ export default function PedidoCliente({
   const dispararTesteAutomacao = useCallback(async () => {
     if (!cobranca) return;
     if (cobrancaSemTelefone) {
-      setRetorno("Informe o telefone/WhatsApp do cliente no caso antes de testar a automação.");
+      setRetornoTeste({
+        tom: "erro",
+        texto: "Informe o telefone/WhatsApp do cliente no caso antes de testar a automação.",
+      });
       return;
     }
     setTestandoAutomacao(true);
-    setRetorno("");
+    setRetornoTeste(null);
     try {
       const r = await dispararTesteCobrancaDocumentos(casoId, cobranca);
-      setRetorno(
+      setRetornoTeste(
         r.enviado
-          ? "✓ Teste temporário enviado pelo mesmo fluxo do timer."
-          : r.ultimo_erro || "Teste temporário processado; nenhuma mensagem saiu pelas regras atuais.",
+          ? { tom: "ok", texto: "Teste temporário enviado pelo mesmo fluxo do timer." }
+          : {
+              tom: "erro",
+              texto:
+                r.ultimo_erro ||
+                "Teste temporário processado; nenhuma mensagem saiu pelas regras atuais.",
+            },
       );
       obterCobrancaDocumentos(casoId).then(setCobranca).catch(() => {});
     } catch (e) {
-      setRetorno(e instanceof Error ? e.message : "Não foi possível disparar o teste da automação.");
+      setRetornoTeste({
+        tom: "erro",
+        texto: e instanceof Error ? e.message : "Não foi possível disparar o teste da automação.",
+      });
     } finally {
       setTestandoAutomacao(false);
     }
@@ -154,18 +185,21 @@ export default function PedidoCliente({
         <Vazio>Montando o pedido…</Vazio>
       ) : (
         <>
-          <div className="flex items-center gap-[14px] mb-[14px] flex-wrap">
+          <div className="flex items-start gap-[14px] mb-[14px] flex-wrap">
             {/* A ação principal do bloco é copiar: é para isso que o bloco existe. */}
             <Botao variante="primario" onClick={copiar}>
               {copiado ? "✓ Mensagem copiada" : "Copiar a mensagem"}
             </Botao>
-            <Botao
+            <BotaoProcesso
               variante="secundario"
-              onClick={() => void enviarWhatsApp()}
-              disabled={enviando}
+              onClick={enviarWhatsApp}
+              processando={enviando}
+              textoProcessando="Enviando pelo WhatsApp…"
+              erro={retornoWhatsApp?.tom === "erro" ? retornoWhatsApp.texto : null}
+              concluido={retornoWhatsApp?.tom === "ok" ? retornoWhatsApp.texto : null}
             >
-              {enviando ? "Enviando…" : "Enviar link pelo WhatsApp"}
-            </Botao>
+              Enviar link pelo WhatsApp
+            </BotaoProcesso>
             <Marcacao>
               <input
                 type="checkbox"
@@ -188,8 +222,6 @@ export default function PedidoCliente({
           <AjudaCampo>
             O texto se refaz sozinho conforme os documentos chegam — não precisa editar aqui.
           </AjudaCampo>
-
-          {retorno && <p className="mt-3 text-xs text-tinta-3">{retorno}</p>}
 
           {cobranca && (
             <div className="mt-5 border-t border-borda pt-4">
@@ -264,16 +296,35 @@ export default function PedidoCliente({
                 <span>Incluir documentos opcionais nas cobranças</span>
               </Marcacao>
               <div className="mt-3 flex items-center gap-3 flex-wrap">
-                <Botao variante="primario" onClick={() => void salvarAutomacao()} disabled={salvando}>
-                  {salvando ? "Salvando…" : "Salvar automação"}
-                </Botao>
-                <Botao
-                  variante="secundario"
-                  onClick={() => void dispararTesteAutomacao()}
-                  disabled={testandoAutomacao || salvando || !cobranca.ativa || cobrancaSemTelefone}
+                <BotaoProcesso
+                  variante="primario"
+                  onClick={salvarAutomacao}
+                  processando={salvando}
+                  textoProcessando="Salvando…"
+                  aguardando={testandoAutomacao}
+                  erro={retornoAutomacao?.tom === "erro" ? retornoAutomacao.texto : null}
+                  concluido={retornoAutomacao?.tom === "ok" ? retornoAutomacao.texto : null}
                 >
-                  {testandoAutomacao ? "Testando…" : "Teste temporário: disparar agora"}
-                </Botao>
+                  Salvar automação
+                </BotaoProcesso>
+                <BotaoProcesso
+                  variante="secundario"
+                  onClick={dispararTesteAutomacao}
+                  processando={testandoAutomacao}
+                  textoProcessando="Testando…"
+                  aguardando={salvando}
+                  pendencia={
+                    !cobranca.ativa
+                      ? "Ative a cobrança automática para testar."
+                      : cobrancaSemTelefone
+                        ? "Preencha o telefone do caso para testar."
+                        : null
+                  }
+                  erro={retornoTeste?.tom === "erro" ? retornoTeste.texto : null}
+                  concluido={retornoTeste?.tom === "ok" ? retornoTeste.texto : null}
+                >
+                  Teste temporário: disparar agora
+                </BotaoProcesso>
               </div>
               <AjudaCampo>
                 Usa a mesma conexão Evolution do módulo Saúde do agente. O destinatário é o WhatsApp do cliente no cadastro/entrevista do caso; o gestor não precisa informar número aqui. O botão de teste é temporário e será removido do produto final.

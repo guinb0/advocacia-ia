@@ -51,6 +51,7 @@ import {
   PenLine,
   PhoneCall,
   Search,
+  Tags,
   Users,
   X,
   type LucideIcon,
@@ -113,6 +114,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
       { tela: "catalogoRoteiros", rotulo: "Roteiros" },
+      { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
       { tela: "usuarios", rotulo: "Usuários" },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
@@ -145,6 +147,7 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   revisao: FileCheck2,
   followup: PhoneCall,
   catalogoRoteiros: BookOpen,
+  glossarioDocumentos: Tags,
   usuarios: Users,
   saudeAgente: HeartPulse,
   modelosDePeticao: PenLine,

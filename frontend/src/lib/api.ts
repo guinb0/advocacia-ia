@@ -28,6 +28,11 @@ import type {
   TipoDocumento,
   CobrancaDocumentos,
   Triagem as TriagemResposta,
+  DuplicidadeDocumento,
+  EventoHistorico,
+  ImpactoTipoDocumento,
+  OpcoesReclassificacao,
+  TipoDocumentoGlossario,
 } from "./types";
 
 /**
@@ -59,11 +64,14 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {
   readonly status?: number;
+  /** O corpo JSON da resposta de erro — é por onde o 409 de duplicidade traz a lista. */
+  readonly dados?: unknown;
 
-  constructor(message: string, options?: ErrorOptions & { status?: number }) {
+  constructor(message: string, options?: ErrorOptions & { status?: number; dados?: unknown }) {
     super(message, options);
     this.name = "ApiError";
     this.status = options?.status;
+    this.dados = options?.dados;
   }
 }
 
@@ -327,9 +335,21 @@ async function comoJson<T>(resposta: Response): Promise<T> {
       corpo && typeof corpo === "object" && "detail" in corpo
         ? String((corpo as { detail: unknown }).detail)
         : `Erro ${resposta.status}`;
-    throw new ApiError(detalhe, { status: resposta.status });
+    throw new ApiError(detalhe, { status: resposta.status, dados: corpo });
   }
   return corpo as T;
+}
+
+/** Os documentos parecidos, quando o erro é o 409 de duplicidade; `null` nos demais.
+ *
+ * O 409 também serve a outros conflitos (versão do glossário, categoria removida),
+ * então quem decide é o `codigo` do corpo, e não o status sozinho. */
+export function duplicidadesDoErro(erro: unknown): DuplicidadeDocumento[] | null {
+  if (!(erro instanceof ApiError) || erro.status !== 409) return null;
+  const dados = erro.dados as { codigo?: string; duplicidades?: DuplicidadeDocumento[] } | null;
+  return dados?.codigo === "DOCUMENTO_DUPLICADO" && Array.isArray(dados.duplicidades)
+    ? dados.duplicidades
+    : null;
 }
 
 export async function listarTipos(): Promise<TipoDocumento[]> {
@@ -1349,12 +1369,15 @@ export async function enviarDocumento(
   arquivo: File,
   idioma = "pt",
   usarParaRgECpf = false,
+  /** Envia mesmo sendo idêntico a outro arquivo do caso (a confirmação fica no histórico). */
+  confirmarDuplicidade = false,
 ): Promise<RespostaEnvio> {
   const form = new FormData();
   form.append("item", itemCodigo);
   form.append("arquivo", arquivo);
   form.append("idioma", idioma);
   form.append("usar_para_rg_e_cpf", String(usarParaRgECpf));
+  form.append("confirmar_duplicidade", String(confirmarDuplicidade));
   return comoJson<RespostaEnvio>(
     await buscar(`/api/casos/${casoId}/documentos`, { method: "POST", body: form }),
   );
@@ -1381,15 +1404,102 @@ export async function enviarDocumentosEmLote(
   );
 }
 
-/** Palavra final do escritório sobre o item de um documento já lido. */
-export async function reatribuirEntrega(entregaId: string, itens: string[]): Promise<Entrega> {
+/** Palavra final do escritório sobre o item e o tipo de um documento já lido.
+ *
+ * Com suspeita de duplicidade o servidor devolve 409 sem gravar — ver
+ * `duplicidadesDoErro` — e só `confirmarDuplicidade` conclui. */
+export async function reatribuirEntrega(
+  entregaId: string,
+  itens: string[],
+  opcoes: OpcoesReclassificacao = {},
+): Promise<Entrega> {
   return comoJson<Entrega>(
     await buscar(`/api/entregas/${entregaId}/itens`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itens }),
+      body: JSON.stringify({
+        itens,
+        tipo: opcoes.tipo || null,
+        confirmar_duplicidade: opcoes.confirmarDuplicidade ?? false,
+        motivo: opcoes.motivo ?? "",
+      }),
     }),
   );
+}
+
+/** Reclassificações, devoluções à triagem, repetidos aceitos e remoção do documento. */
+export async function historicoEntrega(entregaId: string): Promise<EventoHistorico[]> {
+  const r = await comoJson<{ eventos: EventoHistorico[] }>(
+    await buscar(`/api/entregas/${entregaId}/historico`),
+  );
+  return r.eventos;
+}
+
+// -------------------------------------------------- glossário de documentos
+// Consultar é livre para a equipe; criar e editar pedem o módulo
+// `glossario_documentos` (ver `app/tipos_documento.py`).
+
+export async function listarTiposDocumento(
+  incluirInativos = false,
+): Promise<TipoDocumentoGlossario[]> {
+  const r = await comoJson<{ tipos: TipoDocumentoGlossario[] }>(
+    await buscar(`/api/tipos-documento?incluir_inativos=${incluirInativos}`),
+  );
+  return r.tipos;
+}
+
+export async function criarTipoDocumento(dados: {
+  nome: string;
+  /** Vazio = gerado a partir do nome. */
+  codigo?: string;
+  descricao: string;
+  sinonimos: string[];
+  /** Categorias (tipos de caso) em cujo checklist o tipo passa a ser pedido. */
+  categorias: string[];
+}): Promise<TipoDocumentoGlossario> {
+  return comoJson(
+    await buscar("/api/tipos-documento", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
+export async function editarTipoDocumento(
+  codigo: string,
+  dados: {
+    nome: string;
+    descricao: string;
+    sinonimos: string[];
+    ativo: boolean;
+    /** A versão lida ao abrir o formulário; outra no servidor = 409. */
+    versao: number;
+    motivo?: string;
+    /** Ausente mantém os tipos de caso marcados; vazio desmarca todos. */
+    categorias?: string[];
+  },
+): Promise<TipoDocumentoGlossario> {
+  return comoJson(
+    await buscar(`/api/tipos-documento/${encodeURIComponent(codigo)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
+export async function impactoTipoDocumento(codigo: string): Promise<ImpactoTipoDocumento> {
+  return comoJson(
+    await buscar(`/api/tipos-documento/${encodeURIComponent(codigo)}/impacto`),
+  );
+}
+
+export async function historicoTipoDocumento(codigo: string): Promise<EventoHistorico[]> {
+  const r = await comoJson<{ eventos: EventoHistorico[] }>(
+    await buscar(`/api/tipos-documento/${encodeURIComponent(codigo)}/historico`),
+  );
+  return r.eventos;
 }
 
 export async function vincularIdentidadeUnificada(
@@ -1510,6 +1620,12 @@ export interface ModuloDeAcesso {
   ordem?: number;
 }
 
+/** Quantas contas dependem de um perfil. É o tamanho do impacto de mexer nele. */
+export interface ContagemDeContas {
+  total: number;
+  ativos: number;
+}
+
 /** Um perfil com os módulos que ele alcança — a linha da matriz de acesso. */
 export interface PerfilComAcesso {
   id: number;
@@ -1521,6 +1637,23 @@ export interface PerfilComAcesso {
   criado_em: string;
   /** Códigos dos módulos marcados, na ordem do catálogo. */
   modulos: string[];
+  /** Contas ligadas a este perfil. Opcional porque só a matriz (protegida) a
+   *  traz — o vocabulário de `listarPerfis` sai sem token e não expõe isso. */
+  usuarios?: ContagemDeContas;
+}
+
+/** Uma alteração já feita em algum perfil — a linha do histórico. */
+export interface AlteracaoDePerfil {
+  id: number;
+  perfil: string;
+  /** `criado`, `atualizado` ou `removido`. */
+  acao: string;
+  /** Quem alterou: o e-mail da conta, que é o login do escritório. */
+  autor: string;
+  /** O que mudou, em uma linha. Vem pronto do servidor para a tela não
+   *  reconstruir a comparação e correr o risco de descrevê-la diferente. */
+  resumo: string;
+  criado_em: string;
 }
 
 export interface UsuarioCadastrado {
@@ -1528,6 +1661,8 @@ export interface UsuarioCadastrado {
   usuario: string;
   nome: string;
   email: string | null;
+  /** Só dígitos, como o servidor guarda. A máscara é da tela (`formatarTelefone`). */
+  telefone?: string;
   ativo: boolean;
   perfis: string[];
   perfilId?: number | null;
@@ -1570,12 +1705,18 @@ export async function salvarPerfil(
   rotulo: string,
   descricao: string,
   modulos: string[],
-): Promise<void> {
-  await buscar(`/api/usuarios/perfis/${encodeURIComponent(codigo)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ codigo, rotulo, descricao, modulos }),
-  });
+): Promise<{ alteracao: { resumo: string } | null }> {
+  /* A resposta é lida, e não descartada: ela diz o que o servidor ENTENDEU da
+   * alteração — inclusive quando ele não gravou nada por não haver mudança. É
+   * isso que a tela mostra de volta, em vez de um "salvo" que não distingue as
+   * duas situações. */
+  return comoJson(
+    await buscar(`/api/usuarios/perfis/${encodeURIComponent(codigo)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigo, rotulo, descricao, modulos }),
+    }),
+  );
 }
 
 /** Apaga um perfil. Os de sistema recusam.
@@ -1585,6 +1726,17 @@ export async function salvarPerfil(
  * para onde essas pessoas vão. */
 export async function removerPerfil(codigo: string): Promise<void> {
   await buscar(`/api/usuarios/perfis/${encodeURIComponent(codigo)}`, { method: "DELETE" });
+}
+
+/** As últimas alterações feitas nos perfis — quem mexeu, quando e no quê.
+ *
+ * A matriz mostra como o acesso ESTÁ; isto mostra como ele chegou aí. Sem o
+ * segundo, "quem abriu este módulo?" só se responde pela memória de alguém. */
+export async function listarHistoricoPerfis(limite = 30): Promise<AlteracaoDePerfil[]> {
+  const r = await comoJson<{ alteracoes: AlteracaoDePerfil[] }>(
+    await buscar(`/api/usuarios/perfis/historico?limite=${limite}`),
+  );
+  return r.alteracoes;
 }
 
 function normalizarPaginacaoUsuarios(
@@ -1634,12 +1786,45 @@ export async function listarUsuarios(): Promise<UsuarioCadastrado[]> {
 export async function criarUsuario(dados: {
   nome: string;
   email: string;
+  telefone?: string;
   perfilId: number;
   senha: string;
 }): Promise<UsuarioCadastrado> {
   return comoJson<UsuarioCadastrado>(
     await buscar("/api/usuarios", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
+/** A conta inteira como deve ficar depois da edição. */
+export interface EdicaoDeUsuario {
+  nome: string;
+  email: string;
+  /** Como foi digitado; o servidor guarda só os dígitos. Vazio apaga o telefone. */
+  telefone: string;
+  perfilId: number;
+  ativo: boolean;
+  /** Vazio mantém a senha atual — ela nunca volta do servidor, então não há o
+   *  que reenviar. */
+  senha: string;
+  /** Volta para a senha padrão, que obriga a pessoa a trocar ao entrar. */
+  redefinirSenha: boolean;
+}
+
+/** Edita uma conta existente. Só o secretário: para os demais o servidor responde 403.
+ *
+ * `alterados` diz o que de fato mudou (nomes de campo, nunca valores), e é isso
+ * que a tela repete — salvar sem mexer em nada volta com a lista vazia. */
+export async function editarUsuario(
+  id: string,
+  dados: EdicaoDeUsuario,
+): Promise<UsuarioCadastrado & { alterados: string[] }> {
+  return comoJson(
+    await buscar(`/api/usuarios/${encodeURIComponent(id)}`, {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(dados),
     }),

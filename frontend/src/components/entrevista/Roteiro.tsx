@@ -36,6 +36,7 @@ import VideoDaEntrevista, { type ControlesVideo } from "@/components/entrevista/
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import SeletorDeRoteiro from "@/components/entrevista/SeletorDeRoteiro";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
 // Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
@@ -2730,38 +2731,35 @@ function CampoResposta({
       {pergunta.transcrever && !escutando && (
         <div className={`${T_ACOES} mb-2`}>
           {!emCurso && (
-            <button
-              type="button"
-              className={T_BOTAO}
+            <BotaoProcesso
+              variante="primario"
+              pequeno
               onClick={() => onGravar(pergunta.id)}
-              disabled={!temMic || ocupado}
-              title={
-                !temMic
-                  ? "Ligue o microfone no topo da tela"
-                  : ocupado
-                    ? "Outra pergunta está gravando — finalize aquela antes"
-                    : ""
-              }
+              pendencia={temMic ? null : "Ligue o microfone no topo da tela."}
+              pendenciaAoClicar
+              aguardando={ocupado ? "Outra pergunta está gravando — finalize aquela antes." : false}
             >
               {/* O rótulo muda porque a operação é a mesma mas a intenção não:
                 * complementar é o que se faz depois de ler a conferência e
                 * descobrir o que faltou perguntar. O trecho novo entra no fim
                 * do que já estava escrito, sem apagar nada. */}
               {texto.trim() ? "Adicionar complemento" : "Gravar resposta"}
-            </button>
+            </BotaoProcesso>
           )}
 
           {emCurso && (
             <>
-              {/* Sem "Pausar": a gravação do atendimento não tem buraco. */}
-              <button
-                type="button"
-                className={gravando && !finalizando ? T_BOTAO_GRAVANDO : T_BOTAO}
+              {/* Sem "Pausar": a gravação do atendimento não tem buraco.
+                * Gravando: vermelho, porque é estado que precisa saltar aos olhos. */}
+              <BotaoProcesso
+                variante={gravando && !finalizando ? "perigo" : "primario"}
+                pequeno
                 onClick={onFinalizar}
-                disabled={finalizando}
+                processando={finalizando}
+                textoProcessando="Transcrevendo…"
               >
-                {finalizando ? "Transcrevendo…" : "Finalizar resposta"}
-              </button>
+                Finalizar resposta
+              </BotaoProcesso>
             </>
           )}
 

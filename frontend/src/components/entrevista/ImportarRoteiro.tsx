@@ -21,15 +21,9 @@ import { useRef, useState } from "react";
 
 import { importarRoteiro } from "@/lib/api";
 import type { RoteiroImportado } from "@/lib/types";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
-const T_BOTAO =
-  "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
-const T_SECUNDARIO =
-  "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer enabled:hover:bg-papel-2";
+const AGUARDE_LEITURA = "Aguarde: o roteiro ainda está sendo montado.";
 const T_ERRO =
   "border-[1.5px] border-critico text-critico p-[10px] font-normal text-[12px] leading-[1.5] font-ui";
 
@@ -81,9 +75,9 @@ export default function ImportarRoteiro({ aoImportar, aoFechar }: Props) {
           <h2 className="m-0 font-semibold text-[19px] leading-[1.15] font-titulo">
             Roteiro a partir de um documento
           </h2>
-          <button type="button" className={T_SECUNDARIO} onClick={aoFechar} disabled={lendo}>
+          <BotaoProcesso variante="discreto" pequeno onClick={aoFechar} aguardando={lendo ? AGUARDE_LEITURA : false}>
             Fechar
-          </button>
+          </BotaoProcesso>
         </div>
 
         <div className="px-4 py-4">
@@ -106,14 +100,14 @@ export default function ImportarRoteiro({ aoImportar, aoFechar }: Props) {
           />
 
           <div className="flex gap-[10px] items-center flex-wrap">
-            <button
-              type="button"
-              className={T_SECUNDARIO}
+            <BotaoProcesso
+              variante="secundario"
+              pequeno
               onClick={() => entrada.current?.click()}
-              disabled={lendo}
+              aguardando={lendo ? AGUARDE_LEITURA : false}
             >
               Escolher arquivo
-            </button>
+            </BotaoProcesso>
             <span className="text-[12px] font-ui text-tinta-3">
               {arquivo ? arquivo.name : "nenhum arquivo escolhido"}
             </span>
@@ -137,14 +131,16 @@ export default function ImportarRoteiro({ aoImportar, aoFechar }: Props) {
           {erro && <div className={`${T_ERRO} mt-4`}>{erro}</div>}
 
           <div className="flex justify-end mt-5">
-            <button
-              type="button"
-              className={T_BOTAO}
-              onClick={() => void importar()}
-              disabled={!arquivo || lendo}
+            <BotaoProcesso
+              variante="primario"
+              onClick={importar}
+              processando={lendo}
+              textoProcessando="Montando o roteiro…"
+              pendencia={arquivo ? null : "Escolha acima o arquivo do roteiro."}
+              onPendencia={() => entrada.current?.click()}
             >
-              {lendo ? "Montando o roteiro…" : "Montar roteiro"}
-            </button>
+              Montar roteiro
+            </BotaoProcesso>
           </div>
         </div>
       </div>

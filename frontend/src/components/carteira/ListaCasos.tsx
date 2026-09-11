@@ -5,6 +5,7 @@ import { FolderOpen, Trash2 } from "lucide-react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
 import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 
@@ -173,14 +174,23 @@ export default function ListaCasos({
             )}
           </div>
 
-          <Botao
+          <BotaoProcesso
             type="submit"
             variante="primario"
             bloco
-            disabled={!cliente.trim() || !categoriaSelecionada || criando}
+            processando={criando}
+            textoProcessando="Criando o caso…"
+            pendencia={
+              !cliente.trim()
+                ? "Digite o nome do cliente para criar o caso."
+                : !categoriaSelecionada
+                  ? "Escolha o tipo de ação."
+                  : null
+            }
+            onPendencia={() => document.getElementById(cliente.trim() ? "categoria" : "cliente")?.focus()}
           >
-            {criando ? "Criando…" : "Criar o caso"}
-          </Botao>
+            Criar o caso
+          </BotaoProcesso>
         </form>
 
         {categorias.length === 0 && (

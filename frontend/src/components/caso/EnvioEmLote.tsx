@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Botao, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 interface Props {
   onEnviar: (arquivos: File[]) => Promise<void> | void;
@@ -144,9 +145,17 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
               </li>
             ))}
           </ul>
-          <Botao variante="primario" bloco className="mt-3" onClick={() => void confirmar()} disabled={enviando}>
-            {enviando ? "Recebendo arquivos…" : `Enviar ${arquivos.length} arquivo(s)`}
-          </Botao>
+          <BotaoProcesso
+            variante="primario"
+            bloco
+            className="mt-3"
+            onClick={confirmar}
+            processando={enviando}
+            textoProcessando="Recebendo arquivos…"
+            dica={`Enviando ${arquivos.length} arquivo(s) — mantenha esta página aberta`}
+          >
+            Enviar {arquivos.length} arquivo(s)
+          </BotaoProcesso>
         </div>
       )}
     </section>

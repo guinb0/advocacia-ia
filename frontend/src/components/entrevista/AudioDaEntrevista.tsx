@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { consultarGravacao, encerrarGravacao, urlDoAudio } from "@/lib/transcricao";
 import type { Gravacao } from "@/lib/transcricao";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* O áudio da entrevista, para ouvir na hora ou baixar em .mp4.
  *
@@ -108,14 +109,14 @@ export default function AudioDaEntrevista({
         * — o arquivo sairia cortado. Um botão explícito finaliza e libera. */}
       {!preparando && !erro && gravacao?.existe && !gravacao.pronto && (
         <div className="mt-3">
-          <button
-            type="button"
-            className="inline-block border-[1.5px] border-tinta bg-transparent text-tinta font-semibold text-[11px] leading-none font-ui tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer hover:bg-tinta hover:text-papel disabled:cursor-wait disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada"
-            onClick={() => void finalizar()}
-            disabled={finalizando}
+          <BotaoProcesso
+            variante="primario"
+            onClick={finalizar}
+            processando={finalizando}
+            textoProcessando="Preparando o áudio…"
           >
-            {finalizando ? "Preparando o áudio…" : "Finalizar entrevista e liberar áudio (.mp4)"}
-          </button>
+            Finalizar entrevista e liberar áudio (.mp4)
+          </BotaoProcesso>
           <p className="mt-[10px] mb-0 font-normal text-[12px] leading-[1.55] font-ui text-tinta-3 max-w-[68ch]">
             {finalizando
               ? "Fechando e convertendo — leva alguns segundos por hora de conversa."
