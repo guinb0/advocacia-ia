@@ -1357,6 +1357,22 @@ function preencherMarcadores(
     return () => window.clearTimeout(timer);
   }, [roteiro, comecarEntrevista, faltaParaComecar.length, chaveIdentificacao]);
 
+  /* Ao preencher o último dado da identificação (por exemplo, Brasília/DF),
+   * a entrevista passa para o modo de leitura e os campos ficam recolhidos no
+   * resumo "Identificação". Sem rolar junto, parecia que o preenchimento tinha
+   * escondido a tela. Leva diretamente ao roteiro, que é a próxima tarefa; os
+   * dados continuam acessíveis pelo botão "Editar dados". */
+  useEffect(() => {
+    if (!escutando) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById("leitura-do-roteiro")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [escutando]);
+
   /* Os nomes que preenchem os marcadores do roteiro.
    *
    * O do cliente sai do campo que já é obrigatório para iniciar; o de quem
@@ -1756,7 +1772,7 @@ function preencherMarcadores(
         * roteiro precisa; mas não some, porque a atendente pode querer voltar a
         * uma frase. Ver `roteiros.SAUDACAO`. */}
       {escutando && roteiro.saudacao?.length > 0 && (
-        <section className="border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
+        <section id="leitura-do-roteiro" className="scroll-mt-24 border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
           <div className="flex items-center justify-between gap-[10px]">
             <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
               LEIA AO CLIENTE
