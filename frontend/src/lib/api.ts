@@ -839,6 +839,7 @@ export interface GastoDocumento {
 
 export interface AnaliseDocumentos {
   achados: AchadoDocumento[];
+  cronologia?: Array<{ data: string; evento: string; documento: string; entrega_id: string; citacao: string }>;
   /** Gastos dos documentos, em ordem cronológica, ligados ao arquivo de origem. */
   gastos?: GastoDocumento[];
   documentos_lidos: number;

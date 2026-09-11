@@ -63,7 +63,12 @@ TEMPO_MODELO_S = 60.0
 INSTRUCAO = """Você lê documentos de um processo trabalhista e aponta o que eles
 dizem e o caso ainda NÃO registrou.
 
-Devolva APENAS JSON: {"achados": [...], "gastos": [...]}
+Devolva APENAS JSON: {"achados": [...], "gastos": [...], "cronologia": [...]}
+
+Cada item de cronologia é um acontecimento do caso registrado em documento (acidente,
+atendimento, internação, cirurgia, exame, afastamento, decisão do INSS etc.):
+{"data":"DD/MM/AAAA","evento":"frase curta do que ocorreu","documento":"nome exato do arquivo","citacao":"trecho LITERAL que traz a data e o evento"}.
+Não inclua data de upload; sem data do acontecimento, não inclua o item.
 
 Cada gasto (despesa que o documento comprova — nota fiscal, recibo, comprovante
 de farmácia, transporte, consulta, exame, honorário etc.):
@@ -310,12 +315,29 @@ def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
         log.info("análise do caso %s: %d achado(s) recusados na conferência", caso_id, recusados)
 
     gastos = _extrair_gastos(bruto, texto_por_arquivo, id_por_arquivo)
+    cronologia = []
+    for item in bruto.get("cronologia") or []:
+        if not isinstance(item, dict):
+            continue
+        arquivo = str(item.get("documento") or "").strip()
+        citacao = str(item.get("citacao") or "").strip()
+        data = str(item.get("data") or "").strip()
+        evento = str(item.get("evento") or "").strip()
+        if not (arquivo and citacao and data and evento):
+            continue
+        corpo = texto_por_arquivo.get(arquivo)
+        if corpo is None or _normalizar(citacao) not in corpo or _chave_data(data)[0]:
+            continue
+        cronologia.append({"data": data[:20], "evento": evento[:220], "documento": arquivo,
+                           "entrega_id": id_por_arquivo[arquivo], "citacao": citacao[:400]})
+    cronologia.sort(key=lambda evento: _chave_data(evento["data"]))
 
     return {
         "achados": achados[:12],
         # Gastos comprovados nos documentos, EM ORDEM CRONOLÓGICA, cada um ligado
         # ao arquivo de origem (issue "Organizar gastos em ordem cronológica").
         "gastos": gastos,
+        "cronologia": cronologia,
         "documentos_lidos": len(documentos),
         # Contado e mostrado de propósito: silenciar a recusa esconderia um
         # modelo alucinando com frequência, que é o que precisa aparecer.
