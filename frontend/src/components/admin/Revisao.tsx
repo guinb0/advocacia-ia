@@ -66,7 +66,6 @@ export default function Revisao() {
 
   return (
     <div className="grid gap-5">
-      <GeradorEmLote aoConcluir={recarregar} />
       <Cartao
         titulo="Revisão de petições"
         subtitulo="As petições que aguardam revisão. Abrir uma marca o início; aprovar ou devolver para ajustes conclui."
@@ -127,7 +126,7 @@ type EstadoLote = "aguardando" | "gerando" | "pronta" | "falhou";
 /** Dispara uma requisição por caso: o navegador não espera uma terminar para
  * começar a próxima, e a fila de revisão continua sendo o ponto único para
  * editar/aprovar cada minuta quando terminar. */
-function GeradorEmLote({ aoConcluir }: { aoConcluir: () => Promise<void> }) {
+export function GeradorEmLote({ aoConcluir }: { aoConcluir: () => Promise<void> }) {
   const [casos, setCasos] = useState<Array<{ id: string; cliente: string; categoria: string }>>([]);
   const [selecionados, setSelecionados] = useState<string[]>([]);
   const [estados, setEstados] = useState<Record<string, { estado: EstadoLote; detalhe?: string }>>({});
