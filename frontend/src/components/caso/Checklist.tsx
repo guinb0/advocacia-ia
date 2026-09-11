@@ -226,6 +226,7 @@ export default function Checklist({
                 key={item.codigo}
                 item={item}
                 itensChecklist={itens}
+                casoId={caso.id}
                 enviando={enviando === item.codigo}
                 onEnviar={onEnviar}
                 onRemover={onRemover}
