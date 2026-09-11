@@ -4,7 +4,8 @@ import { useRef, useState } from "react";
 
 import type { ItemSituacao, OpcoesReclassificacao } from "@/lib/types";
 import { useModelo } from "@/lib/useExtracao";
-import { Botao, Marcacao, Selo } from "@/components/ui/Basicos";
+import { baixarSelecaoDeDocumentos, baixarSelecaoEmPdf } from "@/lib/api";
+import { Aviso, Botao, Marcacao, Selo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import VisorEntrega from "@/components/caso/VisorEntrega";
@@ -60,6 +61,8 @@ const APARENCIA = {
 interface Props {
   item: ItemSituacao;
   itensChecklist: ItemSituacao[];
+  /** O caso a que este item pertence — usado para gerar o ZIP da seleção. */
+  casoId: string;
   enviando: boolean;
   onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
@@ -75,6 +78,7 @@ interface Props {
 export default function ItemChecklistLinha({
   item,
   itensChecklist,
+  casoId,
   enviando,
   onEnviar,
   onRemover,
@@ -86,6 +90,58 @@ export default function ItemChecklistLinha({
   const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
   /** Entrega aberta no visor (arquivo + campos extraídos). */
   const [visor, setVisor] = useState<{ id: string; arquivo: string } | null>(null);
+
+  /* Seleção para o pacote (ZIP ou PDF único). Guarda os ids marcados; um id de
+   * entrega que depois some (removida) fica no conjunto sem efeito — é
+   * filtrado contra as entregas atuais antes de qualquer uso. */
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [baixando, setBaixando] = useState<"zip" | "pdf" | null>(null);
+  const [erroZip, setErroZip] = useState<string | null>(null);
+  const [faltandoZip, setFaltandoZip] = useState(0);
+
+  const idsEntregas = item.entregas.map((e) => e.id);
+  const idsMarcados = idsEntregas.filter((id) => marcados.has(id));
+  const todosMarcados = idsEntregas.length > 0 && idsMarcados.length === idsEntregas.length;
+
+  function alternarMarcado(id: string) {
+    setMarcados((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+  }
+
+  async function baixarSelecao(formato: "zip" | "pdf") {
+    if (idsMarcados.length === 0) return;
+    setBaixando(formato);
+    setErroZip(null);
+    setFaltandoZip(0);
+    try {
+      const pacote =
+        formato === "zip"
+          ? await baixarSelecaoDeDocumentos(casoId, item.codigo, idsMarcados)
+          : await baixarSelecaoEmPdf(casoId, item.codigo, idsMarcados);
+      setFaltandoZip(pacote.faltando);
+      /* Mesmo motivo de `BaixarDocumentos`: o blob veio por `fetch` (o link cru
+       * não manda o Bearer), e sem revogar a URL o pacote fica preso na
+       * memória da aba. */
+      const url = URL.createObjectURL(pacote.arquivo);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = pacote.nome;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      const padrao =
+        formato === "pdf"
+          ? "Não foi possível combinar os arquivos num PDF. Tente baixar em ZIP."
+          : "Não foi possível montar o pacote.";
+      setErroZip(e instanceof Error ? e.message : padrao);
+    } finally {
+      setBaixando(null);
+    }
+  }
   const estadoModelo = useModelo();
   const aparencia = APARENCIA[item.status];
   const podeUsarParaAmbos = item.tipo_ocr === "rg" || item.tipo_ocr === "cpf";
@@ -205,12 +261,77 @@ export default function ItemChecklistLinha({
       )}
 
       {item.entregas.length > 0 && (
-        <ul className="list-none mt-[10px] ml-9 p-0 border border-borda rounded-campo bg-papel-2">
+        <>
+          {/* Selecionar arquivos desta classificação e baixar só eles — em ZIP
+            * ou combinados num único PDF. A classificação é o próprio item —
+            * o pacote nunca mistura entregas de outro. */}
+          <div className="flex items-center gap-3 flex-wrap mt-[10px] ml-9">
+            <Marcacao>
+              <input
+                type="checkbox"
+                checked={todosMarcados}
+                onChange={() =>
+                  setMarcados(todosMarcados ? new Set() : new Set(idsEntregas))
+                }
+                disabled={!!baixando}
+              />
+              <span>
+                Selecionar {item.entregas.length === 1 ? "o arquivo" : "todos"}
+              </span>
+            </Marcacao>
+            <Botao
+              variante="secundario"
+              pequeno
+              onClick={() => void baixarSelecao("zip")}
+              disabled={!!baixando || idsMarcados.length === 0}
+            >
+              {baixando === "zip"
+                ? "Montando o pacote…"
+                : `Baixar ${idsMarcados.length || ""} selecionado${idsMarcados.length === 1 ? "" : "s"} (.zip)`}
+            </Botao>
+            {idsMarcados.length > 1 && (
+              <Botao
+                variante="secundario"
+                pequeno
+                onClick={() => void baixarSelecao("pdf")}
+                disabled={!!baixando}
+                title="Junta as páginas de todos os selecionados num único arquivo PDF"
+              >
+                {baixando === "pdf" ? "Combinando…" : "Baixar como um PDF único"}
+              </Botao>
+            )}
+          </div>
+
+          {faltandoZip > 0 && (
+            <div className="mt-2 ml-9 max-w-[74ch]">
+              <Aviso tom="atencao" titulo="O pacote saiu incompleto">
+                {faltandoZip} {faltandoZip === 1 ? "arquivo constava" : "arquivos constavam"}{" "}
+                na seleção mas não {faltandoZip === 1 ? "está" : "estão"} mais no disco.
+              </Aviso>
+            </div>
+          )}
+          {erroZip && (
+            <div className="mt-2 ml-9 max-w-[74ch]">
+              <Aviso tom="critico" titulo="Não foi possível baixar">
+                {erroZip}
+              </Aviso>
+            </div>
+          )}
+
+          <ul className="list-none mt-[10px] ml-9 p-0 border border-borda rounded-campo bg-papel-2">
           {item.entregas.map((entrega) => (
             <li
               key={entrega.id}
               className="flex items-center gap-[10px] flex-wrap px-3 py-[10px] border-b border-borda last:border-b-0"
             >
+              <input
+                type="checkbox"
+                className="flex-none"
+                checked={marcados.has(entrega.id)}
+                onChange={() => alternarMarcado(entrega.id)}
+                disabled={!!baixando}
+                aria-label={`Selecionar ${entrega.arquivo}`}
+              />
               <Selo tom="ok" simbolo="✓">
                 Recebido
               </Selo>
@@ -314,7 +435,8 @@ export default function ItemChecklistLinha({
               })()}
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       )}
 
       {visor && (

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import armazenamento, cache_leitura, categorias
+from . import armazenamento, cache_leitura, categorias, conversao_pdf
 from .categorias import ItemChecklist
 from .extractors import RE_PIS, ROTULOS_TIPO
 
@@ -797,4 +797,214 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
         "faltando": faltando,
         "cliente": situacao["caso"]["cliente"],
         "pronto": situacao["progresso"]["pronto"],
+    }
+
+
+# ------------------------------------------- ZIP de uma seleção por classificação
+
+
+class SelecaoInvalida(Exception):
+    """Pedido de ZIP por classificação recusado inteiro.
+
+    Motivos: um id que não é daquela classificação (item errado ou outro caso),
+    ou seleção acima do teto de quantidade/tamanho. `status` é o código HTTP que
+    a rota devolve — a regra do "por que recusou" mora aqui, não no `main`.
+    """
+
+    def __init__(self, mensagem: str, status: int = 400) -> None:
+        super().__init__(mensagem)
+        self.status = status
+
+
+def _resolver_selecao(
+    caso_id: str,
+    classificacao: str,
+    entrega_ids: list[str],
+    *,
+    limite_itens: int,
+    limite_bytes: int,
+) -> tuple[dict[str, Any], list[tuple[str, Path]], list[str], dict[str, dict[str, Any]], str] | None:
+    """Valida e resolve uma seleção de entregas dentro de UMA classificação.
+
+    Compartilhada por `montar_zip_selecao` e `montar_pdf_selecao`: as regras do
+    que pode entrar são as MESMAS nos dois formatos — só muda o que se faz com
+    os arquivos depois de resolvidos.
+
+    Devolve `(item, resolvidos, faltando, do_item, cliente)`, com `resolvidos`
+    já com o caminho no disco pronto para uso. `None` se o caso não existe.
+    `SelecaoInvalida` recusa o pedido INTEIRO: classificação que não existe,
+    id de outro item ou de outro caso (é essa a checagem de acesso por
+    documento), ou seleção acima do teto de quantidade/tamanho.
+    """
+    situacao = montar_situacao(caso_id)
+    if situacao is None:
+        return None
+    if situacao.get("categoria") is None:
+        raise SelecaoInvalida(
+            situacao.get("erro") or "A categoria deste caso não existe mais.", 409
+        )
+
+    item = next(
+        (i for i in situacao["itens"] if i["codigo"] == classificacao), None
+    )
+    if item is None:
+        raise SelecaoInvalida(
+            f"A classificação '{classificacao}' não existe nesta categoria.", 404
+        )
+
+    # Dois cliques no mesmo arquivo não são dois arquivos; a ordem da seleção é
+    # preservada porque é a ordem em que a tela mostrou as linhas.
+    pedidos = list(dict.fromkeys(entrega_ids))
+    if not pedidos:
+        raise SelecaoInvalida("Nenhum documento foi selecionado.")
+    if len(pedidos) > limite_itens:
+        raise SelecaoInvalida(
+            f"São aceitos até {limite_itens} documentos por pacote. "
+            "Divida a seleção em partes menores.",
+            413,
+        )
+
+    do_item = {e["id"]: e for e in item["entregas"]}
+    intrusos = [eid for eid in pedidos if eid not in do_item]
+    if intrusos:
+        raise SelecaoInvalida(
+            f"{len(intrusos)} documento(s) selecionado(s) não pertencem à "
+            f"classificação '{item['nome']}'.",
+            409,
+        )
+
+    # Resolve os caminhos ANTES de escrever: some quem não tem cópia recuperável,
+    # e a soma dos bytes reprova a seleção grande antes de gastar disco.
+    # Documento é PDF/foto já comprimido, então essa soma é ~o tamanho do ZIP
+    # (o PDF combinado pode diferir um pouco, por causa da recompressão de
+    # imagem — ver `conversao_pdf.converter_para_pdf`).
+    resolvidos: list[tuple[str, Path]] = []
+    faltando: list[str] = []
+    total_bytes = 0
+    for eid in pedidos:
+        caminho = armazenamento.caminho_duravel_da_entrega(eid)
+        if caminho is None:
+            faltando.append(do_item[eid]["arquivo"])
+            continue
+        total_bytes += caminho.stat().st_size
+        resolvidos.append((eid, caminho))
+
+    if total_bytes > limite_bytes:
+        raise SelecaoInvalida(
+            f"A seleção passa de {limite_bytes // (1024 * 1024)}MB. "
+            "Baixe em partes menores.",
+            413,
+        )
+
+    return item, resolvidos, faltando, do_item, situacao["caso"]["cliente"]
+
+
+def montar_zip_selecao(
+    caso_id: str,
+    classificacao: str,
+    entrega_ids: list[str],
+    destino: Path,
+    *,
+    limite_itens: int,
+    limite_bytes: int,
+) -> dict[str, Any] | None:
+    """ZIP só com as entregas marcadas DENTRO de uma classificação.
+
+    O irmão `montar_zip` leva o caso inteiro na ordem do checklist. Aqui o
+    atendente escolhe uma classificação — "Laudos médicos", por exemplo —, marca
+    alguns arquivos dela e leva só esses. Cada arquivo sai prefixado pelo nome da
+    classificação, para o outro lado conferir contra a mesma lista.
+
+    `None` se o caso não existe. Um id cujo arquivo sumiu do disco é PULADO e
+    contado em `faltando`, nunca inventado. Ver `_resolver_selecao` para as
+    condições em que o pedido é recusado inteiro.
+    """
+    resolvido = _resolver_selecao(
+        caso_id, classificacao, entrega_ids,
+        limite_itens=limite_itens, limite_bytes=limite_bytes,
+    )
+    if resolvido is None:
+        return None
+    item, resolvidos, faltando, do_item, cliente = resolvido
+
+    guardados: list[str] = []
+    if resolvidos:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
+            usados: set[str] = set()
+            for eid, caminho in resolvidos:
+                nome = _nome_no_pacote(
+                    item["numero"], item["nome"], do_item[eid]["arquivo"]
+                )
+                # Dois arquivos com o mesmo nome: o descompactador sobrescreve um
+                # com o outro, calado.
+                if nome in usados:
+                    base, ponto, ext = nome.rpartition(".")
+                    nome = (
+                        f"{base} ({len(usados)}){ponto}{ext}"
+                        if ponto
+                        else f"{nome} ({len(usados)})"
+                    )
+                usados.add(nome)
+                pacote.write(caminho, arcname=nome)
+                guardados.append(nome)
+
+    return {
+        "arquivos": len(guardados),
+        "faltando": faltando,
+        "cliente": cliente,
+        "classificacao": item["nome"],
+        "classificacao_codigo": item["codigo"],
+    }
+
+
+def montar_pdf_selecao(
+    caso_id: str,
+    classificacao: str,
+    entrega_ids: list[str],
+    destino: Path,
+    *,
+    limite_itens: int,
+    limite_bytes: int,
+    limite_paginas: int,
+) -> dict[str, Any] | None:
+    """Os documentos marcados de UMA classificação, juntos num único PDF.
+
+    Mesma seleção e mesmas guardas de `montar_zip_selecao` — o que muda é o
+    formato de saída: em vez de um ZIP com N arquivos, um PDF só com as páginas
+    de todos, na ordem em que foram marcados. PDF entra intacto; imagem vira
+    página, pelo mesmo conversor do botão "baixar como PDF" de uma entrega
+    (`conversao_pdf.converter_para_pdf`).
+
+    `None` se o caso não existe. Levanta `SelecaoInvalida` nas mesmas condições
+    do ZIP (ver `_resolver_selecao`), mais quando algum arquivo não é PDF nem
+    imagem, ou a soma de páginas passa do limite.
+    """
+    resolvido = _resolver_selecao(
+        caso_id, classificacao, entrega_ids,
+        limite_itens=limite_itens, limite_bytes=limite_bytes,
+    )
+    if resolvido is None:
+        return None
+    item, resolvidos, faltando, do_item, cliente = resolvido
+
+    total_paginas = 0
+    if resolvidos:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            total_paginas = conversao_pdf.mesclar_em_pdf(
+                [(caminho, do_item[eid]["arquivo"]) for eid, caminho in resolvidos],
+                destino,
+                limite_paginas=limite_paginas,
+            )
+        except conversao_pdf.ErroConversaoPdf as exc:
+            raise SelecaoInvalida(str(exc), 415) from exc
+
+    return {
+        "arquivos": len(resolvidos),
+        "paginas": total_paginas,
+        "faltando": faltando,
+        "cliente": cliente,
+        "classificacao": item["nome"],
+        "classificacao_codigo": item["codigo"],
     }
