@@ -49,7 +49,11 @@ from . import (
     analise_resposta,
     armazenamento,
     assinatura,
+    assinatura_autentique,
+    assinatura_clicksign,
+    assinatura_config,
     assinatura_navegador,
+    assinatura_provedores,
     auth,
     jurimetria_caso,
     captcha,
@@ -154,6 +158,10 @@ async def ciclo_de_vida(_: FastAPI):
             await run_in_threadpool(revisao.inicializar)
         except Exception:
             log.exception("Não foi possível inicializar a tabela de revisões")
+        try:
+            await run_in_threadpool(assinatura_config.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a configuração de assinatura eletrônica")
         try:
             # Cria a tabela de contas e garante que exista pelo menos uma, senão um
             # ambiente novo sobe com a autenticação ligada e nenhum jeito de entrar.
@@ -1273,10 +1281,78 @@ def config_assinatura():
     return {
         **assinatura.configuracao(),
         "whatsapp_proprio": whatsapp.configurado(),
-        # Envio pelo SITE do ZapSign (Playwright), para o plano sem API. A tela só
-        # oferece o botão quando há login configurado no ambiente.
-        "navegador": assinatura_navegador.configurado(),
+        # Envio pelo SITE do ZapSign (Playwright) OU pela API do provedor que o
+        # escritório tiver ativado (Clicksign/Autentique) — ver `assinatura_provedores`.
+        # A tela só oferece o botão quando há um caminho de envio pronto.
+        "navegador": assinatura_provedores.configurado(),
+        "provedor_ativo": assinatura_config.provedor_ativo(),
     }
+
+
+@app.get("/api/assinatura/provedores", dependencies=[Depends(auth.exigir_modulo("contratos"))])
+def listar_provedores_assinatura():
+    """Status de cada provedor para a tela de configuração — nunca o token."""
+    return {"provedores": assinatura_config.status()}
+
+
+class PedidoTokenProvedor(BaseModel):
+    token: str = Field(..., min_length=4, max_length=4000)
+
+
+@app.post(
+    "/api/assinatura/provedores/{provedor}/token",
+    dependencies=[Depends(auth.exigir_modulo("contratos"))],
+)
+def salvar_token_provedor_assinatura(provedor: str, pedido: PedidoTokenProvedor):
+    """Cifra e salva o token do escritório. Não testa sozinho — use o botão de teste."""
+    try:
+        assinatura_config.salvar_token(provedor, pedido.token)
+    except assinatura_config.ErroConfigAssinatura as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "provedor": provedor, "configurado": True, "testado_ok": False}
+
+
+@app.post(
+    "/api/assinatura/provedores/{provedor}/testar",
+    dependencies=[Depends(auth.exigir_modulo("contratos"))],
+)
+async def testar_provedor_assinatura(provedor: str):
+    """Bate na API do provedor com o token salvo e registra o resultado."""
+    adaptador = {
+        "clicksign": assinatura_clicksign,
+        "autentique": assinatura_autentique,
+    }.get(provedor)
+    if adaptador is None:
+        raise HTTPException(
+            422, f"Provedor {provedor!r} desconhecido. Use clicksign ou autentique."
+        )
+    try:
+        token = assinatura_config.token_de(provedor)
+    except assinatura_config.ErroConfigAssinatura as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    ok, mensagem = await adaptador.testar(token)
+    assinatura_config.marcar_teste(provedor, ok, mensagem)
+    if not ok:
+        raise HTTPException(502, mensagem)
+    return {"ok": True, "mensagem": mensagem}
+
+
+class PedidoAtivarProvedor(BaseModel):
+    provedor: str = Field(..., min_length=3, max_length=20)
+
+
+@app.post(
+    "/api/assinatura/provedores/ativar",
+    dependencies=[Depends(auth.exigir_modulo("contratos"))],
+)
+def ativar_provedor_assinatura(pedido: PedidoAtivarProvedor):
+    """Torna o provedor escolhido o caminho de envio — exige teste aprovado."""
+    try:
+        assinatura_config.ativar(pedido.provedor)
+    except assinatura_config.ErroConfigAssinatura as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "provedor_ativo": assinatura_config.provedor_ativo()}
 
 
 @app.post("/api/assinatura/navegador", status_code=201)
@@ -1292,16 +1368,14 @@ async def enviar_assinatura_pelo_site(
     entra na conta (Playwright), sobe o PDF e dispara o convite por e-mail. Se o
     site devolver o link e houver telefone, ele também vai ao cliente pela nossa
     Evolution. Ver `app/assinatura_navegador.py`.
+
+    Quando o escritório tiver Clicksign ou Autentique ativada em Configurações, o
+    envio sai por lá em vez do site do ZapSign — ver `app/assinatura_provedores.py`.
     """
-    if not assinatura_navegador.configurado():
-        raise HTTPException(
-            503,
-            "O envio pelo site do ZapSign não está configurado: falta o login "
-            "(ZAPSIGN_LOGIN_EMAIL/ZAPSIGN_LOGIN_SENHA) no ambiente.",
-        )
+    if not assinatura_provedores.configurado():
+        raise HTTPException(503, assinatura_provedores.mensagem_nao_configurado())
     pdf = await _ler_upload(arquivo)
-    resultado = await run_in_threadpool(
-        assinatura_navegador.enviar_para_assinatura,
+    resultado = await assinatura_provedores.enviar_um(
         pdf,
         arquivo.filename or "documento.pdf",
         cliente_nome.strip(),
@@ -1384,12 +1458,8 @@ async def enviar_documento_para_assinatura_site(pedido: PedidoAssinaturaDireta):
     clique. O convite sai por e-mail e, havendo telefone, o link também vai pelo
     WhatsApp do cliente.
     """
-    if not assinatura_navegador.configurado():
-        raise HTTPException(
-            503,
-            "O envio pelo site do ZapSign não está configurado: falta o login "
-            "(ZAPSIGN_LOGIN_EMAIL/ZAPSIGN_LOGIN_SENHA) no ambiente.",
-        )
+    if not assinatura_provedores.configurado():
+        raise HTTPException(503, assinatura_provedores.mensagem_nao_configurado())
     if pedido.documento not in contrato.CODIGOS:
         raise HTTPException(
             422,
@@ -1400,8 +1470,8 @@ async def enviar_documento_para_assinatura_site(pedido: PedidoAssinaturaDireta):
     if not email:
         raise HTTPException(
             422,
-            "A ZapSign exige um e-mail para enviar o convite. Preencha o e-mail do "
-            "cliente na entrevista e tente de novo.",
+            "O envio para assinatura exige um e-mail para mandar o convite. Preencha "
+            "o e-mail do cliente na entrevista e tente de novo.",
         )
     try:
         docx, _faltando = await run_in_threadpool(
@@ -1417,8 +1487,7 @@ async def enviar_documento_para_assinatura_site(pedido: PedidoAssinaturaDireta):
         (m["rotulo"] for m in contrato.MODELOS if m["codigo"] == pedido.documento),
         pedido.documento,
     )
-    resultado = await run_in_threadpool(
-        assinatura_navegador.enviar_para_assinatura,
+    resultado = await assinatura_provedores.enviar_um(
         pdf,
         f"{rotulo} - {nome or 'cliente'}.pdf".replace("/", "-"),
         nome,
@@ -1455,24 +1524,20 @@ class PedidoAssinaturaTodos(BaseModel):
 async def enviar_todos_para_assinatura_site(pedido: PedidoAssinaturaTodos):
     """Gera contrato + procuração + declaração e os manda assinar num clique.
 
-    Os três sobem na MESMA sessão do navegador (um login só) pela conta ZapSign;
-    cada um volta com o seu link de assinatura e, havendo telefone, cada link vai
-    ao cliente pelo WhatsApp — um por documento, para ele não achar que acabou no
-    primeiro.
+    Os três sobem na MESMA sessão do navegador (um login só) quando o provedor
+    ativo é a ZapSign; cada um volta com o seu link de assinatura e, havendo
+    telefone, cada link vai ao cliente pelo WhatsApp — um por documento, para
+    ele não achar que acabou no primeiro.
     """
-    if not assinatura_navegador.configurado():
-        raise HTTPException(
-            503,
-            "O envio pelo site do ZapSign não está configurado: falta o login "
-            "(ZAPSIGN_LOGIN_EMAIL/ZAPSIGN_LOGIN_SENHA) no ambiente.",
-        )
+    if not assinatura_provedores.configurado():
+        raise HTTPException(503, assinatura_provedores.mensagem_nao_configurado())
     nome = str(pedido.respostas.get("nome") or "").strip()
     email = str(pedido.respostas.get("email") or "").strip()
     if not email:
         raise HTTPException(
             422,
-            "A ZapSign exige um e-mail para enviar o convite. Preencha o e-mail do "
-            "cliente na entrevista e tente de novo.",
+            "O envio para assinatura exige um e-mail para mandar o convite. Preencha "
+            "o e-mail do cliente na entrevista e tente de novo.",
         )
     try:
         gerados = await run_in_threadpool(
@@ -1493,9 +1558,7 @@ async def enviar_todos_para_assinatura_site(pedido: PedidoAssinaturaTodos):
     except contrato.ErroContrato as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    resultado = await run_in_threadpool(
-        assinatura_navegador.enviar_varios_para_assinatura, documentos, nome, email
-    )
+    resultado = await assinatura_provedores.enviar_varios(documentos, nome, email)
     if not resultado["ok"]:
         raise HTTPException(502, resultado["erro"])
 
