@@ -8,6 +8,7 @@ publicadas; este módulo mantém as duas em sincronia enquanto a transição exi
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -22,6 +23,8 @@ __all__ = [
     "listar",
     "salvar",
     "remover",
+    "historico",
+    "usuarios_por_perfil",
     "pode",
     "modulos_de",
     "modulos_ordenados_de",
@@ -145,6 +148,19 @@ MODULOS: tuple[dict[str, str], ...] = (
         "grupo": "Escritório",
         "ordem": 110,
     },
+    {
+        "codigo": "glossario_documentos",
+        "rotulo": "Glossário de documentos",
+        "descricao": (
+            "Criar e editar os tipos de documento usados na classificação e na "
+            "reclassificação. Consultar a lista é livre para a equipe."
+        ),
+        "rota": "glossarioDocumentos",
+        # Manutenção de cadastro, como os roteiros: é o gestor do escritório que
+        # decide o vocabulário, e não quem está com o documento na mão.
+        "grupo": "Escritório",
+        "ordem": 115,
+    },
 )
 CODIGOS_MODULOS = tuple(m["codigo"] for m in MODULOS)
 
@@ -160,6 +176,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "modulos": (
             "entrevista", "casos", "documentos", "operacao", "agente", "contratos",
             "investigacao", "usuarios", "roteiros", "revisao",
+            "glossario_documentos",
         ),
     },
     {
@@ -171,9 +188,11 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         # escritório — importa do documento, corrige pergunta, desfaz edição —
         # sem necessariamente conduzir atendimento. São trabalhos diferentes, e
         # dar um não obriga a dar o outro.
+        # `glossario_documentos` junto de `usuarios`: quem administra as contas do
+        # escritório é o gestor, e o vocabulário dos documentos é cadastro dele.
         "modulos": (
             "casos", "documentos", "supervisao", "metricas", "operacao", "agente", "usuarios",
-            "roteiros", "revisao",
+            "roteiros", "revisao", "glossario_documentos",
         ),
     },
     {
@@ -209,6 +228,12 @@ _TABELA_ACESSOS = f"{SCHEMA}.{PREFIXO}perfil_modulos"
 _TABELA_PERFIS_NOVA = f"{SCHEMA}.{PREFIXO}tb_perfis"
 _TABELA_MODULOS = f"{SCHEMA}.{PREFIXO}tb_modulos_web"
 _TABELA_PERMISSOES = f"{SCHEMA}.{PREFIXO}tb_permissoes"
+_TABELA_ALTERACOES = f"{SCHEMA}.{PREFIXO}perfil_alteracoes"
+#: Lida daqui, e não do módulo de contas, porque a pergunta é da MATRIZ: "quem
+#: perde acesso se esta caixa for desmarcada?". Quem responde isso precisa
+#: acompanhar a alteração no mesmo instante em que ela é gravada, e não depois,
+#: da tela de cadastro.
+_TABELA_USUARIOS = f"{SCHEMA}.{PREFIXO}usuarios"
 
 ESQUEMA = f"""
 IF OBJECT_ID('{_TABELA_PERFIS}') IS NULL
@@ -261,6 +286,18 @@ CREATE TABLE {_TABELA_PERMISSOES} (
         REFERENCES {_TABELA_MODULOS} (id),
     CONSTRAINT fk_acervo_tb_permissoes_perfil FOREIGN KEY (perfil)
         REFERENCES {_TABELA_PERFIS_NOVA} (id)
+);
+
+IF OBJECT_ID('{_TABELA_ALTERACOES}') IS NULL
+CREATE TABLE {_TABELA_ALTERACOES} (
+    id             int            IDENTITY(1,1) NOT NULL CONSTRAINT pk_acervo_perfil_alteracoes PRIMARY KEY,
+    perfil_codigo  varchar(60)    NOT NULL,
+    acao           varchar(20)    NOT NULL,
+    autor          nvarchar(200)  NOT NULL,
+    resumo         nvarchar(600)  NOT NULL,
+    antes          nvarchar(max)  NULL,
+    depois         nvarchar(max)  NULL,
+    criado_em      varchar(40)    NOT NULL
 );
 
 IF OBJECT_ID('{SCHEMA}.ck_acervo_tb_permissoes_hasPermissao', 'C') IS NULL
@@ -620,14 +657,185 @@ def listar() -> list[dict[str, Any]]:
     ]
 
 
+def _estado_de(con: Any, codigo: str) -> dict[str, Any] | None:
+    """O perfil como ele está AGORA, ou `None` se ele ainda não existe.
+
+    Lido dentro da transação de quem vai alterar, e não antes dela: entre uma
+    leitura solta e a escrita cabe outra alteração, e a trilha registraria como
+    "antes" um estado que já não era o anterior de verdade.
+    """
+    linha = con.execute(
+        f"SELECT rotulo, descricao FROM {_TABELA_PERFIS} WHERE codigo = ?", (codigo,)
+    ).fetchone()
+    if linha is None:
+        return None
+    marcados = con.execute(
+        f"""SELECT m.nome_modulo AS modulo
+              FROM {_TABELA_PERMISSOES} a
+              JOIN {_TABELA_PERFIS_NOVA} p ON p.id = a.perfil
+              JOIN {_TABELA_MODULOS} m ON m.id = a.modulo
+             WHERE p.nome = ? AND p.ativo = 1 AND m.ativo = 1 AND a.hasPermissao = 's'""",
+        (codigo,),
+    ).fetchall()
+    return {
+        "rotulo": linha["rotulo"],
+        "descricao": linha["descricao"],
+        "modulos": sorted(str(item["modulo"]) for item in marcados),
+    }
+
+
+def _resumo_da_mudanca(antes: dict[str, Any] | None, depois: dict[str, Any]) -> str:
+    """O que mudou, em uma linha legível. Vazio quando nada mudou.
+
+    Vazio é o sinal que impede a trilha de encher de linhas iguais: salvar sem
+    ter mexido em nada é o que acontece quando alguém abre a tela, clica e
+    desiste — e uma auditoria cheia desses registros esconde a alteração real.
+
+    Os CÓDIGOS dos módulos vão no texto, não os rótulos. O rótulo é editável e
+    muda com o tempo; o registro precisa continuar querendo dizer a mesma coisa
+    daqui a um ano.
+    """
+    if antes is None:
+        marcados = ", ".join(depois["modulos"]) or "nenhum módulo"
+        return f"perfil criado com {marcados}"
+
+    partes: list[str] = []
+    if antes["rotulo"] != depois["rotulo"]:
+        partes.append(f"rótulo: {antes['rotulo']} para {depois['rotulo']}")
+    if antes["descricao"] != depois["descricao"]:
+        partes.append("descrição alterada")
+
+    concedidos = [m for m in depois["modulos"] if m not in antes["modulos"]]
+    retirados = [m for m in antes["modulos"] if m not in depois["modulos"]]
+    if concedidos:
+        partes.append("módulos concedidos: " + ", ".join(concedidos))
+    if retirados:
+        partes.append("módulos retirados: " + ", ".join(retirados))
+    return "; ".join(partes)
+
+
+def _registrar(
+    con: Any,
+    codigo: str,
+    acao: str,
+    antes: dict[str, Any] | None,
+    depois: dict[str, Any] | None,
+    resumo: str,
+    autor: str,
+    agora: str,
+) -> dict[str, Any] | None:
+    """Grava a linha da trilha. `resumo` vazio não vira registro.
+
+    Na MESMA transação da alteração, de propósito: uma trilha gravada à parte
+    pode sobreviver a uma alteração que deu erro e foi desfeita — e aí o
+    registro afirma uma mudança que não aconteceu.
+    """
+    if not resumo:
+        return None
+    con.execute(
+        f"""INSERT INTO {_TABELA_ALTERACOES}
+               (perfil_codigo, acao, autor, resumo, antes, depois, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            codigo,
+            acao,
+            autor or "desconhecido",
+            resumo[:600],
+            json.dumps(antes, ensure_ascii=False) if antes is not None else None,
+            json.dumps(depois, ensure_ascii=False) if depois is not None else None,
+            agora,
+        ),
+    )
+    return {
+        "perfil": codigo,
+        "acao": acao,
+        "autor": autor or "desconhecido",
+        "resumo": resumo,
+        "criado_em": agora,
+    }
+
+
+def _quantos_usam(con: Any, codigo: str) -> int:
+    """Contas ligadas a este perfil, pelo id novo ou pelo nome legado."""
+    identificador = _perfil_id(con, codigo)
+    linha = con.execute(
+        f"""SELECT COUNT(*) AS n
+              FROM {_TABELA_USUARIOS}
+             WHERE perfil = ? OR (? IS NOT NULL AND perfil_id = ?)""",
+        (codigo, identificador, identificador),
+    ).fetchone()
+    return int(linha["n"]) if linha else 0
+
+
+def usuarios_por_perfil() -> dict[str, dict[str, int]]:
+    """Quantas contas cada perfil tem, no total e ativas.
+
+    É o que responde "quem eu afeto se mexer nesta linha?" antes de a alteração
+    ser feita. Sem isso, desmarcar um módulo é decisão tomada às cegas: a matriz
+    mostra o desenho de acesso e não mostra a gente que está atrás dele.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            f"""SELECT COALESCE(p.nome, u.perfil) AS perfil,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN u.ativo = 1 THEN 1 ELSE 0 END) AS ativos
+                  FROM {_TABELA_USUARIOS} u
+             LEFT JOIN {_TABELA_PERFIS_NOVA} p ON p.id = u.perfil_id
+              GROUP BY COALESCE(p.nome, u.perfil)"""
+        ).fetchall()
+    return {
+        str(linha["perfil"]): {
+            "total": int(linha["total"] or 0),
+            "ativos": int(linha["ativos"] or 0),
+        }
+        for linha in linhas
+        if linha["perfil"]
+    }
+
+
+def historico(limite: int = 50) -> list[dict[str, Any]]:
+    """As últimas alterações de perfil, da mais recente para a mais antiga."""
+    limite = max(1, min(int(limite), 200))
+    with conectar() as con:
+        linhas = con.execute(
+            f"""SELECT TOP (?) id, perfil_codigo, acao, autor, resumo, antes, depois, criado_em
+                  FROM {_TABELA_ALTERACOES}
+                 ORDER BY id DESC""",
+            (limite,),
+        ).fetchall()
+    return [
+        {
+            "id": linha["id"],
+            "perfil": linha["perfil_codigo"],
+            "acao": linha["acao"],
+            "autor": linha["autor"],
+            "resumo": linha["resumo"],
+            "antes": json.loads(linha["antes"]) if linha["antes"] else None,
+            "depois": json.loads(linha["depois"]) if linha["depois"] else None,
+            "criado_em": linha["criado_em"],
+        }
+        for linha in linhas
+    ]
+
+
 def salvar(
-    codigo: str, rotulo: str, descricao: str, modulos: list[str]
+    codigo: str,
+    rotulo: str,
+    descricao: str,
+    modulos: list[str],
+    *,
+    autor: str = "",
 ) -> dict[str, Any]:
     """Cria ou atualiza um perfil e a lista de módulos que ele acessa.
 
     Módulo fora do catálogo é descartado em silêncio — não é erro do usuário, é
     tela desatualizada mandando código que não existe mais, e recusar a operação
     inteira por causa disso perderia as marcações válidas junto.
+
+    `autor` é quem responde pela alteração e vai para a trilha
+    (`acervo_perfil_alteracoes`) junto do estado anterior e do novo. Tem padrão
+    vazio porque há chamadas internas sem sessão — a inicialização, por exemplo
+    —, e essas gravam como "desconhecido" em vez de inventar um nome.
     """
     ativos = _codigos_modulos_ativos()
     limpo = [m for m in modulos if m in ativos]
@@ -641,6 +849,7 @@ def salvar(
 
     agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with conectar() as con:
+        antes = _estado_de(con, codigo)
         existe = con.execute(
             f"SELECT sistema FROM {_TABELA_PERFIS} WHERE codigo = ?", (codigo,)
         ).fetchone()
@@ -667,12 +876,45 @@ def salvar(
         for modulo in CODIGOS_MODULOS:
             _definir_permissao(con, codigo, modulo, modulo in limpo)
 
-    return {"codigo": codigo, "rotulo": rotulo, "descricao": descricao, "modulos": limpo}
+        depois = {"rotulo": rotulo, "descricao": descricao, "modulos": sorted(limpo)}
+        resumo = _resumo_da_mudanca(antes, depois)
+        # A contagem entra no resumo só quando alguém PERDE acesso: é o caso em
+        # que a auditoria precisa saber o tamanho do estrago sem ter de
+        # reconstruir depois quem usava o perfil naquele dia.
+        perdeu = antes is not None and any(
+            m not in depois["modulos"] for m in antes["modulos"]
+        )
+        if resumo and perdeu:
+            afetadas = _quantos_usam(con, codigo)
+            if afetadas:
+                resumo = f"{resumo}; {afetadas} conta(s) usavam este perfil"
+        registro = _registrar(
+            con,
+            codigo,
+            "criado" if antes is None else "atualizado",
+            antes,
+            depois,
+            resumo,
+            autor,
+            agora,
+        )
+
+    return {
+        "codigo": codigo,
+        "rotulo": rotulo,
+        "descricao": descricao,
+        "modulos": limpo,
+        "alteracao": registro,
+    }
 
 
-def remover(codigo: str) -> None:
+def remover(codigo: str, *, autor: str = "") -> None:
     """Apaga um perfil. Os de sistema não podem ser apagados — ver `SEMENTE`."""
+    from datetime import datetime, timezone
+
+    agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with conectar() as con:
+        antes = _estado_de(con, codigo)
         linha = con.execute(
             f"SELECT sistema FROM {_TABELA_PERFIS} WHERE codigo = ?", (codigo,)
         ).fetchone()
@@ -688,6 +930,7 @@ def remover(codigo: str) -> None:
             con.execute(f"UPDATE {_TABELA_PERFIS_NOVA} SET ativo = 0 WHERE id = ?", (perfil_id,))
         con.execute(f"DELETE FROM {_TABELA_ACESSOS} WHERE perfil_codigo = ?", (codigo,))
         con.execute(f"DELETE FROM {_TABELA_PERFIS} WHERE codigo = ?", (codigo,))
+        _registrar(con, codigo, "removido", antes, None, "perfil removido", autor, agora)
 
 
 def modulos_de(perfis: list[str] | tuple[str, ...]) -> set[str]:

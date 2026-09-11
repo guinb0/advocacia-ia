@@ -46,6 +46,7 @@ __all__ = [
     "conectar",
     "dsn",
     "inicializar_schema",
+    "limite_de_espera_por_lock",
     "sessao",
 ]
 
@@ -258,6 +259,31 @@ def _qualificar(sql: str) -> str:
 #: Conexão emprestada pelo escopo em curso, quando há um (ver `sessao`).
 _emprestada: ContextVar[Conexao | None] = ContextVar("conexao_emprestada", default=None)
 
+#: Teto de espera por lock das conexões abertas no escopo em curso, em ms.
+_limite_lock_ms: ContextVar[int | None] = ContextVar("limite_lock_ms", default=None)
+
+
+@contextmanager
+def limite_de_espera_por_lock(milissegundos: int) -> Iterator[None]:
+    """Conexões abertas dentro do bloco desistem de esperar lock depois deste tempo.
+
+    O padrão do SQL Server é esperar lock PARA SEMPRE. Isso é o certo para uma
+    requisição comum, e é o errado para a subida da API: os `inicializar()` gravam em
+    tabelas que outras máquinas também usam, e uma transação esquecida aberta em
+    qualquer uma delas deixava o uvicorn preso antes de abrir a porta — sem uma linha
+    de erro, com a tela inteira fora do ar. Foi o que aconteceu em 10/09/2026: uma
+    sessão remota com transação aberta desde 12:59 travou o `UPDATE` de
+    `acervo_tb_perfis` em `perfis.inicializar`.
+
+    Com o teto, a etapa falha com o erro 1222 do SQL Server, a subida registra e
+    segue. Vale só para o escopo: requisições não herdam o limite.
+    """
+    marca = _limite_lock_ms.set(milissegundos)
+    try:
+        yield
+    finally:
+        _limite_lock_ms.reset(marca)
+
 
 @contextmanager
 def conectar() -> Iterator[Conexao]:
@@ -275,6 +301,9 @@ def conectar() -> Iterator[Conexao]:
         return
 
     bruta = pyodbc.connect(dsn(), timeout=15, autocommit=False)
+    limite_lock = _limite_lock_ms.get()
+    if limite_lock is not None:
+        bruta.cursor().execute(f"SET LOCK_TIMEOUT {int(limite_lock)}")
     conexao = Conexao(bruta)
     try:
         yield conexao

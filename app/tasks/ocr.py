@@ -10,7 +10,9 @@ from .. import (
     armazenamento,
     casos,
     categorias,
+    duplicidade,
     extracao_office,
+    historico_alteracoes,
     indexacao_documento,
     jobs,
     pipeline,
@@ -77,6 +79,63 @@ def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
             entrega_id,
             exc_info=True,
         )
+
+
+def _segurar_se_duplicado(
+    entrega_id: str,
+    caso_id: str,
+    resultado: dict,
+    destino: roteamento.Destino,
+    categoria: categorias.Categoria,
+) -> roteamento.Destino:
+    """Documento que parece repetir outro do caso não conta no checklist sozinho.
+
+    O envio já barrou o arquivo idêntico (`duplicidade.identicos`, na API). O que só
+    a leitura revela — o mesmo número de documento em outra foto, o mesmo texto em
+    outro arquivo — é verificado aqui, ANTES de a entrega marcar um item: a suspeita
+    manda o documento para a triagem com o motivo, e é a pessoa que decide.
+
+    Falhar nesta verificação não pode perder a leitura: o documento segue o destino
+    que o roteamento deu, como antes desta regra existir.
+    """
+    if destino.em_triagem:
+        return destino
+    try:
+        # Repetido aceito no envio já teve a decisão tomada por alguém.
+        if historico_alteracoes.houve(
+            historico_alteracoes.ENTIDADE_ENTREGA, entrega_id, "duplicidade_confirmada"
+        ):
+            return destino
+        suspeitas = duplicidade.procurar(
+            caso_id,
+            {
+                "id": entrega_id,
+                "conteudo_sha256": duplicidade.sha_da_entrega(entrega_id),
+                "tipo_detectado": (resultado.get("tipo") or {}).get("detectado"),
+                "itens_atendidos": list(destino.itens),
+                "roteamento_origem": destino.origem,
+                "extracao": resultado,
+            },
+            categoria,
+        )
+    except Exception:
+        log.warning("verificação de duplicidade falhou para %s", entrega_id, exc_info=True)
+        return destino
+    if not suspeitas:
+        return destino
+
+    resultado["duplicidade"] = {
+        "suspeitas": [s.to_dict() for s in suspeitas],
+        "destino_sugerido": list(destino.itens),
+    }
+    log.info("entrega %s segurada na triagem por duplicidade", entrega_id)
+    return roteamento.Destino(
+        [],
+        roteamento.DUPLICIDADE,
+        0,
+        duplicidade.mensagem(suspeitas),
+        destino.analise,
+    )
 
 
 @worker_ready.connect
@@ -293,6 +352,8 @@ def processar_entrega(
                 )
             except ValueError:
                 pass
+
+        destino = _segurar_se_duplicado(entrega_id, caso_id, resultado, destino, categoria)
 
         itens_atendidos = list(destino.itens)
         item_destino = next(

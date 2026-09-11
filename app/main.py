@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import io
 import logging
@@ -66,6 +67,8 @@ from . import (
     documentacao,
     docx_pdf,
     dois_fatores,
+    duplicidade,
+    historico_alteracoes,
     contrato,
     escuta,
     perfis,
@@ -82,11 +85,14 @@ from . import (
     revisao,
     roteamento,
     roteiros,
+    tipos_documento,
     triagem,
     valor_documento,
     whatsapp,
 )
 from . import jobs, observabilidade
+from .banco import limite_de_espera_por_lock
+from .banco import sessao as sessao_banco
 from . import entrevista as entrevista_lib
 from . import roteiro_ia
 from .cache_leitura import por_alguns_segundos
@@ -112,6 +118,10 @@ STATIC = BASE / "static"
 MAX_BYTES = 20 * 1024 * 1024
 _ocr_aquecido = threading.Event()
 
+#: Quanto cada etapa da subida espera por um lock antes de desistir. Generoso para
+#: o banco remoto sob carga, curto perto do "para sempre" que travava a API.
+ESPERA_LOCK_NA_SUBIDA_MS = int(os.getenv("ESPERA_LOCK_NA_SUBIDA_MS", "15000"))
+
 
 @asynccontextmanager
 async def ciclo_de_vida(_: FastAPI):
@@ -125,35 +135,49 @@ async def ciclo_de_vida(_: FastAPI):
         threading.Thread(
             target=_tentar_aquecer, name="aquecer-ocr", daemon=True
         ).start()
-    try:
-        await run_in_threadpool(jobs.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar a tabela de jobs")
-    try:
-        # Cria a matriz perfil x módulo e garante os perfis de sistema. Falhar
-        # aqui não impede a API de subir: sem a tabela, `exigir_modulo` nega
-        # tudo, que é o lado seguro de errar — o contrário abriria os módulos.
-        await run_in_threadpool(perfis.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar os perfis de acesso")
-    try:
-        await run_in_threadpool(revisao.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar a tabela de revisões")
-    try:
-        # Cria a tabela de contas e garante que exista pelo menos uma, senão um
-        # ambiente novo sobe com a autenticação ligada e nenhum jeito de entrar.
-        await run_in_threadpool(usuarios.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar as contas de usuário")
-    try:
-        await run_in_threadpool(localidades.inicializar)
-    except Exception:
-        log.exception("Não foi possível sincronizar as localidades do IBGE")
-    try:
-        await run_in_threadpool(documentacao.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar a fila de documentação")
+    # A subida não espera lock para sempre (ver `banco.limite_de_espera_por_lock`):
+    # uma transação esquecida em outra máquina, no banco compartilhado, prendia o
+    # uvicorn antes de abrir a porta. Cada etapa abaixo já tolera a própria falha.
+    with limite_de_espera_por_lock(ESPERA_LOCK_NA_SUBIDA_MS):
+        try:
+            await run_in_threadpool(jobs.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a tabela de jobs")
+        try:
+            # Cria a matriz perfil x módulo e garante os perfis de sistema. Falhar
+            # aqui não impede a API de subir: sem a tabela, `exigir_modulo` nega
+            # tudo, que é o lado seguro de errar — o contrário abriria os módulos.
+            await run_in_threadpool(perfis.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar os perfis de acesso")
+        try:
+            await run_in_threadpool(revisao.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a tabela de revisões")
+        try:
+            # Cria a tabela de contas e garante que exista pelo menos uma, senão um
+            # ambiente novo sobe com a autenticação ligada e nenhum jeito de entrar.
+            await run_in_threadpool(usuarios.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar as contas de usuário")
+        try:
+            await run_in_threadpool(localidades.inicializar)
+        except Exception:
+            log.exception("Não foi possível sincronizar as localidades do IBGE")
+        try:
+            await run_in_threadpool(documentacao.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a fila de documentação")
+        try:
+            await run_in_threadpool(historico_alteracoes.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar o histórico de alterações")
+        try:
+            # Sem os tipos de sistema, a reclassificação cai no nome do item de
+            # checklist — o comportamento de antes do glossário, e não uma falha.
+            await run_in_threadpool(tipos_documento.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar o glossário de tipos de documento")
     yield
 
 
@@ -298,6 +322,18 @@ app.include_router(dados.roteador)
 app.include_router(documentacao.roteador)
 app.include_router(operacao.roteador)
 app.include_router(whatsapp.roteador)
+app.include_router(tipos_documento.roteador)
+
+
+@app.exception_handler(duplicidade.DocumentoDuplicado)
+async def responder_documento_duplicado(_: Request, exc: duplicidade.DocumentoDuplicado):
+    """O 409 de duplicidade leva a lista do que parece repetido, e não só a frase.
+
+    `detail` continua sendo texto, como em todo erro desta API: quem só mostra a
+    mensagem (o portal, o envio em lote) não precisa saber de duplicidade. A tela da
+    equipe lê `codigo` e `duplicidades` para oferecer a confirmação.
+    """
+    return JSONResponse(exc.corpo(), status_code=409)
 
 
 @app.middleware("http")
@@ -2971,8 +3007,14 @@ async def _registrar_documento(
     idioma: str,
     usar_para_rg_e_cpf: bool,
     lote_id: str | None = None,
+    confirmar_duplicidade: bool = False,
+    usuario: str | None = None,
 ) -> dict[str, Any]:
     """OCR + registro da entrega. Compartilhado pelo advogado e pelo portal.
+
+    Arquivo idêntico a outro do caso é recusado antes de qualquer gravação (ver
+    `app/duplicidade.py`). `confirmar_duplicidade` só chega da rota da equipe; o
+    portal e o envio em lote nunca o passam.
 
     O cliente passa pelo mesmo caminho de propósito: a validação de tipo, a
     legibilidade e o vínculo RG/CPF não podem depender de quem enviou.
@@ -3010,6 +3052,18 @@ async def _registrar_documento(
     conteudo = await _ler_upload(arquivo)
     nome = arquivo.filename or "sem-nome"
 
+    # DUPLICIDADE ANTES DE GRAVAR QUALQUER COISA
+    #
+    # Mesmos bytes de outro arquivo do caso é o mesmo documento. Recusar aqui, antes
+    # do disco e da fila, evita uma segunda leitura paga e um segundo documento
+    # contando no checklist. A mesma consulta pega o arquivo repetido DENTRO de um
+    # lote: o primeiro já foi gravado quando o segundo chega.
+    repetidos = duplicidade.identicos(caso_id, hashlib.sha256(conteudo).hexdigest())
+    if repetidos and not confirmar_duplicidade:
+        raise duplicidade.DocumentoDuplicado(
+            repetidos, f"{duplicidade.mensagem(repetidos)} Nada foi gravado."
+        )
+
     item_codigo = item or categorias.ITEM_TRIAGEM
 
     # O arquivo vai para o disco e a entrega é criada antes de entrar na fila.
@@ -3019,9 +3073,27 @@ async def _registrar_documento(
     caminho = destino / f"{item_codigo}_{uuid.uuid4()}{Path(nome).suffix.lower()}"
     caminho.write_bytes(conteudo)
 
-    entrega = armazenamento.registrar_entrega_pendente(
-        caso_id, item_codigo, nome, caminho, conteudo=conteudo, lote_id=lote_id
-    )
+    def registrar() -> dict[str, Any]:
+        return armazenamento.registrar_entrega_pendente(
+            caso_id, item_codigo, nome, caminho, conteudo=conteudo, lote_id=lote_id
+        )
+
+    if not repetidos:
+        entrega = registrar()
+    else:
+        # Repetido aceito por decisão de alguém: a entrega e o registro de quem
+        # decidiu entram juntos, ou nenhum dos dois.
+        with sessao_banco():
+            entrega = registrar()
+            historico_alteracoes.registrar(
+                historico_alteracoes.ENTIDADE_ENTREGA,
+                entrega["id"],
+                "duplicidade_confirmada",
+                usuario=usuario or "escritório",
+                depois={"duplicidades": [d.to_dict() for d in repetidos]},
+                caso_id=caso_id,
+                motivo="Arquivo idêntico enviado com confirmação.",
+            )
 
     # O checklist antes abria uma thread na API e carregava outra cópia do
     # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
@@ -3058,15 +3130,27 @@ async def enviar_documento(
     arquivo: UploadFile = File(...),
     idioma: str = Form("pt"),
     usar_para_rg_e_cpf: bool = Form(False),
+    confirmar_duplicidade: bool = Form(False),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
     """Recebe um documento, roda o OCR e marca o item do checklist.
 
     `item` é opcional: sem ele, quem decide o item é a leitura do documento.
+    `confirmar_duplicidade` aceita um arquivo idêntico a outro do caso, e a
+    confirmação fica no histórico do documento.
     """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         raise HTTPException(404, "Caso não encontrado.")
-    return await _registrar_documento(caso, item, arquivo, idioma, usar_para_rg_e_cpf)
+    return await _registrar_documento(
+        caso,
+        item,
+        arquivo,
+        idioma,
+        usar_para_rg_e_cpf,
+        confirmar_duplicidade=confirmar_duplicidade,
+        usuario=_autor_da_acao(usuario),
+    )
 
 
 #: Teto de arquivos por envio em massa. Não é limite de tamanho — é para o
@@ -3222,17 +3306,77 @@ async def enviar_documentos_em_lote(
     return await _registrar_lote(caso, arquivos, idioma)
 
 
+def _autor_da_acao(usuario: auth.Usuario) -> str:
+    return usuario.nome or usuario.usuario or usuario.id or "escritório"
+
+
+def _retrato_da_classificacao(
+    entrega: dict[str, Any], categoria: categorias.Categoria | None
+) -> dict[str, Any]:
+    """Como o documento está classificado — o antes e o depois do histórico."""
+    return {
+        "itens_atendidos": list(entrega.get("itens_atendidos") or []),
+        "item_codigo": entrega.get("item_codigo"),
+        "tipo_detectado": entrega.get("tipo_detectado"),
+        "tipo_documento": duplicidade.tipo_da_entrega(
+            entrega, categoria, tipos_documento.codigos_conhecidos()
+        ),
+        "roteamento_origem": entrega.get("roteamento_origem"),
+    }
+
+
+def _tipo_para_reclassificacao(
+    tipo: str | None, item: categorias.ItemChecklist
+) -> tuple[str, str]:
+    """Código e nome do tipo que a reclassificação vai gravar.
+
+    Tipo escolhido na tela precisa existir e estar ativo no glossário. Sem escolha,
+    vale o tipo que o item de checklist pede. O último recurso — item sem tipo — é
+    o comportamento de antes do glossário, para um checklist novo não travar a
+    reclassificação enquanto ninguém o vincula.
+    """
+    codigo = (tipo or "").strip()
+    if codigo:
+        registro = tipos_documento.obter(codigo)
+        if registro is None:
+            raise HTTPException(400, f"O tipo “{codigo}” não existe no glossário.")
+        if not registro["ativo"]:
+            raise HTTPException(
+                400, f"O tipo “{registro['nome']}” está desativado no glossário."
+            )
+        return registro["codigo"], registro["nome"]
+
+    codigo = item.tipo_documento or ""
+    if codigo:
+        registro = tipos_documento.obter(codigo)
+        if registro is not None:
+            return codigo, registro["nome"]
+        semente = tipos_documento.SEMENTE_POR_CODIGO.get(codigo)
+        if semente is not None:
+            return codigo, semente.nome
+    return item.tipo_ocr or item.codigo, item.nome
+
+
 @app.patch("/api/entregas/{entrega_id}/itens")
 def reatribuir_entrega(
     entrega_id: str,
     itens: list[str] = Body(..., embed=True),
+    tipo: str | None = Body(None, embed=True),
+    confirmar_duplicidade: bool = Body(False, embed=True),
+    motivo: str = Body("", embed=True, max_length=600),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
-    """Move um documento já lido para outro(s) item(ns) do checklist.
+    """Classifica ou reclassifica um documento já lido: item do checklist e tipo.
 
     É a palavra final sobre o roteamento automático, e a saída da triagem: o
     advogado olhou o arquivo e disse a que ele responde. Não refaz OCR — o texto
     e os campos já estão gravados, e o arquivo é o mesmo.
+
+    `tipo` é um código do glossário (`app/tipos_documento.py`); sem ele, vale o
+    tipo que o item pede. Antes de gravar, o documento é comparado com os demais
+    do caso (`app/duplicidade.py`): havendo suspeita, a resposta é 409 com a lista,
+    e só `confirmar_duplicidade` conclui. Toda mudança entra no histórico do
+    documento, com quem fez, o antes e o depois.
 
     Lista vazia devolve a entrega para a triagem, que é como se desfaz uma
     atribuição errada sem apagar o documento.
@@ -3257,38 +3401,87 @@ def reatribuir_entrega(
             f"Item(ns) fora do checklist de {categoria.nome}: {', '.join(desconhecidos)}.",
         )
 
+    quem = _autor_da_acao(usuario)
+    antes = _retrato_da_classificacao(entrega, categoria)
+
     if not escolhidos:
-        return armazenamento.reatribuir_entrega(
-            entrega_id,
-            [],
-            categorias.ITEM_TRIAGEM,
-            roteamento.HUMANO,
-            motivo="Devolvido à triagem pelo escritório.",
-        )
+        with sessao_banco():
+            devolvida = armazenamento.reatribuir_entrega(
+                entrega_id,
+                [],
+                categorias.ITEM_TRIAGEM,
+                roteamento.HUMANO,
+                motivo="Devolvido à triagem pelo escritório.",
+            )
+            historico_alteracoes.registrar(
+                historico_alteracoes.ENTIDADE_ENTREGA,
+                entrega_id,
+                "devolvida_triagem",
+                usuario=quem,
+                antes=antes,
+                depois=_retrato_da_classificacao(devolvida or {}, categoria),
+                caso_id=entrega["caso_id"],
+                motivo=motivo,
+            )
+        return devolvida
 
     item_correto = validos[escolhidos[0]]
-    if len(escolhidos) > 1:
-        detectado = entrega.get("tipo_detectado")
-        confere = casos.tipo_confere(item_correto, detectado, True)
-        return armazenamento.reatribuir_entrega(
-            entrega_id,
-            escolhidos,
-            escolhidos[0],
-            roteamento.HUMANO,
-            tipo_confere=confere,
-            confianca=100,
-            motivo=f"Atribuído por {usuario.nome or usuario.usuario or 'escritório'}.",
-        )
-    tipo_correto = item_correto.tipo_ocr or item_correto.codigo
-    corrigida = armazenamento.corrigir_classificacao_entrega(
-        entrega_id,
-        item_codigo=item_correto.codigo,
-        tipo_correto=tipo_correto,
-        rotulo_correto=item_correto.nome,
-        categoria=categoria.codigo,
-        corrigido_por=usuario.nome or usuario.usuario or usuario.id or "escritório",
+    tipo_codigo, tipo_nome = _tipo_para_reclassificacao(tipo, item_correto)
+
+    suspeitas = duplicidade.procurar(
+        entrega["caso_id"],
+        {
+            **entrega,
+            "itens_atendidos": escolhidos,
+            "roteamento_origem": roteamento.HUMANO,
+            "tipo_documento": tipo_codigo,
+        },
+        categoria,
     )
-    if corrigida:
+    if suspeitas and not confirmar_duplicidade:
+        raise duplicidade.DocumentoDuplicado(
+            suspeitas,
+            f"{duplicidade.mensagem(suspeitas)} Confirme para reclassificar mesmo assim.",
+        )
+
+    with sessao_banco():
+        if len(escolhidos) > 1:
+            confere = casos.tipo_confere(item_correto, entrega.get("tipo_detectado"), True)
+            corrigida = armazenamento.reatribuir_entrega(
+                entrega_id,
+                escolhidos,
+                escolhidos[0],
+                roteamento.HUMANO,
+                tipo_confere=confere,
+                confianca=100,
+                motivo=f"Atribuído por {quem}.",
+            )
+        else:
+            corrigida = armazenamento.corrigir_classificacao_entrega(
+                entrega_id,
+                item_codigo=item_correto.codigo,
+                tipo_correto=tipo_codigo,
+                rotulo_correto=tipo_nome,
+                categoria=categoria.codigo,
+                corrigido_por=quem,
+            )
+        if corrigida is None:
+            raise HTTPException(404, "Entrega não encontrada.")
+        depois = _retrato_da_classificacao(corrigida, categoria)
+        if suspeitas:
+            depois["duplicidades_confirmadas"] = [s.to_dict() for s in suspeitas]
+        historico_alteracoes.registrar(
+            historico_alteracoes.ENTIDADE_ENTREGA,
+            entrega_id,
+            "reclassificada",
+            usuario=quem,
+            antes=antes,
+            depois=depois,
+            caso_id=entrega["caso_id"],
+            motivo=motivo,
+        )
+
+    if len(escolhidos) == 1:
         threading.Thread(
             target=_entregar_ao_agente,
             args=(entrega["caso_id"], entrega_id),
@@ -3948,10 +4141,43 @@ def baixar_documentos_do_caso(caso_id: str):
     )
 
 
+@app.get("/api/entregas/{entrega_id}/historico")
+def historico_da_entrega(entrega_id: str):
+    """Reclassificações, devoluções à triagem, repetidos aceitos e remoção."""
+    return {
+        "eventos": historico_alteracoes.listar(
+            historico_alteracoes.ENTIDADE_ENTREGA, entrega_id
+        )
+    }
+
+
 @app.delete("/api/entregas/{entrega_id}")
-def excluir_entrega(entrega_id: str):
-    if not armazenamento.excluir_entrega(entrega_id):
+def excluir_entrega(
+    entrega_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+):
+    """Remove o documento e deixa no histórico o que ele era e quem o removeu.
+
+    Remover é o desfecho natural de uma duplicidade confirmada como repetição, e é
+    justamente o caso em que alguém pergunta depois "o que havia aqui".
+    """
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
+    caso = armazenamento.obter_caso(entrega["caso_id"])
+    categoria = categorias.obter(caso["categoria"]) if caso else None
+    antes = {"arquivo": entrega.get("arquivo"), **_retrato_da_classificacao(entrega, categoria)}
+
+    with sessao_banco():
+        if not armazenamento.excluir_entrega(entrega_id):
+            raise HTTPException(404, "Entrega não encontrada.")
+        historico_alteracoes.registrar(
+            historico_alteracoes.ENTIDADE_ENTREGA,
+            entrega_id,
+            "removida",
+            usuario=_autor_da_acao(usuario),
+            antes=antes,
+            caso_id=entrega["caso_id"],
+        )
     return {"removido": True}
 
 

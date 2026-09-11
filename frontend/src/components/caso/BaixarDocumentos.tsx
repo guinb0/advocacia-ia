@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { baixarDocumentosDoCaso } from "@/lib/api";
 import { Aviso } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* Tudo que o cliente enviou, num pacote só.
  *
@@ -24,13 +25,9 @@ interface Props {
   pronto: boolean;
 }
 
-const BASE_BOTAO =
-  "border border-tinta px-[14px] py-[10px] bg-transparent text-tinta text-[10px] font-semibold leading-none " +
-  "font-ui tracking-[0.06em] uppercase cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
-
 export default function BaixarDocumentos({ casoId, total, pronto }: Props) {
   const [baixando, setBaixando] = useState(false);
+  const [baixado, setBaixado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [faltando, setFaltando] = useState(0);
 
@@ -38,6 +35,7 @@ export default function BaixarDocumentos({ casoId, total, pronto }: Props) {
 
   async function baixar() {
     setBaixando(true);
+    setBaixado(false);
     setErro(null);
     setFaltando(0);
     try {
@@ -54,6 +52,7 @@ export default function BaixarDocumentos({ casoId, total, pronto }: Props) {
       link.download = pacote.nome;
       link.click();
       URL.revokeObjectURL(url);
+      setBaixado(true);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível montar o pacote.");
     } finally {
@@ -64,14 +63,18 @@ export default function BaixarDocumentos({ casoId, total, pronto }: Props) {
   return (
     <section className="mt-4">
       <div className="flex items-center flex-wrap gap-3 max-[640px]:items-stretch max-[640px]:flex-col">
-        <button
-          type="button"
-          className={pronto ? `${BASE_BOTAO} bg-tinta text-papel` : `${BASE_BOTAO} enabled:hover:bg-papel-2`}
-          onClick={() => void baixar()}
-          disabled={baixando}
+        {/* Com o checklist fechado, baixar o pacote vira A ação da tela — e o
+          * botão ganha o preenchimento sólido da ação principal. */}
+        <BotaoProcesso
+          variante={pronto ? "primario" : "secundario"}
+          onClick={baixar}
+          processando={baixando}
+          textoProcessando="Montando o pacote…"
+          dica="Juntando os arquivos na ordem do checklist"
+          concluido={baixado ? "Pacote baixado — confira a pasta de downloads do navegador." : null}
         >
-          {baixando ? "Montando o pacote…" : `Baixar os ${total} documentos (.zip)`}
-        </button>
+          Baixar os {total} documentos (.zip)
+        </BotaoProcesso>
         <span className="italic font-normal text-[12px] leading-[1.5] font-titulo text-tinta-3">
           {pronto
             ? "O checklist fechou — este é o pacote para a inicial."

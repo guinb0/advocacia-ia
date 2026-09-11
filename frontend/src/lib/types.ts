@@ -120,6 +120,79 @@ export interface TipoDocumento {
   descricao: string;
 }
 
+/** Um tipo do glossário de documentos (`app/tipos_documento.py`). */
+export interface TipoDocumentoGlossario {
+  /** Fica gravado em cada documento classificado; nunca muda. */
+  codigo: string;
+  nome: string;
+  descricao: string;
+  sinonimos: string[];
+  ativo: boolean;
+  /** Tipo que o sistema garante existir: edita-se, não se desativa. */
+  sistema: boolean;
+  /** Muda a cada edição. A edição devolve a que leu, para não apagar a de outra pessoa. */
+  versao: number;
+  criado_em: string;
+  criado_por: string;
+  atualizado_em: string;
+  atualizado_por: string;
+  /** Quantos itens de checklist pedem este tipo. */
+  itens_checklist: number;
+  /** Categorias (tipos de caso) em que o glossário acrescenta este tipo ao checklist. */
+  categorias?: string[];
+}
+
+/** O que muda — e o que não muda — ao editar ou desativar um tipo. */
+export interface ImpactoTipoDocumento {
+  tipo: TipoDocumentoGlossario;
+  itens_checklist: {
+    categoria: string;
+    categoria_nome: string;
+    item: string;
+    nome: string;
+    do_glossario?: boolean;
+  }[];
+  documentos: number;
+  casos: number;
+  correcoes: number;
+  pode_desativar: boolean;
+  bloqueio_desativacao: string | null;
+  efeitos: { codigo: string; renomear: string; sinonimos: string; desativar: string };
+}
+
+/** Uma linha do histórico de alterações (glossário ou documento). */
+export interface EventoHistorico {
+  id: string;
+  entidade: string;
+  entidade_id: string;
+  caso_id: string | null;
+  acao: string;
+  antes: Record<string, unknown> | null;
+  depois: Record<string, unknown> | null;
+  motivo: string;
+  usuario: string;
+  criado_em: string;
+}
+
+/** Um documento do caso que parece ser o mesmo, e por qual regra. */
+export interface DuplicidadeDocumento {
+  entrega_id: string;
+  arquivo: string;
+  regra: "identico" | "mesmo_numero" | "mesmo_conteudo";
+  explicacao: string;
+  /** Itens do checklist em que o documento parecido está; vazio = triagem. */
+  itens: string[];
+  criado_em: string;
+}
+
+export interface OpcoesReclassificacao {
+  /** Código do glossário; ausente = o tipo que o item pede. */
+  tipo?: string;
+  /** Conclui mesmo com suspeita de duplicidade. */
+  confirmarDuplicidade?: boolean;
+  motivo?: string;
+}
+
 // ------------------------------------------------ categorias e checklists
 
 export interface ItemChecklist {
@@ -130,6 +203,10 @@ export interface ItemChecklist {
   /** Código do classificador de OCR, quando o sistema sabe conferir o tipo. */
   tipo_ocr: string | null;
   observacao: string;
+  /** Tipo do glossário que o item pede. Ausente em respostas de versões antigas da API. */
+  tipo_documento?: string | null;
+  /** Item acrescentado por um tipo de caso marcado no glossário, fora do checklist do escritório. */
+  do_glossario?: boolean;
 }
 
 export interface Categoria {
@@ -184,7 +261,15 @@ export interface Entrega {
   /** Mesmo lote de envio em massa. Ausente em entregas individuais/antigas. */
   lote_id?: string | null;
   /** Quem decidiu o item final do documento. */
-  roteamento_origem?: "escolha" | "deterministico" | "semantico" | "humano" | null;
+  roteamento_origem?:
+    | "escolha"
+    | "deterministico"
+    | "semantico"
+    | "humano"
+    | "triagem"
+    /** Segurado na triagem por parecer repetir outro documento do caso. */
+    | "duplicidade"
+    | null;
   roteamento_confianca?: number | null;
   roteamento_motivo?: string | null;
   criado_em: string;

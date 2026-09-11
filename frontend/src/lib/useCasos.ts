@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import * as api from "./api";
-import type { Caso, CasoCriado, Categoria, SituacaoCaso } from "./types";
+import type { Caso, CasoCriado, Categoria, OpcoesReclassificacao, SituacaoCaso } from "./types";
 
 /** Quantos arquivos por request no envio em massa. Uma pasta grande é enviada em
  *  blocos deste tamanho, em sequência: mantém cada request rápido e garante que
@@ -116,7 +116,26 @@ export function useSituacao(casoId: string | null, atualizarAoVivo = false) {
         await api.enviarDocumento(casoId, itemCodigo, arquivo, "pt", usarParaRgECpf);
         await recarregar();
       } catch (e) {
-        setErro(e instanceof Error ? e.message : "Falha ao enviar o documento.");
+        /* Arquivo idêntico a outro do caso volta 409 e NADA foi gravado. A equipe
+         * pode insistir quando sabe que precisa das duas cópias; a confirmação fica
+         * no histórico do documento. */
+        const repetidos = api.duplicidadesDoErro(e);
+        const mensagem = e instanceof Error ? e.message : "Falha ao enviar o documento.";
+        if (
+          repetidos &&
+          window.confirm(
+            `${mensagem}\n\nEnviar mesmo assim? A confirmação fica registrada no histórico do documento.`,
+          )
+        ) {
+          try {
+            await api.enviarDocumento(casoId, itemCodigo, arquivo, "pt", usarParaRgECpf, true);
+            await recarregar();
+          } catch (e2) {
+            setErro(e2 instanceof Error ? e2.message : "Falha ao enviar o documento.");
+          }
+        } else {
+          setErro(mensagem);
+        }
       } finally {
         setEnviando(null);
       }
@@ -221,12 +240,15 @@ export function useSituacao(casoId: string | null, atualizarAoVivo = false) {
   );
 
   const reatribuir = useCallback(
-    async (entregaId: string, itens: string[]) => {
+    async (entregaId: string, itens: string[], opcoes?: OpcoesReclassificacao) => {
       setErro(null);
       try {
-        await api.reatribuirEntrega(entregaId, itens);
+        await api.reatribuirEntrega(entregaId, itens, opcoes);
         await recarregar();
       } catch (e) {
+        // A suspeita de duplicidade volta para quem pediu: é ali, ao lado do
+        // documento, que a pessoa confirma ou desiste.
+        if (api.duplicidadesDoErro(e)) throw e;
         setErro(e instanceof Error ? e.message : "Não foi possível atribuir o documento.");
       }
     },

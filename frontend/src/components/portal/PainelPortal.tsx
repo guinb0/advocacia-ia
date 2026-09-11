@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { consultarPortal, gerarPortal } from "@/lib/api";
 import type { PortalGerado } from "@/lib/types";
 import { Aviso, Botao, Cartao } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import ChamadaAoVivo from "@/components/chamada/ChamadaAoVivo";
 
 /** Link e senha que o cliente usa para enviar documentos sozinho. */
@@ -92,9 +93,14 @@ export default function PainelPortal({
         )}
 
         {!ativo ? (
-          <Botao variante="primario" onClick={gerar} disabled={gerando}>
-            {gerando ? "Gerando…" : "Gerar o link e a senha"}
-          </Botao>
+          <BotaoProcesso
+            variante="primario"
+            onClick={gerar}
+            processando={gerando}
+            textoProcessando="Gerando o link e a senha…"
+          >
+            Gerar o link e a senha
+          </BotaoProcesso>
         ) : (
           <>
             <div className="flex items-center gap-[10px] px-3 py-[10px] mb-2 border border-borda rounded-campo bg-papel-2 flex-wrap">
@@ -144,14 +150,15 @@ export default function PainelPortal({
                   consultada depois. Se o cliente a perdeu, gere outra — a anterior deixa de valer
                   na hora.
                 </p>
-                <Botao
+                <BotaoProcesso
                   variante="secundario"
                   onClick={gerar}
-                  disabled={gerando}
+                  processando={gerando}
+                  textoProcessando="Gerando a nova senha…"
                   title="O link e a senha anteriores param de funcionar"
                 >
-                  {gerando ? "Gerando…" : "Gerar uma nova senha"}
-                </Botao>
+                  Gerar uma nova senha
+                </BotaoProcesso>
               </>
             )}
           </>

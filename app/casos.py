@@ -247,6 +247,15 @@ def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
             + (entrega.get("erro_proc") or "falha no processamento.")
         ]
     motivo = (entrega.get("roteamento_motivo") or "").strip()
+    if entrega.get("roteamento_origem") == "duplicidade":
+        # Aqui o destino É conhecido — o que falta é alguém confirmar que não é
+        # repetição. Dizer "não foi possível identificar" mandaria procurar o
+        # problema no lugar errado.
+        return [
+            (motivo or "Este documento parece repetir outro já enviado ao caso.")
+            + " Remova-o se for repetido; se não for, atribua-o ao item — o sistema "
+            "pedirá confirmação."
+        ]
     return [
         "Este documento foi lido, mas não foi possível dizer a que item do "
         "checklist ele responde. Escolha o item certo aqui ao lado."

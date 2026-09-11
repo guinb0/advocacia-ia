@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura, Microfone } from "@/lib/transcricao";
+import { Botao } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* Transcreve a resposta do entrevistado. A entrevista acontece aqui — o
  * sistema é quem grava.
@@ -20,21 +22,6 @@ interface Props {
   /** Chamado quando a resposta fecha, com o texto consolidado. */
   onResposta?: (perguntaId: string, texto: string, duracaoS: number) => void;
 }
-
-const BOTAO =
-  "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
-/* Gravando: vermelho, porque é estado que precisa saltar aos olhos. */
-const BOTAO_GRAVANDO =
-  "border-[1.5px] border-critico bg-transparent text-critico text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-critico enabled:hover:text-papel";
-const SECUNDARIO =
-  "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer enabled:hover:bg-papel-2";
 
 export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: Props) {
   const [estado, setEstado] = useState<EstadoCaptura>("sem-audio");
@@ -159,35 +146,49 @@ export default function EntrevistaAoVivo({ perguntaId, pergunta, onResposta }: P
         finalizar a cada pergunta — o microfone continua aberto entre elas.
       </p>
 
-      <div className="flex gap-[10px] items-center flex-wrap">
-        <button type="button" className={SECUNDARIO} onClick={selecionar} disabled={emCurso}>
+      <div className="flex gap-[10px] items-start flex-wrap">
+        <BotaoProcesso
+          variante="secundario"
+          pequeno
+          onClick={selecionar}
+          textoProcessando="Abrindo o microfone…"
+          aguardando={emCurso ? "Finalize a resposta antes de trocar o microfone." : false}
+        >
           {temAudio ? "Trocar microfone" : "Ligar microfone"}
-        </button>
+        </BotaoProcesso>
 
         {!emCurso ? (
-          <button type="button" className={BOTAO} onClick={iniciar} disabled={!temAudio || ocupado}>
-            {ocupado ? "Transcrevendo…" : final ? "Adicionar complemento" : "Iniciar resposta"}
-          </button>
+          <BotaoProcesso
+            variante="primario"
+            pequeno
+            onClick={iniciar}
+            processando={ocupado}
+            textoProcessando="Transcrevendo…"
+            pendencia={temAudio ? null : "Ligue o microfone primeiro."}
+          >
+            {final ? "Adicionar complemento" : "Iniciar resposta"}
+          </BotaoProcesso>
         ) : (
           <>
             {/* O "Pausar" saiu daqui: pausar abria buraco no áudio, e o
               * arquivo deixava de ser o registro do atendimento. Ver
-              * `transcricao.ts`. */}
-            <button type="button" className={gravando ? BOTAO_GRAVANDO : BOTAO} onClick={finalizar}>
+              * `transcricao.ts`. Gravando: vermelho, porque é estado que precisa
+              * saltar aos olhos. */}
+            <Botao variante={gravando ? "perigo" : "primario"} pequeno onClick={finalizar}>
               Finalizar resposta
-            </button>
+            </Botao>
           </>
         )}
 
         {temAudio && (
-          <button
-            type="button"
-            className={SECUNDARIO}
+          <BotaoProcesso
+            variante="discreto"
+            pequeno
             onClick={() => capturaRef.current?.encerrar()}
-            disabled={emCurso}
+            aguardando={emCurso ? "Finalize a resposta antes de encerrar a captura." : false}
           >
             Encerrar captura
-          </button>
+          </BotaoProcesso>
         )}
 
         {microfones.length > 1 && (

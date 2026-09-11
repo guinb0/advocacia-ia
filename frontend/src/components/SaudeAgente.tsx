@@ -213,13 +213,25 @@ function CartaoWhatsapp() {
           )}
         </div>
         {status && status.configurado && conectado && (
-          <Botao variante="secundario" pequeno onClick={() => void desconectar()} disabled={desconectando}>
-            {desconectando ? "Desconectando…" : "Desconectar número"}
+          <Botao
+            variante="secundario"
+            pequeno
+            carregando={desconectando}
+            textoCarregando="Desconectando…"
+            onClick={() => void desconectar()}
+          >
+            Desconectar número
           </Botao>
         )}
         {status && status.configurado && !conectado && (
-          <Botao variante="primario" pequeno onClick={() => void pedirQr()} disabled={pedindoQr}>
-            {pedindoQr ? "Gerando QR…" : qr ? "Gerar outro QR" : "Conectar / trocar número"}
+          <Botao
+            variante="primario"
+            pequeno
+            carregando={pedindoQr}
+            textoCarregando="Gerando QR…"
+            onClick={() => void pedirQr()}
+          >
+            {qr ? "Gerar outro QR" : "Conectar / trocar número"}
           </Botao>
         )}
       </div>
@@ -321,9 +333,15 @@ export default function SaudeAgente({ onVoltar }: Props) {
             do escritório.
           </p>
         </div>
-        <Botao variante="secundario" pequeno onClick={() => void carregar()} disabled={carregando}>
+        <Botao
+          variante="secundario"
+          pequeno
+          carregando={carregando}
+          textoCarregando="Atualizando…"
+          onClick={() => void carregar()}
+        >
           <RefreshCcw size={14} aria-hidden />
-          {carregando ? "Atualizando…" : "Atualizar"}
+          Atualizar
         </Botao>
       </header>
 

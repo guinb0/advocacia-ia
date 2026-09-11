@@ -22,6 +22,8 @@ import type {
   DocumentoDoCliente,
   Signatario,
 } from "@/lib/types";
+import { Botao } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* Contrato de honorários, preenchido com o que a entrevista respondeu.
  *
@@ -73,16 +75,6 @@ const INTERVALO_MS = 20_000;
  * integração oficial estiver disponível, basta reativar este ponto. */
 const ASSINATURA_ELETRONICA_ATIVA = false;
 
-const BOTAO =
-  "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
-const BOTAO_SECUNDARIO =
-  "border border-borda-forte bg-transparent text-tinta-3 text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
 const ROTULO = "block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3 mb-2";
 /* Campo que ficou em branco no contrato: âmbar, não vermelho. Não é erro do
  * sistema — é entrevista incompleta, e quem resolve é o entrevistador. */
@@ -97,7 +89,8 @@ export default function PainelContrato({ respostas }: Props) {
   const [porDocumento, setPorDocumento] = useState<
     Partial<Record<DocumentoDoCliente, { nome: string; faltando: string[] }>>
   >({});
-  const [erro, setErro] = useState<string | null>(null);
+  /** `origem` é o botão que falhou (`"contrato:pdf"`, `"todos"`): o erro aparece junto dele. */
+  const [erro, setErro] = useState<{ origem: string; texto: string } | null>(null);
 
   const [config, setConfig] = useState<ConfigAssinatura | null>(null);
   /* Por que não basta `config === null`: sem separar "ainda não perguntei" de
@@ -156,11 +149,11 @@ export default function PainelContrato({ respostas }: Props) {
    * o contrato quer telefone e e-mail, a procuração não. Somados, sugeririam
    * buracos onde não há. */
   async function gerar(codigo: DocumentoDoCliente, formato: "docx" | "pdf") {
+    const chave = `${codigo}:${formato}`;
     if (requisitosContrato.length > 0) {
-      setErro(`Documentos não gerados: informe ${requisitosContrato.join(" e ")}.`);
+      setErro({ origem: chave, texto: `Documentos não gerados: informe ${requisitosContrato.join(" e ")}.` });
       return;
     }
-    const chave = `${codigo}:${formato}`;
     setGerando(chave);
     setErro(null);
     try {
@@ -171,7 +164,7 @@ export default function PainelContrato({ respostas }: Props) {
       }));
       baixarBlob(gerado.arquivo, gerado.nome);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível gerar o documento.");
+      setErro({ origem: chave, texto: e instanceof Error ? e.message : "Não foi possível gerar o documento." });
     } finally {
       setGerando(null);
     }
@@ -182,11 +175,14 @@ export default function PainelContrato({ respostas }: Props) {
    * link vai por WhatsApp. */
   async function enviarTodos() {
     if (requisitosContrato.length > 0) {
-      setErro(`Não é possível enviar: informe ${requisitosContrato.join(" e ")}.`);
+      setErro({ origem: "todos", texto: `Não é possível enviar: informe ${requisitosContrato.join(" e ")}.` });
       return;
     }
     if (!email) {
-      setErro("A ZapSign precisa do e-mail do cliente para enviar o convite. Preencha o e-mail na entrevista.");
+      setErro({
+        origem: "todos",
+        texto: "A ZapSign precisa do e-mail do cliente para enviar o convite. Preencha o e-mail na entrevista.",
+      });
       return;
     }
     setEnviandoTodos(true);
@@ -196,7 +192,7 @@ export default function PainelContrato({ respostas }: Props) {
       const r = await enviarTodosParaAssinaturaSite({ respostas, clienteWhatsapp: telefone });
       setResultadoTodos({ documentos: r.documentos, whatsapp_enviado: r.whatsapp_enviado });
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível enviar para assinatura.");
+      setErro({ origem: "todos", texto: e instanceof Error ? e.message : "Não foi possível enviar para assinatura." });
     } finally {
       setEnviandoTodos(false);
     }
@@ -323,6 +319,12 @@ export default function PainelContrato({ respostas }: Props) {
   const podeEnviar =
     Boolean(config?.ativa) && requisitosContrato.length === 0 && destinos.length > 0;
 
+  /* O quadro âmbar acima já diz o que falta; nos botões a frase só aparece ao
+   * clicar, para não repetir a mesma linha seis vezes. */
+  const pendenciaContrato = requisitosContrato.length
+    ? `Informe ${requisitosContrato.join(" e ")} na entrevista.`
+    : null;
+
   return (
     <div className="mt-6 border-t border-borda pt-[14px] mb-[18px]">
       <span className={ROTULO}>DOCUMENTOS PARA O CLIENTE ASSINAR</span>
@@ -368,28 +370,28 @@ export default function PainelContrato({ respostas }: Props) {
               className="py-3 first:pt-0 last:pb-0 [&+&]:border-t [&+&]:border-borda"
             >
               <div className="grid grid-cols-2 items-stretch gap-3 max-[640px]:grid-cols-1">
-                <button
-                  type="button"
-                  className={`${BOTAO} w-full min-h-12 px-3`}
-                  onClick={() => void gerar(doc.codigo, "pdf")}
-                  disabled={gerando !== null || requisitosContrato.length > 0}
-                  aria-label={`Baixar ${doc.rotulo} em PDF`}
-                >
-                  {gerando === `${doc.codigo}:pdf`
-                    ? "Gerando…"
-                    : `Baixar ${doc.rotulo} em PDF`}
-                </button>
-                <button
-                  type="button"
-                  className={`${BOTAO_SECUNDARIO} w-full min-h-12 px-3`}
-                  onClick={() => void gerar(doc.codigo, "docx")}
-                  disabled={gerando !== null || requisitosContrato.length > 0}
-                  aria-label={`Baixar ${doc.rotulo} em DOCX`}
-                >
-                  {gerando === `${doc.codigo}:docx`
-                    ? "Gerando…"
-                    : `Baixar ${doc.rotulo} em DOCX`}
-                </button>
+                {(["pdf", "docx"] as const).map((formato) => {
+                  const chave = `${doc.codigo}:${formato}`;
+                  const rotulo = `Baixar ${doc.rotulo} em ${formato.toUpperCase()}`;
+                  return (
+                    <BotaoProcesso
+                      key={formato}
+                      variante="secundario"
+                      bloco
+                      classeBotao="min-h-12 px-3"
+                      onClick={() => gerar(doc.codigo, formato)}
+                      processando={gerando === chave}
+                      textoProcessando={`Gerando o ${formato.toUpperCase()}…`}
+                      pendencia={pendenciaContrato}
+                      pendenciaAoClicar
+                      aguardando={gerando !== null ? "Aguarde: outro documento está sendo gerado." : false}
+                      erro={erro?.origem === chave ? erro.texto : null}
+                      aria-label={rotulo}
+                    >
+                      {rotulo}
+                    </BotaoProcesso>
+                  );
+                })}
                 {feito && feito.faltando.length === 0 && (
                   <span className="col-span-2 mt-1 font-normal text-[11.5px] leading-[1.5] font-ui text-ok max-[640px]:col-span-1">
                     ✓ sem campo em branco
@@ -423,16 +425,22 @@ export default function PainelContrato({ respostas }: Props) {
         * do site configurado. */}
       {config?.navegador && (
         <div className="mt-4 border-t border-borda pt-4">
-          <button
-            type="button"
-            className={`${BOTAO} w-full min-h-12 px-3`}
-            onClick={() => void enviarTodos()}
-            disabled={enviandoTodos || requisitosContrato.length > 0}
+          <BotaoProcesso
+            variante="primario"
+            bloco
+            classeBotao="min-h-12 px-3"
+            onClick={enviarTodos}
+            processando={enviandoTodos}
+            textoProcessando="Enviando os três para assinatura…"
+            dica="Pode levar alguns minutos — mantenha esta página aberta"
+            pendencia={
+              pendenciaContrato ??
+              (email ? null : "Preencha o e-mail do cliente na entrevista: a ZapSign precisa dele para o convite.")
+            }
+            erro={erro?.origem === "todos" ? erro.texto : null}
           >
-            {enviandoTodos
-              ? "Enviando os três para assinatura… (pode levar alguns minutos)"
-              : "Enviar os três para o cliente assinar (ZapSign + WhatsApp)"}
-          </button>
+            Enviar os três para o cliente assinar (ZapSign + WhatsApp)
+          </BotaoProcesso>
           <p className="mt-2 mb-0 font-normal text-[11.5px] leading-[1.5] font-ui text-tinta-3">
             Contrato, procuração e declaração sobem de uma vez. O convite vai por e-mail
             para {email || "o e-mail do cliente"}
@@ -469,7 +477,6 @@ export default function PainelContrato({ respostas }: Props) {
         </div>
       )}
 
-      {erro && <div className={ERRO}>{erro}</div>}
         </div>
 
       {/* Integração mantida no código, mas deliberadamente fora da tela até o
@@ -540,23 +547,20 @@ export default function PainelContrato({ respostas }: Props) {
               )}
             </ul>
 
-            <div className="flex gap-3 items-center flex-wrap">
-              <button
-                type="button"
-                className={BOTAO}
-                onClick={mandarAssinar}
-                disabled={enviando || !podeEnviar}
-              >
-                {enviando ? "Enviando…" : "Mandar os três para assinatura"}
-              </button>
-            </div>
-
-            {!podeEnviar && cliente && destinos.length === 0 && (
-              <p className="block mt-[6px] font-normal text-[11.5px] leading-[1.5] font-ui text-tinta-3">
-                Volte ao roteiro e preencha o e-mail{config.whatsapp ? " ou o telefone" : ""}{" "}
-                do cliente.
-              </p>
-            )}
+            <BotaoProcesso
+              variante="primario"
+              onClick={mandarAssinar}
+              processando={enviando}
+              textoProcessando="Enviando para a ZapSign…"
+              pendencia={
+                podeEnviar
+                  ? null
+                  : (pendenciaContrato ??
+                    `Volte ao roteiro e preencha o e-mail${config.whatsapp ? " ou o telefone" : ""} do cliente.`)
+              }
+            >
+              Mandar os três para assinatura
+            </BotaoProcesso>
           </>
         )}
 
@@ -707,17 +711,26 @@ function EnvioPeloSiteZapSign({
           onChange={(e) => setWhatsapp(e.target.value)}
           placeholder="WhatsApp do cliente (opcional)"
         />
-        <button
-          type="button"
-          onClick={() => void enviar()}
-          disabled={enviando || !arquivo || !email.trim()}
-          className="rounded-[6px] bg-acao px-4 py-2 text-sm font-semibold text-white hover:bg-acao-forte disabled:opacity-50"
+        <BotaoProcesso
+          variante="primario"
+          bloco
+          onClick={enviar}
+          processando={enviando}
+          textoProcessando="Enviando pelo site do ZapSign…"
+          dica="A automação entra na conta do escritório — pode levar um minuto"
+          pendencia={
+            !arquivo
+              ? "Escolha o PDF a assinar."
+              : !email.trim()
+                ? "Informe o e-mail do cliente."
+                : null
+          }
+          onPendencia={() => !arquivo && fileRef.current?.click()}
+          erro={erro}
         >
-          {enviando ? "Enviando pelo site do ZapSign…" : "Enviar para assinatura"}
-        </button>
+          Enviar para assinatura
+        </BotaoProcesso>
       </div>
-
-      {erro && <p className="mt-2 mb-0 text-sm text-critico">{erro}</p>}
       {resultado && (
         <div className="mt-2 rounded-[6px] border border-ok-borda bg-ok-claro p-3 text-sm text-tinta">
           <p className="m-0 font-semibold text-ok">Enviado ✓</p>
@@ -733,7 +746,7 @@ function EnvioPeloSiteZapSign({
           </p>
           {resultado.link && (
             <div className="mt-3 border-t border-ok-borda pt-3">
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-start">
                 <input
                   className={CAMPO}
                   value={whatsapp}
@@ -741,24 +754,19 @@ function EnvioPeloSiteZapSign({
                   placeholder="WhatsApp do cliente (com DDD)"
                   inputMode="tel"
                 />
-                <button
-                  type="button"
-                  onClick={() => void enviarLinkWhatsapp()}
-                  disabled={reenviandoWa || !whatsapp.trim()}
-                  className="rounded-[6px] bg-acao px-4 py-2 text-sm font-semibold text-white hover:bg-acao-forte disabled:opacity-50"
+                <BotaoProcesso
+                  variante="primario"
+                  onClick={enviarLinkWhatsapp}
+                  processando={reenviandoWa}
+                  textoProcessando="Enviando…"
+                  pendencia={whatsapp.trim() ? null : "Informe o WhatsApp com DDD."}
+                  pendenciaAoClicar
+                  erro={envioWa?.tom === "erro" ? envioWa.texto : null}
+                  concluido={envioWa?.tom === "ok" ? envioWa.texto : null}
                 >
-                  {reenviandoWa
-                    ? "Enviando…"
-                    : resultado.whatsapp_enviado
-                      ? "Reenviar link por WhatsApp"
-                      : "Enviar link por WhatsApp"}
-                </button>
+                  {resultado.whatsapp_enviado ? "Reenviar link por WhatsApp" : "Enviar link por WhatsApp"}
+                </BotaoProcesso>
               </div>
-              {envioWa && (
-                <p className={`mt-2 mb-0 text-sm ${envioWa.tom === "ok" ? "text-ok" : "text-critico"}`}>
-                  {envioWa.texto}
-                </p>
-              )}
             </div>
           )}
         </div>
@@ -821,14 +829,19 @@ function Acompanhamento({
         </p>
       )}
 
-      <div className="flex gap-3 items-center flex-wrap">
-        <button type="button" className={BOTAO_SECUNDARIO} onClick={onAtualizar}>
+      <div className="flex gap-3 items-start flex-wrap">
+        <Botao variante="secundario" onClick={onAtualizar}>
           Atualizar agora
-        </button>
+        </Botao>
         {concluido && (
-          <button type="button" className={BOTAO} onClick={onBaixar} disabled={baixando}>
-            {baixando ? "Baixando…" : "Baixar assinado (PDF)"}
-          </button>
+          <BotaoProcesso
+            variante="primario"
+            onClick={onBaixar}
+            processando={baixando}
+            textoProcessando="Baixando…"
+          >
+            Baixar assinado (PDF)
+          </BotaoProcesso>
         )}
       </div>
 
@@ -928,14 +941,15 @@ function LinhaSignatario({
         * o atendente ter de abrir o WhatsApp e achar a conversa. Só aparece
         * para quem tem telefone: sem número não há para onde mandar. */}
       {whatsappProprio && signatario.url_assinatura && signatario.estado !== "assinou" && signatario.telefone && (
-        <button
-          type="button"
-          className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-[1.4] font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta disabled:cursor-wait disabled:text-tinta-desabilitada"
-          disabled={enviando}
+        <Botao
+          variante="texto"
+          pequeno
+          carregando={enviando}
+          textoCarregando="enviando…"
           onClick={() => void enviarWhatsApp()}
         >
-          {enviando ? "enviando…" : "enviar por WhatsApp"}
-        </button>
+          enviar por WhatsApp
+        </Botao>
       )}
       {envio && (
         <span className={`font-normal text-[11px] leading-[1.4] font-ui ${envio.tom === "ok" ? "text-ok" : "text-critico"}`}>

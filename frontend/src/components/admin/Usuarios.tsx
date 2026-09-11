@@ -2,17 +2,20 @@
 
 /* Cadastro de quem usa o sistema.
  *
- * Quatro campos, e é de propósito: conta se cria no meio do atendimento, com
- * alguém esperando. Nome, e-mail, perfil e senha bastam para entrar — CPF,
- * telefone e endereço o cadastro do CASO já coleta, e pedir duas vezes é a
- * forma mais rápida de ninguém preencher nenhuma das duas.
+ * Poucos campos, e é de propósito: conta se cria no meio do atendimento, com
+ * alguém esperando. Nome, e-mail, perfil e senha bastam para entrar; o telefone
+ * é opcional. CPF e endereço o cadastro do CASO já coleta, e pedir duas vezes é
+ * a forma mais rápida de ninguém preencher nenhuma das duas.
+ *
+ * Editar uma conta que já existe é outra coisa — é poder entrar como aquela
+ * pessoa — e fica só com o secretário (ver `EditarUsuario.tsx`).
  *
  * A lista fica ao lado do formulário, e não atrás de um botão, porque a pergunta
  * que antecede "cadastrar" quase sempre é "ele já não está aí?".
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Mail, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, Mail, Pencil, Phone, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
 
 import {
   AjudaCampo,
@@ -30,6 +33,7 @@ import {
   TrZebra,
   Vazio,
 } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   ApiError,
   criarUsuario,
@@ -38,12 +42,19 @@ import {
   type Perfil,
   type UsuarioCadastrado,
 } from "@/lib/api";
+/* A matriz de perfis mora nesta tela, e não numa própria, porque as duas
+ * respondem à mesma pergunta em ordens diferentes: aqui se escolhe o perfil de
+ * alguém, e é aqui que se descobre que o perfil disponível não alcança o que a
+ * pessoa precisa. Separá-las obrigaria a sair da tela para conferir isso. */
+import PerfisDeAcesso from "@/components/PerfisDeAcesso";
+import EditarUsuario, { formatarTelefone } from "@/components/admin/EditarUsuario";
+import { useSessao } from "@/lib/auth";
 
 interface Props {
   onVoltar: () => void;
 }
 
-const VAZIO = { nome: "", email: "", perfilId: 0, senha: "" };
+const VAZIO = { nome: "", email: "", telefone: "", perfilId: 0, senha: "" };
 const TAMANHO_PAGINA = 12;
 
 export default function Usuarios({ onVoltar }: Props) {
@@ -60,6 +71,26 @@ export default function Usuarios({ onVoltar }: Props) {
    * já cadastrados, então os dois não podem disputar a mesma faixa. */
   const [erroPerfis, setErroPerfis] = useState<string | null>(null);
   const [feito, setFeito] = useState<string | null>(null);
+
+  /* Só o secretário edita conta existente. Esconder o botão aqui é para não
+   * oferecer o que vai dar 403 — quem de fato barra é o servidor
+   * (`PodeEditarContas`), e é lá que a regra vale. */
+  const sessao = useSessao();
+  const podeEditar = sessao.papeis.includes("secretario");
+  const [editando, setEditando] = useState<UsuarioCadastrado | null>(null);
+  const [editado, setEditado] = useState<string | null>(null);
+
+  /* O cartão de edição nasce no topo da tela, e o botão fica lá embaixo, na linha
+   * da tabela. `window.scrollTo` não servia: a partir de `lg` quem rola é a área de
+   * conteúdo do `AppShell`, não a janela — o cartão abria fora da vista e o clique
+   * parecia não fazer nada. `scrollIntoView` acha o contêiner certo sozinho. */
+  const cartaoEdicao = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const cartao = cartaoEdicao.current;
+    if (!editando || !cartao) return;
+    cartao.scrollIntoView({ behavior: "smooth", block: "start" });
+    cartao.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  }, [editando]);
 
   const recarregar = useCallback(async (paginaSolicitada = 1) => {
     const paginaSegura = Number.isFinite(paginaSolicitada) ? Math.max(1, paginaSolicitada) : 1;
@@ -184,6 +215,32 @@ export default function Usuarios({ onVoltar }: Props) {
         </div>
       )}
 
+      {editado && !editando && (
+        <Aviso tom="ok" titulo="Alterações salvas">
+          {editado}
+        </Aviso>
+      )}
+
+      {editando && (
+        <div ref={cartaoEdicao} className="scroll-mt-4">
+          <EditarUsuario
+            key={editando.id}
+            usuario={editando}
+            perfis={perfis}
+            contaPropria={
+              (editando.email ?? editando.usuario ?? "").toLowerCase() ===
+              sessao.usuario.toLowerCase()
+            }
+            onCancelar={() => setEditando(null)}
+            onSalvo={async (resumo) => {
+              setEditando(null);
+              setEditado(resumo);
+              await recarregar(pagina);
+            }}
+          />
+        </div>
+      )}
+
       <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),400px)_minmax(0,1fr)] items-start gap-5 max-[920px]:grid-cols-1">
         <Cartao
           titulo={
@@ -219,6 +276,19 @@ export default function Usuarios({ onVoltar }: Props) {
               <AjudaCampo>
                 É com ele que a pessoa entra — não há usuário separado.
               </AjudaCampo>
+            </div>
+
+            <div>
+              <RotuloCampo>Telefone</RotuloCampo>
+              <Campo
+                type="tel"
+                inputMode="tel"
+                maxLength={30}
+                value={form.telefone}
+                onChange={(e) => setForm({ ...form, telefone: e.target.value })}
+                placeholder="(61) 99999-0000"
+              />
+              <AjudaCampo>Opcional.</AjudaCampo>
             </div>
 
             <div>
@@ -258,15 +328,17 @@ export default function Usuarios({ onVoltar }: Props) {
               </AjudaCampo>
             </div>
 
-            <Botao
+            <BotaoProcesso
               type="submit"
               variante="primario"
               bloco
-              disabled={salvando || !perfilSelecionado}
+              processando={salvando}
+              textoProcessando="Cadastrando…"
+              pendencia={perfilSelecionado ? null : "Escolha o perfil do novo usuário."}
             >
               <UserPlus size={16} aria-hidden />
-              {salvando ? "Cadastrando…" : "Cadastrar usuário"}
-            </Botao>
+              Cadastrar usuário
+            </BotaoProcesso>
           </form>
 
           {/* O perfil Cliente existe, mas o caminho do cliente é o portal do
@@ -317,6 +389,7 @@ export default function Usuarios({ onVoltar }: Props) {
                       <Th>Login</Th>
                       <Th>Perfil</Th>
                       <Th>Situação</Th>
+                      {podeEditar && <Th className="text-right">Ação</Th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -340,6 +413,12 @@ export default function Usuarios({ onVoltar }: Props) {
                               {u.usuario}
                             </span>
                           </span>
+                          {u.telefone && (
+                            <span className="mt-1 flex items-center gap-2 text-xs text-tinta-3 tabular-nums">
+                              <Phone size={12} className="shrink-0" aria-hidden />
+                              {formatarTelefone(u.telefone)}
+                            </span>
+                          )}
                         </Td>
                         <Td>
                           <span className="flex max-w-[260px] flex-wrap gap-1">
@@ -361,6 +440,22 @@ export default function Usuarios({ onVoltar }: Props) {
                             {u.ativo ? "ativo" : "inativo"}
                           </Selo>
                         </Td>
+                        {podeEditar && (
+                          <Td className="text-right">
+                            <Botao
+                              pequeno
+                              variante="secundario"
+                              onClick={() => {
+                                setEditado(null);
+                                setEditando(u);
+                              }}
+                              aria-label={`Editar ${u.nome}`}
+                            >
+                              <Pencil size={14} aria-hidden />
+                              Editar
+                            </Botao>
+                          </Td>
+                        )}
                       </TrZebra>
                     ))}
                   </tbody>
@@ -382,6 +477,8 @@ export default function Usuarios({ onVoltar }: Props) {
           )}
         </Cartao>
       </div>
+
+      <PerfisDeAcesso />
     </div>
   );
 }

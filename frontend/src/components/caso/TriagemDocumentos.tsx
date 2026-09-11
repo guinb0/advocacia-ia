@@ -2,14 +2,26 @@
 
 import { useState } from "react";
 
-import type { Entrega, ItemSituacao } from "@/lib/types";
+import type {
+  DuplicidadeDocumento,
+  Entrega,
+  ItemSituacao,
+  OpcoesReclassificacao,
+} from "@/lib/types";
+import { duplicidadesDoErro } from "@/lib/api";
+import AvisoDuplicidade from "@/components/caso/AvisoDuplicidade";
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import VisorEntrega from "@/components/caso/VisorEntrega";
 
 interface Props {
   entregas: Entrega[];
   itens: ItemSituacao[];
-  onAtribuir: (entregaId: string, itens: string[]) => Promise<void> | void;
+  onAtribuir: (
+    entregaId: string,
+    itens: string[],
+    opcoes?: OpcoesReclassificacao,
+  ) => Promise<void> | void;
   onRemover: (entregaId: string) => void;
 }
 
@@ -17,15 +29,37 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
   const [destinos, setDestinos] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState<string | null>(null);
   const [visor, setVisor] = useState<{ id: string; arquivo: string } | null>(null);
+  /** Suspeita de duplicidade por documento, esperando a pessoa decidir. */
+  const [suspeitas, setSuspeitas] = useState<
+    Record<string, { lista: DuplicidadeDocumento[]; mensagem: string }>
+  >({});
 
   if (entregas.length === 0) return null;
 
-  async function atribuir(entrega: Entrega) {
+  function descartarSuspeita(entregaId: string) {
+    setSuspeitas((atual) => {
+      const resto = { ...atual };
+      delete resto[entregaId];
+      return resto;
+    });
+  }
+
+  async function atribuir(entrega: Entrega, confirmar = false) {
     const destino = destinos[entrega.id];
     if (!destino) return;
     setSalvando(entrega.id);
     try {
-      await onAtribuir(entrega.id, [destino]);
+      await onAtribuir(entrega.id, [destino], { confirmarDuplicidade: confirmar });
+      descartarSuspeita(entrega.id);
+    } catch (e) {
+      // Só a duplicidade chega aqui: os demais erros a tela do caso já mostra.
+      const lista = duplicidadesDoErro(e);
+      if (lista) {
+        setSuspeitas((atual) => ({
+          ...atual,
+          [entrega.id]: { lista, mensagem: e instanceof Error ? e.message : "" },
+        }));
+      }
     } finally {
       setSalvando(null);
     }
@@ -69,6 +103,20 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                 </div>
               ))}
 
+              {suspeitas[entrega.id] && (
+                <div className="mt-3">
+                  <AvisoDuplicidade
+                    mensagem={suspeitas[entrega.id].mensagem}
+                    duplicidades={suspeitas[entrega.id].lista}
+                    itens={itens}
+                    confirmando={salvando === entrega.id}
+                    rotuloConfirmar="Atribuir mesmo assim"
+                    onConfirmar={() => void atribuir(entrega, true)}
+                    onCancelar={() => descartarSuspeita(entrega.id)}
+                  />
+                </div>
+              )}
+
               {!lendo && (
                 <div className="flex gap-2 items-end mt-3 flex-wrap">
                   <label className="flex-1 min-w-[240px] text-xs text-tinta-3">
@@ -84,13 +132,16 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                       ))}
                     </select>
                   </label>
-                  <Botao
+                  <BotaoProcesso
                     variante="primario"
-                    onClick={() => void atribuir(entrega)}
-                    disabled={!destinos[entrega.id] || salvando === entrega.id}
+                    onClick={() => atribuir(entrega)}
+                    processando={salvando === entrega.id}
+                    textoProcessando="Atribuindo…"
+                    pendencia={destinos[entrega.id] ? null : "Escolha ao lado o item correto do checklist."}
+                    pendenciaAoClicar
                   >
-                    {salvando === entrega.id ? "Atribuindo…" : "Atribuir ao item"}
-                  </Botao>
+                    Atribuir ao item
+                  </BotaoProcesso>
                   <Botao variante="perigo" onClick={() => onRemover(entrega.id)}>Remover</Botao>
                 </div>
               )}

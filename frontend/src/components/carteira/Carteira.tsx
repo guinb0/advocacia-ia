@@ -574,6 +574,7 @@ const APOIO_POR_TELA: Partial<Record<Tela, string>> = {
   panorama: "visão analítica",
   supervisao: "entrevistas",
   catalogoRoteiros: "roteiros guiados",
+  glossarioDocumentos: "tipos de documento",
   usuarios: "acessos",
   saudeAgente: "integrações",
   modelosDePeticao: "petições",

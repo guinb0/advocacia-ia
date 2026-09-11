@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { tamanhoLegivel } from "@/lib/formato";
 import type { TipoDocumento } from "@/lib/types";
 import { AjudaCampo, Aviso, Botao, CampoSeletor, Cartao, RotuloCampo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 interface Props {
   arquivo: File | null;
@@ -159,15 +160,21 @@ export default function PainelEnvio({
         </CampoSeletor>
       </div>
 
-      <div className="flex gap-[10px] mt-5">
-        <Botao
+      <div className="flex items-start gap-[10px] mt-5">
+        {/* Sem arquivo, o botão não fica cinza: clicar abre a escolha do arquivo,
+          * que é exatamente o que falta para começar. */}
+        <BotaoProcesso
           variante="primario"
+          bloco
           className="flex-1"
-          disabled={!arquivo || processando}
+          processando={processando}
+          textoProcessando="Lendo o documento…"
+          pendencia={arquivo ? null : "Escolha o arquivo acima para liberar a leitura."}
+          onPendencia={selecionarArquivo}
           onClick={() => onExtrair(idioma, tipo)}
         >
-          {processando ? "Lendo o documento…" : "2. Ler o documento"}
-        </Botao>
+          2. Ler o documento
+        </BotaoProcesso>
         <Botao variante="discreto" onClick={onLimpar} disabled={processando}>
           Limpar
         </Botao>

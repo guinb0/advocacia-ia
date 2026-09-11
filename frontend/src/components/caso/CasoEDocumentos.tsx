@@ -6,6 +6,7 @@ import { useChamada } from "@/lib/ChamadaContexto";
 import type { CasoCriado, Categoria } from "@/lib/types";
 import { useSituacao } from "@/lib/useCasos";
 import { Aviso, Campo, CampoSeletor, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import Checklist from "@/components/caso/Checklist";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
 import { obterAtendimentoDocumentacao, criarSalaChamada, solicitarDocumentacao } from "@/lib/api";
@@ -285,14 +286,28 @@ export default function CasoEDocumentos({
           </div>
         )}
 
-        <button
-          type="button"
-          className="border-[1.5px] border-acao bg-acao text-papel text-[11px] font-semibold leading-none font-ui tracking-[0.1em] uppercase px-[15px] py-[11px] cursor-pointer enabled:hover:bg-acao-forte enabled:hover:border-acao-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada disabled:border-borda-forte disabled:cursor-not-allowed"
-          onClick={() => void criar()}
-          disabled={criando || !cliente.trim() || !escolhida || (editavel && !cpf?.trim())}
+        <BotaoProcesso
+          variante="primario"
+          onClick={criar}
+          processando={criando}
+          textoProcessando="Criando o caso…"
+          dica="Criando o caso, abrindo o portal e a sala da chamada"
+          pendencia={
+            !cliente.trim()
+              ? "Informe o nome do cliente."
+              : editavel && !cpf?.trim()
+                ? "Informe o CPF do cliente."
+                : !escolhida
+                  ? "Escolha o tipo de ação."
+                  : null
+          }
+          onPendencia={() =>
+            editavel &&
+            document.getElementById(cliente.trim() ? "triagem-cpf" : "triagem-nome")?.focus()
+          }
         >
-          {criando ? "Criando…" : "Criar caso"}
-        </button>
+          Criar caso
+        </BotaoProcesso>
       </section>
     );
   }

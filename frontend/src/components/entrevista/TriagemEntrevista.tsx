@@ -23,6 +23,7 @@ import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import AvaliacaoGoogle from "@/components/contrato/AvaliacaoGoogle";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import { AjudaCampo, Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
 import PainelChamada from "@/components/chamada/PainelChamada";
@@ -681,14 +682,30 @@ export default function TriagemEntrevista({
           }
         />
 
-      <div className="flex gap-[10px] items-center flex-wrap mt-3">
-        <Botao variante="secundario" onClick={() => void analisar()} disabled={analisando || !texto.trim()}>
-          {analisando ? "Analisando…" : "Analisar o relato"}
-        </Botao>
+      <div className="flex gap-[10px] items-start flex-wrap mt-3">
+        {/* A ação do bloco: sem relato, o clique diz o que falta em vez de o botão
+          * ficar cinza sem explicação. */}
+        <BotaoProcesso
+          variante="primario"
+          onClick={() => analisar()}
+          processando={analisando}
+          textoProcessando="Analisando o relato…"
+          dica="Sugerindo as ações cabíveis e comparando com a base de casos"
+          pendencia={texto.trim() ? null : "Cole o relato acima ou escolha um arquivo com texto."}
+          pendenciaAoClicar
+          onPendencia={() => document.getElementById("relato-entrevista")?.focus()}
+        >
+          Analisar o relato
+        </BotaoProcesso>
 
-        <Botao variante="discreto" pequeno onClick={() => inputRef.current?.click()} disabled={analisando}>
+        <BotaoProcesso
+          variante="discreto"
+          pequeno
+          onClick={() => inputRef.current?.click()}
+          aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
+        >
           Escolher arquivo com texto
-        </Botao>
+        </BotaoProcesso>
 
         <input
           ref={inputRef}
@@ -863,14 +880,15 @@ export default function TriagemEntrevista({
           />
 
           {casoTxtId && gravacaoEstado !== "sem-audio" && (
-            <Botao
+            <BotaoProcesso
               variante="secundario"
               className="mt-3"
-              disabled={encerrandoTxt}
-              onClick={() => void encerrarGravacaoTxt()}
+              processando={encerrandoTxt}
+              textoProcessando="Encerrando a gravação…"
+              onClick={encerrarGravacaoTxt}
             >
-              {encerrandoTxt ? "Encerrando a gravação…" : "Encerrar a gravação do atendimento"}
-            </Botao>
+              Encerrar a gravação do atendimento
+            </BotaoProcesso>
           )}
         </div>
       )}
