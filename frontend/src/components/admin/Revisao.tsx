@@ -17,6 +17,8 @@ import {
   type MetricasRevisao,
   type PeticaoParaRevisar,
 } from "@/lib/api";
+import { listarCasos } from "@/lib/api";
+import { gerarAnaliseEPeticao } from "@/lib/agente";
 import { baixarArquivoDaPeticao, buscarPeticao, type Peticao } from "@/lib/agente";
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
@@ -64,6 +66,7 @@ export default function Revisao() {
 
   return (
     <div className="grid gap-5">
+      <GeradorEmLote aoConcluir={recarregar} />
       <Cartao
         titulo="Revisão de petições"
         subtitulo="As petições que aguardam revisão. Abrir uma marca o início; aprovar ou devolver para ajustes conclui."
@@ -116,6 +119,63 @@ export default function Revisao() {
         </Cartao>
       )}
     </div>
+  );
+}
+
+type EstadoLote = "aguardando" | "gerando" | "pronta" | "falhou";
+
+/** Dispara uma requisição por caso: o navegador não espera uma terminar para
+ * começar a próxima, e a fila de revisão continua sendo o ponto único para
+ * editar/aprovar cada minuta quando terminar. */
+function GeradorEmLote({ aoConcluir }: { aoConcluir: () => Promise<void> }) {
+  const [casos, setCasos] = useState<Array<{ id: string; cliente: string; categoria: string }>>([]);
+  const [selecionados, setSelecionados] = useState<string[]>([]);
+  const [estados, setEstados] = useState<Record<string, { estado: EstadoLote; detalhe?: string }>>({});
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    void listarCasos().then((lista) => setCasos(lista)).catch(() => setErro("Não foi possível listar os casos."));
+  }, []);
+
+  function alternar(id: string) {
+    setSelecionados((atuais) => atuais.includes(id) ? atuais.filter((item) => item !== id) : [...atuais, id]);
+  }
+
+  async function gerarLote() {
+    if (!selecionados.length) return;
+    setErro(null);
+    setEstados(Object.fromEntries(selecionados.map((id) => [id, { estado: "gerando" as const }])));
+    await Promise.allSettled(selecionados.map(async (id) => {
+      try {
+        await gerarAnaliseEPeticao(id);
+        setEstados((atual) => ({ ...atual, [id]: { estado: "pronta" } }));
+      } catch (falha) {
+        setEstados((atual) => ({ ...atual, [id]: { estado: "falhou", detalhe: falha instanceof Error ? falha.message : "Falha ao gerar." } }));
+      }
+    }));
+    await aoConcluir();
+  }
+
+  const gerando = Object.values(estados).some((item) => item.estado === "gerando");
+  return (
+    <Cartao titulo="Fila de geração" subtitulo="Selecione vários casos para gerar as minutas ao mesmo tempo. Ao terminar, cada uma aparece abaixo para revisão e edição individual.">
+      {erro && <Aviso tom="critico" titulo="Fila indisponível">{erro}</Aviso>}
+      {casos.length === 0 ? <Vazio>Nenhum caso disponível para inclusão na fila.</Vazio> : <>
+        <div className="max-h-64 overflow-y-auto rounded-campo border border-borda">
+          {casos.map((caso) => {
+            const situacao = estados[caso.id];
+            return <label key={caso.id} className="flex cursor-pointer items-center justify-between gap-3 border-b border-borda px-3 py-2 last:border-0 hover:bg-papel-2">
+              <span className="flex min-w-0 items-center gap-3"><input type="checkbox" checked={selecionados.includes(caso.id)} disabled={gerando} onChange={() => alternar(caso.id)} /><span className="min-w-0"><strong className="block truncate text-tinta">{caso.cliente}</strong><small className="text-tinta-3">{caso.categoria}</small></span></span>
+              {situacao && <Selo tom={situacao.estado === "pronta" ? "ok" : situacao.estado === "falhou" ? "critico" : "atencao"}>{situacao.estado === "gerando" ? "gerando" : situacao.estado === "pronta" ? "pronta" : "falhou"}</Selo>}
+            </label>;
+          })}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm text-tinta-3">{selecionados.length} caso(s) selecionado(s). As falhas ficam isoladas e não impedem os demais.</span>
+          <BotaoProcesso variante="primario" onClick={() => void gerarLote()} processando={gerando} textoProcessando="Gerando minutas…" pendencia={selecionados.length ? null : "Selecione ao menos um caso."}>Gerar petições selecionadas</BotaoProcesso>
+        </div>
+      </>}
+    </Cartao>
   );
 }
 
