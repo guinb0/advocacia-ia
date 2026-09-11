@@ -241,7 +241,7 @@ export default function Usuarios({ onVoltar }: Props) {
         </div>
       )}
 
-      <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),400px)_minmax(0,1fr)] items-start gap-5 max-[920px]:grid-cols-1">
+      <div className="space-y-5">
         <Cartao
           titulo={
             <span className="inline-flex min-w-0 items-center gap-2">
@@ -252,7 +252,7 @@ export default function Usuarios({ onVoltar }: Props) {
           subtitulo="Dados mínimos para liberar entrada no sistema."
           className="min-w-0 overflow-hidden"
         >
-          <form onSubmit={enviar} className="grid gap-4">
+          <form onSubmit={enviar} className="grid grid-cols-2 gap-x-5 gap-y-4 max-[720px]:grid-cols-1">
             <div>
               <RotuloCampo>Nome completo</RotuloCampo>
               <Campo
@@ -328,10 +328,13 @@ export default function Usuarios({ onVoltar }: Props) {
               </AjudaCampo>
             </div>
 
+            <div className="col-span-2 flex flex-wrap items-center justify-between gap-3 border-t border-borda pt-4 max-[720px]:col-span-1">
+              <span className="text-xs leading-[1.45] text-tinta-3">
+                O acesso fica ativo assim que o cadastro for confirmado.
+              </span>
             <BotaoProcesso
               type="submit"
               variante="primario"
-              bloco
               processando={salvando}
               textoProcessando="Cadastrando…"
               pendencia={perfilSelecionado ? null : "Escolha o perfil do novo usuário."}
@@ -339,6 +342,7 @@ export default function Usuarios({ onVoltar }: Props) {
               <UserPlus size={16} aria-hidden />
               Cadastrar usuário
             </BotaoProcesso>
+            </div>
           </form>
 
           {/* O perfil Cliente existe, mas o caminho do cliente é o portal do

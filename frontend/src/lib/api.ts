@@ -19,6 +19,8 @@ import type {
   PortalEstado,
   PortalGerado,
   ProcessamentoEntrevista,
+  ProvedorAssinatura,
+  StatusProvedorAssinatura,
   RespostaEnvio,
   RoteiroCompleto,
   RoteiroImportado,
@@ -1066,6 +1068,51 @@ export async function gerarRelatorio(
 /** Se o envio para assinatura está ligado — sem a chave no `.env` ele não existe. */
 export async function configAssinatura(): Promise<ConfigAssinatura> {
   return comoJson<ConfigAssinatura>(await buscar("/api/assinatura/config"));
+}
+
+/** Status de cada provedor (ZapSign, Clicksign, Autentique) — nunca o token. */
+export async function listarProvedoresAssinatura(): Promise<StatusProvedorAssinatura[]> {
+  const dados = await comoJson<{ provedores: StatusProvedorAssinatura[] }>(
+    await buscar("/api/assinatura/provedores"),
+  );
+  return dados.provedores;
+}
+
+/** Cifra e salva o token do escritório para Clicksign/Autentique. Não testa
+ *  sozinho — o botão "Testar conexão" (`testarProvedorAssinatura`) faz isso. */
+export async function salvarTokenProvedorAssinatura(
+  provedor: "clicksign" | "autentique",
+  token: string,
+): Promise<void> {
+  await comoJson(
+    await buscar(`/api/assinatura/provedores/${provedor}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+  );
+}
+
+/** Bate na API do provedor com o token salvo. Lança se a conexão falhar — a
+ *  mensagem de erro já vem pronta para a tela. */
+export async function testarProvedorAssinatura(
+  provedor: "clicksign" | "autentique",
+): Promise<{ ok: boolean; mensagem: string }> {
+  return comoJson(await buscar(`/api/assinatura/provedores/${provedor}/testar`, { method: "POST" }));
+}
+
+/** Torna o provedor escolhido o caminho de envio. Exige teste aprovado antes
+ *  (Clicksign/Autentique) — a ZapSign pode voltar a ser ativada a qualquer hora. */
+export async function ativarProvedorAssinatura(
+  provedor: ProvedorAssinatura,
+): Promise<{ ok: boolean; provedor_ativo: ProvedorAssinatura }> {
+  return comoJson(
+    await buscar("/api/assinatura/provedores/ativar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provedor }),
+    }),
+  );
 }
 
 /** Envia um documento à assinatura pelo SITE do ZapSign (plano sem API), via

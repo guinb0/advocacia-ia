@@ -24,6 +24,7 @@ import TriagemEntrevista from "@/components/entrevista/TriagemEntrevista";
 import Supervisao from "@/components/admin/Supervisao";
 import SaudeAgente from "@/components/SaudeAgente";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
+import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
 import Revisao from "@/components/admin/Revisao";
 import FollowUp from "@/components/admin/FollowUp";
 import Usuarios from "@/components/admin/Usuarios";
@@ -235,6 +236,14 @@ const Telas = (props: HomeViewProps) => {
     return (
       <ModuleFrame variant="compact">
         <ModelosDePeticao onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "configuracaoAssinatura") {
+    return (
+      <ModuleFrame variant="compact">
+        <ConfiguracaoAssinatura />
       </ModuleFrame>
     );
   }
