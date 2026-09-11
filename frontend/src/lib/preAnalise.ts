@@ -80,9 +80,10 @@ export async function lerEntrevista(
   transcricao: string,
   respostas: Record<string, string | string[]>,
   aoConsolidar?: (processamento: ProcessamentoEntrevista) => void,
+  roteiro = "empregado_publico",
 ): Promise<LeituraDaEntrevista> {
   const cobertura = transcricao.length;
-  const processamento = await processarEntrevista(transcricao, respostas);
+  const processamento = await processarEntrevista(transcricao, respostas, roteiro);
   aoConsolidar?.(processamento);
 
   const lacunas = processamento.faltando.filter((p) => p.obrigatoria).map((p) => p.pergunta);
@@ -109,6 +110,8 @@ interface Opcoes {
   /** A transcrição bruta como ela está agora, já concatenada. */
   lerTranscricao: () => string;
   lerRespostas: () => Record<string, string | string[]>;
+  /** Identifica a versão atual do roteiro; editar perguntas invalida insights antigos. */
+  lerRoteiro: () => string;
   /** Falso enquanto a revisão de verdade corre, e depois do encerramento: as
    *  duas disputariam o mesmo threadpool do servidor, que é o que transcreve
    *  a conversa ao vivo. */
@@ -116,14 +119,15 @@ interface Opcoes {
 }
 
 /** Mantém uma leitura recente da entrevista pronta, sem mostrar nada. */
-export function usarPreAnalise({ lerTranscricao, lerRespostas, ativa }: Opcoes): {
+export function usarPreAnalise({ lerTranscricao, lerRespostas, lerRoteiro, ativa }: Opcoes): {
   obter: () => LeituraDaEntrevista | null;
 } {
   const pronta = useRef<LeituraDaEntrevista | null>(null);
   const emCurso = useRef(false);
   const ultimaPassada = useRef(0);
-  const entradas = useRef({ lerTranscricao, lerRespostas });
-  entradas.current = { lerTranscricao, lerRespostas };
+  const entradas = useRef({ lerTranscricao, lerRespostas, lerRoteiro });
+  const roteiroLido = useRef("");
+  entradas.current = { lerTranscricao, lerRespostas, lerRoteiro };
 
   useEffect(() => {
     if (!ativa) return;
@@ -131,18 +135,21 @@ export function usarPreAnalise({ lerTranscricao, lerRespostas, ativa }: Opcoes):
       if (emCurso.current) return;
       if (Date.now() - ultimaPassada.current < INTERVALO_MINIMO_MS) return;
       const transcricao = entradas.current.lerTranscricao();
+      const roteiro = entradas.current.lerRoteiro();
       const coberto = pronta.current?.cobertura ?? 0;
+      const roteiroMudou = roteiro !== roteiroLido.current;
       if (coberto === 0) {
         if (transcricao.length < PRIMEIRA_PASSADA) return;
-      } else if (transcricao.length < coberto * (1 + CRESCIMENTO_MINIMO_RELATIVO)) {
+      } else if (!roteiroMudou && transcricao.length < coberto * (1 + CRESCIMENTO_MINIMO_RELATIVO)) {
         return;
       }
 
       emCurso.current = true;
       ultimaPassada.current = Date.now();
-      void lerEntrevista(transcricao, entradas.current.lerRespostas())
+      void lerEntrevista(transcricao, entradas.current.lerRespostas(), undefined, roteiro)
         .then((leitura) => {
           pronta.current = leitura;
+          roteiroLido.current = roteiro;
         })
         .catch(() => {
           /* Silêncio de propósito: isto é adiantamento, e falhar aqui não muda

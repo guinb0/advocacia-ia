@@ -43,7 +43,7 @@ cd advocacia-ia
 .\iniciar.ps1 -Prod
 ```
 
-Ele carrega o `.env` da raiz sozinho e levanta: Redis, observabilidade, Jitsi (:8081), agente jurídico (:8011 + worker Dramatiq),
+Ele carrega o `.env` da raiz sozinho e levanta: SQL Server local (:14333), Redis, observabilidade, Jitsi (:8081), agente jurídico (:8011 + worker Dramatiq),
 transcrição/Whisper (:8200), API (:8100), workers Celery e frontend (:3000). Se
 o agente já estiver em :8011, reutiliza o processo; `-SemAgente` não o sobe.
 `-SemJitsi` pula somente as chamadas remotas.
@@ -61,6 +61,23 @@ vez de deixar metade dos serviços no ar e falhar muitos minutos depois.
 O agente lê **somente** `ia-juridica/.env`. Em especial, não herda a
 `DATABASE_URL` do Acervo, que aponta para o corpus pgvector e seria o banco
 errado para o Case State.
+
+## Dados de desenvolvimento
+
+O banco SQL Server local pode receber uma carteira sintética por comando manual:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.seed_development --confirm
+```
+
+O comando exige `PERMITIR_DADOS_TESTE=true`, `SQLSERVER_HOST=127.0.0.1` ou
+`localhost`, e `SQLSERVER_PORT=14333`. Para removê-la sem alterar outros dados
+locais, use `--clean --confirm`. O guia completo, incluindo as contas de
+demonstração, está em `docs/COMECANDO.md`.
+
+`iniciar.ps1` fixa o backend no SQL Server de desenvolvimento em `127.0.0.1` e
+usa `SQLSERVER_LOCAL_PORT` (padrão `14333`) para evitar que valores antigos do
+`.env` redirecionem a aplicação para um servidor remoto.
 
 ## Endereços por ambiente
 
@@ -90,7 +107,7 @@ sem isso o navegador não manda o cookie e o login "entra e volta". O Jitsi rece
 
 | O quê | Onde | Sem ele |
 |---|---|---|
-| SQL Server | 177.131.142.42:1433 | nada persiste |
+| SQL Server | contêiner local, :14333 | nada persiste |
 | pgvector | 10.200.1.1:5432, **atrás da VPN** | some recomendação, análise por precedentes e a aba Dados |
 | Redis | contêiner, :6380 | fila e lock de GPU param |
 | Postgres de jobs | contêiner, :5434 | histórico de jobs |
@@ -105,8 +122,9 @@ respondeu" — não é bug de aplicação.
 
 Não há contêiner de identidade. Quem assina a sessão é o próprio backend
 (`app/auth.py`, HS256, cookie `HttpOnly` de 24h) e as contas vivem na tabela
-`dbo.acervo_usuarios` do banco `advocacia`, então `docker compose down -v` não
-apaga login nenhum.
+`dbo.acervo_usuarios` do banco local `advocacia`. O volume persiste entre
+reinicializacoes; `docker compose down -v` apaga os logins junto com os outros
+dados locais de desenvolvimento.
 
 Um ambiente com a tabela vazia cria sozinho a conta inicial (`ACERVO_ADMIN_EMAIL`,
 padrão `admin@acervo.local`) — senão a autenticação subiria ligada e sem ninguém

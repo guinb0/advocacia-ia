@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FluxoPeticao, { type ControlesGeracaoPeticao } from "@/components/admin/FluxoPeticao";
+import { GeradorEmLote } from "@/components/admin/Revisao";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
@@ -411,6 +412,8 @@ export default function Dossie({
         onAtualizar={carregar}
       />
 
+      <GeradorEmLote aoConcluir={async () => { await carregar(); }} />
+
       <FluxoPeticao
         casoId={casoId}
         temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
@@ -592,6 +595,23 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
             {analise.documentos_lidos === 1 ? "" : "s"}
             {analise.recusados ? ` · ${analise.recusados} achado(s) recusados na conferência da citação` : ""}
           </p>
+
+          {(analise.cronologia?.length ?? 0) > 0 && (
+            <div className="mt-4 border-t border-borda pt-3">
+              <p className={ORIGEM}>Linha do tempo do caso</p>
+              <ol className="m-0 border-l border-acao pl-5">
+                {analise.cronologia!.map((evento, i) => (
+                  <li key={i} className="relative mb-4 last:mb-0">
+                    <span className="absolute -left-[25px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
+                    <strong className="block text-sm tabular-nums text-acao">{evento.data}</strong>
+                    <span className="block text-sm text-tinta">{evento.evento}</span>
+                    <span className={`${ORIGEM} block truncate`} title={evento.documento}>{evento.documento}</span>
+                    <blockquote className={TRECHO}>{evento.citacao}</blockquote>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
 
           {analise.achados.length === 0 ? (
             <p className={TEXTO_VAZIO}>

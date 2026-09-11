@@ -16,13 +16,14 @@ Depois disto, leia o `CONTEXTO.md` — ele conta o que foi decidido e por quê, 
 | **[uv](https://docs.astral.sh/uv/)** | cria o venv e instala o Python 3.11 | `uv --version` |
 | **Node 20+** | o frontend é Next.js 16 | `node --version` |
 | **Git** | | `git --version` |
-| **Docker Desktop** | *opcional* — só para login e chamadas | `docker ps` |
+| **Docker Desktop** | SQL Server local, filas e chamadas | `docker ps` |
+| **ODBC Driver 17 for SQL Server** | conexão Python com o SQL Server | `Get-OdbcDriver -Name "ODBC Driver 17 for SQL Server"` |
 
 **Python 3.11 especificamente.** O `paddlepaddle` ainda não publica wheels para
 3.13+, e o `uv` resolve isso sozinho — não precisa instalar Python à mão.
 
-**Docker é opcional.** Sem ele você roda com `-SemAuth` e perde só o login e a
-chamada por vídeo. Tudo o mais funciona.
+**Docker é necessário.** O ambiente de desenvolvimento usa um SQL Server local
+para casos, usuários e login, além dos serviços de fila.
 
 ---
 
@@ -33,9 +34,9 @@ git clone https://gitlab.level33lab.cloud/ia/advocacia-ia
 cd advocacia-ia
 ```
 
-Salve o arquivo de configuração que veio junto como `.env` nesta pasta. **Ele
-funciona como está, sem preencher nada** — cada bloco lá dentro liga um recurso
-a mais, e explica o que você perde deixando vazio.
+Copie `.env.example` para `.env` e defina `SQLSERVER_PASSWORD` com uma senha forte.
+Ela fica somente na sua máquina e é usada pelo SQL Server local. Os outros blocos
+ligam recursos opcionais e explicam o que você perde deixando-os vazios.
 
 ```powershell
 .\iniciar.ps1 -SemAuth
@@ -47,8 +48,8 @@ Na primeira vez ele vai criar o venv, instalar as dependências Python, rodar
 
 Quando parar de escrever, abra **http://localhost:3000**.
 
-> `-SemAuth` desliga a autenticação e dispensa o Docker. É como você vai rodar
-> no dia a dia enquanto estiver mexendo em OCR, entrevista ou contrato.
+> `-SemAuth` desliga a autenticação, mas o Docker continua necessário para o
+> SQL Server local e as filas. Use-o para trabalhar sem login.
 
 ### Com login
 
@@ -69,6 +70,7 @@ NÃO pode acontecer é elas seguirem assim quando o sistema sair da máquina.
 
 | serviço | porta | sobe com |
 |---|---|---|
+| SQL Server local | `14333` | `iniciar.ps1` |
 | Backend (FastAPI + PaddleOCR) | `8100` | `iniciar.ps1` |
 | Frontend (Next.js) | `3000` | `iniciar.ps1` |
 | Transcrição (Whisper) | `8200` | `iniciar.ps1` |
@@ -76,6 +78,76 @@ NÃO pode acontecer é elas seguirem assim quando o sistema sair da máquina.
 
 `Ctrl+C` no terminal derruba backend, frontend e transcrição juntos. O Jitsi
 fica de pé entre execuções, como container.
+
+O SQL Server guarda os registros do Acervo em um volume Docker persistente.
+Arquivos enviados pelo cliente continuam em `dados/`. Para apagar apenas os dados
+locais de desenvolvimento, execute `docker compose down -v`; isto também apaga
+os volumes de Redis, jobs e Grafana.
+
+`SQLSERVER_LOCAL_PORT` define a porta publicada pelo contêiner; mantenha o valor
+`14333` para o backend e o seeder usarem o mesmo SQL Server local.
+
+### Dados de demonstração
+
+Com o SQL Server local em execução, o seeder manual cria dados inteiramente
+sintéticos para navegar pela carteira, checklist, contratos, supervisão, operação,
+conversas e métricas. Ele não chama OCR, IA, ZapSign, SMTP ou qualquer serviço externo.
+As entregas sintéticas também são marcadas como já tratadas pelo agente jurídico,
+portanto não entram na fila assíncrona de sincronização. O worker também descarta
+qualquer tarefa pendente cujo caso tenha o marcador `dev-seed-`.
+
+No `.env`, habilite explicitamente:
+
+```env
+PERMITIR_DADOS_TESTE=true
+```
+
+Depois execute:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.seed_development --confirm
+```
+
+O comando só aceita `SQLSERVER_HOST=127.0.0.1` ou `localhost` e
+`SQLSERVER_PORT=14333`. Ele recria apenas os registros sintéticos identificados
+como demonstração, sem duplicá-los.
+
+Contas criadas:
+
+| Conta | Perfil | Senha |
+|---|---|---|
+| `ana.dev@acervo.local` | advogado | `Demo123!` |
+| `bruno.dev@acervo.local` | secretário | `Demo123!` |
+| `carla.dev@acervo.local` | documentação | `Demo123!` |
+
+Todos os casos usam a categoria `doenca_ocupacional`, para que o Panorama possa
+comparar tempos entre casos equivalentes:
+
+| ID | Cliente sintético | Cenário |
+|---|---|---|
+| `dev-seed-interview` | Cliente Entrevista | caso aberto, sem entrevista |
+| `dev-seed-collection` | Cliente Coleta | entrevista e duas entregas aprovadas; faltam documentos |
+| `dev-seed-review` | Cliente Conferência | checklist entregue, com o último documento reprovado |
+| `dev-seed-contract` | Cliente Contrato | checklist completo e contrato pendente |
+| `dev-seed-complete-one` | Cliente Instruído Um | checklist e contrato assinados; histórico iniciado há 34 dias |
+| `dev-seed-complete-two` | Cliente Instruído Dois | checklist e contrato assinados; histórico iniciado há 48 dias |
+| `dev-seed-complete-three` | Cliente Instruído Três | checklist e contrato assinados; histórico iniciado há 65 dias |
+
+Cada caso com entrevista recebe qualificação sintética, entrevista, auditoria,
+ligações, follow-up e configuração de cobrança de documentos. As entregas são
+arquivos PDF mínimos, sem dados pessoais ou OCR real. O caso de coleta também
+recebe uma automação de WhatsApp e uma conversa do agente geral. O primeiro caso
+instruído recebe uma solicitação de petição concluída. Essas datas retroativas
+ativam os indicadores de coleta, contrato, ciclo, supervisão e mediana no Painel
+e no Panorama.
+
+Para remover apenas os dados que o seeder criou:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.seed_development --clean --confirm
+```
+
+Ao terminar os testes, volte `PERMITIR_DADOS_TESTE` para `false`.
 
 Documentação interativa da API: **http://127.0.0.1:8100/docs**.
 
@@ -115,6 +187,7 @@ PASS/FALHA.
 .venv\Scripts\python.exe -m tests.test_assinatura
 .venv\Scripts\python.exe -m tests.test_analise_resposta
 .venv\Scripts\python.exe -m tests.test_casos
+.venv\Scripts\python.exe -m tests.test_seed_development
 ```
 
 Nenhuma delas toca serviço externo — DeepSeek, ZapSign e pgvector entram
@@ -151,7 +224,7 @@ frontend/
   components/PainelContrato.tsx contrato e assinatura
   app/portal/[token]/           o que o cliente vê
 scripts/estado_rag.py           diagnóstico do banco vetorial
-dados/                          SQLite + arquivos dos clientes (fora do git)
+dados/                          arquivos dos clientes (fora do git)
 ```
 
 Os documentos dos clientes ficam em `dados/` e **nunca** vão para o

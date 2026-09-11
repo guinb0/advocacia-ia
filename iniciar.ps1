@@ -54,7 +54,12 @@ Importar-Env ".\.env"
 if ($script:EnvDoAmbiente.Count -gt 0) {
     Write-Host "Atencao: estas variaveis ja estavam nesta janela do PowerShell e venceram o .env:" -ForegroundColor Yellow
     foreach ($nome in ($script:EnvDoAmbiente.Keys | Sort-Object)) {
-        Write-Host ("  {0} = {1}" -f $nome, $script:EnvDoAmbiente[$nome]) -ForegroundColor Yellow
+        $valor = if ($nome -match "(?i)(password|senha|secret|token|api_key)") {
+            "<redacted>"
+        } else {
+            $script:EnvDoAmbiente[$nome]
+        }
+        Write-Host ("  {0} = {1}" -f $nome, $valor) -ForegroundColor Yellow
     }
     Write-Host "Se nao era essa a intencao, abra um PowerShell novo (ou limpe com:" -ForegroundColor Yellow
     Write-Host '  Get-Content .\.env | % { if ($_ -match ''^\s*([A-Z_0-9]+)='') { Remove-Item "env:$($Matches[1])" -EA SilentlyContinue } }' -ForegroundColor DarkGray
@@ -255,10 +260,22 @@ if ($SemAuth) {
     Write-Host "Login proprio (JWT em cookie HttpOnly)." -ForegroundColor Green
 }
 
-# Broker durável e painéis. Redis usa AOF; Flower, Prometheus e Grafana ficam
-# disponíveis sem compartilhar processo com a API.
-Write-Host "Subindo Redis e observabilidade..." -ForegroundColor Yellow
-docker compose up -d --wait --wait-timeout 60 redis jobs-db flower prometheus grafana | Out-Null
+# Broker durável, SQL Server local e painéis. Redis usa AOF; Flower, Prometheus e
+# Grafana ficam disponíveis sem compartilhar processo com a API.
+if (-not $env:SQLSERVER_PASSWORD) {
+    throw "Falta SQLSERVER_PASSWORD no .env. Use uma senha forte para o SQL Server local."
+}
+$portaSqlLocal = if ($env:SQLSERVER_LOCAL_PORT) { $env:SQLSERVER_LOCAL_PORT } else { "14333" }
+$env:SQLSERVER_HOST = "127.0.0.1"
+$env:SQLSERVER_PORT = $portaSqlLocal
+$env:SQLSERVER_USER = "sa"
+Write-Host "Subindo banco local, Redis e observabilidade..." -ForegroundColor Yellow
+docker compose up -d --wait --wait-timeout 120 sqlserver redis jobs-db flower prometheus grafana | Out-Null
+docker compose exec -T sqlserver /bin/bash -ec '
+    /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
+        -v database="$SQLSERVER_DATABASE" \
+        -i /docker-entrypoint-initdb.d/create_local_database.sql
+' | Out-Null
 # 127.0.0.1 e nao "localhost": no Windows o "localhost" resolve primeiro para o
 # IPv6 ::1, e o encaminhamento IPv6 do Docker Desktop reseta as conexoes do
 # redis-py/kombu (WinError 10054) enquanto o IPv4 funciona. Fixar o loopback

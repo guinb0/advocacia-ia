@@ -25,7 +25,6 @@ import Supervisao from "@/components/admin/Supervisao";
 import SaudeAgente from "@/components/SaudeAgente";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
 import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
-import Revisao from "@/components/admin/Revisao";
 import FollowUp from "@/components/admin/FollowUp";
 import Usuarios from "@/components/admin/Usuarios";
 import Resultado from "@/components/caso/Resultado";
@@ -219,7 +218,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "revisao") {
     return (
       <ModuleFrame variant="wide">
-        <Revisao />
+        <Supervisao onVoltar={voltarParaCarteira} />
       </ModuleFrame>
     );
   }

@@ -100,7 +100,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
     titulo: "Análise",
     itens: [
       { tela: "avulso", rotulo: "Ler um documento" },
-      { tela: "revisao", rotulo: "Revisão" },
+      { tela: "revisao", rotulo: "Revisão do roteiro" },
       { tela: "investigacao", rotulo: "Investigar" },
       { tela: "dados", rotulo: "Dados" },
       { tela: "panorama", rotulo: "Panorama" },
@@ -116,7 +116,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
       { tela: "catalogoRoteiros", rotulo: "Roteiros" },
       { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
-      { tela: "usuarios", rotulo: "Usuários" },
+      { tela: "usuarios", rotulo: "Administração" },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
       { tela: "configuracaoAssinatura", rotulo: "Assinatura eletrônica" },

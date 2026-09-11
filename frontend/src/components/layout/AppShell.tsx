@@ -18,7 +18,7 @@ const ROTULO_TELA: Record<Tela, string> = {
   casos: "Casos",
   avulso: "Ler documento",
   investigacao: "Investigação",
-  usuarios: "Usuários",
+  usuarios: "Administração",
   panorama: "Panorama",
   operacao: "Operação",
   entrevista: "Entrevista guiada",
@@ -29,7 +29,7 @@ const ROTULO_TELA: Record<Tela, string> = {
   configuracaoAssinatura: "Assinatura eletrônica",
   catalogoRoteiros: "Roteiros",
   glossarioDocumentos: "Glossário de documentos",
-  revisao: "Revisão de petições",
+  revisao: "Revisão do roteiro",
   followup: "Follow-up",
   documentacao: "Documentação",
 };
@@ -53,7 +53,7 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
      * grudava. No celular o fluxo é o do documento: a página rola pelo `<body>`
      * (que já tem `overflow-x:hidden` e `max-width:100vw` em globals.css, o que
      * mata a rolagem horizontal), e a topbar `sticky top-0` gruda de verdade. */
-    <div className="min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[236px_minmax(0,1fr)]">
+    <div className="app-shell min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[236px_minmax(0,1fr)]">
       <BarraLateral tela={tela} onNavegar={onNavegar} />
       <main className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-hidden">
         <div className="hidden shrink-0 border-b border-borda bg-papel/[0.88] px-6 py-3 shadow-[0_1px_0_rgba(16,32,51,0.03)] backdrop-blur lg:block">

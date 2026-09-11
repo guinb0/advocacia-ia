@@ -85,14 +85,13 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
     // O RAG cru pode recuperar processos de outro assunto. Só entram perguntas
     // da comparação que passou pelo corte de similaridade da recomendação.
     ...(recomendacao?.analise_comparativa?.perguntas_criticas ?? []),
-  ])).slice(0, 8);
-  const provas = recomendacao?.analise_comparativa?.provas_prioritarias ?? [];
+  ])).filter((pergunta) => !perguntaDeDocumentacao(pergunta)).slice(0, 3);
   const tipo = triagem?.sugestoes[0];
   return (
     <section className="w-full border-l-4 border-tinta bg-papel-2 px-4 py-[14px]" aria-live="polite">
       <strong className="block text-[14px] text-tinta">Revisão da entrevista — o que fazer agora</strong>
       <p className="mt-1 text-xs leading-[1.55] text-tinta-3">
-        Leia as sugestões abaixo e faça ao cliente as perguntas que faltarem. A chamada e a gravação continuam ativas.
+        Só o que precisa ser confirmado com o cliente agora. A chamada e a gravação continuam ativas.
       </p>
       {/* Dizer que é preliminar não é detalhe: o fim da conversa é onde ficam os
         * valores e o motivo da saída, e uma revisão que parece completa sem eles
@@ -155,19 +154,21 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
         </details>
       )}
       {perguntas.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Perguntas específicas para esta conversa</summary>
-          <p className="mt-2 mb-1 text-xs text-tinta-3">Nascem de ambiguidades e fatos realmente mencionados, sem repetir as pendências do roteiro.</p>
+        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Até 3 perguntas que importam agora</summary>
+          <p className="mt-2 mb-1 text-xs text-tinta-3">Nascem de ambiguidades e fatos mencionados, sem repetir o roteiro ou pedir documentos.</p>
           <ol className="mt-2 pl-5 text-xs leading-[1.6]">{perguntas.map((p) => <li key={p}>“{p}”</li>)}</ol>
         </details>
       )}
-      {provas.length > 0 && (
-        <details className="mt-3"><summary className="cursor-pointer text-xs font-bold">Documentos e provas a pedir</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{provas.slice(0, 8).map((p) => <li key={p.prova}><strong>{p.prova}</strong> — {p.motivo}</li>)}</ul>
-        </details>
-      )}
+      <p className="mt-3 mb-0 border-l-2 border-borda-forte pl-2 text-xs leading-[1.5] text-tinta-3">
+        Documentos e provas serão organizados na etapa de documentação, depois de encerrar a entrevista.
+      </p>
       {avisos.map((aviso) => <p key={aviso} className="mt-3 text-xs text-atencao">{aviso}</p>)}
     </section>
   );
+}
+
+function perguntaDeDocumentacao(texto: string): boolean {
+  return /\b(documento|prova|laudo|exame|atestado|carteira|ctps|contracheque|holerite|cat|cnis|ppp)\b/i.test(texto);
 }
 
 export default function EntrevistaComChamada({
@@ -215,6 +216,7 @@ export default function EntrevistaComChamada({
   const preAnalise = usarPreAnalise({
     lerTranscricao: transcricaoAtual,
     lerRespostas: () => ultimo.current[0],
+    lerRoteiro: () => roteiro.current?.codigoRoteiro() ?? "empregado_publico",
     ativa: encerrada === null && !fechando,
   });
 
@@ -336,7 +338,7 @@ export default function EntrevistaComChamada({
                       roteiro.current?.atualizarRespostas(processamento.respostas);
                       ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
                       onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
-                    });
+                    }, roteiro.current?.codigoRoteiro() ?? "empregado_publico");
                     setResultadoFinal({ ...leitura, provisorio: false });
                   })()
                     .catch((e: unknown) => setErroFecho(e instanceof Error ? e.message : "Não foi possível revisar a entrevista."))
@@ -412,6 +414,9 @@ export default function EntrevistaComChamada({
               {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}
               {resultadoFinal && <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeComplementar={false} />}
 
+              {/* O id pode existir enquanto o atendimento continua. O áudio só
+                  fica disponível depois do encerramento definitivo, quando o
+                  arquivo contém também as etapas posteriores ao roteiro. */}
               {encerrada && <AudioDaEntrevista entrevistaId={encerrada} />}
 
               <div className="flex items-start flex-wrap gap-[14px]">
