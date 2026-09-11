@@ -16,7 +16,7 @@ import {
   type EstadoCaptura,
   type TrechoTranscrito,
 } from "@/lib/transcricao";
-import type { CasoCriado, Categoria, Estrategia, Triagem } from "@/lib/types";
+import type { CasoCriado, Categoria, Estrategia, RoteiroCompleto, Triagem } from "@/lib/types";
 import CasoEDocumentos from "@/components/caso/CasoEDocumentos";
 import { useChamada } from "@/lib/ChamadaContexto";
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
@@ -201,6 +201,7 @@ export default function TriagemEntrevista({
   const [qualificacao, setQualificacao] = useState<Record<string, string | string[]> | null>(
     null,
   );
+  const [roteiroAtivo, setRoteiroAtivo] = useState<RoteiroCompleto | null>(null);
   /* O áudio sobrevive à tela em que foi gravado — pelo mesmo motivo da
    * qualificação. Sem guardar o id aqui, o arquivo continuaria no disco e
    * ninguém teria como pedi-lo: o nome dele é um uuid. */
@@ -461,7 +462,7 @@ export default function TriagemEntrevista({
         <p className="mb-3 mt-1 text-xs leading-[1.5] text-tinta-3">
           Abra esta revisão apenas se precisar validar ou corrigir uma resposta antes de criar o caso.
         </p>
-        <RespostasDoRoteiro respostas={qualificacao} />
+        {roteiroAtivo && <RespostasDoRoteiro respostas={qualificacao} roteiro={roteiroAtivo} />}
       </details>
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
@@ -562,6 +563,7 @@ export default function TriagemEntrevista({
       <div className="min-w-0 p-4 sm:p-5">
       {mostrarRoteiro ? (
         <EntrevistaComChamada
+          onRoteiroAtivo={setRoteiroAtivo}
           /* As respostas sobem a cada mudança: é o que deixa as etapas abaixo
            * do roteiro prontas antes de a entrevista fechar. O relato e o id do
            * áudio vêm junto, pelos mesmos motivos de sempre. */
@@ -581,6 +583,7 @@ export default function TriagemEntrevista({
             setQualificacao(respostas);
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
+            setCadastroConfirmado(true);
             setMostrarRoteiro(false);
             setEncerrado(true);
             // Encerrou com o caso já criado: regrava a conversa inteira, agora
@@ -633,7 +636,7 @@ export default function TriagemEntrevista({
 
       {/* Fechou a tela sem encerrar (ou voltou para continuar): as etapas seguem
         * aqui, porque continuam por fazer. */}
-      {!encerrado && !mostrarRoteiro && etapasDoAtendimento}
+      {!mostrarRoteiro && etapasDoAtendimento}
 
       {/* O importador abaixo também serve para análise avulsa, antes de começar
         * uma entrevista. Depois de FINALIZAR, porém, a conversa já foi lida em

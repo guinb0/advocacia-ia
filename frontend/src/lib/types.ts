@@ -309,6 +309,8 @@ export interface DocumentoPendente {
 export interface Progresso {
   obrigatorios_total: number;
   obrigatorios_entregues: number;
+  /** Arquivos obrigatórios já recebidos, inclusive os que ainda precisam de conferência. */
+  obrigatorios_recebidos?: number;
   obrigatorios_pendentes: number;
   opcionais_total: number;
   opcionais_entregues: number;
@@ -431,6 +433,17 @@ export interface RoteiroCompleto {
   fechos_por_tipo: Record<string, string>;
   /** id da pergunta de rastreio -> módulo que ela libera. */
   mapa_rastreio: Record<string, string>;
+}
+
+/** A versão exata do roteiro que a pessoa está vendo e que a IA deve usar.
+ *
+ * O código sozinho não basta: o roteiro pode ter sido editado apenas para a
+ * sessão e ainda não existir no catálogo do servidor. `chave` também separa o
+ * cache da pré-análise entre duas versões com o mesmo código. */
+export interface ContextoRevisaoRoteiro {
+  roteiro: RoteiroCompleto;
+  chave: string;
+  ids_renderizaveis: string[];
 }
 
 // ----------------------------------------------------- triagem da entrevista

@@ -318,9 +318,9 @@ export default function PerfisDeAcesso() {
                     <Th
                       key={m.codigo}
                       title={m.descricao}
-                      className="min-w-[46px] cursor-help pb-3 text-center align-bottom"
+                      className="min-w-[132px] cursor-help text-center align-middle"
                     >
-                      <span className="inline-block max-h-[150px] rotate-180 [writing-mode:vertical-rl]">
+                      <span className="inline-block whitespace-normal leading-[1.3]">
                         {m.rotulo}
                       </span>
                     </Th>

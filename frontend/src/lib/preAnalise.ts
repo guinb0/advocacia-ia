@@ -3,7 +3,13 @@
 import { useEffect, useRef } from "react";
 
 import { processarEntrevista, recomendarEntrevista, triarEntrevista } from "@/lib/api";
-import type { ProcessamentoEntrevista, RecomendacaoEntrevista, Triagem } from "@/lib/types";
+import { chaveDasRespostas } from "@/lib/roteiroContexto";
+import type {
+  ContextoRevisaoRoteiro,
+  ProcessamentoEntrevista,
+  RecomendacaoEntrevista,
+  Triagem,
+} from "@/lib/types";
 
 /* A revisão da entrevista, adiantada enquanto a conversa ainda corre.
  *
@@ -37,6 +43,11 @@ export interface LeituraDaEntrevista {
   /** Quantos caracteres de transcrição esta leitura cobriu. É o que separa
    *  preliminar de definitiva: igual ao tamanho atual, nada ficou de fora. */
   cobertura: number;
+  /** Versão exata do roteiro usada nesta leitura. */
+  roteiro_chave: string;
+  /** Entradas e saída distinguem edição manual de consolidação já aplicada. */
+  respostas_entrada_chave: string;
+  respostas_saida_chave: string;
 }
 
 /** De quanto em quanto tempo o relógio da pré-análise acorda. */
@@ -79,39 +90,56 @@ const MINIMO_RECOMENDACAO = 40;
 export async function lerEntrevista(
   transcricao: string,
   respostas: Record<string, string | string[]>,
+  contextoRoteiro: ContextoRevisaoRoteiro,
   aoConsolidar?: (processamento: ProcessamentoEntrevista) => void,
-  roteiro = "empregado_publico",
 ): Promise<LeituraDaEntrevista> {
   const cobertura = transcricao.length;
-  const processamento = await processarEntrevista(transcricao, respostas, roteiro);
+  const respostasEntradaChave = chaveDasRespostas(respostas);
+  const processamento = await processarEntrevista(
+    transcricao,
+    respostas,
+    contextoRoteiro.roteiro.codigo,
+    contextoRoteiro.roteiro,
+  );
   aoConsolidar?.(processamento);
 
   const lacunas = processamento.faltando.filter((p) => p.obrigatoria).map((p) => p.pergunta);
   const avisos: string[] = [];
-  const [triagem, recomendacao] = await Promise.all([
-    triarEntrevista(transcricao).catch(() => {
-      avisos.push("O tipo do caso não pôde ser classificado automaticamente.");
-      return null;
-    }),
-    transcricao.length >= MINIMO_RECOMENDACAO
-      ? recomendarEntrevista(transcricao, lacunas).catch(() => {
+  const promessaTriagem = triarEntrevista(transcricao).catch(() => {
+    avisos.push("O tipo do caso não pôde ser classificado automaticamente.");
+    return null;
+  });
+  const promessaRecomendacao = transcricao.length >= MINIMO_RECOMENDACAO
+      ? recomendarEntrevista(transcricao, lacunas, contextoRoteiro.roteiro).catch(() => {
           avisos.push("A base vetorial não respondeu. Encaminhe para revisão do advogado.");
           return null;
         })
-      : Promise.resolve(null),
+      : Promise.resolve(null);
+  const [triagem, recomendacao] = await Promise.all([
+    promessaTriagem,
+    promessaRecomendacao,
   ]);
   if (processamento.analise_indisponivel) {
     avisos.push("A análise jurídica detalhada ficou indisponível nesta execução.");
   }
-  return { processamento, triagem, recomendacao, avisos, cobertura };
+  return {
+    processamento,
+    triagem,
+    recomendacao,
+    avisos,
+    cobertura,
+    roteiro_chave: contextoRoteiro.chave,
+    respostas_entrada_chave: respostasEntradaChave,
+    respostas_saida_chave: chaveDasRespostas(processamento.respostas),
+  };
 }
 
 interface Opcoes {
   /** A transcrição bruta como ela está agora, já concatenada. */
   lerTranscricao: () => string;
   lerRespostas: () => Record<string, string | string[]>;
-  /** Identifica a versão atual do roteiro; editar perguntas invalida insights antigos. */
-  lerRoteiro: () => string;
+  /** Snapshot do roteiro visível. Trocar a chave invalida qualquer leitura. */
+  contextoRoteiro: ContextoRevisaoRoteiro | null;
   /** Falso enquanto a revisão de verdade corre, e depois do encerramento: as
    *  duas disputariam o mesmo threadpool do servidor, que é o que transcreve
    *  a conversa ao vivo. */
@@ -119,37 +147,57 @@ interface Opcoes {
 }
 
 /** Mantém uma leitura recente da entrevista pronta, sem mostrar nada. */
-export function usarPreAnalise({ lerTranscricao, lerRespostas, lerRoteiro, ativa }: Opcoes): {
+export function usarPreAnalise({
+  lerTranscricao,
+  lerRespostas,
+  contextoRoteiro,
+  ativa,
+}: Opcoes): {
   obter: () => LeituraDaEntrevista | null;
 } {
   const pronta = useRef<LeituraDaEntrevista | null>(null);
-  const emCurso = useRef(false);
+  const emCurso = useRef<number | null>(null);
   const ultimaPassada = useRef(0);
-  const entradas = useRef({ lerTranscricao, lerRespostas, lerRoteiro });
-  const roteiroLido = useRef("");
-  entradas.current = { lerTranscricao, lerRespostas, lerRoteiro };
+  const geracao = useRef(0);
+  const entradas = useRef({ lerTranscricao, lerRespostas, contextoRoteiro });
+  entradas.current = { lerTranscricao, lerRespostas, contextoRoteiro };
 
   useEffect(() => {
-    if (!ativa) return;
+    geracao.current += 1;
+    pronta.current = null;
+    emCurso.current = null;
+    ultimaPassada.current = 0;
+    if (!ativa || !contextoRoteiro) return;
+    const geracaoAtual = geracao.current;
     const id = window.setInterval(() => {
-      if (emCurso.current) return;
+      if (emCurso.current === geracaoAtual) return;
       if (Date.now() - ultimaPassada.current < INTERVALO_MINIMO_MS) return;
       const transcricao = entradas.current.lerTranscricao();
-      const roteiro = entradas.current.lerRoteiro();
-      const coberto = pronta.current?.cobertura ?? 0;
-      const roteiroMudou = roteiro !== roteiroLido.current;
+      const contextoAtual = entradas.current.contextoRoteiro;
+      if (!contextoAtual || contextoAtual.chave !== contextoRoteiro.chave) return;
+      const coberto = pronta.current?.roteiro_chave === contextoAtual.chave
+        ? pronta.current.cobertura
+        : 0;
       if (coberto === 0) {
         if (transcricao.length < PRIMEIRA_PASSADA) return;
-      } else if (!roteiroMudou && transcricao.length < coberto * (1 + CRESCIMENTO_MINIMO_RELATIVO)) {
+      } else if (transcricao.length < coberto * (1 + CRESCIMENTO_MINIMO_RELATIVO)) {
         return;
       }
 
-      emCurso.current = true;
+      emCurso.current = geracaoAtual;
       ultimaPassada.current = Date.now();
-      void lerEntrevista(transcricao, entradas.current.lerRespostas(), undefined, roteiro)
+      void lerEntrevista(
+        transcricao,
+        entradas.current.lerRespostas(),
+        contextoAtual,
+      )
         .then((leitura) => {
-          pronta.current = leitura;
-          roteiroLido.current = roteiro;
+          if (
+            geracao.current === geracaoAtual &&
+            entradas.current.contextoRoteiro?.chave === leitura.roteiro_chave
+          ) {
+            pronta.current = leitura;
+          }
         })
         .catch(() => {
           /* Silêncio de propósito: isto é adiantamento, e falhar aqui não muda
@@ -157,11 +205,19 @@ export function usarPreAnalise({ lerTranscricao, lerRespostas, lerRoteiro, ativa
            * que o erro aparece, com o cliente ainda na sala. */
         })
         .finally(() => {
-          emCurso.current = false;
+          if (emCurso.current === geracaoAtual) emCurso.current = null;
         });
     }, PASSO_MS);
-    return () => window.clearInterval(id);
-  }, [ativa]);
+    return () => {
+      window.clearInterval(id);
+      geracao.current += 1;
+    };
+  }, [ativa, contextoRoteiro?.chave]);
 
-  return { obter: () => pronta.current };
+  return {
+    obter: () =>
+      pronta.current?.roteiro_chave === entradas.current.contextoRoteiro?.chave
+        ? pronta.current
+        : null,
+  };
 }

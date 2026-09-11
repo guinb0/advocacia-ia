@@ -19,7 +19,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FluxoPeticao, { type ControlesGeracaoPeticao } from "@/components/admin/FluxoPeticao";
-import { GeradorEmLote } from "@/components/admin/Revisao";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
@@ -411,8 +410,6 @@ export default function Dossie({
         entrevistas={dados.entrevistas ?? []}
         onAtualizar={carregar}
       />
-
-      <GeradorEmLote aoConcluir={async () => { await carregar(); }} />
 
       <FluxoPeticao
         casoId={casoId}
