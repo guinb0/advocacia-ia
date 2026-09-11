@@ -152,6 +152,27 @@ export async function restaurarModeloVisualPeticao(): Promise<ModeloVisualPetica
   return comoJson(await buscar("/api/modelos/peticao/visual", { method: "DELETE" }));
 }
 
+export interface ModeloContrato {
+  codigo: "contrato" | "procuracao" | "hipossuficiencia";
+  rotulo: string;
+  disponivel: boolean;
+  origem: "banco" | "docs" | "nenhuma";
+  arquivo: string;
+  enviado_por?: string;
+  atualizado_em?: string;
+}
+
+export async function listarModelosContrato(): Promise<ModeloContrato[]> {
+  const resposta = await comoJson<{ modelos: ModeloContrato[] }>(await buscar("/api/modelos"));
+  return resposta.modelos;
+}
+
+export async function enviarModeloContrato(codigo: ModeloContrato["codigo"], arquivo: File): Promise<ModeloContrato> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar(`/api/modelos/${encodeURIComponent(codigo)}`, { method: "POST", body: form }));
+}
+
 /** Skill/prompt que o escritório configura por categoria de petição — issue
  *  "Configurar skill por modelo de petição". Local ao Acervo, não depende do
  *  agente jurídico (`ia-juridica`) estar ativo. */
