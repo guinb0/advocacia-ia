@@ -232,6 +232,8 @@ export interface ManipuladorRoteiro {
    * cliente diz coisas que valem estar no áudio. Devolve o `entrevistaId`, que
    * é por onde o arquivo é baixado depois. */
   encerrarGravacao: () => Promise<string>;
+  /** Fecha a gravação visual somente ao encerrar todo o atendimento. */
+  encerrarAtendimento: () => Promise<void>;
   /** Tudo que foi transcrito, na ordem, com o instante de cada trecho.
    *
    * É a transcrição BRUTA: a conversa como ela saiu do Whisper, sem passar
@@ -795,12 +797,12 @@ export default function Roteiro({
       },
       encerrarGravacao: async () => {
         await encerrarEscutaRef.current();
-        // O vídeo vem DEPOIS do áudio: o `encerrarEscuta` espera os últimos
-        // blocos de PCM chegarem ao servidor, e é o áudio que sustenta a
-        // transcrição. Se o download do vídeo falhar, o atendimento já está
-        // salvo — por isso ele não interrompe o encerramento.
-        await controlesVideo.current?.pararEBaixar();
         return captura.current?.entrevistaId ?? "";
+      },
+      encerrarAtendimento: async () => {
+        // A entrevista guiada pode terminar antes do atendimento. O vídeo só
+        // para e baixa na saída definitiva, depois das etapas seguintes.
+        await controlesVideo.current?.pararEBaixar();
       },
       transcricaoBruta: () => [...transcricaoBruta.current],
     }),

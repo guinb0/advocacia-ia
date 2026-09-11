@@ -436,16 +436,11 @@ export default function EntrevistaComChamada({
               <BotaoProcesso
                 variante="primario"
                 onClick={() => {
-                  if (
-                    roteiro.current?.temVideoPendente() &&
-                    !window.confirm(
-                      "O vídeo gravado ainda não foi baixado e será perdido ao sair. " +
-                        "Sair mesmo assim?",
-                    )
-                  ) {
-                    return;
-                  }
-                  onConcluir(...ultimo.current);
+                  /* Este é o encerramento real do atendimento. O vídeo
+                   * continua durante as etapas intermediárias e só agora deve
+                   * ser parado e baixado automaticamente. */
+                  void roteiro.current?.encerrarAtendimento()
+                    .finally(() => onConcluir(...ultimo.current));
                 }}
               >
                 Finalizar entrevista

@@ -452,14 +452,17 @@ export default function TriagemEntrevista({
       />
       <PainelContrato respostas={qualificacao} />
 
-      {/* O roteiro inteiro com o que foi respondido, para conferir antes de o
-        * cliente desligar. Vem DEPOIS do contrato de propósito: quem chegou até
-        * aqui já fechou o atendimento, e o que resta é revisar — o que ficou em
-        * branco ainda dá para colher com ele na linha. */}
-      {/* `aberto` aqui, recolhido no `Roteiro`: são momentos diferentes. Lá a
-        * entrevista ainda corre e a lista disputaria a atenção; aqui o
-        * atendimento já fechou e conferir É o trabalho. */}
-      <RespostasDoRoteiro respostas={qualificacao} />
+      {/* A revisão continua disponível, mas fica recolhida para que a próxima
+        * tarefa do atendimento seja a única coisa dominante na tela. */}
+      <details className="mt-4 rounded-cartao border border-borda bg-papel-2 px-4 py-3 [&[open]>summary]:mb-3">
+        <summary className="cursor-pointer text-sm font-semibold text-tinta">
+          Conferir todas as respostas da entrevista
+        </summary>
+        <p className="mb-3 mt-1 text-xs leading-[1.5] text-tinta-3">
+          Abra esta revisão apenas se precisar validar ou corrigir uma resposta antes de criar o caso.
+        </p>
+        <RespostasDoRoteiro respostas={qualificacao} />
+      </details>
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
         * ainda na linha, e o checklist recebe o que ele já tem em mãos. */}
