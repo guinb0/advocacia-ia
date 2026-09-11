@@ -7,6 +7,27 @@
 # `app/auth.py`). Não há mais container de identidade para subir, nem realm para
 # importar — as contas vivem na tabela `acervo_usuarios` do SQL Server.
 services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: advocacia-sqlserver
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${SQLSERVER_PASSWORD:?Defina SQLSERVER_PASSWORD no .env}
+      SQLSERVER_DATABASE: ${SQLSERVER_DATABASE:-advocacia}
+    ports:
+      - "${SQLSERVER_LOCAL_PORT:-14333}:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+      - ./sql/create_local_database.sql:/docker-entrypoint-initdb.d/create_local_database.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\""]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
   jobs-db:
     image: postgres:16-alpine
     container_name: advocacia-jobs-db
@@ -76,6 +97,7 @@ services:
       - prometheus
 
 volumes:
+  sqlserver_data:
   redis_data:
   grafana_data:
   jobs_postgres_data:
