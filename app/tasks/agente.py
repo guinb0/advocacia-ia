@@ -10,6 +10,7 @@ from ..agente.cliente import AgenteIndisponivel, ErroDoAgente
 from ..celery_app import celery_app
 
 log = logging.getLogger("integracao-agente")
+DEVELOPMENT_CASE_PREFIX = "dev-seed-"
 
 
 @celery_app.task(
@@ -23,6 +24,10 @@ log = logging.getLogger("integracao-agente")
 )
 def enviar_entrega_ao_agente(self, caso_id: str, entrega_id: str) -> bool:
     """Garante o vínculo e envia sem repetir a inferência de OCR em caso de falha."""
+    if caso_id.startswith(DEVELOPMENT_CASE_PREFIX):
+        return False
+    if armazenamento.obter_caso(caso_id) is None:
+        return False
     try:
         espelho.garantir_caso(caso_id)
         enviado = espelho.enviar_entrega(caso_id, entrega_id, silencioso=False)
