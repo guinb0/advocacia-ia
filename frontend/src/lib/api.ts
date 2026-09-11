@@ -1557,6 +1557,75 @@ export async function baixarDocumentosDoCaso(casoId: string): Promise<PacoteDocu
   };
 }
 
+/** ZIP só com as entregas marcadas DENTRO de uma classificação (um item do
+ * checklist). É a versão seletiva de `baixarDocumentosDoCaso`: o atendente
+ * escolheu a classificação, marcou alguns arquivos dela e leva só esses.
+ *
+ * O servidor recusa o pedido inteiro se algum id não for daquela classificação
+ * — a mensagem de erro já vem pronta em `detail`. */
+export async function baixarSelecaoDeDocumentos(
+  casoId: string,
+  classificacao: string,
+  entregas: string[],
+): Promise<PacoteDocumentos> {
+  const r = await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos.zip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ classificacao, entregas }),
+  });
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+  return {
+    arquivo: await r.blob(),
+    nome: nomeDoAnexo(r, "documentos.zip"),
+    arquivos: Number(r.headers.get("X-Arquivos") ?? 0),
+    faltando: Number(r.headers.get("X-Faltando") ?? 0),
+  };
+}
+
+export interface PacotePdfCombinado extends PacoteDocumentos {
+  /** Páginas do PDF final — PDF original preserva as próprias; imagem vira 1. */
+  paginas: number;
+}
+
+/** Os mesmos documentos marcados, mas combinados num PDF só em vez de um ZIP.
+ *
+ * Irmã de `baixarSelecaoDeDocumentos`: mesma seleção, mesmas guardas. O
+ * servidor recusa (415) se algum arquivo não for PDF nem imagem, ou se a soma
+ * de páginas passar do teto — nesses casos o ZIP continua sendo a opção. */
+export async function baixarSelecaoEmPdf(
+  casoId: string,
+  classificacao: string,
+  entregas: string[],
+): Promise<PacotePdfCombinado> {
+  const r = await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos.pdf`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ classificacao, entregas }),
+  });
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+  return {
+    arquivo: await r.blob(),
+    nome: nomeDoAnexo(r, "documentos.pdf"),
+    arquivos: Number(r.headers.get("X-Arquivos") ?? 0),
+    paginas: Number(r.headers.get("X-Paginas") ?? 0),
+    faltando: Number(r.headers.get("X-Faltando") ?? 0),
+  };
+}
+
 /** URL absoluta do arquivo. Serve para abrir em nova aba quando não há
  * autenticação; com token ligado use `baixarArquivoEntrega`, porque `<img>` e
  * `<iframe>` não enviam o header Authorization e levariam 401. */

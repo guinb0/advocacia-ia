@@ -4151,6 +4151,149 @@ def historico_da_entrega(entrega_id: str):
     }
 
 
+#: Tetos da seleção por classificação (rotas POST abaixo, ZIP e PDF). A
+#: quantidade casa com o teto de itens de um ZIP recebido; o tamanho reusa o
+#: mesmo número de bytes, porque documento é PDF/foto já comprimido e a soma
+#: dos arquivos é ~o tamanho do pacote. Acima disto a rota recusa com 413 —
+#: gerar assíncrono fica para depois.
+MAX_ITENS_ZIP_SELECAO = int(os.getenv("MAX_ITENS_ZIP_SELECAO", "50"))
+MAX_BYTES_ZIP_SELECAO = int(
+    os.getenv("MAX_BYTES_ZIP_SELECAO", str(200 * 1024 * 1024))
+)
+#: Teto de páginas do PDF combinado. Bem acima do `pdf.MAX_PAGINAS_PDF` (que é
+#: por ARQUIVO enviado): aqui é a soma de vários documentos já aceitos no caso.
+MAX_PAGINAS_PDF_SELECAO = int(os.getenv("MAX_PAGINAS_PDF_SELECAO", "300"))
+
+
+class PedidoSelecaoDocumentos(BaseModel):
+    """Documentos marcados dentro de UMA classificação, para baixar juntos —
+    em ZIP (`POST .../documentos.zip`) ou combinados num PDF só
+    (`POST .../documentos.pdf`). O corpo é o mesmo nos dois formatos."""
+
+    #: Código do item do checklist (a "classificação"), como vem em
+    #: `GET /api/casos/{id}` → `itens[].codigo`.
+    classificacao: str = Field(min_length=1, max_length=60)
+    #: Ids das entregas marcadas. O teto alto aqui é só contra payload abusivo;
+    #: o limite real, com mensagem amigável, é `MAX_ITENS_ZIP_SELECAO`.
+    entregas: list[str] = Field(min_length=1, max_length=1000)
+
+
+@app.post("/api/casos/{caso_id}/documentos.zip")
+def baixar_selecao_de_documentos(
+    caso_id: str,
+    pedido: PedidoSelecaoDocumentos,
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    """Um ZIP só com os documentos marcados dentro de UMA classificação.
+
+    O GET desta mesma rota leva o caso inteiro. Aqui o atendente escolhe a
+    classificação, marca alguns arquivos dela e leva só esses — cada arquivo sai
+    prefixado pelo nome da classificação, para o outro lado conferir contra a
+    mesma lista.
+
+    Recusa o pedido inteiro se algum id não for daquela classificação (ou for de
+    outro caso): nada de outra classificação entra por engano. O pacote nasce em
+    `pipeline.TMP_DIR` e é apagado assim que a resposta termina.
+    """
+    destino = pipeline.TMP_DIR / f"selecao-{caso_id}-{uuid.uuid4().hex}.zip"
+    try:
+        resumo = casos.montar_zip_selecao(
+            caso_id,
+            pedido.classificacao,
+            pedido.entregas,
+            destino,
+            limite_itens=MAX_ITENS_ZIP_SELECAO,
+            limite_bytes=MAX_BYTES_ZIP_SELECAO,
+        )
+    except casos.SelecaoInvalida as exc:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(exc.status, str(exc)) from exc
+
+    if resumo is None:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(404, "Caso não encontrado.")
+
+    if resumo["arquivos"] == 0:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(
+            404, "Nenhum dos documentos selecionados está disponível para download."
+        )
+
+    cliente = re.sub(r"[^\w\- ]", "", resumo["cliente"]).strip() or caso_id[:8]
+    classificacao = (
+        re.sub(r"[^\w\- ]", "", resumo["classificacao"]).strip() or "documentos"
+    )
+    return FileResponse(
+        destino,
+        media_type="application/zip",
+        filename=f"Documentos - {cliente} - {classificacao}.zip",
+        background=BackgroundTask(destino.unlink, missing_ok=True),
+        headers={
+            "X-Arquivos": str(resumo["arquivos"]),
+            "X-Faltando": str(len(resumo["faltando"])),
+        },
+    )
+
+
+@app.post("/api/casos/{caso_id}/documentos.pdf")
+def baixar_selecao_de_documentos_em_pdf(
+    caso_id: str,
+    pedido: PedidoSelecaoDocumentos,
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    """Os documentos marcados dentro de UMA classificação, juntos num PDF só.
+
+    Irmã de `baixar_selecao_de_documentos`: mesma seleção, mesmas guardas —
+    quantidade, classificação, permissão. A diferença é o formato de saída: em
+    vez de um ZIP com N arquivos, um único PDF com as páginas de todos, na
+    ordem em que foram marcados. PDF original entra intacto; imagem vira
+    página, como no botão "baixar como PDF" de uma entrega avulsa.
+
+    Recusa com 415 se algum arquivo não for PDF nem imagem, ou se a soma de
+    páginas passar do teto — para esses casos o ZIP continua existindo.
+    """
+    destino = pipeline.TMP_DIR / f"selecao-{caso_id}-{uuid.uuid4().hex}.pdf"
+    try:
+        resumo = casos.montar_pdf_selecao(
+            caso_id,
+            pedido.classificacao,
+            pedido.entregas,
+            destino,
+            limite_itens=MAX_ITENS_ZIP_SELECAO,
+            limite_bytes=MAX_BYTES_ZIP_SELECAO,
+            limite_paginas=MAX_PAGINAS_PDF_SELECAO,
+        )
+    except casos.SelecaoInvalida as exc:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(exc.status, str(exc)) from exc
+
+    if resumo is None:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(404, "Caso não encontrado.")
+
+    if resumo["paginas"] == 0:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(
+            404, "Nenhum dos documentos selecionados está disponível para download."
+        )
+
+    cliente = re.sub(r"[^\w\- ]", "", resumo["cliente"]).strip() or caso_id[:8]
+    classificacao = (
+        re.sub(r"[^\w\- ]", "", resumo["classificacao"]).strip() or "documentos"
+    )
+    return FileResponse(
+        destino,
+        media_type="application/pdf",
+        filename=f"Documentos - {cliente} - {classificacao}.pdf",
+        background=BackgroundTask(destino.unlink, missing_ok=True),
+        headers={
+            "X-Arquivos": str(resumo["arquivos"]),
+            "X-Paginas": str(resumo["paginas"]),
+            "X-Faltando": str(len(resumo["faltando"])),
+        },
+    )
+
+
 @app.delete("/api/entregas/{entrega_id}")
 def excluir_entrega(
     entrega_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
