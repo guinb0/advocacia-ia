@@ -241,6 +241,9 @@ export interface ManipuladorRoteiro {
    * que foi dito — e é o que sobra para conferir uma interpretação duvidosa
    * seis meses depois. */
   transcricaoBruta: () => { quando: number; texto: string }[];
+  /** Versão do roteiro em uso, inclusive alterações feitas nesta entrevista. */
+  assinaturaRoteiro: () => string;
+  codigoRoteiro: () => string;
 }
 
 /** De onde vem o áudio que está sendo transcrito. */
@@ -805,6 +808,8 @@ export default function Roteiro({
         await controlesVideo.current?.pararEBaixar();
       },
       transcricaoBruta: () => [...transcricaoBruta.current],
+      assinaturaRoteiro: () => JSON.stringify(roteiroRef.current ?? {}),
+      codigoRoteiro: () => roteiroRef.current?.codigo ?? codigo,
     }),
     [],
   );

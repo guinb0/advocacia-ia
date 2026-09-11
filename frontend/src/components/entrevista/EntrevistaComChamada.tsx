@@ -216,6 +216,7 @@ export default function EntrevistaComChamada({
   const preAnalise = usarPreAnalise({
     lerTranscricao: transcricaoAtual,
     lerRespostas: () => ultimo.current[0],
+    lerRoteiro: () => roteiro.current?.codigoRoteiro() ?? "empregado_publico",
     ativa: encerrada === null && !fechando,
   });
 
@@ -337,7 +338,7 @@ export default function EntrevistaComChamada({
                       roteiro.current?.atualizarRespostas(processamento.respostas);
                       ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
                       onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
-                    });
+                    }, roteiro.current?.codigoRoteiro() ?? "empregado_publico");
                     setResultadoFinal({ ...leitura, provisorio: false });
                   })()
                     .catch((e: unknown) => setErroFecho(e instanceof Error ? e.message : "Não foi possível revisar a entrevista."))
