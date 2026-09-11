@@ -828,7 +828,7 @@ def obter(codigo: str) -> Roteiro | None:
     roteiro. Apagá-la devolve o roteiro do módulo — o escritório nunca fica sem
     saída se uma edição sair errada.
     """
-    salvo = _importados().get(codigo)
+    salvo, registro = _importado_por_codigo(codigo)
     embutido = ROTEIROS.get(codigo)
 
     if salvo is not None and embutido is not None:
@@ -850,7 +850,7 @@ def obter(codigo: str) -> Roteiro | None:
         # em `_VERSAO_MODULO`: deploy novo tem carimbo novo, e uma edicao feita
         # DEPOIS do deploy continua valendo, que e o que o botao "Editar
         # roteiro" promete.
-        if _VERSAO_MODULO > _salvo_em(codigo):
+        if _VERSAO_MODULO > str((registro or {}).get("atualizado_em") or ""):
             log.info(
                 "Roteiro '%s' foi alterado no codigo depois da edicao salva; "
                 "o do modulo passa a valer. Apague a linha do catalogo para "
@@ -952,6 +952,18 @@ def de_dict(dados: Any) -> Roteiro:
         retomadas=_lista_de_texto(dados.get("retomadas")),
         fechos_por_tipo=_mapa_de_texto(dados.get("fechos_por_tipo")),
     )
+
+
+def snapshot_ativo(codigo: str, dados: Any | None) -> Roteiro | None:
+    """Valida a versão enviada pela tela e confere a identidade do roteiro."""
+    if dados is None:
+        return None
+    atual = de_dict(dados)
+    if atual.codigo != codigo:
+        raise RoteiroInvalido(
+            "O código do roteiro ativo não corresponde ao snapshot enviado."
+        )
+    return atual
 
 
 def _bloco_de_dict(dados: Any, usados: set[str]) -> Bloco:
@@ -1092,7 +1104,13 @@ def _mapa_de_texto(valor: Any) -> dict[str, str]:
 
 _TTL_CACHE_S = 30.0
 _cache: dict[str, Roteiro] = {}
+_cache_metadados: dict[str, dict[str, Any]] = {}
 _cache_ate: float = 0.0
+_cache_resumos: list[dict[str, Any]] = []
+_cache_resumos_ate: float = 0.0
+_cache_resumos_banco_disponivel: bool | None = None
+_cache_codigos_salvos: set[str] = set()
+_cache_por_codigo: dict[str, tuple[float, Roteiro | None, dict[str, Any] | None]] = {}
 
 #: Quando este arquivo foi escrito — o "carimbo" do roteiro que vem em código.
 #:
@@ -1105,30 +1123,143 @@ _VERSAO_MODULO = datetime.fromtimestamp(
 ).isoformat(timespec="seconds")
 
 
-def _salvo_em(codigo: str) -> str:
-    """Quando aquele roteiro foi salvo no catálogo. String vazia se não foi.
+def invalidar_cache() -> None:
+    """Chamado depois de salvar ou excluir. Idempotente e barato."""
+    global _cache_ate, _cache_resumos_ate, _cache_resumos_banco_disponivel
+    _cache_ate = 0.0
+    _cache_resumos_ate = 0.0
+    _cache_resumos_banco_disponivel = None
+    _cache_codigos_salvos.clear()
+    _cache_por_codigo.clear()
 
-    Comparação de texto ISO-8601 em UTC é comparação cronológica — é assim que o
-    resto do Acervo guarda data (ver `armazenamento.agora`), e converter para
-    `datetime` aqui só acrescentaria um lugar onde fuso horário pode errar.
-    """
+
+def _importado_por_codigo(
+    codigo: str,
+) -> tuple[Roteiro | None, dict[str, Any] | None]:
+    """Carrega somente o roteiro escolhido, nunca o catálogo completo."""
+    agora = time.monotonic()
+    em_cache = _cache_por_codigo.get(codigo)
+    if em_cache is not None and agora < em_cache[0]:
+        return em_cache[1], em_cache[2]
+
+    # Se o seletor acabou de consultar o catálogo, ele já sabe se há uma versão
+    # salva deste código. Não repita uma conexão que acabou de falhar nem procure
+    # no banco por um roteiro que o catálogo confirmou ser apenas embutido.
+    if agora < _cache_resumos_ate and (
+        _cache_resumos_banco_disponivel is False
+        or (
+            _cache_resumos_banco_disponivel is True
+            and codigo not in _cache_codigos_salvos
+        )
+    ):
+        resultado = (None, None)
+        _cache_por_codigo[codigo] = (agora + _TTL_CACHE_S, *resultado)
+        return resultado
+
     try:
         from . import armazenamento
 
         registro = armazenamento.obter_roteiro(codigo)
     except Exception:
-        return ""
-    return str((registro or {}).get("atualizado_em") or "")
+        log.debug("Roteiro salvo '%s' indisponível.", codigo, exc_info=True)
+        registro = None
+
+    salvo: Roteiro | None = None
+    if registro is not None:
+        try:
+            salvo = de_dict(registro.get("conteudo"))
+        except RoteiroInvalido:
+            log.warning("Roteiro salvo '%s' está inválido e foi ignorado.", codigo)
+
+    _cache_por_codigo[codigo] = (agora + _TTL_CACHE_S, salvo, registro)
+    return salvo, registro
 
 
-def invalidar_cache() -> None:
-    """Chamado depois de salvar ou excluir. Idempotente e barato."""
-    global _cache_ate
-    _cache_ate = 0.0
+def listar_resumos() -> list[dict[str, Any]]:
+    """Catálogo leve e coerente com a versão que `obter` entregará no clique."""
+    global _cache_resumos, _cache_resumos_ate, _cache_resumos_banco_disponivel
+    agora = time.monotonic()
+    if agora < _cache_resumos_ate:
+        return [dict(item) for item in _cache_resumos]
+
+    try:
+        from . import armazenamento
+
+        salvos = armazenamento.listar_resumos_roteiros()
+        _cache_resumos_banco_disponivel = True
+    except Exception:
+        log.debug("Resumos de roteiros indisponíveis; usando os do módulo.", exc_info=True)
+        salvos = []
+        _cache_resumos_banco_disponivel = False
+
+    _cache_codigos_salvos.clear()
+    _cache_codigos_salvos.update(
+        str(item.get("codigo") or "") for item in salvos if item.get("codigo")
+    )
+
+    por_codigo = {
+        str(item.get("codigo") or ""): item
+        for item in salvos
+        if str(item.get("codigo") or "")
+    }
+    resultado: list[dict[str, Any]] = []
+    for codigo, embutido in ROTEIROS.items():
+        salvo = por_codigo.pop(codigo, None)
+        salvo_ativo = bool(
+            salvo and str(salvo.get("atualizado_em") or "") >= _VERSAO_MODULO
+        )
+        resultado.append(
+            {
+                "codigo": codigo,
+                "nome": salvo.get("nome", embutido.nome) if salvo_ativo else embutido.nome,
+                "descricao": (
+                    salvo.get("descricao", embutido.descricao)
+                    if salvo_ativo
+                    else embutido.descricao
+                ),
+                "importado": salvo is not None,
+                "origem": str((salvo or {}).get("origem") or ""),
+                "criado_por": str((salvo or {}).get("criado_por") or ""),
+                "atualizado_em": str((salvo or {}).get("atualizado_em") or ""),
+            }
+        )
+
+    # `salvos` já veio em ordem de criação; dicionários preservam essa ordem.
+    for codigo, salvo in por_codigo.items():
+        resultado.append(
+            {
+                "codigo": codigo,
+                "nome": str(salvo.get("nome") or codigo),
+                "descricao": str(salvo.get("descricao") or ""),
+                "importado": True,
+                "origem": str(salvo.get("origem") or ""),
+                "criado_por": str(salvo.get("criado_por") or ""),
+                "atualizado_em": str(salvo.get("atualizado_em") or ""),
+            }
+        )
+
+    _cache_resumos = resultado
+    _cache_resumos_ate = agora + _TTL_CACHE_S
+    return [dict(item) for item in resultado]
+
+
+def catalogo_resumos_parcial() -> bool:
+    """Verdadeiro quando só os roteiros embutidos puderam ser listados."""
+    return _cache_resumos_banco_disponivel is False
+
+
+def metadados_importados() -> dict[str, dict[str, Any]]:
+    """Metadados das mesmas linhas já carregadas para montar o catálogo.
+
+    A listagem precisa de origem, autor e datas. Reaproveitar esta cópia evita
+    uma segunda ida ao SQL Server na mesma requisição.
+    """
+    _importados()
+    return dict(_cache_metadados)
 
 
 def _importados() -> dict[str, Roteiro]:
-    global _cache, _cache_ate
+    global _cache, _cache_ate, _cache_metadados
 
     agora = time.monotonic()
     if agora < _cache_ate:
@@ -1143,9 +1274,14 @@ def _importados() -> dict[str, Roteiro]:
         # servindo o roteiro do escritório. Um catálogo vazio faz exatamente
         # isso; levantar aqui derrubaria a entrevista inteira.
         log.debug("Catálogo de roteiros indisponível; usando só os do módulo.", exc_info=True)
-        _cache, _cache_ate = {}, agora + _TTL_CACHE_S
+        _cache, _cache_metadados, _cache_ate = {}, {}, agora + _TTL_CACHE_S
         return _cache
 
+    _cache_metadados = {
+        str(linha.get("codigo") or ""): linha
+        for linha in linhas
+        if str(linha.get("codigo") or "")
+    }
     catalogo: dict[str, Roteiro] = {}
     for linha in linhas:
         try:

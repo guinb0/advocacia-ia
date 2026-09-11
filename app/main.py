@@ -451,19 +451,9 @@ def listar_roteiros(
     a tela usa para oferecer "voltar ao original": só faz sentido em quem tem
     original para voltar.
     """
-    salvos = {r["codigo"]: r for r in _roteiros_salvos()}
-    todos = [
-        {
-            "codigo": r.codigo,
-            "nome": r.nome,
-            "descricao": r.descricao,
-            "importado": r.codigo in salvos,
-            "origem": salvos.get(r.codigo, {}).get("origem", ""),
-            "criado_por": salvos.get(r.codigo, {}).get("criado_por", ""),
-            "atualizado_em": salvos.get(r.codigo, {}).get("atualizado_em", ""),
-        }
-        for r in roteiros.listar()
-    ]
+    # Não chama `roteiros.listar()`: ela materializa blocos e perguntas, mas o
+    # seletor só precisa dos metadados abaixo.
+    todos = roteiros.listar_resumos()
     total = len(todos)
     importados = sum(1 for r in todos if r["importado"])
     tamanho_real = tamanho or total or 1
@@ -476,6 +466,11 @@ def listar_roteiros(
 
     return {
         "roteiros": todos,
+        "aviso_catalogo": (
+            "O catálogo de roteiros salvos não respondeu. Mostrando apenas os roteiros originais do sistema."
+            if roteiros.catalogo_resumos_parcial()
+            else ""
+        ),
         "total": total,
         "pagina": pagina_real,
         "tamanho": tamanho_real,
@@ -483,21 +478,6 @@ def listar_roteiros(
         "importados": importados,
         "originais": total - importados,
     }
-
-
-def _roteiros_salvos() -> list[dict[str, Any]]:
-    """O catálogo do banco, ou vazio se ele ainda não existe.
-
-    A listagem de roteiros não pode falhar por causa da tabela: sem ela o
-    escritório ainda tem o roteiro escrito em `app/roteiros.py`, que é o que se
-    usa todo dia.
-    """
-    try:
-        return armazenamento.listar_roteiros()
-    except Exception:
-        log.debug("Catálogo de roteiros indisponível.", exc_info=True)
-        return []
-
 
 class PedidoContrato(BaseModel):
     """As respostas do roteiro, como a tela as tem em mãos."""
@@ -998,6 +978,9 @@ class PedidoEscuta(BaseModel):
     trecho: str = Field(max_length=8_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
     roteiro: str = Field(default="empregado_publico", max_length=60)
+    #: Snapshot da versão que está na tela. É necessário para edições usadas
+    #: apenas nesta sessão, que ainda não existem no catálogo do servidor.
+    roteiro_snapshot: dict[str, Any] | None = None
     #: Qual pergunta está na vez NA TELA. Sem ela o backend adivinha "a primeira
     #: em aberto", e erra sempre que a condução pula adiante — que é o normal.
     pergunta_atual: str = Field(default="", max_length=80)
@@ -1009,9 +992,21 @@ class PedidoProcessamentoEntrevista(BaseModel):
     transcricao: str = Field(min_length=1, max_length=80_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
     roteiro: str = Field(default="empregado_publico", max_length=60)
+    #: A versão efetivamente exibida, inclusive quando editada só na sessão.
+    roteiro_snapshot: dict[str, Any] | None = None
     #: Buscar precedentes no pgvector para sugerir perguntas e apontar lacunas.
     #: Melhor-esforço: banco fora do ar não impede o preenchimento do formulário.
     analisar: bool = True
+
+
+def _roteiro_ativo(
+    codigo: str, snapshot: dict[str, Any] | None
+) -> roteiros.Roteiro | None:
+    """Valida o snapshot vindo da tela e impede código/versão desencontrados."""
+    try:
+        return roteiros.snapshot_ativo(codigo, snapshot)
+    except roteiros.RoteiroInvalido as exc:
+        raise HTTPException(422, f"Roteiro ativo inválido: {exc}") from exc
 
 
 @app.post("/api/entrevista/escuta")
@@ -1026,6 +1021,7 @@ async def escutar_entrevista(pedido: PedidoEscuta):
     ninguém falou. Separados não servem: saber o que falta sem ver o que já
     entrou faz repetir pergunta, que é do que o escritório reclamou.
     """
+    roteiro_ativo = _roteiro_ativo(pedido.roteiro, pedido.roteiro_snapshot)
     try:
         return await run_in_threadpool(
             escuta.escutar,
@@ -1033,6 +1029,7 @@ async def escutar_entrevista(pedido: PedidoEscuta):
             pedido.respostas,
             pedido.roteiro,
             pedido.pergunta_atual,
+            roteiro_ativo,
         )
     except escuta.ErroEscuta as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -1057,6 +1054,7 @@ async def processar_entrevista(pedido: PedidoProcessamentoEntrevista):
     """
     analise: dict[str, Any] | None = None
     erro_analise = ""
+    roteiro_ativo = _roteiro_ativo(pedido.roteiro, pedido.roteiro_snapshot)
 
     def _analisar() -> None:
         nonlocal analise, erro_analise
@@ -1082,6 +1080,7 @@ async def processar_entrevista(pedido: PedidoProcessamentoEntrevista):
             pedido.transcricao,
             pedido.respostas,
             pedido.roteiro,
+            roteiro_ativo,
         )
     except escuta.ErroEscuta as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -1109,6 +1108,7 @@ class PedidoRecomendacao(BaseModel):
 
     relato: str = Field(min_length=40, max_length=40_000)
     lacunas_obrigatorias: list[str] = Field(default_factory=list, max_length=120)
+    contexto_roteiro: str = Field(default="", max_length=12_000)
     limite_precedentes: int = Field(default=12, ge=4, le=30)
 
 
@@ -1157,6 +1157,7 @@ async def recomendar_entrevista(pedido: PedidoRecomendacao):
             recomendacao.recomendar,
             pedido.relato,
             lacunas_obrigatorias=lacunas,
+            contexto_roteiro=pedido.contexto_roteiro,
             limite=pedido.limite_precedentes,
             # 6s era apertado: o pgvector fica atrás da VPN, com ~80ms de
             # latência e servidor compartilhado. Uma oscilação dentro desses 6

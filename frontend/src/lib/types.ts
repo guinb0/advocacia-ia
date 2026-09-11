@@ -433,6 +433,17 @@ export interface RoteiroCompleto {
   mapa_rastreio: Record<string, string>;
 }
 
+/** A versão exata do roteiro que a pessoa está vendo e que a IA deve usar.
+ *
+ * O código sozinho não basta: o roteiro pode ter sido editado apenas para a
+ * sessão e ainda não existir no catálogo do servidor. `chave` também separa o
+ * cache da pré-análise entre duas versões com o mesmo código. */
+export interface ContextoRevisaoRoteiro {
+  roteiro: RoteiroCompleto;
+  chave: string;
+  ids_renderizaveis: string[];
+}
+
 // ----------------------------------------------------- triagem da entrevista
 
 export interface SugestaoCategoria {
