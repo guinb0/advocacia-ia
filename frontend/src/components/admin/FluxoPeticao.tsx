@@ -418,6 +418,36 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         </section>
       )}
 
+      {peticao && (analise?.acoes_sugeridas?.length ?? 0) > 0 && (
+        <section className="grid gap-3 border border-acao-borda bg-acao-clara p-4">
+          <div>
+            <h3 className="m-0 text-sm font-semibold text-tinta">Outras petições sugeridas para este caso</h3>
+            <p className="mt-1 text-sm text-tinta-2">
+              São ações possíveis a partir da mesma entrevista e dos mesmos documentos. Elas não
+              substituem a minuta acima: cada uma deve ser confirmada e redigida separadamente.
+            </p>
+          </div>
+          <ul className="m-0 grid list-none gap-2 p-0">
+            {analise!.acoes_sugeridas!.map((acao, indice) => (
+              <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <strong className="text-sm text-tinta">{acao.titulo}</strong>
+                  <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao">
+                    {acao.prioridade === "principal" ? "prioritária" : acao.prioridade === "alternativa" ? "alternativa" : "avaliar"}
+                  </span>
+                </div>
+                <p className="mb-0 mt-2 text-sm text-tinta-2">{acao.motivo}</p>
+                {acao.pedidos.length > 0 && (
+                  <p className="mb-0 mt-2 text-xs text-tinta-3">
+                    Pedidos possíveis: {acao.pedidos.join("; ")}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {peticao?.jurimetria && <ModuloJurimetria dados={peticao.jurimetria} />}
     </Cartao>
   );
