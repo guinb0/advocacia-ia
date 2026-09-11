@@ -644,6 +644,23 @@ export interface ConfigAssinatura {
    *  envio pela conta ZapSign via navegador. */
   navegador?: boolean;
   signatario_escritorio: { nome: string; email: string; papel: string } | null;
+  /** Qual provedor o próximo envio vai usar — "zapsign" é o padrão, sem cadastro
+   *  nesta tela. Ver `ConfiguracaoAssinatura` em `components/admin`. */
+  provedor_ativo?: "zapsign" | "clicksign" | "autentique";
+}
+
+// ------------------------------------- provedores de assinatura (Clicksign/Autentique)
+
+export type ProvedorAssinatura = "zapsign" | "clicksign" | "autentique";
+
+/** Status de um provedor — nunca o token, que fica só no servidor. */
+export interface StatusProvedorAssinatura {
+  provedor: ProvedorAssinatura;
+  ativo: boolean;
+  configurado: boolean;
+  testado_ok: boolean;
+  testado_em: string | null;
+  testado_mensagem: string | null;
 }
 
 // ------------------------------- conferência da resposta durante a entrevista

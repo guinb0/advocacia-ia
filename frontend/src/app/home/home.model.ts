@@ -25,6 +25,7 @@ export type Tela =
   | "dados"
   | "saudeAgente"
   | "modelosDePeticao"
+  | "configuracaoAssinatura"
   | "catalogoRoteiros"
   | "glossarioDocumentos"
   | "revisao"
@@ -57,6 +58,9 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
    * que não está mapeado. O catálogo de roteiros pertence ao módulo `roteiros`,
    * que o advogado e o secretário têm — ver `app/perfis.py`. */
   catalogoRoteiros: "roteiros",
+  /* Guarda o token de Clicksign/Autentique do escritório — mesmo módulo que já
+   * controla os modelos de contrato (`app/main.py`, `PodeManterModelos`). */
+  configuracaoAssinatura: "contratos",
   /* A TELA de manutenção pede o módulo; consultar o glossário não pede — a
    * reclassificação, dentro do caso, lê a lista sem passar por aqui. */
   glossarioDocumentos: "glossario_documentos",

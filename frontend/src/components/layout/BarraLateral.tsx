@@ -40,6 +40,7 @@ import {
   Database,
   FileCheck2,
   FileSearch,
+  FileSignature,
   FileText,
   FolderKanban,
   HeartPulse,
@@ -118,6 +119,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       { tela: "usuarios", rotulo: "Usuários" },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
+      { tela: "configuracaoAssinatura", rotulo: "Assinatura eletrônica" },
     ],
   },
 ];
@@ -151,6 +153,7 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   usuarios: Users,
   saudeAgente: HeartPulse,
   modelosDePeticao: PenLine,
+  configuracaoAssinatura: FileSignature,
   caso: ClipboardCheck,
   dossie: FolderKanban,
   painel: BarChart3,
