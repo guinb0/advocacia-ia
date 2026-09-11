@@ -48,6 +48,7 @@ import {
  * pessoa precisa. Separá-las obrigaria a sair da tela para conferir isso. */
 import PerfisDeAcesso from "@/components/PerfisDeAcesso";
 import ModelosContrato from "@/components/admin/ModelosContrato";
+import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
 import EditarUsuario, { formatarTelefone } from "@/components/admin/EditarUsuario";
 import { useSessao } from "@/lib/auth";
 
@@ -59,7 +60,7 @@ const VAZIO = { nome: "", email: "", telefone: "", perfilId: 0, senha: "" };
 const TAMANHO_PAGINA = 12;
 
 export default function Usuarios({ onVoltar }: Props) {
-  const [aba, setAba] = useState<"membros" | "perfis" | "contratos">("membros");
+  const [aba, setAba] = useState<"membros" | "perfis" | "contratos" | "assinatura">("membros");
   const [perfis, setPerfis] = useState<Perfil[]>([]);
   const [itens, setItens] = useState<UsuarioCadastrado[]>([]);
   const [total, setTotal] = useState(0);
@@ -235,18 +236,32 @@ export default function Usuarios({ onVoltar }: Props) {
           {"Perfis e permiss\u00f5es"}
         </button>
         {sessao.modulos.includes("contratos") && (
-          <button
-            type="button"
-            onClick={() => setAba("contratos")}
-            aria-current={aba === "contratos" ? "page" : undefined}
-            className={
-              "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
-              (aba === "contratos" ? "bg-acao text-papel shadow-cartao" : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
-            }
-          >
-            <ShieldCheck size={16} aria-hidden />
-            Modelos de contrato
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setAba("contratos")}
+              aria-current={aba === "contratos" ? "page" : undefined}
+              className={
+                "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+                (aba === "contratos" ? "bg-acao text-papel shadow-cartao" : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+              }
+            >
+              <ShieldCheck size={16} aria-hidden />
+              Modelos de contrato
+            </button>
+            <button
+              type="button"
+              onClick={() => setAba("assinatura")}
+              aria-current={aba === "assinatura" ? "page" : undefined}
+              className={
+                "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+                (aba === "assinatura" ? "bg-acao text-papel shadow-cartao" : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+              }
+            >
+              <ShieldCheck size={16} aria-hidden />
+              Assinatura eletrônica
+            </button>
+          </>
         )}
       </nav>
 
@@ -536,6 +551,7 @@ export default function Usuarios({ onVoltar }: Props) {
 
       {aba === "perfis" && <PerfisDeAcesso />}
       {aba === "contratos" && <ModelosContrato />}
+      {aba === "assinatura" && <ConfiguracaoAssinatura />}
     </div>
   );
 }

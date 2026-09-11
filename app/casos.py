@@ -415,6 +415,11 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
 
     obrigatorios = [i for i in itens if i["obrigatorio"]]
     entregues_obrig = [i for i in obrigatorios if i["status"] == ENTREGUE]
+    # "Recebido" é diferente de "validado": um documento obrigatório já
+    # anexado, porém ainda a conferir, não pode sumir da contagem do que o
+    # escritório possui. Ele continua fora de `entregues`, que é a métrica de
+    # segurança usada para liberar a petição.
+    recebidos_obrig = [i for i in obrigatorios if i["status"] != PENDENTE]
     pendentes_obrig = [i for i in obrigatorios if i["status"] == PENDENTE]
     conferir = [i for i in itens if i["status"] == CONFERIR]
     return {
@@ -433,6 +438,7 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
         "progresso": {
             "obrigatorios_total": len(obrigatorios),
             "obrigatorios_entregues": len(entregues_obrig),
+            "obrigatorios_recebidos": len(recebidos_obrig),
             "obrigatorios_pendentes": len(pendentes_obrig),
             "opcionais_total": len(itens) - len(obrigatorios),
             "opcionais_entregues": sum(

@@ -309,6 +309,8 @@ export interface DocumentoPendente {
 export interface Progresso {
   obrigatorios_total: number;
   obrigatorios_entregues: number;
+  /** Arquivos obrigatórios já recebidos, inclusive os que ainda precisam de conferência. */
+  obrigatorios_recebidos?: number;
   obrigatorios_pendentes: number;
   opcionais_total: number;
   opcionais_entregues: number;
