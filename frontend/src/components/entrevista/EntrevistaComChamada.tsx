@@ -413,6 +413,9 @@ export default function EntrevistaComChamada({
               {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}
               {resultadoFinal && <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeComplementar={false} />}
 
+              {/* O id pode existir enquanto o atendimento continua. O áudio só
+                  fica disponível depois do encerramento definitivo, quando o
+                  arquivo contém também as etapas posteriores ao roteiro. */}
               {encerrada && <AudioDaEntrevista entrevistaId={encerrada} />}
 
               <div className="flex items-start flex-wrap gap-[14px]">

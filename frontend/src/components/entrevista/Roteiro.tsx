@@ -756,12 +756,9 @@ export default function Roteiro({
 
   useEffect(
     () => () => {
-      /* Sair da tela também fecha a gravação. Sem isto, quem clicasse em
-       * "Fechar sem concluir" deixaria o áudio parado em WAV, sem MP4 e sem
-       * ninguém para pedi-lo. O POST vai solto de propósito: o componente está
-       * indo embora e não há mais tela para receber a resposta — o que importa
-       * é o arquivo ficar convertido no disco. */
-      void captura.current?.encerrarGravacao().catch(() => undefined);
+      /* Desmontar o roteiro não é encerrar o atendimento. A conversa pode ter
+       * avançado para documentação, avaliação ou assinatura na mesma tela; só
+       * o comando explícito de encerrar atendimento fecha áudio e transcrição. */
       captura.current?.encerrar();
     },
     [],
@@ -796,12 +793,15 @@ export default function Roteiro({
         setRevisada(true);
       },
       encerrarGravacao: async () => {
-        await encerrarEscutaRef.current();
         return captura.current?.entrevistaId ?? "";
       },
       encerrarAtendimento: async () => {
-        // A entrevista guiada pode terminar antes do atendimento. O vídeo só
-        // para e baixa na saída definitiva, depois das etapas seguintes.
+        // Este é o ÚNICO ponto que para a captura. Assim a transcrição e o
+        // áudio incluem o atendimento inteiro, não só o roteiro inicial.
+        await encerrarEscutaRef.current();
+        await captura.current?.encerrarGravacao();
+        captura.current?.encerrar();
+        // O vídeo segue a mesma regra do áudio: só baixa na saída definitiva.
         await controlesVideo.current?.pararEBaixar();
       },
       transcricaoBruta: () => [...transcricaoBruta.current],

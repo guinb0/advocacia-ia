@@ -60,8 +60,10 @@ export default function ModelosContrato() {
       <Cartao
         titulo="Modelos de contrato"
         subtitulo="Substitua os três documentos padrão usados para gerar e enviar contratos à assinatura."
-        acoes={<Botao pequeno variante="secundario" onClick={() => void carregar()} carregando={carregando}><RefreshCw size={14} />Atualizar</Botao>}
       >
+        <div className="mb-4 flex justify-end">
+          <Botao pequeno variante="secundario" onClick={() => void carregar()} carregando={carregando}><RefreshCw size={14} />Atualizar</Botao>
+        </div>
         <Aviso tom="info" titulo="Modelo editável">
           Envie a versão em <strong>DOCX</strong> com os campos entre colchetes. O sistema preenche esses campos antes de gerar o PDF e enviar para assinatura. Um PDF pode servir de referência, mas não pode ser preenchido automaticamente.
         </Aviso>
