@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Mail, Pencil, Phone, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
+import { ArrowLeft, LayoutList, Mail, Pencil, Phone, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
 
 import {
   AjudaCampo,
@@ -58,6 +58,7 @@ const VAZIO = { nome: "", email: "", telefone: "", perfilId: 0, senha: "" };
 const TAMANHO_PAGINA = 12;
 
 export default function Usuarios({ onVoltar }: Props) {
+  const [aba, setAba] = useState<"membros" | "perfis">("membros");
   const [perfis, setPerfis] = useState<Perfil[]>([]);
   const [itens, setItens] = useState<UsuarioCadastrado[]>([]);
   const [total, setTotal] = useState(0);
@@ -177,22 +178,22 @@ export default function Usuarios({ onVoltar }: Props) {
             Administração
           </p>
           <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">
-            Usuários
+            Administração de acessos
           </h1>
           <p className="m-0 max-w-[66ch] text-tinta-3 leading-[1.5]">
-            Quem pode entrar no sistema, com qual perfil e em que situação. O e-mail
-            continua sendo o login oficial do escritório.
+            Membros, perfis e permissões do escritório. O e-mail continua sendo o
+            login oficial do sistema.
           </p>
         </div>
         <div className="grid min-w-[220px] grid-cols-2 gap-2 max-[520px]:w-full">
           <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
-            <div className="text-xs font-semibold text-tinta-3">Nesta página</div>
+            <div className="text-xs font-semibold text-tinta-3">Membros cadastrados</div>
             <div className="mt-1 font-titulo text-lg font-semibold text-tinta tabular-nums">
-              {itens.length}
+              {total}
             </div>
           </div>
           <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
-            <div className="text-xs font-semibold text-tinta-3">Ativos</div>
+            <div className="text-xs font-semibold text-tinta-3">Membros ativos</div>
             <div className="mt-1 font-titulo text-lg font-semibold text-ok tabular-nums">
               {ativos}
             </div>
@@ -200,6 +201,41 @@ export default function Usuarios({ onVoltar }: Props) {
         </div>
       </header>
 
+      <nav
+        className="flex w-full gap-1 overflow-x-auto rounded-cartao border border-borda bg-papel p-1"
+        aria-label={"Administra\u00e7\u00e3o de acessos"}
+      >
+        <button
+          type="button"
+          onClick={() => setAba("membros")}
+          aria-current={aba === "membros" ? "page" : undefined}
+          className={
+            "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+            (aba === "membros"
+              ? "bg-acao text-papel shadow-cartao"
+              : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+          }
+        >
+          <UsersRound size={16} aria-hidden />
+          Membros e acessos
+        </button>
+        <button
+          type="button"
+          onClick={() => setAba("perfis")}
+          aria-current={aba === "perfis" ? "page" : undefined}
+          className={
+            "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+            (aba === "perfis"
+              ? "bg-acao text-papel shadow-cartao"
+              : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+          }
+        >
+          <LayoutList size={16} aria-hidden />
+          {"Perfis e permiss\u00f5es"}
+        </button>
+      </nav>
+
+      {aba === "membros" && <>
       {(erro || feito) && (
         <div className="space-y-3">
           {erro && (
@@ -481,8 +517,9 @@ export default function Usuarios({ onVoltar }: Props) {
           )}
         </Cartao>
       </div>
+      </>}
 
-      <PerfisDeAcesso />
+      {aba === "perfis" && <PerfisDeAcesso />}
     </div>
   );
 }
