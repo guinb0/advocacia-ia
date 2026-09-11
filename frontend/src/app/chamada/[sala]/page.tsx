@@ -6,6 +6,7 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* A chamada do lado de quem é entrevistado.
  *
@@ -22,11 +23,6 @@ import Retratos from "@/components/ui/Retratos";
  * portal para enviar documentos (mesma sala, que é o token do caso), a ligação
  * NÃO cai: ela segue no painel flutuante. */
 
-const BOTAO =
-  "mt-5 w-full p-4 border-[1.5px] border-tinta bg-transparent text-tinta text-[13px] font-semibold leading-none " +
-  "font-ui tracking-[0.14em] uppercase cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
 /* Dois por linha no celular, e nao quatro empilhados.
  *
  * Empilhados, os botoes ocupavam ~300px — metade da tela do telefone — e
@@ -128,9 +124,23 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
                 Entrar com a câmera ligada
               </label>
 
-              <button type="button" className={BOTAO} onClick={entrar} disabled={entrando || !nome.trim()}>
-                {entrando ? "Abrindo…" : "Entrar na chamada"}
-              </button>
+              {/* Botão grande e sempre com a cor da ação: quem abre isto é o cliente,
+                * no celular. Sem nome, o toque diz o que falta e leva ao campo. */}
+              <BotaoProcesso
+                variante="primario"
+                bloco
+                className="mt-5"
+                classeBotao="text-base"
+                style={{ minHeight: 52 }}
+                onClick={entrar}
+                processando={entrando}
+                textoProcessando="Abrindo…"
+                pendencia={nome.trim() ? null : "Digite seu nome acima para entrar."}
+                pendenciaAoClicar
+                onPendencia={() => document.getElementById("nome-na-chamada")?.focus()}
+              >
+                Entrar na chamada
+              </BotaoProcesso>
               <p className="mt-4 mb-0 text-[11.5px] leading-[1.6] font-ui text-tinta-3">
                 Ao entrar, a conversa é transcrita pelo escritório para virar o registro do
                 seu atendimento.

@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { baixarArquivoDaPeticao, buscarPeticao, type Peticao } from "@/lib/agente";
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 function baixarBlob(arquivo: Blob, nome: string): void {
   const url = URL.createObjectURL(arquivo);
@@ -219,12 +220,24 @@ function ItemFila({
                 ))}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Botao onClick={() => void concluir("aprovada")} disabled={concluindo !== null}>
-                  {concluindo === "aprovada" ? "Aprovando…" : "Aprovar petição"}
-                </Botao>
-                <Botao variante="secundario" onClick={() => void concluir("ajustes")} disabled={concluindo !== null}>
-                  {concluindo === "ajustes" ? "Devolvendo…" : "Devolver para ajustes"}
-                </Botao>
+                <BotaoProcesso
+                  variante="primario"
+                  onClick={() => concluir("aprovada")}
+                  processando={concluindo === "aprovada"}
+                  textoProcessando="Aprovando…"
+                  aguardando={concluindo !== null}
+                >
+                  Aprovar petição
+                </BotaoProcesso>
+                <BotaoProcesso
+                  variante="secundario"
+                  onClick={() => concluir("ajustes")}
+                  processando={concluindo === "ajustes"}
+                  textoProcessando="Devolvendo…"
+                  aguardando={concluindo !== null}
+                >
+                  Devolver para ajustes
+                </BotaoProcesso>
               </div>
             </>
           ) : null}

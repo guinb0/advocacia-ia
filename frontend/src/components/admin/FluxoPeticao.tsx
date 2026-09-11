@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Aviso, Botao, Cartao, RotuloCampo, Campo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
   buscarPeticao,
@@ -40,7 +41,15 @@ export type ControlesGeracaoPeticao = {
   ocupado: boolean;
   podeGerar: boolean;
   rotulo: string;
+  /* O botão de gerar mora no cabeçalho do dossiê, longe deste cartão: sem o
+   * resultado aqui, quem clicava lá em cima não via nem o erro nem o fim. */
+  erro: string | null;
+  concluido: string | null;
 };
+
+type AcaoPeticao = "gerar" | "salvar" | "revisar";
+/** Resultado da última ação, com a ação que o produziu — cada um aparece junto do próprio botão. */
+type Retorno = { acao: AcaoPeticao; texto: string } | null;
 
 type Props = {
   casoId: string;
@@ -53,8 +62,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [peticao, setPeticao] = useState<Peticao | null>(null);
   const [edicao, setEdicao] = useState<Record<string, string>>({});
   const [ocupado, setOcupado] = useState(false);
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
+  /** Qual formato está sendo salvo: cada botão de download mostra só o próprio andamento. */
+  const [salvandoComo, setSalvandoComo] = useState<"docx" | "pdf" | null>(null);
+  const salvando = salvandoComo !== null;
+  const [erro, setErro] = useState<Retorno>(null);
+  const [concluido, setConcluido] = useState<Retorno>(null);
   const [mostrarPrevia, setMostrarPrevia] = useState(true);
 
   // Revisão por prompt — issue "Permitir alteração da petição por prompt com
@@ -62,6 +74,10 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   // ao carregar o histórico não pode esconder a petição, que é o que importa
   // primeiro.
   const [promptRevisao, setPromptRevisao] = useState("");
+  /* Marcado por padrão: a crítica quase sempre é uma lição do escritório, e é
+   * dela que a IA aprende. Desmarcar é o que impede um ajuste pontual — "troque
+   * o nome do cliente" — de virar regra de todas as petições da categoria. */
+  const [ensinarIA, setEnsinarIA] = useState(true);
   const [revisando, setRevisando] = useState(false);
   const [historico, setHistorico] = useState<HistoricoDePeticao | null>(null);
   const [mostrarHistorico, setMostrarHistorico] = useState(false);
@@ -95,6 +111,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 
   const gerar = useCallback(async () => {
     setErro(null);
+    setConcluido(null);
     setOcupado(true);
     try {
       const resultado = await gerarAnaliseEPeticao(casoId);
@@ -106,9 +123,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         await recarregar();
         const arquivo = await baixarArquivoDaPeticao(casoId, "local", "docx");
         baixarArquivo(arquivo, `Peticao inicial - v${resultado.peticao.version}.docx`);
+        setConcluido({
+          acao: "gerar",
+          texto: `Petição gerada (versão ${resultado.peticao.version}) e .docx baixado.`,
+        });
       }
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Falha ao gerar a petição.");
+      setErro({ acao: "gerar", texto: e instanceof Error ? e.message : "Falha ao gerar a petição." });
     } finally {
       setOcupado(false);
     }
@@ -121,6 +142,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       ? "Gerar de novo"
       : "Gerar análise e petição";
 
+  const erroGerar = erro?.acao === "gerar" ? erro.texto : null;
+  const concluidoGerar = concluido?.acao === "gerar" ? concluido.texto : null;
+
   useEffect(() => {
     onControlesGeracao?.({
       gerar: () => void gerar(),
@@ -129,13 +153,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       // incompletos do dossiê (casos antigos podem ter texto e `caracteres` zerado).
       podeGerar: true,
       rotulo: rotuloGerar,
+      erro: erroGerar,
+      concluido: concluidoGerar,
     });
-  }, [onControlesGeracao, gerar, ocupado, semEntrevista, rotuloGerar]);
+  }, [onControlesGeracao, gerar, ocupado, semEntrevista, rotuloGerar, erroGerar, concluidoGerar]);
 
   async function salvar(baixarPdf = false) {
     if (!peticao) return;
-    setSalvando(true);
+    const formato = baixarPdf ? "pdf" : "docx";
+    setSalvandoComo(formato);
     setErro(null);
+    setConcluido(null);
     try {
       const secoes = (peticao.sections ?? []).map((s) => ({
         code: s.code,
@@ -143,13 +171,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       }));
       const atualizada = await salvarRascunhoPeticao(casoId, peticao.id, secoes);
       setPeticao(atualizada);
-      const formato = baixarPdf ? "pdf" : "docx";
       const arquivo = await baixarArquivoDaPeticao(casoId, peticao.id, formato);
       baixarArquivo(arquivo, `Peticao inicial - v${atualizada.version}.${formato}`);
+      setConcluido({ acao: "salvar", texto: `Versão ${atualizada.version} salva e .${formato} baixado.` });
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível salvar.");
+      setErro({ acao: "salvar", texto: e instanceof Error ? e.message : "Não foi possível salvar." });
     } finally {
-      setSalvando(false);
+      setSalvandoComo(null);
     }
   }
 
@@ -157,17 +185,30 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     if (!peticao || !promptRevisao.trim()) return;
     setRevisando(true);
     setErro(null);
+    setConcluido(null);
     try {
-      const resultado = await revisarPeticaoComPrompt(casoId, peticao.id, promptRevisao.trim());
+      const resultado = await revisarPeticaoComPrompt(
+        casoId,
+        peticao.id,
+        promptRevisao.trim(),
+        ensinarIA,
+      );
       setPeticao(resultado.peticao);
       setPromptRevisao("");
+      setConcluido({
+        acao: "revisar",
+        texto: `Revisão aplicada — a petição está na versão ${resultado.peticao.version}.`,
+      });
       setHistorico((atual) => ({
         criticas: resultado.criticas,
         versoes: atual?.versoes ?? [],
       }));
       await recarregar();
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível aplicar a revisão.");
+      setErro({
+        acao: "revisar",
+        texto: e instanceof Error ? e.message : "Não foi possível aplicar a revisão.",
+      });
     } finally {
       setRevisando(false);
     }
@@ -192,9 +233,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         </Aviso>
       )}
 
-      {erro && (
-        <Aviso tom="critico" titulo="Erro">
-          {erro}
+      {/* O erro de gerar aparece também aqui, além do botão do cabeçalho: quem já
+        * rolou até este cartão não vê mais o topo. Salvar e revisar mostram o
+        * próprio resultado junto dos seus botões. */}
+      {erro?.acao === "gerar" && (
+        <Aviso tom="critico" titulo="A petição não foi gerada">
+          {erro.texto}
         </Aviso>
       )}
 
@@ -243,24 +287,35 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               >
                 {mostrarPrevia ? "Ocultar prévia" : "Mostrar prévia"}
               </Botao>
-              <Botao
+              <BotaoProcesso
                 variante="secundario"
                 pequeno
-                disabled={salvando || ocupado}
-                onClick={() => void salvar(false)}
+                processando={salvandoComo === "docx"}
+                textoProcessando="Salvando…"
+                aguardando={ocupado || salvandoComo === "pdf"}
+                onClick={() => salvar(false)}
               >
-                {salvando ? "Salvando…" : "Salvar e baixar .docx"}
-              </Botao>
-              <Botao
+                Salvar e baixar .docx
+              </BotaoProcesso>
+              <BotaoProcesso
                 variante="texto"
                 pequeno
-                disabled={salvando || ocupado}
-                onClick={() => void salvar(true)}
+                processando={salvandoComo === "pdf"}
+                textoProcessando="Gerando o PDF…"
+                aguardando={ocupado || salvandoComo === "docx"}
+                onClick={() => salvar(true)}
               >
                 Baixar PDF
-              </Botao>
+              </BotaoProcesso>
             </div>
           </div>
+
+          {erro?.acao === "salvar" && (
+            <Aviso tom="critico" titulo="Não foi possível salvar">
+              {erro.texto}
+            </Aviso>
+          )}
+          {concluido?.acao === "salvar" && <Aviso tom="ok">{concluido.texto}</Aviso>}
 
           {(peticao.readiness?.pendencias ?? []).length > 0 && (
             <Aviso tom="atencao" titulo="Pontos sem comprovação documental">
@@ -327,15 +382,37 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               rows={3}
               placeholder="O que deve mudar nesta petição?"
             />
+            <label className="flex items-start gap-2 text-xs text-tinta-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-[2px]"
+                checked={ensinarIA}
+                onChange={(e) => setEnsinarIA(e.target.checked)}
+              />
+              <span>
+                Ensinar a IA com esta correção
+                <span className="block text-tinta-3">
+                  Marcado, ela passa a valer para as próximas petições desta mesma
+                  categoria de caso. Desmarque quando o ajuste for só deste cliente
+                  (um nome, um valor, uma data) — a correção continua no histórico
+                  deste caso de qualquer jeito.
+                </span>
+              </span>
+            </label>
             <div>
-              <Botao
+              <BotaoProcesso
                 variante="secundario"
                 pequeno
-                disabled={revisando || salvando || ocupado || !promptRevisao.trim()}
-                onClick={() => void revisar()}
+                processando={revisando}
+                textoProcessando="Aplicando a revisão…"
+                pendencia={promptRevisao.trim() ? null : "Descreva acima o que deve mudar."}
+                aguardando={salvando || ocupado}
+                erro={erro?.acao === "revisar" ? erro.texto : null}
+                concluido={concluido?.acao === "revisar" ? concluido.texto : null}
+                onClick={revisar}
               >
-                {revisando ? "Revisando…" : "Aplicar revisão"}
-              </Botao>
+                Aplicar revisão
+              </BotaoProcesso>
             </div>
           </div>
         </section>
@@ -432,6 +509,23 @@ function HistoricoDeCriticas({
                   v{critica.versao_origem} → v{critica.versao_resultado}
                 </span>
                 <span>{new Date(critica.criado_em).toLocaleString("pt-BR")}</span>
+                {/* Qual crítica está ensinando a IA e qual valeu só aqui — sem
+                  * isto não há como saber por que a próxima petição saiu
+                  * diferente. */}
+                <span
+                  className={
+                    critica.generaliza === false
+                      ? "text-tinta-3"
+                      : "text-ok font-semibold"
+                  }
+                  title={
+                    critica.generaliza === false
+                      ? "Valeu só neste caso — não instrui as próximas petições."
+                      : "Esta correção instrui as próximas petições desta categoria."
+                  }
+                >
+                  {critica.generaliza === false ? "só neste caso" : "ensina a IA"}
+                </span>
               </div>
               <p className="text-sm text-tinta-2 m-0 whitespace-pre-wrap">{critica.prompt}</p>
             </li>

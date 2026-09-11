@@ -51,6 +51,7 @@ import {
   PenLine,
   PhoneCall,
   Search,
+  Tags,
   Users,
   X,
   type LucideIcon,
@@ -107,11 +108,13 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
   {
     titulo: "Escritório",
     itens: [
+      { tela: "operacao", rotulo: "Operação" },
       { tela: "supervisao", rotulo: "Supervisão" },
       // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
       // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
       { tela: "catalogoRoteiros", rotulo: "Roteiros" },
+      { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
       { tela: "usuarios", rotulo: "Usuários" },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
@@ -139,10 +142,12 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   investigacao: Search,
   dados: Database,
   panorama: BarChart3,
+  operacao: Activity,
   supervisao: Activity,
   revisao: FileCheck2,
   followup: PhoneCall,
   catalogoRoteiros: BookOpen,
+  glossarioDocumentos: Tags,
   usuarios: Users,
   saudeAgente: HeartPulse,
   modelosDePeticao: PenLine,

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 
 import { corDoScore, leituraDoScore, SELO_TOM, type TomSelo } from "@/lib/formato";
 
@@ -64,19 +65,36 @@ const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
     "enabled:hover:text-acao-forte disabled:text-tinta-desabilitada",
 };
 
-interface BotaoProps extends React.ComponentPropsWithoutRef<"button"> {
+export interface BotaoProps extends React.ComponentPropsWithoutRef<"button"> {
   variante?: BotaoVariante;
   /** Botão dentro de linha de lista. */
   pequeno?: boolean;
   /** 100% da largura do contêiner. */
   bloco?: boolean;
+  /** A ação deste botão está em andamento. */
+  carregando?: boolean;
+  /** Rótulo enquanto `carregando` — diga o que está acontecendo ("Lendo o documento…"). */
+  textoCarregando?: ReactNode;
 }
 
+/* `carregando` NÃO vira `disabled`, de propósito.
+ *
+ * O `disabled:` pinta o botão de cinza, e cinza quer dizer "indisponível":
+ * quem acabou de clicar via o botão apagar e concluía que o clique quebrou
+ * alguma coisa — e clicava de novo. Em andamento, o botão mantém a cor da
+ * variante, ganha o giro e o rótulo do que está acontecendo, e só o clique é
+ * engolido (`aria-busy` avisa o leitor de tela). Cinza fica para o que de fato
+ * não se pode usar, como "Próxima" na última página. */
 export function Botao({
   variante = "secundario",
   pequeno,
   bloco,
+  carregando,
+  textoCarregando,
   className,
+  children,
+  disabled,
+  onClick,
   ...props
 }: BotaoProps) {
   return (
@@ -86,10 +104,27 @@ export function Botao({
         variante !== "texto" && (pequeno ? "min-h-8 px-[11px] py-[6px] text-xs gap-[6px]" : "min-h-10 px-4 py-[9px]"),
         VARIANTE_BOTAO[variante],
         bloco && "w-full",
+        carregando && "cursor-progress",
         className,
       )}
       {...props}
-    />
+      disabled={carregando ? undefined : disabled}
+      aria-busy={carregando || undefined}
+      aria-disabled={carregando ? true : props["aria-disabled"]}
+      onClick={(evento) => {
+        if (carregando) {
+          // Também barra o envio do formulário quando o botão é `type="submit"`.
+          evento.preventDefault();
+          return;
+        }
+        onClick?.(evento);
+      }}
+    >
+      {carregando && (
+        <Loader2 aria-hidden className={cn("shrink-0 animate-spin", pequeno ? "size-[14px]" : "size-4")} />
+      )}
+      {carregando ? (textoCarregando ?? children) : children}
+    </button>
   );
 }
 

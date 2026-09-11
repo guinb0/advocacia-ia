@@ -15,6 +15,7 @@ import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
 import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, escutarTrecho, listarMunicipios, obterRoteiro, recomendarEntrevista, registrarAtendimentoDocumentacao } from "@/lib/api";
 import type { MunicipioLocalidade } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
+import { formatarTelefone } from "@/lib/formato";
 import type {
   AnaliseResposta,
   Bloco,
@@ -35,6 +36,7 @@ import VideoDaEntrevista, { type ControlesVideo } from "@/components/entrevista/
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import SeletorDeRoteiro from "@/components/entrevista/SeletorDeRoteiro";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
 // Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
@@ -113,9 +115,11 @@ function classeOpcao(ativa: boolean, sim: boolean): string {
 
 type Respostas = Record<string, string | string[]>;
 const CAMPOS_TECNICOS_DIGITADOS = new Set([
+  "nome", "cpf", "uf", "municipio",
   "nacionalidade", "nascimento", "estado_civil", "profissao", "rg", "rg_orgao",
   "rg_uf", "mae", "pai", "cep", "endereco", "telefone", "email", "pis",
 ]);
+const IDS_FIXOS_IDENTIFICACAO = new Set(["cpf", "nome", "estado_civil", "uf", "municipio"]);
 type TrechoAoVivo = { quando: number; texto: string; quem: "Entrevistador" | "Entrevistado" | "Falante não identificado" };
 
 /* Tudo que o `PainelEscuta` ("A ENTREVISTA ATÉ AQUI") precisa para se desenhar.
@@ -295,6 +299,7 @@ const MAXIMO_SEGURANDO_S = 40;
  * 20s porque é o intervalo típico entre dois preenchimentos numa conversa
  * corrida — abaixo disso a placa piscaria a cada pausa para respirar. */
 const SEGUNDOS_FLUINDO = 20;
+const MS_ESPERA_IDENTIFICACAO_COMPLETA = 3000;
 
 /** Tem valor? Mesmo critério de `escuta._respondida`, no backend. */
 function respondida(valor: string | string[] | undefined): boolean {
@@ -358,6 +363,8 @@ export default function Roteiro({
      *  pode ser reiniciado junto com `em`. */
     desde: number;
   } | null>(null);
+  const identificacaoCompletaEm = useRef<number | null>(null);
+  const chaveIdentificacaoCompleta = useRef("");
   /* Quando um campo QUALQUER foi preenchido pela última vez. É o sinal de que a
    * entrevista está andando, mesmo que fora da ordem do roteiro. */
   const [ultimoPreenchimento, setUltimoPreenchimento] = useState<number | null>(null);
@@ -910,12 +917,18 @@ export default function Roteiro({
 
   /** Rola até o campo e o destaca — o painel é índice, não só relatório. */
   const irPara = useCallback((perguntaId: string) => {
-    const alvo = document.getElementById(`pergunta-${perguntaId}`);
-    if (!alvo) return;
-    alvo.scrollIntoView({ behavior: "smooth", block: "center" });
-    alvo.querySelector("textarea,input,select,button")?.setAttribute("data-realce", "1");
-    (alvo.querySelector("textarea,input") as HTMLElement | null)?.focus();
-  }, []);
+    if (escutando || escutaEncerrada || revisada) setRevisada(true);
+    if (IDS_FIXOS_IDENTIFICACAO.has(perguntaId)) setIdExpandida(true);
+    window.setTimeout(() => {
+      const alvo = document.getElementById(`pergunta-${perguntaId}`);
+      if (!alvo) return;
+      alvo.scrollIntoView({ behavior: "smooth", block: "center" });
+      const controle = alvo.querySelector("textarea,input,select,button") as HTMLElement | null;
+      controle?.setAttribute("data-realce", "1");
+      controle?.focus();
+      window.setTimeout(() => controle?.removeAttribute("data-realce"), 2400);
+    }, 80);
+  }, [escutaEncerrada, escutando, revisada]);
 
   /* Tira a pergunta da vez sem respondê-la. Ela continua pendente: o painel a
    * mostra em "falta perguntar" e a condução a devolve quando o roteiro acabar,
@@ -1294,6 +1307,14 @@ function preencherMarcadores(
     () => faltaParaComecar.map((c) => c.rotulo),
     [faltaParaComecar],
   );
+  const chaveIdentificacao = useMemo(
+    () =>
+      CAMPOS_DA_IDENTIFICACAO.map((campo) => {
+        const valor = respostas[campo.id];
+        return `${campo.id}:${Array.isArray(valor) ? valor.join("\u001f") : String(valor ?? "")}`;
+      }).join("\u001e"),
+    [CAMPOS_DA_IDENTIFICACAO, respostas],
+  );
 
   /* Se uma edição deixar um dado obrigatório inválido, reabre os campos para a
    * correção continuar visível. Dados válidos nunca provocam recolhimento. */
@@ -1309,10 +1330,30 @@ function preencherMarcadores(
    * Esperar a identificação dá tempo de abrir o Jitsi e receber a faixa remota. */
   useEffect(() => {
     if (!roteiro || inicioAutomatico.current) return;
-    if (faltaParaComecar.length > 0) return;
-    inicioAutomatico.current = true;
-    void comecarEntrevista();
-  }, [roteiro, comecarEntrevista, faltaParaComecar.length]);
+    if (faltaParaComecar.length > 0) {
+      identificacaoCompletaEm.current = null;
+      chaveIdentificacaoCompleta.current = "";
+      return;
+    }
+    const agora = Date.now();
+    if (
+      identificacaoCompletaEm.current === null ||
+      chaveIdentificacaoCompleta.current !== chaveIdentificacao
+    ) {
+      identificacaoCompletaEm.current = agora;
+      chaveIdentificacaoCompleta.current = chaveIdentificacao;
+    }
+    const restante = Math.max(
+      0,
+      MS_ESPERA_IDENTIFICACAO_COMPLETA - (agora - identificacaoCompletaEm.current),
+    );
+    const timer = window.setTimeout(() => {
+      if (inicioAutomatico.current || faltaParaComecar.length > 0) return;
+      inicioAutomatico.current = true;
+      void comecarEntrevista();
+    }, restante);
+    return () => window.clearTimeout(timer);
+  }, [roteiro, comecarEntrevista, faltaParaComecar.length, chaveIdentificacao]);
 
   /* Os nomes que preenchem os marcadores do roteiro.
    *
@@ -1449,7 +1490,7 @@ function preencherMarcadores(
   /* Com a identificação concluída e a escuta aberta, o bloco "abertura" sai da
    * lista corrida e passa a viver dentro do cabeçalho recolhível, logo acima
    * dela. Nos outros estados ele é um bloco como os demais. */
-  const acordeaoIdentificacao = escutando && identificacaoConcluida;
+  const acordeaoIdentificacao = (escutando || roteiroRevelado) && identificacaoConcluida;
   const aberturaBloco = acordeaoIdentificacao
     ? blocosNaTela.find((b) => b.id === "abertura") ?? null
     : null;
@@ -2428,14 +2469,6 @@ function CampoResposta({
 }) {
   const texto = typeof valor === "string" ? valor : "";
 
-  if (escutando && ["nome", "cpf", "uf", "municipio"].includes(pergunta.id)) {
-    return (
-      <div className="w-full max-w-[520px] border border-ok bg-ok-claro text-tinta px-[11px] py-[9px] text-[13px] font-ui">
-        {texto || "—"}
-      </div>
-    );
-  }
-
   // Ao vivo o roteiro é guia de leitura, não formulário. A fala só será
   // interpretada e distribuída entre campos depois do encerramento.
   if (escutando && !CAMPOS_TECNICOS_DIGITADOS.has(pergunta.id)) {
@@ -2458,49 +2491,67 @@ function CampoResposta({
 
   if (pergunta.id === "municipio") {
     // Input + datalist: dá para DIGITAR e filtrar na hora, muito mais rápido que
-    // rolar centenas de municípios num select.
+    // rolar centenas de municípios num select. A lista sugere; não valida regra.
     return (
       <>
         <input
-          list="lista-municipios"
-          className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui disabled:bg-papel-3 disabled:text-tinta-desabilitada"
+          list={municipios.length ? "lista-municipios" : undefined}
+          className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui"
           value={texto}
-          disabled={carregandoMunicipios || municipios.length === 0}
           placeholder={
             carregandoMunicipios
               ? "Carregando municípios…"
               : municipios.length
                 ? "Digite para filtrar o município"
-                : "Escolha a UF primeiro"
+                : "Digite o município"
           }
           onChange={(e) => onResponder(pergunta.id, e.target.value)}
         />
-        <datalist id="lista-municipios">
-          {municipios.map((municipio) => (
-            <option key={municipio.id} value={municipio.nome} />
-          ))}
-        </datalist>
+        {municipios.length > 0 && (
+          <datalist id="lista-municipios">
+            {municipios.map((municipio) => (
+              <option key={municipio.id} value={municipio.nome} />
+            ))}
+          </datalist>
+        )}
+        {carregandoMunicipios && (
+          <span className="block mt-[5px] font-normal text-[11.5px] leading-[1.4] font-codigo text-tinta-3">
+            carregando sugestões de município…
+          </span>
+        )}
       </>
     );
   }
 
   if (pergunta.id === "uf") {
+    const uf = texto.trim().toUpperCase();
+    const opcoes = pergunta.opcoes.length ? pergunta.opcoes : [];
+    const ufValida = !uf || opcoes.includes(uf);
+
     // Mesmo motivo do município: digitar "SP" filtra na hora, sem rolar 27 estados.
     return (
       <>
         <input
           list="lista-ufs"
-          className="w-full max-w-[220px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui"
-          value={texto}
+          className={`w-full max-w-[220px] border bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui ${
+            ufValida ? "border-borda-forte" : "border-critico"
+          }`}
+          value={uf}
           placeholder="Digite a UF (ex.: SP)"
-          maxLength={pergunta.opcoes.length ? undefined : 2}
-          onChange={(e) => onResponder(pergunta.id, e.target.value)}
+          maxLength={2}
+          aria-invalid={!ufValida}
+          onChange={(e) => onResponder(pergunta.id, e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2))}
         />
         <datalist id="lista-ufs">
-          {(pergunta.opcoes.length ? pergunta.opcoes : []).map((o) => (
+          {opcoes.map((o) => (
             <option key={o} value={o} />
           ))}
         </datalist>
+        {!ufValida && (
+          <span className="block mt-[5px] font-normal text-[11.5px] leading-[1.4] font-codigo text-critico">
+            Informe uma UF válida.
+          </span>
+        )}
       </>
     );
   }
@@ -2631,6 +2682,30 @@ function CampoResposta({
     );
   }
 
+  if (pergunta.id === "telefone") {
+    const temTelefone = texto.replace(/\D/g, "").length > 0;
+    return (
+      <>
+        <input
+          className={`w-full max-w-[520px] border ${
+            temTelefone ? "border-borda-forte" : "border-atencao"
+          } bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui`}
+          type="tel"
+          inputMode="tel"
+          value={formatarTelefone(texto)}
+          placeholder="(61) 98180-8863"
+          onChange={(e) => onResponder(pergunta.id, formatarTelefone(e.target.value))}
+          aria-invalid={!temTelefone}
+        />
+        {!temTelefone && (
+          <span className="block mt-[5px] font-normal text-[11.5px] leading-[1.4] font-codigo text-atencao">
+            Informe o telefone/WhatsApp do cliente antes de seguir.
+          </span>
+        )}
+      </>
+    );
+  }
+
   if (pergunta.tipo === "dado" || pergunta.tipo === "data") {
     return (
       <input
@@ -2656,38 +2731,35 @@ function CampoResposta({
       {pergunta.transcrever && !escutando && (
         <div className={`${T_ACOES} mb-2`}>
           {!emCurso && (
-            <button
-              type="button"
-              className={T_BOTAO}
+            <BotaoProcesso
+              variante="primario"
+              pequeno
               onClick={() => onGravar(pergunta.id)}
-              disabled={!temMic || ocupado}
-              title={
-                !temMic
-                  ? "Ligue o microfone no topo da tela"
-                  : ocupado
-                    ? "Outra pergunta está gravando — finalize aquela antes"
-                    : ""
-              }
+              pendencia={temMic ? null : "Ligue o microfone no topo da tela."}
+              pendenciaAoClicar
+              aguardando={ocupado ? "Outra pergunta está gravando — finalize aquela antes." : false}
             >
               {/* O rótulo muda porque a operação é a mesma mas a intenção não:
                 * complementar é o que se faz depois de ler a conferência e
                 * descobrir o que faltou perguntar. O trecho novo entra no fim
                 * do que já estava escrito, sem apagar nada. */}
               {texto.trim() ? "Adicionar complemento" : "Gravar resposta"}
-            </button>
+            </BotaoProcesso>
           )}
 
           {emCurso && (
             <>
-              {/* Sem "Pausar": a gravação do atendimento não tem buraco. */}
-              <button
-                type="button"
-                className={gravando && !finalizando ? T_BOTAO_GRAVANDO : T_BOTAO}
+              {/* Sem "Pausar": a gravação do atendimento não tem buraco.
+                * Gravando: vermelho, porque é estado que precisa saltar aos olhos. */}
+              <BotaoProcesso
+                variante={gravando && !finalizando ? "perigo" : "primario"}
+                pequeno
                 onClick={onFinalizar}
-                disabled={finalizando}
+                processando={finalizando}
+                textoProcessando="Transcrevendo…"
               >
-                {finalizando ? "Transcrevendo…" : "Finalizar resposta"}
-              </button>
+                Finalizar resposta
+              </BotaoProcesso>
             </>
           )}
 

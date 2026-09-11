@@ -31,6 +31,15 @@ DIAS_PARA_COBRAR = 7
 #: ligação: o WhatsApp não trouxe os documentos e a espera virou risco.
 DIAS_PARA_LIGAR = 10
 
+#: Quantos dias uma ligação registrada tira o caso da fila de ligar.
+#:
+#: Antes não havia prazo: UMA ligação, alguma vez, e o caso saía da fila para
+#: sempre — mesmo sem nunca ter entregado documento nenhum. Quem ligou na
+#: segunda e não recebeu nada nunca mais via aquele cliente na aba "Ligar", e o
+#: caso apodrecia sem ninguém notar. A ligação silencia, não encerra: passada a
+#: janela, se ainda falta documento, ele volta para a fila.
+DIAS_APOS_LIGACAO = 7
+
 #: Casos por página. O mesmo valor é o padrão da rota.
 TAMANHO_PADRAO = 10
 
@@ -322,6 +331,22 @@ def _ultimas_ligacoes_por_caso() -> dict[str, dict[str, Any]]:
     return {str(linha["caso_id"]): dict(linha) for linha in linhas}
 
 
+def _dias_desde_ligacao(ultima_ligacao: dict[str, Any]) -> int | None:
+    """Dias corridos desde a última ligação, ou None quando a data não serve."""
+    bruto = ultima_ligacao.get("realizada_em") or ultima_ligacao.get("criado_em")
+    if not bruto:
+        return None
+    if isinstance(bruto, datetime):
+        quando = bruto
+    else:
+        try:
+            quando = datetime.fromisoformat(str(bruto).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    agora = datetime.now(quando.tzinfo) if quando.tzinfo else datetime.now()
+    return max(0, (agora - quando).days)
+
+
 def _precisa_ligar(
     telefone: str,
     cobranca: dict[str, Any] | None,
@@ -336,8 +361,15 @@ def _precisa_ligar(
       - follow-up desligado e caso parado além do prazo de cobrança;
       - follow-up ligado, mas parado tempo demais mesmo assim.
     """
+    # A ligação recente silencia o caso — dar tempo de o cliente providenciar o
+    # documento —, mas não o encerra: sem prazo, "já liguei uma vez" valia para
+    # sempre. Data ilegível cai no comportamento antigo (silencia), que é o
+    # conservador: melhor não recolocar na fila por causa de um dado ruim.
     if ultima_ligacao:
-        return False, "Ligação registrada."
+        dias_desde = _dias_desde_ligacao(ultima_ligacao)
+        if dias_desde is None or dias_desde < DIAS_APOS_LIGACAO:
+            return False, "Ligação registrada."
+        return True, f"Ligado há {dias_desde} dias e os documentos não chegaram."
     if not telefone:
         return True, "Sem telefone cadastrado — contato só por ligação."
     if cobranca and str(cobranca.get("ultimo_erro") or "").strip():
@@ -391,6 +423,11 @@ def relatorio_follow_up() -> dict[str, Any]:
                 "precisa_ligar": precisa,
                 "motivo_ligacao": motivo,
                 "ultima_ligacao": ultima_ligacao,
+                # Quantos dias faz — a tela precisa disto para dizer "ligado há
+                # 3 dias" sem reimplementar a conta do fuso do lado do navegador.
+                "dias_desde_ligacao": (
+                    _dias_desde_ligacao(ultima_ligacao) if ultima_ligacao else None
+                ),
             }
         )
 

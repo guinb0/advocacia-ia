@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import { Aviso } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import PainelChamada from "@/components/chamada/PainelChamada";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
 import Roteiro from "@/components/entrevista/Roteiro";
@@ -102,9 +103,11 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
           está sendo lido agora e esta revisão será atualizada em instantes.
         </p>
       )}
-      {podeComplementar && <button type="button" className={`${CONCLUIR} mt-3`} onClick={onVoltar}>
+      {podeComplementar && (
+        <BotaoProcesso variante="primario" className="mt-3" onClick={onVoltar}>
           Voltar e complementar a entrevista
-        </button>}
+        </BotaoProcesso>
+      )}
       <div className="grid grid-cols-2 max-[700px]:grid-cols-1 gap-3 mt-3">
         <div className="border border-borda bg-papel p-3">
           <strong className="text-xs">Tipo provável do caso</strong>
@@ -286,11 +289,13 @@ export default function EntrevistaComChamada({
 
           {encerrada === null ? (
             <div className="flex items-center flex-wrap gap-[14px] max-w-[860px] mt-7 mb-2 border-t-[3px] border-double border-borda-forte pt-[18px]">
-              <button
+              <BotaoProcesso
                 id="acao-revisar-entrevista"
-                type="button"
-                className={CONCLUIR}
-                disabled={fechando}
+                variante="primario"
+                processando={fechando && !resultadoFinal}
+                textoProcessando="Revisando a entrevista…"
+                dica="Conferindo o que faltou e sugerindo perguntas"
+                aguardando={fechando}
                 onClick={() => {
                   /* Sem esta pergunta, sair descartaria em silêncio o nome e o
                    * CPF que a escuta ouviu — o contrato e a procuração
@@ -338,8 +343,8 @@ export default function EntrevistaComChamada({
                     .finally(() => { setFechando(false); setConsolidando(false); });
                 }}
               >
-                {fechando ? "Revisando a entrevista…" : resultadoFinal ? "Revisar novamente" : "Revisar entrevista"}
-              </button>
+                {resultadoFinal ? "Revisar novamente" : "Revisar entrevista"}
+              </BotaoProcesso>
               <span className={ENCERRAR_NOTA}>
                 A chamada e a gravação continuam enquanto o sistema confere o que faltou e sugere perguntas.
               </span>
@@ -351,11 +356,12 @@ export default function EntrevistaComChamada({
                 </div>
               )}
               {resultadoFinal && (
-                <button
+                <BotaoProcesso
                   id="acao-avancar-finalizacao"
-                  type="button"
-                  className={CONCLUIR}
-                  disabled={fechando}
+                  variante="primario"
+                  processando={fechando && resultadoFinal !== null}
+                  textoProcessando="Fechando a gravação…"
+                  aguardando={fechando}
                   onClick={() => {
                     setFechando(true);
                     setErroFecho(null);
@@ -377,7 +383,7 @@ export default function EntrevistaComChamada({
                   }}
                 >
                   Avançar para finalizar entrevista
-                </button>
+                </BotaoProcesso>
               )}
             </div>
           ) : (
@@ -408,10 +414,9 @@ export default function EntrevistaComChamada({
 
               {encerrada && <AudioDaEntrevista entrevistaId={encerrada} />}
 
-              <div className="flex items-center flex-wrap gap-[14px]">
-                <button
-                  type="button"
-                  className={CONCLUIR}
+              <div className="flex items-start flex-wrap gap-[14px]">
+                <BotaoProcesso
+                  variante="primario"
                   onClick={() => {
                     /* Mesmo texto que vai gravado no caso — de propósito. Ver
                      * `montarTranscricaoBruta`, em `lib/transcricao.ts`. */
@@ -422,15 +427,14 @@ export default function EntrevistaComChamada({
                   }}
                 >
                   Baixar a transcrição bruta (.txt)
-                </button>
+                </BotaoProcesso>
                 <span className={ENCERRAR_NOTA}>
                   O vídeo fica no bloco <strong>VÍDEO</strong>, no alto desta tela.
                 </span>
               </div>
 
-              <button
-                type="button"
-                className={CONCLUIR}
+              <BotaoProcesso
+                variante="primario"
                 onClick={() => {
                   if (
                     roteiro.current?.temVideoPendente() &&
@@ -445,7 +449,7 @@ export default function EntrevistaComChamada({
                 }}
               >
                 Finalizar entrevista
-              </button>
+              </BotaoProcesso>
             </div>
           )}
         </div>

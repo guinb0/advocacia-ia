@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { Aviso, Botao, Cartao, Paginacao, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   ApiError,
   enviarModeloVisualPeticao,
@@ -574,9 +575,14 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               />
             </label>
             {modeloVisual?.origem === "banco" && (
-              <Botao variante="texto" disabled={enviandoVisual} onClick={() => void restaurarVisual()}>
+              <BotaoProcesso
+                variante="texto"
+                aguardando={enviandoVisual ? "Aguarde: o modelo enviado ainda está sendo processado." : false}
+                textoProcessando="Restaurando…"
+                onClick={() => restaurarVisual()}
+              >
                 <RotateCcw size={15} aria-hidden /> Restaurar Lara & Melo
-              </Botao>
+              </BotaoProcesso>
             )}
           </div>
         </div>
@@ -713,9 +719,16 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         )}
 
         <div className="mt-4 flex justify-end">
-          <Botao onClick={() => void salvarSkill()} disabled={salvandoSkill || !categoriaSkill}>
-            {salvandoSkill ? "Salvando…" : "Salvar skill desta categoria"}
-          </Botao>
+          <BotaoProcesso
+            variante="primario"
+            onClick={() => salvarSkill()}
+            processando={salvandoSkill}
+            textoProcessando="Salvando…"
+            pendencia={categoriaSkill ? null : "Escolha a categoria acima."}
+            pendenciaAoClicar
+          >
+            Salvar skill desta categoria
+          </BotaoProcesso>
         </div>
       </Cartao>
 
@@ -976,12 +989,16 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           </div>
           <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex justify-end sm:ml-auto">
-              <Botao
-                onClick={() => void salvarConfiguracao()}
-                disabled={salvandoConfiguracao || !configuracao.display_name.trim()}
+              <BotaoProcesso
+                variante="primario"
+                onClick={() => salvarConfiguracao()}
+                processando={salvandoConfiguracao}
+                textoProcessando="Salvando…"
+                pendencia={configuracao.display_name.trim() ? null : "Preencha o nome da ação."}
+                pendenciaAoClicar
               >
-                {salvandoConfiguracao ? "Salvando…" : "Salvar configuração"}
-              </Botao>
+                Salvar configuração
+              </BotaoProcesso>
             </div>
           </div>
         </Cartao>
@@ -1028,8 +1045,14 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                       <Selo tom={seg.tom} simbolo={peca.segmentation.quality === "FULL" ? "✓" : "!"}>
                         {seg.texto}
                       </Selo>
-                      <Botao variante="texto" pequeno disabled={removendo === peca.id} onClick={() => void remover(peca)}>
-                        {removendo === peca.id ? "Removendo…" : "Remover"}
+                      <Botao
+                        variante="texto"
+                        pequeno
+                        carregando={removendo === peca.id}
+                        textoCarregando="Removendo…"
+                        onClick={() => void remover(peca)}
+                      >
+                        Remover
                       </Botao>
                     </div>
                   </div>

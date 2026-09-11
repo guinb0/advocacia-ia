@@ -27,6 +27,7 @@ import type { AtendimentoDocumentacao } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import { useSessao } from "@/lib/auth";
 import { Aviso, Botao, Selo, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 interface Props {
   onVoltar: () => void;
@@ -278,14 +279,16 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
                 {alerta.entrevistador_nome} está aguardando você na chamada.
               </p>
             </div>
-            <Botao
+            <BotaoProcesso
               variante="primario"
               onClick={() => void assumir(alerta)}
-              disabled={assumindo !== null}
+              processando={assumindo === alerta.entrevista_id}
+              textoProcessando="Entrando…"
+              aguardando={assumindo !== null}
               className="shrink-0"
             >
-              {assumindo === alerta.entrevista_id ? "Entrando…" : "Entrar e abrir documentos"}
-            </Botao>
+              Entrar e abrir documentos
+            </BotaoProcesso>
           </div>
         </section>
       )}
@@ -470,18 +473,18 @@ function AtendimentoLinha({
 
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           {solicitado && viva ? (
-            <Botao
+            <BotaoProcesso
               variante="primario"
               pequeno
               onClick={() => void onAssumir(item)}
-              disabled={assumindo !== null}
+              processando={assumindo === item.entrevista_id}
+              textoProcessando="Entrando…"
+              aguardando={assumindo !== null}
               className="max-w-full"
             >
               <Headphones size={15} aria-hidden />
-              <span className="min-w-0 truncate">
-                {assumindo === item.entrevista_id ? "Entrando…" : "Assumir"}
-              </span>
-            </Botao>
+              <span className="min-w-0 truncate">Assumir</span>
+            </BotaoProcesso>
           ) : solicitado ? (
             <Selo tom="neutro">chamada encerrada</Selo>
           ) : (

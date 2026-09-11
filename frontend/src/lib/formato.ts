@@ -25,6 +25,29 @@ export function tamanhoLegivel(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
+export function digitosTelefone(valor: string): string {
+  return valor.replace(/\D/g, "").slice(0, 13);
+}
+
+export function telefonePreenchido(valor: string | null | undefined): boolean {
+  return digitosTelefone(valor ?? "").length > 0;
+}
+
+export function formatarTelefone(valor: string): string {
+  const digitos = digitosTelefone(valor);
+  const nacional =
+    digitos.startsWith("55") && (digitos.length === 12 || digitos.length === 13)
+      ? digitos.slice(2)
+      : digitos;
+  const prefixoPais = nacional.length !== digitos.length ? "+55 " : "";
+  if (nacional.length <= 2) return prefixoPais + nacional;
+  const ddd = nacional.slice(0, 2);
+  const numero = nacional.slice(2);
+  if (numero.length <= 4) return `${prefixoPais}(${ddd}) ${numero}`;
+  if (numero.length <= 8) return `${prefixoPais}(${ddd}) ${numero.slice(0, 4)}-${numero.slice(4)}`;
+  return `${prefixoPais}(${ddd}) ${numero.slice(0, 5)}-${numero.slice(5, 9)}`;
+}
+
 /** "data_nascimento" -> "data nascimento" */
 export function semUnderscore(texto: string): string {
   return texto.replace(/_/g, " ");

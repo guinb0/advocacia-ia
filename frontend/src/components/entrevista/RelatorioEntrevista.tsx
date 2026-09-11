@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { gerarRelatorio } from "@/lib/api";
 import type { RelatorioGerado } from "@/lib/api";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* O relatório analisado da entrevista, para a equipe jurídica.
  *
@@ -62,45 +63,32 @@ export default function RelatorioEntrevista({ respostas, relato }: Props) {
         assistida por precedentes.
       </p>
 
-      <div className="flex items-center gap-[14px] flex-wrap mt-3">
-        <button
-          type="button"
-          className="border-[1.5px] border-tinta bg-transparent text-tinta font-semibold text-[11px] leading-none font-ui tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada enabled:hover:bg-tinta enabled:hover:text-papel"
+      <div className="mt-3">
+        <BotaoProcesso
+          variante="primario"
           onClick={gerar}
-          disabled={gerando}
+          processando={gerando}
+          textoProcessando="Gerando o relatório…"
+          dica="Buscando precedentes e montando o PDF — limite de 90 segundos"
+          erro={erro}
+          concluido={
+            feito && (
+              <>
+                Baixado.{" "}
+                {feito.analise === "sim"
+                  ? "Com análise por precedentes."
+                  : feito.analise === "indisponivel"
+                    ? "Sem a análise — a base de precedentes não respondeu; dá para gerar de novo."
+                    : "Sem análise."}
+                {feito.impedimentos > 0 && ` ${feito.impedimentos} impedimento(s) sinalizado(s).`}
+                {feito.pendencias > 0 && ` ${feito.pendencias} pendência(s) obrigatória(s).`}
+              </>
+            )
+          }
         >
-          {gerando
-            ? "Gerando…"
-            : feito
-              ? "Gerar de novo"
-              : "Gerar relatório analisado (PDF)"}
-        </button>
-
-        {gerando && (
-          <span className="font-normal text-[12px] leading-[1.4] font-codigo text-tinta-3">
-            buscando precedentes e montando o PDF — limite de 90 segundos
-          </span>
-        )}
+          {feito ? "Gerar de novo" : "Gerar relatório analisado (PDF)"}
+        </BotaoProcesso>
       </div>
-
-      {erro && (
-        <p className="mt-[10px] mb-0 font-normal text-[12px] leading-[1.5] font-ui text-critico">
-          {erro}
-        </p>
-      )}
-
-      {feito && !gerando && (
-        <p className="mt-[10px] mb-0 font-normal text-[12px] leading-[1.55] font-ui text-tinta-3" aria-live="polite">
-          Baixado.{" "}
-          {feito.analise === "sim"
-            ? "Com análise por precedentes."
-            : feito.analise === "indisponivel"
-              ? "Sem a análise — a base de precedentes não respondeu; dá para gerar de novo."
-              : "Sem análise."}
-          {feito.impedimentos > 0 && ` ${feito.impedimentos} impedimento(s) sinalizado(s).`}
-          {feito.pendencias > 0 && ` ${feito.pendencias} pendência(s) obrigatória(s).`}
-        </p>
-      )}
     </section>
   );
 }

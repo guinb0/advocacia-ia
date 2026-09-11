@@ -8,6 +8,8 @@ que a issue pede definir e destacar. Ver `carteira._precisa_ligar`.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from app import carteira
 
 
@@ -52,7 +54,39 @@ def main_teste() -> int:
     )
     falhas += checar(
         not precisa and motivo == "Ligação registrada.",
-        "ligação registrada resolve qualquer alerta pendente",
+        "ligação sem data legível silencia o alerta (o conservador)",
+    )
+
+    # A JANELA DA LIGAÇÃO — o buraco que a fila tinha.
+    #
+    # Antes bastava existir UMA ligação, de qualquer época, para o caso sair da
+    # aba "Ligar" para sempre: quem foi ligado uma vez e nunca mandou documento
+    # nenhum não voltava à fila, e o caso apodrecia sem ninguém ver. Agora a
+    # ligação silencia pelo prazo e depois devolve o caso para a fila.
+    def ha_dias(n: int) -> dict[str, object]:
+        return {"id": "call-1", "realizada_em": (datetime.now() - timedelta(days=n)).isoformat()}
+
+    precisa, motivo = liga("", None, 30, ha_dias(0))
+    falhas += checar(
+        not precisa and motivo == "Ligação registrada.",
+        "ligação de hoje tira o caso da fila",
+    )
+
+    precisa, _ = liga("", None, 30, ha_dias(carteira.DIAS_APOS_LIGACAO - 1))
+    falhas += checar(not precisa, "dentro da janela o caso segue fora da fila")
+
+    precisa, motivo = liga("", None, 30, ha_dias(carteira.DIAS_APOS_LIGACAO + 3))
+    falhas += checar(
+        precisa and "não chegaram" in motivo,
+        "passada a janela sem documento, o caso VOLTA para a fila",
+        motivo,
+    )
+
+    dias = carteira._dias_desde_ligacao(ha_dias(5))
+    falhas += checar(dias == 5, "a tela recebe os dias desde a ligação", str(dias))
+    falhas += checar(
+        carteira._dias_desde_ligacao({"id": "x"}) is None,
+        "sem data, a conta devolve None em vez de inventar",
     )
 
     print("TODOS OS TESTES PASSARAM" if not falhas else f"{falhas} FALHA(S)")

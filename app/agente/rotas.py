@@ -73,6 +73,19 @@ def _erro(erro: ErroDoAgente) -> HTTPException:
     return HTTPException(status.HTTP_502_BAD_GATEWAY, str(erro))
 
 
+def _gerar_peticao_registrada(caso_id: str, usuario: auth.Usuario, origem: str, acao: Any) -> dict[str, Any]:
+    solicitacao = armazenamento.registrar_solicitacao_peticao(
+        caso_id, usuario.id, usuario.nome, origem
+    )
+    try:
+        resultado = acao()
+    except Exception as erro:
+        armazenamento.concluir_solicitacao_peticao(solicitacao, str(erro))
+        raise
+    armazenamento.concluir_solicitacao_peticao(solicitacao)
+    return resultado
+
+
 @roteador.get("/config")
 def configuracao() -> dict[str, Any]:
     """A tela pergunta antes de oferecer o botão — como já faz com a ZapSign."""
@@ -390,14 +403,18 @@ def decidir_hipotese(
 
 
 @roteador.post("/casos/{caso_id}/peticao", status_code=status.HTTP_202_ACCEPTED)
-def gerar_peticao(caso_id: str, opcao: int = 0) -> dict[str, Any]:
+def gerar_peticao(
+    caso_id: str, opcao: int = 0, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
     """Gera petição a partir da entrevista, com embeddings de style e de documentos.
 
     Fluxo: transcrição → análise resumida → duas estratégias → redação no modelo
     treinado em Modelos de Petição. Use as rotas `/peticao-fluxo/*` para passo a passo.
     """
     try:
-        return peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+        return _gerar_peticao_registrada(
+            caso_id, usuario, "peticao", lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -428,18 +445,29 @@ def estrategias_peticao_fluxo(caso_id: str) -> dict[str, Any]:
 
 
 @roteador.post("/casos/{caso_id}/peticao-fluxo/completo")
-def gerar_analise_e_peticao(caso_id: str) -> dict[str, Any]:
+def gerar_analise_e_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
     """Analisa entrevista + OCR e redige a petição (síncrono, sem agente)."""
     try:
-        return peticao_fluxo.gerar_completo(caso_id)
+        return _gerar_peticao_registrada(
+            caso_id, usuario, "peticao-fluxo-completo", lambda: peticao_fluxo.gerar_completo(caso_id)
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
 
 @roteador.post("/casos/{caso_id}/peticao-fluxo/gerar")
-def gerar_peticao_fluxo(caso_id: str, opcao: int = 0) -> dict[str, Any]:
+def gerar_peticao_fluxo(
+    caso_id: str, opcao: int = 0, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
     try:
-        return peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+        return _gerar_peticao_registrada(
+            caso_id,
+            usuario,
+            "peticao-fluxo-gerar",
+            lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao),
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -588,6 +616,10 @@ def revisar_peticao_com_prompt(
     caso_id: str,
     peca_ref: str,
     prompt: str = Body(..., embed=True),
+    # Padrão `True` porque é o caso comum — a crítica quase sempre é uma lição
+    # do escritório — e porque é o que os clientes antigos, que não mandam o
+    # campo, já faziam.
+    generaliza: bool = Body(True, embed=True),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> dict[str, Any]:
     """Issue "Permitir alteração da petição por prompt com rastreabilidade".
@@ -604,7 +636,7 @@ def revisar_peticao_com_prompt(
         )
     try:
         return peticao_fluxo.revisar_peticao(
-            caso_id, prompt=prompt, usuario=usuario.nome
+            caso_id, prompt=prompt, usuario=usuario.nome, generaliza=generaliza
         )
     except peticao_local.ErroPeticao as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro

@@ -22,10 +22,12 @@ import { useChamada } from "@/lib/ChamadaContexto";
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import AvaliacaoGoogle from "@/components/contrato/AvaliacaoGoogle";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
-import { Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { AjudaCampo, Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
 import PainelChamada from "@/components/chamada/PainelChamada";
+import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 
 const OPCAO_BASE =
   "flex gap-3 items-start w-full px-[14px] py-3 border-none border-b border-borda border-l-4 bg-transparent " +
@@ -61,6 +63,9 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
   onAlterar: (id: string, valor: string) => void;
   onContinuar: () => void;
 }) {
+  const [tentouContinuar, setTentouContinuar] = useState(false);
+  const telefone = String(respostas.telefone ?? "");
+  const telefoneVazio = !telefonePreenchido(telefone);
   const desenhar = (grupo: (typeof CAMPOS_CADASTRAIS)[number]["grupo"]) =>
     CAMPOS_CADASTRAIS.filter((campo) => campo.grupo === grupo).map((campo) => (
       <div key={campo.id} className={campo.id === "endereco" ? "sm:col-span-2" : ""}>
@@ -68,10 +73,28 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
         <Campo
           id={`cadastro-final-${campo.id}`}
           type={("tipo" in campo && campo.tipo) || "text"}
-          value={String(respostas[campo.id] ?? "")}
-          onChange={(evento) => onAlterar(campo.id, evento.target.value)}
+          inputMode={campo.id === "telefone" ? "tel" : undefined}
+          value={
+            campo.id === "telefone"
+              ? formatarTelefone(String(respostas[campo.id] ?? ""))
+              : String(respostas[campo.id] ?? "")
+          }
+          onChange={(evento) =>
+            onAlterar(
+              campo.id,
+              campo.id === "telefone" ? formatarTelefone(evento.target.value) : evento.target.value,
+            )
+          }
+          placeholder={campo.id === "telefone" ? "(61) 98180-8863" : undefined}
+          aria-invalid={campo.id === "telefone" && tentouContinuar && telefoneVazio}
+          className={campo.id === "telefone" && tentouContinuar && telefoneVazio ? "border-atencao" : undefined}
           autoComplete="off"
         />
+        {campo.id === "telefone" && tentouContinuar && telefoneVazio && (
+          <AjudaCampo className="text-atencao">
+            Telefone vazio. Clique em salvar novamente para continuar sem WhatsApp automático.
+          </AjudaCampo>
+        )}
       </div>
     ));
 
@@ -99,7 +122,16 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
         </details>
 
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-borda pt-4">
-          <Botao variante="primario" onClick={onContinuar}>
+          <Botao
+            variante="primario"
+            onClick={() => {
+              if (telefoneVazio && !tentouContinuar) {
+                setTentouContinuar(true);
+                return;
+              }
+              onContinuar();
+            }}
+          >
             {confirmado ? "Dados atualizados" : "Salvar e continuar"}
           </Botao>
           <span className="text-xs text-tinta-3">
@@ -213,6 +245,7 @@ export default function TriagemEntrevista({
   const [atendimentoTxt, setAtendimentoTxt] = useState(false);
   const [nomeTxt, setNomeTxt] = useState("");
   const [cpfTxt, setCpfTxt] = useState("");
+  const [telefoneTxt, setTelefoneTxt] = useState("");
   const [categoriaTxt, setCategoriaTxt] = useState("");
   const [entrevistaIdTxt, setEntrevistaIdTxt] = useState("");
   const [gravacaoEstado, setGravacaoEstado] = useState<EstadoCaptura>("sem-audio");
@@ -433,6 +466,7 @@ export default function TriagemEntrevista({
       <CasoEDocumentos
         cliente={String(qualificacao.nome ?? "")}
         entrevistaId={audioEntrevista}
+        telefone={String(qualificacao.telefone ?? "")}
         onCasoCriado={async (casoId) => {
           setCasoCriado(casoId);
           // Grava já, sem esperar o encerramento: se a aba morrer daqui para a
@@ -648,14 +682,30 @@ export default function TriagemEntrevista({
           }
         />
 
-      <div className="flex gap-[10px] items-center flex-wrap mt-3">
-        <Botao variante="secundario" onClick={() => void analisar()} disabled={analisando || !texto.trim()}>
-          {analisando ? "Analisando…" : "Analisar o relato"}
-        </Botao>
+      <div className="flex gap-[10px] items-start flex-wrap mt-3">
+        {/* A ação do bloco: sem relato, o clique diz o que falta em vez de o botão
+          * ficar cinza sem explicação. */}
+        <BotaoProcesso
+          variante="primario"
+          onClick={() => analisar()}
+          processando={analisando}
+          textoProcessando="Analisando o relato…"
+          dica="Sugerindo as ações cabíveis e comparando com a base de casos"
+          pendencia={texto.trim() ? null : "Cole o relato acima ou escolha um arquivo com texto."}
+          pendenciaAoClicar
+          onPendencia={() => document.getElementById("relato-entrevista")?.focus()}
+        >
+          Analisar o relato
+        </BotaoProcesso>
 
-        <Botao variante="discreto" pequeno onClick={() => inputRef.current?.click()} disabled={analisando}>
+        <BotaoProcesso
+          variante="discreto"
+          pequeno
+          onClick={() => inputRef.current?.click()}
+          aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
+        >
           Escolher arquivo com texto
-        </Botao>
+        </BotaoProcesso>
 
         <input
           ref={inputRef}
@@ -798,6 +848,8 @@ export default function TriagemEntrevista({
             onCliente={setNomeTxt}
             cpf={cpfTxt}
             onCpf={setCpfTxt}
+            telefone={telefoneTxt}
+            onTelefone={setTelefoneTxt}
             sugerida={categoriaTxt}
             onCategoria={setCategoriaTxt}
             categorias={categorias}
@@ -828,14 +880,15 @@ export default function TriagemEntrevista({
           />
 
           {casoTxtId && gravacaoEstado !== "sem-audio" && (
-            <Botao
+            <BotaoProcesso
               variante="secundario"
               className="mt-3"
-              disabled={encerrandoTxt}
-              onClick={() => void encerrarGravacaoTxt()}
+              processando={encerrandoTxt}
+              textoProcessando="Encerrando a gravação…"
+              onClick={encerrarGravacaoTxt}
             >
-              {encerrandoTxt ? "Encerrando a gravação…" : "Encerrar a gravação do atendimento"}
-            </Botao>
+              Encerrar a gravação do atendimento
+            </BotaoProcesso>
           )}
         </div>
       )}

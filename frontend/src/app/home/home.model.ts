@@ -19,12 +19,14 @@ export type Tela =
   | "investigacao"
   | "usuarios"
   | "panorama"
+  | "operacao"
   | "entrevista"
   | "supervisao"
   | "dados"
   | "saudeAgente"
   | "modelosDePeticao"
   | "catalogoRoteiros"
+  | "glossarioDocumentos"
   | "revisao"
   | "followup"
   | "documentacao";
@@ -43,6 +45,7 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   investigacao: "investigacao",
   usuarios: "usuarios",
   panorama: "metricas",
+  operacao: "operacao",
   entrevista: "entrevista",
   supervisao: "supervisao",
   dados: "metricas",
@@ -54,6 +57,9 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
    * que não está mapeado. O catálogo de roteiros pertence ao módulo `roteiros`,
    * que o advogado e o secretário têm — ver `app/perfis.py`. */
   catalogoRoteiros: "roteiros",
+  /* A TELA de manutenção pede o módulo; consultar o glossário não pede — a
+   * reclassificação, dentro do caso, lê a lista sem passar por aqui. */
+  glossarioDocumentos: "glossario_documentos",
   /* `modelosDePeticao` de propósito NÃO está aqui.
    *
    * Na barra horizontal antiga o item aparecia para todo mundo (filtro de

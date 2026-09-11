@@ -145,11 +145,13 @@ def main_teste() -> int:
             caso_id = novo_caso.json()["id"]
 
             # Botões "Enviar" e "Enviar outro" chamam a mesma rota, uma vez por arquivo.
+            # Bytes diferentes por arquivo: frente e verso são dois documentos, e o
+            # mesmo conteúdo duas vezes seria recusado como arquivo repetido.
             for nome in ("rg-frente.pdf", "rg-verso.pdf"):
                 resposta = cliente.post(
                     f"/api/casos/{caso_id}/documentos",
                     data={"item": "DOC.03", "idioma": "pt", "usar_para_rg_e_cpf": "false"},
-                    files={"arquivo": (nome, b"%PDF-1.7 teste", "application/pdf")},
+                    files={"arquivo": (nome, f"%PDF-1.7 teste {nome}".encode(), "application/pdf")},
                 )
                 falhas += not checar(resposta.status_code == 201, f"{nome} chega à rota de checklist")
 

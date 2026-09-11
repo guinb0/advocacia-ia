@@ -125,11 +125,13 @@ def gerar_completo(caso_id: str) -> dict[str, Any]:
     }
 
 
-def revisar_peticao(caso_id: str, *, prompt: str, usuario: str) -> dict[str, Any]:
+def revisar_peticao(
+    caso_id: str, *, prompt: str, usuario: str, generaliza: bool = True
+) -> dict[str, Any]:
     """Issue "Permitir alteração da petição por prompt com rastreabilidade"."""
     try:
         dados = peticao_local.revisar_com_prompt(
-            caso_id, prompt_critica=prompt, usuario=usuario
+            caso_id, prompt_critica=prompt, usuario=usuario, generaliza=generaliza
         )
     except peticao_local.ErroPeticao as erro:
         raise _erro_peticao(erro) from erro

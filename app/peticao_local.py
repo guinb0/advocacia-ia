@@ -228,12 +228,17 @@ def _categoria_do_caso(caso_id: str) -> str:
     return str(caso.get("categoria") or "")
 
 
-#: Quantas críticas recentes de uma categoria entram automaticamente no prompt das
-#: próximas gerações — a retroalimentação da issue "Permitir alteração da petição
-#: por prompt com rastreabilidade" ("a IA vai aprendendo até sair do jeitinho que
-#: eles querem"). Um número pequeno de propósito: é contexto de estilo, não um
-#: histórico completo — e cada crítica citada come espaço do prompt.
-CRITICAS_RECENTES_POR_CATEGORIA = 5
+#: Quantas lições de uma categoria entram automaticamente no prompt das próximas
+#: gerações — a retroalimentação da issue "Permitir alteração da petição por
+#: prompt com rastreabilidade" ("a IA vai aprendendo até sair do jeitinho que
+#: eles querem").
+#:
+#: Era 5, e 5 quebrava a promessa: medido contra o banco, gravadas 7 correções na
+#: mesma categoria, a IA lembrava da 3ª à 7ª e ESQUECIA as duas primeiras — o
+#: escritório reensinava o que já tinha ensinado. 20 cabe no prompt e cobre o que
+#: uma categoria acumula em meses; repetidas não gastam vaga (`_chave`), e o que
+#: for marcado "só deste caso" nem chega aqui.
+CRITICAS_RECENTES_POR_CATEGORIA = 20
 
 
 def _com_skill_do_escritorio(caso_id: str, instrucao: str) -> str:
@@ -680,7 +685,7 @@ Cada content deve conter parágrafos separados por linha em branco.""",
 
 
 def revisar_com_prompt(
-    caso_id: str, *, prompt_critica: str, usuario: str
+    caso_id: str, *, prompt_critica: str, usuario: str, generaliza: bool = True
 ) -> dict[str, Any]:
     """Reescreve a petição a partir de uma crítica em linguagem natural.
 
@@ -696,7 +701,9 @@ def revisar_com_prompt(
     2. A crítica em si vai para `peticao_criticas`, com quem pediu e em cima de
        qual versão — o "log" e a "instrução armazenada" que a issue pede, e
        também o que alimenta a retroalimentação automática entre casos (ver
-       `_com_skill_do_escritorio`).
+       `_com_skill_do_escritorio`). Com `generaliza=False` ela fica só na
+       rastreabilidade deste caso e NÃO instrui as próximas petições: é o que
+       impede um "troque o nome do cliente" de virar regra da categoria.
     3. A nova versão volta **sempre** para `IN_REVIEW`, mesmo que a anterior já
        estivesse `APPROVED` — decisão do escritório: revisão por prompt nunca
        substitui uma versão aprovada sem passar de novo pela aprovação humana.
@@ -771,6 +778,7 @@ Cada content em parágrafos separados por linha em branco.""",
             versao_resultado=versao_resultado,
             prompt=prompt_critica,
             usuario=usuario,
+            generaliza=generaliza,
         )
     except Exception:
         # A revisão já foi salva — perder o registro da crítica é ruim, mas não pode

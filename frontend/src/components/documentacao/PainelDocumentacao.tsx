@@ -14,6 +14,7 @@ import type { AtendimentoDocumentacao } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import { useSessao } from "@/lib/auth";
 import { Aviso, Botao, Selo, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 interface Props {
   onVoltar: () => void;
@@ -177,14 +178,16 @@ export default function PainelDocumentacao({ onVoltar, onAbrirDocumentos }: Prop
 
                   <div className="flex min-w-0 justify-start min-[760px]:justify-end">
                     {item.status === "solicitado" && chamadaViva(item) ? (
-                      <Botao
+                      <BotaoProcesso
                         variante="primario"
                         pequeno
                         onClick={() => void assumir(item)}
-                        disabled={assumindo !== null}
+                        processando={assumindo === item.entrevista_id}
+                        textoProcessando="Entrando…"
+                        aguardando={assumindo !== null}
                       >
-                        {assumindo === item.entrevista_id ? "Entrando…" : "Assumir chamada"}
-                      </Botao>
+                        Assumir chamada
+                      </BotaoProcesso>
                     ) : item.status === "solicitado" ? (
                       <span className="inline-flex max-w-full items-center gap-2 truncate rounded-campo border border-borda bg-papel-2 px-3 py-2 text-[11px] uppercase tracking-wider text-tinta-3">
                         {item.sala ? "Chamada encerrada" : "Aguardando início"}

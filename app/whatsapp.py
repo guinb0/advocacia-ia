@@ -26,11 +26,12 @@ import hashlib
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -48,6 +49,7 @@ MENSAGEM_AVALIACAO = (
 )
 log = logging.getLogger("whatsapp")
 INSTANCIA_OFICIAL = os.getenv("EVOLUTION_INSTANCE_FALLBACK", "Advocacia LM").strip()
+DIAGNOSTICO_EVOLUTION = "EVO-DIAG-2"
 
 
 def _url_instancia(base: str, recurso: str, instancia: str) -> str:
@@ -61,21 +63,37 @@ def _instancias_candidatas() -> list[str]:
     return list(dict.fromkeys(nome for nome in candidatas if nome))
 
 
-def _mensagem_erro_evolution(erro: httpx.HTTPError) -> str:
-    """Traduz a falha da Evolution sem devolver chave ou resposta sensível."""
+def _mensagem_erro_evolution(erro: Exception, acao: str = "requisição") -> str:
+    """Traduz a falha sem alegar uma causa que a resposta HTTP não comprova."""
     if isinstance(erro, httpx.HTTPStatusError):
         status = erro.response.status_code
         if status in (401, 403):
-            return "A chave da Evolution configurada no servidor foi recusada."
+            return (
+                f"A {acao} recebeu HTTP {status} do endpoint configurado "
+                f"[{DIAGNOSTICO_EVOLUTION}-HTTP-{status}]. A requisição foi rejeitada, "
+                "mas esse código sozinho não prova erro na chave: URL, proxy, "
+                "instância e política de autenticação também precisam ser conferidos."
+            )
         if status == 404:
-            return "A instância do WhatsApp configurada no servidor não foi encontrada."
+            return (
+                "A instância do WhatsApp não foi encontrada no endpoint configurado "
+                f"[{DIAGNOSTICO_EVOLUTION}-HTTP-404]."
+            )
         if status in (400, 409, 422):
-            return "A Evolution recusou a mensagem ou o destinatário informado."
+            return (
+                f"A {acao} foi rejeitada com HTTP {status} "
+                f"[{DIAGNOSTICO_EVOLUTION}-HTTP-{status}]."
+            )
         if status >= 500:
-            return "A Evolution está indisponível no momento. Tente novamente."
+            return (
+                f"O endpoint da Evolution respondeu HTTP {status} "
+                f"[{DIAGNOSTICO_EVOLUTION}-HTTP-{status}]. Tente novamente."
+            )
     if isinstance(erro, httpx.TimeoutException):
-        return "A Evolution demorou demais para responder. Tente novamente."
-    return "Não foi possível conectar à Evolution API."
+        return f"A Evolution demorou demais para responder [{DIAGNOSTICO_EVOLUTION}-TIMEOUT]."
+    if isinstance(erro, ValueError):
+        return f"A Evolution respondeu em formato inválido [{DIAGNOSTICO_EVOLUTION}-JSON]."
+    return f"Não foi possível conectar à Evolution API [{DIAGNOSTICO_EVOLUTION}-NETWORK]."
 
 
 class Destinatario(BaseModel):
@@ -94,6 +112,9 @@ class ConfiguracaoCobranca(BaseModel):
     ativa: bool = False
     telefone: str = ""
     intervalo_dias: int = Field(default=3, ge=1, le=30)
+    # `None` preserva clientes antigos da API, que conhecem apenas dias.
+    intervalo_horas: int | None = Field(default=None, ge=1, le=720)
+    max_envios_dia: int = Field(default=1, ge=1, le=6)
     incluir_opcionais: bool = False
 
 
@@ -136,7 +157,12 @@ def estado_conexao() -> dict[str, Any]:
     estado a mostrar, não um 500 na tela.
     """
     if not configurado():
-        return {"configurado": False, "conectado": False, "estado": "desconfigurado"}
+        return {
+            "configurado": False,
+            "conectado": False,
+            "estado": "desconfigurado",
+            "diagnostico": DIAGNOSTICO_EVOLUTION,
+        }
     base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
     ultimo_erro = ""
     for instancia in _instancias_candidatas():
@@ -147,9 +173,19 @@ def estado_conexao() -> dict[str, Any]:
                 timeout=15,
             )
             if resposta.status_code == 404:
+                ultimo_erro = _mensagem_erro_evolution(
+                    httpx.HTTPStatusError(
+                        "Not found",
+                        request=resposta.request,
+                        response=resposta,
+                    ),
+                    "consulta de status",
+                )
                 continue
             resposta.raise_for_status()
             dados = resposta.json()
+            if not isinstance(dados, dict):
+                raise ValueError("resposta JSON não é um objeto")
             bloco = dados.get("instance") if isinstance(dados.get("instance"), dict) else dados
             estado = str(bloco.get("state") or dados.get("state") or "").lower()
             resultado = {
@@ -159,6 +195,7 @@ def estado_conexao() -> dict[str, Any]:
                 "instancia": instancia,
                 "numero": "",
                 "perfil": "",
+                "diagnostico": DIAGNOSTICO_EVOLUTION,
             }
             if estado == "open":
                 # O número aparado só quando conectado — a lista traz o dono da
@@ -167,10 +204,21 @@ def estado_conexao() -> dict[str, Any]:
                 resultado["numero"] = numero
                 resultado["perfil"] = perfil
             return resultado
-        except httpx.HTTPError as erro:
-            ultimo_erro = _mensagem_erro_evolution(erro)
+        except (httpx.HTTPError, ValueError) as erro:
+            ultimo_erro = _mensagem_erro_evolution(erro, "consulta de status")
+            log.warning(
+                "Evolution recusou consulta de status: instancia=%s erro=%s",
+                instancia,
+                ultimo_erro,
+            )
             continue
-    return {"configurado": True, "conectado": False, "estado": "indisponivel", "erro": ultimo_erro}
+    return {
+        "configurado": True,
+        "conectado": False,
+        "estado": "indisponivel",
+        "erro": ultimo_erro,
+        "diagnostico": DIAGNOSTICO_EVOLUTION,
+    }
 
 
 def _numero_conectado(base: str, instancia: str) -> tuple[str, str]:
@@ -184,9 +232,16 @@ def _numero_conectado(base: str, instancia: str) -> tuple[str, str]:
         )
         resposta.raise_for_status()
         dados = resposta.json()
-        lista = dados if isinstance(dados, list) else dados.get("instances") or [dados]
+        if isinstance(dados, list):
+            lista = dados
+        elif isinstance(dados, dict):
+            lista = dados.get("instances") or [dados]
+        else:
+            return "", ""
         alvo = _chave(instancia)
         for item in lista:
+            if not isinstance(item, dict):
+                continue
             ins = item.get("instance") if isinstance(item.get("instance"), dict) else item
             nome = str(ins.get("instanceName") or ins.get("name") or "")
             if lista and (len(lista) == 1 or _chave(nome) == alvo):
@@ -233,8 +288,8 @@ def desconectar() -> dict[str, Any]:
                 continue
             resposta.raise_for_status()
             return {"desconectado": True, "instancia": instancia}
-        except httpx.HTTPError as erro:
-            raise RuntimeError(_mensagem_erro_evolution(erro)) from erro
+        except (httpx.HTTPError, ValueError) as erro:
+            raise RuntimeError(_mensagem_erro_evolution(erro, "desconexão")) from erro
     raise RuntimeError(ultimo_erro)
 
 
@@ -260,12 +315,21 @@ def abrir_conexao_qrcode() -> dict[str, Any]:
                 continue
             resposta.raise_for_status()
             dados = resposta.json()
+            if not isinstance(dados, dict):
+                raise ValueError("resposta JSON não é um objeto")
             qr = dados.get("qrcode") if isinstance(dados.get("qrcode"), dict) else {}
-            base64 = dados.get("base64") or qr.get("base64") or ""
-            codigo = dados.get("code") or dados.get("pairingCode") or qr.get("code") or ""
+            base64 = str(dados.get("base64") or qr.get("base64") or "").strip()
+            codigo = str(
+                dados.get("code") or dados.get("pairingCode") or qr.get("code") or ""
+            ).strip()
+            if not base64 and not codigo:
+                raise RuntimeError(
+                    f"A Evolution respondeu sem QR nem código de pareamento "
+                    f"[{DIAGNOSTICO_EVOLUTION}-QR-EMPTY]."
+                )
             return {"qrcode": base64, "codigo": codigo, "instancia": instancia}
-        except httpx.HTTPError as erro:
-            raise RuntimeError(_mensagem_erro_evolution(erro)) from erro
+        except (httpx.HTTPError, ValueError) as erro:
+            raise RuntimeError(_mensagem_erro_evolution(erro, "geração do QR")) from erro
     raise RuntimeError(ultimo_erro)
 
 
@@ -308,7 +372,7 @@ async def _enviar_texto(numero: str, texto: str) -> None:
             status,
             type(erro).__name__,
         )
-        raise HTTPException(502, _mensagem_erro_evolution(erro)) from erro
+        raise HTTPException(502, _mensagem_erro_evolution(erro, "envio da mensagem")) from erro
 
 
 def _enviar_texto_sync(numero: str, texto: str) -> None:
@@ -346,7 +410,7 @@ def _enviar_texto_sync(numero: str, texto: str) -> None:
             status,
             type(erro).__name__,
         )
-        raise RuntimeError(_mensagem_erro_evolution(erro)) from erro
+        raise RuntimeError(_mensagem_erro_evolution(erro, "envio da mensagem")) from erro
 
 
 @roteador.post("/avaliacao-google")
@@ -409,6 +473,57 @@ def _rotulo_do_documento(nome_registrado: str) -> str:
     """
     rotulo = (nome_registrado or "").split("—")[0].strip()
     return rotulo.lower() if rotulo else "o documento"
+
+
+def _variante_cobranca(chave: str, total: int) -> int:
+    if total <= 1:
+        return 0
+    digest = hashlib.sha256(chave.encode("utf-8")).digest()
+    return digest[0] % total
+
+
+def _mensagem_cobranca_documentos(
+    *,
+    cliente: str,
+    pendentes: list[dict[str, Any]],
+    url_portal: str,
+    senha: str | None = None,
+    chave_variante: str = "",
+) -> str:
+    """Mensagem mínima para WhatsApp: pendência e portal, sem documento no chat.
+
+    A variação é determinística e moderada. Ela deixa a conversa menos mecânica
+    para o cliente, mas a proteção real contra bloqueio é cadência, limite diário
+    e idempotência da automação.
+    """
+    nome = _primeiro_nome(cliente)
+    aberturas = [
+        f"Bom dia, {nome}.",
+        f"Olá, {nome}.",
+        f"Oi, {nome}.",
+    ]
+    indice = _variante_cobranca(chave_variante or cliente, len(aberturas))
+    linhas = [
+        aberturas[indice],
+        "",
+        "Ainda precisamos dos seguintes documentos para dar andamento ao atendimento:",
+        "",
+    ]
+    limite = 12
+    for item in pendentes[:limite]:
+        linhas.append(f"- {item.get('nome') or item.get('codigo') or 'Documento'}")
+    restante = len(pendentes) - limite
+    if restante > 0:
+        linhas.append(f"- e mais {restante} documento(s) pendente(s) no portal")
+    linhas += [
+        "",
+        "Por segurança, não envie documentos por esta conversa de WhatsApp.",
+        "Use somente o portal oficial do escritório:",
+        url_portal,
+    ]
+    if senha:
+        linhas.append(f"Senha de acesso: {senha}")
+    return "\n".join(linhas)
 
 
 def _localizar_signatario(registro: dict[str, Any], token: str) -> dict[str, Any]:
@@ -521,17 +636,21 @@ async def configurar_cobranca_documentos(
 ) -> dict[str, Any]:
     if not await run_in_threadpool(automacoes_whatsapp.caso_existe, caso_id):
         raise HTTPException(404, "Caso não encontrado.")
-    telefone = (
-        _numero_brasileiro(dados.telefone)
-        if dados.ativa
-        else (_numero_brasileiro(dados.telefone) if dados.telefone.strip() else "")
-    )
+    telefone_origem = await run_in_threadpool(automacoes_whatsapp.telefone_do_caso, caso_id)
+    telefone = _numero_brasileiro(telefone_origem) if telefone_origem.strip() else ""
+    if dados.ativa and not telefone:
+        raise HTTPException(
+            422,
+            "O caso não possui WhatsApp do cliente. Preencha o telefone no cadastro/entrevista do caso.",
+        )
     return await run_in_threadpool(
         automacoes_whatsapp.salvar_cobranca,
         caso_id,
         ativa=dados.ativa,
         telefone=telefone,
         intervalo_dias=dados.intervalo_dias,
+        intervalo_horas=dados.intervalo_horas,
+        max_envios_dia=dados.max_envios_dia,
         incluir_opcionais=dados.incluir_opcionais,
     )
 
@@ -553,15 +672,19 @@ async def enviar_documentos_agora(
     if not telefone:
         raise HTTPException(
             422,
-            "O caso não possui WhatsApp cadastrado. Informe o número na cobrança de documentos.",
+            "O caso não possui WhatsApp do cliente no cadastro/entrevista.",
         )
     numero = _numero_brasileiro(telefone)
 
-    pedido = await run_in_threadpool(
-        casos.montar_pedido, caso_id, dados.incluir_opcionais
+    resumo = await run_in_threadpool(
+        casos.documentos_pendentes_do_caso, caso_id, dados.incluir_opcionais
     )
-    if not pedido:
+    if not resumo:
         raise HTTPException(404, "Checklist do caso não encontrado.")
+
+    pendentes = resumo.get("pendentes") or []
+    if not pendentes:
+        raise HTTPException(409, "Este caso não possui documentos pendentes para cobrar.")
 
     token = str(caso.get("portal_token") or "").strip()
     senha: str | None = None
@@ -574,66 +697,171 @@ async def enviar_documentos_agora(
         )
         portal.limpar_tentativas(token)
 
-    mensagem = (
-        f"{pedido['texto']}\n\n"
-        "Envie os documentos com segurança pelo seu portal:\n"
-        f"{URL_PORTAL}/portal/{token}"
+    mensagem = _mensagem_cobranca_documentos(
+        cliente=str(caso.get("cliente") or resumo.get("caso", {}).get("cliente") or ""),
+        pendentes=pendentes,
+        url_portal=f"{URL_PORTAL}/portal/{token}",
+        senha=senha,
+        chave_variante=f"manual:{caso_id}:{len(pendentes)}",
     )
-    if senha:
-        mensagem += f"\nSenha de acesso: {senha}"
 
     await _enviar_texto(numero, mensagem)
     return {"enviado": True, "portal_criado": senha is not None}
+
+
+@roteador.post(
+    "/casos/{caso_id}/cobranca-documentos/teste-disparo",
+    dependencies=[Depends(auth.usuario_atual)],
+)
+async def disparar_teste_cobranca_documentos(
+    caso_id: str,
+    dados: ConfiguracaoCobranca | None = Body(default=None),
+) -> dict[str, Any]:
+    """Botão temporário: salva a configuração visível e executa o fluxo do timer."""
+    if not await run_in_threadpool(automacoes_whatsapp.caso_existe, caso_id):
+        raise HTTPException(404, "Caso não encontrado.")
+    if dados is not None:
+        telefone_origem = await run_in_threadpool(automacoes_whatsapp.telefone_do_caso, caso_id)
+        telefone = _numero_brasileiro(telefone_origem) if telefone_origem.strip() else ""
+        if dados.ativa and not telefone:
+            raise HTTPException(
+                422,
+                "O caso não possui WhatsApp do cliente. Preencha o telefone no cadastro/entrevista do caso.",
+            )
+        config = await run_in_threadpool(
+            automacoes_whatsapp.salvar_cobranca,
+            caso_id,
+            ativa=dados.ativa,
+            telefone=telefone,
+            intervalo_dias=dados.intervalo_dias,
+            intervalo_horas=dados.intervalo_horas,
+            max_envios_dia=dados.max_envios_dia,
+            incluir_opcionais=dados.incluir_opcionais,
+        )
+    else:
+        config = await run_in_threadpool(automacoes_whatsapp.obter_cobranca, caso_id)
+    if not config.get("ativa"):
+        raise HTTPException(409, "Ative a cobrança automática antes do teste.")
+    if not str(config.get("telefone") or "").strip():
+        raise HTTPException(422, "O caso não possui WhatsApp cadastrado para testar.")
+    # A mensagem é real e conta no limite diário, mas o teste não desloca a
+    # próxima execução configurada pelo gestor.
+    config = {
+        **config,
+        "proximo_envio_em": datetime.now(timezone.utc).isoformat(),
+    }
+    enviado = await run_in_threadpool(
+        _processar_cobranca_documentos, config, reagendar=False
+    )
+    atualizada = await run_in_threadpool(automacoes_whatsapp.obter_cobranca, caso_id)
+    return {
+        "enviado": enviado,
+        "teste_temporario": True,
+        "ultimo_erro": str(atualizada.get("ultimo_erro") or ""),
+    }
+
+
+def _processar_cobranca_documentos(
+    config: dict[str, Any], *, reagendar: bool = True
+) -> bool:
+    caso = armazenamento.obter_caso_com_segredos(config["caso_id"])
+    token_portal = str((caso or {}).get("portal_token") or "").strip()
+    if not token_portal:
+        automacoes_whatsapp.registrar_resultado_cobranca(
+            config["caso_id"],
+            config["intervalo_dias"],
+            None,
+            "O caso não possui link ativo para o portal do cliente.",
+            config.get("intervalo_horas"),
+            reagendar=reagendar,
+        )
+        return False
+    resumo = casos.documentos_pendentes_do_caso(
+        config["caso_id"], config["incluir_opcionais"]
+    )
+    if not resumo:
+        automacoes_whatsapp.registrar_resultado_cobranca(
+            config["caso_id"],
+            config["intervalo_dias"],
+            None,
+            "Caso ou categoria não encontrado.",
+            config.get("intervalo_horas"),
+            reagendar=reagendar,
+        )
+        return False
+    pendentes = resumo.get("pendentes") or []
+    if not pendentes:
+        # Não cobra quem já concluiu. O agendamento fica para uma eventual
+        # nova pendência, mas nenhuma mensagem de cobrança é enviada.
+        automacoes_whatsapp.registrar_resultado_cobranca(
+            config["caso_id"],
+            config["intervalo_dias"],
+            None,
+            intervalo_horas=config.get("intervalo_horas"),
+            reagendar=reagendar,
+        )
+        return False
+    max_envios = int(config.get("max_envios_dia") or 1)
+    if automacoes_whatsapp.envios_de_cobranca_hoje(config["caso_id"]) >= max_envios:
+        if reagendar:
+            automacoes_whatsapp.reagendar_cobranca_para_amanha(config["caso_id"])
+        return False
+
+    try:
+        numero = _numero_brasileiro(str(config.get("telefone") or ""))
+    except HTTPException as erro:
+        automacoes_whatsapp.registrar_resultado_cobranca(
+            config["caso_id"],
+            config["intervalo_dias"],
+            None,
+            str(erro.detail),
+            config.get("intervalo_horas"),
+            reagendar=reagendar,
+        )
+        return False
+
+    chave = (
+        f"cobranca-documentos:{config['caso_id']}:"
+        f"{hashlib.sha256(str(config.get('proximo_envio_em') or '').encode()).hexdigest()[:12]}"
+    )
+    if not automacoes_whatsapp.reservar(
+        chave,
+        "cobranca_documentos",
+        numero,
+        config["caso_id"],
+    ):
+        return False
+
+    texto = _mensagem_cobranca_documentos(
+        cliente=str((resumo.get("caso") or {}).get("cliente") or ""),
+        pendentes=pendentes,
+        url_portal=f"{URL_PORTAL}/portal/{token_portal}",
+        chave_variante=f"{chave}:{len(pendentes)}",
+    )
+    texto_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
+    try:
+        _enviar_texto_sync(numero, texto)
+    except Exception as erro:  # próxima execução volta a tentar
+        automacoes_whatsapp.finalizar(chave, str(erro))
+        automacoes_whatsapp.registrar_resultado_cobranca(
+            config["caso_id"], config["intervalo_dias"], texto_hash, str(erro),
+            config.get("intervalo_horas"),
+            reagendar=reagendar,
+        )
+        return False
+    automacoes_whatsapp.finalizar(chave)
+    automacoes_whatsapp.registrar_resultado_cobranca(
+        config["caso_id"], config["intervalo_dias"], texto_hash,
+        intervalo_horas=config.get("intervalo_horas"),
+        reagendar=reagendar,
+    )
+    return True
 
 
 def processar_cobrancas_documentos() -> int:
     """Envia cobranças vencidas sempre com o checklist mais recente."""
     enviados = 0
     for config in automacoes_whatsapp.listar_cobrancas_vencidas():
-        caso = armazenamento.obter_caso_com_segredos(config["caso_id"])
-        token_portal = str((caso or {}).get("portal_token") or "").strip()
-        if not token_portal:
-            automacoes_whatsapp.registrar_resultado_cobranca(
-                config["caso_id"],
-                config["intervalo_dias"],
-                None,
-                "O caso não possui link ativo para o portal do cliente.",
-            )
-            continue
-        pedido = casos.montar_pedido(config["caso_id"], config["incluir_opcionais"])
-        if not pedido:
-            automacoes_whatsapp.registrar_resultado_cobranca(
-                config["caso_id"],
-                config["intervalo_dias"],
-                None,
-                "Caso ou categoria não encontrado.",
-            )
-            continue
-        pendentes = pedido["faltando_obrigatorios"] or pedido["reenviar"]
-        if config["incluir_opcionais"]:
-            pendentes = pendentes or pedido["faltando_opcionais"]
-        if not pendentes:
-            # Não cobra quem já concluiu. O agendamento fica para uma eventual
-            # nova pendência, mas nenhuma mensagem de cobrança é enviada.
-            automacoes_whatsapp.registrar_resultado_cobranca(
-                config["caso_id"], config["intervalo_dias"], None
-            )
-            continue
-        texto = (
-            f"{pedido['texto']}\n\n"
-            "Envie os documentos com segurança pelo seu portal:\n"
-            f"{URL_PORTAL}/portal/{token_portal}"
-        )
-        texto_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
-        try:
-            _enviar_texto_sync(config["telefone"], texto)
-        except Exception as erro:  # próxima execução volta a tentar
-            automacoes_whatsapp.registrar_resultado_cobranca(
-                config["caso_id"], config["intervalo_dias"], texto_hash, str(erro)
-            )
-            continue
-        automacoes_whatsapp.registrar_resultado_cobranca(
-            config["caso_id"], config["intervalo_dias"], texto_hash
-        )
-        enviados += 1
+        if _processar_cobranca_documentos(config):
+            enviados += 1
     return enviados

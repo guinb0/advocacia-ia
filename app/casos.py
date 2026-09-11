@@ -24,6 +24,13 @@ PROCESSANDO = "processando"    # chegou e está sendo lido pelo OCR
 CONFERIR = "conferir"          # chegou, mas com ressalva (ilegível ou tipo trocado)
 ENTREGUE = "entregue"          # chegou e passou na validação
 
+PRIORIDADE_LISTAGEM = {
+    PENDENTE: 0,
+    PROCESSANDO: 0,
+    CONFERIR: 1,
+    ENTREGUE: 2,
+}
+
 #: A partir daqui a espera não é mais fila, é problema.
 #:
 #: Uma leitura leva de 4 a 30 segundos. Passados dez minutos no mesmo estado, o
@@ -240,6 +247,15 @@ def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
             + (entrega.get("erro_proc") or "falha no processamento.")
         ]
     motivo = (entrega.get("roteamento_motivo") or "").strip()
+    if entrega.get("roteamento_origem") == "duplicidade":
+        # Aqui o destino É conhecido — o que falta é alguém confirmar que não é
+        # repetição. Dizer "não foi possível identificar" mandaria procurar o
+        # problema no lugar errado.
+        return [
+            (motivo or "Este documento parece repetir outro já enviado ao caso.")
+            + " Remova-o se for repetido; se não for, atribua-o ao item — o sistema "
+            "pedirá confirmação."
+        ]
     return [
         "Este documento foi lido, mas não foi possível dizer a que item do "
         "checklist ele responde. Escolha o item certo aqui ao lado."
@@ -311,11 +327,8 @@ def _carteira_em_outros_docs(caso_id: str, _assinatura: str) -> list[dict[str, s
     chave do cache; documento novo invalida sozinho.
     """
     achados: list[dict[str, str]] = []
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        if not detalhe:
-            continue
-        extracao = detalhe.get("extracao") or {}
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        extracao = entrega.get("extracao") or {}
         # Uma CTPS de verdade não é "outro documento" — é a própria carteira.
         if (extracao.get("tipo") or {}).get("detectado") == "ctps":
             continue
@@ -325,7 +338,7 @@ def _carteira_em_outros_docs(caso_id: str, _assinatura: str) -> list[dict[str, s
         dado = _carteira_no_texto(texto)
         if dado:
             achados.append(
-                {"arquivo": str(entrega.get("arquivo") or detalhe.get("arquivo") or "documento"), "dado": dado}
+                {"arquivo": str(entrega.get("arquivo") or "documento"), "dado": dado}
             )
     return achados
 
@@ -404,7 +417,6 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
     entregues_obrig = [i for i in obrigatorios if i["status"] == ENTREGUE]
     pendentes_obrig = [i for i in obrigatorios if i["status"] == PENDENTE]
     conferir = [i for i in itens if i["status"] == CONFERIR]
-
     return {
         "caso": caso,
         "categoria": {
@@ -412,7 +424,9 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
             "nome": categoria.nome,
             "descricao": categoria.descricao,
         },
-        "itens": itens,
+        # A ordem operacional nasce no domínio e vale para todos os consumidores.
+        # A numeração original continua em cada item e serve como desempate.
+        "itens": ordenar_itens_para_listagem(itens),
         "triagem": [
             {**e, "alertas": _alertas_da_triagem(e)} for e in em_triagem
         ],
@@ -433,6 +447,79 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
             # "está tudo pronto" com arquivo por identificar seria promessa vazia.
             "pronto": not pendentes_obrig and not conferir and not em_triagem,
         },
+    }
+
+
+def ordenar_itens_para_listagem(itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Itens em ordem operacional, sem perder a numeração original do checklist."""
+    return sorted(
+        itens,
+        key=lambda item: (
+            PRIORIDADE_LISTAGEM.get(str(item.get("status") or ""), 99),
+            0 if item.get("obrigatorio") else 1,
+            int(item.get("numero") or 0),
+            str(item.get("codigo") or ""),
+        ),
+    )
+
+
+def documentos_pendentes_da_situacao(
+    situacao: dict[str, Any],
+    incluir_opcionais: bool = False,
+) -> list[dict[str, Any]]:
+    """Documentos que ainda exigem ação do cliente, prontos para reuso externo.
+
+    Usa apenas os status já existentes do checklist. Documento em processamento
+    não entra aqui: o cliente já enviou o arquivo, então uma cobrança automática
+    não deve pedi-lo de novo antes da leitura terminar.
+    """
+    pendentes: list[dict[str, Any]] = []
+    for item in situacao.get("itens") or []:
+        obrigatorio = bool(item.get("obrigatorio"))
+        status = str(item.get("status") or "")
+        if not obrigatorio and not incluir_opcionais and status != CONFERIR:
+            continue
+        if status not in {PENDENTE, CONFERIR}:
+            continue
+        motivo = (
+            _motivo_para_o_cliente(item)
+            if status == CONFERIR and item.get("entregas")
+            else "ainda não recebemos este documento"
+        )
+        pendentes.append(
+            {
+                "codigo": item.get("codigo"),
+                "numero": item.get("numero"),
+                "nome": item.get("nome"),
+                "obrigatorio": obrigatorio,
+                "status": status,
+                "observacao": item.get("observacao", ""),
+                "motivo": motivo,
+            }
+        )
+    return ordenar_itens_para_listagem(pendentes)
+
+
+def documentos_pendentes_do_caso(
+    caso_id: str,
+    incluir_opcionais: bool = False,
+) -> dict[str, Any] | None:
+    """Resumo dos documentos que ainda pedem ação do cliente neste caso."""
+    situacao = montar_situacao(caso_id)
+    if situacao is None or situacao.get("categoria") is None:
+        return None
+    caso = situacao["caso"]
+    return {
+        "caso": {
+            "id": caso.get("id"),
+            "cliente": caso.get("cliente"),
+            "categoria": caso.get("categoria"),
+            "telefone": caso.get("telefone", ""),
+            "portal_ativo": bool(caso.get("portal_token")),
+        },
+        "categoria": situacao.get("categoria"),
+        "pendentes": documentos_pendentes_da_situacao(situacao, incluir_opcionais),
+        "progresso": situacao.get("progresso"),
     }
 
 
