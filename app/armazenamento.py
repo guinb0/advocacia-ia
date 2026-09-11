@@ -2456,6 +2456,25 @@ def listar_roteiros() -> list[dict[str, Any]]:
     return [_normalizar_roteiro(linha) for linha in linhas]
 
 
+def listar_resumos_roteiros() -> list[dict[str, Any]]:
+    """Metadados do seletor, sem transferir nem desserializar `corpo`.
+
+    Um roteiro pode ter dezenas de perguntas. O seletor usa somente estes sete
+    campos; trazer o JSON de todos fazia o clique em "Alterar roteiro" pagar o
+    custo do catálogo inteiro antes de mostrar uma única opção.
+    """
+    # O seletor é uma interação curta. Se a VPN/ODBC estiver indisponível, não
+    # retenha a tela pelos 15 s usados nas operações comuns do banco.
+    with conectar(timeout=5) as con:
+        linhas = con.execute(
+            """SELECT codigo, nome, descricao, criado_por, origem,
+                      criado_em, atualizado_em
+                 FROM roteiros
+             ORDER BY criado_em"""
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
 def obter_roteiro(codigo: str) -> dict[str, Any] | None:
     with conectar() as con:
         linha = con.execute(

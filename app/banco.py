@@ -286,7 +286,7 @@ def limite_de_espera_por_lock(milissegundos: int) -> Iterator[None]:
 
 
 @contextmanager
-def conectar() -> Iterator[Conexao]:
+def conectar(timeout: int = 15) -> Iterator[Conexao]:
     """Abre transação, confirma no fim e desfaz em qualquer erro.
 
     Mesmo contrato do `conectar()` que existia sobre o SQLite: quem chama não precisa
@@ -300,7 +300,7 @@ def conectar() -> Iterator[Conexao]:
         yield ja_aberta
         return
 
-    bruta = pyodbc.connect(dsn(), timeout=15, autocommit=False)
+    bruta = pyodbc.connect(dsn(), timeout=max(1, timeout), autocommit=False)
     limite_lock = _limite_lock_ms.get()
     if limite_lock is not None:
         bruta.cursor().execute(f"SET LOCK_TIMEOUT {int(limite_lock)}")

@@ -73,8 +73,8 @@ class BaseIndisponivel(RuntimeError):
 # mesmo texto reaparece várias vezes — o entrevistador corrige um campo, o relato
 # consolidado não muda, e a consulta ia de novo assim mesmo.
 #
-# A chave inclui as lacunas porque elas mudam o veredito: com obrigatória em
-# aberto, `sim` é rebaixado para `com_ressalva`.
+# A chave inclui lacunas e roteiro: lacuna muda o veredito, e roteiro muda o
+# assunto usado na recuperação e os pontos que a análise comparativa destaca.
 _trava = threading.Lock()
 _cache: dict[str, dict[str, Any]] = {}
 #: Teto pequeno: uma entrevista gera poucas variações do relato, e o processo
@@ -87,10 +87,10 @@ LIMITE_CACHE = 200
 SEP_CHAVE = "␟"
 
 
-def _chave_cache(relato: str, lacunas: list[str]) -> str:
+def _chave_cache(relato: str, lacunas: list[str], contexto_roteiro: str = "") -> str:
     # Separador explícito: sem ele, relato "ab" + lacuna "c" daria a mesma chave
     # que relato "a" + lacuna "bc", e uma entrevista herdaria o veredito de outra.
-    partes = [relato.strip(), *sorted(lacunas)]
+    partes = [relato.strip(), contexto_roteiro.strip(), *sorted(lacunas)]
     cru = SEP_CHAVE.join(partes)
     return hashlib.sha256(cru.encode("utf-8")).hexdigest()
 
@@ -104,6 +104,7 @@ def recomendar(
     relato: str,
     *,
     lacunas_obrigatorias: list[str] | None = None,
+    contexto_roteiro: str = "",
     limite: int = 12,
     connect_timeout: int = 10,
     detalhar: bool = False,
@@ -119,7 +120,7 @@ def recomendar(
     if not relato.strip():
         raise ErroRecomendacao("Sem relato não há o que recomendar.")
 
-    chave = _chave_cache(relato, lacunas)
+    chave = _chave_cache(relato, lacunas, contexto_roteiro)
     with _trava:
         em_cache = _cache.get(chave)
     if em_cache is not None:

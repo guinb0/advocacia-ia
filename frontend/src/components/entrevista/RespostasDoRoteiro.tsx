@@ -28,10 +28,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Aviso, Selo } from "@/components/ui/Basicos";
-import { ApiError, obterRoteiro } from "@/lib/api";
 import type { Pergunta, RoteiroCompleto } from "@/lib/types";
 
 type Respostas = Record<string, string | string[]>;
+const IDENTIFICACAO_MINIMA = new Set(["nome", "cpf", "estado_civil", "uf", "municipio"]);
 
 function respondida(valor: string | string[] | undefined): boolean {
   return Array.isArray(valor) ? valor.length > 0 : Boolean(String(valor ?? "").trim());
@@ -53,7 +53,8 @@ function comoTexto(valor: string | string[] | undefined): string {
 
 interface Props {
   respostas: Respostas;
-  codigo?: string;
+  /** O snapshot exato em uso, inclusive edições ainda não salvas. */
+  roteiro: RoteiroCompleto;
   /** Abre o painel. Vira `true` quando a entrevista encerra — é o momento em
    *  que a conferência deixa de ser distração e passa a ser o trabalho. */
   aberto?: boolean;
@@ -61,12 +62,9 @@ interface Props {
 
 export default function RespostasDoRoteiro({
   respostas,
-  codigo = "empregado_publico",
+  roteiro,
   aberto = false,
 }: Props) {
-  const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
   /* FECHADO POR PADRÃO, e isto é sobre atenção, não sobre espaço.
    *
    * Enquanto a conversa corre, quem conduz olha para a pergunta da vez; uma
@@ -83,36 +81,21 @@ export default function RespostasDoRoteiro({
     if (!mexido) setExpandido(aberto);
   }, [aberto, mexido]);
 
-  useEffect(() => {
-    let cancelado = false;
-    obterRoteiro(codigo)
-      .then((r) => {
-        if (!cancelado) setRoteiro(r);
-      })
-      .catch((e) => {
-        if (!cancelado) setErro(e instanceof ApiError ? e.message : String(e));
-      });
-    return () => {
-      cancelado = true;
-    };
-  }, [codigo]);
-
   const blocos = useMemo(() => {
-    if (!roteiro) return [];
     const positivos = new Set(
       Object.entries(roteiro.mapa_rastreio)
         .filter(([perguntaId]) => respostas[perguntaId] === "sim")
         .map(([, modulo]) => modulo),
     );
     return roteiro.blocos
-      // Nome, CPF, estado civil e localização já foram coletados na abertura.
-      // Continuam em `respostas` para contrato/caso, mas repeti-los na revisão
-      // fazia o atendente entender que precisava perguntar tudo outra vez.
-      .filter((b) => b.id !== "abertura")
       .filter((b) => !b.modulo || positivos.has(b.modulo))
       .map((b) => ({
         ...b,
-        perguntas: b.perguntas.filter((p) => dependenciaAberta(p, respostas)),
+        // Remove os dados cadastrais, não um bloco chamado "abertura". Em um
+        // roteiro personalizado esse bloco pode conter perguntas substantivas.
+        perguntas: b.perguntas.filter(
+          (p) => !IDENTIFICACAO_MINIMA.has(p.id) && dependenciaAberta(p, respostas),
+        ),
       }))
       .filter((b) => b.perguntas.length > 0);
   }, [roteiro, respostas]);
@@ -130,9 +113,6 @@ export default function RespostasDoRoteiro({
     (soma, b) => soma + b.perguntas.filter((p) => respondida(respostas[p.id])).length,
     0,
   );
-
-  if (erro) return <Aviso tom="critico">Não foi possível carregar o roteiro: {erro}</Aviso>;
-  if (!roteiro) return null;
 
   return (
     <section className="mt-6 border-t border-borda pt-[14px]" aria-labelledby="titulo-respostas">

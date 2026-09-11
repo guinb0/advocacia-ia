@@ -627,13 +627,57 @@ export async function obterDocumentosPendentes(
 
 // ------------------------------------------------------ roteiro de entrevista
 
+const TTL_ROTEIROS_MS = 30_000;
+const TTL_CATALOGO_ROTEIROS_MS = 5 * 60_000;
+const roteirosCompletos = new Map<string, { ate: number; valor: Promise<RoteiroCompleto> }>();
+let catalogoRoteiros: { ate: number; valor: Promise<RoteiroResumo[]> } | null = null;
+let ultimoCatalogoRoteiros: RoteiroResumo[] | null = null;
+let ultimoAvisoCatalogoRoteiros = "";
+
+function invalidarCacheRoteiros(codigo?: string): void {
+  catalogoRoteiros = null;
+  ultimoCatalogoRoteiros = null;
+  ultimoAvisoCatalogoRoteiros = "";
+  if (codigo) roteirosCompletos.delete(codigo);
+  else roteirosCompletos.clear();
+}
+
 export async function obterRoteiro(codigo: string): Promise<RoteiroCompleto> {
-  return comoJson<RoteiroCompleto>(await buscar(`/api/roteiros/${codigo}`));
+  const agora = Date.now();
+  const existente = roteirosCompletos.get(codigo);
+  if (existente && existente.ate > agora) return existente.valor;
+  const valor = buscar(`/api/roteiros/${codigo}`).then((resposta) =>
+    comoJson<RoteiroCompleto>(resposta),
+  );
+  roteirosCompletos.set(codigo, { ate: agora + TTL_ROTEIROS_MS, valor });
+  valor.catch(() => roteirosCompletos.delete(codigo));
+  return valor;
 }
 
 export async function listarRoteiros(): Promise<RoteiroResumo[]> {
-  const dados = await comoJson<{ roteiros: RoteiroResumo[] }>(await buscar("/api/roteiros"));
-  return dados.roteiros;
+  const agora = Date.now();
+  if (catalogoRoteiros && catalogoRoteiros.ate > agora) return catalogoRoteiros.valor;
+  const valor = buscar("/api/roteiros")
+    .then((resposta) => comoJson<{ roteiros: RoteiroResumo[]; aviso_catalogo?: string }>(resposta))
+    .then((dados) => {
+      ultimoCatalogoRoteiros = dados.roteiros;
+      ultimoAvisoCatalogoRoteiros = dados.aviso_catalogo ?? "";
+      return dados.roteiros;
+    });
+  catalogoRoteiros = { ate: agora + TTL_CATALOGO_ROTEIROS_MS, valor };
+  valor.catch(() => {
+    if (catalogoRoteiros?.valor === valor) catalogoRoteiros = null;
+  });
+  return valor;
+}
+
+/** Permite abrir o seletor instantaneamente enquanto uma atualização acontece. */
+export function catalogoRoteirosEmCache(): RoteiroResumo[] | null {
+  return ultimoCatalogoRoteiros;
+}
+
+export function avisoCatalogoRoteirosEmCache(): string {
+  return ultimoAvisoCatalogoRoteiros;
 }
 
 export interface PaginaRoteiros {
@@ -727,22 +771,30 @@ export async function salvarRoteiro(
   roteiro: RoteiroCompleto,
   origem = "",
 ): Promise<RoteiroCompleto> {
-  return comoJson<RoteiroCompleto>(
+  const salvo = await comoJson<RoteiroCompleto>(
     await buscar("/api/roteiros", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roteiro, origem }),
     }),
   );
+  invalidarCacheRoteiros(roteiro.codigo);
+  roteirosCompletos.set(salvo.codigo, {
+    ate: Date.now() + TTL_ROTEIROS_MS,
+    valor: Promise.resolve(salvo),
+  });
+  return salvo;
 }
 
 /** Tira o roteiro do catálogo. Num que também existe em código, desfaz a edição. */
 export async function excluirRoteiroSalvo(
   codigo: string,
 ): Promise<{ revertido_para_o_modulo: boolean }> {
-  return comoJson<{ revertido_para_o_modulo: boolean }>(
+  const resultado = await comoJson<{ revertido_para_o_modulo: boolean }>(
     await buscar(`/api/roteiros/${codigo}`, { method: "DELETE" }),
   );
+  invalidarCacheRoteiros(codigo);
+  return resultado;
 }
 
 export interface AtendimentoDocumentacao {
@@ -1319,12 +1371,19 @@ export async function escutarTrecho(
   respostas: Record<string, string | string[]>,
   roteiro = "empregado_publico",
   perguntaAtual = "",
+  roteiroSnapshot?: RoteiroCompleto,
 ): Promise<Escuta> {
   return comoJson<Escuta>(
     await buscar("/api/entrevista/escuta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trecho, respostas, roteiro, pergunta_atual: perguntaAtual }),
+      body: JSON.stringify({
+        trecho,
+        respostas,
+        roteiro,
+        pergunta_atual: perguntaAtual,
+        roteiro_snapshot: roteiroSnapshot,
+      }),
     }),
   );
 }
@@ -1343,11 +1402,17 @@ export async function processarEntrevista(
   transcricao: string,
   respostas: Record<string, string | string[]>,
   roteiro = "empregado_publico",
+  roteiroSnapshot?: RoteiroCompleto,
 ): Promise<ProcessamentoEntrevista> {
   const resposta = await buscar("/api/entrevista/processar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcricao, respostas, roteiro }),
+    body: JSON.stringify({
+      transcricao,
+      respostas,
+      roteiro,
+      roteiro_snapshot: roteiroSnapshot,
+    }),
   });
   return comoJson<ProcessamentoEntrevista>(
     explicarRotaDeProcessamento(resposta),
@@ -1382,7 +1447,15 @@ export async function analisarResposta(
 export async function recomendarEntrevista(
   relato: string,
   lacunasObrigatorias: string[],
+  roteiro: RoteiroCompleto,
 ): Promise<RecomendacaoEntrevista> {
+  const contextoRoteiro = [
+    `Roteiro ativo: ${roteiro.nome}`,
+    roteiro.descricao && `Objetivo: ${roteiro.descricao}`,
+    ...roteiro.blocos.map((bloco) =>
+      `${bloco.titulo}: ${bloco.perguntas.map((pergunta) => pergunta.texto).join(" | ")}`
+    ),
+  ].filter(Boolean).join("\n").slice(0, 12_000);
   return comoJson<RecomendacaoEntrevista>(
     await buscar("/api/entrevista/recomendacao", {
       method: "POST",
@@ -1390,6 +1463,7 @@ export async function recomendarEntrevista(
       body: JSON.stringify({
         relato,
         lacunas_obrigatorias: lacunasObrigatorias,
+        contexto_roteiro: contextoRoteiro,
         limite_precedentes: 12,
       }),
     }),
