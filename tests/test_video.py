@@ -13,7 +13,7 @@ O que ele prova, e que ninguém consegue afirmar lendo o código:
 - que o vídeo vive só em `blob:` — nada foi para o servidor, que é o combinado;
 - que `descartar` revoga o blob e devolve a memória.
 
-Como funciona: compila `lib/gravacaoVideo.ts` com o `tsc` do próprio projeto,
+Como funciona: compila `src/lib/gravacaoVideo.ts` com o `tsc` do próprio projeto,
 serve a página num `127.0.0.1` (getUserMedia exige contexto seguro, e localhost
 conta), e sobe o Chrome headless com câmera e microfone falsos. A página devolve
 o resultado por `sendBeacon`.
@@ -150,13 +150,13 @@ principal()
 
 
 def _compilar(destino: Path) -> str | None:
-    """`lib/gravacaoVideo.ts` -> JS de módulo. Devolve o erro, ou None."""
+    """`src/lib/gravacaoVideo.ts` -> JS de módulo. Devolve o erro, ou None."""
     npx = shutil.which("npx") or shutil.which("npx.cmd")
     if npx is None:
         return "npx não encontrado (Node.js não está no PATH)."
     proc = subprocess.run(
         [
-            npx, "tsc", "lib/gravacaoVideo.ts",
+            npx, "tsc", "src/lib/gravacaoVideo.ts",
             "--target", "es2020", "--module", "es2020",
             "--lib", "es2020,dom", "--moduleResolution", "bundler",
             "--outDir", str(destino),

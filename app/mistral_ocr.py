@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import time
 
 import cv2
@@ -65,6 +66,40 @@ def _codificar_para_ocr(img_bgr: np.ndarray) -> tuple[str, bytes]:
     return "image/jpeg", jpg.tobytes()
 
 
+#: Linha de separação de tabela markdown: `| --- | :---: |`. Não é conteúdo.
+_SEPARADOR_TABELA = re.compile(r"^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$")
+
+
+def _celulas(texto: str) -> list[str]:
+    """Uma linha de markdown vira as CÉLULAS dela, não uma linha só.
+
+    A Mistral devolve documento estruturado como TABELA markdown, e é um acerto:
+    ela entendeu o layout. Só que a tabela vinha inteira como uma linha de texto —
+    `|  NOME MARIA APARECIDA DA SILVA  |   |` — e aí a extração de campos
+    quebrava. `parece_nome` exige `fullmatch` de letras e espaços, e o `|` que
+    sobrava no fim do valor bastava para o nome ser recusado.
+
+    O efeito era exatamente o que a suíte media na CNH limpa: nome, filiação 1 e
+    filiação 2 não saíam de um documento em que estavam escritos com todas as
+    letras, e a categoria vinha `B` no lugar de `AB`. Quanto MAIS limpa a foto,
+    pior — foto boa é a que faz a Mistral reconhecer a tabela.
+
+    Cada célula é uma linha própria, e a coluna entra no `x` para a geometria
+    continuar valendo: `indices_abaixo` procura o valor "na mesma coluna", e sem
+    isso duas colunas diferentes pareceriam a mesma.
+    """
+    if "|" not in texto:
+        return [texto]
+    if _SEPARADOR_TABELA.match(texto):
+        return []
+    return [parte.strip() for parte in texto.strip().strip("|").split("|")]
+
+
+#: Largura de coluna assumida ao espalhar as células no eixo x. Só precisa ser
+#: maior que a largura de uma célula para colunas vizinhas não se sobreporem.
+_PASSO_COLUNA = 1_000.0
+
+
 def _linhas_da_resposta(dados: dict) -> list[Linha]:
     linhas: list[Linha] = []
     y = 0.0
@@ -78,7 +113,19 @@ def _linhas_da_resposta(dados: dict) -> list[Linha]:
             texto = texto.strip().lstrip("#").strip()
             if not texto:
                 continue
-            linhas.append(Linha(texto, confianca, y, 0.0, float(len(texto)), 1.0))
+            for coluna, celula in enumerate(_celulas(texto)):
+                if not celula:
+                    continue
+                linhas.append(
+                    Linha(
+                        celula,
+                        confianca,
+                        y,
+                        coluna * _PASSO_COLUNA,
+                        float(len(celula)),
+                        1.0,
+                    )
+                )
             y += 1.0
         y += 10.0
     return linhas
