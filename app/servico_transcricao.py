@@ -344,6 +344,35 @@ async def ws_transcricao(ws: WebSocket):
                         # em vez de chegar depois do final e desfazer o texto.
                         sessao.estado = transcricao.Estado.FINISHING
                         final = await run_in_threadpool(sessao.transcrever_final)
+
+                        # O FIM DA CONVERSA, QUE NÃO CABIA EM NENHUM TRECHO
+                        #
+                        # O registro bruto da entrevista é feito de `trecho`, e
+                        # trecho só sai do que CONGELOU. No encerramento sobra
+                        # sempre uma cauda — o último parcial roda a cada
+                        # `SEGUNDOS_ENTRE_PARCIAIS` e o que está dentro da
+                        # `MARGEM_CAUDA_S` não congela —, e ela só é apurada
+                        # aqui, pelo passe final. Sem esta mensagem esse texto
+                        # morria: o `final` vai para a resposta da PERGUNTA em
+                        # curso e, na escuta contínua, não há pergunta nenhuma.
+                        # O .txt da entrevista e o que vai para o caso
+                        # terminavam alguns segundos antes da conversa — em cima
+                        # do fechamento com o cliente sobre os documentos.
+                        #
+                        # Tipo próprio, e não `trecho`: o cliente descarta
+                        # `trecho` quando já não está gravando (e aqui, depois
+                        # do `stop`, ele não está mais), e esse descarte existe
+                        # por um bom motivo que não se quer desfazer.
+                        resto = " ".join(
+                            p
+                            for p in (sessao.trecho_confirmado(), sessao.cauda_final)
+                            if p
+                        ).strip()
+                        if resto:
+                            await ws.send_json(
+                                {"type": "trecho_final", "sessionId": sid, "text": resto}
+                            )
+
                         await ws.send_json(
                             {
                                 "type": "final",

@@ -515,8 +515,17 @@ export default function EntrevistaComChamada({
                   ) {
                     return;
                   }
-                  void roteiro.current?.encerrarAtendimento()
-                    .finally(() => onConcluir(...ultimo.current));
+                  void roteiro.current?.encerrarAtendimento().finally(() => {
+                    /* A transcrição é relida AGORA, e não tirada de
+                     * `ultimo.current`: o encerramento acabou de acrescentar a
+                     * cauda da conversa (ver `onCauda`), e o snapshot foi tirado
+                     * antes dela. Era o fim do atendimento que não chegava ao
+                     * caso mesmo depois de ter sido transcrito. */
+                    const [respostas, relato, entrevistaId] = ultimo.current;
+                    const trechos = roteiro.current?.transcricaoBruta() ?? ultimo.current[3];
+                    ultimo.current = [respostas, relato, entrevistaId, trechos];
+                    onConcluir(respostas, relato, entrevistaId, trechos);
+                  });
                 }}
               >
                 Criar caso
