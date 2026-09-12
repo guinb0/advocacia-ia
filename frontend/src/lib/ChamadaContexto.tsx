@@ -62,6 +62,7 @@ interface ValorChamada {
   entrar: (sala: string, papel: PapelChamada, opcoes?: OpcoesEntrada, token?: string) => Promise<void>;
   desligar: () => void;
   alternarMudo: () => void;
+  reativarAudio: () => Promise<void>;
   alternarCamera: () => Promise<void>;
   alternarTela: () => Promise<void>;
   limparErro: () => void;
@@ -153,6 +154,16 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     setMudo(chamada.current?.alternarMudo() ?? false);
   }, []);
 
+  const reativarAudio = useCallback(async () => {
+    try {
+      const ativo = await chamada.current?.reativarAudio();
+      setMudo(false);
+      if (!ativo) setErro("Não foi possível reativar o microfone nesta chamada.");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível reativar o microfone.");
+    }
+  }, []);
+
   const alternarCamera = useCallback(async () => {
     setTemCamera(await (chamada.current?.alternarCamera() ?? Promise.resolve(false)));
     // Ligar a câmera encerra o compartilhamento (uma faixa de vídeo por
@@ -208,6 +219,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     entrar,
     desligar: soltar,
     alternarMudo,
+    reativarAudio,
     alternarCamera,
     alternarTela,
     limparErro,
