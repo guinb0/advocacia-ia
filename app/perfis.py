@@ -546,6 +546,47 @@ def _modulo_id(con: Any, nome_modulo: str) -> int | None:
     return _ids_de_modulo[nome_modulo]
 
 
+#: A matriz de permissões inteira, lida de uma vez: (perfil_id, modulo_id) → id da linha.
+#:
+#: POR QUE
+#:
+#: `_definir_permissao` é chamada uma vez por par perfil×módulo, e cada chamada
+#: perguntava ao banco "já existe permissão para este par?". Medido em 12/09/2026,
+#: na subida da API: **122 dos 221 statements** eram essa mesma pergunta, uma por
+#: par, a 60ms de ida e volta — e a API não atende antes de a inicialização acabar.
+#:
+#: A tabela inteira tem uma linha por par (umas centenas): cabe numa consulta. O
+#: memo é atualizado a cada INSERT/UPDATE para que uma chamada posterior, na mesma
+#: inicialização, veja o que a anterior gravou — é disso que depende o
+#: `sobrescrever=False` do `_migrar_acessos_legados`.
+_permissoes_carregadas = False
+_ids_de_permissao: dict[tuple[int, int], int] = {}
+
+
+def _carregar_permissoes(con: Any) -> None:
+    """Lê a matriz de permissões de uma vez. Idempotente por inicialização."""
+    global _permissoes_carregadas
+    if _permissoes_carregadas:
+        return
+    linhas = con.execute(
+        f"SELECT id, perfil, modulo FROM {_TABELA_PERMISSOES}"
+    ).fetchall()
+    _ids_de_permissao.clear()
+    for linha in linhas:
+        try:
+            chave = (int(linha["perfil"]), int(linha["modulo"]))
+        except (TypeError, ValueError):
+            continue
+        _ids_de_permissao[chave] = int(linha["id"])
+    _permissoes_carregadas = True
+
+
+def _limpar_memo_de_permissoes() -> None:
+    global _permissoes_carregadas
+    _permissoes_carregadas = False
+    _ids_de_permissao.clear()
+
+
 def _definir_permissao(
     con: Any, perfil: str, modulo: str, permitido: bool, sobrescrever: bool = True
 ) -> None:
@@ -554,22 +595,30 @@ def _definir_permissao(
     if perfil_id is None or modulo_id is None:
         return
     valor = "s" if permitido else "n"
-    existe = con.execute(
-        f"SELECT id FROM {_TABELA_PERMISSOES} WHERE perfil = ? AND modulo = ?",
-        (perfil_id, modulo_id),
-    ).fetchone()
-    if existe:
+    _carregar_permissoes(con)
+    chave = (perfil_id, modulo_id)
+    existente = _ids_de_permissao.get(chave)
+    if existente is not None:
         if not sobrescrever:
             return
         con.execute(
             f"UPDATE {_TABELA_PERMISSOES} SET hasPermissao = ? WHERE id = ?",
-            (valor, existe["id"]),
+            (valor, existente),
         )
     else:
         con.execute(
             f"INSERT INTO {_TABELA_PERMISSOES} (modulo, perfil, hasPermissao) VALUES (?, ?, ?)",
             (modulo_id, perfil_id, valor),
         )
+        # O memo passa a conhecer o par recém-criado. Sem isto, uma segunda chamada
+        # para o MESMO par na mesma inicializacao inseriria a linha de novo — e o
+        #  da migração legada deixaria de ser respeitado.
+        linha = con.execute(
+            f"SELECT id FROM {_TABELA_PERMISSOES} WHERE perfil = ? AND modulo = ?",
+            (perfil_id, modulo_id),
+        ).fetchone()
+        if linha:
+            _ids_de_permissao[chave] = int(linha["id"])
 
 
 def _migrar_acessos_legados(con: Any) -> None:
@@ -638,6 +687,7 @@ def inicializar() -> None:
         # O memo vale por inicialização: dentro dela os ids não mudam, entre uma e
         # outra o banco pode ter mudado (outra instância criou um módulo novo).
         _limpar_memo_de_ids()
+        _limpar_memo_de_permissoes()
         _executar_schema(con)
         agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
         _semear_legado(con, agora)

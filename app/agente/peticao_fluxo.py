@@ -47,14 +47,17 @@ def transcricao(caso_id: str) -> dict[str, Any]:
 def _resumo_preparacao(caso_id: str) -> dict[str, Any]:
     situacao = casos_ocr.montar_situacao(caso_id) or {}
     progresso = situacao.get("progresso") or {}
-    documentos = 0
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        if (
-            detalhe
-            and str((detalhe.get("extracao") or {}).get("texto_completo") or "").strip()
-        ):
-            documentos += 1
+    # Contar em UMA consulta, e não abrindo cada anexo.
+    #
+    # Isto é só o número "46 docs com texto OCR" do alto do painel, e custava um
+    # `obter_entrega` por arquivo — cada um com conexão própria e uma pergunta ao
+    # agente jurídico. Medido no caso `da5a030b`: 99 consultas e 30s para ABRIR a
+    # tela, antes de o advogado clicar em nada.
+    documentos = sum(
+        1
+        for entrega in armazenamento.listar_extracoes_do_caso(caso_id)
+        if str((entrega.get("extracao") or {}).get("texto_completo") or "").strip()
+    )
     return {
         "documentos_lidos": documentos,
         "checklist_obrigatorios": progresso.get("obrigatorios_total"),

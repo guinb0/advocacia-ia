@@ -70,6 +70,16 @@ class ConexaoFalsa:
         if "FROM dbo.acervo_tb_modulos_web" in sql and "WHERE nome_modulo = ?" in sql:
             modulo = self.modulos.get(params[0])
             return Resultado([{"id": modulo}] if modulo else [])
+        # A matriz inteira, numa consulta. É como `_definir_permissao` passou a ler
+        # depois de 122 dos 221 statements da subida da API serem esta mesma
+        # pergunta repetida par por par (medido em 12/09/2026).
+        if "SELECT id, perfil, modulo FROM dbo.acervo_tb_permissoes" in sql:
+            return Resultado(
+                [
+                    {"id": dados["id"], "perfil": perfil, "modulo": modulo}
+                    for (perfil, modulo), dados in self.permissoes.items()
+                ]
+            )
         if "FROM dbo.acervo_tb_permissoes" in sql and "WHERE perfil = ? AND modulo = ?" in sql:
             permissao = self.permissoes.get((params[0], params[1]))
             return Resultado([permissao] if permissao else [])
