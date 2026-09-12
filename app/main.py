@@ -2764,7 +2764,7 @@ def fila_da_carteira(
     busca: str = "",
     categoria: str = "",
     situacao: str = "",
-    ordenar: str = "risco",
+    ordenar: str = "recente",
 ):
     """A fila de casos da carteira, uma página por vez.
 

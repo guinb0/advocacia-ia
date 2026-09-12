@@ -35,7 +35,6 @@ import type {
 } from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
-import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
 import VideoDaEntrevista, { type ControlesVideo } from "@/components/entrevista/VideoDaEntrevista";
@@ -1951,12 +1950,6 @@ function preencherMarcadores(
             </p>
           ))}
         </details>
-      )}
-
-      {/* O áudio, depois de encerrada a escuta. Antes disso não há arquivo, e um
-        * botão que não baixa nada é pior que botão nenhum. */}
-      {escutaEncerrada && (
-        <AudioDaEntrevista entrevistaId={captura.current?.entrevistaId ?? ""} />
       )}
 
       {/* O roteiro respondido, abaixo de tudo e RECOLHIDO enquanto a conversa

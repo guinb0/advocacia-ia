@@ -313,9 +313,10 @@ def listar_casos() -> list[dict[str, Any]]:
     with conectar() as con:
         linhas = con.execute(
             """
-            SELECT c.*,
+            SELECT c.*, q.cpf AS cpf,
                    (SELECT COUNT(*) FROM entregas e WHERE e.caso_id = c.id) AS total_entregas
               FROM casos c
+              LEFT JOIN qualificacao q ON q.caso_id = c.id
              ORDER BY c.atualizado_em DESC
             """
         ).fetchall()

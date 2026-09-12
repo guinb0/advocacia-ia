@@ -518,7 +518,7 @@ export async function obterCarteira(
   if (filtros.busca?.trim()) params.set("busca", filtros.busca.trim());
   if (filtros.categoria) params.set("categoria", filtros.categoria);
   if (filtros.situacao) params.set("situacao", filtros.situacao);
-  if (filtros.ordenar && filtros.ordenar !== "risco") params.set("ordenar", filtros.ordenar);
+  if (filtros.ordenar && filtros.ordenar !== "recente") params.set("ordenar", filtros.ordenar);
   return comoJson<PaginaCarteira>(await buscar(`/api/carteira?${params.toString()}`));
 }
 

@@ -572,6 +572,17 @@ export class ChamadaJitsi {
     trilha.addEventListener("unmute", tocar);
     this.remotas.set(faixa, alto);
 
+    /* No Safari/iOS a faixa pode chegar depois do toque “Entrar”, fora da
+     * janela de autoplay. Qualquer próximo toque do atendente libera todas as
+     * saídas pendentes; não depende de trocar microfone nem de reconectar. */
+    const destravar = () => {
+      for (const audio of this.remotas.values()) void audio.play().catch(() => {});
+      document.removeEventListener("pointerdown", destravar, true);
+      document.removeEventListener("keydown", destravar, true);
+    };
+    document.addEventListener("pointerdown", destravar, true);
+    document.addEventListener("keydown", destravar, true);
+
     this.mudarEstado("falando");
     this.eventos.onFaixaRemota?.(faixa.getTrack());
   }
