@@ -483,6 +483,72 @@ def testar_skill_por_categoria() -> int:
     return falhas
 
 
+def testar_identidade_do_reclamante() -> int:
+    """O nome do autor vem do CADASTRO, nunca da transcrição.
+
+    Caso real : a transcrição citava de passagem "um tado chamado
+    Roosevelt" — terceiro, ou erro do reconhecimento de voz — e a petição saiu
+    qualificando ROOSEVELT como reclamante, com "CPF [PENDENTE]" ao lado, num caso
+    em que o CPF estava gravado na qualificação. O nome do autor é a única coisa de
+    uma petição que não se pode errar, e o sistema já o sabia.
+    """
+    falhas = 0
+    armazenamento.obter_qualificacao = lambda caso_id: {
+        "cpf": "083.042.631-06",
+        "nome_mae": "ANDREIA LUCIA NUNES DOS SANTOS",
+        "email": "cliente@exemplo.com",
+        "endereco": "",
+    }
+    try:
+        ctx = pl._montar_contexto(CASO, "e aí um tado chamado Roosevelt machucou com a moto")
+
+        falhas += not checar(
+            "Maria Aparecida" in ctx and "083.042.631-06" in ctx,
+            "nome e CPF do cadastro entram no contexto",
+        )
+        falhas += not checar(
+            "IDENTIDADE DO RECLAMANTE" in ctx,
+            "num bloco próprio, identificado como identidade do reclamante",
+        )
+        falhas += not checar(
+            "TERCEIRO" in ctx,
+            "dizendo que outro nome na transcrição é de terceiro",
+        )
+        falhas += not checar(
+            "[PENDENTE]" in ctx,
+            "e proibindo [PENDENTE] para dado que o cadastro tem",
+        )
+        falhas += not checar(
+            ctx.index("IDENTIDADE DO RECLAMANTE") < ctx.index("Roosevelt"),
+            "a identidade vem ANTES da transcrição, não perdida no meio dela",
+        )
+        # Campo vazio do cadastro não entra como linha vazia, que viraria ruído.
+        falhas += not checar(
+            "Endereço:" not in ctx, "campo em branco no cadastro não entra no bloco"
+        )
+
+        # Sem qualificação nenhuma: o nome do caso ainda tem de ir.
+        armazenamento.obter_qualificacao = lambda caso_id: None
+        ctx2 = pl._montar_contexto(CASO, "conversa")
+        falhas += not checar(
+            "Maria Aparecida" in ctx2,
+            "sem qualificação cadastrada, o nome do caso continua indo",
+        )
+
+        # Banco fora do ar não derruba a geração da peça.
+        def explode(_id):
+            raise RuntimeError("banco fora")
+
+        armazenamento.obter_qualificacao = explode
+        ctx3 = pl._montar_contexto(CASO, "conversa")
+        falhas += not checar(
+            "Maria Aparecida" in ctx3, "cadastro indisponível não derruba o contexto"
+        )
+    finally:
+        armazenamento.obter_qualificacao = lambda caso_id: None
+    return falhas
+
+
 def main_teste() -> int:
     instalar_dublês()
     _zerar_banco()
@@ -499,6 +565,7 @@ def main_teste() -> int:
         ("9. Resposta estranha do modelo", testar_resposta_estranha_do_modelo),
         ("10. Entrevista sem conteúdo", testar_entrevista_sem_conteudo),
         ("11. Skill por categoria de petição", testar_skill_por_categoria),
+        ("12. Identidade do reclamante", testar_identidade_do_reclamante),
     ):
         print(f"\n{titulo}")
         falhas += teste()
