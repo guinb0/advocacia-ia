@@ -362,23 +362,21 @@ export class GravacaoVideo {
     this.pendente = false;
   }
 
-  /** Esquece o vídeo e devolve a memória ao navegador.
+  /** Esquece o vídeo e devolve a memória ao navegador NA HORA.
    *
-   * O REVOKE É ATRASADO, E É O QUE FAZ O DOWNLOAD AUTOMÁTICO CHEGAR
-   *
-   * Ele era síncrono, e o fim do atendimento acontece nesta ordem: o vídeo é
-   * baixado sozinho (`pararEBaixar` → clique no link), o atendimento fecha e a
-   * tela do roteiro sai do ar — e o `encerrar()` do desmonte cai aqui e revogava
-   * a URL. O download é assíncrono: revogar antes de o navegador ter começado a
-   * ler o blob CANCELA o arquivo. Ou seja, justamente no encerramento — o único
-   * momento em que o download é automático — ele era desfeito, e o vídeo não
-   * ficava em lugar nenhum (o servidor nunca o recebe).
-   *
-   * 30s é folga de sobra para o navegador assumir o blob. A memória é devolvida
-   * do mesmo jeito; no caso do desmonte a aba costuma nem existir mais. */
+   * É o "descartar" explícito da tela: quem clicou ali decidiu que não quer o
+   * arquivo, não há download em curso, e a memória (centenas de MB numa
+   * entrevista longa) tem de voltar imediatamente. */
   descartar(): void {
+    this._esquecer(0);
+  }
+
+  private _esquecer(atrasoMs: number): void {
     const url = this.pronto?.url;
-    if (url) setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    if (url) {
+      if (atrasoMs > 0) setTimeout(() => URL.revokeObjectURL(url), atrasoMs);
+      else URL.revokeObjectURL(url);
+    }
     this.pronto = null;
     this.pendente = false;
     this.pedacos = [];
@@ -393,7 +391,19 @@ export class GravacaoVideo {
       this.gravador.stop();
     }
     this.soltar();
-    this.descartar();
+    /* AQUI o revoke tem de ESPERAR, e é o que faz o download automático chegar.
+     *
+     * O fim do atendimento acontece nesta ordem: o vídeo é baixado sozinho
+     * (`pararEBaixar` → clique no link), o atendimento fecha, e a tela do roteiro
+     * sai do ar — o desmonte chama este `encerrar()`. O download é assíncrono:
+     * revogar a URL antes de o navegador ter começado a ler o blob CANCELA o
+     * arquivo. Ou seja, justamente no único momento em que o download é
+     * automático, ele era desfeito — e o vídeo não fica em lugar nenhum, porque o
+     * servidor nunca o recebe.
+     *
+     * 30s é folga de sobra para o navegador assumir o blob; no desmonte a aba
+     * costuma nem existir mais. O `descartar()` explícito continua imediato. */
+    this._esquecer(30_000);
     this.mudar("parado");
   }
 }
