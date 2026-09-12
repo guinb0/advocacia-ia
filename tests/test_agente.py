@@ -17,6 +17,10 @@ os.environ.setdefault("AGENTE_API_URL", "http://agente-de-teste.invalido")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.banco_de_teste import exigir_banco_de_teste  # noqa: E402
+
+exigir_banco_de_teste()
+
 from app import armazenamento  # noqa: E402
 
 # Redireciona o banco ANTES de qualquer uso, como nos demais testes.
@@ -24,6 +28,9 @@ _TEMP = Path(tempfile.mkdtemp(prefix="ocr-agente-"))
 armazenamento.DIR_DADOS = _TEMP
 armazenamento.DIR_ARQUIVOS = _TEMP / "casos"
 armazenamento.DIR_CONTRATOS = _TEMP / "contratos"
+# `CAMINHO_BANCO` não redireciona mais o banco (era do tempo do SQLite): a conexão
+# vem de `SQLSERVER_*`. A trava abaixo é o que impede este teste de escrever em
+# produção — ver `tests/banco_de_teste.py`.
 armazenamento.CAMINHO_BANCO = _TEMP / "casos.db"
 
 from app.agente import dossie, espelho  # noqa: E402
@@ -166,9 +173,19 @@ def main() -> int:
         depois["caso_ref"] != antes["caso_ref"],
         "caso que sumiu do agente é recriado, e o vínculo passa a apontar para o novo",
     )
+    # O vínculo não carrega mais uma lista `enviados`: a marca de "já entregue ao
+    # agente" virou a coluna `agente_envio_chave` de cada entrega, e
+    # `salvar_refs_agente` a limpa quando o `case_ref` troca. Esta linha pedia a
+    # chave antiga e estourava `KeyError` — o arquivo morria aqui, no meio da
+    # seção 1, e as dez seções seguintes (envio da extração, dossiê, conferência
+    # do contrato) não rodavam mais, sem ninguém notar.
     checar(
-        depois["enviados"] == [],
+        not [e for e in armazenamento.listar_entregas(orfao) if e.get("agente_envio_chave")],
         "o revínculo zera as entregas enviadas — o caso novo não conhece nenhuma",
+    )
+    checar(
+        depois.get("ultimo_erro") is None,
+        "o erro do vínculo morto não fica grudado no caso depois de recriado",
     )
     ClienteFalso.casos_apagados.clear()
 

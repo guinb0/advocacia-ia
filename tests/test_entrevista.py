@@ -11,12 +11,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.banco_de_teste import exigir_banco_de_teste  # noqa: E402
+
+exigir_banco_de_teste()
+
 from app import armazenamento  # noqa: E402
 
 _TEMP = Path(tempfile.mkdtemp(prefix="ocr-entrevista-"))
 armazenamento.DIR_DADOS = _TEMP
 armazenamento.DIR_ARQUIVOS = _TEMP / "casos"
 armazenamento.DIR_CONTRATOS = _TEMP / "contratos"
+# `CAMINHO_BANCO` não redireciona mais o banco (era do tempo do SQLite): a conexão
+# vem de `SQLSERVER_*`. A trava acima é o que impede este teste de escrever em
+# produção — ver `tests/banco_de_teste.py`.
 armazenamento.CAMINHO_BANCO = _TEMP / "casos.db"
 
 from app import entrevista  # noqa: E402
