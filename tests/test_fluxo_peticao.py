@@ -413,6 +413,76 @@ def testar_entrevista_sem_conteudo() -> int:
     return falhas
 
 
+def testar_skill_por_categoria() -> int:
+    """A skill do escritório chega ao prompt — issue "Configurar skill por modelo de petição".
+
+    Os critérios da issue que dão para medir aqui: cada categoria tem a SUA skill,
+    mexer numa não afeta as outras, e o processamento usa a correspondente. O que
+    decide isso é `_com_skill_do_escritorio`, e ele é chamado em toda geração.
+
+    A ordem também é conferida: o contrato do prompt (o formato do JSON que
+    `_normalizar_secoes` espera de volta) vem ANTES da orientação do escritório.
+    Se a skill viesse primeiro, uma instrução do tipo "responda em tópicos"
+    poderia mudar o formato e a petição inteira voltaria ilegível.
+    """
+    falhas = 0
+    skills = {
+        "doenca_ocupacional": "Cite sempre o nexo causal e o CID.",
+        "assalto_carteiro": "Descreva o risco da atividade externa.",
+    }
+    peticao_skills.instrucoes_da_categoria = lambda categoria: skills.get(categoria, "")
+    peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: (
+        ["separe dano moral de material"] if categoria == "doenca_ocupacional" else []
+    )
+    try:
+        contrato = "Devolva JSON: {\"secoes\": []}"
+        montado = pl._com_skill_do_escritorio(CASO, contrato)
+
+        falhas += not checar(
+            "Cite sempre o nexo causal e o CID." in montado,
+            "a skill da categoria do caso entra no prompt",
+        )
+        falhas += not checar(
+            "Descreva o risco da atividade externa." not in montado,
+            "a skill de OUTRA categoria não vaza para este caso",
+        )
+        falhas += not checar(
+            "separe dano moral de material" in montado,
+            "as correções já ensinadas na categoria também entram",
+        )
+        falhas += not checar(
+            montado.index(contrato) < montado.index("Cite sempre o nexo"),
+            "o formato de resposta vem antes da orientação do escritório",
+        )
+
+        # Categoria sem skill cadastrada: o prompt tem de voltar INTOCADO, que é o
+        # comportamento de antes de a configuração existir.
+        peticao_skills.instrucoes_da_categoria = lambda categoria: ""
+        peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: []
+        falhas += not checar(
+            pl._com_skill_do_escritorio(CASO, contrato) == contrato,
+            "sem skill nem correção, o prompt padrão não é alterado",
+        )
+
+        # pgvector fora do ar não pode derrubar a geração por causa de um reforço
+        # opcional — é o motivo de as duas leituras serem protegidas.
+        def explode(*a, **k):
+            raise RuntimeError("pgvector fora")
+
+        peticao_criticas.ultimas_da_categoria = explode
+        try:
+            igual = pl._com_skill_do_escritorio(CASO, contrato) == contrato
+        except Exception as erro:
+            igual = False
+            falhas += not checar(False, "banco de skills fora do ar não derruba a geração", str(erro))
+        else:
+            falhas += not checar(igual, "banco de skills fora do ar não derruba a geração")
+    finally:
+        peticao_skills.instrucoes_da_categoria = lambda categoria: ""
+        peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: []
+    return falhas
+
+
 def main_teste() -> int:
     instalar_dublês()
     _zerar_banco()
@@ -428,6 +498,7 @@ def main_teste() -> int:
         ("8. Crítica em branco", testar_revisao_vazia),
         ("9. Resposta estranha do modelo", testar_resposta_estranha_do_modelo),
         ("10. Entrevista sem conteúdo", testar_entrevista_sem_conteudo),
+        ("11. Skill por categoria de petição", testar_skill_por_categoria),
     ):
         print(f"\n{titulo}")
         falhas += teste()
