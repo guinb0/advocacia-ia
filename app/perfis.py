@@ -412,15 +412,38 @@ def _sincronizar_perfis(con: Any, agora: str) -> None:
     for perfil in linhas:
         nome = str(perfil["codigo"])
         existe = con.execute(
-            f"SELECT id FROM {_TABELA_PERFIS_NOVA} WHERE nome = ?", (nome,)
+            f"SELECT id, rotulo, descricao, sistema FROM {_TABELA_PERFIS_NOVA} WHERE nome = ?",
+            (nome,),
         ).fetchone()
         if existe:
-            con.execute(
-                f"""UPDATE {_TABELA_PERFIS_NOVA}
-                       SET rotulo = ?, descricao = ?, sistema = ?
-                     WHERE nome = ?""",
-                (perfil["rotulo"], perfil["descricao"], int(bool(perfil["sistema"])), nome),
+            # UPDATE só quando algo REALMENTE mudou.
+            #
+            # Antes ele rodava para TODO perfil a cada subida, mesmo sem diferença
+            # nenhuma. Cada UPDATE toma lock exclusivo da linha até o commit — e o
+            # commit é no fim de toda a inicialização —, então duas instâncias
+            # subindo juntas (ou um deploy junto de um teste) travavam uma na
+            # outra. Medido em 12/09/2026: `perfis.inicializar` levou 52s esperando
+            # lock; em 10/09 o mesmo ponto prendeu o uvicorn antes de abrir a porta
+            # (ver o cabeçalho de `banco.limite_de_espera_por_lock`).
+            #
+            # No caso comum — nada mudou — agora não há escrita nem lock.
+            novo = (
+                str(perfil["rotulo"] or ""),
+                str(perfil["descricao"] or ""),
+                int(bool(perfil["sistema"])),
             )
+            atual = (
+                str(existe["rotulo"] or ""),
+                str(existe["descricao"] or ""),
+                int(bool(existe["sistema"])),
+            )
+            if novo != atual:
+                con.execute(
+                    f"""UPDATE {_TABELA_PERFIS_NOVA}
+                           SET rotulo = ?, descricao = ?, sistema = ?
+                         WHERE nome = ?""",
+                    (*novo, nome),
+                )
         else:
             con.execute(
                 f"""INSERT INTO {_TABELA_PERFIS_NOVA}
@@ -436,11 +459,44 @@ def _sincronizar_perfis(con: Any, agora: str) -> None:
             )
 
 
+#: Ids já resolvidos DENTRO de uma inicialização — nome → id.
+#:
+#: POR QUE ISSO EXISTE
+#:
+#: Medido em 12/09/2026, contra o SQL Server remoto: `inicializar()` disparava 428
+#: statements e levava 50s, sem nenhum statement individualmente lento (60ms de ida
+#: e volta cada). Dos 428, 272 eram a MESMA pergunta repetida — 143 vezes "qual o
+#: id deste módulo" e 129 "qual o id deste perfil", para as mesmas duas dúzias de
+#: nomes, porque cada par perfil×módulo da matriz de permissões refazia as duas
+#: consultas.
+#:
+#: Id de linha existente não muda no meio da inicialização, então perguntar de novo
+#: é só latência. Com o memo a subida faz ~27 buscas em vez de 272 — e, além do
+#: tempo, encurta a janela em que a transação segura lock, que é o que já prendeu o
+#: uvicorn antes de abrir a porta (ver `banco.limite_de_espera_por_lock`).
+#:
+#: Só id ENCONTRADO entra: "não existe" é estado que a própria inicialização muda
+#: (ela insere em seguida), e cachear a ausência devolveria `None` depois do INSERT.
+_ids_de_perfil: dict[str, int] = {}
+_ids_de_modulo: dict[str, int] = {}
+
+
+def _limpar_memo_de_ids() -> None:
+    """Zera o memo. Chamado no começo de cada `inicializar()`."""
+    _ids_de_perfil.clear()
+    _ids_de_modulo.clear()
+
+
 def _perfil_id(con: Any, nome: str) -> int | None:
+    if nome in _ids_de_perfil:
+        return _ids_de_perfil[nome]
     linha = con.execute(
         f"SELECT id FROM {_TABELA_PERFIS_NOVA} WHERE nome = ? AND ativo = 1", (nome,)
     ).fetchone()
-    return int(linha["id"]) if linha else None
+    if not linha:
+        return None
+    _ids_de_perfil[nome] = int(linha["id"])
+    return _ids_de_perfil[nome]
 
 
 def perfil_id_de(nome: str, *, ativo: bool = True, con: Any | None = None) -> int | None:
@@ -478,11 +534,16 @@ def perfil_nome_de_id(perfil_id: int, *, ativo: bool = True, con: Any | None = N
 
 
 def _modulo_id(con: Any, nome_modulo: str) -> int | None:
+    if nome_modulo in _ids_de_modulo:
+        return _ids_de_modulo[nome_modulo]
     linha = con.execute(
         f"SELECT id FROM {_TABELA_MODULOS} WHERE nome_modulo = ? AND ativo = 1",
         (nome_modulo,),
     ).fetchone()
-    return int(linha["id"]) if linha else None
+    if not linha:
+        return None
+    _ids_de_modulo[nome_modulo] = int(linha["id"])
+    return _ids_de_modulo[nome_modulo]
 
 
 def _definir_permissao(
@@ -574,6 +635,9 @@ def inicializar() -> None:
     with conectar() as con:
         from datetime import datetime, timezone
 
+        # O memo vale por inicialização: dentro dela os ids não mudam, entre uma e
+        # outra o banco pode ter mudado (outra instância criou um módulo novo).
+        _limpar_memo_de_ids()
         _executar_schema(con)
         agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
         _semear_legado(con, agora)
