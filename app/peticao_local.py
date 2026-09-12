@@ -6,6 +6,8 @@ import io
 import json
 import logging
 import os
+import re
+import unicodedata
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -775,6 +777,188 @@ Cada content deve conter parágrafos separados por linha em branco.""",
     }
     _salvar(caso_id, dados)
     return dados
+
+
+#: Quantas peças anexas um caso pode ter. Três é o teto do que a análise sugere
+#: (`acoes_sugeridas`), e é também o limite do que um advogado revisa de uma vez —
+#: peça que ninguém lê é token gasto e risco de ir a protocolo sem conferência.
+MAX_ANEXAS_POR_CASO = 3
+
+
+def id_da_anexa(caso_id: str, titulo: str) -> str:
+    """Identificador estável da peça a partir do título.
+
+    Determinístico de propósito: mandar redigir "Ação de danos morais" duas vezes
+    substitui a peça em vez de criar uma segunda igual. O caso entra no id porque
+    o mesmo título aparece em casos diferentes.
+    """
+    limpo = re.sub(r"[^a-z0-9]+", "-", _sem_acento(titulo).lower()).strip("-")
+    return f"{caso_id}:{limpo[:60] or 'peca'}"
+
+
+def _sem_acento(texto: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or "")) if unicodedata.category(c) != "Mn"
+    )
+
+
+def listar_anexas(caso_id: str) -> list[dict[str, Any]]:
+    """As outras peças já redigidas deste caso, como a tela as mostra."""
+    saida = []
+    for linha in armazenamento.listar_peticoes_anexas(caso_id):
+        dados = linha.get("dados") or {}
+        saida.append(
+            {
+                "id": linha["id"],
+                "titulo": linha.get("titulo") or "",
+                "motivo": linha.get("motivo") or "",
+                "gerada_por": linha.get("gerada_por") or "",
+                "criado_em": linha.get("criado_em"),
+                "atualizado_em": linha.get("atualizado_em"),
+                "pendencias": dados.get("pendencias") or [],
+                "secoes": len(dados.get("sections") or []),
+            }
+        )
+    return saida
+
+
+def gerar_anexa(
+    caso_id: str,
+    *,
+    titulo: str,
+    motivo: str = "",
+    pedidos: list[str] | None = None,
+    texto_entrevista: str,
+    gerada_por: str = "",
+) -> dict[str, Any]:
+    """Redige UMA das outras ações sugeridas, a partir do material do mesmo caso.
+
+    POR QUE NÃO É A MESMA FUNÇÃO DA PETIÇÃO INICIAL
+
+    `gerar` produz A peça do caso: versiona, guarda o anterior no histórico, entra
+    em revisão, é revisada por prompt e aprovada. Estas são peças irmãs, redigidas
+    do mesmo material para OUTRA ação — o escritório quer levar duas ações do mesmo
+    acidente, e até aqui o banco não permitia (a chave de `peticoes_locais` é o
+    caso, então a segunda peça apagava a primeira).
+
+    A minuta principal NÃO é tocada aqui. É o ponto: quem clica em "gerar esta
+    peça" na sugestão não pode perder a petição inicial que já revisou.
+
+    O TÍTULO DA SUGESTÃO VAI NO PROMPT COMO ALVO
+
+    Sem isso o modelo redigiria outra petição inicial — o material é o mesmo, e é
+    o pedido que muda. O título e os pedidos que a análise sugeriu entram como o
+    que esta peça deve postular, e o resto do contexto (identidade do reclamante,
+    entrevista, documentos, achados) é o mesmo de `_montar_contexto`.
+    """
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ErroPeticao("Diga qual peça deve ser redigida.")
+
+    peca_id = id_da_anexa(caso_id, titulo)
+    existentes = {linha["id"] for linha in armazenamento.listar_peticoes_anexas(caso_id)}
+    if peca_id not in existentes and len(existentes) >= MAX_ANEXAS_POR_CASO:
+        raise ErroPeticao(
+            f"Este caso já tem {MAX_ANEXAS_POR_CASO} peças além da petição inicial. "
+            "Baixe e apague uma antes de redigir outra."
+        )
+
+    contexto = _montar_contexto(caso_id, texto_entrevista)
+    alvo = [f"PEÇA A REDIGIR: {titulo}"]
+    if motivo.strip():
+        alvo.append(f"POR QUE ELA CABE NESTE CASO: {motivo.strip()}")
+    if pedidos:
+        alvo.append("PEDIDOS QUE A ANÁLISE APONTOU: " + "; ".join(p for p in pedidos if p))
+
+    saida = _llm_json(
+        _com_skill_do_escritorio(
+            caso_id,
+            """Você é advogado trabalhista e vai redigir UMA peça específica, indicada
+em "PEÇA A REDIGIR", usando o material do caso (entrevista, documentos, achados).
+
+Esta NÃO é a petição inicial do caso — ela já existe. Redija a peça pedida, com os
+pedidos próprios dela. Se o material não sustentar a peça, diga isso em `pendencias`
+e escreva o que for possível com [PENDENTE: explicação] no que faltar.
+
+Use SOMENTE fatos da entrevista e dos documentos — não invente. A qualificação do
+autor sai do bloco IDENTIDADE DO RECLAMANTE, nunca de nome citado na conversa.
+
+JSON:
+{
+  "secoes": [
+    {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
+    {"code":"FACTS","label":"Dos fatos","content":"..."},
+    {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
+    {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
+    {"code":"EVIDENCE","label":"Das provas","content":"..."},
+    {"code":"VALUE","label":"Do valor da causa","content":"..."},
+    {"code":"CLOSING","label":"Fechamento","content":"..."}
+  ],
+  "pendencias": ["o que falta para esta peça em particular"]
+}
+Cada content em parágrafos separados por linha em branco.""",
+        ),
+        "\n".join(alvo) + "\n\n" + contexto,
+        timeout=240.0,
+    )
+
+    secoes = _normalizar_secoes(saida.get("secoes") or [])
+    if not any(secao["content"] for secao in secoes):
+        raise ErroPeticao("O modelo não devolveu texto desta peça.")
+
+    agora = _agora()
+    dados = {
+        "id": peca_id,
+        "document_type": "ADDITIONAL_CLAIM",
+        "title": titulo,
+        "motivo": motivo.strip(),
+        "created_at": agora,
+        "updated_at": agora,
+        "sections": secoes,
+        "pendencias": [str(p) for p in saida.get("pendencias") or [] if str(p).strip()],
+        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+    }
+    armazenamento.salvar_peticao_anexa(
+        caso_id,
+        peca_id,
+        titulo=titulo,
+        motivo=motivo,
+        dados=dados,
+        docx=montar_docx(secoes),
+        gerada_por=gerada_por,
+    )
+    return {
+        "id": peca_id,
+        "titulo": titulo,
+        "motivo": motivo.strip(),
+        "pendencias": dados["pendencias"],
+        "secoes": len(secoes),
+        "criado_em": agora,
+        "atualizado_em": agora,
+        "gerada_por": gerada_por,
+    }
+
+
+def ler_docx_anexa(peca_id: str) -> tuple[str, bytes]:
+    """Título e .docx de uma peça anexa, para o download."""
+    registro = armazenamento.obter_peticao_anexa(peca_id)
+    if not registro:
+        raise ErroPeticao("Peça não encontrada.")
+    conteudo = bytes(registro.get("_docx") or b"")
+    if not conteudo:
+        # Regrava a partir do JSON: o texto é a verdade, o binário é derivado.
+        conteudo = montar_docx((registro.get("dados") or {}).get("sections") or [])
+    return str(registro.get("titulo") or "Peça"), conteudo
+
+
+def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
+    from . import docx_pdf
+
+    titulo, docx = ler_docx_anexa(peca_id)
+    try:
+        return titulo, docx_pdf.converter(docx)
+    except docx_pdf.ErroConversaoDocx as erro:
+        raise ErroPeticao(str(erro)) from erro
 
 
 def revisar_com_prompt(

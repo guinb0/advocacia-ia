@@ -98,6 +98,110 @@ def salvar_peticao_local(caso_id: str, dados: dict[str, Any], docx: bytes) -> No
         )
 
 
+def salvar_peticao_anexa(
+    caso_id: str,
+    peca_id: str,
+    *,
+    titulo: str,
+    motivo: str,
+    dados: dict[str, Any],
+    docx: bytes,
+    gerada_por: str = "",
+) -> None:
+    """Grava (ou regrava) uma das OUTRAS peças do caso.
+
+    `peca_id` é determinístico a partir do título (ver `peticao_local.id_da_anexa`),
+    então mandar redigir a mesma ação de novo substitui a anterior em vez de
+    empilhar duas peças iguais na tela. Sem histórico, ao contrário da petição
+    principal: quem quiser guardar a versão anterior baixa antes de regerar, e a
+    tela avisa isso.
+    """
+    if not docx:
+        raise ValueError("O DOCX da peça está vazio.")
+    instante = agora()
+    payload = {chave: valor for chave, valor in dados.items() if chave != "_docx"}
+    with conectar() as con:
+        con.execute(
+            """
+            MERGE peticoes_anexas AS alvo
+            USING (SELECT ? AS id) AS origem
+               ON alvo.id = origem.id
+            WHEN MATCHED THEN UPDATE SET
+                 titulo = ?, motivo = ?, dados_json = ?, docx = ?,
+                 gerada_por = ?, atualizado_em = ?
+            WHEN NOT MATCHED THEN INSERT
+                 (id, caso_id, titulo, motivo, dados_json, docx, gerada_por,
+                  criado_em, atualizado_em)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                peca_id,
+                titulo[:300],
+                motivo[:1000],
+                json.dumps(payload, ensure_ascii=False),
+                docx,
+                gerada_por[:200],
+                instante,
+                peca_id,
+                caso_id,
+                titulo[:300],
+                motivo[:1000],
+                json.dumps(payload, ensure_ascii=False),
+                docx,
+                gerada_por[:200],
+                instante,
+                instante,
+            ),
+        )
+
+
+def listar_peticoes_anexas(caso_id: str) -> list[dict[str, Any]]:
+    """As outras peças deste caso, da mais antiga para a mais nova. SEM o .docx.
+
+    O binário fica fora de propósito: a lista é o que a tela pinta a cada abertura
+    do dossiê, e arrastar meio mega por peça só para desenhar um título custaria
+    mais que a tela inteira.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, caso_id, titulo, motivo, dados_json, gerada_por, criado_em,"
+            "       atualizado_em"
+            "  FROM peticoes_anexas WHERE caso_id = ? ORDER BY criado_em",
+            (caso_id,),
+        ).fetchall()
+    saida = []
+    for linha in linhas:
+        item = dict(linha)
+        try:
+            item["dados"] = json.loads(item.pop("dados_json"))
+        except (TypeError, json.JSONDecodeError):
+            item["dados"] = {}
+            item.pop("dados_json", None)
+        saida.append(item)
+    return saida
+
+
+def obter_peticao_anexa(peca_id: str) -> dict[str, Any] | None:
+    """Uma peça anexa COM o .docx, para baixar."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT id, caso_id, titulo, motivo, dados_json, docx, gerada_por,"
+            "       criado_em, atualizado_em"
+            "  FROM peticoes_anexas WHERE id = ?",
+            (peca_id,),
+        ).fetchone()
+    if linha is None:
+        return None
+    item = dict(linha)
+    try:
+        item["dados"] = json.loads(item.pop("dados_json"))
+    except (TypeError, json.JSONDecodeError):
+        item["dados"] = {}
+        item.pop("dados_json", None)
+    item["_docx"] = bytes(item.pop("docx") or b"")
+    return item
+
+
 def registrar_versao_peticao(caso_id: str, dados: dict[str, Any]) -> None:
     """Guarda a versão da petição ANTES de ela ser sobrescrita.
 

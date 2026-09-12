@@ -29,6 +29,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from .. import armazenamento, auth, contrato, peticao_local
 from . import conversas, dossie, espelho, peticao_fluxo
@@ -472,6 +473,58 @@ def gerar_peticao_fluxo(
         raise _erro(erro) from erro
 
 
+class PedidoPecaAnexa(BaseModel):
+    """A ação sugerida que o advogado mandou redigir."""
+
+    titulo: str
+    motivo: str = ""
+    pedidos: list[str] = []
+
+
+@roteador.get("/casos/{caso_id}/peticoes-anexas")
+def listar_peticoes_anexas(caso_id: str) -> dict[str, Any]:
+    """As OUTRAS peças já redigidas para este caso, além da petição inicial."""
+    return {
+        "anexas": peticao_local.listar_anexas(caso_id),
+        "maximo": peticao_local.MAX_ANEXAS_POR_CASO,
+    }
+
+
+@roteador.post("/casos/{caso_id}/peticoes-anexas", status_code=status.HTTP_201_CREATED)
+def gerar_peticao_anexa(
+    caso_id: str,
+    pedido: PedidoPecaAnexa,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Redige UMA das ações sugeridas, sem tocar na petição inicial do caso.
+
+    A petição inicial continua sendo a peça que se revisa por prompt, versiona e
+    aprova. Esta nasce do mesmo material (mesma entrevista, mesmos documentos) para
+    OUTRA ação — é o que o escritório pediu para poder levar duas ações do mesmo
+    acidente sem redigir a segunda à mão.
+    """
+    try:
+        entrevista = peticao_fluxo.transcricao(caso_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+    def redigir() -> dict[str, Any]:
+        try:
+            return peticao_local.gerar_anexa(
+                caso_id,
+                titulo=pedido.titulo,
+                motivo=pedido.motivo,
+                pedidos=pedido.pedidos,
+                texto_entrevista=entrevista["texto"],
+                gerada_por=usuario.nome or usuario.id,
+            )
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+    # Mesma trilha da petição principal: quem pediu, quando, e se terminou.
+    return _gerar_peticao_registrada(caso_id, usuario, "peticao-anexa", redigir)
+
+
 def _peca_local(peca_ref: str) -> bool:
     return peca_ref == peticao_local.ID_LOCAL
 
@@ -517,12 +570,26 @@ def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Respon
             status_code=400, detail="Formato inválido: use docx ou pdf."
         )
 
+    nome_da_peca = "Peticao inicial"
     if _peca_local(peca_ref):
         try:
             conteudo = (
                 peticao_local.ler_pdf(caso_id)
                 if formato == "pdf"
                 else peticao_local.ler_docx(caso_id)
+            )
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
+    elif peca_ref.startswith(f"{caso_id}:"):
+        # Peça ANEXA deste caso — o id vem de `peticao_local.id_da_anexa`. O
+        # `peca_ref` já existia nesta rota para isto; até agora só valia "local".
+        # O prefixo é conferido contra o caso da URL de propósito: sem isso, o id
+        # de uma peça de OUTRO caso baixaria por aqui.
+        try:
+            nome_da_peca, conteudo = (
+                peticao_local.ler_pdf_anexa(peca_ref)
+                if formato == "pdf"
+                else peticao_local.ler_docx_anexa(peca_ref)
             )
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
@@ -534,7 +601,7 @@ def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Respon
             raise _erro(erro) from erro
 
     caso = armazenamento.obter_caso(caso_id) or {}
-    arquivo = f"Peticao inicial - {caso.get('cliente', 'caso')}.{formato}".replace(
+    arquivo = f"{nome_da_peca} - {caso.get('cliente', 'caso')}.{formato}".replace(
         "/", "-"
     )
     disposicao = "inline" if formato == "pdf" else "attachment"

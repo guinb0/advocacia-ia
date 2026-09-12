@@ -871,6 +871,44 @@ export async function enviarPecaDeEstilo(
  * O PDF sai `inline` do servidor, e é por isso que ele pode ser exibido dentro do dossiê;
  * o `.docx` continua vindo como anexo, para o advogado editar e assinar.
  */
+/** Uma das OUTRAS peças do caso — ação diferente, mesmo material.
+ *
+ * Não é uma versão da petição inicial: ela continua sendo a peça que se revisa por
+ * prompt, versiona e aprova. Estas nascem da mesma entrevista e dos mesmos
+ * documentos para outra ação, e existem para baixar (ver `peticoes_anexas` em
+ * `app/banco.py`). */
+export interface PecaAnexa {
+  id: string;
+  titulo: string;
+  motivo: string;
+  gerada_por: string;
+  criado_em: string;
+  atualizado_em: string;
+  pendencias: string[];
+  secoes: number;
+}
+
+export function listarPecasAnexas(
+  casoId: string,
+): Promise<{ anexas: PecaAnexa[]; maximo: number }> {
+  return chamar(`/api/agente/casos/${casoId}/peticoes-anexas`);
+}
+
+export function gerarPecaAnexa(
+  casoId: string,
+  acao: { titulo: string; motivo?: string; pedidos?: string[] },
+): Promise<PecaAnexa> {
+  return chamar(`/api/agente/casos/${casoId}/peticoes-anexas`, {
+    method: "POST",
+    body: JSON.stringify({
+      titulo: acao.titulo,
+      motivo: acao.motivo ?? "",
+      pedidos: acao.pedidos ?? [],
+    }),
+  });
+}
+
+
 export function urlDaPeticao(
   casoId: string,
   pecaId: string,

@@ -53,6 +53,7 @@ def _zerar_banco() -> None:
     BANCO["docx"] = b""
     BANCO["versoes"] = []
     BANCO["criticas"] = []
+    ANEXAS.clear()
 
 
 def _obter_caso(caso_id: str):
@@ -117,6 +118,34 @@ def _montar_situacao(caso_id: str):
     }
 
 
+ANEXAS: dict[str, dict[str, object]] = {}
+
+
+def _salvar_peticao_anexa(caso_id, peca_id, *, titulo, motivo, dados, docx, gerada_por=""):
+    if not docx:
+        raise ValueError("O DOCX da peça está vazio.")
+    ANEXAS[peca_id] = {
+        "id": peca_id,
+        "caso_id": caso_id,
+        "titulo": titulo,
+        "motivo": motivo,
+        "dados": {k: v for k, v in dados.items() if k != "_docx"},
+        "_docx": docx,
+        "gerada_por": gerada_por,
+        "criado_em": ANEXAS.get(peca_id, {}).get("criado_em") or "2026-09-12T00:00:00+00:00",
+        "atualizado_em": "2026-09-12T00:00:00+00:00",
+    }
+
+
+def _listar_peticoes_anexas(caso_id):
+    return [dict(v) for v in ANEXAS.values() if v["caso_id"] == caso_id]
+
+
+def _obter_peticao_anexa(peca_id):
+    item = ANEXAS.get(peca_id)
+    return dict(item) if item else None
+
+
 def instalar_dublês() -> None:
     """Troca TODO acesso externo por versões em memória."""
     armazenamento.obter_caso = _obter_caso
@@ -127,6 +156,9 @@ def instalar_dublês() -> None:
     armazenamento.salvar_peticao_local = _salvar_peticao_local
     armazenamento.registrar_versao_peticao = _registrar_versao_peticao
     armazenamento.listar_versoes_peticao = _listar_versoes_peticao
+    armazenamento.salvar_peticao_anexa = _salvar_peticao_anexa
+    armazenamento.listar_peticoes_anexas = _listar_peticoes_anexas
+    armazenamento.obter_peticao_anexa = _obter_peticao_anexa
     armazenamento.obter_modelo = lambda codigo: None  # cai na logo Lara & Melo
     casos_ocr.montar_situacao = _montar_situacao
     analise_documentos.analisar = lambda caso_id: {"achados": []}
@@ -549,6 +581,116 @@ def testar_identidade_do_reclamante() -> int:
     return falhas
 
 
+def testar_pecas_anexas() -> int:
+    """As OUTRAS peças do caso, sem encostar na petição inicial.
+
+    O que o escritório pediu: levar duas ações do mesmo acidente sem redigir a
+    segunda à mão. Até aqui era impossível — a chave de `peticoes_locais` é o
+    `caso_id`, então a segunda peça sobrescrevia a primeira. Agora elas moram em
+    `peticoes_anexas` (ver `app/banco.py`), e o que este teste protege é
+    exatamente a fronteira: gerar uma anexa NÃO pode mexer na minuta principal,
+    nem na versão dela, nem no histórico.
+    """
+    falhas = 0
+    principal_antes = pl.carregar(CASO)
+    versao_antes = principal_antes["version"]
+    versoes_antes = len(pl.historico_de_versoes(CASO))
+
+    dublar_modelo(
+        {
+            "secoes": [
+                {"code": "HEADING", "label": "Endereçamento", "content": "EXCELENTÍSSIMO"},
+                {"code": "FACTS", "label": "Dos fatos", "content": "Assédio relatado na entrevista"},
+                {"code": "CLAIMS", "label": "Dos pedidos", "content": "a) dano moral"},
+            ],
+            "pendencias": ["falta prova do assédio"],
+        }
+    )
+    peca = pl.gerar_anexa(
+        CASO,
+        titulo="Ação de danos morais",
+        motivo="assédio relatado",
+        pedidos=["dano moral"],
+        texto_entrevista="relato mais novo",
+        gerada_por="ana",
+    )
+
+    falhas += not checar(peca["titulo"] == "Ação de danos morais", "a peça sai com o título pedido")
+    falhas += not checar(
+        peca["id"] == f"{CASO}:acao-de-danos-morais",
+        f"com id derivado do título ({peca['id']})",
+    )
+    falhas += not checar(peca["pendencias"] == ["falta prova do assédio"], "as pendências dela vêm à tona")
+    falhas += not checar(peca["gerada_por"] == "ana", "e quem mandou redigir fica registrado")
+
+    # A FRONTEIRA: a minuta principal segue intacta.
+    principal_depois = pl.carregar(CASO)
+    falhas += not checar(
+        principal_depois["version"] == versao_antes,
+        f"a petição inicial NÃO muda de versão (antes {versao_antes}, depois {principal_depois['version']})",
+    )
+    falhas += not checar(
+        principal_depois["sections"] == principal_antes["sections"],
+        "e o texto dela fica igual, palavra por palavra",
+    )
+    falhas += not checar(
+        len(pl.historico_de_versoes(CASO)) == versoes_antes,
+        "nada é empurrado para o histórico da principal",
+    )
+
+    # A listagem, que é o que a tela pinta.
+    lista = pl.listar_anexas(CASO)
+    falhas += not checar(len(lista) == 1, f"a peça aparece na lista do caso ({len(lista)})")
+    falhas += not checar(lista[0]["secoes"] == 7, f"com as sete seções normalizadas ({lista[0]['secoes']})")
+
+    # Redigir a MESMA ação de novo substitui, em vez de empilhar duas iguais.
+    dublar_modelo({"secoes": [{"code": "FACTS", "label": "Dos fatos", "content": "texto novo"}]})
+    pl.gerar_anexa(
+        CASO, titulo="ação de DANOS morais!", texto_entrevista="relato mais novo"
+    )
+    lista2 = pl.listar_anexas(CASO)
+    falhas += not checar(
+        len(lista2) == 1, f"o mesmo título não cria uma segunda peça igual ({len(lista2)})"
+    )
+
+    # O .docx sai montado a partir do texto da peça.
+    titulo, docx = pl.ler_docx_anexa(peca["id"])
+    falhas += not checar(bool(docx) and titulo.lower().startswith("ação"), "o .docx da peça é entregue")
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(docx)) as arquivo:
+        documento = arquivo.read("word/document.xml").decode("utf-8")
+    falhas += not checar("texto novo" in documento, "e é o texto da versão mais recente dela")
+
+    # Teto: o caso não acumula peça sem limite.
+    for n in range(pl.MAX_ANEXAS_POR_CASO):
+        dublar_modelo({"secoes": [{"code": "FACTS", "label": "Dos fatos", "content": f"peça {n}"}]})
+        try:
+            pl.gerar_anexa(CASO, titulo=f"Ação extra {n}", texto_entrevista="relato mais novo")
+        except pl.ErroPeticao as erro:
+            falhas += not checar(
+                "já tem" in str(erro),
+                f"passado o teto, a recusa explica o motivo ({erro})",
+            )
+            break
+    else:
+        falhas += not checar(False, "o teto de peças por caso é respeitado")
+
+    falhas += not checar(
+        len(pl.listar_anexas(CASO)) <= pl.MAX_ANEXAS_POR_CASO,
+        "e a lista nunca passa do teto",
+    )
+
+    # Peça inexistente não devolve arquivo vazio: devolve erro.
+    try:
+        pl.ler_docx_anexa("caso-inexistente:nada")
+        falhas += not checar(False, "peça inexistente é recusada")
+    except pl.ErroPeticao:
+        falhas += not checar(True, "peça inexistente é recusada com erro em português")
+    return falhas
+
+
 def main_teste() -> int:
     instalar_dublês()
     _zerar_banco()
@@ -566,6 +708,7 @@ def main_teste() -> int:
         ("10. Entrevista sem conteúdo", testar_entrevista_sem_conteudo),
         ("11. Skill por categoria de petição", testar_skill_por_categoria),
         ("12. Identidade do reclamante", testar_identidade_do_reclamante),
+        ("13. Outras peças do caso", testar_pecas_anexas),
     ):
         print(f"\n{titulo}")
         falhas += teste()

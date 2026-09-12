@@ -212,6 +212,7 @@ TABELAS = (
     "entregas",
     "entrevistas",
     "peticoes_locais",
+    "peticoes_anexas",
     "peticao_versoes",
     "revisoes",
     "assinaturas",
@@ -493,6 +494,37 @@ CREATE TABLE {SCHEMA}.{PREFIXO}peticao_versoes (
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
+-- As OUTRAS peças do caso — as ações que a análise sugeriu e o advogado mandou
+-- redigir, além da petição inicial.
+--
+-- POR QUE TABELA PRÓPRIA, E NÃO MAIS LINHAS EM `peticoes_locais`
+--
+-- Lá a chave primária é o `caso_id`: uma peça por caso, por construção. Gerar uma
+-- segunda peça naquela tabela sobrescreveria a primeira — era exatamente o que
+-- impedia o escritório de ter duas peças vivas ao mesmo tempo. Trocar aquela
+-- chave mexeria no histórico de versões, na revisão por prompt e na aprovação,
+-- que são da peça PRINCIPAL e continuam sendo dela.
+--
+-- Aqui a divisão é deliberada: a petição inicial é a peça que se revisa por
+-- prompt, versiona e aprova; estas são peças redigidas a partir do mesmo material
+-- (mesma entrevista, mesmos documentos), prontas para baixar e levar para fora.
+-- Regerar substitui a anexa, sem histórico — quem quiser guardar a anterior baixa
+-- antes, e a tela diz isso.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}peticoes_anexas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}peticoes_anexas (
+    id            varchar(120)   NOT NULL CONSTRAINT pk_acervo_peticoes_anexas PRIMARY KEY,
+    caso_id       varchar(64)    NOT NULL,
+    titulo        nvarchar(300)  NOT NULL,
+    motivo        nvarchar(1000) NOT NULL CONSTRAINT df_acervo_anexa_motivo DEFAULT N'',
+    dados_json    nvarchar(max)  NOT NULL,
+    docx          varbinary(max) NOT NULL,
+    gerada_por    nvarchar(200)  NOT NULL CONSTRAINT df_acervo_anexa_quem DEFAULT N'',
+    criado_em     varchar(40)    NOT NULL,
+    atualizado_em varchar(40)    NOT NULL,
+    CONSTRAINT fk_acervo_anexa_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}assinaturas') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}assinaturas (
     id            varchar(64)   NOT NULL CONSTRAINT pk_ocr_assinaturas PRIMARY KEY,
@@ -693,6 +725,10 @@ INDICES = (
     f"CREATE INDEX idx_acervo_solicitacoes_peticao_em ON {SCHEMA}.{PREFIXO}solicitacoes_peticao"
     f" (solicitada_em DESC)",
     f"CREATE INDEX idx_acervo_peticao_versoes_caso ON {SCHEMA}.{PREFIXO}peticao_versoes (caso_id, versao)",
+    # As outras peças do caso são listadas a cada abertura do dossiê, sempre pelo
+    # caso e em ordem de criação.
+    f"CREATE INDEX idx_acervo_peticoes_anexas_caso ON {SCHEMA}.{PREFIXO}peticoes_anexas"
+    f" (caso_id, criado_em)",
     f"CREATE INDEX idx_acervo_municipios_uf_nome ON {SCHEMA}.{PREFIXO}municipios (uf_id, nome)",
     # O histórico é de quem perguntou, e abre ordenado pela conversa mais recente.
     f"CREATE INDEX idx_acervo_conversas_usuario ON {SCHEMA}.{PREFIXO}conversas"
