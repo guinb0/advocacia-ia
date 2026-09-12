@@ -15,12 +15,15 @@ cinco para o sistema continuar funcionando.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+
+log = logging.getLogger("peticao_skills")
 
 
 def _url() -> str:
@@ -109,5 +112,16 @@ def instrucoes_da_categoria(categoria: str) -> str:
     try:
         registro = obter(categoria)
     except Exception:
+        # Silêncio total aqui custou tempo de diagnóstico: com o pgvector fora do
+        # ar (ou a tabela ainda não criada) a petição saía SEM a instrução do
+        # escritório e nada dizia isso em lugar nenhum — o sintoma era "a IA
+        # ignorou a skill", indistinguível de skill mal escrita. O registro não
+        # muda o comportamento, só deixa rastro de que a instrução não foi lida.
+        log.warning(
+            "skill da categoria %r não pôde ser lida; a petição será gerada com o "
+            "prompt padrão",
+            categoria,
+            exc_info=True,
+        )
         return ""
     return (registro or {}).get("instrucoes", "") or ""

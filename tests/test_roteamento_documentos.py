@@ -31,6 +31,10 @@ from fastapi.testclient import TestClient
 from app import armazenamento, casos, categorias, main, pipeline, roteamento, valor_documento
 from app.celery_app import celery_app
 
+from tests.banco_de_teste import exigir_banco_de_teste
+
+exigir_banco_de_teste()
+
 CATEGORIA = categorias.obter("acidente_trabalho_correios")
 
 PDF = b"%PDF-1.7 teste"
@@ -330,6 +334,9 @@ def main_teste() -> int:
     temporario = Path(tempfile.mkdtemp(prefix="ocr-roteamento-"))
     armazenamento.DIR_DADOS = temporario
     armazenamento.DIR_ARQUIVOS = temporario / "casos"
+    # `CAMINHO_BANCO` não redireciona mais o banco (era do tempo do SQLite): a conexão
+    # vem de `SQLSERVER_*`. A trava no topo do arquivo é o que impede este teste de
+    # escrever em produção — ver `tests/banco_de_teste.py`.
     armazenamento.CAMINHO_BANCO = temporario / "casos.db"
     armazenamento.inicializar()
 

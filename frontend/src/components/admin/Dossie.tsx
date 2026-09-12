@@ -58,6 +58,7 @@ import {
   type PesquisaDetalhe,
   type Precedente,
 } from "@/lib/agente";
+import { baixarArquivo } from "@/lib/baixar";
 
 /* Vocabulário de estado do guia: símbolo + palavra + cor, nesta ordem. */
 const ETAPA: Record<EstadoEtapa, { simbolo: string; palavra: string; tom: TomSelo }> = {
@@ -229,14 +230,6 @@ function alertasIdentificacaoDoDossie(dados: DossieDados): string[] {
   return alertas;
 }
 
-function baixarArquivo(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 function campoLegivel(campo: string): string {
   const texto = campo

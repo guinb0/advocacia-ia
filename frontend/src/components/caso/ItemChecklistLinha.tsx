@@ -10,6 +10,7 @@ import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import VisorEntrega from "@/components/caso/VisorEntrega";
 import CorrigirItemDocumento from "@/components/caso/CorrigirItemDocumento";
+import { baixarArquivo } from "@/lib/baixar";
 
 /* A lista não pré-visualiza nada: cada entrega aparece só como enviada, e o
  * arquivo abre no visor ao clique. Além de deixar o checklist limpo, isso evita
@@ -126,12 +127,7 @@ export default function ItemChecklistLinha({
       /* Mesmo motivo de `BaixarDocumentos`: o blob veio por `fetch` (o link cru
        * não manda o Bearer), e sem revogar a URL o pacote fica preso na
        * memória da aba. */
-      const url = URL.createObjectURL(pacote.arquivo);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = pacote.nome;
-      link.click();
-      URL.revokeObjectURL(url);
+      baixarArquivo(pacote.arquivo, pacote.nome);
     } catch (e) {
       const padrao =
         formato === "pdf"

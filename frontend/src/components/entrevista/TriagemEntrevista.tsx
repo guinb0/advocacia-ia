@@ -290,12 +290,18 @@ export default function TriagemEntrevista({
     trechos: TrechoTranscrito[],
     gravacaoId: string,
     concluida: boolean,
+    /* O relato montado das respostas, para quando NÃO houve áudio: microfone
+     * negado, entrevista só digitada, ou o .txt trazido de fora. Sem esta
+     * reserva o caso ficava com uma entrevista sem conteúdo e a petição era
+     * redigida sem o relato do cliente. Vem por parâmetro porque quem encerra
+     * tem o relato fresco na mão, antes de o estado ser atualizado. */
+    relato: string = texto,
   ) {
     if (!casoId || !gravacaoId) return;
     try {
       await gravarEntrevistaAoVivo(casoId, {
         gravacao_id: gravacaoId,
-        texto: montarTranscricaoBruta(trechos),
+        texto: montarTranscricaoBruta(trechos) || relato.trim(),
         realizada_em: new Date().toISOString().slice(0, 10),
         avaliacao_google: avaliacaoConcluida,
         concluida,
@@ -590,7 +596,7 @@ export default function TriagemEntrevista({
             // com o fechamento do roteiro dentro dela, e libera a leitura do
             // agente. Sem caso ainda, quem grava é a criação dele, logo abaixo.
             if (casoCriado) {
-              void guardarEntrevista(casoCriado, trechos, entrevistaId, true);
+              void guardarEntrevista(casoCriado, trechos, entrevistaId, true, relato);
             }
           }}
           onFechar={() => setMostrarRoteiro(false)}

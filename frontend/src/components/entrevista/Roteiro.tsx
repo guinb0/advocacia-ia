@@ -693,6 +693,21 @@ export default function Roteiro({
         filaTrechos.current.push(texto.trim());
         void consumirFilaRef.current();
       },
+      /* A cauda do atendimento, no encerramento. Vai SÓ para o registro bruto:
+       * a fila da escuta não recebe nada aqui, senão uma extração atrasada
+       * poderia reescrever campo que já foi conferido à mão. */
+      onCauda: (texto) => {
+        const limpo = texto.trim();
+        if (!limpo) return;
+        const trecho = { quando: Date.now(), texto: limpo };
+        transcricaoBruta.current.push(trecho);
+        setTranscricaoVisivel((atuais) =>
+          [
+            ...atuais,
+            { ...trecho, quem: ultimoFalante.current ?? "Falante não identificado" },
+          ].slice(-60),
+        );
+      },
       onFinal: (texto) => {
         const id = emGravacao.current;
         if (id) {
@@ -882,6 +897,10 @@ export default function Roteiro({
      * inteira está no arquivo" de "faltou o fim": o encerramento vai por HTTP,
      * numa conexão diferente da que leva o PCM, e poderia chegar primeiro. */
     await captura.current?.aguardarEnvio();
+    /* E espera o passe final antes de deixar o encerramento seguir: é ele que
+     * apura a cauda (`onCauda`). Quem chama isto fecha o socket na linha
+     * seguinte — sem esta espera, o fim da conversa era cortado no caminho. */
+    await captura.current?.aguardarFinal();
     setEscutaEncerrada(true);
   }, []);
 

@@ -2873,7 +2873,11 @@ def revisao_concluir(
 @app.get("/api/revisao/metricas")
 def revisao_metricas(minhas: bool = False, usuario: auth.Usuario = PodeRevisar):
     """Métricas de revisão. `minhas=true` recorta para o próprio revisor."""
-    return revisao.metricas(_quem_revisa(usuario) if minhas else None)
+    # O id vai junto: o recorte "minhas" é por identidade, não por nome de
+    # exibição (ver `revisao.metricas`).
+    if not minhas:
+        return revisao.metricas()
+    return revisao.metricas(_quem_revisa(usuario), usuario.id)
 
 
 @app.get("/api/casos/{caso_id}/painel")

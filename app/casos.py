@@ -610,11 +610,20 @@ def _motivo_para_o_cliente(item: dict[str, Any]) -> str:
     de classificador ("o sistema leu como 'cpf'"). Isso não vai numa mensagem de
     WhatsApp para o cliente.
     """
-    entregas = item["entregas"]
+    entregas = item.get("entregas") or []
 
-    if any(e["tipo_confere"] is False for e in entregas):
+    # Acesso tolerante, e não por gosto: `armazenamento._normalizar_entrega` já
+    # trata `tipo_confere` AUSENTE (`if "tipo_confere" in registro`), então há
+    # caminho em que a entrega chega sem a chave. Com `[...]` isso virava
+    # `KeyError` dentro da montagem das pendências — ou seja, um 500 justamente na
+    # lista que o atendente usa para cobrar e que alimenta a automação do
+    # WhatsApp, por um campo que nem é o motivo principal.
+    #
+    # O padrão de `dados_utilizaveis` é `True` de propósito: sem informação, não
+    # se acusa a foto de ilegível. Cai no motivo genérico, que é honesto.
+    if any(e.get("tipo_confere") is False for e in entregas):
         return "o arquivo enviado parece ser de outro documento"
-    if any(not e["dados_utilizaveis"] for e in entregas):
+    if any(not e.get("dados_utilizaveis", True) for e in entregas):
         return "a foto não ficou legível o suficiente"
     return "precisamos de uma nova cópia"
 

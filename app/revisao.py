@@ -192,14 +192,34 @@ def _parse(iso: str) -> datetime:
     return datetime.fromisoformat(iso)
 
 
-def metricas(revisor: str | None = None) -> dict[str, Any]:
+def metricas(revisor: str | None = None, revisor_id: str = "") -> dict[str, Any]:
     """Consolida a atividade de revisão: quantas, tempo médio, e o corte por revisor.
 
     `revisor` filtra para o próprio painel do revisor; sem ele, é o panorama do
     escritório. Só conta revisões CONCLUÍDAS — as abertas ainda não têm duração.
+
+    O FILTRO PREFERE O `revisor_id`, E NÃO O NOME
+    
+    O recorte "minhas revisões" era feito pelo nome de exibição. Dois revisores
+    homônimos — "Ana Silva" e "Ana Silva" — viam as revisões um do outro como
+    próprias, e quem tivesse o nome editado (o gestor edita usuário, ver
+    `app/usuarios.py`) perdia de vista tudo o que já havia revisado. O id existe
+    na tabela justamente para isso e não estava sendo usado.
+    
+    O nome segue valendo para as linhas ANTIGAS: `revisor_id` entrou por
+    `ALTER TABLE` e está NULL nelas, então filtrar só por id apagaria o histórico
+    de antes da coluna. O agrupamento de `por_revisor` continua pelo nome, que é
+    o que a tela mostra.
     """
-    filtro = " AND revisor = ?" if revisor else ""
-    params: tuple[Any, ...] = (revisor,) if revisor else ()
+    if revisor_id:
+        filtro = " AND (revisor_id = ? OR (revisor_id IS NULL AND revisor = ?))"
+        params: tuple[Any, ...] = (revisor_id, revisor or "")
+    elif revisor:
+        filtro = " AND revisor = ?"
+        params = (revisor,)
+    else:
+        filtro = ""
+        params = ()
     with conectar() as con:
         concluidas = con.execute(
             f"""
