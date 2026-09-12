@@ -141,6 +141,16 @@ function relogio(quando: number): string {
  * precisa alcançar o secretário, que lê este texto pela tela da supervisão.
  */
 export function montarTranscricaoBruta(trechos: TrechoTranscrito[]): string {
+  /* Sem nenhum trecho reconhecido não existe transcrição, e devolver só o
+   * cabeçalho era pior que devolver nada: o texto saía com ~400 caracteres de
+   * aviso e ZERO fala, era gravado no caso como se fosse a entrevista, e a
+   * petição nascia daquilo — a DeepSeek recebia "0 trecho(s) reconhecido(s)"
+   * no lugar do relato do cliente e redigia a peça sem fato nenhum. Acontecia
+   * sempre que o microfone era negado ou a entrevista era só digitada.
+   *
+   * Vazio aqui faz `guardarEntrevista` cair no relato montado das respostas
+   * (ver `TriagemEntrevista`), que é onde o conteúdo realmente está. */
+  if (trechos.length === 0) return "";
   const cabecalho = [
     "TRANSCRIÇÃO BRUTA DA ENTREVISTA",
     `Gerada em ${new Date().toLocaleString("pt-BR")}`,
