@@ -217,10 +217,21 @@ def _llm_json(
             timeout=timeout,
         )
         resposta.raise_for_status()
-        return json.loads(resposta.json()["choices"][0]["message"]["content"])
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError) as erro:
+        conteudo = resposta.json()["choices"][0]["message"]["content"]
+        saida = json.loads(conteudo)
+    # `IndexError` e `TypeError` não estavam aqui, e é justamente o que um
+    # provedor devolve quando filtra a resposta: HTTP 200 com `choices: []`. O
+    # erro subia cru e a tela mostrava 500 sem dizer nada ao advogado, que ficava
+    # sem saber se devia tentar de novo — e devia.
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as erro:
         log.warning("petição local: LLM falhou: %s", erro)
         raise ErroPeticao("O modelo não respondeu — tente de novo.") from erro
+    if not isinstance(saida, dict):
+        # JSON válido que não é objeto (uma lista, um número) quebraria adiante,
+        # no `.get` de quem chamou, longe daqui.
+        log.warning("petição local: LLM devolveu %s em vez de objeto", type(saida).__name__)
+        raise ErroPeticao("O modelo não respondeu no formato esperado — tente de novo.")
+    return saida
 
 
 def _categoria_do_caso(caso_id: str) -> str:
@@ -670,6 +681,17 @@ Cada content deve conter parágrafos separados por linha em branco.""",
     agora = _agora()
     anterior = carregar(caso_id) or {}
     versao = int(anterior.get("version") or 0) + 1
+    # A versão que está sendo substituída vai para o histórico ANTES de ser
+    # sobrescrita — `peticoes_locais` guarda só a atual (chave é o caso).
+    #
+    # `revisar_com_prompt` já fazia isto e gerar de novo não: o advogado clicava
+    # "Gerar de novo" (a tela até avisa que "cria uma nova versão") e a minuta
+    # anterior — com as correções que ele já tinha feito à mão — desaparecia sem
+    # deixar cópia. O painel de rastreabilidade mostrava um salto de versão sem
+    # nada atrás dele. Vem antes de `_salvar` de propósito: se o histórico falhar,
+    # a petição anterior continua inteira no lugar e é só tentar de novo.
+    if anterior:
+        armazenamento.registrar_versao_peticao(caso_id, anterior)
     dados = {
         "id": ID_LOCAL,
         "document_type": "INITIAL_PETITION",
