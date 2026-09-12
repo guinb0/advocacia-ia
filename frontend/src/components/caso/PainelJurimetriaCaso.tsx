@@ -147,7 +147,7 @@ export default function PainelJurimetriaCaso({ casoId, uf = "" }: { casoId: stri
                 <li key={i} className="rounded-campo border border-borda bg-papel-2 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="min-w-0 truncate font-codigo text-xs text-tinta" title={p.processo ?? ""}>
-                      {p.processo ?? "processo não informado"}
+                      {p.processo_formatado || p.processo || "processo não informado"}
                     </span>
                     <div className="flex items-center gap-2">
                       <Selo tom={TOM_RESULTADO[p.resultado?.toUpperCase()] ?? "neutro"}>{p.resultado}</Selo>
@@ -158,9 +158,12 @@ export default function PainelJurimetriaCaso({ casoId, uf = "" }: { casoId: stri
                   </div>
                   <p className="mt-1 mb-1 text-[11px] text-tinta-3 [overflow-wrap:anywhere]">{p.vara}</p>
                   <p className="m-0 line-clamp-3 text-xs leading-[1.5] text-tinta-2 [overflow-wrap:anywhere]">{p.trecho}</p>
+                  {/* Abrir o processo na consulta pública do próprio tribunal, em vez
+                    * de só mostrar o número. O link é montado do número CNJ — ver
+                    * `tribunais.link_do_processo`. */}
                   {p.url && (
-                    <a href={p.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] text-acao">
-                      ver decisão
+                    <a href={p.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] text-acao underline">
+                      abrir processo{p.tribunal ? ` no ${p.tribunal}` : ""}
                     </a>
                   )}
                 </li>

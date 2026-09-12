@@ -938,6 +938,10 @@ export interface JurimetriaCaso {
   sinais: { categoria: string; tem_entrevista: boolean; achados: string[]; uf?: string; uf_automatica?: boolean };
   precedentes: {
     processo: string | null;
+    /** O número com a pontuação do CNJ, para o advogado conferir e buscar. */
+    processo_formatado?: string | null;
+    /** "TRT8" — o link do processo diz para onde vai antes do clique. */
+    tribunal?: string | null;
     resultado: string;
     vara: string;
     tipo_documento?: string | null;

@@ -187,6 +187,10 @@ export interface Peticao {
     precedentes?: Array<{
       indice: string;
       processo?: string;
+      /** O mesmo número com a pontuação do CNJ — é como o advogado o confere. */
+      processo_formatado?: string;
+      /** "TRT8": para o link dizer PARA ONDE vai antes de ser clicado. */
+      tribunal?: string;
       resultado?: string;
       vara?: string;
       similaridade?: number;

@@ -9,6 +9,8 @@ fim, para o país inteiro. É o que `tribunais_por_prioridade` devolve, em camad
 
 from __future__ import annotations
 
+import re
+
 #: UF → TRT(s) que a julgam. São Paulo tem dois: capital/metro (TRT2) e interior (TRT15).
 UF_PARA_TRT: dict[str, list[str]] = {
     "AC": ["TRT14"], "AL": ["TRT19"], "AM": ["TRT11"], "AP": ["TRT8"],
@@ -78,3 +80,102 @@ def tribunais_por_prioridade(uf: object) -> list[list[str]]:
         camadas.append(da_regiao)
     camadas.append([])  # nacional, sempre por último
     return camadas
+
+
+# --------------------------------------------------- abrir o processo no PJe
+#
+# O advogado quer ABRIR o processo que a jurimetria usou como base, e até aqui a
+# tela mostrava só o número. O campo `url` existe de ponta a ponta (coluna
+# `fontes.url` no pgvector, `referencia()` em `app/rag.py`, o tipo no frontend),
+# mas está vazio: medido no acervo, 7566 fontes e 2 com url — as duas de consulta
+# de CNPJ, nenhuma de processo. O coletor do DJEN não guarda link porque a API de
+# comunicações não devolve um.
+#
+# Então o link é DERIVADO do número, que é o que o padrão CNJ permite fazer sem
+# adivinhar nada: `NNNNNNN-DD.AAAA.J.TR.OOOO`, onde `J` é o segmento da Justiça,
+# `TR` o tribunal e `OOOO` a unidade de origem. Com isso monta-se a consulta
+# processual pública do PJe do PRÓPRIO regional.
+#
+# Conferido contra os tribunais de verdade antes de entrar na tela: TRT8 (1º e 2º
+# grau) e TRT2 responderam 200 no caminho abaixo; o TRT1 devolve 403 para `curl`,
+# que é proteção anti-robô e não ausência da página — do navegador do advogado,
+# com sessão e user-agent normais, abre.
+
+#: Só Justiça do Trabalho. O acervo é trabalhista, e montar link de outro segmento
+#: seria mandar o advogado para um endereço que ninguém verificou.
+_SEGMENTO_TRABALHO = "5"
+
+#: `0000` na unidade de origem é o próprio tribunal — processo de 2º grau.
+_UNIDADE_DO_TRIBUNAL = "0000"
+
+
+def partes_do_numero_cnj(bruto: object) -> tuple[str, str, str, str, str, str] | None:
+    """Os seis campos do número CNJ, ou `None` se não for um número CNJ.
+
+    Aceita com ou sem pontuação: no acervo ele vem cru (`00009437220255080105`),
+    e na petição aparece formatado.
+    """
+    digitos = re.sub(r"\D", "", str(bruto or ""))
+    if len(digitos) != 20:
+        return None
+    return (
+        digitos[0:7],    # sequencial
+        digitos[7:9],    # dígito verificador
+        digitos[9:13],   # ano
+        digitos[13:14],  # segmento da Justiça
+        digitos[14:16],  # tribunal
+        digitos[16:20],  # unidade de origem
+    )
+
+
+def numero_processo_formatado(bruto: object) -> str:
+    """`00009437220255080105` → `0000943-72.2025.5.08.0105`.
+
+    O número cru tem 20 dígitos seguidos, e é assim que ele estava indo para a
+    tela e para o texto da peça. Advogado não lê processo nesse formato, e
+    conferir contra o PJe exige a pontuação.
+    """
+    partes = partes_do_numero_cnj(bruto)
+    if partes is None:
+        return str(bruto or "")
+    sequencial, dv, ano, segmento, tribunal, unidade = partes
+    return f"{sequencial}-{dv}.{ano}.{segmento}.{tribunal}.{unidade}"
+
+
+def link_do_processo(bruto: object) -> str:
+    """A consulta processual pública do PJe daquele TRT, ou "" quando não dá.
+
+    Devolve vazio — e a tela não desenha link — quando o número não é CNJ, quando
+    não é da Justiça do Trabalho, ou quando o regional está fora da faixa 1–24.
+    Link errado é pior que link ausente: manda o advogado conferir no lugar errado.
+    """
+    partes = partes_do_numero_cnj(bruto)
+    if partes is None:
+        return ""
+    sequencial, dv, ano, segmento, tribunal, unidade = partes
+    if segmento != _SEGMENTO_TRABALHO:
+        return ""
+    try:
+        regional = int(tribunal)
+    except ValueError:
+        return ""
+    if not 1 <= regional <= 24:
+        return ""
+    grau = "2" if unidade == _UNIDADE_DO_TRIBUNAL else "1"
+    formatado = f"{sequencial}-{dv}.{ano}.{segmento}.{tribunal}.{unidade}"
+    return (
+        f"https://pje.trt{regional}.jus.br/consultaprocessual/detalhe-processo/"
+        f"{formatado}/{grau}"
+    )
+
+
+def tribunal_do_processo(bruto: object) -> str:
+    """`TRT8` a partir do número, para a tela dizer para onde o link vai."""
+    partes = partes_do_numero_cnj(bruto)
+    if partes is None or partes[3] != _SEGMENTO_TRABALHO:
+        return ""
+    try:
+        regional = int(partes[4])
+    except ValueError:
+        return ""
+    return f"TRT{regional}" if 1 <= regional <= 24 else ""
