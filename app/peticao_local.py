@@ -319,6 +319,61 @@ def _documentos_ocr(caso_id: str) -> list[dict[str, str]]:
     return documentos
 
 
+def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
+    """Quem é o autor da ação, com a autoridade do CADASTRO — não da transcrição.
+
+    O CASO QUE OBRIGOU ISTO
+
+    Caso `da5a030b`: cliente GUILHERME NUNES BEZERRA, com CPF no cadastro. A
+    transcrição da entrevista tem, de passagem, "...tado chamado Roosevelt e aí
+    eles machucaram com a moto da empresa..." — um terceiro citado na conversa, ou
+    um erro do reconhecimento de voz. A petição saiu qualificando "ROOSEVELT
+    RIVERS DA SILVA" como reclamante, e com "CPF [PENDENTE]" logo ao lado, num
+    caso em que o CPF estava gravado.
+
+    O nome do autor é a única coisa de uma petição que não se pode errar, e o
+    sistema já o sabe. Antes ele ia como uma linha solta ("CLIENTE: ...") no alto
+    de 4 mil caracteres de transcrição, sem dizer que aquilo era a fonte da
+    verdade; o modelo preferiu o nome que aparecia no meio da conversa.
+
+    Aqui a identidade vai num bloco próprio, dito como autoritativo, com o que o
+    cadastro tem (o CPF vem da consulta por CPF da entrevista, ver
+    `app/consultas.py`). Duas instruções acompanham: nome diferente deste é de
+    TERCEIRO, e dado que está nesta lista não sai como [PENDENTE].
+    """
+    try:
+        qualificacao = armazenamento.obter_qualificacao(caso_id) or {}
+    except Exception:  # noqa: BLE001 - cadastro ausente não impede a geração
+        log.warning("qualificação indisponível para o caso %s", caso_id, exc_info=True)
+        qualificacao = {}
+
+    campos = (
+        ("Nome completo", caso.get("cliente")),
+        ("CPF", qualificacao.get("cpf")),
+        ("Data de nascimento", qualificacao.get("nascimento")),
+        ("Sexo", qualificacao.get("sexo")),
+        ("Nome da mãe", qualificacao.get("nome_mae")),
+        ("Endereço", qualificacao.get("endereco")),
+        ("CEP", qualificacao.get("cep")),
+        ("Telefone", caso.get("telefone")),
+        ("E-mail", qualificacao.get("email")),
+    )
+    conhecidos = [f"- {rotulo}: {valor}" for rotulo, valor in campos if str(valor or "").strip()]
+    if not conhecidos:
+        return []
+
+    return [
+        "=== IDENTIDADE DO RECLAMANTE (vem do CADASTRO do caso) ===",
+        *conhecidos,
+        "",
+        "Esta lista é a ÚNICA fonte válida para qualificar o autor da ação. Nome que "
+        "apareça na transcrição ou nos documentos e seja diferente do nome acima é de "
+        "TERCEIRO (colega, condutor, médico, testemunha, vítima) — nunca do autor. "
+        "E não escreva [PENDENTE] para dado que esteja nesta lista: use o valor.",
+        "",
+    ]
+
+
 def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     caso = armazenamento.obter_caso(caso_id) or {}
     situacao = casos_ocr.montar_situacao(caso_id) or {}
@@ -328,7 +383,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     progresso = situacao.get("progresso") or {}
 
     linhas = [
-        f"CLIENTE: {caso.get('cliente', '')}",
+        *_identidade_do_reclamante(caso_id, caso),
         f"CATEGORIA: {categoria}",
         "",
         "=== ENTREVISTA (transcrição) ===",
