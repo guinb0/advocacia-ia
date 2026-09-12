@@ -1218,7 +1218,10 @@ function preencherMarcadores(
    * mão, sem consultar base nenhuma. Ligado, digitar um CPF válido consulta a
    * base e traz o cadastro (nome, mãe, nascimento, endereço, telefone…). A
    * escolha fica no navegador de quem atende, valendo para o expediente inteiro. */
-  const [preenchimentoAuto, setPreenchimentoAuto] = useState(false);
+  // A consulta por CPF é o comportamento normal da identificação. A preferência
+  // antiga gravava "0" no navegador e fazia atendimentos seguintes parecerem
+  // quebrados, mesmo quando ninguém tinha escolhido desligá-la naquela sessão.
+  const [preenchimentoAuto, setPreenchimentoAuto] = useState(true);
   const contextoRevisao = useMemo(
     () => criarContextoRevisao(roteiro, preenchimentoAuto, respostas),
     [preenchimentoAuto, respostas, roteiro],
@@ -1233,8 +1236,12 @@ function preencherMarcadores(
   }, [contextoRevisao]);
   useEffect(() => {
     try {
-      const salvo = localStorage.getItem("preenchimento_auto_cpf");
-      if (salvo !== null) setPreenchimentoAuto(salvo === "1");
+      // Só uma opção explicitamente ligada sobrevive entre atendimentos. Uma
+      // escolha antiga de desligar não pode silenciar o preenchimento automático
+      // para o próximo entrevistador.
+      if (localStorage.getItem("preenchimento_auto_cpf") === "1") {
+        setPreenchimentoAuto(true);
+      }
     } catch {
       /* localStorage bloqueado (aba anônima, política): fica no padrão ligado. */
     }
@@ -1243,7 +1250,7 @@ function preencherMarcadores(
     setPreenchimentoAuto((ligado) => {
       const novo = !ligado;
       try {
-        localStorage.setItem("preenchimento_auto_cpf", novo ? "1" : "0");
+        localStorage.setItem("preenchimento_auto_cpf", novo ? "1" : "");
       } catch {
         /* sem persistência: vale para esta sessão mesmo assim. */
       }
@@ -1712,10 +1719,9 @@ function preencherMarcadores(
       {!escutando && faltaParaComecar.length > 0 && (
         <p className={T_AVISO_BLOQUEIO}>
           <strong>Falta preencher {rotulosPendentes.join(" e ")} para começar.</strong>{" "}
-          O preenchimento automático do CPF não traz isso sozinho. São os dados que
-          abrem o atendimento e que o contrato, a procuração e a declaração exigem — e
-          os que não se colhem de ouvido, porque número, nome próprio e nome de cidade
-          a transcrição erra.{" "}
+          O estado civil sempre precisa de confirmação; UF e município são preenchidos
+          automaticamente quando o cadastro do CPF traz endereço. São os dados que abrem
+          o atendimento e que o contrato, a procuração e a declaração exigem.{" "}
           <button
             type="button"
             className="border-none bg-transparent p-0 text-tinta font-semibold text-[13px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-acao"

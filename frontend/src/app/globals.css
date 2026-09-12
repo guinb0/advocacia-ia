@@ -360,6 +360,10 @@ textarea {
   }
 }
 
+@keyframes pulsoAudio {
+  50% { transform: scaleY(0.38); opacity: 0.5; }
+}
+
 /* Ilustracao leve da tela de login. Fica aqui, e nao no tema global, para nao
  * contaminar os demais modulos com animacoes decorativas. */
 @keyframes loginFloat {

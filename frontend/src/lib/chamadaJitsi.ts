@@ -566,6 +566,10 @@ export class ChamadaJitsi {
     tocar();
     alto.addEventListener("loadedmetadata", tocar, { once: true });
     alto.addEventListener("canplay", tocar, { once: true });
+    // Em celular a faixa costuma chegar "muted" durante a negociação e só
+    // liberar amostras depois. Retomar aqui evita ficar preso no silêncio de
+    // uma tentativa de play feita cedo demais.
+    trilha.addEventListener("unmute", tocar);
     this.remotas.set(faixa, alto);
 
     this.mudarEstado("falando");
