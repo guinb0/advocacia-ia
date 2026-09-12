@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Camera, CameraOff, Mic, MicOff, MonitorUp, PhoneOff, Volume2 } from "lucide-react";
 
 import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
@@ -39,6 +40,19 @@ const LEGENDA: Record<EstadoChamada, string> = {
   falando: "em chamada",
   encerrada: "chamada encerrada",
 };
+
+/* Duas classes, e não uma, porque há dois tipos de botão neste painel.
+ *
+ * Os controles da chamada (câmera, tela, microfone, desligar) viraram ícone —
+ * caixa quadrada de 40px. Já "Copiar link" e "Copiar mensagem" continuam sendo
+ * TEXTO: são a ação de mandar a sala para o cliente, e um ícone de prancheta não
+ * diz qual dos dois formatos vai para o WhatsApp dele.
+ *
+ * Com uma classe só, os dois botões de copiar ficavam espremidos numa caixa de
+ * 40x40 — justamente na tela que o atendente usa antes de o cliente entrar. */
+const BOTAO_ICONE =
+  "grid h-10 w-10 place-items-center rounded-campo border border-borda bg-papel text-tinta cursor-pointer " +
+  "hover:bg-papel-2 hover:border-borda-forte focus:outline-none focus:ring-2 focus:ring-acao";
 
 const BOTAO_SECUNDARIO =
   "flex-1 min-w-[118px] border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none " +
@@ -178,54 +192,42 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
             </div>
           )}
 
-          {chamada.estado === "aguardando" && (
-            <p className="m-0 font-normal text-[12px] leading-[1.55] font-ui text-atencao">
-              Mande o link e deixe esta tela aberta. Quando ele entrar, o áudio conecta
-              sozinho e o gravador de cada pergunta passa a ouvir a voz dele.
-            </p>
-          )}
-
-          {chamada.estado === "falando" && (
-            <p className="m-0 font-normal text-[12px] leading-[1.55] font-ui text-ok">
-              {modo === "documentos"
-                ? "A voz do cliente está chegando e sendo acrescentada à gravação do atendimento. Continue conferindo os documentos abaixo."
-                : "A voz do entrevistado está chegando. Use “Gravar resposta” em cada pergunta do roteiro — o que for transcrito é a fala dele, não a sua."}
-            </p>
-          )}
+          <div className="mb-2 flex items-center gap-2 text-xs text-tinta-3" title={chamada.estado === "falando" ? "Áudio do entrevistado conectado" : "Aguardando áudio do entrevistado"}>
+            <Volume2 size={15} className={chamada.estado === "falando" ? "text-ok" : "text-atencao"} aria-hidden />
+            <span>{chamada.estado === "falando" ? "Áudio conectado" : "Aguardando áudio"}</span>
+          </div>
 
           <Retratos participantes={chamada.participantes} tamanho="coluna" />
 
           <div className="flex gap-2 flex-wrap mt-[10px]">
-            <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.alternarCamera()}>
-              {chamada.temCamera ? "Desligar câmera" : "Ligar câmera"}
+            <button type="button" title={chamada.temCamera ? "Desligar câmera" : "Ligar câmera"} aria-label={chamada.temCamera ? "Desligar câmera" : "Ligar câmera"} className={BOTAO_ICONE} onClick={() => void chamada.alternarCamera()}>
+              {chamada.temCamera ? <CameraOff size={18} /> : <Camera size={18} />}
             </button>
             {chamada.telaDisponivel && (
-              <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.alternarTela()}>
-                {chamada.compartilhandoTela ? "Parar de mostrar a tela" : "Mostrar minha tela"}
+              <button type="button" title={chamada.compartilhandoTela ? "Parar de mostrar tela" : "Mostrar tela"} aria-label={chamada.compartilhandoTela ? "Parar de mostrar tela" : "Mostrar tela"} className={BOTAO_ICONE} onClick={() => void chamada.alternarTela()}>
+                <MonitorUp size={18} />
               </button>
             )}
-            <button type="button" className={BOTAO_SECUNDARIO} onClick={chamada.alternarMudo}>
-              {chamada.mudo ? "Reativar meu microfone" : "Ficar mudo"}
+            <button type="button" title={chamada.mudo ? "Reativar microfone" : "Desligar microfone"} aria-label={chamada.mudo ? "Reativar microfone" : "Desligar microfone"} className={BOTAO_ICONE} onClick={chamada.alternarMudo}>
+              {chamada.mudo ? <MicOff size={18} /> : <Mic size={18} />}
             </button>
-            <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.reativarAudio()}>
-              Reativar áudio
+            <button type="button" title="Reativar áudio" aria-label="Reativar áudio" className={BOTAO_ICONE} onClick={() => void chamada.reativarAudio()}>
+              <Volume2 size={18} />
             </button>
             <button
               type="button"
-              className={BOTAO_SECUNDARIO}
+              title="Desligar chamada"
+              aria-label="Desligar chamada"
+              className={`${BOTAO_ICONE} text-critico`}
               onClick={() => {
                 chamada.desligar();
                 setSala(null);
               }}
             >
-              Desligar
+              <PhoneOff size={18} />
             </button>
           </div>
 
-          <p className="mt-3 mb-0 font-normal text-[11.5px] leading-[1.5] font-ui text-ok">
-            A chamada continua ao sair desta tela — segue num painel no canto até você
-            desligar, para acompanhar o cliente no envio dos documentos.
-          </p>
         </>
       )}
 
