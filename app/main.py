@@ -1848,9 +1848,15 @@ def _anexar_documento_assinado_ao_caso(registro: dict[str, Any], caminho: Path) 
     if not caso_id or not caminho.is_file():
         return
     nome = f"{registro['nome']}.pdf".replace("/", "-").replace("\\", "-")
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        origem = (detalhe or {}).get("extracao", {}).get("origem", {})
+    # Uma consulta para saber se este documento assinado já está no checklist.
+    #
+    # Era `listar_entregas` + um `obter_entrega` por anexo — e `obter_entrega` abre
+    # conexão própria e consulta o agente jurídico. Num caso de 46 anexos, anexar UM
+    # contrato assinado custava 92 idas ao banco só para descobrir que ele ainda não
+    # estava lá. A origem da entrega vive dentro da extração, que é justamente o que
+    # a lista em lote já traz.
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        origem = (entrega.get("extracao") or {}).get("origem") or {}
         if origem.get("assinatura_id") == registro.get("id"):
             return
     codigo = _codigo_documento_assinado(str(registro.get("nome") or ""))

@@ -304,12 +304,15 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str) -> str:
 
 
 def _documentos_ocr(caso_id: str) -> list[dict[str, str]]:
+    """O texto de OCR de cada anexo, em UMA consulta (ver `_documentos_do_caso`).
+
+    Era um `obter_entrega` por arquivo, e a geração da petição abre este caminho
+    junto com o da análise: num caso de 46 anexos davam ~180 idas ao banco antes de
+    a primeira palavra ir para o modelo.
+    """
     documentos = []
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        if not detalhe:
-            continue
-        texto = str((detalhe.get("extracao") or {}).get("texto_completo") or "").strip()
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        texto = str((entrega.get("extracao") or {}).get("texto_completo") or "").strip()
         if not texto:
             continue
         documentos.append(

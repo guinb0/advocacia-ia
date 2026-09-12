@@ -325,7 +325,18 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     )
     enviados, falhas = 0, 0
 
-    for entrega in armazenamento.listar_entregas(caso_id):
+    # `listar_extracoes_do_caso`, e não `listar_entregas`: AQUI É PRECISO A EXTRAÇÃO.
+    #
+    # `listar_entregas` exclui o `extracao_json` de propósito (é grande, e a maioria
+    # das telas não precisa dele). Este laço, desde o commit 371dd04 de 27/08/2026,
+    # pedia `entrega.get("extracao")` a essa lista — que nunca tem a chave. O
+    # `continue` disparava para TODA entrega, então "Sincronizar" respondia com
+    # sucesso e `documentos_enviados: 0`, sempre. Medido no caso `da5a030b`: 0 de 46
+    # passavam no filtro.
+    #
+    # A lista em lote traz a extração de todo o caso numa consulta, e só entrega com
+    # extração gravada entra nela — que é exatamente o conjunto que pode ser enviado.
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
         if entrega.get("status_proc") != "pronto" or not entrega.get("extracao"):
             continue
         if _envio_registrado(entrega["id"], entrega["extracao"]):

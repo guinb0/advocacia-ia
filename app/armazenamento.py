@@ -1424,7 +1424,7 @@ def listar_extracoes_do_caso(caso_id: str) -> list[dict[str, Any]]:
     """
     with conectar() as con:
         linhas = con.execute(
-            """SELECT arquivo, extracao_json
+            """SELECT id, arquivo, item_codigo, status_proc, extracao_json
                  FROM entregas
                 WHERE caso_id = ? AND extracao_json IS NOT NULL
                 ORDER BY criado_em""",
@@ -1437,7 +1437,18 @@ def listar_extracoes_do_caso(caso_id: str) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             continue
         if isinstance(extracao, dict):
-            saida.append({"arquivo": linha["arquivo"], "extracao": extracao})
+            # O uid=197609(user) gid=197121 groups=197121 vai junto porque quem cruza achado com documento precisa
+            # apontar a ENTREGA de origem (`analise_documentos`), não só o nome do
+            # arquivo — dois anexos podem ter nomes iguais em pastas diferentes.
+            saida.append(
+                {
+                    "id": str(linha["id"]),
+                    "arquivo": linha["arquivo"],
+                    "item_codigo": linha["item_codigo"],
+                    "status_proc": linha["status_proc"],
+                    "extracao": extracao,
+                }
+            )
     return saida
 
 

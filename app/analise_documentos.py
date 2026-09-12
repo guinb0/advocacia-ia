@@ -158,14 +158,25 @@ def _normalizar(texto: str) -> str:
 
 
 def _documentos_do_caso(caso_id: str) -> list[dict[str, str]]:
-    """Nome e texto lido de cada anexo que tem leitura."""
+    """Nome e texto lido de cada anexo que tem leitura.
+
+    UMA consulta para o caso inteiro, e não uma por arquivo.
+
+    Antes eram `listar_entregas` + um `obter_entrega` por anexo — e `obter_entrega`
+    abre conexão própria e ainda vai perguntar ao agente jurídico se existe OCR
+    espelhado daquele arquivo. Medido em 12/09/2026 no caso `da5a030b` (46 anexos):
+    93 consultas e 27s só para montar esta lista, com a tela do advogado parada. E o
+    espelho do agente, que custava 46 dessas consultas, hoje não existe para
+    NENHUMA entrega do banco — a busca nunca acha nada.
+
+    `listar_extracoes_do_caso` já resolvia isso e foi criada para isto mesmo (ver o
+    docstring dela); este caminho simplesmente não a usava. O que se perde é o
+    enriquecimento pelo agente em entrega antiga sem extração local — inexistente
+    hoje, e ainda disponível em `obter_entrega` nas telas de um documento só.
+    """
     documentos = []
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        if not detalhe:
-            continue
-        extracao = detalhe.get("extracao") or {}
-        texto = str(extracao.get("texto_completo") or "").strip()
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        texto = str((entrega.get("extracao") or {}).get("texto_completo") or "").strip()
         if not texto:
             continue
         documentos.append(

@@ -79,6 +79,28 @@ def _obter_entrega(entrega_id: str):
     return {"id": entrega_id, "extracao": {"texto_completo": textos.get(entrega_id, "")}}
 
 
+def _listar_extracoes_do_caso(caso_id: str):
+    """O carregador em LOTE das extrações do caso — uma consulta, não uma por anexo.
+
+    É por ele que a análise, a petição e o painel leem o OCR desde que o N+1 foi
+    removido (medido: 93 consultas e 27s viraram 1 e 0,7s num caso de 46 anexos).
+    Só entrega COM extração gravada entra, como no banco (`extracao_json IS NOT NULL`).
+    """
+    saida = []
+    for entrega in _listar_entregas(caso_id):
+        detalhe = _obter_entrega(entrega["id"])
+        saida.append(
+            {
+                "id": entrega["id"],
+                "arquivo": entrega.get("arquivo"),
+                "item_codigo": entrega.get("item_codigo"),
+                "status_proc": "pronto",
+                "extracao": detalhe.get("extracao") or {},
+            }
+        )
+    return saida
+
+
 def _obter_peticao_local(caso_id: str):
     dados = BANCO["peticao"]
     if dados is None:
@@ -152,6 +174,7 @@ def instalar_dublês() -> None:
     armazenamento.listar_entrevistas = _listar_entrevistas
     armazenamento.listar_entregas = _listar_entregas
     armazenamento.obter_entrega = _obter_entrega
+    armazenamento.listar_extracoes_do_caso = _listar_extracoes_do_caso
     armazenamento.obter_peticao_local = _obter_peticao_local
     armazenamento.salvar_peticao_local = _salvar_peticao_local
     armazenamento.registrar_versao_peticao = _registrar_versao_peticao
