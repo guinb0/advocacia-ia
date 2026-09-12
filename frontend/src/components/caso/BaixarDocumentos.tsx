@@ -5,6 +5,7 @@ import { useState } from "react";
 import { baixarDocumentosDoCaso } from "@/lib/api";
 import { Aviso } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
+import { baixarArquivo } from "@/lib/baixar";
 
 /* Tudo que o cliente enviou, num pacote só.
  *
@@ -46,12 +47,7 @@ export default function BaixarDocumentos({ casoId, total, pronto }: Props) {
        * por `fetch`. Sem revogar a URL depois, cada download deixa o ZIP
        * inteiro preso na memória da aba até alguém recarregar a página — e
        * aqui são centenas de megabytes de digitalização. */
-      const url = URL.createObjectURL(pacote.arquivo);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = pacote.nome;
-      link.click();
-      URL.revokeObjectURL(url);
+      baixarArquivo(pacote.arquivo, pacote.nome);
       setBaixado(true);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível montar o pacote.");

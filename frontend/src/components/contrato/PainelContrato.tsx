@@ -24,6 +24,7 @@ import type {
 } from "@/lib/types";
 import { Botao } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
+import { baixarArquivo as baixarBlob } from "@/lib/baixar";
 
 /* Contrato de honorários, preenchido com o que a entrevista respondeu.
  *
@@ -50,14 +51,6 @@ function legivel(campo: string): string {
 }
 
 /** Dispara o download de um blob que já veio pela API com o Bearer anexado. */
-function baixarBlob(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 function texto(valor: string | string[] | undefined): string {
   return typeof valor === "string" ? valor.trim() : "";

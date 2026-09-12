@@ -96,6 +96,13 @@ export interface EventosTranscricao {
    *  buraco no texto não é o modelo errando, é áudio que nunca chegou. */
   onChegada?: (fator: number) => void;
   onFinal?: (texto: string, duracaoS: number) => void;
+  /** A cauda do atendimento: o que só o passe final apurou, no encerramento.
+   *
+   * Separado de `onTrecho` porque tem outro destino. `onTrecho` alimenta a
+   * escuta que PREENCHE o roteiro; isto chega quando o atendimento já fechou, e
+   * ali um preenchimento novo passaria por cima de campo que alguém corrigiu à
+   * mão. Aqui só entra no registro bruto — que é o que o caso guarda. */
+  onCauda?: (texto: string) => void;
   onEstado?: (estado: EstadoCaptura) => void;
   /** Situação passageira que não é erro — hoje, o Whisper carregando. */
   onAviso?: (mensagem: string) => void;
@@ -141,6 +148,16 @@ function relogio(quando: number): string {
  * precisa alcançar o secretário, que lê este texto pela tela da supervisão.
  */
 export function montarTranscricaoBruta(trechos: TrechoTranscrito[]): string {
+  /* Sem nenhum trecho reconhecido não existe transcrição, e devolver só o
+   * cabeçalho era pior que devolver nada: o texto saía com ~400 caracteres de
+   * aviso e ZERO fala, era gravado no caso como se fosse a entrevista, e a
+   * petição nascia daquilo — a DeepSeek recebia "0 trecho(s) reconhecido(s)"
+   * no lugar do relato do cliente e redigia a peça sem fato nenhum. Acontecia
+   * sempre que o microfone era negado ou a entrevista era só digitada.
+   *
+   * Vazio aqui faz `guardarEntrevista` cair no relato montado das respostas
+   * (ver `TriagemEntrevista`), que é onde o conteúdo realmente está. */
+  if (trechos.length === 0) return "";
   const cabecalho = [
     "TRANSCRIÇÃO BRUTA DA ENTREVISTA",
     `Gerada em ${new Date().toLocaleString("pt-BR")}`,
@@ -505,7 +522,14 @@ export class CapturaEntrevista {
         if (typeof m.chegada === "number") this.eventos.onChegada?.(m.chegada);
       } else if (m.type === "trecho") {
         if (this.gravando) this.eventos.onTrecho?.(m.text);
-      } else if (m.type === "final") this.eventos.onFinal?.(m.text, m.duracao_s ?? 0);
+      } else if (m.type === "trecho_final") {
+        // Chega DEPOIS do `stop`, com `gravando` já em false: o filtro do
+        // `trecho` acima deixaria cair justamente o fim da conversa.
+        if (m.text) this.eventos.onCauda?.(String(m.text));
+      } else if (m.type === "final") {
+        this.eventos.onFinal?.(m.text, m.duracao_s ?? 0);
+        this.avisarFinal?.();
+      }
       else if (m.type === "aquecendo") {
         this.eventos.onAviso?.(
           "Preparando o reconhecimento de voz — o texto começa a aparecer em instantes.",
@@ -665,6 +689,33 @@ export class CapturaEntrevista {
     } catch {
       this.eventos.onErro?.("Não foi possível fechar a resposta. Grave de novo ou digite.");
     }
+  }
+
+  /** Resolve a espera de `aguardarFinal` quando o `final` chega. */
+  private avisarFinal: (() => void) | null = null;
+
+  /** Espera o servidor terminar o passe final da transcrição.
+   *
+   * O `stop` dispara, no servidor, a transcrição da cauda — e ela leva segundos.
+   * Quem encerra o atendimento chamava `encerrar()` logo depois, e `encerrar()`
+   * FECHA o socket: a resposta era cortada antes de chegar, e com ela o fim da
+   * conversa (ver `trecho_final` em `app/servico_transcricao.py`).
+   *
+   * Com teto: um passe final que não volta não pode prender o encerramento do
+   * atendimento, que é quando o advogado já quer seguir para o caso. */
+  async aguardarFinal(limiteMs = 20_000): Promise<void> {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    await new Promise<void>((ok) => {
+      const relogio = setTimeout(() => {
+        this.avisarFinal = null;
+        ok();
+      }, limiteMs);
+      this.avisarFinal = () => {
+        clearTimeout(relogio);
+        this.avisarFinal = null;
+        ok();
+      };
+    });
   }
 
   /** Espera o navegador entregar o áudio que ainda está na fila do socket.

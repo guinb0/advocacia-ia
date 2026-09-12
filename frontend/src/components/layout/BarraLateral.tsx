@@ -29,13 +29,15 @@
  * dele.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BarChart3,
   BookOpen,
   Bot,
   BriefcaseBusiness,
+  ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   Database,
   FileCheck2,
@@ -67,6 +69,10 @@ export interface ModuloNavegacao {
   rotulo: string;
   /** Telas internas que devem acender o mesmo item de navegação. */
   relacionadas?: Tela[];
+  /* Telas que só existem DENTRO deste item — ver o comentário do grupo
+   * "Escritório" sobre a Administração. Quando há subitens, o item vira
+   * expansível: a lista só ocupa espaço na coluna de quem a abriu. */
+  subitens?: ModuloNavegacao[];
 }
 
 export interface GrupoNavegacao {
@@ -116,10 +122,21 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
       { tela: "catalogoRoteiros", rotulo: "Roteiros" },
       { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
-      { tela: "usuarios", rotulo: "Administração" },
+      /* A Administração é o único item com filhos, e por um motivo prático: o que
+       * mora dentro dela é ajuste de escritório, feito uma vez e revisto raramente
+       * (quem entra, o que cada perfil acessa, por onde os documentos saem para
+       * assinatura). Como item plano, cada uma dessas telas gastava uma linha da
+       * coluna todo dia para um clique por mês; expansível, elas só aparecem para
+       * quem foi procurá-las. */
+      {
+        tela: "usuarios",
+        rotulo: "Administração",
+        subitens: [
+          { tela: "configuracaoAssinatura", rotulo: "Assinatura" },
+        ],
+      },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
-      { tela: "configuracaoAssinatura", rotulo: "Assinatura eletrônica" },
     ],
   },
 ];
@@ -131,6 +148,15 @@ const ITEM =
 const ITEM_ATIVO =
   "relative flex w-full items-center gap-3 rounded-[10px] border border-white/10 bg-nav-fundo-ativo px-3 py-2.5 " +
   "text-left text-sm font-semibold text-nav-texto shadow-[inset_3px_0_0_var(--marca-ouro)] cursor-pointer";
+/* O subitem é o mesmo item, recuado e menor: recuo e traço à esquerda dizem
+ * "isto pertence ao de cima" sem repetir o nome do pai em cada linha. */
+const SUBITEM =
+  "group relative flex w-full items-center gap-2.5 rounded-[10px] border border-transparent py-2 pl-9 pr-3 " +
+  "text-left text-[13px] font-semibold text-nav-texto-3 cursor-pointer transition-colors duration-[120ms] " +
+  "hover:bg-nav-fundo-hover hover:text-nav-texto";
+const SUBITEM_ATIVO =
+  "relative flex w-full items-center gap-2.5 rounded-[10px] border border-white/10 bg-nav-fundo-ativo py-2 pl-9 pr-3 " +
+  "text-left text-[13px] font-semibold text-nav-texto cursor-pointer";
 const GRUPO_TITULO =
   "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-nav-texto-3 first:mt-0";
 
@@ -164,16 +190,32 @@ function ativa(modulo: ModuloNavegacao, tela: Tela): boolean {
   return modulo.tela === tela || (modulo.relacionadas?.includes(tela) ?? false);
 }
 
+/** O item está aceso porque um FILHO dele é a tela atual? Se sim, já abre expandido. */
+export function filhoAtivo(item: ModuloNavegacao, tela: Tela): boolean {
+  return (item.subitens ?? []).some((sub) => ativa(sub, tela));
+}
+
 function indiceDoModulo(item: ModuloNavegacao, modulos: string[]): number {
   const indice = modulos.findIndex((modulo) => podeAbrirTela(item.tela, [modulo]));
-  return indice === -1 ? Number.MAX_SAFE_INTEGER : indice;
+  const proprio = indice === -1 ? Number.MAX_SAFE_INTEGER : indice;
+  /* Um pai que a pessoa não pode abrir mas cujo filho ela pode (tem `contratos`
+   * e não tem `usuarios`) ordena pelo filho — senão ele iria para o fim da lista
+   * por um módulo que nem é o motivo de ele estar ali. */
+  return Math.min(proprio, ...(item.subitens ?? []).map((sub) => indiceDoModulo(sub, modulos)));
 }
 
 export function gruposPermitidos(modulos: string[]): GrupoNavegacao[] {
   return [...GRUPOS_NAVEGACAO]
     .map((grupo, indiceGrupo) => {
       const itens = grupo.itens
-        .filter((item) => podeAbrirTela(item.tela, modulos))
+        .map((item) => {
+          const subitens = (item.subitens ?? []).filter((sub) => podeAbrirTela(sub.tela, modulos));
+          return subitens.length > 0 ? { ...item, subitens } : { ...item, subitens: undefined };
+        })
+        /* O pai FICA quando só o filho é permitido: ali ele é apenas o rótulo que
+         * abre a lista, sem navegar para lugar nenhum (ver `navegarNoPai`). Some
+         * de vez só quando nem ele nem nenhum filho sobrou. */
+        .filter((item) => podeAbrirTela(item.tela, modulos) || (item.subitens?.length ?? 0) > 0)
         .sort((a, b) => indiceDoModulo(a, modulos) - indiceDoModulo(b, modulos));
       return { ...grupo, itens, indiceGrupo };
     })
@@ -193,6 +235,9 @@ interface Props {
 
 export default function BarraLateral({ tela, onNavegar }: Props) {
   const [aberta, setAberta] = useState(false);
+  /* Quais itens com filhos estão expandidos. Vive aqui, e não no item, porque é
+   * estado de quem está olhando a coluna — não da definição do menu. */
+  const [expandidos, setExpandidos] = useState<Tela[]>([]);
   const sessao = useSessao();
   const modulos = sessao.carregando ? [] : sessao.modulos;
   const nome = sessao.nome || sessao.usuario || "Usuário";
@@ -220,43 +265,108 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
     };
   }, [aberta]);
 
+  const grupos = useMemo(() => gruposPermitidos(modulos), [modulos]);
+
+  /* Estar numa tela-filha e ver o pai fechado seria a barra dizendo que o item
+   * aberto não está em lugar nenhum. Abre o pai da tela atual — e deixa aberto,
+   * sem fechar o que a pessoa expandiu à mão. */
+  useEffect(() => {
+    const pais = grupos
+      .flatMap((grupo) => grupo.itens)
+      .filter((item) => filhoAtivo(item, tela))
+      .map((item) => item.tela);
+    if (pais.length === 0) return;
+    setExpandidos((atuais) => {
+      const faltando = pais.filter((pai) => !atuais.includes(pai));
+      return faltando.length === 0 ? atuais : [...atuais, ...faltando];
+    });
+  }, [grupos, tela]);
+
   function navegar(destino: Tela) {
     onNavegar(destino);
     setAberta(false);
   }
 
+  function alternar(pai: Tela) {
+    setExpandidos((atuais) =>
+      atuais.includes(pai) ? atuais.filter((t) => t !== pai) : [...atuais, pai],
+    );
+  }
+
   const lista = (
     <nav className="flex flex-col gap-[2px] px-3 pb-5 pt-2" aria-label="Módulos do sistema">
-      {gruposPermitidos(modulos)
-        .map((grupo) => {
-          const itens = grupo.itens;
-          if (itens.length === 0) return null;
-          return (
-            <div key={grupo.titulo}>
-              <div className={GRUPO_TITULO}>{grupo.titulo}</div>
-              {itens.map((item) => {
-                const acesa = ativa(item, tela);
-                const Icone = ICONE_POR_TELA[item.tela] ?? FileText;
-                return (
+      {grupos.map((grupo) => {
+        const itens = grupo.itens;
+        if (itens.length === 0) return null;
+        return (
+          <div key={grupo.titulo}>
+            <div className={GRUPO_TITULO}>{grupo.titulo}</div>
+            {itens.map((item) => {
+              const subitens = item.subitens ?? [];
+              const temFilhos = subitens.length > 0;
+              const expandido = temFilhos && expandidos.includes(item.tela);
+              /* Pai com filho aberto também fica aceso: o recuo diz onde a pessoa
+               * está, mas só dentro de uma lista que ela consegue ver. */
+              const acesa = ativa(item, tela) || (temFilhos && !expandido && filhoAtivo(item, tela));
+              const podeAbrirPai = podeAbrirTela(item.tela, modulos);
+              const Icone = ICONE_POR_TELA[item.tela] ?? FileText;
+              const Seta = expandido ? ChevronDown : ChevronRight;
+              return (
+                <div key={item.tela}>
                   <button
-                    key={item.tela}
                     type="button"
                     className={acesa ? ITEM_ATIVO : ITEM}
                     aria-current={acesa ? "page" : undefined}
-                    onClick={() => navegar(item.tela)}
+                    aria-expanded={temFilhos ? expandido : undefined}
+                    onClick={() => {
+                      /* Um clique faz as duas coisas: abre a lista e vai para a tela
+                       * do pai. Separar em dois alvos (seta e rótulo) numa coluna
+                       * estreita — e no toque do celular — só produz clique errado. */
+                      if (temFilhos) alternar(item.tela);
+                      if (podeAbrirPai) navegar(item.tela);
+                    }}
                   >
                     <Icone
                       size={17}
                       className={acesa ? "shrink-0 text-marca-ouro" : "shrink-0 text-nav-icone group-hover:text-nav-texto"}
                       aria-hidden
                     />
-                    <span className="min-w-0 truncate">{item.rotulo}</span>
+                    <span className="min-w-0 flex-1 truncate">{item.rotulo}</span>
+                    {temFilhos && (
+                      <Seta
+                        size={15}
+                        className={acesa ? "shrink-0 text-marca-ouro" : "shrink-0 text-nav-icone group-hover:text-nav-texto"}
+                        aria-hidden
+                      />
+                    )}
                   </button>
-                );
-              })}
-            </div>
-          );
-        })}
+                  {expandido &&
+                    subitens.map((sub) => {
+                      const subAcesa = ativa(sub, tela);
+                      const IconeSub = ICONE_POR_TELA[sub.tela] ?? FileText;
+                      return (
+                        <button
+                          key={sub.tela}
+                          type="button"
+                          className={subAcesa ? SUBITEM_ATIVO : SUBITEM}
+                          aria-current={subAcesa ? "page" : undefined}
+                          onClick={() => navegar(sub.tela)}
+                        >
+                          <IconeSub
+                            size={15}
+                            className={subAcesa ? "shrink-0 text-marca-ouro" : "shrink-0 text-nav-icone group-hover:text-nav-texto"}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 truncate">{sub.rotulo}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
     </nav>
   );
 

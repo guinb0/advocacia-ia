@@ -1672,11 +1672,27 @@ def listar_assinaturas(
         parametros.append(caso_id)
     if cliente:
         # O SQLite aceitava uma função Python registrada na conexão; o SQL Server não
-        # roda Python dentro da consulta. Como o nome já é gravado normalizado, comparar
-        # direto basta — e o collation do banco (`Latin1_General_CI_AS`) ignora
-        # maiúsculas, o que dispensa o antigo `COLLATE NOCASE`.
-        condicoes.append("cliente = ?")
-        parametros.append(_normalizar_nome_cliente(cliente))
+        # roda Python dentro da consulta. O nome JÁ é gravado normalizado, então a
+        # igualdade direta resolve — e o collation do banco (`Latin1_General_CI_AS`)
+        # ignora maiúsculas, o que dispensa o antigo `COLLATE NOCASE`.
+        #
+        # O segundo ramo é pelas linhas ANTIGAS, gravadas antes de a normalização
+        # existir na escrita: "Maria    da Silva" com espaços dobrados não casava
+        # com "Maria da Silva" e o contrato já assinado deixava de ser reencontrado
+        # — na prática, ao criar o caso a assinatura existente não era vinculada e
+        # alguém reenviava um documento que o cliente já tinha assinado.
+        #
+        # Colapsar espaços em T-SQL é o truque dos três REPLACE com sentinela: cada
+        # espaço vira "<>", "><" de pares vizinhos desaparece, e o que sobrou volta a
+        # ser um espaço. "<" e ">" não aparecem em nome de pessoa. Fica em OR e não
+        # sozinho para a igualdade direta (indexável) continuar atendendo o caso
+        # normal; a varredura só acontece quando ela não acha nada.
+        condicoes.append(
+            "(cliente = ? OR LTRIM(RTRIM(REPLACE(REPLACE(REPLACE("
+            "cliente, ' ', '<>'), '><', ''), '<>', ' '))) = ?)"
+        )
+        normalizado = _normalizar_nome_cliente(cliente)
+        parametros.extend([normalizado, normalizado])
     if cpf:
         condicoes.append("cpf = ?")
         parametros.append(_normalizar_cpf(cpf))

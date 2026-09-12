@@ -14,6 +14,7 @@ import type { LeituraDaEntrevista } from "@/lib/preAnalise";
 import { chaveDasRespostas } from "@/lib/roteiroContexto";
 import type { ContextoRevisaoRoteiro } from "@/lib/types";
 import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
+import { baixarTexto as baixarArquivoDeTexto } from "@/lib/baixar";
 
 /* A tela da entrevista: roteiro à esquerda, chamada à direita.
  *
@@ -59,12 +60,9 @@ interface Props {
 
 /** Baixa um texto como arquivo, sem passar pelo servidor. */
 function baixarTexto(nome: string, conteudo: string): void {
-  const url = URL.createObjectURL(new Blob([conteudo], { type: "text/plain;charset=utf-8" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
+  // Argumentos na ordem inversa da do `lib/baixar` — as chamadas desta tela já
+  // passam o nome primeiro, e trocá-las não melhoraria nada.
+  baixarArquivoDeTexto(conteudo, nome);
 }
 
 const CONCLUIR =
@@ -471,15 +469,25 @@ export default function EntrevistaComChamada({
               )}
             </div>
           ) : (
-            /* O fecho: a gravação parou e os três arquivos ficam à mão.
+            /* O fecho: as perguntas terminaram, a GRAVAÇÃO NÃO.
+             *
+             * Esta tela dizia "ATENDIMENTO ENCERRADO / A gravação parou agora" —
+             * e era falso. O botão que traz este bloco (`encerrarGravacao`) só
+             * devolve o id da entrevista; quem para a captura é
+             * `encerrarAtendimento`, no "Criar caso" mais abaixo. É de propósito:
+             * as etapas que aparecem aqui (dados finais, avaliação, contrato e a
+             * conversa sobre os DOCUMENTOS) precisam entrar no arquivo.
+             *
+             * O texto errado tinha consequência: convidava a baixar e sair no
+             * meio, com metade do atendimento ainda por gravar.
              *
              * Vídeo, áudio e transcrição bruta são coisas diferentes e servem a
              * perguntas diferentes — o vídeo prova quem estava na sala, o áudio
              * é a conversa, e a transcrição é o que dá para ler e buscar seis
              * meses depois sem ouvir quarenta minutos. */
             <div className="flex items-start flex-col gap-[14px] max-w-[860px] mt-7 mb-2 border-t-[3px] border-double border-borda-forte pt-[18px]">
-              <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-ok">
-                ATENDIMENTO ENCERRADO
+              <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-atencao">
+                PERGUNTAS ENCERRADAS — GRAVAÇÃO AINDA CORRENDO
               </span>
 
               {erroFecho && (
@@ -489,8 +497,9 @@ export default function EntrevistaComChamada({
               )}
 
               <p className={ENCERRAR_NOTA}>
-                A gravação parou agora. Baixe o que precisa antes de sair — o{" "}
-                <strong>vídeo existe só nesta aba</strong> e some ao fechar a tela.
+                A gravação <strong>continua correndo</strong> e só para em “Criar caso” — é o que
+                faz a conversa sobre os documentos entrar no áudio e no vídeo. No encerramento o{" "}
+                <strong>vídeo é baixado sozinho</strong>; ele existe só nesta aba e some ao fechar a tela.
               </p>
 
               <BotaoProcesso
@@ -506,8 +515,17 @@ export default function EntrevistaComChamada({
                   ) {
                     return;
                   }
-                  void roteiro.current?.encerrarAtendimento()
-                    .finally(() => onConcluir(...ultimo.current));
+                  void roteiro.current?.encerrarAtendimento().finally(() => {
+                    /* A transcrição é relida AGORA, e não tirada de
+                     * `ultimo.current`: o encerramento acabou de acrescentar a
+                     * cauda da conversa (ver `onCauda`), e o snapshot foi tirado
+                     * antes dela. Era o fim do atendimento que não chegava ao
+                     * caso mesmo depois de ter sido transcrito. */
+                    const [respostas, relato, entrevistaId] = ultimo.current;
+                    const trechos = roteiro.current?.transcricaoBruta() ?? ultimo.current[3];
+                    ultimo.current = [respostas, relato, entrevistaId, trechos];
+                    onConcluir(respostas, relato, entrevistaId, trechos);
+                  });
                 }}
               >
                 Criar caso
@@ -531,7 +549,9 @@ export default function EntrevistaComChamada({
                   Baixar a transcrição bruta (.txt)
                 </BotaoProcesso>
                 <span className={ENCERRAR_NOTA}>
-                  O vídeo fica no bloco <strong>VÍDEO</strong>, no alto desta tela.
+                  Baixado agora, o .txt traz a conversa <strong>só até aqui</strong> — o que for dito
+                  na etapa dos documentos entra no áudio, mas não neste arquivo. O vídeo fica no
+                  bloco <strong>GRAVAÇÃO VISUAL</strong>, no alto desta tela.
                 </span>
               </div>
 

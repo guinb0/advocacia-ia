@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { GravacaoVideo, podeGravarTela, podeGravarVideo } from "@/lib/gravacaoVideo";
 import type { EstadoVideo, FonteVideo, VideoGravado } from "@/lib/gravacaoVideo";
+import { baixarUrl } from "@/lib/baixar";
 
 /* Gravar a entrevista em vídeo — e baixar, porque ela não fica guardada.
  *
@@ -182,11 +183,21 @@ export default function VideoDaEntrevista({
               g.parar();
             })
           : null);
-      if (!pronto) return;
-      const link = document.createElement("a");
-      link.href = pronto.url;
-      link.download = pronto.nome;
-      link.click();
+      if (!pronto) {
+        // O `onstop` não chegou dentro do teto. O vídeo continua PENDENTE de
+        // propósito: é o que mantém o aviso de perda na saída, e antes disto
+        // o encerramento passava em silêncio.
+        setErro("O vídeo não ficou pronto em 15s e não baixou sozinho. Use o botão abaixo.");
+        return;
+      }
+      /* Pelo `lib/baixar`, e não por um `<a>` solto.
+       *
+       * O link nunca era inserido na página: no Firefox um `<a>` fora do
+       * documento não dispara download nenhum, e o `baixar()` da linha seguinte
+       * marcava o vídeo como salvo do mesmo jeito — o aviso "o vídeo será
+       * perdido" era desarmado e o advogado saía achando que tinha o arquivo. O
+       * vídeo não está em lugar nenhum além desta aba; aqui o erro é definitivo. */
+      baixarUrl(pronto.url, pronto.nome);
       baixar();
     } catch (e) {
       setErro(
