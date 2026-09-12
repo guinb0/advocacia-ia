@@ -20,10 +20,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FluxoPeticao, { type ControlesGeracaoPeticao } from "@/components/admin/FluxoPeticao";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   gerarContratoDoCaso as solicitarContratoDoCaso,
   requisitosDoContrato,
   analisarDocumentosDoCaso,
+  enviarTranscricaoEntrevista,
   type AnaliseDocumentos,
 } from "@/lib/api";
 import type { TomSelo } from "@/lib/formato";
@@ -56,6 +58,7 @@ import {
   type PesquisaDetalhe,
   type Precedente,
 } from "@/lib/agente";
+import { baixarArquivo } from "@/lib/baixar";
 
 /* Vocabulário de estado do guia: símbolo + palavra + cor, nesta ordem. */
 const ETAPA: Record<EstadoEtapa, { simbolo: string; palavra: string; tom: TomSelo }> = {
@@ -126,6 +129,11 @@ const MINUTA = "mt-[14px] p-[16px_18px] bg-papel-2 border border-borda max-h-[52
 const PARAGRAFO_MINUTA = "m-0 mb-2 font-titulo text-base leading-[1.7] text-justify text-tinta-2 max-w-[72ch]";
 const CAMPO_ENTREVISTA = "grid gap-1 text-tinta-2 text-sm";
 const INPUT_ENTREVISTA = "p-[7px_10px] border border-borda rounded-[6px] bg-papel text-tinta";
+
+/** De quem é o achado, em palavra que o advogado lê sem decifrar código. */
+function rotuloParte(parte: "titular" | "terceiro" | "empresa" | "indefinido"): string {
+  return { titular: "cliente", empresa: "empresa", terceiro: "terceiro", indefinido: "" }[parte];
+}
 
 function cpfCanonicoDoFato(valor: string): string | null {
   const normalizado = valor.normalize("NFKC");
@@ -222,14 +230,6 @@ function alertasIdentificacaoDoDossie(dados: DossieDados): string[] {
   return alertas;
 }
 
-function baixarArquivo(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 function campoLegivel(campo: string): string {
   const texto = campo
@@ -349,61 +349,37 @@ export default function Dossie({
       </div>
     );
 
-  const { agente } = dados;
-  const pendencias = agente.pendencias.filter((item) => item.status === "OPEN");
-  const requisitosContrato = requisitosDoContrato(respostasDoDossie(dados));
-  const alertasIdentificacaoContrato = alertasIdentificacaoDoDossie(dados);
-  const temAlertaCpf = alertasIdentificacaoContrato.some((alerta) => alerta.includes("CPF"));
-  const requisitosVisiveis = temAlertaCpf
-    ? requisitosContrato.filter((requisito) => requisito !== "CPF válido")
-    : requisitosContrato;
-  const bloqueantes = pendencias.filter((item) => item.severity === "BLOCKING");
-
   return (
-    /* Duas colunas: o dossiê e o agente. O caso NÃO sai da tela quando se fala com ele —
-     * antes isso era uma aba que substituía o dossiê inteiro, e a citação da resposta
-     * ("Entrevista · falta fazer") apontava para algo que o advogado não estava mais
-     * vendo. Ao lado, ela vira caminho de ida e volta.
-     *
-     * A coluna só existe a partir de `lg`: em 400px de painel sobre uma tela de celular
-     * não sobra dossiê nenhum para a citação apontar, e aí ela não serviria para nada. */
     <div className={DOSSIE_SHELL}>
-      <header className="overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] shadow-cartao">
-        <div className="flex min-w-0 flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
-              Dossiê do caso
-            </span>
-            <h1 className="mt-1 truncate text-xl font-semibold tracking-[-0.01em] text-tinta" title={dados.caso.cliente}>
-              {dados.caso.cliente}
-            </h1>
-            <p className="mt-1 truncate text-sm text-tinta-3" title={dados.checklist.categoria ?? dados.caso.categoria}>
-              {dados.checklist.categoria ?? dados.caso.categoria} · aberto em{" "}
-              {new Date(dados.caso.criado_em).toLocaleDateString("pt-BR")}
-            </p>
-          </div>
-
-          <div className="flex min-w-0 flex-wrap gap-2">
-            {onAbrirPainel && (
-              <Botao variante="secundario" pequeno onClick={onAbrirPainel}>
-                Painel
-              </Botao>
-            )}
-            {onAbrirJurimetria && (
-              <Botao variante="secundario" pequeno onClick={onAbrirJurimetria}>
-                Jurimetria
-              </Botao>
-            )}
-            <Botao
-              variante="primario"
-              disabled={
-                !geracaoPeticao?.podeGerar || geracaoPeticao?.ocupado || ocupado !== null
-              }
-              onClick={() => geracaoPeticao?.gerar()}
-            >
-              <span className="min-w-0 truncate">{geracaoPeticao?.rotulo ?? "Gerar análise e petição"}</span>
+      {/* A identidade do caso (cliente, categoria, data) e a navegação entre áreas
+        * já vivem no cabeçalho de abas logo acima — repeti-las aqui só empilhava
+        * "CASO 1" duas vezes. Este cabeçalho fica só com a ação que é do dossiê:
+        * gerar a análise e a petição. */}
+      <header className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-b border-borda bg-papel-2 px-4 py-3 sm:px-5">
+          <div className="min-w-0 flex-1">
+            <Botao variante="texto" pequeno onClick={onVoltar}>
+              ← Carteira
             </Botao>
           </div>
+          <BotaoProcesso
+            variante="primario"
+            processando={Boolean(geracaoPeticao?.ocupado)}
+            dica="Cruzando entrevista e documentos e redigindo a petição"
+            pendencia={
+              !geracaoPeticao
+                ? "Preparando o painel da petição…"
+                : geracaoPeticao.podeGerar
+                  ? null
+                  : "Falta a transcrição da entrevista para gerar."
+            }
+            aguardando={ocupado !== null}
+            erro={geracaoPeticao?.erro}
+            concluido={geracaoPeticao?.concluido}
+            onClick={() => geracaoPeticao?.gerar()}
+          >
+            <span className="min-w-0 truncate">{geracaoPeticao?.rotulo ?? "Gerar análise e petição"}</span>
+          </BotaoProcesso>
         </div>
       </header>
 
@@ -414,44 +390,28 @@ export default function Dossie({
         </Aviso>
       )}
 
-      <div className="grid min-w-0 grid-cols-1 items-start gap-[18px] xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
-        <aside className="grid min-w-0 content-start gap-[18px] order-2 xl:order-1">
-          <Cartao titulo="Documentos do checklist">
-            <p className={EXPLICACAO}>
-              {dados.checklist.progresso?.obrigatorios_entregues ?? 0} de{" "}
-              {dados.checklist.progresso?.obrigatorios_total ?? "?"} itens obrigatórios entregues.
-            </p>
-            <ul className="m-0 p-0 list-none grid gap-1 text-sm text-tinta-2">
-              {(dados.checklist.itens ?? [])
-                .filter((item) => item.obrigatorio && item.status !== "entregue")
-                .slice(0, 6)
-                .map((item) => (
-                  <li key={item.codigo} className="truncate" title={item.rotulo || item.nome || item.codigo}>
-                    • {item.rotulo || item.nome || item.codigo}
-                  </li>
-                ))}
-            </ul>
-            {(dados.checklist.itens ?? []).filter(
-              (item) => item.obrigatorio && item.status !== "entregue",
-            ).length === 0 && (
-              <p className={TEXTO_VAZIO}>Todos os obrigatórios entregues.</p>
-            )}
-          </Cartao>
+      {/* Uma coluna só. Antes a entrevista dividia a largura com a petição em uma
+        * barra lateral fixa, e a petição — que é o trabalho desta tela — ficava
+        * espremida ao lado de um texto que já foi lido. Agora a entrevista fica em
+        * cima, recolhida, e abre quando alguém precisa reler; a petição usa a
+        * largura inteira, com editor e prévia lado a lado. */}
+      <PainelEntrevista
+        casoId={casoId}
+        entrevistas={dados.entrevistas ?? []}
+        onAtualizar={carregar}
+      />
 
-          <PainelEntrevista
-            casoId={casoId}
-            entrevistas={dados.entrevistas ?? []}
-          />
-        </aside>
+      {/* A linha do tempo dos documentos precisa estar no fluxo principal do
+        * Dossiê: o advogado a abre, analisa os anexos e lê os acontecimentos
+        * datados com seu respectivo arquivo e trecho de comprovação. */}
+      <PainelAnaliseDocumentos casoId={casoId} />
 
-        <div className="grid min-w-0 content-start gap-[18px] order-1 xl:order-2">
-          <FluxoPeticao
-            casoId={casoId}
-            temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
-            onControlesGeracao={setGeracaoPeticao}
-          />
-        </div>
-      </div>
+      <FluxoPeticao
+        casoId={casoId}
+        temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}
+        onControlesGeracao={setGeracaoPeticao}
+      />
+
     </div>
   );
 }
@@ -596,15 +556,32 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
   }
 
   return (
-    <Cartao titulo="O que os documentos dizem">
+    <Cartao titulo="Cronologia dos fatos e documentos">
       <p className={EXPLICACAO}>
-        Lê o texto de todos os anexos e aponta o que eles trazem e a entrevista não
-        registrou. Cada achado cita o trecho literal do documento.
+        Veja a sequência dos acontecimentos comprovados nos documentos: acidente,
+        atendimento, exames, afastamento e demais marcos. Cada ponto mostra o arquivo
+        e o trecho que comprova a data.
       </p>
 
-      <Botao onClick={() => void analisar()} disabled={carregando}>
-        {carregando ? "Lendo os documentos…" : analise ? "Analisar de novo" : "Analisar documentos"}
-      </Botao>
+      <BotaoProcesso
+        variante="secundario"
+        onClick={analisar}
+        processando={carregando}
+        textoProcessando="Lendo os documentos…"
+        dica="Lendo o texto de todos os anexos do caso"
+      >
+        {analise ? "Analisar de novo" : "Analisar documentos"}
+      </BotaoProcesso>
+
+      {!analise && !carregando && !erro && (
+        <div className="mt-4 border-l-4 border-acao bg-acao-clara px-4 py-3">
+          <strong className="block text-sm text-tinta">Linha do tempo ainda não montada</strong>
+          <p className="mb-0 mt-1 text-sm leading-relaxed text-tinta-2">
+            Clique em “Analisar documentos” para organizar os fatos por data. A análise não
+            altera os anexos nem a minuta.
+          </p>
+        </div>
+      )}
 
       {erro && (
         <Aviso tom="critico" titulo="A análise não foi concluída">
@@ -622,6 +599,30 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
             {analise.recusados ? ` · ${analise.recusados} achado(s) recusados na conferência da citação` : ""}
           </p>
 
+          {(analise.cronologia?.length ?? 0) > 0 && (
+            <div className="mt-4 border-t border-borda pt-3">
+              <p className={ORIGEM}>Linha do tempo dos fatos comprovados</p>
+              <ol className="m-0 border-l border-acao pl-5">
+                {analise.cronologia!.map((evento, i) => (
+                  <li key={i} className="relative mb-4 last:mb-0">
+                    <span className="absolute -left-[25px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
+                    <strong className="block text-sm tabular-nums text-acao">{evento.data}</strong>
+                    <span className="block text-sm text-tinta">{evento.evento}</span>
+                    <span className={`${ORIGEM} block truncate`} title={evento.documento}>{evento.documento}</span>
+                    <blockquote className={TRECHO}>{evento.citacao}</blockquote>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {(analise.cronologia?.length ?? 0) === 0 && (
+            <div className="mt-4 border-l-4 border-atencao bg-atencao-claro px-4 py-3 text-sm leading-relaxed text-tinta-2">
+              Nenhum fato com data pôde ser confirmado nos documentos lidos. Revise os anexos
+              ou envie documento que informe a data do acontecimento.
+            </div>
+          )}
+
           {analise.achados.length === 0 ? (
             <p className={TEXTO_VAZIO}>
               Nada nos documentos que a entrevista já não tenha registrado.
@@ -638,12 +639,45 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
                       </Selo>
                     )}
                   </div>
-                  <div className={`${ORIGEM} truncate`} title={a.documento}>{a.documento}</div>
+                  <div className={`${ORIGEM} truncate`} title={a.documento}>
+                    {a.documento}
+                    {a.parte && a.parte !== "indefinido" && (
+                      <span className="text-tinta-3">
+                        {" · "}
+                        {rotuloParte(a.parte)}
+                        {a.papel ? ` (${a.papel})` : ""}
+                      </span>
+                    )}
+                  </div>
                   {a.relevancia && <p className={RAZAO}>{a.relevancia}</p>}
                   <blockquote className={TRECHO}>{a.citacao}</blockquote>
                 </li>
               ))}
             </ul>
+          )}
+
+          {/* Gastos comprovados nos documentos, EM ORDEM CRONOLÓGICA, cada um
+            * ligado ao arquivo de origem. O servidor já ordena e confere a
+            * citação — aqui só se apresenta. */}
+          {(analise.gastos?.length ?? 0) > 0 && (
+            <div className="mt-4 border-t border-borda pt-3">
+              <p className={ORIGEM}>Gastos nos documentos, em ordem cronológica</p>
+              <ul className={LISTA}>
+                {analise.gastos!.map((g, i) => (
+                  <li key={i} className={ITEM}>
+                    <div className={ITEM_TOPO}>
+                      <strong className="tabular-nums">{g.valor}</strong>
+                      <span className="text-tinta-3 tabular-nums">{g.data || "sem data"}</span>
+                    </div>
+                    {g.descricao && <p className={RAZAO}>{g.descricao}</p>}
+                    <div className={`${ORIGEM} truncate`} title={g.documento}>
+                      {g.documento}
+                    </div>
+                    <blockquote className={TRECHO}>{g.citacao}</blockquote>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </>
       )}
@@ -1007,7 +1041,8 @@ function VisualizadorPeticao({
           <Botao
             variante="secundario"
             pequeno
-            disabled={!endereco}
+            carregando={!endereco}
+            textoCarregando="Abrindo o PDF…"
             onClick={() => ancora.current?.click()}
           >
             Baixar PDF
@@ -1015,10 +1050,11 @@ function VisualizadorPeticao({
           <Botao
             variante="secundario"
             pequeno
-            disabled={baixandoDocx}
+            carregando={baixandoDocx}
+            textoCarregando="Baixando…"
             onClick={() => void baixarDocx()}
           >
-            {baixandoDocx ? "Baixando…" : "Baixar .docx"}
+            Baixar .docx
           </Botao>
         </div>
       </div>
@@ -1219,12 +1255,13 @@ function PainelPeticao({
         </Botao>
         {!retida && peticao.status === "IN_REVIEW" && (
           <>
-            <Botao variante="primario" disabled={ocupado} onClick={() => void onDecidir(true)}>
+            {/* A decisão devolve Promise: só o botão clicado gira, e o outro espera. */}
+            <BotaoProcesso variante="primario" aguardando={ocupado} onClick={() => onDecidir(true)}>
               Aprovar
-            </Botao>
-            <Botao variante="secundario" disabled={ocupado} onClick={() => void onDecidir(false)}>
+            </BotaoProcesso>
+            <BotaoProcesso variante="secundario" aguardando={ocupado} onClick={() => onDecidir(false)}>
               Rejeitar
-            </Botao>
+            </BotaoProcesso>
           </>
         )}
       </div>
@@ -1248,12 +1285,22 @@ function PainelPeticao({
           ))}
           {erroEdicao && <Aviso tom="critico">{erroEdicao}</Aviso>}
           <div className="flex flex-wrap gap-2">
-            <Botao variante="secundario" disabled={salvando} onClick={() => void salvarEdicao()}>
-              {salvando ? "Salvando…" : "Salvar rascunho"}
-            </Botao>
-            <Botao variante="primario" disabled={salvando} onClick={() => void salvarEdicao(true)}>
-              {salvando ? "Preparando PDF…" : "Salvar e baixar PDF"}
-            </Botao>
+            <BotaoProcesso
+              variante="secundario"
+              aguardando={salvando}
+              textoProcessando="Salvando…"
+              onClick={() => salvarEdicao()}
+            >
+              Salvar rascunho
+            </BotaoProcesso>
+            <BotaoProcesso
+              variante="primario"
+              aguardando={salvando}
+              textoProcessando="Preparando o PDF…"
+              onClick={() => salvarEdicao(true)}
+            >
+              Salvar e baixar PDF
+            </BotaoProcesso>
           </div>
         </div>
       )}
@@ -1438,12 +1485,12 @@ function PainelEstrategia({
 
       {estrategia.status === "PROPOSED" && (
         <div className="flex gap-2 flex-wrap">
-          <Botao variante="primario" disabled={ocupado} onClick={() => void onDecidirEstrategia(true)}>
+          <BotaoProcesso variante="primario" aguardando={ocupado} onClick={() => onDecidirEstrategia(true)}>
             Aprovar estratégia
-          </Botao>
-          <Botao variante="secundario" disabled={ocupado} onClick={() => void onDecidirEstrategia(false)}>
+          </BotaoProcesso>
+          <BotaoProcesso variante="secundario" aguardando={ocupado} onClick={() => onDecidirEstrategia(false)}>
             Rejeitar
-          </Botao>
+          </BotaoProcesso>
         </div>
       )}
       {aprovada && estrategia.reviewed_by && (
@@ -1519,12 +1566,12 @@ function CartaoHipotese({
 
       {hipotese.status === "PROPOSED" && (
         <div className="flex gap-2 flex-wrap">
-          <Botao variante="secundario" pequeno disabled={ocupado} onClick={() => void onDecidir(true)}>
+          <BotaoProcesso variante="secundario" pequeno aguardando={ocupado} onClick={() => onDecidir(true)}>
             Aceitar tese
-          </Botao>
-          <Botao variante="texto" pequeno disabled={ocupado} onClick={() => void onDecidir(false)}>
+          </BotaoProcesso>
+          <BotaoProcesso variante="texto" pequeno aguardando={ocupado} onClick={() => onDecidir(false)}>
             Descartar
-          </Botao>
+          </BotaoProcesso>
         </div>
       )}
     </li>
@@ -1562,6 +1609,8 @@ function PainelContradicoes({
   const [justificativa, setJustificativa] = useState("");
 
   const emAberto = contradicoes.filter((item) => item.status === "OPEN");
+  const faltaJustificativa =
+    justificativa.trim().length < 3 ? "Escreva acima por que está decidindo assim." : null;
   if (contradicoes.length === 0) return null;
 
   return (
@@ -1614,17 +1663,17 @@ function PainelContradicoes({
 
               {!decidida && aberta !== item.id && (
                 <div className="flex gap-2 flex-wrap">
-                  <Botao
+                  <BotaoProcesso
                     variante="secundario"
                     pequeno
-                    disabled={ocupado}
+                    aguardando={ocupado}
                     onClick={() => {
                       setAberta(item.id);
                       setJustificativa("");
                     }}
                   >
                     Decidir
-                  </Botao>
+                  </BotaoProcesso>
                 </div>
               )}
 
@@ -1642,12 +1691,14 @@ function PainelContradicoes({
                     placeholder="Ex.: o cliente comprova trabalho desde 02/2022 com recibos."
                   />
                   <div className="flex gap-2 flex-wrap">
-                    <Botao
+                    <BotaoProcesso
                       variante="primario"
                       pequeno
-                      disabled={ocupado || justificativa.trim().length < 3}
+                      aguardando={ocupado}
+                      pendencia={faltaJustificativa}
+                      pendenciaAoClicar
                       onClick={() =>
-                        void onResolver(
+                        onResolver(
                           item.id,
                           "RESOLVED",
                           "Ambos os fatos permanecem: a divergência é a tese do caso.",
@@ -1656,13 +1707,15 @@ function PainelContradicoes({
                       }
                     >
                       Manter as duas versões (é a tese)
-                    </Botao>
-                    <Botao
+                    </BotaoProcesso>
+                    <BotaoProcesso
                       variante="secundario"
                       pequeno
-                      disabled={ocupado || justificativa.trim().length < 3}
+                      aguardando={ocupado}
+                      pendencia={faltaJustificativa}
+                      pendenciaAoClicar
                       onClick={() =>
-                        void onResolver(
+                        onResolver(
                           item.id,
                           "RESOLVED",
                           "Prevalece o que o documento registra.",
@@ -1671,13 +1724,15 @@ function PainelContradicoes({
                       }
                     >
                       Prevalece o documento
-                    </Botao>
-                    <Botao
+                    </BotaoProcesso>
+                    <BotaoProcesso
                       variante="texto"
                       pequeno
-                      disabled={ocupado || justificativa.trim().length < 3}
+                      aguardando={ocupado}
+                      pendencia={faltaJustificativa}
+                      pendenciaAoClicar
                       onClick={() =>
-                        void onResolver(
+                        onResolver(
                           item.id,
                           "DISMISSED",
                           "Não era divergência.",
@@ -1686,7 +1741,7 @@ function PainelContradicoes({
                       }
                     >
                       Não era divergência
-                    </Botao>
+                    </BotaoProcesso>
                   </div>
                 </div>
               )}
@@ -1711,12 +1766,43 @@ function PainelContradicoes({
 function PainelEntrevista({
   casoId,
   entrevistas,
+  onAtualizar,
 }: {
   casoId: string;
   entrevistas: EntrevistaResumo[];
+  onAtualizar: () => void | Promise<void>;
 }) {
+  /* Recolhida por padrão: a entrevista é o insumo, não o trabalho da tela. Quem
+   * chega aqui vem redigir a petição, e o resumo do cabeçalho já diz se existe
+   * transcrição e qual é. Abre com um clique quando alguém precisa reler. */
+  const [aberto, setAberto] = useState(false);
   const [lendo, setLendo] = useState<string | null>(null);
   const [texto, setTexto] = useState<Record<string, string>>({});
+  const [transcricao, setTranscricao] = useState("");
+  /** De onde vem a transcrição em envio — só o botão usado mostra o andamento. */
+  const [enviando, setEnviando] = useState<"texto" | "arquivo" | null>(null);
+  const [erroEnvio, setErroEnvio] = useState<string | null>(null);
+  const arquivoRef = useRef<HTMLInputElement>(null);
+
+  async function adicionar(arquivo: File, origem: "texto" | "arquivo" = "arquivo") {
+    setEnviando(origem);
+    setErroEnvio(null);
+    try {
+      await enviarTranscricaoEntrevista(casoId, arquivo);
+      setTranscricao("");
+      await onAtualizar();
+    } catch (e) {
+      setErroEnvio(e instanceof Error ? e.message : "Não foi possível adicionar a transcrição.");
+    } finally {
+      setEnviando(null);
+    }
+  }
+
+  function adicionarTextoColado() {
+    const t = transcricao.trim();
+    if (!t) return;
+    return adicionar(new File([t], "transcricao.txt", { type: "text/plain" }), "texto");
+  }
 
   async function abrirTexto(entrevistaId: string) {
     if (texto[entrevistaId]) {
@@ -1728,8 +1814,33 @@ function PainelEntrevista({
     setLendo(entrevistaId);
   }
 
+  const transcritas = entrevistas.filter((item) => item.caracteres > 0).length;
+  const resumoFechado =
+    entrevistas.length === 0
+      ? "Nenhuma entrevista registrada"
+      : `${entrevistas.length} arquivo${entrevistas.length > 1 ? "s" : ""} · ${transcritas} transcrit${transcritas === 1 ? "a" : "as"}`;
+
   return (
-    <Cartao titulo="Entrevista do atendimento">
+    <Cartao className="grid gap-3">
+      <button
+        type="button"
+        aria-expanded={aberto}
+        className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-3 border-0 bg-transparent p-0 text-left"
+        onClick={() => setAberto((atual) => !atual)}
+      >
+        <span className="min-w-0">
+          <span className="block text-tinta font-titulo text-lg font-semibold leading-[1.25]">
+            Entrevista do atendimento
+          </span>
+          {!aberto && <span className={`${EXPLICACAO} block`}>{resumoFechado}</span>}
+        </span>
+        <span className="shrink-0 text-sm text-tinta-3" aria-hidden>
+          {aberto ? "▲ recolher" : "▼ abrir"}
+        </span>
+      </button>
+
+      {!aberto ? null : (
+      <>
       <p className={EXPLICACAO}>
         O que o cliente contou. Os fatos que saem daqui entram como <strong>alegados</strong>:
         ninguém conferiu ainda, e a petição não os afirma até um documento confirmar. O
@@ -1796,6 +1907,67 @@ function PainelEntrevista({
 
       {entrevistas.length === 0 && (
         <p className={TEXTO_VAZIO}>Nenhuma entrevista registrada neste caso.</p>
+      )}
+
+      {/* Sempre disponível: um caso pode chegar sem entrevista gravada (contato
+       * por telefone, atendimento antigo). Colar ou subir a transcrição aqui é o
+       * que destrava a análise e a petição. */}
+      <div className="mt-4 border-t border-borda pt-4">
+        <h4 className="m-0 mb-2 text-sm font-semibold text-tinta">
+          {entrevistas.length === 0 ? "Adicionar transcrição" : "Adicionar outra transcrição"}
+        </h4>
+        <p className={EXPLICACAO}>
+          Cole o texto do atendimento ou envie um arquivo (.txt, .docx, .pdf). Ele passa a valer
+          como entrevista deste caso.
+        </p>
+        <textarea
+          value={transcricao}
+          onChange={(e) => setTranscricao(e.target.value)}
+          placeholder="Cole aqui a transcrição do atendimento…"
+          rows={5}
+          disabled={enviando !== null}
+          className="mt-2 w-full rounded-campo border border-borda bg-papel p-3 text-sm text-tinta placeholder:text-tinta-3"
+        />
+        {erroEnvio && (
+          <p className="mt-2 mb-0 text-sm text-critico">{erroEnvio}</p>
+        )}
+        <div className="mt-2 flex flex-wrap items-start gap-2">
+          <BotaoProcesso
+            variante="primario"
+            pequeno
+            onClick={adicionarTextoColado}
+            processando={enviando === "texto"}
+            textoProcessando="Enviando…"
+            pendencia={transcricao.trim() ? null : "Cole acima o texto do atendimento."}
+            pendenciaAoClicar
+            aguardando={enviando === "arquivo"}
+          >
+            Adicionar transcrição colada
+          </BotaoProcesso>
+          <BotaoProcesso
+            variante="secundario"
+            pequeno
+            onClick={() => arquivoRef.current?.click()}
+            processando={enviando === "arquivo"}
+            textoProcessando="Enviando o arquivo…"
+            aguardando={enviando === "texto"}
+          >
+            Enviar arquivo
+          </BotaoProcesso>
+          <input
+            ref={arquivoRef}
+            type="file"
+            accept=".txt,.docx,.pdf,.md,.rtf"
+            hidden
+            onChange={(e) => {
+              const arquivo = e.target.files?.[0];
+              e.target.value = "";
+              if (arquivo) void adicionar(arquivo);
+            }}
+          />
+        </div>
+      </div>
+      </>
       )}
     </Cartao>
   );

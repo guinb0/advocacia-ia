@@ -17,6 +17,7 @@ segue responsável pelo texto exibido. Aqui ela existe só para ordenar e contar
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +26,19 @@ from . import casos as casos_ocr
 
 #: Dias parados a partir dos quais um caso sem documento vira cobrança.
 DIAS_PARA_COBRAR = 7
+
+#: A partir daqui, mesmo COM follow-up automático ligado, o silêncio já pede uma
+#: ligação: o WhatsApp não trouxe os documentos e a espera virou risco.
+DIAS_PARA_LIGAR = 10
+
+#: Quantos dias uma ligação registrada tira o caso da fila de ligar.
+#:
+#: Antes não havia prazo: UMA ligação, alguma vez, e o caso saía da fila para
+#: sempre — mesmo sem nunca ter entregado documento nenhum. Quem ligou na
+#: segunda e não recebeu nada nunca mais via aquele cliente na aba "Ligar", e o
+#: caso apodrecia sem ninguém notar. A ligação silencia, não encerra: passada a
+#: janela, se ainda falta documento, ele volta para a fila.
+DIAS_APOS_LIGACAO = 7
 
 #: Casos por página. O mesmo valor é o padrão da rota.
 TAMANHO_PADRAO = 10
@@ -66,7 +80,43 @@ def _peso(severidade: str, progresso: dict[str, Any], dias: int) -> int:
     return base - dias
 
 
-def montar(pagina: int = 1, tamanho: int = TAMANHO_PADRAO) -> dict[str, Any]:
+def _normalizar(texto: str) -> str:
+    """Minúsculas, sem acento — para buscar 'joão' achando 'JOAO' e vice-versa."""
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or "")) if unicodedata.category(c) != "Mn"
+    )
+    return " ".join(sem_acento.lower().split())
+
+
+def _passa_situacao(medido: dict[str, Any], filtro: str) -> bool:
+    """O mesmo vocabulário dos chips da tela (`useCarteira.ts`), agora no servidor.
+
+    `pedido` e `pronto` olham o progresso; os demais são a própria severidade.
+    """
+    if filtro in ("", "todos"):
+        return True
+    progresso = medido["situacao"]["progresso"]
+    if filtro == "pedido":
+        return progresso["obrigatorios_pendentes"] > 0
+    if filtro == "pronto":
+        return bool(progresso["pronto"])
+    return medido["severidade"] == filtro
+
+
+#: A porta de entrada é por criação: caso acabado de abrir não desaparece no
+#: meio de uma carteira antiga. Risco continua disponível como escolha.
+ORDENS = ("risco", "recente", "parado", "nome")
+
+
+def montar(
+    pagina: int = 1,
+    tamanho: int = TAMANHO_PADRAO,
+    *,
+    busca: str = "",
+    categoria: str = "",
+    situacao: str = "",
+    ordenar: str = "recente",
+) -> dict[str, Any]:
     """A página pedida da fila, mais os números que valem para a carteira toda.
 
     Duas consultas numa conexão só — o banco é remoto e o handshake custa mais que as
@@ -75,7 +125,16 @@ def montar(pagina: int = 1, tamanho: int = TAMANHO_PADRAO) -> dict[str, Any]:
     with banco.sessao():
         cadastro = armazenamento.listar_casos()
         entregas_por_caso = armazenamento.entregas_de_todos_os_casos()
-    return compor(cadastro, entregas_por_caso, pagina=pagina, tamanho=tamanho)
+    return compor(
+        cadastro,
+        entregas_por_caso,
+        pagina=pagina,
+        tamanho=tamanho,
+        busca=busca,
+        categoria=categoria,
+        situacao=situacao,
+        ordenar=ordenar,
+    )
 
 
 def compor(
@@ -83,15 +142,25 @@ def compor(
     entregas_por_caso: dict[str, list[dict[str, Any]]],
     pagina: int = 1,
     tamanho: int = TAMANHO_PADRAO,
+    *,
+    busca: str = "",
+    categoria: str = "",
+    situacao: str = "",
+    ordenar: str = "recente",
 ) -> dict[str, Any]:
-    """A mesma fila, a partir de dados já em mãos — sem tocar no banco (assim é testada)."""
+    """A mesma fila, a partir de dados já em mãos — sem tocar no banco (assim é testada).
+
+    Os filtros (`busca`, `categoria`, `situacao`) recortam a LISTA e a paginação; os
+    contadores do topo e os painéis laterais continuam medindo a carteira inteira, para
+    não mentir sobre o tamanho do escritório quando um filtro está ativo.
+    """
     pagina = max(1, pagina)
     tamanho = max(1, min(100, tamanho))
 
     medidos: list[dict[str, Any]] = []
     for caso in cadastro:
-        situacao = casos_ocr.situacao_de(caso, entregas_por_caso.get(str(caso["id"]), []))
-        progresso = situacao.get("progresso")
+        situacao_caso = casos_ocr.situacao_de(caso, entregas_por_caso.get(str(caso["id"]), []))
+        progresso = situacao_caso.get("progresso")
         if not progresso:
             # Categoria que saiu do código: sem checklist não há progresso a medir.
             continue
@@ -99,19 +168,51 @@ def compor(
         severidade = _severidade(progresso, dias)
         medidos.append(
             {
-                "situacao": situacao,
+                "situacao": situacao_caso,
                 "severidade": severidade,
                 "peso": _peso(severidade, progresso, dias),
+                "dias": dias,
             }
         )
 
     medidos.sort(key=lambda m: m["peso"])
 
-    total = len(medidos)
+    # Vocabulário das categorias presentes, para a tela oferecer só o que existe.
+    categorias_presentes = _categorias_presentes(medidos)
+
+    # ---- filtragem: recorta a lista, preserva a medição da carteira inteira ----
+    filtrados = list(medidos)
+    if situacao:
+        filtrados = [m for m in filtrados if _passa_situacao(m, situacao)]
+    if categoria:
+        filtrados = [
+            m for m in filtrados if str(m["situacao"]["caso"].get("categoria") or "") == categoria
+        ]
+    alvo = _normalizar(busca)
+    if alvo:
+        def casa(m: dict[str, Any]) -> bool:
+            caso = m["situacao"]["caso"]
+            campos = " ".join(
+                _normalizar(v)
+                for v in (
+                    caso.get("cliente"),
+                    caso.get("cpf"),
+                    caso.get("observacao"),
+                    (m["situacao"].get("categoria") or {}).get("nome"),
+                    caso.get("categoria"),
+                )
+            )
+            return all(termo in campos for termo in alvo.split())
+
+        filtrados = [m for m in filtrados if casa(m)]
+
+    _ordenar(filtrados, ordenar)
+
+    total = len(filtrados)
     paginas = max(1, -(-total // tamanho))
     pagina = min(pagina, paginas)
     inicio = (pagina - 1) * tamanho
-    da_pagina = medidos[inicio : inicio + tamanho]
+    da_pagina = filtrados[inicio : inicio + tamanho]
 
     return {
         "situacoes": [m["situacao"] for m in da_pagina],
@@ -119,10 +220,37 @@ def compor(
         "pagina": pagina,
         "tamanho": tamanho,
         "paginas": paginas,
+        "categorias": categorias_presentes,
         "triagem": _triagem(medidos),
         "chegando_agora": _chegando_agora(medidos),
         "pedidos": _pedidos(medidos),
     }
+
+
+def _ordenar(medidos: list[dict[str, Any]], ordenar: str) -> None:
+    """Reordena no lugar. Já vem ordenado por risco; só mexe se pedirem outra ordem."""
+    if ordenar == "recente":
+        medidos.sort(
+            key=lambda m: str(m["situacao"]["caso"].get("criado_em") or ""),
+            reverse=True,
+        )
+    elif ordenar == "parado":
+        medidos.sort(key=lambda m: m["dias"], reverse=True)
+    elif ordenar == "nome":
+        medidos.sort(key=lambda m: _normalizar(m["situacao"]["caso"].get("cliente")))
+    # "risco" (ou desconhecido): mantém a ordem por peso já aplicada.
+
+
+def _categorias_presentes(medidos: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Categorias que aparecem na carteira, com código e nome, sem repetir."""
+    vistas: dict[str, str] = {}
+    for m in medidos:
+        caso = m["situacao"]["caso"]
+        codigo = str(caso.get("categoria") or "")
+        if not codigo or codigo in vistas:
+            continue
+        vistas[codigo] = (m["situacao"].get("categoria") or {}).get("nome") or codigo
+    return [{"codigo": c, "nome": n} for c, n in sorted(vistas.items(), key=lambda kv: _normalizar(kv[1]))]
 
 
 def _triagem(medidos: list[dict[str, Any]]) -> dict[str, int]:
@@ -173,3 +301,150 @@ def _pedidos(medidos: list[dict[str, Any]], quantos: int = 4) -> list[dict[str, 
         if len(saida) == quantos:
             break
     return saida
+
+
+# ---------------------------------------------------- RELATÓRIO DE FOLLOW-UP
+# Visão operacional para o atendimento: quem tem documento obrigatório pendente
+# e — pela regra abaixo — precisa de LIGAÇÃO, porque o follow-up automático por
+# WhatsApp não está trazendo os documentos.
+
+
+def _cobrancas_por_caso() -> dict[str, dict[str, Any]]:
+    """Estado do follow-up automático (cobrança) de cada caso, em uma consulta."""
+    with banco.conectar() as con:
+        linhas = con.execute(
+            "SELECT caso_id, ativa, telefone, ultimo_envio_em, ultimo_erro FROM cobrancas_documentos"
+        ).fetchall()
+    return {str(l["caso_id"]): dict(l) for l in linhas}
+
+
+def _ultimas_ligacoes_por_caso() -> dict[str, dict[str, Any]]:
+    with banco.conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT caso_id, id, atendente_id, atendente_nome, realizada_em, criado_em
+              FROM (
+                    SELECT caso_id, id, atendente_id, atendente_nome, realizada_em, criado_em,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY caso_id ORDER BY realizada_em DESC, id DESC
+                           ) AS posicao
+                      FROM ligacoes
+                   ) AS ordenadas
+             WHERE posicao = 1
+            """
+        ).fetchall()
+    return {str(linha["caso_id"]): dict(linha) for linha in linhas}
+
+
+def _dias_desde_ligacao(ultima_ligacao: dict[str, Any]) -> int | None:
+    """Dias corridos desde a última ligação, ou None quando a data não serve."""
+    bruto = ultima_ligacao.get("realizada_em") or ultima_ligacao.get("criado_em")
+    if not bruto:
+        return None
+    if isinstance(bruto, datetime):
+        quando = bruto
+    else:
+        try:
+            quando = datetime.fromisoformat(str(bruto).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    agora = datetime.now(quando.tzinfo) if quando.tzinfo else datetime.now()
+    return max(0, (agora - quando).days)
+
+
+def _precisa_ligar(
+    telefone: str,
+    cobranca: dict[str, Any] | None,
+    dias: int,
+    ultima_ligacao: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """Quando o follow-up por WhatsApp não resolve e um humano tem de ligar.
+
+    Regra (operacional, não é ranking de cliente):
+      - sem telefone → só dá para ligar;
+      - último envio do follow-up falhou → o WhatsApp não está chegando;
+      - follow-up desligado e caso parado além do prazo de cobrança;
+      - follow-up ligado, mas parado tempo demais mesmo assim.
+    """
+    # A ligação recente silencia o caso — dar tempo de o cliente providenciar o
+    # documento —, mas não o encerra: sem prazo, "já liguei uma vez" valia para
+    # sempre. Data ilegível cai no comportamento antigo (silencia), que é o
+    # conservador: melhor não recolocar na fila por causa de um dado ruim.
+    if ultima_ligacao:
+        dias_desde = _dias_desde_ligacao(ultima_ligacao)
+        if dias_desde is None or dias_desde < DIAS_APOS_LIGACAO:
+            return False, "Ligação registrada."
+        return True, f"Ligado há {dias_desde} dias e os documentos não chegaram."
+    if not telefone:
+        return True, "Sem telefone cadastrado — contato só por ligação."
+    if cobranca and str(cobranca.get("ultimo_erro") or "").strip():
+        return True, "O follow-up por WhatsApp falhou no último envio."
+    ativa = bool(cobranca and cobranca.get("ativa"))
+    if not ativa and dias >= DIAS_PARA_COBRAR:
+        return True, f"Sem follow-up automático e {dias} dias sem movimento."
+    if ativa and dias >= DIAS_PARA_LIGAR:
+        return True, f"{dias} dias sem os documentos, apesar do follow-up."
+    return False, ""
+
+
+def relatorio_follow_up() -> dict[str, Any]:
+    """Clientes com documento obrigatório pendente, com telefone, faltantes e alerta.
+
+    Só entra quem tem pendência OBRIGATÓRIA. Ordena os que precisam de ligação
+    primeiro e, entre eles, o que está parado há mais tempo. É o retrato do
+    follow-up; a decisão de ligar é de quem atende.
+    """
+    with banco.sessao():
+        cadastro = armazenamento.listar_casos()
+        entregas_por_caso = armazenamento.entregas_de_todos_os_casos()
+        cobrancas = _cobrancas_por_caso()
+        ligacoes = _ultimas_ligacoes_por_caso()
+
+    clientes: list[dict[str, Any]] = []
+    for caso in cadastro:
+        situacao_caso = casos_ocr.situacao_de(caso, entregas_por_caso.get(str(caso["id"]), []))
+        progresso = situacao_caso.get("progresso")
+        if not progresso or progresso.get("obrigatorios_pendentes", 0) == 0:
+            continue
+        faltantes = [
+            i["nome"]
+            for i in situacao_caso.get("itens", [])
+            if i.get("obrigatorio") and i.get("status") == casos_ocr.PENDENTE
+        ]
+        dias = _dias_desde(caso.get("atualizado_em") or caso.get("criado_em"))
+        telefone = str(caso.get("telefone") or "").strip()
+        cobranca = cobrancas.get(str(caso["id"]))
+        ultima_ligacao = ligacoes.get(str(caso["id"]))
+        precisa, motivo = _precisa_ligar(telefone, cobranca, dias, ultima_ligacao)
+        clientes.append(
+            {
+                "caso_id": str(caso["id"]),
+                "cliente": str(caso.get("cliente") or ""),
+                "telefone": telefone,
+                "documentos_faltantes": faltantes,
+                "faltantes_total": len(faltantes),
+                "dias_parado": dias,
+                "follow_up_ativo": bool(cobranca and cobranca.get("ativa")),
+                "precisa_ligar": precisa,
+                "motivo_ligacao": motivo,
+                "ultima_ligacao": ultima_ligacao,
+                # Quantos dias faz — a tela precisa disto para dizer "ligado há
+                # 3 dias" sem reimplementar a conta do fuso do lado do navegador.
+                "dias_desde_ligacao": (
+                    _dias_desde_ligacao(ultima_ligacao) if ultima_ligacao else None
+                ),
+            }
+        )
+
+    clientes.sort(key=lambda c: (not c["precisa_ligar"], -c["dias_parado"]))
+    return {
+        "clientes": clientes,
+        "total": len(clientes),
+        "precisam_ligar": sum(1 for c in clientes if c["precisa_ligar"]),
+        "regra": (
+            f"Liga quando: sem telefone; ou WhatsApp do follow-up falhou; ou sem "
+            f"follow-up e {DIAS_PARA_COBRAR}+ dias parado; ou {DIAS_PARA_LIGAR}+ dias "
+            f"parado mesmo com follow-up."
+        ),
+        "aviso": "Retrato operacional do follow-up; a decisão de ligar é de quem atende.",
+    }

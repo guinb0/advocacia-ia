@@ -122,4 +122,43 @@ JWT_SECRET=<o mesmo segredo da API>
 
 O proxy deve encaminhar `X-Forwarded-Proto=https`, `X-Forwarded-Host` e
 `X-Forwarded-Port=443` — sem `X-Forwarded-Proto` a API não se reconhece atrás de
-HTTPS e o cookie `Secure` não gruda.
+HTTPS e o cookie `Secure` não gruda. **`X-Forwarded-For` também**: é dele que
+sai o IP que o captcha manda para a Cloudflare conferir (ver `_ip_do_pedido` em
+`app/usuarios.py`); sem ele, todas as tentativas chegam com o IP do proxy e essa
+checagem a mais deixa de valer.
+
+## Captcha e segundo fator
+
+> **ATENÇÃO ANTES DO PRÓXIMO DEPLOY.** O compose de homologação sobe com
+> `DOIS_FATORES_OBRIGATORIO=1`. Com `SMTP_HOST` vazio, **todo login de perfil
+> interno passa a responder 503** — de propósito: é melhor ninguém entrar do que
+> todo mundo entrar com um fator a menos sem perceber. Ou preencha o SMTP abaixo
+> **antes** de subir, ou defina `DOIS_FATORES_OBRIGATORIO=0` na stack enquanto o
+> e-mail não estiver pronto.
+
+O domínio a cadastrar no Turnstile é **`advocacia.levelhom.com.br`** (Cloudflare
+→ Turnstile → *Add site*; acrescente `localhost` no mesmo widget para servir ao
+desenvolvimento). Só cadastrar o domínio não liga nada — as chaves precisam
+chegar à stack:
+
+```env
+# Captcha. SECRET vazio DESLIGA o captcha (o log grita, a stack sobe).
+# A SITE_KEY é pública e chega ao navegador pelo /api/config — NÃO é NEXT_PUBLIC_.
+TURNSTILE_SITE_KEY=<site key do widget de advocacia.levelhom.com.br>
+TURNSTILE_SECRET_KEY=<secret key do mesmo widget>
+
+# Segundo fator por e-mail. Sem SMTP não há como entregar o código.
+SMTP_HOST=<smtp do escritório>
+SMTP_PORTA=587
+SMTP_SEGURANCA=starttls
+SMTP_USUARIO=<conta de envio>
+SMTP_SENHA=<senha de aplicativo, não a senha da conta>
+SMTP_REMETENTE=<endereço que aparece para quem recebe>
+DOIS_FATORES_OBRIGATORIO=1
+```
+
+Nada disso vai para o build do frontend: a tela descobre se há captcha — e com
+que chave — chamando `/api/config` em tempo de execução.
+
+Detalhes de cada ajuste, e o que fazer quando o código não chega, em
+[ACESSO-CAPTCHA-2FA.md](ACESSO-CAPTCHA-2FA.md).

@@ -1,0 +1,171 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: Archivo, system-ui, -apple-system, "Segoe UI", sans-serif; background: #ffffff; color: #33465c; -webkit-font-smoothing: antialiased; }
+    a { color: #17457a; } a:hover { color: #10345f; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; display: flex; background: #ffffff; overflow: hidden;">
+
+  <!-- ============ HISTÓRICO DE CONVERSAS ============ -->
+  <div style="width: 268px; flex-shrink: 0; background: #f7f9fc; border-right: 1px solid #e3e9f0; display: flex; flex-direction: column; min-height: 0;">
+
+    <div style="padding: 14px 14px 10px;">
+      <button style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 40px; padding: 9px 16px; border: 1px solid #17457a; border-radius: 8px; background: #17457a; font-family: Archivo, sans-serif; font-size: 14px; font-weight: 600; color: #ffffff; cursor: pointer;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+        Nova conversa
+      </button>
+    </div>
+
+    <div style="padding: 0 14px 10px;">
+      <div style="display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 11px; border: 1px solid #c8d3e0; border-radius: 8px; background: #ffffff;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a6b80" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <span style="font-size: 14px; color: #5a6b80;">Buscar nas conversas</span>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-height: 0; overflow: hidden; padding: 0 8px;">
+
+      <div style="padding: 10px 6px 5px; font-size: 13px; font-weight: 600; color: #5a6b80;">Hoje</div>
+
+      <div style="padding: 9px 10px; border-radius: 8px; background: #ffffff; border: 1px solid #c8d3e0; margin-bottom: 3px;">
+        <div style="font-size: 14px; font-weight: 600; color: #14202e; line-height: 1.35;">Casos parados esperando documento</div>
+        <div style="margin-top: 2px; font-size: 13px; color: #5a6b80;">3 casos bloqueados · 14:20</div>
+      </div>
+
+      <div style="padding: 9px 10px; border-radius: 8px; margin-bottom: 3px;">
+        <div style="font-size: 14px; color: #33465c; line-height: 1.35;">O que é um fato alegado?</div>
+        <div style="margin-top: 2px; font-size: 13px; color: #5a6b80;">Sobre o sistema · 11:05</div>
+      </div>
+
+      <div style="padding: 9px 10px; border-radius: 8px; margin-bottom: 3px;">
+        <div style="font-size: 14px; color: #33465c; line-height: 1.35;">Resumo do caso 2026/0142</div>
+        <div style="margin-top: 2px; font-size: 13px; color: #5a6b80;">J. R. S. x Empresa A · 09:41</div>
+      </div>
+
+      <div style="padding: 10px 6px 5px; font-size: 13px; font-weight: 600; color: #5a6b80;">Ontem</div>
+
+      <div style="padding: 9px 10px; border-radius: 8px; margin-bottom: 3px;">
+        <div style="font-size: 14px; color: #33465c; line-height: 1.35;">Prazos que vencem esta semana</div>
+        <div style="margin-top: 2px; font-size: 13px; color: #5a6b80;">5 casos · 17:12</div>
+      </div>
+
+      <div style="padding: 9px 10px; border-radius: 8px; margin-bottom: 3px;">
+        <div style="font-size: 14px; color: #33465c; line-height: 1.35;">Como funciona a entrevista guiada</div>
+        <div style="margin-top: 2px; font-size: 13px; color: #5a6b80;">Sobre o sistema · 15:30</div>
+      </div>
+
+      <div style="padding: 10px 6px 5px; font-size: 13px; font-weight: 600; color: #5a6b80;">Semana passada</div>
+
+      <div style="padding: 9px 10px; border-radius: 8px; margin-bottom: 3px;">
+        <div style="font-size: 14px; color: #33465c; line-height: 1.35;">Doença ocupacional x acidente típico</div>
+        <div style="margin-top: 2px; font-size: 13px; color: #5a6b80;">Sobre o sistema · 18/08</div>
+      </div>
+
+      <div style="padding: 9px 10px; border-radius: 8px;">
+        <div style="font-size: 14px; color: #33465c; line-height: 1.35;">Casos do Assalto a Carteiro em aberto</div>
+        <div style="margin-top: 2px; font-size: 13px; color: #5a6b80;">7 casos · 18/08</div>
+      </div>
+    </div>
+
+    <div style="padding: 12px 14px; border-top: 1px solid #e3e9f0; display: flex; align-items: center; gap: 9px;">
+      <div style="display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 999px; background: #17457a; color: #ffffff; font-size: 13px; font-weight: 600;">HP</div>
+      <span style="font-size: 14px; color: #33465c;">Dra. Helena Prado</span>
+    </div>
+  </div>
+
+  <!-- ============ CONVERSA ============ -->
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0;">
+
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 24px; border-bottom: 1px solid #e3e9f0;">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+        <span style="font-size: 15px; font-weight: 600; color: #14202e;">Casos parados esperando documento</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 16px;">
+        <a href="#" style="font-size: 14px; color: #17457a; text-decoration: none;">Casos</a>
+        <a href="#" style="font-size: 14px; color: #17457a; text-decoration: none;">Entrevista guiada</a>
+        <a href="#" style="font-size: 14px; color: #17457a; text-decoration: none;">Ler um documento</a>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-height: 0; overflow: hidden; padding: 24px 0;">
+      <div style="max-width: 760px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 22px;">
+
+        <div style="align-self: flex-end; max-width: 78%; padding: 11px 15px; border-radius: 12px 12px 3px 12px; background: #17457a; color: #ffffff; font-size: 15px; line-height: 1.55;">
+          Quais casos estão parados esperando documento?
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+          <div style="flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; background: #eff3f8;">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#17457a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          </div>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 13px;">
+            <p style="margin: 0; font-size: 15px; line-height: 1.65; color: #33465c;">Três casos estão bloqueados por documento indispensável — nenhum deles gera petição enquanto a pendência não for resolvida.</p>
+
+            <div style="display: flex; flex-direction: column; border: 1px solid #e3e9f0; border-radius: 8px; overflow: hidden;">
+              <div style="display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid #e3e9f0;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #5a6b80; font-variant-numeric: tabular-nums; width: 74px;">2026/0142</span>
+                <a href="#" style="flex: 1; font-size: 15px; color: #17457a; text-decoration: none; font-weight: 500;">J. R. S. x Empresa A</a>
+                <span style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid #edc9c6; border-radius: 999px; background: #fbeceb; color: #b3261e; font-size: 13px; font-weight: 600;">✕ PPP e CAT</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid #e3e9f0;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #5a6b80; font-variant-numeric: tabular-nums; width: 74px;">2026/0138</span>
+                <a href="#" style="flex: 1; font-size: 15px; color: #17457a; text-decoration: none; font-weight: 500;">M. A. C. x Transportes B</a>
+                <span style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid #edc9c6; border-radius: 999px; background: #fbeceb; color: #b3261e; font-size: 13px; font-weight: 600;">✕ Laudo médico</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; padding: 11px 14px;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #5a6b80; font-variant-numeric: tabular-nums; width: 74px;">2026/0129</span>
+                <a href="#" style="flex: 1; font-size: 15px; color: #17457a; text-decoration: none; font-weight: 500;">P. L. O. x Distribuidora C</a>
+                <span style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid #edc9c6; border-radius: 999px; background: #fbeceb; color: #b3261e; font-size: 13px; font-weight: 600;">✕ CNIS</span>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: flex-start; gap: 9px; padding: 11px 14px; border: 1px solid #e0c9a0; border-radius: 8px; background: #fbf4e6;">
+              <span style="color: #8a5300; font-weight: 700; font-size: 15px; line-height: 1.4;">!</span>
+              <div style="font-size: 14px; line-height: 1.5; color: #33465c;">Outros dois têm pendência apenas recomendável: a petição sai, com a lacuna apontada.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="align-self: flex-end; max-width: 78%; padding: 11px 15px; border-radius: 12px 12px 3px 12px; background: #17457a; color: #ffffff; font-size: 15px; line-height: 1.55;">
+          O que é um fato alegado?
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+          <div style="flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; background: #eff3f8;">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#17457a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          </div>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px;">
+            <div style="display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 3px 10px; border: 1px solid #c8d3e0; border-radius: 999px; background: #f7f9fc; font-size: 13px; font-weight: 600; color: #5a6b80;">Sobre o sistema</div>
+            <p style="margin: 0; font-size: 15px; line-height: 1.65; color: #33465c;">É o que o cliente contou e nenhum documento confirmou ainda. Ele entra no caso e aparece no dossiê, mas a petição não pode afirmá-lo como provado — e a geração é bloqueada quando um fato essencial continua só alegado.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding: 0 24px 20px;">
+      <div style="max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: flex-end; gap: 9px; padding: 10px 12px; border: 1px solid #7a8b9f; border-radius: 10px; background: #ffffff; box-shadow: 0 1px 2px rgba(20,32,46,.06), 0 1px 3px rgba(20,32,46,.05);">
+          <div style="flex: 1; min-height: 28px; padding: 4px 2px; font-size: 15px; color: #5a6b80;">Pergunte sobre um caso, sobre o acervo ou sobre o sistema…</div>
+          <button style="display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid #17457a; border-radius: 8px; background: #17457a; cursor: pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg>
+          </button>
+        </div>
+        <div style="font-size: 13px; color: #5a6b80; text-align: center;">Responde a partir do acervo do escritório e aponta de onde tirou cada informação.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

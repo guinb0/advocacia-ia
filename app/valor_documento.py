@@ -58,6 +58,13 @@ TEMPO_MODELO_S = 30.0
 #: ilegível, página em branco, verso de documento.
 MINIMO_CARACTERES = 60
 
+#: Teto do texto que vai para o modelo de leitura. Um laudo ou uma CAT cabem
+#: folgados aqui; o que estoura este limite é prontuário de internação de dezenas
+#: de páginas, que não precisa ir inteiro para o classificador — a transcrição
+#: integral continua guardada em `texto_linhas` na entrega. Corta em fronteira de
+#: linha para não partir um CID ou uma data no meio.
+MAXIMO_CARACTERES = 12000
+
 CODIGOS_DOCUMENTO = {
     "cpf",
     "rg",
@@ -86,8 +93,14 @@ def texto_do_ocr(extracao: dict[str, Any]) -> str:
     linhas = extracao.get("texto_linhas") or []
     partes = [str(l.get("texto", "")).strip() for l in linhas if isinstance(l, dict)]
     # Diagnóstico, assinatura e conclusão podem estar nas páginas finais; a
-    # DeepSeek recebe o conteúdo integral que a Mistral conseguiu ler.
-    return "\n".join(p for p in partes if p)
+    # DeepSeek recebe o conteúdo integral que a Mistral conseguiu ler, até o teto.
+    texto = "\n".join(p for p in partes if p)
+    if len(texto) <= MAXIMO_CARACTERES:
+        return texto
+    # Corta na última quebra de linha antes do teto para não partir um dado no
+    # meio; se não houver quebra, corta seco no teto.
+    corte = texto.rfind("\n", 0, MAXIMO_CARACTERES)
+    return texto[: corte if corte > 0 else MAXIMO_CARACTERES]
 
 
 INSTRUCAO = """Você assessora um advogado trabalhista brasileiro. Recebe o TEXTO BRUTO
@@ -101,6 +114,17 @@ REGRAS
   truncada. Interprete com isso em mente e NÃO invente o que não está legível.
 - `documento`: o que o texto revela ser, em poucas palavras ("CAT", "Laudo
   médico — ortopedia", "Boletim de ocorrência"). Não sabendo, diga "indefinido".
+  NÃO CONFUNDA documentos parecidos — são coisas diferentes:
+  • CAT (Comunicação de Acidente de Trabalho): formulário sobre o ACIDENTE em si,
+    emitido pela empresa/sindicato/médico; traz data e hora do acidente, agente
+    causador, parte do corpo atingida, CID da lesão. Fala do EVENTO.
+  • Comunicação de Decisão / Carta de Concessão do INSS: a decisão do INSS que
+    CONCEDE ou INDEFERE um benefício (auxílio-doença B31, auxílio-acidente B94,
+    aposentadoria); traz número do benefício, espécie, DIB/DCB, "deferido" ou
+    "indeferido". Fala da DECISÃO sobre o benefício, não do acidente. Se o texto
+    fala em conceder/negar benefício, é decisão do INSS — NUNCA "CAT".
+  • Atestado/Laudo médico: descreve o estado de saúde e o afastamento; não é
+    nenhum dos dois acima.
 - `serve_para`: a que itens da lista de pendências ele responde. Use o CÓDIGO do
   item como veio na lista. Só inclua item de que você tem evidência no texto.
 - `achados`: os dados que um advogado procuraria neste tipo de documento — CID,

@@ -14,16 +14,22 @@ import Jurimetria from "@/components/admin/Jurimetria";
 import ListaCasos from "@/components/carteira/ListaCasos";
 import PainelCaso from "@/components/caso/PainelCaso";
 import Panorama from "@/components/Panorama";
+import Operacao from "@/components/operacao/Operacao";
 import PainelEnvio from "@/components/caso/PainelEnvio";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import ChamadaDoAtendimento from "@/components/chamada/ChamadaDoAtendimento";
 import TriagemEntrevista from "@/components/entrevista/TriagemEntrevista";
 import Supervisao from "@/components/admin/Supervisao";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
+import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
+import FollowUp from "@/components/admin/FollowUp";
 import Usuarios from "@/components/admin/Usuarios";
 import Resultado from "@/components/caso/Resultado";
 import CentralDocumentacao from "@/components/documentacao/CentralDocumentacao";
 import CatalogoRoteiros from "@/components/admin/CatalogoRoteiros";
+import GlossarioDocumentos from "@/components/admin/GlossarioDocumentos";
+import SaudeAgente from "@/components/SaudeAgente";
+import Investigacao from "@/components/carteira/Investigacao";
 import { useCasos, useCategorias } from "@/lib/useCasos";
 import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import { useSessao } from "@/lib/auth";
@@ -70,6 +76,7 @@ const Telas = (props: HomeViewProps) => {
       onNavegar={setTela}
       cliente={dadosDoCasoAberto?.caso.cliente}
       categoria={dadosDoCasoAberto?.categoria?.nome}
+      abertoEm={dadosDoCasoAberto?.caso.criado_em}
     />
   );
 
@@ -173,6 +180,46 @@ const Telas = (props: HomeViewProps) => {
     );
   }
 
+  if (tela === "operacao") {
+    return (
+      <ModuleFrame variant="wide">
+        <Operacao />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "investigacao") {
+    return (
+      <ModuleFrame variant="compact">
+        <Investigacao onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "saudeAgente") {
+    return (
+      <ModuleFrame variant="wide">
+        <SaudeAgente onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "revisao") {
+    return (
+      <ModuleFrame variant="wide">
+        <Supervisao onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "followup") {
+    return (
+      <ModuleFrame variant="wide">
+        <FollowUp />
+      </ModuleFrame>
+    );
+  }
+
   if (tela === "modelosDePeticao") {
     return (
       <ModuleFrame variant="compact">
@@ -181,10 +228,26 @@ const Telas = (props: HomeViewProps) => {
     );
   }
 
+  if (tela === "configuracaoAssinatura") {
+    return (
+      <ModuleFrame variant="compact">
+        <ConfiguracaoAssinatura />
+      </ModuleFrame>
+    );
+  }
+
   if (tela === "catalogoRoteiros") {
     return (
       <ModuleFrame variant="compact">
         <CatalogoRoteiros onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "glossarioDocumentos") {
+    return (
+      <ModuleFrame variant="compact">
+        <GlossarioDocumentos onVoltar={voltarParaCarteira} />
       </ModuleFrame>
     );
   }

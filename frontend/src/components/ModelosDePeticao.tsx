@@ -14,39 +14,63 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  FileText,
+  PenLine,
+  RotateCcw,
+  Upload,
+} from "lucide-react";
 
-import { Aviso, Botao, Cartao, Selo, Tabela, Th } from "@/components/ui/Basicos";
+import { Aviso, Botao, Cartao, Paginacao, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   ApiError,
   enviarModeloVisualPeticao,
   listarCategorias,
+  listarSkillsDePeticao,
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
   restaurarModeloVisualPeticao,
   salvarConfiguracaoVisualPeticao,
+  salvarSkillDePeticao,
+  type SkillDePeticao,
   urlApi,
 } from "@/lib/api";
 import type { ItemChecklist } from "@/lib/types";
 
 /* `.tabela th/td` era seletor descendente; sem equivalente no Tailwind, a regra
  * vira constante e cada célula a carrega. */
-const CELULA = "px-[0.4rem] py-2 text-left border-b border-borda";
+/** Um atributo captado do modelo do escritório: rótulo em cima, valor abaixo. */
+function ItemIdentificado({ rotulo, valor }: { rotulo: string; valor: string }) {
+  return (
+    <div className="grid min-w-0 gap-[2px]">
+      <dt className="text-[11px] font-medium uppercase tracking-wide text-tinta-3">{rotulo}</dt>
+      <dd className="m-0 text-sm font-semibold text-tinta [overflow-wrap:anywhere]">{valor}</dd>
+    </div>
+  );
+}
+
+const CELULA = "px-3 py-2 text-left border-b border-borda";
 const CABECALHO_CELULA =
-  "px-[0.4rem] py-2 text-tinta-3 text-xs font-semibold uppercase tracking-[0.03em]";
-const ITEM_TOPO = "flex items-center justify-between gap-[0.6rem]";
-const CAMPO = "flex flex-col gap-[0.28rem] min-w-[220px] flex-1 text-tinta-3 text-xs";
+  "px-3 py-2 text-tinta-3 text-xs font-semibold uppercase tracking-[0.03em] whitespace-nowrap";
+const ITEM_TOPO = "flex min-w-0 items-center justify-between gap-[0.6rem]";
+const CAMPO = "flex min-w-0 flex-1 flex-col gap-[0.28rem] text-xs text-tinta-3";
 /* Cor explícita no select E no option não é redundância: no Windows a lista
  * aberta de um select sem cor própria pode herdar as do sistema — deu faixa
  * preta sem texto legível. */
 const SELECT =
-  "px-[0.6rem] py-[0.55rem] border border-borda-campo rounded-campo bg-papel text-tinta text-sm " +
+  "min-h-10 min-w-0 px-[0.6rem] py-[0.55rem] border border-borda-campo rounded-campo bg-papel text-tinta text-sm " +
   "[&>option]:bg-papel [&>option]:text-tinta";
 
 import {
+  type ConfigAgente,
   type ConfiguracaoDeGeracao,
   type NoDaTaxonomia,
   type PecaDeEstilo,
   type PerfilDeEstilo,
+  configDoAgente,
   configuracaoDeGeracao,
   enviarPecaDeEstilo,
   pecasDeEstilo,
@@ -57,6 +81,7 @@ import {
 } from "@/lib/agente";
 
 const TIPOS = [{ codigo: "INITIAL_PETITION", rotulo: "Petição inicial" }];
+const ITENS_POR_PAGINA = 8;
 
 /** Como cada estado da segmentação se explica para quem cadastrou a peça. */
 const SEGMENTACAO: Record<string, { texto: string; tom: "ok" | "atencao" | "critico" }> = {
@@ -327,8 +352,25 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
   const [erroCarregamento, setErroCarregamento] = useState<string | null>(null);
   const [recado, setRecado] = useState<string | null>(null);
   const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
+  const [carregandoModeloVisual, setCarregandoModeloVisual] = useState(true);
+  // Ligado, desligado ou ainda não sabemos — três estados, não dois: enquanto `null`, a
+  // tela não decide nada (nem chama a taxonomia, nem mostra o aviso de "não ativado").
+  const [configAgente, setConfigAgente] = useState<ConfigAgente | null>(null);
+
+  // Skill/prompt por categoria de petição — local ao Acervo, funciona com ou sem o
+  // agente jurídico ligado (issue "Configurar skill por modelo de petição").
+  const [skills, setSkills] = useState<SkillDePeticao[]>([]);
+  const [categoriaSkill, setCategoriaSkill] = useState("");
+  const [instrucoesSkill, setInstrucoesSkill] = useState("");
+  const [carregandoSkills, setCarregandoSkills] = useState(true);
+  const [salvandoSkill, setSalvandoSkill] = useState(false);
+  const [erroSkill, setErroSkill] = useState<string | null>(null);
+  const [recadoSkill, setRecadoSkill] = useState<string | null>(null);
   const [enviandoVisual, setEnviandoVisual] = useState(false);
   const [salvandoVisual, setSalvandoVisual] = useState(false);
+  const [paginaPecas, setPaginaPecas] = useState(1);
+  const [totalPecas, setTotalPecas] = useState(0);
+  const [totalPaginasPecas, setTotalPaginasPecas] = useState(1);
 
   // Estado separado do `erro` de propósito. A primeira versão usava o mesmo, e o `setErro(null)`
   // do envio apagava a falha da taxonomia — a tela ficava com o seletor vazio e nenhuma
@@ -340,7 +382,8 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
       .then(setModeloVisual)
       .catch((falha) => setErro(
         falha instanceof ApiError ? falha.message : "Não foi possível carregar o modelo visual geral.",
-      ));
+      ))
+      .finally(() => setCarregandoModeloVisual(false));
   }, []);
 
   async function trocarModeloVisual(arquivo: File) {
@@ -389,6 +432,51 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
   }
 
   useEffect(() => {
+    void listarSkillsDePeticao()
+      .then((itens) => {
+        setSkills(itens);
+        setCategoriaSkill((atual) => atual || itens[0]?.categoria || "");
+      })
+      .catch((falha) =>
+        setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível carregar as categorias."),
+      )
+      .finally(() => setCarregandoSkills(false));
+  }, []);
+
+  // Troca de categoria: o texto do campo acompanha o que já está salvo para ELA —
+  // sem isto, editar uma categoria e trocar de select levaria o rascunho junto.
+  useEffect(() => {
+    setInstrucoesSkill(skills.find((item) => item.categoria === categoriaSkill)?.instrucoes ?? "");
+  }, [categoriaSkill, skills]);
+
+  async function salvarSkill() {
+    if (!categoriaSkill) return;
+    setSalvandoSkill(true);
+    setErroSkill(null);
+    setRecadoSkill(null);
+    try {
+      const salvo = await salvarSkillDePeticao(categoriaSkill, instrucoesSkill);
+      setSkills((atual) => atual.map((item) => (item.categoria === categoriaSkill ? { ...item, ...salvo } : item)));
+      setRecadoSkill("Skill salva. As próximas petições desta categoria já usam esta orientação.");
+    } catch (falha) {
+      setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível salvar a skill.");
+    } finally {
+      setSalvandoSkill(false);
+    }
+  }
+
+  useEffect(() => {
+    void configDoAgente()
+      .then(setConfigAgente)
+      // Falha na própria checagem também é "não ligado": sem isso a tela tentaria a
+      // taxonomia mesmo assim e trocaria um aviso calmo por um erro vermelho.
+      .catch(() => setConfigAgente({ ligado: false, disponivel: false, url: "", jurisdicao_padrao: "" }));
+  }, []);
+
+  useEffect(() => {
+    // Sem o agente ligado não há taxonomia para buscar — e chamar mesmo assim só
+    // trocaria "não ativado ainda" por um aviso de erro que não é esse o caso.
+    if (!configAgente?.ligado) return;
     void taxonomiaDeEstilo()
       .then((itens) => {
         setAcoes(itens);
@@ -407,8 +495,8 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
             : "Não foi possível carregar as ações. O agente jurídico está no ar?",
         ),
       );
-    // Uma vez só: a taxonomia é YAML versionado, não muda entre requisições.
-  }, []);
+    // Uma vez por sessão de "ligado": a taxonomia é YAML versionado, não muda entre requisições.
+  }, [configAgente?.ligado]);
 
   /* O checklist do caso (Forense) e a taxonomia do agente usam o mesmo código de
    * ação (`auxilio_acidente`, etc.). Quando bate, oferecemos os documentos do
@@ -436,20 +524,35 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
     };
   }, [acao]);
 
+  useEffect(() => {
+    setPaginaPecas(1);
+  }, [acao, tipo]);
+
   const recarregar = useCallback(async () => {
     if (!acao) return;
     setErroCarregamento(null);
     const [resultadoPecas, resultadoPerfil, resultadoConfig] = await Promise.allSettled([
-      pecasDeEstilo(acao, tipo),
+      pecasDeEstilo(acao, {
+        documentType: tipo,
+        pagina: paginaPecas,
+        tamanho: ITENS_POR_PAGINA,
+      }),
       perfilDeEstilo(acao, tipo),
       configuracaoDeGeracao(acao, tipo),
     ]);
     const falhas: string[] = [];
 
     if (resultadoPecas.status === "fulfilled") {
-      setPecas(resultadoPecas.value);
+      setPecas(resultadoPecas.value.items);
+      setTotalPecas(resultadoPecas.value.total);
+      setTotalPaginasPecas(resultadoPecas.value.paginas);
+      if (paginaPecas > resultadoPecas.value.paginas) {
+        setPaginaPecas(resultadoPecas.value.paginas);
+      }
     } else {
       setPecas([]);
+      setTotalPecas(0);
+      setTotalPaginasPecas(1);
       falhas.push(
         resultadoPecas.reason instanceof ApiError
           ? resultadoPecas.reason.message
@@ -500,7 +603,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
     }
 
     if (falhas.length) setErroCarregamento([...new Set(falhas)].join(" "));
-  }, [acao, tipo]);
+  }, [acao, paginaPecas, tipo]);
 
   useEffect(() => {
     void recarregar();
@@ -623,51 +726,289 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
     () => pecas.filter((peca) => !peca.eligibility.eligible_for_section_profile).length,
     [pecas],
   );
+  const acaoSelecionada = acoes.find((item) => item.code === acao);
+  const documentosObrigatorios = configuracao?.required_documents.length ?? 0;
+  const inicioPecas = totalPecas ? (paginaPecas - 1) * ITENS_POR_PAGINA : 0;
+  const fimPecas = Math.min(inicioPecas + pecas.length, totalPecas);
 
   return (
-    <div className="flex flex-col gap-[1.1rem] max-w-[980px] mx-auto px-4 pt-[1.4rem] pb-12">
-      {/* "Voltar" acima do título, como nos demais módulos: ao lado do `<h1>`,
-        * numa tela estreita, o título quebrava em duas linhas e o botão sentava
-        * por cima. */}
-      <div>
-        <Botao variante="texto" onClick={onVoltar}>
-          ← Voltar
-        </Botao>
-        <h1 className="mt-[0.45rem] mb-0 font-titulo text-[1.45rem] leading-[1.2] text-tinta">Modelos de petição do escritório</h1>
-        <p className="mt-[0.45rem] mb-0 max-w-[62ch] text-tinta-3 text-sm leading-[1.5]">
-          Quanto mais petições reais e revisões finais você cadastrar, melhor o sistema
-          mede o vocabulário, a estrutura, o tamanho e o ritmo do escritório. Com poucas
-          peças ele usa um perfil aproximado; a resposta melhora progressivamente conforme
-          recebe exemplos variados da mesma ação.
-        </p>
-      </div>
+    <div className="flex min-w-0 max-w-full flex-col gap-5">
+      <section className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-borda bg-papel-2 px-5 py-4">
+          <div className="min-w-0">
+            <Botao variante="texto" onClick={onVoltar}>
+              <ArrowLeft size={15} aria-hidden /> Voltar
+            </Botao>
+            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-tinta-3">
+              Produção jurídica
+            </p>
+            <div className="mt-1 flex min-w-0 items-center gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+                <PenLine size={20} aria-hidden />
+              </span>
+              <h1 className="m-0 min-w-0 truncate font-titulo text-[1.7rem] font-semibold leading-[1.15] text-tinta">
+                Modelos de petição do escritório
+              </h1>
+            </div>
+            <p className="mt-2 mb-0 max-w-[72ch] text-sm leading-[1.55] text-tinta-3">
+              Configure o padrão de escrita por ação, mantenha documentos exigidos e acompanhe a qualidade das amostras cadastradas.
+            </p>
+          </div>
+          <div className="grid min-w-[220px] grid-cols-3 gap-2 rounded-campo border border-borda bg-papel p-2 text-center">
+            <div className="min-w-0 px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Amostras</span>
+              <strong className="block font-codigo text-lg text-tinta">{totalPecas}</strong>
+            </div>
+            <div className="min-w-0 border-x border-borda px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Padrão</span>
+              <strong className="block truncate text-sm leading-7 text-tinta">
+                {perfil ? "Medido" : "Em formação"}
+              </strong>
+            </div>
+            <div className="min-w-0 px-2 py-1">
+              <span className="block truncate text-[11px] text-tinta-3">Docs</span>
+              <strong className="block font-codigo text-lg text-tinta">{documentosObrigatorios}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <Cartao titulo="Modelo visual geral dos documentos">
-        <EditorIdentidadeVisual
-          modelo={modeloVisual}
-          enviando={enviandoVisual}
-          salvando={salvandoVisual}
-          onChange={setModeloVisual}
-          onEnviar={trocarModeloVisual}
-          onSalvar={salvarVisual}
-          onRestaurar={restaurarVisual}
-        />
+      {erro && (
+        <Aviso tom="critico" titulo="A ação não foi concluída">
+          {erro}
+        </Aviso>
+      )}
+      {recado && <Aviso tom="ok">{recado}</Aviso>}
+
+      <div className="grid min-w-0 grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)] items-start gap-4 max-[980px]:grid-cols-1">
+      <div className="flex min-w-0 flex-col gap-4">
+      <Cartao titulo="Identidade dos documentos" className="min-w-0 overflow-hidden">
+        <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
+          Selecione um documento com a logo e o padrão do seu escritório que vamos captar o
+          modelo — logo, fonte, tamanho, espaçamento, alinhamento e margens. O conteúdo
+          jurídico do arquivo de referência não é copiado.
+        </p>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao">
+              <FileText size={18} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-tinta" title={modeloVisual?.arquivo ?? undefined}>
+                {carregandoModeloVisual ? "Carregando padrão visual…" : modeloVisual?.arquivo ?? "Padrão indisponível"}
+              </div>
+              <div className="mt-1 truncate text-xs text-tinta-3">
+                Fonte: {modeloVisual?.fonte ?? "—"}
+                {modeloVisual
+                  ? modeloVisual.origem === "embutido"
+                    ? " · padrão atual Lara & Melo"
+                    : " · modelo substituível do escritório"
+                  : ""}
+              </div>
+              <div className="mt-1 text-[11px] text-tinta-3">
+                É esta logo que será carimbada no cabeçalho das próximas petições.
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-campo bg-acao px-4 py-2 text-sm font-semibold text-white hover:bg-acao-forte">
+              <Upload size={16} aria-hidden />
+              {enviandoVisual ? "Processando…" : modeloVisual?.origem === "banco" ? "Trocar modelo" : "Enviar novo modelo"}
+              <input
+                className="sr-only"
+                type="file"
+                accept=".docx"
+                disabled={enviandoVisual}
+                onChange={(evento) => {
+                  const arquivo = evento.target.files?.[0];
+                  evento.target.value = "";
+                  if (arquivo) void trocarModeloVisual(arquivo);
+                }}
+              />
+            </label>
+            {modeloVisual?.origem === "banco" && (
+              <BotaoProcesso
+                variante="texto"
+                aguardando={enviandoVisual ? "Aguarde: o modelo enviado ainda está sendo processado." : false}
+                textoProcessando="Restaurando…"
+                onClick={() => restaurarVisual()}
+              >
+                <RotateCcw size={15} aria-hidden /> Restaurar Lara & Melo
+              </BotaoProcesso>
+            )}
+          </div>
+        </div>
+
+        {modeloVisual && (
+          <div className="mt-4 rounded-campo border border-borda bg-papel-2 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-ok-claro text-ok" aria-hidden>
+                ✓
+              </span>
+              <h4 className="m-0 text-sm font-semibold text-tinta">O que identificamos no seu modelo</h4>
+            </div>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 max-[560px]:grid-cols-1">
+              <ItemIdentificado rotulo="Fonte" valor={modeloVisual.fonte || "—"} />
+              {modeloVisual.atributos?.tamanho_fonte_pt != null && (
+                <ItemIdentificado rotulo="Tamanho" valor={`${modeloVisual.atributos.tamanho_fonte_pt} pt`} />
+              )}
+              {modeloVisual.atributos?.espacamento_linha != null && (
+                <ItemIdentificado rotulo="Espaçamento" valor={`${modeloVisual.atributos.espacamento_linha} linha(s)`} />
+              )}
+              {modeloVisual.atributos?.alinhamento && (
+                <ItemIdentificado rotulo="Alinhamento" valor={modeloVisual.atributos.alinhamento} />
+              )}
+              {modeloVisual.atributos?.margens_cm &&
+                Object.values(modeloVisual.atributos.margens_cm).some((v) => v != null) && (
+                  <ItemIdentificado
+                    rotulo="Margens (cm)"
+                    valor={(["top", "right", "bottom", "left"] as const)
+                      .map((l) => {
+                        const v = modeloVisual.atributos?.margens_cm?.[l];
+                        const nome = { top: "sup", right: "dir", bottom: "inf", left: "esq" }[l];
+                        return v != null ? `${nome} ${v}` : null;
+                      })
+                      .filter(Boolean)
+                      .join(" · ")}
+                  />
+                )}
+              <ItemIdentificado rotulo="Logo" valor="captada do cabeçalho (veja a prévia)" />
+            </dl>
+          </div>
+        )}
+
+        {modeloVisual && (
+          <details className="group mt-4 overflow-hidden rounded-campo border border-borda bg-papel-2">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold text-tinta marker:content-none">
+              Conferir prévia do documento
+              <ChevronDown className="shrink-0 text-tinta-3 transition-transform group-open:rotate-180" size={17} aria-hidden />
+            </summary>
+            <div className="overflow-x-auto rounded-campo border border-borda bg-papel-3 p-3 sm:p-5">
+              <article
+                className="mx-auto min-h-[430px] w-full max-w-[610px] bg-white px-[9%] py-[7%] text-[#202020] shadow-cartao"
+                style={{ fontFamily: `"${modeloVisual.fonte || "Arial"}", Arial, sans-serif` }}
+                aria-label="Prévia do modelo visual do escritório"
+              >
+                <header className="mb-10 border-b border-[#d7d7d7] pb-4">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- mesma imagem
+                     dinâmica e sem cache exibida acima. */}
+                  <img
+                    className="h-16 max-w-[220px] object-contain object-left"
+                    src={urlApi(
+                      `/api/modelos/peticao/visual/logo?v=${encodeURIComponent(
+                        modeloVisual.atualizado_em ?? modeloVisual.arquivo,
+                      )}`,
+                    )}
+                    alt="Logo no cabeçalho da prévia"
+                  />
+                </header>
+                <p className="mb-8 text-center text-[11px] font-bold uppercase leading-relaxed">
+                  Excelentíssimo(a) Senhor(a) Doutor(a) Juiz(a) da Vara do Trabalho
+                </p>
+                <h4 className="mb-4 text-center text-sm font-bold uppercase">Petição inicial</h4>
+                <p className="mb-3 text-justify text-[11px] leading-[1.75]">
+                  Nome do cliente, já qualificado nos autos, por seus advogados, apresenta a
+                  presente petição conforme os fatos, fundamentos e documentos do caso.
+                </p>
+                <p className="text-justify text-[11px] leading-[1.75]">
+                  Esta é somente uma prévia visual. Nenhum conteúdo jurídico deste exemplo será
+                  incluído nas peças geradas.
+                </p>
+              </article>
+            </div>
+          </details>
+        )}
       </Cartao>
 
-      {erroCarregamento && (
+      <Cartao titulo="Skill de redação por categoria" className="min-w-0 overflow-hidden">
+        <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
+          Uma orientação extra que a IA segue ao analisar e redigir a petição desta categoria de
+          caso — o que destacar, como abordar a tese, o que nunca pode faltar. Funciona
+          independente do agente jurídico e vale para toda petição gerada a partir de agora
+          nesta categoria; as demais categorias não são afetadas.
+        </p>
+
+        {erroSkill && (
+          <Aviso tom="critico" titulo="Não foi possível carregar ou salvar">
+            {erroSkill}
+          </Aviso>
+        )}
+        {recadoSkill && <Aviso tom="ok">{recadoSkill}</Aviso>}
+
+        <label className={CAMPO}>
+          <span>Categoria (ação)</span>
+          <select
+            className={SELECT}
+            value={categoriaSkill}
+            disabled={carregandoSkills || !skills.length}
+            onChange={(evento) => setCategoriaSkill(evento.target.value)}
+          >
+            {carregandoSkills && <option value="">carregando…</option>}
+            {skills.map((item) => (
+              <option key={item.categoria} value={item.categoria}>
+                {item.nome}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="mt-4 flex flex-col gap-2 text-tinta-3 text-xs">
+          <span>Instruções de redação para esta categoria</span>
+          <textarea
+            className={`${SELECT} min-h-32 resize-y`}
+            value={instrucoesSkill}
+            disabled={!categoriaSkill}
+            placeholder="Ex.: dar ênfase ao nexo causal entre a doença e a função exercida, sempre pedir dano moral em separado do material."
+            onChange={(evento) => setInstrucoesSkill(evento.target.value)}
+          />
+        </label>
+
+        {skills.find((item) => item.categoria === categoriaSkill)?.atualizado_por && (
+          <p className="mt-2 mb-0 text-[11px] text-tinta-3">
+            Última alteração por{" "}
+            <strong>{skills.find((item) => item.categoria === categoriaSkill)?.atualizado_por}</strong>.
+          </p>
+        )}
+
+        <div className="mt-4 flex justify-end">
+          <BotaoProcesso
+            variante="primario"
+            onClick={() => salvarSkill()}
+            processando={salvandoSkill}
+            textoProcessando="Salvando…"
+            pendencia={categoriaSkill ? null : "Escolha a categoria acima."}
+            pendenciaAoClicar
+          >
+            Salvar skill desta categoria
+          </BotaoProcesso>
+        </div>
+      </Cartao>
+
+      {configAgente && !configAgente.ligado && (
+        <Aviso tom="atencao" titulo="Padrão de escrita por ação ainda não ativado">
+          O aprendizado do estilo do escritório por ação (peças de exemplo, padrão medido e
+          orientações de redação) depende do agente jurídico, que ainda não está ativo neste
+          ambiente. A logo e a fonte acima continuam funcionando normalmente — só esta parte
+          fica pendente até a integração ser ligada.
+        </Aviso>
+      )}
+
+      {configAgente?.ligado && erroCarregamento && (
         <Aviso tom="critico" titulo="Não foi possível carregar esta ação">
           {erroCarregamento} Tente novamente antes de alterar os modelos ou a configuração.
         </Aviso>
       )}
 
-      <Cartao titulo="Adicionar peças">
+      {configAgente?.ligado && (
+      <>
+      <Cartao titulo="Adicionar peças" className="min-w-0 overflow-hidden">
         <p className="mt-2 mb-[0.9rem] text-tinta-3 text-sm leading-[1.5]">
           Cada peça adicionada atualiza o perfil de escrita. As correções feitas pelo
           advogado ao aprovar uma minuta também viram aprendizado supervisionado: o sistema
           compara o texto gerado com a versão final, sem copiar fatos de um processo para outro.
         </p>
 
-        <div className="flex flex-wrap gap-[0.9rem] mb-[0.9rem]">
+        <div className="mb-[0.9rem] grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-[0.9rem]">
           <label className={CAMPO}>
             <span>Ação</span>
             <select className={SELECT}
@@ -700,7 +1041,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
           className={
             "block p-[1.1rem] border-[1.5px] border-dashed rounded-cartao text-center cursor-pointer " +
             "transition-[border-color,background-color,transform,box-shadow] duration-200 " +
-            "[&>input]:block [&>input]:mx-auto [&>input]:mb-[0.6rem] [&>span]:block [&>span]:text-sm " +
+            "[&>span]:block [&>span]:text-sm " +
             "[&>span]:text-tinta-2 [&>small]:block [&>small]:mt-[0.35rem] [&>small]:max-w-[54ch] " +
             "[&>small]:mx-auto [&>small]:text-tinta-3 [&>small]:text-xs [&>small]:leading-[1.45] " +
             (arrastando
@@ -720,6 +1061,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
           }}
         >
           <input
+            className="sr-only"
             type="file"
             accept=".docx,.pdf"
             multiple
@@ -732,7 +1074,8 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
               receberArquivos(arquivos);
             }}
           />
-          <span>
+          <span className="flex flex-col items-center">
+            <Upload className="mb-2 text-acao" size={24} aria-hidden />
             {enviando
               ? "Enviando os arquivos…"
               : arrastando
@@ -767,7 +1110,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
                     {item.estado === "concluido" ? "✓" : item.estado === "recusado" ? "×" : item.estado === "repetido" ? "!" : "•"}
                   </span>
                   <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-tinta">{item.nome}</span>
-                  <small className="text-right text-[11px] text-tinta-3">
+                  <small className="max-w-[45%] truncate text-right text-[11px] text-tinta-3" title={item.detalhe}>
                     {item.detalhe ?? ({ aguardando: "aguardando", enviando: "analisando…", concluido: "adicionada", repetido: "repetida", recusado: "recusada" }[item.estado])}
                   </small>
                 </li>
@@ -781,21 +1124,15 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
             {erroDasAcoes}
           </Aviso>
         )}
-        {recado && <p className="mt-[0.8rem] mb-0 text-tinta-2 text-sm">{recado}</p>}
-        {erro && (
-          <Aviso tom="critico" titulo="Alguns arquivos não entraram">
-            {erro}
-          </Aviso>
-        )}
       </Cartao>
 
       {configuracao && (
-        <Cartao titulo="Configuração da peça">
+        <Cartao titulo="Configuração da peça" className="min-w-0 overflow-hidden">
           <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
             Configure este tipo de documento para a ação escolhida. As regras e a checklist
             acompanham o estilo aprendido e entram diretamente na geração da IA Jurídica.
           </p>
-          <div className="flex flex-wrap gap-[0.9rem]">
+          <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-[0.9rem]">
             <label className={CAMPO}>
               <span>Nome do tipo de documento</span>
               <input className={SELECT} value={configuracao.display_name}
@@ -803,7 +1140,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
             </label>
             <label className={CAMPO}>
               <span>Ação vinculada</span>
-              <input className={SELECT} value={acoes.find((item) => item.code === acao)?.label ?? acao} disabled />
+              <input className={SELECT} value={acaoSelecionada?.label ?? acao} disabled />
             </label>
           </div>
           <label className="mt-4 flex flex-col gap-2 text-tinta-3 text-xs">
@@ -849,9 +1186,9 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
               </div>
             )}
 
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex min-w-0 flex-wrap gap-2">
               <input
-                className={`${SELECT} flex-1`}
+                className={`${SELECT} min-w-[220px] flex-1`}
                 value={documentoNovo}
                 placeholder="Ex.: laudo médico, CNIS, procuração"
                 onChange={(evento) => setDocumentoNovo(evento.target.value)}
@@ -872,9 +1209,9 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
                 {configuracao.required_documents.map((documento) => (
                   <li
                     key={documento}
-                    className="flex items-center gap-2 rounded-pill border border-borda bg-papel px-3 py-1.5 text-xs text-tinta"
+                    className="flex max-w-full items-center gap-2 rounded-pill border border-borda bg-papel px-3 py-1.5 text-xs text-tinta"
                   >
-                    {documento}
+                    <span className="min-w-0 truncate" title={documento}>{documento}</span>
                     <button
                       type="button"
                       className="text-critico cursor-pointer"
@@ -903,29 +1240,34 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
             )}
           </div>
           <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-            {erro && (
-              <Aviso tom="critico" titulo="Não salvou">
-                {erro}
-              </Aviso>
-            )}
             <div className="flex justify-end sm:ml-auto">
-              <Botao
-                onClick={() => void salvarConfiguracao()}
-                disabled={salvandoConfiguracao || !configuracao.display_name.trim()}
+              <BotaoProcesso
+                variante="primario"
+                onClick={() => salvarConfiguracao()}
+                processando={salvandoConfiguracao}
+                textoProcessando="Salvando…"
+                pendencia={configuracao.display_name.trim() ? null : "Preencha o nome da ação."}
+                pendenciaAoClicar
               >
-                {salvandoConfiguracao ? "Salvando…" : "Salvar configuração"}
-              </Botao>
+                Salvar configuração
+              </BotaoProcesso>
             </div>
           </div>
         </Cartao>
       )}
+      </>
+      )}
 
-      <PainelPerfil perfil={perfil} total={pecas.length} />
+      </div>
 
-      <Cartao>
+      {configAgente?.ligado && (
+      <aside className="flex min-w-0 flex-col gap-4">
+      <PainelPerfil perfil={perfil} total={totalPecas} />
+
+      <Cartao className="min-w-0 overflow-hidden">
         <div className={ITEM_TOPO}>
-          <h2 className="m-0 text-tinta font-titulo text-lg font-semibold">Peças cadastradas nesta ação</h2>
-          <span className="px-2 py-[0.1rem] rounded-pill bg-papel-3 text-tinta-2 text-xs tabular-nums">{pecas.length}</span>
+          <h2 className="m-0 min-w-0 truncate text-tinta font-titulo text-lg font-semibold">Peças cadastradas nesta ação</h2>
+          <span className="px-2 py-[0.1rem] rounded-pill bg-papel-3 text-tinta-2 text-xs tabular-nums">{totalPecas}</span>
         </div>
 
         {semSecoes > 0 && (
@@ -937,28 +1279,36 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
         )}
 
         {pecas.length === 0 ? (
-          <p className="mt-[0.6rem] mb-0 text-tinta-3 text-sm leading-[1.5]">
+          <Vazio className="mt-3">
             Nenhuma peça nesta ação ainda. O sistema não mistura amostras de outras ações;
             enquanto não houver exemplos próprios, escreve sem um padrão medido para esta ação.
-          </p>
+          </Vazio>
         ) : (
           <ul className="list-none mt-[0.7rem] mb-0 p-0 flex flex-col gap-2">
             {pecas.map((peca) => {
               const seg = SEGMENTACAO[peca.segmentation.quality];
               return (
-                <li key={peca.id} className="px-3 py-[0.65rem] border border-borda rounded-campo">
-                  <div className={ITEM_TOPO}>
-                    <strong className="overflow-hidden text-ellipsis whitespace-nowrap text-sm text-tinta">{peca.filename ?? "(sem nome)"}</strong>
-                    <div className="flex items-center gap-2">
+                <li key={peca.id} className="min-w-0 rounded-campo border border-borda px-3 py-[0.65rem]">
+                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 max-[520px]:grid-cols-1">
+                    <strong className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-tinta" title={peca.filename ?? "(sem nome)"}>
+                      {peca.filename ?? "(sem nome)"}
+                    </strong>
+                    <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2 max-[520px]:justify-start">
                       <Selo tom={seg.tom} simbolo={peca.segmentation.quality === "FULL" ? "✓" : "!"}>
                         {seg.texto}
                       </Selo>
-                      <Botao variante="texto" pequeno disabled={removendo === peca.id} onClick={() => void remover(peca)}>
-                        {removendo === peca.id ? "Removendo…" : "Remover"}
+                      <Botao
+                        variante="texto"
+                        pequeno
+                        carregando={removendo === peca.id}
+                        textoCarregando="Removendo…"
+                        onClick={() => void remover(peca)}
+                      >
+                        Remover
                       </Botao>
                     </div>
                   </div>
-                  <div className="mt-1 text-tinta-3 text-xs tabular-nums">
+                  <div className="mt-1 truncate text-tinta-3 text-xs tabular-nums">
                     {peca.word_count.toLocaleString("pt-BR")} palavras
                     {peca.document_format ? ` · ${peca.document_format}` : ""}
                     {peca.source === "LAWYER_EDITED_GENERATION"
@@ -970,7 +1320,19 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
             })}
           </ul>
         )}
+        <Paginacao
+          pagina={paginaPecas}
+          totalPaginas={totalPaginasPecas}
+          total={totalPecas}
+          inicio={inicioPecas}
+          fim={fimPecas}
+          rotulo="peças"
+          onPagina={setPaginaPecas}
+        />
       </Cartao>
+      </aside>
+      )}
+      </div>
     </div>
   );
 }
@@ -985,7 +1347,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
 function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total: number }) {
   if (!perfil) {
     return (
-      <Cartao titulo="Padrão medido">
+      <Cartao titulo="Padrão medido" className="min-w-0 overflow-hidden">
         <p className="mt-[0.6rem] mb-0 text-tinta-3 text-sm leading-[1.5]">
           {total < 5
             ? `Há ${total} de 5 petições necessárias nesta ação. Até completar a amostra mínima, os textos ficam cadastrados, mas não orientam novas peças.`
@@ -1003,9 +1365,9 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
   ];
 
   return (
-    <Cartao>
+    <Cartao className="min-w-0 overflow-hidden">
       <div className={ITEM_TOPO}>
-        <h2 className="m-0 text-tinta font-titulo text-lg font-semibold">Padrão medido</h2>
+        <h2 className="m-0 min-w-0 truncate text-tinta font-titulo text-lg font-semibold">Padrão medido</h2>
         <Selo tom={proprias >= 5 ? "ok" : "atencao"} simbolo={proprias >= 5 ? "✓" : "!"}>
           {proprias} peça(s) desta ação
         </Selo>
@@ -1021,8 +1383,12 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
         <p className="my-2">
           As petições desta ação <strong>serão redigidas conforme este padrão do escritório</strong>:
         </p>
-        <ul className="my-2 pl-5">
-          {diretrizesDoPadrao(perfil).map((diretriz) => <li key={diretriz}>{diretriz}</li>)}
+        <ul className="my-2 flex list-none flex-col gap-2 p-0">
+          {diretrizesDoPadrao(perfil).map((diretriz) => (
+            <li key={diretriz} className="line-clamp-2 rounded-campo bg-papel px-3 py-2 text-xs" title={diretriz}>
+              {diretriz}
+            </li>
+          ))}
         </ul>
         <p className="mb-0 mt-2">
           No caso concreto, o sistema manterá essa forma de escrever e adaptará o conteúdo aos
@@ -1032,7 +1398,8 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
         </p>
       </div>
 
-      <Tabela className="text-tinta-2">
+      <div className="max-w-full overflow-x-auto">
+      <Tabela className="min-w-[460px] text-tinta-2">
         <thead>
           <tr>
             <Th className={CABECALHO_CELULA}>
@@ -1065,6 +1432,7 @@ function PainelPerfil({ perfil, total }: { perfil: PerfilDeEstilo | null; total:
           })}
         </tbody>
       </Tabela>
+      </div>
 
       <p className="mt-[0.8rem] mb-0 text-tinta-3 text-xs leading-[1.5]">
         A coluna da direita é a que entra na geração e usa somente esta ação. São {total}

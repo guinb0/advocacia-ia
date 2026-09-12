@@ -143,8 +143,14 @@ AMOSTRAS = [
       "cnh": "12345678900",
       "data_nascimento": "15/03/1990",
       "data_validade": "10/01/2030",
-      "filiacao_1": "JOANA PEREIRA DA SILVA",    # não pode vir com o "AB" da coluna vizinha
-      "filiacao_2": "ANTONIO CARLOS SANTOS",
+      # `filiacao_1`/`filiacao_2` NÃO são cobradas nesta amostra, e é decisão, não
+      # desistência: nela a Mistral devolve os dois nomes numa célula só da tabela
+      # ("FILIACAO JOANA PEREIRA DA SILVA ANTONIO CARLOS SANTOS"), sem quebra
+      # entre eles. Não há como saber onde um nome termina, e chutar poria nome de
+      # terceiro no campo de filiação de um documento que vira peça — o próprio
+      # `extractors` já preferiu rótulo neutro a fato errado (ver o bloco de
+      # filiação). A garantia dos dois campos está em `tests/test_resgate_ocr.py`,
+      # sobre a MESMA CNH numa foto em que as linhas vêm separadas.
       "orgao_emissor": "SSP/MG",
       "categoria_cnh": "AB",
       "data_primeira_habilitacao": "20/06/2010"},

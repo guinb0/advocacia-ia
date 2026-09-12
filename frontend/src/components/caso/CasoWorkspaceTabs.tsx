@@ -41,6 +41,9 @@ interface CasoWorkspaceTabsProps {
   onNavegar: (tela: Tela) => void;
   cliente?: string;
   categoria?: string;
+  /** Data de abertura (ISO). Fica AQUI, ao lado da categoria, para o dossiê não
+   *  repetir a identidade do caso logo abaixo. */
+  abertoEm?: string;
 }
 
 export default function CasoWorkspaceTabs({
@@ -48,6 +51,7 @@ export default function CasoWorkspaceTabs({
   onNavegar,
   cliente,
   categoria,
+  abertoEm,
 }: CasoWorkspaceTabsProps) {
   return (
     <section className="sticky top-0 z-20 overflow-hidden rounded-cartao border border-borda-forte bg-papel/95 shadow-cartao backdrop-blur-xl">
@@ -62,6 +66,12 @@ export default function CasoWorkspaceTabs({
           {categoria && (
             <p className="mt-1 truncate text-sm text-tinta-2" title={categoria}>
               {categoria}
+              {abertoEm && (
+                <span className="text-tinta-3">
+                  {" · aberto em "}
+                  {new Date(abertoEm).toLocaleDateString("pt-BR")}
+                </span>
+              )}
             </p>
           )}
         </div>

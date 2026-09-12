@@ -28,15 +28,9 @@ import { useState } from "react";
 
 import { salvarRoteiro } from "@/lib/api";
 import type { Bloco, Pergunta, RoteiroCompleto, TipoResposta } from "@/lib/types";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
+import { Botao } from "@/components/ui/Basicos";
 
-const T_BOTAO =
-  "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
-const T_SECUNDARIO =
-  "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer enabled:hover:bg-papel-2";
 const T_MINI =
   "border border-borda bg-transparent text-tinta-3 text-[10px] font-semibold leading-none font-ui " +
   "px-2 py-[5px] cursor-pointer hover:bg-papel-2 hover:text-tinta disabled:cursor-not-allowed disabled:text-tinta-desabilitada";
@@ -201,30 +195,31 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
             </p>
           </div>
           <div className="flex gap-[10px] items-center flex-wrap">
-            <button type="button" className={T_SECUNDARIO} onClick={aoFechar} disabled={salvando}>
+            <BotaoProcesso variante="discreto" pequeno aguardando={salvando} onClick={aoFechar}>
               Cancelar
-            </button>
+            </BotaoProcesso>
             {/* Primeiro botão porque é o caso comum no meio de um atendimento:
                 consertar para ESTE cliente sem mexer no roteiro de todos. */}
-            <button
-              type="button"
-              className={T_SECUNDARIO}
+            <BotaoProcesso
+              variante="secundario"
+              pequeno
+              aguardando={salvando}
               onClick={() => {
                 aoUsar(rascunho);
                 aoFechar();
               }}
-              disabled={salvando}
             >
               Usar neste atendimento
-            </button>
-            <button
-              type="button"
-              className={T_BOTAO}
-              onClick={() => void gravarNoCatalogo()}
-              disabled={salvando}
+            </BotaoProcesso>
+            <BotaoProcesso
+              variante="primario"
+              pequeno
+              onClick={gravarNoCatalogo}
+              processando={salvando}
+              textoProcessando="Salvando…"
             >
-              {salvando ? "Salvando…" : "Salvar no catálogo"}
-            </button>
+              Salvar no catálogo
+            </BotaoProcesso>
           </div>
         </div>
 
@@ -388,31 +383,31 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
                         />
                       ))}
 
-                      <button
-                        type="button"
-                        className={T_SECUNDARIO}
+                      <Botao
+                        variante="secundario"
+                        pequeno
                         onClick={() =>
                           alterarBloco(iBloco, { perguntas: [...bloco.perguntas, perguntaNova()] })
                         }
                       >
                         + Pergunta
-                      </button>
+                      </Botao>
                     </div>
                   )}
                 </div>
               );
             })}
 
-            <button
-              type="button"
-              className={T_SECUNDARIO}
+            <Botao
+              variante="secundario"
+              pequeno
               onClick={() => {
                 alterar({ blocos: [...rascunho.blocos, blocoNovo()] });
                 setAbertos((a) => [...a, `bloco-${rascunho.blocos.length}`]);
               }}
             >
               + Bloco
-            </button>
+            </Botao>
           </div>
         </div>
       </div>

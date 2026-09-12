@@ -215,6 +215,42 @@ def main_teste() -> int:
             longa.prefixo_parcial != "",
             "o que saiu da memória já tinha virado texto no prefixo",
         )
+
+        # --- a CAUDA do encerramento não pode ficar só no áudio -----------
+        #
+        # O registro bruto da entrevista é feito dos `trecho` congelados, e no
+        # fim sobra sempre uma cauda: o parcial só roda a cada
+        # `SEGUNDOS_ENTRE_PARCIAIS` e o que está dentro da `MARGEM_CAUDA_S` não
+        # congela. Ela é apurada aqui, no passe final, e `servico_transcricao` a
+        # manda como `trecho_final` — sem isso o .txt da entrevista e o texto que
+        # vai para o caso terminavam segundos antes da conversa, em cima do
+        # fechamento com o cliente sobre os documentos.
+        falar(longa, 4.0)
+        texto_final_longa = longa.transcrever_final()
+        falhas += not checar(
+            longa.cauda_final != "",
+            f"a sessão longa apura a cauda no final ({longa.cauda_final!r})",
+        )
+        falhas += not checar(
+            longa.cauda_final in texto_final_longa,
+            "a cauda apurada é a MESMA que entra no texto final — não é outra leitura",
+        )
+        falhas += not checar(
+            longa.cauda_final != longa.prefixo_parcial
+            and not longa.prefixo_parcial.endswith(longa.cauda_final),
+            "a cauda é o que FALTAVA, e não repetição do que já saiu em trecho",
+        )
+        # Resposta curta é o outro caso: nada foi solto da memória, o final é uma
+        # leitura nova do áudio TODO e repetir isso duplicaria o registro. Por
+        # isso ali a cauda fica vazia de propósito.
+        curta = T.AnswerSession(sessao_id="s5", pergunta_id="p5")
+        curta.estado = T.Estado.LISTENING
+        falar(curta, 3.0)
+        curta.transcrever_final()
+        falhas += not checar(
+            curta._base == 0 and curta.cauda_final == "",
+            "resposta curta não manda cauda — o final dela já é o áudio inteiro",
+        )
     finally:
         T._segmentos_sem_trava = original
         T.SEGUNDOS_ENTRE_PARCIAIS = cadencia_original

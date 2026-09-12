@@ -13,9 +13,15 @@
  * que o botão principal faz.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { ApiError, listarRoteiros, obterRoteiro } from "@/lib/api";
+import {
+  ApiError,
+  avisoCatalogoRoteirosEmCache,
+  catalogoRoteirosEmCache,
+  listarRoteiros,
+  obterRoteiro,
+} from "@/lib/api";
 import type { RoteiroCompleto, RoteiroResumo } from "@/lib/types";
 
 export default function SeletorDeRoteiro({
@@ -32,18 +38,42 @@ export default function SeletorDeRoteiro({
   aoEditarAtual: () => void;
   aoFechar: () => void;
 }) {
-  const [roteiros, setRoteiros] = useState<RoteiroResumo[]>([]);
-  const [carregando, setCarregando] = useState(true);
+  const cacheInicial = catalogoRoteirosEmCache();
+  const [roteiros, setRoteiros] = useState<RoteiroResumo[]>(cacheInicial ?? []);
+  const [carregando, setCarregando] = useState(cacheInicial === null);
   const [erro, setErro] = useState<string | null>(null);
+  const [avisoCatalogo, setAvisoCatalogo] = useState(avisoCatalogoRoteirosEmCache());
   /** Código do roteiro que está sendo buscado no clique — trava o card. */
   const [abrindo, setAbrindo] = useState<string | null>(null);
+  const preBusca = useRef<number | null>(null);
 
   useEffect(() => {
     listarRoteiros()
-      .then(setRoteiros)
+      .then((lista) => {
+        setRoteiros(lista);
+        setAvisoCatalogo(avisoCatalogoRoteirosEmCache());
+      })
       .catch((e) => setErro(e instanceof ApiError ? e.message : String(e)))
       .finally(() => setCarregando(false));
+    return () => {
+      if (preBusca.current !== null) window.clearTimeout(preBusca.current);
+    };
   }, []);
+
+  function cancelarPreBusca() {
+    if (preBusca.current !== null) window.clearTimeout(preBusca.current);
+    preBusca.current = null;
+  }
+
+  function agendarPreBusca(codigo: string) {
+    cancelarPreBusca();
+    // Cruzar um card com o mouse não significa escolhê-lo. A pequena espera
+    // evita baixar todos os roteiros completos ao percorrer o catálogo.
+    preBusca.current = window.setTimeout(() => {
+      preBusca.current = null;
+      void obterRoteiro(codigo).catch(() => undefined);
+    }, 180);
+  }
 
   async function escolher(resumo: RoteiroResumo) {
     // Trocar pelo que já está em uso não faz nada — só fecha.
@@ -104,6 +134,11 @@ export default function SeletorDeRoteiro({
               {erro}
             </div>
           )}
+          {avisoCatalogo && !erro && (
+            <div className="mb-3 border-l-4 border-atencao bg-papel-2 px-3 py-[10px] text-[12.5px] leading-[1.5] font-ui text-tinta">
+              {avisoCatalogo}
+            </div>
+          )}
 
           {carregando ? (
             <p className="m-0 text-tinta-3 text-sm">Carregando o catálogo…</p>
@@ -118,6 +153,14 @@ export default function SeletorDeRoteiro({
                     key={r.codigo}
                     type="button"
                     onClick={() => void escolher(r)}
+                    onPointerEnter={() => {
+                      if (!emUso) agendarPreBusca(r.codigo);
+                    }}
+                    onPointerLeave={cancelarPreBusca}
+                    onFocus={() => {
+                      cancelarPreBusca();
+                      if (!emUso) void obterRoteiro(r.codigo).catch(() => undefined);
+                    }}
                     disabled={abrindo !== null}
                     aria-current={emUso}
                     className={`text-left w-full p-3 border rounded-campo cursor-pointer transition-colors disabled:cursor-wait ${

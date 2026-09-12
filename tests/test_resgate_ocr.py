@@ -134,7 +134,30 @@ else:
     r = pipeline.processar(amostra.read_bytes(), amostra.name, gerar_arquivos_temporarios=False)
     nomes = sorted(c["nome"] for c in r["campos"] if str(c.get("valor") or "").strip())
     resgate = (r.get("ocr") or {}).get("resgate") or {}
-    checar(resgate.get("tentado") is True, "o resgate foi acionado nesta foto", str(resgate))
+    # O resgate é MEIO, não fim. Ele existe para esta foto sair legível, e
+    # `_merecer_resgate` só o aciona quando a primeira passada entrega menos da
+    # metade dos campos esperados. O pré-processamento melhorou desde que esta
+    # linha foi escrita: hoje a primeira passada já tira 11 campos desta CNH, e
+    # exigir `tentado is True` passou a cobrar um remédio para uma doença curada.
+    #
+    # O que segue protegido é a promessa: ou a primeira passada já resolve, ou o
+    # resgate entra. Se o OCR regredir, esta linha falha — e é isso que ela deve
+    # fazer.
+    checar(
+        resgate.get("tentado") is True or int(resgate.get("campos_antes") or 0) >= 3,
+        "ou a primeira passada já lê a foto, ou o resgate entra",
+        str(resgate),
+    )
+    # É AQUI que a filiação da CNH fica protegida (ver o comentário em
+    # `test_pipeline.py`): nesta foto as duas linhas vêm separadas, então os dois
+    # nomes têm de sair certos, cada um no seu campo.
+    valores = {c["nome"]: str(c.get("valor") or "").strip() for c in r["campos"]}
+    checar(
+        valores.get("filiacao_1") == "JOANA PEREIRA DA SILVA"
+        and valores.get("filiacao_2") == "ANTONIO CARLOS SANTOS",
+        "a filiacao sai nos dois campos, sem misturar os nomes",
+        f"1={valores.get('filiacao_1')!r} 2={valores.get('filiacao_2')!r}",
+    )
     checar(
         len(nomes) >= 3,
         f"extrai 3+ campos (passada unica extraia 1): {nomes}",

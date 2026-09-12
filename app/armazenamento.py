@@ -132,6 +132,169 @@ def salvar_peticao_local(caso_id: str, dados: dict[str, Any], docx: bytes) -> No
         )
 
 
+def salvar_peticao_anexa(
+    caso_id: str,
+    peca_id: str,
+    *,
+    titulo: str,
+    motivo: str,
+    dados: dict[str, Any],
+    docx: bytes,
+    gerada_por: str = "",
+) -> None:
+    """Grava (ou regrava) uma das OUTRAS peças do caso.
+
+    `peca_id` é determinístico a partir do título (ver `peticao_local.id_da_anexa`),
+    então mandar redigir a mesma ação de novo substitui a anterior em vez de
+    empilhar duas peças iguais na tela. Sem histórico, ao contrário da petição
+    principal: quem quiser guardar a versão anterior baixa antes de regerar, e a
+    tela avisa isso.
+    """
+    if not docx:
+        raise ValueError("O DOCX da peça está vazio.")
+    instante = agora()
+    payload = {chave: valor for chave, valor in dados.items() if chave != "_docx"}
+    with conectar() as con:
+        con.execute(
+            """
+            MERGE peticoes_anexas AS alvo
+            USING (SELECT ? AS id) AS origem
+               ON alvo.id = origem.id
+            WHEN MATCHED THEN UPDATE SET
+                 titulo = ?, motivo = ?, dados_json = ?, docx = ?,
+                 gerada_por = ?, atualizado_em = ?
+            WHEN NOT MATCHED THEN INSERT
+                 (id, caso_id, titulo, motivo, dados_json, docx, gerada_por,
+                  criado_em, atualizado_em)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                peca_id,
+                titulo[:300],
+                motivo[:1000],
+                json.dumps(payload, ensure_ascii=False),
+                docx,
+                gerada_por[:200],
+                instante,
+                peca_id,
+                caso_id,
+                titulo[:300],
+                motivo[:1000],
+                json.dumps(payload, ensure_ascii=False),
+                docx,
+                gerada_por[:200],
+                instante,
+                instante,
+            ),
+        )
+
+
+def listar_peticoes_anexas(caso_id: str) -> list[dict[str, Any]]:
+    """As outras peças deste caso, da mais antiga para a mais nova. SEM o .docx.
+
+    O binário fica fora de propósito: a lista é o que a tela pinta a cada abertura
+    do dossiê, e arrastar meio mega por peça só para desenhar um título custaria
+    mais que a tela inteira.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, caso_id, titulo, motivo, dados_json, gerada_por, criado_em,"
+            "       atualizado_em"
+            "  FROM peticoes_anexas WHERE caso_id = ? ORDER BY criado_em",
+            (caso_id,),
+        ).fetchall()
+    saida = []
+    for linha in linhas:
+        item = dict(linha)
+        try:
+            item["dados"] = json.loads(item.pop("dados_json"))
+        except (TypeError, json.JSONDecodeError):
+            item["dados"] = {}
+            item.pop("dados_json", None)
+        saida.append(item)
+    return saida
+
+
+def obter_peticao_anexa(peca_id: str) -> dict[str, Any] | None:
+    """Uma peça anexa COM o .docx, para baixar."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT id, caso_id, titulo, motivo, dados_json, docx, gerada_por,"
+            "       criado_em, atualizado_em"
+            "  FROM peticoes_anexas WHERE id = ?",
+            (peca_id,),
+        ).fetchone()
+    if linha is None:
+        return None
+    item = dict(linha)
+    try:
+        item["dados"] = json.loads(item.pop("dados_json"))
+    except (TypeError, json.JSONDecodeError):
+        item["dados"] = {}
+        item.pop("dados_json", None)
+    item["_docx"] = bytes(item.pop("docx") or b"")
+    return item
+
+
+def registrar_versao_peticao(caso_id: str, dados: dict[str, Any]) -> None:
+    """Guarda a versão da petição ANTES de ela ser sobrescrita.
+
+    Issue "Permitir alteração da petição por prompt com rastreabilidade" — cada
+    revisão precisa deixar a versão anterior recuperável, e `peticoes_locais`
+    só guarda a atual (chave é `caso_id`, sem histórico). Sempre um INSERT novo,
+    nunca um UPDATE: é histórico, não estado corrente.
+    """
+    payload = {chave: valor for chave, valor in dados.items() if chave != "_docx"}
+    id_versao = f"{caso_id}:{int(dados.get('version') or 1)}"
+    with conectar() as con:
+        # MERGE, não INSERT puro: `id` é determinístico (`caso_id:versao`), então uma
+        # tentativa repetida (ex.: falha de rede depois de já ter gravado) atualiza a
+        # mesma linha em vez de estourar violação de chave primária.
+        con.execute(
+            """
+            MERGE peticao_versoes AS alvo
+            USING (SELECT ? AS id) AS origem
+               ON alvo.id = origem.id
+            WHEN MATCHED THEN UPDATE SET
+                 status = ?, dados_json = ?
+            WHEN NOT MATCHED THEN INSERT
+                 (id, caso_id, versao, status, dados_json, criado_em)
+                 VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                id_versao,
+                str(dados.get("status") or "IN_REVIEW"),
+                json.dumps(payload, ensure_ascii=False),
+                id_versao,
+                caso_id,
+                int(dados.get("version") or 1),
+                str(dados.get("status") or "IN_REVIEW"),
+                json.dumps(payload, ensure_ascii=False),
+                agora(),
+            ),
+        )
+
+
+def listar_versoes_peticao(caso_id: str) -> list[dict[str, Any]]:
+    """Histórico de versões anteriores desta petição, da mais antiga à mais nova."""
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT versao, status, dados_json, criado_em FROM peticao_versoes"
+            " WHERE caso_id = ? ORDER BY versao",
+            (caso_id,),
+        ).fetchall()
+    resultado = []
+    for linha in linhas:
+        item = dict(linha)
+        try:
+            item["dados"] = json.loads(item.pop("dados_json"))
+        except (TypeError, json.JSONDecodeError):
+            item["dados"] = {}
+            item.pop("dados_json", None)
+        resultado.append(item)
+    return resultado
+
+
 def _normalizar_nome_cliente(cliente: object) -> str:
     """Chave estável para reencontrar contratos criados antes do caso."""
     return " ".join(str(cliente or "").split())
@@ -201,13 +364,97 @@ def criar_caso(
     }
 
 
+#: Campos da qualificação do cliente que a consulta por CPF — ou a digitação —
+#: preenche. Vivem numa tabela à parte, 1:1 com o caso: o `casos` segue enxuto e
+#: o cadastro completo tem onde morar. `nome` e `telefone` ficam no próprio caso.
+CAMPOS_QUALIFICACAO = (
+    "cpf", "nascimento", "sexo", "nome_mae", "cep", "endereco", "email",
+    "renda_estimada",
+)
+
+
+def salvar_qualificacao(caso_id: str, campos: dict[str, Any]) -> None:
+    """Grava ou atualiza a qualificação do cliente do caso.
+
+    Só os campos conhecidos entram, e string vazia vira NULL: o cadastro é
+    OPCIONAL, e "não informado" não é o mesmo que "" para quem for ler depois. É
+    upsert porque o caso nasce no meio da entrevista e pode ser completado adiante.
+    """
+    valores = [str(campos.get(c) or "").strip() or None for c in CAMPOS_QUALIFICACAO]
+    if all(v is None for v in valores):
+        return  # nada informado: não cria uma linha só de nulos
+    instante = agora()
+    atribuicoes = ", ".join(f"{coluna} = ?" for coluna in CAMPOS_QUALIFICACAO)
+    colunas = ", ".join(CAMPOS_QUALIFICACAO)
+    marcadores = ", ".join("?" for _ in CAMPOS_QUALIFICACAO)
+    with conectar() as con:
+        atualizou = con.execute(
+            f"UPDATE qualificacao SET {atribuicoes}, atualizado_em = ? WHERE caso_id = ?",
+            [*valores, instante, caso_id],
+        ).rowcount
+        if not atualizou:
+            con.execute(
+                f"INSERT INTO qualificacao (caso_id, {colunas}, criado_em, atualizado_em)"
+                f" VALUES (?, {marcadores}, ?, ?)",
+                [caso_id, *valores, instante, instante],
+            )
+
+
+def obter_qualificacao(caso_id: str) -> dict[str, Any] | None:
+    """A qualificação gravada do caso, ou None se nunca foi preenchida."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM qualificacao WHERE caso_id = ?", (caso_id,)
+        ).fetchone()
+    return dict(linha) if linha is not None else None
+
+
+def registrar_ligacao(caso_id: str, usuario: str) -> dict[str, Any]:
+    """Registra que ALGUÉM ligou para o cliente do caso, no relatório de follow-up.
+
+    É log de atividade, não estado: cada ligação é uma linha, e o relatório mostra
+    a mais recente. Serve para o atendimento não ligar duas vezes para o mesmo
+    cliente e para a supervisão ver quem está tocando as pendências.
+    """
+    reg_id = str(uuid.uuid4())
+    instante = agora()
+    quem = (usuario or "").strip()[:200]
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO ligacoes_followup (id, caso_id, usuario, criado_em)"
+            " VALUES (?, ?, ?, ?)",
+            (reg_id, caso_id, quem, instante),
+        )
+    return {"id": reg_id, "caso_id": caso_id, "usuario": quem, "criado_em": instante}
+
+
+def ultimas_ligacoes_por_caso() -> dict[str, dict[str, Any]]:
+    """A ligação MAIS RECENTE de cada caso — quem ligou e quando —, numa consulta.
+
+    Espelha `carteira._cobrancas_por_caso`: o relatório de follow-up cruza os dois
+    para todos os casos de uma vez, sem uma ida ao banco por linha.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT caso_id, usuario, criado_em FROM ligacoes_followup ORDER BY criado_em DESC"
+        ).fetchall()
+    ultimas: dict[str, dict[str, Any]] = {}
+    for linha in linhas:
+        caso_id = str(linha["caso_id"])
+        # ORDER BY criado_em DESC: a primeira que aparece por caso é a mais recente.
+        if caso_id not in ultimas:
+            ultimas[caso_id] = {"usuario": linha["usuario"], "quando": linha["criado_em"]}
+    return ultimas
+
+
 def listar_casos() -> list[dict[str, Any]]:
     with conectar() as con:
         linhas = con.execute(
             """
-            SELECT c.*,
+            SELECT c.*, q.cpf AS cpf,
                    (SELECT COUNT(*) FROM entregas e WHERE e.caso_id = c.id) AS total_entregas
               FROM casos c
+              LEFT JOIN qualificacao q ON q.caso_id = c.id
              ORDER BY c.atualizado_em DESC
             """
         ).fetchall()
@@ -292,6 +539,135 @@ def atualizar_caso(
     with conectar() as con:
         cur = con.execute(f"UPDATE casos SET {', '.join(campos)} WHERE id = ?", valores)
     return cur.rowcount > 0
+
+
+def register_call(case_id: str, attendant_id: str, attendant_name: str) -> dict[str, Any]:
+    call_id = str(uuid.uuid4())
+    timestamp = agora()
+    record = {
+        "id": call_id,
+        "caso_id": case_id,
+        "atendente_id": attendant_id.strip(),
+        "atendente_nome": attendant_name.strip(),
+        "realizada_em": timestamp,
+        "criado_em": timestamp,
+    }
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO ligacoes"
+            " (id, caso_id, atendente_id, atendente_nome, realizada_em, criado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                record["id"],
+                record["caso_id"],
+                record["atendente_id"],
+                record["atendente_nome"],
+                record["realizada_em"],
+                record["criado_em"],
+            ),
+        )
+    return record
+
+
+def list_calls(case_id: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, caso_id, atendente_id, atendente_nome, realizada_em, criado_em "
+            "FROM ligacoes WHERE caso_id = ? ORDER BY realizada_em DESC, id DESC",
+            (case_id,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def listar_ligacoes_desde(desde: str) -> list[dict[str, Any]]:
+    """Ligações realizadas a partir do instante informado, para leitura operacional."""
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, caso_id, atendente_id, atendente_nome, realizada_em, criado_em "
+            "FROM ligacoes WHERE realizada_em >= ? ORDER BY realizada_em DESC, id DESC",
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def listar_entrevistas_desde(desde: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, entrevistador, entrevistador_id, avaliacao_google_em, criado_em "
+            "FROM entrevistas WHERE criado_em >= ? ORDER BY criado_em DESC",
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def salvar_auditoria_entrevista(
+    entrevista_id: str, resultado: dict[str, Any], auditado_por: str
+) -> None:
+    instante = agora()
+    with conectar() as con:
+        atualizado = con.execute(
+            "UPDATE auditorias_entrevista SET resultado = ?, auditado_por = ?, auditado_em = ? "
+            "WHERE entrevista_id = ?",
+            (json.dumps(resultado, ensure_ascii=False), auditado_por.strip(), instante, entrevista_id),
+        ).rowcount
+        if not atualizado:
+            con.execute(
+                "INSERT INTO auditorias_entrevista (entrevista_id, resultado, auditado_por, auditado_em) "
+                "VALUES (?, ?, ?, ?)",
+                (entrevista_id, json.dumps(resultado, ensure_ascii=False), auditado_por.strip(), instante),
+            )
+
+
+def listar_auditorias_desde(desde: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT a.entrevista_id, a.resultado, a.auditado_em, e.entrevistador, e.entrevistador_id "
+            "FROM auditorias_entrevista a JOIN entrevistas e ON e.id = a.entrevista_id "
+            "WHERE a.auditado_em >= ? ORDER BY a.auditado_em DESC",
+            (desde,),
+        ).fetchall()
+    resultado = []
+    for linha in linhas:
+        item = dict(linha)
+        try:
+            item["resultado"] = json.loads(item["resultado"])
+        except (TypeError, json.JSONDecodeError):
+            item["resultado"] = {}
+        resultado.append(item)
+    return resultado
+
+
+def registrar_solicitacao_peticao(
+    caso_id: str, solicitante_id: str, solicitante_nome: str, origem: str
+) -> str:
+    identificador = str(uuid.uuid4())
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO solicitacoes_peticao "
+            "(id, caso_id, solicitante_id, solicitante_nome, origem, status, solicitada_em) "
+            "VALUES (?, ?, ?, ?, ?, 'requested', ?)",
+            (identificador, caso_id, solicitante_id.strip(), solicitante_nome.strip(), origem, agora()),
+        )
+    return identificador
+
+
+def concluir_solicitacao_peticao(identificador: str, erro: str = "") -> None:
+    status = "failed" if erro else "completed"
+    with conectar() as con:
+        con.execute(
+            "UPDATE solicitacoes_peticao SET status = ?, concluida_em = ?, erro = ? WHERE id = ?",
+            (status, agora(), erro[:1000] or None, identificador),
+        )
+
+
+def listar_solicitacoes_peticao_desde(desde: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT solicitante_id, solicitante_nome, status, solicitada_em, concluida_em "
+            "FROM solicitacoes_peticao WHERE solicitada_em >= ? ORDER BY solicitada_em DESC",
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
 
 
 def excluir_caso(caso_id: str) -> bool:
@@ -1081,6 +1457,43 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
     return [_normalizar_entrega(l) for l in linhas]
 
 
+def listar_extracoes_do_caso(caso_id: str) -> list[dict[str, Any]]:
+    """Extrações persistidas em uma consulta, sem enriquecimento externo.
+
+    Serve a leituras cruzadas do próprio checklist. `obter_entrega` também
+    consulta o agente jurídico e, chamado uma vez por arquivo, tornava a abertura
+    de casos grandes proporcionalmente lenta.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT id, arquivo, item_codigo, status_proc, extracao_json
+                 FROM entregas
+                WHERE caso_id = ? AND extracao_json IS NOT NULL
+                ORDER BY criado_em""",
+            (caso_id,),
+        ).fetchall()
+    saida: list[dict[str, Any]] = []
+    for linha in linhas:
+        try:
+            extracao = json.loads(linha["extracao_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(extracao, dict):
+            # O uid=197609(user) gid=197121 groups=197121 vai junto porque quem cruza achado com documento precisa
+            # apontar a ENTREGA de origem (`analise_documentos`), não só o nome do
+            # arquivo — dois anexos podem ter nomes iguais em pastas diferentes.
+            saida.append(
+                {
+                    "id": str(linha["id"]),
+                    "arquivo": linha["arquivo"],
+                    "item_codigo": linha["item_codigo"],
+                    "status_proc": linha["status_proc"],
+                    "extracao": extracao,
+                }
+            )
+    return saida
+
+
 def marcos_por_caso(caso_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Entregas, entrevistas, assinaturas e vínculo de vários casos, em quatro consultas.
 
@@ -1416,11 +1829,27 @@ def listar_assinaturas(
         parametros.append(caso_id)
     if cliente:
         # O SQLite aceitava uma função Python registrada na conexão; o SQL Server não
-        # roda Python dentro da consulta. Como o nome já é gravado normalizado, comparar
-        # direto basta — e o collation do banco (`Latin1_General_CI_AS`) ignora
-        # maiúsculas, o que dispensa o antigo `COLLATE NOCASE`.
-        condicoes.append("cliente = ?")
-        parametros.append(_normalizar_nome_cliente(cliente))
+        # roda Python dentro da consulta. O nome JÁ é gravado normalizado, então a
+        # igualdade direta resolve — e o collation do banco (`Latin1_General_CI_AS`)
+        # ignora maiúsculas, o que dispensa o antigo `COLLATE NOCASE`.
+        #
+        # O segundo ramo é pelas linhas ANTIGAS, gravadas antes de a normalização
+        # existir na escrita: "Maria    da Silva" com espaços dobrados não casava
+        # com "Maria da Silva" e o contrato já assinado deixava de ser reencontrado
+        # — na prática, ao criar o caso a assinatura existente não era vinculada e
+        # alguém reenviava um documento que o cliente já tinha assinado.
+        #
+        # Colapsar espaços em T-SQL é o truque dos três REPLACE com sentinela: cada
+        # espaço vira "<>", "><" de pares vizinhos desaparece, e o que sobrou volta a
+        # ser um espaço. "<" e ">" não aparecem em nome de pessoa. Fica em OR e não
+        # sozinho para a igualdade direta (indexável) continuar atendendo o caso
+        # normal; a varredura só acontece quando ela não acha nada.
+        condicoes.append(
+            "(cliente = ? OR LTRIM(RTRIM(REPLACE(REPLACE(REPLACE("
+            "cliente, ' ', '<>'), '><', ''), '<>', ' '))) = ?)"
+        )
+        normalizado = _normalizar_nome_cliente(cliente)
+        parametros.extend([normalizado, normalizado])
     if cpf:
         condicoes.append("cpf = ?")
         parametros.append(_normalizar_cpf(cpf))
@@ -1555,6 +1984,7 @@ def registrar_entrevista(
     texto: str,
     realizada_em: str = "",
     entrevistador: str = "",
+    entrevistador_id: str = "",
     gravacao_id: str = "",
 ) -> dict[str, Any]:
     """Guarda a entrevista do atendimento: o arquivo original e o texto lido dele.
@@ -1568,9 +1998,9 @@ def registrar_entrevista(
         con.execute(
             """
             INSERT INTO entrevistas
-                   (id, caso_id, arquivo, caminho, texto, realizada_em, entrevistador,
-                    resumo, perguntas, fatos_gerados, enviada_em, gravacao_id, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '', '[]', 0, NULL, ?, ?)
+                    (id, caso_id, arquivo, caminho, texto, realizada_em, entrevistador, entrevistador_id,
+                     resumo, perguntas, fatos_gerados, enviada_em, gravacao_id, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '[]', 0, NULL, ?, ?)
             """,
             (
                 identificador,
@@ -1580,6 +2010,7 @@ def registrar_entrevista(
                 texto,
                 realizada_em,
                 entrevistador,
+                entrevistador_id.strip(),
                 gravacao_id,
                 agora(),
             ),
@@ -1660,11 +2091,73 @@ def listar_resumo_supervisao() -> list[dict[str, Any]]:
                    e.avaliacao_google_em, e.gravacao_id, e.criado_em,
                    LENGTH(e.texto) AS caracteres
               FROM entrevistas e
-              JOIN casos c ON c.id = e.caso_id
+         LEFT JOIN casos c ON c.id = e.caso_id
              ORDER BY e.criado_em DESC
             """
         ).fetchall()
     return [_normalizar_entrevista(linha) for linha in linhas]
+
+
+def listar_resumo_supervisao_paginado(
+    *,
+    entrevistador: str,
+    pagina: int,
+    tamanho: int,
+) -> dict[str, Any]:
+    """Página de entrevistas de uma pessoa, sem carregar a supervisão inteira.
+
+    O resumo geral continua em `listar_resumo_supervisao`; esta função existe
+    para a coluna de detalhes. Ela filtra e pagina no SQL, mantendo a transcrição
+    fora da viagem e tolerando entrevista antiga sem caso associado.
+    """
+    nome = " ".join(str(entrevistador or "").split())
+    sem_nome = nome.casefold() == "não identificado"
+    tamanho_real = max(1, min(int(tamanho or 8), 30))
+    pagina_pedida = max(1, int(pagina or 1))
+
+    if sem_nome:
+        filtro = "NULLIF(LTRIM(RTRIM(COALESCE(e.entrevistador, ''))), '') IS NULL"
+        parametros: tuple[Any, ...] = ()
+    else:
+        nome_sql = (
+            "LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+            "LTRIM(RTRIM(COALESCE(e.entrevistador, ''))), "
+            "'  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '))"
+        )
+        filtro = f"{nome_sql} = ?"
+        parametros = (nome.casefold(),)
+
+    with conectar() as con:
+        total_linha = con.execute(
+            f"SELECT COUNT(*) AS n FROM entrevistas e WHERE {filtro}",
+            parametros,
+        ).fetchone()
+        total = int(total_linha["n"] if total_linha else 0)
+        paginas = max(1, (total + tamanho_real - 1) // tamanho_real)
+        pagina_real = min(pagina_pedida, paginas)
+        offset = (pagina_real - 1) * tamanho_real
+        linhas = con.execute(
+            f"""
+            SELECT e.id, e.caso_id, c.cliente, e.arquivo, e.realizada_em,
+                   e.entrevistador, e.fatos_gerados, e.enviada_em,
+                   e.avaliacao_google_em, e.gravacao_id, e.criado_em,
+                   LEN(e.texto) AS caracteres
+              FROM entrevistas e
+         LEFT JOIN casos c ON c.id = e.caso_id
+             WHERE {filtro}
+             ORDER BY e.criado_em DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+            """,
+            (*parametros, offset, tamanho_real),
+        ).fetchall()
+
+    return {
+        "itens": [_normalizar_entrevista(linha) for linha in linhas],
+        "total": total,
+        "pagina": pagina_real,
+        "tamanho": tamanho_real,
+        "paginas": paginas,
+    }
 
 
 def obter_entrevista(entrevista_id: str) -> dict[str, Any] | None:
@@ -1687,17 +2180,34 @@ def marcar_entrevista_lida(
     Guardar o resumo aqui — e não só do lado do agente — é o que faz o dossiê continuar
     explicando a entrevista quando o agente está fora do ar.
     """
+    # O resumo só é sobrescrito quando o agente devolve um não-vazio: a IA local
+    # (ver `entrevista.gerar_resumo`) já pode ter gravado um no encerramento, e um
+    # `summary` vazio do agente não deve apagá-lo.
     with conectar() as con:
         con.execute(
-            "UPDATE entrevistas SET resumo = ?, perguntas = ?, fatos_gerados = ?,"
-            " enviada_em = ? WHERE id = ?",
+            "UPDATE entrevistas SET resumo = CASE WHEN ? <> N'' THEN ? ELSE resumo END,"
+            " perguntas = ?, fatos_gerados = ?, enviada_em = ? WHERE id = ?",
             (
+                resumo[:4000],
                 resumo[:4000],
                 json.dumps(perguntas[:15]),
                 fatos_gerados,
                 agora(),
                 entrevista_id,
             ),
+        )
+
+
+def atualizar_resumo_entrevista(entrevista_id: str, resumo: str) -> None:
+    """Grava o resumo da entrevista gerado pela IA local (ver `entrevista.gerar_resumo`).
+
+    Separado do registro do agente porque não depende dele: o resumo sai no
+    encerramento, com o DeepSeek, esteja o agente jurídico ligado ou não.
+    """
+    with conectar() as con:
+        con.execute(
+            "UPDATE entrevistas SET resumo = ? WHERE id = ?",
+            (resumo[:4000], entrevista_id),
         )
 
 
@@ -2118,6 +2628,25 @@ def listar_roteiros() -> list[dict[str, Any]]:
     with conectar() as con:
         linhas = con.execute("SELECT * FROM roteiros ORDER BY criado_em").fetchall()
     return [_normalizar_roteiro(linha) for linha in linhas]
+
+
+def listar_resumos_roteiros() -> list[dict[str, Any]]:
+    """Metadados do seletor, sem transferir nem desserializar `corpo`.
+
+    Um roteiro pode ter dezenas de perguntas. O seletor usa somente estes sete
+    campos; trazer o JSON de todos fazia o clique em "Alterar roteiro" pagar o
+    custo do catálogo inteiro antes de mostrar uma única opção.
+    """
+    # O seletor é uma interação curta. Se a VPN/ODBC estiver indisponível, não
+    # retenha a tela pelos 15 s usados nas operações comuns do banco.
+    with conectar(timeout=5) as con:
+        linhas = con.execute(
+            """SELECT codigo, nome, descricao, criado_por, origem,
+                      criado_em, atualizado_em
+                 FROM roteiros
+             ORDER BY criado_em"""
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
 
 
 def obter_roteiro(codigo: str) -> dict[str, Any] | None:

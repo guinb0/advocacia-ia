@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useCasos, useCategorias, useSituacao } from "@/lib/useCasos";
 import { useSessao } from "@/lib/auth";
+import { useChamada } from "@/lib/ChamadaContexto";
 
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
 export type Tela =
@@ -14,13 +15,20 @@ export type Tela =
   | "jurimetria"
   | "casos"
   | "avulso"
+  | "investigacao"
   | "usuarios"
   | "panorama"
+  | "operacao"
   | "entrevista"
   | "supervisao"
   | "dados"
+  | "saudeAgente"
   | "modelosDePeticao"
+  | "configuracaoAssinatura"
   | "catalogoRoteiros"
+  | "glossarioDocumentos"
+  | "revisao"
+  | "followup"
   | "documentacao";
 
 export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
@@ -36,15 +44,33 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   avulso: "documentos",
   usuarios: "usuarios",
   panorama: "metricas",
+  operacao: "operacao",
   entrevista: "entrevista",
   supervisao: "supervisao",
   dados: "metricas",
+  saudeAgente: "agente",
+  revisao: "revisao",
+  followup: "casos",
   documentacao: "documentacao",
   modelosDePeticao: "casos",
   /* Sem esta linha a tela seria LIVRE, não restrita: `podeAbrirTela` libera o
    * que não está mapeado. O catálogo de roteiros pertence ao módulo `roteiros`,
    * que o advogado e o secretário têm — ver `app/perfis.py`. */
   catalogoRoteiros: "roteiros",
+  /* Guarda o token de Clicksign/Autentique do escritório — mesmo módulo que já
+   * controla os modelos de contrato (`app/main.py`, `PodeManterModelos`). */
+  configuracaoAssinatura: "contratos",
+  /* A TELA de manutenção pede o módulo; consultar o glossário não pede — a
+   * reclassificação, dentro do caso, lê a lista sem passar por aqui. */
+  glossarioDocumentos: "glossario_documentos",
+  /* `modelosDePeticao` de propósito NÃO está aqui.
+   *
+   * Na barra horizontal antiga o item aparecia para todo mundo (filtro de
+   * perfil retirado enquanto o produto está em construção). Ao migrar para a
+   * barra lateral, o mapeamento para o módulo `agente` escondeu a entrada de
+   * quem não tinha esse módulo na sessão — e a modelagem de petições "sumiu"
+   * do menu. Sem mapeamento, `podeAbrirTela` libera a tela; o backend segue
+   * autenticando as APIs do agente. */
 };
 
 export function podeAbrirTela(tela: Tela, modulos: string[]): boolean {
@@ -96,11 +122,16 @@ export const useHomeModel = () => {
   // parecia deixar a aplicação sem saída.
   const [tela, setTela] = useState<Tela>("carteira");
   const sessao = useSessao();
+  const chamada = useChamada();
   const [casoAberto, setCasoAberto] = useState<string | null>(null);
 
   const categorias = useCategorias();
   const listaCasos = useCasos();
-  const situacaoCaso = useSituacao(casoAberto);
+  const documentadorEmChamada =
+    sessao.modulos.includes("documentacao") &&
+    chamada.estado !== "fora" &&
+    chamada.estado !== "encerrada";
+  const situacaoCaso = useSituacao(casoAberto, documentadorEmChamada);
   const modulos = sessao.modulos;
 
   /* Quem é da Documentação CAI na tela da Documentação — uma vez, ao entrar.
@@ -123,16 +154,29 @@ export const useHomeModel = () => {
     if (sessao.carregando) return;
     /* O atalho de entrada, UMA vez. Sem o `jaDirecionado`, `tela` está nas
      * dependências e este ramo redispara a cada navegação: a pessoa clica em
-     * Casos, o efeito roda porque `tela` mudou, e ela volta para a Documentação
-     * antes de a tela aparecer. */
-    if (
-      !jaDirecionado.current &&
-      sessao.papeis.includes("documentacao") &&
-      podeAbrirTela("documentacao", modulos)
-    ) {
+     * Casos, o efeito roda porque `tela` mudou, e ela volta para a tela de
+     * entrada antes de a tela aparecer.
+     *
+     * A tela de entrada varia com o trabalho da pessoa, decidida por MÓDULO (e
+     * não por nome de perfil, que o escritório edita — ver `app/perfis.py`):
+     *   - Documentação → a central da documentação (fila + status dos clientes);
+     *   - perfil de escritório (secretário/analista): tem visão geral mas NÃO
+     *     conduz atendimento → o painel de andamento do escritório;
+     *   - advogado/entrevistador e os demais → a entrevista guiada (padrão).
+     * É só atalho de conveniência: `podeAbrirTela` é quem de fato autoriza. */
+    if (!jaDirecionado.current) {
       jaDirecionado.current = true;
-      setTela("documentacao");
-      return;
+      if (
+        sessao.papeis.includes("documentacao") &&
+        podeAbrirTela("documentacao", modulos)
+      ) {
+        setTela("documentacao");
+        return;
+      }
+      if (!modulos.includes("entrevista") && podeAbrirTela("panorama", modulos)) {
+        setTela("panorama");
+        return;
+      }
     }
     /* Esta parte SEGUE valendo sempre, e é a que de fato guarda: tela que o
      * perfil não alcança devolve para a primeira que ele alcança. */

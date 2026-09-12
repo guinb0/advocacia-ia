@@ -290,6 +290,18 @@ class AnswerSession:
     texto_parcial: str = ""
     #: O que já saiu da janela e foi congelado. Ver `transcrever_parcial`.
     prefixo_parcial: str = ""
+    #: O texto da CAUDA apurado por `transcrever_final` — o pedaço de áudio que
+    #: nunca congelou e, por isso, nunca saiu como `trecho`.
+    #:
+    #: Sem ele o registro bruto da entrevista terminava alguns segundos antes da
+    #: conversa: o último parcial só roda a cada `SEGUNDOS_ENTRE_PARCIAIS`, e o
+    #: que estiver dentro da `MARGEM_CAUDA_S` não congela. O fim do atendimento —
+    #: justamente o combinado sobre os documentos — ficava só no áudio.
+    #:
+    #: Fica VAZIO quando nada foi descartado da memória (`_base == 0`): ali o
+    #: final é uma transcrição nova do áudio todo, que repetiria o que já foi
+    #: entregue em trechos em vez de completar.
+    cauda_final: str = ""
     texto_final: str = ""
     #: Um parcial rodando por vez, por sessão. Quem controla é o serviço.
     parcial_em_curso: bool = False
@@ -538,6 +550,7 @@ class AnswerSession:
         roteiro enquanto a conversa acontece.
         """
         self.estado = Estado.FINISHING
+        self.cauda_final = ""
         if self._base == 0:
             # Nada foi solto: transcreve tudo de uma vez, como sempre foi.
             completo = self._desde(0)
@@ -551,6 +564,7 @@ class AnswerSession:
             # dali repetiria as últimas palavras no texto final.
             cauda = self._desde(self._inicio_cauda)
             texto_cauda = _transcrever(cauda) if len(cauda) >= TAXA * 0.3 else ""
+            self.cauda_final = texto_cauda
             self.texto_final = " ".join(
                 p for p in (self.prefixo_parcial, texto_cauda) if p
             ).strip()

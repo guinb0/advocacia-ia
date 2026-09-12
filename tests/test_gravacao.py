@@ -82,15 +82,20 @@ def testar_ciclo_completo() -> int:
     return falhas
 
 
-def testar_pausa_nao_entra() -> int:
-    """O que não é enviado não é gravado — e o corte fica registrado."""
+def testar_religacao_nao_entra() -> int:
+    """O que não é enviado não é gravado — e o corte fica registrado.
+
+    Não existe mais pausa (ver `transcricao.ts`): o único intervalo possível no
+    meio de um atendimento é o da religação depois de uma queda de conexão, que
+    são segundos. O trecho registra onde ele ficou.
+    """
     falhas = 0
     with tempfile.TemporaryDirectory() as pasta:
         gravacao.PASTA = Path(pasta)
         grav = gravacao.Gravacao("22222222-2222-4222-8222-222222222222")
 
         grav.acrescentar(_fala(0.5))
-        # A pausa é o navegador PARANDO de mandar bytes: para o servidor, é um
+        # A queda é o navegador PARANDO de mandar bytes: para o servidor, é um
         # intervalo de relógio sem escrita nenhuma.
         grav._ultima_escrita -= gravacao.INTERVALO_TRECHO_S + 1
         grav.acrescentar(_fala(0.5))
@@ -331,12 +336,57 @@ def testar_rotas() -> int:
     return falhas
 
 
+def testar_grava_fora_da_sessao() -> int:
+    """O ÁUDIO DO ATENDIMENTO INTEIRO, e não só o das respostas abertas.
+
+    Era aqui que o arquivo encolhia: o PCM que chegasse sem sessão de
+    transcrição aberta era descartado no `elif` dos bytes, antes de a gravação
+    vê-lo. Quem conduzia a conversa sem uma resposta aberta — o normal, entre
+    perguntas — recebia no fim um arquivo com uma fração do atendimento.
+    """
+    from fastapi.testclient import TestClient
+
+    from app import servico_transcricao
+
+    falhas = 0
+    with tempfile.TemporaryDirectory() as pasta:
+        gravacao.PASTA = Path(pasta)
+        identificador = "99999999-9999-4999-8999-999999999999"
+        cliente = TestClient(servico_transcricao.app)
+
+        with cliente.websocket_connect("/ws/transcricao") as ws:
+            ws.send_json(
+                {
+                    "type": "start",
+                    "sessionId": "sessao-1",
+                    "questionId": "entrevista",
+                    "entrevistaId": identificador,
+                }
+            )
+            ws.receive_json()  # started
+            ws.send_bytes(_fala(0.4).tobytes())  # 0,4s DENTRO da sessão
+
+            ws.send_json({"type": "stop", "sessionId": "sessao-1"})
+            ws.receive_json()  # final
+
+            # E agora o que importa: a conversa continua sem sessão aberta.
+            for _ in range(3):
+                ws.send_bytes(_fala(0.4).tobytes())  # 1,2s FORA de sessão
+
+        dados = cliente.post(f"/entrevista/{identificador}/encerrar").json()
+        falhas += not checar(
+            abs(dados["duracao_s"] - 1.6) < 0.1,
+            f"o arquivo tem o atendimento inteiro (1,6s), não só a resposta ({dados})",
+        )
+    return falhas
+
+
 def main_teste() -> int:
     original = gravacao.PASTA
     falhas = 0
     for titulo, teste in (
         ("PCM entra, MP4 sai", testar_ciclo_completo),
-        ("pausa não entra no arquivo", testar_pausa_nao_entra),
+        ("o intervalo da religação fica registrado", testar_religacao_nao_entra),
         ("F5 no meio não sobrescreve", testar_retomada_nao_sobrescreve),
         ("processo morto com o arquivo aberto", testar_cabecalho_orfao),
         ("encerrar duas vezes", testar_encerrar_duas_vezes),
@@ -344,6 +394,7 @@ def main_teste() -> int:
         ("entrevista sem áudio", testar_sem_audio),
         ("id de entrevista hostil", testar_identificador_hostil),
         ("rotas de ponta a ponta", testar_rotas),
+        ("grava também fora de sessão", testar_grava_fora_da_sessao),
     ):
         print(f"\n{titulo}")
         falhas += teste()

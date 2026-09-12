@@ -433,8 +433,8 @@ export default function Dados({ onVoltar }: Props) {
                   onChange={(e) => setBusca(e.target.value)}
                   placeholder="Número do processo ou título"
                 />
-                <Botao variante="secundario" type="submit" disabled={listando}>
-                  {listando ? "Buscando…" : "Buscar"}
+                <Botao variante="secundario" type="submit" carregando={listando} textoCarregando="Buscando…">
+                  Buscar
                 </Botao>
               </form>
 

@@ -47,3 +47,18 @@ def test_amostra_fraca_nao_inventa_recomendacao(monkeypatch) -> None:
     resultado = recomendacao.recomendar("Relato completo do vínculo, prova e acidente.")
     assert resultado["recomendado"] == "indefinido"
     assert "pouco" in resultado["motivo"].lower()
+
+
+def test_cache_nao_reaproveita_analise_de_outro_roteiro(monkeypatch) -> None:
+    chamadas = []
+    amostra = [trecho("PROCEDENTE") for _ in range(4)]
+
+    def buscar(*args, **kwargs):
+        chamadas.append(1)
+        return amostra
+
+    monkeypatch.setattr(recomendacao.rag, "buscar_similares", buscar)
+    relato = "Relato completo do contrato, do dano e das provas apresentadas."
+    recomendacao.recomendar(relato, contexto_roteiro="Roteiro trabalhista")
+    recomendacao.recomendar(relato, contexto_roteiro="Roteiro cível")
+    assert len(chamadas) == 2

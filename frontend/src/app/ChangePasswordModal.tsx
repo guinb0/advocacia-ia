@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { KeyRound, Loader2, ShieldAlert } from "lucide-react";
+import { KeyRound, ShieldAlert } from "lucide-react";
 
 import { Botao } from "@/components/ui/Basicos";
 
@@ -112,9 +112,16 @@ export default function ChangePasswordModal({
             {divergem && <span className="text-xs text-critico">As duas senhas não são iguais.</span>}
           </div>
 
-          <Botao type="submit" variante="primario" bloco disabled={!podeSalvar} className="mt-3">
-            {salvando && <Loader2 size={18} className="animate-spin" />}
-            {salvando ? "Salvando…" : "Salvar e entrar"}
+          <Botao
+            type="submit"
+            variante="primario"
+            bloco
+            disabled={!podeSalvar && !salvando}
+            carregando={salvando}
+            textoCarregando="Salvando…"
+            className="mt-3"
+          >
+            Salvar e entrar
           </Botao>
         </form>
       </div>

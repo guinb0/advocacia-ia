@@ -2,12 +2,15 @@
 
 import { useRef, useState } from "react";
 
-import type { ItemSituacao } from "@/lib/types";
+import type { ItemSituacao, OpcoesReclassificacao } from "@/lib/types";
 import { useModelo } from "@/lib/useExtracao";
-import { Botao, Marcacao, Selo } from "@/components/ui/Basicos";
+import { baixarSelecaoDeDocumentos, baixarSelecaoEmPdf } from "@/lib/api";
+import { Aviso, Botao, Marcacao, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import VisorEntrega from "@/components/caso/VisorEntrega";
 import CorrigirItemDocumento from "@/components/caso/CorrigirItemDocumento";
+import { baixarArquivo } from "@/lib/baixar";
 
 /* A lista não pré-visualiza nada: cada entrega aparece só como enviada, e o
  * arquivo abre no visor ao clique. Além de deixar o checklist limpo, isso evita
@@ -59,17 +62,24 @@ const APARENCIA = {
 interface Props {
   item: ItemSituacao;
   itensChecklist: ItemSituacao[];
+  /** O caso a que este item pertence — usado para gerar o ZIP da seleção. */
+  casoId: string;
   enviando: boolean;
   onEnviar: (itemCodigo: string, arquivo: File, usarParaRgECpf?: boolean) => void;
   onRemover: (entregaId: string) => void;
   onVincularIdentidade: (entregaId: string, itemCodigo: string) => void;
-  onReatribuir: (entregaId: string, itens: string[]) => Promise<void> | void;
+  onReatribuir: (
+    entregaId: string,
+    itens: string[],
+    opcoes?: OpcoesReclassificacao,
+  ) => Promise<void> | void;
   dentroDoAtendimento?: boolean;
 }
 
 export default function ItemChecklistLinha({
   item,
   itensChecklist,
+  casoId,
   enviando,
   onEnviar,
   onRemover,
@@ -81,6 +91,53 @@ export default function ItemChecklistLinha({
   const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
   /** Entrega aberta no visor (arquivo + campos extraídos). */
   const [visor, setVisor] = useState<{ id: string; arquivo: string } | null>(null);
+
+  /* Seleção para o pacote (ZIP ou PDF único). Guarda os ids marcados; um id de
+   * entrega que depois some (removida) fica no conjunto sem efeito — é
+   * filtrado contra as entregas atuais antes de qualquer uso. */
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [baixando, setBaixando] = useState<"zip" | "pdf" | null>(null);
+  const [erroZip, setErroZip] = useState<string | null>(null);
+  const [faltandoZip, setFaltandoZip] = useState(0);
+
+  const idsEntregas = item.entregas.map((e) => e.id);
+  const idsMarcados = idsEntregas.filter((id) => marcados.has(id));
+  const todosMarcados = idsEntregas.length > 0 && idsMarcados.length === idsEntregas.length;
+
+  function alternarMarcado(id: string) {
+    setMarcados((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+  }
+
+  async function baixarSelecao(formato: "zip" | "pdf") {
+    if (idsMarcados.length === 0) return;
+    setBaixando(formato);
+    setErroZip(null);
+    setFaltandoZip(0);
+    try {
+      const pacote =
+        formato === "zip"
+          ? await baixarSelecaoDeDocumentos(casoId, item.codigo, idsMarcados)
+          : await baixarSelecaoEmPdf(casoId, item.codigo, idsMarcados);
+      setFaltandoZip(pacote.faltando);
+      /* Mesmo motivo de `BaixarDocumentos`: o blob veio por `fetch` (o link cru
+       * não manda o Bearer), e sem revogar a URL o pacote fica preso na
+       * memória da aba. */
+      baixarArquivo(pacote.arquivo, pacote.nome);
+    } catch (e) {
+      const padrao =
+        formato === "pdf"
+          ? "Não foi possível combinar os arquivos num PDF. Tente baixar em ZIP."
+          : "Não foi possível montar o pacote.";
+      setErroZip(e instanceof Error ? e.message : padrao);
+    } finally {
+      setBaixando(null);
+    }
+  }
   const estadoModelo = useModelo();
   const aparencia = APARENCIA[item.status];
   const podeUsarParaAmbos = item.tipo_ocr === "rg" || item.tipo_ocr === "cpf";
@@ -134,8 +191,9 @@ export default function ItemChecklistLinha({
         <Botao
           variante={item.entregas.length ? "secundario" : "primario"}
           pequeno
+          carregando={enviando}
+          textoCarregando="Enviando…"
           onClick={() => inputRef.current?.click()}
-          disabled={enviando}
         >
           {item.entregas.length ? "Enviar outro arquivo" : "Enviar arquivo"}
         </Botao>
@@ -160,6 +218,24 @@ export default function ItemChecklistLinha({
         )}
       </div>
 
+      {/* "Nada passa despercebido": o item falta como arquivo próprio, mas o dado
+        * dele (CTPS, PIS) apareceu em outro documento. Indício, não entrega — o
+        * advogado confere antes de dar por resolvido. */}
+      {item.status === "pendente" && (item.encontrado_em?.length ?? 0) > 0 && (
+        <div className="mt-2 ml-9 max-w-[74ch] border-l-[3px] border-atencao bg-papel-2 px-3 py-2 text-xs leading-[1.55] text-tinta-2">
+          <strong className="text-tinta">Encontrado em outro documento.</strong>{" "}
+          Não foi enviada em separado, mas apareceu:
+          <ul className="mt-1 mb-0 list-disc pl-5">
+            {item.encontrado_em!.map((achado, i) => (
+              <li key={i}>
+                <span className="text-tinta">{achado.dado}</span>{" "}
+                <span className="text-tinta-3">em “{achado.arquivo}”</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {(enviando || item.status === "processando") && (
         <ProgressoOcr modeloPronto={estadoModelo === "pronto"} naFila={!enviando && aguardandoNaFila} />
       )}
@@ -181,12 +257,77 @@ export default function ItemChecklistLinha({
       )}
 
       {item.entregas.length > 0 && (
-        <ul className="list-none mt-[10px] ml-9 p-0 border border-borda rounded-campo bg-papel-2">
+        <>
+          {/* Selecionar arquivos desta classificação e baixar só eles — em ZIP
+            * ou combinados num único PDF. A classificação é o próprio item —
+            * o pacote nunca mistura entregas de outro. */}
+          <div className="flex items-center gap-3 flex-wrap mt-[10px] ml-9">
+            <Marcacao>
+              <input
+                type="checkbox"
+                checked={todosMarcados}
+                onChange={() =>
+                  setMarcados(todosMarcados ? new Set() : new Set(idsEntregas))
+                }
+                disabled={!!baixando}
+              />
+              <span>
+                Selecionar {item.entregas.length === 1 ? "o arquivo" : "todos"}
+              </span>
+            </Marcacao>
+            <Botao
+              variante="secundario"
+              pequeno
+              onClick={() => void baixarSelecao("zip")}
+              disabled={!!baixando || idsMarcados.length === 0}
+            >
+              {baixando === "zip"
+                ? "Montando o pacote…"
+                : `Baixar ${idsMarcados.length || ""} selecionado${idsMarcados.length === 1 ? "" : "s"} (.zip)`}
+            </Botao>
+            {idsMarcados.length > 1 && (
+              <Botao
+                variante="secundario"
+                pequeno
+                onClick={() => void baixarSelecao("pdf")}
+                disabled={!!baixando}
+                title="Junta as páginas de todos os selecionados num único arquivo PDF"
+              >
+                {baixando === "pdf" ? "Combinando…" : "Baixar como um PDF único"}
+              </Botao>
+            )}
+          </div>
+
+          {faltandoZip > 0 && (
+            <div className="mt-2 ml-9 max-w-[74ch]">
+              <Aviso tom="atencao" titulo="O pacote saiu incompleto">
+                {faltandoZip} {faltandoZip === 1 ? "arquivo constava" : "arquivos constavam"}{" "}
+                na seleção mas não {faltandoZip === 1 ? "está" : "estão"} mais no disco.
+              </Aviso>
+            </div>
+          )}
+          {erroZip && (
+            <div className="mt-2 ml-9 max-w-[74ch]">
+              <Aviso tom="critico" titulo="Não foi possível baixar">
+                {erroZip}
+              </Aviso>
+            </div>
+          )}
+
+          <ul className="list-none mt-[10px] ml-9 p-0 border border-borda rounded-campo bg-papel-2">
           {item.entregas.map((entrega) => (
             <li
               key={entrega.id}
               className="flex items-center gap-[10px] flex-wrap px-3 py-[10px] border-b border-borda last:border-b-0"
             >
+              <input
+                type="checkbox"
+                className="flex-none"
+                checked={marcados.has(entrega.id)}
+                onChange={() => alternarMarcado(entrega.id)}
+                disabled={!!baixando}
+                aria-label={`Selecionar ${entrega.arquivo}`}
+              />
               <Selo tom="ok" simbolo="✓">
                 Recebido
               </Selo>
@@ -213,15 +354,15 @@ export default function ItemChecklistLinha({
               </Botao>
 
               {podeUsarParaAmbos && (entrega.itens_atendidos?.length ?? 1) === 1 && (
-                <Botao
+                <BotaoProcesso
                   variante="discreto"
                   pequeno
                   onClick={() => onVincularIdentidade(entrega.id, item.codigo)}
-                  disabled={enviando}
+                  aguardando={enviando ? "Aguarde: o arquivo novo ainda está sendo enviado." : false}
                   title="Confirme somente se este for um documento de identidade unificado"
                 >
                   Usar também como {item.tipo_ocr === "rg" ? "CPF" : "RG"}
-                </Botao>
+                </BotaoProcesso>
               )}
 
               <Botao variante="perigo" pequeno onClick={() => onRemover(entrega.id)}>
@@ -244,24 +385,54 @@ export default function ItemChecklistLinha({
                 />
               )}
 
-              {entrega.alertas.length > 0 && (
-                <ul className="[flex-basis:100%] list-none mt-[6px] p-0">
-                  {entrega.alertas.map((alerta, i) => (
-                    <li
-                      key={i}
-                      className="flex gap-2 px-[11px] py-2 mt-[5px] border border-atencao-borda border-l-4 rounded-campo bg-atencao-claro text-tinta-2 text-xs leading-[1.55]"
-                    >
-                      <span className="flex-none text-atencao font-bold" aria-hidden>
-                        !
-                      </span>
-                      {alerta}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {(() => {
+                // Prefere `avisos` (com tom); cai em `alertas` (só texto, tratado
+                // como nota) para respostas antigas do servidor. Nota de rotina
+                // aparece quieta; só problema real ganha borda colorida.
+                const avisos =
+                  entrega.avisos ??
+                  entrega.alertas.map((texto) => ({ texto, tom: "info" as const }));
+                if (avisos.length === 0) return null;
+                const ESTILO = {
+                  info: {
+                    caixa: "border-borda bg-papel-2 text-tinta-3",
+                    marca: "text-tinta-3",
+                    simbolo: "·",
+                  },
+                  atencao: {
+                    caixa: "border-atencao-borda border-l-4 bg-atencao-claro text-tinta-2",
+                    marca: "text-atencao font-bold",
+                    simbolo: "!",
+                  },
+                  critico: {
+                    caixa: "border-critico-borda border-l-4 bg-critico-claro text-tinta-2",
+                    marca: "text-critico font-bold",
+                    simbolo: "✕",
+                  },
+                } as const;
+                return (
+                  <ul className="[flex-basis:100%] list-none mt-[6px] p-0">
+                    {avisos.map((aviso, i) => {
+                      const estilo = ESTILO[aviso.tom] ?? ESTILO.info;
+                      return (
+                        <li
+                          key={i}
+                          className={`flex gap-2 px-[11px] py-2 mt-[5px] border rounded-campo text-xs leading-[1.55] ${estilo.caixa}`}
+                        >
+                          <span className={`flex-none ${estilo.marca}`} aria-hidden>
+                            {estilo.simbolo}
+                          </span>
+                          {aviso.texto}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       )}
 
       {visor && (

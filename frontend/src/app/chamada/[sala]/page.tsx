@@ -7,6 +7,7 @@ import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
 import ChatChamada from "@/components/chamada/ChatChamada";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* A chamada do lado de quem é entrevistado.
  *
@@ -23,11 +24,6 @@ import ChatChamada from "@/components/chamada/ChatChamada";
  * portal para enviar documentos (mesma sala, que é o token do caso), a ligação
  * NÃO cai: ela segue no painel flutuante. */
 
-const BOTAO =
-  "mt-5 w-full p-4 border-[1.5px] border-tinta bg-transparent text-tinta text-[13px] font-semibold leading-none " +
-  "font-ui tracking-[0.14em] uppercase cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
 /* Dois por linha no celular, e nao quatro empilhados.
  *
  * Empilhados, os botoes ocupavam ~300px — metade da tela do telefone — e
@@ -98,9 +94,10 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
 
           {!naChamada ? (
             <>
-              <p className="m-0 text-[13.5px] leading-[1.6] font-ui text-tinta-3">
-                Diga como quer ser chamado e toque no botão. É pelo próprio navegador — não
-                precisa instalar nada, criar conta nem informar o seu número.
+            <p className="m-0 text-[14px] leading-[1.65] font-ui text-tinta-3">
+                Diga como quer ser chamado e toque em entrar. É pelo próprio navegador — não
+                precisa instalar nada, criar conta nem informar o seu número. Deixe esta tela
+                aberta durante a conversa.
               </p>
 
               <label
@@ -129,13 +126,32 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
                 Entrar com a câmera ligada
               </label>
 
-              <button type="button" className={BOTAO} onClick={entrar} disabled={entrando || !nome.trim()}>
-                {entrando ? "Abrindo…" : "Entrar na chamada"}
-              </button>
+              {/* Botão grande e sempre com a cor da ação: quem abre isto é o cliente,
+                * no celular. Sem nome, o toque diz o que falta e leva ao campo. */}
+              <BotaoProcesso
+                variante="primario"
+                bloco
+                className="mt-5"
+                classeBotao="text-base"
+                style={{ minHeight: 52 }}
+                onClick={entrar}
+                processando={entrando}
+                textoProcessando="Abrindo…"
+                pendencia={nome.trim() ? null : "Digite seu nome acima para entrar."}
+                pendenciaAoClicar
+                onPendencia={() => document.getElementById("nome-na-chamada")?.focus()}
+              >
+                Entrar na chamada
+              </BotaoProcesso>
               <p className="mt-4 mb-0 text-[11.5px] leading-[1.6] font-ui text-tinta-3">
                 Ao entrar, a conversa é transcrita pelo escritório para virar o registro do
                 seu atendimento.
               </p>
+              <div className="mt-4 rounded-campo border border-acao-borda bg-acao-clara px-3 py-3 text-[12px] leading-[1.55] text-tinta-2">
+                <strong className="block text-tinta">No celular</strong>
+                Se usar fone Bluetooth, conecte-o antes de entrar. Quando o navegador perguntar,
+                permita o microfone. Se uma ligação comum chegar, volte a esta tela para retomar.
+              </div>
             </>
           ) : (
             <>
@@ -172,8 +188,8 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
               </div>
 
               <p className="mt-4 mb-0 text-[11.5px] leading-[1.6] font-ui text-tinta-3">
-                A conversa está sendo transcrita. Se precisar de um instante reservado,
-                desligue o microfone.
+                A conversa está sendo transcrita. Mantenha esta página aberta; se precisar de
+                um instante reservado, desligue o microfone.
               </p>
             </>
           )}
@@ -186,8 +202,8 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
         </div>
 
         <p className="mt-5 text-[11.5px] leading-[1.6] font-ui text-tinta-3">
-          Se a chamada não conectar, avise o escritório: em algumas redes de celular a
-          ligação direta entre navegadores não passa.
+          Se não ouvir ou não for ouvido, toque uma vez na tela, confira o ícone de volume e
+          avise o escritório. Algumas redes de celular precisam do relay seguro da chamada.
         </p>
       </div>
     </div>

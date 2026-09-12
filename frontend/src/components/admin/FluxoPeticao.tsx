@@ -8,25 +8,25 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Aviso, Botao, Cartao, RotuloCampo, Campo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
   buscarPeticao,
   estadoPeticaoFluxo,
   gerarAnaliseEPeticao,
+  historicoDePeticao,
+  revisarPeticaoComPrompt,
   salvarRascunhoPeticao,
   type EstadoPeticaoFluxo,
+  type HistoricoDePeticao,
+  gerarPecaAnexa,
+  listarPecasAnexas,
+  type PecaAnexa,
   type Peticao,
   type SecaoPeticao,
 } from "@/lib/agente";
+import { baixarArquivo } from "@/lib/baixar";
 
-function baixarArquivo(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 const TITULO = "font-ui text-lg font-semibold m-0";
 const SUB = "text-sm leading-relaxed text-tinta-3 m-0";
@@ -37,7 +37,15 @@ export type ControlesGeracaoPeticao = {
   ocupado: boolean;
   podeGerar: boolean;
   rotulo: string;
+  /* O botão de gerar mora no cabeçalho do dossiê, longe deste cartão: sem o
+   * resultado aqui, quem clicava lá em cima não via nem o erro nem o fim. */
+  erro: string | null;
+  concluido: string | null;
 };
+
+type AcaoPeticao = "gerar" | "salvar" | "revisar";
+/** Resultado da última ação, com a ação que o produziu — cada um aparece junto do próprio botão. */
+type Retorno = { acao: AcaoPeticao; texto: string } | null;
 
 type Props = {
   casoId: string;
@@ -50,8 +58,25 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [peticao, setPeticao] = useState<Peticao | null>(null);
   const [edicao, setEdicao] = useState<Record<string, string>>({});
   const [ocupado, setOcupado] = useState(false);
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
+  /** Qual formato está sendo salvo: cada botão de download mostra só o próprio andamento. */
+  const [salvandoComo, setSalvandoComo] = useState<"docx" | "pdf" | null>(null);
+  const salvando = salvandoComo !== null;
+  const [erro, setErro] = useState<Retorno>(null);
+  const [concluido, setConcluido] = useState<Retorno>(null);
+  const [mostrarPrevia, setMostrarPrevia] = useState(true);
+
+  // Revisão por prompt — issue "Permitir alteração da petição por prompt com
+  // rastreabilidade". `historico` fica separado de `peticao` porque uma falha
+  // ao carregar o histórico não pode esconder a petição, que é o que importa
+  // primeiro.
+  const [promptRevisao, setPromptRevisao] = useState("");
+  /* Marcado por padrão: a crítica quase sempre é uma lição do escritório, e é
+   * dela que a IA aprende. Desmarcar é o que impede um ajuste pontual — "troque
+   * o nome do cliente" — de virar regra de todas as petições da categoria. */
+  const [ensinarIA, setEnsinarIA] = useState(true);
+  const [revisando, setRevisando] = useState(false);
+  const [historico, setHistorico] = useState<HistoricoDePeticao | null>(null);
+  const [mostrarHistorico, setMostrarHistorico] = useState(false);
 
   const recarregar = useCallback(async () => {
     try {
@@ -60,6 +85,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       if (dados.peticao_pronta) {
         const pronta = await buscarPeticao(casoId, "local");
         setPeticao(pronta);
+        try {
+          setHistorico(await historicoDePeticao(casoId, "local"));
+        } catch {
+          /* rastreabilidade é complementar — a petição continua utilizável sem ela */
+        }
       }
     } catch {
       /* primeiro uso */
@@ -76,7 +106,19 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   }, [peticao?.id, peticao?.sections]);
 
   const gerar = useCallback(async () => {
+    // A minuta já salva é carregada ao voltar ao dossiê. Nunca mande outra
+    // chamada ao modelo por engano: gerar de novo custa token e sobrescreve a
+    // versão em trabalho; a decisão precisa ser explícita.
+    if (
+      peticao &&
+      !window.confirm(
+        "Já existe uma minuta salva para este caso. Gerar novamente usa tokens e cria uma nova versão. Continuar?",
+      )
+    ) {
+      return;
+    }
     setErro(null);
+    setConcluido(null);
     setOcupado(true);
     try {
       const resultado = await gerarAnaliseEPeticao(casoId);
@@ -88,13 +130,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         await recarregar();
         const arquivo = await baixarArquivoDaPeticao(casoId, "local", "docx");
         baixarArquivo(arquivo, `Peticao inicial - v${resultado.peticao.version}.docx`);
+        setConcluido({
+          acao: "gerar",
+          texto: `Petição gerada (versão ${resultado.peticao.version}) e .docx baixado.`,
+        });
       }
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Falha ao gerar a petição.");
+      setErro({ acao: "gerar", texto: e instanceof Error ? e.message : "Falha ao gerar a petição." });
     } finally {
       setOcupado(false);
     }
-  }, [casoId, recarregar]);
+  }, [casoId, peticao, recarregar]);
 
   const semEntrevista = !temEntrevista && !estado?.entrevista?.texto;
   const rotuloGerar = ocupado
@@ -102,6 +148,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     : peticao
       ? "Gerar de novo"
       : "Gerar análise e petição";
+
+  const erroGerar = erro?.acao === "gerar" ? erro.texto : null;
+  const concluidoGerar = concluido?.acao === "gerar" ? concluido.texto : null;
 
   useEffect(() => {
     onControlesGeracao?.({
@@ -111,13 +160,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       // incompletos do dossiê (casos antigos podem ter texto e `caracteres` zerado).
       podeGerar: true,
       rotulo: rotuloGerar,
+      erro: erroGerar,
+      concluido: concluidoGerar,
     });
-  }, [onControlesGeracao, gerar, ocupado, semEntrevista, rotuloGerar]);
+  }, [onControlesGeracao, gerar, ocupado, semEntrevista, rotuloGerar, erroGerar, concluidoGerar]);
 
   async function salvar(baixarPdf = false) {
     if (!peticao) return;
-    setSalvando(true);
+    const formato = baixarPdf ? "pdf" : "docx";
+    setSalvandoComo(formato);
     setErro(null);
+    setConcluido(null);
     try {
       const secoes = (peticao.sections ?? []).map((s) => ({
         code: s.code,
@@ -125,17 +178,104 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       }));
       const atualizada = await salvarRascunhoPeticao(casoId, peticao.id, secoes);
       setPeticao(atualizada);
-      const formato = baixarPdf ? "pdf" : "docx";
       const arquivo = await baixarArquivoDaPeticao(casoId, peticao.id, formato);
       baixarArquivo(arquivo, `Peticao inicial - v${atualizada.version}.${formato}`);
+      setConcluido({ acao: "salvar", texto: `Versão ${atualizada.version} salva e .${formato} baixado.` });
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível salvar.");
+      setErro({ acao: "salvar", texto: e instanceof Error ? e.message : "Não foi possível salvar." });
     } finally {
-      setSalvando(false);
+      setSalvandoComo(null);
+    }
+  }
+
+  async function revisar() {
+    if (!peticao || !promptRevisao.trim()) return;
+    setRevisando(true);
+    setErro(null);
+    setConcluido(null);
+    try {
+      const resultado = await revisarPeticaoComPrompt(
+        casoId,
+        peticao.id,
+        promptRevisao.trim(),
+        ensinarIA,
+      );
+      setPeticao(resultado.peticao);
+      setPromptRevisao("");
+      setConcluido({
+        acao: "revisar",
+        texto: `Revisão aplicada — a petição está na versão ${resultado.peticao.version}.`,
+      });
+      setHistorico((atual) => ({
+        criticas: resultado.criticas,
+        versoes: atual?.versoes ?? [],
+      }));
+      await recarregar();
+    } catch (e) {
+      setErro({
+        acao: "revisar",
+        texto: e instanceof Error ? e.message : "Não foi possível aplicar a revisão.",
+      });
+    } finally {
+      setRevisando(false);
     }
   }
 
   const analise = estado?.analise;
+  /* As outras peças do caso, e o que está sendo redigido ou baixado agora.
+   *
+   * Ficam fora de `peticao` de propósito: a petição inicial tem versão, histórico
+   * e aprovação; estas são peças irmãs, e misturá-las no mesmo estado faria uma
+   * falha ao listá-las esconder a minuta, que é o que importa primeiro. */
+  const [anexas, setAnexas] = useState<PecaAnexa[]>([]);
+  const [maximoAnexas, setMaximoAnexas] = useState(3);
+  const [gerandoAnexa, setGerandoAnexa] = useState<string | null>(null);
+  const [baixandoAnexa, setBaixandoAnexa] = useState<string | null>(null);
+  const [erroAnexa, setErroAnexa] = useState<string | null>(null);
+
+  const sugestoes = analise?.acoes_sugeridas ?? [];
+
+  const recarregarAnexas = useCallback(async () => {
+    try {
+      const dados = await listarPecasAnexas(casoId);
+      setAnexas(dados.anexas);
+      setMaximoAnexas(dados.maximo);
+    } catch {
+      /* a lista é complementar — a minuta principal continua utilizável sem ela */
+    }
+  }, [casoId]);
+
+  useEffect(() => {
+    void recarregarAnexas();
+  }, [recarregarAnexas]);
+
+  async function gerarAnexa(acao: { titulo: string; motivo?: string; pedidos?: string[] }) {
+    setErroAnexa(null);
+    setGerandoAnexa(acao.titulo);
+    try {
+      await gerarPecaAnexa(casoId, acao);
+      await recarregarAnexas();
+    } catch (e) {
+      setErroAnexa(e instanceof Error ? e.message : "Não foi possível gerar esta peça.");
+    } finally {
+      setGerandoAnexa(null);
+    }
+  }
+
+  async function baixarAnexa(peca: PecaAnexa, formato: "docx" | "pdf") {
+    setErroAnexa(null);
+    setBaixandoAnexa(`${peca.id}:${formato}`);
+    try {
+      const arquivo = await baixarArquivoDaPeticao(casoId, peca.id, formato);
+      baixarArquivo(arquivo, `${peca.titulo}.${formato}`);
+    } catch (e) {
+      setErroAnexa(e instanceof Error ? e.message : "Não foi possível baixar esta peça.");
+    } finally {
+      setBaixandoAnexa(null);
+    }
+  }
+
+
   const prep = estado?.preparacao;
 
   return (
@@ -154,9 +294,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         </Aviso>
       )}
 
-      {erro && (
-        <Aviso tom="critico" titulo="Erro">
-          {erro}
+      {/* O erro de gerar aparece também aqui, além do botão do cabeçalho: quem já
+        * rolou até este cartão não vê mais o topo. Salvar e revisar mostram o
+        * próprio resultado junto dos seus botões. */}
+      {erro?.acao === "gerar" && (
+        <Aviso tom="critico" titulo="A petição não foi gerada">
+          {erro.texto}
         </Aviso>
       )}
 
@@ -199,23 +342,41 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </h3>
             <div className="flex gap-2 flex-wrap">
               <Botao
-                variante="secundario"
-                pequeno
-                disabled={salvando || ocupado}
-                onClick={() => void salvar(false)}
-              >
-                {salvando ? "Salvando…" : "Salvar e baixar .docx"}
-              </Botao>
-              <Botao
                 variante="texto"
                 pequeno
-                disabled={salvando || ocupado}
-                onClick={() => void salvar(true)}
+                onClick={() => setMostrarPrevia((atual) => !atual)}
+              >
+                {mostrarPrevia ? "Ocultar prévia" : "Mostrar prévia"}
+              </Botao>
+              <BotaoProcesso
+                variante="secundario"
+                pequeno
+                processando={salvandoComo === "docx"}
+                textoProcessando="Salvando…"
+                aguardando={ocupado || salvandoComo === "pdf"}
+                onClick={() => salvar(false)}
+              >
+                Salvar e baixar .docx
+              </BotaoProcesso>
+              <BotaoProcesso
+                variante="texto"
+                pequeno
+                processando={salvandoComo === "pdf"}
+                textoProcessando="Gerando o PDF…"
+                aguardando={ocupado || salvandoComo === "docx"}
+                onClick={() => salvar(true)}
               >
                 Baixar PDF
-              </Botao>
+              </BotaoProcesso>
             </div>
           </div>
+
+          {erro?.acao === "salvar" && (
+            <Aviso tom="critico" titulo="Não foi possível salvar">
+              {erro.texto}
+            </Aviso>
+          )}
+          {concluido?.acao === "salvar" && <Aviso tom="ok">{concluido.texto}</Aviso>}
 
           {(peticao.readiness?.pendencias ?? []).length > 0 && (
             <Aviso tom="atencao" titulo="Pontos sem comprovação documental">
@@ -223,29 +384,349 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </Aviso>
           )}
 
-          <div className="grid gap-4">
-            {(peticao.sections ?? []).map((secao: SecaoPeticao) => (
-              <div key={secao.code} className="grid gap-1">
-                <RotuloCampo htmlFor={`secao-${secao.code}`}>
-                  {secao.label || secao.code}
-                </RotuloCampo>
-                <Campo
-                  area
-                  id={`secao-${secao.code}`}
-                  value={edicao[secao.code] ?? secao.content}
-                  onChange={(e) =>
-                    setEdicao((atual) => ({ ...atual, [secao.code]: e.target.value }))
-                  }
-                  rows={10}
-                />
-              </div>
-            ))}
+          {historico && (historico.criticas.length > 0 || historico.versoes.length > 0) && (
+            <HistoricoDeCriticas
+              historico={historico}
+              aberto={mostrarHistorico}
+              onAlternar={() => setMostrarHistorico((atual) => !atual)}
+            />
+          )}
+
+          <div className={mostrarPrevia ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "grid gap-4"}>
+            <div className="grid gap-4">
+              {(peticao.sections ?? []).map((secao: SecaoPeticao) => (
+                <div key={secao.code} className="grid gap-1">
+                  <RotuloCampo htmlFor={`secao-${secao.code}`}>
+                    {secao.label || secao.code}
+                  </RotuloCampo>
+                  <Campo
+                    area
+                    id={`secao-${secao.code}`}
+                    value={edicao[secao.code] ?? secao.content}
+                    onChange={(e) =>
+                      setEdicao((atual) => ({ ...atual, [secao.code]: e.target.value }))
+                    }
+                    rows={10}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {mostrarPrevia && (
+              <PreviaPeticao
+                titulo={peticao.title}
+                secoes={peticao.sections ?? []}
+                edicao={edicao}
+              />
+            )}
           </div>
+
+          {/* A revisão por prompt vem DEPOIS do texto: ela age sobre o que está
+            * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
+            * o advogado abria a tela num campo em branco e precisava rolar para
+            * descobrir o que iria alterar. */}
+          <div className="grid gap-2 border border-borda-forte bg-papel p-3">
+            <RotuloCampo htmlFor="prompt-revisao">
+              Pedir uma revisão por prompt
+            </RotuloCampo>
+            <p className="text-xs text-tinta-3 m-0">
+              Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
+              pedidos&quot;). A IA aplica só o que você pedir e preserva o resto do texto. A
+              versão atual fica guardada no histórico, e a revisão volta para
+              &quot;em revisão&quot; — precisa aprovar de novo.
+            </p>
+            <Campo
+              area
+              id="prompt-revisao"
+              value={promptRevisao}
+              onChange={(e) => setPromptRevisao(e.target.value)}
+              rows={3}
+              placeholder="O que deve mudar nesta petição?"
+            />
+            <label className="flex items-start gap-2 text-xs text-tinta-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-[2px]"
+                checked={ensinarIA}
+                onChange={(e) => setEnsinarIA(e.target.checked)}
+              />
+              <span>
+                Ensinar a IA com esta correção
+                <span className="block text-tinta-3">
+                  Marcado, ela passa a valer para as próximas petições desta mesma
+                  categoria de caso. Desmarque quando o ajuste for só deste cliente
+                  (um nome, um valor, uma data) — a correção continua no histórico
+                  deste caso de qualquer jeito.
+                </span>
+              </span>
+            </label>
+            <div>
+              <BotaoProcesso
+                variante="secundario"
+                pequeno
+                processando={revisando}
+                textoProcessando="Aplicando a revisão…"
+                pendencia={promptRevisao.trim() ? null : "Descreva acima o que deve mudar."}
+                aguardando={salvando || ocupado}
+                erro={erro?.acao === "revisar" ? erro.texto : null}
+                concluido={concluido?.acao === "revisar" ? concluido.texto : null}
+                onClick={revisar}
+              >
+                Aplicar revisão
+              </BotaoProcesso>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ------------------------------------------------- outras peças do caso
+        *
+        * O escritório quer poder levar DUAS ações do mesmo acidente sem redigir a
+        * segunda à mão. Até aqui isto não existia: o banco guardava uma peça por
+        * caso (a chave de `peticoes_locais` é o `caso_id`), então gerar a segunda
+        * apagaria a primeira. Agora elas moram em `peticoes_anexas` e a petição
+        * inicial não é tocada.
+        *
+        * O bloco aparece SEMPRE que há minuta, mesmo sem sugestão nenhuma. Antes
+        * ele só existia com a lista cheia — e quem abria a tela sem sugestão não
+        * tinha como saber que a funcionalidade existia. */}
+      {peticao && (
+        <section className="grid gap-3 border border-acao-borda bg-acao-clara p-4">
+          <div>
+            <h3 className="m-0 text-sm font-semibold text-tinta">Outras peças deste caso</h3>
+            <p className="mt-1 text-sm text-tinta-2">
+              Ações possíveis a partir da mesma entrevista e dos mesmos documentos. Gerar uma
+              delas <strong>não altera a petição inicial</strong> acima — cada peça sai com os
+              pedidos próprios dela, para conferir e baixar.
+            </p>
+          </div>
+
+          {erroAnexa && (
+            <Aviso tom="critico" titulo="A peça não foi gerada">
+              {erroAnexa}
+            </Aviso>
+          )}
+
+          {sugestoes.length > 0 ? (
+            <ul className="m-0 grid list-none gap-2 p-0">
+              {sugestoes.map((acao, indice) => {
+                const jaGerada = anexas.find((p) => p.titulo === acao.titulo);
+                return (
+                  <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <strong className="text-sm text-tinta">{acao.titulo}</strong>
+                      <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao">
+                        {acao.prioridade === "principal"
+                          ? "prioritária"
+                          : acao.prioridade === "alternativa"
+                            ? "alternativa"
+                            : "avaliar"}
+                      </span>
+                    </div>
+                    <p className="mb-0 mt-2 text-sm text-tinta-2">{acao.motivo}</p>
+                    {acao.pedidos.length > 0 && (
+                      <p className="mb-0 mt-2 text-xs text-tinta-3">
+                        Pedidos possíveis: {acao.pedidos.join("; ")}
+                      </p>
+                    )}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <BotaoProcesso
+                        variante={jaGerada ? "secundario" : "primario"}
+                        pequeno
+                        processando={gerandoAnexa === acao.titulo}
+                        textoProcessando="Redigindo a peça…"
+                        aguardando={ocupado || (gerandoAnexa !== null && gerandoAnexa !== acao.titulo)}
+                        onClick={() => gerarAnexa(acao)}
+                      >
+                        {jaGerada ? "Redigir de novo" : "Gerar esta peça"}
+                      </BotaoProcesso>
+                      {jaGerada && (
+                        <span className="text-xs text-tinta-3">
+                          Já redigida — regerar substitui o texto atual, sem histórico. Baixe antes
+                          se quiser guardar.
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="m-0 text-sm text-tinta-3">
+              A análise desta minuta não apontou outra ação cabível a partir deste material.
+              Novas sugestões aparecem aqui quando a petição é gerada de novo — normalmente
+              depois de entrar documento novo no caso.
+            </p>
+          )}
+
+          {anexas.length > 0 && (
+            <div className="grid gap-2 border-t border-acao-borda pt-3">
+              <h4 className="m-0 text-xs font-semibold uppercase tracking-[0.1em] text-tinta-3">
+                Peças já redigidas ({anexas.length} de {maximoAnexas})
+              </h4>
+              <ul className="m-0 grid list-none gap-2 p-0">
+                {anexas.map((peca) => (
+                  <li key={peca.id} className="border border-borda bg-papel p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <strong className="text-sm text-tinta">{peca.titulo}</strong>
+                        <p className="mb-0 mt-1 text-xs text-tinta-3">
+                          {peca.secoes} seções
+                          {peca.gerada_por ? ` · por ${peca.gerada_por}` : ""}
+                          {peca.atualizado_em
+                            ? ` · ${new Date(peca.atualizado_em).toLocaleString("pt-BR")}`
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <BotaoProcesso
+                          variante="secundario"
+                          pequeno
+                          processando={baixandoAnexa === `${peca.id}:docx`}
+                          textoProcessando="Baixando…"
+                          onClick={() => baixarAnexa(peca, "docx")}
+                        >
+                          .docx
+                        </BotaoProcesso>
+                        <BotaoProcesso
+                          variante="texto"
+                          pequeno
+                          processando={baixandoAnexa === `${peca.id}:pdf`}
+                          textoProcessando="Gerando o PDF…"
+                          onClick={() => baixarAnexa(peca, "pdf")}
+                        >
+                          PDF
+                        </BotaoProcesso>
+                      </div>
+                    </div>
+                    {peca.pendencias.length > 0 && (
+                      <p className="mb-0 mt-2 text-xs text-atencao">
+                        Pendente nesta peça: {peca.pendencias.join("; ")}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 
       {peticao?.jurimetria && <ModuloJurimetria dados={peticao.jurimetria} />}
     </Cartao>
+  );
+}
+
+/**
+ * Prévia ao vivo: lê o mesmo estado `edicao` dos textareas, então cada tecla
+ * digitada aparece aqui sem round-trip com a API. É só leitura — quem edita
+ * de verdade é o textarea ao lado; isto simula como a peça fica montada.
+ */
+function PreviaPeticao({
+  titulo,
+  secoes,
+  edicao,
+}: {
+  titulo: string;
+  secoes: SecaoPeticao[];
+  edicao: Record<string, string>;
+}) {
+  return (
+    <div className="lg:sticky lg:top-4 grid gap-2">
+      <p className="text-xs font-semibold text-tinta-3 m-0 uppercase tracking-wide">
+        Prévia da petição
+      </p>
+      <div className="font-titulo border border-borda-forte bg-papel shadow-sm p-8 max-h-[80vh] overflow-y-auto">
+        <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-6">
+          {titulo || "Petição inicial"}
+        </h1>
+        <div className="grid gap-4">
+          {secoes.map((secao) => {
+            const conteudo = edicao[secao.code] ?? secao.content;
+            return (
+              <section key={secao.code} className="grid gap-2">
+                {secao.label && (
+                  <h2 className="text-center text-xs font-bold uppercase tracking-wide text-tinta">
+                    {secao.label}
+                  </h2>
+                )}
+                <p className="text-sm leading-relaxed text-justify text-tinta-2 whitespace-pre-wrap m-0">
+                  {conteudo || "—"}
+                </p>
+              </section>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A rastreabilidade que a issue pede: quem pediu cada revisão, quando, sobre
+ * qual versão — visível, não só guardada no banco. Fechado por padrão porque
+ * a maioria das visitas à tela não precisa dela; abre com um clique quando
+ * alguém precisa auditar o que mudou e por quê.
+ */
+function HistoricoDeCriticas({
+  historico,
+  aberto,
+  onAlternar,
+}: {
+  historico: HistoricoDePeticao;
+  aberto: boolean;
+  onAlternar: () => void;
+}) {
+  return (
+    <div className="grid gap-2 border border-borda p-3 bg-papel">
+      <button
+        type="button"
+        className="flex items-center justify-between gap-2 text-left text-xs font-semibold text-tinta-3 uppercase tracking-wide bg-transparent border-0 p-0 cursor-pointer"
+        onClick={onAlternar}
+      >
+        <span>
+          Histórico de revisões ({historico.criticas.length} crítica
+          {historico.criticas.length === 1 ? "" : "s"})
+        </span>
+        <span aria-hidden>{aberto ? "▲" : "▼"}</span>
+      </button>
+      {aberto && (
+        <ul className="grid gap-3 m-0 p-0 list-none">
+          {historico.criticas.length === 0 && (
+            <li className="text-xs text-tinta-3">Nenhuma crítica registrada ainda.</li>
+          )}
+          {[...historico.criticas].reverse().map((critica) => (
+            <li key={critica.id} className="grid gap-1 border-l-2 border-borda pl-3">
+              <div className="flex flex-wrap items-baseline gap-x-2 text-xs text-tinta-3">
+                <strong className="text-tinta-2">{critica.usuario || "usuário não identificado"}</strong>
+                <span>
+                  v{critica.versao_origem} → v{critica.versao_resultado}
+                </span>
+                <span>{new Date(critica.criado_em).toLocaleString("pt-BR")}</span>
+                {/* Qual crítica está ensinando a IA e qual valeu só aqui — sem
+                  * isto não há como saber por que a próxima petição saiu
+                  * diferente. */}
+                <span
+                  className={
+                    critica.generaliza === false
+                      ? "text-tinta-3"
+                      : "text-ok font-semibold"
+                  }
+                  title={
+                    critica.generaliza === false
+                      ? "Valeu só neste caso — não instrui as próximas petições."
+                      : "Esta correção instrui as próximas petições desta categoria."
+                  }
+                >
+                  {critica.generaliza === false ? "só neste caso" : "ensina a IA"}
+                </span>
+              </div>
+              <p className="text-sm text-tinta-2 m-0 whitespace-pre-wrap">{critica.prompt}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -274,6 +755,11 @@ function ModuloJurimetria({
           Busca vetorial pelos embeddings do acervo do Advocacia IA. Módulo interno de apoio
           à decisão; não integra o texto nem o arquivo da petição.
         </p>
+        {dados.jurisdicao && (
+          <p className="text-xs text-tinta-3 m-0">
+            Focada em <strong className="text-tinta-2">{dados.jurisdicao}</strong>.
+          </p>
+        )}
       </header>
 
       {estatisticas && (
@@ -325,10 +811,23 @@ function ModuloJurimetria({
           <ul className="grid gap-2 list-none p-0 m-0">
             {(dados.precedentes ?? []).map((item) => (
               <li key={item.indice} className="text-xs text-tinta-2 border-l-2 border-borda pl-3">
-                <strong>[{item.indice}] Processo {item.processo || "não informado"}</strong>
+                <strong>
+                  [{item.indice}] Processo {item.processo_formatado || item.processo || "não informado"}
+                </strong>
                 {` — ${item.resultado || "desfecho não informado"}; ${item.vara || "órgão não informado"}`}
                 {typeof item.similaridade === "number" ? `; similaridade ${item.similaridade.toFixed(3)}` : ""}
-                {item.url && <> — <a className="text-acao underline" href={item.url} target="_blank" rel="noreferrer">abrir decisão</a></>}
+                {/* O link vai para a consulta processual do PRÓPRIO tribunal, montada
+                  * a partir do número CNJ (ver `tribunais.link_do_processo`). Dizer
+                  * qual tribunal antes do clique evita a surpresa de cair num TRT
+                  * que o advogado não esperava. */}
+                {item.url && (
+                  <>
+                    {" — "}
+                    <a className="text-acao underline" href={item.url} target="_blank" rel="noreferrer">
+                      abrir processo{item.tribunal ? ` no ${item.tribunal}` : ""}
+                    </a>
+                  </>
+                )}
               </li>
             ))}
           </ul>

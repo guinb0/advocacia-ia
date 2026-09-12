@@ -191,6 +191,79 @@ export interface TipoDocumento {
   descricao: string;
 }
 
+/** Um tipo do glossário de documentos (`app/tipos_documento.py`). */
+export interface TipoDocumentoGlossario {
+  /** Fica gravado em cada documento classificado; nunca muda. */
+  codigo: string;
+  nome: string;
+  descricao: string;
+  sinonimos: string[];
+  ativo: boolean;
+  /** Tipo que o sistema garante existir: edita-se, não se desativa. */
+  sistema: boolean;
+  /** Muda a cada edição. A edição devolve a que leu, para não apagar a de outra pessoa. */
+  versao: number;
+  criado_em: string;
+  criado_por: string;
+  atualizado_em: string;
+  atualizado_por: string;
+  /** Quantos itens de checklist pedem este tipo. */
+  itens_checklist: number;
+  /** Categorias (tipos de caso) em que o glossário acrescenta este tipo ao checklist. */
+  categorias?: string[];
+}
+
+/** O que muda — e o que não muda — ao editar ou desativar um tipo. */
+export interface ImpactoTipoDocumento {
+  tipo: TipoDocumentoGlossario;
+  itens_checklist: {
+    categoria: string;
+    categoria_nome: string;
+    item: string;
+    nome: string;
+    do_glossario?: boolean;
+  }[];
+  documentos: number;
+  casos: number;
+  correcoes: number;
+  pode_desativar: boolean;
+  bloqueio_desativacao: string | null;
+  efeitos: { codigo: string; renomear: string; sinonimos: string; desativar: string };
+}
+
+/** Uma linha do histórico de alterações (glossário ou documento). */
+export interface EventoHistorico {
+  id: string;
+  entidade: string;
+  entidade_id: string;
+  caso_id: string | null;
+  acao: string;
+  antes: Record<string, unknown> | null;
+  depois: Record<string, unknown> | null;
+  motivo: string;
+  usuario: string;
+  criado_em: string;
+}
+
+/** Um documento do caso que parece ser o mesmo, e por qual regra. */
+export interface DuplicidadeDocumento {
+  entrega_id: string;
+  arquivo: string;
+  regra: "identico" | "mesmo_numero" | "mesmo_conteudo";
+  explicacao: string;
+  /** Itens do checklist em que o documento parecido está; vazio = triagem. */
+  itens: string[];
+  criado_em: string;
+}
+
+export interface OpcoesReclassificacao {
+  /** Código do glossário; ausente = o tipo que o item pede. */
+  tipo?: string;
+  /** Conclui mesmo com suspeita de duplicidade. */
+  confirmarDuplicidade?: boolean;
+  motivo?: string;
+}
+
 // ------------------------------------------------ categorias e checklists
 
 export interface ItemChecklist {
@@ -201,6 +274,10 @@ export interface ItemChecklist {
   /** Código do classificador de OCR, quando o sistema sabe conferir o tipo. */
   tipo_ocr: string | null;
   observacao: string;
+  /** Tipo do glossário que o item pede. Ausente em respostas de versões antigas da API. */
+  tipo_documento?: string | null;
+  /** Item acrescentado por um tipo de caso marcado no glossário, fora do checklist do escritório. */
+  do_glossario?: boolean;
 }
 
 export interface Categoria {
@@ -221,6 +298,7 @@ export interface Caso {
   cliente: string;
   categoria: string;
   observacao: string;
+  telefone: string;
   criado_em: string;
   atualizado_em: string;
   total_entregas?: number;
@@ -257,12 +335,25 @@ export interface Entrega {
   /** Mesmo lote de envio em massa. Ausente em entregas individuais/antigas. */
   lote_id?: string | null;
   /** Quem decidiu o item final do documento. */
-  roteamento_origem?: "escolha" | "deterministico" | "semantico" | "humano" | null;
+  roteamento_origem?:
+    | "escolha"
+    | "deterministico"
+    | "semantico"
+    | "humano"
+    | "triagem"
+    /** Segurado na triagem por parecer repetir outro documento do caso. */
+    | "duplicidade"
+    | null;
   roteamento_confianca?: number | null;
   roteamento_motivo?: string | null;
   criado_em: string;
   /** Mensagens para o advogado — não são o texto que vai ao cliente. */
   alertas: string[];
+  /** Os mesmos avisos com um tom: "info" é nota de rotina (mostrada quieta),
+   *  "atencao"/"critico" são problemas (mostrados em destaque). A tela usa isto
+   *  para não pintar de amarelo o que é só informação. Ausente em respostas
+   *  antigas — caia em `alertas` como fallback. */
+  avisos?: { texto: string; tom: "info" | "atencao" | "critico" }[];
 }
 
 /** `GET /api/entregas/{id}` devolve a entrega com a extração completa anexada
@@ -275,11 +366,26 @@ export interface EntregaDetalhe extends Entrega {
 export interface ItemSituacao extends ItemChecklist {
   status: StatusItem;
   entregas: Entrega[];
+  /** Item que falta, mas cujo dado (ex.: CTPS/PIS) apareceu em OUTRO documento.
+   *  Indício de que a informação já está no caso — não dá o item por entregue. */
+  encontrado_em?: { arquivo: string; dado: string }[];
+}
+
+export interface DocumentoPendente {
+  codigo: string;
+  numero: number;
+  nome: string;
+  obrigatorio: boolean;
+  status: Extract<StatusItem, "pendente" | "conferir">;
+  observacao: string;
+  motivo: string;
 }
 
 export interface Progresso {
   obrigatorios_total: number;
   obrigatorios_entregues: number;
+  /** Arquivos obrigatórios já recebidos, inclusive os que ainda precisam de conferência. */
+  obrigatorios_recebidos?: number;
   obrigatorios_pendentes: number;
   opcionais_total: number;
   opcionais_entregues: number;
@@ -407,6 +513,17 @@ export interface RoteiroCompleto {
   mapa_rastreio: Record<string, string>;
 }
 
+/** A versão exata do roteiro que a pessoa está vendo e que a IA deve usar.
+ *
+ * O código sozinho não basta: o roteiro pode ter sido editado apenas para a
+ * sessão e ainda não existir no catálogo do servidor. `chave` também separa o
+ * cache da pré-análise entre duas versões com o mesmo código. */
+export interface ContextoRevisaoRoteiro {
+  roteiro: RoteiroCompleto;
+  chave: string;
+  ids_renderizaveis: string[];
+}
+
 // ----------------------------------------------------- triagem da entrevista
 
 export interface SugestaoCategoria {
@@ -526,6 +643,16 @@ export interface Pedido {
   progresso: Progresso;
 }
 
+export interface DocumentosPendentesCaso {
+  caso: Pick<Caso, "id" | "cliente" | "categoria"> & {
+    telefone: string;
+    portal_ativo: boolean;
+  };
+  categoria: { codigo: string; nome: string; descricao: string };
+  pendentes: DocumentoPendente[];
+  progresso: Progresso;
+}
+
 export interface RespostaEnvio {
   entrega: Entrega;
   extracao: Documento;
@@ -536,6 +663,8 @@ export interface CobrancaDocumentos {
   ativa: boolean;
   telefone: string;
   intervalo_dias: number;
+  intervalo_horas: number;
+  max_envios_dia: number;
   incluir_opcionais: boolean;
   proximo_envio_em: string | null;
   ultimo_envio_em: string | null;
@@ -623,7 +752,27 @@ export interface ConfigAssinatura {
   /** O WhatsApp do escritório (Evolution) está pareado. Sem isto o convite sai
    *  só por e-mail, e a tela não oferece o botão de reenviar por WhatsApp. */
   whatsapp_proprio: boolean;
+  /** Há login do ZapSign para enviar pelo SITE (plano sem API). Liga o botão de
+   *  envio pela conta ZapSign via navegador. */
+  navegador?: boolean;
   signatario_escritorio: { nome: string; email: string; papel: string } | null;
+  /** Qual provedor o próximo envio vai usar — "zapsign" é o padrão, sem cadastro
+   *  nesta tela. Ver `ConfiguracaoAssinatura` em `components/admin`. */
+  provedor_ativo?: "zapsign" | "clicksign" | "autentique";
+}
+
+// ------------------------------------- provedores de assinatura (Clicksign/Autentique)
+
+export type ProvedorAssinatura = "zapsign" | "clicksign" | "autentique";
+
+/** Status de um provedor — nunca o token, que fica só no servidor. */
+export interface StatusProvedorAssinatura {
+  provedor: ProvedorAssinatura;
+  ativo: boolean;
+  configurado: boolean;
+  testado_ok: boolean;
+  testado_em: string | null;
+  testado_mensagem: string | null;
 }
 
 // ------------------------------- conferência da resposta durante a entrevista

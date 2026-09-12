@@ -42,7 +42,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import armazenamento, casos, valor_documento
+from . import armazenamento, casos, tipos_documento, valor_documento
 from .categorias import ITEM_TRIAGEM, Categoria, ItemChecklist
 
 log = logging.getLogger("roteamento")
@@ -56,6 +56,7 @@ __all__ = [
     "SEMANTICO",
     "HUMANO",
     "TRIAGEM",
+    "DUPLICIDADE",
 ]
 
 ESCOLHA = "escolha"  # o item veio de quem enviou, e o documento não o desmente
@@ -63,6 +64,7 @@ DETERMINISTICO = "deterministico"  # o classificador de tipos reconheceu o docum
 SEMANTICO = "semantico"  # só o modelo de linguagem soube dizer
 HUMANO = "humano"  # alguém do escritório atribuiu à mão
 TRIAGEM = "triagem"  # ninguém soube: espera na fila de triagem
+DUPLICIDADE = "duplicidade"  # parece repetir outro documento do caso: espera conferência
 
 
 @dataclass(frozen=True)
@@ -140,7 +142,13 @@ def _semantico(
     if not (extracao.get("validacao", {}) or {}).get("texto_utilizavel"):
         return None
 
-    itens = [{"codigo": i.codigo, "nome": i.nome} for i in categoria.itens]
+    # O nome de cada item vai acompanhado do tipo e dos sinônimos do glossário: é
+    # como um sinônimo cadastrado pelo escritório ("holerite") alcança a leitura.
+    glossario = tipos_documento.glossario_por_codigo()
+    itens = [
+        {"codigo": i.codigo, "nome": tipos_documento.descrever_item(i, glossario)}
+        for i in categoria.itens
+    ]
     try:
         correcoes = armazenamento.memoria_correcoes_classificacao(categoria.codigo)
     except Exception:

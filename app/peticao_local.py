@@ -6,6 +6,8 @@ import io
 import json
 import logging
 import os
+import re
+import unicodedata
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +17,14 @@ from xml.etree import ElementTree
 
 import httpx
 
-from . import analise_documentos, armazenamento, rag
+from . import (
+    analise_documentos,
+    armazenamento,
+    jurimetria_caso,
+    peticao_criticas,
+    peticao_skills,
+    rag,
+)
 from . import casos as casos_ocr
 
 log = logging.getLogger("peticao_local")
@@ -91,6 +100,66 @@ def extrair_identidade_visual(conteudo: bytes) -> tuple[bytes, str, str]:
         raise
     except (zipfile.BadZipFile, KeyError, ElementTree.ParseError) as erro:
         raise ErroPeticao("Não foi possível ler a identidade visual deste .docx.") from erro
+
+
+_NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _primeiro_val(raiz, tag: str, attr: str = "val") -> str | None:
+    for el in raiz.iter(f"{_NS_W}{tag}"):
+        v = el.attrib.get(f"{_NS_W}{attr}")
+        if v:
+            return v
+    return None
+
+
+def analisar_estilo(conteudo: bytes) -> dict[str, Any]:
+    """O que dá para captar do padrão do escritório, além de logo e fonte.
+
+    Tamanho da fonte, espaçamento entre linhas, alinhamento e margens — é o que a
+    tela mostra como "identificamos isto no seu documento". Tudo best-effort: o
+    atributo que não estiver no arquivo simplesmente não entra, e nada aqui
+    interrompe o cadastro do modelo.
+    """
+    atributos: dict[str, Any] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
+            nomes = set(arquivo.namelist())
+            if "word/styles.xml" in nomes:
+                estilos = ElementTree.fromstring(arquivo.read("word/styles.xml"))
+                sz = _primeiro_val(estilos, "sz")  # em meios-pontos
+                if sz and sz.isdigit():
+                    atributos["tamanho_fonte_pt"] = round(int(sz) / 2, 1)
+                linha = None
+                for sp in estilos.iter(f"{_NS_W}spacing"):
+                    linha = sp.attrib.get(f"{_NS_W}line")
+                    if linha:
+                        break
+                if linha and linha.isdigit():
+                    # 240 = simples, 360 = 1,5, 480 = duplo.
+                    atributos["espacamento_linha"] = round(int(linha) / 240, 2)
+                jc = _primeiro_val(estilos, "jc")
+                if jc:
+                    atributos["alinhamento"] = {
+                        "both": "justificado",
+                        "left": "à esquerda",
+                        "center": "centralizado",
+                        "right": "à direita",
+                    }.get(jc, jc)
+            if "word/document.xml" in nomes:
+                doc = ElementTree.fromstring(arquivo.read("word/document.xml"))
+                for mar in doc.iter(f"{_NS_W}pgMar"):
+                    def cm(lado: str) -> float | None:
+                        v = mar.attrib.get(f"{_NS_W}{lado}")
+                        return round(int(v) / 1440 * 2.54, 1) if v and v.lstrip("-").isdigit() else None
+
+                    margens = {lado: cm(lado) for lado in ("top", "right", "bottom", "left")}
+                    if any(v is not None for v in margens.values()):
+                        atributos["margens_cm"] = margens
+                    break
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError):
+        return atributos
+    return atributos
 
 
 def identidade_visual() -> tuple[bytes, str, str, str]:
@@ -200,19 +269,100 @@ def _llm_json(
             timeout=timeout,
         )
         resposta.raise_for_status()
-        return json.loads(resposta.json()["choices"][0]["message"]["content"])
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError) as erro:
+        conteudo = resposta.json()["choices"][0]["message"]["content"]
+        saida = json.loads(conteudo)
+    # `IndexError` e `TypeError` não estavam aqui, e é justamente o que um
+    # provedor devolve quando filtra a resposta: HTTP 200 com `choices: []`. O
+    # erro subia cru e a tela mostrava 500 sem dizer nada ao advogado, que ficava
+    # sem saber se devia tentar de novo — e devia.
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as erro:
         log.warning("petição local: LLM falhou: %s", erro)
         raise ErroPeticao("O modelo não respondeu — tente de novo.") from erro
+    if not isinstance(saida, dict):
+        # JSON válido que não é objeto (uma lista, um número) quebraria adiante,
+        # no `.get` de quem chamou, longe daqui.
+        log.warning("petição local: LLM devolveu %s em vez de objeto", type(saida).__name__)
+        raise ErroPeticao("O modelo não respondeu no formato esperado — tente de novo.")
+    return saida
+
+
+def _categoria_do_caso(caso_id: str) -> str:
+    caso = armazenamento.obter_caso(caso_id) or {}
+    return str(caso.get("categoria") or "")
+
+
+#: Quantas lições de uma categoria entram automaticamente no prompt das próximas
+#: gerações — a retroalimentação da issue "Permitir alteração da petição por
+#: prompt com rastreabilidade" ("a IA vai aprendendo até sair do jeitinho que
+#: eles querem").
+#:
+#: Era 5, e 5 quebrava a promessa: medido contra o banco, gravadas 7 correções na
+#: mesma categoria, a IA lembrava da 3ª à 7ª e ESQUECIA as duas primeiras — o
+#: escritório reensinava o que já tinha ensinado. 20 cabe no prompt e cobre o que
+#: uma categoria acumula em meses; repetidas não gastam vaga (`_chave`), e o que
+#: for marcado "só deste caso" nem chega aqui.
+CRITICAS_RECENTES_POR_CATEGORIA = 20
+
+
+def _com_skill_do_escritorio(caso_id: str, instrucao: str) -> str:
+    """Acrescenta o que o escritório já ensinou sobre esta categoria de caso.
+
+    Duas fontes, nesta ordem — configuração explícita primeiro, aprendizado
+    implícito depois:
+
+    1. A skill cadastrada em `peticao_skills` (issue "Configurar skill por
+       modelo de petição") — instrução deliberada, escrita pra isso.
+    2. As últimas críticas que advogados fizeram em petições desta MESMA
+       categoria, mesmo em OUTROS casos (`peticao_criticas`) — retroalimentação
+       automática: o escritório não precisa repetir a mesma correção caso após
+       caso, porque a próxima geração já nasce considerando as anteriores.
+
+    Vem DEPOIS do contrato do prompt (papel, formato do JSON), nunca antes: as
+    duas são conteúdo — o que destacar, como abordar a categoria —, e não podem
+    mudar o formato que `_normalizar_secoes` espera receber de volta. Sem nada
+    cadastrado, `instrucao` volta intocada — mesmo comportamento de antes desta
+    configuração existir.
+    """
+    categoria = _categoria_do_caso(caso_id)
+    skill = peticao_skills.instrucoes_da_categoria(categoria).strip()
+    try:
+        peticao_criticas.inicializar()
+        criticas = peticao_criticas.ultimas_da_categoria(
+            categoria, limite=CRITICAS_RECENTES_POR_CATEGORIA
+        )
+    except Exception:
+        # Mesma régua de `instrucoes_da_categoria`: uma oscilação de rede no
+        # pgvector não pode derrubar a geração por causa de um reforço opcional.
+        criticas = []
+
+    blocos = [instrucao]
+    if skill:
+        blocos.append(
+            "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO ===\n" + skill
+        )
+    if criticas:
+        listadas = "\n".join(f"- {c}" for c in criticas)
+        blocos.append(
+            "=== CORREÇÕES QUE O ESCRITÓRIO JÁ PEDIU EM PETIÇÕES DESTA CATEGORIA ===\n"
+            f"{listadas}\n"
+            "Aplique estas correções diretamente, sem repetir o erro que motivou cada uma."
+        )
+    if len(blocos) == 1:
+        return instrucao
+    blocos.append("Aplique o que vier acima sem contrariar o formato de resposta pedido.")
+    return "\n\n".join(blocos)
 
 
 def _documentos_ocr(caso_id: str) -> list[dict[str, str]]:
+    """O texto de OCR de cada anexo, em UMA consulta (ver `_documentos_do_caso`).
+
+    Era um `obter_entrega` por arquivo, e a geração da petição abre este caminho
+    junto com o da análise: num caso de 46 anexos davam ~180 idas ao banco antes de
+    a primeira palavra ir para o modelo.
+    """
     documentos = []
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        if not detalhe:
-            continue
-        texto = str((detalhe.get("extracao") or {}).get("texto_completo") or "").strip()
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        texto = str((entrega.get("extracao") or {}).get("texto_completo") or "").strip()
         if not texto:
             continue
         documentos.append(
@@ -224,6 +374,61 @@ def _documentos_ocr(caso_id: str) -> list[dict[str, str]]:
     return documentos
 
 
+def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
+    """Quem é o autor da ação, com a autoridade do CADASTRO — não da transcrição.
+
+    O CASO QUE OBRIGOU ISTO
+
+    Caso `da5a030b`: cliente GUILHERME NUNES BEZERRA, com CPF no cadastro. A
+    transcrição da entrevista tem, de passagem, "...tado chamado Roosevelt e aí
+    eles machucaram com a moto da empresa..." — um terceiro citado na conversa, ou
+    um erro do reconhecimento de voz. A petição saiu qualificando "ROOSEVELT
+    RIVERS DA SILVA" como reclamante, e com "CPF [PENDENTE]" logo ao lado, num
+    caso em que o CPF estava gravado.
+
+    O nome do autor é a única coisa de uma petição que não se pode errar, e o
+    sistema já o sabe. Antes ele ia como uma linha solta ("CLIENTE: ...") no alto
+    de 4 mil caracteres de transcrição, sem dizer que aquilo era a fonte da
+    verdade; o modelo preferiu o nome que aparecia no meio da conversa.
+
+    Aqui a identidade vai num bloco próprio, dito como autoritativo, com o que o
+    cadastro tem (o CPF vem da consulta por CPF da entrevista, ver
+    `app/consultas.py`). Duas instruções acompanham: nome diferente deste é de
+    TERCEIRO, e dado que está nesta lista não sai como [PENDENTE].
+    """
+    try:
+        qualificacao = armazenamento.obter_qualificacao(caso_id) or {}
+    except Exception:  # noqa: BLE001 - cadastro ausente não impede a geração
+        log.warning("qualificação indisponível para o caso %s", caso_id, exc_info=True)
+        qualificacao = {}
+
+    campos = (
+        ("Nome completo", caso.get("cliente")),
+        ("CPF", qualificacao.get("cpf")),
+        ("Data de nascimento", qualificacao.get("nascimento")),
+        ("Sexo", qualificacao.get("sexo")),
+        ("Nome da mãe", qualificacao.get("nome_mae")),
+        ("Endereço", qualificacao.get("endereco")),
+        ("CEP", qualificacao.get("cep")),
+        ("Telefone", caso.get("telefone")),
+        ("E-mail", qualificacao.get("email")),
+    )
+    conhecidos = [f"- {rotulo}: {valor}" for rotulo, valor in campos if str(valor or "").strip()]
+    if not conhecidos:
+        return []
+
+    return [
+        "=== IDENTIDADE DO RECLAMANTE (vem do CADASTRO do caso) ===",
+        *conhecidos,
+        "",
+        "Esta lista é a ÚNICA fonte válida para qualificar o autor da ação. Nome que "
+        "apareça na transcrição ou nos documentos e seja diferente do nome acima é de "
+        "TERCEIRO (colega, condutor, médico, testemunha, vítima) — nunca do autor. "
+        "E não escreva [PENDENTE] para dado que esteja nesta lista: use o valor.",
+        "",
+    ]
+
+
 def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     caso = armazenamento.obter_caso(caso_id) or {}
     situacao = casos_ocr.montar_situacao(caso_id) or {}
@@ -233,7 +438,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     progresso = situacao.get("progresso") or {}
 
     linhas = [
-        f"CLIENTE: {caso.get('cliente', '')}",
+        *_identidade_do_reclamante(caso_id, caso),
         f"CATEGORIA: {categoria}",
         "",
         "=== ENTREVISTA (transcrição) ===",
@@ -275,7 +480,9 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
 def analisar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     contexto = _montar_contexto(caso_id, texto_entrevista)
     saida = _llm_json(
-        """Você é advogado trabalhista. Cruze a ENTREVISTA com os DOCUMENTOS (OCR).
+        _com_skill_do_escritorio(
+            caso_id,
+            """Você é advogado trabalhista. Cruze a ENTREVISTA com os DOCUMENTOS (OCR).
 Devolva JSON:
 {
   "resumo": "síntese jurídica em 4-8 frases",
@@ -287,6 +494,7 @@ Devolva JSON:
   "observacoes": "alertas ao advogado"
 }
 Não invente fatos. Diferencie alegação de fato documentado.""",
+        ),
         contexto,
     )
     return {
@@ -333,21 +541,23 @@ def _normalizar_secoes(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _analisar_jurimetria_da_minuta(
-    secoes: list[dict[str, Any]],
+    secoes: list[dict[str, Any]], *, texto_para_uf: str = ""
 ) -> tuple[dict[str, Any], str]:
-    """Compara a minuta pronta com decisões reais e gera apêndice auditável."""
+    """Compara a minuta pronta com decisões reais e gera apêndice auditável.
+
+    `texto_para_uf` foca a busca no TRT do estado do caso (mesmo critério do
+    painel), para o apêndice da peça citar precedentes daquela jurisdição — e
+    não do acervo nacional — quando o estado é identificável nos documentos.
+    """
     consulta = "\n\n".join(
         str(secao.get("content") or "")
         for secao in secoes
         if secao.get("code") in {"FACTS", "LEGAL_GROUNDS", "CLAIMS", "EVIDENCE"}
     ).strip()
+    jurisdicao = ""
     try:
-        similares = rag.buscar_similares(
-            consulta,
-            limite=30,
-            timeout=40,
-            connect_timeout=5,
-            connect_retries=1,
+        similares, jurisdicao, _uf = jurimetria_caso.buscar_focada(
+            consulta, texto_para_uf=texto_para_uf
         )
     except Exception as erro:
         log.warning("petição local: jurimetria indisponível: %s", erro)
@@ -451,6 +661,7 @@ P1, P2 etc. Não invente referência. Responda JSON:
         "disponivel": True,
         "origem": "embeddings_advocacia_ia",
         "consulta_vetorial": True,
+        "jurisdicao": jurisdicao,
         "estatisticas": estatisticas,
         "sintese": str(leitura.get("sintese") or "").strip(),
         "fundamentos": fundamentos,
@@ -469,7 +680,9 @@ def redigir(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     contexto = analise.get("contexto") or _montar_contexto(caso_id, texto_entrevista)
     saida = _llm_json(
-        """Redija uma PETIÇÃO INICIAL trabalhista completa em português formal.
+        _com_skill_do_escritorio(
+            caso_id,
+            """Redija uma PETIÇÃO INICIAL trabalhista completa em português formal.
 Use SOMENTE fatos da entrevista e documentos — não invente.
 Marque com [PENDENTE: motivo] o que depender só de alegação sem prova.
 JSON:
@@ -486,6 +699,7 @@ JSON:
   "pendencias": ["fatos sem comprovação documental"]
 }
 Cada content em parágrafos separados por linha em branco.""",
+        ),
         (
             f"ANÁLISE:\n{analise.get('resumo', '')}\n"
             f"Cruzamento: {analise.get('cruzamento_entrevista_documentos', '')}\n"
@@ -505,7 +719,9 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     contexto = _montar_contexto(caso_id, texto_entrevista)
     saida = _llm_json(
-        """Você é advogado trabalhista e redator de petições iniciais.
+        _com_skill_do_escritorio(
+            caso_id,
+            """Você é advogado trabalhista e redator de petições iniciais.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
 Onde faltar dado indispensável, escreva [PENDENTE: explicação].
@@ -517,7 +733,10 @@ Devolva JSON exatamente com:
     "cruzamento_entrevista_documentos": "confronto entre relato e provas",
     "pontos_fortes": ["..."], "lacunas": ["..."],
     "fatos_confirmados": ["..."], "fatos_so_na_entrevista": ["..."],
-    "observacoes": "alertas para revisão"
+    "observacoes": "alertas para revisão",
+    "acoes_sugeridas": [
+      {"titulo":"nome da ação adicional ou conexa", "motivo":"por que os fatos podem justificar esta peça", "pedidos":["pedido possível"], "prioridade":"principal|alternativa|avaliar"}
+    ]
   },
   "secoes": [
     {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
@@ -530,7 +749,11 @@ Devolva JSON exatamente com:
   ],
   "pendencias": ["..."]
 }
+Em `acoes_sugeridas`, inclua de zero a três peças DIFERENTES da minuta principal,
+somente se os fatos realmente apontarem para elas. Não sugira duplicata, recurso,
+ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
 Cada content deve conter parágrafos separados por linha em branco.""",
+        ),
         contexto,
         timeout=240.0,
     )
@@ -549,15 +772,36 @@ Cada content deve conter parágrafos separados por linha em branco.""",
             str(x) for x in bruto_analise.get("fatos_so_na_entrevista") or []
         ],
         "observacoes": str(bruto_analise.get("observacoes") or "").strip(),
+        "acoes_sugeridas": [
+            {
+                "titulo": str(item.get("titulo") or "").strip(),
+                "motivo": str(item.get("motivo") or "").strip(),
+                "pedidos": [str(p).strip() for p in item.get("pedidos") or [] if str(p).strip()],
+                "prioridade": str(item.get("prioridade") or "avaliar").strip().lower(),
+            }
+            for item in bruto_analise.get("acoes_sugeridas") or []
+            if isinstance(item, dict) and str(item.get("titulo") or "").strip()
+        ][:3],
     }
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
-    jurimetria, _ = _analisar_jurimetria_da_minuta(secoes)
+    jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     agora = _agora()
     anterior = carregar(caso_id) or {}
     versao = int(anterior.get("version") or 0) + 1
+    # A versão que está sendo substituída vai para o histórico ANTES de ser
+    # sobrescrita — `peticoes_locais` guarda só a atual (chave é o caso).
+    #
+    # `revisar_com_prompt` já fazia isto e gerar de novo não: o advogado clicava
+    # "Gerar de novo" (a tela até avisa que "cria uma nova versão") e a minuta
+    # anterior — com as correções que ele já tinha feito à mão — desaparecia sem
+    # deixar cópia. O painel de rastreabilidade mostrava um salto de versão sem
+    # nada atrás dele. Vem antes de `_salvar` de propósito: se o histórico falhar,
+    # a petição anterior continua inteira no lugar e é só tentar de novo.
+    if anterior:
+        armazenamento.registrar_versao_peticao(caso_id, anterior)
     dados = {
         "id": ID_LOCAL,
         "document_type": "INITIAL_PETITION",
@@ -586,6 +830,308 @@ Cada content deve conter parágrafos separados por linha em branco.""",
     }
     _salvar(caso_id, dados)
     return dados
+
+
+#: Quantas peças anexas um caso pode ter. Três é o teto do que a análise sugere
+#: (`acoes_sugeridas`), e é também o limite do que um advogado revisa de uma vez —
+#: peça que ninguém lê é token gasto e risco de ir a protocolo sem conferência.
+MAX_ANEXAS_POR_CASO = 3
+
+
+def id_da_anexa(caso_id: str, titulo: str) -> str:
+    """Identificador estável da peça a partir do título.
+
+    Determinístico de propósito: mandar redigir "Ação de danos morais" duas vezes
+    substitui a peça em vez de criar uma segunda igual. O caso entra no id porque
+    o mesmo título aparece em casos diferentes.
+    """
+    limpo = re.sub(r"[^a-z0-9]+", "-", _sem_acento(titulo).lower()).strip("-")
+    return f"{caso_id}:{limpo[:60] or 'peca'}"
+
+
+def _sem_acento(texto: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or "")) if unicodedata.category(c) != "Mn"
+    )
+
+
+def listar_anexas(caso_id: str) -> list[dict[str, Any]]:
+    """As outras peças já redigidas deste caso, como a tela as mostra."""
+    saida = []
+    for linha in armazenamento.listar_peticoes_anexas(caso_id):
+        dados = linha.get("dados") or {}
+        saida.append(
+            {
+                "id": linha["id"],
+                "titulo": linha.get("titulo") or "",
+                "motivo": linha.get("motivo") or "",
+                "gerada_por": linha.get("gerada_por") or "",
+                "criado_em": linha.get("criado_em"),
+                "atualizado_em": linha.get("atualizado_em"),
+                "pendencias": dados.get("pendencias") or [],
+                "secoes": len(dados.get("sections") or []),
+            }
+        )
+    return saida
+
+
+def gerar_anexa(
+    caso_id: str,
+    *,
+    titulo: str,
+    motivo: str = "",
+    pedidos: list[str] | None = None,
+    texto_entrevista: str,
+    gerada_por: str = "",
+) -> dict[str, Any]:
+    """Redige UMA das outras ações sugeridas, a partir do material do mesmo caso.
+
+    POR QUE NÃO É A MESMA FUNÇÃO DA PETIÇÃO INICIAL
+
+    `gerar` produz A peça do caso: versiona, guarda o anterior no histórico, entra
+    em revisão, é revisada por prompt e aprovada. Estas são peças irmãs, redigidas
+    do mesmo material para OUTRA ação — o escritório quer levar duas ações do mesmo
+    acidente, e até aqui o banco não permitia (a chave de `peticoes_locais` é o
+    caso, então a segunda peça apagava a primeira).
+
+    A minuta principal NÃO é tocada aqui. É o ponto: quem clica em "gerar esta
+    peça" na sugestão não pode perder a petição inicial que já revisou.
+
+    O TÍTULO DA SUGESTÃO VAI NO PROMPT COMO ALVO
+
+    Sem isso o modelo redigiria outra petição inicial — o material é o mesmo, e é
+    o pedido que muda. O título e os pedidos que a análise sugeriu entram como o
+    que esta peça deve postular, e o resto do contexto (identidade do reclamante,
+    entrevista, documentos, achados) é o mesmo de `_montar_contexto`.
+    """
+    titulo = (titulo or "").strip()
+    if not titulo:
+        raise ErroPeticao("Diga qual peça deve ser redigida.")
+
+    peca_id = id_da_anexa(caso_id, titulo)
+    existentes = {linha["id"] for linha in armazenamento.listar_peticoes_anexas(caso_id)}
+    if peca_id not in existentes and len(existentes) >= MAX_ANEXAS_POR_CASO:
+        raise ErroPeticao(
+            f"Este caso já tem {MAX_ANEXAS_POR_CASO} peças além da petição inicial. "
+            "Baixe e apague uma antes de redigir outra."
+        )
+
+    contexto = _montar_contexto(caso_id, texto_entrevista)
+    alvo = [f"PEÇA A REDIGIR: {titulo}"]
+    if motivo.strip():
+        alvo.append(f"POR QUE ELA CABE NESTE CASO: {motivo.strip()}")
+    if pedidos:
+        alvo.append("PEDIDOS QUE A ANÁLISE APONTOU: " + "; ".join(p for p in pedidos if p))
+
+    saida = _llm_json(
+        _com_skill_do_escritorio(
+            caso_id,
+            """Você é advogado trabalhista e vai redigir UMA peça específica, indicada
+em "PEÇA A REDIGIR", usando o material do caso (entrevista, documentos, achados).
+
+Esta NÃO é a petição inicial do caso — ela já existe. Redija a peça pedida, com os
+pedidos próprios dela. Se o material não sustentar a peça, diga isso em `pendencias`
+e escreva o que for possível com [PENDENTE: explicação] no que faltar.
+
+Use SOMENTE fatos da entrevista e dos documentos — não invente. A qualificação do
+autor sai do bloco IDENTIDADE DO RECLAMANTE, nunca de nome citado na conversa.
+
+JSON:
+{
+  "secoes": [
+    {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
+    {"code":"FACTS","label":"Dos fatos","content":"..."},
+    {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
+    {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
+    {"code":"EVIDENCE","label":"Das provas","content":"..."},
+    {"code":"VALUE","label":"Do valor da causa","content":"..."},
+    {"code":"CLOSING","label":"Fechamento","content":"..."}
+  ],
+  "pendencias": ["o que falta para esta peça em particular"]
+}
+Cada content em parágrafos separados por linha em branco.""",
+        ),
+        "\n".join(alvo) + "\n\n" + contexto,
+        timeout=240.0,
+    )
+
+    secoes = _normalizar_secoes(saida.get("secoes") or [])
+    if not any(secao["content"] for secao in secoes):
+        raise ErroPeticao("O modelo não devolveu texto desta peça.")
+
+    agora = _agora()
+    dados = {
+        "id": peca_id,
+        "document_type": "ADDITIONAL_CLAIM",
+        "title": titulo,
+        "motivo": motivo.strip(),
+        "created_at": agora,
+        "updated_at": agora,
+        "sections": secoes,
+        "pendencias": [str(p) for p in saida.get("pendencias") or [] if str(p).strip()],
+        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+    }
+    armazenamento.salvar_peticao_anexa(
+        caso_id,
+        peca_id,
+        titulo=titulo,
+        motivo=motivo,
+        dados=dados,
+        docx=montar_docx(secoes),
+        gerada_por=gerada_por,
+    )
+    return {
+        "id": peca_id,
+        "titulo": titulo,
+        "motivo": motivo.strip(),
+        "pendencias": dados["pendencias"],
+        "secoes": len(secoes),
+        "criado_em": agora,
+        "atualizado_em": agora,
+        "gerada_por": gerada_por,
+    }
+
+
+def ler_docx_anexa(peca_id: str) -> tuple[str, bytes]:
+    """Título e .docx de uma peça anexa, para o download."""
+    registro = armazenamento.obter_peticao_anexa(peca_id)
+    if not registro:
+        raise ErroPeticao("Peça não encontrada.")
+    conteudo = bytes(registro.get("_docx") or b"")
+    if not conteudo:
+        # Regrava a partir do JSON: o texto é a verdade, o binário é derivado.
+        conteudo = montar_docx((registro.get("dados") or {}).get("sections") or [])
+    return str(registro.get("titulo") or "Peça"), conteudo
+
+
+def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
+    from . import docx_pdf
+
+    titulo, docx = ler_docx_anexa(peca_id)
+    try:
+        return titulo, docx_pdf.converter(docx)
+    except docx_pdf.ErroConversaoDocx as erro:
+        raise ErroPeticao(str(erro)) from erro
+
+
+def revisar_com_prompt(
+    caso_id: str, *, prompt_critica: str, usuario: str, generaliza: bool = True
+) -> dict[str, Any]:
+    """Reescreve a petição a partir de uma crítica em linguagem natural.
+
+    Issue "Permitir alteração da petição por prompt com rastreabilidade":
+    advogado ou gestor descreve o que quer mudar ("os pedidos estão fracos,
+    separe dano moral do material") e o sistema aplica sobre a petição ATUAL —
+    não gera do zero, então o que já estava bom continua igual.
+
+    Três coisas ficam registradas, em ordem:
+
+    1. A versão anterior vai para `peticao_versoes` **antes** de ser
+       sobrescrita — rastreabilidade por caso, requisito da issue.
+    2. A crítica em si vai para `peticao_criticas`, com quem pediu e em cima de
+       qual versão — o "log" e a "instrução armazenada" que a issue pede, e
+       também o que alimenta a retroalimentação automática entre casos (ver
+       `_com_skill_do_escritorio`). Com `generaliza=False` ela fica só na
+       rastreabilidade deste caso e NÃO instrui as próximas petições: é o que
+       impede um "troque o nome do cliente" de virar regra da categoria.
+    3. A nova versão volta **sempre** para `IN_REVIEW`, mesmo que a anterior já
+       estivesse `APPROVED` — decisão do escritório: revisão por prompt nunca
+       substitui uma versão aprovada sem passar de novo pela aprovação humana.
+    """
+    prompt_critica = prompt_critica.strip()
+    if not prompt_critica:
+        raise ErroPeticao("Escreva o que deve mudar na petição.")
+
+    atual = carregar(caso_id)
+    if not atual:
+        raise ErroPeticao("Nenhuma petição gerada para este caso.")
+
+    secoes_atuais = [
+        s for s in atual.get("sections") or [] if s.get("code") != "JURIMETRY"
+    ]
+    if not secoes_atuais:
+        raise ErroPeticao("Esta petição não tem seções para revisar.")
+
+    minuta_atual = "\n\n".join(
+        f"### {s.get('label', s.get('code'))}\n{s.get('content', '')}"
+        for s in secoes_atuais
+    )
+
+    saida = _llm_json(
+        _com_skill_do_escritorio(
+            caso_id,
+            """Você é advogado trabalhista revisando uma petição inicial já redigida.
+Aplique a CRÍTICA do advogado sobre a MINUTA ATUAL. Mude SOMENTE o que a crítica pede;
+preserve o restante do texto tal como está, palavra por palavra onde a crítica não manda
+mexer. Não invente fatos novos que não estejam na minuta atual. Devolva as SETE seções
+completas, mesmo as que não mudaram. JSON:
+{
+  "secoes": [
+    {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
+    {"code": "FACTS", "label": "Dos fatos", "content": "..."},
+    {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
+    {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
+    {"code": "EVIDENCE", "label": "Das provas", "content": "..."},
+    {"code": "VALUE", "label": "Do valor da causa", "content": "..."},
+    {"code": "CLOSING", "label": "Fechamento", "content": "..."}
+  ]
+}
+Cada content em parágrafos separados por linha em branco.""",
+        ),
+        f"MINUTA ATUAL:\n{minuta_atual}\n\nCRÍTICA DO ADVOGADO:\n{prompt_critica}",
+        timeout=240.0,
+    )
+    secoes = _normalizar_secoes(saida.get("secoes") or [])
+    if not any(secao["content"] for secao in secoes):
+        raise ErroPeticao("O modelo não devolveu texto da petição revisada.")
+
+    # 1) snapshot da versão anterior — antes de sobrescrever.
+    armazenamento.registrar_versao_peticao(caso_id, atual)
+
+    versao_origem = int(atual.get("version") or 1)
+    versao_resultado = versao_origem + 1
+    novos_dados = {
+        **atual,
+        "version": versao_resultado,
+        "status": "IN_REVIEW",
+        "sections": secoes,
+    }
+    _salvar(caso_id, novos_dados)
+
+    # 2) a crítica em si — log + instrução armazenada + insumo da retroalimentação.
+    try:
+        peticao_criticas.inicializar()
+        peticao_criticas.registrar(
+            caso_id=caso_id,
+            categoria=_categoria_do_caso(caso_id),
+            versao_origem=versao_origem,
+            versao_resultado=versao_resultado,
+            prompt=prompt_critica,
+            usuario=usuario,
+            generaliza=generaliza,
+        )
+    except Exception:
+        # A revisão já foi salva — perder o registro da crítica é ruim, mas não pode
+        # desfazer o trabalho do advogado por uma oscilação do pgvector. Fica no log
+        # do servidor; quem ler a rastreabilidade do caso vai notar a lacuna.
+        log.exception("crítica de petição não pôde ser registrada (caso %s)", caso_id)
+
+    return novos_dados
+
+
+def historico_de_criticas(caso_id: str) -> list[dict[str, Any]]:
+    """A rastreabilidade que a issue pede: cada crítica deste caso, quem pediu, quando."""
+    try:
+        peticao_criticas.inicializar()
+        return peticao_criticas.listar_por_caso(caso_id)
+    except Exception:
+        log.warning("histórico de críticas indisponível (caso %s)", caso_id, exc_info=True)
+        return []
+
+
+def historico_de_versoes(caso_id: str) -> list[dict[str, Any]]:
+    """As versões anteriores desta petição — o que ela era antes de cada revisão."""
+    return armazenamento.listar_versoes_peticao(caso_id)
 
 
 def salvar_secoes(caso_id: str, secoes: list[dict[str, str]]) -> dict[str, Any]:

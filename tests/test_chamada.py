@@ -18,6 +18,10 @@ from fastapi.testclient import TestClient
 
 from app import armazenamento, main
 
+from tests.banco_de_teste import exigir_banco_de_teste
+
+exigir_banco_de_teste()
+
 
 def checar(condicao: bool, descricao: str) -> bool:
     print(f"  {'PASS' if condicao else 'FALHA'} {descricao}")
@@ -28,6 +32,9 @@ def main_teste() -> int:
     temporario = Path(tempfile.mkdtemp(prefix="ocr-chamada-"))
     armazenamento.DIR_DADOS = temporario
     armazenamento.DIR_ARQUIVOS = temporario / "casos"
+    # `CAMINHO_BANCO` não redireciona mais o banco (era do tempo do SQLite): a conexão
+    # vem de `SQLSERVER_*`. A trava no topo do arquivo é o que impede este teste de
+    # escrever em produção — ver `tests/banco_de_teste.py`.
     armazenamento.CAMINHO_BANCO = temporario / "casos.db"
     armazenamento.inicializar()
 

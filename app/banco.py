@@ -44,6 +44,7 @@ __all__ = [
     "conectar",
     "dsn",
     "inicializar_schema",
+    "limite_de_espera_por_lock",
     "sessao",
 ]
 
@@ -210,6 +211,8 @@ class Conexao:
 # estavam no SQLite —, e qualificar aqui evita reescrever 58 consultas.
 TABELAS = (
     "casos",
+    "qualificacao",
+    "ligacoes_followup",
     "classificacoes_documentos_corrigidas",
     "analise_documento_feedback",
     "analise_documento_etapas",
@@ -217,6 +220,9 @@ TABELAS = (
     "entregas",
     "entrevistas",
     "peticoes_locais",
+    "peticoes_anexas",
+    "peticao_versoes",
+    "revisoes",
     "assinaturas",
     "roteiros",
     "ufs",
@@ -227,6 +233,9 @@ TABELAS = (
     "conversas",
     "automacoes_whatsapp",
     "cobrancas_documentos",
+    "ligacoes",
+    "auditorias_entrevista",
+    "solicitacoes_peticao",
     "modelos_documento",
     "configuracoes",
 )
@@ -321,9 +330,34 @@ def _adaptar_sql(sql: str) -> str:
 #: Conexão emprestada pelo escopo em curso, quando há um (ver `sessao`).
 _emprestada: ContextVar[Conexao | None] = ContextVar("conexao_emprestada", default=None)
 
+#: Teto de espera por lock das conexões abertas no escopo em curso, em ms.
+_limite_lock_ms: ContextVar[int | None] = ContextVar("limite_lock_ms", default=None)
+
 
 @contextmanager
-def conectar() -> Iterator[Conexao]:
+def limite_de_espera_por_lock(milissegundos: int) -> Iterator[None]:
+    """Conexões abertas dentro do bloco desistem de esperar lock depois deste tempo.
+
+    O padrão do SQL Server é esperar lock PARA SEMPRE. Isso é o certo para uma
+    requisição comum, e é o errado para a subida da API: os `inicializar()` gravam em
+    tabelas que outras máquinas também usam, e uma transação esquecida aberta em
+    qualquer uma delas deixava o uvicorn preso antes de abrir a porta — sem uma linha
+    de erro, com a tela inteira fora do ar. Foi o que aconteceu em 10/09/2026: uma
+    sessão remota com transação aberta desde 12:59 travou o `UPDATE` de
+    `acervo_tb_perfis` em `perfis.inicializar`.
+
+    Com o teto, a etapa falha com o erro 1222 do SQL Server, a subida registra e
+    segue. Vale só para o escopo: requisições não herdam o limite.
+    """
+    marca = _limite_lock_ms.set(milissegundos)
+    try:
+        yield
+    finally:
+        _limite_lock_ms.reset(marca)
+
+
+@contextmanager
+def conectar(timeout: int = 15) -> Iterator[Conexao]:
     """Abre transação, confirma no fim e desfaz em qualquer erro.
 
     Mesmo contrato do `conectar()` que existia sobre o SQLite: quem chama não precisa
@@ -399,6 +433,33 @@ CREATE TABLE {SCHEMA}.{PREFIXO}casos (
     cliente_ref       varchar(80)   NULL,
     agente_ultimo_erro nvarchar(max) NULL,
     telefone          varchar(30)   NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}qualificacao') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}qualificacao (
+    caso_id        varchar(64)   NOT NULL CONSTRAINT pk_ocr_qualificacao PRIMARY KEY,
+    cpf            varchar(14)   NULL,
+    nascimento     varchar(10)   NULL,
+    sexo           varchar(20)   NULL,
+    nome_mae       nvarchar(200) NULL,
+    cep            varchar(9)    NULL,
+    endereco       nvarchar(400) NULL,
+    email          nvarchar(200) NULL,
+    renda_estimada varchar(80)   NULL,
+    criado_em      varchar(40)   NOT NULL,
+    atualizado_em  varchar(40)   NOT NULL,
+    CONSTRAINT fk_ocr_qualificacao_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}ligacoes_followup') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}ligacoes_followup (
+    id         varchar(64)   NOT NULL CONSTRAINT pk_ocr_ligacoes_followup PRIMARY KEY,
+    caso_id    varchar(64)   NOT NULL,
+    usuario    nvarchar(200) NOT NULL CONSTRAINT df_ocr_ligacoes_user DEFAULT N'',
+    criado_em  varchar(40)   NOT NULL,
+    CONSTRAINT fk_ocr_ligacoes_followup_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}entregas') IS NULL
@@ -482,6 +543,55 @@ CREATE TABLE {SCHEMA}.{PREFIXO}peticoes_locais (
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
+-- Histórico das versões anteriores da petição — `peticoes_locais` guarda só a
+-- ATUAL (chave é `caso_id`); cada revisão por prompt (issue "Permitir alteração
+-- da petição por prompt com rastreabilidade") grava aqui a versão que estava
+-- valendo ANTES de ser sobrescrita. O prompt em si (a crítica) mora no Postgres,
+-- em `peticao_criticas` — é insumo de IA; isto aqui é o conteúdo da peça, que é
+-- estado do caso, junto do resto (`entregas`, `entrevistas`).
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}peticao_versoes') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}peticao_versoes (
+    id            varchar(64)    NOT NULL CONSTRAINT pk_acervo_peticao_versoes PRIMARY KEY,
+    caso_id       varchar(64)    NOT NULL,
+    versao        int            NOT NULL,
+    status        varchar(40)    NOT NULL,
+    dados_json    nvarchar(max)  NOT NULL,
+    criado_em     varchar(40)    NOT NULL,
+    CONSTRAINT fk_acervo_peticao_versoes_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+-- As OUTRAS peças do caso — as ações que a análise sugeriu e o advogado mandou
+-- redigir, além da petição inicial.
+--
+-- POR QUE TABELA PRÓPRIA, E NÃO MAIS LINHAS EM `peticoes_locais`
+--
+-- Lá a chave primária é o `caso_id`: uma peça por caso, por construção. Gerar uma
+-- segunda peça naquela tabela sobrescreveria a primeira — era exatamente o que
+-- impedia o escritório de ter duas peças vivas ao mesmo tempo. Trocar aquela
+-- chave mexeria no histórico de versões, na revisão por prompt e na aprovação,
+-- que são da peça PRINCIPAL e continuam sendo dela.
+--
+-- Aqui a divisão é deliberada: a petição inicial é a peça que se revisa por
+-- prompt, versiona e aprova; estas são peças redigidas a partir do mesmo material
+-- (mesma entrevista, mesmos documentos), prontas para baixar e levar para fora.
+-- Regerar substitui a anexa, sem histórico — quem quiser guardar a anterior baixa
+-- antes, e a tela diz isso.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}peticoes_anexas') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}peticoes_anexas (
+    id            varchar(120)   NOT NULL CONSTRAINT pk_acervo_peticoes_anexas PRIMARY KEY,
+    caso_id       varchar(64)    NOT NULL,
+    titulo        nvarchar(300)  NOT NULL,
+    motivo        nvarchar(1000) NOT NULL CONSTRAINT df_acervo_anexa_motivo DEFAULT N'',
+    dados_json    nvarchar(max)  NOT NULL,
+    docx          varbinary(max) NOT NULL,
+    gerada_por    nvarchar(200)  NOT NULL CONSTRAINT df_acervo_anexa_quem DEFAULT N'',
+    criado_em     varchar(40)    NOT NULL,
+    atualizado_em varchar(40)    NOT NULL,
+    CONSTRAINT fk_acervo_anexa_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}assinaturas') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}assinaturas (
     id            varchar(64)   NOT NULL CONSTRAINT pk_ocr_assinaturas PRIMARY KEY,
@@ -517,6 +627,8 @@ CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
     ativa              int           NOT NULL CONSTRAINT df_acervo_cobranca_ativa DEFAULT 0,
     telefone           varchar(20)   NOT NULL CONSTRAINT df_acervo_cobranca_telefone DEFAULT '',
     intervalo_dias     int           NOT NULL CONSTRAINT df_acervo_cobranca_intervalo DEFAULT 3,
+    intervalo_horas    int           NULL,
+    max_envios_dia     int           NOT NULL CONSTRAINT df_acervo_cobranca_max_dia DEFAULT 1,
     incluir_opcionais  int           NOT NULL CONSTRAINT df_acervo_cobranca_opcionais DEFAULT 0,
     proximo_envio_em   varchar(40)   NULL,
     ultimo_envio_em    varchar(40)   NULL,
@@ -525,6 +637,43 @@ CREATE TABLE {SCHEMA}.{PREFIXO}cobrancas_documentos (
     criado_em          varchar(40)   NOT NULL,
     atualizado_em      varchar(40)   NOT NULL,
     CONSTRAINT fk_acervo_cobrancas_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}ligacoes') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}ligacoes (
+    id             varchar(64)   NOT NULL CONSTRAINT pk_acervo_ligacoes PRIMARY KEY,
+    caso_id        varchar(64)   NOT NULL,
+    atendente_id   varchar(160)  NOT NULL,
+    atendente_nome nvarchar(200) NOT NULL,
+    realizada_em   varchar(40)   NOT NULL,
+    criado_em      varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_ligacoes_caso FOREIGN KEY (caso_id)
+        REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}auditorias_entrevista') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}auditorias_entrevista (
+    entrevista_id varchar(64)   NOT NULL CONSTRAINT pk_acervo_auditorias_entrevista PRIMARY KEY,
+    resultado     nvarchar(max) NOT NULL,
+    auditado_por  nvarchar(200) NOT NULL CONSTRAINT df_acervo_aud_entrevista_por DEFAULT N'',
+    auditado_em   varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_auditorias_entrevista_entrevista FOREIGN KEY (entrevista_id)
+        REFERENCES {SCHEMA}.{PREFIXO}entrevistas (id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}solicitacoes_peticao') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}solicitacoes_peticao (
+    id               varchar(64)   NOT NULL CONSTRAINT pk_acervo_solicitacoes_peticao PRIMARY KEY,
+    caso_id          varchar(64)   NOT NULL,
+    solicitante_id   varchar(160)  NOT NULL,
+    solicitante_nome nvarchar(200) NOT NULL,
+    origem           varchar(80)   NOT NULL,
+    status           varchar(20)   NOT NULL,
+    solicitada_em    varchar(40)   NOT NULL,
+    concluida_em     varchar(40)   NULL,
+    erro             nvarchar(1000) NULL,
+    CONSTRAINT fk_acervo_solicitacoes_peticao_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
 
@@ -718,6 +867,19 @@ INDICES = (
     # transcrição, e ela roda duas vezes por atendimento.
     f"CREATE INDEX idx_acervo_entrevistas_gravacao ON {SCHEMA}.{PREFIXO}entrevistas (gravacao_id)",
     f"CREATE INDEX idx_acervo_assinaturas_caso ON {SCHEMA}.{PREFIXO}assinaturas (caso_id)",
+    f"CREATE INDEX idx_acervo_ligacoes_caso_realizada ON {SCHEMA}.{PREFIXO}ligacoes"
+    f" (caso_id, realizada_em DESC)",
+    f"CREATE INDEX idx_acervo_ligacoes_realizada ON {SCHEMA}.{PREFIXO}ligacoes (realizada_em DESC)",
+    f"CREATE INDEX idx_acervo_entrevistas_criado ON {SCHEMA}.{PREFIXO}entrevistas (criado_em DESC)",
+    f"CREATE INDEX idx_acervo_auditorias_entrevista_em ON {SCHEMA}.{PREFIXO}auditorias_entrevista"
+    f" (auditado_em DESC)",
+    f"CREATE INDEX idx_acervo_solicitacoes_peticao_em ON {SCHEMA}.{PREFIXO}solicitacoes_peticao"
+    f" (solicitada_em DESC)",
+    f"CREATE INDEX idx_acervo_peticao_versoes_caso ON {SCHEMA}.{PREFIXO}peticao_versoes (caso_id, versao)",
+    # As outras peças do caso são listadas a cada abertura do dossiê, sempre pelo
+    # caso e em ordem de criação.
+    f"CREATE INDEX idx_acervo_peticoes_anexas_caso ON {SCHEMA}.{PREFIXO}peticoes_anexas"
+    f" (caso_id, criado_em)",
     f"CREATE INDEX idx_acervo_municipios_uf_nome ON {SCHEMA}.{PREFIXO}municipios (uf_id, nome)",
     # O histórico é de quem perguntou, e abre ordenado pela conversa mais recente.
     f"CREATE INDEX idx_acervo_conversas_usuario ON {SCHEMA}.{PREFIXO}conversas"
@@ -755,6 +917,7 @@ COLUNAS_NOVAS = (
     # atendimento gravaria a MESMA entrevista duas vezes, e a supervisão passaria a
     # contar o dobro do trabalho de quem a conduziu.
     (f"{PREFIXO}entrevistas", "gravacao_id", "varchar(64) NULL"),
+    (f"{PREFIXO}entrevistas", "entrevistador_id", "varchar(160) NULL"),
     # A ordem da mensagem dentro da conversa. `criado_em` tem precisão de SEGUNDOS, e
     # pergunta e resposta caem no mesmo segundo com facilidade — quando isso acontecia,
     # o desempate ia para o `id` (um UUID) e a conversa reabria com a resposta ANTES da
@@ -798,6 +961,19 @@ COLUNAS_NOVAS = (
         f"{PREFIXO}casos",
         "telefone",
         "varchar(30) NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''",
+    ),
+    # Ritmo da cobrança automática de documentos por WhatsApp. O limite diário
+    # segura excesso de contato; o intervalo em horas permite cadência dentro do
+    # dia sem trocar a regra antiga de `intervalo_dias` para clientes já salvos.
+    (
+        f"{PREFIXO}cobrancas_documentos",
+        "intervalo_horas",
+        "int NULL",
+    ),
+    (
+        f"{PREFIXO}cobrancas_documentos",
+        "max_envios_dia",
+        "int NOT NULL CONSTRAINT df_acervo_cobranca_max_dia DEFAULT 1",
     ),
 )
 

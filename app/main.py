@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import io
 import logging
@@ -30,6 +31,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     WebSocket,
@@ -49,7 +51,14 @@ from . import (
     analise_resposta,
     armazenamento,
     assinatura,
+    assinatura_autentique,
+    assinatura_clicksign,
+    assinatura_config,
+    assinatura_navegador,
+    assinatura_provedores,
     auth,
+    jurimetria_caso,
+    captcha,
     carteira,
     casos,
     categorias,
@@ -65,25 +74,34 @@ from . import (
     documentos_juridicos,
     extracao_office,
     docx_pdf,
+    dois_fatores,
+    duplicidade,
+    historico_alteracoes,
     contrato,
     escuta,
     perfis,
     painel as painel_do_caso,
+    operacao,
     panorama,
     peticao_local,
+    peticao_skills,
     pipeline,
     portal,
     rag,
     recomendacao,
     relatorio,
+    revisao,
     roteamento,
     roteiros,
+    tipos_documento,
     triagem,
     triagem_documental,
     valor_documento,
     whatsapp,
 )
 from . import jobs, observabilidade
+from .banco import limite_de_espera_por_lock
+from .banco import sessao as sessao_banco
 from . import entrevista as entrevista_lib
 from . import roteiro_ia
 from .cache_leitura import por_alguns_segundos
@@ -145,6 +163,10 @@ MAX_ARQUIVOS_POR_ZIP = _limite_do_ambiente("DOCUMENTO_ZIP_MAX_ARQUIVOS", 1000)
 MAX_TAXA_COMPACTACAO_ZIP = 100
 _ocr_aquecido = threading.Event()
 
+#: Quanto cada etapa da subida espera por um lock antes de desistir. Generoso para
+#: o banco remoto sob carga, curto perto do "para sempre" que travava a API.
+ESPERA_LOCK_NA_SUBIDA_MS = int(os.getenv("ESPERA_LOCK_NA_SUBIDA_MS", "15000"))
+
 
 @asynccontextmanager
 async def ciclo_de_vida(_: FastAPI):
@@ -158,31 +180,53 @@ async def ciclo_de_vida(_: FastAPI):
         threading.Thread(
             target=_tentar_aquecer, name="aquecer-ocr", daemon=True
         ).start()
-    try:
-        await run_in_threadpool(jobs.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar a tabela de jobs")
-    try:
-        # Cria a matriz perfil x módulo e garante os perfis de sistema. Falhar
-        # aqui não impede a API de subir: sem a tabela, `exigir_modulo` nega
-        # tudo, que é o lado seguro de errar — o contrário abriria os módulos.
-        await run_in_threadpool(perfis.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar os perfis de acesso")
-    try:
-        # Cria a tabela de contas e garante que exista pelo menos uma, senão um
-        # ambiente novo sobe com a autenticação ligada e nenhum jeito de entrar.
-        await run_in_threadpool(usuarios.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar as contas de usuário")
-    try:
-        await run_in_threadpool(localidades.inicializar)
-    except Exception:
-        log.exception("Não foi possível sincronizar as localidades do IBGE")
-    try:
-        await run_in_threadpool(documentacao.inicializar)
-    except Exception:
-        log.exception("Não foi possível inicializar a fila de documentação")
+    # A subida não espera lock para sempre (ver `banco.limite_de_espera_por_lock`):
+    # uma transação esquecida em outra máquina, no banco compartilhado, prendia o
+    # uvicorn antes de abrir a porta. Cada etapa abaixo já tolera a própria falha.
+    with limite_de_espera_por_lock(ESPERA_LOCK_NA_SUBIDA_MS):
+        try:
+            await run_in_threadpool(jobs.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a tabela de jobs")
+        try:
+            # Cria a matriz perfil x módulo e garante os perfis de sistema. Falhar
+            # aqui não impede a API de subir: sem a tabela, `exigir_modulo` nega
+            # tudo, que é o lado seguro de errar — o contrário abriria os módulos.
+            await run_in_threadpool(perfis.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar os perfis de acesso")
+        try:
+            await run_in_threadpool(revisao.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a tabela de revisões")
+        try:
+            await run_in_threadpool(assinatura_config.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a configuração de assinatura eletrônica")
+        try:
+            # Cria a tabela de contas e garante que exista pelo menos uma, senão um
+            # ambiente novo sobe com a autenticação ligada e nenhum jeito de entrar.
+            await run_in_threadpool(usuarios.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar as contas de usuário")
+        try:
+            await run_in_threadpool(localidades.inicializar)
+        except Exception:
+            log.exception("Não foi possível sincronizar as localidades do IBGE")
+        try:
+            await run_in_threadpool(documentacao.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a fila de documentação")
+        try:
+            await run_in_threadpool(historico_alteracoes.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar o histórico de alterações")
+        try:
+            # Sem os tipos de sistema, a reclassificação cai no nome do item de
+            # checklist — o comportamento de antes do glossário, e não uma falha.
+            await run_in_threadpool(tipos_documento.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar o glossário de tipos de documento")
     yield
 
 
@@ -253,6 +297,15 @@ PUBLICAS = {
     "/api/chamada/config",
     "/api/chamada/sala",
     "/api/user/authenticate",
+    # Os dois passos seguintes do login TAMBEM sao anteriores a sessao. Quem esta
+    # confirmando o codigo do segundo fator, por definicao, ainda nao tem cookie:
+    # ele so nasce depois do `verify`. Sem estas duas linhas o middleware devolve
+    # "Autenticacao necessaria" antes de a rota rodar, e o login com segundo fator
+    # fica impossivel de concluir -- com o agravante de nao deixar rastro: o
+    # contador de tentativas do desafio nem chega a ser tocado, entao a tabela
+    # mostra `tentativas = 0` e parece que ninguem tentou.
+    "/api/user/authenticate/verify",
+    "/api/user/authenticate/resend",
     "/api/user/logout",
     "/docs",
     "/openapi.json",
@@ -315,7 +368,48 @@ app.include_router(usuarios.roteador_sessao)
 app.include_router(supervisao.roteador)
 app.include_router(dados.roteador)
 app.include_router(documentacao.roteador)
+app.include_router(operacao.roteador)
 app.include_router(whatsapp.roteador)
+app.include_router(tipos_documento.roteador)
+
+
+@app.exception_handler(duplicidade.DocumentoDuplicado)
+async def responder_documento_duplicado(_: Request, exc: duplicidade.DocumentoDuplicado):
+    """O 409 de duplicidade leva a lista do que parece repetido, e não só a frase.
+
+    `detail` continua sendo texto, como em todo erro desta API: quem só mostra a
+    mensagem (o portal, o envio em lote) não precisa saber de duplicidade. A tela da
+    equipe lê `codigo` e `duplicidades` para oferecer a confirmação.
+    """
+    return JSONResponse(exc.corpo(), status_code=409)
+
+
+@app.middleware("http")
+async def rede_de_seguranca(request: Request, call_next):
+    """Último anteparo: nenhuma falha inesperada vira tela vermelha de 500.
+
+    Registrado ANTES da autenticação para virar a camada mais interna entre os
+    middlewares deste app — assim envolve as rotas e ainda fica por dentro do
+    CORS (adicionado depois), garantindo cabeçalho CORS até na resposta de erro.
+    HTTPException e as respostas já tratadas passam intactas; o que cai aqui é o
+    imprevisto, que vira um 503 legível em vez de traceback cru no navegador.
+    """
+    try:
+        return await call_next(request)
+    except HTTPException:
+        # Tratada pelo próprio FastAPI mais acima na pilha; não é imprevisto.
+        raise
+    except Exception:  # noqa: BLE001 — a rede de segurança precisa pegar tudo.
+        log.exception("Falha não tratada em %s %s", request.method, request.url.path)
+        return JSONResponse(
+            {
+                "detail": (
+                    "Este recurso está indisponível no momento. Nada foi perdido; "
+                    "tente de novo em instantes."
+                )
+            },
+            status_code=503,
+        )
 
 
 @app.middleware("http")
@@ -401,43 +495,43 @@ def tipos():
 
 
 @app.get("/api/roteiros")
-def listar_roteiros():
+def listar_roteiros(
+    pagina: int | None = Query(None, ge=1),
+    tamanho: int | None = Query(None, ge=1, le=100),
+):
     """Roteiros de entrevista disponíveis, sem as perguntas.
 
     `importado` diz se aquele roteiro tem uma versão salva no catálogo. É o que
     a tela usa para oferecer "voltar ao original": só faz sentido em quem tem
     original para voltar.
     """
-    salvos = {r["codigo"]: r for r in _roteiros_salvos()}
+    # Não chama `roteiros.listar()`: ela materializa blocos e perguntas, mas o
+    # seletor só precisa dos metadados abaixo.
+    todos = roteiros.listar_resumos()
+    total = len(todos)
+    importados = sum(1 for r in todos if r["importado"])
+    tamanho_real = tamanho or total or 1
+    paginas = max(1, (total + tamanho_real - 1) // tamanho_real)
+    pagina_real = min(pagina or 1, paginas)
+
+    if pagina is not None or tamanho is not None:
+        inicio = (pagina_real - 1) * tamanho_real
+        todos = todos[inicio : inicio + tamanho_real]
+
     return {
-        "roteiros": [
-            {
-                "codigo": r.codigo,
-                "nome": r.nome,
-                "descricao": r.descricao,
-                "importado": r.codigo in salvos,
-                "origem": salvos.get(r.codigo, {}).get("origem", ""),
-                "criado_por": salvos.get(r.codigo, {}).get("criado_por", ""),
-                "atualizado_em": salvos.get(r.codigo, {}).get("atualizado_em", ""),
-            }
-            for r in roteiros.listar()
-        ]
+        "roteiros": todos,
+        "aviso_catalogo": (
+            "O catálogo de roteiros salvos não respondeu. Mostrando apenas os roteiros originais do sistema."
+            if roteiros.catalogo_resumos_parcial()
+            else ""
+        ),
+        "total": total,
+        "pagina": pagina_real,
+        "tamanho": tamanho_real,
+        "paginas": paginas,
+        "importados": importados,
+        "originais": total - importados,
     }
-
-
-def _roteiros_salvos() -> list[dict[str, Any]]:
-    """O catálogo do banco, ou vazio se ele ainda não existe.
-
-    A listagem de roteiros não pode falhar por causa da tabela: sem ela o
-    escritório ainda tem o roteiro escrito em `app/roteiros.py`, que é o que se
-    usa todo dia.
-    """
-    try:
-        return armazenamento.listar_roteiros()
-    except Exception:
-        log.debug("Catálogo de roteiros indisponível.", exc_info=True)
-        return []
-
 
 class PedidoContrato(BaseModel):
     """As respostas do roteiro, como a tela as tem em mãos."""
@@ -675,6 +769,63 @@ async def excluir_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
         armazenamento.excluir_modelo, peticao_local.CONFIG_VISUAL_GERAL
     )
     return await run_in_threadpool(_resposta_modelo_visual)
+
+
+# --------------------------------------- skill de redação por categoria de petição
+#
+# Instrução extra que o escritório dá para a IA redigir cada categoria (ação) de um
+# jeito próprio — issue "Configurar skill por modelo de petição". Fica no Postgres
+# do pgvector (`app/peticao_skills.py`), não no SQL Server: é insumo da geração por
+# IA, e é lá que mora o resto do que alimenta o RAG. `PodeManterModeloPeticao` é o
+# mesmo gate desta tela inteira — só quem administra modelos de petição edita.
+
+
+class SkillPeticaoEntrada(BaseModel):
+    instrucoes: str = Field(default="", max_length=8000)
+
+
+@app.get("/api/modelos/peticao/skills")
+async def listar_skills_de_peticao(_autorizado=PodeManterModeloPeticao):
+    """Uma linha por categoria — as sem skill cadastrada vêm com instruções vazias."""
+    await run_in_threadpool(peticao_skills.inicializar)
+    salvas = {
+        registro["categoria"]: registro
+        for registro in await run_in_threadpool(peticao_skills.listar)
+    }
+    return [
+        {
+            "categoria": cat.codigo,
+            "nome": cat.nome,
+            "instrucoes": salvas.get(cat.codigo, {}).get("instrucoes", ""),
+            "atualizado_por": salvas.get(cat.codigo, {}).get("atualizado_por", ""),
+            "atualizado_em": salvas.get(cat.codigo, {}).get("atualizado_em", ""),
+        }
+        for cat in categorias.listar()
+    ]
+
+
+@app.put("/api/modelos/peticao/skills/{categoria}")
+async def salvar_skill_de_peticao(
+    categoria: str,
+    corpo: SkillPeticaoEntrada,
+    usuario: auth.Usuario = PodeManterModeloPeticao,
+):
+    """Grava a skill desta categoria. Nunca toca nas demais — a chave é a categoria."""
+    if categorias.obter(categoria) is None:
+        raise HTTPException(404, f"Categoria '{categoria}' não existe.")
+    await run_in_threadpool(peticao_skills.inicializar)
+    registro = await run_in_threadpool(
+        peticao_skills.salvar,
+        categoria,
+        instrucoes=corpo.instrucoes.strip(),
+        atualizado_por=usuario.nome,
+    )
+    return {
+        "categoria": categoria,
+        "instrucoes": registro.get("instrucoes", ""),
+        "atualizado_por": registro.get("atualizado_por", ""),
+        "atualizado_em": registro.get("atualizado_em", ""),
+    }
 
 
 #: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.
@@ -923,6 +1074,9 @@ class PedidoEscuta(BaseModel):
     trecho: str = Field(max_length=8_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
     roteiro: str = Field(default="empregado_publico", max_length=60)
+    #: Snapshot da versão que está na tela. É necessário para edições usadas
+    #: apenas nesta sessão, que ainda não existem no catálogo do servidor.
+    roteiro_snapshot: dict[str, Any] | None = None
     #: Qual pergunta está na vez NA TELA. Sem ela o backend adivinha "a primeira
     #: em aberto", e erra sempre que a condução pula adiante — que é o normal.
     pergunta_atual: str = Field(default="", max_length=80)
@@ -934,9 +1088,21 @@ class PedidoProcessamentoEntrevista(BaseModel):
     transcricao: str = Field(min_length=1, max_length=80_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
     roteiro: str = Field(default="empregado_publico", max_length=60)
+    #: A versão efetivamente exibida, inclusive quando editada só na sessão.
+    roteiro_snapshot: dict[str, Any] | None = None
     #: Buscar precedentes no pgvector para sugerir perguntas e apontar lacunas.
     #: Melhor-esforço: banco fora do ar não impede o preenchimento do formulário.
     analisar: bool = True
+
+
+def _roteiro_ativo(
+    codigo: str, snapshot: dict[str, Any] | None
+) -> roteiros.Roteiro | None:
+    """Valida o snapshot vindo da tela e impede código/versão desencontrados."""
+    try:
+        return roteiros.snapshot_ativo(codigo, snapshot)
+    except roteiros.RoteiroInvalido as exc:
+        raise HTTPException(422, f"Roteiro ativo inválido: {exc}") from exc
 
 
 @app.post("/api/entrevista/escuta")
@@ -951,6 +1117,7 @@ async def escutar_entrevista(pedido: PedidoEscuta):
     ninguém falou. Separados não servem: saber o que falta sem ver o que já
     entrou faz repetir pergunta, que é do que o escritório reclamou.
     """
+    roteiro_ativo = _roteiro_ativo(pedido.roteiro, pedido.roteiro_snapshot)
     try:
         return await run_in_threadpool(
             escuta.escutar,
@@ -958,6 +1125,7 @@ async def escutar_entrevista(pedido: PedidoEscuta):
             pedido.respostas,
             pedido.roteiro,
             pedido.pergunta_atual,
+            roteiro_ativo,
         )
     except escuta.ErroEscuta as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -982,6 +1150,7 @@ async def processar_entrevista(pedido: PedidoProcessamentoEntrevista):
     """
     analise: dict[str, Any] | None = None
     erro_analise = ""
+    roteiro_ativo = _roteiro_ativo(pedido.roteiro, pedido.roteiro_snapshot)
 
     def _analisar() -> None:
         nonlocal analise, erro_analise
@@ -1007,6 +1176,7 @@ async def processar_entrevista(pedido: PedidoProcessamentoEntrevista):
             pedido.transcricao,
             pedido.respostas,
             pedido.roteiro,
+            roteiro_ativo,
         )
     except escuta.ErroEscuta as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -1034,6 +1204,7 @@ class PedidoRecomendacao(BaseModel):
 
     relato: str = Field(min_length=40, max_length=40_000)
     lacunas_obrigatorias: list[str] = Field(default_factory=list, max_length=120)
+    contexto_roteiro: str = Field(default="", max_length=12_000)
     limite_precedentes: int = Field(default=12, ge=4, le=30)
 
 
@@ -1082,6 +1253,7 @@ async def recomendar_entrevista(pedido: PedidoRecomendacao):
             recomendacao.recomendar,
             pedido.relato,
             lacunas_obrigatorias=lacunas,
+            contexto_roteiro=pedido.contexto_roteiro,
             limite=pedido.limite_precedentes,
             # 6s era apertado: o pgvector fica atrás da VPN, com ~80ms de
             # latência e servidor compartilhado. Uma oscilação dentro desses 6
@@ -1203,7 +1375,312 @@ def config_assinatura():
     a instância do escritório está pareada. Enquanto não estiver, a tela não
     oferece o botão — mas o cliente continua recebendo o convite por e-mail.
     """
-    return {**assinatura.configuracao(), "whatsapp_proprio": whatsapp.configurado()}
+    return {
+        **assinatura.configuracao(),
+        "whatsapp_proprio": whatsapp.configurado(),
+        # Envio pelo SITE do ZapSign (Playwright) OU pela API do provedor que o
+        # escritório tiver ativado (Clicksign/Autentique) — ver `assinatura_provedores`.
+        # A tela só oferece o botão quando há um caminho de envio pronto.
+        "navegador": assinatura_provedores.configurado(),
+        "provedor_ativo": assinatura_config.provedor_ativo(),
+    }
+
+
+@app.get("/api/assinatura/provedores", dependencies=[Depends(auth.exigir_modulo("contratos"))])
+def listar_provedores_assinatura():
+    """Status de cada provedor para a tela de configuração — nunca o token."""
+    return {"provedores": assinatura_config.status()}
+
+
+class PedidoTokenProvedor(BaseModel):
+    token: str = Field(..., min_length=4, max_length=4000)
+
+
+@app.post(
+    "/api/assinatura/provedores/{provedor}/token",
+    dependencies=[Depends(auth.exigir_modulo("contratos"))],
+)
+def salvar_token_provedor_assinatura(provedor: str, pedido: PedidoTokenProvedor):
+    """Cifra e salva o token do escritório. Não testa sozinho — use o botão de teste."""
+    try:
+        assinatura_config.salvar_token(provedor, pedido.token)
+    except assinatura_config.ErroConfigAssinatura as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "provedor": provedor, "configurado": True, "testado_ok": False}
+
+
+@app.post(
+    "/api/assinatura/provedores/{provedor}/testar",
+    dependencies=[Depends(auth.exigir_modulo("contratos"))],
+)
+async def testar_provedor_assinatura(provedor: str):
+    """Bate na API do provedor com o token salvo e registra o resultado."""
+    adaptador = {
+        "clicksign": assinatura_clicksign,
+        "autentique": assinatura_autentique,
+    }.get(provedor)
+    if adaptador is None:
+        raise HTTPException(
+            422, f"Provedor {provedor!r} desconhecido. Use clicksign ou autentique."
+        )
+    try:
+        token = assinatura_config.token_de(provedor)
+    except assinatura_config.ErroConfigAssinatura as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    ok, mensagem = await adaptador.testar(token)
+    assinatura_config.marcar_teste(provedor, ok, mensagem)
+    if not ok:
+        raise HTTPException(502, mensagem)
+    return {"ok": True, "mensagem": mensagem}
+
+
+class PedidoAtivarProvedor(BaseModel):
+    provedor: str = Field(..., min_length=3, max_length=20)
+
+
+@app.post(
+    "/api/assinatura/provedores/ativar",
+    dependencies=[Depends(auth.exigir_modulo("contratos"))],
+)
+def ativar_provedor_assinatura(pedido: PedidoAtivarProvedor):
+    """Torna o provedor escolhido o caminho de envio — exige teste aprovado."""
+    try:
+        assinatura_config.ativar(pedido.provedor)
+    except assinatura_config.ErroConfigAssinatura as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "provedor_ativo": assinatura_config.provedor_ativo()}
+
+
+@app.post("/api/assinatura/navegador", status_code=201)
+async def enviar_assinatura_pelo_site(
+    arquivo: UploadFile = File(...),
+    cliente_nome: str = Form(...),
+    cliente_email: str = Form(...),
+    cliente_whatsapp: str = Form(""),
+):
+    """Manda o documento à assinatura pelo SITE do ZapSign, e o link pelo WhatsApp.
+
+    Existe para o plano do escritório, que não tem API do ZapSign: a automação
+    entra na conta (Playwright), sobe o PDF e dispara o convite por e-mail. Se o
+    site devolver o link e houver telefone, ele também vai ao cliente pela nossa
+    Evolution. Ver `app/assinatura_navegador.py`.
+
+    Quando o escritório tiver Clicksign ou Autentique ativada em Configurações, o
+    envio sai por lá em vez do site do ZapSign — ver `app/assinatura_provedores.py`.
+    """
+    if not assinatura_provedores.configurado():
+        raise HTTPException(503, assinatura_provedores.mensagem_nao_configurado())
+    pdf = await _ler_upload(arquivo)
+    resultado = await assinatura_provedores.enviar_um(
+        pdf,
+        arquivo.filename or "documento.pdf",
+        cliente_nome.strip(),
+        cliente_email.strip(),
+    )
+    if not resultado["ok"]:
+        raise HTTPException(502, resultado["erro"])
+
+    whatsapp_enviado = False
+    if resultado["link"] and cliente_whatsapp.strip() and whatsapp.configurado():
+        try:
+            numero = whatsapp._numero_brasileiro(cliente_whatsapp)
+            texto = (
+                f"Olá! Segue o documento para assinatura digital: {resultado['link']}\n"
+                "Qualquer dúvida, estamos à disposição."
+            )
+            await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)
+            whatsapp_enviado = True
+        except Exception:  # noqa: BLE001 - o e-mail do ZapSign já saiu; WhatsApp é reforço
+            log.warning("Falha ao enviar link de assinatura pelo WhatsApp", exc_info=True)
+
+    return {"ok": True, "link": resultado["link"], "whatsapp_enviado": whatsapp_enviado}
+
+
+class PedidoLinkAssinaturaSite(BaseModel):
+    telefone: str = Field(..., min_length=8, max_length=20)
+    link: str = Field(..., min_length=8, max_length=500)
+
+
+@app.post("/api/assinatura/navegador/whatsapp", status_code=201)
+async def reenviar_link_assinatura_site(pedido: PedidoLinkAssinaturaSite) -> dict[str, bool]:
+    """(Re)envia ao cliente, pelo WhatsApp, o link de assinatura já criado no ZapSign.
+
+    O envio pelo site já dispara o link uma vez, mas o convite cai no spam e o
+    cliente jura que não recebeu — ou o telefone não estava à mão na criação.
+    Este botão manda o MESMO link, sem recriar o documento na ZapSign. Aceita só
+    um link http(s), não texto livre: não é um canal para mandar qualquer coisa a
+    qualquer número (ver o cabeçalho de `app/whatsapp.py`).
+    """
+    if not whatsapp.configurado():
+        raise HTTPException(
+            503,
+            "O WhatsApp do escritório não está conectado. Conecte a Evolution para enviar o link.",
+        )
+    link = pedido.link.strip()
+    if not (link.startswith("http://") or link.startswith("https://")):
+        raise HTTPException(422, "Link de assinatura inválido.")
+    numero = whatsapp._numero_brasileiro(pedido.telefone)
+    texto = (
+        f"Olá! Segue o documento para assinatura digital: {link}\n"
+        "Qualquer dúvida, estamos à disposição."
+    )
+    try:
+        await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a Evolution pode oscilar; a tela reoferece o botão
+        log.warning("Falha ao reenviar link de assinatura pelo WhatsApp", exc_info=True)
+        raise HTTPException(
+            502, "A Evolution não enviou a mensagem agora. Tente novamente."
+        ) from exc
+    return {"enviado": True}
+
+
+class PedidoAssinaturaDireta(BaseModel):
+    """Manda UM documento do escritório à assinatura sem baixar/reanexar o PDF."""
+
+    respostas: dict[str, Any]
+    municipio: str = ""
+    documento: str = "contrato"
+    cliente_whatsapp: str = ""
+
+
+@app.post("/api/assinatura/navegador/documento", status_code=201)
+async def enviar_documento_para_assinatura_site(pedido: PedidoAssinaturaDireta):
+    """Gera o documento no servidor e o manda assinar pela conta ZapSign (site).
+
+    Tira o vai-e-volta de baixar o PDF e reanexar: preenche o modelo com a
+    qualificação da entrevista, converte para PDF e sobe pela automação, num
+    clique. O convite sai por e-mail e, havendo telefone, o link também vai pelo
+    WhatsApp do cliente.
+    """
+    if not assinatura_provedores.configurado():
+        raise HTTPException(503, assinatura_provedores.mensagem_nao_configurado())
+    if pedido.documento not in contrato.CODIGOS:
+        raise HTTPException(
+            422,
+            f"Documento {pedido.documento!r} não existe. Conhecidos: {', '.join(contrato.CODIGOS)}.",
+        )
+    nome = str(pedido.respostas.get("nome") or "").strip()
+    email = str(pedido.respostas.get("email") or "").strip()
+    if not email:
+        raise HTTPException(
+            422,
+            "O envio para assinatura exige um e-mail para mandar o convite. Preencha "
+            "o e-mail do cliente na entrevista e tente de novo.",
+        )
+    try:
+        docx, _faltando = await run_in_threadpool(
+            contrato.gerar, pedido.respostas, pedido.municipio, None, pedido.documento
+        )
+        pdf = await run_in_threadpool(docx_pdf.converter, docx)
+    except docx_pdf.ErroConversaoDocx as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except contrato.ErroContrato as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    rotulo = next(
+        (m["rotulo"] for m in contrato.MODELOS if m["codigo"] == pedido.documento),
+        pedido.documento,
+    )
+    resultado = await assinatura_provedores.enviar_um(
+        pdf,
+        f"{rotulo} - {nome or 'cliente'}.pdf".replace("/", "-"),
+        nome,
+        email,
+    )
+    if not resultado["ok"]:
+        raise HTTPException(502, resultado["erro"])
+
+    whatsapp_enviado = False
+    if resultado["link"] and pedido.cliente_whatsapp.strip() and whatsapp.configurado():
+        try:
+            numero = whatsapp._numero_brasileiro(pedido.cliente_whatsapp)
+            texto = (
+                f"Olá! Segue o documento para assinatura digital: {resultado['link']}\n"
+                "Qualquer dúvida, estamos à disposição."
+            )
+            await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)
+            whatsapp_enviado = True
+        except Exception:  # noqa: BLE001 - o e-mail já saiu; WhatsApp é reforço
+            log.warning("Falha ao enviar link de assinatura pelo WhatsApp", exc_info=True)
+
+    return {"ok": True, "link": resultado["link"], "whatsapp_enviado": whatsapp_enviado}
+
+
+class PedidoAssinaturaTodos(BaseModel):
+    """Manda os TRÊS documentos à assinatura de uma vez, num login só."""
+
+    respostas: dict[str, Any]
+    municipio: str = ""
+    cliente_whatsapp: str = ""
+
+
+@app.post("/api/assinatura/navegador/todos", status_code=201)
+async def enviar_todos_para_assinatura_site(pedido: PedidoAssinaturaTodos):
+    """Gera contrato + procuração + declaração e os manda assinar num clique.
+
+    Os três sobem na MESMA sessão do navegador (um login só) quando o provedor
+    ativo é a ZapSign; cada um volta com o seu link de assinatura e, havendo
+    telefone, cada link vai ao cliente pelo WhatsApp — um por documento, para
+    ele não achar que acabou no primeiro.
+    """
+    if not assinatura_provedores.configurado():
+        raise HTTPException(503, assinatura_provedores.mensagem_nao_configurado())
+    nome = str(pedido.respostas.get("nome") or "").strip()
+    email = str(pedido.respostas.get("email") or "").strip()
+    if not email:
+        raise HTTPException(
+            422,
+            "O envio para assinatura exige um e-mail para mandar o convite. Preencha "
+            "o e-mail do cliente na entrevista e tente de novo.",
+        )
+    try:
+        gerados = await run_in_threadpool(
+            contrato.gerar_todos, pedido.respostas, pedido.municipio
+        )
+        documentos = []
+        for item in gerados:
+            pdf = await run_in_threadpool(docx_pdf.converter, item["docx"])
+            documentos.append(
+                {
+                    "pdf": pdf,
+                    "nome": f"{item['rotulo']} - {nome or 'cliente'}.pdf".replace("/", "-"),
+                    "rotulo": item["rotulo"],
+                }
+            )
+    except docx_pdf.ErroConversaoDocx as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except contrato.ErroContrato as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    resultado = await assinatura_provedores.enviar_varios(documentos, nome, email)
+    if not resultado["ok"]:
+        raise HTTPException(502, resultado["erro"])
+
+    docs_saida = resultado.get("documentos") or []
+    whatsapp_enviado = False
+    if pedido.cliente_whatsapp.strip() and whatsapp.configurado():
+        try:
+            numero = whatsapp._numero_brasileiro(pedido.cliente_whatsapp)
+            for doc in docs_saida:
+                if not doc.get("link"):
+                    continue
+                texto = (
+                    f"Olá! Segue {doc.get('rotulo', 'o documento')} para assinatura digital: "
+                    f"{doc['link']}\nQualquer dúvida, estamos à disposição."
+                )
+                await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)
+                whatsapp_enviado = True
+        except Exception:  # noqa: BLE001 - o e-mail já saiu; WhatsApp é reforço
+            log.warning("Falha ao enviar links de assinatura pelo WhatsApp", exc_info=True)
+
+    return {
+        "ok": True,
+        "documentos": [{"rotulo": d.get("rotulo", ""), "link": d.get("link", "")} for d in docs_saida],
+        "whatsapp_enviado": whatsapp_enviado,
+    }
 
 
 @app.post("/api/contrato/assinatura", status_code=201)
@@ -1467,9 +1944,15 @@ def _anexar_documento_assinado_ao_caso(registro: dict[str, Any], caminho: Path) 
     if not caso_id or not caminho.is_file():
         return
     nome = f"{registro['nome']}.pdf".replace("/", "-").replace("\\", "-")
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        origem = (detalhe or {}).get("extracao", {}).get("origem", {})
+    # Uma consulta para saber se este documento assinado já está no checklist.
+    #
+    # Era `listar_entregas` + um `obter_entrega` por anexo — e `obter_entrega` abre
+    # conexão própria e consulta o agente jurídico. Num caso de 46 anexos, anexar UM
+    # contrato assinado custava 92 idas ao banco só para descobrir que ele ainda não
+    # estava lá. A origem da entrega vive dentro da extração, que é justamente o que
+    # a lista em lote já traz.
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        origem = (entrega.get("extracao") or {}).get("origem") or {}
         if origem.get("assinatura_id") == registro.get("id"):
             return
     codigo = _codigo_documento_assinado(str(registro.get("nome") or ""))
@@ -2009,8 +2492,19 @@ def config():
 
     Sobrou pouco depois que o Keycloak saiu: não há mais URL de servidor de
     identidade nem client_id para o navegador descobrir. O que fica é o que a
-    tela decide com base nisto — mostrar ou não a tela de login."""
-    return {"auth": auth.configuracao_publica()}
+    tela decide com base nisto — mostrar ou não a tela de login, desenhar ou não
+    o widget do captcha, e com que chave.
+
+    A `site key` do Turnstile é pública por definição (o navegador precisa dela)
+    e mesmo assim vem por aqui em vez de `NEXT_PUBLIC_TURNSTILE_SITE_KEY`: o
+    `.env.example` já registra o estrago que variável embutida no bundle fez
+    quando o sistema foi aberto de outro computador. Servida daqui, ela acompanha
+    o servidor que respondeu."""
+    return {
+        "auth": auth.configuracao_publica(),
+        "captcha": captcha.configuracao_publica(),
+        "doisFatores": dois_fatores.configuracao_publica(),
+    }
 
 
 @app.get("/api/eu")
@@ -2367,6 +2861,20 @@ def analisar_documentos_do_caso(caso_id: str):
         raise HTTPException(503, str(exc)) from exc
 
 
+@app.get("/api/casos/{caso_id}/jurimetria")
+async def jurimetria_do_caso(caso_id: str, uf: str = ""):
+    """Cruza os fatos do caso (entrevista + achados do OCR) com o acervo de decisões.
+
+    `uf` foca a análise no TRT daquele estado — com fallback para os regionais da
+    mesma região e, por fim, o acervo nacional. Entrega os precedentes semelhantes
+    e a distribuição de desfechos POR VARA — o "seu caso × os números" num lugar só.
+    Descritivo, não preditivo. Nunca dá 500: base fora do ar vira `disponivel:false`.
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return await run_in_threadpool(lambda: jurimetria_caso.cruzar(caso_id, uf=uf))
+
+
 @app.post("/api/chamada/sala/{sala_id}/token", status_code=201)
 def token_da_sala(sala_id: str):
     """O token para ENTRAR numa sala que já existe. Sem login, de propósito.
@@ -2537,6 +3045,37 @@ def criar_caso(
     return {**caso, "portal": _criar_portal(caso["id"])}
 
 
+class QualificacaoCliente(BaseModel):
+    """A qualificação do cliente colhida na entrevista — consulta por CPF ou à mão.
+
+    Toda opcional: o campo em branco vira NULL na tabela `qualificacao`, porque
+    "não informado" não é o mesmo que "" para quem for ler o cadastro depois.
+    """
+
+    cpf: str = ""
+    nascimento: str = ""
+    sexo: str = ""
+    nome_mae: str = ""
+    cep: str = ""
+    endereco: str = ""
+    email: str = ""
+    renda_estimada: str = ""
+
+
+@app.put("/api/casos/{caso_id}/qualificacao")
+def gravar_qualificacao(caso_id: str, dados: QualificacaoCliente):
+    """Grava (upsert) a qualificação do cliente numa tabela à parte, 1:1 com o caso.
+
+    Fica separada de `casos` de propósito: o caso segue enxuto e o cadastro
+    completo — o que a consulta por CPF traz e o que a atendente digita — tem
+    onde morar. Campo vazio não vira "", vira ausência (NULL).
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    armazenamento.salvar_qualificacao(caso_id, dados.model_dump())
+    return {"ok": True}
+
+
 @app.get("/api/casos")
 @por_alguns_segundos(5)
 def listar_casos():
@@ -2544,15 +3083,62 @@ def listar_casos():
 
 
 @app.get("/api/carteira")
-def fila_da_carteira(pagina: int = 1, tamanho: int = carteira.TAMANHO_PADRAO):
+def fila_da_carteira(
+    pagina: int = 1,
+    tamanho: int = carteira.TAMANHO_PADRAO,
+    busca: str = "",
+    categoria: str = "",
+    situacao: str = "",
+    ordenar: str = "recente",
+):
     """A fila de casos da carteira, uma página por vez.
 
     Substitui o `GET /api/casos` seguido de um `GET /api/casos/{id}` por caso que a tela
     fazia: eram N+1 requisições e a carteira inteira no navegador. Aqui são duas consultas
     e só a página pedida no payload — mas a ordem por risco e os contadores do topo são
     medidos sobre a carteira toda (ver `app/carteira.py`).
+
+    `busca`, `categoria` e `situacao` recortam a lista no servidor, para o filtro valer
+    na carteira inteira e não só na página aberta; `ordenar` troca a ordem da fila.
     """
-    return carteira.montar(pagina=pagina, tamanho=tamanho)
+    return carteira.montar(
+        pagina=pagina,
+        tamanho=tamanho,
+        busca=busca,
+        categoria=categoria,
+        situacao=situacao,
+        ordenar=ordenar,
+    )
+
+
+@app.get("/api/follow-up")
+def relatorio_follow_up(_usuario: auth.Usuario = Depends(auth.exigir_modulo("casos"))):
+    """Relatório operacional: clientes com documento obrigatório pendente.
+
+    Nome, telefone, documentos faltantes e alerta de quando o follow-up por
+    WhatsApp não resolve e é preciso LIGAR (ver `carteira.relatorio_follow_up`).
+    """
+    return carteira.relatorio_follow_up()
+
+
+@app.get("/api/casos/{caso_id}/ligacoes")
+def list_case_calls(
+    caso_id: str,
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return {"calls": armazenamento.list_calls(caso_id)}
+
+
+@app.post("/api/casos/{caso_id}/ligacoes", status_code=201)
+def register_case_call(
+    caso_id: str,
+    usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return armazenamento.register_call(caso_id, usuario.id, usuario.nome)
 
 
 @app.get("/api/casos/{caso_id}")
@@ -2560,7 +3146,63 @@ def obter_caso(caso_id: str):
     situacao = casos.montar_situacao(caso_id)
     if situacao is None:
         raise HTTPException(404, "Caso não encontrado.")
+    # "Nada passa despercebido": item de carteira que falta, mas cujo dado (CTPS,
+    # PIS) aparece em outro anexo, ganha a observação de onde foi encontrado.
+    # A leitura agora é feita em lote sobre as extrações persistidas, sem abrir
+    # cada entrega nem consultar o agente jurídico uma vez por arquivo.
+    casos.anexar_observacoes_cruzadas(caso_id, situacao)
     return situacao
+
+
+# --------------------------------------------------------- REVISÃO DE PETIÇÕES
+# Perfil Revisor: fila de petições a revisar, aprovação e métricas de atividade.
+PodeRevisar = Depends(auth.exigir_modulo("revisao"))
+
+
+def _quem_revisa(usuario: auth.Usuario) -> str:
+    return usuario.usuario or getattr(usuario, "nome", "") or usuario.id or "revisor"
+
+
+class PedidoConclusaoRevisao(BaseModel):
+    #: "aprovada" (segue para assinatura) ou "ajustes" (volta ao redator).
+    resultado: str
+
+
+@app.get("/api/revisao/fila")
+def revisao_fila(_usuario: auth.Usuario = PodeRevisar):
+    """As petições que precisam de revisão, da mais antiga para a mais nova."""
+    return {"pendentes": revisao.fila_pendentes()}
+
+
+@app.post("/api/revisao/{caso_id}/iniciar", status_code=201)
+def revisao_iniciar(caso_id: str, usuario: auth.Usuario = PodeRevisar):
+    """Marca o início da revisão desta petição por este revisor (idempotente)."""
+    if not peticao_local.existe(caso_id):
+        raise HTTPException(404, "Não há petição para revisar neste caso.")
+    return revisao.iniciar(caso_id, _quem_revisa(usuario), usuario.id)
+
+
+@app.post("/api/revisao/{caso_id}/concluir")
+def revisao_concluir(
+    caso_id: str, pedido: PedidoConclusaoRevisao, usuario: auth.Usuario = PodeRevisar
+):
+    """Aprova a petição ou a devolve para ajustes, fechando a contagem do tempo."""
+    if not peticao_local.existe(caso_id):
+        raise HTTPException(404, "Não há petição para revisar neste caso.")
+    try:
+        return revisao.concluir(caso_id, _quem_revisa(usuario), pedido.resultado.strip(), usuario.id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/revisao/metricas")
+def revisao_metricas(minhas: bool = False, usuario: auth.Usuario = PodeRevisar):
+    """Métricas de revisão. `minhas=true` recorta para o próprio revisor."""
+    # O id vai junto: o recorte "minhas" é por identidade, não por nome de
+    # exibição (ver `revisao.metricas`).
+    if not minhas:
+        return revisao.metricas()
+    return revisao.metricas(_quem_revisa(usuario), usuario.id)
 
 
 @app.get("/api/casos/{caso_id}/painel")
@@ -2598,9 +3240,12 @@ def panorama_do_escritorio():
 
 @app.patch("/api/casos/{caso_id}")
 def atualizar_caso(
-    caso_id: str, cliente: str | None = Form(None), observacao: str | None = Form(None)
+    caso_id: str,
+    cliente: str | None = Form(None),
+    observacao: str | None = Form(None),
+    telefone: str | None = Form(None),
 ):
-    if not armazenamento.atualizar_caso(caso_id, cliente, observacao):
+    if not armazenamento.atualizar_caso(caso_id, cliente, observacao, telefone):
         raise HTTPException(404, "Caso não encontrado ou nada para atualizar.")
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return armazenamento.obter_caso(caso_id)
@@ -2653,6 +3298,15 @@ def pedido_do_caso(caso_id: str, incluir_opcionais: bool = False):
     return pedido
 
 
+@app.get("/api/casos/{caso_id}/documentos/pendentes")
+def documentos_pendentes_do_caso(caso_id: str, incluir_opcionais: bool = False):
+    """Documentos que ainda exigem ação do cliente, sem montar texto de WhatsApp."""
+    pendentes = casos.documentos_pendentes_do_caso(caso_id, incluir_opcionais)
+    if pendentes is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return pendentes
+
+
 # O antigo `_ler_documento` (OCR do checklist numa thread da API) saiu daqui: quem
 # lê o documento agora é `tasks.ocr.processar_entrega`, no worker que já mantém o
 # Paddle aquecido. A ponte com o agente jurídico foi junto — a task chama
@@ -2703,6 +3357,22 @@ def _ler_entrevista_no_agente(caso_id: str, entrevista_id: str) -> None:
         )
 
 
+def _resumir_entrevista_em_fundo(entrevista_id: str, texto: str) -> None:
+    """Gera o resumo da entrevista por IA e o grava, fora do ciclo da requisição.
+
+    Roda numa thread de fundo, como a leitura no agente: quem encerrou o
+    atendimento não espera o modelo. É independente do agente jurídico — sai do
+    DeepSeek direto. Falhar não desfaz nada: a transcrição bruta já está salva, e
+    `entrevista.gerar_resumo` devolve "" em vez de levantar.
+    """
+    try:
+        resumo = entrevista_lib.gerar_resumo(texto)
+        if resumo:
+            armazenamento.atualizar_resumo_entrevista(entrevista_id, resumo)
+    except Exception:  # noqa: BLE001 - enriquecimento, nunca derruba o atendimento
+        log.warning("não foi possível resumir a entrevista %s", entrevista_id, exc_info=True)
+
+
 def _entregar_ao_agente(caso_id: str, entrega_id: str) -> None:
     """Empurra a extração recém-lida para o agente jurídico, se o caso estiver ligado.
 
@@ -2730,8 +3400,14 @@ async def _registrar_documento(
     idioma: str,
     usar_para_rg_e_cpf: bool,
     lote_id: str | None = None,
+    confirmar_duplicidade: bool = False,
+    usuario: str | None = None,
 ) -> dict[str, Any]:
     """OCR + registro da entrega. Compartilhado pelo advogado e pelo portal.
+
+    Arquivo idêntico a outro do caso é recusado antes de qualquer gravação (ver
+    `app/duplicidade.py`). `confirmar_duplicidade` só chega da rota da equipe; o
+    portal e o envio em lote nunca o passam.
 
     O cliente passa pelo mesmo caminho de propósito: a validação de tipo, a
     legibilidade e o vínculo RG/CPF não podem depender de quem enviou.
@@ -2768,6 +3444,19 @@ async def _registrar_documento(
 
     conteudo = await _ler_upload(arquivo)
     nome = arquivo.filename or "sem-nome"
+
+    # DUPLICIDADE ANTES DE GRAVAR QUALQUER COISA
+    #
+    # Mesmos bytes de outro arquivo do caso é o mesmo documento. Recusar aqui, antes
+    # do disco e da fila, evita uma segunda leitura paga e um segundo documento
+    # contando no checklist. A mesma consulta pega o arquivo repetido DENTRO de um
+    # lote: o primeiro já foi gravado quando o segundo chega.
+    repetidos = duplicidade.identicos(caso_id, hashlib.sha256(conteudo).hexdigest())
+    if repetidos and not confirmar_duplicidade:
+        raise duplicidade.DocumentoDuplicado(
+            repetidos, f"{duplicidade.mensagem(repetidos)} Nada foi gravado."
+        )
+
     item_codigo = item or categorias.ITEM_TRIAGEM
 
     # A gravação no disco e as INSERTs no PostgreSQL remoto são I/O bloqueante;
@@ -2803,9 +3492,31 @@ def _gravar_e_enfileirar(
     caminho = destino / f"{item_codigo}_{uuid.uuid4()}{Path(nome).suffix.lower()}"
     caminho.write_bytes(conteudo)
 
-    entrega = armazenamento.registrar_entrega_pendente(
-        caso_id, item_codigo, nome, caminho, conteudo=conteudo, lote_id=lote_id
-    )
+    def registrar() -> dict[str, Any]:
+        return armazenamento.registrar_entrega_pendente(
+            caso_id, item_codigo, nome, caminho, conteudo=conteudo, lote_id=lote_id
+        )
+
+    if not repetidos:
+        entrega = registrar()
+    else:
+        # Repetido aceito por decisão de alguém: a entrega e o registro de quem
+        # decidiu entram juntos, ou nenhum dos dois.
+        with sessao_banco():
+            entrega = registrar()
+            historico_alteracoes.registrar(
+                historico_alteracoes.ENTIDADE_ENTREGA,
+                entrega["id"],
+                "duplicidade_confirmada",
+                usuario=usuario or "escritório",
+                depois={"duplicidades": [d.to_dict() for d in repetidos]},
+                caso_id=caso_id,
+                motivo="Arquivo idêntico enviado com confirmação.",
+            )
+
+    # O checklist antes abria uma thread na API e carregava outra cópia do
+    # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
+    # único dono do modelo; a requisição continua voltando imediatamente.
     try:
         analise_id, tarefa_id = pipeline_documentos_tasks.enfileirar_entrega(
             entrega["id"],
@@ -2837,15 +3548,27 @@ async def enviar_documento(
     arquivo: UploadFile = File(...),
     idioma: str = Form("pt"),
     usar_para_rg_e_cpf: bool = Form(False),
+    confirmar_duplicidade: bool = Form(False),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
     """Recebe um documento, roda o OCR e marca o item do checklist.
 
     `item` é opcional: sem ele, quem decide o item é a leitura do documento.
+    `confirmar_duplicidade` aceita um arquivo idêntico a outro do caso, e a
+    confirmação fica no histórico do documento.
     """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         raise HTTPException(404, "Caso não encontrado.")
-    return await _registrar_documento(caso, item, arquivo, idioma, usar_para_rg_e_cpf)
+    return await _registrar_documento(
+        caso,
+        item,
+        arquivo,
+        idioma,
+        usar_para_rg_e_cpf,
+        confirmar_duplicidade=confirmar_duplicidade,
+        usuario=_autor_da_acao(usuario),
+    )
 
 
 def _processar_registro_lote(
@@ -2881,6 +3604,84 @@ def _processar_registro_lote(
             log.exception("falha ao registrar %s no lote %s", nome, lote_id)
 
 
+#: Guardas contra ZIP malicioso (zip bomb): teto de itens e de bytes já
+#: descomprimidos. Um ZIP acima disto é recusado inteiro, com o motivo.
+MAX_ITENS_ZIP = int(os.getenv("MAX_ITENS_ZIP", "200"))
+MAX_BYTES_ZIP = int(os.getenv("MAX_BYTES_ZIP_DESCOMPRIMIDO", str(200 * 1024 * 1024)))
+
+
+class _ArquivoEmMemoria:
+    """Imita o mínimo de `UploadFile` que o registro usa: `filename` e `read()`.
+
+    É o que um arquivo tirado de dentro de um ZIP vira, para seguir pelo MESMO
+    caminho de um upload solto — mesma validação, mesmo OCR, mesma triagem.
+    """
+
+    def __init__(self, filename: str, conteudo: bytes):
+        self.filename = filename
+        self._conteudo = conteudo
+
+    async def read(self) -> bytes:
+        return self._conteudo
+
+
+def _e_lixo_de_zip(nome: str) -> bool:
+    """Entradas que todo desktop enfia no ZIP e que não são documento."""
+    base = nome.rsplit("/", 1)[-1]
+    return (
+        not base
+        or nome.endswith("/")
+        or nome.startswith("__MACOSX/")
+        or base in {".DS_Store", "Thumbs.db"}
+        or base.startswith("._")
+    )
+
+
+async def _expandir_zips(arquivos: list[Any]) -> list[Any]:
+    """Troca cada `.zip` pelos arquivos que ele contém; deixa os demais intactos.
+
+    Um envio pode misturar arquivos soltos e ZIPs — todos saem daqui como itens
+    individuais. Subpasta dentro do ZIP vira parte do nome, para o escritório
+    reconhecer de onde veio cada arquivo. ZIP dentro de ZIP não é aberto.
+    """
+    saida: list[Any] = []
+    for arquivo in arquivos:
+        nome = getattr(arquivo, "filename", "") or ""
+        if not nome.lower().endswith(".zip"):
+            saida.append(arquivo)
+            continue
+        bruto = await arquivo.read()
+        try:
+            with zipfile.ZipFile(io.BytesIO(bruto)) as z:
+                itens = [
+                    i for i in z.infolist()
+                    if not i.is_dir() and not _e_lixo_de_zip(i.filename)
+                ]
+                if len(itens) > MAX_ITENS_ZIP:
+                    raise HTTPException(
+                        400,
+                        f"O ZIP '{nome}' tem mais de {MAX_ITENS_ZIP} arquivos. "
+                        "Divida em partes menores.",
+                    )
+                if sum(i.file_size for i in itens) > MAX_BYTES_ZIP:
+                    raise HTTPException(
+                        413,
+                        f"O conteúdo de '{nome}' passa de "
+                        f"{MAX_BYTES_ZIP // (1024 * 1024)}MB descomprimido.",
+                    )
+                for info in itens:
+                    if info.filename.lower().endswith(".zip"):
+                        continue  # ZIP aninhado não é aberto (evita bomba/loop).
+                    dados = z.read(info)
+                    if dados:
+                        saida.append(_ArquivoEmMemoria(info.filename.replace("\\", "/"), dados))
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(
+                400, f"'{nome}' não é um ZIP válido ou está corrompido."
+            ) from exc
+    return saida
+
+
 async def _registrar_lote(
     caso: dict[str, Any],
     arquivos: list[UploadFile],
@@ -2893,14 +3694,23 @@ async def _registrar_lote(
     como `recusados`. A parte cara — disco + PostgreSQL remoto — vai para
     `_processar_registro_lote`, para o navegador não esperar dezenas de idas ao
     banco dentro do prazo de uma requisição.
+
+    Um arquivo que falha não derruba os outros: o lote devolve o que entrou e o
+    que não entrou, com o motivo, porque quem mandou doze fotos precisa saber
+    qual das doze precisa repetir. Um ZIP é aberto antes: cada arquivo de dentro
+    entra como se tivesse sido enviado solto.
     """
     if not arquivos:
         raise HTTPException(400, "Nenhum arquivo foi enviado.")
+
+    arquivos = await _expandir_zips(arquivos)
+    if not arquivos:
+        raise HTTPException(400, "O ZIP não tinha nenhum arquivo aproveitável.")
     if len(arquivos) > MAX_ARQUIVOS_POR_LOTE:
         raise HTTPException(
             400,
-            f"São aceitos até {MAX_ARQUIVOS_POR_LOTE} arquivos por envio. "
-            "Divida em partes menores.",
+            f"São aceitos até {MAX_ARQUIVOS_POR_LOTE} arquivos por envio "
+            "(contando os de dentro de um ZIP). Divida em partes menores.",
         )
     categoria = categorias.obter(caso["categoria"])
     if categoria is None:
@@ -3009,17 +3819,77 @@ async def enviar_documentos_zip(
     return await _registrar_lote(caso, arquivos, idioma, tarefas)
 
 
+def _autor_da_acao(usuario: auth.Usuario) -> str:
+    return usuario.nome or usuario.usuario or usuario.id or "escritório"
+
+
+def _retrato_da_classificacao(
+    entrega: dict[str, Any], categoria: categorias.Categoria | None
+) -> dict[str, Any]:
+    """Como o documento está classificado — o antes e o depois do histórico."""
+    return {
+        "itens_atendidos": list(entrega.get("itens_atendidos") or []),
+        "item_codigo": entrega.get("item_codigo"),
+        "tipo_detectado": entrega.get("tipo_detectado"),
+        "tipo_documento": duplicidade.tipo_da_entrega(
+            entrega, categoria, tipos_documento.codigos_conhecidos()
+        ),
+        "roteamento_origem": entrega.get("roteamento_origem"),
+    }
+
+
+def _tipo_para_reclassificacao(
+    tipo: str | None, item: categorias.ItemChecklist
+) -> tuple[str, str]:
+    """Código e nome do tipo que a reclassificação vai gravar.
+
+    Tipo escolhido na tela precisa existir e estar ativo no glossário. Sem escolha,
+    vale o tipo que o item de checklist pede. O último recurso — item sem tipo — é
+    o comportamento de antes do glossário, para um checklist novo não travar a
+    reclassificação enquanto ninguém o vincula.
+    """
+    codigo = (tipo or "").strip()
+    if codigo:
+        registro = tipos_documento.obter(codigo)
+        if registro is None:
+            raise HTTPException(400, f"O tipo “{codigo}” não existe no glossário.")
+        if not registro["ativo"]:
+            raise HTTPException(
+                400, f"O tipo “{registro['nome']}” está desativado no glossário."
+            )
+        return registro["codigo"], registro["nome"]
+
+    codigo = item.tipo_documento or ""
+    if codigo:
+        registro = tipos_documento.obter(codigo)
+        if registro is not None:
+            return codigo, registro["nome"]
+        semente = tipos_documento.SEMENTE_POR_CODIGO.get(codigo)
+        if semente is not None:
+            return codigo, semente.nome
+    return item.tipo_ocr or item.codigo, item.nome
+
+
 @app.patch("/api/entregas/{entrega_id}/itens")
 def reatribuir_entrega(
     entrega_id: str,
     itens: list[str] = Body(..., embed=True),
+    tipo: str | None = Body(None, embed=True),
+    confirmar_duplicidade: bool = Body(False, embed=True),
+    motivo: str = Body("", embed=True, max_length=600),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
-    """Move um documento já lido para outro(s) item(ns) do checklist.
+    """Classifica ou reclassifica um documento já lido: item do checklist e tipo.
 
     É a palavra final sobre o roteamento automático, e a saída da triagem: o
     advogado olhou o arquivo e disse a que ele responde. Não refaz OCR — o texto
     e os campos já estão gravados, e o arquivo é o mesmo.
+
+    `tipo` é um código do glossário (`app/tipos_documento.py`); sem ele, vale o
+    tipo que o item pede. Antes de gravar, o documento é comparado com os demais
+    do caso (`app/duplicidade.py`): havendo suspeita, a resposta é 409 com a lista,
+    e só `confirmar_duplicidade` conclui. Toda mudança entra no histórico do
+    documento, com quem fez, o antes e o depois.
 
     Lista vazia devolve a entrega para a triagem, que é como se desfaz uma
     atribuição errada sem apagar o documento.
@@ -3044,14 +3914,29 @@ def reatribuir_entrega(
             f"Item(ns) fora do checklist de {categoria.nome}: {', '.join(desconhecidos)}.",
         )
 
+    quem = _autor_da_acao(usuario)
+    antes = _retrato_da_classificacao(entrega, categoria)
+
     if not escolhidos:
-        return armazenamento.reatribuir_entrega(
-            entrega_id,
-            [],
-            categorias.ITEM_TRIAGEM,
-            roteamento.HUMANO,
-            motivo="Devolvido à triagem pelo escritório.",
-        )
+        with sessao_banco():
+            devolvida = armazenamento.reatribuir_entrega(
+                entrega_id,
+                [],
+                categorias.ITEM_TRIAGEM,
+                roteamento.HUMANO,
+                motivo="Devolvido à triagem pelo escritório.",
+            )
+            historico_alteracoes.registrar(
+                historico_alteracoes.ENTIDADE_ENTREGA,
+                entrega_id,
+                "devolvida_triagem",
+                usuario=quem,
+                antes=antes,
+                depois=_retrato_da_classificacao(devolvida or {}, categoria),
+                caso_id=entrega["caso_id"],
+                motivo=motivo,
+            )
+        return devolvida
 
     item_correto = validos[escolhidos[0]]
     analise = analise_documental.obter_por_entrega(entrega_id)
@@ -3066,7 +3951,7 @@ def reatribuir_entrega(
             tipo_documento=tipo_humano,
             aceito=True,
             observacao=f"Destino confirmado no checklist: {item_correto.nome}.",
-            corrigido_por=usuario.nome or usuario.usuario or usuario.id or "escritório",
+            corrigido_por=quem,
         )
         revisada = armazenamento.obter_entrega(entrega_id)
         if revisada:
@@ -3078,27 +3963,68 @@ def reatribuir_entrega(
             ).start()
         return revisada
 
-    if len(escolhidos) > 1:
-        detectado = entrega.get("tipo_detectado")
-        confere = casos.tipo_confere(item_correto, detectado, True)
-        return armazenamento.reatribuir_entrega(
-            entrega_id,
-            escolhidos,
-            escolhidos[0],
-            roteamento.HUMANO,
-            tipo_confere=confere,
-            confianca=100,
-            motivo=f"Atribuído por {usuario.nome or usuario.usuario or 'escritório'}.",
-        )
-    tipo_correto = item_correto.tipo_ocr or item_correto.codigo
-    corrigida = armazenamento.corrigir_classificacao_entrega(
-        entrega_id,
-        item_codigo=item_correto.codigo,
-        tipo_correto=tipo_correto,
-        rotulo_correto=item_correto.nome,
-        categoria=categoria.codigo,
-        corrigido_por=usuario.nome or usuario.usuario or usuario.id or "escritório",
+    tipo_codigo, tipo_nome = _tipo_para_reclassificacao(tipo, item_correto)
+
+    suspeitas = duplicidade.procurar(
+        entrega["caso_id"],
+        {
+            **entrega,
+            "itens_atendidos": escolhidos,
+            "roteamento_origem": roteamento.HUMANO,
+            "tipo_documento": tipo_codigo,
+        },
+        categoria,
     )
+    if suspeitas and not confirmar_duplicidade:
+        raise duplicidade.DocumentoDuplicado(
+            suspeitas,
+            f"{duplicidade.mensagem(suspeitas)} Confirme para reclassificar mesmo assim.",
+        )
+
+    with sessao_banco():
+        if len(escolhidos) > 1:
+            confere = casos.tipo_confere(item_correto, entrega.get("tipo_detectado"), True)
+            corrigida = armazenamento.reatribuir_entrega(
+                entrega_id,
+                escolhidos,
+                escolhidos[0],
+                roteamento.HUMANO,
+                tipo_confere=confere,
+                confianca=100,
+                motivo=f"Atribuído por {quem}.",
+            )
+        else:
+            corrigida = armazenamento.corrigir_classificacao_entrega(
+                entrega_id,
+                item_codigo=item_correto.codigo,
+                tipo_correto=tipo_codigo,
+                rotulo_correto=tipo_nome,
+                categoria=categoria.codigo,
+                corrigido_por=quem,
+            )
+        if corrigida is None:
+            raise HTTPException(404, "Entrega não encontrada.")
+        depois = _retrato_da_classificacao(corrigida, categoria)
+        if suspeitas:
+            depois["duplicidades_confirmadas"] = [s.to_dict() for s in suspeitas]
+        historico_alteracoes.registrar(
+            historico_alteracoes.ENTIDADE_ENTREGA,
+            entrega_id,
+            "reclassificada",
+            usuario=quem,
+            antes=antes,
+            depois=depois,
+            caso_id=entrega["caso_id"],
+            motivo=motivo,
+        )
+
+    if len(escolhidos) == 1:
+        threading.Thread(
+            target=_entregar_ao_agente,
+            args=(entrega["caso_id"], entrega_id),
+            name=f"agente-correcao-{entrega_id[:8]}",
+            daemon=True,
+        ).start()
     return corrigida
 
 
@@ -3230,7 +4156,25 @@ async def enviar_entrevista(
         texto=texto,
         realizada_em=realizada_em.strip(),
         entrevistador=entrevistador.strip() or _quem_conduziu(request),
+        entrevistador_id=_id_de_quem_conduziu(request),
     )
+
+    threading.Thread(
+        target=_ler_entrevista_no_agente,
+        args=(caso_id, entrevista["id"]),
+        name=f"agente-entrevista-{entrevista['id'][:8]}",
+        daemon=True,
+    ).start()
+
+    # O arquivo é uma entrevista completa: gera o resumo por IA junto, à parte do
+    # agente (ver a rota do atendimento ao vivo).
+    if texto:
+        threading.Thread(
+            target=_resumir_entrevista_em_fundo,
+            args=(entrevista["id"], texto),
+            name=f"resumo-entrevista-{entrevista['id'][:8]}",
+            daemon=True,
+        ).start()
 
     return entrevista
 
@@ -3247,6 +4191,13 @@ def _quem_conduziu(request: Request) -> str:
     if usuario is None or usuario is auth.USUARIO_ABERTO:
         return ""
     return (usuario.nome or usuario.usuario or "").strip()[:120]
+
+
+def _id_de_quem_conduziu(request: Request) -> str:
+    usuario = getattr(request.state, "usuario", None)
+    if usuario is None or usuario is auth.USUARIO_ABERTO:
+        return ""
+    return str(usuario.id or "").strip()[:160]
 
 
 class TranscricaoAoVivo(BaseModel):
@@ -3340,6 +4291,7 @@ async def gravar_entrevista_ao_vivo(
             texto=texto,
             realizada_em=dados.realizada_em or date.today().isoformat(),
             entrevistador=_quem_conduziu(request),
+            entrevistador_id=_id_de_quem_conduziu(request),
             gravacao_id=dados.gravacao_id,
         )
 
@@ -3347,6 +4299,27 @@ async def gravar_entrevista_ao_vivo(
     # aconteceu — que é o único momento em que ela significa o que afirma. A
     # supervisão pode corrigi-la depois, mas não é ela quem deveria criá-la.
     armazenamento.marcar_avaliacao_google(entrevista["id"], dados.avaliacao_google)
+
+    # O agente só lê a entrevista ENCERRADA. Mandar a conversa pela metade geraria
+    # fatos a partir de um relato que ainda ia mudar, e o dossiê guarda fato, não
+    # rascunho. `enviada` evita reenviar quando o atendente volta ao roteiro.
+    if dados.concluida and texto and not entrevista.get("enviada"):
+        threading.Thread(
+            target=_ler_entrevista_no_agente,
+            args=(caso_id, entrevista["id"]),
+            name=f"agente-entrevista-{entrevista['id'][:8]}",
+            daemon=True,
+        ).start()
+
+    # O resumo por IA sai no encerramento, à parte do agente: não depende do
+    # serviço externo, então acontece mesmo quando o caso não está ligado a ele.
+    if dados.concluida and texto:
+        threading.Thread(
+            target=_resumir_entrevista_em_fundo,
+            args=(entrevista["id"], texto),
+            name=f"resumo-entrevista-{entrevista['id'][:8]}",
+            daemon=True,
+        ).start()
 
     return armazenamento.obter_entrevista(entrevista["id"]) or entrevista
 
@@ -3794,10 +4767,186 @@ def baixar_documentos_do_caso(caso_id: str):
     )
 
 
+@app.get("/api/entregas/{entrega_id}/historico")
+def historico_da_entrega(entrega_id: str):
+    """Reclassificações, devoluções à triagem, repetidos aceitos e remoção."""
+    return {
+        "eventos": historico_alteracoes.listar(
+            historico_alteracoes.ENTIDADE_ENTREGA, entrega_id
+        )
+    }
+
+
+#: Tetos da seleção por classificação (rotas POST abaixo, ZIP e PDF). A
+#: quantidade casa com o teto de itens de um ZIP recebido; o tamanho reusa o
+#: mesmo número de bytes, porque documento é PDF/foto já comprimido e a soma
+#: dos arquivos é ~o tamanho do pacote. Acima disto a rota recusa com 413 —
+#: gerar assíncrono fica para depois.
+MAX_ITENS_ZIP_SELECAO = int(os.getenv("MAX_ITENS_ZIP_SELECAO", "50"))
+MAX_BYTES_ZIP_SELECAO = int(
+    os.getenv("MAX_BYTES_ZIP_SELECAO", str(200 * 1024 * 1024))
+)
+#: Teto de páginas do PDF combinado. Bem acima do `pdf.MAX_PAGINAS_PDF` (que é
+#: por ARQUIVO enviado): aqui é a soma de vários documentos já aceitos no caso.
+MAX_PAGINAS_PDF_SELECAO = int(os.getenv("MAX_PAGINAS_PDF_SELECAO", "300"))
+
+
+class PedidoSelecaoDocumentos(BaseModel):
+    """Documentos marcados dentro de UMA classificação, para baixar juntos —
+    em ZIP (`POST .../documentos.zip`) ou combinados num PDF só
+    (`POST .../documentos.pdf`). O corpo é o mesmo nos dois formatos."""
+
+    #: Código do item do checklist (a "classificação"), como vem em
+    #: `GET /api/casos/{id}` → `itens[].codigo`.
+    classificacao: str = Field(min_length=1, max_length=60)
+    #: Ids das entregas marcadas. O teto alto aqui é só contra payload abusivo;
+    #: o limite real, com mensagem amigável, é `MAX_ITENS_ZIP_SELECAO`.
+    entregas: list[str] = Field(min_length=1, max_length=1000)
+
+
+@app.post("/api/casos/{caso_id}/documentos.zip")
+def baixar_selecao_de_documentos(
+    caso_id: str,
+    pedido: PedidoSelecaoDocumentos,
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    """Um ZIP só com os documentos marcados dentro de UMA classificação.
+
+    O GET desta mesma rota leva o caso inteiro. Aqui o atendente escolhe a
+    classificação, marca alguns arquivos dela e leva só esses — cada arquivo sai
+    prefixado pelo nome da classificação, para o outro lado conferir contra a
+    mesma lista.
+
+    Recusa o pedido inteiro se algum id não for daquela classificação (ou for de
+    outro caso): nada de outra classificação entra por engano. O pacote nasce em
+    `pipeline.TMP_DIR` e é apagado assim que a resposta termina.
+    """
+    destino = pipeline.TMP_DIR / f"selecao-{caso_id}-{uuid.uuid4().hex}.zip"
+    try:
+        resumo = casos.montar_zip_selecao(
+            caso_id,
+            pedido.classificacao,
+            pedido.entregas,
+            destino,
+            limite_itens=MAX_ITENS_ZIP_SELECAO,
+            limite_bytes=MAX_BYTES_ZIP_SELECAO,
+        )
+    except casos.SelecaoInvalida as exc:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(exc.status, str(exc)) from exc
+
+    if resumo is None:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(404, "Caso não encontrado.")
+
+    if resumo["arquivos"] == 0:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(
+            404, "Nenhum dos documentos selecionados está disponível para download."
+        )
+
+    cliente = re.sub(r"[^\w\- ]", "", resumo["cliente"]).strip() or caso_id[:8]
+    classificacao = (
+        re.sub(r"[^\w\- ]", "", resumo["classificacao"]).strip() or "documentos"
+    )
+    return FileResponse(
+        destino,
+        media_type="application/zip",
+        filename=f"Documentos - {cliente} - {classificacao}.zip",
+        background=BackgroundTask(destino.unlink, missing_ok=True),
+        headers={
+            "X-Arquivos": str(resumo["arquivos"]),
+            "X-Faltando": str(len(resumo["faltando"])),
+        },
+    )
+
+
+@app.post("/api/casos/{caso_id}/documentos.pdf")
+def baixar_selecao_de_documentos_em_pdf(
+    caso_id: str,
+    pedido: PedidoSelecaoDocumentos,
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("casos")),
+):
+    """Os documentos marcados dentro de UMA classificação, juntos num PDF só.
+
+    Irmã de `baixar_selecao_de_documentos`: mesma seleção, mesmas guardas —
+    quantidade, classificação, permissão. A diferença é o formato de saída: em
+    vez de um ZIP com N arquivos, um único PDF com as páginas de todos, na
+    ordem em que foram marcados. PDF original entra intacto; imagem vira
+    página, como no botão "baixar como PDF" de uma entrega avulsa.
+
+    Recusa com 415 se algum arquivo não for PDF nem imagem, ou se a soma de
+    páginas passar do teto — para esses casos o ZIP continua existindo.
+    """
+    destino = pipeline.TMP_DIR / f"selecao-{caso_id}-{uuid.uuid4().hex}.pdf"
+    try:
+        resumo = casos.montar_pdf_selecao(
+            caso_id,
+            pedido.classificacao,
+            pedido.entregas,
+            destino,
+            limite_itens=MAX_ITENS_ZIP_SELECAO,
+            limite_bytes=MAX_BYTES_ZIP_SELECAO,
+            limite_paginas=MAX_PAGINAS_PDF_SELECAO,
+        )
+    except casos.SelecaoInvalida as exc:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(exc.status, str(exc)) from exc
+
+    if resumo is None:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(404, "Caso não encontrado.")
+
+    if resumo["paginas"] == 0:
+        destino.unlink(missing_ok=True)
+        raise HTTPException(
+            404, "Nenhum dos documentos selecionados está disponível para download."
+        )
+
+    cliente = re.sub(r"[^\w\- ]", "", resumo["cliente"]).strip() or caso_id[:8]
+    classificacao = (
+        re.sub(r"[^\w\- ]", "", resumo["classificacao"]).strip() or "documentos"
+    )
+    return FileResponse(
+        destino,
+        media_type="application/pdf",
+        filename=f"Documentos - {cliente} - {classificacao}.pdf",
+        background=BackgroundTask(destino.unlink, missing_ok=True),
+        headers={
+            "X-Arquivos": str(resumo["arquivos"]),
+            "X-Paginas": str(resumo["paginas"]),
+            "X-Faltando": str(len(resumo["faltando"])),
+        },
+    )
+
+
 @app.delete("/api/entregas/{entrega_id}")
-def excluir_entrega(entrega_id: str):
-    if not armazenamento.excluir_entrega(entrega_id):
+def excluir_entrega(
+    entrega_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+):
+    """Remove o documento e deixa no histórico o que ele era e quem o removeu.
+
+    Remover é o desfecho natural de uma duplicidade confirmada como repetição, e é
+    justamente o caso em que alguém pergunta depois "o que havia aqui".
+    """
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
+    caso = armazenamento.obter_caso(entrega["caso_id"])
+    categoria = categorias.obter(caso["categoria"]) if caso else None
+    antes = {"arquivo": entrega.get("arquivo"), **_retrato_da_classificacao(entrega, categoria)}
+
+    with sessao_banco():
+        if not armazenamento.excluir_entrega(entrega_id):
+            raise HTTPException(404, "Entrega não encontrada.")
+        historico_alteracoes.registrar(
+            historico_alteracoes.ENTIDADE_ENTREGA,
+            entrega_id,
+            "removida",
+            usuario=_autor_da_acao(usuario),
+            antes=antes,
+            caso_id=entrega["caso_id"],
+        )
     return {"removido": True}
 
 

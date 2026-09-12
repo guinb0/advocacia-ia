@@ -11,12 +11,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.banco_de_teste import exigir_banco_de_teste  # noqa: E402
+
+exigir_banco_de_teste()
+
 from app import armazenamento  # noqa: E402
 
 _TEMP = Path(tempfile.mkdtemp(prefix="ocr-entrevista-"))
 armazenamento.DIR_DADOS = _TEMP
 armazenamento.DIR_ARQUIVOS = _TEMP / "casos"
 armazenamento.DIR_CONTRATOS = _TEMP / "contratos"
+# `CAMINHO_BANCO` não redireciona mais o banco (era do tempo do SQLite): a conexão
+# vem de `SQLSERVER_*`. A trava acima é o que impede este teste de escrever em
+# produção — ver `tests/banco_de_teste.py`.
 armazenamento.CAMINHO_BANCO = _TEMP / "casos.db"
 
 from app import entrevista  # noqa: E402
@@ -114,18 +121,27 @@ def main() -> int:
     sem = dossie._etapa_entrevista([])
     checar(sem["estado"] == "pendente", "caso sem entrevista aparece como pendente")
 
-    nao_lida = dossie._etapa_entrevista([dossie._entrevista_resumida(registro)])
+    # Áudio anexado, mas ainda SEM transcrição: em andamento, não pronto.
+    so_audio = dict(registro)
+    so_audio["texto"] = ""
+    aguardando = dossie._etapa_entrevista([dossie._entrevista_resumida(so_audio)])
     checar(
-        nao_lida["estado"] == "andamento",
-        "entrevista anexada mas não lida não é 'pronto' — nada dela chegou ao caso",
+        aguardando["estado"] == "andamento",
+        "entrevista anexada sem transcrição fica em 'andamento'",
     )
 
-    lida = dossie._etapa_entrevista([dossie._entrevista_resumida(relida)])
-    checar(lida["estado"] == "pronto" and "7 fato" in lida["detalhe"], "entrevista lida mostra quantos fatos gerou")
+    # Com transcrição já dá para redigir (fluxo local): pronto.
+    com_texto = dossie._etapa_entrevista([dossie._entrevista_resumida(registro)])
+    checar(
+        com_texto["estado"] == "pronto" and "transcrição" in com_texto["detalhe"],
+        "entrevista com transcrição fica pronta para redigir",
+    )
 
-    vazia = dict(relida)
-    vazia["fatos_gerados"] = 0
-    sem_fato = dossie._etapa_entrevista([dossie._entrevista_resumida(vazia)])
+    # Fluxo do agente: lida (enviada), sem texto e sem nenhum fato → atenção.
+    lida_sem_fato = dict(relida)
+    lida_sem_fato["texto"] = ""
+    lida_sem_fato["fatos_gerados"] = 0
+    sem_fato = dossie._etapa_entrevista([dossie._entrevista_resumida(lida_sem_fato)])
     checar(
         sem_fato["estado"] == "atencao",
         "entrevista lida sem nenhum fato aproveitado é atenção, não sucesso",

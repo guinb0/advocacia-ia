@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import httpx
 
 from app import whatsapp
+from app import automacoes_whatsapp
 
 
 def test_nome_da_instancia_com_espaco_vai_codificado():
@@ -53,15 +54,23 @@ def test_envio_tenta_instancia_oficial_quando_configurada_nao_existe(monkeypatch
     ]
 
 
-def test_erro_de_chave_da_evolution_e_explicito_sem_expor_resposta():
+def test_erro_da_evolution_e_explicito_sem_cravar_causa_nem_expor_resposta():
     requisicao = httpx.Request("POST", "https://evolution.exemplo/message/sendText/instancia")
     resposta = httpx.Response(401, request=requisicao, text="apikey secreta recusada")
     erro = httpx.HTTPStatusError("Unauthorized", request=requisicao, response=resposta)
 
-    mensagem = whatsapp._mensagem_erro_evolution(erro)
+    mensagem = whatsapp._mensagem_erro_evolution(erro, "geração do QR")
 
-    assert mensagem == "A chave da Evolution configurada no servidor foi recusada."
+    assert "geração do QR recebeu HTTP 401" in mensagem
+    assert "EVO-DIAG-2-HTTP-401" in mensagem
+    assert "não prova erro na chave" in mensagem
     assert "secreta" not in mensagem
+
+
+def test_contrato_antigo_de_intervalo_continua_usando_dias():
+    config = whatsapp.ConfiguracaoCobranca(intervalo_dias=3)
+
+    assert config.intervalo_horas is None
 
 
 def test_link_zapsign_automatico_so_vai_para_parte_externa(monkeypatch):
@@ -133,10 +142,73 @@ def test_avaliacao_google_reenvia_quando_forcado(monkeypatch):
     envio.assert_awaited_once()
 
 
+def test_telefone_da_cobranca_vem_do_caso(monkeypatch):
+    monkeypatch.setattr(
+        automacoes_whatsapp.armazenamento,
+        "obter_caso",
+        lambda _caso_id: {"telefone": "(61) 99999-0000"},
+    )
+
+    assert automacoes_whatsapp.telefone_do_caso("caso-1") == "(61) 99999-0000"
+
+
+def test_telefone_da_cobranca_cai_para_signatario_antigo(monkeypatch):
+    monkeypatch.setattr(
+        automacoes_whatsapp.armazenamento,
+        "obter_caso",
+        lambda _caso_id: {"cliente": "Maria Silva", "telefone": ""},
+    )
+    monkeypatch.setattr(
+        automacoes_whatsapp.armazenamento,
+        "obter_qualificacao",
+        lambda _caso_id: {"cpf": "123.456.789-00"},
+    )
+    monkeypatch.setattr(
+        automacoes_whatsapp.armazenamento,
+        "listar_assinaturas",
+        lambda **_kwargs: [
+            {
+                "signatarios": [
+                    {"papel": "cliente", "telefone": "61999990000"},
+                ],
+            }
+        ],
+    )
+
+    assert automacoes_whatsapp.telefone_do_caso("caso-1") == "61999990000"
+
+
+def test_telefone_nao_e_inferido_por_nome_sem_cpf(monkeypatch):
+    consultas: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        automacoes_whatsapp.armazenamento,
+        "obter_caso",
+        lambda _caso_id: {"cliente": "Nome Homônimo", "telefone": ""},
+    )
+    monkeypatch.setattr(
+        automacoes_whatsapp.armazenamento,
+        "obter_qualificacao",
+        lambda _caso_id: {"cpf": ""},
+    )
+
+    def listar_assinaturas(**filtros):
+        consultas.append(filtros)
+        return []
+
+    monkeypatch.setattr(
+        automacoes_whatsapp.armazenamento,
+        "listar_assinaturas",
+        listar_assinaturas,
+    )
+
+    assert automacoes_whatsapp.telefone_do_caso("caso-1") == ""
+    assert consultas == [{"caso_id": "caso-1"}]
+
+
 def test_cobranca_recalcula_o_texto_no_momento_do_envio(monkeypatch):
     config = {
         "caso_id": "caso-1", "telefone": "5561999999999", "intervalo_dias": 3,
-        "incluir_opcionais": False,
+        "intervalo_horas": 24, "max_envios_dia": 1, "incluir_opcionais": False,
     }
     monkeypatch.setattr(whatsapp.automacoes_whatsapp, "listar_cobrancas_vencidas", lambda: [config])
     monkeypatch.setattr(
@@ -144,17 +216,65 @@ def test_cobranca_recalcula_o_texto_no_momento_do_envio(monkeypatch):
         lambda _caso_id: {"portal_token": "portal-seguro-123"},
     )
     monkeypatch.setattr(
-        whatsapp.casos, "montar_pedido",
+        whatsapp.casos, "documentos_pendentes_do_caso",
         lambda *_args: {
-            "texto": "Agora falta somente o RG", "faltando_obrigatorios": ["RG"],
-            "faltando_opcionais": [], "reenviar": [],
+            "caso": {"cliente": "Maria Silva"},
+            "pendentes": [{"codigo": "rg", "nome": "RG", "status": "pendente"}],
         },
     )
     enviado: list[str] = []
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "envios_de_cobranca_hoje", lambda _caso_id: 0)
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "reservar", lambda *_args: True)
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "finalizar", lambda *_args: None)
     monkeypatch.setattr(whatsapp, "_enviar_texto_sync", lambda _numero, texto: enviado.append(texto))
-    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "registrar_resultado_cobranca", lambda *_args: None)
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "registrar_resultado_cobranca", lambda *_args, **_kwargs: None)
 
     assert whatsapp.processar_cobrancas_documentos() == 1
     assert len(enviado) == 1
-    assert "Agora falta somente o RG" in enviado[0]
+    assert "RG" in enviado[0]
+    assert "não envie documentos por esta conversa de WhatsApp" in enviado[0]
     assert enviado[0].endswith("/portal/portal-seguro-123")
+
+
+def test_mensagem_cobranca_limita_dados_e_orienta_portal():
+    texto = whatsapp._mensagem_cobranca_documentos(
+        cliente="Maria Silva",
+        pendentes=[
+            {"codigo": "rg", "nome": "RG"},
+            {"codigo": "cpf", "nome": "CPF"},
+        ],
+        url_portal="https://app.exemplo/portal/token",
+        chave_variante="caso-1",
+    )
+
+    assert "RG" in texto
+    assert "CPF" in texto
+    assert "https://app.exemplo/portal/token" in texto
+    assert "não envie documentos por esta conversa de WhatsApp" in texto
+
+
+def test_cobranca_respeita_limite_diario(monkeypatch):
+    config = {
+        "caso_id": "caso-1", "telefone": "5561999999999", "intervalo_dias": 1,
+        "intervalo_horas": 6, "max_envios_dia": 2, "incluir_opcionais": False,
+    }
+    reagendados: list[str] = []
+    envio = []
+
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "listar_cobrancas_vencidas", lambda: [config])
+    monkeypatch.setattr(
+        whatsapp.armazenamento, "obter_caso_com_segredos",
+        lambda _caso_id: {"portal_token": "portal-seguro-123"},
+    )
+    monkeypatch.setattr(
+        whatsapp.casos, "documentos_pendentes_do_caso",
+        lambda *_args: {"caso": {"cliente": "Maria"}, "pendentes": [{"nome": "RG"}]},
+    )
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "envios_de_cobranca_hoje", lambda _caso_id: 2)
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "reagendar_cobranca_para_amanha", reagendados.append)
+    monkeypatch.setattr(whatsapp.automacoes_whatsapp, "reservar", lambda *_args: True)
+    monkeypatch.setattr(whatsapp, "_enviar_texto_sync", lambda *_args: envio.append(True))
+
+    assert whatsapp.processar_cobrancas_documentos() == 0
+    assert reagendados == ["caso-1"]
+    assert envio == []

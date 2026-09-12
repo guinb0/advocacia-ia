@@ -131,8 +131,8 @@ def cenario_preenchimento() -> int:
     return falhas
 
 
-def cenario_recusa_documentos() -> int:
-    """A regra que protege o contrato: fala não vira número de documento."""
+def cenario_transcricao_preenche_demais_dados() -> int:
+    """Fora os cinco campos manuais, a fala preenche os dados do roteiro."""
     falhas = 0
     instalar_modelo(
         {
@@ -147,19 +147,17 @@ def cenario_recusa_documentos() -> int:
     )
     r = escuta.escutar(FALA, {})
     ids = {p["pergunta_id"] for p in r["preenchidas"]}
-    falhas += not checar("rg" not in ids, "RG ouvido NÃO é preenchido")
-    falhas += not checar("nascimento" not in ids, "data de nascimento ouvida NÃO é preenchida")
-    falhas += not checar("rg_orgao" not in ids, "órgão expedidor NÃO é preenchido")
+    falhas += not checar("nascimento" in ids, "data de nascimento ouvida é preenchida")
     falhas += not checar(
         "tempo_casa" in ids,
         "mas 'oito anos' entra — é resposta de entrevista, não de documentação",
     )
 
-    # E o modelo nem chega a ver essas perguntas: elas saem da lista mandada.
+    # O nascimento está na janela desta chamada e precisa chegar ao modelo.
     prompt = str(visto["prompt"])
     falhas += not checar(
-        "\n- rg:" not in prompt and "\n- nascimento:" not in prompt,
-        "a qualificação nem é oferecida ao modelo",
+        "\n- nascimento:" in prompt,
+        "os demais dados que estão na janela são oferecidos ao modelo",
     )
     # Nome e CPF passaram a ser DIGITADOS antes de a transcrição abrir, e por
     # isso saem da lista também: medido no áudio real, a fala virava "Guilherme
@@ -167,6 +165,10 @@ def cenario_recusa_documentos() -> int:
     falhas += not checar(
         "\n- nome:" not in prompt and "\n- cpf:" not in prompt,
         "nome e CPF nem são oferecidos: são digitados antes de começar",
+    )
+    falhas += not checar(
+        escuta.DADOS_DIGITADOS == {"nome", "cpf", "estado_civil", "uf", "municipio"},
+        "somente os cinco campos definidos pelo escritório ficam manuais",
     )
     return falhas
 
@@ -586,6 +588,48 @@ def cenario_sem_chave() -> int:
     return falhas
 
 
+def cenario_snapshot_do_roteiro_ativo() -> int:
+    """Uma edição da sessão prevalece sobre o roteiro salvo com o mesmo código."""
+    falhas = 0
+    roteiro_ativo = escuta.roteiros.de_dict(
+        {
+            "codigo": "empregado_publico",
+            "nome": "Roteiro editado na sessão",
+            "descricao": "Versão que ainda não foi salva no catálogo.",
+            "blocos": [
+                {
+                    "id": "bloco_sessao",
+                    "titulo": "Perguntas desta sessão",
+                    "perguntas": [
+                        {
+                            "id": "pergunta_exclusiva_da_sessao",
+                            "texto": "Qual fato deve ser esclarecido nesta entrevista?",
+                            "tipo": "relato",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    instalar_modelo({"preenchidas": [], "lembretes": []})
+    r = escuta.escutar(
+        "O cliente começou a explicar o assunto específico desta entrevista.",
+        {},
+        "empregado_publico",
+        roteiro_ativo=roteiro_ativo,
+    )
+    ids = {item["pergunta_id"] for item in r["faltando"]}
+    falhas += not checar(
+        ids == {"pergunta_exclusiva_da_sessao"},
+        f"a escuta usa o snapshot da sessão, não o catálogo ({ids})",
+    )
+    falhas += not checar(
+        "Correios" not in str(visto.get("prompt", "")),
+        "perguntas do roteiro salvo não contaminam o prompt",
+    )
+    return falhas
+
+
 def cenario_processamento_consolidado() -> int:
     """A entrevista vira fatos e depois formulário, sem sobrescrever dados."""
     falhas = 0
@@ -860,7 +904,7 @@ def main_teste() -> int:
     falhas = 0
     for titulo, teste in (
         ("preenchimento e lembretes", cenario_preenchimento),
-        ("fala NÃO vira número de documento", cenario_recusa_documentos),
+        ("fala preenche os demais dados", cenario_transcricao_preenche_demais_dados),
         ("nome e CPF são digitados, nunca ouvidos", cenario_nome_e_cpf_sao_digitados),
         ("alucinação do modelo", cenario_alucinacao),
         ("módulos fechados pelo rastreio", cenario_modulos_fechados),
@@ -874,6 +918,7 @@ def main_teste() -> int:
         ("a citação é conferida contra a transcrição", cenario_citacao_conferida),
         ("recusada não volta como ausente", cenario_recusada_nao_volta_como_ausente),
         ("descarta marcador de ausência", cenario_descarta_nao_informado),
+        ("snapshot do roteiro ativo", cenario_snapshot_do_roteiro_ativo),
         ("sem chave", cenario_sem_chave),
     ):
         print(f"\n{titulo}")

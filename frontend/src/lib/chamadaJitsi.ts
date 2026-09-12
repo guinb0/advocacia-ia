@@ -33,6 +33,10 @@
 
 const BASE_JITSI = process.env.NEXT_PUBLIC_JITSI_URL ?? "http://localhost:8081";
 
+/** Quanto se espera antes de tratar um microfone mudo como microfone perdido.
+ *  Trazer a aba de volta costuma devolver o áudio em menos de um segundo. */
+const ESPERA_MUDO_MS = 3_000;
+
 export type PapelChamada = "advogado" | "cliente";
 
 export type EstadoChamada =
@@ -210,6 +214,8 @@ export class ChamadaJitsi {
   private estadoAtual: EstadoChamada = "fora";
   private desligando = false;
   private mudoAtual = false;
+  /** Impede duas recuperações de microfone ao mesmo tempo (`ended` + `mute`). */
+  private recuperandoAudio = false;
 
   constructor(
     private papel: PapelChamada,
@@ -278,20 +284,48 @@ export class ChamadaJitsi {
     const api = await carregarJitsi();
     this.api = api;
 
-    // O microfone abre ANTES de entrar na sala: se a permissão for negada, o
-    // erro sai limpo, sem deixar uma conexão pendurada no servidor.
-    const faixas = await api.createLocalTracks({ devices: ["audio"] });
-    this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
-    if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
-
-    // A câmera é pedida depois e em separado: negá-la não pode derrubar a
-    // entrevista, que funciona inteira só com voz.
-    if (opcoes.camera) {
+    /* Microfone e câmera num pedido SÓ, e não em dois.
+     *
+     * O CELULAR MUDO: ERA DAQUI
+     *
+     * Antes eram duas capturas: `createLocalTracks(["audio"])` e, logo depois,
+     * `createLocalTracks(["video"])`. No desktop isso é inofensivo. No celular
+     * não é: o iOS mantém UMA sessão de captura por página, e abrir a segunda
+     * ENCERRA as faixas da primeira — a faixa de áudio morre calada, sem erro
+     * nenhum. O Chrome Android faz o parecido ao trocar a configuração do
+     * dispositivo no meio. O cliente entrava, aparecia em vídeo, e o
+     * entrevistador não ouvia nada; sem câmera, a mesma chamada funcionava. Era
+     * o "às vezes" do sintoma.
+     *
+     * Pedindo os dois juntos existe uma captura só, e a faixa de áudio não é
+     * derrubada por ninguém. A câmera continua sem poder derrubar a entrevista:
+     * se o pedido conjunto falhar (permissão de câmera negada, aparelho sem
+     * câmera), cai para áudio puro, que é o que a entrevista realmente exige.
+     */
+    const querCamera = Boolean(opcoes.camera);
+    let faixas: FaixaJitsi[] = [];
+    if (querCamera) {
       try {
-        await this.abrirCamera(api);
+        faixas = await api.createLocalTracks({ devices: ["audio", "video"] });
       } catch {
         this.eventos.onErro?.("Não foi possível abrir a câmera. A chamada segue só com voz.");
+        faixas = [];
       }
+    }
+    if (!faixas.some((f) => f.getType() === "audio")) {
+      // Sem câmera, ou com o pedido conjunto recusado: o microfone sozinho. Se
+      // a permissão do microfone for negada, o erro sai limpo daqui, sem deixar
+      // conexão pendurada no servidor.
+      faixas = await api.createLocalTracks({ devices: ["audio"] });
+    }
+    this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
+    if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
+    this.vigiarMicrofone();
+
+    const camera = faixas.find((f) => f.getType() === "video") ?? null;
+    if (camera) {
+      this.minhaCamera = camera;
+      this.videos.set("eu", camera.getTrack());
     }
 
     await this.conectar(api, salaJitsi, token);
@@ -328,6 +362,10 @@ export class ChamadaJitsi {
       return false;
     }
 
+    /* Aqui a captura de vídeo é inevitavelmente separada — a chamada já está de
+     * pé —, então no celular ela ainda pode derrubar o microfone (ver o comentário
+     * em `entrar`). Quem conserta é `vigiarMicrofone`: a faixa morta dispara
+     * `ended` e volta republicada, sem o usuário precisar desligar a conversa. */
     await this.abrirCamera(this.api);
     if (this.minhaCamera && this.sala) await this.sala.addTrack(this.minhaCamera);
     this.anunciarParticipantes();
@@ -468,7 +506,10 @@ export class ChamadaJitsi {
       // O nome vai antes das faixas: quem já está na sala recebe o "entrou"
       // junto do nome, em vez de ver um "participante" anônimo por um segundo.
       if (this.meuNome) sala.setDisplayName(this.meuNome);
-      if (this.minhaFaixa) void sala.addTrack(this.minhaFaixa);
+      // Publicação de áudio é confirmada: em alguns navegadores a sala entra
+      // antes de o dispositivo terminar de ficar disponível. Antes uma falha
+      // aqui era silenciosa e a chamada parecia normal, mas sem voz de saída.
+      void this.publicarMicrofone(sala);
       if (this.minhaCamera) void sala.addTrack(this.minhaCamera);
       this.mudarEstado(sala.getParticipantCount() > 0 ? "conectando" : "aguardando");
       this.anunciarParticipantes();
@@ -539,6 +580,99 @@ export class ChamadaJitsi {
     sala.join();
   }
 
+  private async publicarMicrofone(sala: ConferenciaJitsi): Promise<boolean> {
+    const faixa = this.minhaFaixa;
+    if (!faixa) return false;
+    faixa.getTrack().enabled = true;
+    try {
+      await sala.addTrack(faixa);
+      return true;
+    } catch {
+      await new Promise<void>((ok) => window.setTimeout(ok, 500));
+    }
+    try {
+      faixa.getTrack().enabled = true;
+      await sala.addTrack(faixa);
+      return true;
+    } catch {
+      this.eventos.onErro?.("O microfone não foi publicado na chamada. Use “Reativar áudio” sem desligar a conversa.");
+      return false;
+    }
+  }
+
+  /* O microfone pode MORRER no meio da chamada, e no celular isso é rotina.
+   *
+   * Bloqueio de tela, troca de app, uma ligação telefônica entrando, o fone de
+   * ouvido saindo do pareamento: o sistema tira o microfone da página. A faixa
+   * dispara `ended` (morreu) ou `mute` (parou de entregar áudio) e o Jitsi
+   * continua publicando uma faixa que não carrega som nenhum — a chamada segue
+   * com cara de normal, o cronômetro andando, e o entrevistador sem ouvir mais
+   * nada. Era o outro caminho para o mesmo sintoma, e o único remédio era o
+   * botão "Reativar áudio", que só existe se alguém desconfiar de usá-lo.
+   *
+   * `ended` é definitivo, então recupera na hora. `mute` costuma ser passageiro
+   * (volta com `unmute` ao trazer a aba de volta), por isso a espera antes de
+   * recriar a faixa — recriar a cada ida e volta de aba seria pior que o mal.
+   */
+  private vigiarMicrofone(): void {
+    const faixa = this.minhaFaixa;
+    if (!faixa) return;
+    const nativa = faixa.getTrack();
+
+    nativa.addEventListener(
+      "ended",
+      () => void this.recuperarMicrofone(nativa),
+      { once: true },
+    );
+    nativa.addEventListener("mute", () => {
+      window.setTimeout(() => {
+        if (nativa.muted) void this.recuperarMicrofone(nativa);
+      }, ESPERA_MUDO_MS);
+    });
+  }
+
+  private async recuperarMicrofone(nativa: MediaStreamTrack): Promise<void> {
+    // Só a faixa VIGENTE interessa: um evento atrasado da faixa antiga não pode
+    // derrubar a que acabou de entrar no lugar dela.
+    if (this.desligando || !this.sala || this.recuperandoAudio) return;
+    if (this.minhaFaixa?.getTrack() !== nativa) return;
+    // Mudo por escolha do usuário não é defeito. Ressuscitar a faixa aqui
+    // devolveria a voz de quem pediu para não ser ouvido.
+    if (this.mudoAtual) return;
+
+    this.recuperandoAudio = true;
+    try {
+      const ok = await this.reativarAudio();
+      if (ok) {
+        this.eventos.onErro?.(
+          "O microfone caiu e foi reaberto sozinho. Confira se o outro lado voltou a ouvir você.",
+        );
+      }
+    } catch {
+      this.eventos.onErro?.(
+        "O microfone foi tomado por outro aplicativo e não voltou. Use “Reativar áudio” para tentar de novo.",
+      );
+    } finally {
+      this.recuperandoAudio = false;
+    }
+  }
+
+  /** Reabre e republica o microfone sem derrubar vídeo ou sala. */
+  async reativarAudio(): Promise<boolean> {
+    if (!this.api || !this.sala) return false;
+    const anterior = this.minhaFaixa;
+    if (anterior) {
+      await this.sala.removeTrack(anterior).catch(() => {});
+      await anterior.dispose().catch(() => {});
+    }
+    const faixas = await this.api.createLocalTracks({ devices: ["audio"] });
+    this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
+    if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
+    this.mudoAtual = false;
+    this.vigiarMicrofone();
+    return this.publicarMicrofone(this.sala);
+  }
+
   /** Monta a lista de retratos: eu primeiro, depois quem chegou. */
   private anunciarParticipantes(): void {
     if (!this.eventos.onParticipantes) return;
@@ -576,15 +710,49 @@ export class ChamadaJitsi {
      * sairia vazia, sem erro nenhum. O `attach` da lib faz esse trabalho. */
     const alto = document.createElement("audio");
     alto.autoplay = true;
+    alto.setAttribute("playsinline", "");
+    alto.muted = false;
+    alto.volume = 1;
+    /* `track.attach()` funciona na maior parte dos desktops, mas há WebViews e
+     * Safari móvel em que ele só prepara internamente a faixa e não associa a
+     * saída de áudio. Ao atribuir também o MediaStream nativo, o navegador tem
+     * uma rota direta e explícita para o alto-falante/fone do entrevistador.
+     * Isso vale igualmente quando o participante troca para microfone USB ou
+     * Bluetooth: o Jitsi substitui a faixa remota e este método é chamado outra
+     * vez para a nova trilha. */
     faixa.attach(alto);
+    const trilha = faixa.getTrack();
+    alto.srcObject = new MediaStream([trilha]);
     document.body.appendChild(alto);
     // `autoplay` sozinho pode ser barrado pela política do navegador, e um
     // elemento barrado não reproduz — e faixa remota que não reproduz não
     // alimenta o WebAudio (é o silêncio descrito acima). Como a entrevista só
     // chega aqui depois de vários cliques, o gesto de usuário já existe; o
     // `play()` explícito converte esse gesto em reprodução de fato.
-    void alto.play?.().catch(() => {});
+    const tocar = () => void alto.play().catch(() => {
+      /* Em iPhone/iPad a primeira tentativa pode cair antes de o WebRTC marcar
+       * a faixa como utilizável. Os eventos abaixo tentam de novo quando ela
+       * efetivamente fica pronta, sem exibir um erro falso para a entrevista. */
+    });
+    tocar();
+    alto.addEventListener("loadedmetadata", tocar, { once: true });
+    alto.addEventListener("canplay", tocar, { once: true });
+    // Em celular a faixa costuma chegar "muted" durante a negociação e só
+    // liberar amostras depois. Retomar aqui evita ficar preso no silêncio de
+    // uma tentativa de play feita cedo demais.
+    trilha.addEventListener("unmute", tocar);
     this.remotas.set(faixa, alto);
+
+    /* No Safari/iOS a faixa pode chegar depois do toque “Entrar”, fora da
+     * janela de autoplay. Qualquer próximo toque do atendente libera todas as
+     * saídas pendentes; não depende de trocar microfone nem de reconectar. */
+    const destravar = () => {
+      for (const audio of this.remotas.values()) void audio.play().catch(() => {});
+      document.removeEventListener("pointerdown", destravar, true);
+      document.removeEventListener("keydown", destravar, true);
+    };
+    document.addEventListener("pointerdown", destravar, true);
+    document.addEventListener("keydown", destravar, true);
 
     this.mudarEstado("falando");
     this.eventos.onFaixaRemota?.(faixa.getTrack());
@@ -598,6 +766,7 @@ export class ChamadaJitsi {
     } catch {
       /* a faixa já pode ter sido descartada pela lib */
     }
+    alto.srcObject = null;
     alto.remove();
     this.remotas.delete(faixa);
     if (this.remotas.size === 0 && !this.desligando) this.mudarEstado("aguardando");

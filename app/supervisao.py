@@ -26,12 +26,12 @@ perfis, para a API e a navbar seguirem a mesma regra.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from . import armazenamento, auditoria, contrato
+from . import armazenamento, auditoria, auth, contrato
 from .auth import exigir_modulo
 from .cache_leitura import por_alguns_segundos
 
@@ -73,7 +73,11 @@ def _data_curta(bruto: object) -> str:
 
 @roteador.get("/entrevistas", dependencies=[PodeSupervisionar])
 @por_alguns_segundos(5)
-def por_entrevistador() -> dict[str, Any]:
+def por_entrevistador(
+    entrevistador: Annotated[str | None, Query(max_length=160)] = None,
+    pagina: Annotated[int, Query(ge=1)] = 1,
+    tamanho: Annotated[int, Query(ge=1, le=30)] = 8,
+) -> dict[str, Any]:
     """Quantas entrevistas cada um fez, e a lista de cada pessoa."""
     entrevistas = armazenamento.listar_resumo_supervisao()
     # O nome do cliente não está na entrevista, e abrir caso a caso seria uma
@@ -119,6 +123,15 @@ def por_entrevistador() -> dict[str, Any]:
         # grande, porque é pendência de dado, não desempenho de ninguém.
         key=lambda p: (p["entrevistador"] == SEM_NOME, -p["quantidade"]),
     )
+    chave_selecionada = _chave(entrevistador) if entrevistador else ""
+    if chave_selecionada == _chave(SEM_NOME):
+        chave_selecionada = SEM_NOME
+    if not chave_selecionada and itens:
+        entrevistador = str(itens[0]["entrevistador"])
+        chave_selecionada = _chave(entrevistador)
+
+    tamanho_real = max(1, min(int(tamanho or 8), 30))
+    pagina_pedida = max(1, int(pagina or 1))
     for pessoa in itens:
         pessoa["entrevistas"].sort(key=lambda x: str(x.get("criado_em") or ""), reverse=True)
         # O resumo de cada um, calculado AQUI e não na tela.
@@ -134,6 +147,23 @@ def por_entrevistador() -> dict[str, Any]:
         pessoa["ultima_em"] = next(
             (_data_curta(e.get("realizada_em") or e.get("criado_em")) for e in lista), ""
         )
+        pessoa["entrevistas"] = []
+
+    pagina_entrevistas = (
+        armazenamento.listar_resumo_supervisao_paginado(
+            entrevistador=str(entrevistador or ""),
+            pagina=pagina_pedida,
+            tamanho=tamanho_real,
+        )
+        if entrevistador
+        else {
+            "itens": [],
+            "total": 0,
+            "pagina": 1,
+            "tamanho": tamanho_real,
+            "paginas": 1,
+        }
+    )
 
     total = len(entrevistas)
     return {
@@ -155,6 +185,14 @@ def por_entrevistador() -> dict[str, Any]:
             ),
             "ao_vivo": sum(1 for e in entrevistas if e.get("gravacao_id")),
             "anexadas": sum(1 for e in entrevistas if not e.get("gravacao_id")),
+        },
+        "entrevistas": {
+            "entrevistador": entrevistador or "",
+            "itens": pagina_entrevistas["itens"],
+            "total": pagina_entrevistas["total"],
+            "pagina": pagina_entrevistas["pagina"],
+            "tamanho": pagina_entrevistas["tamanho"],
+            "paginas": pagina_entrevistas["paginas"],
         },
     }
 
@@ -182,7 +220,7 @@ def transcricao(entrevista_id: str) -> dict[str, Any]:
 
 
 @roteador.post("/entrevistas/{entrevista_id}/auditoria", dependencies=[PodeSupervisionar])
-def auditar_entrevista(entrevista_id: str) -> dict[str, Any]:
+def auditar_entrevista(entrevista_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
     """Lê a transcrição bruta e diz o que do roteiro não aparece nela.
 
     É POST e não GET porque cada chamada custa uma ida ao modelo: com GET, um
@@ -200,6 +238,7 @@ def auditar_entrevista(entrevista_id: str) -> dict[str, Any]:
         raise HTTPException(503, str(exc)) from exc
     relatorio["entrevista_id"] = entrevista_id
     relatorio["entrevistador"] = e.get("entrevistador") or SEM_NOME
+    armazenamento.salvar_auditoria_entrevista(entrevista_id, relatorio, usuario.nome)
     return relatorio
 
 

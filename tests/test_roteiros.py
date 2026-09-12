@@ -56,9 +56,16 @@ def main_teste() -> int:
 
         abertura = next(bloco for bloco in resposta.json()["blocos"] if bloco["id"] == "abertura")
         ids_abertura = [pergunta["id"] for pergunta in abertura["perguntas"]]
+        # O CPF abre a identificação: é ele que dispara a consulta à base e traz o
+        # resto preenchido. Depois vêm os campos que a consulta por CPF devolve
+        # (nascimento, mãe, endereço…), para conferência já na identificação.
         falhas += not checar(
-            ids_abertura == ["nome", "cpf", "uf", "municipio"],
-            "a abertura pede nome, CPF, UF e município nesta ordem",
+            ids_abertura[:5] == ["cpf", "nome", "estado_civil", "uf", "municipio"],
+            f"a abertura começa por CPF, nome, estado civil, UF e município ({ids_abertura[:5]})",
+        )
+        falhas += not checar(
+            {"nascimento", "mae", "endereco", "telefone", "email"} <= set(ids_abertura),
+            "a abertura traz os campos que a consulta por CPF preenche",
         )
         uf_residencia = next((p for p in perguntas if p["id"] == "uf"), None)
         municipio = next((p for p in perguntas if p["id"] == "municipio"), None)
@@ -104,16 +111,30 @@ def main_teste() -> int:
             not sem_opcoes, f"toda escolha e lista tem opções (vazias: {sem_opcoes or '—'})"
         )
 
-        # --- RG em três campos, como o contrato pede ---------------------
         ids = {p["id"] for p in perguntas}
+
+        # --- RG em três campos, como o contrato pede ---------------------
+        #
+        # A conferência é sobre o BLOCO `identificacao` ("Qualificação completa"),
+        # e não sobre o roteiro servido: o bloco existe mas ficou FORA do roteiro
+        # padrão de propósito — a qualificação cadastral passou a ser trabalho da
+        # Documentação, para a conversa não começar como formulário.
+        #
+        # O que segue protegido é o formato: `app/contrato.py` monta
+        # "portador(a) do RG nº ___, expedido por ___" a partir de `rg`,
+        # `rg_orgao` e `rg_uf`, então esses três campos não podem voltar a ser um
+        # campo só. ATENÇÃO: enquanto o bloco estiver fora do roteiro, o contrato
+        # sai com RG, nacionalidade e profissão em branco (voltam em `faltando`,
+        # para preencher à mão) — é decisão de produto, não defeito de código.
+        identificacao = {p.id: p for p in roteiros.IDENTIFICACAO.perguntas}
         falhas += not checar(
-            {"rg", "rg_orgao", "rg_uf"} <= ids,
+            {"rg", "rg_orgao", "rg_uf"} <= set(identificacao),
             "o RG está separado em número, órgão expedidor e UF",
         )
-        uf = next((p for p in perguntas if p["id"] == "rg_uf"), None)
+        uf = identificacao.get("rg_uf")
         falhas += not checar(
-            uf is not None and uf["tipo"] == "lista" and len(uf["opcoes"]) == 27,
-            "a UF é escolhida numa lista com as 27 unidades da federação",
+            uf is not None and uf.tipo == "lista" and len(uf.opcoes) == 27,
+            "a UF do RG é escolhida numa lista com as 27 unidades da federação",
         )
 
         buscas_estranhas = {p["busca"] for p in perguntas if p["busca"] not in BUSCAS_CONHECIDAS}
@@ -169,8 +190,9 @@ def main_teste() -> int:
     )
     abertura = next(b for b in corpo["blocos"] if b["id"] == "abertura")
     falhas += not checar(
-        [p["id"] for p in abertura["perguntas"]] == ["nome", "cpf", "uf", "municipio"],
-        "e ela pede nome, CPF, UF e município",
+        [p["id"] for p in abertura["perguntas"]][:5]
+        == ["cpf", "nome", "estado_civil", "uf", "municipio"],
+        "e ela abre por CPF, nome, estado civil, UF e município",
     )
     falhas += not checar(
         "identificacao" not in ordem,
@@ -195,10 +217,19 @@ def main_teste() -> int:
     # Fecho para tipo que não existe é frase que nunca aparece; e `relato` fica
     # de fora de propósito — ali o que se quer é que o cliente conte.
     fechos = corpo["fechos_por_tipo"]
-    tipos_no_roteiro = {p["tipo"] for b in corpo["blocos"] for p in b["perguntas"]}
+    # Contra os tipos de TODOS os blocos do módulo, não só os do roteiro servido:
+    # `data` só aparece em `identificacao`, que está fora do roteiro padrão hoje e
+    # pode voltar. Fecho para um tipo que não existe em lugar nenhum continua
+    # sendo frase que nunca aparece, e é isso que esta linha pega.
+    tipos_conhecidos = {
+        pergunta.tipo
+        for nome in dir(roteiros)
+        if isinstance(getattr(roteiros, nome), roteiros.Bloco)
+        for pergunta in getattr(roteiros, nome).perguntas
+    }
     falhas += not checar(
-        set(fechos) <= tipos_no_roteiro,
-        f"todo fecho é de um tipo que o roteiro usa (sobrando: {set(fechos) - tipos_no_roteiro})",
+        set(fechos) <= tipos_conhecidos,
+        f"todo fecho é de um tipo que algum bloco usa (sobrando: {set(fechos) - tipos_conhecidos})",
     )
     falhas += not checar(
         "relato" not in fechos,

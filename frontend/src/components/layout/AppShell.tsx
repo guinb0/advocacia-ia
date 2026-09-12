@@ -16,13 +16,20 @@ const ROTULO_TELA: Record<Tela, string> = {
   jurimetria: "Jurimetria",
   casos: "Casos",
   avulso: "Ler documento",
-  usuarios: "Usuários",
+  investigacao: "Investigação",
+  usuarios: "Administração",
   panorama: "Panorama",
+  operacao: "Operação",
   entrevista: "Entrevista guiada",
   supervisao: "Supervisão",
   dados: "Dados",
-  modelosDePeticao: "Identidade visual",
+  saudeAgente: "Saúde do agente",
+  modelosDePeticao: "Modelos de petição",
+  configuracaoAssinatura: "Assinatura eletrônica",
   catalogoRoteiros: "Roteiros",
+  glossarioDocumentos: "Glossário de documentos",
+  revisao: "Revisão do roteiro",
+  followup: "Follow-up",
   documentacao: "Documentação",
 };
 
@@ -41,6 +48,13 @@ const DESCRICAO_TELA: Record<Tela, string> = {
   dados: "Consulte as informações estruturadas do acervo.",
   modelosDePeticao: "Padronize a apresentação dos documentos jurídicos.",
   catalogoRoteiros: "Organize as perguntas usadas nos atendimentos.",
+  investigacao: "Busque e cruze informações públicas sobre a outra parte.",
+  operacao: "Distribuição dos atendimentos em curso e ligações registradas.",
+  saudeAgente: "Estado do agente jurídico e das integrações que ele usa.",
+  configuracaoAssinatura: "Credenciais e preferências da assinatura eletrônica.",
+  glossarioDocumentos: "Vocabulário dos tipos de documento aceitos no acervo.",
+  revisao: "Fila de petições a revisar, aprovação e métricas de revisão.",
+  followup: "Clientes com documento pendente e necessidade de contato.",
   documentacao: "Acompanhe pedidos, arquivos e entregas documentais.",
 };
 
@@ -63,7 +77,7 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
      * grudava. No celular o fluxo é o do documento: a página rola pelo `<body>`
      * (que já tem `overflow-x:hidden` e `max-width:100vw` em globals.css, o que
      * mata a rolagem horizontal), e a topbar `sticky top-0` gruda de verdade. */
-    <div className="min-h-dvh bg-transparent lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[252px_minmax(0,1fr)]">
+    <div className="app-shell min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[236px_minmax(0,1fr)]">
       <BarraLateral tela={tela} onNavegar={onNavegar} />
       <main className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-hidden">
         <div className="hidden shrink-0 border-b border-borda bg-papel/[0.82] px-7 py-3.5 shadow-[0_1px_0_rgba(16,32,51,0.03)] backdrop-blur-xl lg:block">

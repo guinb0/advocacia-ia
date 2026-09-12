@@ -344,6 +344,35 @@ async def ws_transcricao(ws: WebSocket):
                         # em vez de chegar depois do final e desfazer o texto.
                         sessao.estado = transcricao.Estado.FINISHING
                         final = await run_in_threadpool(sessao.transcrever_final)
+
+                        # O FIM DA CONVERSA, QUE NÃO CABIA EM NENHUM TRECHO
+                        #
+                        # O registro bruto da entrevista é feito de `trecho`, e
+                        # trecho só sai do que CONGELOU. No encerramento sobra
+                        # sempre uma cauda — o último parcial roda a cada
+                        # `SEGUNDOS_ENTRE_PARCIAIS` e o que está dentro da
+                        # `MARGEM_CAUDA_S` não congela —, e ela só é apurada
+                        # aqui, pelo passe final. Sem esta mensagem esse texto
+                        # morria: o `final` vai para a resposta da PERGUNTA em
+                        # curso e, na escuta contínua, não há pergunta nenhuma.
+                        # O .txt da entrevista e o que vai para o caso
+                        # terminavam alguns segundos antes da conversa — em cima
+                        # do fechamento com o cliente sobre os documentos.
+                        #
+                        # Tipo próprio, e não `trecho`: o cliente descarta
+                        # `trecho` quando já não está gravando (e aqui, depois
+                        # do `stop`, ele não está mais), e esse descarte existe
+                        # por um bom motivo que não se quer desfazer.
+                        resto = " ".join(
+                            p
+                            for p in (sessao.trecho_confirmado(), sessao.cauda_final)
+                            if p
+                        ).strip()
+                        if resto:
+                            await ws.send_json(
+                                {"type": "trecho_final", "sessionId": sid, "text": resto}
+                            )
+
                         await ws.send_json(
                             {
                                 "type": "final",
@@ -359,17 +388,29 @@ async def ws_transcricao(ws: WebSocket):
                     await ws.send_json({"type": "pong"})
 
             elif (dados := msg.get("bytes")) is not None:
-                sessao = _sessoes.obter(atual) if atual else None
-                if sessao is None:
-                    continue  # áudio fora de resposta ativa: descartado
                 pcm = transcricao.pcm_de_bytes(dados)
-                sessao.acrescentar(pcm)
-                # A gravação recebe o MESMO PCM, e não uma cópia do fluxo: é o
-                # que garante que o arquivo seja exatamente o que foi
-                # transcrito. Ela não tem o teto de 30 min da sessão — aquele
-                # protege memória, e isto vai para o disco.
+
+                # A GRAVAÇÃO VEM PRIMEIRO, E FORA DO `if` DA SESSÃO.
+                #
+                # Antes o áudio sem sessão ativa era descartado no topo deste
+                # ramo, e a gravação só recebia o que estivesse dentro de uma
+                # resposta aberta. O arquivo saía menor que o atendimento: nos
+                # manifestos, 920s de áudio para 1060s de relógio, em trechos
+                # com buracos — e, quando a sessão morria no meio (queda de
+                # conexão), o arquivo terminava ali, com o atendimento ainda
+                # correndo. O que o escritório pediu é o oposto: o áudio do
+                # atendimento INTEIRO, do "podemos começar?" ao encerramento.
+                #
+                # É o mesmo PCM que vai para o Whisper, não uma cópia do fluxo —
+                # o arquivo continua sendo exatamente o que foi transcrito, e
+                # agora também o que não coube em nenhuma sessão.
                 if grav is not None:
                     grav.acrescentar(pcm)
+
+                sessao = _sessoes.obter(atual) if atual else None
+                if sessao is None:
+                    continue  # sem resposta aberta: grava, mas não transcreve
+                sessao.acrescentar(pcm)
 
                 if sessao.iniciar_parcial():
                     tarefa = asyncio.create_task(_enviar_parcial(ws, sessao))

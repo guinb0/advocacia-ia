@@ -8,6 +8,7 @@ import type {
   Categoria,
   ConfigAssinatura,
   Documento,
+  DocumentosPendentesCaso,
   DocumentoDoCliente,
   EnderecoCep,
   Entrega,
@@ -18,6 +19,8 @@ import type {
   PortalEstado,
   PortalGerado,
   ProcessamentoEntrevista,
+  ProvedorAssinatura,
+  StatusProvedorAssinatura,
   RespostaEnvio,
   RoteiroCompleto,
   RoteiroImportado,
@@ -27,6 +30,11 @@ import type {
   TipoDocumento,
   CobrancaDocumentos,
   Triagem as TriagemResposta,
+  DuplicidadeDocumento,
+  EventoHistorico,
+  ImpactoTipoDocumento,
+  OpcoesReclassificacao,
+  TipoDocumentoGlossario,
 } from "./types";
 
 /**
@@ -77,12 +85,22 @@ export function urlApi(caminho: string): string {
 
 export class ApiError extends Error {
   readonly status?: number;
+  /** O corpo JSON da resposta de erro — é por onde o 409 de duplicidade traz a lista. */
+  readonly dados?: unknown;
 
-  constructor(message: string, options?: ErrorOptions & { status?: number }) {
+  constructor(message: string, options?: ErrorOptions & { status?: number; dados?: unknown }) {
     super(message, options);
     this.name = "ApiError";
     this.status = options?.status;
+    this.dados = options?.dados;
   }
+}
+
+export interface AtributosModeloVisual {
+  tamanho_fonte_pt?: number;
+  espacamento_linha?: number;
+  alinhamento?: string;
+  margens_cm?: { top?: number | null; right?: number | null; bottom?: number | null; left?: number | null };
 }
 
 export interface ModeloVisualPeticao {
@@ -99,6 +117,8 @@ export interface ModeloVisualPeticao {
   cor_texto: string;
   cor_destaque: string;
   mostrar_linha_cabecalho: boolean;
+  /** O que o sistema captou do padrão do .docx além da logo e da fonte. */
+  atributos?: AtributosModeloVisual;
 }
 
 export type ConfiguracaoVisualPeticao = Omit<
@@ -108,6 +128,48 @@ export type ConfiguracaoVisualPeticao = Omit<
 
 export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
   return comoJson(await buscar("/api/modelos/peticao/visual"));
+}
+
+export interface StatusWhatsapp {
+  configurado: boolean;
+  conectado: boolean;
+  /** "open" (conectado), "connecting", "close" (caído), "indisponivel"… */
+  estado: string;
+  instancia?: string;
+  /** Número pareado, formatado (+55 (DD) 9XXXX-XXXX), quando conectado. */
+  numero?: string;
+  /** Nome do perfil do WhatsApp conectado, quando a Evolution o expõe. */
+  perfil?: string;
+  erro?: string;
+  /** Identifica a versão do diagnóstico e denuncia backend antigo no deploy. */
+  diagnostico?: string;
+}
+
+/** Se o WhatsApp do escritório (Evolution) está conectado — para o painel. */
+export async function statusWhatsapp(): Promise<StatusWhatsapp> {
+  return comoJson(await buscar("/api/whatsapp/status"));
+}
+
+/** Pede um QR novo para religar a instância caída ou trocar de número. */
+export async function conectarWhatsapp(): Promise<{ qrcode: string; codigo: string; instancia: string }> {
+  return comoJson(await buscar("/api/whatsapp/conectar", { method: "POST" }));
+}
+
+/** Desliga o número do WhatsApp (logout) — depois é só escanear outro QR. */
+export async function desconectarWhatsapp(): Promise<{ desconectado: boolean; instancia: string }> {
+  return comoJson(await buscar("/api/whatsapp/desconectar", { method: "POST" }));
+}
+
+/** Guarda uma transcrição de atendimento como entrevista do caso. Aceita um
+ *  arquivo (.txt, .docx, .pdf); texto colado vira um .txt no cliente. É o que
+ *  destrava a análise/petição quando o caso ainda não tem entrevista gravada. */
+export async function enviarTranscricaoEntrevista(
+  casoId: string,
+  arquivo: File,
+): Promise<{ id: string; arquivo?: string }> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar(`/api/casos/${casoId}/entrevista`, { method: "POST", body: form }));
 }
 
 export async function enviarModeloVisualPeticao(
@@ -132,6 +194,55 @@ export async function salvarConfiguracaoVisualPeticao(
   }));
 }
 
+export interface ModeloContrato {
+  codigo: "contrato" | "procuracao" | "hipossuficiencia";
+  rotulo: string;
+  disponivel: boolean;
+  origem: "banco" | "docs" | "nenhuma";
+  arquivo: string;
+  enviado_por?: string;
+  atualizado_em?: string;
+}
+
+export async function listarModelosContrato(): Promise<ModeloContrato[]> {
+  const resposta = await comoJson<{ modelos: ModeloContrato[] }>(await buscar("/api/modelos"));
+  return resposta.modelos;
+}
+
+export async function enviarModeloContrato(codigo: ModeloContrato["codigo"], arquivo: File): Promise<ModeloContrato> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar(`/api/modelos/${encodeURIComponent(codigo)}`, { method: "POST", body: form }));
+}
+
+/** Skill/prompt que o escritório configura por categoria de petição — issue
+ *  "Configurar skill por modelo de petição". Local ao Acervo, não depende do
+ *  agente jurídico (`ia-juridica`) estar ativo. */
+export interface SkillDePeticao {
+  categoria: string;
+  nome: string;
+  instrucoes: string;
+  atualizado_por?: string;
+  atualizado_em?: string;
+}
+
+export async function listarSkillsDePeticao(): Promise<SkillDePeticao[]> {
+  return comoJson(await buscar("/api/modelos/peticao/skills"));
+}
+
+export async function salvarSkillDePeticao(
+  categoria: string,
+  instrucoes: string,
+): Promise<SkillDePeticao> {
+  return comoJson(
+    await buscar(`/api/modelos/peticao/skills/${encodeURIComponent(categoria)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instrucoes }),
+    }),
+  );
+}
+
 export async function enviarAvaliacaoGoogle(
   telefone: string,
   forcar = false,
@@ -149,7 +260,10 @@ export async function obterCobrancaDocumentos(casoId: string): Promise<CobrancaD
 
 export async function salvarCobrancaDocumentos(
   casoId: string,
-  config: Pick<CobrancaDocumentos, "ativa" | "telefone" | "intervalo_dias" | "incluir_opcionais">,
+  config: Pick<
+    CobrancaDocumentos,
+    "ativa" | "telefone" | "intervalo_dias" | "intervalo_horas" | "max_envios_dia" | "incluir_opcionais"
+  >,
 ): Promise<CobrancaDocumentos> {
   return comoJson(await buscar(`/api/whatsapp/casos/${encodeURIComponent(casoId)}/cobranca-documentos`, {
     method: "PUT",
@@ -168,6 +282,23 @@ export async function enviarDocumentosWhatsApp(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ incluir_opcionais: incluirOpcionais }),
+    },
+  ));
+}
+
+export async function dispararTesteCobrancaDocumentos(
+  casoId: string,
+  config?: Pick<
+    CobrancaDocumentos,
+    "ativa" | "telefone" | "intervalo_dias" | "intervalo_horas" | "max_envios_dia" | "incluir_opcionais"
+  >,
+): Promise<{ enviado: boolean; teste_temporario: boolean; ultimo_erro?: string }> {
+  return comoJson(await buscar(
+    `/api/whatsapp/casos/${encodeURIComponent(casoId)}/cobranca-documentos/teste-disparo`,
+    {
+      method: "POST",
+      headers: config ? { "Content-Type": "application/json" } : undefined,
+      body: config ? JSON.stringify(config) : undefined,
     },
   ));
 }
@@ -279,9 +410,21 @@ async function comoJson<T>(resposta: Response): Promise<T> {
       corpo && typeof corpo === "object" && "detail" in corpo
         ? String((corpo as { detail: unknown }).detail)
         : `Erro ${resposta.status}`;
-    throw new ApiError(detalhe, { status: resposta.status });
+    throw new ApiError(detalhe, { status: resposta.status, dados: corpo });
   }
   return corpo as T;
+}
+
+/** Os documentos parecidos, quando o erro é o 409 de duplicidade; `null` nos demais.
+ *
+ * O 409 também serve a outros conflitos (versão do glossário, categoria removida),
+ * então quem decide é o `codigo` do corpo, e não o status sozinho. */
+export function duplicidadesDoErro(erro: unknown): DuplicidadeDocumento[] | null {
+  if (!(erro instanceof ApiError) || erro.status !== 409) return null;
+  const dados = erro.dados as { codigo?: string; duplicidades?: DuplicidadeDocumento[] } | null;
+  return dados?.codigo === "DOCUMENTO_DUPLICADO" && Array.isArray(dados.duplicidades)
+    ? dados.duplicidades
+    : null;
 }
 
 export async function listarTipos(): Promise<TipoDocumento[]> {
@@ -403,13 +546,32 @@ export interface PaginaCarteira {
   };
   chegando_agora: { entrega: Entrega; cliente: string }[];
   pedidos: { casoId: string; cliente: string; faltantes: number; reenvios: number }[];
+  /** Categorias presentes na carteira, para a tela oferecer só o que existe. */
+  categorias: { codigo: string; nome: string }[];
 }
 
-/** A fila da carteira já montada e paginada pelo servidor (ver `app/carteira.py`). */
-export async function obterCarteira(pagina: number, tamanho: number): Promise<PaginaCarteira> {
-  return comoJson<PaginaCarteira>(
-    await buscar(`/api/carteira?pagina=${pagina}&tamanho=${tamanho}`),
-  );
+/** Filtros da carteira. Vazio/omesso significa "sem filtro". `situacao` usa o
+ *  mesmo vocabulário dos chips: critico, atencao, pedido, pronto. */
+export interface FiltrosCarteira {
+  busca?: string;
+  categoria?: string;
+  situacao?: string;
+  ordenar?: "risco" | "recente" | "parado" | "nome";
+}
+
+/** A fila da carteira já montada e paginada pelo servidor (ver `app/carteira.py`).
+ *  Os filtros vão ao servidor para valerem na carteira inteira, não só na página. */
+export async function obterCarteira(
+  pagina: number,
+  tamanho: number,
+  filtros: FiltrosCarteira = {},
+): Promise<PaginaCarteira> {
+  const params = new URLSearchParams({ pagina: String(pagina), tamanho: String(tamanho) });
+  if (filtros.busca?.trim()) params.set("busca", filtros.busca.trim());
+  if (filtros.categoria) params.set("categoria", filtros.categoria);
+  if (filtros.situacao) params.set("situacao", filtros.situacao);
+  if (filtros.ordenar && filtros.ordenar !== "recente") params.set("ordenar", filtros.ordenar);
+  return comoJson<PaginaCarteira>(await buscar(`/api/carteira?${params.toString()}`));
 }
 
 /** Abre o caso. O `telefone` é o WhatsApp que a entrevista colheu.
@@ -430,6 +592,35 @@ export async function criarCaso(
   form.append("observacao", observacao);
   form.append("telefone", telefone);
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
+}
+
+/** Grava a qualificação do cliente (o que o CPF puxou + o que foi digitado) no caso.
+ *
+ * Vai só o cadastro — nome e telefone já vivem no próprio caso. Campo vazio segue
+ * vazio e o backend o grava como NULL: o cadastro é opcional. Fica numa tabela à
+ * parte (`qualificacao`), 1:1 com o caso. */
+export async function salvarQualificacaoDoCaso(
+  casoId: string,
+  respostas: Record<string, string | string[]>,
+): Promise<void> {
+  const texto = (id: string) =>
+    typeof respostas[id] === "string" ? (respostas[id] as string).trim() : "";
+  await comoJson(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/qualificacao`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cpf: texto("cpf"),
+        nascimento: texto("nascimento"),
+        sexo: texto("sexo"),
+        nome_mae: texto("mae"),
+        cep: texto("cep"),
+        endereco: texto("endereco"),
+        email: texto("email"),
+        renda_estimada: texto("renda_estimada"),
+      }),
+    }),
+  );
 }
 
 /** Qualificação do cidadão pelo CPF, na base da Receita (Conecta gov.br).
@@ -476,15 +667,116 @@ export async function obterPedido(casoId: string, incluirOpcionais: boolean): Pr
   return comoJson<Pedido>(await buscar(`/api/casos/${casoId}/pedido${query}`));
 }
 
+export async function obterDocumentosPendentes(
+  casoId: string,
+  incluirOpcionais = false,
+): Promise<DocumentosPendentesCaso> {
+  const query = incluirOpcionais ? "?incluir_opcionais=true" : "";
+  return comoJson<DocumentosPendentesCaso>(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos/pendentes${query}`),
+  );
+}
+
 // ------------------------------------------------------ roteiro de entrevista
 
+const TTL_ROTEIROS_MS = 30_000;
+const TTL_CATALOGO_ROTEIROS_MS = 5 * 60_000;
+const roteirosCompletos = new Map<string, { ate: number; valor: Promise<RoteiroCompleto> }>();
+let catalogoRoteiros: { ate: number; valor: Promise<RoteiroResumo[]> } | null = null;
+let ultimoCatalogoRoteiros: RoteiroResumo[] | null = null;
+let ultimoAvisoCatalogoRoteiros = "";
+
+function invalidarCacheRoteiros(codigo?: string): void {
+  catalogoRoteiros = null;
+  ultimoCatalogoRoteiros = null;
+  ultimoAvisoCatalogoRoteiros = "";
+  if (codigo) roteirosCompletos.delete(codigo);
+  else roteirosCompletos.clear();
+}
+
 export async function obterRoteiro(codigo: string): Promise<RoteiroCompleto> {
-  return comoJson<RoteiroCompleto>(await buscar(`/api/roteiros/${codigo}`));
+  const agora = Date.now();
+  const existente = roteirosCompletos.get(codigo);
+  if (existente && existente.ate > agora) return existente.valor;
+  const valor = buscar(`/api/roteiros/${codigo}`).then((resposta) =>
+    comoJson<RoteiroCompleto>(resposta),
+  );
+  roteirosCompletos.set(codigo, { ate: agora + TTL_ROTEIROS_MS, valor });
+  valor.catch(() => roteirosCompletos.delete(codigo));
+  return valor;
 }
 
 export async function listarRoteiros(): Promise<RoteiroResumo[]> {
-  const dados = await comoJson<{ roteiros: RoteiroResumo[] }>(await buscar("/api/roteiros"));
-  return dados.roteiros;
+  const agora = Date.now();
+  if (catalogoRoteiros && catalogoRoteiros.ate > agora) return catalogoRoteiros.valor;
+  const valor = buscar("/api/roteiros")
+    .then((resposta) => comoJson<{ roteiros: RoteiroResumo[]; aviso_catalogo?: string }>(resposta))
+    .then((dados) => {
+      ultimoCatalogoRoteiros = dados.roteiros;
+      ultimoAvisoCatalogoRoteiros = dados.aviso_catalogo ?? "";
+      return dados.roteiros;
+    });
+  catalogoRoteiros = { ate: agora + TTL_CATALOGO_ROTEIROS_MS, valor };
+  valor.catch(() => {
+    if (catalogoRoteiros?.valor === valor) catalogoRoteiros = null;
+  });
+  return valor;
+}
+
+/** Permite abrir o seletor instantaneamente enquanto uma atualização acontece. */
+export function catalogoRoteirosEmCache(): RoteiroResumo[] | null {
+  return ultimoCatalogoRoteiros;
+}
+
+export function avisoCatalogoRoteirosEmCache(): string {
+  return ultimoAvisoCatalogoRoteiros;
+}
+
+export interface PaginaRoteiros {
+  roteiros: RoteiroResumo[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+  importados: number;
+  originais: number;
+}
+
+export async function listarRoteirosPaginado(
+  pagina: number,
+  tamanho: number,
+): Promise<PaginaRoteiros> {
+  const paginaSolicitada = Number.isFinite(pagina) ? Math.max(1, Math.floor(pagina)) : 1;
+  const tamanhoSolicitado = Number.isFinite(tamanho) ? Math.max(1, Math.floor(tamanho)) : 10;
+  const dados = await comoJson<Partial<PaginaRoteiros> & { roteiros?: RoteiroResumo[] }>(
+    await buscar(`/api/roteiros?pagina=${paginaSolicitada}&tamanho=${tamanhoSolicitado}`),
+  );
+  const numeroSeguro = (valor: unknown, fallback: number) =>
+    typeof valor === "number" && Number.isFinite(valor) ? valor : fallback;
+  const roteiros = dados.roteiros ?? [];
+  const total = Math.max(0, numeroSeguro(dados.total, roteiros.length));
+  const paginaAtual = Math.max(1, numeroSeguro(dados.pagina, paginaSolicitada));
+  const tamanhoAtual = Math.max(1, numeroSeguro(dados.tamanho, tamanhoSolicitado));
+  const paginas = Math.max(
+    1,
+    numeroSeguro(dados.paginas, Math.max(1, Math.ceil(total / tamanhoAtual))),
+  );
+  const importados = Math.min(
+    total,
+    Math.max(
+      0,
+      numeroSeguro(dados.importados, roteiros.filter((roteiro) => roteiro.importado).length),
+    ),
+  );
+  return {
+    roteiros,
+    total,
+    pagina: paginaAtual,
+    tamanho: tamanhoAtual,
+    paginas,
+    importados,
+    originais: Math.max(0, numeroSeguro(dados.originais, total - importados)),
+  };
 }
 
 /** Lê o documento anexado e monta um roteiro a partir dele.
@@ -531,22 +823,30 @@ export async function salvarRoteiro(
   roteiro: RoteiroCompleto,
   origem = "",
 ): Promise<RoteiroCompleto> {
-  return comoJson<RoteiroCompleto>(
+  const salvo = await comoJson<RoteiroCompleto>(
     await buscar("/api/roteiros", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roteiro, origem }),
     }),
   );
+  invalidarCacheRoteiros(roteiro.codigo);
+  roteirosCompletos.set(salvo.codigo, {
+    ate: Date.now() + TTL_ROTEIROS_MS,
+    valor: Promise.resolve(salvo),
+  });
+  return salvo;
 }
 
 /** Tira o roteiro do catálogo. Num que também existe em código, desfaz a edição. */
 export async function excluirRoteiroSalvo(
   codigo: string,
 ): Promise<{ revertido_para_o_modulo: boolean }> {
-  return comoJson<{ revertido_para_o_modulo: boolean }>(
+  const resultado = await comoJson<{ revertido_para_o_modulo: boolean }>(
     await buscar(`/api/roteiros/${codigo}`, { method: "DELETE" }),
   );
+  invalidarCacheRoteiros(codigo);
+  return resultado;
 }
 
 export interface AtendimentoDocumentacao {
@@ -640,12 +940,33 @@ export interface AchadoDocumento {
    *  achado cuja citação não existe no documento apontado não chega até aqui. */
   citacao: string;
   relevancia: string;
+  /** De quem é a informação: o cliente (titular), a empregadora (empresa), um
+   *  terceiro (médico, perito, testemunha…) ou indefinido quando não dá para
+   *  saber. Fechado no servidor; valor estranho vira "indefinido". */
+  parte?: "titular" | "terceiro" | "empresa" | "indefinido";
+  /** O envolvimento dessa pessoa no caso, em texto livre curto. */
+  papel?: string;
   /** O documento contradiz o que a entrevista registrou. */
   contradiz: boolean;
 }
 
+/** Um gasto comprovado num documento (nota, recibo, comprovante). A lista vem
+ *  do servidor JÁ em ordem cronológica e com a citação conferida. */
+export interface GastoDocumento {
+  valor: string;
+  /** Data do gasto (DD/MM/AAAA); pode vir vazia quando o documento não a traz. */
+  data: string;
+  descricao: string;
+  documento: string;
+  entrega_id: string;
+  citacao: string;
+}
+
 export interface AnaliseDocumentos {
   achados: AchadoDocumento[];
+  cronologia?: Array<{ data: string; evento: string; documento: string; entrega_id: string; citacao: string }>;
+  /** Gastos dos documentos, em ordem cronológica, ligados ao arquivo de origem. */
+  gastos?: GastoDocumento[];
   documentos_lidos: number;
   /** Quantos achados o servidor recusou por citação não conferida. Aparece na
    *  tela de propósito: silenciar esconderia um modelo alucinando com
@@ -659,6 +980,44 @@ export async function analisarDocumentosDoCaso(casoId: string): Promise<AnaliseD
   return comoJson(
     await buscar(`/api/casos/${encodeURIComponent(casoId)}/analise-documentos`, { method: "POST" }),
   );
+}
+
+export interface JurimetriaCaso {
+  disponivel: boolean;
+  aviso: string;
+  /** De onde vieram os números: "TRT8", "TRT2 + TRT15", "acervo nacional"… */
+  jurisdicao?: string;
+  sinais: { categoria: string; tem_entrevista: boolean; achados: string[]; uf?: string; uf_automatica?: boolean };
+  precedentes: {
+    processo: string | null;
+    /** O número com a pontuação do CNJ, para o advogado conferir e buscar. */
+    processo_formatado?: string | null;
+    /** "TRT8" — o link do processo diz para onde vai antes do clique. */
+    tribunal?: string | null;
+    resultado: string;
+    vara: string;
+    tipo_documento?: string | null;
+    similaridade: number | null;
+    url?: string | null;
+    trecho: string;
+  }[];
+  estatisticas: {
+    processos_analisados: number;
+    resultados: { nome: string; quantidade: number; percentual: number }[];
+    varas: { nome: string; quantidade: number; percentual: number }[];
+    desfechos_favoraveis_amplos: { quantidade: number; percentual: number; criterio: string };
+    desfechos_merito: { processos: number; favoraveis: number; percentual: number; criterio: string };
+    similaridade_amostra: { maxima: number; mediana: number; minima: number };
+    aviso: string;
+  } | null;
+}
+
+/** Cruza os fatos do caso (entrevista + achados do OCR) com o acervo de decisões:
+ *  precedentes semelhantes e a distribuição de desfechos por vara. Descritivo.
+ *  `uf` foca no TRT do estado (com fallback para a região e o país). */
+export async function jurimetriaDoCaso(casoId: string, uf = ""): Promise<JurimetriaCaso> {
+  const q = uf ? `?uf=${encodeURIComponent(uf)}` : "";
+  return comoJson(await buscar(`/api/casos/${encodeURIComponent(casoId)}/jurimetria${q}`));
 }
 
 /** Sorteia uma sala nova, ou pega o token para ENTRAR numa que já existe.
@@ -841,6 +1200,120 @@ export async function configAssinatura(): Promise<ConfigAssinatura> {
   return comoJson<ConfigAssinatura>(await buscar("/api/assinatura/config"));
 }
 
+/** Status de cada provedor (ZapSign, Clicksign, Autentique) — nunca o token. */
+export async function listarProvedoresAssinatura(): Promise<StatusProvedorAssinatura[]> {
+  const dados = await comoJson<{ provedores: StatusProvedorAssinatura[] }>(
+    await buscar("/api/assinatura/provedores"),
+  );
+  return dados.provedores;
+}
+
+/** Cifra e salva o token do escritório para Clicksign/Autentique. Não testa
+ *  sozinho — o botão "Testar conexão" (`testarProvedorAssinatura`) faz isso. */
+export async function salvarTokenProvedorAssinatura(
+  provedor: "clicksign" | "autentique",
+  token: string,
+): Promise<void> {
+  await comoJson(
+    await buscar(`/api/assinatura/provedores/${provedor}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+  );
+}
+
+/** Bate na API do provedor com o token salvo. Lança se a conexão falhar — a
+ *  mensagem de erro já vem pronta para a tela. */
+export async function testarProvedorAssinatura(
+  provedor: "clicksign" | "autentique",
+): Promise<{ ok: boolean; mensagem: string }> {
+  return comoJson(await buscar(`/api/assinatura/provedores/${provedor}/testar`, { method: "POST" }));
+}
+
+/** Torna o provedor escolhido o caminho de envio. Exige teste aprovado antes
+ *  (Clicksign/Autentique) — a ZapSign pode voltar a ser ativada a qualquer hora. */
+export async function ativarProvedorAssinatura(
+  provedor: ProvedorAssinatura,
+): Promise<{ ok: boolean; provedor_ativo: ProvedorAssinatura }> {
+  return comoJson(
+    await buscar("/api/assinatura/provedores/ativar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provedor }),
+    }),
+  );
+}
+
+/** Envia um documento à assinatura pelo SITE do ZapSign (plano sem API), via
+ *  navegador, e — havendo telefone e link — manda o link pela Evolution. */
+export async function enviarAssinaturaPeloSite(dados: {
+  arquivo: File;
+  clienteNome: string;
+  clienteEmail: string;
+  clienteWhatsapp?: string;
+}): Promise<{ ok: boolean; link: string; whatsapp_enviado: boolean }> {
+  const form = new FormData();
+  form.append("arquivo", dados.arquivo);
+  form.append("cliente_nome", dados.clienteNome);
+  form.append("cliente_email", dados.clienteEmail);
+  form.append("cliente_whatsapp", dados.clienteWhatsapp ?? "");
+  return comoJson(await buscar("/api/assinatura/navegador", { method: "POST", body: form }));
+}
+
+/** Gera os TRÊS documentos e os manda assinar de uma vez pela conta ZapSign
+ *  (site), num login só. Cada um volta com o seu link; havendo telefone, cada
+ *  link vai pelo WhatsApp. Demora o tempo da automação (~1 min por documento). */
+export async function enviarTodosParaAssinaturaSite(dados: {
+  respostas: Record<string, string | string[]>;
+  municipio?: string;
+  clienteWhatsapp?: string;
+}): Promise<{ ok: boolean; documentos: { rotulo: string; link: string }[]; whatsapp_enviado: boolean }> {
+  return comoJson(await buscar("/api/assinatura/navegador/todos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      respostas: dados.respostas,
+      municipio: dados.municipio ?? "",
+      cliente_whatsapp: dados.clienteWhatsapp ?? "",
+    }),
+  }));
+}
+
+/** Gera um documento no servidor e o manda assinar pela conta ZapSign (site),
+ *  num clique — sem baixar o PDF e reanexar. O convite sai por e-mail e, havendo
+ *  telefone, o link também vai pelo WhatsApp. Demora o tempo da automação. */
+export async function enviarDocumentoParaAssinaturaSite(dados: {
+  respostas: Record<string, string | string[]>;
+  documento: string;
+  municipio?: string;
+  clienteWhatsapp?: string;
+}): Promise<{ ok: boolean; link: string; whatsapp_enviado: boolean }> {
+  return comoJson(await buscar("/api/assinatura/navegador/documento", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      respostas: dados.respostas,
+      municipio: dados.municipio ?? "",
+      documento: dados.documento,
+      cliente_whatsapp: dados.clienteWhatsapp ?? "",
+    }),
+  }));
+}
+
+/** (Re)envia ao cliente, pelo WhatsApp, o link de assinatura já criado no ZapSign.
+ *  Serve quando o convite caiu no spam ou o telefone não estava à mão na criação. */
+export async function reenviarLinkAssinaturaSite(
+  telefone: string,
+  link: string,
+): Promise<{ enviado: boolean }> {
+  return comoJson(await buscar("/api/assinatura/navegador/whatsapp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ telefone, link }),
+  }));
+}
+
 /** Gera o contrato e o manda assinar. O .docx é o mesmo de `gerarContrato`. */
 export async function enviarParaAssinatura(
   respostas: Record<string, string | string[]>,
@@ -954,12 +1427,19 @@ export async function escutarTrecho(
   respostas: Record<string, string | string[]>,
   roteiro = "empregado_publico",
   perguntaAtual = "",
+  roteiroSnapshot?: RoteiroCompleto,
 ): Promise<Escuta> {
   return comoJson<Escuta>(
     await buscar("/api/entrevista/escuta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trecho, respostas, roteiro, pergunta_atual: perguntaAtual }),
+      body: JSON.stringify({
+        trecho,
+        respostas,
+        roteiro,
+        pergunta_atual: perguntaAtual,
+        roteiro_snapshot: roteiroSnapshot,
+      }),
     }),
   );
 }
@@ -978,11 +1458,17 @@ export async function processarEntrevista(
   transcricao: string,
   respostas: Record<string, string | string[]>,
   roteiro = "empregado_publico",
+  roteiroSnapshot?: RoteiroCompleto,
 ): Promise<ProcessamentoEntrevista> {
   const resposta = await buscar("/api/entrevista/processar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcricao, respostas, roteiro }),
+    body: JSON.stringify({
+      transcricao,
+      respostas,
+      roteiro,
+      roteiro_snapshot: roteiroSnapshot,
+    }),
   });
   return comoJson<ProcessamentoEntrevista>(
     explicarRotaDeProcessamento(resposta),
@@ -1017,7 +1503,15 @@ export async function analisarResposta(
 export async function recomendarEntrevista(
   relato: string,
   lacunasObrigatorias: string[],
+  roteiro: RoteiroCompleto,
 ): Promise<RecomendacaoEntrevista> {
+  const contextoRoteiro = [
+    `Roteiro ativo: ${roteiro.nome}`,
+    roteiro.descricao && `Objetivo: ${roteiro.descricao}`,
+    ...roteiro.blocos.map((bloco) =>
+      `${bloco.titulo}: ${bloco.perguntas.map((pergunta) => pergunta.texto).join(" | ")}`
+    ),
+  ].filter(Boolean).join("\n").slice(0, 12_000);
   return comoJson<RecomendacaoEntrevista>(
     await buscar("/api/entrevista/recomendacao", {
       method: "POST",
@@ -1025,6 +1519,7 @@ export async function recomendarEntrevista(
       body: JSON.stringify({
         relato,
         lacunas_obrigatorias: lacunasObrigatorias,
+        contexto_roteiro: contextoRoteiro,
         limite_precedentes: 12,
       }),
     }),
@@ -1073,12 +1568,15 @@ export async function enviarDocumento(
   arquivo: File,
   idioma = "pt",
   usarParaRgECpf = false,
+  /** Envia mesmo sendo idêntico a outro arquivo do caso (a confirmação fica no histórico). */
+  confirmarDuplicidade = false,
 ): Promise<RespostaEnvio> {
   const form = new FormData();
   form.append("item", itemCodigo);
   form.append("arquivo", arquivo);
   form.append("idioma", idioma);
   form.append("usar_para_rg_e_cpf", String(usarParaRgECpf));
+  form.append("confirmar_duplicidade", String(confirmarDuplicidade));
   return comoJson<RespostaEnvio>(
     await buscar(`/api/casos/${casoId}/documentos`, { method: "POST", body: form }),
   );
@@ -1188,15 +1686,103 @@ export async function definirPoliticaRevisao(
   );
 }
 
-/** Palavra final do escritório sobre o item de um documento já lido. */
-export async function reatribuirEntrega(entregaId: string, itens: string[]): Promise<Entrega> {
+
+/** Palavra final do escritório sobre o item e o tipo de um documento já lido.
+ *
+ * Com suspeita de duplicidade o servidor devolve 409 sem gravar — ver
+ * `duplicidadesDoErro` — e só `confirmarDuplicidade` conclui. */
+export async function reatribuirEntrega(
+  entregaId: string,
+  itens: string[],
+  opcoes: OpcoesReclassificacao = {},
+): Promise<Entrega> {
   return comoJson<Entrega>(
     await buscar(`/api/entregas/${entregaId}/itens`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itens }),
+      body: JSON.stringify({
+        itens,
+        tipo: opcoes.tipo || null,
+        confirmar_duplicidade: opcoes.confirmarDuplicidade ?? false,
+        motivo: opcoes.motivo ?? "",
+      }),
     }),
   );
+}
+
+/** Reclassificações, devoluções à triagem, repetidos aceitos e remoção do documento. */
+export async function historicoEntrega(entregaId: string): Promise<EventoHistorico[]> {
+  const r = await comoJson<{ eventos: EventoHistorico[] }>(
+    await buscar(`/api/entregas/${entregaId}/historico`),
+  );
+  return r.eventos;
+}
+
+// -------------------------------------------------- glossário de documentos
+// Consultar é livre para a equipe; criar e editar pedem o módulo
+// `glossario_documentos` (ver `app/tipos_documento.py`).
+
+export async function listarTiposDocumento(
+  incluirInativos = false,
+): Promise<TipoDocumentoGlossario[]> {
+  const r = await comoJson<{ tipos: TipoDocumentoGlossario[] }>(
+    await buscar(`/api/tipos-documento?incluir_inativos=${incluirInativos}`),
+  );
+  return r.tipos;
+}
+
+export async function criarTipoDocumento(dados: {
+  nome: string;
+  /** Vazio = gerado a partir do nome. */
+  codigo?: string;
+  descricao: string;
+  sinonimos: string[];
+  /** Categorias (tipos de caso) em cujo checklist o tipo passa a ser pedido. */
+  categorias: string[];
+}): Promise<TipoDocumentoGlossario> {
+  return comoJson(
+    await buscar("/api/tipos-documento", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
+export async function editarTipoDocumento(
+  codigo: string,
+  dados: {
+    nome: string;
+    descricao: string;
+    sinonimos: string[];
+    ativo: boolean;
+    /** A versão lida ao abrir o formulário; outra no servidor = 409. */
+    versao: number;
+    motivo?: string;
+    /** Ausente mantém os tipos de caso marcados; vazio desmarca todos. */
+    categorias?: string[];
+  },
+): Promise<TipoDocumentoGlossario> {
+  return comoJson(
+    await buscar(`/api/tipos-documento/${encodeURIComponent(codigo)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
+export async function impactoTipoDocumento(codigo: string): Promise<ImpactoTipoDocumento> {
+  return comoJson(
+    await buscar(`/api/tipos-documento/${encodeURIComponent(codigo)}/impacto`),
+  );
+}
+
+export async function historicoTipoDocumento(codigo: string): Promise<EventoHistorico[]> {
+  const r = await comoJson<{ eventos: EventoHistorico[] }>(
+    await buscar(`/api/tipos-documento/${encodeURIComponent(codigo)}/historico`),
+  );
+  return r.eventos;
 }
 
 export async function vincularIdentidadeUnificada(
@@ -1275,6 +1861,75 @@ export async function baixarDocumentosDoCaso(casoId: string): Promise<PacoteDocu
   };
 }
 
+/** ZIP só com as entregas marcadas DENTRO de uma classificação (um item do
+ * checklist). É a versão seletiva de `baixarDocumentosDoCaso`: o atendente
+ * escolheu a classificação, marcou alguns arquivos dela e leva só esses.
+ *
+ * O servidor recusa o pedido inteiro se algum id não for daquela classificação
+ * — a mensagem de erro já vem pronta em `detail`. */
+export async function baixarSelecaoDeDocumentos(
+  casoId: string,
+  classificacao: string,
+  entregas: string[],
+): Promise<PacoteDocumentos> {
+  const r = await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos.zip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ classificacao, entregas }),
+  });
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+  return {
+    arquivo: await r.blob(),
+    nome: nomeDoAnexo(r, "documentos.zip"),
+    arquivos: Number(r.headers.get("X-Arquivos") ?? 0),
+    faltando: Number(r.headers.get("X-Faltando") ?? 0),
+  };
+}
+
+export interface PacotePdfCombinado extends PacoteDocumentos {
+  /** Páginas do PDF final — PDF original preserva as próprias; imagem vira 1. */
+  paginas: number;
+}
+
+/** Os mesmos documentos marcados, mas combinados num PDF só em vez de um ZIP.
+ *
+ * Irmã de `baixarSelecaoDeDocumentos`: mesma seleção, mesmas guardas. O
+ * servidor recusa (415) se algum arquivo não for PDF nem imagem, ou se a soma
+ * de páginas passar do teto — nesses casos o ZIP continua sendo a opção. */
+export async function baixarSelecaoEmPdf(
+  casoId: string,
+  classificacao: string,
+  entregas: string[],
+): Promise<PacotePdfCombinado> {
+  const r = await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos.pdf`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ classificacao, entregas }),
+  });
+  if (!r.ok) {
+    const corpo = await r.json().catch(() => null);
+    throw new ApiError(
+      corpo && typeof corpo === "object" && "detail" in corpo
+        ? String((corpo as { detail: unknown }).detail)
+        : `Erro ${r.status}`,
+    );
+  }
+  return {
+    arquivo: await r.blob(),
+    nome: nomeDoAnexo(r, "documentos.pdf"),
+    arquivos: Number(r.headers.get("X-Arquivos") ?? 0),
+    paginas: Number(r.headers.get("X-Paginas") ?? 0),
+    faltando: Number(r.headers.get("X-Faltando") ?? 0),
+  };
+}
+
 /** URL absoluta do arquivo. Serve para abrir em nova aba quando não há
  * autenticação; com token ligado use `baixarArquivoEntrega`, porque `<img>` e
  * `<iframe>` não enviam o header Authorization e levariam 401. */
@@ -1338,6 +1993,12 @@ export interface ModuloDeAcesso {
   ordem?: number;
 }
 
+/** Quantas contas dependem de um perfil. É o tamanho do impacto de mexer nele. */
+export interface ContagemDeContas {
+  total: number;
+  ativos: number;
+}
+
 /** Um perfil com os módulos que ele alcança — a linha da matriz de acesso. */
 export interface PerfilComAcesso {
   id: number;
@@ -1349,6 +2010,23 @@ export interface PerfilComAcesso {
   criado_em: string;
   /** Códigos dos módulos marcados, na ordem do catálogo. */
   modulos: string[];
+  /** Contas ligadas a este perfil. Opcional porque só a matriz (protegida) a
+   *  traz — o vocabulário de `listarPerfis` sai sem token e não expõe isso. */
+  usuarios?: ContagemDeContas;
+}
+
+/** Uma alteração já feita em algum perfil — a linha do histórico. */
+export interface AlteracaoDePerfil {
+  id: number;
+  perfil: string;
+  /** `criado`, `atualizado` ou `removido`. */
+  acao: string;
+  /** Quem alterou: o e-mail da conta, que é o login do escritório. */
+  autor: string;
+  /** O que mudou, em uma linha. Vem pronto do servidor para a tela não
+   *  reconstruir a comparação e correr o risco de descrevê-la diferente. */
+  resumo: string;
+  criado_em: string;
 }
 
 export interface UsuarioCadastrado {
@@ -1356,9 +2034,19 @@ export interface UsuarioCadastrado {
   usuario: string;
   nome: string;
   email: string | null;
+  /** Só dígitos, como o servidor guarda. A máscara é da tela (`formatarTelefone`). */
+  telefone?: string;
   ativo: boolean;
   perfis: string[];
   perfilId?: number | null;
+}
+
+export interface UsuariosPaginados {
+  itens: UsuarioCadastrado[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
 }
 
 /** Os perfis que o cadastro oferece. Vêm do servidor para a tela não manter uma
@@ -1390,12 +2078,18 @@ export async function salvarPerfil(
   rotulo: string,
   descricao: string,
   modulos: string[],
-): Promise<void> {
-  await buscar(`/api/usuarios/perfis/${encodeURIComponent(codigo)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ codigo, rotulo, descricao, modulos }),
-  });
+): Promise<{ alteracao: { resumo: string } | null }> {
+  /* A resposta é lida, e não descartada: ela diz o que o servidor ENTENDEU da
+   * alteração — inclusive quando ele não gravou nada por não haver mudança. É
+   * isso que a tela mostra de volta, em vez de um "salvo" que não distingue as
+   * duas situações. */
+  return comoJson(
+    await buscar(`/api/usuarios/perfis/${encodeURIComponent(codigo)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigo, rotulo, descricao, modulos }),
+    }),
+  );
 }
 
 /** Apaga um perfil. Os de sistema recusam.
@@ -1407,14 +2101,65 @@ export async function removerPerfil(codigo: string): Promise<void> {
   await buscar(`/api/usuarios/perfis/${encodeURIComponent(codigo)}`, { method: "DELETE" });
 }
 
+/** As últimas alterações feitas nos perfis — quem mexeu, quando e no quê.
+ *
+ * A matriz mostra como o acesso ESTÁ; isto mostra como ele chegou aí. Sem o
+ * segundo, "quem abriu este módulo?" só se responde pela memória de alguém. */
+export async function listarHistoricoPerfis(limite = 30): Promise<AlteracaoDePerfil[]> {
+  const r = await comoJson<{ alteracoes: AlteracaoDePerfil[] }>(
+    await buscar(`/api/usuarios/perfis/historico?limite=${limite}`),
+  );
+  return r.alteracoes;
+}
+
+function normalizarPaginacaoUsuarios(
+  resposta: Partial<UsuariosPaginados>,
+  paginaPedida: number,
+  tamanhoPedido: number,
+): UsuariosPaginados {
+  const itens = Array.isArray(resposta.itens) ? resposta.itens : [];
+  const tamanho = Number.isFinite(resposta.tamanho)
+    ? Math.max(1, Math.floor(resposta.tamanho ?? tamanhoPedido))
+    : Math.max(1, Math.floor(tamanhoPedido));
+  const total = Number.isFinite(resposta.total)
+    ? Math.max(0, Math.floor(resposta.total ?? itens.length))
+    : itens.length;
+  const paginas = Number.isFinite(resposta.paginas)
+    ? Math.max(1, Math.floor(resposta.paginas ?? 1))
+    : Math.max(1, Math.ceil(total / tamanho));
+  const pagina = Number.isFinite(resposta.pagina)
+    ? Math.min(Math.max(1, Math.floor(resposta.pagina ?? paginaPedida)), paginas)
+    : Math.min(Math.max(1, Math.floor(paginaPedida)), paginas);
+
+  return { itens, total, pagina, tamanho, paginas };
+}
+
+export async function listarUsuariosPaginado(
+  pagina = 1,
+  tamanho = 12,
+): Promise<UsuariosPaginados> {
+  const paginaSegura = Number.isFinite(pagina) ? Math.max(1, Math.floor(pagina)) : 1;
+  const tamanhoSeguro = Number.isFinite(tamanho)
+    ? Math.min(Math.max(1, Math.floor(tamanho)), 50)
+    : 12;
+  const params = new URLSearchParams({
+    pagina: String(paginaSegura),
+    tamanho: String(tamanhoSeguro),
+  });
+  const r = await comoJson<Partial<UsuariosPaginados>>(
+    await buscar(`/api/usuarios?${params.toString()}`),
+  );
+  return normalizarPaginacaoUsuarios(r, paginaSegura, tamanhoSeguro);
+}
+
 export async function listarUsuarios(): Promise<UsuarioCadastrado[]> {
-  const r = await comoJson<{ itens: UsuarioCadastrado[] }>(await buscar("/api/usuarios"));
-  return r.itens;
+  return (await listarUsuariosPaginado()).itens;
 }
 
 export async function criarUsuario(dados: {
   nome: string;
   email: string;
+  telefone?: string;
   perfilId: number;
   senha: string;
 }): Promise<UsuarioCadastrado> {
@@ -1441,6 +2186,38 @@ export async function atualizarUsuario(
   dados: { nome: string; email: string; perfilId: number; senha: string; ativo: boolean },
 ): Promise<UsuarioCadastrado> {
   return comoJson<UsuarioCadastrado>(
+    await buscar(`/api/usuarios/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dados),
+    }),
+  );
+}
+
+/** A conta inteira como deve ficar depois da edição. */
+export interface EdicaoDeUsuario {
+  nome: string;
+  email: string;
+  /** Como foi digitado; o servidor guarda só os dígitos. Vazio apaga o telefone. */
+  telefone: string;
+  perfilId: number;
+  ativo: boolean;
+  /** Vazio mantém a senha atual — ela nunca volta do servidor, então não há o
+   *  que reenviar. */
+  senha: string;
+  /** Volta para a senha padrão, que obriga a pessoa a trocar ao entrar. */
+  redefinirSenha: boolean;
+}
+
+/** Edita uma conta existente. Só o secretário: para os demais o servidor responde 403.
+ *
+ * `alterados` diz o que de fato mudou (nomes de campo, nunca valores), e é isso
+ * que a tela repete — salvar sem mexer em nada volta com a lista vazia. */
+export async function editarUsuario(
+  id: string,
+  dados: EdicaoDeUsuario,
+): Promise<UsuarioCadastrado & { alterados: string[] }> {
+  return comoJson(
     await buscar(`/api/usuarios/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1479,6 +2256,15 @@ export interface PessoaSupervisao {
   ao_vivo: number;
   /** dd/mm/aaaa, já normalizada: `realizada_em` é texto livre e tem dois formatos. */
   ultima_em: string;
+}
+
+export interface EntrevistasSupervisaoPaginadas {
+  entrevistador: string;
+  itens: EntrevistaResumo[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
 }
 
 /** O que o escritório deve, em número. Pendências, não acertos — ver `app/supervisao.py`. */
@@ -1528,8 +2314,79 @@ export async function listarSupervisao(): Promise<{
   total_pessoas: number;
   sem_atribuicao: number;
   pendencias: PendenciasSupervisao;
+  entrevistas: EntrevistasSupervisaoPaginadas;
 }> {
   return comoJson(await buscar("/api/supervisao/entrevistas"));
+}
+
+export async function listarSupervisaoPaginada({
+  entrevistador,
+  pagina = 1,
+  tamanho = 8,
+}: {
+  entrevistador?: string | null;
+  pagina?: number;
+  tamanho?: number;
+} = {}): Promise<{
+  itens: PessoaSupervisao[];
+  total_entrevistas: number;
+  total_pessoas: number;
+  sem_atribuicao: number;
+  pendencias: PendenciasSupervisao;
+  entrevistas: EntrevistasSupervisaoPaginadas;
+}> {
+  const paginaSegura = Number.isFinite(pagina) ? Math.max(1, Math.floor(pagina)) : 1;
+  const tamanhoSeguro = Number.isFinite(tamanho) ? Math.min(Math.max(1, Math.floor(tamanho)), 30) : 8;
+  const params = new URLSearchParams({
+    pagina: String(paginaSegura),
+    tamanho: String(tamanhoSeguro),
+  });
+  if (entrevistador) params.set("entrevistador", entrevistador);
+
+  const dados = await comoJson<{
+    itens?: PessoaSupervisao[];
+    total_entrevistas?: number;
+    total_pessoas?: number;
+    sem_atribuicao?: number;
+    pendencias?: PendenciasSupervisao;
+    entrevistas?: Partial<EntrevistasSupervisaoPaginadas>;
+  }>(await buscar(`/api/supervisao/entrevistas?${params.toString()}`));
+
+  const entrevistas = dados.entrevistas ?? {};
+  const itens = Array.isArray(dados.itens) ? dados.itens : [];
+  const lista = Array.isArray(entrevistas.itens) ? entrevistas.itens : [];
+  const total = Number.isFinite(entrevistas.total) ? Math.max(0, Math.floor(entrevistas.total ?? 0)) : lista.length;
+  const tamanhoReal = Number.isFinite(entrevistas.tamanho)
+    ? Math.max(1, Math.floor(entrevistas.tamanho ?? tamanhoSeguro))
+    : tamanhoSeguro;
+  const paginas = Number.isFinite(entrevistas.paginas)
+    ? Math.max(1, Math.floor(entrevistas.paginas ?? 1))
+    : Math.max(1, Math.ceil(total / tamanhoReal));
+  const paginaReal = Number.isFinite(entrevistas.pagina)
+    ? Math.min(Math.max(1, Math.floor(entrevistas.pagina ?? paginaSegura)), paginas)
+    : Math.min(paginaSegura, paginas);
+
+  return {
+    itens,
+    total_entrevistas: dados.total_entrevistas ?? 0,
+    total_pessoas: dados.total_pessoas ?? 0,
+    sem_atribuicao: dados.sem_atribuicao ?? 0,
+    pendencias: dados.pendencias ?? {
+      sem_avaliacao: 0,
+      sem_dossie: 0,
+      sem_quem_conduziu: 0,
+      ao_vivo: 0,
+      anexadas: 0,
+    },
+    entrevistas: {
+      entrevistador: entrevistas.entrevistador ?? entrevistador ?? "",
+      itens: lista,
+      total,
+      pagina: paginaReal,
+      tamanho: tamanhoReal,
+      paginas,
+    },
+  };
 }
 
 export async function obterTranscricao(id: string): Promise<{
@@ -1730,4 +2587,108 @@ export interface PrazosAcervo {
 
 export async function prazosAcervo(): Promise<PrazosAcervo> {
   return comoJson(await buscar("/api/dados/prazos"));
+}
+
+// ------------------------------------------------------ Revisão de petições
+
+export interface PeticaoParaRevisar {
+  caso_id: string;
+  versao: number;
+  status: string;
+  atualizado_em: string;
+  cliente: string;
+  categoria: string;
+  /** Quem já está revisando esta versão (revisão aberta), se houver. */
+  revisor_andamento: string | null;
+  andamento_desde: string | null;
+}
+
+export interface MetricasRevisao {
+  revisadas: number;
+  aprovadas: number;
+  ajustes: number;
+  em_andamento: number;
+  tempo_medio_s: number;
+  por_revisor: {
+    revisor: string;
+    revisadas: number;
+    aprovadas: number;
+    ajustes: number;
+    tempo_total_s: number;
+    tempo_medio_s: number;
+  }[];
+  aviso: string;
+}
+
+/** As petições que precisam de revisão, da mais antiga para a mais nova. */
+export async function filaDeRevisao(): Promise<{ pendentes: PeticaoParaRevisar[] }> {
+  return comoJson(await buscar("/api/revisao/fila"));
+}
+
+/** Marca o início da revisão desta petição (idempotente). */
+export async function iniciarRevisao(casoId: string): Promise<unknown> {
+  return comoJson(await buscar(`/api/revisao/${encodeURIComponent(casoId)}/iniciar`, { method: "POST" }));
+}
+
+/** Aprova a petição ("aprovada") ou devolve para ajustes ("ajustes"). */
+export async function concluirRevisao(
+  casoId: string,
+  resultado: "aprovada" | "ajustes",
+): Promise<{ resultado: string; status_peticao: string; duracao_s: number }> {
+  return comoJson(await buscar(`/api/revisao/${encodeURIComponent(casoId)}/concluir`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resultado }),
+  }));
+}
+
+export async function metricasDeRevisao(minhas = false): Promise<MetricasRevisao> {
+  return comoJson(await buscar(`/api/revisao/metricas${minhas ? "?minhas=true" : ""}`));
+}
+
+// ------------------------------------------------- Relatório de follow-up
+
+export interface ClienteFollowUp {
+  caso_id: string;
+  cliente: string;
+  telefone: string;
+  documentos_faltantes: string[];
+  faltantes_total: number;
+  dias_parado: number;
+  follow_up_ativo: boolean;
+  precisa_ligar: boolean;
+  motivo_ligacao: string;
+  ultima_ligacao: Call | null;
+  /** Dias corridos desde a última ligação — `null` quando nunca ligaram. */
+  dias_desde_ligacao: number | null;
+}
+
+export interface RelatorioFollowUp {
+  clientes: ClienteFollowUp[];
+  total: number;
+  precisam_ligar: number;
+  regra: string;
+  aviso: string;
+}
+
+export interface Call {
+  id: string;
+  caso_id: string;
+  atendente_id: string;
+  atendente_nome: string;
+  realizada_em: string;
+  criado_em: string;
+}
+
+/** Clientes com documento obrigatório pendente, com alerta de necessidade de ligação. */
+export async function relatorioFollowUp(): Promise<RelatorioFollowUp> {
+  return comoJson(await buscar("/api/follow-up"));
+}
+
+export async function callHistory(caseId: string): Promise<{ calls: Call[] }> {
+  return comoJson(await buscar(`/api/casos/${encodeURIComponent(caseId)}/ligacoes`));
+}
+
+export async function registerCall(caseId: string): Promise<Call> {
+  return comoJson(await buscar(`/api/casos/${encodeURIComponent(caseId)}/ligacoes`, { method: "POST" }));
 }

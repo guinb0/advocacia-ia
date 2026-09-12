@@ -18,13 +18,16 @@ grava o upload temporário, cria uma linha em `jobs`, publica na fila
 - Redis lock `gpu:0`: compartilhado pelo Whisper e pelo OCR quando
   `OCR_USA_GPU=1`. Com a configuração medida atual, PaddleOCR continua em CPU.
 - Beat: limpa temporários a cada hora e marca jobs abandonados a cada 15 minutos.
+- Entregas enfileiradas cujo caso foi apagado são descartadas pelo worker do agente.
 
 ## Operação local
 
-`iniciar.ps1` sobe Redis, workers, Beat, API, frontend, Whisper e os painéis.
+`iniciar.ps1` sobe SQL Server local, Redis, workers, Beat, API, frontend, Whisper
+e os painéis.
 
 - App: <http://localhost:3000>
 - API: <http://127.0.0.1:8100/docs>
+- SQL Server: `127.0.0.1:14333`
 - Flower: <http://localhost:5555>
 - Prometheus: <http://localhost:9090>
 - Grafana: <http://localhost:3001>

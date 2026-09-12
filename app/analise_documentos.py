@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from . import armazenamento
+from . import armazenamento, cache_leitura
 
 log = logging.getLogger("analise_documentos")
 
@@ -56,14 +56,44 @@ MAX_CARACTERES_POR_DOCUMENTO = 6000
 
 #: Teto do conjunto. Acima disto o modelo passa a ignorar o meio do prompt, e o
 #: que ele ignora ninguém fica sabendo.
-MAX_CARACTERES_TOTAL = 40000
+#:
+#: Era 40 mil, e 40 mil derrubava metade de um caso de verdade. Medido no caso
+#: `da5a030b` (46 anexos, 57 mil caracteres de OCR): 15 documentos ficavam de
+#: fora — e não uns quaisquer. Ficavam fora 8 notas fiscais de farmácia, 7
+#: comprovantes de transporte, os exames e o plano de saúde: exatamente os papéis
+#: que carregam DATA e VALOR. A cronologia e os gastos eram montados sem ver os
+#: documentos que os produzem, e a tela dizia "cronologia dos fatos" para uma
+#: leitura feita sobre a outra metade do caso.
+MAX_CARACTERES_TOTAL = 90000
+
+#: Cada documento entra com PELO MENOS isto, mesmo num caso com muitos anexos.
+#: Uma nota fiscal cabe inteira aqui — é o que garante que nenhum TIPO de
+#: documento fique invisível só por estar no fim da lista.
+FATIA_MINIMA_POR_DOCUMENTO = 700
 
 TEMPO_MODELO_S = 60.0
 
 INSTRUCAO = """Você lê documentos de um processo trabalhista e aponta o que eles
 dizem e o caso ainda NÃO registrou.
 
-Devolva APENAS JSON: {"achados": [...]}
+Devolva APENAS JSON: {"achados": [...], "gastos": [...], "cronologia": [...]}
+
+Cada item de cronologia é um acontecimento do caso registrado em documento (acidente,
+atendimento, internação, cirurgia, exame, afastamento, decisão do INSS etc.):
+{"data":"DD/MM/AAAA","evento":"frase curta do que ocorreu","documento":"nome exato do arquivo","citacao":"trecho LITERAL que traz a data e o evento"}.
+Não inclua data de upload; sem data do acontecimento, não inclua o item.
+
+Cada gasto (despesa que o documento comprova — nota fiscal, recibo, comprovante
+de farmácia, transporte, consulta, exame, honorário etc.):
+{
+  "valor": "o valor em reais como está no documento, ex.: R$ 123,45",
+  "data": "a data DO GASTO no formato DD/MM/AAAA (a data da compra/serviço; se só
+           houver mês/ano, use 01 no dia; se não houver data, deixe vazio)",
+  "descricao": "o que foi pago, em poucas palavras (ex.: 'medicamentos', 'corrida
+                de aplicativo', 'consulta')",
+  "documento": "nome exato do arquivo, como veio na lista",
+  "citacao": "trecho LITERAL e contínuo do documento onde o valor aparece"
+}
 
 Cada achado:
 {
@@ -71,8 +101,18 @@ Cada achado:
   "documento": "nome exato do arquivo, como veio na lista",
   "citacao": "trecho LITERAL e contínuo do documento, copiado caractere a caractere",
   "relevancia": "por que isto importa para o caso, em uma frase",
+  "parte": "de quem é esta informação — um de: titular, terceiro, empresa, indefinido",
+  "papel": "o envolvimento dessa pessoa no caso, em poucas palavras (ex.: reclamante, empregadora, médico, perito, testemunha, preposto, sindicato). Vazio se não der para saber.",
   "contradiz": true se o documento contradiz o que a entrevista registrou, senão false
 }
+
+COMO PREENCHER "parte" E "papel":
+- "titular": o cliente do escritório, autor da ação — o dono do RG/CPF do caso.
+- "empresa": a empregadora / reclamada.
+- "terceiro": qualquer outra pessoa citada (médico que assinou o laudo, perito,
+  testemunha, preposto, colega, familiar). Em "papel", diga qual é o envolvimento.
+- "indefinido": não dá para saber de quem é a informação. Na dúvida, use este —
+  atribuir errado é pior que admitir que não se sabe.
 
 REGRAS QUE NÃO SE NEGOCIAM:
 
@@ -85,8 +125,23 @@ REGRAS QUE NÃO SE NEGOCIAM:
 4. Não deduza. "O laudo é de psiquiatra, então há transtorno mental" não é
    achado; "CID F43.1" escrito no laudo é.
 5. Nenhum achado é melhor que achado duvidoso. Lista vazia é resposta válida.
+6. Um GASTO também tem citação literal conferível, pela mesma regra. Registre
+   todo valor pago que o documento comprovar — cada nota/recibo pode ter vários.
+   O que não tiver valor em reais não é gasto. Não invente data.
 
-Máximo 12 achados, os mais relevantes primeiro."""
+Máximo 12 achados, os mais relevantes primeiro. Gastos: todos os que houver."""
+
+
+#: Vocabulário fechado de "de quem é a informação". Fechá-lo é o que permite ao
+#: painel agrupar e colorir sem adivinhar sinônimo; o texto livre do envolvimento
+#: fica em `papel`. Valor fora da lista vira "indefinido" — atribuir errado a
+#: prova a uma parte é pior que dizer que não se sabe.
+PARTES_VALIDAS = {"titular", "terceiro", "empresa", "indefinido"}
+
+
+def _normalizar_parte(bruto: Any) -> str:
+    valor = str(bruto or "").strip().lower()
+    return valor if valor in PARTES_VALIDAS else "indefinido"
 
 
 def _normalizar(texto: str) -> str:
@@ -103,14 +158,25 @@ def _normalizar(texto: str) -> str:
 
 
 def _documentos_do_caso(caso_id: str) -> list[dict[str, str]]:
-    """Nome e texto lido de cada anexo que tem leitura."""
+    """Nome e texto lido de cada anexo que tem leitura.
+
+    UMA consulta para o caso inteiro, e não uma por arquivo.
+
+    Antes eram `listar_entregas` + um `obter_entrega` por anexo — e `obter_entrega`
+    abre conexão própria e ainda vai perguntar ao agente jurídico se existe OCR
+    espelhado daquele arquivo. Medido em 12/09/2026 no caso `da5a030b` (46 anexos):
+    93 consultas e 27s só para montar esta lista, com a tela do advogado parada. E o
+    espelho do agente, que custava 46 dessas consultas, hoje não existe para
+    NENHUMA entrega do banco — a busca nunca acha nada.
+
+    `listar_extracoes_do_caso` já resolvia isso e foi criada para isto mesmo (ver o
+    docstring dela); este caminho simplesmente não a usava. O que se perde é o
+    enriquecimento pelo agente em entrega antiga sem extração local — inexistente
+    hoje, e ainda disponível em `obter_entrega` nas telas de um documento só.
+    """
     documentos = []
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        if not detalhe:
-            continue
-        extracao = detalhe.get("extracao") or {}
-        texto = str(extracao.get("texto_completo") or "").strip()
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        texto = str((entrega.get("extracao") or {}).get("texto_completo") or "").strip()
         if not texto:
             continue
         documentos.append(
@@ -137,21 +203,110 @@ def _fatos_conhecidos(caso_id: str) -> list[str]:
     return conhecidos
 
 
-def _montar_mensagem(documentos: list[dict[str, str]], conhecidos: list[str]) -> str:
+def _apelidos_de_arquivo(caminhos: Any) -> dict[str, str]:
+    """Nome curto do arquivo → caminho completo, SÓ quando o nome curto é único.
+
+    POR QUE ISTO EXISTE
+
+    Os anexos chegam com caminho ("HILDEBRANDO_.../04_Notas_Fiscais/Scanner_20250623
+    (25).pdf") e é o caminho que vai no cabeçalho de cada documento no prompt. O
+    modelo, ao apontar de onde tirou um gasto, responde com o NOME DO ARQUIVO —
+    "Scanner_20250623 (25).pdf". A conferência procurava esse texto como chave e
+    não achava, então TODO achado era recusado por "atribuição errada".
+
+    Medido no caso `da5a030b`: o modelo devolveu 19 gastos e 13 eventos de
+    cronologia, e os 46 anexos foram lidos. Recusados: todos. A tela mostrava
+    "cronologia dos fatos" vazia, como se os documentos não dissessem nada.
+
+    POR QUE SÓ QUANDO É ÚNICO
+
+    A conferência existe para impedir que uma citação seja atribuída ao documento
+    errado. Se duas pastas têm "Scanner_20250623 (2).pdf", resolver pelo nome
+    curto escolheria uma das duas no chute — exatamente o erro que a regra evita.
+    Nome curto repetido não ganha apelido, e o achado é recusado como antes.
+    """
+    candidatos: dict[str, list[str]] = {}
+    for bruto in caminhos:
+        caminho = str(bruto or "")
+        curto = caminho.replace(chr(92), "/").split("/")[-1]
+        if curto and curto != caminho:
+            candidatos.setdefault(curto, []).append(caminho)
+    return {curto: caminhos[0] for curto, caminhos in candidatos.items() if len(caminhos) == 1}
+
+
+def _resolver_arquivo(nome: str, conhecidos: dict[str, Any]) -> str:
+    """O caminho canônico do anexo que o modelo apontou, ou "" se não der para saber."""
+    if nome in conhecidos:
+        return nome
+    apelidos = _apelidos_de_arquivo(conhecidos)
+    return apelidos.get(str(nome).replace(chr(92), "/").split("/")[-1], "")
+
+
+def _cabecalho(arquivo: str) -> str:
+    """A linha que separa um anexo do outro no prompt. Também consome orçamento."""
+    return f"\n=== {arquivo} ===\n"
+
+
+def _fatia(texto: str, limite: int) -> str:
+    """O documento encurtado pelas DUAS pontas, não só pelo começo.
+
+    Numa nota fiscal o emitente e a data estão no cabeçalho e o VALOR TOTAL está
+    no pé. Cortar só o começo entregava ao modelo um gasto sem valor — e um gasto
+    sem valor não entra na lista de gastos nem na cronologia.
+    """
+    if len(texto) <= limite:
+        return texto
+    cabeca = int(limite * 0.62)
+    cauda = max(0, limite - cabeca - 8)
+    return texto[:cabeca] + "\n[…]\n" + (texto[-cauda:] if cauda else "")
+
+
+def _montar_mensagem(
+    documentos: list[dict[str, str]], conhecidos: list[str]
+) -> tuple[str, list[str]]:
+    """A mensagem do modelo e a lista do que NÃO couber nela.
+
+    TODO documento entra, com uma fatia do tamanho do orçamento dividido entre
+    eles. Antes era por ordem de chegada até o teto estourar, e aí um `break`
+    largava todo o resto — quem estivesse no fim da lista simplesmente não
+    existia para a análise, sem aparecer em lugar nenhum. Dividir é o que garante
+    que uma classe inteira de documento (as notas fiscais, no caso medido) não
+    fique invisível por causa da posição na fila.
+    """
     partes = ["O QUE A ENTREVISTA JÁ REGISTROU:"]
     partes.append("\n".join(f"- {c}" for c in conhecidos) if conhecidos else "- (nada ainda)")
     partes.append("\nDOCUMENTOS DO CASO:")
+
+    # O nome de cada anexo também ocupa lugar, e nestes casos ele é comprido
+    # ("HILDEBRANDO_.../04_Notas_Fiscais_Farmacia/Scanner_20250623 (12).pdf").
+    # Dividir o teto cru pelo número de documentos deixava o último de fora por
+    # causa dos cabeçalhos; o desconto é medido, não estimado.
+    quantos = max(1, len(documentos))
+    cabecalhos = sum(len(_cabecalho(doc["arquivo"])) for doc in documentos)
+    disponivel = max(0, MAX_CARACTERES_TOTAL - cabecalhos)
+    limite = min(
+        MAX_CARACTERES_POR_DOCUMENTO,
+        max(FATIA_MINIMA_POR_DOCUMENTO, disponivel // quantos),
+    )
+
     total = 0
+    fora: list[str] = []
     for doc in documentos:
-        bloco = f"\n=== {doc['arquivo']} ===\n{doc['texto']}"
+        bloco = _cabecalho(doc["arquivo"]) + _fatia(doc["texto"], limite)
         if total + len(bloco) > MAX_CARACTERES_TOTAL:
-            partes.append(
-                f"\n[{len(documentos)} documentos no caso; o restante não coube nesta análise]"
-            )
-            break
+            # `continue`, e não `break`: o próximo documento pode ser pequeno e
+            # ainda caber. O que não couber sai nomeado, para a tela poder dizer.
+            fora.append(doc["arquivo"])
+            continue
         partes.append(bloco)
         total += len(bloco)
-    return "\n".join(partes)
+
+    if fora:
+        partes.append(
+            f"\n[{len(fora)} de {len(documentos)} documentos não couberam nesta "
+            "análise: " + ", ".join(fora[:10]) + ("…]" if len(fora) > 10 else "]")
+        )
+    return "\n".join(partes), fora
 
 
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
@@ -171,7 +326,11 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
                 "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
-                "max_tokens": 2000,
+                # 12 achados com citação LITERAL passam de 1900 tokens — 2000 de
+                # teto truncava a resposta no meio e o JSON inteiro virava
+                # "ilegível", perdendo TODOS os achados de uma vez (não só o
+                # último). Folga larga; DeepSeek cobra pelo que gera, não pelo teto.
+                "max_tokens": 8000,
                 "messages": [
                     {"role": "system", "content": INSTRUCAO},
                     {"role": "user", "content": mensagem},
@@ -194,11 +353,26 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
 
 
 def analisar(caso_id: str) -> dict[str, Any]:
-    """Lê os anexos do caso e devolve o que eles dizem e a entrevista não pegou."""
+    """Lê os anexos do caso e devolve o que eles dizem e a entrevista não pegou.
+
+    A leitura é cara (uma volta na DeepSeek) e o mesmo caso a pede em dois pontos
+    quase juntos — o painel de jurimetria e o contexto da petição. Sem cache, cada
+    um paga a volta e, pior, podem divergir (o modelo não é 100% determinístico):
+    o painel mostraria um conjunto de achados e a peça citaria outro. A assinatura
+    é o `atualizado_em` do caso, que `_tocar_caso` bumpa a cada nova entrega ou
+    entrevista — documento novo invalida sozinho; nada muda, reaproveita.
+    """
+    caso = armazenamento.obter_caso(caso_id) or {}
+    return _analisar_cacheado(caso_id, str(caso.get("atualizado_em") or ""))
+
+
+@cache_leitura.por_alguns_segundos(300)
+def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
     documentos = _documentos_do_caso(caso_id)
     if not documentos:
         return {
             "achados": [],
+            "gastos": [],
             "documentos_lidos": 0,
             "aviso": (
                 "Nenhum anexo deste caso tem texto lido ainda. Envie os documentos "
@@ -207,7 +381,8 @@ def analisar(caso_id: str) -> dict[str, Any]:
         }
 
     conhecidos = _fatos_conhecidos(caso_id)
-    bruto = _chamar_modelo(_montar_mensagem(documentos, conhecidos))
+    mensagem, documentos_fora = _montar_mensagem(documentos, conhecidos)
+    bruto = _chamar_modelo(mensagem)
 
     # Índice por nome de arquivo, para conferir a citação contra o documento que
     # o modelo apontou — e não contra o conjunto. Citação que existe em OUTRO
@@ -227,7 +402,8 @@ def analisar(caso_id: str) -> dict[str, Any]:
             recusados += 1
             continue
 
-        corpo = texto_por_arquivo.get(arquivo)
+        arquivo = _resolver_arquivo(arquivo, texto_por_arquivo)
+        corpo = texto_por_arquivo.get(arquivo) if arquivo else None
         if corpo is None or _normalizar(citacao) not in corpo:
             # Citação que não está no documento apontado: pode ser invenção ou
             # troca de arquivo. Os dois são inaceitáveis num achado que vai
@@ -242,6 +418,10 @@ def analisar(caso_id: str) -> dict[str, Any]:
                 "entrega_id": id_por_arquivo[arquivo],
                 "citacao": citacao[:400],
                 "relevancia": str(item.get("relevancia") or "").strip()[:300],
+                # De quem é a informação e qual o envolvimento dessa pessoa: é o
+                # que separa, no painel, o dado do cliente do dado de um terceiro.
+                "parte": _normalizar_parte(item.get("parte")),
+                "papel": str(item.get("papel") or "").strip()[:80],
                 "contradiz": bool(item.get("contradiz")),
             }
         )
@@ -249,10 +429,97 @@ def analisar(caso_id: str) -> dict[str, Any]:
     if recusados:
         log.info("análise do caso %s: %d achado(s) recusados na conferência", caso_id, recusados)
 
+    gastos = _extrair_gastos(bruto, texto_por_arquivo, id_por_arquivo)
+    cronologia = []
+    for item in bruto.get("cronologia") or []:
+        if not isinstance(item, dict):
+            continue
+        arquivo = str(item.get("documento") or "").strip()
+        citacao = str(item.get("citacao") or "").strip()
+        data = str(item.get("data") or "").strip()
+        evento = str(item.get("evento") or "").strip()
+        if not (arquivo and citacao and data and evento):
+            continue
+        arquivo = _resolver_arquivo(arquivo, texto_por_arquivo)
+        corpo = texto_por_arquivo.get(arquivo) if arquivo else None
+        if corpo is None or _normalizar(citacao) not in corpo or _chave_data(data)[0]:
+            continue
+        cronologia.append({"data": data[:20], "evento": evento[:220], "documento": arquivo,
+                           "entrega_id": id_por_arquivo[arquivo], "citacao": citacao[:400]})
+    cronologia.sort(key=lambda evento: _chave_data(evento["data"]))
+
     return {
         "achados": achados[:12],
-        "documentos_lidos": len(documentos),
+        # Gastos comprovados nos documentos, EM ORDEM CRONOLÓGICA, cada um ligado
+        # ao arquivo de origem (issue "Organizar gastos em ordem cronológica").
+        "gastos": gastos,
+        "cronologia": cronologia,
+        "documentos_lidos": len(documentos) - len(documentos_fora),
+        # Quais anexos NÃO entraram, com nome. Um número sozinho ("31 de 46") não
+        # deixa ninguém conferir se o que faltou era importante — e o que faltava,
+        # no caso medido, eram justamente as notas fiscais.
+        "documentos_fora": documentos_fora,
+        "aviso_documentos_fora": (
+            f"{len(documentos_fora)} de {len(documentos)} anexos não couberam nesta "
+            "leitura e não estão refletidos na cronologia nem nos gastos."
+            if documentos_fora
+            else ""
+        ),
         # Contado e mostrado de propósito: silenciar a recusa esconderia um
         # modelo alucinando com frequência, que é o que precisa aparecer.
         "recusados": recusados,
     }
+
+
+#: A data do gasto para ordenar: "DD/MM/AAAA" vira "AAAAMMDD"; sem data, vai para
+#: o fim (a tupla começa com 1, e as datadas com 0).
+def _chave_data(bruto: str) -> tuple[int, str]:
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", str(bruto or ""))
+    if not m:
+        return (1, "")
+    dia, mes, ano = m.groups()
+    ano = ("20" + ano) if len(ano) == 2 else ano
+    try:
+        return (0, f"{int(ano):04d}{int(mes):02d}{int(dia):02d}")
+    except ValueError:
+        return (1, "")
+
+
+def _extrair_gastos(
+    bruto: dict[str, Any],
+    texto_por_arquivo: dict[str, str],
+    id_por_arquivo: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Gastos comprovados nos documentos, conferidos pela citação e ordenados.
+
+    Mesma regra dos achados: a citação tem de existir LITERALMENTE no documento
+    apontado — gasto sem prova conferível não entra. Cada gasto guarda o
+    `entrega_id` de origem para a tela/peça rastrear de onde veio. A ordenação é
+    pela data do gasto; sem data, vai para o fim (mantém, mas não some).
+    """
+    gastos: list[dict[str, Any]] = []
+    for item in bruto.get("gastos") or []:
+        if not isinstance(item, dict):
+            continue
+        arquivo = str(item.get("documento") or "").strip()
+        citacao = str(item.get("citacao") or "").strip()
+        valor = str(item.get("valor") or "").strip()
+        if not (arquivo and citacao and valor):
+            continue
+        arquivo = _resolver_arquivo(arquivo, texto_por_arquivo)
+        corpo = texto_por_arquivo.get(arquivo) if arquivo else None
+        if corpo is None or _normalizar(citacao) not in corpo:
+            continue
+        data = str(item.get("data") or "").strip()
+        gastos.append(
+            {
+                "valor": valor[:40],
+                "data": data[:20],
+                "descricao": str(item.get("descricao") or "").strip()[:120],
+                "documento": arquivo,
+                "entrega_id": id_por_arquivo[arquivo],
+                "citacao": citacao[:400],
+            }
+        )
+    gastos.sort(key=lambda g: _chave_data(g["data"]))
+    return gastos

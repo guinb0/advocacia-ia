@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 
 import { corDoScore, leituraDoScore, SELO_TOM, type TomSelo } from "@/lib/formato";
 
@@ -64,19 +65,36 @@ const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
     "enabled:hover:text-acao-forte disabled:text-tinta-desabilitada",
 };
 
-interface BotaoProps extends React.ComponentPropsWithoutRef<"button"> {
+export interface BotaoProps extends React.ComponentPropsWithoutRef<"button"> {
   variante?: BotaoVariante;
   /** Botão dentro de linha de lista. */
   pequeno?: boolean;
   /** 100% da largura do contêiner. */
   bloco?: boolean;
+  /** A ação deste botão está em andamento. */
+  carregando?: boolean;
+  /** Rótulo enquanto `carregando` — diga o que está acontecendo ("Lendo o documento…"). */
+  textoCarregando?: ReactNode;
 }
 
+/* `carregando` NÃO vira `disabled`, de propósito.
+ *
+ * O `disabled:` pinta o botão de cinza, e cinza quer dizer "indisponível":
+ * quem acabou de clicar via o botão apagar e concluía que o clique quebrou
+ * alguma coisa — e clicava de novo. Em andamento, o botão mantém a cor da
+ * variante, ganha o giro e o rótulo do que está acontecendo, e só o clique é
+ * engolido (`aria-busy` avisa o leitor de tela). Cinza fica para o que de fato
+ * não se pode usar, como "Próxima" na última página. */
 export function Botao({
   variante = "secundario",
   pequeno,
   bloco,
+  carregando,
+  textoCarregando,
   className,
+  children,
+  disabled,
+  onClick,
   ...props
 }: BotaoProps) {
   return (
@@ -86,10 +104,27 @@ export function Botao({
         variante !== "texto" && (pequeno ? "min-h-8 px-[11px] py-[6px] text-xs gap-[6px]" : "min-h-10 px-4 py-[9px]"),
         VARIANTE_BOTAO[variante],
         bloco && "w-full",
+        carregando && "cursor-progress",
         className,
       )}
       {...props}
-    />
+      disabled={carregando ? undefined : disabled}
+      aria-busy={carregando || undefined}
+      aria-disabled={carregando ? true : props["aria-disabled"]}
+      onClick={(evento) => {
+        if (carregando) {
+          // Também barra o envio do formulário quando o botão é `type="submit"`.
+          evento.preventDefault();
+          return;
+        }
+        onClick?.(evento);
+      }}
+    >
+      {carregando && (
+        <Loader2 aria-hidden className={cn("shrink-0 animate-spin", pequeno ? "size-[14px]" : "size-4")} />
+      )}
+      {carregando ? (textoCarregando ?? children) : children}
+    </button>
   );
 }
 
@@ -298,6 +333,66 @@ export function ValorTabela({ className, ...props }: React.ComponentPropsWithout
 
 export function ObservacaoTabela({ className, ...props }: React.ComponentPropsWithoutRef<"div">) {
   return <div className={cn("mt-1 text-tinta-3 text-xs leading-[1.5]", className)} {...props} />;
+}
+
+export function Paginacao({
+  pagina,
+  totalPaginas,
+  total,
+  inicio,
+  fim,
+  onPagina,
+  rotulo = "itens",
+  className,
+}: {
+  pagina: number;
+  totalPaginas: number;
+  total: number;
+  inicio: number;
+  fim: number;
+  onPagina: (pagina: number) => void;
+  rotulo?: string;
+  className?: string;
+}) {
+  const totalSeguro = Number.isFinite(total) ? Math.max(0, Math.floor(total)) : 0;
+  const paginasSeguro = Number.isFinite(totalPaginas)
+    ? Math.max(1, Math.floor(totalPaginas))
+    : 1;
+  if (totalSeguro === 0 || paginasSeguro <= 1) return null;
+
+  const paginaSeguro = Number.isFinite(pagina)
+    ? Math.min(Math.max(1, Math.floor(pagina)), paginasSeguro)
+    : 1;
+  const inicioSeguro = Number.isFinite(inicio)
+    ? Math.min(Math.max(0, Math.floor(inicio)), Math.max(0, totalSeguro - 1))
+    : 0;
+  const fimSeguro = Number.isFinite(fim)
+    ? Math.min(Math.max(inicioSeguro + 1, Math.floor(fim)), totalSeguro)
+    : Math.min(inicioSeguro + 1, totalSeguro);
+
+  return (
+    <div
+      className={cn(
+        "mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-borda pt-3 text-xs text-tinta-3",
+        className,
+      )}
+    >
+      <span className="min-w-0 truncate">
+        {inicioSeguro + 1}-{fimSeguro} de {totalSeguro} {rotulo}
+      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <Botao variante="secundario" pequeno disabled={paginaSeguro <= 1} onClick={() => onPagina(paginaSeguro - 1)}>
+          Anterior
+        </Botao>
+        <span className="tabular-nums text-tinta-2">
+          {paginaSeguro}/{paginasSeguro}
+        </span>
+        <Botao variante="secundario" pequeno disabled={paginaSeguro >= paginasSeguro} onClick={() => onPagina(paginaSeguro + 1)}>
+          Próxima
+        </Botao>
+      </div>
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------- cartão -- */

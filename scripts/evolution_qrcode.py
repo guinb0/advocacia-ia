@@ -1,4 +1,4 @@
-"""Conecta a instância do WhatsApp na Evolution API e mostra o QR Code.
+r"""Conecta a instância do WhatsApp na Evolution API e mostra o QR Code.
 
 O envio do link de avaliação (`app/whatsapp.py`) só funciona depois que alguém
 apontou a câmera do celular do escritório para um QR Code e a Evolution API
@@ -14,8 +14,8 @@ Se a instância já estiver pareada, ele diz isso e não gera QR nenhum.
     .venv\Scripts\python.exe -m scripts.evolution_qrcode
 
 Lê `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE` do `.env`.
-A chave nunca é impressa: um erro 401 aparece como "a chave foi recusada", e não
-como o valor da chave num log que depois vai parar em algum lugar.
+A chave e o corpo de respostas de erro nunca são impressos. Um HTTP 401 confirma
+rejeição da requisição, mas não basta para atribuir a causa à chave.
 """
 
 from __future__ import annotations
@@ -66,8 +66,12 @@ def main() -> int:
 
     with httpx.Client(base_url=base, headers=cabecalhos, timeout=30) as cliente:
         estado = cliente.get(f"/instance/connectionState/{instancia}")
-        if estado.status_code == 401:
-            return _erro("A Evolution API recusou a chave (401). Confira EVOLUTION_API_KEY.")
+        if estado.status_code in (401, 403):
+            return _erro(
+                f"A consulta de status recebeu HTTP {estado.status_code} [EVO-DIAG-2]. "
+                "Confira URL, proxy, instância e autenticação; o código não prova, "
+                "sozinho, erro na chave."
+            )
 
         if estado.status_code == 404:
             print(f"Instância '{instancia}' não existe ainda. Criando...")
@@ -76,7 +80,9 @@ def main() -> int:
                 json={"instanceName": instancia, "qrcode": True, "integration": "WHATSAPP-BAILEYS"},
             )
             if criacao.status_code >= 400:
-                return _erro(f"Não consegui criar a instância ({criacao.status_code}): {criacao.text}")
+                return _erro(
+                    f"Não consegui criar a instância (HTTP {criacao.status_code}) [EVO-DIAG-2]."
+                )
             corpo = criacao.json()
             qr = (corpo.get("qrcode") or {}).get("base64")
             if qr:
@@ -93,11 +99,13 @@ def main() -> int:
 
         conexao = cliente.get(f"/instance/connect/{instancia}")
         if conexao.status_code >= 400:
-            return _erro(f"Não consegui pedir o QR ({conexao.status_code}): {conexao.text}")
+            return _erro(
+                f"Não consegui pedir o QR (HTTP {conexao.status_code}) [EVO-DIAG-2]."
+            )
         corpo = conexao.json()
         qr = corpo.get("base64") or (corpo.get("qrcode") or {}).get("base64")
         if not qr:
-            return _erro(f"A Evolution API respondeu sem QR Code: {corpo}")
+            return _erro("A Evolution API respondeu sem QR Code [EVO-DIAG-2-QR-EMPTY].")
         _gravar_qrcode(qr)
         print("Escaneie pelo WhatsApp > Aparelhos conectados > Conectar aparelho.")
         print("O código vale ~40 segundos; rode de novo se expirar.")

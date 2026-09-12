@@ -66,6 +66,74 @@ Onde:
 - `perfil` referencia `acervo_tb_perfis.id`
 - `hasPermissao` usa `s` ou `n`
 
+### `acervo_perfil_alteracoes`
+
+Trilha do que o gestor muda nos perfis. Uma linha por alteração aceita:
+
+- `perfil_codigo`
+- `acao` — `criado`, `atualizado` ou `removido`
+- `autor` — o e-mail da conta que alterou (o login do escritório). Alteração
+  feita sem sessão — a inicialização, por exemplo — grava `desconhecido`, e com
+  a autenticação desligada grava `sessão sem autenticação`
+- `resumo` — o que mudou, em uma linha, com os **códigos** dos módulos (o rótulo
+  é editável e o registro precisa continuar significando a mesma coisa depois)
+- `antes` / `depois` — o estado completo do perfil em JSON
+- `criado_em`
+
+Duas decisões que valem registro:
+
+1. **Salvar sem mudar nada não gera linha.** Abrir a tela, clicar e desistir é
+   comum; uma trilha cheia desses registros esconde a alteração de verdade.
+2. **A gravação acontece na mesma transação da alteração.** Uma trilha escrita à
+   parte sobreviveria a uma alteração desfeita por erro, e passaria a afirmar uma
+   mudança que não aconteceu.
+
+Quando a alteração RETIRA módulo de um perfil em uso, o resumo termina com
+quantas contas usavam aquele perfil naquele momento — a auditoria precisa do
+tamanho do impacto sem ter de reconstruir depois quem usava o quê.
+
+## Quem altera, e por onde
+
+A matriz é editada em **Usuários → Perfis de acesso**
+(`frontend/src/components/PerfisDeAcesso.tsx`, montada dentro da tela de
+usuários). A tela mostra, por perfil: os módulos marcados, quantas contas
+dependem dele e um aviso antes de salvar quando a alteração tira acesso de
+contas ativas.
+
+As rotas de gestão exigem o módulo `usuarios` (`auth.exigir_modulo`), o que
+inclui:
+
+- `GET /api/usuarios/modulos` — catálogo de módulos
+- `GET /api/usuarios/perfis/matriz` — perfis, módulos e contagem de contas
+- `GET /api/usuarios/perfis/historico` — a trilha
+- `PUT /api/usuarios/perfis/{codigo}` — cria ou atualiza
+- `DELETE /api/usuarios/perfis/{codigo}` — apaga
+
+`GET /api/usuarios/perfis` continua **sem** exigência de módulo (a sessão, porém,
+segue exigida pelo middleware — `LIVRES_SEM_ADVOGADO` dispensa o papel de advogado,
+não a autenticação): é o vocabulário
+que alimenta o seletor do cadastro e não diz o que cada perfil alcança.
+
+O que é mutável pela tela: `rotulo`, `descricao` e os módulos. O `codigo` não —
+ele viaja no claim `perfil` do token e é comparado como texto exato, então mudá-lo
+invalidaria as sessões abertas. Perfil de sistema não é apagável, e perfil com
+conta vinculada também não (o servidor recusa, e a tela não oferece o botão).
+
+## Edição de contas: só o secretário
+
+`PUT /api/usuarios/{codigo}` altera nome, e-mail (o login), telefone, perfil, situação e
+senha de uma conta existente. `DELETE /api/usuarios/{codigo}` (desativar) segue a mesma
+regra. As duas exigem o **papel** `secretario` (`auth.exigir_papel`), e não um módulo —
+módulo se concede pela matriz, e o advogado, que também administra a matriz, poderia se
+dar esse poder com um clique. Cadastrar conta nova continua com o módulo `usuarios`.
+
+- O secretário não muda o próprio perfil nem desativa a própria conta.
+- Senha vazia mantém a atual; `redefinirSenha` volta para a senha padrão e obriga a troca.
+- Perfil trocado e conta desativada valem na hora (a autorização lê o banco a cada
+  requisição). E-mail trocado derruba a sessão aberta da pessoa. **Senha trocada não
+  derruba sessão aberta** — o token vale até 24 h; para cortar acesso agora, desative.
+- `telefone` é opcional e guardado só com dígitos (10 a 13).
+
 ## Compatibilidade
 
 As tabelas antigas continuam existindo:

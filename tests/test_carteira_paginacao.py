@@ -92,8 +92,20 @@ vistos = [s["caso"]["id"] for p in (pagina1, pagina3) for s in p["situacoes"]]
 checar(len(set(vistos)) == len(vistos), "nenhum caso aparece em duas páginas")
 
 print("\nOrdem por risco, medida na carteira inteira")
-primeiro = pagina1["situacoes"][0]["caso"]["id"]
+# `ordenar` explícito: o PADRÃO da fila é "recente" — no servidor
+# (`carteira.compor` e a rota em `app/main.py`) e na tela (`useCarteira`, que
+# trata qualquer outra ordem como filtro ativo). Este bloco mede a ordem por
+# RISCO, que é a opção "Ordem: risco de travar" do seletor; pedi-la é o que faz o
+# peso de `_peso` valer. Sem o parâmetro, o teste media a ordem por data e
+# acusava falha num comportamento correto.
+por_risco = carteira.compor(cadastro, entregas, pagina=1, tamanho=10, ordenar="risco")
+primeiro = por_risco["situacoes"][0]["caso"]["id"]
 checar(primeiro == "caso-24", "o caso a cobrar (último cadastrado) abre a página 1", primeiro)
+checar(
+    pagina1["situacoes"][0]["caso"]["id"] == "caso-00",
+    "a fila PADRÃO continua sendo por data de cadastro, não por risco",
+    pagina1["situacoes"][0]["caso"]["id"],
+)
 
 print("\nTriagem — a mesma em qualquer página")
 checar(pagina1["triagem"] == pagina3["triagem"], "contadores não mudam ao virar de página")

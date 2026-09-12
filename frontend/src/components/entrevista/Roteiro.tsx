@@ -12,30 +12,37 @@ import type { ReactNode, Ref } from "react";
 
 import { useSessao } from "@/lib/auth";
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, listarMunicipios, obterRoteiro, recomendarEntrevista, registrarAtendimentoDocumentacao } from "@/lib/api";
+import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, escutarTrecho, listarMunicipios, listarRoteiros, obterRoteiro, registrarAtendimentoDocumentacao } from "@/lib/api";
 import type { MunicipioLocalidade } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
+import { formatarTelefone } from "@/lib/formato";
+import {
+  CAMPOS_TECNICOS_DIGITADOS,
+  criarContextoRevisao,
+  respostasCompativeis,
+} from "@/lib/roteiroContexto";
+import type { RespostasRoteiro } from "@/lib/roteiroContexto";
 import type {
   AnaliseResposta,
   Bloco,
   CampoOuvido,
+  ContextoRevisaoRoteiro,
   EnderecoCep,
   Lembrete,
   Pergunta,
   PerguntaPendente,
-  RecomendacaoEntrevista,
   ProcessamentoEntrevista,
   RoteiroCompleto,
 } from "@/lib/types";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
-import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
-import VideoDaEntrevista from "@/components/entrevista/VideoDaEntrevista";
+import VideoDaEntrevista, { type ControlesVideo } from "@/components/entrevista/VideoDaEntrevista";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import SeletorDeRoteiro from "@/components/entrevista/SeletorDeRoteiro";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
 // Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
@@ -56,33 +63,16 @@ const T_SECUNDARIO =
   "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer enabled:hover:bg-papel-2";
 const T_ERRO = "mt-3 border-[1.5px] border-critico text-critico p-[10px] font-normal text-[12px] leading-[1.5] font-ui";
 const T_AVISO = "mt-[10px] mb-0 font-normal text-[11.5px] leading-[1.5] font-ui text-atencao";
+/* Mesmo padrão de banner de aviso já usado mais abaixo neste arquivo (borda
+ * esquerda + fundo) — reaproveitado aqui porque "falta preencher X para
+ * começar" é o aviso mais importante da tela (é o que trava o atendimento) e
+ * andava discreto demais dentro de T_AVISO: fácil de não notar com o cliente
+ * já na linha, principalmente quando o preenchimento automático por CPF deixa
+ * a maioria dos campos prontos e só um ou dois (tipicamente estado civil)
+ * ficam faltando sem chamar atenção. */
+const T_AVISO_BLOQUEIO =
+  "mt-3 border-l-4 border-atencao bg-atencao-claro px-3 py-[10px] font-normal text-[13px] leading-[1.5] font-ui text-tinta";
 const T_ACOES = "flex gap-[10px] items-center flex-wrap";
-
-/* Bloco "vale abrir este caso?" — cartão de recomendação com veredito colorido
- * e a análise comparativa entre processos semelhantes. */
-const RECOMENDACAO =
-  "mt-4 mb-5 p-4 border border-borda bg-papel-2 font-normal text-[13px] leading-[1.55] font-ui";
-const RECOMENDACAO_TOPO = "flex justify-between gap-3 text-tinta-3";
-const VEREDITO_BASE = "inline-block mt-3 px-[9px] py-[5px] rounded-[3px] font-bold tracking-[0.03em]";
-const VEREDITO_COR: Record<string, string> = {
-  sim: "bg-ok-claro text-ok",
-  com_ressalva: "bg-atencao-claro text-atencao",
-  atencao: "bg-critico-claro text-critico",
-};
-const VEREDITO_INDEFINIDO = "bg-papel text-tinta-3";
-const RESUMO_SUMMARY = "cursor-pointer font-semibold";
-const RESUMO_LINK = "text-inherit underline";
-const RESUMO_SMALL = "block mt-[10px] text-tinta-3";
-/* Lista fora do escopo da comparativa (lacunas/precedentes): o reset antigo
- * zerava padding mas não list-style, então o marcador de disco ficava colado
- * na borda — reproduzido aqui de propósito, não é engano. */
-const LISTA_BARE = "list-disc pl-0 m-0";
-const COMPARATIVA = "mt-4 pt-3.5 border-t border-borda";
-const COMPARATIVA_H4 = "m-0 mb-[6px] text-[15px]";
-const COMPARATIVA_DETAILS = "mt-[10px] p-[10px_12px] bg-papel border border-borda [&[open]>summary]:mb-2";
-const COMPARATIVA_LISTA = "m-0 pl-5";
-const COMPARATIVA_ITEM = "[&+&]:mt-2";
-const COMPARATIVA_SMALL = "block mt-[2px] text-tinta-3";
 
 /** Botão de escolha (sim/não, lista curta). "sim" ativo vira verde; qualquer
  * outra opção ativa vira escuro — nunca os dois ao mesmo tempo. */
@@ -103,11 +93,8 @@ function classeOpcao(ativa: boolean, sim: boolean): string {
  * Só as perguntas narrativas trazem gravador. Nome, CPF e RG são digitados:
  * número ditado o Whisper erra, e ninguém confere dígito lido de ouvido. */
 
-type Respostas = Record<string, string | string[]>;
-const CAMPOS_TECNICOS_DIGITADOS = new Set([
-  "nacionalidade", "nascimento", "estado_civil", "profissao", "rg", "rg_orgao",
-  "rg_uf", "mae", "pai", "cep", "endereco", "telefone", "email", "pis",
-]);
+type Respostas = RespostasRoteiro;
+const IDS_FIXOS_IDENTIFICACAO = new Set(["cpf", "nome", "estado_civil", "uf", "municipio"]);
 type TrechoAoVivo = { quando: number; texto: string; quem: "Entrevistador" | "Entrevistado" | "Falante não identificado" };
 
 /* Tudo que o `PainelEscuta` ("A ENTREVISTA ATÉ AQUI") precisa para se desenhar.
@@ -127,7 +114,7 @@ export interface EstadoEscuta {
   faltando: PerguntaPendente[];
   interpretando: boolean;
   captando: boolean;
-  pausado: boolean;
+  reconectando: boolean;
   ultimaFala: number | null;
   ultimoSom: number | null;
   nivelTipico: number | null;
@@ -210,7 +197,7 @@ export interface ManipuladorRoteiro {
    * identificam o cliente no contrato e na procuração. */
   sugestoesPendentes: () => number;
   /** Volta da revisão ao ponto exato do roteiro que precisa de complemento. */
-  irParaPergunta: (perguntaId: string) => void;
+  irParaPergunta: (perguntaId: string) => boolean;
   /** Aplica ao roteiro as respostas consolidadas pela revisão final. */
   atualizarRespostas: (respostas: Record<string, string | string[]>) => void;
   /** Somente o que uma pessoa digitou/corrigiu; é fonte de verdade para a IA. */
@@ -224,6 +211,8 @@ export interface ManipuladorRoteiro {
    * cliente diz coisas que valem estar no áudio. Devolve o `entrevistaId`, que
    * é por onde o arquivo é baixado depois. */
   encerrarGravacao: () => Promise<string>;
+  /** Fecha a gravação visual somente ao encerrar todo o atendimento. */
+  encerrarAtendimento: () => Promise<void>;
   /** Tudo que foi transcrito, na ordem, com o instante de cada trecho.
    *
    * É a transcrição BRUTA: a conversa como ela saiu do Whisper, sem passar
@@ -231,6 +220,9 @@ export interface ManipuladorRoteiro {
    * que foi dito — e é o que sobra para conferir uma interpretação duvidosa
    * seis meses depois. */
   transcricaoBruta: () => { quando: number; texto: string }[];
+  /** Versão do roteiro em uso, inclusive alterações feitas nesta entrevista. */
+  assinaturaRoteiro: () => string;
+  codigoRoteiro: () => string;
 }
 
 /** De onde vem o áudio que está sendo transcrito. */
@@ -291,6 +283,7 @@ const MAXIMO_SEGURANDO_S = 40;
  * 20s porque é o intervalo típico entre dois preenchimentos numa conversa
  * corrida — abaixo disso a placa piscaria a cada pausa para respirar. */
 const SEGUNDOS_FLUINDO = 20;
+const MS_ESPERA_IDENTIFICACAO_COMPLETA = 1000;
 
 /** Tem valor? Mesmo critério de `escuta._respondida`, no backend. */
 function respondida(valor: string | string[] | undefined): boolean {
@@ -316,6 +309,8 @@ interface Props {
   /** O estado do painel "A ENTREVISTA ATÉ AQUI", para a tela de fora desenhá-lo
    *  na coluna da chamada. `null` enquanto a escuta não abriu (ou ao desmontar). */
   onEscuta?: (estado: EstadoEscuta | null) => void;
+  /** A versão exata que a tela mostra e que a IA deve revisar. */
+  onContextoRevisao?: (contexto: ContextoRevisaoRoteiro | null) => void;
   ref?: Ref<ManipuladorRoteiro>;
 }
 
@@ -323,13 +318,14 @@ export default function Roteiro({
   codigo = "empregado_publico",
   onRespostas,
   onEscuta,
+  onContextoRevisao,
   ref,
 }: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
-  /* O roteiro é editável no meio do atendimento. Só isto vive aqui em cima: o
-   * painel de edição é um componente à parte, e o que ele devolve substitui o
-   * `roteiro` desta sessão. As RESPOSTAS não são tocadas — elas são guardadas
-   * por id de pergunta, e reescrever um enunciado não muda o id. */
+  /* O roteiro é editável no meio do atendimento. O painel de edição é um
+   * componente à parte, e o que ele devolve substitui o roteiro da sessão.
+   * Dados cadastrais sobrevivem; respostas de perguntas removidas ou alteradas
+   * são descartadas por `respostasCompativeis`. */
   const [editandoRoteiro, setEditandoRoteiro] = useState(false);
   /* Escolher OUTRO roteiro do catálogo — o caso comum do botão "Alterar
    * roteiro". Editar o atual virou ação secundária dentro do seletor. */
@@ -354,6 +350,8 @@ export default function Roteiro({
      *  pode ser reiniciado junto com `em`. */
     desde: number;
   } | null>(null);
+  const identificacaoCompletaEm = useRef<number | null>(null);
+  const chaveIdentificacaoCompleta = useRef("");
   /* Quando um campo QUALQUER foi preenchido pela última vez. É o sinal de que a
    * entrevista está andando, mesmo que fora da ordem do roteiro. */
   const [ultimoPreenchimento, setUltimoPreenchimento] = useState<number | null>(null);
@@ -382,10 +380,6 @@ export default function Roteiro({
   fonteAtual.current = fonte;
 
   const [conferencias, setConferencias] = useState<Record<string, EstadoConferencia>>({});
-  const [recomendacaoCaso, setRecomendacaoCaso] = useState<RecomendacaoEntrevista | null>(null);
-  const [erroRecomendacao, setErroRecomendacao] = useState<string | null>(null);
-  const [atualizandoRecomendacao, setAtualizandoRecomendacao] = useState(false);
-  const ultimoRelatoRecomendado = useRef("");
 
   /* A escuta chegou ao fim e o áudio pode ser oferecido. Quem grava é o
    * servidor, do mesmo PCM que alimenta a transcrição — ver `app/gravacao.py` e
@@ -401,7 +395,11 @@ export default function Roteiro({
   /* Vídeo gravado e ainda não baixado. Ao contrário do áudio, ele não está em
    * lugar nenhum além desta aba — concluir a entrevista o destrói. */
   const videoPendente = useRef(false);
-  const irParaRef = useRef<(perguntaId: string) => void>(() => undefined);
+  /* O comando de fechar e baixar o vídeo, entregue pelo painel. É o
+   * `encerrarGravacao` que o aciona: o vídeo só existe nesta aba, e sair sem
+   * baixar o perdia. */
+  const controlesVideo = useRef<ControlesVideo | null>(null);
+  const irParaRef = useRef<(perguntaId: string) => boolean>(() => false);
 
   /* ---------------------------------------------------- escuta contínua
    *
@@ -454,6 +452,8 @@ export default function Roteiro({
    * duas rodadas simultâneas mandariam o mesmo `respostas` desatualizado e a
    * segunda desfaria o preenchimento da primeira. A fila serializa, e o trecho
    * que chega enquanto uma roda espera a vez. */
+  const filaTrechos = useRef<string[]>([]);
+  const escutaEmCurso = useRef(false);
   /* A conversa inteira, como o Whisper a devolveu, na ordem.
    *
    * Num ref e não em estado: cresce a cada frase de uma conversa de trinta
@@ -473,6 +473,9 @@ export default function Roteiro({
   respostasRef.current = respostas;
   const roteiroRef = useRef<RoteiroCompleto | null>(null);
   roteiroRef.current = roteiro;
+  const roteiroIaRef = useRef<RoteiroCompleto | null>(null);
+  const idsRenderizaveisRef = useRef<Set<string>>(new Set());
+  const idsNoAcordeaoRef = useRef<Set<string>>(new Set());
   /* Último texto já conferido, por pergunta. Sem isto, sair e voltar à caixa de
    * texto dispararia uma conferência a cada clique — e cada uma é uma chamada
    * ao modelo, numa tela em que o entrevistador clica o tempo todo. */
@@ -552,6 +555,93 @@ export default function Roteiro({
   const conferirRef = useRef(conferir);
   conferirRef.current = conferir;
 
+  /* A interpretação por trecho foi removida do caminho ao vivo.
+   *
+   * Cada volta manda o trecho e o estado ATUAL das respostas: é assim que a
+   * escuta sabe o que já foi respondido e não repete pergunta. Por isso a
+   * serialização importa — mandar duas em paralelo é mandar duas vezes o mesmo
+   * estado velho. */
+  const consumirFila = useCallback(async () => {
+    if (escutaEmCurso.current) return;
+    escutaEmCurso.current = true;
+    setOuvindo(true);
+    try {
+      while (filaTrechos.current.length > 0) {
+        // Junta o que se acumulou: se três trechos entraram enquanto a chamada
+        // anterior rodava, eles são uma frase só para quem vai interpretá-los.
+        const trecho = filaTrechos.current.join(" ").trim();
+        filaTrechos.current = [];
+        if (!trecho) continue;
+
+        const r = await escutarTrecho(
+          trecho,
+          respostasRef.current,
+          roteiroIaRef.current?.codigo ?? roteiroRef.current?.codigo ?? codigo,
+          atualRef.current,
+          roteiroIaRef.current ?? undefined,
+        );
+        setErroEscuta(null);
+        setFaltando(r.faltando);
+        setLembretes(r.lembretes);
+        if (r.sugestoes.length) {
+          // Sugestão nova de um campo substitui a anterior daquele campo: o
+          // cliente que repete o CPF está corrigindo, não acrescentando.
+          setSugestoes((atuais) => [
+            ...atuais.filter((s) => !r.sugestoes.some((n) => n.pergunta_id === s.pergunta_id)),
+            ...r.sugestoes,
+          ]);
+        }
+        if (r.preenchidas.length) {
+          /* Caiu trecho NA pergunta da vez: ele está respondendo ESTA, e a
+           * condução espera ele terminar. Cair em outra pergunta não segura
+           * nada — é resposta adiantada, e adiantar é justamente o que faz a
+           * entrevista encurtar. */
+          if (r.preenchidas.some((p) => p.pergunta_id === atualRef.current)) {
+            setRespondendoAgora((anterior) => {
+              const agora = Date.now();
+              // Só preserva o `desde` se ainda for a MESMA pergunta; trocou de
+              // pergunta, o teto recomeça, senão a segunda herdaria o relógio
+              // gasto pela primeira e nem chegaria a segurar.
+              return anterior && anterior.id === atualRef.current
+                ? { ...anterior, em: agora }
+                : { id: atualRef.current, em: agora, desde: agora };
+            });
+          }
+          // Caiu em qualquer pergunta: a entrevista está andando, e a cobrança
+          // recolhe enquanto isso durar.
+          setUltimoPreenchimento(Date.now());
+          setRespostas((atuais) => {
+            const novo = { ...atuais };
+            for (const p of r.preenchidas) {
+              const anterior = String(novo[p.pergunta_id] ?? "").trim();
+              // Acrescenta em vez de substituir: o cliente volta ao assunto
+              // várias vezes numa conversa, e o segundo trecho complementa o
+              // primeiro em vez de apagá-lo.
+              novo[p.pergunta_id] = anterior ? `${anterior} ${p.valor}` : p.valor;
+            }
+            return novo;
+          });
+          setOuvidas((atuais) => [
+            ...atuais.filter((o) => !r.preenchidas.some((n) => n.pergunta_id === o.pergunta_id)),
+            ...r.preenchidas,
+          ]);
+        }
+      }
+    } catch (e) {
+      // A escuta falhando não pode parar a entrevista: a conversa continua e os
+      // campos seguem editáveis à mão.
+      setErroEscuta(
+        e instanceof Error ? e.message : "A escuta automática falhou. Digite à mão.",
+      );
+    } finally {
+      escutaEmCurso.current = false;
+      setOuvindo(false);
+    }
+  }, [codigo]);
+
+  const consumirFilaRef = useRef(consumirFila);
+  consumirFilaRef.current = consumirFila;
+
   if (captura.current === null && typeof window !== "undefined") {
     captura.current = new CapturaEntrevista({
       onParcial: (texto) => {
@@ -603,14 +693,29 @@ export default function Roteiro({
         );
         ultimoFalante.current = quem;
         setTranscricaoVisivel((atuais) => [...atuais, { ...trecho, quem }].slice(-60));
-        /* Trecho do entrevistador (leitura do roteiro / saudação) não vai para
-         * a escuta: o modelo já confunde pergunta com resposta, e mandar a
-         * fala de quem conduz piora. Na faixa da chamada tudo é Entrevistado. */
-        /* A transcrição é contínua, mas a interpretação não acontece mais a
-         * cada frase. A pré-análise relê janelas maduras da conversa e aplica
-         * uma consolidação coerente; no fim, a entrevista inteira é relida.
-         * Isso evita que um fragmento provisório faça o formulário saltar ou
-         * que uma afirmação posterior seja apenas concatenada à anterior. */
+        /* TUDO vai para a LLM — pergunta E resposta. Antes a fala classificada
+         * como "Entrevistador" era descartada aqui; mas a classificação erra, e
+         * cada trecho descartado é interação que nunca chega ao modelo. O rótulo
+         * `quem` fica só para colorir a tela; a extração recebe a conversa
+         * inteira, como texto único, e interpreta o que é pergunta e o que é
+         * resposta. */
+        filaTrechos.current.push(texto.trim());
+        void consumirFilaRef.current();
+      },
+      /* A cauda do atendimento, no encerramento. Vai SÓ para o registro bruto:
+       * a fila da escuta não recebe nada aqui, senão uma extração atrasada
+       * poderia reescrever campo que já foi conferido à mão. */
+      onCauda: (texto) => {
+        const limpo = texto.trim();
+        if (!limpo) return;
+        const trecho = { quando: Date.now(), texto: limpo };
+        transcricaoBruta.current.push(trecho);
+        setTranscricaoVisivel((atuais) =>
+          [
+            ...atuais,
+            { ...trecho, quem: ultimoFalante.current ?? "Falante não identificado" },
+          ].slice(-60),
+        );
       },
       onFinal: (texto) => {
         const id = emGravacao.current;
@@ -655,12 +760,9 @@ export default function Roteiro({
 
   useEffect(
     () => () => {
-      /* Sair da tela também fecha a gravação. Sem isto, quem clicasse em
-       * "Fechar sem concluir" deixaria o áudio parado em WAV, sem MP4 e sem
-       * ninguém para pedi-lo. O POST vai solto de propósito: o componente está
-       * indo embora e não há mais tela para receber a resposta — o que importa
-       * é o arquivo ficar convertido no disco. */
-      void captura.current?.encerrarGravacao().catch(() => undefined);
+      /* Desmontar o roteiro não é encerrar o atendimento. A conversa pode ter
+       * avançado para documentação, avaliação ou assinatura na mesma tela; só
+       * o comando explícito de encerrar atendimento fecha áudio e transcrição. */
       captura.current?.encerrar();
     },
     [],
@@ -730,10 +832,20 @@ export default function Roteiro({
         })));
       },
       encerrarGravacao: async () => {
-        await encerrarEscutaRef.current();
         return captura.current?.entrevistaId ?? "";
       },
+      encerrarAtendimento: async () => {
+        // Este é o ÚNICO ponto que para a captura. Assim a transcrição e o
+        // áudio incluem o atendimento inteiro, não só o roteiro inicial.
+        await encerrarEscutaRef.current();
+        await captura.current?.encerrarGravacao();
+        captura.current?.encerrar();
+        // O vídeo segue a mesma regra do áudio: só baixa na saída definitiva.
+        await controlesVideo.current?.pararEBaixar();
+      },
       transcricaoBruta: () => [...transcricaoBruta.current],
+      assinaturaRoteiro: () => JSON.stringify(roteiroRef.current ?? {}),
+      codigoRoteiro: () => roteiroRef.current?.codigo ?? codigo,
     }),
     [],
   );
@@ -827,6 +939,10 @@ export default function Roteiro({
      * inteira está no arquivo" de "faltou o fim": o encerramento vai por HTTP,
      * numa conexão diferente da que leva o PCM, e poderia chegar primeiro. */
     await captura.current?.aguardarEnvio();
+    /* E espera o passe final antes de deixar o encerramento seguir: é ele que
+     * apura a cauda (`onCauda`). Quem chama isto fecha o socket na linha
+     * seguinte — sem esta espera, o fim da conversa era cortado no caminho. */
+    await captura.current?.aguardarFinal();
     setEscutaEncerrada(true);
   }, []);
 
@@ -848,15 +964,33 @@ export default function Roteiro({
 
   /** Rola até o campo e o destaca — o painel é índice, não só relatório. */
   const irPara = useCallback((perguntaId: string) => {
-    setMostrarRoteiroCompleto(true);
-    window.setTimeout(() => {
+    if (!idsRenderizaveisRef.current.has(perguntaId)) return false;
+    if (escutando || escutaEncerrada || revisada) setRevisada(true);
+    if (
+      IDS_FIXOS_IDENTIFICACAO.has(perguntaId) ||
+      idsNoAcordeaoRef.current.has(perguntaId)
+    ) {
+      setIdExpandida(true);
+    }
+    const encontrarEFocar = (tentativa: number) => {
       const alvo = document.getElementById(`pergunta-${perguntaId}`);
-      if (!alvo) return;
+      if (!alvo) {
+        if (tentativa < 10) {
+          window.setTimeout(() => encontrarEFocar(tentativa + 1), 50);
+        } else {
+          setAviso("O campo indicado não está disponível nesta versão do roteiro.");
+        }
+        return;
+      }
       alvo.scrollIntoView({ behavior: "smooth", block: "center" });
-      alvo.querySelector("textarea,input,select,button")?.setAttribute("data-realce", "1");
-      (alvo.querySelector("textarea,input") as HTMLElement | null)?.focus();
-    }, 40);
-  }, []);
+      const controle = alvo.querySelector("textarea,input,select,button") as HTMLElement | null;
+      controle?.setAttribute("data-realce", "1");
+      controle?.focus();
+      window.setTimeout(() => controle?.removeAttribute("data-realce"), 2400);
+    };
+    window.setTimeout(() => encontrarEFocar(0), 50);
+    return true;
+  }, [escutaEncerrada, escutando, revisada]);
 
   /* Tira a pergunta da vez sem respondê-la. Ela continua pendente: o painel a
    * mostra em "falta perguntar" e a condução a devolve quando o roteiro acabar,
@@ -867,8 +1001,6 @@ export default function Roteiro({
 
   const retomarPuladas = useCallback(() => setPuladas([]), []);
 
-  const pausar = useCallback(() => captura.current?.pausar(), []);
-  const retomar = useCallback(() => captura.current?.retomar(), []);
   const finalizar = useCallback(() => {
     // Marca ANTES de mandar parar: o servidor pode levar segundos para devolver
     // o texto, e é essa marca que troca os botões por "Transcrevendo…" em vez
@@ -908,7 +1040,7 @@ export default function Roteiro({
       faltando,
       interpretando: ouvindo,
       captando: escutando && estadoMic !== "sem-audio",
-      pausado: estadoMic === "pausado",
+      reconectando: estadoMic === "reconectando",
       ultimaFala,
       ultimoSom,
       nivelTipico,
@@ -1107,13 +1239,13 @@ function preencherMarcadores(
   const CAMPOS_DA_IDENTIFICACAO = useMemo(
     () =>
       [
-        { id: "nome", rotulo: "o nome completo" },
         {
           id: "cpf",
           rotulo: "um CPF válido",
           completo: (v: string | string[] | undefined) =>
             conferirCpf(String(v ?? "")).valido === true,
         },
+        { id: "nome", rotulo: "o nome completo" },
         { id: "estado_civil", rotulo: "o estado civil" },
         { id: "uf", rotulo: "a UF" },
         { id: "municipio", rotulo: "o município" },
@@ -1139,9 +1271,80 @@ function preencherMarcadores(
    * O aviso de situação cadastral (óbito, CPF nulo, suspenso), esse aparece:
    * ninguém quer descobrir isso depois do contrato assinado. */
   const [avisoReceita, setAvisoReceita] = useState("");
+  /* Os ids que a consulta por CPF trouxe preenchidos. Guardados para que a fase
+   * de identificação mostre TODOS eles (mãe, nascimento, endereço, telefone…) e
+   * não só os cinco campos fixos: quem digita o CPF quer conferir o que a base
+   * devolveu, não descobrir depois que metade veio escondida no bloco de baixo. */
+  const [camposPuxados, setCamposPuxados] = useState<Set<string>>(new Set());
   const cpfConsultado = useRef("");
 
+  /* PREENCHIMENTO AUTOMÁTICO POR CPF — o liga/desliga.
+   *
+   * DESLIGADO por padrão: é opt-in. Sem ninguém ligar, a identificação é
+   * exatamente o que era antes — CPF, nome, estado civil, UF e município, tudo à
+   * mão, sem consultar base nenhuma. Ligado, digitar um CPF válido consulta a
+   * base e traz o cadastro (nome, mãe, nascimento, endereço, telefone…). A
+   * escolha fica no navegador de quem atende, valendo para o expediente inteiro. */
+  // A consulta por CPF é o comportamento normal da identificação. A preferência
+  // antiga gravava "0" no navegador e fazia atendimentos seguintes parecerem
+  // quebrados, mesmo quando ninguém tinha escolhido desligá-la naquela sessão.
+  const [preenchimentoAuto, setPreenchimentoAuto] = useState(true);
+  const contextoRevisao = useMemo(
+    () => criarContextoRevisao(roteiro, preenchimentoAuto, respostas),
+    [preenchimentoAuto, respostas, roteiro],
+  );
+  roteiroIaRef.current = contextoRevisao?.roteiro ?? null;
+  idsRenderizaveisRef.current = new Set(contextoRevisao?.ids_renderizaveis ?? []);
+
+  const publicarContexto = useRef(onContextoRevisao);
+  publicarContexto.current = onContextoRevisao;
   useEffect(() => {
+    publicarContexto.current?.(contextoRevisao);
+  }, [contextoRevisao]);
+  useEffect(() => {
+    try {
+      // Só uma opção explicitamente ligada sobrevive entre atendimentos. Uma
+      // escolha antiga de desligar não pode silenciar o preenchimento automático
+      // para o próximo entrevistador.
+      if (localStorage.getItem("preenchimento_auto_cpf") === "1") {
+        setPreenchimentoAuto(true);
+      }
+    } catch {
+      /* localStorage bloqueado (aba anônima, política): fica no padrão ligado. */
+    }
+  }, []);
+  const alternarPreenchimentoAuto = useCallback(() => {
+    setPreenchimentoAuto((ligado) => {
+      const novo = !ligado;
+      try {
+        localStorage.setItem("preenchimento_auto_cpf", novo ? "1" : "");
+      } catch {
+        /* sem persistência: vale para esta sessão mesmo assim. */
+      }
+      if (!novo) {
+        // Desligou: esquece o que já foi revelado, para a tela voltar ao mínimo.
+        setCamposPuxados(new Set());
+        setAvisoReceita("");
+        cpfConsultado.current = "";
+      }
+      return novo;
+    });
+  }, []);
+
+  const aplicarRoteiro = useCallback((novo: RoteiroCompleto) => {
+    setRespostas((atuais) => respostasCompativeis(atuais, roteiroRef.current, novo));
+    setPuladas([]);
+    setSugestoes([]);
+    setLembretes([]);
+    setFaltando([]);
+    setOuvidas([]);
+    setConferencias({});
+    atualRef.current = "";
+    setRoteiro(novo);
+  }, []);
+
+  useEffect(() => {
+    if (!preenchimentoAuto) return;
     const digitos = String(respostas.cpf ?? "").replace(/\D/g, "");
     if (digitos.length !== 11 || !conferirCpf(digitos).valido) return;
     if (cpfConsultado.current === digitos) return;
@@ -1152,13 +1355,18 @@ function preencherMarcadores(
       .then((consulta) => {
         if (cancelado) return;
         setAvisoReceita(consulta.aviso || "");
+        const preenchidos: string[] = [];
         setRespostas((atuais) => {
           const novas = { ...atuais };
           for (const [id, valor] of Object.entries(consulta.campos)) {
+            if (valor) preenchidos.push(id);
             if (!respondida(novas[id]) && valor) novas[id] = valor;
           }
           return novas;
         });
+        // Tudo que veio com valor entra na tela da identificação, mesmo o que
+        // já estava preenchido: é o que deixa a conferência visível de uma vez.
+        setCamposPuxados(new Set(preenchidos));
       })
       .catch(() => {
         // Sem credencial, ou base fora: a entrevista segue como sempre seguiu.
@@ -1168,7 +1376,7 @@ function preencherMarcadores(
     return () => {
       cancelado = true;
     };
-  }, [respostas.cpf]);
+  }, [respostas.cpf, preenchimentoAuto]);
 
   const idsDaIdentificacao = useMemo(
     () => new Set<string>(CAMPOS_DA_IDENTIFICACAO.map((c) => c.id)),
@@ -1189,6 +1397,14 @@ function preencherMarcadores(
     () => faltaParaComecar.map((c) => c.rotulo),
     [faltaParaComecar],
   );
+  const chaveIdentificacao = useMemo(
+    () =>
+      CAMPOS_DA_IDENTIFICACAO.map((campo) => {
+        const valor = respostas[campo.id];
+        return `${campo.id}:${Array.isArray(valor) ? valor.join("\u001f") : String(valor ?? "")}`;
+      }).join("\u001e"),
+    [CAMPOS_DA_IDENTIFICACAO, respostas],
+  );
 
   /* Se uma edição deixar um dado obrigatório inválido, reabre os campos para a
    * correção continuar visível. Dados válidos nunca provocam recolhimento. */
@@ -1204,10 +1420,46 @@ function preencherMarcadores(
    * Esperar a identificação dá tempo de abrir o Jitsi e receber a faixa remota. */
   useEffect(() => {
     if (!roteiro || inicioAutomatico.current) return;
-    if (faltaParaComecar.length > 0) return;
-    inicioAutomatico.current = true;
-    void comecarEntrevista();
-  }, [roteiro, comecarEntrevista, faltaParaComecar.length]);
+    if (faltaParaComecar.length > 0) {
+      identificacaoCompletaEm.current = null;
+      chaveIdentificacaoCompleta.current = "";
+      return;
+    }
+    const agora = Date.now();
+    if (
+      identificacaoCompletaEm.current === null ||
+      chaveIdentificacaoCompleta.current !== chaveIdentificacao
+    ) {
+      identificacaoCompletaEm.current = agora;
+      chaveIdentificacaoCompleta.current = chaveIdentificacao;
+    }
+    const restante = Math.max(
+      0,
+      MS_ESPERA_IDENTIFICACAO_COMPLETA - (agora - identificacaoCompletaEm.current),
+    );
+    const timer = window.setTimeout(() => {
+      if (inicioAutomatico.current || faltaParaComecar.length > 0) return;
+      inicioAutomatico.current = true;
+      void comecarEntrevista();
+    }, restante);
+    return () => window.clearTimeout(timer);
+  }, [roteiro, comecarEntrevista, faltaParaComecar.length, chaveIdentificacao]);
+
+  /* Ao preencher o último dado da identificação (por exemplo, Brasília/DF),
+   * a entrevista passa para o modo de leitura e os campos ficam recolhidos no
+   * resumo "Identificação". Sem rolar junto, parecia que o preenchimento tinha
+   * escondido a tela. Leva diretamente ao roteiro, que é a próxima tarefa; os
+   * dados continuam acessíveis pelo botão "Editar dados". */
+  useEffect(() => {
+    if (!escutando) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById("leitura-do-roteiro")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [escutando]);
 
   /* Os nomes que preenchem os marcadores do roteiro.
    *
@@ -1227,24 +1479,6 @@ function preencherMarcadores(
     const resp = sequencia.filter(({ pergunta }) => respondida(respostas[pergunta.id]));
     return { total: sequencia.length, feitas: resp.length };
   }, [sequencia, respostas]);
-
-  const relatoConsolidado = useMemo(
-    () => montarRelato(blocosVisiveis, respostas),
-    [blocosVisiveis, respostas],
-  );
-  const lacunasObrigatorias = useMemo(
-    () =>
-      sequencia
-        .filter(({ pergunta }) => pergunta.obrigatoria && !respondida(respostas[pergunta.id]))
-        .map(({ pergunta }) => pergunta.texto),
-    [sequencia, respostas],
-  );
-
-  /* Espera a fala virar resposta consolidada. Trechos provisórios do Whisper não
-   * mudam `respostas`; e o debounce evita uma consulta por campo quando a escuta
-   * preenche vários de uma vez. A última leitura boa permanece visível em falha. */
-  // A síntese jurídica passou para o encerramento unificado. Não há mais uma
-  // consulta concorrente a cada resposta provisória.
 
   /* Sobe o que já foi respondido, sem esperar o fim da entrevista.
    *
@@ -1305,27 +1539,37 @@ function preencherMarcadores(
    *
    * A trava do microfone não mudou: a transcrição continua começando só depois
    * de nome, CPF, UF e município (ver o auto-início, acima). */
-  // A identificação abre o atendimento, mas não deve esconder de quem conduz
-  // as perguntas que precisa fazer. A transcrição continua preenchendo as
-  // respostas em segundo plano; o roteiro completo fica disponível assim que
-  // os dados mínimos foram confirmados.
-  const roteiroRevelado = escutaEncerrada || revisada || identificacaoConcluida;
+  const roteiroRevelado = escutaEncerrada || revisada;
+  /* Antes da escuta, a tela é a identificação MAIS o que o CPF acabou de puxar.
+   *
+   * Os cinco campos fixos nunca somem; os demais (mãe, nascimento, endereço,
+   * telefone, e-mail, renda…) entram só quando a consulta os trouxe, e saem se
+   * a base não devolveu — assim a conferência aparece inteira sem transformar o
+   * topo num formulário de catorze campos quando não há o que conferir. Durante
+   * a escuta o topo volta a ser só a identificação (o roteiro ao vivo é guia de
+   * leitura, não formulário). */
+  const idsVisiveis = escutando || !preenchimentoAuto
+    ? idsDaIdentificacao
+    : new Set([...idsDaIdentificacao, ...camposPuxados]);
   const blocosNaTela = roteiroRevelado
-    ? (roteiro?.blocos ?? [])
+    ? roteiro?.blocos ?? []
     : blocosVisiveis
         .map((bloco) => ({
           ...bloco,
-          perguntas: bloco.perguntas.filter((p) => idsDaIdentificacao.has(p.id)),
+          perguntas: bloco.perguntas.filter((p) => idsVisiveis.has(p.id)),
         }))
         .filter((bloco) => bloco.perguntas.length > 0);
 
   /* Com a identificação concluída e a escuta aberta, o bloco "abertura" sai da
    * lista corrida e passa a viver dentro do cabeçalho recolhível, logo acima
    * dela. Nos outros estados ele é um bloco como os demais. */
-  const acordeaoIdentificacao = escutando && identificacaoConcluida;
+  const acordeaoIdentificacao = (escutando || roteiroRevelado) && identificacaoConcluida;
   const aberturaBloco = acordeaoIdentificacao
     ? blocosNaTela.find((b) => b.id === "abertura") ?? null
     : null;
+  idsNoAcordeaoRef.current = new Set(
+    aberturaBloco?.perguntas.map((pergunta) => pergunta.id) ?? [],
+  );
   const blocosNoCorpo = acordeaoIdentificacao
     ? blocosNaTela.filter((b) => b.id !== "abertura")
     : blocosNaTela;
@@ -1344,11 +1588,10 @@ function preencherMarcadores(
       {trocandoRoteiro && (
         <SeletorDeRoteiro
           atualCodigo={roteiro.codigo}
-          /* Troca o roteiro da sessão pelo escolhido. As respostas não são
-             tocadas: ficam guardadas por id de pergunta e reaparecem se o id
-             existir no novo roteiro. */
+          /* Troca o roteiro da sessão pelo escolhido. Dados cadastrais comuns
+             sobrevivem; respostas jurídicas do roteiro anterior não. */
           aoEscolher={(novo, origem) => {
-            setRoteiro(novo);
+            aplicarRoteiro(novo);
             setOrigemRoteiro(origem);
           }}
           /* A antiga função do botão continua a um clique: consertar uma
@@ -1367,11 +1610,11 @@ function preencherMarcadores(
           origem={origemRoteiro}
           /* Vale só para esta sessão: nada é gravado, e o próximo atendimento
              volta ao roteiro do catálogo. */
-          aoUsar={setRoteiro}
+          aoUsar={aplicarRoteiro}
           /* Gravado: o servidor devolve a versão canônica já validada, que é a
              que passa a valer aqui também — assim a tela não fica com um
              rascunho que o backend normalizou de outro jeito. */
-          aoSalvar={setRoteiro}
+          aoSalvar={aplicarRoteiro}
           aoFechar={() => setEditandoRoteiro(false)}
         />
       )}
@@ -1403,12 +1646,14 @@ function preencherMarcadores(
               A pergunta que não serve para este cliente, a que faltou, a opção
               que ninguém listou — tudo isso aparece com o cliente na linha, e
               até aqui a saída era anotar à parte e consertar o código depois.
-              Editar não interrompe a entrevista: as respostas são guardadas por
-              id de pergunta e continuam intactas atrás do painel. */}
+              Editar não interrompe a entrevista: cadastro e respostas de
+              perguntas inalteradas continuam guardados atrás do painel. */}
           <button
             type="button"
             className={T_SECUNDARIO}
             onClick={() => setTrocandoRoteiro(true)}
+            onPointerEnter={() => void listarRoteiros().catch(() => undefined)}
+            onFocus={() => void listarRoteiros().catch(() => undefined)}
             title="Escolher outro roteiro do catálogo para este atendimento"
           >
             Alterar roteiro
@@ -1497,9 +1742,33 @@ function preencherMarcadores(
         onPendente={(pendente) => {
           videoPendente.current = pendente;
         }}
+        onControles={(c) => {
+          controlesVideo.current = c;
+        }}
       />
 
       {erro && <div className={T_ERRO}>{erro}</div>}
+
+      {/* Liga/desliga do preenchimento por CPF. Só na fase de identificação: é
+        * quando o CPF é digitado e a escolha ainda faz diferença. Desligado, a
+        * entrevista volta ao formato manual de antes. */}
+      {!escutando && (
+        <label className="flex items-center gap-2 mb-2 font-normal text-[12px] leading-[1.4] font-ui text-tinta-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={preenchimentoAuto}
+            onChange={alternarPreenchimentoAuto}
+          />
+          <span>
+            Preencher automaticamente pelo CPF{" "}
+            <em className="not-italic">
+              {preenchimentoAuto
+                ? "— digite o CPF e o cadastro vem da base"
+                : "— desligado: preenchimento à mão, como antes"}
+            </em>
+          </span>
+        </label>
+      )}
 
       {/* O que a Receita diz do CPF, quando não é "regular".
         *
@@ -1526,14 +1795,14 @@ function preencherMarcadores(
         * cinza sem explicação — que é como o entrevistador descobriria a regra,
         * com o cliente esperando. */}
       {!escutando && faltaParaComecar.length > 0 && (
-        <p className={T_AVISO}>
-          <strong>Digite {rotulosPendentes.join(" e ")} para começar.</strong> São os
-          dados que abrem o atendimento e que o contrato, a procuração e a declaração
-          exigem — e os que não se colhem de ouvido, porque número, nome próprio e nome
-          de cidade a transcrição erra.{" "}
+        <p className={T_AVISO_BLOQUEIO}>
+          <strong>Falta preencher {rotulosPendentes.join(" e ")} para começar.</strong>{" "}
+          O estado civil sempre precisa de confirmação; UF e município são preenchidos
+          automaticamente quando o cadastro do CPF traz endereço. São os dados que abrem
+          o atendimento e que o contrato, a procuração e a declaração exigem.{" "}
           <button
             type="button"
-            className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta"
+            className="border-none bg-transparent p-0 text-tinta font-semibold text-[13px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-acao"
             onClick={() => irPara(faltaParaComecar[0].id)}
           >
             ir ao campo
@@ -1572,7 +1841,7 @@ function preencherMarcadores(
         * roteiro precisa; mas não some, porque a atendente pode querer voltar a
         * uma frase. Ver `roteiros.SAUDACAO`. */}
       {escutando && roteiro.saudacao?.length > 0 && (
-        <section className="border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
+        <section id="leitura-do-roteiro" className="scroll-mt-24 border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
           <div className="flex items-center justify-between gap-[10px]">
             <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
               LEIA AO CLIENTE
@@ -1638,61 +1907,6 @@ function preencherMarcadores(
         </section>
       )}
 
-      {escutaEncerrada && (recomendacaoCaso || atualizandoRecomendacao || erroRecomendacao) && (
-        <section className={RECOMENDACAO} style={{ borderLeftWidth: "4px", borderLeftColor: "var(--tinta)" }} aria-live="polite">
-          <div className={RECOMENDACAO_TOPO}>
-            <strong className="text-tinta text-[14px]">Vale abrir este caso?</strong>
-            {atualizandoRecomendacao && <span>atualizando com as respostas…</span>}
-          </div>
-          {recomendacaoCaso && (
-            <>
-              <div className={`${VEREDITO_BASE} ${VEREDITO_COR[recomendacaoCaso.recomendado] ?? VEREDITO_INDEFINIDO}`}>
-                {recomendacaoCaso.recomendado === "sim" ? "SIM — levar para análise" :
-                  recomendacaoCaso.recomendado === "com_ressalva" ? "COM RESSALVAS" :
-                  recomendacaoCaso.recomendado === "atencao" ? "ATENÇÃO ANTES DE ABRIR" :
-                  "AMOSTRA INSUFICIENTE"}
-              </div>
-              <p>{recomendacaoCaso.motivo}</p>
-              {recomendacaoCaso.analise_comparativa && (() => {
-                const analise = recomendacaoCaso.analise_comparativa;
-                const refs = (indices: string[]) => indices.map((indice) => {
-                  const ref = analise.referencias[indice];
-                  if (!ref) return indice;
-                  const rotulo = `${indice}: ${ref.processo ?? "processo sem número"}`;
-                  return ref.url ? <a key={indice} className={RESUMO_LINK} href={ref.url} target="_blank" rel="noreferrer">{rotulo}</a> : <span key={indice}>{rotulo}</span>;
-                }).reduce<React.ReactNode[]>((todos, item, i) => i ? [...todos, ", ", item] : [item], []);
-                return (
-                  <div className={COMPARATIVA}>
-                    <h4 className={COMPARATIVA_H4}>O que os processos semelhantes indicam</h4>
-                    <p>{analise.sintese}</p>
-                    {analise.pontos_comuns.length > 0 && (
-                      <details open className={COMPARATIVA_DETAILS}><summary className={RESUMO_SUMMARY}>Pontos realmente em comum</summary><ul className={COMPARATIVA_LISTA}>{analise.pontos_comuns.map((item, i) => <li key={i} className={COMPARATIVA_ITEM}><strong>{item.ponto}</strong> — {item.impacto} <small className={COMPARATIVA_SMALL}>Força {item.forca}: {refs(item.precedentes)}</small></li>)}</ul></details>
-                    )}
-                    {analise.diferencas_decisivas.length > 0 && (
-                      <details open className={COMPARATIVA_DETAILS}><summary className={RESUMO_SUMMARY}>O que separou resultados favoráveis e improcedentes</summary><ul className={COMPARATIVA_LISTA}>{analise.diferencas_decisivas.map((item, i) => <li key={i} className={COMPARATIVA_ITEM}><strong>{item.ponto}</strong> — {item.por_que_importa}<small className={COMPARATIVA_SMALL}>Favoráveis: {refs(item.precedentes_favoraveis)} · Contrários: {refs(item.precedentes_contrarios)}</small></li>)}</ul></details>
-                    )}
-                    {analise.provas_prioritarias.length > 0 && (
-                      <details open className={COMPARATIVA_DETAILS}><summary className={RESUMO_SUMMARY}>Provas para buscar agora</summary><ul className={COMPARATIVA_LISTA}>{analise.provas_prioritarias.map((item, i) => <li key={i} className={COMPARATIVA_ITEM}><strong>{item.prova}</strong> — {item.motivo}<small className={COMPARATIVA_SMALL}>{refs(item.precedentes)}</small></li>)}</ul></details>
-                    )}
-                    {analise.perguntas_criticas.length > 0 && (
-                      <details open className={COMPARATIVA_DETAILS}><summary className={RESUMO_SUMMARY}>Perguntas que podem mudar a avaliação</summary><ol className={COMPARATIVA_LISTA}>{analise.perguntas_criticas.map((item) => <li key={item} className={COMPARATIVA_ITEM}>{item}</li>)}</ol></details>
-                    )}
-                  </div>
-                );
-              })()}
-              {recomendacaoCaso.lacunas_obrigatorias.length > 0 && (
-                <details><summary className={RESUMO_SUMMARY}>{recomendacaoCaso.lacunas_obrigatorias.length} pontos obrigatórios ainda faltam</summary><ul className={LISTA_BARE}>{recomendacaoCaso.lacunas_obrigatorias.slice(0, 8).map((item) => <li key={item}>{item}</li>)}</ul></details>
-              )}
-              {recomendacaoCaso.precedentes.length > 0 && (
-                <details><summary className={RESUMO_SUMMARY}>{recomendacaoCaso.precedentes.length} processos semelhantes consultados</summary><ul className={LISTA_BARE}>{recomendacaoCaso.precedentes.slice(0, 8).map((p, i) => <li key={`${p.processo}-${i}`}>{p.url ? <a className={RESUMO_LINK} href={p.url} target="_blank" rel="noreferrer">{p.processo || `Precedente ${i + 1}`}</a> : (p.processo || `Precedente ${i + 1}`)} — {p.resultado || "resultado não classificado"} · {(p.similaridade * 100).toFixed(0)}%</li>)}</ul></details>
-              )}
-              <small className={RESUMO_SMALL}>{recomendacaoCaso.aviso}</small>
-            </>
-          )}
-          {erroRecomendacao && <p className="text-atencao">{erroRecomendacao} A entrevista continua normalmente.</p>}
-        </section>
-      )}
-
       {/* O painel "A ENTREVISTA ATÉ AQUI" não fica mais ao lado do formulário:
         * ele foi para a coluna da direita, embaixo do cartão CHAMADA, e é a tela
         * de fora (`EntrevistaComChamada`) que o desenha a partir do que o efeito
@@ -1719,7 +1933,7 @@ function preencherMarcadores(
              * cobrança é para quem não responde, não para quem está no meio da
              * resposta. Falar de OUTRA coisa não conta — o relógio segue, que é
              * a regra do escritório. */
-            ativo={escutando && estadoMic !== "pausado" && !respondendo}
+            ativo={escutando && estadoMic !== "reconectando" && !respondendo}
             respondendo={respondendo}
             fluindo={fluindo}
             onIrPara={irPara}
@@ -1768,14 +1982,12 @@ function preencherMarcadores(
                 incertas={incertasAutomaticas.current}
                 onResponder={responder}
                 gravandoId={gravandoId}
-                pausado={estadoMic === "pausado"}
+                reconectando={estadoMic === "reconectando"}
                 finalizando={finalizando}
                 parcial={parcial}
                 temMic={temMic}
                 escutando={escutando && identificacaoConcluida}
                 onGravar={gravar}
-                onPausar={pausar}
-                onRetomar={retomar}
                 onFinalizar={finalizar}
                 conferencias={conferencias}
                 onConferir={conferir}
@@ -1797,14 +2009,12 @@ function preencherMarcadores(
               incertas={incertasAutomaticas.current}
               onResponder={responder}
               gravandoId={gravandoId}
-              pausado={estadoMic === "pausado"}
+              reconectando={estadoMic === "reconectando"}
               finalizando={finalizando}
               parcial={parcial}
               temMic={temMic}
               escutando={escutando && identificacaoConcluida}
               onGravar={gravar}
-              onPausar={pausar}
-              onRetomar={retomar}
               onFinalizar={finalizar}
               conferencias={conferencias}
               onConferir={conferir}
@@ -1848,12 +2058,6 @@ function preencherMarcadores(
         </details>
       )}
 
-      {/* O áudio, depois de encerrada a escuta. Antes disso não há arquivo, e um
-        * botão que não baixa nada é pior que botão nenhum. */}
-      {escutaEncerrada && (
-        <AudioDaEntrevista entrevistaId={captura.current?.entrevistaId ?? ""} />
-      )}
-
       {/* O roteiro respondido, abaixo de tudo e RECOLHIDO enquanto a conversa
         * corre — aberto ele disputaria o olho de quem conduz com o cliente.
         *
@@ -1862,7 +2066,11 @@ function preencherMarcadores(
         * branco ainda dá para colher com o cliente na linha. Depois disso quem
         * manda é o clique de quem está lendo. */}
       {escutando && (
-        <RespostasDoRoteiro respostas={respostas} codigo={codigo} aberto={escutaEncerrada} />
+        <RespostasDoRoteiro
+          respostas={respostas}
+          roteiro={contextoRevisao?.roteiro ?? roteiro}
+          aberto={escutaEncerrada}
+        />
       )}
 
       {/* Não há botão de concluir aqui.
@@ -1969,14 +2177,12 @@ function BlocoRoteiro({
   incertas,
   onResponder,
   gravandoId,
-  pausado,
+  reconectando,
   finalizando,
   parcial,
   temMic,
   escutando,
   onGravar,
-  onPausar,
-  onRetomar,
   onFinalizar,
   conferencias,
   onConferir,
@@ -2000,15 +2206,13 @@ function BlocoRoteiro({
   incertas: Set<string>;
   onResponder: (id: string, valor: string | string[]) => void;
   gravandoId: string | null;
-  pausado: boolean;
+  reconectando: boolean;
   finalizando: boolean;
   parcial: string;
   temMic: boolean;
   /** A entrevista está com o microfone aberto: os botões por pergunta somem. */
   escutando: boolean;
   onGravar: (id: string) => void;
-  onPausar: () => void;
-  onRetomar: () => void;
   onFinalizar: () => void;
   conferencias: Record<string, EstadoConferencia>;
   onConferir: (id: string, texto: string, forcar?: boolean) => void;
@@ -2111,15 +2315,13 @@ function BlocoRoteiro({
                 valorAlvo={p.preenche ? respostas[p.preenche] : undefined}
                 onResponder={onResponder}
                 gravando={gravandoId === p.id}
-                pausado={gravandoId === p.id && pausado}
+                reconectando={gravandoId === p.id && reconectando}
                 finalizando={gravandoId === p.id && finalizando}
                 parcial={gravandoId === p.id ? parcial : ""}
                 temMic={temMic}
                 escutando={escutando}
                 ocupado={gravandoId !== null && gravandoId !== p.id}
                 onGravar={onGravar}
-                onPausar={onPausar}
-                onRetomar={onRetomar}
                 onFinalizar={onFinalizar}
                 onConferir={onConferir}
                 municipios={municipios}
@@ -2243,6 +2445,12 @@ function CampoCep({
         if (!alvo.current.trim()) {
           responder.current(pergunta.preenche, endereco.endereco_formatado);
         }
+        // O CEP também identifica município e UF — e é por aqui que o município
+        // se preenche quando o cadastro por CPF não o trouxe. UF primeiro: mudar
+        // a UF limpa o município (ver o onResponder), então o município tem de
+        // vir depois para não ser apagado.
+        if (endereco.uf) responder.current("uf", endereco.uf);
+        if (endereco.cidade) responder.current("municipio", endereco.cidade);
       })
       .catch((e) => {
         if (!cancelado) setErro(e instanceof Error ? e.message : "Não foi possível consultar o CEP.");
@@ -2306,15 +2514,13 @@ function CampoResposta({
   valorAlvo,
   onResponder,
   gravando,
-  pausado,
+  reconectando,
   finalizando,
   parcial,
   temMic,
   escutando,
   ocupado,
   onGravar,
-  onPausar,
-  onRetomar,
   onFinalizar,
   onConferir,
   municipios,
@@ -2326,7 +2532,8 @@ function CampoResposta({
   valorAlvo?: string | string[];
   onResponder: (id: string, valor: string | string[]) => void;
   gravando: boolean;
-  pausado: boolean;
+  /** A conexão caiu e está religando sozinha. */
+  reconectando: boolean;
   /** Esperando o texto final voltar do servidor. */
   finalizando: boolean;
   parcial: string;
@@ -2336,22 +2543,12 @@ function CampoResposta({
   /** Outra pergunta está gravando — o microfone é um só para a entrevista. */
   ocupado: boolean;
   onGravar: (id: string) => void;
-  onPausar: () => void;
-  onRetomar: () => void;
   onFinalizar: () => void;
   onConferir: (id: string, texto: string, forcar?: boolean) => void;
   municipios: MunicipioLocalidade[];
   carregandoMunicipios: boolean;
 }) {
   const texto = typeof valor === "string" ? valor : "";
-
-  if (escutando && ["nome", "cpf", "uf", "municipio"].includes(pergunta.id)) {
-    return (
-      <div className="w-full max-w-[520px] border border-ok bg-ok-claro text-tinta px-[11px] py-[9px] text-[13px] font-ui">
-        {texto || "—"}
-      </div>
-    );
-  }
 
   // Ao vivo o roteiro é guia de leitura, não formulário. A fala só será
   // interpretada e distribuída entre campos depois do encerramento.
@@ -2374,16 +2571,69 @@ function CampoResposta({
   }
 
   if (pergunta.id === "municipio") {
+    // Input + datalist: dá para DIGITAR e filtrar na hora, muito mais rápido que
+    // rolar centenas de municípios num select. A lista sugere; não valida regra.
     return (
-      <select
-        className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui disabled:bg-papel-3 disabled:text-tinta-desabilitada"
-        value={texto}
-        disabled={carregandoMunicipios || municipios.length === 0}
-        onChange={(e) => onResponder(pergunta.id, e.target.value)}
-      >
-        <option value="">{carregandoMunicipios ? "Carregando municípios…" : municipios.length ? "Selecione o município" : "Escolha a UF primeiro"}</option>
-        {municipios.map((municipio) => <option key={municipio.id} value={municipio.nome}>{municipio.nome}</option>)}
-      </select>
+      <>
+        <input
+          list={municipios.length ? "lista-municipios" : undefined}
+          className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui"
+          value={texto}
+          placeholder={
+            carregandoMunicipios
+              ? "Carregando municípios…"
+              : municipios.length
+                ? "Digite para filtrar o município"
+                : "Digite o município"
+          }
+          onChange={(e) => onResponder(pergunta.id, e.target.value)}
+        />
+        {municipios.length > 0 && (
+          <datalist id="lista-municipios">
+            {municipios.map((municipio) => (
+              <option key={municipio.id} value={municipio.nome} />
+            ))}
+          </datalist>
+        )}
+        {carregandoMunicipios && (
+          <span className="block mt-[5px] font-normal text-[11.5px] leading-[1.4] font-codigo text-tinta-3">
+            carregando sugestões de município…
+          </span>
+        )}
+      </>
+    );
+  }
+
+  if (pergunta.id === "uf") {
+    const uf = texto.trim().toUpperCase();
+    const opcoes = pergunta.opcoes.length ? pergunta.opcoes : [];
+    const ufValida = !uf || opcoes.includes(uf);
+
+    // Mesmo motivo do município: digitar "SP" filtra na hora, sem rolar 27 estados.
+    return (
+      <>
+        <input
+          list="lista-ufs"
+          className={`w-full max-w-[220px] border bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui ${
+            ufValida ? "border-borda-forte" : "border-critico"
+          }`}
+          value={uf}
+          placeholder="Digite a UF (ex.: SP)"
+          maxLength={2}
+          aria-invalid={!ufValida}
+          onChange={(e) => onResponder(pergunta.id, e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2))}
+        />
+        <datalist id="lista-ufs">
+          {opcoes.map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+        {!ufValida && (
+          <span className="block mt-[5px] font-normal text-[11.5px] leading-[1.4] font-codigo text-critico">
+            Informe uma UF válida.
+          </span>
+        )}
+      </>
     );
   }
 
@@ -2513,6 +2763,30 @@ function CampoResposta({
     );
   }
 
+  if (pergunta.id === "telefone") {
+    const temTelefone = texto.replace(/\D/g, "").length > 0;
+    return (
+      <>
+        <input
+          className={`w-full max-w-[520px] border ${
+            temTelefone ? "border-borda-forte" : "border-atencao"
+          } bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui`}
+          type="tel"
+          inputMode="tel"
+          value={formatarTelefone(texto)}
+          placeholder="(61) 98180-8863"
+          onChange={(e) => onResponder(pergunta.id, formatarTelefone(e.target.value))}
+          aria-invalid={!temTelefone}
+        />
+        {!temTelefone && (
+          <span className="block mt-[5px] font-normal text-[11.5px] leading-[1.4] font-codigo text-atencao">
+            Informe o telefone/WhatsApp do cliente antes de seguir.
+          </span>
+        )}
+      </>
+    );
+  }
+
   if (pergunta.tipo === "dado" || pergunta.tipo === "data") {
     return (
       <input
@@ -2525,7 +2799,7 @@ function CampoResposta({
   }
 
   // relato — com gravador quando marcado, sempre editável por teclado.
-  const emCurso = gravando || pausado;
+  const emCurso = gravando || reconectando;
 
   return (
     <>
@@ -2538,53 +2812,41 @@ function CampoResposta({
       {pergunta.transcrever && !escutando && (
         <div className={`${T_ACOES} mb-2`}>
           {!emCurso && (
-            <button
-              type="button"
-              className={T_BOTAO}
+            <BotaoProcesso
+              variante="primario"
+              pequeno
               onClick={() => onGravar(pergunta.id)}
-              disabled={!temMic || ocupado}
-              title={
-                !temMic
-                  ? "Ligue o microfone no topo da tela"
-                  : ocupado
-                    ? "Outra pergunta está gravando — finalize aquela antes"
-                    : ""
-              }
+              pendencia={temMic ? null : "Ligue o microfone no topo da tela."}
+              pendenciaAoClicar
+              aguardando={ocupado ? "Outra pergunta está gravando — finalize aquela antes." : false}
             >
               {/* O rótulo muda porque a operação é a mesma mas a intenção não:
                 * complementar é o que se faz depois de ler a conferência e
                 * descobrir o que faltou perguntar. O trecho novo entra no fim
                 * do que já estava escrito, sem apagar nada. */}
               {texto.trim() ? "Adicionar complemento" : "Gravar resposta"}
-            </button>
+            </BotaoProcesso>
           )}
 
           {emCurso && (
             <>
-              <button
-                type="button"
-                className={T_SECUNDARIO}
-                onClick={pausado ? onRetomar : onPausar}
-                // Depois de finalizar não há o que pausar: a captura já parou.
-                // Desabilitar é o que faz o botão parar de mentir.
-                disabled={finalizando}
-              >
-                {pausado ? "Retomar" : "Pausar"}
-              </button>
-              <button
-                type="button"
-                className={gravando && !finalizando ? T_BOTAO_GRAVANDO : T_BOTAO}
+              {/* Sem "Pausar": a gravação do atendimento não tem buraco.
+                * Gravando: vermelho, porque é estado que precisa saltar aos olhos. */}
+              <BotaoProcesso
+                variante={gravando && !finalizando ? "perigo" : "primario"}
+                pequeno
                 onClick={onFinalizar}
-                disabled={finalizando}
+                processando={finalizando}
+                textoProcessando="Transcrevendo…"
               >
-                {finalizando ? "Transcrevendo…" : "Finalizar resposta"}
-              </button>
+                Finalizar resposta
+              </BotaoProcesso>
             </>
           )}
 
-          {pausado && !finalizando && (
+          {reconectando && !finalizando && (
             <span className="font-normal text-[11.5px] leading-[1.4] font-ui text-atencao self-center">
-              pausado — o que for dito agora não entra na resposta
+              religando a transcrição — estes segundos não entram no arquivo
             </span>
           )}
 

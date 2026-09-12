@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Botao, Selo } from "@/components/ui/Basicos";
 
 // Mesmo teto do backend (`MAX_ARQUIVOS_POR_LOTE` em `app/main.py`) — os dois
 // precisam concordar, senão a tela deixa escolher mais do que o servidor aceita.
 const LIMITE = 500;
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 interface Props {
   onEnviar: (arquivos: File[]) => Promise<void> | void;
@@ -15,13 +16,25 @@ interface Props {
 }
 
 function chave(arquivo: File): string {
-  return `${arquivo.name}:${arquivo.size}:${arquivo.lastModified}`;
+  // `webkitRelativePath` distingue dois "rg.jpg" vindos de subpastas diferentes.
+  return `${arquivo.webkitRelativePath || arquivo.name}:${arquivo.size}:${arquivo.lastModified}`;
 }
 
 export default function EnvioEmLote({ onEnviar, enviando = false, compacto = false }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const pastaRef = useRef<HTMLInputElement>(null);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [arrastando, setArrastando] = useState(false);
+
+  // `webkitdirectory` não existe no tipo do input; setar no elemento é o jeito
+  // sem brigar com o TypeScript. Com ele, escolher a pasta traz todos os
+  // arquivos de dentro (e das subpastas) de uma vez.
+  useEffect(() => {
+    if (pastaRef.current) {
+      pastaRef.current.setAttribute("webkitdirectory", "");
+      pastaRef.current.setAttribute("directory", "");
+    }
+  }, []);
 
   function acrescentar(novos: File[]) {
     setArquivos((atuais) => {
@@ -32,13 +45,18 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
         vistos.add(id);
         return true;
       });
-      return [...atuais, ...unicos].slice(0, LIMITE);
+      // Sem teto aqui: o envio parte em blocos, então toda a pasta é analisada.
+      return [...atuais, ...unicos];
     });
   }
 
   async function confirmar() {
     if (!arquivos.length || enviando) return;
     await onEnviar(arquivos);
+    setArquivos([]);
+  }
+
+  function limpar() {
     setArquivos([]);
   }
 
@@ -53,33 +71,45 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
             Enviar vários documentos de uma vez
           </h2>
           <p className="mt-1 mb-0 max-w-[70ch] text-tinta-2 text-sm leading-[1.55]">
-            Selecione arquivos de qualquer tipo sem escolher o documento, ou uma única pasta
-            compactada em <strong>.zip</strong> — o sistema descompacta sozinho. Imagens e PDFs
-            serão lidos automaticamente; os demais formatos serão preservados para conferência.
+            Selecione arquivos, uma <strong>pasta inteira</strong> ou um <strong>ZIP</strong> — sem
+            escolher o documento de cada um. O ZIP é aberto automaticamente e{" "}
+            <strong>todos os arquivos são analisados</strong>, por mais que sejam. Imagens e PDFs
+            são lidos na hora; os demais formatos ficam preservados para conferência.
           </p>
         </div>
-        <Selo tom="info">até {LIMITE} arquivos</Selo>
+        <Selo tom="info">todos são analisados</Selo>
       </div>
 
-      <button
-        type="button"
-        className={`w-full mt-4 px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao ${
-          arrastando ? "border-acao text-acao bg-papel-2" : "border-acao-borda"
-        }`}
-        onClick={() => inputRef.current?.click()}
-        onDragEnter={(evento) => { evento.preventDefault(); setArrastando(true); }}
-        onDragOver={(evento) => evento.preventDefault()}
-        onDragLeave={() => setArrastando(false)}
-        onDrop={(evento) => {
-          evento.preventDefault();
-          setArrastando(false);
-          acrescentar(Array.from(evento.dataTransfer.files));
-        }}
-        disabled={enviando}
-      >
-        <strong>Escolher arquivos</strong>
-        <span className="block mt-1 text-tinta-3">ou arraste os arquivos para esta área</span>
-      </button>
+      <div className="mt-4 grid grid-cols-2 gap-2 max-[420px]:grid-cols-1">
+        <button
+          type="button"
+          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao ${
+            arrastando ? "border-acao text-acao bg-papel-2" : "border-acao-borda"
+          }`}
+          onClick={() => inputRef.current?.click()}
+          onDragEnter={(evento) => { evento.preventDefault(); setArrastando(true); }}
+          onDragOver={(evento) => evento.preventDefault()}
+          onDragLeave={() => setArrastando(false)}
+          onDrop={(evento) => {
+            evento.preventDefault();
+            setArrastando(false);
+            acrescentar(Array.from(evento.dataTransfer.files));
+          }}
+          disabled={enviando}
+        >
+          <strong>Escolher arquivos ou ZIP</strong>
+          <span className="block mt-1 text-tinta-3">ou arraste para esta área</span>
+        </button>
+        <button
+          type="button"
+          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed border-acao-borda rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao`}
+          onClick={() => pastaRef.current?.click()}
+          disabled={enviando}
+        >
+          <strong>Escolher uma pasta</strong>
+          <span className="block mt-1 text-tinta-3">envia todos os arquivos dela</span>
+        </button>
+      </div>
       <input
         ref={inputRef}
         type="file"
@@ -90,6 +120,17 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
           evento.target.value = "";
         }}
       />
+      <input
+        ref={pastaRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(evento) => {
+          acrescentar(Array.from(evento.target.files ?? []));
+          evento.target.value = "";
+        }}
+      />
+
 
       {arquivos.length > 0 && (
         <div className="mt-3">
@@ -97,7 +138,7 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
             <span className="text-tinta text-sm font-medium">
               {arquivos.length} {arquivos.length === 1 ? "arquivo selecionado" : "arquivos selecionados"}
             </span>
-            <Botao variante="texto" pequeno onClick={() => setArquivos([])} disabled={enviando}>
+            <Botao variante="texto" pequeno onClick={limpar} disabled={enviando}>
               Limpar seleção
             </Botao>
           </div>
@@ -108,9 +149,17 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
               </li>
             ))}
           </ul>
-          <Botao variante="primario" bloco className="mt-3" onClick={() => void confirmar()} disabled={enviando}>
-            {enviando ? "Recebendo arquivos…" : `Enviar ${arquivos.length} arquivo(s)`}
-          </Botao>
+          <BotaoProcesso
+            variante="primario"
+            bloco
+            className="mt-3"
+            onClick={confirmar}
+            processando={enviando}
+            textoProcessando="Recebendo arquivos…"
+            dica={`Enviando ${arquivos.length} arquivo(s) — mantenha esta página aberta`}
+          >
+            Enviar {arquivos.length} arquivo(s)
+          </BotaoProcesso>
         </div>
       )}
     </section>

@@ -325,7 +325,18 @@ def sincronizar(caso_id: str, *, jurisdicao: str | None = None) -> dict[str, Any
     )
     enviados, falhas = 0, 0
 
-    for entrega in armazenamento.listar_entregas(caso_id):
+    # `listar_extracoes_do_caso`, e não `listar_entregas`: AQUI É PRECISO A EXTRAÇÃO.
+    #
+    # `listar_entregas` exclui o `extracao_json` de propósito (é grande, e a maioria
+    # das telas não precisa dele). Este laço, desde o commit 371dd04 de 27/08/2026,
+    # pedia `entrega.get("extracao")` a essa lista — que nunca tem a chave. O
+    # `continue` disparava para TODA entrega, então "Sincronizar" respondia com
+    # sucesso e `documentos_enviados: 0`, sempre. Medido no caso `da5a030b`: 0 de 46
+    # passavam no filtro.
+    #
+    # A lista em lote traz a extração de todo o caso numa consulta, e só entrega com
+    # extração gravada entra nela — que é exatamente o conjunto que pode ser enviado.
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
         if entrega.get("status_proc") != "pronto" or not entrega.get("extracao"):
             continue
         if _envio_registrado(entrega["id"], entrega["extracao"]):
@@ -488,6 +499,29 @@ def caso_ref(caso_id: str) -> str:
     transformá-la em erro de tela apagaria a conversa inteira por causa de uma resposta.
     """
     anterior = armazenamento.estado_agente(caso_id)
+    vinculo = garantir_caso(caso_id)
+    if anterior is None or anterior["caso_ref"] != vinculo["caso_ref"]:
+        return str(sincronizar(caso_id)["caso_ref"])
+    return str(vinculo["caso_ref"])
+
+
+def caso_ref(caso_id: str) -> str:
+    """O caso correspondente no agente, criando-o se for a primeira vez.
+
+    Criar aqui é deliberado: quem pergunta ao agente sobre um caso quer a resposta, não
+    uma mensagem dizendo que precisa antes clicar em outro botão.
+
+    O vínculo guardado **não** serve como atalho: ele diz que o caso foi criado, não que
+    ele ainda existe. Confiar nele fazia toda ação apontar para um caso morto depois de o
+    agente trocar de banco, e o advogado recebia "caso não encontrado" sem nada que
+    pudesse fazer na tela. `garantir_caso` custa uma leitura e resolve o caso comum; a
+    sincronização completa só roda quando o caso teve mesmo de ser recriado.
+
+    Levanta `ErroDoAgente`, e não `HTTPException`: quem chama decide o que fazer com a
+    indisponibilidade. Na conversa geral, por exemplo, ela vira mensagem NA transcrição —
+    transformá-la em erro de tela apagaria a conversa inteira por causa de uma resposta.
+    """
+    anterior = armazenamento.obter_vinculo_agente(caso_id)
     vinculo = garantir_caso(caso_id)
     if anterior is None or anterior["caso_ref"] != vinculo["caso_ref"]:
         return str(sincronizar(caso_id)["caso_ref"])

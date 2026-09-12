@@ -174,6 +174,7 @@ export interface Peticao {
     disponivel: boolean;
     origem?: string;
     consulta_vetorial?: boolean;
+    jurisdicao?: string;
     aviso?: string;
     sintese?: string;
     estatisticas?: {
@@ -186,6 +187,10 @@ export interface Peticao {
     precedentes?: Array<{
       indice: string;
       processo?: string;
+      /** O mesmo número com a pontuação do CNJ — é como o advogado o confere. */
+      processo_formatado?: string;
+      /** "TRT8": para o link dizer PARA ONDE vai antes de ser clicado. */
+      tribunal?: string;
       resultado?: string;
       vara?: string;
       similaridade?: number;
@@ -500,6 +505,12 @@ export interface AnaliseFluxo {
   resumo: string;
   cruzamento_entrevista_documentos?: string;
   pontos_fortes: string[];
+  acoes_sugeridas?: Array<{
+    titulo: string;
+    motivo: string;
+    pedidos: string[];
+    prioridade: "principal" | "alternativa" | "avaliar" | string;
+  }>;
   lacunas: string[];
   fatos_confirmados?: string[];
   fatos_so_na_entrevista?: string[];
@@ -622,6 +633,61 @@ export function salvarRascunhoPeticao(
     method: "PUT",
     body: JSON.stringify({ secoes }),
   });
+}
+
+/** Uma crítica registrada — issue "Permitir alteração da petição por prompt
+ *  com rastreabilidade". `versao_origem`/`versao_resultado` amarram a crítica
+ *  às duas pontas da revisão que ela gerou. */
+export interface CriticaDePeticao {
+  id: string;
+  caso_id: string;
+  categoria: string;
+  versao_origem: number;
+  versao_resultado: number;
+  prompt: string;
+  usuario: string;
+  /** `false` = valeu só para este caso; não instrui as próximas petições. */
+  generaliza?: boolean;
+  criado_em: string;
+}
+
+/** Uma versão anterior da petição, guardada antes de uma revisão sobrescrevê-la. */
+export interface VersaoDePeticao {
+  versao: number;
+  status: string;
+  criado_em: string;
+  dados: Peticao;
+}
+
+export interface HistoricoDePeticao {
+  criticas: CriticaDePeticao[];
+  versoes: VersaoDePeticao[];
+}
+
+/**
+ * Pede à IA que reescreva a petição a partir de uma crítica em texto livre.
+ *
+ * Não gera do zero: aplica só o que a crítica pede sobre a minuta atual. A
+ * versão anterior fica preservada (`historicoDePeticao`), a crítica em si é
+ * registrada com autor e data, e a nova versão SEMPRE volta para "em revisão"
+ * — mesmo que a anterior já estivesse aprovada, é preciso aprovar de novo.
+ */
+export function revisarPeticaoComPrompt(
+  casoId: string,
+  pecaId: string,
+  prompt: string,
+  /** `false` = lição só deste caso: entra na rastreabilidade e NÃO ensina a IA. */
+  generaliza = true,
+): Promise<{ peticao: Peticao; criticas: CriticaDePeticao[] }> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/revisar`, {
+    method: "POST",
+    body: JSON.stringify({ prompt, generaliza }),
+  });
+}
+
+/** A rastreabilidade completa desta petição: toda crítica feita e toda versão anterior. */
+export function historicoDePeticao(casoId: string, pecaId: string): Promise<HistoricoDePeticao> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/historico`);
 }
 
 /**
@@ -748,17 +814,46 @@ export interface PecaDeEstilo {
   created_at: string | null;
 }
 
+export interface PaginaPecasDeEstilo {
+  items: PecaDeEstilo[];
+  total: number;
+  limit: number;
+  offset: number;
+  pagina: number;
+  tamanho: number;
+  paginas: number;
+}
+
 export async function pecasDeEstilo(
   taxonomyCode?: string | null,
-  documentType = "INITIAL_PETITION",
-): Promise<PecaDeEstilo[]> {
-  const busca = new URLSearchParams();
+  opcoes: { pagina?: number; tamanho?: number; documentType?: string | null } = {},
+): Promise<PaginaPecasDeEstilo> {
+  const tamanho = Number.isFinite(opcoes.tamanho)
+    ? Math.max(1, Math.floor(opcoes.tamanho ?? 20))
+    : 20;
+  const pagina = Number.isFinite(opcoes.pagina)
+    ? Math.max(1, Math.floor(opcoes.pagina ?? 1))
+    : 1;
+  const offset = (pagina - 1) * tamanho;
+  const busca = new URLSearchParams({ limit: String(tamanho), offset: String(offset) });
   if (taxonomyCode) busca.set("taxonomy_code", taxonomyCode);
-  if (documentType) busca.set("document_type", documentType);
-  const dados = await chamar<{ items: PecaDeEstilo[] }>(
-    `/api/agente/estilo/pecas${busca.toString() ? `?${busca}` : ""}`,
+  if (opcoes.documentType) busca.set("document_type", opcoes.documentType);
+  const dados = await chamar<{ items: PecaDeEstilo[]; total?: number; limit?: number; offset?: number }>(
+    `/api/agente/estilo/pecas?${busca}`,
   );
-  return dados.items ?? [];
+  const items = Array.isArray(dados.items) ? dados.items : [];
+  const total = Number.isFinite(dados.total) ? Math.max(0, dados.total ?? 0) : items.length;
+  const limite = Number.isFinite(dados.limit) ? Math.max(1, dados.limit ?? tamanho) : tamanho;
+  const deslocamento = Number.isFinite(dados.offset) ? Math.max(0, dados.offset ?? offset) : offset;
+  return {
+    items,
+    total,
+    limit: limite,
+    offset: deslocamento,
+    pagina: Math.floor(deslocamento / limite) + 1,
+    tamanho: limite,
+    paginas: Math.max(1, Math.ceil(total / limite)),
+  };
 }
 
 /** Sobe uma peça pronta do escritório para o corpus de estilo. */
@@ -780,6 +875,44 @@ export async function enviarPecaDeEstilo(
  * O PDF sai `inline` do servidor, e é por isso que ele pode ser exibido dentro do dossiê;
  * o `.docx` continua vindo como anexo, para o advogado editar e assinar.
  */
+/** Uma das OUTRAS peças do caso — ação diferente, mesmo material.
+ *
+ * Não é uma versão da petição inicial: ela continua sendo a peça que se revisa por
+ * prompt, versiona e aprova. Estas nascem da mesma entrevista e dos mesmos
+ * documentos para outra ação, e existem para baixar (ver `peticoes_anexas` em
+ * `app/banco.py`). */
+export interface PecaAnexa {
+  id: string;
+  titulo: string;
+  motivo: string;
+  gerada_por: string;
+  criado_em: string;
+  atualizado_em: string;
+  pendencias: string[];
+  secoes: number;
+}
+
+export function listarPecasAnexas(
+  casoId: string,
+): Promise<{ anexas: PecaAnexa[]; maximo: number }> {
+  return chamar(`/api/agente/casos/${casoId}/peticoes-anexas`);
+}
+
+export function gerarPecaAnexa(
+  casoId: string,
+  acao: { titulo: string; motivo?: string; pedidos?: string[] },
+): Promise<PecaAnexa> {
+  return chamar(`/api/agente/casos/${casoId}/peticoes-anexas`, {
+    method: "POST",
+    body: JSON.stringify({
+      titulo: acao.titulo,
+      motivo: acao.motivo ?? "",
+      pedidos: acao.pedidos ?? [],
+    }),
+  });
+}
+
+
 export function urlDaPeticao(
   casoId: string,
   pecaId: string,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FolderOpen, Trash2 } from "lucide-react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import {
@@ -9,7 +10,9 @@ import {
   type SugestaoCategoriaPorDocumentos,
 } from "@/lib/api";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
+import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 
 interface Props {
   casos: Caso[];
@@ -17,9 +20,17 @@ interface Props {
   carregando: boolean;
   erro: string | null;
   onAbrir: (casoId: string) => void;
-  onCriar: (cliente: string, categoria: string) => Promise<CasoCriado>;
+  onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
 }
+
+function normalizarFiltro(valor: string): string {
+  return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+}
+
+const ACAO_ICONE =
+  "inline-flex h-9 w-9 items-center justify-center rounded-campo border transition-colors " +
+  "duration-[120ms] ease-out disabled:cursor-not-allowed disabled:opacity-60";
 
 export default function ListaCasos({
   casos,
@@ -31,7 +42,9 @@ export default function ListaCasos({
   onExcluir,
 }: Props) {
   const [cliente, setCliente] = useState("");
+  const [telefone, setTelefone] = useState("");
   const [categoria, setCategoria] = useState("");
+  const [filtroCliente, setFiltroCliente] = useState("");
   const [criando, setCriando] = useState(false);
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -43,6 +56,7 @@ export default function ListaCasos({
   const [sugestao, setSugestao] = useState<SugestaoCategoriaPorDocumentos | null>(null);
   const [erroSugestao, setErroSugestao] = useState<string | null>(null);
   const inputSugestaoRef = useRef<HTMLInputElement>(null);
+  const [tentouCriar, setTentouCriar] = useState(false);
   /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
    * de 5 em 5 só para exibição — nada é buscado por página. `pagina` pode ficar
    * maior que o total depois de uma exclusão; `paginaAtual` reancora. */
@@ -53,14 +67,45 @@ export default function ListaCasos({
   const [novoPortal, setNovoPortal] = useState<CasoCriado | null>(null);
   const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
+  const telefoneVazio = !telefonePreenchido(telefone);
+  const filtroNormalizado = normalizarFiltro(filtroCliente);
+  const casosOrdenados = useMemo(
+    () =>
+      [...casos].sort((a, b) => {
+        const dataA = Date.parse(a.criado_em || "");
+        const dataB = Date.parse(b.criado_em || "");
+        if (Number.isNaN(dataA) && Number.isNaN(dataB)) return a.cliente.localeCompare(b.cliente, "pt-BR");
+        if (Number.isNaN(dataA)) return 1;
+        if (Number.isNaN(dataB)) return -1;
+        return dataB - dataA;
+      }),
+    [casos],
+  );
+  const casosDoCliente = useMemo(
+    () =>
+      filtroNormalizado
+        ? casosOrdenados.filter((caso) => normalizarFiltro(caso.cliente).includes(filtroNormalizado))
+        : casosOrdenados,
+    [casosOrdenados, filtroNormalizado],
+  );
+
+  useEffect(() => {
+    setPagina(1);
+  }, [filtroNormalizado]);
 
   async function criar(evento: React.FormEvent) {
     evento.preventDefault();
     if (!cliente.trim() || !categoriaSelecionada) return;
+    if (telefoneVazio && !tentouCriar) {
+      setTentouCriar(true);
+      return;
+    }
     setCriando(true);
     try {
-      setNovoPortal(await onCriar(cliente.trim(), categoriaSelecionada));
+      setNovoPortal(await onCriar(cliente.trim(), categoriaSelecionada, "", formatarTelefone(telefone)));
       setCliente("");
+      setTelefone("");
+      setTentouCriar(false);
     } finally {
       setCriando(false);
     }
@@ -72,7 +117,7 @@ export default function ListaCasos({
   const casosFiltrados = useMemo(() => {
     const termo = busca.trim().toLocaleLowerCase("pt-BR").replace(/\D/g, "") || busca.trim().toLocaleLowerCase("pt-BR");
     const somenteNumeros = busca.trim() && /^\D*\d[\d.\-/\s]*$/.test(busca);
-    return casos
+    return casosDoCliente
       .filter((caso) => {
         const texto = `${caso.cliente} ${caso.id} ${caso.observacao ?? ""}`.toLocaleLowerCase("pt-BR");
         const corresponde = !busca.trim() || (somenteNumeros ? texto.replace(/\D/g, "").includes(termo) : texto.includes(termo));
@@ -85,7 +130,7 @@ export default function ListaCasos({
         : ordem === "antigos"
           ? a.criado_em.localeCompare(b.criado_em)
           : b.criado_em.localeCompare(a.criado_em));
-  }, [casos, busca, tipoFiltro, dataInicial, dataFinal, ordem]);
+  }, [casosDoCliente, busca, tipoFiltro, dataInicial, dataFinal, ordem]);
 
   useEffect(() => setPagina(1), [busca, tipoFiltro, dataInicial, dataFinal, ordem]);
 
@@ -206,6 +251,26 @@ export default function ListaCasos({
           </div>
 
           <div className="mb-4">
+            <RotuloCampo htmlFor="telefone">Telefone / WhatsApp do cliente</RotuloCampo>
+            <Campo
+              id="telefone"
+              type="tel"
+              inputMode="tel"
+              value={formatarTelefone(telefone)}
+              onChange={(e) => setTelefone(formatarTelefone(e.target.value))}
+              placeholder="(61) 98180-8863"
+              autoComplete="off"
+              aria-invalid={tentouCriar && telefoneVazio}
+              className={tentouCriar && telefoneVazio ? "border-atencao" : undefined}
+            />
+            {tentouCriar && telefoneVazio && (
+              <p className="mt-[6px] text-xs leading-[1.5] text-atencao">
+                Telefone vazio. Clique em criar novamente para seguir sem WhatsApp automático.
+              </p>
+            )}
+          </div>
+
+          <div className="mb-4">
             <RotuloCampo htmlFor="categoria">Tipo de ação</RotuloCampo>
             <CampoSeletor
               id="categoria"
@@ -237,14 +302,23 @@ export default function ListaCasos({
             )}
           </div>
 
-          <Botao
+          <BotaoProcesso
             type="submit"
             variante="primario"
             bloco
-            disabled={!cliente.trim() || !categoriaSelecionada || criando}
+            processando={criando}
+            textoProcessando="Criando o caso…"
+            pendencia={
+              !cliente.trim()
+                ? "Digite o nome do cliente para criar o caso."
+                : !categoriaSelecionada
+                  ? "Escolha o tipo de ação."
+                  : null
+            }
+            onPendencia={() => document.getElementById(cliente.trim() ? "categoria" : "cliente")?.focus()}
           >
-            {criando ? "Criando…" : "Criar o caso"}
-          </Botao>
+            Criar o caso
+          </BotaoProcesso>
         </form>
 
         {categorias.length === 0 && (
@@ -272,7 +346,7 @@ export default function ListaCasos({
         subtitulo={
           casos.length === 0
             ? "Nenhum caso ainda."
-            : `${casos.length} ${casos.length === 1 ? "caso" : "casos"} — clique em um para abrir o checklist.`
+            : `${casosFiltrados.length} de ${casos.length} ${casos.length === 1 ? "caso" : "casos"} — mais recentes primeiro.`
         }
       >
         {erro && (
@@ -283,10 +357,23 @@ export default function ListaCasos({
           </div>
         )}
 
+        <div className="mb-4">
+          <RotuloCampo htmlFor="filtro-casos-cliente">Filtrar por nome do caso</RotuloCampo>
+          <Campo
+            id="filtro-casos-cliente"
+            value={filtroCliente}
+            onChange={(e) => setFiltroCliente(e.target.value)}
+            placeholder="Digite o nome do cliente"
+            autoComplete="off"
+          />
+        </div>
+
         {carregando && casos.length === 0 ? (
           <Vazio>Carregando…</Vazio>
         ) : casos.length === 0 ? (
           <Vazio>Crie o primeiro caso ao lado para começar a cobrar os documentos do cliente.</Vazio>
+        ) : casosFiltrados.length === 0 ? (
+          <Vazio>Nenhum caso encontrado com esse nome.</Vazio>
         ) : (
           <>
           <div className="mb-4 grid gap-3 rounded-campo border border-borda bg-papel-2 p-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -304,7 +391,7 @@ export default function ListaCasos({
             <p className="m-0 self-end text-xs text-tinta-3 sm:col-span-2">{casosFiltrados.length} resultado(s)</p>
           </div>
           <div className="min-w-0 overflow-hidden rounded-campo border border-borda">
-            <div className="hidden grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_164px] gap-3 border-b border-borda bg-papel-2 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:grid">
+            <div className="hidden grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_136px] gap-3 border-b border-borda bg-papel-2 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:grid">
               <span>Cliente</span>
               <span>Tipo de ação</span>
               <span>Arquivos</span>
@@ -318,7 +405,7 @@ export default function ListaCasos({
 
                 return (
                   <li key={caso.id} className="min-w-0 bg-papel">
-                    <div className="grid min-w-0 gap-3 px-3 py-3 min-[780px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_164px] min-[780px]:items-center min-[780px]:px-4">
+                    <div className="grid min-w-0 gap-3 px-3 py-3 min-[780px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_136px] min-[780px]:items-center min-[780px]:px-4">
                       <button
                         type="button"
                         className="min-w-0 rounded-campo border-none bg-transparent p-1 text-left text-inherit [font:inherit] transition-colors hover:bg-papel-3"
@@ -351,34 +438,31 @@ export default function ListaCasos({
                         </Selo>
                       </div>
 
-                      <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 min-[780px]:justify-end">
-                        <Botao variante="secundario" pequeno onClick={() => onAbrir(caso.id)}>
-                          Abrir
-                        </Botao>
-                        {confirmando === caso.id ? (
-                          <span className="flex min-w-0 max-w-full items-center gap-2 rounded-campo border border-critico-borda bg-critico-claro px-2 py-2">
-                            <span className="min-w-0 max-w-[22ch] truncate text-xs text-tinta-2">
-                              Apagar caso e arquivos?
-                            </span>
-                            <Botao
-                              variante="perigo"
-                              pequeno
-                              onClick={async () => {
-                                await onExcluir(caso.id);
-                                setConfirmando(null);
-                              }}
-                            >
-                              Apagar
-                            </Botao>
-                            <Botao variante="discreto" pequeno onClick={() => setConfirmando(null)}>
-                              Cancelar
-                            </Botao>
-                          </span>
-                        ) : (
-                          <Botao variante="discreto" pequeno onClick={() => setConfirmando(caso.id)}>
-                            Excluir
-                          </Botao>
-                        )}
+                      <div className="flex min-w-0 items-center justify-start gap-2 min-[780px]:justify-end">
+                        <button
+                          type="button"
+                          className={`${ACAO_ICONE} border-borda-campo bg-papel text-acao hover:border-acao hover:bg-acao-clara`}
+                          onClick={() => onAbrir(caso.id)}
+                          title="Abrir caso"
+                          aria-label={`Abrir caso de ${caso.cliente}`}
+                        >
+                          <FolderOpen size={17} strokeWidth={2.1} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          className={`${ACAO_ICONE} border-transparent bg-transparent text-tinta-2 hover:border-critico-borda hover:bg-critico-claro hover:text-critico`}
+                          onClick={async () => {
+                            const confirmado = window.confirm(
+                              `Apagar o caso de ${caso.cliente}?\n\nEssa ação remove o caso e os arquivos vinculados. Não continue se clicou sem querer.`,
+                            );
+                            if (!confirmado) return;
+                            await onExcluir(caso.id);
+                          }}
+                          title="Apagar caso"
+                          aria-label={`Apagar caso de ${caso.cliente}`}
+                        >
+                          <Trash2 size={17} strokeWidth={2.1} aria-hidden />
+                        </button>
                       </div>
                     </div>
                   </li>

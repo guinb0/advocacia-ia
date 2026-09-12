@@ -29,6 +29,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from .. import armazenamento, auth, contrato, peticao_local
 from . import conversas, dossie, espelho, peticao_fluxo
@@ -71,6 +72,19 @@ def _erro(erro: ErroDoAgente) -> HTTPException:
     if erro.status is not None and erro.status in _REPASSADOS:
         return HTTPException(erro.status, str(erro))
     return HTTPException(status.HTTP_502_BAD_GATEWAY, str(erro))
+
+
+def _gerar_peticao_registrada(caso_id: str, usuario: auth.Usuario, origem: str, acao: Any) -> dict[str, Any]:
+    solicitacao = armazenamento.registrar_solicitacao_peticao(
+        caso_id, usuario.id, usuario.nome, origem
+    )
+    try:
+        resultado = acao()
+    except Exception as erro:
+        armazenamento.concluir_solicitacao_peticao(solicitacao, str(erro))
+        raise
+    armazenamento.concluir_solicitacao_peticao(solicitacao)
+    return resultado
 
 
 @roteador.get("/config")
@@ -390,14 +404,18 @@ def decidir_hipotese(
 
 
 @roteador.post("/casos/{caso_id}/peticao", status_code=status.HTTP_202_ACCEPTED)
-def gerar_peticao(caso_id: str, opcao: int = 0) -> dict[str, Any]:
+def gerar_peticao(
+    caso_id: str, opcao: int = 0, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
     """Gera petição a partir da entrevista, com embeddings de style e de documentos.
 
     Fluxo: transcrição → análise resumida → duas estratégias → redação no modelo
     treinado em Modelos de Petição. Use as rotas `/peticao-fluxo/*` para passo a passo.
     """
     try:
-        return peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+        return _gerar_peticao_registrada(
+            caso_id, usuario, "peticao", lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
@@ -428,20 +446,83 @@ def estrategias_peticao_fluxo(caso_id: str) -> dict[str, Any]:
 
 
 @roteador.post("/casos/{caso_id}/peticao-fluxo/completo")
-def gerar_analise_e_peticao(caso_id: str) -> dict[str, Any]:
+def gerar_analise_e_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
     """Analisa entrevista + OCR e redige a petição (síncrono, sem agente)."""
     try:
-        return peticao_fluxo.gerar_completo(caso_id)
+        return _gerar_peticao_registrada(
+            caso_id, usuario, "peticao-fluxo-completo", lambda: peticao_fluxo.gerar_completo(caso_id)
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
 
 
 @roteador.post("/casos/{caso_id}/peticao-fluxo/gerar")
-def gerar_peticao_fluxo(caso_id: str, opcao: int = 0) -> dict[str, Any]:
+def gerar_peticao_fluxo(
+    caso_id: str, opcao: int = 0, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
     try:
-        return peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+        return _gerar_peticao_registrada(
+            caso_id,
+            usuario,
+            "peticao-fluxo-gerar",
+            lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao),
+        )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
+
+
+class PedidoPecaAnexa(BaseModel):
+    """A ação sugerida que o advogado mandou redigir."""
+
+    titulo: str
+    motivo: str = ""
+    pedidos: list[str] = []
+
+
+@roteador.get("/casos/{caso_id}/peticoes-anexas")
+def listar_peticoes_anexas(caso_id: str) -> dict[str, Any]:
+    """As OUTRAS peças já redigidas para este caso, além da petição inicial."""
+    return {
+        "anexas": peticao_local.listar_anexas(caso_id),
+        "maximo": peticao_local.MAX_ANEXAS_POR_CASO,
+    }
+
+
+@roteador.post("/casos/{caso_id}/peticoes-anexas", status_code=status.HTTP_201_CREATED)
+def gerar_peticao_anexa(
+    caso_id: str,
+    pedido: PedidoPecaAnexa,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Redige UMA das ações sugeridas, sem tocar na petição inicial do caso.
+
+    A petição inicial continua sendo a peça que se revisa por prompt, versiona e
+    aprova. Esta nasce do mesmo material (mesma entrevista, mesmos documentos) para
+    OUTRA ação — é o que o escritório pediu para poder levar duas ações do mesmo
+    acidente sem redigir a segunda à mão.
+    """
+    try:
+        entrevista = peticao_fluxo.transcricao(caso_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+    def redigir() -> dict[str, Any]:
+        try:
+            return peticao_local.gerar_anexa(
+                caso_id,
+                titulo=pedido.titulo,
+                motivo=pedido.motivo,
+                pedidos=pedido.pedidos,
+                texto_entrevista=entrevista["texto"],
+                gerada_por=usuario.nome or usuario.id,
+            )
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+    # Mesma trilha da petição principal: quem pediu, quando, e se terminou.
+    return _gerar_peticao_registrada(caso_id, usuario, "peticao-anexa", redigir)
 
 
 def _peca_local(peca_ref: str) -> bool:
@@ -489,12 +570,26 @@ def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Respon
             status_code=400, detail="Formato inválido: use docx ou pdf."
         )
 
+    nome_da_peca = "Peticao inicial"
     if _peca_local(peca_ref):
         try:
             conteudo = (
                 peticao_local.ler_pdf(caso_id)
                 if formato == "pdf"
                 else peticao_local.ler_docx(caso_id)
+            )
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
+    elif peca_ref.startswith(f"{caso_id}:"):
+        # Peça ANEXA deste caso — o id vem de `peticao_local.id_da_anexa`. O
+        # `peca_ref` já existia nesta rota para isto; até agora só valia "local".
+        # O prefixo é conferido contra o caso da URL de propósito: sem isso, o id
+        # de uma peça de OUTRO caso baixaria por aqui.
+        try:
+            nome_da_peca, conteudo = (
+                peticao_local.ler_pdf_anexa(peca_ref)
+                if formato == "pdf"
+                else peticao_local.ler_docx_anexa(peca_ref)
             )
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
@@ -506,7 +601,7 @@ def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Respon
             raise _erro(erro) from erro
 
     caso = armazenamento.obter_caso(caso_id) or {}
-    arquivo = f"Peticao inicial - {caso.get('cliente', 'caso')}.{formato}".replace(
+    arquivo = f"{nome_da_peca} - {caso.get('cliente', 'caso')}.{formato}".replace(
         "/", "-"
     )
     disposicao = "inline" if formato == "pdf" else "attachment"
@@ -581,6 +676,47 @@ def salvar_rascunho_peticao(
         return Cliente().salvar_rascunho_peticao(caso_ref, peca_ref, secoes)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao/{peca_ref}/revisar")
+def revisar_peticao_com_prompt(
+    caso_id: str,
+    peca_ref: str,
+    prompt: str = Body(..., embed=True),
+    # Padrão `True` porque é o caso comum — a crítica quase sempre é uma lição
+    # do escritório — e porque é o que os clientes antigos, que não mandam o
+    # campo, já faziam.
+    generaliza: bool = Body(True, embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Issue "Permitir alteração da petição por prompt com rastreabilidade".
+
+    Mesma permissão de `decidir_peticao`/`salvar_rascunho_peticao` — quem já
+    pode gerar e aprovar a petição já pode pedir uma revisão por prompt; não
+    existe papel "gestor" separado no sistema hoje.
+    """
+    if not _peca_local(peca_ref):
+        # Ainda não existe equivalente no `ia-juridica` — melhor recusar
+        # explicando do que fingir que a revisão aconteceu.
+        raise HTTPException(
+            501, "Revisão por prompt ainda não é suportada nas petições do agente."
+        )
+    try:
+        return peticao_fluxo.revisar_peticao(
+            caso_id, prompt=prompt, usuario=usuario.nome, generaliza=generaliza
+        )
+    except peticao_local.ErroPeticao as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/casos/{caso_id}/peticao/{peca_ref}/historico")
+def historico_de_peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
+    """A rastreabilidade que a issue pede: críticas feitas e versões anteriores."""
+    if not _peca_local(peca_ref):
+        return {"criticas": [], "versoes": []}
+    return peticao_fluxo.historico_de_peticao(caso_id)
 
 
 # ------------------------------------------------------------------- estilo
@@ -709,11 +845,17 @@ def taxonomia_de_estilo() -> dict[str, Any]:
 
 @roteador.get("/estilo/pecas")
 def pecas_de_estilo(
-    taxonomy_code: str | None = None, document_type: str | None = None
+    taxonomy_code: str | None = None,
+    document_type: str | None = None,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     try:
         return Cliente().pecas_de_estilo(
-            taxonomy_code=taxonomy_code, document_type=document_type
+            taxonomy_code=taxonomy_code,
+            document_type=document_type,
+            limit=limit,
+            offset=offset,
         )
     except ErroDoAgente as erro:
         raise _erro(erro) from erro

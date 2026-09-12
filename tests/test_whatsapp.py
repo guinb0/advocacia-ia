@@ -132,18 +132,46 @@ def testar_sem_telefone() -> int:
 
 def testar_desconfigurado() -> int:
     """Sem `.env` preenchido a resposta é 503, e não um 500 sem explicação."""
-    guardado = {c: os.environ.pop(c, None) for c in ("EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE")}
+    # VAZIAS, e não removidas.
+    #
+    # O `importlib.reload` abaixo faz o módulo carregar o `.env` da raiz outra vez,
+    # e `carregar_env` preenche o que está AUSENTE — então apagar a variável só
+    # convidava o `.env` a repô-la. Era por isso que este teste (o gate do CI)
+    # passava no CI, que não tem `.env`, e falhava na máquina de quem tem um: o
+    # WhatsApp voltava configurado e a resposta vinha 200 no lugar de 503.
+    # Definida vazia, ela vence o arquivo.
+    chaves = ("EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE")
+    guardado = {c: os.environ.get(c) for c in chaves}
+    for chave in chaves:
+        os.environ[chave] = ""
     # Recarrega o módulo para desfazer o `_enviar_texto` gravado dos outros
     # testes: aqui quem precisa rodar é o verdadeiro, porque o 503 é dele.
     import importlib
 
     modulo = importlib.reload(whatsapp)
+
+    # A reserva anti-duplicidade sai de cena — ela grava no BANCO, e é dela que
+    # vinha a segunda falha deste teste: a rota reserva o envio por número, então
+    # da segunda execução em diante `reservar` respondia "já enviado" e a resposta
+    # vinha 200 no lugar do 503 que se quer medir. O que está em jogo aqui é o
+    # WhatsApp DESLIGADO responder 503, não a deduplicação.
+    from app import automacoes_whatsapp
+
+    reservar_real = automacoes_whatsapp.reservar
+    automacoes_whatsapp.reservar = lambda *a, **k: True  # type: ignore[assignment]
+
     app = FastAPI()
     app.include_router(modulo.roteador)
     r = TestClient(app).post("/api/whatsapp/avaliacao-google", json={"telefone": "91988887777"})
-    falhas = not checar(r.status_code == 503, "WhatsApp desligado responde 503")
+    automacoes_whatsapp.reservar = reservar_real  # type: ignore[assignment]
+    falhas = not checar(
+        r.status_code == 503,
+        f"WhatsApp desligado responde 503 (veio {r.status_code}: {r.text[:120]})",
+    )
     for chave, valor in guardado.items():
-        if valor is not None:
+        if valor is None:
+            os.environ.pop(chave, None)
+        else:
             os.environ[chave] = valor
     return falhas
 

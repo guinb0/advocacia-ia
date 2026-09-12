@@ -17,10 +17,34 @@ import asyncio
 import base64
 import json
 import os
+import sys
 
 import httpx
 
+# O console do Windows abre em cp1252, e este teste imprime "→" nos rótulos.
+# Sem isto ele morria ao IMPRIMIR o resultado, não ao verificá-lo: um
+# UnicodeEncodeError no fim de uma execução inteira verde, que passava por falha
+# de assinatura na leitura da suíte.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from app import assinatura
+from tests.banco_de_teste import exigir_banco_de_teste
+
+# A última seção grava e apaga linhas em `assinaturas` de verdade (é o que prova o
+# índice por nome + CPF), então vale a mesma trava dos outros testes de banco.
+exigir_banco_de_teste()
+
+# O ambiente é fixado no SANDBOX, e não herdado do `.env` da máquina.
+#
+# O teste configura `ZAPSIGN_TEST_API_TOKEN`, mas `assinatura.token()` só lê essa
+# variável quando a base é a de sandbox — com a base de produção ele procura
+# `ZAPSIGN_API_TOKEN`, que o escritório não tem (o envio real hoje é pelo
+# navegador, ver `app/assinatura_navegador.py`). Sem esta linha o teste passava no
+# CI (sem `.env`) e falhava na máquina de quem tem um, com "falta
+# ZAPSIGN_API_TOKEN" — parecendo defeito da assinatura em vez de ambiente.
+# O transporte é falso (`httpx.MockTransport`), então a URL nunca é chamada.
+os.environ["ZAPSIGN_BASE_URL"] = "https://sandbox.api.zapsign.com.br/api/v1"
 
 
 def checar(condicao: bool, descricao: str) -> bool:

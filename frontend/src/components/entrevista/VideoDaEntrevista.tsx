@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { GravacaoVideo, podeGravarTela, podeGravarVideo } from "@/lib/gravacaoVideo";
 import type { EstadoVideo, FonteVideo, VideoGravado } from "@/lib/gravacaoVideo";
+import { baixarUrl } from "@/lib/baixar";
 
 /* Gravar a entrevista em vídeo — e baixar, porque ela não fica guardada.
  *
@@ -15,10 +16,17 @@ import type { EstadoVideo, FonteVideo, VideoGravado } from "@/lib/gravacaoVideo"
  * O botão fica em cima, junto do "começar", e não no rodapé: vídeo se decide no
  * início da conversa. No fim, só sobra o arrependimento. */
 
+export type ControlesVideo = {
+  /** Fecha a gravação e baixa o arquivo, sem depender de ninguém clicar. */
+  pararEBaixar: () => Promise<void>;
+};
+
 interface Props {
   /** Avisa que há vídeo gravado e ainda não baixado — o que se perde ao sair. */
   onPendente?: (pendente: boolean) => void;
   automatico?: boolean;
+  /** Entrega ao pai o comando de encerrar — é o fim do atendimento que o aciona. */
+  onControles?: (controles: ControlesVideo) => void;
 }
 
 const BOTAO =
@@ -35,9 +43,17 @@ const BOTAO_DESTAQUE =
   "border-[1.5px] border-critico bg-critico text-papel text-[11px] font-semibold leading-none font-ui " +
   "tracking-[0.1em] uppercase px-[13px] py-[9px] cursor-pointer inline-block no-underline hover:bg-tinta hover:border-tinta";
 
-export default function VideoDaEntrevista({ onPendente, automatico = false }: Props) {
+export default function VideoDaEntrevista({
+  onPendente,
+  automatico = false,
+  onControles,
+}: Props) {
   const [estado, setEstado] = useState<EstadoVideo>("parado");
   const [video, setVideo] = useState<VideoGravado | null>(null);
+  /* O `pararEBaixar` é fixado por `useCallback` e não enxergaria o estado; o
+   * ref é o que diz se o arquivo JÁ está pronto (gravação parada antes do fim). */
+  const videoRef = useRef<VideoGravado | null>(null);
+  videoRef.current = video;
   const [erro, setErro] = useState<string | null>(null);
   const [decorrido, setDecorrido] = useState(0);
   const [baixado, setBaixado] = useState(false);
@@ -50,6 +66,10 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
   const gravacao = useRef<GravacaoVideo | null>(null);
   const onPendenteRef = useRef(onPendente);
   onPendenteRef.current = onPendente;
+  /* Quem está esperando o arquivo ficar pronto. O `MediaRecorder` só entrega o
+   * blob no `onstop`, que é assíncrono: sem isto, "encerrar e baixar" tentaria
+   * baixar um vídeo que ainda não existe. */
+  const aguardandoPronto = useRef<((v: VideoGravado) => void) | null>(null);
 
   if (gravacao.current === null && typeof window !== "undefined") {
     gravacao.current = new GravacaoVideo({
@@ -58,6 +78,8 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
         setVideo(pronto);
         setBaixado(false);
         onPendenteRef.current?.(true);
+        aguardandoPronto.current?.(pronto);
+        aguardandoPronto.current = null;
       },
       onErro: setErro,
     });
@@ -129,6 +151,70 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
     onPendenteRef.current?.(false);
   }, []);
 
+  /* Encerrar o atendimento baixa o vídeo SOZINHO.
+   *
+   * Ele não está em lugar nenhum além desta aba — o servidor nunca o recebeu —
+   * e o fluxo dependia de alguém lembrar de clicar em "Baixar" antes de sair.
+   * Quem esquecia perdia a gravação inteira, sem recuperação possível. Agora o
+   * fim do atendimento é o gatilho: para de gravar, espera o `onstop` entregar
+   * o blob e dispara o download.
+   *
+   * Nunca levanta: o áudio e a transcrição do atendimento não podem ficar
+   * presos porque o vídeo falhou. O painel continua na tela com o botão manual
+   * para quem precisar tentar de novo. */
+  const pararEBaixar = useCallback(async () => {
+    const g = gravacao.current;
+    if (!g) return;
+    try {
+      const pronto =
+        videoRef.current ??
+        (g.estado === "gravando"
+          ? await new Promise<VideoGravado | null>((ok) => {
+              // Teto: um `onstop` que não chega não pode segurar o
+              // encerramento do atendimento para sempre.
+              const relogio = setTimeout(() => {
+                aguardandoPronto.current = null;
+                ok(null);
+              }, 15_000);
+              aguardandoPronto.current = (v) => {
+                clearTimeout(relogio);
+                ok(v);
+              };
+              g.parar();
+            })
+          : null);
+      if (!pronto) {
+        // O `onstop` não chegou dentro do teto. O vídeo continua PENDENTE de
+        // propósito: é o que mantém o aviso de perda na saída, e antes disto
+        // o encerramento passava em silêncio.
+        setErro("O vídeo não ficou pronto em 15s e não baixou sozinho. Use o botão abaixo.");
+        return;
+      }
+      /* Pelo `lib/baixar`, e não por um `<a>` solto.
+       *
+       * O link nunca era inserido na página: no Firefox um `<a>` fora do
+       * documento não dispara download nenhum, e o `baixar()` da linha seguinte
+       * marcava o vídeo como salvo do mesmo jeito — o aviso "o vídeo será
+       * perdido" era desarmado e o advogado saía achando que tinha o arquivo. O
+       * vídeo não está em lugar nenhum além desta aba; aqui o erro é definitivo. */
+      baixarUrl(pronto.url, pronto.nome);
+      baixar();
+    } catch (e) {
+      setErro(
+        e instanceof Error
+          ? `O vídeo não baixou sozinho (${e.message}). Use o botão abaixo.`
+          : "O vídeo não baixou sozinho. Use o botão abaixo.",
+      );
+    }
+  }, [baixar]);
+
+  // Entregue ao pai uma vez: é o fim do atendimento que chama.
+  const onControlesRef = useRef(onControles);
+  onControlesRef.current = onControles;
+  useEffect(() => {
+    onControlesRef.current?.({ pararEBaixar });
+  }, [pararEBaixar]);
+
   const descartar = useCallback(() => {
     gravacao.current?.descartar();
     setVideo(null);
@@ -181,9 +267,13 @@ export default function VideoDaEntrevista({ onPendente, automatico = false }: Pr
           </>
         ) : (
           <>
-            <span className="inline-flex items-center gap-[7px] text-[12px] font-medium leading-none font-codigo text-critico">
-              <i className="w-2 h-2 bg-critico rounded-full animate-[pulsarForte_1.6s_ease-in-out_infinite] motion-reduce:animate-none" />
-              TELA E VÍDEO GRAVANDO · {formatarRelogio(decorrido)}
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-none font-codigo text-critico" aria-label={`Gravação em andamento: ${formatarRelogio(decorrido)}`}>
+              <span className="flex h-4 items-center gap-[2px]" aria-hidden>
+                <i className="h-1.5 w-[3px] rounded-full bg-critico animate-[pulsoAudio_0.7s_ease-in-out_infinite] motion-reduce:animate-none" />
+                <i className="h-3 w-[3px] rounded-full bg-critico animate-[pulsoAudio_0.9s_ease-in-out_infinite] motion-reduce:animate-none" />
+                <i className="h-2 w-[3px] rounded-full bg-critico animate-[pulsoAudio_0.6s_ease-in-out_infinite] motion-reduce:animate-none" />
+              </span>
+              <span>{formatarRelogio(decorrido)}</span>
             </span>
             <button type="button" className={BOTAO_GRAVANDO} onClick={() => gravacao.current?.parar()}>
               Parar

@@ -74,6 +74,75 @@ def converter_para_pdf(origem: Path, nome_original: str, destino: Path) -> PdfCo
     return PdfConvertido(destino, True, download)
 
 
+def mesclar_em_pdf(
+    origens: list[tuple[Path, str]], destino: Path, *, limite_paginas: int
+) -> int:
+    """Junta vários arquivos (PDF ou imagem) num único PDF, na ordem dada.
+
+    Cada imagem passa por `converter_para_pdf` antes — a mesma conversão do
+    botão "baixar como PDF" de uma entrega —, e o PDF resultante (ou o original,
+    se já for PDF) tem suas páginas importadas para um documento novo. Ao final
+    sobra um único arquivo, na ordem em que os originais foram passados.
+
+    O pdfium não é thread-safe: cada chamada à biblioteca aqui passa pelo MESMO
+    lock que protege a rasterização do OCR (`app.pdf.PDFIUM_LOCK`), senão duas
+    exportações ao mesmo tempo corrompem uma a outra.
+
+    Devolve o total de páginas do PDF final. `ErroConversaoPdf` se algum
+    arquivo não puder entrar (tipo não suportado, ou a própria conversão
+    falhar), ou se a soma de páginas passar do limite — um PDF de centenas de
+    páginas não é o caso de uso desta função.
+    """
+    import pypdfium2 as pdfium
+
+    from . import pdf as pdf_mod
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    temporarios: list[Path] = []
+    combinado = pdfium.PdfDocument.new()
+    try:
+        total_paginas = 0
+        for indice, (origem, nome_original) in enumerate(origens):
+            ext = origem.suffix.lower()
+            if ext == ".pdf":
+                caminho_pdf = origem
+            elif ext in EXTENSOES_IMAGEM:
+                tmp = destino.with_name(f"{destino.stem}-parte-{indice}.pdf")
+                converter_para_pdf(origem, nome_original, tmp)
+                temporarios.append(tmp)
+                caminho_pdf = tmp
+            else:
+                raise ErroConversaoPdf(
+                    f"'{nome_original}' não pode entrar no PDF combinado — hoje "
+                    "só PDF e imagem são aceitos nesse formato."
+                )
+
+            with pdf_mod.PDFIUM_LOCK:
+                with pdfium.PdfDocument(str(caminho_pdf)) as parte:
+                    n = len(parte)
+                    if n == 0:
+                        continue
+                    if total_paginas + n > limite_paginas:
+                        raise ErroConversaoPdf(
+                            f"A seleção passa de {limite_paginas} páginas combinadas. "
+                            "Baixe em partes menores."
+                        )
+                    combinado.import_pages(parte)
+                    total_paginas += n
+
+        if total_paginas == 0:
+            raise ErroConversaoPdf("Nenhum arquivo pôde ser combinado em PDF.")
+
+        with pdf_mod.PDFIUM_LOCK:
+            combinado.save(str(destino))
+    finally:
+        combinado.close()
+        for tmp in temporarios:
+            tmp.unlink(missing_ok=True)
+
+    return total_paginas
+
+
 def _preparar_pagina(imagem: Image.Image) -> Image.Image:
     pagina = imagem.copy()
     if pagina.mode in {"RGBA", "LA", "P"}:

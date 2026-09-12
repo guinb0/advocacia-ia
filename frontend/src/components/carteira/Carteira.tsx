@@ -93,8 +93,23 @@ export default function Carteira({
   onNovoCaso,
   onNavegar,
 }: Props) {
-  const { linhas, triagem, chegandoAgora, pedidos, carregando, erro, recarregar, paginacao, irPara } =
-    useCarteira();
+  const {
+    linhas,
+    triagem,
+    chegandoAgora,
+    pedidos,
+    carregando,
+    erro,
+    recarregar,
+    paginacao,
+    irPara,
+    categorias,
+    filtros,
+    setFiltros,
+    algumFiltroAtivo,
+    limparFiltros,
+  } = useCarteira();
+  const { setBusca, setCategoria, setSituacao, setOrdenar } = setFiltros;
   const estadoModelo = useModelo();
   const sessao = useSessao();
 
@@ -103,41 +118,13 @@ export default function Carteira({
    * montar é que existe "hoje". */
   const [hoje, setHoje] = useState("");
   useEffect(() => setHoje(HOJE_FORMATO.format(new Date())), []);
-  const [filtro, setFiltro] = useState<Filtro>("todos");
-  const [busca, setBusca] = useState("");
-  const [tipoFiltro, setTipoFiltro] = useState("");
-  const [dataInicial, setDataInicial] = useState("");
-  const [dataFinal, setDataFinal] = useState("");
-  const [ordem, setOrdem] = useState<"prioridade" | "recentes" | "antigos" | "nome">("prioridade");
   const [selecionado, setSelecionado] = useState(0);
   const listaRef = useRef<HTMLUListElement>(null);
 
-  const tiposDisponiveis = useMemo(() =>
-    [...new Map(linhas.map((linha) => [linha.caso.categoria, linha.categoriaNome])).entries()]
-      .sort((a, b) => a[1].localeCompare(b[1], "pt-BR")), [linhas]);
-
-  const visiveis = useMemo(() => {
-    const buscaLimpa = busca.trim().toLocaleLowerCase("pt-BR");
-    const numerica = buscaLimpa && /^\D*\d[\d.\-/\s]*$/.test(buscaLimpa);
-    const termo = numerica ? buscaLimpa.replace(/\D/g, "") : buscaLimpa;
-    return linhas.filter((linha) => {
-      const passaSituacao = filtro === "todos"
-        || (filtro === "pedido" && linha.situacao.progresso.obrigatorios_pendentes > 0)
-        || (filtro === "pronto" && linha.situacao.progresso.pronto)
-        || linha.severidade === filtro;
-      const texto = `${linha.caso.cliente} ${linha.caso.id} ${linha.caso.observacao ?? ""}`.toLocaleLowerCase("pt-BR");
-      const passaBusca = !termo || (numerica ? texto.replace(/\D/g, "").includes(termo) : texto.includes(termo));
-      const dia = (linha.caso.criado_em ?? "").slice(0, 10);
-      return passaSituacao && passaBusca && (!tipoFiltro || linha.caso.categoria === tipoFiltro)
-        && (!dataInicial || dia >= dataInicial) && (!dataFinal || dia <= dataFinal);
-    }).sort((a, b) => ordem === "nome"
-      ? a.caso.cliente.localeCompare(b.caso.cliente, "pt-BR")
-      : ordem === "recentes"
-        ? b.caso.criado_em.localeCompare(a.caso.criado_em)
-        : ordem === "antigos"
-          ? a.caso.criado_em.localeCompare(b.caso.criado_em)
-          : a.peso - b.peso);
-  }, [linhas, filtro, busca, tipoFiltro, dataInicial, dataFinal, ordem]);
+  // A lista já vem filtrada e paginada do servidor: o filtro vale na carteira
+  // inteira, não só nesta página. `filtro` é a situação escolhida nos chips.
+  const filtro = (filtros.situacao || "todos") as Filtro;
+  const visiveis = linhas;
 
   // Um filtro que encolhe a lista pode deixar o cursor fora dela.
   useEffect(() => {
@@ -147,10 +134,13 @@ export default function Carteira({
   // Página nova, lista nova: o cursor volta para o topo dela.
   useEffect(() => setSelecionado(0), [paginacao.pagina]);
 
-  const alternarFiltro = useCallback((alvo: Filtro) => {
-    setFiltro((atual) => (atual === alvo ? "todos" : alvo));
-    setSelecionado(0);
-  }, []);
+  const alternarFiltro = useCallback(
+    (alvo: Filtro) => {
+      setSituacao((atual) => (atual === alvo ? "" : alvo));
+      setSelecionado(0);
+    },
+    [setSituacao],
+  );
 
   useEffect(() => {
     function aoTeclar(evento: KeyboardEvent) {
@@ -175,7 +165,7 @@ export default function Carteira({
         evento.preventDefault();
         onAbrir(atual.caso.id);
       } else if (evento.key === "Escape") {
-        setFiltro("todos");
+        limparFiltros();
       } else if (evento.key.toLowerCase() === "c") {
         alternarFiltro("atencao");
       } else if (evento.key.toLowerCase() === "p") {
@@ -187,7 +177,7 @@ export default function Carteira({
 
     window.addEventListener("keydown", aoTeclar);
     return () => window.removeEventListener("keydown", aoTeclar);
-  }, [visiveis, selecionado, onAbrir, onNovoCaso, alternarFiltro]);
+  }, [visiveis, selecionado, onAbrir, onNovoCaso, alternarFiltro, limparFiltros]);
 
   // Mantém a linha do cursor visível quando a navegação passa da dobra. O
   // backend já entrega apenas os itens da página atual.
@@ -247,7 +237,7 @@ export default function Carteira({
           ajuda="Esperando uma decisão sua"
           simbolo="✕"
           severidade="critico"
-          ativo={filtro === "critico"}
+          ativo={filtros.situacao === "critico"}
           onClick={() => alternarFiltro("critico")}
         />
         <CartaoTriagem
@@ -256,7 +246,7 @@ export default function Carteira({
           ajuda="Documento ilegível ou trocado"
           simbolo="!"
           severidade="atencao"
-          ativo={filtro === "atencao"}
+          ativo={filtros.situacao === "atencao"}
           onClick={() => alternarFiltro("atencao")}
         />
         <CartaoTriagem
@@ -265,7 +255,7 @@ export default function Carteira({
           ajuda="Para enviar ao cliente"
           simbolo="→"
           severidade="neutro"
-          ativo={filtro === "pedido"}
+          ativo={filtros.situacao === "pedido"}
           onClick={() => alternarFiltro("pedido")}
         />
         <CartaoTriagem
@@ -274,7 +264,7 @@ export default function Carteira({
           ajuda="Prontos para a inicial"
           simbolo="✓"
           severidade="pronto"
-          ativo={filtro === "pronto"}
+          ativo={filtros.situacao === "pronto"}
           onClick={() => alternarFiltro("pronto")}
         />
       </div>
@@ -293,8 +283,7 @@ export default function Carteira({
             <div>
               <h2 className="m-0 text-lg">Fila de casos</h2>
               <p className="mb-0 mt-1 text-xs text-tinta-3">
-                {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · o que pode
-                travar aparece primeiro
+                {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · novos aparecem primeiro
               </p>
             </div>
             {paginacao.total > 0 && (
@@ -304,29 +293,56 @@ export default function Carteira({
             )}
           </div>
 
-          <div className="grid gap-3 border-b border-borda bg-papel-2 px-[18px] py-4 sm:grid-cols-2 xl:grid-cols-5">
-            <input className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm xl:col-span-2" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome, CPF ou ID" aria-label="Buscar na carteira" />
-            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value)} aria-label="Filtrar por tipo de caso">
-              <option value="">Todos os tipos</option>{tiposDisponiveis.map(([codigo, nome]) => <option key={codigo} value={codigo}>{nome}</option>)}
+          {/* Filtros que valem na carteira inteira: nome/CPF, ação e ordem. */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-borda px-[18px] py-[10px]">
+            <input
+              type="search"
+              value={filtros.busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Nome ou CPF do cliente"
+              aria-label="Filtrar por nome ou CPF"
+              className="min-w-[180px] flex-1 rounded-campo border border-borda bg-papel px-3 py-[7px] text-sm text-tinta placeholder:text-tinta-3"
+            />
+            <select
+              value={filtros.categoria}
+              onChange={(e) => setCategoria(e.target.value)}
+              aria-label="Filtrar por categoria"
+              className="rounded-campo border border-borda bg-papel px-3 py-[7px] text-sm text-tinta"
+            >
+              <option value="">Todas as ações</option>
+              {categorias.map((c) => (
+                <option key={c.codigo} value={c.codigo}>
+                  {c.nome}
+                </option>
+              ))}
             </select>
-            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={ordem} onChange={(e) => setOrdem(e.target.value as typeof ordem)} aria-label="Ordenar carteira">
-              <option value="prioridade">Prioridade</option><option value="recentes">Mais recentes</option><option value="antigos">Mais antigos</option><option value="nome">Nome A–Z</option>
+            <select
+              value={filtros.ordenar}
+              onChange={(e) => setOrdenar(e.target.value as typeof filtros.ordenar)}
+              aria-label="Ordenar a fila"
+              className="rounded-campo border border-borda bg-papel px-3 py-[7px] text-sm text-tinta"
+            >
+              <option value="recente">Ordem: criados por último</option>
+              <option value="risco">Ordem: risco de travar</option>
+              <option value="parado">Ordem: parados há mais tempo</option>
+              <option value="nome">Ordem: nome do cliente (A–Z)</option>
             </select>
-            <button type="button" className="min-h-10 rounded-campo border border-borda-forte px-3 text-sm font-semibold" onClick={() => { setBusca(""); setTipoFiltro(""); setDataInicial(""); setDataFinal(""); setOrdem("prioridade"); setFiltro("todos"); }}>Limpar filtros</button>
-            <label className="text-xs text-tinta-3">De<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataInicial} onChange={(e) => setDataInicial(e.target.value)} /></label>
-            <label className="text-xs text-tinta-3">Até<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataFinal} onChange={(e) => setDataFinal(e.target.value)} /></label>
-            <p className="m-0 self-end text-xs text-tinta-3 sm:col-span-2">{visiveis.length} resultado(s) nesta página</p>
+            {algumFiltroAtivo && (
+              <Botao variante="secundario" pequeno onClick={limparFiltros}>
+                Limpar filtros
+              </Botao>
+            )}
           </div>
 
-          {/* Filtro aplicado dito em palavras, com o desfazer ao lado. */}
-          {filtro !== "todos" && (
+          {/* Situação escolhida nos chips, dita em palavras. */}
+          {filtro !== "todos" && filtro in DESCRICAO_FILTRO && (
             <div className="flex justify-between items-center gap-3 px-[18px] py-[10px] border-b border-acao-borda bg-acao-clara text-acao text-sm font-semibold flex-wrap">
               <span>
-                Mostrando {visiveis.length} de {linhas.length} nesta página —{" "}
-                {DESCRICAO_FILTRO[filtro]}
+                {paginacao.total} {paginacao.total === 1 ? "caso" : "casos"} —{" "}
+                {DESCRICAO_FILTRO[filtro as Exclude<Filtro, "todos">]}
               </span>
-              <Botao variante="secundario" pequeno onClick={() => setFiltro("todos")}>
-                Ver todos os casos
+              <Botao variante="secundario" pequeno onClick={() => setSituacao("")}>
+                Ver todas as situações
               </Botao>
             </div>
           )}
@@ -372,13 +388,15 @@ export default function Carteira({
                 <>
                   <h3 className="mb-[6px] mt-0 text-tinta text-lg">Nada neste filtro</h3>
                   <p className="mx-auto mb-[18px] mt-0 max-w-[46ch] text-tinta-3 text-sm">
-                    {filtro === "todos"
-                      ? "Nenhum caso a mostrar."
-                      : `Nenhum caso se encaixa em: ${DESCRICAO_FILTRO[filtro]}.`}
+                    {algumFiltroAtivo
+                      ? "Nenhum caso encontrado com os filtros atuais."
+                      : "Nenhum caso a mostrar."}
                   </p>
-                  <Botao variante="secundario" onClick={() => setFiltro("todos")}>
-                    Ver todos os casos
-                  </Botao>
+                  {algumFiltroAtivo && (
+                    <Botao variante="secundario" onClick={limparFiltros}>
+                      Limpar filtros
+                    </Botao>
+                  )}
                 </>
               )}
             </div>
@@ -564,6 +582,7 @@ const APOIO_POR_TELA: Partial<Record<Tela, string>> = {
   panorama: "visão analítica",
   supervisao: "entrevistas",
   catalogoRoteiros: "roteiros guiados",
+  glossarioDocumentos: "tipos de documento",
   usuarios: "acessos",
   modelosDePeticao: "petições",
 };

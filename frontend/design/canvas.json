@@ -1,0 +1,38 @@
+{
+  "artboards": [
+    { "file": "AgenteGeral.dc.html", "x": 0, "y": 0, "w": 1440, "h": 900, "title": "Agente geral — chat com histórico" },
+    { "file": "Main.dc.html", "x": 1560, "y": 0, "w": 1440, "h": 980, "title": "Dossiê + ajudante na lateral" },
+    { "file": "RevisarPeticao.dc.html", "x": 0, "y": 1140, "w": 1440, "h": 900, "title": "Revisar a petição" }
+  ],
+  "annotations": [
+    {
+      "id": "nota-geral",
+      "x": 0,
+      "y": -180,
+      "w": 640,
+      "text": "AGENTE GERAL — chat de verdade.\nHistórico de conversas na coluna esquerda, agrupado por dia, com busca e \"Nova conversa\". A conversa ocupa o centro, largura de leitura.\n\nDuas naturezas de resposta, e o chat mostra qual:\n· sobre o ACERVO — casos, pendências, prazos, com link para abrir cada caso;\n· sobre o SISTEMA — marcada com o selo \"Sobre o sistema\", para não confundir explicação de produto com dado de caso."
+    },
+    {
+      "id": "nota-caso",
+      "x": 1560,
+      "y": -180,
+      "w": 640,
+      "text": "DENTRO DO CASO — o dossiê NÃO muda.\nMesmo cabeçalho, mesmos botões, mesmos cartões de estado com a barra colorida à esquerda. Só duas coisas acontecem:\n\n1. a aba \"Chat do agente · interno\" SAI — o chat passa a viver na lateral, e o dossiê continua visível enquanto se conversa;\n2. o conteúdo fica RESPONSIVO ao painel: os cartões passam de 5 para 3 colunas e a fileira de botões quebra em duas linhas. Nada é reescrito — só reflui."
+    },
+    {
+      "id": "nota-lastro",
+      "x": 2260,
+      "y": -180,
+      "w": 560,
+      "text": "O ajudante responde com o que o caso registra, e mostra em quê se apoiou — cada item leva ao cartão correspondente no dossiê ao lado.\n\nQuando o caso ainda não foi enviado ao agente, ele diz isso na abertura em vez de responder no vazio."
+    },
+    {
+      "id": "nota-peticao",
+      "x": 0,
+      "y": 2080,
+      "w": 640,
+      "text": "MESMO PAINEL, sobre a peça.\nO ajudante é o mesmo componente: muda o que está à esquerda. Aqui ele aponta os trechos que o caso não sustenta e propõe a reescrita com o antes e o depois — nada é aplicado sem o clique."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

@@ -6,6 +6,7 @@ import {
   analisarEstrategia,
   gravarEntrevistaAoVivo,
   listarAssinaturas,
+  salvarQualificacaoDoCaso,
   triarEntrevista,
   vincularAssinaturaAoCaso,
 } from "@/lib/api";
@@ -15,16 +16,18 @@ import {
   type EstadoCaptura,
   type TrechoTranscrito,
 } from "@/lib/transcricao";
-import type { CasoCriado, Categoria, Estrategia, Triagem } from "@/lib/types";
+import type { CasoCriado, Categoria, Estrategia, RoteiroCompleto, Triagem } from "@/lib/types";
 import CasoEDocumentos from "@/components/caso/CasoEDocumentos";
 import { useChamada } from "@/lib/ChamadaContexto";
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import AvaliacaoGoogle from "@/components/contrato/AvaliacaoGoogle";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
-import { Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { AjudaCampo, Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
 import PainelChamada from "@/components/chamada/PainelChamada";
+import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 
 const OPCAO_BASE =
   "flex gap-3 items-start w-full px-[14px] py-3 border-none border-b border-borda border-l-4 bg-transparent " +
@@ -60,6 +63,9 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
   onAlterar: (id: string, valor: string) => void;
   onContinuar: () => void;
 }) {
+  const [tentouContinuar, setTentouContinuar] = useState(false);
+  const telefone = String(respostas.telefone ?? "");
+  const telefoneVazio = !telefonePreenchido(telefone);
   const desenhar = (grupo: (typeof CAMPOS_CADASTRAIS)[number]["grupo"]) =>
     CAMPOS_CADASTRAIS.filter((campo) => campo.grupo === grupo).map((campo) => (
       <div key={campo.id} className={campo.id === "endereco" ? "sm:col-span-2" : ""}>
@@ -67,10 +73,28 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
         <Campo
           id={`cadastro-final-${campo.id}`}
           type={("tipo" in campo && campo.tipo) || "text"}
-          value={String(respostas[campo.id] ?? "")}
-          onChange={(evento) => onAlterar(campo.id, evento.target.value)}
+          inputMode={campo.id === "telefone" ? "tel" : undefined}
+          value={
+            campo.id === "telefone"
+              ? formatarTelefone(String(respostas[campo.id] ?? ""))
+              : String(respostas[campo.id] ?? "")
+          }
+          onChange={(evento) =>
+            onAlterar(
+              campo.id,
+              campo.id === "telefone" ? formatarTelefone(evento.target.value) : evento.target.value,
+            )
+          }
+          placeholder={campo.id === "telefone" ? "(61) 98180-8863" : undefined}
+          aria-invalid={campo.id === "telefone" && tentouContinuar && telefoneVazio}
+          className={campo.id === "telefone" && tentouContinuar && telefoneVazio ? "border-atencao" : undefined}
           autoComplete="off"
         />
+        {campo.id === "telefone" && tentouContinuar && telefoneVazio && (
+          <AjudaCampo className="text-atencao">
+            Telefone vazio. Clique em salvar novamente para continuar sem WhatsApp automático.
+          </AjudaCampo>
+        )}
       </div>
     ));
 
@@ -98,7 +122,16 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
         </details>
 
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-borda pt-4">
-          <Botao variante="primario" onClick={onContinuar}>
+          <Botao
+            variante="primario"
+            onClick={() => {
+              if (telefoneVazio && !tentouContinuar) {
+                setTentouContinuar(true);
+                return;
+              }
+              onContinuar();
+            }}
+          >
             {confirmado ? "Dados atualizados" : "Salvar e continuar"}
           </Botao>
           <span className="text-xs text-tinta-3">
@@ -169,6 +202,7 @@ export default function TriagemEntrevista({
   const [qualificacao, setQualificacao] = useState<Record<string, string | string[]> | null>(
     null,
   );
+  const [roteiroAtivo, setRoteiroAtivo] = useState<RoteiroCompleto | null>(null);
   /* O áudio sobrevive à tela em que foi gravado — pelo mesmo motivo da
    * qualificação. Sem guardar o id aqui, o arquivo continuaria no disco e
    * ninguém teria como pedi-lo: o nome dele é um uuid. */
@@ -213,6 +247,7 @@ export default function TriagemEntrevista({
   const [atendimentoTxt, setAtendimentoTxt] = useState(false);
   const [nomeTxt, setNomeTxt] = useState("");
   const [cpfTxt, setCpfTxt] = useState("");
+  const [telefoneTxt, setTelefoneTxt] = useState("");
   const [categoriaTxt, setCategoriaTxt] = useState("");
   const [entrevistaIdTxt, setEntrevistaIdTxt] = useState("");
   const [gravacaoEstado, setGravacaoEstado] = useState<EstadoCaptura>("sem-audio");
@@ -256,12 +291,18 @@ export default function TriagemEntrevista({
     trechos: TrechoTranscrito[],
     gravacaoId: string,
     concluida: boolean,
+    /* O relato montado das respostas, para quando NÃO houve áudio: microfone
+     * negado, entrevista só digitada, ou o .txt trazido de fora. Sem esta
+     * reserva o caso ficava com uma entrevista sem conteúdo e a petição era
+     * redigida sem o relato do cliente. Vem por parâmetro porque quem encerra
+     * tem o relato fresco na mão, antes de o estado ser atualizado. */
+    relato: string = texto,
   ) {
     if (!casoId || !gravacaoId) return;
     try {
       await gravarEntrevistaAoVivo(casoId, {
         gravacao_id: gravacaoId,
-        texto: montarTranscricaoBruta(trechos),
+        texto: montarTranscricaoBruta(trechos) || relato.trim(),
         realizada_em: new Date().toISOString().slice(0, 10),
         avaliacao_google: avaliacaoConcluida,
         concluida,
@@ -419,25 +460,37 @@ export default function TriagemEntrevista({
       />
       <PainelContrato respostas={qualificacao} />
 
-      {/* O roteiro inteiro com o que foi respondido, para conferir antes de o
-        * cliente desligar. Vem DEPOIS do contrato de propósito: quem chegou até
-        * aqui já fechou o atendimento, e o que resta é revisar — o que ficou em
-        * branco ainda dá para colher com ele na linha. */}
-      {/* `aberto` aqui, recolhido no `Roteiro`: são momentos diferentes. Lá a
-        * entrevista ainda corre e a lista disputaria a atenção; aqui o
-        * atendimento já fechou e conferir É o trabalho. */}
-      <RespostasDoRoteiro respostas={qualificacao} />
+      {/* A revisão continua disponível, mas fica recolhida para que a próxima
+        * tarefa do atendimento seja a única coisa dominante na tela. */}
+      <details className="mt-4 rounded-cartao border border-borda bg-papel-2 px-4 py-3 [&[open]>summary]:mb-3">
+        <summary className="cursor-pointer text-sm font-semibold text-tinta">
+          Conferir todas as respostas da entrevista
+        </summary>
+        <p className="mb-3 mt-1 text-xs leading-[1.5] text-tinta-3">
+          Abra esta revisão apenas se precisar validar ou corrigir uma resposta antes de criar o caso.
+        </p>
+        {roteiroAtivo && <RespostasDoRoteiro respostas={qualificacao} roteiro={roteiroAtivo} />}
+      </details>
 
       {/* E o caso nasce aqui, na mesma rolagem: o portal abre com o cliente
         * ainda na linha, e o checklist recebe o que ele já tem em mãos. */}
       <CasoEDocumentos
         cliente={String(qualificacao.nome ?? "")}
         entrevistaId={audioEntrevista}
+        telefone={String(qualificacao.telefone ?? "")}
         onCasoCriado={async (casoId) => {
           setCasoCriado(casoId);
           // Grava já, sem esperar o encerramento: se a aba morrer daqui para a
           // frente, a entrevista conduzida até aqui não se perde.
           await guardarEntrevista(casoId, transcricao, audioEntrevista, encerrado);
+          // O cadastro que o CPF puxou (e o que foi digitado) vira linha na
+          // tabela de qualificação. Falhar aqui não desfaz o caso: o cadastro se
+          // regrava, mas o atendimento com o cliente na linha não recomeça.
+          try {
+            await salvarQualificacaoDoCaso(casoId, qualificacao);
+          } catch (e) {
+            console.error("Não foi possível gravar a qualificação do caso.", e);
+          }
           const nome = String(qualificacao.nome ?? "");
           const cpf = String(qualificacao.cpf ?? "");
           if (nome && cpf) {
@@ -478,7 +531,7 @@ export default function TriagemEntrevista({
     {
       gravando: { tom: "ok", titulo: "Gravando o atendimento" },
       capturando: { tom: "info", titulo: "Microfone ligado — aguardando fala" },
-      pausado: { tom: "info", titulo: "Gravação pausada" },
+      reconectando: { tom: "atencao", titulo: "Religando a transcrição…" },
       recuperando: { tom: "atencao", titulo: "Reconectando o microfone…" },
       "sem-audio": { tom: "neutro", titulo: "Gravação encerrada" },
     } as const
@@ -553,6 +606,7 @@ export default function TriagemEntrevista({
       )}
       {mostrarRoteiro ? (
         <EntrevistaComChamada
+          onRoteiroAtivo={setRoteiroAtivo}
           /* As respostas sobem a cada mudança: é o que deixa as etapas abaixo
            * do roteiro prontas antes de a entrevista fechar. O relato e o id do
            * áudio vêm junto, pelos mesmos motivos de sempre. */
@@ -572,13 +626,14 @@ export default function TriagemEntrevista({
             setQualificacao(respostas);
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
+            setCadastroConfirmado(true);
             setMostrarRoteiro(false);
             setEncerrado(true);
             // Encerrou com o caso já criado: regrava a conversa inteira, agora
             // com o fechamento do roteiro dentro dela, e libera a leitura do
             // agente. Sem caso ainda, quem grava é a criação dele, logo abaixo.
             if (casoCriado) {
-              void guardarEntrevista(casoCriado, trechos, entrevistaId, true);
+              void guardarEntrevista(casoCriado, trechos, entrevistaId, true, relato);
             }
           }}
           onFechar={() => setMostrarRoteiro(false)}
@@ -625,7 +680,7 @@ export default function TriagemEntrevista({
 
       {/* Fechou a tela sem encerrar (ou voltou para continuar): as etapas seguem
         * aqui, porque continuam por fazer. */}
-      {!encerrado && !mostrarRoteiro && etapasDoAtendimento}
+      {!mostrarRoteiro && etapasDoAtendimento}
 
       {/* O importador abaixo também serve para análise avulsa, antes de começar
         * uma entrevista. Depois de FINALIZAR, porém, a conversa já foi lida em
@@ -685,14 +740,30 @@ export default function TriagemEntrevista({
           }
         />
 
-      <div className="flex gap-[10px] items-center flex-wrap mt-3">
-        <Botao variante="secundario" onClick={() => void analisar()} disabled={analisando || !texto.trim()}>
-          {analisando ? "Analisando…" : "Analisar o relato"}
-        </Botao>
+      <div className="flex gap-[10px] items-start flex-wrap mt-3">
+        {/* A ação do bloco: sem relato, o clique diz o que falta em vez de o botão
+          * ficar cinza sem explicação. */}
+        <BotaoProcesso
+          variante="primario"
+          onClick={() => analisar()}
+          processando={analisando}
+          textoProcessando="Analisando o relato…"
+          dica="Sugerindo as ações cabíveis e comparando com a base de casos"
+          pendencia={texto.trim() ? null : "Cole o relato acima ou escolha um arquivo com texto."}
+          pendenciaAoClicar
+          onPendencia={() => document.getElementById("relato-entrevista")?.focus()}
+        >
+          Analisar o relato
+        </BotaoProcesso>
 
-        <Botao variante="discreto" pequeno onClick={() => inputRef.current?.click()} disabled={analisando}>
+        <BotaoProcesso
+          variante="discreto"
+          pequeno
+          onClick={() => inputRef.current?.click()}
+          aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
+        >
           Escolher arquivo com texto
-        </Botao>
+        </BotaoProcesso>
 
         <input
           ref={inputRef}
@@ -835,6 +906,8 @@ export default function TriagemEntrevista({
             onCliente={setNomeTxt}
             cpf={cpfTxt}
             onCpf={setCpfTxt}
+            telefone={telefoneTxt}
+            onTelefone={setTelefoneTxt}
             sugerida={categoriaTxt}
             onCategoria={setCategoriaTxt}
             categorias={categorias}
@@ -865,14 +938,15 @@ export default function TriagemEntrevista({
           />
 
           {casoTxtId && gravacaoEstado !== "sem-audio" && (
-            <Botao
+            <BotaoProcesso
               variante="secundario"
               className="mt-3"
-              disabled={encerrandoTxt}
-              onClick={() => void encerrarGravacaoTxt()}
+              processando={encerrandoTxt}
+              textoProcessando="Encerrando a gravação…"
+              onClick={encerrarGravacaoTxt}
             >
-              {encerrandoTxt ? "Encerrando a gravação…" : "Encerrar a gravação do atendimento"}
-            </Botao>
+              Encerrar a gravação do atendimento
+            </BotaoProcesso>
           )}
         </div>
       )}

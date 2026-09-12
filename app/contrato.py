@@ -295,6 +295,13 @@ def _chave(marcador: str) -> str:
 
 _MARCADOR = re.compile(r"\[[^\[\]\n]{1,60}\]")
 
+#: A qualificação inteira (nome, endereço, CPF, RG…) mora numa CAIXA DE TEXTO do
+#: modelo, e o modelo a marca como `noAutofit` — a caixa NÃO cresce com o texto.
+#: No Word passa despercebido; na conversão para PDF (LibreOffice) o valor real,
+#: mais longo que o placeholder, transborda e é CORTADO. Trocar por `spAutoFit`
+#: manda a caixa crescer para caber o texto, e o corte some sem editar o modelo.
+_AUTOFIT = re.compile(rb"<a:noAutofit\s*/>")
+
 #: Rótulos que o modelo deixa em branco para completar à mão, sem colchete.
 #:
 #: No bloco de assinatura o cliente aparece como "[Nome do Contratante]" seguido
@@ -522,6 +529,12 @@ def preencher(valores: dict[str, Any], modelo: Path | None = None) -> tuple[byte
         editados: dict[str, bytes] = {}
         for nome in _partes_com_texto(origem):
             bruto = origem.read(nome)
+            # Antes de qualquer coisa: caixa de texto que não cresce corta o
+            # valor preenchido no PDF. Faz a troca no XML cru, para o ElementTree
+            # já reservar `spAutoFit` na serialização.
+            bruto_autofit = _AUTOFIT.sub(b"<a:spAutoFit/>", bruto)
+            autofit_mudou = bruto_autofit != bruto
+            bruto = bruto_autofit
             _registrar_prefixos(bruto)
             raiz = ET.fromstring(bruto)
             mudou = 0
@@ -535,7 +548,7 @@ def preencher(valores: dict[str, Any], modelo: Path | None = None) -> tuple[byte
                 trocas, ausentes = _preencher_paragrafo(nos, normalizados)
                 mudou += trocas
                 faltando |= ausentes
-            if mudou:
+            if mudou or autofit_mudou:
                 editados[nome] = _serializar(raiz, bruto)
 
         destino = io.BytesIO()

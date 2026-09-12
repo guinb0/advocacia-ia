@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   baixarContratoAssinado,
   configAssinatura,
   DOCUMENTOS_DO_CLIENTE,
+  enviarAssinaturaPeloSite,
   enviarLinkAssinatura,
   enviarParaAssinatura,
+  enviarTodosParaAssinaturaSite,
   gerarContrato,
   listarAssinaturas,
   obterAssinatura,
+  reenviarLinkAssinaturaSite,
   requisitosDoContrato,
 } from "@/lib/api";
 import type {
@@ -19,6 +22,9 @@ import type {
   DocumentoDoCliente,
   Signatario,
 } from "@/lib/types";
+import { Botao } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
+import { baixarArquivo as baixarBlob } from "@/lib/baixar";
 
 /* Contrato de honorários, preenchido com o que a entrevista respondeu.
  *
@@ -45,14 +51,6 @@ function legivel(campo: string): string {
 }
 
 /** Dispara o download de um blob que já veio pela API com o Bearer anexado. */
-function baixarBlob(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 function texto(valor: string | string[] | undefined): string {
   return typeof valor === "string" ? valor.trim() : "";
@@ -70,16 +68,6 @@ const INTERVALO_MS = 20_000;
  * integração oficial estiver disponível, basta reativar este ponto. */
 const ASSINATURA_ELETRONICA_ATIVA = false;
 
-const BOTAO =
-  "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
-const BOTAO_SECUNDARIO =
-  "border border-borda-forte bg-transparent text-tinta-3 text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
 const ROTULO = "block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3 mb-2";
 /* Campo que ficou em branco no contrato: âmbar, não vermelho. Não é erro do
  * sistema — é entrevista incompleta, e quem resolve é o entrevistador. */
@@ -94,7 +82,8 @@ export default function PainelContrato({ respostas }: Props) {
   const [porDocumento, setPorDocumento] = useState<
     Partial<Record<DocumentoDoCliente, { nome: string; faltando: string[] }>>
   >({});
-  const [erro, setErro] = useState<string | null>(null);
+  /** `origem` é o botão que falhou (`"contrato:pdf"`, `"todos"`): o erro aparece junto dele. */
+  const [erro, setErro] = useState<{ origem: string; texto: string } | null>(null);
 
   const [config, setConfig] = useState<ConfigAssinatura | null>(null);
   /* Por que não basta `config === null`: sem separar "ainda não perguntei" de
@@ -112,6 +101,13 @@ export default function PainelContrato({ respostas }: Props) {
    * o que já foi enviado vale, e reenviar tudo duplicaria convites. */
   const [parcial, setParcial] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  /* Envio dos TRÊS de uma vez (um clique, um login): gera os PDFs no servidor e
+   * sobe pela automação do site, sem baixar/reanexar. `resultadoTodos` guarda o
+   * link de cada documento devolvido pela ZapSign. */
+  const [enviandoTodos, setEnviandoTodos] = useState(false);
+  const [resultadoTodos, setResultadoTodos] = useState<
+    { documentos: { rotulo: string; link: string }[]; whatsapp_enviado: boolean } | null
+  >(null);
   const [baixandoAssinado, setBaixandoAssinado] = useState(false);
   const [erroAssinatura, setErroAssinatura] = useState<string | null>(null);
   /* Separado do erro: a ZapSign não respondeu, mas o que está na tela continua
@@ -146,11 +142,11 @@ export default function PainelContrato({ respostas }: Props) {
    * o contrato quer telefone e e-mail, a procuração não. Somados, sugeririam
    * buracos onde não há. */
   async function gerar(codigo: DocumentoDoCliente, formato: "docx" | "pdf") {
+    const chave = `${codigo}:${formato}`;
     if (requisitosContrato.length > 0) {
-      setErro(`Documentos não gerados: informe ${requisitosContrato.join(" e ")}.`);
+      setErro({ origem: chave, texto: `Documentos não gerados: informe ${requisitosContrato.join(" e ")}.` });
       return;
     }
-    const chave = `${codigo}:${formato}`;
     setGerando(chave);
     setErro(null);
     try {
@@ -161,14 +157,46 @@ export default function PainelContrato({ respostas }: Props) {
       }));
       baixarBlob(gerado.arquivo, gerado.nome);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível gerar o documento.");
+      setErro({ origem: chave, texto: e instanceof Error ? e.message : "Não foi possível gerar o documento." });
     } finally {
       setGerando(null);
     }
   }
 
+  /* Um clique: gera os TRÊS documentos no servidor e os manda assinar pela conta
+   * ZapSign (site), num login só, sem baixar/reanexar. Havendo telefone, cada
+   * link vai por WhatsApp. */
+  async function enviarTodos() {
+    if (requisitosContrato.length > 0) {
+      setErro({ origem: "todos", texto: `Não é possível enviar: informe ${requisitosContrato.join(" e ")}.` });
+      return;
+    }
+    if (!email) {
+      setErro({
+        origem: "todos",
+        texto: "A ZapSign precisa do e-mail do cliente para enviar o convite. Preencha o e-mail na entrevista.",
+      });
+      return;
+    }
+    setEnviandoTodos(true);
+    setErro(null);
+    setResultadoTodos(null);
+    try {
+      const r = await enviarTodosParaAssinaturaSite({ respostas, clienteWhatsapp: telefone });
+      setResultadoTodos({ documentos: r.documentos, whatsapp_enviado: r.whatsapp_enviado });
+    } catch (e) {
+      setErro({ origem: "todos", texto: e instanceof Error ? e.message : "Não foi possível enviar para assinatura." });
+    } finally {
+      setEnviandoTodos(false);
+    }
+  }
+
   useEffect(() => {
-    if (!ASSINATURA_ELETRONICA_ATIVA) return;
+    // A config precisa ser buscada SEMPRE: o envio pela conta ZapSign (site) só
+    // depende de `config.navegador`, e é independente do fluxo de API (desligado
+    // por `ASSINATURA_ELETRONICA_ATIVA`). Travar a busca atrás dessa flag deixava
+    // `config` nulo e ESCONDIA o botão de enviar para assinatura — o escritório
+    // via só os downloads e nenhum jeito de mandar o cliente assinar.
     let vivo = true;
     void configAssinatura()
       .then((c) => {
@@ -284,6 +312,12 @@ export default function PainelContrato({ respostas }: Props) {
   const podeEnviar =
     Boolean(config?.ativa) && requisitosContrato.length === 0 && destinos.length > 0;
 
+  /* O quadro âmbar acima já diz o que falta; nos botões a frase só aparece ao
+   * clicar, para não repetir a mesma linha seis vezes. */
+  const pendenciaContrato = requisitosContrato.length
+    ? `Informe ${requisitosContrato.join(" e ")} na entrevista.`
+    : null;
+
   return (
     <div className="mt-6 border-t border-borda pt-[14px] mb-[18px]">
       <span className={ROTULO}>DOCUMENTOS PARA O CLIENTE ASSINAR</span>
@@ -329,28 +363,28 @@ export default function PainelContrato({ respostas }: Props) {
               className="py-3 first:pt-0 last:pb-0 [&+&]:border-t [&+&]:border-borda"
             >
               <div className="grid grid-cols-2 items-stretch gap-3 max-[640px]:grid-cols-1">
-                <button
-                  type="button"
-                  className={`${BOTAO} w-full min-h-12 px-3`}
-                  onClick={() => void gerar(doc.codigo, "pdf")}
-                  disabled={gerando !== null || requisitosContrato.length > 0}
-                  aria-label={`Baixar ${doc.rotulo} em PDF`}
-                >
-                  {gerando === `${doc.codigo}:pdf`
-                    ? "Gerando…"
-                    : `Baixar ${doc.rotulo} em PDF`}
-                </button>
-                <button
-                  type="button"
-                  className={`${BOTAO_SECUNDARIO} w-full min-h-12 px-3`}
-                  onClick={() => void gerar(doc.codigo, "docx")}
-                  disabled={gerando !== null || requisitosContrato.length > 0}
-                  aria-label={`Baixar ${doc.rotulo} em DOCX`}
-                >
-                  {gerando === `${doc.codigo}:docx`
-                    ? "Gerando…"
-                    : `Baixar ${doc.rotulo} em DOCX`}
-                </button>
+                {(["pdf", "docx"] as const).map((formato) => {
+                  const chave = `${doc.codigo}:${formato}`;
+                  const rotulo = `Baixar ${doc.rotulo} em ${formato.toUpperCase()}`;
+                  return (
+                    <BotaoProcesso
+                      key={formato}
+                      variante="secundario"
+                      bloco
+                      classeBotao="min-h-12 px-3"
+                      onClick={() => gerar(doc.codigo, formato)}
+                      processando={gerando === chave}
+                      textoProcessando={`Gerando o ${formato.toUpperCase()}…`}
+                      pendencia={pendenciaContrato}
+                      pendenciaAoClicar
+                      aguardando={gerando !== null ? "Aguarde: outro documento está sendo gerado." : false}
+                      erro={erro?.origem === chave ? erro.texto : null}
+                      aria-label={rotulo}
+                    >
+                      {rotulo}
+                    </BotaoProcesso>
+                  );
+                })}
                 {feito && feito.faltando.length === 0 && (
                   <span className="col-span-2 mt-1 font-normal text-[11.5px] leading-[1.5] font-ui text-ok max-[640px]:col-span-1">
                     ✓ sem campo em branco
@@ -379,7 +413,63 @@ export default function PainelContrato({ respostas }: Props) {
         })}
       </ul>
 
-      {erro && <div className={ERRO}>{erro}</div>}
+      {/* UM clique para os TRÊS: gera contrato + procuração + declaração e os
+        * manda assinar pela conta ZapSign, num login só. Só aparece com o login
+        * do site configurado. */}
+      {config?.navegador && (
+        <div className="mt-4 border-t border-borda pt-4">
+          <BotaoProcesso
+            variante="primario"
+            bloco
+            classeBotao="min-h-12 px-3"
+            onClick={enviarTodos}
+            processando={enviandoTodos}
+            textoProcessando="Enviando os três para assinatura…"
+            dica="Pode levar alguns minutos — mantenha esta página aberta"
+            pendencia={
+              pendenciaContrato ??
+              (email ? null : "Preencha o e-mail do cliente na entrevista: a ZapSign precisa dele para o convite.")
+            }
+            erro={erro?.origem === "todos" ? erro.texto : null}
+          >
+            Enviar os três para o cliente assinar (ZapSign + WhatsApp)
+          </BotaoProcesso>
+          <p className="mt-2 mb-0 font-normal text-[11.5px] leading-[1.5] font-ui text-tinta-3">
+            Contrato, procuração e declaração sobem de uma vez. O convite vai por e-mail
+            para {email || "o e-mail do cliente"}
+            {telefone ? " e o link de cada um pelo WhatsApp" : ""}.
+          </p>
+
+          {resultadoTodos && (
+            <div className="mt-3 border-l-[3px] border-ok bg-papel-2 px-3 py-2 text-[12px] leading-[1.5] text-tinta-2">
+              <strong className="text-ok">Enviado para assinatura ✓</strong>
+              <span className="block mt-1 text-tinta-3">
+                Convite por e-mail para {email}.{" "}
+                {resultadoTodos.whatsapp_enviado
+                  ? "Links também enviados pelo WhatsApp."
+                  : telefone
+                    ? "Os links por WhatsApp não saíram — confira o número/conexão."
+                    : "Sem telefone: convite só por e-mail."}
+              </span>
+              <ul className="mt-2 mb-0 grid gap-1 list-none p-0">
+                {resultadoTodos.documentos.map((d, i) => (
+                  <li key={i} className="[overflow-wrap:anywhere]">
+                    <span className="text-tinta">{d.rotulo}:</span>{" "}
+                    {d.link ? (
+                      <a href={d.link} target="_blank" rel="noreferrer" className="text-acao underline">
+                        abrir link de assinatura
+                      </a>
+                    ) : (
+                      <span className="text-atencao">link não capturado</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
         </div>
 
       {/* Integração mantida no código, mas deliberadamente fora da tela até o
@@ -450,23 +540,20 @@ export default function PainelContrato({ respostas }: Props) {
               )}
             </ul>
 
-            <div className="flex gap-3 items-center flex-wrap">
-              <button
-                type="button"
-                className={BOTAO}
-                onClick={mandarAssinar}
-                disabled={enviando || !podeEnviar}
-              >
-                {enviando ? "Enviando…" : "Mandar os três para assinatura"}
-              </button>
-            </div>
-
-            {!podeEnviar && cliente && destinos.length === 0 && (
-              <p className="block mt-[6px] font-normal text-[11.5px] leading-[1.5] font-ui text-tinta-3">
-                Volte ao roteiro e preencha o e-mail{config.whatsapp ? " ou o telefone" : ""}{" "}
-                do cliente.
-              </p>
-            )}
+            <BotaoProcesso
+              variante="primario"
+              onClick={mandarAssinar}
+              processando={enviando}
+              textoProcessando="Enviando para a ZapSign…"
+              pendencia={
+                podeEnviar
+                  ? null
+                  : (pendenciaContrato ??
+                    `Volte ao roteiro e preencha o e-mail${config.whatsapp ? " ou o telefone" : ""} do cliente.`)
+              }
+            >
+              Mandar os três para assinatura
+            </BotaoProcesso>
           </>
         )}
 
@@ -492,6 +579,14 @@ export default function PainelContrato({ respostas }: Props) {
         ))}
       </div>
       )}
+
+      {config?.navegador && (
+        <EnvioPeloSiteZapSign
+          clienteNome={cliente}
+          clienteEmail={email}
+          clienteTelefone={telefone}
+        />
+      )}
       </div>
 
       {Object.keys(porDocumento).length > 0 && (
@@ -499,6 +594,175 @@ export default function PainelContrato({ respostas }: Props) {
           Gerada a papelada, crie o caso abaixo: é ele que abre o checklist e o portal
           para o cliente enviar os demais documentos.
         </p>
+      )}
+    </div>
+  );
+}
+
+/* Envio pelo SITE do ZapSign (plano sem API). Sobe um PDF já pronto (o contrato
+ * baixado, a procuração, ou qualquer documento) e a automação entra na conta do
+ * escritório, cria o documento e dispara o convite por e-mail; havendo telefone,
+ * o link também vai pela nossa Evolution. Ver app/assinatura_navegador.py. */
+function EnvioPeloSiteZapSign({
+  clienteNome,
+  clienteEmail,
+  clienteTelefone,
+}: {
+  clienteNome: string;
+  clienteEmail: string;
+  clienteTelefone: string;
+}) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [email, setEmail] = useState(clienteEmail);
+  const [whatsapp, setWhatsapp] = useState(clienteTelefone);
+  const [enviando, setEnviando] = useState(false);
+  const [resultado, setResultado] = useState<{ link: string; whatsapp_enviado: boolean } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  /* Reenvio manual do link pelo WhatsApp, separado do envio inicial: o convite
+   * cai no spam, ou o telefone só aparece depois de o documento já ter subido. */
+  const [reenviandoWa, setReenviandoWa] = useState(false);
+  const [envioWa, setEnvioWa] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const CAMPO =
+    "w-full rounded-[6px] border border-borda bg-papel px-3 py-2 text-sm text-tinta placeholder:text-tinta-3";
+
+  async function enviar() {
+    if (!arquivo || !email.trim() || enviando) return;
+    setEnviando(true);
+    setErro(null);
+    setResultado(null);
+    try {
+      const r = await enviarAssinaturaPeloSite({
+        arquivo,
+        clienteNome,
+        clienteEmail: email.trim(),
+        clienteWhatsapp: whatsapp.trim(),
+      });
+      setResultado({ link: r.link, whatsapp_enviado: r.whatsapp_enviado });
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível enviar pelo site do ZapSign.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  /* Manda (ou reenvia) só o link de assinatura pelo WhatsApp — sem recriar o
+   * documento na ZapSign. Usa o número digitado no campo acima. */
+  async function enviarLinkWhatsapp() {
+    if (!resultado?.link || !whatsapp.trim() || reenviandoWa) return;
+    setReenviandoWa(true);
+    setEnvioWa(null);
+    try {
+      await reenviarLinkAssinaturaSite(whatsapp.trim(), resultado.link);
+      setEnvioWa({ tom: "ok", texto: "Link enviado pelo WhatsApp." });
+    } catch (e) {
+      setEnvioWa({ tom: "erro", texto: e instanceof Error ? e.message : "Falha ao enviar pelo WhatsApp." });
+    } finally {
+      setReenviandoWa(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-[10px] border border-borda-forte bg-papel-2 p-4">
+      <h3 className="m-0 text-sm font-semibold text-tinta">Enviar para o cliente assinar (ZapSign + WhatsApp)</h3>
+      <p className="mt-1 mb-3 text-xs leading-[1.55] text-tinta-3">
+        Baixe acima o documento (contrato, procuração ou declaração), selecione o PDF aqui e
+        envie: o escritório sobe na ZapSign e dispara o convite por e-mail; havendo telefone,
+        o link de assinatura também vai pelo <strong>WhatsApp</strong> do cliente. Depois de
+        enviar, dá para reenviar o link por WhatsApp com um clique.
+      </p>
+
+      <div className="grid gap-2">
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={enviando}
+          className="rounded-[6px] border border-dashed border-acao-borda bg-papel px-3 py-3 text-sm text-tinta-2 hover:border-acao hover:text-acao"
+        >
+          {arquivo ? `Documento: ${arquivo.name}` : "Escolher o PDF a assinar"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf"
+          hidden
+          onChange={(e) => {
+            setArquivo(e.target.files?.[0] ?? null);
+            e.target.value = "";
+          }}
+        />
+        <input
+          className={CAMPO}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="E-mail do cliente"
+          type="email"
+        />
+        <input
+          className={CAMPO}
+          value={whatsapp}
+          onChange={(e) => setWhatsapp(e.target.value)}
+          placeholder="WhatsApp do cliente (opcional)"
+        />
+        <BotaoProcesso
+          variante="primario"
+          bloco
+          onClick={enviar}
+          processando={enviando}
+          textoProcessando="Enviando pelo site do ZapSign…"
+          dica="A automação entra na conta do escritório — pode levar um minuto"
+          pendencia={
+            !arquivo
+              ? "Escolha o PDF a assinar."
+              : !email.trim()
+                ? "Informe o e-mail do cliente."
+                : null
+          }
+          onPendencia={() => !arquivo && fileRef.current?.click()}
+          erro={erro}
+        >
+          Enviar para assinatura
+        </BotaoProcesso>
+      </div>
+      {resultado && (
+        <div className="mt-2 rounded-[6px] border border-ok-borda bg-ok-claro p-3 text-sm text-tinta">
+          <p className="m-0 font-semibold text-ok">Enviado ✓</p>
+          {resultado.link ? (
+            <p className="mt-1 mb-0 [overflow-wrap:anywhere]">
+              Link de assinatura: <a href={resultado.link} target="_blank" rel="noreferrer">{resultado.link}</a>
+            </p>
+          ) : (
+            <p className="mt-1 mb-0 text-tinta-3">O convite por e-mail saiu; o site não expôs o link direto.</p>
+          )}
+          <p className="mt-1 mb-0 text-tinta-3">
+            WhatsApp: {resultado.whatsapp_enviado ? "link enviado ao cliente" : "não enviado"}
+          </p>
+          {resultado.link && (
+            <div className="mt-3 border-t border-ok-borda pt-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-start">
+                <input
+                  className={CAMPO}
+                  value={whatsapp}
+                  onChange={(e) => setWhatsapp(e.target.value)}
+                  placeholder="WhatsApp do cliente (com DDD)"
+                  inputMode="tel"
+                />
+                <BotaoProcesso
+                  variante="primario"
+                  onClick={enviarLinkWhatsapp}
+                  processando={reenviandoWa}
+                  textoProcessando="Enviando…"
+                  pendencia={whatsapp.trim() ? null : "Informe o WhatsApp com DDD."}
+                  pendenciaAoClicar
+                  erro={envioWa?.tom === "erro" ? envioWa.texto : null}
+                  concluido={envioWa?.tom === "ok" ? envioWa.texto : null}
+                >
+                  {resultado.whatsapp_enviado ? "Reenviar link por WhatsApp" : "Enviar link por WhatsApp"}
+                </BotaoProcesso>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -558,14 +822,19 @@ function Acompanhamento({
         </p>
       )}
 
-      <div className="flex gap-3 items-center flex-wrap">
-        <button type="button" className={BOTAO_SECUNDARIO} onClick={onAtualizar}>
+      <div className="flex gap-3 items-start flex-wrap">
+        <Botao variante="secundario" onClick={onAtualizar}>
           Atualizar agora
-        </button>
+        </Botao>
         {concluido && (
-          <button type="button" className={BOTAO} onClick={onBaixar} disabled={baixando}>
-            {baixando ? "Baixando…" : "Baixar assinado (PDF)"}
-          </button>
+          <BotaoProcesso
+            variante="primario"
+            onClick={onBaixar}
+            processando={baixando}
+            textoProcessando="Baixando…"
+          >
+            Baixar assinado (PDF)
+          </BotaoProcesso>
         )}
       </div>
 
@@ -665,14 +934,15 @@ function LinhaSignatario({
         * o atendente ter de abrir o WhatsApp e achar a conversa. Só aparece
         * para quem tem telefone: sem número não há para onde mandar. */}
       {whatsappProprio && signatario.url_assinatura && signatario.estado !== "assinou" && signatario.telefone && (
-        <button
-          type="button"
-          className="border-none bg-transparent p-0 text-tinta-3 font-normal text-[11px] leading-[1.4] font-ui underline underline-offset-[3px] cursor-pointer hover:text-tinta disabled:cursor-wait disabled:text-tinta-desabilitada"
-          disabled={enviando}
+        <Botao
+          variante="texto"
+          pequeno
+          carregando={enviando}
+          textoCarregando="enviando…"
           onClick={() => void enviarWhatsApp()}
         >
-          {enviando ? "enviando…" : "enviar por WhatsApp"}
-        </button>
+          enviar por WhatsApp
+        </Botao>
       )}
       {envio && (
         <span className={`font-normal text-[11px] leading-[1.4] font-ui ${envio.tom === "ok" ? "text-ok" : "text-critico"}`}>
