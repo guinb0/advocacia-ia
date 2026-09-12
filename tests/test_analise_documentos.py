@@ -31,7 +31,7 @@ DOCUMENTOS = [
 ]
 
 
-def instalar(resposta: dict) -> list[str]:
+def instalar(resposta: dict, documentos: list[dict] | None = None) -> list[str]:
     """Troca o modelo e devolve a lista onde as mensagens enviadas ficam."""
     enviadas: list[str] = []
 
@@ -40,7 +40,8 @@ def instalar(resposta: dict) -> list[str]:
         return resposta
 
     ad._chamar_modelo = falso  # type: ignore[assignment]
-    ad._documentos_do_caso = lambda _id: list(DOCUMENTOS)  # type: ignore[assignment]
+    escolhidos = list(documentos) if documentos is not None else list(DOCUMENTOS)
+    ad._documentos_do_caso = lambda _id: escolhidos  # type: ignore[assignment]
     ad._fatos_conhecidos = lambda _id: ["Ficou afastado pelo INSS?: não"]  # type: ignore[assignment]
     # `analisar` cacheia por `atualizado_em` do caso; aqui não há banco, e cada
     # cenário troca o modelo por outro — sem limpar, o 2º cenário receberia o
@@ -192,6 +193,162 @@ def cenario_gastos() -> int:
     return falhas
 
 
+def cenario_orcamento_dos_documentos() -> int:
+    """Caso com MUITOS anexos: nenhum tipo de documento pode ficar invisível.
+
+    Medido num caso real (`da5a030b`, 46 anexos, 57 mil caracteres de OCR): o
+    montador ia somando documento por documento até estourar 40 mil caracteres e
+    aí dava `break`. Ficavam de fora 15 anexos — 8 notas fiscais de farmácia, 7
+    comprovantes de transporte, exames e o plano de saúde. Ou seja, justamente os
+    papéis que carregam DATA e VALOR: a cronologia e a lista de gastos eram
+    montadas sem ver os documentos que as produzem, e nada na tela dizia isso.
+
+    O que este cenário protege:
+
+    1. TODO documento aparece no prompt, mesmo o último da fila.
+    2. O corte de cada documento pega o começo E o fim — numa nota fiscal o valor
+       total está no pé, e cortar só o começo entrega um gasto sem valor.
+    3. Quando ainda assim algo não couber, sai NOMEADO no resultado, para a tela
+       poder dizer qual anexo não entrou na leitura.
+    """
+    falhas = 0
+
+    # 60 documentos de 3 mil caracteres = 180 mil, bem acima do teto.
+    muitos = []
+    for n in range(60):
+        cabeca = f"NOTA FISCAL {n:02d} EMITENTE DROGARIA CENTRAL DATA 1{n % 9}/03/2025 "
+        muitos.append(
+            {
+                "id": f"e{n}",
+                "arquivo": f"nota_{n:02d}.pdf",
+                "texto": cabeca + ("m" * 2800) + f" VALOR TOTAL R$ {n + 1},50",
+            }
+        )
+
+    mensagem, fora = ad._montar_mensagem(muitos, [])
+
+    citados = [d["arquivo"] for d in muitos if f"=== {d['arquivo']} ===" in mensagem]
+    falhas += not checar(
+        len(citados) == 60, f"os 60 anexos entram no prompt (entraram {len(citados)})"
+    )
+    falhas += not checar(fora == [], f"e nada fica de fora ({len(fora)})")
+    falhas += not checar(
+        len(mensagem) <= ad.MAX_CARACTERES_TOTAL + 2000,
+        f"sem estourar o teto do prompt ({len(mensagem)} caracteres)",
+    )
+    falhas += not checar(
+        "NOTA FISCAL 59" in mensagem and "VALOR TOTAL R$ 60,50" in mensagem,
+        "o ÚLTIMO da fila entra com cabeçalho E com o valor do pé",
+    )
+
+    # Documento único e gigante: aí o teto por documento é que manda, e ele não
+    # pode engolir a janela inteira.
+    unico = [{"id": "x", "arquivo": "processo.pdf", "texto": "a" * 500_000}]
+    msg_unico, fora_unico = ad._montar_mensagem(unico, [])
+    falhas += not checar(
+        len(msg_unico) <= ad.MAX_CARACTERES_POR_DOCUMENTO + 500 and not fora_unico,
+        f"um PDF gigante é cortado no teto por documento ({len(msg_unico)})",
+    )
+
+    # E o que realmente não couber precisa sair com NOME.
+    #
+    # Chegar a esse ponto exige passar do limite em que nem a fatia mínima cabe
+    # para todos — acima de ~128 anexos, com o teto de hoje. Abaixo disso a
+    # divisão dá conta e ninguém fica de fora, que é o comportamento desejado.
+    demais = [
+        {"id": f"g{n}", "arquivo": f"gordo_{n}.pdf", "texto": "z" * 5_000}
+        for n in range(200)
+    ]
+    _, fora_demais = ad._montar_mensagem(demais, [])
+    falhas += not checar(
+        bool(fora_demais) and all(nome.startswith("gordo_") for nome in fora_demais),
+        f"o que não couber sai nomeado, não só contado ({len(fora_demais)} nomes)",
+    )
+    falhas += not checar(
+        len(fora_demais) < len(demais),
+        f"mas a maioria ainda entra ({len(demais) - len(fora_demais)} de {len(demais)})",
+    )
+    return falhas
+
+
+def cenario_nome_do_arquivo_com_caminho() -> int:
+    """Anexo com CAMINHO na chave e nome curto na resposta do modelo.
+
+    O caso real que motivou isto (`da5a030b`): os anexos vêm de pastas, então a
+    chave é "HILDEBRANDO_.../04_Notas_Fiscais/Scanner_20250623 (25).pdf", e é o
+    caminho que vai no cabeçalho do prompt. O modelo aponta a origem pelo NOME DO
+    ARQUIVO — "Scanner_20250623 (25).pdf". A conferência procurava esse texto como
+    chave, não achava, e recusava o achado como "atribuição errada".
+
+    O efeito medido: 19 gastos e 13 eventos de cronologia devolvidos pelo modelo,
+    TODOS recusados. A tela mostrava "cronologia dos fatos" vazia e a lista de
+    gastos vazia, como se 46 documentos não dissessem nada.
+
+    A resolução pelo nome curto só vale quando ele é ÚNICO — é o segundo bloco
+    aqui. Dois arquivos com o mesmo nome em pastas diferentes voltam a ser
+    recusados, porque escolher um dos dois no chute é exatamente o erro que a
+    conferência existe para impedir.
+    """
+    falhas = 0
+    caminho = "HILDEBRANDO/04_Notas_Fiscais/Scanner_20250623 (25).pdf"
+    instalar(
+        {
+            "achados": [
+                {"informacao": "Compra de medicamento", "documento": "Scanner_20250623 (25).pdf",
+                 "citacao": "TRAMAL 100MG", "relevancia": "gasto com tratamento",
+                 "parte": "titular", "papel": "reclamante"}
+            ],
+            "gastos": [
+                {"valor": "R$ 517,30", "data": "05/05/2025", "descricao": "medicamentos",
+                 "documento": "Scanner_20250623 (25).pdf", "citacao": "VALOR TOTAL 517,30"}
+            ],
+            "cronologia": [
+                {"data": "05/05/2025", "evento": "Compra de medicamento",
+                 "documento": "Scanner_20250623 (25).pdf", "citacao": "05/05/2025"}
+            ],
+        },
+        documentos=[
+            {"id": "e9", "arquivo": caminho,
+             "texto": "DROGARIA CENTRAL 05/05/2025 TRAMAL 100MG VALOR TOTAL 517,30"}
+        ],
+    )
+    r = ad.analisar("caso-1")
+
+    falhas += not checar(r["recusados"] == 0, f"nada é recusado por causa do caminho ({r['recusados']})")
+    falhas += not checar(len(r["achados"]) == 1, f"o achado entra ({len(r['achados'])})")
+    falhas += not checar(len(r["gastos"]) == 1, f"o gasto entra ({len(r['gastos'])})")
+    falhas += not checar(len(r["cronologia"]) == 1, f"o evento entra ({len(r['cronologia'])})")
+    if r["achados"]:
+        falhas += not checar(
+            r["achados"][0]["documento"] == caminho,
+            "e o achado guarda o CAMINHO completo, não o nome curto "
+            f"({r['achados'][0]['documento']})",
+        )
+        falhas += not checar(
+            r["achados"][0]["entrega_id"] == "e9", "ligado à entrega certa"
+        )
+
+    # Nome curto ambíguo: duas pastas, mesmo arquivo. Aí não se adivinha.
+    instalar(
+        {
+            "achados": [
+                {"informacao": "Algo", "documento": "Scanner.pdf", "citacao": "TRAMAL",
+                 "relevancia": "x", "parte": "titular", "papel": ""}
+            ]
+        },
+        documentos=[
+            {"id": "a1", "arquivo": "PASTA_A/Scanner.pdf", "texto": "TRAMAL 100MG"},
+            {"id": "b1", "arquivo": "PASTA_B/Scanner.pdf", "texto": "TRAMAL 100MG"},
+        ],
+    )
+    r2 = ad.analisar("caso-1")
+    falhas += not checar(
+        len(r2["achados"]) == 0 and r2["recusados"] == 1,
+        f"nome repetido em duas pastas é recusado, não chutado ({len(r2['achados'])} achados)",
+    )
+    return falhas
+
+
 def main_teste() -> int:
     falhas = 0
     for titulo, teste in (
@@ -200,6 +357,8 @@ def main_teste() -> int:
         ("o que o modelo recebe", cenario_o_que_o_modelo_recebe),
         ("cada achado diz de quem é a informação", cenario_atribuicao_de_parte),
         ("gastos em ordem cronológica, com origem e citação", cenario_gastos),
+        ("caso com muitos anexos: nenhum fica invisível", cenario_orcamento_dos_documentos),
+        ("anexo em pasta: o modelo aponta pelo nome do arquivo", cenario_nome_do_arquivo_com_caminho),
     ):
         print(f"\n{titulo}")
         falhas += teste()
