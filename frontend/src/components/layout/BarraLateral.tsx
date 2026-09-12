@@ -40,6 +40,7 @@ import {
   Database,
   FileCheck2,
   FileSearch,
+  FileSignature,
   FileText,
   FolderKanban,
   HeartPulse,
@@ -51,6 +52,7 @@ import {
   PenLine,
   PhoneCall,
   Search,
+  Tags,
   Users,
   X,
   type LucideIcon,
@@ -98,7 +100,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
     titulo: "Análise",
     itens: [
       { tela: "avulso", rotulo: "Ler um documento" },
-      { tela: "revisao", rotulo: "Revisão" },
+      { tela: "revisao", rotulo: "Revisão do roteiro" },
       { tela: "investigacao", rotulo: "Investigar" },
       { tela: "dados", rotulo: "Dados" },
       { tela: "panorama", rotulo: "Panorama" },
@@ -107,14 +109,17 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
   {
     titulo: "Escritório",
     itens: [
+      { tela: "operacao", rotulo: "Operação" },
       { tela: "supervisao", rotulo: "Supervisão" },
       // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
       // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
       { tela: "catalogoRoteiros", rotulo: "Roteiros" },
-      { tela: "usuarios", rotulo: "Usuários" },
+      { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
+      { tela: "usuarios", rotulo: "Administração" },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
+      { tela: "configuracaoAssinatura", rotulo: "Assinatura eletrônica" },
     ],
   },
 ];
@@ -139,13 +144,16 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   investigacao: Search,
   dados: Database,
   panorama: BarChart3,
+  operacao: Activity,
   supervisao: Activity,
   revisao: FileCheck2,
   followup: PhoneCall,
   catalogoRoteiros: BookOpen,
+  glossarioDocumentos: Tags,
   usuarios: Users,
   saudeAgente: HeartPulse,
   modelosDePeticao: PenLine,
+  configuracaoAssinatura: FileSignature,
   caso: ClipboardCheck,
   dossie: FolderKanban,
   painel: BarChart3,

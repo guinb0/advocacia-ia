@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { obterEntrega } from "@/lib/api";
 import type { Campo, EntregaDetalhe, ItemSituacao } from "@/lib/types";
-import { Cartao, Selo, Vazio } from "@/components/ui/Basicos";
+import { Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 
 /** A ficha do cliente em seções, na ordem em que se lê um cadastro. Agrupar é o
  *  que tira o resumo do "muro de campos" e deixa o olho achar o que procura —
@@ -101,28 +101,42 @@ export default function ResumoDocumentos({ itens }: { itens: ItemSituacao[] }) {
     return [...unicas.values()];
   }, [itens]);
   const chave = entregas.map((e) => `${e.id}:${e.status_proc}`).join("|");
+  const [aberto, setAberto] = useState(false);
   const [detalhes, setDetalhes] = useState<EntregaDetalhe[]>([]);
   const [carregando, setCarregando] = useState(false);
 
   useEffect(() => {
+    if (!aberto) return;
     const prontas = entregas.filter((e) => e.status_proc === "pronto");
     if (!prontas.length) {
       setDetalhes([]);
+      setCarregando(false);
       return;
     }
     let cancelado = false;
+    setDetalhes([]);
     setCarregando(true);
-    Promise.allSettled(prontas.map((e) => obterEntrega(e.id))).then((resultados) => {
-      if (cancelado) return;
-      setDetalhes(resultados.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])));
-      setCarregando(false);
-    });
+    void (async () => {
+      const carregadas: EntregaDetalhe[] = [];
+      // Evita abrir dezenas de consultas pesadas ao mesmo tempo. Quatro mantém a
+      // ficha responsiva sem saturar API, banco e enriquecimento do agente.
+      for (let inicio = 0; inicio < prontas.length && !cancelado; inicio += 4) {
+        const lote = await Promise.allSettled(
+          prontas.slice(inicio, inicio + 4).map((e) => obterEntrega(e.id)),
+        );
+        carregadas.push(...lote.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])));
+      }
+      if (!cancelado) {
+        setDetalhes(carregadas);
+        setCarregando(false);
+      }
+    })();
     return () => {
       cancelado = true;
     };
     // A chave muda quando o OCR termina ou uma entrega é adicionada/removida.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chave]);
+  }, [aberto, chave]);
 
   const dados = useMemo(() => consolidar(detalhes), [detalhes]);
   const nome = dados.get("nome");
@@ -141,9 +155,18 @@ export default function ResumoDocumentos({ itens }: { itens: ItemSituacao[] }) {
   return (
     <Cartao
       titulo="Dados do cliente nos documentos"
-      subtitulo="A ficha reunida do que o OCR leu nos arquivos. Confira sempre no documento original."
+      subtitulo="Ficha reunida sob demanda: carregue quando precisar conferir os dados extraídos."
     >
-      {carregando && detalhes.length === 0 ? (
+      {!aberto ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="m-0 text-sm leading-[1.55] text-tinta-3">
+            {entregas.length} arquivo{entregas.length === 1 ? "" : "s"} no caso. A navegação abre primeiro; os dados extraídos carregam só quando você pedir.
+          </p>
+          <Botao variante="secundario" pequeno onClick={() => setAberto(true)}>
+            Carregar ficha dos documentos
+          </Botao>
+        </div>
+      ) : carregando && detalhes.length === 0 ? (
         <Vazio>Montando a ficha do cliente…</Vazio>
       ) : detalhes.length === 0 ? (
         <Vazio>Os documentos ainda estão sendo interpretados.</Vazio>

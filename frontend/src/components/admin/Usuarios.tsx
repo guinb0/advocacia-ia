@@ -2,17 +2,20 @@
 
 /* Cadastro de quem usa o sistema.
  *
- * Quatro campos, e é de propósito: conta se cria no meio do atendimento, com
- * alguém esperando. Nome, e-mail, perfil e senha bastam para entrar — CPF,
- * telefone e endereço o cadastro do CASO já coleta, e pedir duas vezes é a
- * forma mais rápida de ninguém preencher nenhuma das duas.
+ * Poucos campos, e é de propósito: conta se cria no meio do atendimento, com
+ * alguém esperando. Nome, e-mail, perfil e senha bastam para entrar; o telefone
+ * é opcional. CPF e endereço o cadastro do CASO já coleta, e pedir duas vezes é
+ * a forma mais rápida de ninguém preencher nenhuma das duas.
+ *
+ * Editar uma conta que já existe é outra coisa — é poder entrar como aquela
+ * pessoa — e fica só com o secretário (ver `EditarUsuario.tsx`).
  *
  * A lista fica ao lado do formulário, e não atrás de um botão, porque a pergunta
  * que antecede "cadastrar" quase sempre é "ele já não está aí?".
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Mail, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, LayoutList, Mail, Pencil, Phone, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
 
 import {
   AjudaCampo,
@@ -30,6 +33,7 @@ import {
   TrZebra,
   Vazio,
 } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   ApiError,
   criarUsuario,
@@ -38,15 +42,25 @@ import {
   type Perfil,
   type UsuarioCadastrado,
 } from "@/lib/api";
+/* A matriz de perfis mora nesta tela, e não numa própria, porque as duas
+ * respondem à mesma pergunta em ordens diferentes: aqui se escolhe o perfil de
+ * alguém, e é aqui que se descobre que o perfil disponível não alcança o que a
+ * pessoa precisa. Separá-las obrigaria a sair da tela para conferir isso. */
+import PerfisDeAcesso from "@/components/PerfisDeAcesso";
+import ModelosContrato from "@/components/admin/ModelosContrato";
+import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
+import EditarUsuario, { formatarTelefone } from "@/components/admin/EditarUsuario";
+import { useSessao } from "@/lib/auth";
 
 interface Props {
   onVoltar: () => void;
 }
 
-const VAZIO = { nome: "", email: "", perfilId: 0, senha: "" };
+const VAZIO = { nome: "", email: "", telefone: "", perfilId: 0, senha: "" };
 const TAMANHO_PAGINA = 12;
 
 export default function Usuarios({ onVoltar }: Props) {
+  const [aba, setAba] = useState<"membros" | "perfis" | "contratos" | "assinatura">("membros");
   const [perfis, setPerfis] = useState<Perfil[]>([]);
   const [itens, setItens] = useState<UsuarioCadastrado[]>([]);
   const [total, setTotal] = useState(0);
@@ -60,6 +74,26 @@ export default function Usuarios({ onVoltar }: Props) {
    * já cadastrados, então os dois não podem disputar a mesma faixa. */
   const [erroPerfis, setErroPerfis] = useState<string | null>(null);
   const [feito, setFeito] = useState<string | null>(null);
+
+  /* Só o secretário edita conta existente. Esconder o botão aqui é para não
+   * oferecer o que vai dar 403 — quem de fato barra é o servidor
+   * (`PodeEditarContas`), e é lá que a regra vale. */
+  const sessao = useSessao();
+  const podeEditar = sessao.papeis.includes("secretario");
+  const [editando, setEditando] = useState<UsuarioCadastrado | null>(null);
+  const [editado, setEditado] = useState<string | null>(null);
+
+  /* O cartão de edição nasce no topo da tela, e o botão fica lá embaixo, na linha
+   * da tabela. `window.scrollTo` não servia: a partir de `lg` quem rola é a área de
+   * conteúdo do `AppShell`, não a janela — o cartão abria fora da vista e o clique
+   * parecia não fazer nada. `scrollIntoView` acha o contêiner certo sozinho. */
+  const cartaoEdicao = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const cartao = cartaoEdicao.current;
+    if (!editando || !cartao) return;
+    cartao.scrollIntoView({ behavior: "smooth", block: "start" });
+    cartao.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  }, [editando]);
 
   const recarregar = useCallback(async (paginaSolicitada = 1) => {
     const paginaSegura = Number.isFinite(paginaSolicitada) ? Math.max(1, paginaSolicitada) : 1;
@@ -146,22 +180,22 @@ export default function Usuarios({ onVoltar }: Props) {
             Administração
           </p>
           <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">
-            Usuários
+            Administração de acessos
           </h1>
           <p className="m-0 max-w-[66ch] text-tinta-3 leading-[1.5]">
-            Quem pode entrar no sistema, com qual perfil e em que situação. O e-mail
-            continua sendo o login oficial do escritório.
+            Membros, perfis e permissões do escritório. O e-mail continua sendo o
+            login oficial do sistema.
           </p>
         </div>
         <div className="grid min-w-[220px] grid-cols-2 gap-2 max-[520px]:w-full">
           <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
-            <div className="text-xs font-semibold text-tinta-3">Nesta página</div>
+            <div className="text-xs font-semibold text-tinta-3">Membros cadastrados</div>
             <div className="mt-1 font-titulo text-lg font-semibold text-tinta tabular-nums">
-              {itens.length}
+              {total}
             </div>
           </div>
           <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
-            <div className="text-xs font-semibold text-tinta-3">Ativos</div>
+            <div className="text-xs font-semibold text-tinta-3">Membros ativos</div>
             <div className="mt-1 font-titulo text-lg font-semibold text-ok tabular-nums">
               {ativos}
             </div>
@@ -169,6 +203,69 @@ export default function Usuarios({ onVoltar }: Props) {
         </div>
       </header>
 
+      <nav
+        className="flex w-full gap-1 overflow-x-auto rounded-cartao border border-borda bg-papel p-1"
+        aria-label={"Administra\u00e7\u00e3o de acessos"}
+      >
+        <button
+          type="button"
+          onClick={() => setAba("membros")}
+          aria-current={aba === "membros" ? "page" : undefined}
+          className={
+            "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+            (aba === "membros"
+              ? "bg-acao text-papel shadow-cartao"
+              : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+          }
+        >
+          <UsersRound size={16} aria-hidden />
+          Membros e acessos
+        </button>
+        <button
+          type="button"
+          onClick={() => setAba("perfis")}
+          aria-current={aba === "perfis" ? "page" : undefined}
+          className={
+            "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+            (aba === "perfis"
+              ? "bg-acao text-papel shadow-cartao"
+              : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+          }
+        >
+          <LayoutList size={16} aria-hidden />
+          {"Perfis e permiss\u00f5es"}
+        </button>
+        {sessao.modulos.includes("contratos") && (
+          <>
+            <button
+              type="button"
+              onClick={() => setAba("contratos")}
+              aria-current={aba === "contratos" ? "page" : undefined}
+              className={
+                "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+                (aba === "contratos" ? "bg-acao text-papel shadow-cartao" : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+              }
+            >
+              <ShieldCheck size={16} aria-hidden />
+              Modelos de contrato
+            </button>
+            <button
+              type="button"
+              onClick={() => setAba("assinatura")}
+              aria-current={aba === "assinatura" ? "page" : undefined}
+              className={
+                "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+                (aba === "assinatura" ? "bg-acao text-papel shadow-cartao" : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+              }
+            >
+              <ShieldCheck size={16} aria-hidden />
+              Assinatura eletrônica
+            </button>
+          </>
+        )}
+      </nav>
+
+      {aba === "membros" && <>
       {(erro || feito) && (
         <div className="space-y-3">
           {erro && (
@@ -184,7 +281,33 @@ export default function Usuarios({ onVoltar }: Props) {
         </div>
       )}
 
-      <div className="grid min-w-0 grid-cols-[minmax(min(100%,320px),400px)_minmax(0,1fr)] items-start gap-5 max-[920px]:grid-cols-1">
+      {editado && !editando && (
+        <Aviso tom="ok" titulo="Alterações salvas">
+          {editado}
+        </Aviso>
+      )}
+
+      {editando && (
+        <div ref={cartaoEdicao} className="scroll-mt-4">
+          <EditarUsuario
+            key={editando.id}
+            usuario={editando}
+            perfis={perfis}
+            contaPropria={
+              (editando.email ?? editando.usuario ?? "").toLowerCase() ===
+              sessao.usuario.toLowerCase()
+            }
+            onCancelar={() => setEditando(null)}
+            onSalvo={async (resumo) => {
+              setEditando(null);
+              setEditado(resumo);
+              await recarregar(pagina);
+            }}
+          />
+        </div>
+      )}
+
+      <div className="space-y-5">
         <Cartao
           titulo={
             <span className="inline-flex min-w-0 items-center gap-2">
@@ -195,7 +318,7 @@ export default function Usuarios({ onVoltar }: Props) {
           subtitulo="Dados mínimos para liberar entrada no sistema."
           className="min-w-0 overflow-hidden"
         >
-          <form onSubmit={enviar} className="grid gap-4">
+          <form onSubmit={enviar} className="grid grid-cols-2 gap-x-5 gap-y-4 max-[720px]:grid-cols-1">
             <div>
               <RotuloCampo>Nome completo</RotuloCampo>
               <Campo
@@ -219,6 +342,19 @@ export default function Usuarios({ onVoltar }: Props) {
               <AjudaCampo>
                 É com ele que a pessoa entra — não há usuário separado.
               </AjudaCampo>
+            </div>
+
+            <div>
+              <RotuloCampo>Telefone</RotuloCampo>
+              <Campo
+                type="tel"
+                inputMode="tel"
+                maxLength={30}
+                value={form.telefone}
+                onChange={(e) => setForm({ ...form, telefone: e.target.value })}
+                placeholder="(61) 99999-0000"
+              />
+              <AjudaCampo>Opcional.</AjudaCampo>
             </div>
 
             <div>
@@ -258,15 +394,21 @@ export default function Usuarios({ onVoltar }: Props) {
               </AjudaCampo>
             </div>
 
-            <Botao
+            <div className="col-span-2 flex flex-wrap items-center justify-between gap-3 border-t border-borda pt-4 max-[720px]:col-span-1">
+              <span className="text-xs leading-[1.45] text-tinta-3">
+                O acesso fica ativo assim que o cadastro for confirmado.
+              </span>
+            <BotaoProcesso
               type="submit"
               variante="primario"
-              bloco
-              disabled={salvando || !perfilSelecionado}
+              processando={salvando}
+              textoProcessando="Cadastrando…"
+              pendencia={perfilSelecionado ? null : "Escolha o perfil do novo usuário."}
             >
               <UserPlus size={16} aria-hidden />
-              {salvando ? "Cadastrando…" : "Cadastrar usuário"}
-            </Botao>
+              Cadastrar usuário
+            </BotaoProcesso>
+            </div>
           </form>
 
           {/* O perfil Cliente existe, mas o caminho do cliente é o portal do
@@ -317,6 +459,7 @@ export default function Usuarios({ onVoltar }: Props) {
                       <Th>Login</Th>
                       <Th>Perfil</Th>
                       <Th>Situação</Th>
+                      {podeEditar && <Th className="text-right">Ação</Th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -340,6 +483,12 @@ export default function Usuarios({ onVoltar }: Props) {
                               {u.usuario}
                             </span>
                           </span>
+                          {u.telefone && (
+                            <span className="mt-1 flex items-center gap-2 text-xs text-tinta-3 tabular-nums">
+                              <Phone size={12} className="shrink-0" aria-hidden />
+                              {formatarTelefone(u.telefone)}
+                            </span>
+                          )}
                         </Td>
                         <Td>
                           <span className="flex max-w-[260px] flex-wrap gap-1">
@@ -361,6 +510,22 @@ export default function Usuarios({ onVoltar }: Props) {
                             {u.ativo ? "ativo" : "inativo"}
                           </Selo>
                         </Td>
+                        {podeEditar && (
+                          <Td className="text-right">
+                            <Botao
+                              pequeno
+                              variante="secundario"
+                              onClick={() => {
+                                setEditado(null);
+                                setEditando(u);
+                              }}
+                              aria-label={`Editar ${u.nome}`}
+                            >
+                              <Pencil size={14} aria-hidden />
+                              Editar
+                            </Botao>
+                          </Td>
+                        )}
                       </TrZebra>
                     ))}
                   </tbody>
@@ -382,6 +547,11 @@ export default function Usuarios({ onVoltar }: Props) {
           )}
         </Cartao>
       </div>
+      </>}
+
+      {aba === "perfis" && <PerfisDeAcesso />}
+      {aba === "contratos" && <ModelosContrato />}
+      {aba === "assinatura" && <ConfiguracaoAssinatura />}
     </div>
   );
 }

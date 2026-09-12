@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from . import armazenamento, cache_leitura, categorias
+from . import armazenamento, cache_leitura, categorias, conversao_pdf
 from .categorias import ItemChecklist
 from .extractors import RE_PIS, ROTULOS_TIPO
 
@@ -23,6 +23,13 @@ PENDENTE = "pendente"          # nada foi enviado
 PROCESSANDO = "processando"    # chegou e está sendo lido pelo OCR
 CONFERIR = "conferir"          # chegou, mas com ressalva (ilegível ou tipo trocado)
 ENTREGUE = "entregue"          # chegou e passou na validação
+
+PRIORIDADE_LISTAGEM = {
+    PENDENTE: 0,
+    PROCESSANDO: 0,
+    CONFERIR: 1,
+    ENTREGUE: 2,
+}
 
 #: A partir daqui a espera não é mais fila, é problema.
 #:
@@ -240,6 +247,15 @@ def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
             + (entrega.get("erro_proc") or "falha no processamento.")
         ]
     motivo = (entrega.get("roteamento_motivo") or "").strip()
+    if entrega.get("roteamento_origem") == "duplicidade":
+        # Aqui o destino É conhecido — o que falta é alguém confirmar que não é
+        # repetição. Dizer "não foi possível identificar" mandaria procurar o
+        # problema no lugar errado.
+        return [
+            (motivo or "Este documento parece repetir outro já enviado ao caso.")
+            + " Remova-o se for repetido; se não for, atribua-o ao item — o sistema "
+            "pedirá confirmação."
+        ]
     return [
         "Este documento foi lido, mas não foi possível dizer a que item do "
         "checklist ele responde. Escolha o item certo aqui ao lado."
@@ -311,11 +327,8 @@ def _carteira_em_outros_docs(caso_id: str, _assinatura: str) -> list[dict[str, s
     chave do cache; documento novo invalida sozinho.
     """
     achados: list[dict[str, str]] = []
-    for entrega in armazenamento.listar_entregas(caso_id):
-        detalhe = armazenamento.obter_entrega(entrega["id"])
-        if not detalhe:
-            continue
-        extracao = detalhe.get("extracao") or {}
+    for entrega in armazenamento.listar_extracoes_do_caso(caso_id):
+        extracao = entrega.get("extracao") or {}
         # Uma CTPS de verdade não é "outro documento" — é a própria carteira.
         if (extracao.get("tipo") or {}).get("detectado") == "ctps":
             continue
@@ -325,7 +338,7 @@ def _carteira_em_outros_docs(caso_id: str, _assinatura: str) -> list[dict[str, s
         dado = _carteira_no_texto(texto)
         if dado:
             achados.append(
-                {"arquivo": str(entrega.get("arquivo") or detalhe.get("arquivo") or "documento"), "dado": dado}
+                {"arquivo": str(entrega.get("arquivo") or "documento"), "dado": dado}
             )
     return achados
 
@@ -402,9 +415,13 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
 
     obrigatorios = [i for i in itens if i["obrigatorio"]]
     entregues_obrig = [i for i in obrigatorios if i["status"] == ENTREGUE]
+    # "Recebido" é diferente de "validado": um documento obrigatório já
+    # anexado, porém ainda a conferir, não pode sumir da contagem do que o
+    # escritório possui. Ele continua fora de `entregues`, que é a métrica de
+    # segurança usada para liberar a petição.
+    recebidos_obrig = [i for i in obrigatorios if i["status"] != PENDENTE]
     pendentes_obrig = [i for i in obrigatorios if i["status"] == PENDENTE]
     conferir = [i for i in itens if i["status"] == CONFERIR]
-
     return {
         "caso": caso,
         "categoria": {
@@ -412,13 +429,16 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
             "nome": categoria.nome,
             "descricao": categoria.descricao,
         },
-        "itens": itens,
+        # A ordem operacional nasce no domínio e vale para todos os consumidores.
+        # A numeração original continua em cada item e serve como desempate.
+        "itens": ordenar_itens_para_listagem(itens),
         "triagem": [
             {**e, "alertas": _alertas_da_triagem(e)} for e in em_triagem
         ],
         "progresso": {
             "obrigatorios_total": len(obrigatorios),
             "obrigatorios_entregues": len(entregues_obrig),
+            "obrigatorios_recebidos": len(recebidos_obrig),
             "obrigatorios_pendentes": len(pendentes_obrig),
             "opcionais_total": len(itens) - len(obrigatorios),
             "opcionais_entregues": sum(
@@ -433,6 +453,79 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
             # "está tudo pronto" com arquivo por identificar seria promessa vazia.
             "pronto": not pendentes_obrig and not conferir and not em_triagem,
         },
+    }
+
+
+def ordenar_itens_para_listagem(itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Itens em ordem operacional, sem perder a numeração original do checklist."""
+    return sorted(
+        itens,
+        key=lambda item: (
+            PRIORIDADE_LISTAGEM.get(str(item.get("status") or ""), 99),
+            0 if item.get("obrigatorio") else 1,
+            int(item.get("numero") or 0),
+            str(item.get("codigo") or ""),
+        ),
+    )
+
+
+def documentos_pendentes_da_situacao(
+    situacao: dict[str, Any],
+    incluir_opcionais: bool = False,
+) -> list[dict[str, Any]]:
+    """Documentos que ainda exigem ação do cliente, prontos para reuso externo.
+
+    Usa apenas os status já existentes do checklist. Documento em processamento
+    não entra aqui: o cliente já enviou o arquivo, então uma cobrança automática
+    não deve pedi-lo de novo antes da leitura terminar.
+    """
+    pendentes: list[dict[str, Any]] = []
+    for item in situacao.get("itens") or []:
+        obrigatorio = bool(item.get("obrigatorio"))
+        status = str(item.get("status") or "")
+        if not obrigatorio and not incluir_opcionais and status != CONFERIR:
+            continue
+        if status not in {PENDENTE, CONFERIR}:
+            continue
+        motivo = (
+            _motivo_para_o_cliente(item)
+            if status == CONFERIR and item.get("entregas")
+            else "ainda não recebemos este documento"
+        )
+        pendentes.append(
+            {
+                "codigo": item.get("codigo"),
+                "numero": item.get("numero"),
+                "nome": item.get("nome"),
+                "obrigatorio": obrigatorio,
+                "status": status,
+                "observacao": item.get("observacao", ""),
+                "motivo": motivo,
+            }
+        )
+    return ordenar_itens_para_listagem(pendentes)
+
+
+def documentos_pendentes_do_caso(
+    caso_id: str,
+    incluir_opcionais: bool = False,
+) -> dict[str, Any] | None:
+    """Resumo dos documentos que ainda pedem ação do cliente neste caso."""
+    situacao = montar_situacao(caso_id)
+    if situacao is None or situacao.get("categoria") is None:
+        return None
+    caso = situacao["caso"]
+    return {
+        "caso": {
+            "id": caso.get("id"),
+            "cliente": caso.get("cliente"),
+            "categoria": caso.get("categoria"),
+            "telefone": caso.get("telefone", ""),
+            "portal_ativo": bool(caso.get("portal_token")),
+        },
+        "categoria": situacao.get("categoria"),
+        "pendentes": documentos_pendentes_da_situacao(situacao, incluir_opcionais),
+        "progresso": situacao.get("progresso"),
     }
 
 
@@ -710,4 +803,214 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
         "faltando": faltando,
         "cliente": situacao["caso"]["cliente"],
         "pronto": situacao["progresso"]["pronto"],
+    }
+
+
+# ------------------------------------------- ZIP de uma seleção por classificação
+
+
+class SelecaoInvalida(Exception):
+    """Pedido de ZIP por classificação recusado inteiro.
+
+    Motivos: um id que não é daquela classificação (item errado ou outro caso),
+    ou seleção acima do teto de quantidade/tamanho. `status` é o código HTTP que
+    a rota devolve — a regra do "por que recusou" mora aqui, não no `main`.
+    """
+
+    def __init__(self, mensagem: str, status: int = 400) -> None:
+        super().__init__(mensagem)
+        self.status = status
+
+
+def _resolver_selecao(
+    caso_id: str,
+    classificacao: str,
+    entrega_ids: list[str],
+    *,
+    limite_itens: int,
+    limite_bytes: int,
+) -> tuple[dict[str, Any], list[tuple[str, Path]], list[str], dict[str, dict[str, Any]], str] | None:
+    """Valida e resolve uma seleção de entregas dentro de UMA classificação.
+
+    Compartilhada por `montar_zip_selecao` e `montar_pdf_selecao`: as regras do
+    que pode entrar são as MESMAS nos dois formatos — só muda o que se faz com
+    os arquivos depois de resolvidos.
+
+    Devolve `(item, resolvidos, faltando, do_item, cliente)`, com `resolvidos`
+    já com o caminho no disco pronto para uso. `None` se o caso não existe.
+    `SelecaoInvalida` recusa o pedido INTEIRO: classificação que não existe,
+    id de outro item ou de outro caso (é essa a checagem de acesso por
+    documento), ou seleção acima do teto de quantidade/tamanho.
+    """
+    situacao = montar_situacao(caso_id)
+    if situacao is None:
+        return None
+    if situacao.get("categoria") is None:
+        raise SelecaoInvalida(
+            situacao.get("erro") or "A categoria deste caso não existe mais.", 409
+        )
+
+    item = next(
+        (i for i in situacao["itens"] if i["codigo"] == classificacao), None
+    )
+    if item is None:
+        raise SelecaoInvalida(
+            f"A classificação '{classificacao}' não existe nesta categoria.", 404
+        )
+
+    # Dois cliques no mesmo arquivo não são dois arquivos; a ordem da seleção é
+    # preservada porque é a ordem em que a tela mostrou as linhas.
+    pedidos = list(dict.fromkeys(entrega_ids))
+    if not pedidos:
+        raise SelecaoInvalida("Nenhum documento foi selecionado.")
+    if len(pedidos) > limite_itens:
+        raise SelecaoInvalida(
+            f"São aceitos até {limite_itens} documentos por pacote. "
+            "Divida a seleção em partes menores.",
+            413,
+        )
+
+    do_item = {e["id"]: e for e in item["entregas"]}
+    intrusos = [eid for eid in pedidos if eid not in do_item]
+    if intrusos:
+        raise SelecaoInvalida(
+            f"{len(intrusos)} documento(s) selecionado(s) não pertencem à "
+            f"classificação '{item['nome']}'.",
+            409,
+        )
+
+    # Resolve os caminhos ANTES de escrever: some quem não tem cópia recuperável,
+    # e a soma dos bytes reprova a seleção grande antes de gastar disco.
+    # Documento é PDF/foto já comprimido, então essa soma é ~o tamanho do ZIP
+    # (o PDF combinado pode diferir um pouco, por causa da recompressão de
+    # imagem — ver `conversao_pdf.converter_para_pdf`).
+    resolvidos: list[tuple[str, Path]] = []
+    faltando: list[str] = []
+    total_bytes = 0
+    for eid in pedidos:
+        caminho = armazenamento.caminho_duravel_da_entrega(eid)
+        if caminho is None:
+            faltando.append(do_item[eid]["arquivo"])
+            continue
+        total_bytes += caminho.stat().st_size
+        resolvidos.append((eid, caminho))
+
+    if total_bytes > limite_bytes:
+        raise SelecaoInvalida(
+            f"A seleção passa de {limite_bytes // (1024 * 1024)}MB. "
+            "Baixe em partes menores.",
+            413,
+        )
+
+    return item, resolvidos, faltando, do_item, situacao["caso"]["cliente"]
+
+
+def montar_zip_selecao(
+    caso_id: str,
+    classificacao: str,
+    entrega_ids: list[str],
+    destino: Path,
+    *,
+    limite_itens: int,
+    limite_bytes: int,
+) -> dict[str, Any] | None:
+    """ZIP só com as entregas marcadas DENTRO de uma classificação.
+
+    O irmão `montar_zip` leva o caso inteiro na ordem do checklist. Aqui o
+    atendente escolhe uma classificação — "Laudos médicos", por exemplo —, marca
+    alguns arquivos dela e leva só esses. Cada arquivo sai prefixado pelo nome da
+    classificação, para o outro lado conferir contra a mesma lista.
+
+    `None` se o caso não existe. Um id cujo arquivo sumiu do disco é PULADO e
+    contado em `faltando`, nunca inventado. Ver `_resolver_selecao` para as
+    condições em que o pedido é recusado inteiro.
+    """
+    resolvido = _resolver_selecao(
+        caso_id, classificacao, entrega_ids,
+        limite_itens=limite_itens, limite_bytes=limite_bytes,
+    )
+    if resolvido is None:
+        return None
+    item, resolvidos, faltando, do_item, cliente = resolvido
+
+    guardados: list[str] = []
+    if resolvidos:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
+            usados: set[str] = set()
+            for eid, caminho in resolvidos:
+                nome = _nome_no_pacote(
+                    item["numero"], item["nome"], do_item[eid]["arquivo"]
+                )
+                # Dois arquivos com o mesmo nome: o descompactador sobrescreve um
+                # com o outro, calado.
+                if nome in usados:
+                    base, ponto, ext = nome.rpartition(".")
+                    nome = (
+                        f"{base} ({len(usados)}){ponto}{ext}"
+                        if ponto
+                        else f"{nome} ({len(usados)})"
+                    )
+                usados.add(nome)
+                pacote.write(caminho, arcname=nome)
+                guardados.append(nome)
+
+    return {
+        "arquivos": len(guardados),
+        "faltando": faltando,
+        "cliente": cliente,
+        "classificacao": item["nome"],
+        "classificacao_codigo": item["codigo"],
+    }
+
+
+def montar_pdf_selecao(
+    caso_id: str,
+    classificacao: str,
+    entrega_ids: list[str],
+    destino: Path,
+    *,
+    limite_itens: int,
+    limite_bytes: int,
+    limite_paginas: int,
+) -> dict[str, Any] | None:
+    """Os documentos marcados de UMA classificação, juntos num único PDF.
+
+    Mesma seleção e mesmas guardas de `montar_zip_selecao` — o que muda é o
+    formato de saída: em vez de um ZIP com N arquivos, um PDF só com as páginas
+    de todos, na ordem em que foram marcados. PDF entra intacto; imagem vira
+    página, pelo mesmo conversor do botão "baixar como PDF" de uma entrega
+    (`conversao_pdf.converter_para_pdf`).
+
+    `None` se o caso não existe. Levanta `SelecaoInvalida` nas mesmas condições
+    do ZIP (ver `_resolver_selecao`), mais quando algum arquivo não é PDF nem
+    imagem, ou a soma de páginas passa do limite.
+    """
+    resolvido = _resolver_selecao(
+        caso_id, classificacao, entrega_ids,
+        limite_itens=limite_itens, limite_bytes=limite_bytes,
+    )
+    if resolvido is None:
+        return None
+    item, resolvidos, faltando, do_item, cliente = resolvido
+
+    total_paginas = 0
+    if resolvidos:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            total_paginas = conversao_pdf.mesclar_em_pdf(
+                [(caminho, do_item[eid]["arquivo"]) for eid, caminho in resolvidos],
+                destino,
+                limite_paginas=limite_paginas,
+            )
+        except conversao_pdf.ErroConversaoPdf as exc:
+            raise SelecaoInvalida(str(exc), 415) from exc
+
+    return {
+        "arquivos": len(resolvidos),
+        "paginas": total_paginas,
+        "faltando": faltando,
+        "cliente": cliente,
+        "classificacao": item["nome"],
+        "classificacao_codigo": item["codigo"],
     }

@@ -20,6 +20,9 @@ perfil e senha bastam para entrar; o resto (CPF, endereço, telefone) o cadastro
 do CASO já coleta, e pedir duas vezes é a forma mais rápida de ninguém preencher
 nenhuma das duas.
 
+O telefone entrou depois, OPCIONAL, pelo mesmo motivo: é o dado que o secretário
+precisa para achar a pessoa, e obrigatório ele travaria o cadastro feito na hora.
+
 O e-mail é o nome de usuário. Ter os dois separados obrigaria a inventar um
 apelido na hora, que é justamente a decisão que trava quem está cadastrando.
 
@@ -110,6 +113,30 @@ PODEM_GERIR = ("advogado", "secretario")
 # funciona sem alteracao de codigo.
 PodeGerir = Depends(auth.exigir_modulo("usuarios"))
 
+#: Mexer na conta de alguém — e-mail, senha, perfil, situação — é mais que
+#: cadastrar: é poder entrar como aquela pessoa. Fica com o papel `secretario` e
+#: com mais ninguém, por decisão do escritório.
+#:
+#: Amarrado ao PAPEL, e não a um módulo, de propósito. Módulo se concede pela
+#: matriz de perfis, e quem administra a matriz inclui o advogado (ele tem
+#: `usuarios`): com um módulo aqui, bastaria um clique para ele se dar o poder de
+#: trocar a senha de qualquer colega. O papel não se concede pela tela.
+PodeEditarContas = Depends(auth.exigir_papel("secretario"))
+
+
+def _autor(usuario: auth.Usuario) -> str:
+    """Como a pessoa aparece na trilha de alterações.
+
+    O e-mail vem primeiro por ser o login — é ele que identifica a conta sem
+    ambiguidade quando dois colegas têm o mesmo primeiro nome. Com a
+    autenticação desligada não há ninguém a nomear, e a trilha diz isso em vez
+    de atribuir a alteração a um usuário que não existe.
+    """
+    if not auth.ATIVA:
+        return "sessão sem autenticação"
+    return usuario.email or usuario.nome or "desconhecido"
+
+
 _TABELA = f"{SCHEMA}.{PREFIXO}usuarios"
 _TABELA_PERFIS_NOVA = f"{SCHEMA}.{PREFIXO}tb_perfis"
 
@@ -127,6 +154,9 @@ CREATE TABLE {_TABELA} (
 
 IF COL_LENGTH('{_TABELA}', 'perfil_id') IS NULL
 ALTER TABLE {_TABELA} ADD perfil_id int NULL;
+
+IF COL_LENGTH('{_TABELA}', 'telefone') IS NULL
+ALTER TABLE {_TABELA} ADD telefone varchar(13) NULL;
 
 IF OBJECT_ID('{SCHEMA}.fk_acervo_usuarios_perfil_id', 'F') IS NULL
    AND OBJECT_ID('{_TABELA_PERFIS_NOVA}') IS NOT NULL
@@ -192,6 +222,25 @@ def _parece_md5(valor: str) -> bool:
 
 def _hash_de(senha: str) -> str:
     return senha.strip().lower() if _parece_md5(senha) else _md5(senha)
+
+
+def _normalizar_telefone(valor: str) -> str | None:
+    """Só os dígitos, ou `None` quando não veio telefone.
+
+    Dígitos, e não o texto como foi digitado: "(61) 99999-0000", "61999990000" e
+    "+55 61 99999-0000" são o mesmo número, e guardar três grafias faria qualquer
+    busca por telefone depender de adivinhar como alguém escreveu. A máscara é
+    trabalho da tela.
+    """
+    digitos = "".join(c for c in (valor or "") if c.isdigit())
+    if not digitos:
+        return None
+    if len(digitos) not in (10, 11, 12, 13):
+        raise HTTPException(
+            400,
+            "Telefone precisa de DDD e número: 10 ou 11 dígitos (12 ou 13 com o +55).",
+        )
+    return digitos
 
 
 def _decodificar(valor: str) -> str:
@@ -741,16 +790,40 @@ def matriz_de_perfis() -> dict[str, Any]:
 
     Separada de `GET /perfis` porque as duas respondem a perguntas diferentes,
     para públicos diferentes. Aquela é vocabulário — "que perfis existem?" — e
-    responde sem token porque alimenta o seletor do cadastro. Esta diz o que cada
+    responde a qualquer conta autenticada, porque alimenta o seletor do cadastro. Esta diz o que cada
     perfil ALCANÇA, que é desenho de acesso do escritório e só interessa a quem
     administra. Juntar as duas obrigaria a proteger o vocabulário ou a expor a
     matriz; nenhuma das duas serve.
     """
-    return {"perfis": perfis_lib.listar(), "modulos": perfis_lib.catalogo()}
+    contagem = perfis_lib.usuarios_por_perfil()
+    perfis = perfis_lib.listar()
+    for perfil in perfis:
+        # Zero explícito, e não ausência: a tela precisa dizer "nenhuma conta"
+        # com a mesma confiança com que diz "4 contas", e um campo faltando ali
+        # vira "—", que se lê como "não sei".
+        perfil["usuarios"] = contagem.get(perfil["codigo"], {"total": 0, "ativos": 0})
+    return {"perfis": perfis, "modulos": perfis_lib.catalogo()}
 
 
-@roteador.put("/perfis/{codigo}", dependencies=[PodeGerir])
-def salvar_perfil(codigo: str, pedido: PedidoPerfil) -> dict[str, Any]:
+@roteador.get("/perfis/historico")
+def historico_de_perfis(
+    limite: Annotated[int, Query(ge=1, le=200)] = 50,
+    _usuario: auth.Usuario = PodeGerir,
+) -> dict[str, Any]:
+    """As últimas alterações feitas nos perfis, com autor e o que mudou.
+
+    Fica ao lado da matriz porque é a mesma pergunta em outro tempo verbal: a
+    matriz diz como o acesso está, o histórico diz como ele chegou nesse estado
+    — e quem administra precisa das duas para responder "quem abriu isto, e
+    quando?" sem depender da memória de alguém.
+    """
+    return {"alteracoes": perfis_lib.historico(limite)}
+
+
+@roteador.put("/perfis/{codigo}")
+def salvar_perfil(
+    codigo: str, pedido: PedidoPerfil, usuario: auth.Usuario = PodeGerir
+) -> dict[str, Any]:
     """Cria ou atualiza um perfil e a matriz de módulos dele.
 
     O corpo traz o estado COMPLETO das caixas: a matriz é substituída inteira, em
@@ -761,14 +834,18 @@ def salvar_perfil(codigo: str, pedido: PedidoPerfil) -> dict[str, Any]:
         raise HTTPException(400, "O código do endereço e o do corpo precisam ser iguais.")
     try:
         return perfis_lib.salvar(
-            pedido.codigo, pedido.rotulo, pedido.descricao, pedido.modulos
+            pedido.codigo,
+            pedido.rotulo,
+            pedido.descricao,
+            pedido.modulos,
+            autor=_autor(usuario),
         )
     except ValueError as erro:
         raise HTTPException(400, str(erro)) from erro
 
 
-@roteador.delete("/perfis/{codigo}", dependencies=[PodeGerir])
-def remover_perfil(codigo: str) -> dict[str, str]:
+@roteador.delete("/perfis/{codigo}")
+def remover_perfil(codigo: str, usuario: auth.Usuario = PodeGerir) -> dict[str, str]:
     """Apaga um perfil. Os de sistema recusam — ver `perfis.SEMENTE`.
 
     Recusa também enquanto houver gente usando: apagar o perfil de alguém deixaria
@@ -790,7 +867,7 @@ def remover_perfil(codigo: str) -> dict[str, str]:
             f"{em_uso['n']} usuário(s) ainda usam este perfil. Mova essas contas antes.",
         )
     try:
-        perfis_lib.remover(codigo)
+        perfis_lib.remover(codigo, autor=_autor(usuario))
     except ValueError as erro:
         raise HTTPException(400, str(erro)) from erro
     return {"codigo": codigo, "situacao": "removido"}
@@ -798,12 +875,14 @@ def remover_perfil(codigo: str) -> dict[str, str]:
 
 @roteador.get("/perfis")
 def listar_perfis() -> dict[str, Any]:
-    """Os perfis que a tela oferece. Sem token: é vocabulário, não dado de ninguém.
+    """Os perfis que a tela oferece. Vocabulário: não exige o módulo `usuarios`.
 
     Lê do banco em vez de uma lista cravada: é o que faz um perfil criado na tela
     aparecer no seletor do cadastro sem alguém editar código. Os módulos de cada
     perfil NÃO vêm aqui — quem pergunta isto está montando um seletor, e o
-    desenho de acesso do escritório não precisa sair sem token para isso.
+    desenho de acesso do escritório não precisa sair para isso. (A sessão continua
+    exigida pelo middleware: `LIVRES_SEM_ADVOGADO` dispensa o PAPEL de advogado,
+    não a autenticação.)
 
     Falha de banco deve aparecer como erro: devolver a semente sem IDs criaria
     contas inconsistentes e faria o cadastro parecer disponivel quando nao esta.
@@ -850,6 +929,8 @@ class NovoUsuario(BaseModel):
     #: Compatibilidade com clientes antigos. A tela atual envia `perfilId` e o
     #: servidor deriva este nome da tabela de perfis.
     perfil: Annotated[str | None, Field(default=None, min_length=2, max_length=60)] = None
+    #: Opcional. Chega como foi digitado; `_normalizar_telefone` guarda só os dígitos.
+    telefone: Annotated[str, Field(max_length=30)] = ""
     #: 8 é o mínimo que não é teatro. Vazio deixa a conta com a senha padrão, e o
     #: token sai marcado para a tela exigir a troca no primeiro acesso.
     senha: Annotated[str, Field(max_length=128)] = ""
@@ -876,7 +957,7 @@ def listar_usuarios(
         pagina_real = min(pagina_pedida, paginas)
         offset = (pagina_real - 1) * tamanho_real
         linhas = con.execute(
-            f"""SELECT u.codigo, u.nome, u.email, u.perfil, u.ativo,
+            f"""SELECT u.codigo, u.nome, u.email, u.telefone, u.perfil, u.ativo,
                        COALESCE(p_id.id, p_nome.id) AS perfil_id,
                        COALESCE(p_id.nome, p_nome.nome) AS perfil_ref
                   FROM {_TABELA} u
@@ -893,6 +974,7 @@ def listar_usuarios(
             "usuario": linha["email"],
             "nome": linha["nome"],
             "email": linha["email"],
+            "telefone": linha["telefone"] or "",
             "ativo": bool(linha["ativo"]),
             "perfis": [linha["perfil_ref"] or linha["perfil"]],
             "perfilId": linha["perfil_id"],
@@ -906,6 +988,14 @@ def listar_usuarios(
         "tamanho": tamanho_real,
         "paginas": paginas,
     }
+
+
+def listar_colaboradores_ativos() -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            f"SELECT codigo, nome FROM {_TABELA} WHERE ativo = 1 ORDER BY nome"
+        ).fetchall()
+    return [{"id": str(linha["codigo"]), "nome": str(linha["nome"])} for linha in linhas]
 
 
 @roteador.post("", status_code=201, dependencies=[PodeGerir])
@@ -922,6 +1012,7 @@ def criar_usuario(pedido: NovoUsuario) -> dict[str, Any]:
     if senha and not _parece_md5(senha) and len(senha) < 8:
         raise HTTPException(400, "A senha precisa de pelo menos 8 caracteres.")
     hash_senha = _hash_de(senha) if senha else auth.SENHA_PADRAO_MD5
+    telefone = _normalizar_telefone(pedido.telefone)
 
     with conectar() as con:
         perfil_id, perfil = _resolver_perfil_usuario(con, pedido.perfil_id, pedido.perfil)
@@ -931,9 +1022,10 @@ def criar_usuario(pedido: NovoUsuario) -> dict[str, Any]:
         if existe:
             raise HTTPException(409, f"Já existe usuário com o e-mail {email}.")
         con.execute(
-            f"INSERT INTO {_TABELA} (nome, email, senha_md5, perfil, perfil_id, ativo, criado_em)"
-            " VALUES (?, ?, ?, ?, ?, 1, ?)",
-            (pedido.nome.strip(), email, hash_senha, perfil, perfil_id, _agora()),
+            f"INSERT INTO {_TABELA}"
+            " (nome, email, telefone, senha_md5, perfil, perfil_id, ativo, criado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            (pedido.nome.strip(), email, telefone, hash_senha, perfil, perfil_id, _agora()),
         )
         criado = con.execute(
             f"SELECT codigo FROM {_TABELA} WHERE email = ?", (email,)
@@ -948,12 +1040,13 @@ def criar_usuario(pedido: NovoUsuario) -> dict[str, Any]:
         "perfil": perfil,
         "perfilId": perfil_id,
         "perfis": [perfil],
+        "telefone": telefone or "",
         "ativo": True,
         "senhaPadrao": hash_senha == auth.SENHA_PADRAO_MD5,
     }
 
 
-@roteador.delete("/{codigo}", dependencies=[PodeGerir])
+@roteador.delete("/{codigo}", dependencies=[PodeEditarContas])
 def desativar_usuario(codigo: int, request: Request) -> dict[str, Any]:
     """Desativa a conta em vez de apagá-la.
 
@@ -974,3 +1067,173 @@ def desativar_usuario(codigo: int, request: Request) -> dict[str, Any]:
     if not alteradas:
         raise HTTPException(404, "Usuário não encontrado.")
     return {"id": str(codigo), "situacao": "desativado"}
+
+
+# ------------------------------------------------------------------ edição
+
+
+class EdicaoUsuario(BaseModel):
+    """A conta inteira como deve ficar — não um remendo campo a campo.
+
+    Completa pelo mesmo motivo da matriz de perfis: a tela manda o formulário
+    inteiro, e aceitar só o que mudou criaria o caso de tela e banco discordarem
+    sobre o que está gravado. A senha é a exceção, e por segurança: ela nunca sai
+    do servidor, então a tela não tem o que reenviar — vazio só pode ser "manter".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    nome: Annotated[str, Field(min_length=3, max_length=120)]
+    email: Annotated[
+        str, Field(min_length=5, max_length=160, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+    ]
+    telefone: Annotated[str, Field(max_length=30)] = ""
+    perfil_id: Annotated[
+        int, Field(validation_alias=AliasChoices("perfilId", "perfil_id"), gt=0)
+    ]
+    ativo: bool = True
+    senha: Annotated[str, Field(max_length=128)] = ""
+    #: Volta a conta para a senha padrão, que obriga a troca no próximo acesso. É o
+    #: caminho para "esqueci a senha": o secretário não precisa inventar uma senha
+    #: e ditá-la, e a pessoa escolhe a dela ao entrar.
+    redefinir_senha: Annotated[
+        bool, Field(validation_alias=AliasChoices("redefinirSenha", "redefinir_senha"))
+    ] = False
+
+
+@roteador.put("/{codigo}")
+def editar_usuario(
+    codigo: int,
+    pedido: EdicaoUsuario,
+    resposta: Response,
+    usuario: auth.Usuario = PodeEditarContas,
+) -> dict[str, Any]:
+    """Altera nome, e-mail, telefone, perfil, situação e senha de uma conta.
+
+    SÓ O SECRETÁRIO — ver `PodeEditarContas`.
+
+    DUAS RECUSAS SOBRE A PRÓPRIA CONTA
+
+    O secretário não muda o próprio perfil nem desativa a própria conta. Nos dois
+    casos ele perderia, no mesmo clique, o poder de desfazer o que fez — e sendo o
+    único secretário, o escritório inteiro fica sem quem edite contas.
+
+    O QUE ACONTECE COM QUEM ESTÁ LOGADO
+
+    A autorização lê o perfil do BANCO pelo e-mail a cada requisição (ver
+    `auth._papeis_atuais`). Então perfil trocado e conta desativada valem na hora.
+    E-mail trocado desliga a sessão aberta da pessoa, que entra de novo com o
+    e-mail novo. Senha trocada NÃO derruba sessão aberta — o token vale até 24 h
+    e não carrega a senha; para cortar acesso agora, desative a conta.
+
+    Quando é a própria conta e o e-mail ou a senha mudam, o token é reemitido,
+    senão o secretário se desconectaria editando o próprio cadastro.
+    """
+    email = pedido.email.strip().lower()
+    nome = pedido.nome.strip()
+    telefone = _normalizar_telefone(pedido.telefone)
+
+    senha = pedido.senha.strip()
+    if senha and pedido.redefinir_senha:
+        raise HTTPException(
+            400, "Escolha entre definir uma senha nova e voltar para a senha padrão."
+        )
+    if senha and not _parece_md5(senha) and len(senha) < 8:
+        raise HTTPException(400, "A senha precisa de pelo menos 8 caracteres.")
+    if pedido.redefinir_senha:
+        novo_hash: str | None = auth.SENHA_PADRAO_MD5
+    else:
+        novo_hash = _hash_de(senha) if senha else None
+
+    with conectar() as con:
+        atual = con.execute(
+            f"""SELECT codigo, nome, email, telefone, perfil, perfil_id, ativo
+                  FROM {_TABELA}
+                 WHERE codigo = ?""",
+            (codigo,),
+        ).fetchone()
+        if atual is None:
+            raise HTTPException(404, "Usuário não encontrado.")
+
+        perfil_id, perfil = _resolver_perfil_usuario(con, pedido.perfil_id, None)
+        email_atual = str(atual["email"] or "").strip().lower()
+        # Comparado pelo NOME do perfil, e não pelo id: conta antiga pode estar
+        # sem `perfil_id` preenchido, e aí comparar ids acusaria mudança que não há.
+        perfil_mudou = perfil != str(atual["perfil"] or "").strip()
+        propria = auth.ATIVA and email_atual == usuario.email.strip().lower()
+
+        if propria and perfil_mudou:
+            raise HTTPException(
+                400, "Você não pode mudar o próprio perfil. Peça a outro secretário."
+            )
+        if propria and not pedido.ativo:
+            raise HTTPException(400, "Você não pode desativar a própria conta.")
+
+        if email != email_atual:
+            outro = con.execute(
+                f"SELECT 1 FROM {_TABELA} WHERE email = ? AND codigo <> ?", (email, codigo)
+            ).fetchone()
+            if outro:
+                raise HTTPException(409, f"Já existe outro usuário com o e-mail {email}.")
+
+        alterados: list[str] = []
+        if nome != atual["nome"]:
+            alterados.append("nome")
+        if email != email_atual:
+            alterados.append("email")
+        if telefone != (atual["telefone"] or None):
+            alterados.append("telefone")
+        if perfil_mudou:
+            alterados.append("perfil")
+        if pedido.ativo != bool(atual["ativo"]):
+            alterados.append("situação")
+        if pedido.redefinir_senha:
+            alterados.append("senha padrão")
+        elif novo_hash is not None:
+            alterados.append("senha")
+
+        con.execute(
+            f"""UPDATE {_TABELA}
+                   SET nome = ?, email = ?, telefone = ?, perfil = ?, perfil_id = ?, ativo = ?
+                 WHERE codigo = ?""",
+            (nome, email, telefone, perfil, perfil_id, 1 if pedido.ativo else 0, codigo),
+        )
+        if novo_hash is not None:
+            con.execute(
+                f"UPDATE {_TABELA} SET senha_md5 = ? WHERE codigo = ?", (novo_hash, codigo)
+            )
+
+    # O nome dos campos, nunca o valor: senha e e-mail antigos não vão para o log.
+    log.info(
+        "usuario %s editado por %s: %s",
+        codigo,
+        _autor(usuario),
+        ", ".join(alterados) or "nada mudou",
+    )
+
+    if propria and ("email" in alterados or novo_hash is not None):
+        pessoa = _por_email(email)
+        if pessoa is not None:
+            auth.definir_cookie(
+                resposta,
+                auth.gerar_token(
+                    codigo=pessoa["codigo"],
+                    nome=pessoa["nome"],
+                    email=pessoa["email"],
+                    perfil=pessoa["perfil"],
+                    senha_padrao=pessoa["senha_md5"] == auth.SENHA_PADRAO_MD5,
+                ),
+            )
+
+    return {
+        "id": str(codigo),
+        "usuario": email,
+        "nome": nome,
+        "email": email,
+        "telefone": telefone or "",
+        "perfil": perfil,
+        "perfilId": perfil_id,
+        "perfis": [perfil],
+        "ativo": pedido.ativo,
+        "alterados": alterados,
+    }

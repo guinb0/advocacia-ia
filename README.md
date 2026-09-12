@@ -11,7 +11,7 @@ entrevista para o modelo de linguagem, o CEP para a base pública, o `.docx` par
 a assinatura eletrônica, e a consulta ao banco de precedentes.
 
 **Stack:** FastAPI + PaddleOCR + faster-whisper no backend, Next.js 16 + React 19
-no frontend, SQLite local e um PostgreSQL com pgvector para os precedentes.
+no frontend, SQL Server local e um PostgreSQL com pgvector para os precedentes.
 
 ## O fluxo
 
@@ -67,7 +67,7 @@ configuração e o que fazer quando não sobe — está em
 ```powershell
 cd advocacia-ia
 .\iniciar.ps1            # desenvolvimento
-.\iniciar.ps1 -SemAuth   # sem login, dispensa o Docker
+.\iniciar.ps1 -SemAuth   # sem login; o Docker continua necessario
 .\iniciar.ps1 -Prod      # usa o build de produção do Next
 ```
 
@@ -87,6 +87,7 @@ São **três processos**:
 | API | `8100` | FastAPI + PaddleOCR (docs interativos em `/docs`) |
 | Web | `3000` | Next.js |
 | Transcrição | `8200` | Whisper, em processo próprio |
+| SQL Server local | `14333` | casos, usuarios e demais registros do Acervo |
 
 A API fica na 8100 em vez da óbvia 8000 porque esta costuma já estar ocupada na
 máquina (WSL, outros projetos). A web usa a 3000, que é a padrão do Next — então
@@ -224,7 +225,7 @@ Por isso o JSON traz os dois: `tipo.codigo` (usado na extração) e `tipo.detect
 
 | Caminho | O quê |
 |---|---|
-| `dados/casos.db` | SQLite: casos, entregas e o índice das assinaturas |
+| volume `sqlserver_data` | SQL Server local: casos, entregas e o índice das assinaturas |
 | `dados/casos/<id>/` | os arquivos que o cliente mandou |
 | `dados/contratos/<id>.pdf` | contratos assinados, baixados da ZapSign |
 | `dados/.portal-segredo` | assina as sessões do portal; sorteado no 1º boot |
@@ -426,6 +427,7 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -m tests.test_chamada          # sinalização WebRTC (ver ressalva abaixo)
 & $py -m tests.test_pipeline         # end-to-end com documentos sintéticos
 & $py -m tests.test_concorrencia     # 3 OCRs simultâneos
+& $py -m tests.test_seed_development # proteções do seeder local
 ```
 
 Nenhum toca serviço externo: DeepSeek, ZapSign e pgvector entram dublados. Rodam
@@ -486,7 +488,7 @@ app/                     backend (FastAPI)
   casos.py               status de cada item e o texto do pedido ao cliente
   painel.py              o caso medido no tempo: etapas, comparação, riscos
   panorama.py            o escritório inteiro, com a MESMA medição do painel
-  armazenamento.py       SQLite: casos, entregas, assinaturas, arquivos em disco
+  armazenamento.py       SQL Server: casos, entregas, assinaturas, arquivos em disco
   portal.py              senha e sessão do portal do cliente
   pipeline.py            orquestra OCR -> campos -> validação -> JSON/XML
   ocr_engine.py          wrapper do PaddleOCR, thread dedicada
@@ -521,7 +523,7 @@ scripts/                 rodados à mão, com `python -m scripts.<nome>`
 sql/                     migrações do pgvector, aplicadas em ordem
 docs/                    guias, checklists do escritório e o contrato oficial
 tests/                   cada arquivo roda sozinho e imprime PASS/FALHA
-dados/                   SQLite + arquivos dos clientes — FORA do git
+dados/                   arquivos dos clientes — FORA do git
 tmp/                     JSON/XML temporários da análise avulsa (TTL 30 min)
 static/index.html        mesma UI em HTML puro (plano B sem Node)
 ```

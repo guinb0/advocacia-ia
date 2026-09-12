@@ -256,9 +256,13 @@ export default function VideoDaEntrevista({
           </>
         ) : (
           <>
-            <span className="inline-flex items-center gap-[7px] text-[12px] font-medium leading-none font-codigo text-critico">
-              <i className="w-2 h-2 bg-critico rounded-full animate-[pulsarForte_1.6s_ease-in-out_infinite] motion-reduce:animate-none" />
-              TELA E VÍDEO GRAVANDO · {formatarRelogio(decorrido)}
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-none font-codigo text-critico" aria-label={`Gravação em andamento: ${formatarRelogio(decorrido)}`}>
+              <span className="flex h-4 items-center gap-[2px]" aria-hidden>
+                <i className="h-1.5 w-[3px] rounded-full bg-critico animate-[pulsoAudio_0.7s_ease-in-out_infinite] motion-reduce:animate-none" />
+                <i className="h-3 w-[3px] rounded-full bg-critico animate-[pulsoAudio_0.9s_ease-in-out_infinite] motion-reduce:animate-none" />
+                <i className="h-2 w-[3px] rounded-full bg-critico animate-[pulsoAudio_0.6s_ease-in-out_infinite] motion-reduce:animate-none" />
+              </span>
+              <span>{formatarRelogio(decorrido)}</span>
             </span>
             <button type="button" className={BOTAO_GRAVANDO} onClick={() => gravacao.current?.parar()}>
               Parar

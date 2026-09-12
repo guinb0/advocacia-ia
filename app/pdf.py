@@ -9,8 +9,11 @@ import cv2
 import numpy as np
 
 # PDFium não é thread-safe. A API processa uploads em threads para não bloquear o
-# event loop, então todas as renderizações passam por este único lock.
-_PDFIUM_LOCK = threading.Lock()
+# event loop, então todas as renderizações passam por este único lock. Público
+# (sem `_`) porque `conversao_pdf.mesclar_em_pdf` também chama a biblioteca e
+# precisa do MESMO lock — dois pdfium ao mesmo tempo em threads diferentes é o
+# que ele não tolera, não importa a operação.
+PDFIUM_LOCK = threading.Lock()
 
 MAX_PAGINAS_PDF = 10
 MAX_PIXELS_RENDERIZADOS = 24_000_000
@@ -45,7 +48,7 @@ def pdf_para_imagem(conteudo: bytes) -> np.ndarray:
         raise ValueError("O suporte a PDF não está instalado no servidor.") from exc
 
     try:
-        with _PDFIUM_LOCK:
+        with PDFIUM_LOCK:
             with pdfium.PdfDocument(conteudo) as documento:
                 total_paginas = len(documento)
                 if total_paginas == 0:

@@ -16,6 +16,7 @@ import Jurimetria from "@/components/admin/Jurimetria";
 import ListaCasos from "@/components/carteira/ListaCasos";
 import PainelCaso from "@/components/caso/PainelCaso";
 import Panorama from "@/components/Panorama";
+import Operacao from "@/components/operacao/Operacao";
 import PainelEnvio from "@/components/caso/PainelEnvio";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
 import ChamadaDoAtendimento from "@/components/chamada/ChamadaDoAtendimento";
@@ -23,12 +24,13 @@ import TriagemEntrevista from "@/components/entrevista/TriagemEntrevista";
 import Supervisao from "@/components/admin/Supervisao";
 import SaudeAgente from "@/components/SaudeAgente";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
-import Revisao from "@/components/admin/Revisao";
+import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
 import FollowUp from "@/components/admin/FollowUp";
 import Usuarios from "@/components/admin/Usuarios";
 import Resultado from "@/components/caso/Resultado";
 import CentralDocumentacao from "@/components/documentacao/CentralDocumentacao";
 import CatalogoRoteiros from "@/components/admin/CatalogoRoteiros";
+import GlossarioDocumentos from "@/components/admin/GlossarioDocumentos";
 import { useCasos, useCategorias } from "@/lib/useCasos";
 import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import { useSessao } from "@/lib/auth";
@@ -197,6 +199,14 @@ const Telas = (props: HomeViewProps) => {
     );
   }
 
+  if (tela === "operacao") {
+    return (
+      <ModuleFrame variant="wide">
+        <Operacao />
+      </ModuleFrame>
+    );
+  }
+
   if (tela === "saudeAgente") {
     return (
       <ModuleFrame variant="wide">
@@ -208,7 +218,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "revisao") {
     return (
       <ModuleFrame variant="wide">
-        <Revisao />
+        <Supervisao onVoltar={voltarParaCarteira} />
       </ModuleFrame>
     );
   }
@@ -229,10 +239,26 @@ const Telas = (props: HomeViewProps) => {
     );
   }
 
+  if (tela === "configuracaoAssinatura") {
+    return (
+      <ModuleFrame variant="compact">
+        <ConfiguracaoAssinatura />
+      </ModuleFrame>
+    );
+  }
+
   if (tela === "catalogoRoteiros") {
     return (
       <ModuleFrame variant="compact">
         <CatalogoRoteiros onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "glossarioDocumentos") {
+    return (
+      <ModuleFrame variant="compact">
+        <GlossarioDocumentos onVoltar={voltarParaCarteira} />
       </ModuleFrame>
     );
   }

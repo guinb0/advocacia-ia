@@ -501,6 +501,12 @@ export interface AnaliseFluxo {
   resumo: string;
   cruzamento_entrevista_documentos?: string;
   pontos_fortes: string[];
+  acoes_sugeridas?: Array<{
+    titulo: string;
+    motivo: string;
+    pedidos: string[];
+    prioridade: "principal" | "alternativa" | "avaliar" | string;
+  }>;
   lacunas: string[];
   fatos_confirmados?: string[];
   fatos_so_na_entrevista?: string[];
@@ -636,6 +642,8 @@ export interface CriticaDePeticao {
   versao_resultado: number;
   prompt: string;
   usuario: string;
+  /** `false` = valeu só para este caso; não instrui as próximas petições. */
+  generaliza?: boolean;
   criado_em: string;
 }
 
@@ -664,10 +672,12 @@ export function revisarPeticaoComPrompt(
   casoId: string,
   pecaId: string,
   prompt: string,
+  /** `false` = lição só deste caso: entra na rastreabilidade e NÃO ensina a IA. */
+  generaliza = true,
 ): Promise<{ peticao: Peticao; criticas: CriticaDePeticao[] }> {
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/revisar`, {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, generaliza }),
   });
 }
 

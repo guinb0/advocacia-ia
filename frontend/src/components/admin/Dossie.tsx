@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FluxoPeticao, { type ControlesGeracaoPeticao } from "@/components/admin/FluxoPeticao";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   gerarContratoDoCaso as solicitarContratoDoCaso,
   requisitosDoContrato,
@@ -371,15 +372,24 @@ export default function Dossie({
               ← Carteira
             </Botao>
           </div>
-          <Botao
+          <BotaoProcesso
             variante="primario"
-            disabled={
-              !geracaoPeticao?.podeGerar || geracaoPeticao?.ocupado || ocupado !== null
+            processando={Boolean(geracaoPeticao?.ocupado)}
+            dica="Cruzando entrevista e documentos e redigindo a petição"
+            pendencia={
+              !geracaoPeticao
+                ? "Preparando o painel da petição…"
+                : geracaoPeticao.podeGerar
+                  ? null
+                  : "Falta a transcrição da entrevista para gerar."
             }
+            aguardando={ocupado !== null}
+            erro={geracaoPeticao?.erro}
+            concluido={geracaoPeticao?.concluido}
             onClick={() => geracaoPeticao?.gerar()}
           >
             <span className="min-w-0 truncate">{geracaoPeticao?.rotulo ?? "Gerar análise e petição"}</span>
-          </Botao>
+          </BotaoProcesso>
         </div>
       </header>
 
@@ -400,6 +410,11 @@ export default function Dossie({
         entrevistas={dados.entrevistas ?? []}
         onAtualizar={carregar}
       />
+
+      {/* A linha do tempo dos documentos precisa estar no fluxo principal do
+        * Dossiê: o advogado a abre, analisa os anexos e lê os acontecimentos
+        * datados com seu respectivo arquivo e trecho de comprovação. */}
+      <PainelAnaliseDocumentos casoId={casoId} />
 
       <FluxoPeticao
         casoId={casoId}
@@ -557,9 +572,15 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
         registrou. Cada achado cita o trecho literal do documento.
       </p>
 
-      <Botao onClick={() => void analisar()} disabled={carregando}>
-        {carregando ? "Lendo os documentos…" : analise ? "Analisar de novo" : "Analisar documentos"}
-      </Botao>
+      <BotaoProcesso
+        variante="secundario"
+        onClick={analisar}
+        processando={carregando}
+        textoProcessando="Lendo os documentos…"
+        dica="Lendo o texto de todos os anexos do caso"
+      >
+        {analise ? "Analisar de novo" : "Analisar documentos"}
+      </BotaoProcesso>
 
       {erro && (
         <Aviso tom="critico" titulo="A análise não foi concluída">
@@ -576,6 +597,23 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
             {analise.documentos_lidos === 1 ? "" : "s"}
             {analise.recusados ? ` · ${analise.recusados} achado(s) recusados na conferência da citação` : ""}
           </p>
+
+          {(analise.cronologia?.length ?? 0) > 0 && (
+            <div className="mt-4 border-t border-borda pt-3">
+              <p className={ORIGEM}>Linha do tempo do caso</p>
+              <ol className="m-0 border-l border-acao pl-5">
+                {analise.cronologia!.map((evento, i) => (
+                  <li key={i} className="relative mb-4 last:mb-0">
+                    <span className="absolute -left-[25px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
+                    <strong className="block text-sm tabular-nums text-acao">{evento.data}</strong>
+                    <span className="block text-sm text-tinta">{evento.evento}</span>
+                    <span className={`${ORIGEM} block truncate`} title={evento.documento}>{evento.documento}</span>
+                    <blockquote className={TRECHO}>{evento.citacao}</blockquote>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
 
           {analise.achados.length === 0 ? (
             <p className={TEXTO_VAZIO}>
@@ -995,7 +1033,8 @@ function VisualizadorPeticao({
           <Botao
             variante="secundario"
             pequeno
-            disabled={!endereco}
+            carregando={!endereco}
+            textoCarregando="Abrindo o PDF…"
             onClick={() => ancora.current?.click()}
           >
             Baixar PDF
@@ -1003,10 +1042,11 @@ function VisualizadorPeticao({
           <Botao
             variante="secundario"
             pequeno
-            disabled={baixandoDocx}
+            carregando={baixandoDocx}
+            textoCarregando="Baixando…"
             onClick={() => void baixarDocx()}
           >
-            {baixandoDocx ? "Baixando…" : "Baixar .docx"}
+            Baixar .docx
           </Botao>
         </div>
       </div>
@@ -1207,12 +1247,13 @@ function PainelPeticao({
         </Botao>
         {!retida && peticao.status === "IN_REVIEW" && (
           <>
-            <Botao variante="primario" disabled={ocupado} onClick={() => void onDecidir(true)}>
+            {/* A decisão devolve Promise: só o botão clicado gira, e o outro espera. */}
+            <BotaoProcesso variante="primario" aguardando={ocupado} onClick={() => onDecidir(true)}>
               Aprovar
-            </Botao>
-            <Botao variante="secundario" disabled={ocupado} onClick={() => void onDecidir(false)}>
+            </BotaoProcesso>
+            <BotaoProcesso variante="secundario" aguardando={ocupado} onClick={() => onDecidir(false)}>
               Rejeitar
-            </Botao>
+            </BotaoProcesso>
           </>
         )}
       </div>
@@ -1236,12 +1277,22 @@ function PainelPeticao({
           ))}
           {erroEdicao && <Aviso tom="critico">{erroEdicao}</Aviso>}
           <div className="flex flex-wrap gap-2">
-            <Botao variante="secundario" disabled={salvando} onClick={() => void salvarEdicao()}>
-              {salvando ? "Salvando…" : "Salvar rascunho"}
-            </Botao>
-            <Botao variante="primario" disabled={salvando} onClick={() => void salvarEdicao(true)}>
-              {salvando ? "Preparando PDF…" : "Salvar e baixar PDF"}
-            </Botao>
+            <BotaoProcesso
+              variante="secundario"
+              aguardando={salvando}
+              textoProcessando="Salvando…"
+              onClick={() => salvarEdicao()}
+            >
+              Salvar rascunho
+            </BotaoProcesso>
+            <BotaoProcesso
+              variante="primario"
+              aguardando={salvando}
+              textoProcessando="Preparando o PDF…"
+              onClick={() => salvarEdicao(true)}
+            >
+              Salvar e baixar PDF
+            </BotaoProcesso>
           </div>
         </div>
       )}
@@ -1426,12 +1477,12 @@ function PainelEstrategia({
 
       {estrategia.status === "PROPOSED" && (
         <div className="flex gap-2 flex-wrap">
-          <Botao variante="primario" disabled={ocupado} onClick={() => void onDecidirEstrategia(true)}>
+          <BotaoProcesso variante="primario" aguardando={ocupado} onClick={() => onDecidirEstrategia(true)}>
             Aprovar estratégia
-          </Botao>
-          <Botao variante="secundario" disabled={ocupado} onClick={() => void onDecidirEstrategia(false)}>
+          </BotaoProcesso>
+          <BotaoProcesso variante="secundario" aguardando={ocupado} onClick={() => onDecidirEstrategia(false)}>
             Rejeitar
-          </Botao>
+          </BotaoProcesso>
         </div>
       )}
       {aprovada && estrategia.reviewed_by && (
@@ -1507,12 +1558,12 @@ function CartaoHipotese({
 
       {hipotese.status === "PROPOSED" && (
         <div className="flex gap-2 flex-wrap">
-          <Botao variante="secundario" pequeno disabled={ocupado} onClick={() => void onDecidir(true)}>
+          <BotaoProcesso variante="secundario" pequeno aguardando={ocupado} onClick={() => onDecidir(true)}>
             Aceitar tese
-          </Botao>
-          <Botao variante="texto" pequeno disabled={ocupado} onClick={() => void onDecidir(false)}>
+          </BotaoProcesso>
+          <BotaoProcesso variante="texto" pequeno aguardando={ocupado} onClick={() => onDecidir(false)}>
             Descartar
-          </Botao>
+          </BotaoProcesso>
         </div>
       )}
     </li>
@@ -1550,6 +1601,8 @@ function PainelContradicoes({
   const [justificativa, setJustificativa] = useState("");
 
   const emAberto = contradicoes.filter((item) => item.status === "OPEN");
+  const faltaJustificativa =
+    justificativa.trim().length < 3 ? "Escreva acima por que está decidindo assim." : null;
   if (contradicoes.length === 0) return null;
 
   return (
@@ -1602,17 +1655,17 @@ function PainelContradicoes({
 
               {!decidida && aberta !== item.id && (
                 <div className="flex gap-2 flex-wrap">
-                  <Botao
+                  <BotaoProcesso
                     variante="secundario"
                     pequeno
-                    disabled={ocupado}
+                    aguardando={ocupado}
                     onClick={() => {
                       setAberta(item.id);
                       setJustificativa("");
                     }}
                   >
                     Decidir
-                  </Botao>
+                  </BotaoProcesso>
                 </div>
               )}
 
@@ -1630,12 +1683,14 @@ function PainelContradicoes({
                     placeholder="Ex.: o cliente comprova trabalho desde 02/2022 com recibos."
                   />
                   <div className="flex gap-2 flex-wrap">
-                    <Botao
+                    <BotaoProcesso
                       variante="primario"
                       pequeno
-                      disabled={ocupado || justificativa.trim().length < 3}
+                      aguardando={ocupado}
+                      pendencia={faltaJustificativa}
+                      pendenciaAoClicar
                       onClick={() =>
-                        void onResolver(
+                        onResolver(
                           item.id,
                           "RESOLVED",
                           "Ambos os fatos permanecem: a divergência é a tese do caso.",
@@ -1644,13 +1699,15 @@ function PainelContradicoes({
                       }
                     >
                       Manter as duas versões (é a tese)
-                    </Botao>
-                    <Botao
+                    </BotaoProcesso>
+                    <BotaoProcesso
                       variante="secundario"
                       pequeno
-                      disabled={ocupado || justificativa.trim().length < 3}
+                      aguardando={ocupado}
+                      pendencia={faltaJustificativa}
+                      pendenciaAoClicar
                       onClick={() =>
-                        void onResolver(
+                        onResolver(
                           item.id,
                           "RESOLVED",
                           "Prevalece o que o documento registra.",
@@ -1659,13 +1716,15 @@ function PainelContradicoes({
                       }
                     >
                       Prevalece o documento
-                    </Botao>
-                    <Botao
+                    </BotaoProcesso>
+                    <BotaoProcesso
                       variante="texto"
                       pequeno
-                      disabled={ocupado || justificativa.trim().length < 3}
+                      aguardando={ocupado}
+                      pendencia={faltaJustificativa}
+                      pendenciaAoClicar
                       onClick={() =>
-                        void onResolver(
+                        onResolver(
                           item.id,
                           "DISMISSED",
                           "Não era divergência.",
@@ -1674,7 +1733,7 @@ function PainelContradicoes({
                       }
                     >
                       Não era divergência
-                    </Botao>
+                    </BotaoProcesso>
                   </div>
                 </div>
               )}
@@ -1712,12 +1771,13 @@ function PainelEntrevista({
   const [lendo, setLendo] = useState<string | null>(null);
   const [texto, setTexto] = useState<Record<string, string>>({});
   const [transcricao, setTranscricao] = useState("");
-  const [enviando, setEnviando] = useState(false);
+  /** De onde vem a transcrição em envio — só o botão usado mostra o andamento. */
+  const [enviando, setEnviando] = useState<"texto" | "arquivo" | null>(null);
   const [erroEnvio, setErroEnvio] = useState<string | null>(null);
   const arquivoRef = useRef<HTMLInputElement>(null);
 
-  async function adicionar(arquivo: File) {
-    setEnviando(true);
+  async function adicionar(arquivo: File, origem: "texto" | "arquivo" = "arquivo") {
+    setEnviando(origem);
     setErroEnvio(null);
     try {
       await enviarTranscricaoEntrevista(casoId, arquivo);
@@ -1726,14 +1786,14 @@ function PainelEntrevista({
     } catch (e) {
       setErroEnvio(e instanceof Error ? e.message : "Não foi possível adicionar a transcrição.");
     } finally {
-      setEnviando(false);
+      setEnviando(null);
     }
   }
 
   function adicionarTextoColado() {
     const t = transcricao.trim();
     if (!t) return;
-    void adicionar(new File([t], "transcricao.txt", { type: "text/plain" }));
+    return adicionar(new File([t], "transcricao.txt", { type: "text/plain" }), "texto");
   }
 
   async function abrirTexto(entrevistaId: string) {
@@ -1857,29 +1917,35 @@ function PainelEntrevista({
           onChange={(e) => setTranscricao(e.target.value)}
           placeholder="Cole aqui a transcrição do atendimento…"
           rows={5}
-          disabled={enviando}
+          disabled={enviando !== null}
           className="mt-2 w-full rounded-campo border border-borda bg-papel p-3 text-sm text-tinta placeholder:text-tinta-3"
         />
         {erroEnvio && (
           <p className="mt-2 mb-0 text-sm text-critico">{erroEnvio}</p>
         )}
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Botao
+        <div className="mt-2 flex flex-wrap items-start gap-2">
+          <BotaoProcesso
             variante="primario"
             pequeno
             onClick={adicionarTextoColado}
-            disabled={enviando || !transcricao.trim()}
+            processando={enviando === "texto"}
+            textoProcessando="Enviando…"
+            pendencia={transcricao.trim() ? null : "Cole acima o texto do atendimento."}
+            pendenciaAoClicar
+            aguardando={enviando === "arquivo"}
           >
-            {enviando ? "Enviando…" : "Adicionar transcrição colada"}
-          </Botao>
-          <Botao
+            Adicionar transcrição colada
+          </BotaoProcesso>
+          <BotaoProcesso
             variante="secundario"
             pequeno
             onClick={() => arquivoRef.current?.click()}
-            disabled={enviando}
+            processando={enviando === "arquivo"}
+            textoProcessando="Enviando o arquivo…"
+            aguardando={enviando === "texto"}
           >
             Enviar arquivo
-          </Botao>
+          </BotaoProcesso>
           <input
             ref={arquivoRef}
             type="file"

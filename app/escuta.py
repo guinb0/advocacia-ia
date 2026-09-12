@@ -718,9 +718,10 @@ de fazer em voz alta. Ela mudou tudo o que vem a seguir.
 
   Se a fala identificar uma só ("carteiro de moto", "entrego de bicicleta"),
   preencha normalmente.
-- NUNCA preencha CPF, RG, datas de nascimento ou qualquer número de documento a
-  partir da fala, mesmo que apareça claramente. Esses campos são digitados por
-  outra equipe.
+- NUNCA preencha nome, CPF, estado civil, UF ou município a partir da fala:
+  esses cinco campos são digitados manualmente. Todos os demais campos do
+  formulário, inclusive RG, nascimento e outros dados objetivos, podem ser
+  preenchidos quando forem explicitamente informados pelo cliente.
 - `valor` é a RESPOSTA à pergunta, não a transcrição da fala. Use as palavras do
   cliente, mas só as que respondem: sem repetir o enunciado, sem "ah", "então",
   "né", e sem dizer duas vezes a mesma coisa. Pergunta de relato aceita frase
@@ -807,7 +808,8 @@ REGRAS
   compor uma única resposta narrativa. Aproveite todos sem duplicar conteúdo.
 - Respostas existentes foram digitadas por uma pessoa e são autoritativas: não
   as altere nem as repita.
-- Nunca extraia CPF, RG, data de nascimento ou número de documento da fala.
+- Nunca extraia nome, CPF, estado civil, UF ou município da fala. Extraia os
+  demais campos quando estiverem explicitamente apoiados pelo mapa de fatos.
 - Para `sim_nao`, use somente "sim" ou "não".
 - Para perguntas com opções, devolva exatamente uma das opções disponíveis.
   É permitido normalizar uma expressão inequivocamente equivalente para o texto
@@ -1337,6 +1339,7 @@ def processar_entrevista(
     transcricao: str,
     respostas_iniciais: dict[str, Any] | None = None,
     codigo_roteiro: str = "empregado_publico",
+    roteiro_ativo: roteiros.Roteiro | None = None,
 ) -> dict[str, Any]:
     """Transforma a conversa completa em respostas revisáveis, numa única leitura.
 
@@ -1344,7 +1347,7 @@ def processar_entrevista(
     atual ou fragmentos. Ela só roda depois do encerramento e nunca modifica a
     transcrição recebida.
     """
-    roteiro = roteiros.obter(codigo_roteiro)
+    roteiro = roteiro_ativo or roteiros.obter(codigo_roteiro)
     if roteiro is None:
         raise ErroEscuta(f"Roteiro {codigo_roteiro!r} não existe.")
 
@@ -1609,6 +1612,7 @@ def escutar(
     respostas: dict[str, Any],
     codigo_roteiro: str = "empregado_publico",
     pergunta_atual: str = "",
+    roteiro_ativo: roteiros.Roteiro | None = None,
 ) -> dict[str, Any]:
     """O que este trecho de fala respondeu, e o que ainda falta perguntar.
 
@@ -1616,7 +1620,7 @@ def escutar(
     o que já está preenchido, e para o rastreio decidir quais módulos existem.
     """
     trecho = _texto(trecho, 4000)
-    roteiro = roteiros.obter(codigo_roteiro)
+    roteiro = roteiro_ativo or roteiros.obter(codigo_roteiro)
     if roteiro is None:
         raise ErroEscuta(f"Roteiro {codigo_roteiro!r} não existe.")
 

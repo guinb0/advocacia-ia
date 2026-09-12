@@ -221,10 +221,11 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                 <Botao
                   pequeno
                   onClick={() => void abrirEditor(r)}
-                  disabled={abrindo === r.codigo}
+                  carregando={abrindo === r.codigo}
+                  textoCarregando="Abrindo…"
                 >
                   <FilePenLine size={14} aria-hidden />
-                  {abrindo === r.codigo ? "Abrindo…" : "Editar"}
+                  Editar
                 </Botao>
                 {/* Só em quem TEM versão salva: num roteiro que nunca foi
                     editado não há nada para desfazer, e o botão convidaria a
@@ -234,10 +235,11 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                     pequeno
                     variante="texto"
                     onClick={() => void reverter(r)}
-                    disabled={revertendo === r.codigo}
+                    carregando={revertendo === r.codigo}
+                    textoCarregando="Revertendo…"
                   >
                     <RotateCcw size={14} aria-hidden />
-                    {revertendo === r.codigo ? "Revertendo…" : "Voltar ao original"}
+                    Voltar ao original
                   </Botao>
                 )}
               </div>

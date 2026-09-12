@@ -367,6 +367,15 @@ export default function PainelCaso({
     ];
   }, [distribuicaoPorTipo]);
   const mapa = useMemo(() => mapaDeAtividade(eventosFiltrados), [eventosFiltrados]);
+  // Fica antes dos retornos para preservar a mesma ordem de hooks no carregamento.
+  const cronologiaDosFatos = useMemo(
+    () => (dados?.fatos.itens ?? [])
+      .filter((fato) => fato.vigente && fato.tipos_de_origem.includes("OCR_DOCUMENT"))
+      .map((fato) => ({ fato, data: dataDoFato(fato) }))
+      .filter((item): item is { fato: FatoDoCaso; data: string } => item.data !== null)
+      .sort((a, b) => a.data.localeCompare(b.data)),
+    [dados?.fatos.itens],
+  );
 
   if (carregando && !dados) {
     return (
@@ -414,6 +423,11 @@ export default function PainelCaso({
   const etapasIniciadas = dados.etapas_medidas.filter((etapa) => etapa.iniciada);
   const comparaveis = comparacao.linhas.filter((linha) => linha.realizado_horas !== null);
   const fatosPaginados = paginar(dados.fatos.itens, paginaFatos);
+  /* A linha do tempo operacional, mais abaixo, conta quando o SISTEMA recebeu
+   * um documento. Para entender o caso, o advogado precisa da outra ordem: o
+   * que ocorreu e em qual data o documento registra. Só entram fatos vigentes
+   * com origem documental; relato de entrevista permanece na tabela, mas não
+   * pode se apresentar como acontecimento comprovado. */
   const ocorrenciasPaginadas = paginar(dados.ocorrencias.itens, paginaOcorrencias);
   const pendenciasPaginadas = paginar(dados.pendencias.itens, paginaPendencias);
   const responsaveisPaginados = paginar(resumo.responsaveis, paginaResponsaveis, 5);
@@ -712,6 +726,40 @@ export default function PainelCaso({
                   fim={fatosPaginados.fim}
                   onPagina={setPaginaFatos}
                 />
+              </div>
+            )}
+          </Figura>
+        </div>
+
+        <div className={CARTAO}>
+          <Figura
+            titulo="Cronologia dos fatos comprovados"
+            descricao="Sequência das datas que os documentos registram. Ela mostra quando os fatos ocorreram, não a data em que o arquivo foi enviado ao sistema."
+          >
+            {cronologiaDosFatos.length === 0 ? (
+              <SemDado
+                titulo="Ainda não há fatos documentais com data"
+                motivo="Envie ou processe documentos que indiquem a data do acontecimento. Fatos apenas relatados na entrevista ficam na tabela acima, sem serem tratados como prova documental."
+              />
+            ) : (
+              <div className="relative ml-2 border-l border-borda-forte pl-5">
+                {cronologiaDosFatos.map(({ fato, data }) => (
+                  <div key={fato.id} className="relative pb-5 last:pb-0">
+                    <span className="absolute -left-[29px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
+                    <time className="block text-xs font-semibold tabular-nums text-acao">
+                      {dataDoFatoLegivel(data)}
+                    </time>
+                    <div className="mt-1 text-sm font-semibold text-tinta">
+                      {rotuloLegivel(fato.tipo)}
+                    </div>
+                    <p className="mb-1 mt-1 text-sm leading-[1.5] text-tinta-2">
+                      {valorDoFato(fato.valor)}
+                    </p>
+                    <p className="m-0 text-xs leading-[1.45] text-tinta-3">
+                      Documento: {fato.origens.map(origemLegivel).join(" | ") || "origem documental sem detalhe"}
+                    </p>
+                  </div>
+                ))}
               </div>
             )}
           </Figura>
@@ -1579,4 +1627,30 @@ function LinhaDoEvento({ evento }: { evento: EventoDoCaso }) {
       </div>
     </div>
   );
+}
+
+/** Retira uma data de um fato sem inventar uma. O agente entrega valores
+ * tipados, mas a chave varia entre `date`, `start_date`, `data_acidente` etc. */
+function dataDoFato(fato: FatoDoCaso): string | null {
+  if (fato.tipo === "PERSON.BIRTH_DATE") return null;
+  const procurar = (valor: unknown, chave = ""): string | null => {
+    if (typeof valor === "string" && /(?:date|data|inicio|fim|admiss|demiss|afast)/i.test(chave)) {
+      const iso = valor.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+      if (iso) return iso;
+      const brasileiro = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})/) ?? valor.match(/^(\d{2})-(\d{2})-(\d{4})/);
+      if (brasileiro) return `${brasileiro[3]}-${brasileiro[2]}-${brasileiro[1]}`;
+    }
+    if (!valor || typeof valor !== "object" || Array.isArray(valor)) return null;
+    for (const [nome, item] of Object.entries(valor)) {
+      const encontrada = procurar(item, nome);
+      if (encontrada) return encontrada;
+    }
+    return null;
+  };
+  return procurar(fato.valor);
+}
+
+function dataDoFatoLegivel(data: string): string {
+  const [ano, mes, dia] = data.split("-");
+  return `${dia}/${mes}/${ano}`;
 }

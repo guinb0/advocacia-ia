@@ -6,6 +6,8 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import { CapturaEntrevista } from "@/lib/transcricao";
+import { Botao } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* Entrevista por chamada de voz, do lado do advogado — na tela do checklist.
  *
@@ -37,24 +39,6 @@ const LEGENDA: Record<EstadoChamada, string> = {
   falando: "em chamada",
   encerrada: "chamada encerrada",
 };
-
-const BOTAO =
-  "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-tinta enabled:hover:text-papel";
-/* Transcrevendo: vermelho, porque é estado que precisa saltar aos olhos. */
-const BOTAO_GRAVANDO =
-  "border-[1.5px] border-critico bg-transparent text-critico text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-[14px] py-[10px] cursor-pointer disabled:cursor-not-allowed " +
-  "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada " +
-  "enabled:hover:bg-critico enabled:hover:text-papel";
-const SECUNDARIO =
-  "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer mt-[10px] enabled:hover:bg-papel-2";
-const SECUNDARIO_EM_ACOES =
-  "border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui " +
-  "tracking-[0.08em] uppercase px-3 py-[9px] cursor-pointer mt-0 enabled:hover:bg-papel-2";
 
 export default function ChamadaAoVivo({ sala, onFala }: Props) {
   const chamada = useChamada();
@@ -204,34 +188,38 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
         numa faixa separada da sua — e é só ela que vira texto.
       </p>
 
-      <div className="flex gap-[10px] items-center flex-wrap">
+      <div className="flex gap-[10px] items-start flex-wrap">
         {!naChamada ? (
-          <button type="button" className={BOTAO} onClick={chamar} disabled={entrando}>
-            {entrando ? "Abrindo…" : "Entrar na chamada"}
-          </button>
+          <BotaoProcesso
+            variante="primario"
+            pequeno
+            onClick={chamar}
+            processando={entrando}
+            textoProcessando="Abrindo a chamada…"
+          >
+            Entrar na chamada
+          </BotaoProcesso>
         ) : (
           <>
-            <button
-              type="button"
-              className={gravando ? BOTAO_GRAVANDO : BOTAO}
+            {/* Transcrevendo: vermelho, porque é estado que precisa saltar aos olhos. */}
+            <BotaoProcesso
+              variante={gravando ? "perigo" : "primario"}
+              pequeno
               onClick={alternarTranscricao}
-              disabled={!temFaixa || transcrevendo}
-              title={temFaixa ? "" : "Só depois que o cliente entrar na chamada"}
+              processando={transcrevendo}
+              textoProcessando={gravando ? "Transcrevendo…" : "Iniciando…"}
+              pendencia={temFaixa ? null : "Só depois que o cliente entrar na chamada."}
             >
-              {transcrevendo
-                ? "Transcrevendo…"
-                : gravando
-                  ? "Encerrar fala"
-                  : "Transcrever fala do cliente"}
-            </button>
+              {gravando ? "Encerrar fala" : "Transcrever fala do cliente"}
+            </BotaoProcesso>
 
-            <button type="button" className={SECUNDARIO_EM_ACOES} onClick={chamada.alternarMudo}>
+            <Botao variante="secundario" pequeno onClick={chamada.alternarMudo}>
               {chamada.mudo ? "Reativar meu microfone" : "Ficar mudo"}
-            </button>
+            </Botao>
 
-            <button type="button" className={SECUNDARIO_EM_ACOES} onClick={desligar}>
+            <Botao variante="secundario" pequeno onClick={desligar}>
               Desligar
-            </button>
+            </Botao>
           </>
         )}
 
@@ -282,9 +270,9 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
       )}
 
       {falas.length > 0 && (
-        <button type="button" className={SECUNDARIO} onClick={copiar}>
+        <Botao variante="secundario" pequeno className="mt-[10px]" onClick={copiar}>
           {copiado ? "✓ Copiado" : "Copiar transcrição"}
-        </button>
+        </Botao>
       )}
 
       {naChamada && (

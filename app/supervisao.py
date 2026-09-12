@@ -31,7 +31,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from . import armazenamento, auditoria, contrato
+from . import armazenamento, auditoria, auth, contrato
 from .auth import exigir_modulo
 from .cache_leitura import por_alguns_segundos
 
@@ -220,7 +220,7 @@ def transcricao(entrevista_id: str) -> dict[str, Any]:
 
 
 @roteador.post("/entrevistas/{entrevista_id}/auditoria", dependencies=[PodeSupervisionar])
-def auditar_entrevista(entrevista_id: str) -> dict[str, Any]:
+def auditar_entrevista(entrevista_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
     """Lê a transcrição bruta e diz o que do roteiro não aparece nela.
 
     É POST e não GET porque cada chamada custa uma ida ao modelo: com GET, um
@@ -238,6 +238,7 @@ def auditar_entrevista(entrevista_id: str) -> dict[str, Any]:
         raise HTTPException(503, str(exc)) from exc
     relatorio["entrevista_id"] = entrevista_id
     relatorio["entrevistador"] = e.get("entrevistador") or SEM_NOME
+    armazenamento.salvar_auditoria_entrevista(entrevista_id, relatorio, usuario.nome)
     return relatorio
 
 

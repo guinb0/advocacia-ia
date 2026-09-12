@@ -86,8 +86,8 @@ def _detalhes_documentos(caso_id: str | None) -> dict[str, Any] | None:
     progresso = situacao.get("progresso") or {}
     pendentes = [
         str(item.get("nome") or item.get("codigo") or "Documento")
-        for item in itens
-        if item.get("obrigatorio") and item.get("status") == casos.PENDENTE
+        for item in casos.documentos_pendentes_da_situacao(situacao)
+        if item.get("status") == casos.PENDENTE
     ]
     conferir = [
         str(item.get("nome") or item.get("codigo") or "Documento")
@@ -109,6 +109,22 @@ def _detalhes_documentos(caso_id: str | None) -> dict[str, Any] | None:
         "pronto": bool(progresso.get("pronto")),
         "ultima_entrega_em": max(datas) if datas else None,
     }
+
+
+def listar_entrevistas_ativas(desde: str) -> list[dict[str, Any]]:
+    """Entrevistas com batida recente, sem carregar dados de documentação do caso."""
+    with conectar() as con:
+        linhas = con.execute(
+            f"""
+            SELECT entrevista_id, cliente, entrevistador_id, entrevistador_nome,
+                   iniciado_em, atualizado_em
+              FROM {TABELA}
+             WHERE status = 'entrevista' AND atualizado_em >= ?
+             ORDER BY atualizado_em DESC, entrevista_id DESC
+            """,
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
 
 
 @roteador.post("/atendimentos")

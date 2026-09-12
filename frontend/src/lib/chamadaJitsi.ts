@@ -539,14 +539,37 @@ export class ChamadaJitsi {
      * sairia vazia, sem erro nenhum. O `attach` da lib faz esse trabalho. */
     const alto = document.createElement("audio");
     alto.autoplay = true;
+    alto.setAttribute("playsinline", "");
+    alto.muted = false;
+    alto.volume = 1;
+    /* `track.attach()` funciona na maior parte dos desktops, mas há WebViews e
+     * Safari móvel em que ele só prepara internamente a faixa e não associa a
+     * saída de áudio. Ao atribuir também o MediaStream nativo, o navegador tem
+     * uma rota direta e explícita para o alto-falante/fone do entrevistador.
+     * Isso vale igualmente quando o participante troca para microfone USB ou
+     * Bluetooth: o Jitsi substitui a faixa remota e este método é chamado outra
+     * vez para a nova trilha. */
     faixa.attach(alto);
+    const trilha = faixa.getTrack();
+    alto.srcObject = new MediaStream([trilha]);
     document.body.appendChild(alto);
     // `autoplay` sozinho pode ser barrado pela política do navegador, e um
     // elemento barrado não reproduz — e faixa remota que não reproduz não
     // alimenta o WebAudio (é o silêncio descrito acima). Como a entrevista só
     // chega aqui depois de vários cliques, o gesto de usuário já existe; o
     // `play()` explícito converte esse gesto em reprodução de fato.
-    void alto.play?.().catch(() => {});
+    const tocar = () => void alto.play().catch(() => {
+      /* Em iPhone/iPad a primeira tentativa pode cair antes de o WebRTC marcar
+       * a faixa como utilizável. Os eventos abaixo tentam de novo quando ela
+       * efetivamente fica pronta, sem exibir um erro falso para a entrevista. */
+    });
+    tocar();
+    alto.addEventListener("loadedmetadata", tocar, { once: true });
+    alto.addEventListener("canplay", tocar, { once: true });
+    // Em celular a faixa costuma chegar "muted" durante a negociação e só
+    // liberar amostras depois. Retomar aqui evita ficar preso no silêncio de
+    // uma tentativa de play feita cedo demais.
+    trilha.addEventListener("unmute", tocar);
     this.remotas.set(faixa, alto);
 
     this.mudarEstado("falando");
@@ -561,6 +584,7 @@ export class ChamadaJitsi {
     } catch {
       /* a faixa já pode ter sido descartada pela lib */
     }
+    alto.srcObject = null;
     alto.remove();
     this.remotas.delete(faixa);
     if (this.remotas.size === 0 && !this.desligando) this.mudarEstado("aguardando");

@@ -440,6 +440,97 @@ def list_calls(case_id: str) -> list[dict[str, Any]]:
     return [dict(linha) for linha in linhas]
 
 
+def listar_ligacoes_desde(desde: str) -> list[dict[str, Any]]:
+    """Ligações realizadas a partir do instante informado, para leitura operacional."""
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, caso_id, atendente_id, atendente_nome, realizada_em, criado_em "
+            "FROM ligacoes WHERE realizada_em >= ? ORDER BY realizada_em DESC, id DESC",
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def listar_entrevistas_desde(desde: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id, entrevistador, entrevistador_id, avaliacao_google_em, criado_em "
+            "FROM entrevistas WHERE criado_em >= ? ORDER BY criado_em DESC",
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def salvar_auditoria_entrevista(
+    entrevista_id: str, resultado: dict[str, Any], auditado_por: str
+) -> None:
+    instante = agora()
+    with conectar() as con:
+        atualizado = con.execute(
+            "UPDATE auditorias_entrevista SET resultado = ?, auditado_por = ?, auditado_em = ? "
+            "WHERE entrevista_id = ?",
+            (json.dumps(resultado, ensure_ascii=False), auditado_por.strip(), instante, entrevista_id),
+        ).rowcount
+        if not atualizado:
+            con.execute(
+                "INSERT INTO auditorias_entrevista (entrevista_id, resultado, auditado_por, auditado_em) "
+                "VALUES (?, ?, ?, ?)",
+                (entrevista_id, json.dumps(resultado, ensure_ascii=False), auditado_por.strip(), instante),
+            )
+
+
+def listar_auditorias_desde(desde: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT a.entrevista_id, a.resultado, a.auditado_em, e.entrevistador, e.entrevistador_id "
+            "FROM auditorias_entrevista a JOIN entrevistas e ON e.id = a.entrevista_id "
+            "WHERE a.auditado_em >= ? ORDER BY a.auditado_em DESC",
+            (desde,),
+        ).fetchall()
+    resultado = []
+    for linha in linhas:
+        item = dict(linha)
+        try:
+            item["resultado"] = json.loads(item["resultado"])
+        except (TypeError, json.JSONDecodeError):
+            item["resultado"] = {}
+        resultado.append(item)
+    return resultado
+
+
+def registrar_solicitacao_peticao(
+    caso_id: str, solicitante_id: str, solicitante_nome: str, origem: str
+) -> str:
+    identificador = str(uuid.uuid4())
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO solicitacoes_peticao "
+            "(id, caso_id, solicitante_id, solicitante_nome, origem, status, solicitada_em) "
+            "VALUES (?, ?, ?, ?, ?, 'requested', ?)",
+            (identificador, caso_id, solicitante_id.strip(), solicitante_nome.strip(), origem, agora()),
+        )
+    return identificador
+
+
+def concluir_solicitacao_peticao(identificador: str, erro: str = "") -> None:
+    status = "failed" if erro else "completed"
+    with conectar() as con:
+        con.execute(
+            "UPDATE solicitacoes_peticao SET status = ?, concluida_em = ?, erro = ? WHERE id = ?",
+            (status, agora(), erro[:1000] or None, identificador),
+        )
+
+
+def listar_solicitacoes_peticao_desde(desde: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT solicitante_id, solicitante_nome, status, solicitada_em, concluida_em "
+            "FROM solicitacoes_peticao WHERE solicitada_em >= ? ORDER BY solicitada_em DESC",
+            (desde,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
 def excluir_caso(caso_id: str) -> bool:
     """Apaga o caso, suas entregas e os arquivos enviados."""
     with conectar() as con:
@@ -1219,6 +1310,32 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
     return [_normalizar_entrega(l) for l in linhas]
 
 
+def listar_extracoes_do_caso(caso_id: str) -> list[dict[str, Any]]:
+    """Extrações persistidas em uma consulta, sem enriquecimento externo.
+
+    Serve a leituras cruzadas do próprio checklist. `obter_entrega` também
+    consulta o agente jurídico e, chamado uma vez por arquivo, tornava a abertura
+    de casos grandes proporcionalmente lenta.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT arquivo, extracao_json
+                 FROM entregas
+                WHERE caso_id = ? AND extracao_json IS NOT NULL
+                ORDER BY criado_em""",
+            (caso_id,),
+        ).fetchall()
+    saida: list[dict[str, Any]] = []
+    for linha in linhas:
+        try:
+            extracao = json.loads(linha["extracao_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(extracao, dict):
+            saida.append({"arquivo": linha["arquivo"], "extracao": extracao})
+    return saida
+
+
 def marcos_por_caso(caso_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Entregas, entrevistas, assinaturas e vínculo de vários casos, em quatro consultas.
 
@@ -1693,6 +1810,7 @@ def registrar_entrevista(
     texto: str,
     realizada_em: str = "",
     entrevistador: str = "",
+    entrevistador_id: str = "",
     gravacao_id: str = "",
 ) -> dict[str, Any]:
     """Guarda a entrevista do atendimento: o arquivo original e o texto lido dele.
@@ -1706,9 +1824,9 @@ def registrar_entrevista(
         con.execute(
             """
             INSERT INTO entrevistas
-                   (id, caso_id, arquivo, caminho, texto, realizada_em, entrevistador,
-                    resumo, perguntas, fatos_gerados, enviada_em, gravacao_id, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '', '[]', 0, NULL, ?, ?)
+                    (id, caso_id, arquivo, caminho, texto, realizada_em, entrevistador, entrevistador_id,
+                     resumo, perguntas, fatos_gerados, enviada_em, gravacao_id, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '[]', 0, NULL, ?, ?)
             """,
             (
                 identificador,
@@ -1718,6 +1836,7 @@ def registrar_entrevista(
                 texto,
                 realizada_em,
                 entrevistador,
+                entrevistador_id.strip(),
                 gravacao_id,
                 agora(),
             ),
@@ -2335,6 +2454,25 @@ def listar_roteiros() -> list[dict[str, Any]]:
     with conectar() as con:
         linhas = con.execute("SELECT * FROM roteiros ORDER BY criado_em").fetchall()
     return [_normalizar_roteiro(linha) for linha in linhas]
+
+
+def listar_resumos_roteiros() -> list[dict[str, Any]]:
+    """Metadados do seletor, sem transferir nem desserializar `corpo`.
+
+    Um roteiro pode ter dezenas de perguntas. O seletor usa somente estes sete
+    campos; trazer o JSON de todos fazia o clique em "Alterar roteiro" pagar o
+    custo do catálogo inteiro antes de mostrar uma única opção.
+    """
+    # O seletor é uma interação curta. Se a VPN/ODBC estiver indisponível, não
+    # retenha a tela pelos 15 s usados nas operações comuns do banco.
+    with conectar(timeout=5) as con:
+        linhas = con.execute(
+            """SELECT codigo, nome, descricao, criado_por, origem,
+                      criado_em, atualizado_em
+                 FROM roteiros
+             ORDER BY criado_em"""
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
 
 
 def obter_roteiro(codigo: str) -> dict[str, Any] | None:

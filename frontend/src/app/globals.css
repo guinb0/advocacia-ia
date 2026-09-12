@@ -284,6 +284,17 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* No painel desktop a rolagem pertence exclusivamente ao miolo do AppShell.
+ * Sem esta contenção, o navegador também cria uma barra para o `body`, além
+ * da barra do conteúdo: as duas disputam a tela e deixam uma faixa vazia no
+ * fim da página. Em celular o documento continua sendo a área rolável. */
+@media (min-width: 1024px) {
+  body:has(.app-shell) {
+    height: 100dvh;
+    overflow: hidden;
+  }
+}
+
 h1,
 h2,
 h3,
@@ -347,6 +358,10 @@ textarea {
   50% {
     opacity: 0.25;
   }
+}
+
+@keyframes pulsoAudio {
+  50% { transform: scaleY(0.38); opacity: 0.5; }
 }
 
 /* Ilustracao leve da tela de login. Fica aqui, e nao no tema global, para nao

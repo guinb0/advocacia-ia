@@ -1,16 +1,19 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import { Aviso } from "@/components/ui/Basicos";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import PainelChamada from "@/components/chamada/PainelChamada";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
 import Roteiro from "@/components/entrevista/Roteiro";
 import type { EstadoEscuta, ManipuladorRoteiro } from "@/components/entrevista/Roteiro";
 import { lerEntrevista, usarPreAnalise } from "@/lib/preAnalise";
 import type { LeituraDaEntrevista } from "@/lib/preAnalise";
+import { chaveDasRespostas } from "@/lib/roteiroContexto";
+import type { ContextoRevisaoRoteiro } from "@/lib/types";
 import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
 
 /* A tela da entrevista: roteiro à esquerda, chamada à direita.
@@ -44,6 +47,8 @@ interface Props {
     entrevistaId: string,
     transcricao: TrechoTranscrito[],
   ) => void;
+  /** Publica o snapshot em uso para etapas que sobrevivem ao fechamento. */
+  onRoteiroAtivo?: (roteiro: ContextoRevisaoRoteiro["roteiro"] | null) => void;
   /** O que vem DEPOIS do roteiro, na mesma rolagem.
    *
    * O escritório pediu "tudo numa paulada só": não há mais o corte de concluir
@@ -76,22 +81,26 @@ const ENCERRAR_NOTA = "max-w-[46ch] italic font-normal text-[12px] leading-[1.5]
  * o que ler, e é trocada pela definitiva assim que o fim da conversa é lido. */
 type ResultadoFinal = LeituraDaEntrevista & { provisorio: boolean };
 
-function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }: { resultado: ResultadoFinal; onVoltar: () => void; onIrPara: (id: string) => void; podeComplementar?: boolean }) {
-  const { processamento, triagem, recomendacao, avisos, provisorio } = resultado;
+function PainelFinal({ resultado, onVoltar, onIrPara, podeIrPara, podeComplementar = true }: { resultado: ResultadoFinal; onVoltar: () => void; onIrPara: (id: string) => void; podeIrPara: (id: string) => boolean; podeComplementar?: boolean }) {
+  const {
+    processamento, triagem, recomendacao, avisos, provisorio,
+  } = resultado;
   const insights = processamento.insights_entrevista;
   const perguntas = Array.from(new Set([
     ...(insights?.perguntas_especificas ?? []),
     // O RAG cru pode recuperar processos de outro assunto. Só entram perguntas
     // da comparação que passou pelo corte de similaridade da recomendação.
     ...(recomendacao?.analise_comparativa?.perguntas_criticas ?? []),
-  ])).slice(0, 8);
-  const provas = recomendacao?.analise_comparativa?.provas_prioritarias ?? [];
+  ])).filter((pergunta) => !perguntaDeDocumentacao(pergunta)).slice(0, 3);
+  const pontosFortes = recomendacao?.analise_comparativa?.pontos_comuns ?? [];
+  const pontosFracos = recomendacao?.analise_comparativa?.diferencas_decisivas ?? [];
+  const amostra = recomendacao?.estatistica.desfechos_merito;
   const tipo = triagem?.sugestoes[0];
   return (
     <section className="w-full border-l-4 border-tinta bg-papel-2 px-4 py-[14px]" aria-live="polite">
       <strong className="block text-[14px] text-tinta">Revisão da entrevista — o que fazer agora</strong>
       <p className="mt-1 text-xs leading-[1.55] text-tinta-3">
-        Leia as sugestões abaixo e faça ao cliente as perguntas que faltarem. A chamada e a gravação continuam ativas.
+        Só o que precisa ser confirmado com o cliente agora. A chamada e a gravação continuam ativas.
       </p>
       {/* Dizer que é preliminar não é detalhe: o fim da conversa é onde ficam os
         * valores e o motivo da saída, e uma revisão que parece completa sem eles
@@ -102,9 +111,11 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
           está sendo lido agora e esta revisão será atualizada em instantes.
         </p>
       )}
-      {podeComplementar && <button type="button" className={`${CONCLUIR} mt-3`} onClick={onVoltar}>
+      {podeComplementar && (
+        <BotaoProcesso variante="primario" className="mt-3" onClick={onVoltar}>
           Voltar e complementar a entrevista
-        </button>}
+        </BotaoProcesso>
+      )}
       <div className="grid grid-cols-2 max-[700px]:grid-cols-1 gap-3 mt-3">
         <div className="border border-borda bg-papel p-3">
           <strong className="text-xs">Tipo provável do caso</strong>
@@ -121,6 +132,16 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
           </p>
           {recomendacao && <small className="text-tinta-3">{recomendacao.motivo}</small>}
         </div>
+        {amostra && <div className="col-span-2 max-[700px]:col-span-1 border border-borda bg-papel p-3">
+          <strong className="text-xs">Amostra de casos semelhantes — não é chance de vitória</strong>
+          <p className="my-1 text-sm">
+            {amostra.favoraveis} de {amostra.processos} decisões de mérito ({amostra.percentual.toFixed(0)}%)
+            foram favoráveis à parte autora.
+          </p>
+          <small className="text-tinta-3">
+            É um retrato dos precedentes recuperados. Provas, fatos e enquadramento do caso ainda precisam da decisão do advogado.
+          </small>
+        </div>}
       </div>
       {insights && (
         <div className={`mt-3 border-l-[3px] px-3 py-[11px] text-xs leading-[1.6] ${
@@ -143,34 +164,47 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeComplementar = true }:
       )}
       {processamento.faltando.length > 0 && (
         <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que ainda não foi perguntado ({processamento.faltando.length})</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.slice(0, 12).map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.slice(0, 12).map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
       {processamento.incertas.length > 0 && (
         <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que precisa ser confirmado ({processamento.incertas.length})</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.incertas.slice(0, 10).map((p) => <li key={p.pergunta_id}><strong>Confirme com o cliente:</strong> {p.motivo} {podeComplementar && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.incertas.slice(0, 10).map((p) => <li key={p.pergunta_id}><strong>Confirme com o cliente:</strong> {p.motivo} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
       {perguntas.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Perguntas específicas para esta conversa</summary>
-          <p className="mt-2 mb-1 text-xs text-tinta-3">Nascem de ambiguidades e fatos realmente mencionados, sem repetir as pendências do roteiro.</p>
+        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Até 3 perguntas que importam agora</summary>
+          <p className="mt-2 mb-1 text-xs text-tinta-3">Nascem de ambiguidades e fatos mencionados, sem repetir o roteiro ou pedir documentos.</p>
           <ol className="mt-2 pl-5 text-xs leading-[1.6]">{perguntas.map((p) => <li key={p}>“{p}”</li>)}</ol>
         </details>
       )}
-      {provas.length > 0 && (
-        <details className="mt-3"><summary className="cursor-pointer text-xs font-bold">Documentos e provas a pedir</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{provas.slice(0, 8).map((p) => <li key={p.prova}><strong>{p.prova}</strong> — {p.motivo}</li>)}</ul>
+      {pontosFortes.length > 0 && (
+        <details className="mt-3"><summary className="cursor-pointer text-xs font-bold">Pontos fortes sustentados pela amostra</summary>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{pontosFortes.slice(0, 6).map((p) => <li key={p.ponto}><strong>{p.ponto}</strong> — {p.impacto}</li>)}</ul>
         </details>
       )}
+      {pontosFracos.length > 0 && (
+        <details className="mt-3"><summary className="cursor-pointer text-xs font-bold">Pontos fracos ou que exigem confirmação</summary>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{pontosFracos.slice(0, 6).map((p) => <li key={p.ponto}><strong>{p.ponto}</strong> — {p.por_que_importa}</li>)}</ul>
+        </details>
+      )}
+      <p className="mt-3 mb-0 border-l-2 border-borda-forte pl-2 text-xs leading-[1.5] text-tinta-3">
+        Documentos e provas serão organizados na etapa de documentação, depois de encerrar a entrevista.
+      </p>
       {avisos.map((aviso) => <p key={aviso} className="mt-3 text-xs text-atencao">{aviso}</p>)}
     </section>
   );
+}
+
+function perguntaDeDocumentacao(texto: string): boolean {
+  return /\b(documento|prova|laudo|exame|atestado|carteira|ctps|contracheque|holerite|cat|cnis|ppp)\b/i.test(texto);
 }
 
 export default function EntrevistaComChamada({
   onConcluir,
   onFechar,
   onRespostas,
+  onRoteiroAtivo,
   depois,
 }: Props) {
   const roteiro = useRef<ManipuladorRoteiro>(null);
@@ -195,6 +229,25 @@ export default function EntrevistaComChamada({
   const [erroFecho, setErroFecho] = useState<string | null>(null);
   const [consolidando, setConsolidando] = useState(false);
   const [resultadoFinal, setResultadoFinal] = useState<ResultadoFinal | null>(null);
+  const [contextoRoteiro, setContextoRoteiro] = useState<ContextoRevisaoRoteiro | null>(null);
+  const publicarRoteiroAtivo = useRef(onRoteiroAtivo);
+  publicarRoteiroAtivo.current = onRoteiroAtivo;
+  const chaveRoteiro = useRef("");
+  const geracaoRevisao = useRef(0);
+  const atualizarContextoRoteiro = useCallback((contexto: ContextoRevisaoRoteiro | null) => {
+    const proximaChave = contexto?.chave ?? "";
+    if (chaveRoteiro.current && chaveRoteiro.current !== proximaChave) {
+      geracaoRevisao.current += 1;
+      // Resultado e erro pertencem à versão anterior; não podem sobreviver à troca.
+      setResultadoFinal(null);
+      setErroFecho(null);
+      setConsolidando(false);
+      setFechando(false);
+    }
+    chaveRoteiro.current = proximaChave;
+    setContextoRoteiro(contexto);
+    publicarRoteiroAtivo.current?.(contexto?.roteiro ?? null);
+  }, []);
   /* O painel "A ENTREVISTA ATÉ AQUI" agora mora nesta coluna, embaixo da
    * chamada. O estado que o alimenta nasce no `Roteiro` e chega por `onEscuta`;
    * é `null` enquanto a escuta não abriu. */
@@ -212,12 +265,15 @@ export default function EntrevistaComChamada({
   const preAnalise = usarPreAnalise({
     lerTranscricao: transcricaoAtual,
     lerRespostas: () => ultimo.current[0],
+    contextoRoteiro,
     ativa: encerrada === null && !fechando,
   });
 
   const voltarAoRoteiro = () => {
     document.getElementById("roteiro-da-entrevista")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  const idsRenderizaveis = new Set(contextoRoteiro?.ids_renderizaveis ?? []);
+  const podeIrParaPergunta = (id: string) => idsRenderizaveis.has(id);
   const irParaPergunta = (id: string) => roteiro.current?.irParaPergunta(id);
 
   return (
@@ -262,6 +318,7 @@ export default function EntrevistaComChamada({
           <Roteiro
             ref={roteiro}
             onEscuta={setEscuta}
+            onContextoRevisao={atualizarContextoRoteiro}
             onRespostas={(respostas, relato, entrevistaId) => {
               /* A transcrição BRUTA sobe junto, e é ela que vai para o caso.
                *
@@ -286,11 +343,13 @@ export default function EntrevistaComChamada({
 
           {encerrada === null ? (
             <div className="flex items-center flex-wrap gap-[14px] max-w-[860px] mt-7 mb-2 border-t-[3px] border-double border-borda-forte pt-[18px]">
-              <button
+              <BotaoProcesso
                 id="acao-revisar-entrevista"
-                type="button"
-                className={CONCLUIR}
-                disabled={fechando}
+                variante="primario"
+                processando={fechando && !resultadoFinal}
+                textoProcessando="Revisando a entrevista…"
+                dica="Conferindo o que faltou e sugerindo perguntas"
+                aguardando={fechando}
                 onClick={() => {
                   /* Sem esta pergunta, sair descartaria em silêncio o nome e o
                    * CPF que a escuta ouviu — o contrato e a procuração
@@ -308,9 +367,14 @@ export default function EntrevistaComChamada({
                   }
                   setFechando(true);
                   setErroFecho(null);
+                  const geracaoDaVez = ++geracaoRevisao.current;
                   void (async () => {
                     const transcricao = transcricaoAtual();
                     if (!transcricao.trim()) throw new Error("A conversa ainda não produziu transcrição. Confira o microfone ou preencha os campos manualmente.");
+                    const contextoDaVez = contextoRoteiro;
+                    if (!contextoDaVez) {
+                      throw new Error("O roteiro ativo ainda não terminou de carregar.");
+                    }
 
                     /* O que a pré-análise já leu vai para a tela AGORA.
                      *
@@ -318,28 +382,54 @@ export default function EntrevistaComChamada({
                      * são as de alguns minutos atrás, e aplicá-las apagaria o
                      * que foi respondido desde então. Campo só a definitiva
                      * mexe, logo abaixo. */
-                    const adiantada = preAnalise.obter();
-                    const completa = adiantada !== null && adiantada.cobertura === transcricao.length;
-                    if (adiantada) setResultadoFinal({ ...adiantada, provisorio: !completa });
+                    const [respostasAtuais, relatoAtual, entrevistaId, trechos] = ultimo.current;
+                    const chaveRespostasAtuais = chaveDasRespostas(respostasAtuais);
+                    const candidata = preAnalise.obter();
+                    const adiantada = candidata !== null
+                      && (
+                        candidata.respostas_entrada_chave === chaveRespostasAtuais
+                        || candidata.respostas_saida_chave === chaveRespostasAtuais
+                      )
+                      ? candidata
+                      : null;
+                    const completa = adiantada !== null
+                      && adiantada.roteiro_chave === contextoDaVez.chave
+                      && adiantada.cobertura === transcricao.length;
+                    if (adiantada) {
+                      roteiro.current?.atualizarRespostas(adiantada.processamento.respostas);
+                      ultimo.current = [adiantada.processamento.respostas, relatoAtual, entrevistaId, trechos];
+                      onRespostas?.(adiantada.processamento.respostas, relatoAtual, entrevistaId, trechos);
+                      setResultadoFinal({ ...adiantada, provisorio: !completa });
+                    }
                     if (completa) return;
 
                     setConsolidando(true);
-                    const [respostasAtuais, relatoAtual, entrevistaId, trechos] = ultimo.current;
-                    const leitura = await lerEntrevista(transcricao, respostasAtuais, (processamento) => {
+                    const leitura = await lerEntrevista(transcricao, respostasAtuais, contextoDaVez, (processamento) => {
+                      if (geracaoRevisao.current !== geracaoDaVez) return;
                       // A revisão não pode viver só numa cópia externa: o roteiro
                       // que permanece na tela precisa exibir a consolidação.
                       roteiro.current?.atualizarRespostas(processamento.respostas);
                       ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
                       onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
                     });
+                    if (geracaoRevisao.current !== geracaoDaVez) return;
                     setResultadoFinal({ ...leitura, provisorio: false });
                   })()
-                    .catch((e: unknown) => setErroFecho(e instanceof Error ? e.message : "Não foi possível revisar a entrevista."))
-                    .finally(() => { setFechando(false); setConsolidando(false); });
+                    .catch((e: unknown) => {
+                      if (geracaoRevisao.current === geracaoDaVez) {
+                        setErroFecho(e instanceof Error ? e.message : "Não foi possível revisar a entrevista.");
+                      }
+                    })
+                    .finally(() => {
+                      if (geracaoRevisao.current === geracaoDaVez) {
+                        setFechando(false);
+                        setConsolidando(false);
+                      }
+                    });
                 }}
               >
-                {fechando ? "Revisando a entrevista…" : resultadoFinal ? "Revisar novamente" : "Revisar entrevista"}
-              </button>
+                {resultadoFinal ? "Revisar novamente" : "Revisar entrevista"}
+              </BotaoProcesso>
               <span className={ENCERRAR_NOTA}>
                 A chamada e a gravação continuam enquanto o sistema confere o que faltou e sugere perguntas.
               </span>
@@ -347,15 +437,16 @@ export default function EntrevistaComChamada({
               {erroFecho && <Aviso tom="atencao" titulo="A revisão não foi concluída">{erroFecho}</Aviso>}
               {resultadoFinal && (
                 <div className="basis-full w-full">
-                  <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} />
+                  <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} />
                 </div>
               )}
               {resultadoFinal && (
-                <button
+                <BotaoProcesso
                   id="acao-avancar-finalizacao"
-                  type="button"
-                  className={CONCLUIR}
-                  disabled={fechando}
+                  variante="primario"
+                  processando={fechando && resultadoFinal !== null}
+                  textoProcessando="Fechando a gravação…"
+                  aguardando={fechando}
                   onClick={() => {
                     setFechando(true);
                     setErroFecho(null);
@@ -377,7 +468,7 @@ export default function EntrevistaComChamada({
                   }}
                 >
                   Avançar para finalizar entrevista
-                </button>
+                </BotaoProcesso>
               )}
             </div>
           ) : (
@@ -403,15 +494,37 @@ export default function EntrevistaComChamada({
                 <strong>vídeo existe só nesta aba</strong> e some ao fechar a tela.
               </p>
 
-              {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}
-              {resultadoFinal && <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeComplementar={false} />}
+              <BotaoProcesso
+                id="acao-criar-caso"
+                variante="primario"
+                onClick={() => {
+                  if (
+                    roteiro.current?.temVideoPendente() &&
+                    !window.confirm(
+                      "O vídeo gravado ainda não foi baixado e será perdido ao sair. " +
+                        "Criar o caso e continuar mesmo assim?",
+                    )
+                  ) {
+                    return;
+                  }
+                  void roteiro.current?.encerrarAtendimento()
+                    .finally(() => onConcluir(...ultimo.current));
+                }}
+              >
+                Criar caso
+              </BotaoProcesso>
 
+              {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}
+              {resultadoFinal && <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} podeComplementar={false} />}
+
+              {/* O id pode existir enquanto o atendimento continua. O áudio só
+                  fica disponível depois do encerramento definitivo, quando o
+                  arquivo contém também as etapas posteriores ao roteiro. */}
               {encerrada && <AudioDaEntrevista entrevistaId={encerrada} />}
 
-              <div className="flex items-center flex-wrap gap-[14px]">
-                <button
-                  type="button"
-                  className={CONCLUIR}
+              <div className="flex items-start flex-wrap gap-[14px]">
+                <BotaoProcesso
+                  variante="primario"
                   onClick={() => {
                     /* Mesmo texto que vai gravado no caso — de propósito. Ver
                      * `montarTranscricaoBruta`, em `lib/transcricao.ts`. */
@@ -422,30 +535,12 @@ export default function EntrevistaComChamada({
                   }}
                 >
                   Baixar a transcrição bruta (.txt)
-                </button>
+                </BotaoProcesso>
                 <span className={ENCERRAR_NOTA}>
                   O vídeo fica no bloco <strong>VÍDEO</strong>, no alto desta tela.
                 </span>
               </div>
 
-              <button
-                type="button"
-                className={CONCLUIR}
-                onClick={() => {
-                  if (
-                    roteiro.current?.temVideoPendente() &&
-                    !window.confirm(
-                      "O vídeo gravado ainda não foi baixado e será perdido ao sair. " +
-                        "Sair mesmo assim?",
-                    )
-                  ) {
-                    return;
-                  }
-                  onConcluir(...ultimo.current);
-                }}
-              >
-                Finalizar entrevista
-              </button>
             </div>
           )}
         </div>

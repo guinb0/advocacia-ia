@@ -36,6 +36,12 @@ CATEGORIA = categorias.obter("acidente_trabalho_correios")
 PDF = b"%PDF-1.7 teste"
 
 
+def pdf(nome: str) -> bytes:
+    """Bytes próprios por arquivo: o mesmo conteúdo duas vezes no caso é recusado
+    como arquivo repetido (`app/duplicidade.py`), e aqui cada nome é um documento."""
+    return PDF + b" " + nome.encode()
+
+
 def checar(condicao: bool, descricao: str, detalhe: str = "") -> bool:
     print(f"  {'PASS' if condicao else 'FALHA'} {descricao}" + (f" ({detalhe})" if detalhe and not condicao else ""))
     return condicao
@@ -218,7 +224,7 @@ def testar_api() -> int:
         resposta = cliente.post(
             f"/api/casos/{caso_id}/documentos",
             data={"item": "DOC.04", "idioma": "pt"},
-            files={"arquivo": ("comprovante.pdf", PDF, "application/pdf")},
+            files={"arquivo": ("comprovante.pdf", pdf("comprovante.pdf"), "application/pdf")},
         )
         falhas += not checar(resposta.status_code == 201, "a rota aceita o envio")
 
@@ -249,9 +255,9 @@ def testar_api() -> int:
         lote = cliente.post(
             f"/api/casos/{caso_id}/documentos/lote",
             files=[
-                ("arquivos", ("meu-cpf.pdf", PDF, "application/pdf")),
-                ("arquivos", ("ctps-pagina.pdf", PDF, "application/pdf")),
-                ("arquivos", ("ilegivel.jpg", PDF, "image/jpeg")),
+                ("arquivos", ("meu-cpf.pdf", pdf("meu-cpf.pdf"), "application/pdf")),
+                ("arquivos", ("ctps-pagina.pdf", pdf("ctps-pagina.pdf"), "application/pdf")),
+                ("arquivos", ("ilegivel.jpg", pdf("ilegivel.jpg"), "image/jpeg")),
             ],
         )
         falhas += not checar(lote.status_code == 201, "o lote é aceito", str(lote.status_code))
@@ -296,7 +302,7 @@ def testar_api() -> int:
         cliente.post(
             f"/api/casos/{caso_id}/documentos",
             data={"item": "DOC.13", "idioma": "pt"},
-            files={"arquivo": ("atestado.pdf", PDF, "application/pdf")},
+            files={"arquivo": ("atestado.pdf", pdf("atestado.pdf"), "application/pdf")},
         )
         with patch.object(roteamento.valor_documento, "ler", lambda *a, **k: {
             "documento": "Atestado médico",

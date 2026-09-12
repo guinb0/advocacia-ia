@@ -13,7 +13,7 @@ import EnvioEmLote from "@/components/caso/EnvioEmLote";
 import ResumoDocumentos from "@/components/caso/ResumoDocumentos";
 import TriagemDocumentos from "@/components/caso/TriagemDocumentos";
 
-type Filtro = "todos" | "obrigatorios" | "falta";
+type Filtro = "todos" | "pendentes" | "enviados";
 
 interface Props {
   situacao: SituacaoCaso;
@@ -65,7 +65,7 @@ export default function Checklist({
   dentroDoAtendimento = false,
   mostrarPrazos = false,
 }: Props) {
-  const [filtro, setFiltro] = useState<Filtro>("obrigatorios");
+  const [filtro, setFiltro] = useState<Filtro>("todos");
   const { caso, categoria, progresso, itens } = situacao;
 
   if (!categoria) {
@@ -82,17 +82,18 @@ export default function Checklist({
   }
 
   const naoResolvidos = itens.filter((i) => i.status !== "entregue").length;
+  const enviados = itens.filter((i) => i.status === "entregue").length;
 
   const visiveis = itens.filter((item) => {
-    if (filtro === "obrigatorios") return item.obrigatorio;
-    if (filtro === "falta") return item.status !== "entregue";
+    if (filtro === "pendentes") return item.status !== "entregue";
+    if (filtro === "enviados") return item.status === "entregue";
     return true;
   });
 
   const filtros: { id: Filtro; nome: string }[] = [
-    { id: "obrigatorios", nome: `Obrigatórios (${progresso.obrigatorios_total})` },
-    { id: "falta", nome: `Falta resolver (${naoResolvidos})` },
-    { id: "todos", nome: `Todos os documentos (${itens.length})` },
+    { id: "todos", nome: `Todos (${itens.length})` },
+    { id: "pendentes", nome: `Pendentes (${naoResolvidos})` },
+    { id: "enviados", nome: `Enviados (${enviados})` },
   ];
 
   const pct = Math.max(0, Math.min(100, progresso.percentual_obrigatorios));
@@ -120,10 +121,10 @@ export default function Checklist({
           </div>
           <div className="text-right">
             <span className="text-tinta font-titulo text-[2rem] font-semibold tabular-nums leading-none whitespace-nowrap">
-              {progresso.obrigatorios_entregues}
+              {progresso.obrigatorios_recebidos ?? progresso.obrigatorios_entregues}
               <span className="text-tinta-3 text-[1.25rem]">/{progresso.obrigatorios_total}</span>
             </span>
-            <div className="mt-[2px] text-tinta-3 text-xs">documentos obrigatórios entregues</div>
+            <div className="mt-[2px] text-tinta-3 text-xs">documentos obrigatórios recebidos</div>
           </div>
         </div>
 
@@ -142,6 +143,11 @@ export default function Checklist({
         </div>
 
         <div className="flex gap-2 mt-[14px] flex-wrap">
+          {(progresso.obrigatorios_recebidos ?? progresso.obrigatorios_entregues) > progresso.obrigatorios_entregues && (
+            <Selo tom="atencao" simbolo="!">
+              {progresso.obrigatorios_entregues} validados · {(progresso.obrigatorios_recebidos ?? 0) - progresso.obrigatorios_entregues} a conferir
+            </Selo>
+          )}
           {progresso.obrigatorios_pendentes > 0 && (
             <Selo tom="critico" simbolo="✕">
               {progresso.obrigatorios_pendentes} sem arquivo
@@ -225,6 +231,7 @@ export default function Checklist({
                 key={item.codigo}
                 item={item}
                 itensChecklist={itens}
+                casoId={caso.id}
                 enviando={enviando === item.codigo}
                 onEnviar={onEnviar}
                 onRemover={onRemover}

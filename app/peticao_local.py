@@ -228,12 +228,17 @@ def _categoria_do_caso(caso_id: str) -> str:
     return str(caso.get("categoria") or "")
 
 
-#: Quantas críticas recentes de uma categoria entram automaticamente no prompt das
-#: próximas gerações — a retroalimentação da issue "Permitir alteração da petição
-#: por prompt com rastreabilidade" ("a IA vai aprendendo até sair do jeitinho que
-#: eles querem"). Um número pequeno de propósito: é contexto de estilo, não um
-#: histórico completo — e cada crítica citada come espaço do prompt.
-CRITICAS_RECENTES_POR_CATEGORIA = 5
+#: Quantas lições de uma categoria entram automaticamente no prompt das próximas
+#: gerações — a retroalimentação da issue "Permitir alteração da petição por
+#: prompt com rastreabilidade" ("a IA vai aprendendo até sair do jeitinho que
+#: eles querem").
+#:
+#: Era 5, e 5 quebrava a promessa: medido contra o banco, gravadas 7 correções na
+#: mesma categoria, a IA lembrava da 3ª à 7ª e ESQUECIA as duas primeiras — o
+#: escritório reensinava o que já tinha ensinado. 20 cabe no prompt e cobre o que
+#: uma categoria acumula em meses; repetidas não gastam vaga (`_chave`), e o que
+#: for marcado "só deste caso" nem chega aqui.
+CRITICAS_RECENTES_POR_CATEGORIA = 20
 
 
 def _com_skill_do_escritorio(caso_id: str, instrucao: str) -> str:
@@ -607,7 +612,10 @@ Devolva JSON exatamente com:
     "cruzamento_entrevista_documentos": "confronto entre relato e provas",
     "pontos_fortes": ["..."], "lacunas": ["..."],
     "fatos_confirmados": ["..."], "fatos_so_na_entrevista": ["..."],
-    "observacoes": "alertas para revisão"
+    "observacoes": "alertas para revisão",
+    "acoes_sugeridas": [
+      {"titulo":"nome da ação adicional ou conexa", "motivo":"por que os fatos podem justificar esta peça", "pedidos":["pedido possível"], "prioridade":"principal|alternativa|avaliar"}
+    ]
   },
   "secoes": [
     {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
@@ -620,6 +628,9 @@ Devolva JSON exatamente com:
   ],
   "pendencias": ["..."]
 }
+Em `acoes_sugeridas`, inclua de zero a três peças DIFERENTES da minuta principal,
+somente se os fatos realmente apontarem para elas. Não sugira duplicata, recurso,
+ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
 Cada content deve conter parágrafos separados por linha em branco.""",
         ),
         contexto,
@@ -640,6 +651,16 @@ Cada content deve conter parágrafos separados por linha em branco.""",
             str(x) for x in bruto_analise.get("fatos_so_na_entrevista") or []
         ],
         "observacoes": str(bruto_analise.get("observacoes") or "").strip(),
+        "acoes_sugeridas": [
+            {
+                "titulo": str(item.get("titulo") or "").strip(),
+                "motivo": str(item.get("motivo") or "").strip(),
+                "pedidos": [str(p).strip() for p in item.get("pedidos") or [] if str(p).strip()],
+                "prioridade": str(item.get("prioridade") or "avaliar").strip().lower(),
+            }
+            for item in bruto_analise.get("acoes_sugeridas") or []
+            if isinstance(item, dict) and str(item.get("titulo") or "").strip()
+        ][:3],
     }
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(secao["content"] for secao in secoes):
@@ -680,7 +701,7 @@ Cada content deve conter parágrafos separados por linha em branco.""",
 
 
 def revisar_com_prompt(
-    caso_id: str, *, prompt_critica: str, usuario: str
+    caso_id: str, *, prompt_critica: str, usuario: str, generaliza: bool = True
 ) -> dict[str, Any]:
     """Reescreve a petição a partir de uma crítica em linguagem natural.
 
@@ -696,7 +717,9 @@ def revisar_com_prompt(
     2. A crítica em si vai para `peticao_criticas`, com quem pediu e em cima de
        qual versão — o "log" e a "instrução armazenada" que a issue pede, e
        também o que alimenta a retroalimentação automática entre casos (ver
-       `_com_skill_do_escritorio`).
+       `_com_skill_do_escritorio`). Com `generaliza=False` ela fica só na
+       rastreabilidade deste caso e NÃO instrui as próximas petições: é o que
+       impede um "troque o nome do cliente" de virar regra da categoria.
     3. A nova versão volta **sempre** para `IN_REVIEW`, mesmo que a anterior já
        estivesse `APPROVED` — decisão do escritório: revisão por prompt nunca
        substitui uma versão aprovada sem passar de novo pela aprovação humana.
@@ -771,6 +794,7 @@ Cada content em parágrafos separados por linha em branco.""",
             versao_resultado=versao_resultado,
             prompt=prompt_critica,
             usuario=usuario,
+            generaliza=generaliza,
         )
     except Exception:
         # A revisão já foi salva — perder o registro da crítica é ruim, mas não pode
