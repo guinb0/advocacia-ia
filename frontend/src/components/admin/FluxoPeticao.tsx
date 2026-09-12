@@ -110,6 +110,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   }, [peticao?.id, peticao?.sections]);
 
   const gerar = useCallback(async () => {
+    // A minuta já salva é carregada ao voltar ao dossiê. Nunca mande outra
+    // chamada ao modelo por engano: gerar de novo custa token e sobrescreve a
+    // versão em trabalho; a decisão precisa ser explícita.
+    if (
+      peticao &&
+      !window.confirm(
+        "Já existe uma minuta salva para este caso. Gerar novamente usa tokens e cria uma nova versão. Continuar?",
+      )
+    ) {
+      return;
+    }
     setErro(null);
     setConcluido(null);
     setOcupado(true);
@@ -133,7 +144,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     } finally {
       setOcupado(false);
     }
-  }, [casoId, recarregar]);
+  }, [casoId, peticao, recarregar]);
 
   const semEntrevista = !temEntrevista && !estado?.entrevista?.texto;
   const rotuloGerar = ocupado
