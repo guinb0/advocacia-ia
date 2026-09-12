@@ -103,7 +103,8 @@ def _passa_situacao(medido: dict[str, Any], filtro: str) -> bool:
     return medido["severidade"] == filtro
 
 
-#: Como ordenar a fila. "risco" é o padrão histórico (o que pode travar primeiro).
+#: A porta de entrada é por criação: caso acabado de abrir não desaparece no
+#: meio de uma carteira antiga. Risco continua disponível como escolha.
 ORDENS = ("risco", "recente", "parado", "nome")
 
 
@@ -114,7 +115,7 @@ def montar(
     busca: str = "",
     categoria: str = "",
     situacao: str = "",
-    ordenar: str = "risco",
+    ordenar: str = "recente",
 ) -> dict[str, Any]:
     """A página pedida da fila, mais os números que valem para a carteira toda.
 
@@ -145,7 +146,7 @@ def compor(
     busca: str = "",
     categoria: str = "",
     situacao: str = "",
-    ordenar: str = "risco",
+    ordenar: str = "recente",
 ) -> dict[str, Any]:
     """A mesma fila, a partir de dados já em mãos — sem tocar no banco (assim é testada).
 
@@ -195,6 +196,7 @@ def compor(
                 _normalizar(v)
                 for v in (
                     caso.get("cliente"),
+                    caso.get("cpf"),
                     caso.get("observacao"),
                     (m["situacao"].get("categoria") or {}).get("nome"),
                     caso.get("categoria"),
@@ -228,7 +230,10 @@ def compor(
 def _ordenar(medidos: list[dict[str, Any]], ordenar: str) -> None:
     """Reordena no lugar. Já vem ordenado por risco; só mexe se pedirem outra ordem."""
     if ordenar == "recente":
-        medidos.sort(key=lambda m: m["dias"])  # menos dias parado = mais recente
+        medidos.sort(
+            key=lambda m: str(m["situacao"]["caso"].get("criado_em") or ""),
+            reverse=True,
+        )
     elif ordenar == "parado":
         medidos.sort(key=lambda m: m["dias"], reverse=True)
     elif ordenar == "nome":

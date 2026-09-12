@@ -566,10 +566,11 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
   }
 
   return (
-    <Cartao titulo="O que os documentos dizem">
+    <Cartao titulo="Cronologia dos fatos e documentos">
       <p className={EXPLICACAO}>
-        Lê o texto de todos os anexos e aponta o que eles trazem e a entrevista não
-        registrou. Cada achado cita o trecho literal do documento.
+        Veja a sequência dos acontecimentos comprovados nos documentos: acidente,
+        atendimento, exames, afastamento e demais marcos. Cada ponto mostra o arquivo
+        e o trecho que comprova a data.
       </p>
 
       <BotaoProcesso
@@ -581,6 +582,16 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
       >
         {analise ? "Analisar de novo" : "Analisar documentos"}
       </BotaoProcesso>
+
+      {!analise && !carregando && !erro && (
+        <div className="mt-4 border-l-4 border-acao bg-acao-clara px-4 py-3">
+          <strong className="block text-sm text-tinta">Linha do tempo ainda não montada</strong>
+          <p className="mb-0 mt-1 text-sm leading-relaxed text-tinta-2">
+            Clique em “Analisar documentos” para organizar os fatos por data. A análise não
+            altera os anexos nem a minuta.
+          </p>
+        </div>
+      )}
 
       {erro && (
         <Aviso tom="critico" titulo="A análise não foi concluída">
@@ -600,7 +611,7 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
 
           {(analise.cronologia?.length ?? 0) > 0 && (
             <div className="mt-4 border-t border-borda pt-3">
-              <p className={ORIGEM}>Linha do tempo do caso</p>
+              <p className={ORIGEM}>Linha do tempo dos fatos comprovados</p>
               <ol className="m-0 border-l border-acao pl-5">
                 {analise.cronologia!.map((evento, i) => (
                   <li key={i} className="relative mb-4 last:mb-0">
@@ -612,6 +623,13 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
                   </li>
                 ))}
               </ol>
+            </div>
+          )}
+
+          {(analise.cronologia?.length ?? 0) === 0 && (
+            <div className="mt-4 border-l-4 border-atencao bg-atencao-claro px-4 py-3 text-sm leading-relaxed text-tinta-2">
+              Nenhum fato com data pôde ser confirmado nos documentos lidos. Revise os anexos
+              ou envie documento que informe a data do acontecimento.
             </div>
           )}
 

@@ -445,7 +445,10 @@ export class ChamadaJitsi {
       // O nome vai antes das faixas: quem já está na sala recebe o "entrou"
       // junto do nome, em vez de ver um "participante" anônimo por um segundo.
       if (this.meuNome) sala.setDisplayName(this.meuNome);
-      if (this.minhaFaixa) void sala.addTrack(this.minhaFaixa);
+      // Publicação de áudio é confirmada: em alguns navegadores a sala entra
+      // antes de o dispositivo terminar de ficar disponível. Antes uma falha
+      // aqui era silenciosa e a chamada parecia normal, mas sem voz de saída.
+      void this.publicarMicrofone(sala);
       if (this.minhaCamera) void sala.addTrack(this.minhaCamera);
       this.mudarEstado(sala.getParticipantCount() > 0 ? "conectando" : "aguardando");
       this.anunciarParticipantes();
@@ -500,6 +503,41 @@ export class ChamadaJitsi {
     });
 
     sala.join();
+  }
+
+  private async publicarMicrofone(sala: ConferenciaJitsi): Promise<boolean> {
+    const faixa = this.minhaFaixa;
+    if (!faixa) return false;
+    faixa.getTrack().enabled = true;
+    try {
+      await sala.addTrack(faixa);
+      return true;
+    } catch {
+      await new Promise<void>((ok) => window.setTimeout(ok, 500));
+    }
+    try {
+      faixa.getTrack().enabled = true;
+      await sala.addTrack(faixa);
+      return true;
+    } catch {
+      this.eventos.onErro?.("O microfone não foi publicado na chamada. Use “Reativar áudio” sem desligar a conversa.");
+      return false;
+    }
+  }
+
+  /** Reabre e republica o microfone sem derrubar vídeo ou sala. */
+  async reativarAudio(): Promise<boolean> {
+    if (!this.api || !this.sala) return false;
+    const anterior = this.minhaFaixa;
+    if (anterior) {
+      await this.sala.removeTrack(anterior).catch(() => {});
+      await anterior.dispose().catch(() => {});
+    }
+    const faixas = await this.api.createLocalTracks({ devices: ["audio"] });
+    this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
+    if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
+    this.mudoAtual = false;
+    return this.publicarMicrofone(this.sala);
   }
 
   /** Monta a lista de retratos: eu primeiro, depois quem chegou. */
@@ -571,6 +609,17 @@ export class ChamadaJitsi {
     // uma tentativa de play feita cedo demais.
     trilha.addEventListener("unmute", tocar);
     this.remotas.set(faixa, alto);
+
+    /* No Safari/iOS a faixa pode chegar depois do toque “Entrar”, fora da
+     * janela de autoplay. Qualquer próximo toque do atendente libera todas as
+     * saídas pendentes; não depende de trocar microfone nem de reconectar. */
+    const destravar = () => {
+      for (const audio of this.remotas.values()) void audio.play().catch(() => {});
+      document.removeEventListener("pointerdown", destravar, true);
+      document.removeEventListener("keydown", destravar, true);
+    };
+    document.addEventListener("pointerdown", destravar, true);
+    document.addEventListener("keydown", destravar, true);
 
     this.mudarEstado("falando");
     this.eventos.onFaixaRemota?.(faixa.getTrack());

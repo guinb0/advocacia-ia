@@ -207,6 +207,9 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
             <button type="button" className={BOTAO_SECUNDARIO} onClick={chamada.alternarMudo}>
               {chamada.mudo ? "Reativar meu microfone" : "Ficar mudo"}
             </button>
+            <button type="button" className={BOTAO_SECUNDARIO} onClick={() => void chamada.reativarAudio()}>
+              Reativar áudio
+            </button>
             <button
               type="button"
               className={BOTAO_SECUNDARIO}

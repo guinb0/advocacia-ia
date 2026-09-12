@@ -281,8 +281,7 @@ export default function Carteira({
             <div>
               <h2 className="m-0 text-lg">Fila de casos</h2>
               <p className="mb-0 mt-1 text-xs text-tinta-3">
-                {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · o que pode
-                travar aparece primeiro
+                {triagem.ativos} {triagem.ativos === 1 ? "caso ativo" : "casos ativos"} · novos aparecem primeiro
               </p>
             </div>
             {paginacao.total > 0 && (
@@ -292,14 +291,14 @@ export default function Carteira({
             )}
           </div>
 
-          {/* Filtros que valem na carteira inteira: busca, categoria e ordem. */}
+          {/* Filtros que valem na carteira inteira: nome/CPF, ação e ordem. */}
           <div className="flex flex-wrap items-center gap-2 border-b border-borda px-[18px] py-[10px]">
             <input
               type="search"
               value={filtros.busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar por cliente, categoria…"
-              aria-label="Buscar casos"
+              placeholder="Nome ou CPF do cliente"
+              aria-label="Filtrar por nome ou CPF"
               className="min-w-[180px] flex-1 rounded-campo border border-borda bg-papel px-3 py-[7px] text-sm text-tinta placeholder:text-tinta-3"
             />
             <select
@@ -308,7 +307,7 @@ export default function Carteira({
               aria-label="Filtrar por categoria"
               className="rounded-campo border border-borda bg-papel px-3 py-[7px] text-sm text-tinta"
             >
-              <option value="">Todas as categorias</option>
+              <option value="">Todas as ações</option>
               {categorias.map((c) => (
                 <option key={c.codigo} value={c.codigo}>
                   {c.nome}
@@ -321,8 +320,8 @@ export default function Carteira({
               aria-label="Ordenar a fila"
               className="rounded-campo border border-borda bg-papel px-3 py-[7px] text-sm text-tinta"
             >
+              <option value="recente">Ordem: criados por último</option>
               <option value="risco">Ordem: risco de travar</option>
-              <option value="recente">Ordem: mais recentes</option>
               <option value="parado">Ordem: parados há mais tempo</option>
               <option value="nome">Ordem: nome do cliente (A–Z)</option>
             </select>

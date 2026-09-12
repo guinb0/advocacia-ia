@@ -187,7 +187,7 @@ export function useCarteira() {
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("");
   const [situacao, setSituacao] = useState("");
-  const [ordenar, setOrdenar] = useState<NonNullable<api.FiltrosCarteira["ordenar"]>>("risco");
+  const [ordenar, setOrdenar] = useState<NonNullable<api.FiltrosCarteira["ordenar"]>>("recente");
 
   // Digitar não pode disparar uma requisição por tecla: a busca só vai ao
   // servidor depois de uma pausa curta.
@@ -228,14 +228,13 @@ export function useCarteira() {
     void recarregar();
   }, [recarregar]);
 
-  /* A página já vem ordenada por risco do servidor; reordenar aqui pelo mesmo
-   * peso mantém as duas pontas de acordo caso uma delas mude. */
+  /* A página já vem ordenada pelo servidor. Reordenar por risco aqui apagava a
+   * escolha “criados por último” e fazia casos novos parecerem perdidos. */
   const linhas = useMemo(
     () =>
       (dados?.situacoes ?? [])
         .filter((s) => !!s.progresso)
-        .map(montarLinha)
-        .sort((a, b) => a.peso - b.peso),
+        .map(montarLinha),
     [dados],
   );
 
@@ -290,12 +289,12 @@ export function useCarteira() {
 
   const filtros = { busca, categoria, situacao, ordenar };
   const setFiltros = { setBusca, setCategoria, setSituacao, setOrdenar };
-  const algumFiltroAtivo = Boolean(buscaEfetiva || categoria || situacao || ordenar !== "risco");
+  const algumFiltroAtivo = Boolean(buscaEfetiva || categoria || situacao || ordenar !== "recente");
   const limparFiltros = useCallback(() => {
     setBusca("");
     setCategoria("");
     setSituacao("");
-    setOrdenar("risco");
+    setOrdenar("recente");
   }, []);
 
   return {
