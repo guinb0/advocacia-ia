@@ -811,10 +811,23 @@ function ModuloJurimetria({
           <ul className="grid gap-2 list-none p-0 m-0">
             {(dados.precedentes ?? []).map((item) => (
               <li key={item.indice} className="text-xs text-tinta-2 border-l-2 border-borda pl-3">
-                <strong>[{item.indice}] Processo {item.processo || "não informado"}</strong>
+                <strong>
+                  [{item.indice}] Processo {item.processo_formatado || item.processo || "não informado"}
+                </strong>
                 {` — ${item.resultado || "desfecho não informado"}; ${item.vara || "órgão não informado"}`}
                 {typeof item.similaridade === "number" ? `; similaridade ${item.similaridade.toFixed(3)}` : ""}
-                {item.url && <> — <a className="text-acao underline" href={item.url} target="_blank" rel="noreferrer">abrir decisão</a></>}
+                {/* O link vai para a consulta processual do PRÓPRIO tribunal, montada
+                  * a partir do número CNJ (ver `tribunais.link_do_processo`). Dizer
+                  * qual tribunal antes do clique evita a surpresa de cair num TRT
+                  * que o advogado não esperava. */}
+                {item.url && (
+                  <>
+                    {" — "}
+                    <a className="text-acao underline" href={item.url} target="_blank" rel="noreferrer">
+                      abrir processo{item.tribunal ? ` no ${item.tribunal}` : ""}
+                    </a>
+                  </>
+                )}
               </li>
             ))}
           </ul>

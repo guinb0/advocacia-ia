@@ -16,6 +16,14 @@ import httpx
 import psycopg
 from psycopg.rows import dict_row
 
+# As funções, e não o módulo: `buscar_similares` tem um PARÂMETRO chamado
+# `tribunais` (a lista de regionais a filtrar), que sombrearia o módulo dentro dela.
+from .tribunais import (
+    link_do_processo,
+    numero_processo_formatado,
+    tribunal_do_processo,
+)
+
 BASE = Path(__file__).resolve().parent.parent
 
 
@@ -132,8 +140,23 @@ class TrechoSimilar:
     metadados: dict[str, Any]
 
     def referencia(self) -> dict[str, Any]:
+        """O precedente como a tela e a peça o citam — com link para ABRIR o processo.
+
+        O `url` guardado na fonte vem primeiro, quando existe. Ele quase nunca
+        existe: o coletor do DJEN não recebe link da API de comunicações, e medido
+        no acervo são 7566 fontes com 2 urls, as duas de consulta de CNPJ. Por isso
+        o link é derivado do número CNJ (ver `tribunais.link_do_processo`) — é o
+        que leva o advogado à consulta processual do próprio TRT em um clique, que
+        é o que ele pediu ao ver a lista de "decisões consultadas".
+
+        `processo_formatado` existe pelo mesmo motivo: o número no acervo é 20
+        dígitos seguidos, e ninguém confere processo nesse formato.
+        """
+        processo = self.metadados.get("numero_processo")
         return {
-            "processo": self.metadados.get("numero_processo"),
+            "processo": processo,
+            "processo_formatado": numero_processo_formatado(processo),
+            "tribunal": tribunal_do_processo(processo),
             "resultado": self.metadados.get("rotulo"),
             "vara": self.metadados.get("orgao_julgador"),
             "relator": self.metadados.get("relator"),
@@ -142,7 +165,7 @@ class TrechoSimilar:
             "tipo_documento": self.metadados.get("tipo_documento"),
             "titulo": self.titulo,
             "identificador": self.identificador,
-            "url": self.url,
+            "url": self.url or link_do_processo(processo),
             "similaridade": round(self.similaridade, 4),
         }
 
