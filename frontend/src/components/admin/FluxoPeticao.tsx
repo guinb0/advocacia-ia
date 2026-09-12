@@ -19,6 +19,9 @@ import {
   salvarRascunhoPeticao,
   type EstadoPeticaoFluxo,
   type HistoricoDePeticao,
+  gerarPecaAnexa,
+  listarPecasAnexas,
+  type PecaAnexa,
   type Peticao,
   type SecaoPeticao,
 } from "@/lib/agente";
@@ -219,6 +222,60 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   }
 
   const analise = estado?.analise;
+  /* As outras peças do caso, e o que está sendo redigido ou baixado agora.
+   *
+   * Ficam fora de `peticao` de propósito: a petição inicial tem versão, histórico
+   * e aprovação; estas são peças irmãs, e misturá-las no mesmo estado faria uma
+   * falha ao listá-las esconder a minuta, que é o que importa primeiro. */
+  const [anexas, setAnexas] = useState<PecaAnexa[]>([]);
+  const [maximoAnexas, setMaximoAnexas] = useState(3);
+  const [gerandoAnexa, setGerandoAnexa] = useState<string | null>(null);
+  const [baixandoAnexa, setBaixandoAnexa] = useState<string | null>(null);
+  const [erroAnexa, setErroAnexa] = useState<string | null>(null);
+
+  const sugestoes = analise?.acoes_sugeridas ?? [];
+
+  const recarregarAnexas = useCallback(async () => {
+    try {
+      const dados = await listarPecasAnexas(casoId);
+      setAnexas(dados.anexas);
+      setMaximoAnexas(dados.maximo);
+    } catch {
+      /* a lista é complementar — a minuta principal continua utilizável sem ela */
+    }
+  }, [casoId]);
+
+  useEffect(() => {
+    void recarregarAnexas();
+  }, [recarregarAnexas]);
+
+  async function gerarAnexa(acao: { titulo: string; motivo?: string; pedidos?: string[] }) {
+    setErroAnexa(null);
+    setGerandoAnexa(acao.titulo);
+    try {
+      await gerarPecaAnexa(casoId, acao);
+      await recarregarAnexas();
+    } catch (e) {
+      setErroAnexa(e instanceof Error ? e.message : "Não foi possível gerar esta peça.");
+    } finally {
+      setGerandoAnexa(null);
+    }
+  }
+
+  async function baixarAnexa(peca: PecaAnexa, formato: "docx" | "pdf") {
+    setErroAnexa(null);
+    setBaixandoAnexa(`${peca.id}:${formato}`);
+    try {
+      const arquivo = await baixarArquivoDaPeticao(casoId, peca.id, formato);
+      baixarArquivo(arquivo, `${peca.titulo}.${formato}`);
+    } catch (e) {
+      setErroAnexa(e instanceof Error ? e.message : "Não foi possível baixar esta peça.");
+    } finally {
+      setBaixandoAnexa(null);
+    }
+  }
+
+
   const prep = estado?.preparacao;
 
   return (
@@ -422,33 +479,136 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         </section>
       )}
 
-      {peticao && (analise?.acoes_sugeridas?.length ?? 0) > 0 && (
+      {/* ------------------------------------------------- outras peças do caso
+        *
+        * O escritório quer poder levar DUAS ações do mesmo acidente sem redigir a
+        * segunda à mão. Até aqui isto não existia: o banco guardava uma peça por
+        * caso (a chave de `peticoes_locais` é o `caso_id`), então gerar a segunda
+        * apagaria a primeira. Agora elas moram em `peticoes_anexas` e a petição
+        * inicial não é tocada.
+        *
+        * O bloco aparece SEMPRE que há minuta, mesmo sem sugestão nenhuma. Antes
+        * ele só existia com a lista cheia — e quem abria a tela sem sugestão não
+        * tinha como saber que a funcionalidade existia. */}
+      {peticao && (
         <section className="grid gap-3 border border-acao-borda bg-acao-clara p-4">
           <div>
-            <h3 className="m-0 text-sm font-semibold text-tinta">Outras petições sugeridas para este caso</h3>
+            <h3 className="m-0 text-sm font-semibold text-tinta">Outras peças deste caso</h3>
             <p className="mt-1 text-sm text-tinta-2">
-              São ações possíveis a partir da mesma entrevista e dos mesmos documentos. Elas não
-              substituem a minuta acima: cada uma deve ser confirmada e redigida separadamente.
+              Ações possíveis a partir da mesma entrevista e dos mesmos documentos. Gerar uma
+              delas <strong>não altera a petição inicial</strong> acima — cada peça sai com os
+              pedidos próprios dela, para conferir e baixar.
             </p>
           </div>
-          <ul className="m-0 grid list-none gap-2 p-0">
-            {analise!.acoes_sugeridas!.map((acao, indice) => (
-              <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <strong className="text-sm text-tinta">{acao.titulo}</strong>
-                  <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao">
-                    {acao.prioridade === "principal" ? "prioritária" : acao.prioridade === "alternativa" ? "alternativa" : "avaliar"}
-                  </span>
-                </div>
-                <p className="mb-0 mt-2 text-sm text-tinta-2">{acao.motivo}</p>
-                {acao.pedidos.length > 0 && (
-                  <p className="mb-0 mt-2 text-xs text-tinta-3">
-                    Pedidos possíveis: {acao.pedidos.join("; ")}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
+
+          {erroAnexa && (
+            <Aviso tom="critico" titulo="A peça não foi gerada">
+              {erroAnexa}
+            </Aviso>
+          )}
+
+          {sugestoes.length > 0 ? (
+            <ul className="m-0 grid list-none gap-2 p-0">
+              {sugestoes.map((acao, indice) => {
+                const jaGerada = anexas.find((p) => p.titulo === acao.titulo);
+                return (
+                  <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <strong className="text-sm text-tinta">{acao.titulo}</strong>
+                      <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao">
+                        {acao.prioridade === "principal"
+                          ? "prioritária"
+                          : acao.prioridade === "alternativa"
+                            ? "alternativa"
+                            : "avaliar"}
+                      </span>
+                    </div>
+                    <p className="mb-0 mt-2 text-sm text-tinta-2">{acao.motivo}</p>
+                    {acao.pedidos.length > 0 && (
+                      <p className="mb-0 mt-2 text-xs text-tinta-3">
+                        Pedidos possíveis: {acao.pedidos.join("; ")}
+                      </p>
+                    )}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <BotaoProcesso
+                        variante={jaGerada ? "secundario" : "primario"}
+                        pequeno
+                        processando={gerandoAnexa === acao.titulo}
+                        textoProcessando="Redigindo a peça…"
+                        aguardando={ocupado || (gerandoAnexa !== null && gerandoAnexa !== acao.titulo)}
+                        onClick={() => gerarAnexa(acao)}
+                      >
+                        {jaGerada ? "Redigir de novo" : "Gerar esta peça"}
+                      </BotaoProcesso>
+                      {jaGerada && (
+                        <span className="text-xs text-tinta-3">
+                          Já redigida — regerar substitui o texto atual, sem histórico. Baixe antes
+                          se quiser guardar.
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="m-0 text-sm text-tinta-3">
+              A análise desta minuta não apontou outra ação cabível a partir deste material.
+              Novas sugestões aparecem aqui quando a petição é gerada de novo — normalmente
+              depois de entrar documento novo no caso.
+            </p>
+          )}
+
+          {anexas.length > 0 && (
+            <div className="grid gap-2 border-t border-acao-borda pt-3">
+              <h4 className="m-0 text-xs font-semibold uppercase tracking-[0.1em] text-tinta-3">
+                Peças já redigidas ({anexas.length} de {maximoAnexas})
+              </h4>
+              <ul className="m-0 grid list-none gap-2 p-0">
+                {anexas.map((peca) => (
+                  <li key={peca.id} className="border border-borda bg-papel p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <strong className="text-sm text-tinta">{peca.titulo}</strong>
+                        <p className="mb-0 mt-1 text-xs text-tinta-3">
+                          {peca.secoes} seções
+                          {peca.gerada_por ? ` · por ${peca.gerada_por}` : ""}
+                          {peca.atualizado_em
+                            ? ` · ${new Date(peca.atualizado_em).toLocaleString("pt-BR")}`
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <BotaoProcesso
+                          variante="secundario"
+                          pequeno
+                          processando={baixandoAnexa === `${peca.id}:docx`}
+                          textoProcessando="Baixando…"
+                          onClick={() => baixarAnexa(peca, "docx")}
+                        >
+                          .docx
+                        </BotaoProcesso>
+                        <BotaoProcesso
+                          variante="texto"
+                          pequeno
+                          processando={baixandoAnexa === `${peca.id}:pdf`}
+                          textoProcessando="Gerando o PDF…"
+                          onClick={() => baixarAnexa(peca, "pdf")}
+                        >
+                          PDF
+                        </BotaoProcesso>
+                      </div>
+                    </div>
+                    {peca.pendencias.length > 0 && (
+                      <p className="mb-0 mt-2 text-xs text-atencao">
+                        Pendente nesta peça: {peca.pendencias.join("; ")}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 
