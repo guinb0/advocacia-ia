@@ -501,6 +501,12 @@ export interface AnaliseFluxo {
   resumo: string;
   cruzamento_entrevista_documentos?: string;
   pontos_fortes: string[];
+  acoes_sugeridas?: Array<{
+    titulo: string;
+    motivo: string;
+    pedidos: string[];
+    prioridade: "principal" | "alternativa" | "avaliar" | string;
+  }>;
   lacunas: string[];
   fatos_confirmados?: string[];
   fatos_so_na_entrevista?: string[];

@@ -411,6 +411,11 @@ export default function Dossie({
         onAtualizar={carregar}
       />
 
+      {/* A linha do tempo dos documentos precisa estar no fluxo principal do
+        * Dossiê: o advogado a abre, analisa os anexos e lê os acontecimentos
+        * datados com seu respectivo arquivo e trecho de comprovação. */}
+      <PainelAnaliseDocumentos casoId={casoId} />
+
       <FluxoPeticao
         casoId={casoId}
         temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}

@@ -612,7 +612,10 @@ Devolva JSON exatamente com:
     "cruzamento_entrevista_documentos": "confronto entre relato e provas",
     "pontos_fortes": ["..."], "lacunas": ["..."],
     "fatos_confirmados": ["..."], "fatos_so_na_entrevista": ["..."],
-    "observacoes": "alertas para revisão"
+    "observacoes": "alertas para revisão",
+    "acoes_sugeridas": [
+      {"titulo":"nome da ação adicional ou conexa", "motivo":"por que os fatos podem justificar esta peça", "pedidos":["pedido possível"], "prioridade":"principal|alternativa|avaliar"}
+    ]
   },
   "secoes": [
     {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
@@ -625,6 +628,9 @@ Devolva JSON exatamente com:
   ],
   "pendencias": ["..."]
 }
+Em `acoes_sugeridas`, inclua de zero a três peças DIFERENTES da minuta principal,
+somente se os fatos realmente apontarem para elas. Não sugira duplicata, recurso,
+ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
 Cada content deve conter parágrafos separados por linha em branco.""",
         ),
         contexto,
@@ -645,6 +651,16 @@ Cada content deve conter parágrafos separados por linha em branco.""",
             str(x) for x in bruto_analise.get("fatos_so_na_entrevista") or []
         ],
         "observacoes": str(bruto_analise.get("observacoes") or "").strip(),
+        "acoes_sugeridas": [
+            {
+                "titulo": str(item.get("titulo") or "").strip(),
+                "motivo": str(item.get("motivo") or "").strip(),
+                "pedidos": [str(p).strip() for p in item.get("pedidos") or [] if str(p).strip()],
+                "prioridade": str(item.get("prioridade") or "avaliar").strip().lower(),
+            }
+            for item in bruto_analise.get("acoes_sugeridas") or []
+            if isinstance(item, dict) and str(item.get("titulo") or "").strip()
+        ][:3],
     }
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(secao["content"] for secao in secoes):

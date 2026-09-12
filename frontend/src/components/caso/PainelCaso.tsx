@@ -367,6 +367,15 @@ export default function PainelCaso({
     ];
   }, [distribuicaoPorTipo]);
   const mapa = useMemo(() => mapaDeAtividade(eventosFiltrados), [eventosFiltrados]);
+  // Fica antes dos retornos para preservar a mesma ordem de hooks no carregamento.
+  const cronologiaDosFatos = useMemo(
+    () => (dados?.fatos.itens ?? [])
+      .filter((fato) => fato.vigente && fato.tipos_de_origem.includes("OCR_DOCUMENT"))
+      .map((fato) => ({ fato, data: dataDoFato(fato) }))
+      .filter((item): item is { fato: FatoDoCaso; data: string } => item.data !== null)
+      .sort((a, b) => a.data.localeCompare(b.data)),
+    [dados?.fatos.itens],
+  );
 
   if (carregando && !dados) {
     return (
@@ -419,14 +428,6 @@ export default function PainelCaso({
    * que ocorreu e em qual data o documento registra. Só entram fatos vigentes
    * com origem documental; relato de entrevista permanece na tabela, mas não
    * pode se apresentar como acontecimento comprovado. */
-  const cronologiaDosFatos = useMemo(
-    () => dados.fatos.itens
-      .filter((fato) => fato.vigente && fato.tipos_de_origem.includes("OCR_DOCUMENT"))
-      .map((fato) => ({ fato, data: dataDoFato(fato) }))
-      .filter((item): item is { fato: FatoDoCaso; data: string } => item.data !== null)
-      .sort((a, b) => a.data.localeCompare(b.data)),
-    [dados.fatos.itens],
-  );
   const ocorrenciasPaginadas = paginar(dados.ocorrencias.itens, paginaOcorrencias);
   const pendenciasPaginadas = paginar(dados.pendencias.itens, paginaPendencias);
   const responsaveisPaginados = paginar(resumo.responsaveis, paginaResponsaveis, 5);
