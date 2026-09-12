@@ -469,15 +469,25 @@ export default function EntrevistaComChamada({
               )}
             </div>
           ) : (
-            /* O fecho: a gravação parou e os três arquivos ficam à mão.
+            /* O fecho: as perguntas terminaram, a GRAVAÇÃO NÃO.
+             *
+             * Esta tela dizia "ATENDIMENTO ENCERRADO / A gravação parou agora" —
+             * e era falso. O botão que traz este bloco (`encerrarGravacao`) só
+             * devolve o id da entrevista; quem para a captura é
+             * `encerrarAtendimento`, no "Criar caso" mais abaixo. É de propósito:
+             * as etapas que aparecem aqui (dados finais, avaliação, contrato e a
+             * conversa sobre os DOCUMENTOS) precisam entrar no arquivo.
+             *
+             * O texto errado tinha consequência: convidava a baixar e sair no
+             * meio, com metade do atendimento ainda por gravar.
              *
              * Vídeo, áudio e transcrição bruta são coisas diferentes e servem a
              * perguntas diferentes — o vídeo prova quem estava na sala, o áudio
              * é a conversa, e a transcrição é o que dá para ler e buscar seis
              * meses depois sem ouvir quarenta minutos. */
             <div className="flex items-start flex-col gap-[14px] max-w-[860px] mt-7 mb-2 border-t-[3px] border-double border-borda-forte pt-[18px]">
-              <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-ok">
-                ATENDIMENTO ENCERRADO
+              <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-atencao">
+                PERGUNTAS ENCERRADAS — GRAVAÇÃO AINDA CORRENDO
               </span>
 
               {erroFecho && (
@@ -487,8 +497,9 @@ export default function EntrevistaComChamada({
               )}
 
               <p className={ENCERRAR_NOTA}>
-                A gravação parou agora. Baixe o que precisa antes de sair — o{" "}
-                <strong>vídeo existe só nesta aba</strong> e some ao fechar a tela.
+                A gravação <strong>continua correndo</strong> e só para em “Criar caso” — é o que
+                faz a conversa sobre os documentos entrar no áudio e no vídeo. No encerramento o{" "}
+                <strong>vídeo é baixado sozinho</strong>; ele existe só nesta aba e some ao fechar a tela.
               </p>
 
               <BotaoProcesso
@@ -529,7 +540,9 @@ export default function EntrevistaComChamada({
                   Baixar a transcrição bruta (.txt)
                 </BotaoProcesso>
                 <span className={ENCERRAR_NOTA}>
-                  O vídeo fica no bloco <strong>VÍDEO</strong>, no alto desta tela.
+                  Baixado agora, o .txt traz a conversa <strong>só até aqui</strong> — o que for dito
+                  na etapa dos documentos entra no áudio, mas não neste arquivo. O vídeo fica no
+                  bloco <strong>GRAVAÇÃO VISUAL</strong>, no alto desta tela.
                 </span>
               </div>
 
