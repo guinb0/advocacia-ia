@@ -445,7 +445,12 @@ export class ChamadaJitsi {
       // O nome vai antes das faixas: quem já está na sala recebe o "entrou"
       // junto do nome, em vez de ver um "participante" anônimo por um segundo.
       if (this.meuNome) sala.setDisplayName(this.meuNome);
-      if (this.minhaFaixa) void sala.addTrack(this.minhaFaixa);
+      // No Chrome Android a sala pode confirmar a entrada alguns milissegundos
+      // antes de o microfone terminar de ficar utilizável. Antes isto era um
+      // `void addTrack`: a rejeição ficava invisível e o cliente aparecia em
+      // vídeo, mas chegava sem voz. Publica com confirmação e uma tentativa
+      // curta de recuperação para esse caso.
+      void this.publicarMicrofone(sala);
       if (this.minhaCamera) void sala.addTrack(this.minhaCamera);
       this.mudarEstado(sala.getParticipantCount() > 0 ? "conectando" : "aguardando");
       this.anunciarParticipantes();
@@ -500,6 +505,30 @@ export class ChamadaJitsi {
     });
 
     sala.join();
+  }
+
+  private async publicarMicrofone(sala: ConferenciaJitsi): Promise<void> {
+    const faixa = this.minhaFaixa;
+    if (!faixa) return;
+    // Alguns aparelhos Android devolvem a faixa com `enabled=false` na troca
+    // entre a permissão do navegador e a entrada na conferência. A intenção do
+    // usuário ao tocar “Entrar” é falar; não há motivo para publicá-la muda.
+    faixa.getTrack().enabled = true;
+    try {
+      await sala.addTrack(faixa);
+      return;
+    } catch {
+      await new Promise<void>((ok) => window.setTimeout(ok, 500));
+    }
+
+    try {
+      faixa.getTrack().enabled = true;
+      await sala.addTrack(faixa);
+    } catch {
+      this.eventos.onErro?.(
+        "O cliente entrou, mas o microfone não foi publicado. Peça para sair e entrar novamente após permitir o microfone.",
+      );
+    }
   }
 
   /** Monta a lista de retratos: eu primeiro, depois quem chegou. */
