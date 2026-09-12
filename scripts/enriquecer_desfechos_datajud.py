@@ -147,7 +147,14 @@ def _url_pg() -> str:
 
 
 def processos_sem_rotulo(limite: int, origem: str) -> list[str]:
-    """Números de processo cujos chunks ainda não têm desfecho, os mais novos antes."""
+    """Números de processo que ainda não foram consultados no DataJud.
+
+    "Sem rótulo" NÃO basta como critério. Processo em andamento existe no DataJud,
+    tem órgão julgador, e simplesmente ainda não foi julgado — consultá-lo de novo a
+    cada passada nunca produziria rótulo e gastaria a cota da API do CNJ, que é o
+    recurso escasso aqui (429 e fila cheia). O que marca "já consultei este" é o
+    `orgao_julgador`, gravado sempre que o processo é encontrado.
+    """
     with psycopg.connect(_url_pg(), connect_timeout=15) as con:
         linhas = con.execute(
             """
@@ -156,6 +163,7 @@ def processos_sem_rotulo(limite: int, origem: str) -> list[str]:
              WHERE metadados->>'origem' = %s
                AND metadados->>'numero_processo' IS NOT NULL
                AND (metadados->>'rotulo') IS NULL
+               AND (metadados->>'orgao_julgador') IS NULL
              LIMIT %s
             """,
             (origem, limite),
