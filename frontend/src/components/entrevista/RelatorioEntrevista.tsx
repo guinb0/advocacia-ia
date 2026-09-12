@@ -5,6 +5,7 @@ import { useState } from "react";
 import { gerarRelatorio } from "@/lib/api";
 import type { RelatorioGerado } from "@/lib/api";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
+import { baixarArquivo as baixar } from "@/lib/baixar";
 
 /* O relatório analisado da entrevista, para a equipe jurídica.
  *
@@ -24,14 +25,6 @@ interface Props {
 }
 
 /** Dispara o download de um blob que já veio pela API com o Bearer anexado. */
-function baixar(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 export default function RelatorioEntrevista({ respostas, relato }: Props) {
   const [gerando, setGerando] = useState(false);

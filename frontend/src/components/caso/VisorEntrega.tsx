@@ -7,6 +7,7 @@ import { ESTILO_VEREDITO } from "@/lib/formato";
 import type { EntregaDetalhe } from "@/lib/types";
 import { useArquivoEntrega } from "@/lib/useArquivo";
 import { Aviso, Botao, LinkBotao, Selo } from "@/components/ui/Basicos";
+import { baixarArquivo } from "@/lib/baixar";
 
 function ehPdf(nome: string): boolean {
   return nome.toLowerCase().endsWith(".pdf");
@@ -145,12 +146,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
     setErroPdf(null);
     try {
       const pdf = await baixarArquivoEntregaPdf(entregaId);
-      const url = URL.createObjectURL(pdf.arquivo);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = pdf.nome;
-      link.click();
-      URL.revokeObjectURL(url);
+      baixarArquivo(pdf.arquivo, pdf.nome);
     } catch (e) {
       setErroPdf(e instanceof Error ? e.message : "Não foi possível gerar o PDF.");
     } finally {

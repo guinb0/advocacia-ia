@@ -22,15 +22,8 @@ import { gerarAnaliseEPeticao } from "@/lib/agente";
 import { baixarArquivoDaPeticao, buscarPeticao, type Peticao } from "@/lib/agente";
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
+import { baixarArquivo as baixarBlob } from "@/lib/baixar";
 
-function baixarBlob(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 function tempoLegivel(segundos: number): string {
   if (!segundos) return "—";

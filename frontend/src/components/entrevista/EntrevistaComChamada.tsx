@@ -14,6 +14,7 @@ import type { LeituraDaEntrevista } from "@/lib/preAnalise";
 import { chaveDasRespostas } from "@/lib/roteiroContexto";
 import type { ContextoRevisaoRoteiro } from "@/lib/types";
 import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
+import { baixarTexto as baixarArquivoDeTexto } from "@/lib/baixar";
 
 /* A tela da entrevista: roteiro à esquerda, chamada à direita.
  *
@@ -59,12 +60,9 @@ interface Props {
 
 /** Baixa um texto como arquivo, sem passar pelo servidor. */
 function baixarTexto(nome: string, conteudo: string): void {
-  const url = URL.createObjectURL(new Blob([conteudo], { type: "text/plain;charset=utf-8" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
+  // Argumentos na ordem inversa da do `lib/baixar` — as chamadas desta tela já
+  // passam o nome primeiro, e trocá-las não melhoraria nada.
+  baixarArquivoDeTexto(conteudo, nome);
 }
 
 const CONCLUIR =

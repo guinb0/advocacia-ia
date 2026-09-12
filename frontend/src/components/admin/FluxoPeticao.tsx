@@ -22,15 +22,8 @@ import {
   type Peticao,
   type SecaoPeticao,
 } from "@/lib/agente";
+import { baixarArquivo } from "@/lib/baixar";
 
-function baixarArquivo(arquivo: Blob, nome: string): void {
-  const url = URL.createObjectURL(arquivo);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = nome;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 const TITULO = "font-ui text-lg font-semibold m-0";
 const SUB = "text-sm leading-relaxed text-tinta-3 m-0";
