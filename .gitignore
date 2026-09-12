@@ -63,3 +63,15 @@ ocr-extrator/
 
 # Cache incremental do TypeScript: gerado a cada build.
 *.tsbuildinfo
+
+# Coleta bruta do DJEN: 24 arquivos, ~316 MB, refeitos pelo coletor
+# (`scripts/coletar_djen_trts.py`). E insumo intermediario, nao codigo — e um
+# repositorio nao e lugar de guardar 300 MB que qualquer maquina regenera.
+decisoes_djen/
+decisoes_limpas.json
+
+# Capturas de falha da automacao da ZapSign (`ZAPSIGN_SCREENSHOT_DIR`).
+_zapsign_debug/
+
+# Arquivo de workspace do editor: e de quem edita, nao do projeto.
+*.code-workspace
