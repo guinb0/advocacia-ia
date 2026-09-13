@@ -529,6 +529,18 @@ def _peca_local(peca_ref: str) -> bool:
     return peca_ref == peticao_local.ID_LOCAL
 
 
+def _peca_anexa(caso_id: str, peca_ref: str) -> bool:
+    """Uma das OUTRAS peças do caso (ver `peticoes-anexas`), não a petição inicial.
+
+    O prefixo é conferido contra o caso da URL — sem isso, o id de uma peça de
+    OUTRO caso seria aceito aqui (mesma cautela de `baixar_peticao`, que já fazia
+    esta checagem só para o download; ler e salvar rascunho não a faziam, e por
+    isso caíam no `Cliente()` do agente remoto, que não conhece peça anexa
+    nenhuma — era o que impedia editar a segunda petição sugerida em diante).
+    """
+    return peca_ref.startswith(f"{caso_id}:")
+
+
 @roteador.get("/casos/{caso_id}/peticao/progresso")
 def progresso_peticao(caso_id: str, desde: str) -> dict[str, Any]:
     """Quanto da minuta já foi escrito, para a tela mostrar andamento."""
@@ -549,6 +561,11 @@ def peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
         if not dados:
             raise HTTPException(status_code=404, detail="Petição não encontrada.")
         return peticao_local.para_api(dados)
+    if _peca_anexa(caso_id, peca_ref):
+        anexa = peticao_local.obter_anexa(peca_ref)
+        if not anexa:
+            raise HTTPException(status_code=404, detail="Peça não encontrada.")
+        return anexa
     caso_ref = _caso_ref(caso_id)
     try:
         return Cliente().peticao(caso_ref, peca_ref)
@@ -669,6 +686,11 @@ def salvar_rascunho_peticao(
     if _peca_local(peca_ref):
         try:
             return peticao_local.para_api(peticao_local.salvar_secoes(caso_id, secoes))
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
+    if _peca_anexa(caso_id, peca_ref):
+        try:
+            return peticao_local.salvar_secoes_anexa(peca_ref, secoes)
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
     caso_ref = _caso_ref(caso_id)

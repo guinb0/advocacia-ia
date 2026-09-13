@@ -825,6 +825,42 @@ def listar_anexas(caso_id: str) -> list[dict[str, Any]]:
     return saida
 
 
+def obter_anexa(peca_id: str) -> dict[str, Any] | None:
+    """Uma peça anexa com as seções, no mesmo formato que `para_api` devolve para
+    a petição inicial — é o que a tela usa para abrir a peça em edição."""
+    registro = armazenamento.obter_peticao_anexa(peca_id)
+    if not registro:
+        return None
+    return para_api(registro["dados"])
+
+
+def salvar_secoes_anexa(peca_id: str, secoes: list[dict[str, str]]) -> dict[str, Any]:
+    """Grava o texto editado de uma peça anexa. Mesma lógica de `salvar_secoes`,
+    para a peça irmã em vez da petição inicial — ver `armazenamento.salvar_peticao_anexa`.
+    """
+    registro = armazenamento.obter_peticao_anexa(peca_id)
+    if not registro:
+        raise ErroPeticao("Peça não encontrada.")
+
+    dados = dict(registro["dados"])
+    por_codigo = {s["code"]: s.get("content", "") for s in secoes if s.get("code")}
+    for secao in dados.get("sections") or []:
+        if secao.get("code") in por_codigo:
+            secao["content"] = por_codigo[secao["code"]]
+    dados["updated_at"] = _agora()
+
+    armazenamento.salvar_peticao_anexa(
+        registro["caso_id"],
+        peca_id,
+        titulo=str(registro.get("titulo") or dados.get("title") or ""),
+        motivo=str(registro.get("motivo") or ""),
+        dados=dados,
+        docx=montar_docx(dados.get("sections") or []),
+        gerada_por=str(registro.get("gerada_por") or ""),
+    )
+    return para_api(dados)
+
+
 def gerar_anexa(
     caso_id: str,
     *,
