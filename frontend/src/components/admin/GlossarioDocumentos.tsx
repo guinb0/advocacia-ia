@@ -23,7 +23,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, History, PencilLine, Plus, Tags } from "lucide-react";
+import { History, PencilLine, Plus } from "lucide-react";
 
 import {
   AjudaCampo,
@@ -38,6 +38,7 @@ import {
   TrZebra,
   Vazio,
 } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import {
   ApiError,
   criarTipoDocumento,
@@ -128,7 +129,7 @@ function mudancas(evento: EventoHistorico, nomeDoTipoDeCaso: (codigo: string) =>
   return linhas;
 }
 
-export default function GlossarioDocumentos({ onVoltar }: { onVoltar: () => void }) {
+export default function GlossarioDocumentos() {
   const sessao = useSessao();
   const podeEditar = !AUTH_ATIVA || sessao.modulos.includes("glossario_documentos");
 
@@ -314,29 +315,11 @@ export default function GlossarioDocumentos({ onVoltar }: { onVoltar: () => void
 
   return (
     <div className="flex min-w-0 max-w-full flex-col gap-5">
-      <section className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
-        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-borda bg-papel-2 px-5 py-4">
-          <div className="min-w-0">
-            <Botao variante="texto" onClick={onVoltar}>
-              <ArrowLeft size={15} aria-hidden /> Voltar
-            </Botao>
-            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-tinta-3">
-              Escritório
-            </p>
-            <div className="mt-1 flex min-w-0 items-center gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
-                <Tags size={20} aria-hidden />
-              </span>
-              <h1 className="m-0 min-w-0 truncate text-[26px] font-semibold leading-[1.15] font-titulo text-tinta">
-                Glossário de documentos
-              </h1>
-            </div>
-            <p className="mt-2 mb-0 max-w-[70ch] text-tinta-3 text-sm leading-[1.55]">
-              Os tipos de documento que a leitura automática e a reclassificação usam. O código de
-              cada tipo fica gravado nos documentos e não muda; nome, descrição e sinônimos se
-              editam aqui.
-            </p>
-          </div>
+      <CabecalhoPagina
+        contexto="Escritório"
+        titulo="Glossário de documentos"
+        descricao="Os tipos de documento que a leitura automática e a reclassificação usam. O código de cada tipo fica gravado nos documentos e não muda; nome, descrição e sinônimos se editam aqui."
+        acoes={
           <div className="grid min-w-[240px] grid-cols-3 gap-2 rounded-campo border border-borda bg-papel p-2 text-center">
             <div className="min-w-0 px-2 py-1">
               <span className="block truncate text-[11px] text-tinta-3">Total</span>
@@ -351,8 +334,8 @@ export default function GlossarioDocumentos({ onVoltar }: { onVoltar: () => void
               <strong className="block font-codigo text-lg text-tinta">{doEscritorio}</strong>
             </div>
           </div>
-        </div>
-      </section>
+        }
+      />
 
       {erro && <Aviso tom="critico">{erro}</Aviso>}
       {recado && <Aviso tom="ok">{recado}</Aviso>}

@@ -83,8 +83,8 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
       <div className="mt-4 grid grid-cols-2 gap-2 max-[420px]:grid-cols-1">
         <button
           type="button"
-          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao ${
-            arrastando ? "border-acao text-acao bg-papel-2" : "border-acao-borda"
+          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao-texto ${
+            arrastando ? "border-acao text-acao-texto bg-papel-2" : "border-acao-borda"
           }`}
           onClick={() => inputRef.current?.click()}
           onDragEnter={(evento) => { evento.preventDefault(); setArrastando(true); }}
@@ -102,7 +102,7 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
         </button>
         <button
           type="button"
-          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed border-acao-borda rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao`}
+          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed border-acao-borda rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao-texto`}
           onClick={() => pastaRef.current?.click()}
           disabled={enviando}
         >

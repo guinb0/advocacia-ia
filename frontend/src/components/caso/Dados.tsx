@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import {
   CORES_DE_SERIE,
   Figura,
@@ -291,16 +292,11 @@ export default function Dados({ onVoltar }: Props) {
   return (
     <div className="min-w-0">
 
-      <header className="mb-6 rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
-        <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Base de conhecimento</span>
-        <h1 className="mb-[6px] mt-0 text-[1.6rem]">Dados do acervo</h1>
-        <p className="m-0 text-tinta-3 max-w-[74ch] leading-[1.55]">
-          Tudo que foi alimentado no banco de precedentes, em números e em detalhe. É daqui
-          que saem os processos semelhantes citados na recomendação e na análise das
-          respostas — o painel mostra como a base se distribui, e a lista abaixo deixa
-          conferir, documento a documento, o que exatamente está indexado.
-        </p>
-      </header>
+      <CabecalhoPagina
+        contexto="Base de conhecimento"
+        titulo="Dados do acervo"
+        descricao="Tudo que foi alimentado no banco de precedentes, em números e em detalhe. É daqui que saem os processos semelhantes citados na recomendação e na análise das respostas — o painel mostra como a base se distribui, e a lista abaixo deixa conferir, documento a documento, o que exatamente está indexado."
+      />
 
       {erro && (
         <Aviso tom="critico" titulo="Forense indisponível">
@@ -445,7 +441,7 @@ export default function Dados({ onVoltar }: Props) {
                   {tribunal && <Selo tom="info">{tribunal}</Selo>}
                   <button
                     type="button"
-                    className="border-0 bg-transparent text-acao cursor-pointer [font:inherit] underline p-0"
+                    className="border-0 bg-transparent text-acao-texto cursor-pointer [font:inherit] underline p-0"
                     onClick={() => {
                       setOrigem("");
                       setTribunal("");
@@ -460,7 +456,7 @@ export default function Dados({ onVoltar }: Props) {
                 <div>
                   <button
                     type="button"
-                    className="border-0 bg-transparent text-acao cursor-pointer [font:inherit] underline p-0"
+                    className="border-0 bg-transparent text-acao-texto cursor-pointer [font:inherit] underline p-0"
                     onClick={() => setAberto(null)}
                   >
                     ← voltar à lista

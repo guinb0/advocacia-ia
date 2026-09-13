@@ -38,7 +38,7 @@ const ITEM_FUNDO: Record<ItemPortal["status"], string> = {
 };
 const MARCADOR: Record<ItemPortal["status"], string> = {
   entregue: "border-ok-borda bg-ok-claro text-ok",
-  processando: "border-acao-borda bg-acao-clara text-acao",
+  processando: "border-acao-borda bg-acao-clara text-acao-texto",
   conferir: "border-atencao-borda bg-papel text-atencao",
   pendente: "border-critico-borda bg-critico-claro text-critico",
 };

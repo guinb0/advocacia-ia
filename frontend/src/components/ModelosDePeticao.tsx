@@ -1,5 +1,7 @@
 "use client";
 
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
+
 /**
  * Modelos de petição do escritório — a tela que alimenta o Style Engine.
  *
@@ -304,14 +306,11 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
 
   return (
     <div className="mx-auto flex max-w-[1120px] flex-col gap-5 pb-12">
-      <header className="rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
-        <span className="mt-5 block text-[11px] font-bold uppercase tracking-[0.13em] text-tinta-3">Configuração do escritório</span>
-        <h1 className="mb-0 mt-1 font-titulo text-[1.65rem] leading-[1.2] text-tinta">Identidade visual dos documentos</h1>
-        <p className="mb-0 mt-2 max-w-[70ch] text-sm leading-[1.55] text-tinta-3">
-          Padronize a logo, a tipografia e a apresentação das petições geradas pelo sistema.
-          As configurações ficam salvas para todo o escritório.
-        </p>
-      </header>
+      <CabecalhoPagina
+        contexto="Configuração do escritório"
+        titulo="Identidade visual dos documentos"
+        descricao="Padronize a logo, a tipografia e a apresentação das petições geradas para todo o escritório."
+      />
 
       {erro && <Aviso tom="critico" titulo="Não foi possível concluir">{erro}</Aviso>}
       {recado && <Aviso tom="ok" titulo="Configuração atualizada">{recado}</Aviso>}
@@ -743,7 +742,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
               Produção jurídica
             </p>
             <div className="mt-1 flex min-w-0 items-center gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao-texto">
                 <PenLine size={20} aria-hidden />
               </span>
               <h1 className="m-0 min-w-0 truncate font-titulo text-[1.7rem] font-semibold leading-[1.15] text-tinta">
@@ -790,7 +789,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
         </p>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao-texto">
               <FileText size={18} aria-hidden />
             </span>
             <div className="min-w-0">
@@ -1075,7 +1074,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
             }}
           />
           <span className="flex flex-col items-center">
-            <Upload className="mb-2 text-acao" size={24} aria-hidden />
+            <Upload className="mb-2 text-acao-texto" size={24} aria-hidden />
             {enviando
               ? "Enviando os arquivos…"
               : arrastando
@@ -1171,7 +1170,7 @@ function ModelosDePeticaoComAgenteDesativado({ onVoltar }: { onVoltar: () => voi
                         className={
                           "rounded-pill border px-3 py-1.5 text-xs cursor-pointer transition-colors " +
                           (item.obrigatorio
-                            ? "border-acao-borda bg-acao-clara text-acao hover:bg-acao hover:text-papel"
+                            ? "border-acao-borda bg-acao-clara text-acao-texto hover:bg-acao hover:text-papel"
                             : "border-borda bg-papel text-tinta hover:border-borda-forte hover:bg-papel-3")
                         }
                         onClick={() => incluirDocumento(item.nome)}

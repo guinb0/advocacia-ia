@@ -213,8 +213,8 @@
   height: 30px;
   flex-shrink: 0;
   border-radius: var(--raio-pill);
-  background: var(--acao);
-  color: #ffffff;
+  background: var(--nav-fundo);
+  color: var(--nav-texto);
   font-size: var(--t-xs);
   font-weight: 600;
 }
@@ -315,8 +315,8 @@
   max-width: 78%;
   padding: 11px 15px;
   border-radius: var(--raio) var(--raio) 3px var(--raio);
-  background: var(--acao);
-  color: #ffffff;
+  background: var(--nav-fundo);
+  color: var(--nav-texto);
   font-size: var(--t-base);
   line-height: 1.55;
   white-space: pre-line;

@@ -87,7 +87,7 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                 </Selo>
                 <button
                   type="button"
-                  className="flex-1 min-w-[180px] border-none bg-transparent text-acao font-codigo text-xs text-left underline underline-offset-2 cursor-pointer [overflow-wrap:anywhere]"
+                  className="flex-1 min-w-[180px] border-none bg-transparent text-acao-texto font-codigo text-xs text-left underline underline-offset-2 cursor-pointer [overflow-wrap:anywhere]"
                   onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
                 >
                   {entrega.arquivo}

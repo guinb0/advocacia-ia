@@ -1,5 +1,7 @@
 "use client";
 
+import AlternadorTema from "@/components/ui/AlternadorTema";
+
 /* A navegação entre módulos, agora em coluna e em toda tela.
  *
  * POR QUE SAIU DO TOPO
@@ -29,7 +31,7 @@
  * dele.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -60,6 +62,7 @@ import {
 
 import { podeAbrirTela } from "@/app/home/home.model";
 import type { Tela } from "@/app/home/home.model";
+import { useFocoContido } from "@/lib/foco";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 
 export interface ModuloNavegacao {
@@ -84,59 +87,35 @@ export interface GrupoNavegacao {
  * rótulo do grupo, que numa lista vertical é o que impede onze itens de virarem
  * uma parede indistinta. */
 export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
-  {
-    titulo: "Atendimento",
-    itens: [
-      { tela: "entrevista", rotulo: "Entrevista guiada" },
-      // O dossiê, o painel, a jurimetria e o checklist são leituras de UM caso.
-      // Acendem a carteira para a barra não ficar sem resposta quando o advogado
-      // está dentro de um caso.
-      { tela: "carteira", rotulo: "Carteira", relacionadas: ["caso", "dossie", "painel", "jurimetria"] },
-      // O "Agente" (conversa geral) saiu do menu enquanto ainda não funciona — depende
-      // do serviço ia-juridica. A tela e a rota continuam existindo; só não aparece na
-      // navegação. Basta devolver a linha abaixo quando o serviço estiver de pé.
-      { tela: "casos", rotulo: "Casos" },
-      { tela: "followup", rotulo: "Follow-up" },
-      { tela: "documentacao", rotulo: "Documentação" },
-    ],
-  },
-  {
-    titulo: "Análise",
-    itens: [
-      { tela: "avulso", rotulo: "Ler um documento" },
-      { tela: "revisao", rotulo: "Revisão do roteiro" },
-      { tela: "investigacao", rotulo: "Investigar" },
-      { tela: "dados", rotulo: "Dados" },
-      { tela: "panorama", rotulo: "Panorama" },
-    ],
-  },
-  {
-    titulo: "Escritório",
-    itens: [
-      { tela: "operacao", rotulo: "Operação" },
-      { tela: "supervisao", rotulo: "Supervisão" },
-      // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
-      // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
-      // dentro do roteiro; esta entrada é para quem vem consertar depois.
-      { tela: "catalogoRoteiros", rotulo: "Roteiros" },
-      { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
-      /* A Administração é o único item com filhos, e por um motivo prático: o que
-       * mora dentro dela é ajuste de escritório, feito uma vez e revisto raramente
-       * (quem entra, o que cada perfil acessa, por onde os documentos saem para
-       * assinatura). Como item plano, cada uma dessas telas gastava uma linha da
-       * coluna todo dia para um clique por mês; expansível, elas só aparecem para
-       * quem foi procurá-las. */
-      {
-        tela: "usuarios",
-        rotulo: "Administração",
-        subitens: [
-          { tela: "configuracaoAssinatura", rotulo: "Assinatura" },
-        ],
-      },
-      { tela: "saudeAgente", rotulo: "Saúde do agente" },
-      { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
-    ],
-  },
+  { titulo: "Visão geral", itens: [{ tela: "carteira", rotulo: "Mesa do dia" }] },
+  { titulo: "Atendimento", itens: [
+    { tela: "entrevista", rotulo: "Entrevista guiada" },
+    { tela: "followup", rotulo: "Acompanhamento" },
+  ] },
+  { titulo: "Jurídico", itens: [
+    { tela: "casos", rotulo: "Casos e clientes", relacionadas: ["caso", "dossie", "painel", "jurimetria"] },
+    { tela: "documentacao", rotulo: "Documentos" },
+    { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
+    { tela: "revisao", rotulo: "Revisão de petições" },
+  ] },
+  { titulo: "Inteligência", itens: [
+    { tela: "avulso", rotulo: "Leitura de documentos" },
+    { tela: "investigacao", rotulo: "Investigação" },
+    { tela: "dados", rotulo: "Dados" },
+    { tela: "panorama", rotulo: "Panorama" },
+  ] },
+  { titulo: "Gestão", itens: [
+    { tela: "operacao", rotulo: "Operação" },
+    { tela: "supervisao", rotulo: "Supervisão" },
+  ] },
+  { titulo: "Sistema", itens: [
+    { tela: "catalogoRoteiros", rotulo: "Roteiros" },
+    { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
+    { tela: "usuarios", rotulo: "Administração", subitens: [
+      { tela: "configuracaoAssinatura", rotulo: "Assinatura" },
+    ] },
+    { tela: "saudeAgente", rotulo: "Saúde do agente" },
+  ] },
 ];
 
 const ITEM =
@@ -156,7 +135,7 @@ const SUBITEM_ATIVO =
   "relative flex w-full items-center gap-2.5 rounded-[10px] border border-white/10 bg-nav-fundo-ativo py-2 pl-9 pr-3 " +
   "text-left text-[13px] font-semibold text-nav-texto cursor-pointer";
 const GRUPO_TITULO =
-  "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-nav-texto-3 first:mt-0";
+  "px-3 mt-5 mb-2 text-xs font-semibold tracking-[0.04em] text-nav-texto-3 first:mt-0";
 
 export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   entrevista: MessageSquareText,
@@ -230,6 +209,19 @@ interface Props {
 
 export default function BarraLateral({ tela, onNavegar }: Props) {
   const [aberta, setAberta] = useState(false);
+  const [buscaModulo, setBuscaModulo] = useState("");
+  const painelRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const fecharNoDesktop = () => { if (media.matches) setAberta(false); };
+    media.addEventListener("change", fecharNoDesktop);
+    return () => media.removeEventListener("change", fecharNoDesktop);
+  }, []);
+
+  /* A contenção saiu daqui para `useFocoContido`: era a única do sistema, e
+   * todo diálogo precisa da mesma coisa (ver `ChangePasswordModal`). */
+  useFocoContido(painelRef, aberta);
   /* Quais itens com filhos estão expandidos. Vive aqui, e não no item, porque é
    * estado de quem está olhando a coluna — não da definição do menu. */
   const [expandidos, setExpandidos] = useState<Tela[]>([]);
@@ -262,6 +254,15 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
 
   const grupos = useMemo(() => gruposPermitidos(modulos), [modulos]);
 
+  const gruposVisiveis = useMemo(() => {
+    const normalizar = (texto: string) => texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const termo = normalizar(buscaModulo.trim());
+    if (!termo) return grupos;
+    return grupos.map((grupo) => ({ ...grupo, itens: grupo.itens.filter((item) =>
+      normalizar(`${grupo.titulo} ${item.rotulo} ${(item.subitens ?? []).map((sub) => sub.rotulo).join(" ")}`).includes(termo),
+    ) })).filter((grupo) => grupo.itens.length > 0);
+  }, [buscaModulo, grupos]);
+
   /* Estar numa tela-filha e ver o pai fechado seria a barra dizendo que o item
    * aberto não está em lugar nenhum. Abre o pai da tela atual — e deixa aberto,
    * sem fechar o que a pessoa expandiu à mão. */
@@ -280,6 +281,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
   function navegar(destino: Tela) {
     onNavegar(destino);
     setAberta(false);
+    setBuscaModulo("");
   }
 
   function alternar(pai: Tela) {
@@ -289,8 +291,8 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
   }
 
   const lista = (
-    <nav className="flex flex-col gap-[2px] px-3 pb-5 pt-2" aria-label="Módulos do sistema">
-      {grupos.map((grupo) => {
+    <nav className="flex flex-col gap-[2px] px-3 pb-20 pt-2" aria-label="Módulos do sistema">
+      {gruposVisiveis.map((grupo) => {
         const itens = grupo.itens;
         if (itens.length === 0) return null;
         return (
@@ -311,6 +313,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
                   <button
                     type="button"
                     className={acesa ? ITEM_ATIVO : ITEM}
+                    title={item.rotulo}
                     aria-current={acesa ? "page" : undefined}
                     aria-expanded={temFilhos ? expandido : undefined}
                     onClick={() => {
@@ -362,6 +365,9 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
           </div>
         );
       })}
+      {gruposVisiveis.length === 0 && <p className="px-3 py-4 text-sm text-nav-texto-3" role="status">
+        {sessao.carregando ? "Carregando módulos…" : "Nenhum módulo encontrado."}
+      </p>}
     </nav>
   );
 
@@ -381,14 +387,15 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
         </button>
         <div className="min-w-0 flex-1">
           <span className="block truncate font-titulo text-lg font-bold leading-none">Forense</span>
-          <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
+          <span className="mt-1 block truncate text-xs font-medium text-nav-texto-3">
             {GRUPOS_NAVEGACAO.flatMap((grupo) => grupo.itens).find((item) => ativa(item, tela))?.rotulo ?? "Escritório jurídico"}
           </span>
         </div>
         <div className="ml-auto flex min-w-0 items-center gap-2">
+          <AlternadorTema flutuante={false} />
           <span className="hidden min-w-0 text-right min-[430px]:block">
             <strong className="block max-w-[130px] truncate text-xs text-nav-texto">{nome}</strong>
-            <span className="block max-w-[130px] truncate text-[11px] text-nav-texto-3">{perfil}</span>
+            <span className="block max-w-[130px] truncate text-xs text-nav-texto-3">{perfil}</span>
           </span>
           <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.10] text-xs font-bold uppercase text-nav-texto ring-1 ring-white/[0.16]">
             {nome.slice(0, 2)}
@@ -419,6 +426,10 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
       {/* --------------------------------------------------------- a coluna */}
       <aside
         id="barra-lateral"
+        ref={painelRef}
+        role={aberta ? "dialog" : undefined}
+        aria-modal={aberta || undefined}
+        aria-label="Navegação principal"
         className={
           "border-nav-borda bg-nav-fundo " +
           // Celular: gaveta fixa que desliza. `translate-x` em vez de `display`
@@ -426,13 +437,18 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
           // que some do DOM perde o foco do teclado no meio da navegação.
           "fixed inset-y-0 left-0 z-50 w-[264px] max-w-[82vw] overflow-y-auto border-r " +
           "transition-transform duration-200 ease-out " +
-          (aberta ? "translate-x-0" : "-translate-x-full") +
+          (aberta ? "visible translate-x-0" : "invisible -translate-x-full") +
           // Desktop: coluna do fluxo, sempre visível, acompanhando a rolagem.
-          " lg:translate-x-0 lg:static lg:z-auto lg:h-dvh lg:w-full lg:max-w-none " +
+          " lg:visible lg:translate-x-0 lg:static lg:z-auto lg:h-dvh lg:w-full lg:max-w-none " +
           "lg:shrink-0"
         }
       >
-        <div className="h-1 bg-gradient-to-r from-marca-ouro via-[#e4c889] to-transparent" aria-hidden />
+        <div className="flex items-center justify-between border-b border-nav-borda px-5 py-4 lg:hidden">
+          <span className="text-lg font-semibold text-nav-texto">Forense</span>
+          <button type="button" onClick={() => setAberta(false)} aria-label="Fechar menu" className="flex size-11 items-center justify-center rounded-campo text-nav-texto hover:bg-nav-fundo-hover">
+            <X size={20} aria-hidden />
+          </button>
+        </div>
         <div className="hidden px-5 pb-4 pt-5 lg:block">
           <div className="flex items-center gap-3">
             <span className="inline-flex h-11 w-11 items-center justify-center rounded-[14px] bg-white/[0.10] text-marca-ouro shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 ring-white/[0.14]">
@@ -440,11 +456,19 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
             </span>
             <div className="min-w-0">
               <span className="block truncate font-titulo text-xl font-bold leading-none text-nav-texto">Forense</span>
-              <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
+              <span className="mt-1 block truncate text-xs font-medium text-nav-texto-3">
                 Escritório jurídico
               </span>
             </div>
           </div>
+        </div>
+        <div className="mx-4 mb-3 flex items-center gap-2 rounded-campo border border-nav-borda bg-nav-fundo-hover px-3">
+          <Search size={16} className="shrink-0 text-nav-texto-3" aria-hidden />
+          <input aria-label="Buscar módulo" placeholder="Buscar módulo" value={buscaModulo}
+            onChange={(evento) => setBuscaModulo(evento.target.value)}
+            className="min-h-10 w-full min-w-0 bg-transparent text-sm text-nav-texto placeholder:text-nav-texto-3" />
+          {buscaModulo && <button type="button" onClick={() => setBuscaModulo("")} aria-label="Limpar busca de módulos"
+            className="flex min-h-10 min-w-8 items-center justify-center text-nav-texto"><X size={15} aria-hidden /></button>}
         </div>
         {lista}
       </aside>

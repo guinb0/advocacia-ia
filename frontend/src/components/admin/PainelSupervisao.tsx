@@ -154,7 +154,7 @@ export default function PainelSupervisao({
             <div className="font-titulo text-xl font-semibold tabular-nums leading-none text-tinta">
               {total}
             </div>
-            <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao">
+            <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao-texto">
               <ClipboardList size={15} aria-hidden />
             </span>
           </div>

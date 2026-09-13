@@ -2,69 +2,63 @@
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
-/* =========================================================================
- * SISTEMA VISUAL — tema claro institucional (ver docs/GUIA-VISUAL.md)
- *
- * Substitui a antiga direção "AUTOS" (fundo quase preto, filetes duplos,
- * carimbos girados, micro-rótulos em caixa alta de 9px). O motivo da troca não
- * foi estética: usuários sem familiaridade técnica não conseguiam ler a
- * hierarquia, achar a ação principal nem saber o que cada cor significava.
- *
- * As três regras que sustentam o desenho:
- *
- *   1. HIERARQUIA POR PESO E ESPAÇO, não por linha divisória. Cartão branco
- *      sobre fundo cinza-claro, com sombra discreta. Divisória só entre itens
- *      de uma mesma lista.
- *   2. UMA COR DE AÇÃO. Azul-marinho (--acao) é o que se clica. Vermelho,
- *      âmbar e verde ficam reservados a ESTADO (problema, conferir, pronto) e
- *      nunca aparecem como cor de botão comum — assim a cor volta a informar.
- *   3. COR NUNCA SOZINHA. Todo estado traz rótulo em palavra e um símbolo
- *      (✕ ! ✓ ●). Quem não distingue as cores continua lendo a tela.
- *
- * Contraste medido (WCAG 2.1). Texto ≥ 4,5:1; borda de controle e símbolo
- * ≥ 3:1. Sobre o branco: --tinta 16,5:1 · --tinta-2 9,7:1 · --tinta-3 5,5:1 ·
- * --acao 9,7:1 · --critico 6,5:1 · --atencao 6,3:1 · --ok 6,5:1 ·
- * --borda-campo 3,5:1. Ao trocar qualquer valor, remeça antes de commitar.
- * ========================================================================= */
+/* LegalTech Navy + Gold. Tokens compartilhados por Tailwind e CSS Modules.
+ * Gold identifica a ação principal; links e estados informativos usam navy.
+ * Cores de texto de estado são mais escuras que suas marcas para contraste.
+ */
 
 :root {
   /* ------------------------------------------------------------ superfícies */
-  --fundo: #f3f6f9; /* fundo da aplicação */
+  --fundo: #F6F7F9; /* fundo da aplicação */
   --papel: #ffffff; /* cartão, painel, modal */
-  --papel-2: #f7f9fb; /* área rebaixada: campo, bloco de código, zona de envio */
-  --papel-3: #e9eef4; /* hover de linha e de item selecionado */
+  --papel-2: #F8F9FB; /* área rebaixada: campo, bloco de código, zona de envio */
+  --papel-3: #EEF1F5; /* hover de linha e de item selecionado */
 
   /* ----------------------------------------------------------------- tinta */
-  --tinta: #102033; /* títulos e números */
-  --tinta-2: #424c58; /* texto corrido */
-  --tinta-3: #65758a; /* rótulo, metadado, texto de apoio */
+  --tinta: #172033; /* títulos e números */
+  --tinta-2: #465166; /* texto corrido */
+  --tinta-3: #697386; /* rótulo, metadado, texto de apoio */
   --tinta-desabilitada: #56677a; /* texto inativo sem depender de opacity */
 
   /* -------------------------------------------------- navegação sobre azul */
-  --nav-fundo: #082c46;
-  --nav-fundo-ativo: #174a70;
-  --nav-fundo-hover: #103d5d;
-  --nav-texto: #f4f8fd;
-  --nav-texto-2: #d6e6f7;
-  --nav-texto-3: #aac8e8;
-  --nav-borda: #143a5d;
-  --nav-icone: #c4dcf4;
+  --nav-fundo: #0A1322;
+  --nav-fundo-ativo: #16243A;
+  --nav-fundo-hover: #122036;
+  --nav-texto: #F6F7F9;
+  --nav-texto-2: #D5DCE7;
+  --nav-texto-3: #9BAAC0;
+  --nav-borda: #233047;
+  --nav-icone: #ADBBD0;
 
   /* ---------------------------------------------------------------- bordas */
-  --borda: #dce5ef; /* divisória entre itens de uma lista */
-  --borda-forte: #33465c3e; /* contorno de cartão */
+  --borda: #E5E7EB; /* divisória entre itens de uma lista */
+  --borda-forte: #E5E7EB; /* contorno de cartão */
   --borda-campo: #7a8b9f; /* contorno de campo e de botão — precisa dos 3:1 */
 
   /* ------------------------------------------------- ação (só o que se clica) */
-  --acao: #0a426b;
-  --acao-forte: #063453; /* hover/active */
-  --acao-clara: #ebf2fa; /* fundo de destaque informativo */
-  --acao-borda: #bad2ea;
+  --acao: #0B1628;
+  --acao-texto: #0B1628;
+  --acao-forte: #16243A; /* hover/active */
+  --acao-clara: #EEF1F5; /* fundo de destaque informativo */
+  --acao-borda: #CED6E2;
 
   /* ------------------------------------------------ marca: acento, não estado */
-  --marca-ouro: #b88634;
-  --marca-ouro-claro: #fff4dc;
-  --marca-navy-suave: #123d66;
+  --marca-ouro: #C6A15B;
+  --marca-ouro-hover: #B28A43;
+  --marca-ouro-suave: #E2C98D;
+  --marca-ouro-texto: #76591F;
+  --primario-texto: #0B1628;
+  --sucesso-marca: #16865C;
+  --aviso-marca: #C88719;
+  --perigo-marca: #C74444;
+  --espaco-1: 4px;
+  --espaco-2: 8px;
+  --espaco-3: 12px;
+  --espaco-4: 16px;
+  --espaco-6: 24px;
+  --espaco-8: 32px;
+  --marca-ouro-claro: #FAF5E9;
+  --marca-navy-suave: #16243A;
 
   /* ------------------------------------------------------ estado: problema */
   --critico: #b3261e;
@@ -90,7 +84,7 @@
    * dois nomes disputariam o mesmo elemento com a mesma especificidade e quem
    * ganharia dependeria da ordem de carga do CSS. Os tokens semânticos abaixo
    * usam nomes próprios e apenas as consomem. */
-  --fonte-titulo: var(--fonte-serif), Georgia, "Times New Roman", serif;
+  --fonte-titulo: var(--fonte-sans), system-ui, "Segoe UI", sans-serif;
   --fonte-ui: var(--fonte-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
   --fonte-codigo: var(--fonte-mono), ui-monospace, Menlo, Consolas, monospace;
 
@@ -104,11 +98,11 @@
   --t-xl: 1.75rem; /* 28px — título de página */
 
   /* -------------------------------------------------------- forma e sombra */
-  --raio: 14px; /* cartão, painel */
-  --raio-sm: 10px; /* campo, botão */
+  --raio: 12px; /* cartão, painel */
+  --raio-sm: 8px; /* campo, botão */
   --raio-pill: 999px; /* selo de estado */
 
-  --sombra-1: 0 1px 2px rgba(20, 32, 46, 0.04), 0 8px 24px rgba(20, 32, 46, 0.045);
+  --sombra-1: 0 1px 2px rgba(20, 32, 46, 0.04), 0 3px 12px rgba(20, 32, 46, 0.025);
   --sombra-2: 0 2px 5px rgba(20, 32, 46, 0.06), 0 16px 38px rgba(20, 32, 46, 0.09);
   --sombra-modal: 0 24px 60px rgba(20, 32, 46, 0.24);
 
@@ -132,7 +126,7 @@ html[data-theme="dark"] {
   --tinta-desabilitada: #aebdd0;
 
   --nav-fundo: #071829;
-  --nav-fundo-ativo: #123d66;
+  --nav-fundo-ativo: #16243A;
   --nav-fundo-hover: #102f4e;
   --nav-texto: #f5f9ff;
   --nav-texto-2: #d8e8f8;
@@ -145,9 +139,12 @@ html[data-theme="dark"] {
   --borda-campo: #71849a;
 
   --acao: #1f6feb;
+  --acao-texto: #B9D2F2;
   --acao-forte: #1158c7;
-  --acao-clara: #10284a;
-  --acao-borda: #2f81f7;
+  --acao-clara: #233047;
+  --acao-borda: #53647D;
+  --marca-ouro-claro: #302A20;
+  --marca-ouro-texto: #E2C98D;
 
   --critico: #ff938a;
   --critico-claro: #3b2022;
@@ -209,11 +206,15 @@ html[data-theme="dark"] {
   --color-borda-campo: var(--borda-campo);
 
   --color-acao: var(--acao);
+  --color-acao-texto: var(--acao-texto);
   --color-acao-forte: var(--acao-forte);
   --color-acao-clara: var(--acao-clara);
   --color-acao-borda: var(--acao-borda);
 
   --color-marca-ouro: var(--marca-ouro);
+  --color-marca-ouro-hover: var(--marca-ouro-hover);
+  --color-marca-ouro-texto: var(--marca-ouro-texto);
+  --color-primario-texto: var(--primario-texto);
   --color-marca-ouro-claro: var(--marca-ouro-claro);
   --color-marca-navy-suave: var(--marca-navy-suave);
 
@@ -275,9 +276,7 @@ body {
 }
 
 body {
-  background:
-    radial-gradient(circle at 78% -10%, color-mix(in srgb, var(--acao-clara) 72%, transparent) 0, transparent 34rem),
-    var(--fundo);
+  background: var(--fundo);
   color: var(--tinta-2);
   font-family: var(--fonte-ui);
   font-size: var(--t-base);
@@ -305,27 +304,51 @@ textarea {
   }
 }
 
-h1,
-h2,
-h3,
-h4 {
-  color: var(--tinta);
-  font-family: var(--fonte-titulo);
-  font-weight: 600;
-  line-height: 1.2;
-}
+/* Estas quatro regras precisam estar DENTRO de `@layer base`.
+ *
+ * `@import "tailwindcss"` declara as camadas (theme, base, components,
+ * utilities). Regra solta, fora de camada, ganha de QUALQUER regra dentro de
+ * camada — independentemente de especificidade. Soltas aqui, elas venciam as
+ * utilitárias do Tailwind sem ninguém perceber:
+ *
+ *   <h2 class="text-tinta-3">  saía em --tinta       (cor ignorada)
+ *   <a  class="text-critico">  saía em --acao-texto  (cor ignorada)
+ *   <button class="text-sm">   herdava o tamanho do pai (text-sm ignorado)
+ *
+ * Era por isso que o título do login precisava de `!text-[...]` para aparecer.
+ * Dentro de `base` elas voltam a ser o padrão de quem não pediu nada, e a
+ * classe do componente volta a valer.
+ *
+ * `:focus-visible` mais abaixo continua FORA de camada de propósito: o anel de
+ * foco é garantia de acessibilidade e não deve poder ser desligado por classe. */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--tinta);
+    font-family: var(--fonte-titulo);
+    font-weight: 600;
+    line-height: 1.2;
+  }
 
-a {
-  color: var(--acao);
-  text-underline-offset: 2px;
-}
+  a {
+    color: var(--acao-texto);
+    text-underline-offset: 2px;
+  }
 
-button,
-select,
-input,
-textarea {
-  font-family: inherit;
-  font-size: inherit;
+  button,
+  select,
+  input,
+  textarea {
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  ::placeholder {
+    color: var(--tinta-3);
+    opacity: 1;
+  }
 }
 
 /* Números, códigos e datas em mono de largura fixa — sem isso as colunas
@@ -348,10 +371,6 @@ textarea {
   color: var(--tinta);
 }
 
-::placeholder {
-  color: var(--tinta-3);
-  opacity: 1;
-}
 
 /* Ponto pulsante de "aguardando" (dock da chamada) — `motion-reduce:animate-none`
  * já cobre `prefers-reduced-motion`, então a regra fica só aqui, sem media query. */
@@ -459,3 +478,6 @@ textarea {
  * classe utilitária: os tokens do tema, o `@theme` que os entrega ao Tailwind,
  * e o estilo de elemento base (body, títulos, foco, seleção).
  * ========================================================================= */
+
+/* No escritório, o tema fica no cabeçalho para não cobrir os formulários. */
+body:has(.app-shell) .tema-flutuante { display: none; }

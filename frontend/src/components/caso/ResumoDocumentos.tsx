@@ -255,7 +255,7 @@ export default function ResumoDocumentos({ itens }: { itens: ItemSituacao[] }) {
                               <div className="text-xs leading-[1.55] text-tinta-2">
                                 <strong className="font-codigo text-tinta">{achado.valor}</strong>
                                 {achado.importancia && <span className="block mt-1">Por que importa: {achado.importancia}</span>}
-                                {achado.relevante_para && <span className="block text-acao">Importante para: {achado.relevante_para}</span>}
+                                {achado.relevante_para && <span className="block text-acao-texto">Importante para: {achado.relevante_para}</span>}
                               </div>
                             </div>
                           ))}

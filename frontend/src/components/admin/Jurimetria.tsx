@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Aviso, Botao, Cartao, Selo } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import { CORES_DE_SERIE, Figura, GraficoDeBarras, GraficoDeLinha, SemDado } from "@/components/ui/graficos";
 import {
   buscarJurimetria,
@@ -97,25 +98,16 @@ export default function Jurimetria({
 
   return (
     <div className={JURIMETRIA_SHELL}>
-      <header className="overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] shadow-cartao">
-        <div className="flex min-w-0 flex-col gap-3 px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
-              Acervo jurisprudencial
-            </span>
-            <h1 className="mt-1 truncate font-titulo text-xl leading-[1.15] text-tinta">
-              Jurisprudência e jurimetria
-            </h1>
-            <p className="mt-2 max-w-[76ch] text-sm leading-[1.55] text-tinta-2">
-              Como o foro decidiu casos comparáveis a este, medido sobre decisões já
-              proferidas. Não é previsão de resultado.
-            </p>
-          </div>
+      <CabecalhoPagina
+        contexto="Acervo jurisprudencial"
+        titulo="Jurisprudência e jurimetria"
+        descricao="Como o foro decidiu casos comparáveis a este, medido sobre decisões já proferidas. Não é previsão de resultado."
+        acoes={
           <Botao variante="secundario" pequeno onClick={() => void carregar()}>
             Atualizar
           </Botao>
-        </div>
-      </header>
+        }
+      />
 
       {/* Primeiro o cruzamento DESTE caso com o acervo; o painel agregado do
         * recorte vem depois, como contexto mais amplo. */}

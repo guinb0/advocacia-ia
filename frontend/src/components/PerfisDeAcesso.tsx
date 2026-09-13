@@ -279,7 +279,7 @@ export default function PerfisDeAcesso() {
       <Cartao
         titulo={
           <span className="inline-flex min-w-0 items-center gap-2">
-            <UserRoundCog size={18} className="text-acao" aria-hidden />
+            <UserRoundCog size={18} className="text-acao-texto" aria-hidden />
             <span className="truncate">Perfis de acesso</span>
           </span>
         }
@@ -499,7 +499,7 @@ export default function PerfisDeAcesso() {
       <Cartao
         titulo={
           <span className="inline-flex min-w-0 items-center gap-2">
-            <History size={18} className="text-acao" aria-hidden />
+            <History size={18} className="text-acao-texto" aria-hidden />
             <span className="truncate">Últimas alterações</span>
           </span>
         }

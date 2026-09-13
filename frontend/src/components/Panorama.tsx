@@ -49,6 +49,7 @@ const LINHA_CASO =
   "rounded-campo bg-transparent cursor-pointer text-left transition-colors hover:bg-papel-3";
 
 
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
 import {
   CORES_DE_SERIE,
@@ -113,14 +114,11 @@ export default function Panorama({ onVoltar, onAbrirCaso }: Props) {
   return (
     <div className="mx-auto flex max-w-[1180px] flex-col gap-6 pb-16">
 
-      <header className="flex flex-col gap-[6px] rounded-cartao border border-borda-forte bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Visão executiva</span>
-        <h1 className="m-0 text-tinta font-titulo text-xl font-bold tracking-[-0.01em]">Panorama do escritório</h1>
-        <p className="m-0 max-w-[82ch] text-tinta-2 text-base leading-[1.55]">
-          Todos os casos somados: em que estágio estão, onde o tempo é gasto e o que está
-          parado. Tudo medido de instante gravado no banco, com as mesmas contas do painel de
-          cada caso — nada aqui é estimado.
-        </p>
+      <CabecalhoPagina
+        contexto="Visão executiva"
+        titulo="Panorama do escritório"
+        descricao="Acompanhe a evolução dos casos, identifique gargalos e veja onde sua equipe precisa atuar."
+      >
         {dados && (
           <p className="m-0 text-tinta-3 text-sm">
             {dados.cobertura.casos_medidos}{" "}
@@ -128,7 +126,7 @@ export default function Panorama({ onVoltar, onAbrirCaso }: Props) {
             em {dataHora(dados.gerado_em)}
           </p>
         )}
-      </header>
+      </CabecalhoPagina>
 
       {erro && (
         <Aviso tom="critico" titulo="O panorama não pôde ser calculado">

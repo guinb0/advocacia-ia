@@ -48,7 +48,7 @@ export default function DocumentosEmProcessamento({ entregas, itens }: Props) {
               <div className="flex-1 min-w-[220px]">
                 <button
                   type="button"
-                  className="block p-0 border-none bg-transparent text-acao font-codigo text-xs text-left underline underline-offset-2 cursor-pointer [overflow-wrap:anywhere]"
+                  className="block p-0 border-none bg-transparent text-acao-texto font-codigo text-xs text-left underline underline-offset-2 cursor-pointer [overflow-wrap:anywhere]"
                   onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
                 >
                   {entrega.arquivo}

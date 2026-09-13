@@ -11,6 +11,7 @@ import {
   Selo,
   Vazio,
 } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import {
   buscarAlertasMovimentacao,
   buscarOperacao,
@@ -101,25 +102,22 @@ export default function Operacao() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5">
-      <header className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="m-0 font-titulo text-xl font-bold text-tinta">
-            Operação da equipe
-          </h1>
+      <CabecalhoPagina
+        contexto="Gestão"
+        titulo="Operação da equipe"
+        descricao="Acompanhe o volume registrado, as entrevistas em curso e os pontos que ainda precisam de conferência."
+        acoes={
           <Botao
             variante="secundario"
             pequeno
-            disabled={carregando}
+            carregando={carregando}
+            textoCarregando="Atualizando…"
             onClick={() => void carregar()}
           >
-            {carregando ? "Atualizando..." : "Atualizar"}
+            Atualizar
           </Botao>
-        </div>
-        <p className="m-0 max-w-[70ch] text-base leading-[1.55] text-tinta-2">
-          Acompanhe o volume registrado, as entrevistas em curso e os pontos que
-          ainda precisam de conferência.
-        </p>
-      </header>
+        }
+      />
 
       {erro && (
         <Aviso tom="critico" titulo="A operação não pôde ser carregada">

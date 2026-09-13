@@ -456,7 +456,7 @@ export default function PainelContrato({ respostas }: Props) {
                   <li key={i} className="[overflow-wrap:anywhere]">
                     <span className="text-tinta">{d.rotulo}:</span>{" "}
                     {d.link ? (
-                      <a href={d.link} target="_blank" rel="noreferrer" className="text-acao underline">
+                      <a href={d.link} target="_blank" rel="noreferrer" className="text-acao-texto underline">
                         abrir link de assinatura
                       </a>
                     ) : (
@@ -677,7 +677,7 @@ function EnvioPeloSiteZapSign({
           type="button"
           onClick={() => fileRef.current?.click()}
           disabled={enviando}
-          className="rounded-[6px] border border-dashed border-acao-borda bg-papel px-3 py-3 text-sm text-tinta-2 hover:border-acao hover:text-acao"
+          className="rounded-[6px] border border-dashed border-acao-borda bg-papel px-3 py-3 text-sm text-tinta-2 hover:border-acao hover:text-acao-texto"
         >
           {arquivo ? `Documento: ${arquivo.name}` : "Escolher o PDF a assinar"}
         </button>

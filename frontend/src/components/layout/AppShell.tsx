@@ -1,5 +1,7 @@
 "use client";
 
+import AlternadorTema from "@/components/ui/AlternadorTema";
+
 import type { ReactNode } from "react";
 import { ArrowLeft, LogOut } from "lucide-react";
 
@@ -33,31 +35,6 @@ const ROTULO_TELA: Record<Tela, string> = {
   documentacao: "Documentação",
 };
 
-const DESCRICAO_TELA: Record<Tela, string> = {
-  carteira: "Prioridades, pendências e próximos passos do escritório.",
-  caso: "Documentos, validações e andamento deste atendimento.",
-  dossie: "Visão consolidada dos fatos e materiais do caso.",
-  painel: "Indicadores e qualidade da análise documental.",
-  jurimetria: "Precedentes e padrões úteis para a estratégia.",
-  casos: "Crie, localize e organize os casos do escritório.",
-  avulso: "Extraia e confira dados de um documento isolado.",
-  usuarios: "Pessoas, perfis e permissões de acesso.",
-  panorama: "Leitura geral da operação e dos atendimentos.",
-  entrevista: "Conduza a conversa com roteiro e registro assistido.",
-  supervisao: "Acompanhe atendimentos e pontos que exigem atenção.",
-  dados: "Consulte as informações estruturadas do acervo.",
-  modelosDePeticao: "Padronize a apresentação dos documentos jurídicos.",
-  catalogoRoteiros: "Organize as perguntas usadas nos atendimentos.",
-  investigacao: "Busque e cruze informações públicas sobre a outra parte.",
-  operacao: "Distribuição dos atendimentos em curso e ligações registradas.",
-  saudeAgente: "Estado do agente jurídico e das integrações que ele usa.",
-  configuracaoAssinatura: "Credenciais e preferências da assinatura eletrônica.",
-  glossarioDocumentos: "Vocabulário dos tipos de documento aceitos no acervo.",
-  revisao: "Fila de petições a revisar, aprovação e métricas de revisão.",
-  followup: "Clientes com documento pendente e necessidade de contato.",
-  documentacao: "Acompanhe pedidos, arquivos e entregas documentais.",
-};
-
 interface AppShellProps {
   tela: Tela;
   onNavegar: (tela: Tela) => void;
@@ -77,22 +54,43 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
      * grudava. No celular o fluxo é o do documento: a página rola pelo `<body>`
      * (que já tem `overflow-x:hidden` e `max-width:100vw` em globals.css, o que
      * mata a rolagem horizontal), e a topbar `sticky top-0` gruda de verdade. */
-    <div className="app-shell min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[236px_minmax(0,1fr)]">
+    <div className="app-shell min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[248px_minmax(0,1fr)]">
+      <a href="#conteudo-principal" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[80] focus:rounded-campo focus:bg-papel focus:p-3 focus:text-tinta">Ir para o conteúdo</a>
       <BarraLateral tela={tela} onNavegar={onNavegar} />
-      <main className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-hidden">
-        <div className="hidden shrink-0 border-b border-borda bg-papel/[0.82] px-7 py-3.5 shadow-[0_1px_0_rgba(16,32,51,0.03)] backdrop-blur-xl lg:block">
+      <main id="conteudo-principal" tabIndex={-1} className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-hidden">
+        {/* Barra de localização, não de título. O título da tela é o `h1` que
+          * cada módulo renderiza (quase sempre via `CabecalhoPagina`); repetir
+          * o mesmo nome aqui em 1.35rem dava três camadas dizendo "Casos" —
+          * topo, migalha e `h1` — e empurrava o conteúdo para baixo sem
+          * informar nada. Aqui fica só onde o operador está e como voltar. */}
+        <div className="hidden shrink-0 border-b border-borda bg-papel/[0.82] px-7 py-3 shadow-[0_1px_0_rgba(16,32,51,0.03)] backdrop-blur-xl lg:block">
           <div className="mx-auto flex max-w-[1440px] min-w-0 items-center justify-between gap-8">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-baseline gap-3">
-                <h1 className="truncate font-titulo text-[1.35rem] font-semibold tracking-[-0.02em] text-tinta">
-                  {ROTULO_TELA[tela]}
-                </h1>
-                <span className="hidden truncate text-xs text-tinta-3 xl:block">{DESCRICAO_TELA[tela]}</span>
-              </div>
-            </div>
+            <nav className="flex min-w-0 items-center gap-3" aria-label="Localização e retorno">
+              {tela !== "carteira" && (
+                <button
+                  type="button"
+                  onClick={() => onNavegar("carteira")}
+                  className="group inline-flex min-h-9 shrink-0 items-center gap-2 rounded-campo border border-borda-campo bg-papel px-3 text-sm font-semibold text-acao-texto transition-colors hover:border-acao hover:bg-acao-clara focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foco"
+                  aria-label={`Voltar de ${ROTULO_TELA[tela]} para a Carteira`}
+                >
+                  <ArrowLeft size={16} className="transition-transform group-hover:-translate-x-0.5" aria-hidden />
+                  <span>Voltar</span>
+                </button>
+              )}
+              <p className="m-0 min-w-0 truncate text-sm text-tinta-3">
+                {tela !== "carteira" && (
+                  <>
+                    <span>Carteira</span>
+                    <span className="px-1.5" aria-hidden>›</span>
+                  </>
+                )}
+                <span className="font-semibold text-tinta">{ROTULO_TELA[tela]}</span>
+              </p>
+            </nav>
             <div className="flex min-w-0 shrink-0 items-center gap-3">
+              <AlternadorTema flutuante={false} />
               <span className="hidden h-8 w-px bg-borda sm:block" aria-hidden />
-              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-acao-clara text-xs font-bold uppercase text-acao ring-1 ring-acao-borda">
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-acao-clara text-xs font-bold uppercase text-acao-texto ring-1 ring-acao-borda">
                 {nome.slice(0, 2)}
               </span>
               <span className="min-w-0 text-right">
@@ -103,7 +101,7 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
                 <button
                   type="button"
                   onClick={sessao.sair}
-                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-borda-campo bg-papel px-3 text-sm font-semibold text-acao transition-colors hover:border-acao hover:bg-acao-clara"
+                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-[10px] border border-borda-campo bg-papel px-3 text-sm font-semibold text-acao-texto transition-colors hover:border-acao hover:bg-acao-clara"
                 >
                   <LogOut size={16} aria-hidden />
                   Sair
@@ -116,11 +114,11 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
         <div className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden">
           <div className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pb-20 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pt-8 [&>*]:min-w-0">
             {tela !== "carteira" && (
-              <nav className="mb-5 flex min-w-0 items-center gap-2" aria-label="Navegação de retorno">
+              <nav className="mb-5 flex min-w-0 items-center gap-2 lg:hidden" aria-label="Navegação de retorno">
                 <button
                   type="button"
                   onClick={() => onNavegar("carteira")}
-                  className="group inline-flex min-h-10 items-center gap-2 rounded-campo border border-borda-forte bg-papel/90 px-3.5 text-sm font-semibold text-tinta shadow-cartao transition hover:border-acao hover:bg-acao-clara hover:text-acao focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-acao"
+                  className="group inline-flex min-h-10 items-center gap-2 rounded-campo border border-borda-forte bg-papel/90 px-3.5 text-sm font-semibold text-tinta shadow-cartao transition hover:border-acao hover:bg-acao-clara hover:text-acao-texto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-acao"
                   aria-label={`Voltar de ${ROTULO_TELA[tela]} para a Carteira`}
                 >
                   <ArrowLeft size={18} className="transition-transform group-hover:-translate-x-0.5" aria-hidden />

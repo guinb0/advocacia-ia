@@ -23,6 +23,7 @@ import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import AvaliacaoGoogle from "@/components/contrato/AvaliacaoGoogle";
 import RespostasDoRoteiro from "@/components/entrevista/RespostasDoRoteiro";
 import { AjudaCampo, Aviso, Botao, Campo, RotuloCampo, Selo } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
@@ -101,7 +102,7 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
   return (
     <section className="mb-5 mt-6 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
       <header className="border-b border-borda bg-papel-2 px-4 py-4 sm:px-5">
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Etapa 1 · fechamento</span>
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao-texto">Etapa 1 · fechamento</span>
         <h3 className="mt-1 text-lg font-semibold text-tinta">Confira os dados cadastrais</h3>
         <p className="mb-0 mt-1 max-w-[72ch] text-xs leading-[1.55] text-tinta-3">
           Estes campos não fazem parte do roteiro falado. Digite ou corrija agora; e-mail e WhatsApp serão usados no contato com o cliente.
@@ -537,37 +538,26 @@ export default function TriagemEntrevista({
     } as const
   )[gravacaoEstado];
 
+  /* Esta tela era a única sem `h1`: o título do módulo vivia num `h2` dentro do
+   * cartão, e o resto do sistema já tinha migrado para `CabecalhoPagina`. Os
+   * selos de etapa continuam sendo o estado do atendimento, agora na faixa de
+   * ações do cabeçalho. */
   return (
-    <section className="mb-5 min-w-0 overflow-hidden rounded-cartao border border-acao-borda bg-papel shadow-cartao">
-      <header className="border-b border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] px-4 py-5 sm:px-6">
-        <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
-              Atendimento
-            </span>
-            <h2 className="mt-1 truncate text-xl font-semibold leading-[1.15] text-tinta">
-              Entrevista guiada
-            </h2>
-            <p className="mt-2 max-w-[76ch] text-sm leading-[1.55] text-tinta-2">
-              Conduza o relato, valide a ação cabível e crie o caso sem sair do atendimento.
-            </p>
-          </div>
+    <section className="mb-5 min-w-0">
+      <CabecalhoPagina
+        contexto="Atendimento"
+        titulo="Entrevista guiada"
+        descricao="Conduza o relato, valide a ação cabível e crie o caso sem sair do atendimento."
+        acoes={(modoEntrada || qualificacao || resultado) ? (
+          <>
+            <Selo tom={mostrarRoteiro ? "info" : qualificacao ? "ok" : "neutro"}>Roteiro</Selo>
+            <Selo tom={resultado ? "ok" : analisando ? "info" : "neutro"}>Validação</Selo>
+            <Selo tom={casoCriado || casoTxtId ? "ok" : "neutro"}>Caso</Selo>
+          </>
+        ) : undefined}
+      />
 
-          {(modoEntrada || qualificacao || resultado) && <div className="flex min-w-0 flex-wrap gap-2">
-            <Selo tom={mostrarRoteiro ? "info" : qualificacao ? "ok" : "neutro"}>
-              Roteiro
-            </Selo>
-            <Selo tom={resultado ? "ok" : analisando ? "info" : "neutro"}>
-              Validação
-            </Selo>
-            <Selo tom={casoCriado || casoTxtId ? "ok" : "neutro"}>
-              Caso
-            </Selo>
-          </div>}
-        </div>
-      </header>
-
-      <div className="min-w-0 p-4 sm:p-5">
+      <div className="min-w-0 overflow-hidden rounded-cartao border border-borda-forte bg-papel p-4 shadow-cartao sm:p-5">
       {!modoEntrada && !qualificacao && !encerrado && (
         <div className="mx-auto max-w-[860px] py-3 sm:py-6">
           <div className="mb-5 text-center">
@@ -579,19 +569,19 @@ export default function TriagemEntrevista({
           <div className="grid gap-4 md:grid-cols-2">
             <button
               type="button"
-              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left shadow-cartao transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-1 hover:border-acao hover:bg-acao-clara hover:shadow-cartao-forte focus:outline-none focus:ring-2 focus:ring-acao"
+              className="group rounded-cartao border border-borda-forte bg-papel p-5 text-left shadow-cartao transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:border-acao hover:bg-acao-clara hover:shadow-cartao-forte motion-reduce:hover:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foco"
               onClick={() => { setModoEntrada("guiada"); setMostrarRoteiro(true); }}
             >
-              <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-acao-clara text-lg font-bold text-acao">1</span>
+              <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-acao-clara text-lg font-bold text-acao-texto">1</span>
               <strong className="block text-lg text-tinta">Iniciar entrevista do zero</strong>
               <span className="mt-2 block text-sm leading-[1.55] text-tinta-3">
                 Abra o roteiro organizado, conduza as perguntas e transcreva a conversa durante a chamada.
               </span>
-              <span className="mt-4 block text-sm font-semibold text-acao">Abrir roteiro →</span>
+              <span className="mt-4 block text-sm font-semibold text-acao-texto">Abrir roteiro →</span>
             </button>
             <button
               type="button"
-              className="group rounded-cartao border-2 border-borda-forte bg-papel p-5 text-left shadow-cartao transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-1 hover:border-acao hover:bg-acao-clara hover:shadow-cartao-forte focus:outline-none focus:ring-2 focus:ring-acao"
+              className="group rounded-cartao border border-borda-forte bg-papel p-5 text-left shadow-cartao transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-0.5 hover:border-acao hover:bg-acao-clara hover:shadow-cartao-forte motion-reduce:hover:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foco"
               onClick={() => setModoEntrada("transcricao")}
             >
               <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-papel-3 text-lg font-bold text-tinta-2">2</span>
@@ -599,7 +589,7 @@ export default function TriagemEntrevista({
               <span className="mt-2 block text-sm leading-[1.55] text-tinta-3">
                 Cole o texto ou envie um arquivo para identificar os dados e validar os tipos de ação.
               </span>
-              <span className="mt-4 block text-sm font-semibold text-acao">Importar transcrição →</span>
+              <span className="mt-4 block text-sm font-semibold text-acao-texto">Importar transcrição →</span>
             </button>
           </div>
         </div>
@@ -1027,7 +1017,7 @@ export default function TriagemEntrevista({
               )}
 
               <details className={PRECEDENTES}>
-                <summary className="text-acao text-sm font-semibold cursor-pointer">Ver processos usados como referência</summary>
+                <summary className="text-acao-texto text-sm font-semibold cursor-pointer">Ver processos usados como referência</summary>
                 <ul className={LISTA_INSIGHT}>{estrategia.precedentes.map((p) => <li key={p.indice} className={ITEM_INSIGHT}><strong className="text-tinta">{p.indice}</strong> {p.processo || "processo não informado"} · {p.resultado || "sem desfecho"}{p.vara ? ` · ${p.vara}` : ""}</li>)}</ul>
               </details>
               <p className={`${ESTADO_TEXTO} mt-3`}>{estrategia.estatisticas.aviso} Similaridade mediana: {estrategia.estatisticas.similaridade_amostra.mediana}.</p>

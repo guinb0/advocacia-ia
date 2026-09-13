@@ -162,7 +162,7 @@ export default function PainelJurimetriaCaso({ casoId, uf = "" }: { casoId: stri
                     * de só mostrar o número. O link é montado do número CNJ — ver
                     * `tribunais.link_do_processo`. */}
                   {p.url && (
-                    <a href={p.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] text-acao underline">
+                    <a href={p.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] text-acao-texto underline">
                       abrir processo{p.tribunal ? ` no ${p.tribunal}` : ""}
                     </a>
                   )}

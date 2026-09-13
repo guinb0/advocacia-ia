@@ -24,11 +24,12 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, BookOpenText, FilePenLine, RotateCcw, Upload } from "lucide-react";
+import { FilePenLine, RotateCcw, Upload } from "lucide-react";
 
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
 import { Aviso, Botao, Cartao, Paginacao, Selo, Vazio } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import {
   ApiError,
   excluirRoteiroSalvo,
@@ -46,7 +47,7 @@ function quando(iso: string): string {
 
 const ITENS_POR_PAGINA = 10;
 
-export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void }) {
+export default function CatalogoRoteiros() {
   const [roteiros, setRoteiros] = useState<RoteiroResumo[]>([]);
   const [totalRoteiros, setTotalRoteiros] = useState(0);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -127,27 +128,11 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
 
   return (
     <div className="flex min-w-0 max-w-full flex-col gap-5">
-      <section className="overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
-        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-borda bg-papel-2 px-5 py-4">
-          <div className="min-w-0">
-            <Botao variante="texto" onClick={onVoltar}>
-              <ArrowLeft size={15} aria-hidden /> Voltar
-            </Botao>
-            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-tinta-3">
-              Roteiros
-            </p>
-            <div className="mt-1 flex min-w-0 items-center gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
-                <BookOpenText size={20} aria-hidden />
-              </span>
-              <h1 className="m-0 min-w-0 truncate text-[26px] font-semibold leading-[1.15] font-titulo text-tinta">
-                Roteiros de entrevista
-              </h1>
-            </div>
-            <p className="mt-2 mb-0 max-w-[70ch] text-tinta-3 text-sm leading-[1.55]">
-              Mantenha os roteiros fora do atendimento, revise perguntas com calma e preserve a entrevista progressiva.
-            </p>
-          </div>
+      <CabecalhoPagina
+        contexto="Roteiros"
+        titulo="Roteiros de entrevista"
+        descricao="Mantenha os roteiros fora do atendimento, revise perguntas com calma e preserve a entrevista progressiva."
+        acoes={
           <div className="grid min-w-[240px] grid-cols-3 gap-2 rounded-campo border border-borda bg-papel p-2 text-center">
             <div className="min-w-0 px-2 py-1">
               <span className="block truncate text-[11px] text-tinta-3">Total</span>
@@ -162,8 +147,8 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
               <strong className="block font-codigo text-lg text-tinta">{resumo.originais}</strong>
             </div>
           </div>
-        </div>
-      </section>
+        }
+      />
 
       {erro && <Aviso tom="critico">{erro}</Aviso>}
       {recado && <Aviso tom="ok">{recado}</Aviso>}

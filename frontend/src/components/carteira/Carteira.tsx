@@ -14,7 +14,7 @@ import type { LinhaCarteira, Severidade } from "@/lib/useCarteira";
 import { useCarteira } from "@/lib/useCarteira";
 import type { EstadoModelo } from "@/lib/useExtracao";
 import { useModelo } from "@/lib/useExtracao";
-import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import { Aviso, Botao, Esqueleto, Selo } from "@/components/ui/Basicos";
 
 /* Estado da leitura automática, em português de quem usa. "modelo pronto" e
  * "modelo carrega no 1º envio" diziam respeito ao PaddleOCR, não ao trabalho. */
@@ -55,7 +55,7 @@ const SIMBOLO_TRIAGEM: Record<Severidade, string> = {
   critico: "bg-critico-claro text-critico",
   atencao: "bg-atencao-claro text-atencao",
   pronto: "bg-ok-claro text-ok",
-  neutro: "bg-acao-clara text-acao",
+  neutro: "bg-acao-clara text-acao-texto",
 };
 
 interface AtalhoCarteira {
@@ -189,6 +189,7 @@ export default function Carteira({
   const leitura = TEXTO_LEITURA[estadoModelo];
   const atalhos: AtalhoCarteira[] = gruposPermitidos(sessao.carregando ? [] : sessao.modulos)
     .flatMap((grupo) => grupo.itens)
+    .filter((item) => ["entrevista", "casos", "documentacao", "avulso"].includes(item.tela))
     .map((item) => ({
       rotulo: item.rotulo,
       apoio: APOIO_POR_TELA[item.tela] ?? "módulo do sistema",
@@ -198,18 +199,17 @@ export default function Carteira({
 
   return (
     <div className="space-y-6">
-      <header className="relative overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] p-5 shadow-cartao sm:p-6">
-        <div className="pointer-events-none absolute -right-14 -top-20 h-56 w-56 rounded-full border-[34px] border-white/40" aria-hidden />
+      <header className="relative border-b border-borda pb-6">
         <div className="flex flex-wrap items-start justify-between gap-5">
           <div className="relative min-w-0">
-            <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
+            <span className="block text-xs font-bold uppercase tracking-[0.12em] text-tinta-3">
               Carteira
             </span>
             <h1 className="mb-0 mt-2 text-[2rem] tracking-[-0.025em]">Mesa do dia</h1>
             <p className="mt-[6px] max-w-[68ch] text-base text-tinta-2">
-              {triagem.travados > 0
-                ? `${triagem.travados} ${triagem.travados === 1 ? "caso exige" : "casos exigem"} uma decisão sua hoje. Os demais seguem andando sozinhos.`
-                : "Nenhum caso travado hoje. Os casos seguem andando sozinhos."}
+              {carregando ? "Atualizando a situação dos casos…" : erro ? "Não foi possível atualizar a situação. Tente novamente abaixo." : triagem.travados > 0
+                ? `${triagem.travados} ${triagem.travados === 1 ? "caso exige" : "casos exigem"} uma decisão sua hoje. Confira as prioridades na fila abaixo.`
+                : "Nenhum caso travado na carteira. Acompanhe documentos e próximos passos abaixo."}
             </p>
           </div>
 
@@ -336,7 +336,7 @@ export default function Carteira({
 
           {/* Situação escolhida nos chips, dita em palavras. */}
           {filtro !== "todos" && filtro in DESCRICAO_FILTRO && (
-            <div className="flex justify-between items-center gap-3 px-[18px] py-[10px] border-b border-acao-borda bg-acao-clara text-acao text-sm font-semibold flex-wrap">
+            <div className="flex justify-between items-center gap-3 px-[18px] py-[10px] border-b border-acao-borda bg-acao-clara text-acao-texto text-sm font-semibold flex-wrap">
               <span>
                 {paginacao.total} {paginacao.total === 1 ? "caso" : "casos"} —{" "}
                 {DESCRICAO_FILTRO[filtro as Exclude<Filtro, "todos">]}
@@ -367,9 +367,9 @@ export default function Carteira({
           {carregando && linhas.length === 0 ? (
             <div aria-live="polite">
               <p className="px-[18px] py-8 text-tinta-3 text-sm leading-[1.6] text-center">Carregando os casos…</p>
-              <div className="h-[62px] border-b border-borda bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
-              <div className="h-[62px] border-b border-borda bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
-              <div className="h-[62px] border-b border-borda bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
+              <Esqueleto className="h-[62px] border-b border-borda" />
+              <Esqueleto className="h-[62px] border-b border-borda" />
+              <Esqueleto className="h-[62px] border-b border-borda" />
             </div>
           ) : visiveis.length === 0 ? (
             <div className="px-[18px] py-11 text-center">
@@ -402,7 +402,7 @@ export default function Carteira({
             </div>
           ) : (
             <>
-            <div className="hidden grid-cols-[minmax(0,1.35fr)_minmax(170px,0.65fr)_minmax(220px,0.8fr)] gap-4 border-b border-borda bg-papel-2 px-[18px] py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[760px]:grid">
+            <div className="hidden grid-cols-[minmax(0,1.35fr)_minmax(170px,0.65fr)_minmax(220px,0.8fr)] gap-4 border-b border-borda bg-papel-2 px-[18px] py-2 text-xs font-bold uppercase tracking-[0.08em] text-tinta-3 min-[760px]:grid">
               <span>Caso</span>
               <span>Documentos</span>
               <span>Próxima ação</span>
@@ -594,7 +594,7 @@ function AtalhoOperacional({ rotulo, apoio, Icone, onClick }: AtalhoCarteira) {
       className="group flex min-h-[58px] min-w-0 items-center gap-3 rounded-[10px] border border-borda bg-papel-2 px-3 py-2 text-left transition-colors hover:border-acao-borda hover:bg-acao-clara"
       onClick={onClick}
     >
-      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-papel text-acao ring-1 ring-borda group-hover:ring-acao-borda">
+      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-papel text-acao-texto ring-1 ring-borda group-hover:ring-acao-borda">
         <Icone size={17} aria-hidden />
       </span>
       <span className="min-w-0 overflow-hidden">

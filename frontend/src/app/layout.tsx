@@ -14,11 +14,8 @@ export const metadata: Metadata = {
     "Casos trabalhistas e previdenciários: checklist de documentos por categoria, entregas validadas por OCR e pedido ao cliente.",
 };
 
-/* A direção AUTOS é tipográfica antes de ser cromática — trocar Newsreader por
- * uma serifa do sistema desmancha o desenho. `next/font` baixa os arquivos no
- * build e os auto-hospeda em /_next/static, então o app continua rodando sem
- * rede, que era a preocupação registrada aqui antes; o que passa a exigir rede
- * é o `next build`. Os fallbacks abaixo seguram o layout se isso faltar. */
+/* Fontes auto-hospedadas pelo Next no build. Archivo atende a interface;
+ * Newsreader permanece disponível para identidade e documentos existentes. */
 const serif = Newsreader({
   subsets: ["latin"],
   weight: "variable",
@@ -66,7 +63,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='light'&&t!=='dark'){t='dark'}document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch(e){document.documentElement.dataset.theme='dark'}})()`,
+            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='light'&&t!=='dark'){t='light'}document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch(e){document.documentElement.dataset.theme='light'}})()`,
           }}
         />
       </head>

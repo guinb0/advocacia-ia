@@ -515,7 +515,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                   <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <strong className="text-sm text-tinta">{acao.titulo}</strong>
-                      <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao">
+                      <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao-texto">
                         {acao.prioridade === "principal"
                           ? "prioritária"
                           : acao.prioridade === "alternativa"
@@ -823,7 +823,7 @@ function ModuloJurimetria({
                 {item.url && (
                   <>
                     {" — "}
-                    <a className="text-acao underline" href={item.url} target="_blank" rel="noreferrer">
+                    <a className="text-acao-texto underline" href={item.url} target="_blank" rel="noreferrer">
                       abrir processo{item.tribunal ? ` no ${item.tribunal}` : ""}
                     </a>
                   </>

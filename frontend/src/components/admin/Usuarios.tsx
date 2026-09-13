@@ -15,7 +15,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, LayoutList, Mail, Pencil, Phone, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
+import { LayoutList, Mail, Pencil, Phone, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 
 import {
   AjudaCampo,
@@ -53,14 +54,10 @@ import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
 import EditarUsuario, { formatarTelefone } from "@/components/admin/EditarUsuario";
 import { useSessao } from "@/lib/auth";
 
-interface Props {
-  onVoltar: () => void;
-}
-
 const VAZIO = { nome: "", email: "", telefone: "", perfilId: 0, senha: "" };
 const TAMANHO_PAGINA = 12;
 
-export default function Usuarios({ onVoltar }: Props) {
+export default function Usuarios() {
   const [aba, setAba] = useState<"membros" | "perfis" | "contratos" | "assinatura">("membros");
   const [perfis, setPerfis] = useState<Perfil[]>([]);
   const [itens, setItens] = useState<UsuarioCadastrado[]>([]);
@@ -170,39 +167,27 @@ export default function Usuarios({ onVoltar }: Props) {
 
   return (
     <div className="min-w-0 space-y-5">
-      <Botao variante="texto" onClick={onVoltar} className="inline-flex items-center gap-2">
-        <ArrowLeft size={16} aria-hidden />
-        Voltar para a carteira
-      </Botao>
-
-      <header className="flex min-w-0 flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <p className="mb-2 mt-0 font-ui text-xs font-bold uppercase tracking-[0.12em] text-tinta-3">
-            Administração
-          </p>
-          <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">
-            Administração de acessos
-          </h1>
-          <p className="m-0 max-w-[66ch] text-tinta-3 leading-[1.5]">
-            Membros, perfis e permissões do escritório. O e-mail continua sendo o
-            login oficial do sistema.
-          </p>
-        </div>
-        <div className="grid min-w-[220px] grid-cols-2 gap-2 max-[520px]:w-full">
-          <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
-            <div className="text-xs font-semibold text-tinta-3">Membros cadastrados</div>
-            <div className="mt-1 font-titulo text-lg font-semibold text-tinta tabular-nums">
-              {total}
+      <CabecalhoPagina
+        contexto="Administração"
+        titulo="Administração de acessos"
+        descricao="Membros, perfis e permissões do escritório. O e-mail continua sendo o login oficial do sistema."
+        acoes={
+          <div className="grid min-w-[220px] grid-cols-2 gap-2 max-[520px]:w-full">
+            <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+              <div className="text-xs font-semibold text-tinta-3">Membros cadastrados</div>
+              <div className="mt-1 font-titulo text-lg font-semibold text-tinta tabular-nums">
+                {total}
+              </div>
+            </div>
+            <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
+              <div className="text-xs font-semibold text-tinta-3">Membros ativos</div>
+              <div className="mt-1 font-titulo text-lg font-semibold text-ok tabular-nums">
+                {ativos}
+              </div>
             </div>
           </div>
-          <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
-            <div className="text-xs font-semibold text-tinta-3">Membros ativos</div>
-            <div className="mt-1 font-titulo text-lg font-semibold text-ok tabular-nums">
-              {ativos}
-            </div>
-          </div>
-        </div>
-      </header>
+        }
+      />
 
       <nav
         className="flex w-full gap-1 overflow-x-auto rounded-cartao border border-borda bg-papel p-1"
@@ -312,7 +297,7 @@ export default function Usuarios({ onVoltar }: Props) {
         <Cartao
           titulo={
             <span className="inline-flex min-w-0 items-center gap-2">
-              <UserPlus size={18} className="text-acao" aria-hidden />
+              <UserPlus size={18} className="text-acao-texto" aria-hidden />
               <span className="truncate">Cadastrar acesso</span>
             </span>
           }
@@ -430,7 +415,7 @@ export default function Usuarios({ onVoltar }: Props) {
         <Cartao
           titulo={
             <span className="inline-flex min-w-0 items-center gap-2">
-              <UsersRound size={18} className="text-acao" aria-hidden />
+              <UsersRound size={18} className="text-acao-texto" aria-hidden />
               <span className="truncate">Acessos cadastrados</span>
             </span>
           }
@@ -468,7 +453,7 @@ export default function Usuarios({ onVoltar }: Props) {
                       <TrZebra key={u.id}>
                         <Td>
                           <span className="flex min-w-0 items-center gap-2">
-                            <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+                            <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao-texto">
                               <ShieldCheck size={15} aria-hidden />
                             </span>
                             <span className="min-w-0">

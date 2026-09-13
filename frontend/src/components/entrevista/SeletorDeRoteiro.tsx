@@ -23,6 +23,7 @@ import {
   obterRoteiro,
 } from "@/lib/api";
 import type { RoteiroCompleto, RoteiroResumo } from "@/lib/types";
+import { useFocoContido } from "@/lib/foco";
 
 export default function SeletorDeRoteiro({
   atualCodigo,
@@ -38,6 +39,19 @@ export default function SeletorDeRoteiro({
   aoEditarAtual: () => void;
   aoFechar: () => void;
 }) {
+  const painelRef = useRef<HTMLDivElement>(null);
+  useFocoContido(painelRef, true);
+
+  /* Esc fecha o diálogo. Sem isto, quem abriu sem querer (ou desistiu) só sai
+   * acertando o botão certo — e no celular ele costuma estar sob o dedo. */
+  useEffect(() => {
+    const aoTeclar = (evento: KeyboardEvent) => {
+      if (evento.key === "Escape") aoFechar();
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [aoFechar]);
+
   const cacheInicial = catalogoRoteirosEmCache();
   const [roteiros, setRoteiros] = useState<RoteiroResumo[]>(cacheInicial ?? []);
   const [carregando, setCarregando] = useState(cacheInicial === null);
@@ -100,7 +114,7 @@ export default function SeletorDeRoteiro({
       aria-modal="true"
       aria-label="Trocar o roteiro"
     >
-      <div className="w-full max-w-[720px] bg-papel border border-borda-forte my-4">
+      <div ref={painelRef} className="w-full max-w-[720px] overflow-hidden rounded-cartao bg-papel border border-borda-forte my-4">
         <div className="sticky top-0 z-10 bg-papel flex justify-between items-center gap-4 flex-wrap px-4 py-3 border-b border-borda-forte">
           <div>
             <h2 className="m-0 font-semibold text-[19px] leading-[1.15] font-titulo">

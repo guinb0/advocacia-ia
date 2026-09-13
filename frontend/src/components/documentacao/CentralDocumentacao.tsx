@@ -14,6 +14,7 @@ import {
   FolderOpen,
   Headphones,
   Radio,
+  RefreshCw,
   UsersRound,
 } from "lucide-react";
 
@@ -26,8 +27,9 @@ import {
 import type { AtendimentoDocumentacao } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import { useSessao } from "@/lib/auth";
-import { Aviso, Botao, Selo, Vazio } from "@/components/ui/Basicos";
+import { Aviso, Botao, Esqueleto, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 
 interface Props {
   onVoltar: () => void;
@@ -57,6 +59,12 @@ function hora(iso: string | null): string {
   return data.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
+/* Hora cheia com segundos: o painel se atualiza a cada 5 s, então minuto
+ * sozinho não deixa ver se a atualização parou. */
+function relogio(data: Date): string {
+  return data.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 function espera(iso: string | null): string {
   if (!iso) return "agora";
   const inicio = Date.parse(iso);
@@ -76,7 +84,17 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
   const [filtro, setFiltro] = useState<Filtro>("todos");
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [alerta, setAlerta] = useState<AtendimentoDocumentacao | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
+  /* Duas falhas diferentes, dois avisos diferentes: a fila que não atualizou
+   * (o painel continua de pé, só velho) e a ação que o operador acabou de
+   * disparar. Com um `erro` só, "não consegui assumir" aparecia como se a
+   * lista inteira tivesse caído. */
+  const [erroFila, setErroFila] = useState<string | null>(null);
+  const [erroAcao, setErroAcao] = useState<string | null>(null);
+  /* Primeira resposta do servidor. Enquanto for `false`, o painel mostra
+   * esqueleto: zero aqui seria "fila vazia", que é um dado real e o oposto
+   * de "ainda não sei". */
+  const [carregado, setCarregado] = useState(false);
+  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
   const [assumindo, setAssumindo] = useState<string | null>(null);
   const [permissao, setPermissao] = useState<NotificationPermission | "indisponivel">(
     typeof window !== "undefined" && "Notification" in window ? Notification.permission : "indisponivel",
@@ -127,14 +145,16 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
           conferir: r.itens_a_conferir,
           prontos: r.casos_prontos,
         });
-        setErro(null);
+        setErroFila(null);
+        setCarregado(true);
+        setAtualizadoEm(new Date());
         for (const item of r.atendimentos) {
           if (item.status !== "solicitado" || vistas.current.has(item.entrevista_id)) continue;
           vistas.current.add(item.entrevista_id);
           avisar(item);
         }
       })
-      .catch((e) => setErro(e instanceof Error ? e.message : "Não foi possível atualizar a fila."));
+      .catch((e) => setErroFila(e instanceof Error ? e.message : "Não foi possível atualizar a fila."));
   }, [avisar]);
 
   useEffect(() => {
@@ -152,7 +172,7 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
   async function assumir(item: AtendimentoDocumentacao) {
     if (!item.sala) return;
     setAssumindo(item.entrevista_id);
-    setErro(null);
+    setErroAcao(null);
     try {
       const reservado = await assumirAtendimentoDocumentacao(item.entrevista_id);
       const { token } = await criarSalaChamada(reservado.sala!);
@@ -167,7 +187,7 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
       document.title = "Forense";
       onAbrirDocumentos(reservado.caso_id);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível assumir a chamada.");
+      setErroAcao(e instanceof Error ? e.message : "Não foi possível assumir a chamada.");
     } finally {
       setAssumindo(null);
     }
@@ -195,24 +215,19 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
     });
   }
 
+  /* Falhar antes da primeira resposta é diferente de falhar no meio do plantão:
+   * ali não há número velho para mostrar, e um painel zerado seria lido como
+   * "não tem ninguém na fila". */
+  const falhaInicial = !carregado && erroFila !== null;
+
   return (
     <main className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-5">
-      <header className="overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] shadow-cartao">
-        <div className="flex min-w-0 flex-col gap-4 border-b border-acao-borda px-4 py-5 sm:px-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <span className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
-              Central de atendimento
-            </span>
-            <h1 className="mt-1 truncate text-xl font-semibold leading-[1.15] text-tinta">
-              Departamento de Documentação
-            </h1>
-            <p className="mt-2 max-w-[74ch] text-sm leading-[1.55] text-tinta-2">
-              Acompanhe entrevistas em andamento, receba a convocação e entre na mesma
-              chamada com os documentos do cliente à mão.
-            </p>
-          </div>
-
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <CabecalhoPagina
+        contexto="Central de atendimento"
+        titulo="Departamento de Documentação"
+        descricao="Acompanhe entrevistas em andamento, receba a convocação e entre na mesma chamada com os documentos do cliente à mão."
+        acoes={
+          <>
             <Selo tom={permissao === "granted" ? "ok" : "neutro"}>
               notificações {permissao === "granted" ? "ativas" : "pendentes"}
             </Selo>
@@ -221,132 +236,192 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
                 Ativar notificações
               </Botao>
             )}
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        <div className="grid min-w-0 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4 sm:p-5">
-          <Metrica
-            icone={<Radio size={18} aria-hidden />}
-            rotulo="Atendimentos ativos"
-            valor={metricas.ativas}
-            tom="neutro"
-          />
-          <Metrica
-            icone={<BellRing size={18} aria-hidden />}
-            rotulo="Aguardando Documentação"
-            valor={metricas.solicitacoes}
-            tom={metricas.solicitacoes > 0 ? "info" : "neutro"}
-          />
-          <Metrica
-            icone={<FileWarning size={18} aria-hidden />}
-            rotulo="Itens que exigem atenção"
-            valor={metricas.conferir}
-            tom={metricas.conferir > 0 ? "atencao" : "ok"}
-          />
-          <Metrica
-            icone={<CheckCircle2 size={18} aria-hidden />}
-            rotulo="Casos documentalmente prontos"
-            valor={metricas.prontos}
-            tom="ok"
-          />
-        </div>
-        <div className="grid gap-px border-t border-borda bg-borda sm:grid-cols-3">
-          <ResumoOperacional icone={<Files size={15} />} rotulo="Arquivos recebidos" valor={metricas.arquivos} />
-          <ResumoOperacional icone={<Clock3 size={15} />} rotulo="Pendências obrigatórias" valor={metricas.pendencias} />
-          <ResumoOperacional icone={<UsersRound size={15} />} rotulo="Equipe online" valor={metricas.online} />
-        </div>
-      </header>
-
-      {alerta && (
-        <section
-          className="overflow-hidden rounded-cartao border-2 border-acao bg-acao-clara shadow-cartao"
-          role="alert"
-          aria-live="assertive"
-        >
-          <div className="flex min-w-0 flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-acao">
-                <BellRing size={16} aria-hidden />
-                Presença solicitada agora
-              </span>
-              <h2 className="mt-2 truncate text-lg font-semibold text-tinta">
-                {alerta.cliente || "Cliente ainda não identificado"}
-              </h2>
-              <p className="mt-1 text-sm leading-[1.55] text-tinta-2">
-                {alerta.entrevistador_nome} está aguardando você na chamada.
-              </p>
-            </div>
-            <BotaoProcesso
-              variante="primario"
-              onClick={() => void assumir(alerta)}
-              processando={assumindo === alerta.entrevista_id}
-              textoProcessando="Entrando…"
-              aguardando={assumindo !== null}
-              className="shrink-0"
-            >
-              Entrar e abrir documentos
-            </BotaoProcesso>
-          </div>
-        </section>
-      )}
-
-      {erro && (
-        <Aviso tom="critico" titulo="Não foi possível atualizar a documentação">
-          {erro}
+      {erroAcao && (
+        <Aviso tom="critico" titulo="Não foi possível assumir o atendimento">
+          {erroAcao}
         </Aviso>
       )}
 
-      <section className="min-w-0 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
-        <div className="flex min-w-0 flex-col gap-3 border-b border-borda bg-papel-2 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <h2 className="m-0 truncate text-lg font-semibold text-tinta">Operação em tempo real</h2>
-            <p className="mt-1 text-xs text-tinta-3">Chamadas, prioridade e situação documental · atualização a cada 5 segundos</p>
+      {falhaInicial ? (
+        <section className="rounded-cartao border border-borda bg-papel p-4 shadow-cartao sm:p-5">
+          <Aviso tom="critico" titulo="A central ainda não recebeu dados do servidor">
+            Enquanto isso não há fila nem números para mostrar — esta tela vazia não
+            significa que ninguém esteja esperando.
+            <span className="mt-1.5 block text-tinta-3">Resposta do servidor: {erroFila}</span>
+          </Aviso>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Botao variante="secundario" pequeno onClick={carregar}>
+              <RefreshCw size={14} aria-hidden /> Tentar agora
+            </Botao>
+            <span className="text-xs text-tinta-3">A central segue tentando sozinha a cada 5 segundos.</span>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {([
-              ["todos", "Todos", fila.length],
-              ["solicitados", "Chamando equipe", metricas.solicitacoes],
-              ["em_chamada", "Em chamada", fila.filter(chamadaViva).length],
-              ["com_pendencias", "Com pendências", fila.filter((i) => Boolean(i.documentos?.pendencias.length)).length],
-            ] as Array<[Filtro, string, number]>).map(([codigo, rotulo, total]) => (
-              <button
-                key={codigo}
-                type="button"
-                onClick={() => setFiltro(codigo)}
-                className={`rounded-campo border px-3 py-2 text-[11px] font-semibold transition-colors ${
-                  filtro === codigo
-                    ? "border-tinta bg-tinta text-papel"
-                    : "border-borda-forte bg-papel text-tinta-2 hover:border-tinta"
-                }`}
-              >
-                {rotulo} <span className="ml-1 tabular-nums opacity-75">{total}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+        </section>
+      ) : (
+        <>
+          {erroFila && (
+            <Aviso tom="atencao" titulo="Os números abaixo podem estar atrasados">
+              Última atualização confirmada{" "}
+              {atualizadoEm ? `às ${relogio(atualizadoEm)}` : "ainda não ocorreu"}.
+              <span className="mt-1.5 block text-tinta-3">Resposta do servidor: {erroFila}</span>
+            </Aviso>
+          )}
 
-        {filtrada.length === 0 ? (
-          <div className="p-4 sm:p-5">
-            <Vazio>{fila.length === 0
-              ? "Nenhuma entrevista ativa agora. Você será avisado quando precisarem da Documentação."
-              : "Nenhum atendimento corresponde a este filtro."}</Vazio>
-          </div>
-        ) : (
-          <ul className="m-0 list-none divide-y divide-borda p-0">
-            {filtrada.map((item) => (
-              <AtendimentoLinha
-                key={item.entrevista_id}
-                item={item}
-                assumindo={assumindo}
-                onAssumir={assumir}
-                aberto={expandidos.has(item.entrevista_id)}
-                onAlternar={() => alternarDetalhes(item.entrevista_id)}
-                onAbrirDocumentos={onAbrirDocumentos}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+          <section
+            aria-label="Resumo da operação"
+            aria-busy={!carregado}
+            className="overflow-hidden rounded-cartao border border-acao-borda bg-papel shadow-cartao"
+          >
+            {carregado ? (
+              <>
+                <div className="grid min-w-0 gap-3 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-4">
+                  <Metrica
+                    icone={<Radio size={18} aria-hidden />}
+                    rotulo="Atendimentos ativos"
+                    valor={metricas.ativas}
+                    tom="neutro"
+                  />
+                  <Metrica
+                    icone={<BellRing size={18} aria-hidden />}
+                    rotulo="Aguardando Documentação"
+                    valor={metricas.solicitacoes}
+                    tom={metricas.solicitacoes > 0 ? "info" : "neutro"}
+                  />
+                  <Metrica
+                    icone={<FileWarning size={18} aria-hidden />}
+                    rotulo="Itens que exigem atenção"
+                    valor={metricas.conferir}
+                    tom={metricas.conferir > 0 ? "atencao" : "ok"}
+                  />
+                  <Metrica
+                    icone={<CheckCircle2 size={18} aria-hidden />}
+                    rotulo="Casos documentalmente prontos"
+                    valor={metricas.prontos}
+                    tom="ok"
+                  />
+                </div>
+                <div className="grid gap-px border-t border-borda bg-borda sm:grid-cols-3">
+                  <ResumoOperacional icone={<Files size={15} />} rotulo="Arquivos recebidos" valor={metricas.arquivos} />
+                  <ResumoOperacional icone={<Clock3 size={15} />} rotulo="Pendências obrigatórias" valor={metricas.pendencias} />
+                  <ResumoOperacional icone={<UsersRound size={15} />} rotulo="Equipe online" valor={metricas.online} />
+                </div>
+              </>
+            ) : (
+              <div className="grid min-w-0 gap-3 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-4">
+                <p className="sr-only" aria-live="polite">Carregando o resumo da operação…</p>
+                {[0, 1, 2, 3].map((posicao) => (
+                  <Esqueleto key={posicao} className="h-[86px] rounded-campo border border-borda" />
+                ))}
+              </div>
+            )}
+          </section>
+
+          {alerta && (
+            <section
+              className="overflow-hidden rounded-cartao border-2 border-acao bg-acao-clara shadow-cartao"
+              role="alert"
+              aria-live="assertive"
+            >
+              <div className="flex min-w-0 flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-acao-texto">
+                    <BellRing size={16} aria-hidden />
+                    Presença solicitada agora
+                  </span>
+                  <h2 className="mt-2 text-lg font-semibold text-tinta [overflow-wrap:anywhere]">
+                    {alerta.cliente || "Cliente ainda não identificado"}
+                  </h2>
+                  <p className="mt-1 text-sm leading-[1.55] text-tinta-2">
+                    {alerta.entrevistador_nome} está aguardando você na chamada.
+                  </p>
+                </div>
+                <BotaoProcesso
+                  variante="primario"
+                  onClick={() => void assumir(alerta)}
+                  processando={assumindo === alerta.entrevista_id}
+                  textoProcessando="Entrando…"
+                  aguardando={assumindo !== null}
+                  className="shrink-0"
+                >
+                  Entrar e abrir documentos
+                </BotaoProcesso>
+              </div>
+            </section>
+          )}
+
+          <section className="min-w-0 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
+            <div className="flex min-w-0 flex-col gap-3 border-b border-borda bg-papel-2 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <h2 className="m-0 text-lg font-semibold text-tinta">Operação em tempo real</h2>
+                <p className="mt-1 text-xs text-tinta-3">
+                  Chamadas, prioridade e situação documental ·{" "}
+                  {!carregado
+                    ? "consultando o servidor…"
+                    : atualizadoEm
+                      ? `atualizado às ${relogio(atualizadoEm)}, a cada 5 segundos`
+                      : "atualização a cada 5 segundos"}
+                </p>
+              </div>
+              {carregado && (
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ["todos", "Todos", fila.length],
+                    ["solicitados", "Chamando equipe", metricas.solicitacoes],
+                    ["em_chamada", "Em chamada", fila.filter(chamadaViva).length],
+                    ["com_pendencias", "Com pendências", fila.filter((i) => Boolean(i.documentos?.pendencias.length)).length],
+                  ] as Array<[Filtro, string, number]>).map(([codigo, rotulo, total]) => (
+                    <button
+                      key={codigo}
+                      type="button"
+                      onClick={() => setFiltro(codigo)}
+                      aria-pressed={filtro === codigo}
+                      className={`rounded-campo border px-3 py-2 text-[11px] font-semibold transition-colors ${
+                        filtro === codigo
+                          ? "border-tinta bg-tinta text-papel"
+                          : "border-borda-forte bg-papel text-tinta-2 hover:border-tinta"
+                      }`}
+                    >
+                      {rotulo} <span className="ml-1 tabular-nums opacity-75">{total}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {!carregado ? (
+              <div className="divide-y divide-borda" aria-busy>
+                <p className="sr-only" aria-live="polite">Carregando a fila de atendimentos…</p>
+                {[0, 1, 2].map((posicao) => (
+                  <Esqueleto key={posicao} className="h-[92px]" />
+                ))}
+              </div>
+            ) : filtrada.length === 0 ? (
+              <div className="p-4 sm:p-5">
+                <Vazio>{fila.length === 0
+                  ? "Nenhuma entrevista ativa agora. Você será avisado quando precisarem da Documentação."
+                  : "Nenhum atendimento corresponde a este filtro."}</Vazio>
+              </div>
+            ) : (
+              <ul className="m-0 list-none divide-y divide-borda p-0">
+                {filtrada.map((item) => (
+                  <AtendimentoLinha
+                    key={item.entrevista_id}
+                    item={item}
+                    assumindo={assumindo}
+                    onAssumir={assumir}
+                    aberto={expandidos.has(item.entrevista_id)}
+                    onAlternar={() => alternarDetalhes(item.entrevista_id)}
+                    onAbrirDocumentos={onAbrirDocumentos}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
     </main>
   );
 }
@@ -364,7 +439,7 @@ function Metrica({
 }) {
   const classe =
     tom === "info"
-      ? "border-acao-borda bg-acao-clara text-acao"
+      ? "border-acao-borda bg-acao-clara text-acao-texto"
       : tom === "ok"
         ? "border-ok-borda bg-ok-claro text-ok"
         : tom === "atencao"
@@ -444,7 +519,7 @@ function AtendimentoLinha({
               </Selo>
               {viva && <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-ok"><Activity size={12} /> ao vivo</span>}
             </div>
-            <span className={`mt-2 block truncate text-xs ${solicitado ? "font-semibold text-acao" : "text-tinta-3"}`}>
+            <span className={`mt-2 block truncate text-xs ${solicitado ? "font-semibold text-acao-texto" : "text-tinta-3"}`}>
               {solicitado ? `esperando ${espera(item.solicitado_em)}` : `última atividade ${espera(item.atualizado_em)}`}
             </span>
           </div>

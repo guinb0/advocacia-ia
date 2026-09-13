@@ -53,7 +53,7 @@ const LEGENDA: Record<EstadoChamada, string> = {
  * 40x40 — justamente na tela que o atendente usa antes de o cliente entrar. */
 const BOTAO_ICONE =
   "grid h-10 w-10 place-items-center rounded-campo border border-borda bg-papel text-tinta cursor-pointer " +
-  "hover:bg-papel-2 hover:border-borda-forte focus:outline-none focus:ring-2 focus:ring-acao";
+  "hover:bg-papel-2 hover:border-borda-forte focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foco";
 
 const BOTAO_SECUNDARIO =
   "flex-1 min-w-[118px] border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none " +

@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import AppShell from "@/components/layout/AppShell";
 import ModuleFrame from "@/components/layout/ModuleFrame";
 import Carteira from "@/components/carteira/Carteira";
@@ -69,6 +70,9 @@ const Telas = (props: HomeViewProps) => {
     abrirAnalises,
     voltarParaCarteira,
   } = props;
+  /* "Novo caso" da Mesa do dia só troca de tela; no celular a tela de casos
+   * abre com o cadastro fechado, então o pedido precisa viajar junto. */
+  const [pedidoNovoCaso, setPedidoNovoCaso] = useState(0);
   const dadosDoCasoAberto = situacaoCaso.situacao;
   const navegacaoDoCaso = (
     <CasoWorkspaceTabs
@@ -85,7 +89,10 @@ const Telas = (props: HomeViewProps) => {
       <ModuleFrame variant="wide">
         <Carteira
           onAbrir={abrirCaso}
-          onNovoCaso={() => setTela("casos")}
+          onNovoCaso={() => {
+            setPedidoNovoCaso((pedidos) => pedidos + 1);
+            setTela("casos");
+          }}
           onNavegar={setTela}
         />
       </ModuleFrame>
@@ -146,7 +153,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "usuarios") {
     return (
       <ModuleFrame variant="compact">
-        <Usuarios onVoltar={voltarParaCarteira} />
+        <Usuarios />
       </ModuleFrame>
     );
   }
@@ -165,7 +172,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "supervisao") {
     return (
       <ModuleFrame variant="wide">
-        <Supervisao onVoltar={voltarParaCarteira} />
+        <Supervisao />
       </ModuleFrame>
     );
   }
@@ -191,7 +198,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "investigacao") {
     return (
       <ModuleFrame variant="compact">
-        <Investigacao onVoltar={voltarParaCarteira} />
+        <Investigacao />
       </ModuleFrame>
     );
   }
@@ -199,7 +206,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "saudeAgente") {
     return (
       <ModuleFrame variant="wide">
-        <SaudeAgente onVoltar={voltarParaCarteira} />
+        <SaudeAgente />
       </ModuleFrame>
     );
   }
@@ -207,7 +214,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "revisao") {
     return (
       <ModuleFrame variant="wide">
-        <Supervisao onVoltar={voltarParaCarteira} />
+        <Supervisao />
       </ModuleFrame>
     );
   }
@@ -239,7 +246,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "catalogoRoteiros") {
     return (
       <ModuleFrame variant="compact">
-        <CatalogoRoteiros onVoltar={voltarParaCarteira} />
+        <CatalogoRoteiros />
       </ModuleFrame>
     );
   }
@@ -247,7 +254,7 @@ const Telas = (props: HomeViewProps) => {
   if (tela === "glossarioDocumentos") {
     return (
       <ModuleFrame variant="compact">
-        <GlossarioDocumentos onVoltar={voltarParaCarteira} />
+        <GlossarioDocumentos />
       </ModuleFrame>
     );
   }
@@ -303,12 +310,11 @@ const Telas = (props: HomeViewProps) => {
   return (
     <ModuleFrame variant={tela === "casos" ? "compact" : "wide"}>
     <div>
-      {tela !== "entrevista" && <div className="mb-5 flex flex-wrap items-end justify-between gap-5 lg:hidden">
-        <div>
-          <h1 className="mb-0 mt-1 text-xl tracking-[-0.02em]">{cabecalho.titulo}</h1>
-          <p className="mb-0 mt-1.5 max-w-[66ch] text-sm leading-relaxed text-tinta-2">{cabecalho.subtitulo}</p>
-        </div>
-      </div>}
+      {tela !== "entrevista" && <CabecalhoPagina
+        titulo={cabecalho.titulo}
+        descricao={cabecalho.subtitulo}
+        contexto={tela === "casos" ? "Jurídico" : "Inteligência"}
+      />}
 
       {tela === "casos" ? (
         <ListaCasos
@@ -319,6 +325,7 @@ const Telas = (props: HomeViewProps) => {
           onAbrir={abrirCaso}
           onCriar={listaCasos.criar}
           onExcluir={listaCasos.excluir}
+          pedidoNovoCaso={pedidoNovoCaso}
         />
       ) : tela === "entrevista" ? (
         <EntrevistaGuiada

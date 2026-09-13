@@ -9,9 +9,10 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowLeft, Database, Gauge, RefreshCcw, ServerCog } from "lucide-react";
+import { Activity, Database, Gauge, RefreshCcw, ServerCog } from "lucide-react";
 
 import { Aviso, Botao, Cartao, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import {
   ApiError,
   conectarWhatsapp,
@@ -25,10 +26,6 @@ import {
   type DesempenhoAgente,
   type SaudeAgente as SaudeAgenteDados,
 } from "@/lib/agente";
-
-interface Props {
-  onVoltar: () => void;
-}
 
 const NOME_DEPENDENCIA: Record<string, string> = {
   database: "Banco de aplicação",
@@ -59,7 +56,7 @@ function CartaoDependencia({ nome, dep }: { nome: string; dep: DependenciaAgente
   return (
     <div className="flex min-w-0 items-center justify-between gap-3 rounded-campo border border-borda bg-papel-2 px-4 py-3">
       <span className="flex min-w-0 items-center gap-2">
-        <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao">
+        <span className="grid size-8 shrink-0 place-items-center rounded-campo border border-acao-borda bg-acao-clara text-acao-texto">
           <Database size={15} aria-hidden />
         </span>
         <span className="min-w-0 truncate font-semibold text-sm" title={nome}>
@@ -281,7 +278,7 @@ function CartaoWhatsapp() {
   );
 }
 
-export default function SaudeAgente({ onVoltar }: Props) {
+export default function SaudeAgente() {
   const [dados, setDados] = useState<SaudeAgenteDados | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -314,36 +311,23 @@ export default function SaudeAgente({ onVoltar }: Props) {
 
   return (
     <div className="min-w-0 space-y-6">
-      <Botao variante="texto" onClick={onVoltar} className="inline-flex items-center gap-2">
-        <ArrowLeft size={16} aria-hidden />
-        Voltar para a carteira
-      </Botao>
-
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="mb-2 mt-0 font-ui text-xs font-bold uppercase tracking-[0.12em] text-tinta-3">
-            Operação técnica
-          </p>
-          <h1 className="m-0 mb-[6px] text-tinta font-titulo text-xl font-semibold">
-            Saúde do agente jurídico
-          </h1>
-          <p className="m-0 max-w-[70ch] text-tinta-3 leading-[1.5]">
-            Latência das dependências e desempenho das execuções de IA nas últimas{" "}
-            {dados?.agents?.window_hours ?? 24} horas, com leitura curta para acompanhamento
-            do escritório.
-          </p>
-        </div>
-        <Botao
-          variante="secundario"
-          pequeno
-          carregando={carregando}
-          textoCarregando="Atualizando…"
-          onClick={() => void carregar()}
-        >
-          <RefreshCcw size={14} aria-hidden />
-          Atualizar
-        </Botao>
-      </header>
+      <CabecalhoPagina
+        contexto="Operação técnica"
+        titulo="Saúde do agente jurídico"
+        descricao={`Latência das dependências e desempenho das execuções de IA nas últimas ${dados?.agents?.window_hours ?? 24} horas, com leitura curta para acompanhamento do escritório.`}
+        acoes={
+          <Botao
+            variante="secundario"
+            pequeno
+            carregando={carregando}
+            textoCarregando="Atualizando…"
+            onClick={() => void carregar()}
+          >
+            <RefreshCcw size={14} aria-hidden />
+            Atualizar
+          </Botao>
+        }
+      />
 
       {atualizadoEm && !carregando && (
         <p className="text-tinta-3 text-xs">Atualizado às {atualizadoEm.toLocaleTimeString("pt-BR")}</p>

@@ -200,7 +200,7 @@ export default function PainelEscuta({
           {transcricao.map((trecho) => (
             <p key={`${trecho.quando}-${trecho.texto}`} className="my-2">
               <time className="mr-2 text-[10px] font-codigo text-tinta-3">{new Date(trecho.quando).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
-              <strong className={`mr-2 text-[10px] uppercase tracking-[0.06em] ${trecho.quem === "Entrevistado" ? "text-ok" : trecho.quem === "Entrevistador" ? "text-acao" : "text-tinta-3"}`}>
+              <strong className={`mr-2 text-[10px] uppercase tracking-[0.06em] ${trecho.quem === "Entrevistado" ? "text-ok" : trecho.quem === "Entrevistador" ? "text-acao-texto" : "text-tinta-3"}`}>
                 {trecho.quem}
               </strong>
               {trecho.texto}

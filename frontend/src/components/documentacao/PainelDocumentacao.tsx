@@ -216,7 +216,7 @@ function Metrica({
 }) {
   const classe =
     tom === "info"
-      ? "border-acao-borda bg-acao-clara text-acao"
+      ? "border-acao-borda bg-acao-clara text-acao-texto"
       : tom === "ok"
         ? "border-ok-borda bg-ok-claro text-ok"
         : "border-borda bg-papel-2 text-tinta";

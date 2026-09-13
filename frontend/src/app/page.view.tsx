@@ -9,21 +9,27 @@ import type { usePageModel } from "./page.model";
 
 type LoginPageProps = ReturnType<typeof usePageModel>;
 
+/* Os tres nasceram supondo um cartao branco (`bg-white`, texto #102033), e a
+ * coluna do formulario acabou ficando escura nos dois temas: titulo, rotulos e
+ * explicacao ficavam azul-escuro sobre azul-escuro, perto de 1,3:1 — ilegiveis
+ * no tema claro. Agora a coluna e `--papel` e o texto sai dos tokens, entao os
+ * dois temas se resolvem sozinhos. O CTA e o Gold do sistema, o mesmo de
+ * "Novo caso". */
 const CAMPO =
-  "min-h-[46px] rounded-[10px] border border-[#8fa1b5] bg-white px-3 py-2.5 text-base " +
-  "text-[#102033] outline-none transition-[border-color,box-shadow] focus:border-[#1f6feb] " +
-  "focus:ring-2 focus:ring-[#1f6feb]/25 dark:border-[#5f7893] dark:bg-[#0d1724] " +
-  "dark:text-white dark:focus:border-[#79b8ff] dark:focus:ring-[#79b8ff]/25";
+  "min-h-[46px] w-full rounded-campo border border-borda-campo bg-papel px-3 py-2.5 text-base " +
+  "text-tinta outline-none transition-[border-color,box-shadow] " +
+  "hover:border-acao focus:border-foco focus:ring-2 focus:ring-foco/20 " +
+  "aria-invalid:border-critico aria-invalid:focus:ring-critico/20";
 
 const BOTAO_PRIMARIO =
-  "inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-[10px] " +
-  "border border-[#0b57d0] bg-[#0b57d0] px-4 py-3 text-base font-semibold text-white " +
-  "shadow-[0_14px_28px_rgba(11,87,208,0.22)] transition-colors " +
-  "enabled:hover:border-[#0846ad] enabled:hover:bg-[#0846ad] " +
-  "disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#1f6feb] dark:bg-[#1f6feb] " +
-  "dark:enabled:hover:border-[#2f81f7] dark:enabled:hover:bg-[#2f81f7]";
+  "inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-campo " +
+  "border border-marca-ouro bg-marca-ouro px-4 py-3 text-base font-semibold text-primario-texto " +
+  "shadow-cartao transition-colors " +
+  "enabled:hover:border-marca-ouro-hover enabled:hover:bg-marca-ouro-hover " +
+  "enabled:focus-visible:outline-none enabled:focus-visible:ring-2 enabled:focus-visible:ring-foco " +
+  "disabled:cursor-not-allowed disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada";
 
-const ROTULO = "text-sm font-semibold text-[#20334a] dark:text-[#dce8f5]";
+const ROTULO = "text-sm font-semibold text-tinta";
 
 export function LoginPage(props: LoginPageProps) {
   const {
@@ -61,24 +67,24 @@ export function LoginPage(props: LoginPageProps) {
   const noSegundoFator = etapa === "codigo";
 
   return (
-    <main className="relative flex min-h-screen overflow-hidden bg-[#182933] px-3 py-3 text-[#dbe7ee] sm:px-6 sm:py-6 lg:px-8">
+    <main className="relative flex min-h-screen overflow-hidden bg-nav-fundo px-3 py-3 text-nav-texto-2 sm:px-6 sm:py-6 lg:px-8">
       <div
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_16%,rgba(91,139,161,0.16),transparent_36%),radial-gradient(circle_at_88%_82%,rgba(8,18,25,0.24),transparent_34%)]"
         aria-hidden
       />
-      <div className="relative mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-[1120px] items-center overflow-hidden rounded-[28px] border border-[#426274] bg-[#203340] shadow-[0_30px_75px_rgba(4,14,21,0.36)] lg:min-h-[620px] lg:grid-cols-2 lg:items-stretch xl:min-h-[680px]">
+      <div className="relative mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-[1120px] items-center overflow-hidden rounded-[28px] border border-nav-borda bg-nav-fundo-ativo shadow-[0_30px_75px_rgba(4,14,21,0.36)] lg:min-h-[620px] lg:grid-cols-2 lg:items-stretch xl:min-h-[680px]">
         <LoginVisualPanel />
 
-        <section className="mx-auto flex min-h-[620px] w-full flex-col justify-center bg-[#203340] p-7 text-[#dbe7ee] sm:p-10 lg:min-h-0 lg:rounded-r-[28px] lg:p-12">
+        <section className="mx-auto flex min-h-[620px] w-full flex-col justify-center bg-papel p-7 text-tinta-2 sm:p-10 lg:min-h-0 lg:rounded-r-[28px] lg:p-12">
           <div className="mx-auto w-full max-w-[350px] motion-safe:animate-[loginFloat_0.7s_ease-out_1]">
             <div className="mb-10">
               <div className="flex items-center gap-3">
-                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#567589] bg-[#2e4b5e] text-[#e9f2f5] shadow-[0_10px_22px_rgba(7,20,29,0.24)]">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-nav-borda bg-nav-fundo text-marca-ouro shadow-[0_10px_22px_rgba(7,20,29,0.24)]">
                   <FileText size={20} aria-hidden />
                 </span>
                 <div className="min-w-0">
-                  <span className="block truncate font-titulo text-xl leading-none text-white">Forense</span>
-                  <span className="mt-1 block text-[11px] font-semibold uppercase tracking-[0.15em] text-[#9cb3c1]">
+                  <span className="block truncate font-titulo text-xl leading-none text-tinta">Forense</span>
+                  <span className="mt-1 block text-[11px] font-semibold uppercase tracking-[0.15em] text-tinta-3">
                     Escritório jurídico
                   </span>
                 </div>
@@ -91,10 +97,10 @@ export function LoginPage(props: LoginPageProps) {
               * impressão de que o segundo fator é opcional. */}
             {!noSegundoFator ? (
               <>
-                <h1 className="font-titulo text-xl !text-[#102033] dark:!text-white">
+                <h1 className="font-titulo text-xl text-tinta">
                   Entrar no sistema
                 </h1>
-                <p className="mt-2 text-sm leading-6 text-[#33465c] dark:text-[#c8d6e5]">
+                <p className="mt-2 text-sm leading-6 text-tinta-2">
                   A carteira de casos e os documentos dos clientes exigem identificação.
                 </p>
 
@@ -121,7 +127,7 @@ export function LoginPage(props: LoginPageProps) {
                       aria-describedby={errors.email ? "erro-email" : undefined}
                     />
                     {errors.email && (
-                      <span id="erro-email" className="text-xs text-critico dark:text-[#ffb4ad]">
+                      <span id="erro-email" className="text-xs text-critico">
                         {errors.email.message}
                       </span>
                     )}
@@ -137,21 +143,21 @@ export function LoginPage(props: LoginPageProps) {
                         type={mostrarSenha ? "text" : "password"}
                         autoComplete="current-password"
                         {...register("senha")}
-                        className={`${CAMPO} w-full pr-11`}
+                        className={`${CAMPO} pr-11`}
                         aria-invalid={Boolean(errors.senha)}
                         aria-describedby={errors.senha ? "erro-senha" : undefined}
                       />
                       <button
                         type="button"
                         onClick={() => setMostrarSenha(!mostrarSenha)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-[8px] p-1.5 text-[#65758a] transition-colors hover:bg-[#e6ecf2] hover:text-[#102033] dark:text-[#a8bcd2] dark:hover:bg-[#1d2b3b] dark:hover:text-white"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-campo p-1.5 text-tinta-3 transition-colors hover:bg-papel-3 hover:text-tinta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foco"
                         aria-label={mostrarSenha ? "Ocultar a senha" : "Mostrar a senha"}
                       >
                         {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
                     </div>
                     {errors.senha && (
-                      <span id="erro-senha" className="text-xs text-critico dark:text-[#ffb4ad]">
+                      <span id="erro-senha" className="text-xs text-critico">
                         {errors.senha.message}
                       </span>
                     )}
@@ -175,23 +181,23 @@ export function LoginPage(props: LoginPageProps) {
                   </button>
                 </form>
 
-                <p className="mt-7 text-center text-xs leading-5 text-[#65758a] dark:text-[#98acc3]">
+                <p className="mt-7 text-center text-xs leading-5 text-tinta-3">
                   O acesso aos módulos continua definido pelo perfil cadastrado no escritório.
                 </p>
               </>
             ) : (
               <>
                 <div className="flex items-start gap-3">
-                  <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#e7f0fd] text-[#0b57d0] dark:bg-[#12263f] dark:text-[#79b8ff]">
+                  <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-campo border border-acao-borda bg-acao-clara text-acao-texto">
                     <MailCheck size={20} aria-hidden />
                   </span>
                   <div className="min-w-0">
-                    <h1 className="font-titulo text-xl !text-[#102033] dark:!text-white">
+                    <h1 className="font-titulo text-xl text-tinta">
                       Confirme o acesso
                     </h1>
-                    <p className="mt-2 text-sm leading-6 text-[#33465c] dark:text-[#c8d6e5]">
+                    <p className="mt-2 text-sm leading-6 text-tinta-2">
                       Enviamos um código de 6 dígitos para{" "}
-                      <strong className="text-[#102033] dark:text-white">{desafio?.email}</strong>.
+                      <strong className="text-tinta">{desafio?.email}</strong>.
                       Ele vale uma única vez.
                     </p>
                   </div>
@@ -243,7 +249,7 @@ export function LoginPage(props: LoginPageProps) {
                     type="button"
                     onClick={aoReenviarCodigo}
                     disabled={reenviando || segundosParaReenviar > 0}
-                    className="text-sm font-semibold text-[#0b57d0] transition-colors enabled:hover:underline disabled:cursor-not-allowed disabled:text-[#8fa1b5] dark:text-[#79b8ff] dark:disabled:text-[#5f7893]"
+                    className="rounded-campo text-sm font-semibold text-acao-texto transition-colors enabled:hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foco disabled:cursor-not-allowed disabled:text-tinta-desabilitada"
                   >
                     {segundosParaReenviar > 0
                       ? `Reenviar código em ${segundosParaReenviar}s`
@@ -255,14 +261,14 @@ export function LoginPage(props: LoginPageProps) {
                   <button
                     type="button"
                     onClick={voltarParaCredencial}
-                    className="inline-flex items-center gap-1.5 text-sm text-[#65758a] transition-colors hover:text-[#102033] dark:text-[#98acc3] dark:hover:text-white"
+                    className="inline-flex items-center gap-1.5 rounded-campo text-sm text-tinta-3 transition-colors hover:text-tinta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foco"
                   >
                     <ArrowLeft size={15} aria-hidden />
                     Entrar com outra conta
                   </button>
                 </div>
 
-                <p className="mt-7 text-center text-xs leading-5 text-[#65758a] dark:text-[#98acc3]">
+                <p className="mt-7 text-center text-xs leading-5 text-tinta-3">
                   Se você não pediu este acesso, alguém pode ter a sua senha. Troque-a e avise quem
                   administra o sistema.
                 </p>

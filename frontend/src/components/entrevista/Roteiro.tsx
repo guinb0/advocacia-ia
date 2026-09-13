@@ -1802,7 +1802,7 @@ function preencherMarcadores(
           o atendimento e que o contrato, a procuração e a declaração exigem.{" "}
           <button
             type="button"
-            className="border-none bg-transparent p-0 text-tinta font-semibold text-[13px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-acao"
+            className="border-none bg-transparent p-0 text-tinta font-semibold text-[13px] leading-none font-ui underline underline-offset-[3px] cursor-pointer hover:text-acao-texto"
             onClick={() => irPara(faltaParaComecar[0].id)}
           >
             ir ao campo
@@ -2337,7 +2337,7 @@ function BlocoRoteiro({
                     incertas.has(p.id)
                       ? "border-atencao bg-atencao-claro text-atencao"
                       : humana
-                        ? "border-acao-borda bg-acao-clara text-acao"
+                        ? "border-acao-borda bg-acao-clara text-acao-texto"
                       : "border-ok-borda bg-ok-claro text-tinta-2"
                   }`}>
                     <strong className="mr-2 font-ui text-[10px] uppercase tracking-[0.08em]">

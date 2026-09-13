@@ -10,13 +10,14 @@ import {
   type ResultadoInvestigativo,
 } from "@/lib/api";
 import { Botao, Campo, CampoSeletor } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 type Acao = "coletar" | "buscar" | "analisar";
 
 const MINIMO_RELATO = 20;
 
-export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
+export default function Investigacao() {
   const [cnpj, setCnpj] = useState("");
   const [processo, setProcesso] = useState("");
   const [tribunal, setTribunal] = useState("trt8");
@@ -83,11 +84,11 @@ export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
   });
 
   return <div className="min-w-0 space-y-6">
-    <Botao variante="secundario" pequeno onClick={onVoltar}>← Voltar</Botao>
-    <header>
-      <h1>Investigação do caso</h1>
-      <p className="text-tinta-2 max-w-[75ch]">Coleta fontes públicas, preserva a procedência e busca indícios. Todo resultado exige conferência humana.</p>
-    </header>
+    <CabecalhoPagina
+      contexto="Inteligência"
+      titulo="Investigação do caso"
+      descricao="Coleta fontes públicas, preserva a procedência e busca indícios. Todo resultado exige conferência humana."
+    />
     <form
       className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(120px,0.6fr)_max-content] items-end gap-3 rounded-cartao border border-borda bg-papel p-[18px] max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1"
       onSubmit={coletar}
@@ -133,7 +134,7 @@ export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
             <article key={e.identificador} className="p-4 border border-borda rounded-cartao bg-papel">
               <span className="text-tinta-3 text-xs">{e.categoria} · confiança {e.confianca}</span>
               <h3 className="my-[6px] text-base">{e.titulo}</h3>
-              <a href={e.url} target="_blank" rel="noreferrer" className="text-acao text-sm">Abrir fonte ↗</a>
+              <a href={e.url} target="_blank" rel="noreferrer" className="text-acao-texto text-sm">Abrir fonte ↗</a>
             </article>
           ))}
         </div>
@@ -164,7 +165,7 @@ export default function Investigacao({ onVoltar }: { onVoltar: () => void }) {
               <span className="text-tinta-3 text-xs">Similaridade {(r.similaridade * 100).toFixed(1)}%</span>
               <h3 className="my-[6px] text-base">{r.titulo}</h3>
               <p className="whitespace-pre-wrap text-tinta-2 leading-[1.55]">{r.texto}</p>
-              <a href={r.url} target="_blank" rel="noreferrer" className="text-acao text-sm">Conferir origem ↗</a>
+              <a href={r.url} target="_blank" rel="noreferrer" className="text-acao-texto text-sm">Conferir origem ↗</a>
             </article>
           ))}
         </div>

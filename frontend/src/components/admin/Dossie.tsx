@@ -75,7 +75,7 @@ const ETAPA: Record<EstadoEtapa, { simbolo: string; palavra: string; tom: TomSel
  * do que no texto. */
 const ESTILO_ETAPA: Record<EstadoEtapa, { borda: string; cor: string }> = {
   pronto: { borda: "var(--ok)", cor: "text-ok" },
-  andamento: { borda: "var(--acao)", cor: "text-acao" },
+  andamento: { borda: "var(--acao)", cor: "text-acao-texto" },
   atencao: { borda: "var(--atencao-marca)", cor: "text-atencao" },
   pendente: { borda: "var(--borda-forte)", cor: "text-tinta-3" },
   indisponivel: { borda: "var(--critico)", cor: "text-critico" },
@@ -606,7 +606,7 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
                 {analise.cronologia!.map((evento, i) => (
                   <li key={i} className="relative mb-4 last:mb-0">
                     <span className="absolute -left-[25px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
-                    <strong className="block text-sm tabular-nums text-acao">{evento.data}</strong>
+                    <strong className="block text-sm tabular-nums text-acao-texto">{evento.data}</strong>
                     <span className="block text-sm text-tinta">{evento.evento}</span>
                     <span className={`${ORIGEM} block truncate`} title={evento.documento}>{evento.documento}</span>
                     <blockquote className={TRECHO}>{evento.citacao}</blockquote>
@@ -929,7 +929,7 @@ function BarraDeRedacao({ passos, esperadas }: { passos: number; esperadas: numb
     <div className={INDICADOR} aria-live="polite">
       <div className={ITEM_TOPO}>
         <strong>
-          <span aria-hidden className="text-acao font-bold mr-[6px]">
+          <span aria-hidden className="text-acao-texto font-bold mr-[6px]">
             →
           </span>
           {preparando ? "Preparando a petição" : "Redigindo a petição"}

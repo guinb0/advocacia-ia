@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { baixarArquivoEntregaPdf, obterEntrega } from "@/lib/api";
+import { useFocoContido } from "@/lib/foco";
 import { capitalizacaoNatural, ESTILO_VEREDITO } from "@/lib/formato";
 import type { EntregaDetalhe } from "@/lib/types";
 import { useArquivoEntrega } from "@/lib/useArquivo";
@@ -86,6 +87,9 @@ interface Props {
 
 /** Mostra o arquivo como chegou (sem baixar) e os campos que o OCR extraiu. */
 export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
+  const painelRef = useRef<HTMLDivElement>(null);
+  useFocoContido(painelRef, true);
+
   const [detalhe, setDetalhe] = useState<EntregaDetalhe | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [baixandoPdf, setBaixandoPdf] = useState(false);
@@ -182,7 +186,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
       aria-modal="true"
       aria-label={`Documento ${arquivo}`}
     >
-      <div className="w-[min(1100px,100%)] max-h-full flex flex-col border border-borda-forte rounded-cartao bg-papel shadow-modal overflow-hidden">
+      <div ref={painelRef} className="w-[min(1100px,100%)] max-h-full flex flex-col border border-borda-forte rounded-cartao bg-papel shadow-modal overflow-hidden">
         <div className="flex justify-between items-center gap-4 px-5 py-[14px] border-b border-borda bg-papel-2 flex-wrap">
           <div>
             <h2 className="m-0 text-lg">Documento enviado</h2>
@@ -193,7 +197,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
           <button
             ref={fecharRef}
             type="button"
-            className="min-h-8 px-[11px] py-[6px] text-xs gap-[6px] inline-flex items-center justify-center border border-borda-campo bg-papel text-acao rounded-campo font-ui font-semibold text-center no-underline cursor-pointer transition-[background-color,border-color,color] duration-[120ms] ease-out hover:bg-acao-clara hover:border-acao"
+            className="min-h-8 px-[11px] py-[6px] text-xs gap-[6px] inline-flex items-center justify-center border border-borda-campo bg-papel text-acao-texto rounded-campo font-ui font-semibold text-center no-underline cursor-pointer transition-[background-color,border-color,color] duration-[120ms] ease-out hover:bg-acao-clara hover:border-acao"
             onClick={onFechar}
           >
             Fechar ✕

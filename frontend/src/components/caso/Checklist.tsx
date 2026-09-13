@@ -106,7 +106,7 @@ export default function Checklist({
 
   return (
     <>
-      <div className="relative mb-5 overflow-hidden rounded-cartao border border-acao-borda bg-[linear-gradient(135deg,var(--papel)_0%,var(--acao-clara)_100%)] px-5 py-5 shadow-cartao sm:px-6">
+      <div className="relative mb-5 overflow-hidden rounded-cartao border border-acao-borda bg-papel px-5 py-5 shadow-cartao sm:px-6">
         <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full border-[28px] border-white/35" aria-hidden />
         <div className="flex justify-between items-center gap-[14px] mb-[14px] flex-wrap">
           <Selo tom="info">{categoria.nome}</Selo>

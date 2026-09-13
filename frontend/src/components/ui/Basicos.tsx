@@ -39,12 +39,12 @@ const BASE_BOTAO =
  * procurar. Só uma por bloco (ver GUIA-VISUAL.md). */
 const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
   primario:
-    "bg-acao border-acao text-white shadow-[0_5px_14px_rgba(0,42,71,0.16)] " +
-    "enabled:hover:bg-acao-forte enabled:hover:border-acao-forte enabled:hover:shadow-[0_8px_20px_rgba(0,42,71,0.22)] " +
-    "enabled:focus-visible:bg-acao-forte enabled:focus-visible:border-acao-forte " +
+    "bg-marca-ouro border-marca-ouro text-primario-texto shadow-cartao " +
+    "enabled:hover:bg-marca-ouro-hover enabled:hover:border-marca-ouro-hover " +
+    "enabled:focus-visible:ring-2 enabled:focus-visible:ring-foco " +
     "disabled:border-borda-forte disabled:bg-papel-3 disabled:text-tinta-desabilitada",
   secundario:
-    "border-borda-campo bg-papel text-acao " +
+    "border-borda-campo bg-papel text-acao-texto " +
     "enabled:hover:bg-acao-clara enabled:hover:border-acao " +
     "disabled:border-borda disabled:bg-papel-2 disabled:text-tinta-desabilitada",
   discreto:
@@ -61,7 +61,7 @@ const VARIANTE_BOTAO: Record<BotaoVariante, string> = {
    * `variante !== "texto"` abaixo), então não há conflito a resolver com
    * `!important`. */
   texto:
-    "min-h-0 border-transparent bg-transparent px-0 py-[2px] text-acao underline underline-offset-[3px] " +
+    "min-h-0 border-transparent bg-transparent px-0 py-[2px] text-acao-texto underline underline-offset-[3px] " +
     "enabled:hover:text-acao-forte disabled:text-tinta-desabilitada",
 };
 
@@ -167,7 +167,7 @@ const BASE_ABA =
   "flex-none min-h-[34px] px-[13px] py-[6px] border border-transparent rounded-[6px] bg-transparent " +
   "text-sm font-semibold whitespace-nowrap cursor-pointer transition-[background-color,color] duration-[120ms] ease-out";
 const ABA_INATIVA = "text-tinta-2 hover:bg-papel-3 hover:text-tinta";
-const ABA_ATIVA = "bg-papel border-acao-borda text-acao shadow-cartao";
+const ABA_ATIVA = "bg-papel border-borda text-tinta shadow-[inset_0_-2px_0_var(--marca-ouro)]";
 
 /** Contêiner de abas (filtro ou de resultado) — só o wrapper, `role="tablist"`. */
 export function BarraAbas({ className, ...props }: React.ComponentPropsWithoutRef<"div">) {
@@ -212,7 +212,7 @@ interface CampoAreaProps extends React.ComponentPropsWithoutRef<"textarea"> {
 const BASE_CAMPO =
   "w-full min-h-[42px] px-3 py-[10px] border border-borda-campo rounded-campo " +
   "bg-papel text-tinta text-base transition-[border-color,box-shadow] duration-[120ms] ease-out " +
-  "enabled:hover:border-acao focus:border-acao focus:shadow-[0_0_0_3px_var(--acao-clara)] focus:outline-none";
+  "enabled:hover:border-acao focus:border-foco focus:ring-2 focus:ring-foco/20 focus:outline-none disabled:bg-papel-2 disabled:text-tinta-desabilitada disabled:cursor-not-allowed aria-invalid:border-critico aria-invalid:focus:ring-critico/20";
 
 /** Campo de texto — use `area` para textarea. Rótulo visível vai em `<RotuloCampo>`. */
 export function Campo({ area, className, ...props }: CampoProps | CampoAreaProps) {
@@ -315,7 +315,7 @@ export function Td({ className, ...props }: React.ComponentPropsWithoutRef<"td">
 
 /** Linha de corpo de tabela: zebra nas pares, sem filete na última linha. */
 export function TrZebra({ className, ...props }: React.ComponentPropsWithoutRef<"tr">) {
-  return <tr className={cn("even:bg-papel-2 last:[&>td]:border-b-0", className)} {...props} />;
+  return <tr className={cn("even:bg-papel-2 hover:bg-papel-3 transition-colors last:[&>td]:border-b-0", className)} {...props} />;
 }
 
 /** Valor em fonte monoespaçada — número, data, código. Não usa <Td>: a cor
@@ -477,7 +477,7 @@ const CLASSE_SELO: Record<TomSelo, string> = {
   critico: "border-critico-borda bg-critico-claro text-critico",
   atencao: "border-atencao-borda bg-atencao-claro text-atencao",
   ok: "border-ok-borda bg-ok-claro text-ok",
-  info: "border-acao-borda bg-acao-clara text-acao",
+  info: "border-acao-borda bg-acao-clara text-acao-texto",
   neutro: "border-borda-forte bg-papel-2 text-tinta-2",
 };
 
@@ -510,7 +510,7 @@ const CLASSE_AVISO: Record<Exclude<TomSelo, "neutro">, { caixa: string; simbolo:
   critico: { caixa: "border-critico-borda bg-critico-claro", simbolo: "text-critico" },
   atencao: { caixa: "border-atencao-borda bg-atencao-claro", simbolo: "text-atencao" },
   ok: { caixa: "border-ok-borda bg-ok-claro", simbolo: "text-ok" },
-  info: { caixa: "border-acao-borda bg-acao-clara", simbolo: "text-acao" },
+  info: { caixa: "border-acao-borda bg-acao-clara", simbolo: "text-acao-texto" },
 };
 
 /** Faixa de mensagem com símbolo. Usada para erro, ressalva e confirmação. */
@@ -559,10 +559,29 @@ export function Vazio({ className, ...props }: React.ComponentPropsWithoutRef<"d
   );
 }
 
+/* O brilho é a mesma faixa que a Carteira e o PainelCaso já usavam copiada à
+ * mão. Virou primitivo porque o significado é um só: "ainda não chegou
+ * resposta" — diferente de "chegou e veio vazio" (`Vazio`) e de "chegou zero"
+ * (o número real). Trocar esqueleto por zero é o que faz um painel de operação
+ * mentir sobre a fila. */
+export function Esqueleto({ className, ...props }: React.ComponentPropsWithoutRef<"div">) {
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        "bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%]",
+        "animate-[brilho_1.4s_ease-in-out_infinite] motion-reduce:animate-none",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 const SIMBOLO_MENSAGEM: Record<"erro" | "aviso" | "sugestao", { caixa: string; simbolo: string; conteudo: string }> = {
   erro: { caixa: "border-critico-borda bg-critico-claro", simbolo: "text-critico", conteudo: "✕" },
   aviso: { caixa: "border-atencao-borda bg-atencao-claro", simbolo: "text-atencao", conteudo: "!" },
-  sugestao: { caixa: "border-acao-borda bg-acao-clara", simbolo: "text-acao", conteudo: "→" },
+  sugestao: { caixa: "border-acao-borda bg-acao-clara", simbolo: "text-acao-texto", conteudo: "→" },
 };
 
 export function ListaMensagens({

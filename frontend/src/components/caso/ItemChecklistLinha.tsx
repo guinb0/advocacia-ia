@@ -33,7 +33,7 @@ const APARENCIA = {
   processando: {
     borda: "var(--acao)",
     fundo: "",
-    marcador: "border-acao-borda bg-acao-clara text-acao",
+    marcador: "border-acao-borda bg-acao-clara text-acao-texto",
     texto: "Lendo",
     simbolo: "◌",
     tom: "info",
@@ -334,7 +334,7 @@ export default function ItemChecklistLinha({
 
               <button
                 type="button"
-                className="flex-1 min-w-[150px] py-[2px] border-none bg-transparent text-acao font-codigo text-xs text-left underline underline-offset-2 [overflow-wrap:anywhere] cursor-pointer hover:text-acao-forte"
+                className="flex-1 min-w-[150px] py-[2px] border-none bg-transparent text-acao-texto font-codigo text-xs text-left underline underline-offset-2 [overflow-wrap:anywhere] cursor-pointer hover:text-acao-forte"
                 onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
                 title="Abrir o documento e os dados extraídos"
               >

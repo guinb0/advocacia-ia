@@ -17,9 +17,10 @@
  * (4 de 9)" diz que está andando; um spinner não diz nada.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { importarRoteiro } from "@/lib/api";
+import { useFocoContido } from "@/lib/foco";
 import type { RoteiroImportado } from "@/lib/types";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
@@ -37,6 +38,19 @@ interface Props {
 }
 
 export default function ImportarRoteiro({ aoImportar, aoFechar }: Props) {
+  const painelRef = useRef<HTMLDivElement>(null);
+  useFocoContido(painelRef, true);
+
+  /* Esc fecha o diálogo. Sem isto, quem abriu sem querer (ou desistiu) só sai
+   * acertando o botão certo — e no celular ele costuma estar sob o dedo. */
+  useEffect(() => {
+    const aoTeclar = (evento: KeyboardEvent) => {
+      if (evento.key === "Escape") aoFechar();
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [aoFechar]);
+
   const entrada = useRef<HTMLInputElement>(null);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [lendo, setLendo] = useState(false);
@@ -70,7 +84,7 @@ export default function ImportarRoteiro({ aoImportar, aoFechar }: Props) {
       aria-modal="true"
       aria-label="Importar roteiro de um documento"
     >
-      <div className="w-full max-w-[620px] bg-papel border border-borda-forte my-8">
+      <div ref={painelRef} className="w-full max-w-[620px] overflow-hidden rounded-cartao bg-papel border border-borda-forte my-8">
         <div className="flex justify-between items-center gap-4 px-4 py-3 border-b border-borda-forte">
           <h2 className="m-0 font-semibold text-[19px] leading-[1.15] font-titulo">
             Roteiro a partir de um documento

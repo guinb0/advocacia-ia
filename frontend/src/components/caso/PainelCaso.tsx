@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import { Aviso, Botao, Esqueleto, Selo } from "@/components/ui/Basicos";
 import {
   CORES_DE_SERIE,
   Faisca,
@@ -381,9 +381,9 @@ export default function PainelCaso({
     return (
       <div className={PAINEL_ESTADO}>
         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-4">
-          <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
-          <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
-          <div className="h-24 rounded-cartao bg-[linear-gradient(90deg,var(--papel-2),var(--papel-3),var(--papel-2))] [background-size:200%_100%] animate-[brilho_1.4s_ease-in-out_infinite]" />
+          <Esqueleto className="h-24 rounded-cartao" />
+          <Esqueleto className="h-24 rounded-cartao" />
+          <Esqueleto className="h-24 rounded-cartao" />
         </div>
         <div className="px-5 py-[60px] text-center text-tinta-3">
           Montando o painel: histórico do caso, casos anteriores da categoria e agente
@@ -730,7 +730,7 @@ export default function PainelCaso({
                 {cronologiaDosFatos.map(({ fato, data }) => (
                   <div key={fato.id} className="relative pb-5 last:pb-0">
                     <span className="absolute -left-[29px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
-                    <time className="block text-xs font-semibold tabular-nums text-acao">
+                    <time className="block text-xs font-semibold tabular-nums text-acao-texto">
                       {dataDoFatoLegivel(data)}
                     </time>
                     <div className="mt-1 text-sm font-semibold text-tinta">

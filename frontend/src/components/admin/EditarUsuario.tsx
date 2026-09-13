@@ -132,7 +132,7 @@ export default function EditarUsuario({
     <Cartao
       titulo={
         <span className="inline-flex min-w-0 items-center gap-2">
-          <Pencil size={18} className="text-acao" aria-hidden />
+          <Pencil size={18} className="text-acao-texto" aria-hidden />
           <span className="truncate">Editar {usuario.nome}</span>
         </span>
       }
@@ -233,7 +233,7 @@ export default function EditarUsuario({
 
         <div className="rounded-campo border border-borda bg-papel-2 p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-tinta">
-            <KeyRound size={16} className="text-acao" aria-hidden />
+            <KeyRound size={16} className="text-acao-texto" aria-hidden />
             Senha
           </div>
           <div className="grid gap-3">

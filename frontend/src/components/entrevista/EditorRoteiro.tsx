@@ -24,9 +24,10 @@
  * está no meio de uma entrevista quer.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { salvarRoteiro } from "@/lib/api";
+import { useFocoContido } from "@/lib/foco";
 import type { Bloco, Pergunta, RoteiroCompleto, TipoResposta } from "@/lib/types";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import { Botao } from "@/components/ui/Basicos";
@@ -108,6 +109,14 @@ interface Props {
 }
 
 export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, aoFechar }: Props) {
+  const painelRef = useRef<HTMLDivElement>(null);
+  useFocoContido(painelRef, true);
+
+  /* Sem Esc de propósito: este diálogo guarda um rascunho e `aoFechar` o
+   * descarta sem perguntar. Enquanto não houver confirmação de "descartar
+   * alterações?", a tecla mais fácil de acertar por engano não pode ser a que
+   * joga fora o roteiro que a pessoa acabou de montar. */
+
   const [rascunho, setRascunho] = useState<RoteiroCompleto>(roteiro);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -183,7 +192,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
       aria-modal="true"
       aria-label="Editar o roteiro"
     >
-      <div className="w-full max-w-[900px] bg-papel border border-borda-forte my-4">
+      <div ref={painelRef} className="w-full max-w-[900px] overflow-hidden rounded-cartao bg-papel border border-borda-forte my-4">
         <div className="sticky top-0 z-10 bg-papel flex justify-between items-center gap-4 flex-wrap px-4 py-3 border-b border-borda-forte">
           <div>
             <h2 className="m-0 font-semibold text-[19px] leading-[1.15] font-titulo">

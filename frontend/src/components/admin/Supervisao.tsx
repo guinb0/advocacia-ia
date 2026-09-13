@@ -19,12 +19,13 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ClipboardCheck, Headphones, UsersRound } from "lucide-react";
+import { ClipboardCheck, Headphones, UsersRound } from "lucide-react";
 
 import AudioDaEntrevista from "@/components/entrevista/AudioDaEntrevista";
 import ChecklistRoteiro from "@/components/admin/ChecklistRoteiro";
 import PainelSupervisao from "@/components/admin/PainelSupervisao";
 import { Aviso, BarraAbas, Botao, BotaoAba, Cartao, Paginacao, Selo, Vazio } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 import {
   ApiError,
   auditarEntrevista,
@@ -48,10 +49,6 @@ const SEM_PENDENCIAS: PendenciasSupervisao = {
   anexadas: 0,
 };
 
-interface Props {
-  onVoltar: () => void;
-}
-
 const ITEM_BASE =
   "flex flex-col gap-[5px] w-full px-[11px] py-[9px] border border-transparent rounded-campo " +
   "[font:inherit] text-left cursor-pointer";
@@ -67,7 +64,7 @@ const SEM_ENTREVISTAS: EntrevistasSupervisaoPaginadas = {
   paginas: 1,
 };
 
-export default function Supervisao({ onVoltar }: Props) {
+export default function Supervisao() {
   const [pessoas, setPessoas] = useState<PessoaSupervisao[]>([]);
   const [totais, setTotais] = useState({ entrevistas: 0, pessoas: 0, sem: 0 });
   const [pendencias, setPendencias] = useState<PendenciasSupervisao>(SEM_PENDENCIAS);
@@ -202,24 +199,11 @@ export default function Supervisao({ onVoltar }: Props) {
 
   return (
     <div className="min-w-0 space-y-5">
-      <Botao variante="texto" onClick={onVoltar} className="inline-flex items-center gap-2">
-        <ArrowLeft size={16} aria-hidden />
-        Voltar para a carteira
-      </Botao>
-
-      <header className="flex min-w-0 flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <p className="mb-2 mt-0 font-ui text-xs font-bold uppercase tracking-[0.12em] text-tinta-3">
-            Gestão operacional
-          </p>
-          <h1 className="mb-[6px] mt-0 text-tinta font-titulo text-xl font-semibold">
-            Supervisão
-          </h1>
-          <p className="m-0 max-w-[66ch] text-tinta-3 leading-[1.5]">
-            Entrevistas por condução, pendências verificáveis e conferência de roteiro.
-            Abra um atendimento para ver checklist, áudio e transcrição quando existirem.
-          </p>
-        </div>
+      <CabecalhoPagina
+        contexto="Gestão operacional"
+        titulo="Supervisão"
+        descricao="Entrevistas por condução, pendências verificáveis e conferência de roteiro. Abra um atendimento para ver checklist, áudio e transcrição quando existirem."
+        acoes={
         <div className="grid min-w-[260px] grid-cols-2 gap-2 max-[560px]:w-full">
           <div className="rounded-campo border border-borda bg-papel-2 px-3 py-2">
             <div className="flex items-center gap-2 text-xs font-semibold text-tinta-3">
@@ -240,7 +224,8 @@ export default function Supervisao({ onVoltar }: Props) {
             </div>
           </div>
         </div>
-      </header>
+        }
+      />
 
       {erro && (
         <Aviso tom="critico" titulo="Não foi possível carregar">
@@ -279,7 +264,7 @@ export default function Supervisao({ onVoltar }: Props) {
         <Cartao
           titulo={
             <span className="inline-flex min-w-0 items-center gap-2">
-              <ClipboardCheck size={18} className="text-acao" aria-hidden />
+              <ClipboardCheck size={18} className="text-acao-texto" aria-hidden />
               <span className="truncate">Atendimentos</span>
             </span>
           }

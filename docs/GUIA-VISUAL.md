@@ -1,5 +1,11 @@
 # Guia visual do front-end (Forense)
 
+> Atualização de 13/09/2026: a identidade vigente é LegalTech Navy + Gold.
+> Consulte `../UI_REFACTOR_HANDOFF.md` e `frontend/src/app/globals.css` para os valores
+> atuais e a cobertura da migração. As medições de contraste da revisão anterior
+> abaixo não certificam os novos valores. Os contratos funcionais dos componentes
+> (especialmente BotaoProcesso, estados e permissões) continuam válidos.
+
 Este documento descreve o sistema visual do `frontend/`, adotado em substituição
 à antiga direção "AUTOS" (fundo quase preto, filetes duplos, carimbos girados,
 texto em caixa alta de 9–11px). A troca não foi estética: usuários sem
@@ -15,8 +21,8 @@ Três regras sustentam todas as decisões abaixo:
 1. **Hierarquia por peso e espaço, não por linha divisória.** Cartão branco
    com sombra discreta sobre fundo cinza-claro (`--fundo` / `--papel`).
    Divisórias (`--borda`) só separam itens de uma mesma lista.
-2. **Uma única cor de ação.** Azul-marinho (`--acao`) é a cor de tudo o que se
-   clica como ação principal. Vermelho, âmbar e verde ficam reservados a
+2. **Uma única cor de ação principal.** Gold (`--marca-ouro`) com texto Navy
+   (`--primario-texto`) identifica o CTA. Navy (`--acao`) permanece em links e informação. Vermelho, âmbar e verde ficam reservados a
    **estado** (problema / conferir / pronto) e nunca aparecem como cor de
    botão comum — isso devolve à cor o seu significado.
 3. **Cor nunca sozinha.** Todo estado (selo, aviso, marcador de item) traz
@@ -83,8 +89,8 @@ linhas de apelido que só ele usava (confira com uma busca antes).
 Três famílias, injetadas via `next/font` em `app/layout.tsx` e expostas como
 `--fonte-serif` / `--fonte-sans` / `--fonte-mono` no `<html>`:
 
-- **Newsreader** (serifa) — `--fonte-titulo`. Títulos de página e de cartão.
-- **Archivo** (sem serifa) — `--fonte-ui`. Todo o resto: corpo, rótulo, botão.
+- **Newsreader** (serifa) — disponível para branding, sem uso padrão nos títulos operacionais.
+- **Archivo** (sem serifa) — `--fonte-ui` e `--fonte-titulo`. Títulos operacionais, corpo, rótulos e botões.
 - **IBM Plex Mono** — `--fonte-codigo`. Valores extraídos, código, número
   tabular (com `font-variant-numeric: tabular-nums`).
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FolderOpen, Trash2 } from "lucide-react";
+import { ChevronDown, FolderOpen, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import {
@@ -22,6 +22,10 @@ interface Props {
   onAbrir: (casoId: string) => void;
   onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
+  /* Contador, não booleano: cada clique em "Novo caso" na Mesa do dia é um
+   * pedido novo, inclusive o segundo seguido. Um booleano só dispararia uma
+   * vez e o atalho passaria a não fazer nada no celular. */
+  pedidoNovoCaso?: number;
 }
 
 function normalizarFiltro(valor: string): string {
@@ -40,11 +44,11 @@ export default function ListaCasos({
   onAbrir,
   onCriar,
   onExcluir,
+  pedidoNovoCaso = 0,
 }: Props) {
   const [cliente, setCliente] = useState("");
   const [telefone, setTelefone] = useState("");
   const [categoria, setCategoria] = useState("");
-  const [filtroCliente, setFiltroCliente] = useState("");
   const [criando, setCriando] = useState(false);
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -57,6 +61,10 @@ export default function ListaCasos({
   const [erroSugestao, setErroSugestao] = useState<string | null>(null);
   const inputSugestaoRef = useRef<HTMLInputElement>(null);
   const [tentouCriar, setTentouCriar] = useState(false);
+  /* Só vale abaixo de 980px, onde as duas colunas viram uma. Acima disso o
+   * cadastro é a coluna fixa da esquerda e nunca fecha. */
+  const [formularioAberto, setFormularioAberto] = useState(false);
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
    * de 5 em 5 só para exibição — nada é buscado por página. `pagina` pode ficar
    * maior que o total depois de uma exclusão; `paginaAtual` reancora. */
@@ -68,31 +76,6 @@ export default function ListaCasos({
   const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
   const telefoneVazio = !telefonePreenchido(telefone);
-  const filtroNormalizado = normalizarFiltro(filtroCliente);
-  const casosOrdenados = useMemo(
-    () =>
-      [...casos].sort((a, b) => {
-        const dataA = Date.parse(a.criado_em || "");
-        const dataB = Date.parse(b.criado_em || "");
-        if (Number.isNaN(dataA) && Number.isNaN(dataB)) return a.cliente.localeCompare(b.cliente, "pt-BR");
-        if (Number.isNaN(dataA)) return 1;
-        if (Number.isNaN(dataB)) return -1;
-        return dataB - dataA;
-      }),
-    [casos],
-  );
-  const casosDoCliente = useMemo(
-    () =>
-      filtroNormalizado
-        ? casosOrdenados.filter((caso) => normalizarFiltro(caso.cliente).includes(filtroNormalizado))
-        : casosOrdenados,
-    [casosOrdenados, filtroNormalizado],
-  );
-
-  useEffect(() => {
-    setPagina(1);
-  }, [filtroNormalizado]);
-
   async function criar(evento: React.FormEvent) {
     evento.preventDefault();
     if (!cliente.trim() || !categoriaSelecionada) return;
@@ -115,12 +98,12 @@ export default function ListaCasos({
     categorias.find((c) => c.codigo === codigo)?.nome ?? codigo;
 
   const casosFiltrados = useMemo(() => {
-    const termo = busca.trim().toLocaleLowerCase("pt-BR").replace(/\D/g, "") || busca.trim().toLocaleLowerCase("pt-BR");
+    const termo = normalizarFiltro(busca);
     const somenteNumeros = busca.trim() && /^\D*\d[\d.\-/\s]*$/.test(busca);
-    return casosDoCliente
+    return casos
       .filter((caso) => {
-        const texto = `${caso.cliente} ${caso.id} ${caso.observacao ?? ""}`.toLocaleLowerCase("pt-BR");
-        const corresponde = !busca.trim() || (somenteNumeros ? texto.replace(/\D/g, "").includes(termo) : texto.includes(termo));
+        const texto = normalizarFiltro(`${caso.cliente} ${caso.id} ${caso.observacao ?? ""}`);
+        const corresponde = !busca.trim() || (somenteNumeros ? texto.replace(/\D/g, "").includes(termo.replace(/\D/g, "")) : texto.includes(termo));
         const dia = (caso.criado_em ?? "").slice(0, 10);
         return corresponde && (!tipoFiltro || caso.categoria === tipoFiltro)
           && (!dataInicial || dia >= dataInicial) && (!dataFinal || dia <= dataFinal);
@@ -130,9 +113,24 @@ export default function ListaCasos({
         : ordem === "antigos"
           ? a.criado_em.localeCompare(b.criado_em)
           : b.criado_em.localeCompare(a.criado_em));
-  }, [casosDoCliente, busca, tipoFiltro, dataInicial, dataFinal, ordem]);
+  }, [casos, busca, tipoFiltro, dataInicial, dataFinal, ordem]);
 
   useEffect(() => setPagina(1), [busca, tipoFiltro, dataInicial, dataFinal, ordem]);
+
+  useEffect(() => {
+    if (pedidoNovoCaso) setFormularioAberto(true);
+  }, [pedidoNovoCaso]);
+
+  /* Abrir o cadastro é sempre um pedido explícito. Levar o foco ao primeiro
+   * campo evita que o operador role a tela procurando onde digitar — e é o que
+   * faz o atalho da Mesa do dia continuar valendo no celular. */
+  useEffect(() => {
+    if (!formularioAberto) return;
+    const campo = document.getElementById("cliente");
+    if (!(campo instanceof HTMLInputElement)) return;
+    campo.scrollIntoView({ block: "center", behavior: "smooth" });
+    campo.focus({ preventScroll: true });
+  }, [formularioAberto]);
 
   async function sugerirPelosDocumentos(arquivos: File[]) {
     if (!arquivos.length) return;
@@ -156,16 +154,39 @@ export default function ListaCasos({
     }
   }
 
+  /* Só o que estreita a lista conta como filtro: a ordenação reordena, não
+   * esconde, e a busca continua visível mesmo com o bloco recolhido. */
+  const filtrosAtivos = [tipoFiltro, dataInicial, dataFinal].filter(Boolean).length;
+  const filtrosOcultos = filtrosAbertos ? "" : "max-sm:hidden";
+
   const totalPaginas = Math.max(1, Math.ceil(casosFiltrados.length / POR_PAGINA));
   const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
   const casosVisiveis = casosFiltrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(300px,400px)_minmax(0,1fr)] items-start gap-6 max-[980px]:grid-cols-1">
+    <div className="grid min-w-0 grid-cols-[minmax(280px,340px)_minmax(0,1fr)] items-start gap-6 max-[980px]:grid-cols-1">
+      {/* No estreito, o formulário empurrava a lista inteira para baixo da
+        * dobra: quem vinha "ver meus casos" rolava um cadastro completo antes
+        * de achar qualquer caso. Aqui ele começa fechado atrás de um botão; no
+        * layout de duas colunas nada muda. */}
+      <Botao
+        type="button"
+        variante="primario"
+        bloco
+        className="min-[980px]:hidden"
+        aria-expanded={formularioAberto}
+        aria-controls="formulario-novo-caso"
+        onClick={() => setFormularioAberto((aberto) => !aberto)}
+      >
+        <Plus size={16} aria-hidden />
+        {formularioAberto ? "Fechar cadastro" : "Novo caso"}
+      </Botao>
+
       <Cartao
+        id="formulario-novo-caso"
         titulo="Novo caso"
         subtitulo="Escolher o tipo de ação é o que monta o checklist de documentos do cliente."
-        className="min-w-0 lg:sticky lg:top-6"
+        className={`min-w-0 lg:sticky lg:top-6 ${formularioAberto ? "" : "max-[980px]:hidden"}`}
       >
         <form onSubmit={criar}>
           <div className="mb-4">
@@ -346,7 +367,7 @@ export default function ListaCasos({
         subtitulo={
           casos.length === 0
             ? "Nenhum caso ainda."
-            : `${casosFiltrados.length} de ${casos.length} ${casos.length === 1 ? "caso" : "casos"} — mais recentes primeiro.`
+            : `${casosFiltrados.length} de ${casos.length} ${casos.length === 1 ? "caso" : "casos"}.`
         }
       >
         {erro && (
@@ -357,41 +378,83 @@ export default function ListaCasos({
           </div>
         )}
 
-        <div className="mb-4">
-          <RotuloCampo htmlFor="filtro-casos-cliente">Filtrar por nome do caso</RotuloCampo>
-          <Campo
-            id="filtro-casos-cliente"
-            value={filtroCliente}
-            onChange={(e) => setFiltroCliente(e.target.value)}
-            placeholder="Digite o nome do cliente"
-            autoComplete="off"
-          />
-        </div>
+          {/* A busca fica sempre à vista. O resto dos filtros só ocupa a tela
+            * estreita quando pedido: empilhados, eles somavam mais de uma tela
+            * de celular antes do primeiro caso da lista. Em `sm` para cima tudo
+            * aparece de uma vez, como antes. O contador no botão evita o pior
+            * caso do recolhido — filtrar sem lembrar que filtrou. */}
+          <div className="mb-4 grid gap-3 rounded-campo border border-borda bg-papel-2 p-3 sm:grid-cols-2 2xl:grid-cols-4">
+            <Campo
+              className="sm:col-span-2"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar por nome, CPF ou ID"
+              aria-label="Buscar casos"
+            />
+            <Botao
+              type="button"
+              variante="secundario"
+              className="min-h-[42px] justify-between sm:hidden"
+              aria-expanded={filtrosAbertos}
+              aria-controls="filtros-de-casos"
+              onClick={() => setFiltrosAbertos((aberto) => !aberto)}
+            >
+              <span className="inline-flex items-center gap-2">
+                <SlidersHorizontal size={15} aria-hidden />
+                Filtros
+                {filtrosAtivos > 0 && <Selo tom="info">{filtrosAtivos}</Selo>}
+              </span>
+              <ChevronDown size={15} aria-hidden className={filtrosAbertos ? "rotate-180" : ""} />
+            </Botao>
+            <CampoSeletor
+              id="filtros-de-casos"
+              className={filtrosOcultos}
+              value={tipoFiltro}
+              onChange={(e) => setTipoFiltro(e.target.value)}
+              aria-label="Filtrar por tipo de caso"
+            >
+              <option value="">Todos os tipos</option>
+              {categorias.map((c) => <option key={c.codigo} value={c.codigo}>{c.nome}</option>)}
+            </CampoSeletor>
+            <CampoSeletor
+              className={filtrosOcultos}
+              value={ordem}
+              onChange={(e) => setOrdem(e.target.value as typeof ordem)}
+              aria-label="Ordenar casos"
+            >
+              <option value="recentes">Mais recentes</option>
+              <option value="antigos">Mais antigos</option>
+              <option value="nome">Nome A–Z</option>
+            </CampoSeletor>
+            <label className={`text-xs text-tinta-3 ${filtrosOcultos}`}>
+              De
+              <Campo type="date" className="mt-1 px-2 text-sm" value={dataInicial} onChange={(e) => setDataInicial(e.target.value)} />
+            </label>
+            <label className={`text-xs text-tinta-3 ${filtrosOcultos}`}>
+              Até
+              <Campo type="date" className="mt-1 px-2 text-sm" value={dataFinal} onChange={(e) => setDataFinal(e.target.value)} />
+            </label>
+            <Botao
+              type="button"
+              variante="secundario"
+              className={`min-h-[42px] ${filtrosOcultos}`}
+              onClick={() => { setBusca(""); setTipoFiltro(""); setDataInicial(""); setDataFinal(""); setOrdem("recentes"); }}
+            >
+              Limpar filtros
+            </Botao>
+            <p className="m-0 self-center text-xs text-tinta-3">{casosFiltrados.length} resultado(s)</p>
+          </div>
 
         {carregando && casos.length === 0 ? (
           <Vazio>Carregando…</Vazio>
         ) : casos.length === 0 ? (
-          <Vazio>Crie o primeiro caso ao lado para começar a cobrar os documentos do cliente.</Vazio>
+          <Vazio>Nenhum caso cadastrado ainda. Use “Novo caso” para montar o checklist de documentos do cliente.</Vazio>
         ) : casosFiltrados.length === 0 ? (
-          <Vazio>Nenhum caso encontrado com esse nome.</Vazio>
+          <Vazio>Nenhum caso corresponde aos filtros. Altere a busca ou use “Limpar filtros”.</Vazio>
         ) : (
           <>
-          <div className="mb-4 grid gap-3 rounded-campo border border-borda bg-papel-2 p-3 sm:grid-cols-2 xl:grid-cols-5">
-            <input className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm xl:col-span-2" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome, CPF ou ID" aria-label="Buscar casos" />
-            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value)} aria-label="Filtrar por tipo de caso">
-              <option value="">Todos os tipos</option>
-              {categorias.map((c) => <option key={c.codigo} value={c.codigo}>{c.nome}</option>)}
-            </select>
-            <select className="min-h-10 rounded-campo border border-borda-forte bg-papel px-3 text-sm text-tinta" value={ordem} onChange={(e) => setOrdem(e.target.value as typeof ordem)} aria-label="Ordenar casos">
-              <option value="recentes">Mais recentes</option><option value="antigos">Mais antigos</option><option value="nome">Nome A–Z</option>
-            </select>
-            <button type="button" className="min-h-10 rounded-campo border border-borda-forte px-3 text-sm font-semibold" onClick={() => { setBusca(""); setTipoFiltro(""); setDataInicial(""); setDataFinal(""); setOrdem("recentes"); }}>Limpar filtros</button>
-            <label className="text-xs text-tinta-3">De<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataInicial} onChange={(e) => setDataInicial(e.target.value)} /></label>
-            <label className="text-xs text-tinta-3">Até<input type="date" className="mt-1 block min-h-10 w-full rounded-campo border border-borda-forte bg-papel px-2 text-sm text-tinta" value={dataFinal} onChange={(e) => setDataFinal(e.target.value)} /></label>
-            <p className="m-0 self-end text-xs text-tinta-3 sm:col-span-2">{casosFiltrados.length} resultado(s)</p>
-          </div>
           <div className="min-w-0 overflow-hidden rounded-campo border border-borda">
-            <div className="hidden grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_136px] gap-3 border-b border-borda bg-papel-2 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:grid">
+            <div className="hidden grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_136px] gap-3 border-b border-borda bg-papel-2 px-4 py-3 text-xs font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:grid">
               <span>Cliente</span>
               <span>Tipo de ação</span>
               <span>Arquivos</span>
@@ -421,7 +484,7 @@ export default function ListaCasos({
                       </button>
 
                       <div className="min-w-0">
-                        <span className="mb-1 block text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:hidden">
+                        <span className="mb-1 block text-xs font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:hidden">
                           Tipo de ação
                         </span>
                         <span className="block truncate text-sm text-tinta-2" title={categoriaNome}>
@@ -430,7 +493,7 @@ export default function ListaCasos({
                       </div>
 
                       <div className="min-w-0">
-                        <span className="mb-1 block text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:hidden">
+                        <span className="mb-1 block text-xs font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:hidden">
                           Arquivos
                         </span>
                         <Selo tom={totalEntregas > 0 ? "info" : "neutro"}>
@@ -441,7 +504,7 @@ export default function ListaCasos({
                       <div className="flex min-w-0 items-center justify-start gap-2 min-[780px]:justify-end">
                         <button
                           type="button"
-                          className={`${ACAO_ICONE} border-borda-campo bg-papel text-acao hover:border-acao hover:bg-acao-clara`}
+                          className={`${ACAO_ICONE} border-borda-campo bg-papel text-acao-texto hover:border-acao hover:bg-acao-clara`}
                           onClick={() => onAbrir(caso.id)}
                           title="Abrir caso"
                           aria-label={`Abrir caso de ${caso.cliente}`}

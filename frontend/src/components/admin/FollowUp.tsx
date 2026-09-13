@@ -43,6 +43,7 @@ import {
   Selo,
   Vazio,
 } from "@/components/ui/Basicos";
+import CabecalhoPagina from "@/components/ui/CabecalhoPagina";
 
 /* "ligados" existe porque a fila os ESCONDIA.
  *
@@ -178,24 +179,18 @@ export default function FollowUp() {
 
   return (
     <div className="grid min-w-0 gap-5">
-      <header className="flex min-w-0 flex-wrap items-start justify-between gap-5">
-        <div className="min-w-0 max-w-[62ch]">
-          <h1 className="m-0 font-titulo text-[1.75rem] font-semibold leading-[1.15] text-tinta">
-            Documentos pendentes
-          </h1>
-          <p className="mt-2 mb-0 text-sm leading-[1.55] text-tinta-3">
-            Fila de trabalho dos clientes com documento obrigatório em falta. A prioridade
-            sobe quando o follow-up por WhatsApp não está resolvendo.
-          </p>
-        </div>
-        {dados && (
+      <CabecalhoPagina
+        contexto="Atendimento"
+        titulo="Documentos pendentes"
+        descricao="Fila de trabalho dos clientes com documento obrigatório em falta. A prioridade sobe quando o follow-up por WhatsApp não está resolvendo."
+        acoes={dados ? (
           <div className="flex flex-none flex-wrap gap-2">
             <Indicador rotulo="Com pendência" valor={dados.total} />
             <Indicador rotulo="Precisam ligar" valor={dados.precisam_ligar} destaque />
             <Indicador rotulo="Dias parado (méd.)" valor={diasParadoMedio} />
           </div>
-        )}
-      </header>
+        ) : undefined}
+      />
 
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <BarraAbas role="tablist" aria-label="Filtro da fila">

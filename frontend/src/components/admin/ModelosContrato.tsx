@@ -72,7 +72,7 @@ export default function ModelosContrato() {
       {carregando ? <Vazio>Carregando modelos…</Vazio> : (
         <div className="grid gap-4 lg:grid-cols-3">
           {modelos.map((modelo) => (
-            <Cartao key={modelo.codigo} className="flex min-w-0 flex-col" titulo={<span className="inline-flex items-center gap-2"><FileText size={18} className="text-acao" />{modelo.rotulo}</span>}>
+            <Cartao key={modelo.codigo} className="flex min-w-0 flex-col" titulo={<span className="inline-flex items-center gap-2"><FileText size={18} className="text-acao-texto" />{modelo.rotulo}</span>}>
               <div className="flex flex-1 flex-col gap-3 text-sm">
                 <div><span className="block text-xs font-semibold text-tinta-3">Arquivo em uso</span><strong className="mt-1 block break-words text-tinta">{modelo.arquivo || "Nenhum modelo disponível"}</strong></div>
                 <div className="flex flex-wrap gap-2"><Selo tom={modelo.disponivel ? "ok" : "critico"} simbolo={modelo.disponivel ? "✓" : "!"}>{modelo.disponivel ? "disponível" : "pendente"}</Selo><Selo tom="neutro">{modelo.origem === "banco" ? "enviado pelo escritório" : "padrão local"}</Selo></div>
