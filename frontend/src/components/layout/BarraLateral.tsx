@@ -63,6 +63,7 @@ import {
 import { podeAbrirTela } from "@/app/home/home.model";
 import type { Tela } from "@/app/home/home.model";
 import { useFocoContido } from "@/lib/foco";
+import MarcaForense from "@/components/ui/MarcaForense";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 
 export interface ModuloNavegacao {
@@ -450,17 +451,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
           </button>
         </div>
         <div className="hidden px-5 pb-4 pt-5 lg:block">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-[14px] bg-white/[0.10] text-marca-ouro shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 ring-white/[0.14]">
-              <FileText size={20} aria-hidden />
-            </span>
-            <div className="min-w-0">
-              <span className="block truncate font-titulo text-xl font-bold leading-none text-nav-texto">Forense</span>
-              <span className="mt-1 block truncate text-xs font-medium text-nav-texto-3">
-                Escritório jurídico
-              </span>
-            </div>
-          </div>
+          <MarcaForense superficie="navy" />
         </div>
         <div className="mx-4 mb-3 flex items-center gap-2 rounded-campo border border-nav-borda bg-nav-fundo-hover px-3">
           <Search size={16} className="shrink-0 text-nav-texto-3" aria-hidden />

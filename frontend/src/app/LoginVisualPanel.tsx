@@ -1,6 +1,6 @@
 "use client";
 
-import { FileCheck2, FileText, Scale, ShieldCheck } from "lucide-react";
+import { FileCheck2, FileText, Fingerprint, ShieldCheck } from "lucide-react";
 
 type EntityProps = {
   children: React.ReactNode;
@@ -43,8 +43,9 @@ export default function LoginVisualPanel() {
 
       <div className="relative z-10 flex h-full flex-col">
         <div className="flex items-center gap-3">
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#567589] bg-[#2e4b5e] text-[#dbeaf0] shadow-[0_10px_22px_rgba(7,20,29,0.24)]">
-            <Scale size={20} aria-hidden />
+          <span className="inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-[#567589] bg-[#2e4b5e] p-1 shadow-[0_10px_22px_rgba(7,20,29,0.24)]">
+            {/* eslint-disable-next-line @next/next/no-img-element -- ícone de 40px, sem benefício do otimizador */}
+            <img src="/logo-forense-icone.png" alt="" className="h-full w-full object-contain" />
           </span>
           <div>
             <span className="block text-base font-bold leading-none text-[#f2f7f9]">Forense</span>
@@ -84,7 +85,7 @@ export default function LoginVisualPanel() {
             <div className="absolute -right-10 top-[128px] h-11 w-3.5 -rotate-45 rounded-full bg-[#88b4c7]" />
           </div>
 
-          <Entity className="left-0 top-12 h-[70px] w-[80px]"><Scale size={28} /></Entity>
+          <Entity className="left-0 top-12 h-[70px] w-[80px]"><Fingerprint size={28} /></Entity>
           <Entity className="right-2 top-12 h-[70px] w-[80px]"><FileCheck2 size={28} /></Entity>
           <Entity className="bottom-2 left-12 h-[67px] w-[80px]"><ShieldCheck size={27} /></Entity>
           <Entity className="bottom-2 right-14 h-[67px] w-[80px]"><FileText size={27} /></Entity>

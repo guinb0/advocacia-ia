@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowLeft, Eye, EyeOff, FileText, Loader2, MailCheck } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Loader2, MailCheck } from "lucide-react";
 
 import ChangePasswordModal from "./ChangePasswordModal";
 import LoginVisualPanel from "./LoginVisualPanel";
 import TurnstileWidget from "./TurnstileWidget";
 import type { usePageModel } from "./page.model";
+import MarcaForense from "@/components/ui/MarcaForense";
 
 type LoginPageProps = ReturnType<typeof usePageModel>;
 
@@ -78,17 +79,7 @@ export function LoginPage(props: LoginPageProps) {
         <section className="mx-auto flex min-h-[620px] w-full flex-col justify-center bg-papel p-7 text-tinta-2 sm:p-10 lg:min-h-0 lg:rounded-r-[28px] lg:p-12">
           <div className="mx-auto w-full max-w-[350px] motion-safe:animate-[loginFloat_0.7s_ease-out_1]">
             <div className="mb-10">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-nav-borda bg-nav-fundo text-marca-ouro shadow-[0_10px_22px_rgba(7,20,29,0.24)]">
-                  <FileText size={20} aria-hidden />
-                </span>
-                <div className="min-w-0">
-                  <span className="block truncate font-titulo text-xl leading-none text-tinta">Forense</span>
-                  <span className="mt-1 block text-[11px] font-semibold uppercase tracking-[0.15em] text-tinta-3">
-                    Escritório jurídico
-                  </span>
-                </div>
-              </div>
+              <MarcaForense superficie="papel" />
             </div>
 
             {/* O formulário de senha e o do código NÃO ficam na mesma tela ao
