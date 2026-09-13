@@ -275,6 +275,55 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     }
   }
 
+  /* Edição de uma peça anexa — a segunda petição sugerida em diante só dava
+   * para baixar, não para editar como a inicial (a API não sabia distinguir
+   * "petição inicial" de "peça anexa" nas rotas de leitura/rascunho). Reaproveita
+   * `buscarPeticao`/`salvarRascunhoPeticao`, que já são genéricas por `pecaId`. */
+  const [anexaAberta, setAnexaAberta] = useState<string | null>(null);
+  const [peticaoAnexa, setPeticaoAnexa] = useState<Peticao | null>(null);
+  const [edicaoAnexa, setEdicaoAnexa] = useState<Record<string, string>>({});
+  const [carregandoAnexa, setCarregandoAnexa] = useState(false);
+  const [salvandoAnexa, setSalvandoAnexa] = useState(false);
+
+  async function alternarEdicaoAnexa(peca: PecaAnexa) {
+    if (anexaAberta === peca.id) {
+      setAnexaAberta(null);
+      setPeticaoAnexa(null);
+      return;
+    }
+    setErroAnexa(null);
+    setAnexaAberta(peca.id);
+    setCarregandoAnexa(true);
+    try {
+      const dados = await buscarPeticao(casoId, peca.id);
+      setPeticaoAnexa(dados);
+      setEdicaoAnexa(Object.fromEntries((dados.sections ?? []).map((s) => [s.code, s.content])));
+    } catch (e) {
+      setErroAnexa(e instanceof Error ? e.message : "Não foi possível abrir esta peça para edição.");
+      setAnexaAberta(null);
+    } finally {
+      setCarregandoAnexa(false);
+    }
+  }
+
+  async function salvarEdicaoAnexa() {
+    if (!peticaoAnexa) return;
+    setErroAnexa(null);
+    setSalvandoAnexa(true);
+    try {
+      const secoes = (peticaoAnexa.sections ?? []).map((s) => ({
+        code: s.code,
+        content: edicaoAnexa[s.code] ?? s.content,
+      }));
+      const atualizada = await salvarRascunhoPeticao(casoId, peticaoAnexa.id, secoes);
+      setPeticaoAnexa(atualizada);
+      await recarregarAnexas();
+    } catch (e) {
+      setErroAnexa(e instanceof Error ? e.message : "Não foi possível salvar esta peça.");
+    } finally {
+      setSalvandoAnexa(false);
+    }
+  }
 
   const prep = estado?.preparacao;
 
@@ -580,6 +629,15 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <BotaoProcesso
+                          variante={anexaAberta === peca.id ? "secundario" : "primario"}
+                          pequeno
+                          processando={carregandoAnexa && anexaAberta === peca.id}
+                          textoProcessando="Abrindo…"
+                          onClick={() => alternarEdicaoAnexa(peca)}
+                        >
+                          {anexaAberta === peca.id ? "Fechar edição" : "Editar"}
+                        </BotaoProcesso>
+                        <BotaoProcesso
                           variante="secundario"
                           pequeno
                           processando={baixandoAnexa === `${peca.id}:docx`}
@@ -603,6 +661,38 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                       <p className="mb-0 mt-2 text-xs text-atencao">
                         Pendente nesta peça: {peca.pendencias.join("; ")}
                       </p>
+                    )}
+
+                    {anexaAberta === peca.id && peticaoAnexa && (
+                      <div className="mt-3 grid gap-3 border-t border-borda pt-3">
+                        {(peticaoAnexa.sections ?? []).map((secao: SecaoPeticao) => (
+                          <div key={secao.code} className="grid gap-1">
+                            <RotuloCampo htmlFor={`anexa-${peca.id}-${secao.code}`}>
+                              {secao.label || secao.code}
+                            </RotuloCampo>
+                            <Campo
+                              area
+                              id={`anexa-${peca.id}-${secao.code}`}
+                              value={edicaoAnexa[secao.code] ?? secao.content}
+                              onChange={(e) =>
+                                setEdicaoAnexa((atual) => ({ ...atual, [secao.code]: e.target.value }))
+                              }
+                              rows={8}
+                            />
+                          </div>
+                        ))}
+                        <div>
+                          <BotaoProcesso
+                            variante="secundario"
+                            pequeno
+                            processando={salvandoAnexa}
+                            textoProcessando="Salvando…"
+                            onClick={salvarEdicaoAnexa}
+                          >
+                            Salvar edição
+                          </BotaoProcesso>
+                        </div>
+                      </div>
                     )}
                   </li>
                 ))}
