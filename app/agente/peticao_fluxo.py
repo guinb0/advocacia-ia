@@ -18,6 +18,7 @@ __all__ = [
     "gerar_completo",
     "gerar_peticao",
     "historico_de_peticao",
+    "revisar_peca_anexa",
     "revisar_peticao",
     "transcricao",
 ]
@@ -142,6 +143,16 @@ def revisar_peticao(
         "peticao": peticao_local.para_api(dados),
         "criticas": peticao_local.historico_de_criticas(caso_id),
     }
+
+
+def revisar_peca_anexa(peca_id: str, *, prompt: str) -> dict[str, Any]:
+    """Revisão por prompt de uma peça anexa — mesmo recurso da petição inicial,
+    sem versão/histórico (ver `peticao_local.revisar_anexa_com_prompt`)."""
+    try:
+        dados = peticao_local.revisar_anexa_com_prompt(peca_id, prompt_critica=prompt)
+    except peticao_local.ErroPeticao as erro:
+        raise _erro_peticao(erro) from erro
+    return {"peticao": dados, "criticas": []}
 
 
 def historico_de_peticao(caso_id: str) -> dict[str, Any]:

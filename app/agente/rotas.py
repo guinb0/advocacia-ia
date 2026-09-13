@@ -717,20 +717,30 @@ def revisar_peticao_com_prompt(
     pode gerar e aprovar a petição já pode pedir uma revisão por prompt; não
     existe papel "gestor" separado no sistema hoje.
     """
-    if not _peca_local(peca_ref):
-        # Ainda não existe equivalente no `ia-juridica` — melhor recusar
-        # explicando do que fingir que a revisão aconteceu.
-        raise HTTPException(
-            501, "Revisão por prompt ainda não é suportada nas petições do agente."
-        )
-    try:
-        return peticao_fluxo.revisar_peticao(
-            caso_id, prompt=prompt, usuario=usuario.nome, generaliza=generaliza
-        )
-    except peticao_local.ErroPeticao as erro:
-        raise HTTPException(status_code=404, detail=str(erro)) from erro
-    except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+    if _peca_local(peca_ref):
+        try:
+            return peticao_fluxo.revisar_peticao(
+                caso_id, prompt=prompt, usuario=usuario.nome, generaliza=generaliza
+            )
+        # `revisar_peticao` já converte `ErroPeticao` em `ErroDoAgente` (ver
+        # `peticao_fluxo._erro_peticao`) — quem chega aqui como `ErroPeticao`
+        # pura é defensivo; o caminho real é `ErroDoAgente`.
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
+        except ErroDoAgente as erro:
+            raise _erro(erro) from erro
+    if _peca_anexa(caso_id, peca_ref):
+        try:
+            return peticao_fluxo.revisar_peca_anexa(peca_ref, prompt=prompt)
+        except peticao_local.ErroPeticao as erro:
+            raise HTTPException(status_code=404, detail=str(erro)) from erro
+        except ErroDoAgente as erro:
+            raise _erro(erro) from erro
+    # Ainda não existe equivalente no `ia-juridica` — melhor recusar
+    # explicando do que fingir que a revisão aconteceu.
+    raise HTTPException(
+        501, "Revisão por prompt ainda não é suportada nas petições do agente."
+    )
 
 
 @roteador.get("/casos/{caso_id}/peticao/{peca_ref}/historico")
