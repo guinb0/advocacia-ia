@@ -305,11 +305,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 
       {prep && (
         <div className="grid grid-cols-2 gap-2 text-xs text-tinta-3">
-          <div className="border border-borda p-2 bg-papel-2">
+          <div className="rounded-campo border border-borda p-2 bg-papel-2">
             <strong className="block text-tinta-2">{prep.documentos_lidos ?? 0}</strong>
             docs com texto OCR
           </div>
-          <div className="border border-borda p-2 bg-papel-2">
+          <div className="rounded-campo border border-borda p-2 bg-papel-2">
             <strong className="block text-tinta-2">
               {prep.checklist_entregues ?? 0}/{prep.checklist_obrigatorios ?? "?"}
             </strong>
@@ -335,7 +335,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       )}
 
       {peticao && (
-        <section className="grid gap-3 border border-borda p-4 bg-papel-2">
+        <section className="grid gap-3 rounded-campo border border-borda p-4 bg-papel-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold m-0">
               Petição inicial — versão {peticao.version}
@@ -425,7 +425,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
             * o advogado abria a tela num campo em branco e precisava rolar para
             * descobrir o que iria alterar. */}
-          <div className="grid gap-2 border border-borda-forte bg-papel p-3">
+          <div className="grid gap-2 rounded-campo border border-borda-forte bg-papel p-3">
             <RotuloCampo htmlFor="prompt-revisao">
               Pedir uma revisão por prompt
             </RotuloCampo>
@@ -512,7 +512,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               {sugestoes.map((acao, indice) => {
                 const jaGerada = anexas.find((p) => p.titulo === acao.titulo);
                 return (
-                  <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
+                  <li key={`${acao.titulo}-${indice}`} className="rounded-campo border border-borda bg-papel p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <strong className="text-sm text-tinta">{acao.titulo}</strong>
                       <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao-texto">
@@ -566,7 +566,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               </h4>
               <ul className="m-0 grid list-none gap-2 p-0">
                 {anexas.map((peca) => (
-                  <li key={peca.id} className="border border-borda bg-papel p-3">
+                  <li key={peca.id} className="rounded-campo border border-borda bg-papel p-3">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
                         <strong className="text-sm text-tinta">{peca.titulo}</strong>
@@ -678,7 +678,7 @@ function HistoricoDeCriticas({
   onAlternar: () => void;
 }) {
   return (
-    <div className="grid gap-2 border border-borda p-3 bg-papel">
+    <div className="grid gap-2 rounded-campo border border-borda p-3 bg-papel">
       <button
         type="button"
         className="flex items-center justify-between gap-2 text-left text-xs font-semibold text-tinta-3 uppercase tracking-wide bg-transparent border-0 p-0 cursor-pointer"
@@ -737,7 +737,7 @@ function ModuloJurimetria({
 }) {
   if (!dados.disponivel) {
     return (
-      <section className="grid gap-3 border border-borda p-4 bg-papel">
+      <section className="grid gap-3 rounded-campo border border-borda p-4 bg-papel">
         <h3 className="text-sm font-semibold m-0">Jurimetria da minuta</h3>
         <Aviso tom="atencao">{dados.aviso || "Base de processos indisponível."}</Aviso>
       </section>
@@ -748,7 +748,7 @@ function ModuloJurimetria({
   const merito = estatisticas?.desfechos_merito;
   const similaridade = estatisticas?.similaridade_amostra;
   return (
-    <section className="grid gap-4 border border-borda p-4 bg-papel">
+    <section className="grid gap-4 rounded-campo border border-borda p-4 bg-papel">
       <header className="grid gap-1">
         <h3 className="text-sm font-semibold m-0">Jurimetria da minuta</h3>
         <p className={SUB}>
@@ -764,17 +764,17 @@ function ModuloJurimetria({
 
       {estatisticas && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-tinta-3">
-          <div className="border border-borda p-2 bg-papel-2">
+          <div className="rounded-campo border border-borda p-2 bg-papel-2">
             <strong className="block text-tinta-2">{estatisticas.processos_analisados}</strong>
             processos semelhantes
           </div>
-          <div className="border border-borda p-2 bg-papel-2">
+          <div className="rounded-campo border border-borda p-2 bg-papel-2">
             <strong className="block text-tinta-2">
               {merito ? `${merito.favoraveis}/${merito.processos} (${merito.percentual.toLocaleString("pt-BR")}%)` : "—"}
             </strong>
             favoráveis no mérito
           </div>
-          <div className="border border-borda p-2 bg-papel-2">
+          <div className="rounded-campo border border-borda p-2 bg-papel-2">
             <strong className="block text-tinta-2">
               {similaridade ? similaridade.mediana.toFixed(3) : "—"}
             </strong>

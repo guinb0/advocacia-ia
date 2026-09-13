@@ -1620,7 +1620,7 @@ function preencherMarcadores(
       )}
 
       {TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA && (
-        <div className="mb-4 border-l-4 border-atencao bg-papel-2 px-3 py-[10px] text-[12px] leading-[1.5] font-ui text-tinta">
+        <div className="mb-4 rounded-campo border-l-4 border-atencao bg-papel-2 px-3 py-[10px] text-[12px] leading-[1.5] font-ui text-tinta">
           <strong>Modo de teste:</strong> transcrição temporariamente desativada. Nenhum áudio é enviado ao serviço de transcrição.
         </div>
       )}
@@ -1841,7 +1841,7 @@ function preencherMarcadores(
         * roteiro precisa; mas não some, porque a atendente pode querer voltar a
         * uma frase. Ver `roteiros.SAUDACAO`. */}
       {escutando && roteiro.saudacao?.length > 0 && (
-        <section id="leitura-do-roteiro" className="scroll-mt-24 border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
+        <section id="leitura-do-roteiro" className="scroll-mt-24 rounded-campo border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
           <div className="flex items-center justify-between gap-[10px]">
             <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
               LEIA AO CLIENTE
@@ -2238,7 +2238,7 @@ function BlocoRoteiro({
         * pula estes campos de propósito — quem não conhecia o roteiro começava
         * a datilografar a qualificação com o cliente esperando. */}
       {bloco.delegado_a && (
-        <p className="mt-2 border-l-[3px] border-atencao px-[11px] py-2 bg-papel-2 font-normal text-[12px] leading-[1.55] font-ui max-w-[74ch]">
+        <p className="mt-2 rounded-campo border-l-[3px] border-atencao px-[11px] py-2 bg-papel-2 font-normal text-[12px] leading-[1.55] font-ui max-w-[74ch]">
           <strong>Não percorrer nesta entrevista.</strong> Esta etapa é do{" "}
           {bloco.delegado_a}, depois do encerramento.
           {bloco.instrucao && (
@@ -2467,7 +2467,7 @@ function CampoCep({
   return (
     <>
       <input
-        className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui"
+        className="w-full max-w-[520px] rounded-campo border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui"
         type="text"
         inputMode="numeric"
         value={valor}
@@ -2496,7 +2496,7 @@ function CampoCep({
           {alvo.current.trim() && alvo.current !== achado.endereco_formatado && (
             <button
               type="button"
-              className="block mt-[6px] border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui tracking-[0.08em] uppercase px-[10px] py-[7px] cursor-pointer hover:bg-papel-2"
+              className="block mt-[6px] rounded-campo border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none font-ui tracking-[0.08em] uppercase px-[10px] py-[7px] cursor-pointer hover:bg-papel-2"
               onClick={() => onResponder(pergunta.preenche, achado.endereco_formatado)}
             >
               Substituir o endereço digitado
@@ -2577,7 +2577,7 @@ function CampoResposta({
       <>
         <input
           list={municipios.length ? "lista-municipios" : undefined}
-          className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui"
+          className="w-full max-w-[520px] rounded-campo border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] text-[13px] font-ui"
           value={texto}
           placeholder={
             carregandoMunicipios
@@ -2674,7 +2674,7 @@ function CampoResposta({
   if (pergunta.tipo === "lista") {
     return (
       <select
-        className="w-auto min-w-[96px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui [&>option]:bg-papel [&>option]:text-tinta"
+        className="w-auto min-w-[96px] rounded-campo border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui [&>option]:bg-papel [&>option]:text-tinta"
         value={texto}
         onChange={(e) => onResponder(pergunta.id, e.target.value)}
         aria-label={pergunta.texto}
@@ -2790,7 +2790,7 @@ function CampoResposta({
   if (pergunta.tipo === "dado" || pergunta.tipo === "data") {
     return (
       <input
-        className="w-full max-w-[520px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui"
+        className="w-full max-w-[520px] rounded-campo border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[9px] font-normal text-[13px] leading-[1.4] font-ui"
         type={pergunta.tipo === "data" ? "date" : "text"}
         value={texto}
         onChange={(e) => onResponder(pergunta.id, e.target.value)}
@@ -2865,7 +2865,7 @@ function CampoResposta({
       )}
 
       <textarea
-        className="w-full min-h-[88px] border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[10px] font-normal text-[13px] leading-[1.6] font-ui resize-y"
+        className="w-full min-h-[88px] rounded-campo border border-borda-forte bg-papel-2 text-tinta px-[11px] py-[10px] font-normal text-[13px] leading-[1.6] font-ui resize-y"
         value={gravando && parcial ? `${texto}${texto ? " " : ""}${parcial}` : texto}
         onChange={(e) => onResponder(pergunta.id, e.target.value)}
         /* Conferir ao sair do campo é o equivalente digitado de "finalizar

@@ -111,7 +111,7 @@ const ROTULO_FATO: Record<string, string> = {
 const DOSSIE_SHELL = "flex w-full min-w-0 max-w-full flex-col gap-5";
 const TITULO_CARTAO = "mb-1 min-w-0 truncate text-tinta font-titulo text-lg font-semibold leading-[1.25]";
 const ITEM_TOPO = "flex min-w-0 items-center justify-between gap-[10px] flex-wrap";
-const ITEM = "min-w-0 overflow-hidden border border-borda bg-papel p-[12px_14px] grid gap-[6px]";
+const ITEM = "min-w-0 overflow-hidden rounded-campo border border-borda bg-papel p-[12px_14px] grid gap-[6px]";
 const LISTA = "list-none m-0 p-0 grid min-w-0 gap-3";
 const EXPLICACAO = "-mt-1 mb-3 text-tinta-3 text-sm leading-[1.5] max-w-[62ch]";
 const TEXTO_VAZIO = "mt-[6px] text-tinta-3 text-sm";
@@ -119,13 +119,13 @@ const ORIGEM = "text-tinta-3 text-xs";
 const RAZAO = "mt-[2px] text-tinta-2 text-sm leading-[1.55]";
 const VALOR = "font-codigo tabular-nums text-sm text-tinta";
 const TRECHO =
-  "mt-[6px] p-[8px_12px] bg-papel-2 border-l-[3px] border-borda-forte text-tinta-2 text-sm leading-[1.55] [overflow-wrap:anywhere]";
+  "mt-[6px] rounded-campo p-[8px_12px] bg-papel-2 border-l-[3px] border-borda-forte text-tinta-2 text-sm leading-[1.55] [overflow-wrap:anywhere]";
 const PONTOS = "mt-[2px] p-0 list-none grid min-w-0 gap-1 text-sm leading-[1.5]";
 const SECAO_TITULO = "mt-[18px] mb-[6px] font-ui text-sm font-bold tracking-[0.02em] text-tinta first:mt-0";
 const FICHA_LINHA =
-  "grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-x-3 gap-y-[2px] bg-papel p-[9px_12px]";
-const INDICADOR = "min-w-0 overflow-hidden border border-borda bg-papel-2 p-[12px_14px] mb-[14px] grid gap-2";
-const MINUTA = "mt-[14px] p-[16px_18px] bg-papel-2 border border-borda max-h-[520px] overflow-auto";
+  "grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-x-3 gap-y-[2px] rounded-campo bg-papel p-[9px_12px]";
+const INDICADOR = "min-w-0 overflow-hidden rounded-campo border border-borda bg-papel-2 p-[12px_14px] mb-[14px] grid gap-2";
+const MINUTA = "mt-[14px] rounded-campo p-[16px_18px] bg-papel-2 border border-borda max-h-[520px] overflow-auto";
 const PARAGRAFO_MINUTA = "m-0 mb-2 font-titulo text-base leading-[1.7] text-justify text-tinta-2 max-w-[72ch]";
 const CAMPO_ENTREVISTA = "grid gap-1 text-tinta-2 text-sm";
 const INPUT_ENTREVISTA = "p-[7px_10px] border border-borda rounded-[6px] bg-papel text-tinta";
@@ -746,8 +746,8 @@ function PainelJurisprudencia({
                 {indicadores.indicators.map((item) => (
                   <div key={item.label} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-[10px] text-xs text-tinta-2 sm:grid-cols-[130px_minmax(0,1fr)_auto]">
                     <span className="truncate" title={item.label.toLowerCase()}>{item.label.toLowerCase()}</span>
-                    <span className="block h-2 bg-papel-3 border border-borda">
-                      <i className="block h-full bg-acao" style={{ width: `${Math.round(item.share * 100)}%` }} />
+                    <span className="block h-2 overflow-hidden rounded-pill bg-papel-3 border border-borda">
+                      <i className="block h-full rounded-pill bg-acao" style={{ width: `${Math.round(item.share * 100)}%` }} />
                     </span>
                     <span className="font-codigo tabular-nums">
                       {item.count} de {indicadores.sample_size}
@@ -1030,7 +1030,7 @@ function VisualizadorPeticao({
   }
 
   return (
-    <div className="mt-[14px] max-w-full overflow-hidden border border-borda bg-papel-2">
+    <div className="mt-[14px] max-w-full overflow-hidden rounded-cartao border border-borda bg-papel-2">
       <div className={`${ITEM_TOPO} p-[10px_12px] border-b border-borda bg-papel sticky top-0 z-10`}>
         <strong className="min-w-0 truncate text-sm">Petição em PDF — versão {versao}</strong>
         <div className="flex gap-2 flex-wrap">

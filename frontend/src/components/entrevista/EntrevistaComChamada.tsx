@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { Aviso } from "@/components/ui/Basicos";
+import { Aviso, Botao } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import PainelChamada from "@/components/chamada/PainelChamada";
 import PainelEscuta from "@/components/entrevista/PainelEscuta";
@@ -65,10 +65,6 @@ function baixarTexto(nome: string, conteudo: string): void {
   baixarArquivoDeTexto(conteudo, nome);
 }
 
-const CONCLUIR =
-  "border-[1.5px] border-acao bg-acao text-papel text-[11px] font-semibold leading-none font-ui " +
-  "tracking-[0.1em] uppercase px-4 py-3 cursor-pointer enabled:hover:bg-acao-forte enabled:hover:border-acao-forte " +
-  "disabled:bg-papel-3 disabled:text-tinta-desabilitada disabled:border-borda-forte disabled:cursor-not-allowed";
 const ENCERRAR_NOTA = "max-w-[46ch] italic font-normal text-[12px] leading-[1.5] font-titulo text-tinta-3";
 
 /* A leitura mostrada na tela, e se ela já cobre a conversa inteira.
@@ -274,45 +270,72 @@ export default function EntrevistaComChamada({
   const podeIrParaPergunta = (id: string) => idsRenderizaveis.has(id);
   const irParaPergunta = (id: string) => roteiro.current?.irParaPergunta(id);
 
+  /* Progresso do roteiro, não da revisão: `ids_renderizaveis` é o total de
+   * perguntas que se aplicam agora (o roteiro tem ramificação — nem toda
+   * entrevista faz as mesmas perguntas), e `escuta.faltando` é o que a escuta
+   * ao vivo ainda não ouviu resposta — o mesmo dado que já vira lembrete no
+   * painel de escuta ao lado. Nenhum estado novo: só a leitura de dois que já
+   * existiam, juntos, numa barra visível o tempo todo. */
+  const totalPerguntas = contextoRoteiro?.ids_renderizaveis.length ?? 0;
+  const pendentes = escuta?.faltando.length ?? 0;
+  const respondidas = totalPerguntas > 0 ? Math.max(0, totalPerguntas - pendentes) : 0;
+  const progresso = totalPerguntas > 0 ? Math.round((respondidas / totalPerguntas) * 100) : null;
+
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-fundo px-4 pb-10 pt-4 sm:px-5 lg:px-6">
-      <div className="sticky top-0 z-30 mx-auto mb-5 flex max-w-[1500px] min-w-0 items-center justify-between gap-4 rounded-cartao border border-borda-forte bg-papel/95 px-4 py-3 shadow-cartao backdrop-blur">
-        <div className="min-w-0">
-          <span className="block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
-            ENTREVISTA EM ANDAMENTO
-          </span>
-          <strong className="mt-1 block truncate text-sm text-tinta">
-            Roteiro, chamada e fechamento no mesmo fluxo
-          </strong>
-          <span className="mt-1 block text-[10.5px] text-tinta-3" aria-live="polite">
-            {preAnalise.estado === "analisando"
-              ? "IA revisando a conversa até aqui…"
-              : preAnalise.estado === "consolidado"
-                ? `Último checkpoint consolidado · ${preAnalise.cobertura.toLocaleString("pt-BR")} caracteres analisados`
-                : "A IA aguardará informação suficiente antes de consolidar respostas"}
-          </span>
+      <div className="sticky top-0 z-30 mx-auto mb-5 max-w-[1500px] min-w-0 overflow-hidden rounded-cartao border border-borda-forte bg-papel/95 shadow-cartao backdrop-blur">
+        <div className="flex min-w-0 items-center justify-between gap-4 px-4 py-3">
+          <div className="min-w-0">
+            <span className="inline-flex items-center gap-[7px] text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-marca-ouro-texto">
+              <i className="h-[6px] w-[6px] shrink-0 rounded-full bg-marca-ouro motion-safe:animate-pulse" aria-hidden />
+              ENTREVISTA EM ANDAMENTO
+              {progresso !== null && (
+                <span className="text-tinta-3">· {respondidas} de {totalPerguntas} perguntas</span>
+              )}
+            </span>
+            <strong className="mt-1 block truncate text-sm text-tinta">
+              Roteiro, chamada e fechamento no mesmo fluxo
+            </strong>
+            <span className="mt-1 block text-[10.5px] text-tinta-3" aria-live="polite">
+              {preAnalise.estado === "analisando"
+                ? "IA revisando a conversa até aqui…"
+                : preAnalise.estado === "consolidado"
+                  ? `Último checkpoint consolidado · ${preAnalise.cobertura.toLocaleString("pt-BR")} caracteres analisados`
+                  : "A IA aguardará informação suficiente antes de consolidar respostas"}
+            </span>
+          </div>
+          <Botao
+            type="button"
+            variante="discreto"
+            pequeno
+            className="shrink-0"
+            onClick={() => {
+              /* Fechar já se sabe que perde as respostas — o rótulo diz. O que
+               * ele não diz é que leva junto o vídeo, que não está guardado em
+               * lugar nenhum além desta aba. */
+              if (
+                roteiro.current?.temVideoPendente() &&
+                !window.confirm(
+                  "O vídeo gravado ainda não foi baixado e será perdido ao fechar. " +
+                    "Fechar mesmo assim?",
+                )
+              ) {
+                return;
+              }
+              onFechar();
+            }}
+          >
+            Fechar sem concluir
+          </Botao>
         </div>
-        <button
-          type="button"
-          className="shrink-0 rounded-campo border border-borda-forte bg-transparent px-3 py-[9px] font-ui text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-tinta hover:bg-papel-2"
-          onClick={() => {
-            /* Fechar já se sabe que perde as respostas — o rótulo diz. O que
-             * ele não diz é que leva junto o vídeo, que não está guardado em
-             * lugar nenhum além desta aba. */
-            if (
-              roteiro.current?.temVideoPendente() &&
-              !window.confirm(
-                "O vídeo gravado ainda não foi baixado e será perdido ao fechar. " +
-                  "Fechar mesmo assim?",
-              )
-            ) {
-              return;
-            }
-            onFechar();
-          }}
-        >
-          Fechar sem concluir
-        </button>
+        {progresso !== null && (
+          <div className="h-[3px] w-full bg-papel-3" aria-hidden>
+            <div
+              className="h-full bg-marca-ouro transition-[width] duration-500 ease-out"
+              style={{ width: `${progresso}%` }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="mx-auto grid max-w-[1500px] grid-cols-[minmax(0,1fr)_minmax(340px,460px)] items-start gap-5 max-[1080px]:grid-cols-[minmax(0,1fr)]">

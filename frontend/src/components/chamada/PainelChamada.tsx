@@ -126,15 +126,15 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
   const naChamada = chamada.ativa;
   const ponto =
     chamada.estado === "falando" ? (
-      <i className="w-2 h-2 flex-none bg-ok" />
+      <i className="w-2 h-2 flex-none rounded-full bg-ok" />
     ) : chamada.estado === "aguardando" || chamada.estado === "conectando" ? (
-      <i className="w-2 h-2 flex-none bg-atencao animate-[respirar_2s_ease-in-out_infinite] motion-reduce:animate-none" />
+      <i className="w-2 h-2 flex-none rounded-full bg-atencao animate-[respirar_2s_ease-in-out_infinite] motion-reduce:animate-none" />
     ) : (
-      <i className="w-2 h-2 flex-none border border-tinta-3" />
+      <i className="w-2 h-2 flex-none rounded-full border border-tinta-3" />
     );
 
   return (
-    <aside className="border border-borda-forte px-4 pt-[14px] pb-4 bg-papel">
+    <aside className="rounded-cartao border border-borda-forte bg-papel px-4 pt-[14px] pb-4 shadow-cartao">
       <div className="flex justify-between items-center gap-[10px] flex-wrap mb-[10px]">
         <span className="text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
           {modo === "documentos" ? "JITSI MEET · CHAMADA E GRAVAÇÃO" : "JITSI MEET"}

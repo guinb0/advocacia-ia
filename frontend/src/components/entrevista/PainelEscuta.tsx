@@ -87,6 +87,10 @@ const ESTADO_SILENCIO = `${ESTADO_BASE} font-normal text-atencao`;
 /* Microfone mudo: vermelho, porque aqui a entrevista ESTÁ sendo perdida
  * enquanto se conversa. É o único estado do painel que exige ação imediata. */
 
+/* O ponto antes do texto é o mesmo vocabulário da fila da Central de
+ * Documentação: verde pulsando = coisa acontecendo agora, cinza parado = sem
+ * atividade. Aqui ele só pulsa em "ouvindo" de verdade — pulsar durante
+ * "microfone fechado" anunciaria vida que não existe. */
 function situacao(
   captando: boolean,
   reconectando: boolean,
@@ -94,12 +98,14 @@ function situacao(
   ultimaFala: number | null,
   ultimoSom: number | null,
   nivelTipico: number | null,
-): { texto: string; classe: string; titulo: string } {
+): { texto: string; classe: string; titulo: string; ponto: string; pulsa: boolean } {
 
   if (reconectando) {
     return {
       texto: "religando",
       classe: ESTADO_PAUSADO,
+      ponto: "bg-atencao",
+      pulsa: true,
       titulo:
         "A conexão caiu e está voltando sozinha. O que for dito nestes segundos " +
         "não entra no arquivo; o resto do atendimento continua sendo gravado.",
@@ -109,6 +115,8 @@ function situacao(
     return {
       texto: "microfone fechado",
       classe: ESTADO_OCIOSO,
+      ponto: "bg-tinta-3",
+      pulsa: false,
       titulo: "Clique em “Começar a entrevista” para abrir o microfone.",
     };
   }
@@ -116,6 +124,8 @@ function situacao(
     return {
       texto: "interpretando…",
       classe: ESTADO_OUVINDO,
+      ponto: "bg-ok",
+      pulsa: true,
       titulo: "Um trecho da conversa está sendo lido contra o roteiro.",
     };
   }
@@ -123,17 +133,22 @@ function situacao(
     return {
       texto: "ouvindo — nada reconhecido ainda",
       classe: ESTADO_OCIOSO,
+      ponto: "bg-ok",
+      pulsa: true,
       titulo:
         "O microfone está aberto. O texto só entra quando um trecho de fala " +
         "para de mudar, o que leva alguns segundos após a pausa.",
     };
   }
   const segundos = Math.round((Date.now() - ultimaFala) / 1000);
+  const ouvindoAgora = segundos < 45;
   return {
     texto: segundos < 20 ? "ouvindo" : `ouvindo — nada há ${segundos}s`,
-    classe: segundos < 45 ? ESTADO_OUVINDO : ESTADO_SILENCIO,
+    classe: ouvindoAgora ? ESTADO_OUVINDO : ESTADO_SILENCIO,
+    ponto: ouvindoAgora ? "bg-ok" : "bg-atencao",
+    pulsa: ouvindoAgora,
     titulo:
-      segundos < 45
+      ouvindoAgora
         ? "Última fala reconhecida há pouco."
         : "Faz tempo que nada é reconhecido. Se alguém está falando, confira o microfone.",
   };
@@ -183,13 +198,14 @@ export default function PainelEscuta({
     /* Fica embaixo do cartão CHAMADA, na mesma coluna. A coluna já é `sticky` e
      * rola por conta própria (ver `EntrevistaComChamada`); aqui basta empilhar
      * com a mesma moldura do cartão de cima. */
-    <aside className="mt-4 border border-borda-forte px-4 pt-[14px] pb-4 bg-papel">
+    <aside className="mt-4 rounded-cartao border border-borda-forte bg-papel px-4 pt-[14px] pb-4 shadow-cartao">
       <div className="flex items-baseline justify-between gap-2 mb-3 pb-[10px] border-b border-borda">
         <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
           A ENTREVISTA ATÉ AQUI
         </span>
-        <span className={estado.classe} title={estado.titulo}>
-          {estado.texto}
+        <span className="inline-flex items-center gap-[6px]" title={estado.titulo}>
+          <i className={`h-[6px] w-[6px] shrink-0 rounded-full ${estado.ponto} ${estado.pulsa ? "motion-safe:animate-pulse" : ""}`} aria-hidden />
+          <span className={estado.classe}>{estado.texto}</span>
         </span>
       </div>
 
