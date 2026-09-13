@@ -666,6 +666,54 @@ def testar_pecas_anexas() -> int:
     falhas += not checar(len(lista) == 1, f"a peça aparece na lista do caso ({len(lista)})")
     falhas += not checar(lista[0]["secoes"] == 7, f"com as sete seções normalizadas ({lista[0]['secoes']})")
 
+    # Editar à mão, como a petição inicial — era exatamente isto que faltava: a
+    # segunda petição sugerida em diante só dava para baixar, não para editar
+    # (rotas `GET`/`PUT .../rascunho` caíam no agente remoto, que não conhece
+    # peça anexa nenhuma; ver `app/agente/rotas.py::_peca_anexa`).
+    aberta = pl.obter_anexa(peca["id"])
+    falhas += not checar(aberta is not None, "a peça é recuperável para edição")
+    fatos_gerado = next(s for s in aberta["sections"] if s["code"] == "FACTS")
+    falhas += not checar(
+        fatos_gerado["content"] == "Assédio relatado na entrevista",
+        "com o texto gerado, seção por seção",
+    )
+
+    atualizada = pl.salvar_secoes_anexa(
+        peca["id"],
+        [{"code": "FACTS", "content": "Assédio relatado, editado à mão pelo advogado"}],
+    )
+    fatos_editado = next(s for s in atualizada["sections"] if s["code"] == "FACTS")
+    falhas += not checar(
+        fatos_editado["content"] == "Assédio relatado, editado à mão pelo advogado",
+        "o texto editado à mão é o que fica salvo",
+    )
+    outra_secao = next(s for s in atualizada["sections"] if s["code"] == "CLAIMS")
+    falhas += not checar(
+        outra_secao["content"] == "a) dano moral",
+        "e as seções não editadas continuam como estavam",
+    )
+
+    releitura = pl.obter_anexa(peca["id"])
+    fatos_releitura = next(s for s in releitura["sections"] if s["code"] == "FACTS")
+    falhas += not checar(
+        fatos_releitura["content"] == "Assédio relatado, editado à mão pelo advogado",
+        "e a edição permanece depois de reabrir a peça",
+    )
+
+    _titulo_editado, docx_editado = pl.ler_docx_anexa(peca["id"])
+    with zipfile.ZipFile(io.BytesIO(docx_editado)) as arquivo:
+        documento_editado = arquivo.read("word/document.xml").decode("utf-8")
+    falhas += not checar(
+        "editado à mão pelo advogado" in documento_editado,
+        "e o .docx regravado reflete a edição",
+    )
+
+    try:
+        pl.salvar_secoes_anexa("caso-inexistente:nada", [{"code": "FACTS", "content": "x"}])
+        falhas += not checar(False, "editar peça inexistente é recusado")
+    except pl.ErroPeticao:
+        falhas += not checar(True, "editar peça inexistente é recusado com erro em português")
+
     # Redigir a MESMA ação de novo substitui, em vez de empilhar duas iguais.
     dublar_modelo({"secoes": [{"code": "FACTS", "label": "Dos fatos", "content": "texto novo"}]})
     pl.gerar_anexa(
@@ -679,9 +727,6 @@ def testar_pecas_anexas() -> int:
     # O .docx sai montado a partir do texto da peça.
     titulo, docx = pl.ler_docx_anexa(peca["id"])
     falhas += not checar(bool(docx) and titulo.lower().startswith("ação"), "o .docx da peça é entregue")
-    import io
-    import zipfile
-
     with zipfile.ZipFile(io.BytesIO(docx)) as arquivo:
         documento = arquivo.read("word/document.xml").decode("utf-8")
     falhas += not checar("texto novo" in documento, "e é o texto da versão mais recente dela")
