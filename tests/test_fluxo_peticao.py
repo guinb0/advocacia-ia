@@ -714,6 +714,46 @@ def testar_pecas_anexas() -> int:
     except pl.ErroPeticao:
         falhas += not checar(True, "editar peça inexistente é recusado com erro em português")
 
+    # Revisão por prompt — o mesmo recurso que a petição inicial oferece, só
+    # que sem versão nem crítica registrada: a peça anexa já não tinha
+    # histórico nem para "gerar de novo" (ver `armazenamento.salvar_peticao_anexa`).
+    dublar_modelo(
+        {
+            "secoes": [
+                {"code": "HEADING", "label": "Endereçamento", "content": "EXCELENTÍSSIMO"},
+                {"code": "FACTS", "label": "Dos fatos", "content": "Assédio relatado, agora com a revisão aplicada"},
+                {"code": "CLAIMS", "label": "Dos pedidos", "content": "a) dano moral; b) dano existencial"},
+            ]
+        }
+    )
+    resultado_revisao = pl.revisar_anexa_com_prompt(
+        peca["id"], prompt_critica="separe dano moral de dano existencial nos pedidos"
+    )
+    pedidos_revisados = next(s for s in resultado_revisao["sections"] if s["code"] == "CLAIMS")
+    falhas += not checar(
+        pedidos_revisados["content"] == "a) dano moral; b) dano existencial",
+        "a revisão por prompt reescreve a peça anexa",
+    )
+
+    releitura2 = pl.obter_anexa(peca["id"])
+    pedidos_releitura = next(s for s in releitura2["sections"] if s["code"] == "CLAIMS")
+    falhas += not checar(
+        pedidos_releitura["content"] == "a) dano moral; b) dano existencial",
+        "e a revisão permanece depois de reabrir a peça",
+    )
+
+    try:
+        pl.revisar_anexa_com_prompt(peca["id"], prompt_critica="   ")
+        falhas += not checar(False, "crítica em branco é recusada")
+    except pl.ErroPeticao:
+        falhas += not checar(True, "crítica em branco é recusada com erro em português")
+
+    try:
+        pl.revisar_anexa_com_prompt("caso-inexistente:nada", prompt_critica="mude algo")
+        falhas += not checar(False, "revisar peça inexistente é recusado")
+    except pl.ErroPeticao:
+        falhas += not checar(True, "revisar peça inexistente é recusado com erro em português")
+
     # Redigir a MESMA ação de novo substitui, em vez de empilhar duas iguais.
     dublar_modelo({"secoes": [{"code": "FACTS", "label": "Dos fatos", "content": "texto novo"}]})
     pl.gerar_anexa(

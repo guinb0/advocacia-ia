@@ -284,15 +284,24 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [edicaoAnexa, setEdicaoAnexa] = useState<Record<string, string>>({});
   const [carregandoAnexa, setCarregandoAnexa] = useState(false);
   const [salvandoAnexa, setSalvandoAnexa] = useState(false);
+  const [mostrarPreviaAnexa, setMostrarPreviaAnexa] = useState(true);
+  /* Revisão por prompt — recurso opcional, oferecido para a peça anexa com a
+   * mesma qualidade da petição inicial; sem "ensinar a IA" nem versão anterior
+   * guardada, porque a anexa já não tem histórico nem para "gerar de novo"
+   * (ver `app/peticao_local.revisar_anexa_com_prompt`). */
+  const [promptRevisaoAnexa, setPromptRevisaoAnexa] = useState("");
+  const [revisandoAnexa, setRevisandoAnexa] = useState(false);
 
   async function alternarEdicaoAnexa(peca: PecaAnexa) {
     if (anexaAberta === peca.id) {
       setAnexaAberta(null);
       setPeticaoAnexa(null);
+      setPromptRevisaoAnexa("");
       return;
     }
     setErroAnexa(null);
     setAnexaAberta(peca.id);
+    setPromptRevisaoAnexa("");
     setCarregandoAnexa(true);
     try {
       const dados = await buscarPeticao(casoId, peca.id);
@@ -322,6 +331,32 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       setErroAnexa(e instanceof Error ? e.message : "Não foi possível salvar esta peça.");
     } finally {
       setSalvandoAnexa(false);
+    }
+  }
+
+  async function revisarEdicaoAnexa() {
+    if (!peticaoAnexa || !promptRevisaoAnexa.trim()) return;
+    setErroAnexa(null);
+    setRevisandoAnexa(true);
+    try {
+      // `generaliza=false`: a peça anexa não ensina a IA nem guarda a crítica —
+      // ver o comentário no estado acima.
+      const resultado = await revisarPeticaoComPrompt(
+        casoId,
+        peticaoAnexa.id,
+        promptRevisaoAnexa.trim(),
+        false,
+      );
+      setPeticaoAnexa(resultado.peticao);
+      setEdicaoAnexa(
+        Object.fromEntries((resultado.peticao.sections ?? []).map((s) => [s.code, s.content])),
+      );
+      setPromptRevisaoAnexa("");
+      await recarregarAnexas();
+    } catch (e) {
+      setErroAnexa(e instanceof Error ? e.message : "Não foi possível aplicar a revisão nesta peça.");
+    } finally {
+      setRevisandoAnexa(false);
     }
   }
 
@@ -665,32 +700,96 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 
                     {anexaAberta === peca.id && peticaoAnexa && (
                       <div className="mt-3 grid gap-3 border-t border-borda pt-3">
-                        {(peticaoAnexa.sections ?? []).map((secao: SecaoPeticao) => (
-                          <div key={secao.code} className="grid gap-1">
-                            <RotuloCampo htmlFor={`anexa-${peca.id}-${secao.code}`}>
-                              {secao.label || secao.code}
-                            </RotuloCampo>
-                            <Campo
-                              area
-                              id={`anexa-${peca.id}-${secao.code}`}
-                              value={edicaoAnexa[secao.code] ?? secao.content}
-                              onChange={(e) =>
-                                setEdicaoAnexa((atual) => ({ ...atual, [secao.code]: e.target.value }))
-                              }
-                              rows={8}
-                            />
-                          </div>
-                        ))}
-                        <div>
-                          <BotaoProcesso
-                            variante="secundario"
+                        <div className="flex justify-end">
+                          <Botao
+                            variante="texto"
                             pequeno
-                            processando={salvandoAnexa}
-                            textoProcessando="Salvando…"
-                            onClick={salvarEdicaoAnexa}
+                            onClick={() => setMostrarPreviaAnexa((atual) => !atual)}
                           >
-                            Salvar edição
-                          </BotaoProcesso>
+                            {mostrarPreviaAnexa ? "Ocultar prévia" : "Mostrar prévia"}
+                          </Botao>
+                        </div>
+
+                        <div
+                          className={
+                            mostrarPreviaAnexa
+                              ? "grid gap-4 lg:grid-cols-2 lg:items-start"
+                              : "grid gap-4"
+                          }
+                        >
+                          <div className="grid gap-3">
+                            {(peticaoAnexa.sections ?? []).map((secao: SecaoPeticao) => (
+                              <div key={secao.code} className="grid gap-1">
+                                <RotuloCampo htmlFor={`anexa-${peca.id}-${secao.code}`}>
+                                  {secao.label || secao.code}
+                                </RotuloCampo>
+                                <Campo
+                                  area
+                                  id={`anexa-${peca.id}-${secao.code}`}
+                                  value={edicaoAnexa[secao.code] ?? secao.content}
+                                  onChange={(e) =>
+                                    setEdicaoAnexa((atual) => ({ ...atual, [secao.code]: e.target.value }))
+                                  }
+                                  rows={8}
+                                />
+                              </div>
+                            ))}
+                            <div>
+                              <BotaoProcesso
+                                variante="secundario"
+                                pequeno
+                                processando={salvandoAnexa}
+                                textoProcessando="Salvando…"
+                                onClick={salvarEdicaoAnexa}
+                              >
+                                Salvar edição
+                              </BotaoProcesso>
+                            </div>
+                          </div>
+
+                          {mostrarPreviaAnexa && (
+                            <PreviaPeticao
+                              titulo={peticaoAnexa.title}
+                              secoes={peticaoAnexa.sections ?? []}
+                              edicao={edicaoAnexa}
+                            />
+                          )}
+                        </div>
+
+                        {/* Revisão por prompt — opcional, mesma qualidade da petição
+                          * inicial. Sem "ensinar a IA" nem versão anterior guardada:
+                          * a peça anexa não tem histórico (nem "gerar de novo" tem,
+                          * ver o aviso acima da lista). */}
+                        <div className="grid gap-2 border border-borda-forte bg-papel p-3">
+                          <RotuloCampo htmlFor={`anexa-${peca.id}-prompt-revisao`}>
+                            Pedir uma revisão por prompt (opcional)
+                          </RotuloCampo>
+                          <p className="text-xs text-tinta-3 m-0">
+                            Descreva o que deve mudar nesta peça. A IA aplica só o que você
+                            pedir e preserva o resto do texto. Diferente da petição inicial,
+                            esta peça não guarda versão anterior — reveja o resultado antes
+                            de salvar.
+                          </p>
+                          <Campo
+                            area
+                            id={`anexa-${peca.id}-prompt-revisao`}
+                            value={promptRevisaoAnexa}
+                            onChange={(e) => setPromptRevisaoAnexa(e.target.value)}
+                            rows={3}
+                            placeholder="O que deve mudar nesta peça?"
+                          />
+                          <div>
+                            <BotaoProcesso
+                              variante="secundario"
+                              pequeno
+                              processando={revisandoAnexa}
+                              textoProcessando="Aplicando a revisão…"
+                              pendencia={promptRevisaoAnexa.trim() ? null : "Descreva acima o que deve mudar."}
+                              onClick={revisarEdicaoAnexa}
+                            >
+                              Aplicar revisão
+                            </BotaoProcesso>
+                          </div>
                         </div>
                       </div>
                     )}
