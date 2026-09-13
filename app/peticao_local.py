@@ -1000,6 +1000,91 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
         raise ErroPeticao(str(erro)) from erro
 
 
+def _revisar_secoes_via_llm(
+    caso_id: str, secoes_atuais: list[dict[str, Any]], prompt_critica: str
+) -> list[dict[str, Any]]:
+    """O miolo da revisão por prompt: aplica a crítica sobre as seções atuais.
+
+    Compartilhado entre `revisar_com_prompt` (a petição inicial, com versão,
+    histórico e crítica registrada) e `revisar_anexa_com_prompt` (as outras
+    peças, sem nada disso — ver o cabeçalho de `armazenamento.salvar_peticao_anexa`
+    sobre por que elas não têm histórico). O que os dois merecem por igual é a
+    MESMA qualidade de revisão: mesmo prompt, mesmo cuidado de preservar o texto
+    que a crítica não pediu para mudar.
+    """
+    minuta_atual = "\n\n".join(
+        f"### {s.get('label', s.get('code'))}\n{s.get('content', '')}"
+        for s in secoes_atuais
+    )
+
+    saida = _llm_json(
+        _com_skill_do_escritorio(
+            caso_id,
+            """Você é advogado trabalhista revisando uma peça já redigida.
+Aplique a CRÍTICA do advogado sobre a MINUTA ATUAL. Mude SOMENTE o que a crítica pede;
+preserve o restante do texto tal como está, palavra por palavra onde a crítica não manda
+mexer. Não invente fatos novos que não estejam na minuta atual. Devolva as SETE seções
+completas, mesmo as que não mudaram. JSON:
+{
+  "secoes": [
+    {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
+    {"code": "FACTS", "label": "Dos fatos", "content": "..."},
+    {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
+    {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
+    {"code": "EVIDENCE", "label": "Das provas", "content": "..."},
+    {"code": "VALUE", "label": "Do valor da causa", "content": "..."},
+    {"code": "CLOSING", "label": "Fechamento", "content": "..."}
+  ]
+}
+Cada content em parágrafos separados por linha em branco.""",
+        ),
+        f"MINUTA ATUAL:\n{minuta_atual}\n\nCRÍTICA DO ADVOGADO:\n{prompt_critica}",
+        timeout=240.0,
+    )
+    secoes = _normalizar_secoes(saida.get("secoes") or [])
+    if not any(secao["content"] for secao in secoes):
+        raise ErroPeticao("O modelo não devolveu texto da peça revisada.")
+    return secoes
+
+
+def revisar_anexa_com_prompt(peca_id: str, *, prompt_critica: str) -> dict[str, Any]:
+    """Reescreve uma peça anexa a partir de uma crítica em linguagem natural.
+
+    Mesmo recurso que `revisar_com_prompt` oferece à petição inicial — a
+    diferença é que a peça anexa não versiona nem guarda a crítica em
+    `peticao_criticas` (ela já não tem histórico nenhum, nem para "gerar de
+    novo"; ver `armazenamento.salvar_peticao_anexa`). A revisão sobrescreve o
+    texto atual da peça, e é isso que a tela avisa antes de aplicar.
+    """
+    prompt_critica = prompt_critica.strip()
+    if not prompt_critica:
+        raise ErroPeticao("Escreva o que deve mudar nesta peça.")
+
+    registro = armazenamento.obter_peticao_anexa(peca_id)
+    if not registro:
+        raise ErroPeticao("Peça não encontrada.")
+
+    dados = dict(registro["dados"])
+    secoes_atuais = dados.get("sections") or []
+    if not secoes_atuais:
+        raise ErroPeticao("Esta peça não tem seções para revisar.")
+
+    secoes = _revisar_secoes_via_llm(registro["caso_id"], secoes_atuais, prompt_critica)
+    dados["sections"] = secoes
+    dados["updated_at"] = _agora()
+
+    armazenamento.salvar_peticao_anexa(
+        registro["caso_id"],
+        peca_id,
+        titulo=str(registro.get("titulo") or dados.get("title") or ""),
+        motivo=str(registro.get("motivo") or ""),
+        dados=dados,
+        docx=montar_docx(secoes),
+        gerada_por=str(registro.get("gerada_por") or ""),
+    )
+    return para_api(dados)
+
+
 def revisar_com_prompt(
     caso_id: str, *, prompt_critica: str, usuario: str, generaliza: bool = True
 ) -> dict[str, Any]:
@@ -1038,38 +1123,7 @@ def revisar_com_prompt(
     if not secoes_atuais:
         raise ErroPeticao("Esta petição não tem seções para revisar.")
 
-    minuta_atual = "\n\n".join(
-        f"### {s.get('label', s.get('code'))}\n{s.get('content', '')}"
-        for s in secoes_atuais
-    )
-
-    saida = _llm_json(
-        _com_skill_do_escritorio(
-            caso_id,
-            """Você é advogado trabalhista revisando uma petição inicial já redigida.
-Aplique a CRÍTICA do advogado sobre a MINUTA ATUAL. Mude SOMENTE o que a crítica pede;
-preserve o restante do texto tal como está, palavra por palavra onde a crítica não manda
-mexer. Não invente fatos novos que não estejam na minuta atual. Devolva as SETE seções
-completas, mesmo as que não mudaram. JSON:
-{
-  "secoes": [
-    {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
-    {"code": "FACTS", "label": "Dos fatos", "content": "..."},
-    {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
-    {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
-    {"code": "EVIDENCE", "label": "Das provas", "content": "..."},
-    {"code": "VALUE", "label": "Do valor da causa", "content": "..."},
-    {"code": "CLOSING", "label": "Fechamento", "content": "..."}
-  ]
-}
-Cada content em parágrafos separados por linha em branco.""",
-        ),
-        f"MINUTA ATUAL:\n{minuta_atual}\n\nCRÍTICA DO ADVOGADO:\n{prompt_critica}",
-        timeout=240.0,
-    )
-    secoes = _normalizar_secoes(saida.get("secoes") or [])
-    if not any(secao["content"] for secao in secoes):
-        raise ErroPeticao("O modelo não devolveu texto da petição revisada.")
+    secoes = _revisar_secoes_via_llm(caso_id, secoes_atuais, prompt_critica)
 
     # 1) snapshot da versão anterior — antes de sobrescrever.
     armazenamento.registrar_versao_peticao(caso_id, atual)
