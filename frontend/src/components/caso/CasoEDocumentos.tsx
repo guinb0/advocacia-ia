@@ -66,6 +66,7 @@ interface Props {
   onEncerrarChamada: () => void;
   /** Há chamada de pé — sem ela, o botão de desligar não faz sentido. */
   emChamada: boolean;
+  criadoInicial?: CasoCriado;
 }
 
 export default function CasoEDocumentos({
@@ -86,11 +87,12 @@ export default function CasoEDocumentos({
   onAbrirAnalises,
   onEncerrarChamada,
   emChamada,
+  criadoInicial,
 }: Props) {
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [tentouCriar, setTentouCriar] = useState(false);
-  const [criado, setCriado] = useState<CasoCriado | null>(null);
+  const [criado, setCriado] = useState<CasoCriado | null>(criadoInicial ?? null);
   const [mostrarCredenciais, setMostrarCredenciais] = useState(true);
   /* Em que sala a conversa estava ANTES de o caso nascer.
    *
@@ -388,6 +390,8 @@ export default function CasoEDocumentos({
         <CredenciaisPortal
           cliente={criado.cliente}
           portal={criado.portal}
+          casoId={criado.id}
+          telefone={telefoneAtual || criado.telefone}
           /* "Abrir o caso" aqui não navega para lugar nenhum: o caso já está
            * aberto logo abaixo, nesta mesma tela. Fechar a caixa é tudo o que
            * resta a fazer — e ela some só depois de a senha ter sido copiada,

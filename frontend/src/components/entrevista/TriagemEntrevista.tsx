@@ -220,6 +220,7 @@ export default function TriagemEntrevista({
    * regravar a transcrição completa: o caso nasce NO MEIO do atendimento, e o
    * fechamento do roteiro — inclusive o pedido da avaliação — vem depois dele. */
   const [casoCriado, setCasoCriado] = useState("");
+  const [casoNovo, setCasoNovo] = useState<CasoCriado | null>(null);
   /* O atendimento foi ENCERRADO no botão do fim — diferente de "fechei a tela".
    *
    * Encerrado, as etapas não se repetem aqui embaixo: elas já foram feitas lá
@@ -511,9 +512,12 @@ export default function TriagemEntrevista({
           * as respostas da entrevista é esta tela. Sem ele o caso nasce sem
           * número e a cobrança de documentos abre com o campo em branco,
           * pedindo o que o cliente já ditou (ver `telefone_do_caso`). */
-        onCriar={(nome, categoria) =>
-          onCriarCaso(nome, categoria, "", String(qualificacao.telefone ?? ""))
-        }
+        onCriar={async (nome, categoria) => {
+          const novo = await onCriarCaso(nome, categoria, "", String(qualificacao.telefone ?? ""));
+          setCasoNovo(novo);
+          return novo;
+        }}
+        criadoInicial={casoNovo ?? undefined}
         onAbrirDossie={onAbrirDossie}
         onAbrirAnalises={onAbrirAnalises}
         emChamada={chamada.estado !== "fora" && chamada.estado !== "encerrada"}
@@ -635,8 +639,9 @@ export default function TriagemEntrevista({
           {avaliacaoConcluida
             ? "A avaliação no Google ficou marcada como concluída."
             : "A avaliação no Google ficou EM ABERTO — se o cliente ainda está na linha, volte ao roteiro."}{" "}
-          Agora crie o caso abaixo: é ele que abre o checklist e o portal para o cliente
-          enviar os documentos.
+          {casoCriado
+            ? "O caso já foi criado: o link e a senha do cliente continuam abaixo."
+            : "Agora crie o caso abaixo: é ele que abre o checklist e o portal para o cliente enviar os documentos."}
         </div>
       )}
 

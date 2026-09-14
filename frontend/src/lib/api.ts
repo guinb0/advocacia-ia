@@ -261,6 +261,18 @@ export async function dispararTesteCobrancaDocumentos(
   ));
 }
 
+export async function enviarPortalWhatsApp(
+  casoId: string,
+  senha: string,
+  telefone: string,
+): Promise<{ enviado: boolean }> {
+  return comoJson(await buscar(`/api/whatsapp/casos/${encodeURIComponent(casoId)}/enviar-portal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ senha, telefone }),
+  }));
+}
+
 /** O link de assinatura de UM documento para UM signatário, pelo WhatsApp.
  *
  * Manda identificadores, nunca a URL nem o telefone: o servidor busca os dois no

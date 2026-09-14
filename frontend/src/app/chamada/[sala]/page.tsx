@@ -149,7 +149,9 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
               <div className="mt-4 rounded-campo border border-acao-borda bg-acao-clara px-3 py-3 text-[12px] leading-[1.55] text-tinta-2">
                 <strong className="block text-tinta">No celular</strong>
                 Se usar fone Bluetooth, conecte-o antes de entrar. Quando o navegador perguntar,
-                permita o microfone. Se uma ligação comum chegar, volte a esta tela para retomar.
+                permita o microfone. A tela fica acesa durante a chamada; se ela apagar, chegar
+                uma ligação ou você trocar de aplicativo, volte a esta tela que o microfone
+                é retomado sozinho.
               </div>
             </>
           ) : (
