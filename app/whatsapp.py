@@ -122,6 +122,11 @@ class EnvioDocumentos(BaseModel):
     incluir_opcionais: bool = False
 
 
+class EnvioPortal(BaseModel):
+    senha: str
+    telefone: str = ""
+
+
 def _numero_brasileiro(valor: str) -> str:
     numero = re.sub(r"\D", "", valor)
     if len(numero) in (10, 11):
@@ -707,6 +712,33 @@ async def enviar_documentos_agora(
 
     await _enviar_texto(numero, mensagem)
     return {"enviado": True, "portal_criado": senha is not None}
+
+
+@roteador.post(
+    "/casos/{caso_id}/enviar-portal",
+    dependencies=[Depends(auth.usuario_atual)],
+)
+async def enviar_portal(caso_id: str, dados: EnvioPortal) -> dict[str, bool]:
+    caso = await run_in_threadpool(armazenamento.obter_caso_com_segredos, caso_id)
+    if not caso:
+        raise HTTPException(404, "Caso não encontrado.")
+    token = str(caso.get("portal_token") or "").strip()
+    if not token or not caso.get("portal_senha_hash"):
+        raise HTTPException(409, "Este caso ainda não tem portal.")
+    if not portal.conferir_senha(dados.senha, caso["portal_senha_hash"], caso["portal_sal"]):
+        raise HTTPException(422, "A senha não confere com a do portal deste caso.")
+    telefone = dados.telefone.strip() or str(caso.get("telefone") or "").strip()
+    if not telefone:
+        raise HTTPException(422, "Informe o WhatsApp do cliente.")
+    cliente = str(caso.get("cliente") or "").strip()
+    mensagem = (
+        f"Olá{', ' + cliente.split()[0] if cliente else ''}! Aqui é da Lara & Melo Advocacia.\n\n"
+        f"Este é o link do seu caso, para enviar os documentos e entrar na chamada:\n"
+        f"{URL_PORTAL}/portal/{token}\n\n"
+        f"Senha: *{dados.senha.strip().upper()}*"
+    )
+    await _enviar_texto(_numero_brasileiro(telefone), mensagem)
+    return {"enviado": True}
 
 
 @roteador.post(

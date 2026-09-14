@@ -206,6 +206,8 @@ export default function ListaCasos({
           <CredenciaisPortal
             cliente={novoPortal.cliente}
             portal={novoPortal.portal}
+            casoId={novoPortal.id}
+            telefone={novoPortal.telefone}
             onAbrirCaso={() => onAbrir(novoPortal.id)}
             onFechar={() => setNovoPortal(null)}
           />

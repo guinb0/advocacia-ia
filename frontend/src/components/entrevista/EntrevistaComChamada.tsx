@@ -474,7 +474,7 @@ export default function EntrevistaComChamada({
              * Esta tela dizia "ATENDIMENTO ENCERRADO / A gravação parou agora" —
              * e era falso. O botão que traz este bloco (`encerrarGravacao`) só
              * devolve o id da entrevista; quem para a captura é
-             * `encerrarAtendimento`, no "Criar caso" mais abaixo. É de propósito:
+             * `encerrarAtendimento`, no "Finalizar atendimento" mais abaixo. É de propósito:
              * as etapas que aparecem aqui (dados finais, avaliação, contrato e a
              * conversa sobre os DOCUMENTOS) precisam entrar no arquivo.
              *
@@ -497,8 +497,9 @@ export default function EntrevistaComChamada({
               )}
 
               <p className={ENCERRAR_NOTA}>
-                A gravação <strong>continua correndo</strong> e só para em “Criar caso” — é o que
-                faz a conversa sobre os documentos entrar no áudio e no vídeo. No encerramento o{" "}
+                A gravação e a transcrição <strong>continuam correndo</strong> e só param em
+                “Finalizar atendimento” — crie o caso acima e mande o link e a senha ao cliente
+                antes. No encerramento o{" "}
                 <strong>vídeo é baixado sozinho</strong>; ele existe só nesta aba e some ao fechar a tela.
               </p>
 
@@ -507,10 +508,11 @@ export default function EntrevistaComChamada({
                 variante="primario"
                 onClick={() => {
                   if (
-                    roteiro.current?.temVideoPendente() &&
                     !window.confirm(
-                      "O vídeo gravado ainda não foi baixado e será perdido ao sair. " +
-                        "Criar o caso e continuar mesmo assim?",
+                      (roteiro.current?.temVideoPendente()
+                        ? "O vídeo gravado será baixado agora, neste computador. "
+                        : "") +
+                        "Finalizar o atendimento para a transcrição e desliga a chamada. Continuar?",
                     )
                   ) {
                     return;
@@ -528,7 +530,7 @@ export default function EntrevistaComChamada({
                   });
                 }}
               >
-                Criar caso
+                Finalizar atendimento
               </BotaoProcesso>
 
               {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}

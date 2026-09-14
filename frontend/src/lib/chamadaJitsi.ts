@@ -206,6 +206,8 @@ export class ChamadaJitsi {
   private mudoAtual = false;
   /** Impede duas recuperações de microfone ao mesmo tempo (`ended` + `mute`). */
   private recuperandoAudio = false;
+  private travaTela: WakeLockSentinel | null = null;
+  private aoMudarVisibilidade = () => void this.retomarAoVoltar();
 
   constructor(
     private papel: PapelChamada,
@@ -298,6 +300,8 @@ export class ChamadaJitsi {
     this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
     if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
     this.vigiarMicrofone();
+    document.addEventListener("visibilitychange", this.aoMudarVisibilidade);
+    void this.manterTelaAcesa();
 
     const camera = faixas.find((f) => f.getType() === "video") ?? null;
     if (camera) {
@@ -598,6 +602,7 @@ export class ChamadaJitsi {
     // Só a faixa VIGENTE interessa: um evento atrasado da faixa antiga não pode
     // derrubar a que acabou de entrar no lugar dela.
     if (this.desligando || !this.sala || this.recuperandoAudio) return;
+    if (document.visibilityState !== "visible") return;
     if (this.minhaFaixa?.getTrack() !== nativa) return;
     // Mudo por escolha do usuário não é defeito. Ressuscitar a faixa aqui
     // devolveria a voz de quem pediu para não ser ouvido.
@@ -614,6 +619,58 @@ export class ChamadaJitsi {
     } catch {
       this.eventos.onErro?.(
         "O microfone foi tomado por outro aplicativo e não voltou. Use “Reativar áudio” para tentar de novo.",
+      );
+    } finally {
+      this.recuperandoAudio = false;
+    }
+  }
+
+  private async manterTelaAcesa(): Promise<void> {
+    if (this.desligando || this.travaTela || document.visibilityState !== "visible") return;
+    if (!("wakeLock" in navigator)) return;
+    try {
+      const trava = await navigator.wakeLock.request("screen");
+      if (this.desligando) {
+        void trava.release().catch(() => {});
+        return;
+      }
+      this.travaTela = trava;
+      trava.addEventListener("release", () => {
+        if (this.travaTela === trava) this.travaTela = null;
+      }, { once: true });
+    } catch {
+      this.travaTela = null;
+    }
+  }
+
+  private async retomarAoVoltar(): Promise<void> {
+    if (document.visibilityState !== "visible" || this.desligando || !this.sala) return;
+    void this.manterTelaAcesa();
+    for (const audio of this.remotas.values()) void audio.play().catch(() => {});
+    const nativa = this.minhaFaixa?.getTrack();
+    if (!nativa) {
+      if (!this.mudoAtual) await this.recuperarMicrofoneAusente();
+      return;
+    }
+    if (nativa.readyState === "ended") {
+      await this.recuperarMicrofone(nativa);
+      return;
+    }
+    if (nativa.muted) {
+      window.setTimeout(() => {
+        if (nativa.muted || nativa.readyState === "ended") void this.recuperarMicrofone(nativa);
+      }, ESPERA_MUDO_MS);
+    }
+  }
+
+  private async recuperarMicrofoneAusente(): Promise<void> {
+    if (this.recuperandoAudio) return;
+    this.recuperandoAudio = true;
+    try {
+      await this.reativarAudio();
+    } catch {
+      this.eventos.onErro?.(
+        "O microfone não voltou depois que a tela apagou. Use “Reativar áudio” para tentar de novo.",
       );
     } finally {
       this.recuperandoAudio = false;
@@ -745,6 +802,9 @@ export class ChamadaJitsi {
 
   desligar(): void {
     this.desligando = true;
+    document.removeEventListener("visibilitychange", this.aoMudarVisibilidade);
+    void this.travaTela?.release().catch(() => {});
+    this.travaTela = null;
 
     for (const faixa of [...this.remotas.keys()]) this.soltarFaixa(faixa);
 
