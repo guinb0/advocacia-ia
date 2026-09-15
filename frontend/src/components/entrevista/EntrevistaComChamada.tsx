@@ -13,7 +13,12 @@ import { lerEntrevista, usarPreAnalise } from "@/lib/preAnalise";
 import type { LeituraDaEntrevista } from "@/lib/preAnalise";
 import { chaveDasRespostas } from "@/lib/roteiroContexto";
 import type { ContextoRevisaoRoteiro } from "@/lib/types";
-import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
+import {
+  apagarCopiaTranscricao,
+  lerCopiaTranscricao,
+  montarTranscricaoBruta,
+  type TrechoTranscrito,
+} from "@/lib/transcricao";
 import { baixarTexto as baixarArquivoDeTexto } from "@/lib/baixar";
 import { enviarGravacaoDrive, statusDrive } from "@/lib/api";
 
@@ -277,6 +282,7 @@ export default function EntrevistaComChamada({
       `${d2(agora.getHours())}h${d2(agora.getMinutes())}.txt`;
     const conteudo = montarTranscricaoBruta(trechos) || "Nenhuma fala foi transcrita neste atendimento.";
     baixarTexto(nome, conteudo);
+    apagarCopiaTranscricao();
     void statusDrive()
       .then((situacao) =>
         situacao.conectado
@@ -285,6 +291,16 @@ export default function EntrevistaComChamada({
       )
       .catch(() => undefined);
   };
+
+  useEffect(() => {
+    const copia = lerCopiaTranscricao();
+    if (copia.length === 0) return;
+    baixarTexto(
+      `Transcrição recuperada de atendimento interrompido ${new Date(copia[0].quando).toLocaleString("pt-BR").replace(/[/:]/g, "-")}.txt`,
+      montarTranscricaoBruta(copia),
+    );
+    apagarCopiaTranscricao();
+  }, []);
 
   useEffect(() => {
     const avisar = (evento: BeforeUnloadEvent) => {
@@ -581,26 +597,11 @@ export default function EntrevistaComChamada({
               {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}
               {resultadoFinal && <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} podeComplementar={false} />}
 
-              <div className="flex items-start flex-wrap gap-[14px]">
-                <BotaoProcesso
-                  variante="primario"
-                  onClick={() => {
-                    /* Mesmo texto que vai gravado no caso — de propósito. Ver
-                     * `montarTranscricaoBruta`, em `lib/transcricao.ts`. */
-                    baixarTexto(
-                      `Transcrição bruta ${new Date().toLocaleDateString("pt-BR")}.txt`,
-                      montarTranscricaoBruta(roteiro.current?.transcricaoBruta() ?? []),
-                    );
-                  }}
-                >
-                  Baixar a transcrição bruta (.txt)
-                </BotaoProcesso>
-                <span className={ENCERRAR_NOTA}>
-                  Baixado agora, o .txt traz a conversa <strong>só até aqui</strong> — o que for dito
-                  na etapa dos documentos entra no áudio, mas não neste arquivo. O vídeo fica no
-                  bloco <strong>GRAVAÇÃO VISUAL</strong>, no alto desta tela.
-                </span>
-              </div>
+              <span className={ENCERRAR_NOTA}>
+                A transcrição de <strong>tudo que foi falado</strong>, do início ao fim, é baixada
+                automaticamente ao finalizar. Se a página fechar antes, ela é baixada ao abrir o
+                sistema de novo.
+              </span>
 
             </div>
           )}

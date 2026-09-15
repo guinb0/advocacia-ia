@@ -239,10 +239,16 @@ export class GravacaoVideo {
     // Microfone próprio, e não o da transcrição: aquele é da `CapturaEntrevista`
     // e pará-lo aqui emudeceria a entrevista inteira. Abrir o mesmo dispositivo
     // duas vezes é coisa que o navegador resolve.
-    return navigator.mediaDevices.getUserMedia({
-      video: QUADRO,
-      audio: true,
-    });
+    let ultimo: unknown = null;
+    for (const video of [QUADRO, { width: { ideal: 640 }, height: { ideal: 480 } }, true] as const) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ video, audio: true });
+      } catch (e) {
+        ultimo = e;
+        if (e instanceof DOMException && /NotAllowed|Security|NotFound/i.test(e.name)) break;
+      }
+    }
+    throw ultimo;
   }
 
   private async daTelaComMicrofone(): Promise<MediaStream> {

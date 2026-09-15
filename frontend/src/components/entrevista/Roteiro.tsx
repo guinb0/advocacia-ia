@@ -33,7 +33,7 @@ import type {
   PerguntaPendente,
   RoteiroCompleto,
 } from "@/lib/types";
-import { CapturaEntrevista } from "@/lib/transcricao";
+import { CapturaEntrevista, guardarCopiaTranscricao } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
 import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
@@ -678,6 +678,7 @@ export default function Roteiro({
         // não o que o modelo entendeu — inclusive o que ele descartou.
         const trecho = { quando: Date.now(), texto: texto.trim() };
         transcricaoBruta.current.push(trecho);
+        guardarCopiaTranscricao(transcricaoBruta.current);
         const quem = inferirFalante(
           texto,
           fonteAtual.current,
@@ -704,6 +705,7 @@ export default function Roteiro({
         if (!limpo) return;
         const trecho = { quando: Date.now(), texto: limpo };
         transcricaoBruta.current.push(trecho);
+        guardarCopiaTranscricao(transcricaoBruta.current);
         setTranscricaoVisivel((atuais) =>
           [
             ...atuais,
@@ -903,7 +905,7 @@ export default function Roteiro({
     /* E espera o passe final antes de deixar o encerramento seguir: é ele que
      * apura a cauda (`onCauda`). Quem chama isto fecha o socket na linha
      * seguinte — sem esta espera, o fim da conversa era cortado no caminho. */
-    await captura.current?.aguardarFinal();
+    await captura.current?.aguardarFinal(60_000);
     setEscutaEncerrada(true);
   }, []);
 
