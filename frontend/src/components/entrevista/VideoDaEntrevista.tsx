@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GravacaoVideo, podeGravarTela, podeGravarVideo } from "@/lib/gravacaoVideo";
 import type { EstadoVideo, FonteVideo, VideoGravado } from "@/lib/gravacaoVideo";
 import { baixarUrl } from "@/lib/baixar";
+import { explicarErroCamera } from "@/lib/chamadaJitsi";
 import { enviarGravacaoDrive, statusDrive } from "@/lib/api";
 
 /* Gravar a entrevista em vídeo — e baixar, porque ela não fica guardada.
@@ -125,10 +126,10 @@ export default function VideoDaEntrevista({
     try {
       await gravacao.current?.iniciar(fonte);
     } catch (e) {
-      const m = e instanceof Error ? e.message : "Não foi possível gravar o vídeo.";
-      // Cancelar a escolha da janela é um NotAllowedError igual ao da permissão
-      // negada, e um erro vermelho para quem só desistiu seria ruído.
-      if (/Permission denied|NotAllowedError/i.test(m)) {
+      const m = e instanceof Error ? `${e.name} ${e.message}`.trim() : "Não foi possível gravar o vídeo.";
+      if (fonte === "camera" && !/abort|cancel/i.test(m)) {
+        setErro(explicarErroCamera(e));
+      } else if (/Permission denied|NotAllowedError/i.test(m)) {
         setErro("Permissão de câmera ou de tela negada.");
       } else if (/InvalidStateError/i.test(m)) {
         setErro("O navegador exige um clique para compartilhar a tela. Use o botão de autorização acima.");

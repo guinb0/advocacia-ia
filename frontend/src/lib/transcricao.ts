@@ -173,6 +173,33 @@ export function montarTranscricaoBruta(trechos: TrechoTranscrito[]): string {
   return cabecalho + trechos.map((t) => `[${relogio(t.quando)}] ${t.texto}`).join("\n");
 }
 
+const CHAVE_COPIA_TRANSCRICAO = "advocacia:transcricao-em-andamento";
+
+export function guardarCopiaTranscricao(trechos: TrechoTranscrito[]): void {
+  try {
+    localStorage.setItem(CHAVE_COPIA_TRANSCRICAO, JSON.stringify(trechos));
+  } catch {
+    return;
+  }
+}
+
+export function lerCopiaTranscricao(): TrechoTranscrito[] {
+  try {
+    const dados = JSON.parse(localStorage.getItem(CHAVE_COPIA_TRANSCRICAO) || "[]");
+    return Array.isArray(dados) ? dados.filter((t) => t && typeof t.texto === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function apagarCopiaTranscricao(): void {
+  try {
+    localStorage.removeItem(CHAVE_COPIA_TRANSCRICAO);
+  } catch {
+    return;
+  }
+}
+
 /** Onde baixar ou tocar o áudio já convertido. */
 export function urlDoAudio(entrevistaId: string): string {
   return `${BASE_TRANSCRICAO}/entrevista/${entrevistaId}/audio`;
