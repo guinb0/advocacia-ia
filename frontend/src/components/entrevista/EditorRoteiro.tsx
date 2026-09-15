@@ -27,6 +27,7 @@
 import { useState } from "react";
 
 import { salvarRoteiro } from "@/lib/api";
+import { montarRoteiroColado, roteiroComoTexto } from "@/lib/roteiroColado";
 import type { Bloco, Pergunta, RoteiroCompleto, TipoResposta } from "@/lib/types";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import { Botao } from "@/components/ui/Basicos";
@@ -112,6 +113,24 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [abertos, setAbertos] = useState<string[]>([]);
+  const [textoColado, setTextoColado] = useState(() => roteiroComoTexto(roteiro));
+  const [resumoColado, setResumoColado] = useState<string | null>(null);
+
+  function aplicarTextoColado() {
+    const montado = montarRoteiroColado(textoColado, rascunho);
+    const perguntas = montado.blocos
+      .filter((b) => b.id !== "abertura")
+      .reduce((soma, b) => soma + b.perguntas.length, 0);
+    if (perguntas === 0) {
+      setErro("Não encontrei perguntas no texto. Confira se os títulos das seções estão em MAIÚSCULAS.");
+      return;
+    }
+    setRascunho(montado);
+    setErro(null);
+    setResumoColado(
+      `Montado: ${montado.blocos.filter((b) => b.id !== "abertura").length} seções e ${perguntas} perguntas. Agora é só salvar.`,
+    );
+  }
 
   function alterar(campos: Partial<RoteiroCompleto>) {
     setRascunho((atual) => ({ ...atual, ...campos }));
@@ -226,6 +245,32 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
         <div className="px-4 py-4">
           {erro && <div className={`${T_ERRO} mb-4`}>{erro}</div>}
 
+          <div className="mb-5 border border-acao bg-acao-clara px-3 py-3">
+            <span className="block text-[13px] font-semibold font-ui text-tinta">
+              Roteiro completo — cole o texto do documento (Ctrl+C / Ctrl+V)
+            </span>
+            <p className="mb-2 mt-1 text-[11.5px] leading-[1.5] font-ui text-tinta-2">
+              Títulos em MAIÚSCULAS viram seções e cada linha abaixo deles vira uma pergunta. O que
+              vem antes do primeiro título é a saudação; o que vem depois de “Encerramento” é lido no
+              final. Linhas entre parênteses são orientação à atendente.
+            </p>
+            <textarea
+              className={`${T_CAMPO} min-h-[320px]`}
+              value={textoColado}
+              onChange={(e) => {
+                setTextoColado(e.target.value);
+                setResumoColado(null);
+              }}
+              placeholder="Cole aqui o roteiro completo…"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Botao variante="primario" pequeno onClick={aplicarTextoColado}>
+                Montar o roteiro com este texto
+              </Botao>
+              {resumoColado && <span className="text-[11.5px] font-ui text-ok">{resumoColado}</span>}
+            </div>
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2 mb-5">
             <label className="block">
               <span className={T_ROTULO}>Nome do roteiro</span>
@@ -245,6 +290,10 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
             </label>
           </div>
 
+          <details className="border-t border-borda pt-3">
+          <summary className="cursor-pointer text-[12px] font-semibold font-ui text-tinta-3">
+            Ajustes avançados por seção (tipo de resposta, opções, condições)
+          </summary>
           <Paragrafos
             rotulo="Saudação — lida em voz alta antes da primeira pergunta"
             valores={rascunho.saudacao}
@@ -409,6 +458,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
               + Bloco
             </Botao>
           </div>
+          </details>
         </div>
       </div>
     </div>
