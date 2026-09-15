@@ -9,7 +9,8 @@ import * as portal from "@/lib/apiPortal";
 import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
 import type { TomSelo } from "@/lib/formato";
 import { useChamada } from "@/lib/ChamadaContexto";
-import { pedirPermissaoMicrofone, type EstadoChamada, type PermissaoMicrofone } from "@/lib/chamadaJitsi";
+import type { EstadoChamada } from "@/lib/chamadaJitsi";
+import AtivarMicrofone from "@/components/chamada/AtivarMicrofone";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
 
 /* Cada estado com símbolo, palavra e tom. O cliente lê "Recebido" e "Precisa
@@ -333,8 +334,12 @@ function Checklist({
         )}
 
         {faltam.length > 0 && (
-          <>
-            <div className="mt-5 mb-0 px-[18px] py-4 border border-acao-borda rounded-campo bg-acao-clara">
+          <details className="mt-6 group">
+            <summary className="flex items-center gap-[10px] cursor-pointer list-none text-acao font-ui text-base font-semibold underline underline-offset-4">
+              Ver o que ainda falta enviar
+              <Selo tom="critico">{faltam.length}</Selo>
+            </summary>
+            <div className="mt-4 mb-0 px-[18px] py-4 border border-acao-borda rounded-campo bg-acao-clara">
               <h2 className="mb-2 mt-0 text-tinta font-ui text-sm font-bold">Como fotografar para dar certo</h2>
               <ul className="m-0 pl-5">
                 <li className="mb-1 text-tinta-2 text-sm leading-[1.55]">
@@ -352,11 +357,7 @@ function Checklist({
               </ul>
             </div>
 
-            <h2 className="flex items-center gap-[10px] mt-7 mb-[10px] text-tinta font-titulo text-lg font-semibold">
-              Ainda falta enviar
-              <Selo tom="critico">{faltam.length}</Selo>
-            </h2>
-            <ul className="list-none m-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
+            <ul className="list-none mt-4 mb-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
               {faltam.map((item) => (
                 <Linha
                   key={item.codigo}
@@ -366,16 +367,16 @@ function Checklist({
                 />
               ))}
             </ul>
-          </>
+          </details>
         )}
 
         {prontos.length > 0 && (
-          <>
-            <h2 className="flex items-center gap-[10px] mt-7 mb-[10px] text-tinta font-titulo text-lg font-semibold">
-              Já recebemos
+          <details className="mt-5">
+            <summary className="flex items-center gap-[10px] cursor-pointer list-none text-tinta-2 font-ui text-base font-semibold underline underline-offset-4">
+              Ver o que já recebemos
               <Selo tom="ok">{prontos.length}</Selo>
-            </h2>
-            <ul className="list-none m-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
+            </summary>
+            <ul className="list-none mt-4 mb-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
               {prontos.map((item) => (
                 <Linha
                   key={item.codigo}
@@ -385,7 +386,7 @@ function Checklist({
                 />
               ))}
             </ul>
-          </>
+          </details>
         )}
 
         <div className="mt-7 pt-4 border-t border-borda text-tinta-3 text-sm leading-[1.6]">
@@ -420,12 +421,6 @@ function Chamada({ token }: { token: string }) {
   // Esta seção mostra a chamada por inteiro: enquanto está na tela, o painel
   // flutuante se recolhe. `registrarPainel` é estável, então roda uma vez.
   useEffect(() => chamada.registrarPainel(), [chamada.registrarPainel]);
-
-  const [microfone, setMicrofone] = useState<PermissaoMicrofone | null>(null);
-  useEffect(() => {
-    if (chamada.ativa) return;
-    void pedirPermissaoMicrofone().then(setMicrofone);
-  }, []);
 
   async function entrar() {
     setErro(null);
@@ -466,6 +461,7 @@ function Chamada({ token }: { token: string }) {
             Se o escritório combinou uma conversa por voz, toque abaixo. Você fala pelo
             próprio celular, sem instalar nada.
           </p>
+          <AtivarMicrofone />
           <BotaoProcesso
             variante="primario"
             className="mt-[14px]"
@@ -475,12 +471,6 @@ function Chamada({ token }: { token: string }) {
           >
             Entrar na chamada
           </BotaoProcesso>
-          {microfone === "negado" && (
-            <p className="mt-3 mb-0 border-l-2 border-atencao pl-[9px] text-[13px] leading-[1.5] text-atencao">
-              O microfone está bloqueado neste navegador. No iPhone, toque em “aA” na barra do
-              endereço, depois em Ajustes do Site → Microfone → Permitir, e recarregue a página.
-            </p>
-          )}
         </>
       ) : (
         <>

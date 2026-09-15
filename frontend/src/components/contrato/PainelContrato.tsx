@@ -424,7 +424,7 @@ export default function PainelContrato({ respostas }: Props) {
             classeBotao="min-h-12 px-3"
             onClick={enviarTodos}
             processando={enviandoTodos}
-            textoProcessando="Enviando os três para assinatura…"
+            textoProcessando="Enviando os documentos para assinatura…"
             dica="Pode levar alguns minutos — mantenha esta página aberta"
             pendencia={
               pendenciaContrato ??
@@ -432,12 +432,12 @@ export default function PainelContrato({ respostas }: Props) {
             }
             erro={erro?.origem === "todos" ? erro.texto : null}
           >
-            Enviar os três para o cliente assinar (ZapSign + WhatsApp)
+            Enviar para o cliente assinar em um só link (ZapSign + WhatsApp)
           </BotaoProcesso>
           <p className="mt-2 mb-0 font-normal text-[11.5px] leading-[1.5] font-ui text-tinta-3">
-            Contrato, procuração e declaração sobem de uma vez. O convite vai por e-mail
-            para {email || "o e-mail do cliente"}
-            {telefone ? " e o link de cada um pelo WhatsApp" : ""}.
+            Contrato, procuração e declaração vão juntos em um único documento: o cliente
+            assina uma vez só. O convite vai por e-mail para {email || "o e-mail do cliente"}
+            {telefone ? " e o link também pelo WhatsApp" : ""}.
           </p>
 
           {resultadoTodos && (
@@ -623,6 +623,12 @@ function EnvioPeloSiteZapSign({
   const [reenviandoWa, setReenviandoWa] = useState(false);
   const [envioWa, setEnvioWa] = useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (clienteEmail) setEmail((atual) => atual.trim() || clienteEmail);
+  }, [clienteEmail]);
+  useEffect(() => {
+    if (clienteTelefone) setWhatsapp((atual) => atual.trim() || clienteTelefone);
+  }, [clienteTelefone]);
   const CAMPO =
     "w-full rounded-[6px] border border-borda bg-papel px-3 py-2 text-sm text-tinta placeholder:text-tinta-3";
 

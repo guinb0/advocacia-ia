@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GravacaoVideo, podeGravarTela, podeGravarVideo } from "@/lib/gravacaoVideo";
 import type { EstadoVideo, FonteVideo, VideoGravado } from "@/lib/gravacaoVideo";
 import { baixarUrl } from "@/lib/baixar";
+import { enviarGravacaoDrive, statusDrive } from "@/lib/api";
 
 /* Gravar a entrevista em vídeo — e baixar, porque ela não fica guardada.
  *
@@ -145,6 +146,24 @@ export default function VideoDaEntrevista({
     void iniciar(temTela ? "tela" : "camera");
   }, [automatico, podeGravar, temTela, iniciar]);
 
+  const [drive, setDrive] = useState<{ tom: "info" | "ok" | "erro"; texto: string } | null>(null);
+
+  const enviarParaDrive = useCallback(async (gravado: VideoGravado) => {
+    try {
+      const situacao = await statusDrive();
+      if (!situacao.conectado) return;
+      setDrive({ tom: "info", texto: "Salvando a gravação no Google Drive…" });
+      const arquivo = await (await fetch(gravado.url)).blob();
+      await enviarGravacaoDrive(arquivo, gravado.nome);
+      setDrive({ tom: "ok", texto: "Gravação salva no Google Drive do escritório." });
+    } catch (e) {
+      setDrive({
+        tom: "erro",
+        texto: `Não foi possível salvar no Google Drive${e instanceof Error ? ` (${e.message})` : ""}. O arquivo continua baixado neste computador.`,
+      });
+    }
+  }, []);
+
   const baixar = useCallback(() => {
     gravacao.current?.marcarBaixado();
     setBaixado(true);
@@ -199,6 +218,7 @@ export default function VideoDaEntrevista({
        * vídeo não está em lugar nenhum além desta aba; aqui o erro é definitivo. */
       baixarUrl(pronto.url, pronto.nome);
       baixar();
+      void enviarParaDrive(pronto);
     } catch (e) {
       setErro(
         e instanceof Error
@@ -288,6 +308,17 @@ export default function VideoDaEntrevista({
 
       {erro && (
         <p className="mt-[10px] mb-0 font-normal text-[12px] leading-[1.5] font-ui text-critico">{erro}</p>
+      )}
+
+      {drive && (
+        <p
+          className={`mt-[10px] mb-0 font-normal text-[12px] leading-[1.5] font-ui ${
+            drive.tom === "erro" ? "text-critico" : drive.tom === "ok" ? "text-ok" : "text-tinta-3"
+          }`}
+          aria-live="polite"
+        >
+          {drive.texto}
+        </p>
       )}
 
       {video && (

@@ -128,6 +128,42 @@ export async function desconectarWhatsapp(): Promise<{ desconectado: boolean; in
   return comoJson(await buscar("/api/whatsapp/desconectar", { method: "POST" }));
 }
 
+export interface StatusDrive {
+  configurado: boolean;
+  credenciais_do_ambiente: boolean;
+  conectado: boolean;
+  conta: string;
+  pasta_url: string;
+  redirect_uri: string;
+}
+
+export async function statusDrive(): Promise<StatusDrive> {
+  return comoJson(await buscar("/api/drive/status"));
+}
+
+export async function salvarCredenciaisDrive(clientId: string, clientSecret: string): Promise<StatusDrive> {
+  return comoJson(await buscar("/api/drive/credenciais", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
+  }));
+}
+
+export async function urlConectarDrive(): Promise<{ url: string }> {
+  return comoJson(await buscar("/api/drive/conectar"));
+}
+
+export async function desconectarDrive(): Promise<StatusDrive> {
+  return comoJson(await buscar("/api/drive/desconectar", { method: "POST" }));
+}
+
+export async function enviarGravacaoDrive(arquivo: Blob, nome: string): Promise<{ id: string; link: string }> {
+  const form = new FormData();
+  form.append("arquivo", arquivo, nome);
+  form.append("nome", nome);
+  return comoJson(await buscar("/api/drive/gravacoes", { method: "POST", body: form }));
+}
+
 /** Guarda uma transcrição de atendimento como entrevista do caso. Aceita um
  *  arquivo (.txt, .docx, .pdf); texto colado vira um .txt no cliente. É o que
  *  destrava a análise/petição quando o caso ainda não tem entrevista gravada. */
