@@ -24,7 +24,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, BookOpenText, FilePenLine, RotateCcw, Upload } from "lucide-react";
+import { ArrowLeft, BookOpenText, FilePenLine, RotateCcw, Trash2, Upload } from "lucide-react";
 
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
 import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
@@ -105,6 +105,10 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
   }
 
   async function reverter(resumo: RoteiroResumo) {
+    const pergunta = resumo.original_do_sistema
+      ? `Descartar as edições de “${resumo.nome}” e voltar ao roteiro original do sistema?`
+      : `Excluir o roteiro “${resumo.nome}”? Ele deixa de aparecer nos atendimentos e não dá para desfazer.`;
+    if (!window.confirm(pergunta)) return;
     setRevertendo(resumo.codigo);
     setErro(null);
     try {
@@ -230,7 +234,7 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                 {/* Só em quem TEM versão salva: num roteiro que nunca foi
                     editado não há nada para desfazer, e o botão convidaria a
                     apagar o que não dá para apagar. */}
-                {r.importado && (
+                {r.importado && r.original_do_sistema && (
                   <Botao
                     pequeno
                     variante="texto"
@@ -240,6 +244,18 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
                   >
                     <RotateCcw size={14} aria-hidden />
                     Voltar ao original
+                  </Botao>
+                )}
+                {r.importado && !r.original_do_sistema && (
+                  <Botao
+                    pequeno
+                    variante="perigo"
+                    onClick={() => void reverter(r)}
+                    carregando={revertendo === r.codigo}
+                    textoCarregando="Excluindo…"
+                  >
+                    <Trash2 size={14} aria-hidden />
+                    Excluir
                   </Botao>
                 )}
               </div>

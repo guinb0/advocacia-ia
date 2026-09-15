@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   analisarEstrategia,
+  consultarCpf,
   gravarEntrevistaAoVivo,
   listarAssinaturas,
   salvarQualificacaoDoCaso,
@@ -28,6 +29,7 @@ import EntrevistaComChamada from "@/components/entrevista/EntrevistaComChamada";
 import PainelContrato from "@/components/contrato/PainelContrato";
 import PainelChamada from "@/components/chamada/PainelChamada";
 import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
+import { conferirCpf, formatarCpf } from "@/lib/documentos";
 
 const OPCAO_BASE =
   "flex gap-3 items-start w-full px-[14px] py-3 border-none border-b border-borda border-l-4 bg-transparent " +
@@ -90,9 +92,10 @@ function edicoesPreenchidas(edicoes: Record<string, string>): Record<string, str
   return Object.fromEntries(Object.entries(edicoes).filter(([, valor]) => valor.trim() !== ""));
 }
 
-function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }: {
+function DadosCadastraisFinais({ respostas, confirmado, avisoCpf, onAlterar, onContinuar }: {
   respostas: Record<string, string | string[]>;
   confirmado: boolean;
+  avisoCpf?: string;
   onAlterar: (id: string, valor: string) => void;
   onContinuar: () => void;
 }) {
@@ -123,6 +126,9 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
           className={campo.id === "telefone" && tentouContinuar && telefoneVazio ? "border-atencao" : undefined}
           autoComplete="off"
         />
+        {campo.id === "cpf" && (
+          <AjudaCampo>{avisoCpf || "Digite o CPF: nome, mãe, nascimento, endereço e contatos vêm preenchidos."}</AjudaCampo>
+        )}
         {campo.id === "telefone" && tentouContinuar && telefoneVazio && (
           <AjudaCampo className="text-atencao">
             Telefone vazio. Clique em salvar novamente para continuar sem WhatsApp automático.
@@ -137,7 +143,7 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
         <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Etapa 1 · fechamento</span>
         <h3 className="mt-1 text-lg font-semibold text-tinta">Confira os dados cadastrais</h3>
         <p className="mb-0 mt-1 max-w-[72ch] text-xs leading-[1.55] text-tinta-3">
-          Preenchidos automaticamente com a consulta do CPF e as respostas da entrevista. Confira e corrija o que precisar; e-mail e WhatsApp serão usados no contato com o cliente.
+          Qualificação do cliente, depois da entrevista. Digite o CPF para puxar os dados da base; o que foi dito na entrevista também já vem preenchido. Confira e corrija o que precisar; e-mail e WhatsApp serão usados no contato com o cliente.
         </p>
       </header>
 
@@ -235,6 +241,29 @@ export default function TriagemEntrevista({
     null,
   );
   const edicoesCadastro = useRef<Record<string, string>>({});
+  const cpfConsultadoQualificacao = useRef("");
+  const [avisoCpf, setAvisoCpf] = useState("");
+  const consultarCpfDaQualificacao = (valor: string) => {
+    const digitos = valor.replace(/\D/g, "");
+    if (digitos.length !== 11 || !conferirCpf(digitos).valido || cpfConsultadoQualificacao.current === digitos) return;
+    cpfConsultadoQualificacao.current = digitos;
+    setAvisoCpf("Consultando o CPF…");
+    void consultarCpf(digitos)
+      .then((consulta) => {
+        setAvisoCpf(consulta.aviso || "Dados do CPF preenchidos. Confira com o cliente.");
+        setQualificacao((atuais) => {
+          const novas = { ...(atuais ?? {}) };
+          for (const [id, valor] of Object.entries(consulta.campos)) {
+            if (valor && !preenchido(novas[id])) novas[id] = valor;
+          }
+          return completarQualificacao(novas);
+        });
+      })
+      .catch(() => {
+        cpfConsultadoQualificacao.current = "";
+        setAvisoCpf("Não foi possível consultar o CPF agora. Preencha os dados à mão.");
+      });
+  };
   const [roteiroAtivo, setRoteiroAtivo] = useState<RoteiroCompleto | null>(null);
   /* O áudio sobrevive à tela em que foi gravado — pelo mesmo motivo da
    * qualificação. Sem guardar o id aqui, o arquivo continuaria no disco e
@@ -472,9 +501,12 @@ export default function TriagemEntrevista({
       <DadosCadastraisFinais
         respostas={qualificacao}
         confirmado={cadastroConfirmado}
-        onAlterar={(id, valor) => {
+        avisoCpf={avisoCpf}
+        onAlterar={(id, bruto) => {
+          const valor = id === "cpf" ? formatarCpf(bruto) : bruto;
           edicoesCadastro.current = { ...edicoesCadastro.current, [id]: valor };
           setQualificacao((atuais) => ({ ...(atuais ?? {}), [id]: valor }));
+          if (id === "cpf") consultarCpfDaQualificacao(valor);
         }}
         onContinuar={() => {
           setCadastroConfirmado(true);
