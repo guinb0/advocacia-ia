@@ -17,7 +17,7 @@ function carregarSegmentador(): Promise<ImageSegmenter> {
           outputCategoryMask: false,
           outputConfidenceMasks: true,
         });
-      return criar("GPU").catch(() => criar("CPU"));
+      return criar("CPU").catch(() => criar("GPU"));
     })().catch((erro) => {
       segmentador = null;
       throw erro;
@@ -81,6 +81,7 @@ export function criarEfeitoFundo(urlImagem: string, aoFalhar?: (mensagem: string
       let semSegmentacao = false;
       let inverter: boolean | null = null;
       let dimensionado = false;
+      let imagemMascara: ImageData | null = null;
 
       void carregarImagem(urlImagem).then((imagem) => (fundo = imagem)).catch(() => undefined);
       void carregarSegmentador()
@@ -160,7 +161,10 @@ export function criarEfeitoFundo(urlImagem: string, aoFalhar?: (mensagem: string
           mascara.width = w;
           mascara.height = h;
         }
-        const imagem = ctxMascara.createImageData(w, h);
+        const imagem =
+          imagemMascara && imagemMascara.width === w && imagemMascara.height === h
+            ? imagemMascara
+            : (imagemMascara = ctxMascara.createImageData(w, h));
         for (let i = 0; i < dados.length; i++) {
           imagem.data[i * 4 + 3] = (inverter ? 1 - dados[i] : dados[i]) * 255;
         }
@@ -168,9 +172,8 @@ export function criarEfeitoFundo(urlImagem: string, aoFalhar?: (mensagem: string
         ctxMascara.putImageData(imagem, 0, 0);
 
         ctx.globalCompositeOperation = "copy";
-        ctx.filter = "blur(3px)";
+        ctx.imageSmoothingEnabled = true;
         ctx.drawImage(mascara, 0, 0, saida.width, saida.height);
-        ctx.filter = "none";
         ctx.globalCompositeOperation = "source-in";
         ctx.drawImage(origem, 0, 0, saida.width, saida.height);
         ctx.globalCompositeOperation = "destination-over";
