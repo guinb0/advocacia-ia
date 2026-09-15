@@ -276,6 +276,7 @@ export class CapturaEntrevista {
   /** Uma recuperação por vez; a troca de microfone dispara vários eventos. */
   private recuperando = false;
   private ouvindoDispositivos = false;
+  private ultimaTrilhaChamada: MediaStreamTrack | null = null;
 
   constructor(private eventos: EventosTranscricao = {}) {}
 
@@ -334,6 +335,7 @@ export class CapturaEntrevista {
   async usarTrilha(trilha: MediaStreamTrack): Promise<void> {
     this.desmontar();
     this.origem = "chamada";
+    this.ultimaTrilhaChamada = trilha;
     this.dispositivoAtual = undefined;
     // Uma faixa nova chegando É a recuperação: em produção a fonte é a voz do
     // cliente, e a chamada reentrega a faixa quando ela é renegociada.
@@ -476,7 +478,9 @@ export class CapturaEntrevista {
       void this.aoPerderFonte(motivo);
     };
     trilha.addEventListener("ended", () => cair("trilha encerrada"));
-    trilha.addEventListener("mute", () => cair("trilha muda"));
+    trilha.addEventListener("mute", () => {
+      if (this.origem !== "chamada") cair("trilha muda");
+    });
     this.trilha = trilha;
 
     /* Taxa NATIVA de propósito, e não 16 kHz forçado.
@@ -595,8 +599,15 @@ export class CapturaEntrevista {
     };
 
     await new Promise<void>((ok, falhou) => {
-      ws.onopen = () => ok();
-      setTimeout(() => falhou(new Error("O servidor de transcrição não respondeu.")), 10_000);
+      const relogio = setTimeout(() => {
+        ws.onclose = null;
+        ws.close();
+        falhou(new Error("O servidor de transcrição não respondeu."));
+      }, 8_000);
+      ws.onopen = () => {
+        clearTimeout(relogio);
+        ok();
+      };
     });
 
     this.ws = ws;
@@ -624,11 +635,18 @@ export class CapturaEntrevista {
         await new Promise((ok) => setTimeout(ok, espera));
         if (this.encerrado) return;
         try {
-          await this.iniciarResposta(pergunta ?? "entrevista");
-          this.eventos.onAviso?.("Conexão restabelecida. A gravação continua no mesmo arquivo.");
+          if (!this.trilha && this.ultimaTrilhaChamada?.readyState === "live") {
+            await this.usarTrilha(this.ultimaTrilhaChamada).catch(() => undefined);
+          }
+          await this.abrirSessao(pergunta ?? "entrevista");
+          this.eventos.onAviso?.(
+            this.trilha
+              ? "Conexão restabelecida. A gravação continua no mesmo arquivo."
+              : "Conexão restabelecida. Aguardando o áudio da chamada voltar.",
+          );
           return;
         } catch {
-          espera = Math.min(espera * 2, 15_000);
+          espera = Math.min(espera * 2, 4_000);
         }
       }
     } finally {
@@ -653,7 +671,10 @@ export class CapturaEntrevista {
   /** Começa a transcrever a resposta desta pergunta. */
   async iniciarResposta(perguntaId: string): Promise<void> {
     if (!this.trilha) throw new Error("Ligue o microfone antes de iniciar.");
+    await this.abrirSessao(perguntaId);
+  }
 
+  private async abrirSessao(perguntaId: string): Promise<void> {
     /* Gravar depois de encerrar é OUTRA entrevista, com outro arquivo.
      *
      * Reaproveitar o id faria a conversão seguinte passar por cima do .mp4 que
