@@ -2698,6 +2698,94 @@ def obter_gravacao_temporaria(gravacao_id: str) -> dict[str, Any] | None:
     return dict(linha) if linha else None
 
 
+def salvar_pedaco_gravacao(
+    *,
+    sessao_id: str,
+    ordem: int,
+    nome_arquivo: str,
+    mime: str,
+    conteudo: bytes,
+    enviado_por: str = "",
+) -> None:
+    identificador = f"{sessao_id}:{ordem}"
+    with conectar() as con:
+        con.execute("DELETE FROM gravacoes_pedacos WHERE id = ?", (identificador,))
+        con.execute(
+            """
+            INSERT INTO gravacoes_pedacos
+                   (id, sessao_id, ordem, nome_arquivo, mime, conteudo, enviado_por, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (identificador, sessao_id, ordem, nome_arquivo, mime, conteudo, enviado_por, agora()),
+        )
+
+
+def pedacos_da_gravacao(sessao_id: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT ordem, nome_arquivo, mime, conteudo
+                 FROM gravacoes_pedacos
+                WHERE sessao_id = ?
+             ORDER BY ordem""",
+            (sessao_id,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def listar_sessoes_gravacao() -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT sessao_id, MIN(nome_arquivo) AS nome_arquivo, COUNT(*) AS pedacos,
+                      SUM(CAST(DATALENGTH(conteudo) AS bigint)) AS tamanho,
+                      MIN(enviado_por) AS enviado_por, MIN(criado_em) AS inicio,
+                      MAX(criado_em) AS ultimo
+                 FROM gravacoes_pedacos
+             GROUP BY sessao_id
+             ORDER BY MAX(criado_em) DESC"""
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def salvar_trecho_transcricao(
+    *, entrevista_id: str, quando: int, texto: str, enviado_por: str = ""
+) -> None:
+    identificador = f"{entrevista_id}:{quando}"
+    with conectar() as con:
+        con.execute("DELETE FROM transcricao_trechos WHERE id = ?", (identificador,))
+        con.execute(
+            """
+            INSERT INTO transcricao_trechos
+                   (id, entrevista_id, quando, texto, enviado_por, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (identificador, entrevista_id, quando, texto, enviado_por, agora()),
+        )
+
+
+def trechos_da_transcricao(entrevista_id: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT quando, texto
+                 FROM transcricao_trechos
+                WHERE entrevista_id = ?
+             ORDER BY quando""",
+            (entrevista_id,),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def listar_transcricoes_parciais() -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT entrevista_id, COUNT(*) AS trechos, MIN(enviado_por) AS enviado_por,
+                      MIN(criado_em) AS inicio, MAX(criado_em) AS ultimo
+                 FROM transcricao_trechos
+             GROUP BY entrevista_id
+             ORDER BY MAX(criado_em) DESC"""
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
 # --------------------------------------------------- modelos .docx do escritório
 #
 # O contrato de honorários não é versionado (ver o `.gitignore` e o comentário da

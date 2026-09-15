@@ -49,6 +49,7 @@ export interface EventosVideo {
   onEstado?: (estado: EstadoVideo) => void;
   onPronto?: (video: VideoGravado) => void;
   onErro?: (mensagem: string) => void;
+  onPedaco?: (pedaco: Blob, ordem: number, tipo: string) => void;
 }
 
 /* Ordem de preferência. O primeiro que o navegador aceitar é o usado.
@@ -220,8 +221,11 @@ export class GravacaoVideo {
       audioBitsPerSecond: BITS_AUDIO,
     });
     this.pedacos = [];
+    let ordem = 0;
     gravador.ondataavailable = (e) => {
-      if (e.data.size > 0) this.pedacos.push(e.data);
+      if (e.data.size === 0) return;
+      this.pedacos.push(e.data);
+      this.eventos.onPedaco?.(e.data, ordem++, formato);
     };
     gravador.onstop = () => this.montar(formato);
     gravador.onerror = () => {

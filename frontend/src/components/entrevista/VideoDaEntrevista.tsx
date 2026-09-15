@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GravacaoVideo, podeGravarTela, podeGravarVideo } from "@/lib/gravacaoVideo";
 import type { EstadoVideo, FonteVideo, VideoGravado } from "@/lib/gravacaoVideo";
 import { baixarUrl } from "@/lib/baixar";
-import { guardarGravacaoNoBanco } from "@/lib/api";
+import { enviarPedacoGravacao } from "@/lib/api";
 import { explicarErroCamera } from "@/lib/chamadaJitsi";
 import { enviarGravacaoDrive, statusDrive } from "@/lib/api";
 
@@ -73,9 +73,24 @@ export default function VideoDaEntrevista({
    * blob no `onstop`, que é assíncrono: sem isto, "encerrar e baixar" tentaria
    * baixar um vídeo que ainda não existe. */
   const aguardandoPronto = useRef<((v: VideoGravado) => void) | null>(null);
+  const sessaoVideo = useRef({ id: "", nome: "" });
 
   if (gravacao.current === null && typeof window !== "undefined") {
     gravacao.current = new GravacaoVideo({
+      onPedaco: (pedaco, ordem, tipo) => {
+        if (ordem === 0) {
+          const agora = new Date();
+          const d2 = (n: number) => String(n).padStart(2, "0");
+          sessaoVideo.current = {
+            id: `${agora.getTime()}-${Math.random().toString(36).slice(2, 10)}`,
+            nome:
+              `Entrevista ${d2(agora.getDate())}-${d2(agora.getMonth() + 1)}-${agora.getFullYear()} ` +
+              `${d2(agora.getHours())}h${d2(agora.getMinutes())}.${tipo.includes("mp4") ? "mp4" : "webm"}`,
+          };
+        }
+        const { id, nome } = sessaoVideo.current;
+        if (id) void enviarPedacoGravacao(id, ordem, pedaco, nome);
+      },
       onEstado: setEstado,
       onPronto: (pronto) => {
         setVideo(pronto);
@@ -151,10 +166,6 @@ export default function VideoDaEntrevista({
   const [drive, setDrive] = useState<{ tom: "info" | "ok" | "erro"; texto: string } | null>(null);
 
   const enviarParaDrive = useCallback(async (gravado: VideoGravado) => {
-    void fetch(gravado.url)
-      .then((resposta) => resposta.blob())
-      .then((arquivo) => guardarGravacaoNoBanco(arquivo, gravado.nome, "video"))
-      .catch(() => undefined);
     try {
       const situacao = await statusDrive();
       if (!situacao.conectado) return;

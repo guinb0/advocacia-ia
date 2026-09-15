@@ -4088,6 +4088,109 @@ def listar_gravacoes_temporarias(_usuario: auth.Usuario = Depends(auth.usuario_a
     return {"gravacoes": armazenamento.listar_gravacoes_temporarias()}
 
 
+def _exigir_midia_no_banco_liberada() -> None:
+    if datetime.now(timezone(timedelta(hours=-3))).date() > GUARDAR_MIDIA_NO_BANCO_ATE:
+        raise HTTPException(410, "O armazenamento temporário de gravações no banco já foi encerrado.")
+
+
+class PedidoTrechoTranscricao(BaseModel):
+    entrevista_id: str = Field(min_length=1, max_length=64)
+    quando: int = 0
+    texto: str = Field(min_length=1, max_length=20000)
+
+
+@app.post("/api/gravacoes-temporarias/pedacos", status_code=201)
+async def guardar_pedaco_de_video(
+    arquivo: UploadFile = File(...),
+    sessao_id: str = Form(...),
+    ordem: int = Form(...),
+    nome: str = Form(""),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    _exigir_midia_no_banco_liberada()
+    sessao = sessao_id.strip()[:64]
+    if not sessao or ordem < 0:
+        raise HTTPException(400, "Sessão ou ordem inválida.")
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Pedaço vazio.")
+    if len(conteudo) > 64 * 1024 * 1024:
+        raise HTTPException(413, "Pedaço grande demais.")
+    try:
+        await run_in_threadpool(
+            armazenamento.salvar_pedaco_gravacao,
+            sessao_id=sessao,
+            ordem=ordem,
+            nome_arquivo=(nome or arquivo.filename or "Entrevista.webm")[:400],
+            mime=(arquivo.content_type or "application/octet-stream")[:100],
+            conteudo=conteudo,
+            enviado_por=usuario.nome,
+        )
+    except Exception as exc:
+        log.exception("Falha ao guardar pedaço de vídeo no banco")
+        raise HTTPException(503, f"Não foi possível guardar o pedaço do vídeo: {exc}") from exc
+    return {"sessao_id": sessao, "ordem": ordem, "tamanho": len(conteudo)}
+
+
+@app.get("/api/gravacoes-temporarias/videos")
+def listar_videos_em_pedacos(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    return {"videos": armazenamento.listar_sessoes_gravacao()}
+
+
+@app.get("/api/gravacoes-temporarias/videos/{sessao_id}")
+def baixar_video_em_pedacos(sessao_id: str, _usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    pedacos = armazenamento.pedacos_da_gravacao(sessao_id)
+    if not pedacos:
+        raise HTTPException(404, "Vídeo não encontrado.")
+    nome = str(pedacos[0]["nome_arquivo"] or "Entrevista.webm")
+    return Response(
+        content=b"".join(bytes(p["conteudo"]) for p in pedacos),
+        media_type=str(pedacos[0]["mime"] or "application/octet-stream").split(";")[0],
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(nome)}"},
+    )
+
+
+@app.post("/api/gravacoes-temporarias/trechos", status_code=201)
+def guardar_trecho_de_transcricao(
+    pedido: PedidoTrechoTranscricao,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    _exigir_midia_no_banco_liberada()
+    try:
+        armazenamento.salvar_trecho_transcricao(
+            entrevista_id=pedido.entrevista_id,
+            quando=pedido.quando,
+            texto=pedido.texto,
+            enviado_por=usuario.nome,
+        )
+    except Exception as exc:
+        log.exception("Falha ao guardar trecho da transcrição no banco")
+        raise HTTPException(503, f"Não foi possível guardar o trecho da transcrição: {exc}") from exc
+    return {"ok": True}
+
+
+@app.get("/api/gravacoes-temporarias/transcricoes")
+def listar_transcricoes_parciais(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    return {"transcricoes": armazenamento.listar_transcricoes_parciais()}
+
+
+@app.get("/api/gravacoes-temporarias/transcricoes/{entrevista_id}")
+def baixar_transcricao_parcial(entrevista_id: str, _usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    trechos = armazenamento.trechos_da_transcricao(entrevista_id)
+    if not trechos:
+        raise HTTPException(404, "Transcrição não encontrada.")
+    fuso = timezone(timedelta(hours=-3))
+    linhas = [
+        f"[{datetime.fromtimestamp(int(t['quando']) / 1000, fuso).strftime('%d/%m/%Y %H:%M:%S')}] {t['texto']}"
+        for t in trechos
+    ]
+    return Response(
+        content="\n".join(linhas).encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f'Transcricao {entrevista_id}.txt')}"},
+    )
+
+
 @app.get("/api/gravacoes-temporarias/{gravacao_id}")
 def baixar_gravacao_temporaria(gravacao_id: str, _usuario: auth.Usuario = Depends(auth.usuario_atual)):
     registro = armazenamento.obter_gravacao_temporaria(gravacao_id)
