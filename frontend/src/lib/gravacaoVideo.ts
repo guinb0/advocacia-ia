@@ -59,9 +59,15 @@ export interface EventosVideo {
 const FORMATOS = [
   'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
   "video/mp4",
-  'video/webm;codecs="vp9,opus"',
+  'video/webm;codecs="vp8,opus"',
   "video/webm",
 ];
+
+const QUADRO = { width: { ideal: 1280, max: 1280 }, height: { ideal: 720, max: 720 }, frameRate: { ideal: 15, max: 15 } };
+
+function ehFirefox(): boolean {
+  return typeof navigator !== "undefined" && /firefox/i.test(navigator.userAgent);
+}
 
 /* 1,2 Mbps de vídeo é o bastante para duas pessoas conversando em 720p, e são
  * ~9 MB por minuto. Acima disso a aba passa a carregar centenas de MB de blob
@@ -234,7 +240,7 @@ export class GravacaoVideo {
     // e pará-lo aqui emudeceria a entrevista inteira. Abrir o mesmo dispositivo
     // duas vezes é coisa que o navegador resolve.
     return navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } },
+      video: QUADRO,
       audio: true,
     });
   }
@@ -253,7 +259,7 @@ export class GravacaoVideo {
     }
 
     const tela = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 24 } },
+      video: QUADRO,
       // Áudio da aba: é por onde sai a voz de quem está na chamada.
       audio: true,
       ...ESTA_ABA,
@@ -269,14 +275,18 @@ export class GravacaoVideo {
      * opcional, e tratar "não informou" como "é tela inteira" tiraria a
      * gravação de quem só usa um navegador mais calado. */
     const superficie = tela.getVideoTracks()[0]?.getSettings().displaySurface;
-    if (superficie && superficie !== "browser") {
+    const aceitas = ehFirefox() ? ["browser", "window"] : ["browser"];
+    if (superficie && !aceitas.includes(superficie)) {
       for (const trilha of tela.getTracks()) trilha.stop();
       throw new Error(
-        "A gravação precisa ser desta aba, e não da tela inteira ou de outra " +
-          "janela. Clique de novo e escolha “Guia do Chrome” — a que está com o " +
-          "sistema aberto.",
+        ehFirefox()
+          ? "A gravação precisa ser da janela do navegador com o sistema aberto, e não da " +
+              "tela inteira. Clique de novo e escolha a janela do Firefox."
+          : "A gravação precisa ser desta aba, e não da tela inteira ou de outra " +
+              "janela. Clique de novo e escolha a guia que está com o sistema aberto.",
       );
     }
+    await tela.getVideoTracks()[0]?.applyConstraints(QUADRO).catch(() => undefined);
 
     let microfone: MediaStream | null = null;
     try {

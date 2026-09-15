@@ -188,6 +188,18 @@ function carregarJitsi(): Promise<ApiJitsi> {
 
 export type PermissaoMicrofone = "permitido" | "negado" | "indisponivel";
 
+export async function consultarPermissaoMicrofone(): Promise<PermissaoMicrofone | "perguntar"> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return "indisponivel";
+  try {
+    const status = await navigator.permissions?.query({ name: "microphone" as PermissionName });
+    if (status?.state === "granted") return "permitido";
+    if (status?.state === "denied") return "negado";
+  } catch {
+    return "perguntar";
+  }
+  return "perguntar";
+}
+
 export async function pedirPermissaoMicrofone(): Promise<PermissaoMicrofone> {
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return "indisponivel";
   try {

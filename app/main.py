@@ -1521,6 +1521,19 @@ class PedidoAssinaturaTodos(BaseModel):
     cliente_whatsapp: str = ""
 
 
+def _juntar_pdfs(pdfs: list[bytes]) -> bytes:
+    import io
+
+    import pypdfium2 as pdfium
+
+    destino = pdfium.PdfDocument.new()
+    for conteudo in pdfs:
+        destino.import_pages(pdfium.PdfDocument(conteudo))
+    saida = io.BytesIO()
+    destino.save(saida)
+    return saida.getvalue()
+
+
 @app.post("/api/assinatura/navegador/todos", status_code=201)
 async def enviar_todos_para_assinatura_site(pedido: PedidoAssinaturaTodos):
     """Gera contrato + procuração + declaração e os manda assinar num clique.
@@ -1544,16 +1557,19 @@ async def enviar_todos_para_assinatura_site(pedido: PedidoAssinaturaTodos):
         gerados = await run_in_threadpool(
             contrato.gerar_todos, pedido.respostas, pedido.municipio
         )
-        documentos = []
+        pdfs: list[bytes] = []
+        rotulos: list[str] = []
         for item in gerados:
-            pdf = await run_in_threadpool(docx_pdf.converter, item["docx"])
-            documentos.append(
-                {
-                    "pdf": pdf,
-                    "nome": f"{item['rotulo']} - {nome or 'cliente'}.pdf".replace("/", "-"),
-                    "rotulo": item["rotulo"],
-                }
-            )
+            pdfs.append(await run_in_threadpool(docx_pdf.converter, item["docx"]))
+            rotulos.append(str(item["rotulo"]))
+        rotulo = f"{', '.join(rotulos[:-1])} e {rotulos[-1]}" if len(rotulos) > 1 else rotulos[0]
+        documentos = [
+            {
+                "pdf": await run_in_threadpool(_juntar_pdfs, pdfs),
+                "nome": f"Documentos para assinatura - {nome or 'cliente'}.pdf".replace("/", "-"),
+                "rotulo": rotulo,
+            }
+        ]
     except docx_pdf.ErroConversaoDocx as exc:
         raise HTTPException(502, str(exc)) from exc
     except contrato.ErroContrato as exc:
@@ -1572,7 +1588,8 @@ async def enviar_todos_para_assinatura_site(pedido: PedidoAssinaturaTodos):
                 if not doc.get("link"):
                     continue
                 texto = (
-                    f"Olá! Segue {doc.get('rotulo', 'o documento')} para assinatura digital: "
+                    f"Olá! Seguem os seus documentos ({doc.get('rotulo', 'contrato')}) para "
+                    f"assinatura digital, todos em um só link — basta assinar uma vez: "
                     f"{doc['link']}\nQualquer dúvida, estamos à disposição."
                 )
                 await run_in_threadpool(whatsapp._enviar_texto_sync, numero, texto)

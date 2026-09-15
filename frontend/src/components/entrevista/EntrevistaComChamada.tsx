@@ -226,6 +226,7 @@ export default function EntrevistaComChamada({
   const [erroFecho, setErroFecho] = useState<string | null>(null);
   const [consolidando, setConsolidando] = useState(false);
   const [resultadoFinal, setResultadoFinal] = useState<ResultadoFinal | null>(null);
+  const [revisadas, setRevisadas] = useState<Record<string, string | string[]> | null>(null);
   const [contextoRoteiro, setContextoRoteiro] = useState<ContextoRevisaoRoteiro | null>(null);
   const publicarRoteiroAtivo = useRef(onRoteiroAtivo);
   publicarRoteiroAtivo.current = onRoteiroAtivo;
@@ -237,6 +238,7 @@ export default function EntrevistaComChamada({
       geracaoRevisao.current += 1;
       // Resultado e erro pertencem à versão anterior; não podem sobreviver à troca.
       setResultadoFinal(null);
+      setRevisadas(null);
       setErroFecho(null);
       setConsolidando(false);
       setFechando(false);
@@ -265,6 +267,16 @@ export default function EntrevistaComChamada({
     contextoRoteiro,
     ativa: encerrada === null && !fechando,
   });
+
+  const aplicarRevisadas = () => {
+    if (!revisadas) return;
+    const [respostasAtuais, relato, entrevistaId, trechos] = ultimo.current;
+    const combinadas = { ...respostasAtuais, ...revisadas };
+    roteiro.current?.atualizarRespostas(revisadas);
+    ultimo.current = [combinadas, relato, entrevistaId, trechos];
+    onRespostas?.(combinadas, relato, entrevistaId, trechos);
+    setRevisadas(null);
+  };
 
   const voltarAoRoteiro = () => {
     document.getElementById("roteiro-da-entrevista")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -393,9 +405,7 @@ export default function EntrevistaComChamada({
                       && adiantada.roteiro_chave === contextoDaVez.chave
                       && adiantada.cobertura === transcricao.length;
                     if (adiantada) {
-                      roteiro.current?.atualizarRespostas(adiantada.processamento.respostas);
-                      ultimo.current = [adiantada.processamento.respostas, relatoAtual, entrevistaId, trechos];
-                      onRespostas?.(adiantada.processamento.respostas, relatoAtual, entrevistaId, trechos);
+                      setRevisadas(adiantada.processamento.respostas);
                       setResultadoFinal({ ...adiantada, provisorio: !completa });
                     }
                     if (completa) return;
@@ -403,11 +413,7 @@ export default function EntrevistaComChamada({
                     setConsolidando(true);
                     const leitura = await lerEntrevista(transcricao, respostasAtuais, contextoDaVez, (processamento) => {
                       if (geracaoRevisao.current !== geracaoDaVez) return;
-                      // A revisão não pode viver só numa cópia externa: o roteiro
-                      // que permanece na tela precisa exibir a consolidação.
-                      roteiro.current?.atualizarRespostas(processamento.respostas);
-                      ultimo.current = [processamento.respostas, relatoAtual, entrevistaId, trechos];
-                      onRespostas?.(processamento.respostas, relatoAtual, entrevistaId, trechos);
+                      setRevisadas(processamento.respostas);
                     });
                     if (geracaoRevisao.current !== geracaoDaVez) return;
                     setResultadoFinal({ ...leitura, provisorio: false });
@@ -432,6 +438,16 @@ export default function EntrevistaComChamada({
               </span>
               {consolidando && <Aviso tom="neutro" titulo="Lendo o restante da conversa">A revisão já vem adiantada do que foi transcrito durante a entrevista; falta só o trecho final.</Aviso>}
               {erroFecho && <Aviso tom="atencao" titulo="A revisão não foi concluída">{erroFecho}</Aviso>}
+              {revisadas && (
+                <div className="basis-full w-full flex items-center flex-wrap gap-3 border-l-4 border-acao bg-acao-clara px-4 py-3">
+                  <span className="text-[13px] leading-[1.5] text-tinta">
+                    A revisão encontrou respostas na conversa. Nada foi colocado no roteiro ainda.
+                  </span>
+                  <BotaoProcesso variante="primario" onClick={aplicarRevisadas}>
+                    Informações revisadas — aplicar ao roteiro
+                  </BotaoProcesso>
+                </div>
+              )}
               {resultadoFinal && (
                 <div className="basis-full w-full">
                   <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} />
@@ -530,7 +546,7 @@ export default function EntrevistaComChamada({
                   });
                 }}
               >
-                Finalizar atendimento
+                Finalizar atendimento e baixar gravação
               </BotaoProcesso>
 
               {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}

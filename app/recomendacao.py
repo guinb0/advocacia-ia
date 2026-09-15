@@ -192,7 +192,7 @@ def recomendar(
             f"{len(lacunas)} item(ns) obrigatório(s)."
         )
 
-    detalhes = _analisar_pontos(relato, similares) if detalhar else None
+    detalhes = _analisar_pontos(relato, similares, contexto_roteiro) if detalhar else None
     resultado = {
         "recomendado": veredito,
         "motivo": motivo,
@@ -217,7 +217,7 @@ def recomendar(
     return {**resultado, "do_cache": False}
 
 
-def _analisar_pontos(relato: str, similares: list[Any]) -> dict[str, Any] | None:
+def _analisar_pontos(relato: str, similares: list[Any], contexto_roteiro: str = "") -> dict[str, Any] | None:
     """Compara fatos e provas sem transformar correlação em causa ou prognóstico."""
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
@@ -247,6 +247,11 @@ formação jurídica. Escreva cada uma como uma pergunta curta, direta e pronta
 para ser dita ao cliente. Não use jargão, não mande o entrevistador interpretar
 a resposta e não escreva orientações abstratas como "investigue o nexo".
 
+O ROTEIRO ATIVO define o assunto da entrevista. `perguntas_criticas` e
+`provas_prioritarias` só podem tratar de temas que o roteiro pergunta: se um
+precedente fala de CAT, INSS, acidente, assalto ou doença e o roteiro não trata
+disso, ignore esse ponto.
+
 Responda somente JSON:
 {"sintese":"...","pontos_comuns":[{"ponto":"...","impacto":"...","forca":"alta|media|baixa","precedentes":["P1"]}],"diferencas_decisivas":[{"ponto":"...","por_que_importa":"...","precedentes_favoraveis":["P1"],"precedentes_contrarios":["P2"]}],"provas_prioritarias":[{"prova":"...","motivo":"...","precedentes":["P1"]}],"perguntas_criticas":["..."]}
 """
@@ -261,7 +266,7 @@ Responda somente JSON:
                 "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": instrucao},
-                    {"role": "user", "content": f"RELATO:\n{relato[:10000]}\n\nPRECEDENTES:\n" + "\n\n".join(contexto)},
+                    {"role": "user", "content": f"ROTEIRO ATIVO:\n{contexto_roteiro[:6000] or 'não informado'}\n\nRELATO:\n{relato[:10000]}\n\nPRECEDENTES:\n" + "\n\n".join(contexto)},
                 ],
             },
             timeout=35,

@@ -626,6 +626,9 @@ do roteiro que ainda estão em aberto.
 Sua tarefa é dizer o que ESTE trecho respondeu — nada além disso.
 
 REGRAS
+- O assunto da entrevista é o das perguntas recebidas, que vêm do roteiro ativo.
+  Em `lembretes`, nunca cobre tema que não esteja nessas perguntas (acidente,
+  CAT, INSS, assalto, doença, documentos de outro tipo de caso etc.).
 - Só preencha o que foi DITO. Não deduza, não complete, não invente detalhe que
   não foi falado. Se a pessoa disse "faz uns três anos", o valor é "uns três
   anos" — não vire uma data exata, que ela não deu.
@@ -796,6 +799,12 @@ item do mapa contém um fato organizado e sua citação literal. Associe os fato
 às perguntas do formulário; não crie fatos e não use conhecimento externo.
 
 REGRAS
+- O FORMULÁRIO é o do ROTEIRO ATIVO e define o assunto desta entrevista. As
+  regras abaixo que citam ids específicos (r_assalto, ac_como, do_cid etc.) só
+  valem quando esse id existe no formulário. Em `perguntas_especificas`,
+  `desvios` e `diagnostico`, trate SOMENTE de temas cobertos pelas perguntas do
+  formulário: nunca cobre acidente, CAT, INSS, assalto, doença, afastamento ou
+  documentos que o formulário não pergunta.
 - Use somente informações explicitamente presentes no MAPA DE FATOS.
 - Não deduza datas, nomes, números, causas, consequências ou documentos.
 - Se uma informação estiver ambígua, contraditória ou pouco segura, deixe o
@@ -1388,6 +1397,8 @@ def processar_entrevista(
     # mesma tarefa, sem permitir que a etapa intermediária invente conteúdo.
     mensagem = "\n\n".join(
         [
+            f"ROTEIRO ATIVO: {roteiro.nome}"
+            + (f" — {roteiro.descricao}" if roteiro.descricao else ""),
             "RESPOSTAS JÁ DIGITADAS (não alterar):\n"
             + json.dumps(respostas, ensure_ascii=False),
             "FORMULÁRIO:\n" + "\n".join(f"- {_descrever(p)}" for p in perguntas),

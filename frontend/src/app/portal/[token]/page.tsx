@@ -9,7 +9,8 @@ import * as portal from "@/lib/apiPortal";
 import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
 import type { TomSelo } from "@/lib/formato";
 import { useChamada } from "@/lib/ChamadaContexto";
-import { pedirPermissaoMicrofone, type EstadoChamada, type PermissaoMicrofone } from "@/lib/chamadaJitsi";
+import type { EstadoChamada } from "@/lib/chamadaJitsi";
+import AtivarMicrofone from "@/components/chamada/AtivarMicrofone";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
 
 /* Cada estado com símbolo, palavra e tom. O cliente lê "Recebido" e "Precisa
@@ -421,12 +422,6 @@ function Chamada({ token }: { token: string }) {
   // flutuante se recolhe. `registrarPainel` é estável, então roda uma vez.
   useEffect(() => chamada.registrarPainel(), [chamada.registrarPainel]);
 
-  const [microfone, setMicrofone] = useState<PermissaoMicrofone | null>(null);
-  useEffect(() => {
-    if (chamada.ativa) return;
-    void pedirPermissaoMicrofone().then(setMicrofone);
-  }, []);
-
   async function entrar() {
     setErro(null);
     setEntrando(true);
@@ -466,6 +461,7 @@ function Chamada({ token }: { token: string }) {
             Se o escritório combinou uma conversa por voz, toque abaixo. Você fala pelo
             próprio celular, sem instalar nada.
           </p>
+          <AtivarMicrofone />
           <BotaoProcesso
             variante="primario"
             className="mt-[14px]"
@@ -475,12 +471,6 @@ function Chamada({ token }: { token: string }) {
           >
             Entrar na chamada
           </BotaoProcesso>
-          {microfone === "negado" && (
-            <p className="mt-3 mb-0 border-l-2 border-atencao pl-[9px] text-[13px] leading-[1.5] text-atencao">
-              O microfone está bloqueado neste navegador. No iPhone, toque em “aA” na barra do
-              endereço, depois em Ajustes do Site → Microfone → Permitir, e recarregue a página.
-            </p>
-          )}
         </>
       ) : (
         <>

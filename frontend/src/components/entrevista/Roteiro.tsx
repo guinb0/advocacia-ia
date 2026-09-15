@@ -485,7 +485,9 @@ export default function Roteiro({
   const contextoDoCaso = useCallback((exceto: string): string => {
     const atual = roteiroRef.current;
     if (!atual) return "";
-    const partes: string[] = [];
+    const partes: string[] = [
+      `ROTEIRO ATIVO: ${atual.nome}${atual.descricao ? ` — ${atual.descricao}` : ""}`,
+    ];
     for (const bloco of atual.blocos) {
       for (const p of bloco.perguntas) {
         if (p.id === exceto || p.transcrever) continue;
