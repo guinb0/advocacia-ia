@@ -86,25 +86,12 @@ const ENCERRAR_NOTA = "max-w-[46ch] italic font-normal text-[12px] leading-[1.5]
 type ResultadoFinal = LeituraDaEntrevista & { provisorio: boolean };
 
 function PainelFinal({ resultado, onVoltar, onIrPara, podeIrPara, podeComplementar = true }: { resultado: ResultadoFinal; onVoltar: () => void; onIrPara: (id: string) => void; podeIrPara: (id: string) => boolean; podeComplementar?: boolean }) {
-  const {
-    processamento, triagem, recomendacao, avisos, provisorio,
-  } = resultado;
-  const insights = processamento.insights_entrevista;
-  const perguntas = Array.from(new Set([
-    ...(insights?.perguntas_especificas ?? []),
-    // O RAG cru pode recuperar processos de outro assunto. Só entram perguntas
-    // da comparação que passou pelo corte de similaridade da recomendação.
-    ...(recomendacao?.analise_comparativa?.perguntas_criticas ?? []),
-  ])).filter((pergunta) => !perguntaDeDocumentacao(pergunta)).slice(0, 3);
-  const pontosFortes = recomendacao?.analise_comparativa?.pontos_comuns ?? [];
-  const pontosFracos = recomendacao?.analise_comparativa?.diferencas_decisivas ?? [];
-  const amostra = recomendacao?.estatistica.desfechos_merito;
-  const tipo = triagem?.sugestoes[0];
+  const { processamento, avisos, provisorio } = resultado;
   return (
     <section className="w-full border-l-4 border-tinta bg-papel-2 px-4 py-[14px]" aria-live="polite">
-      <strong className="block text-[14px] text-tinta">Revisão da entrevista — o que fazer agora</strong>
+      <strong className="block text-[14px] text-tinta">Conferência das perguntas do roteiro</strong>
       <p className="mt-1 text-xs leading-[1.55] text-tinta-3">
-        Só o que precisa ser confirmado com o cliente agora. A chamada e a gravação continuam ativas.
+        A IA confere se cada pergunta do roteiro foi respondida. A chamada e a gravação continuam ativas.
       </p>
       {/* Dizer que é preliminar não é detalhe: o fim da conversa é onde ficam os
         * valores e o motivo da saída, e uma revisão que parece completa sem eles
@@ -120,55 +107,14 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeIrPara, podeComplement
           Voltar e complementar a entrevista
         </BotaoProcesso>
       )}
-      <div className="grid grid-cols-2 max-[700px]:grid-cols-1 gap-3 mt-3">
-        <div className="border border-borda bg-papel p-3">
-          <strong className="text-xs">Tipo provável do caso</strong>
-          <p className="my-1 text-sm">{tipo?.nome ?? "Não foi possível classificar com segurança"}</p>
-          {triagem && <small className="text-tinta-3">{triagem.motivo}</small>}
-        </div>
-        <div className="border border-borda bg-papel p-3">
-          <strong className="text-xs">Encaminhamento sugerido</strong>
-          <p className="my-1 text-sm">
-            {recomendacao?.recomendado === "sim" ? "Levar para análise do advogado" :
-              recomendacao?.recomendado === "com_ressalva" ? "Levar com ressalvas e completar os dados" :
-                recomendacao?.recomendado === "atencao" ? "Não abrir sem revisão do advogado" :
-                  "Sem base suficiente para recomendar"}
-          </p>
-          {recomendacao && <small className="text-tinta-3">{recomendacao.motivo}</small>}
-        </div>
-        {amostra && <div className="col-span-2 max-[700px]:col-span-1 border border-borda bg-papel p-3">
-          <strong className="text-xs">Amostra de casos semelhantes — não é chance de vitória</strong>
-          <p className="my-1 text-sm">
-            {amostra.favoraveis} de {amostra.processos} decisões de mérito ({amostra.percentual.toFixed(0)}%)
-            foram favoráveis à parte autora.
-          </p>
-          <small className="text-tinta-3">
-            É um retrato dos precedentes recuperados. Provas, fatos e enquadramento do caso ainda precisam da decisão do advogado.
-          </small>
-        </div>}
-      </div>
-      {insights && (
-        <div className={`mt-3 border-l-[3px] px-3 py-[11px] text-xs leading-[1.6] ${
-          insights.foco === "adequado" ? "border-ok bg-papel" : "border-atencao bg-papel-2"
-        }`}>
-          <strong className="block text-tinta">
-            {insights.foco === "fora_do_assunto"
-              ? "A conversa fugiu do assunto"
-              : insights.foco === "parcial"
-                ? "A conversa perdeu foco em alguns pontos"
-                : "A conversa permaneceu focada"}
-          </strong>
-          {insights.diagnostico && <p className="my-1 text-tinta-2">{insights.diagnostico}</p>}
-          {insights.desvios.length > 0 && (
-            <ul className="mb-0 mt-2 pl-5 text-tinta-2">
-              {insights.desvios.map((desvio) => <li key={desvio}>{desvio}</li>)}
-            </ul>
-          )}
-        </div>
+      {processamento.faltando.length === 0 && processamento.incertas.length === 0 && (
+        <p className="mt-3 mb-0 border-l-[3px] border-ok bg-papel px-3 py-[11px] text-xs font-semibold text-ok">
+          Todas as perguntas do roteiro foram respondidas.
+        </p>
       )}
       {processamento.faltando.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que ainda não foi perguntado ({processamento.faltando.length})</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.slice(0, 12).map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Perguntas do roteiro sem resposta ({processamento.faltando.length})</summary>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
       {processamento.incertas.length > 0 && (
@@ -176,33 +122,11 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeIrPara, podeComplement
           <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.incertas.slice(0, 10).map((p) => <li key={p.pergunta_id}><strong>Confirme com o cliente:</strong> {p.motivo} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
-      {perguntas.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Até 3 perguntas que importam agora</summary>
-          <p className="mt-2 mb-1 text-xs text-tinta-3">Nascem de ambiguidades e fatos mencionados, sem repetir o roteiro ou pedir documentos.</p>
-          <ol className="mt-2 pl-5 text-xs leading-[1.6]">{perguntas.map((p) => <li key={p}>“{p}”</li>)}</ol>
-        </details>
-      )}
-      {pontosFortes.length > 0 && (
-        <details className="mt-3"><summary className="cursor-pointer text-xs font-bold">Pontos fortes sustentados pela amostra</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{pontosFortes.slice(0, 6).map((p) => <li key={p.ponto}><strong>{p.ponto}</strong> — {p.impacto}</li>)}</ul>
-        </details>
-      )}
-      {pontosFracos.length > 0 && (
-        <details className="mt-3"><summary className="cursor-pointer text-xs font-bold">Pontos fracos ou que exigem confirmação</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{pontosFracos.slice(0, 6).map((p) => <li key={p.ponto}><strong>{p.ponto}</strong> — {p.por_que_importa}</li>)}</ul>
-        </details>
-      )}
-      <p className="mt-3 mb-0 border-l-2 border-borda-forte pl-2 text-xs leading-[1.5] text-tinta-3">
-        Documentos e provas serão organizados na etapa de documentação, depois de encerrar a entrevista.
-      </p>
       {avisos.map((aviso) => <p key={aviso} className="mt-3 text-xs text-atencao">{aviso}</p>)}
     </section>
   );
 }
 
-function perguntaDeDocumentacao(texto: string): boolean {
-  return /\b(documento|prova|laudo|exame|atestado|carteira|ctps|contracheque|holerite|cat|cnis|ppp)\b/i.test(texto);
-}
 
 export default function EntrevistaComChamada({
   onConcluir,
