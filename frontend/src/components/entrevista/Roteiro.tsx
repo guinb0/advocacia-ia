@@ -12,7 +12,7 @@ import type { ReactNode, Ref } from "react";
 
 import { useSessao } from "@/lib/auth";
 import { entrevistaDeTeste } from "@/lib/amostraEntrevista";
-import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, escutarTrecho, listarMunicipios, listarRoteiros, obterRoteiro, registrarAtendimentoDocumentacao } from "@/lib/api";
+import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultarCpf, escutarTrecho, guardarTrechoNoBanco, listarMunicipios, listarRoteiros, obterRoteiro, registrarAtendimentoDocumentacao } from "@/lib/api";
 import type { MunicipioLocalidade } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
 import { formatarTelefone } from "@/lib/formato";
@@ -680,6 +680,7 @@ export default function Roteiro({
         const trecho = { quando: Date.now(), texto: texto.trim() };
         transcricaoBruta.current.push(trecho);
         guardarCopiaTranscricao(transcricaoBruta.current);
+        void guardarTrechoNoBanco(captura.current?.entrevistaId ?? "", trecho.quando, trecho.texto);
         const quem = inferirFalante(
           texto,
           fonteAtual.current,
@@ -707,6 +708,7 @@ export default function Roteiro({
         const trecho = { quando: Date.now(), texto: limpo };
         transcricaoBruta.current.push(trecho);
         guardarCopiaTranscricao(transcricaoBruta.current);
+        void guardarTrechoNoBanco(captura.current?.entrevistaId ?? "", trecho.quando, trecho.texto);
         setTranscricaoVisivel((atuais) =>
           [
             ...atuais,

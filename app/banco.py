@@ -230,6 +230,8 @@ TABELAS = (
     "solicitacoes_peticao",
     "modelos_documento",
     "gravacoes_temporarias",
+    "gravacoes_pedacos",
+    "transcricao_trechos",
 )
 
 
@@ -695,6 +697,28 @@ CREATE TABLE {SCHEMA}.{PREFIXO}gravacoes_temporarias (
     tamanho       bigint         NOT NULL,
     conteudo      varbinary(max) NOT NULL,
     enviado_por   nvarchar(400)  NOT NULL CONSTRAINT df_acervo_grav_temp_quem DEFAULT N'',
+    criado_em     varchar(40)    NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}gravacoes_pedacos') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}gravacoes_pedacos (
+    id            varchar(100)   NOT NULL CONSTRAINT pk_acervo_grav_pedacos PRIMARY KEY,
+    sessao_id     varchar(64)    NOT NULL,
+    ordem         int            NOT NULL,
+    nome_arquivo  nvarchar(400)  NOT NULL,
+    mime          varchar(100)   NOT NULL,
+    conteudo      varbinary(max) NOT NULL,
+    enviado_por   nvarchar(400)  NOT NULL CONSTRAINT df_acervo_grav_ped_quem DEFAULT N'',
+    criado_em     varchar(40)    NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}transcricao_trechos') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}transcricao_trechos (
+    id            varchar(120)   NOT NULL CONSTRAINT pk_acervo_transc_trechos PRIMARY KEY,
+    entrevista_id varchar(64)    NOT NULL,
+    quando        bigint         NOT NULL,
+    texto         nvarchar(max)  NOT NULL,
+    enviado_por   nvarchar(400)  NOT NULL CONSTRAINT df_acervo_transc_tr_quem DEFAULT N'',
     criado_em     varchar(40)    NOT NULL
 );
 
