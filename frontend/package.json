@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copiar-mediapipe.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/copiar-mediapipe.mjs",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit"
@@ -19,6 +21,7 @@
   ],
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
+    "@mediapipe/tasks-vision": "1.0.1",
     "@tanstack/react-query": "^5.62.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

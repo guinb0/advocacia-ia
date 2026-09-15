@@ -89,5 +89,5 @@ export const config = {
   /* Deixa de fora o que não é página: rotas de API do próprio Next, os estáticos
    * do build e o favicon. Rodar a guarda neles custaria uma verificação de
    * assinatura por imagem carregada, sem proteger nada. */
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|mediapipe|fundo-chamada.jpg).*)"],
 };
