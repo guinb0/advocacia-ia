@@ -29,7 +29,18 @@ const LINK_AVALIACAO = "https://share.google/BrQVYGnjqdSz3pEw7";
 const MENSAGEM =
   "Obrigado por conversar conosco. Sua avaliação ajuda outras pessoas a encontrarem nosso trabalho. Se puder, avalie a LARA & MELO no Google: ";
 
+const FALA_ANTES_DO_LINK = [
+  "Sr.(a) [Nome], concluímos a nossa entrevista.Primeiramente gostaria de agradecer, em nome do Dr. Gustavo Lara e de toda a equipe da Lara & Melo Advogados Associados, pela confiança em compartilhar conosco a sua história.",
+  "Pode ter certeza de que todas as informações prestadas hoje serão analisadas com muita atenção.",
+  "Antes de encerrarmos, posso lhe fazer apenas uma última pergunta?",
+  "Como foi a sua experiência durante este atendimento? O(a) senhor(a) gostou da forma como foi atendido(a)? Existe alguma sugestão ou algo que poderíamos melhorar?",
+  "(Aguardar a resposta do cliente.)",
+  "Fico muito feliz em ouvir isso. Trabalhamos diariamente para oferecer um atendimento de excelência para todos os trabalhadores que confiam no nosso escritório.",
+  "Se o(a) senhor(a) permitir, gostaria de lhe encaminhar um link de avaliação. A sua opinião é extremamente importante para nós, pois nos ajuda a aperfeiçoar continuamente nossos atendimentos e também auxilia outras pessoas a conhecerem o trabalho desenvolvido pela nossa equipe.",
+];
+
 interface Props {
+  cliente?: string;
   /** A etapa está cumprida. Mora no atendimento, não aqui: voltar ao roteiro
    *  desmonta esta caixa, e uma marcação que se perdesse nisso não é registro. */
   concluida: boolean;
@@ -37,7 +48,7 @@ interface Props {
   telefone: string;
 }
 
-export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Props) {
+export default function AvaliacaoGoogle({ cliente = "", concluida, onConcluir, telefone }: Props) {
   const [copiado, setCopiado] = useState(false);
   /** Qual envio está em curso — o primeiro ou o reenvio pedido pelo atendente —
    *  para só o botão clicado mostrar o andamento. */
@@ -105,6 +116,22 @@ export default function AvaliacaoGoogle({ concluida, onConcluir, telefone }: Pro
           ele avalia, como diz o roteiro — para confirmar que deu certo e ajudar se
           houver dificuldade. Só o link vai para o cliente; nada mais é enviado.
         </p>
+
+        <div className="mt-[13px] max-w-[74ch] border-l-4 border-acao bg-acao-clara px-4 py-3">
+          <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.12em] text-acao">
+            Leia para o cliente antes de enviar o link
+          </span>
+          {FALA_ANTES_DO_LINK.map((paragrafo) => (
+            <p
+              key={paragrafo}
+              className={`mb-2 mt-0 last:mb-0 text-[14px] leading-[1.6] font-titulo ${
+                paragrafo.startsWith("(") ? "italic text-tinta-3" : "text-tinta"
+              }`}
+            >
+              {paragrafo.replace("[Nome]", cliente.trim() || "[Nome]")}
+            </p>
+          ))}
+        </div>
 
         <div className="flex items-start flex-wrap gap-[9px] mt-[13px] max-[640px]:items-stretch max-[640px]:flex-col">
           <BotaoProcesso

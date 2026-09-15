@@ -534,6 +534,7 @@ export default function TriagemEntrevista({
       {cadastroConfirmado && <div id="proximas-etapas-atendimento">
       <PainelContrato respostas={qualificacao} />
       <AvaliacaoGoogle
+        cliente={String(qualificacao.nome ?? "")}
         concluida={avaliacaoConcluida}
         onConcluir={setAvaliacaoConcluida}
         telefone={String(qualificacao.telefone ?? "")}
