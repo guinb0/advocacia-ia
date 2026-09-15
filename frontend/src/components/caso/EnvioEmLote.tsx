@@ -9,6 +9,7 @@ interface Props {
   onEnviar: (arquivos: File[]) => Promise<void> | void;
   enviando?: boolean;
   compacto?: boolean;
+  simples?: boolean;
 }
 
 function chave(arquivo: File): string {
@@ -16,9 +17,10 @@ function chave(arquivo: File): string {
   return `${arquivo.webkitRelativePath || arquivo.name}:${arquivo.size}:${arquivo.lastModified}`;
 }
 
-export default function EnvioEmLote({ onEnviar, enviando = false, compacto = false }: Props) {
+export default function EnvioEmLote({ onEnviar, enviando = false, compacto = false, simples = false }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const pastaRef = useRef<HTMLInputElement>(null);
+  const fotosRef = useRef<HTMLInputElement>(null);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [arrastando, setArrastando] = useState(false);
 
@@ -54,6 +56,48 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
 
   function limpar() {
     setArquivos([]);
+  }
+
+  if (simples) {
+    return (
+      <section
+        className="p-4 border border-acao-borda rounded-cartao bg-acao-clara"
+        aria-labelledby="titulo-envio-fotos"
+      >
+        <h2 id="titulo-envio-fotos" className="m-0 text-tinta font-titulo text-lg font-semibold">
+          Enviar documentos
+        </h2>
+        <p className="mt-1 mb-0 text-tinta-2 text-sm leading-[1.55]">
+          Toque no botão, escolha várias fotos ou PDFs de uma vez e pronto — nós identificamos cada
+          documento. Pode repetir quantas vezes precisar.
+        </p>
+        <BotaoProcesso
+          variante="primario"
+          bloco
+          className="mt-3"
+          classeBotao="text-base"
+          style={{ minHeight: 56 }}
+          onClick={() => fotosRef.current?.click()}
+          processando={enviando}
+          textoProcessando="Enviando seus documentos…"
+          dica="Mantenha esta página aberta até terminar"
+        >
+          Enviar fotos dos documentos
+        </BotaoProcesso>
+        <input
+          ref={fotosRef}
+          type="file"
+          accept="image/*,application/pdf"
+          multiple
+          hidden
+          onChange={(evento) => {
+            const escolhidos = Array.from(evento.target.files ?? []);
+            evento.target.value = "";
+            if (escolhidos.length && !enviando) void onEnviar(escolhidos);
+          }}
+        />
+      </section>
+    );
   }
 
   return (
