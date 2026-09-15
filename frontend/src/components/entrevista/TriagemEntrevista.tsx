@@ -573,6 +573,14 @@ export default function TriagemEntrevista({
             }
           }
         }}
+        onCasoAdicional={async (casoId) => {
+          await guardarEntrevista(casoId, transcricao, audioEntrevista, encerrado);
+          try {
+            await salvarQualificacaoDoCaso(casoId, qualificacao);
+          } catch (e) {
+            console.error("Não foi possível gravar a qualificação do caso.", e);
+          }
+        }}
         categorias={categorias}
         sugerida={escolhida ?? undefined}
         /* O telefone entra AQUI, e não dentro do `CasoEDocumentos`: quem tem

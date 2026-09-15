@@ -99,9 +99,27 @@ export default function ListaCasos({
   const nomeCategoria = (codigo: string) =>
     categorias.find((c) => c.codigo === codigo)?.nome ?? codigo;
 
-  const totalPaginas = Math.max(1, Math.ceil(casosFiltrados.length / POR_PAGINA));
+  async function excluirCaso(caso: Caso) {
+    const confirmado = window.confirm(
+      `Apagar o caso de ${caso.cliente} (${nomeCategoria(caso.categoria)})?\n\nEssa ação remove o caso e os arquivos vinculados. Não continue se clicou sem querer.`,
+    );
+    if (!confirmado) return;
+    await onExcluir(caso.id);
+  }
+
+  const [clienteAberto, setClienteAberto] = useState<string | null>(null);
+  const grupos = useMemo(() => {
+    const mapa = new Map<string, Caso[]>();
+    for (const caso of casosFiltrados) {
+      const chave = normalizarFiltro(caso.cliente);
+      mapa.set(chave, [...(mapa.get(chave) ?? []), caso]);
+    }
+    return [...mapa.entries()].map(([chave, lista]) => ({ chave, cliente: lista[0].cliente, casos: lista }));
+  }, [casosFiltrados]);
+
+  const totalPaginas = Math.max(1, Math.ceil(grupos.length / POR_PAGINA));
   const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
-  const casosVisiveis = casosFiltrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
+  const gruposVisiveis = grupos.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(280px,380px)_minmax(0,1fr)] items-start gap-5 max-[980px]:grid-cols-1">
@@ -259,24 +277,26 @@ export default function ListaCasos({
             </div>
 
             <ul className="m-0 list-none divide-y divide-borda p-0">
-              {casosVisiveis.map((caso) => {
-                const totalEntregas = caso.total_entregas ?? 0;
-                const categoriaNome = nomeCategoria(caso.categoria);
+              {gruposVisiveis.map((grupo) => {
+                const unico = grupo.casos.length === 1 ? grupo.casos[0] : null;
+                const aberto = clienteAberto === grupo.chave;
+                const totalEntregas = grupo.casos.reduce((soma, caso) => soma + (caso.total_entregas ?? 0), 0);
+                const abrirGrupo = () => (unico ? onAbrir(unico.id) : setClienteAberto(aberto ? null : grupo.chave));
 
                 return (
-                  <li key={caso.id} className="min-w-0 bg-papel">
+                  <li key={grupo.chave} className="min-w-0 bg-papel">
                     <div className="grid min-w-0 gap-3 px-3 py-3 min-[780px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_112px_136px] min-[780px]:items-center min-[780px]:px-4">
                       <button
                         type="button"
                         className="min-w-0 rounded-campo border-none bg-transparent p-1 text-left text-inherit [font:inherit] transition-colors hover:bg-papel-3"
-                        onClick={() => onAbrir(caso.id)}
-                        title={caso.cliente}
+                        onClick={abrirGrupo}
+                        title={grupo.cliente}
                       >
                         <span className="block truncate text-base font-semibold text-tinta">
-                          {caso.cliente}
+                          {grupo.cliente}
                         </span>
                         <span className="mt-1 block truncate font-codigo text-xs text-tinta-3">
-                          {caso.id}
+                          {unico ? unico.id : `${grupo.casos.length} casos — clique para escolher a ação`}
                         </span>
                       </button>
 
@@ -284,9 +304,19 @@ export default function ListaCasos({
                         <span className="mb-1 block text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3 min-[780px]:hidden">
                           Tipo de ação
                         </span>
-                        <span className="block truncate text-sm text-tinta-2" title={categoriaNome}>
-                          {categoriaNome}
-                        </span>
+                        {unico ? (
+                          <span className="block truncate text-sm text-tinta-2" title={nomeCategoria(unico.categoria)}>
+                            {nomeCategoria(unico.categoria)}
+                          </span>
+                        ) : (
+                          <span className="flex flex-wrap gap-1">
+                            {grupo.casos.map((caso) => (
+                              <Selo key={caso.id} tom="info">
+                                {nomeCategoria(caso.categoria)}
+                              </Selo>
+                            ))}
+                          </span>
+                        )}
                       </div>
 
                       <div className="min-w-0">
@@ -302,36 +332,85 @@ export default function ListaCasos({
                         <button
                           type="button"
                           className={`${ACAO_ICONE} border-borda-campo bg-papel text-acao hover:border-acao hover:bg-acao-clara`}
-                          onClick={() => onAbrir(caso.id)}
-                          title="Abrir caso"
-                          aria-label={`Abrir caso de ${caso.cliente}`}
+                          onClick={abrirGrupo}
+                          title={unico ? "Abrir caso" : "Escolher a ação"}
+                          aria-label={unico ? `Abrir caso de ${grupo.cliente}` : `Escolher a ação de ${grupo.cliente}`}
                         >
                           <FolderOpen size={17} strokeWidth={2.1} aria-hidden />
                         </button>
-                        <button
-                          type="button"
-                          className={`${ACAO_ICONE} border-transparent bg-transparent text-tinta-2 hover:border-critico-borda hover:bg-critico-claro hover:text-critico`}
-                          onClick={async () => {
-                            const confirmado = window.confirm(
-                              `Apagar o caso de ${caso.cliente}?\n\nEssa ação remove o caso e os arquivos vinculados. Não continue se clicou sem querer.`,
-                            );
-                            if (!confirmado) return;
-                            await onExcluir(caso.id);
-                          }}
-                          title="Apagar caso"
-                          aria-label={`Apagar caso de ${caso.cliente}`}
-                        >
-                          <Trash2 size={17} strokeWidth={2.1} aria-hidden />
-                        </button>
+                        {unico && (
+                          <button
+                            type="button"
+                            className={`${ACAO_ICONE} border-transparent bg-transparent text-tinta-2 hover:border-critico-borda hover:bg-critico-claro hover:text-critico`}
+                            onClick={() => void excluirCaso(unico)}
+                            title="Apagar caso"
+                            aria-label={`Apagar caso de ${grupo.cliente}`}
+                          >
+                            <Trash2 size={17} strokeWidth={2.1} aria-hidden />
+                          </button>
+                        )}
                       </div>
                     </div>
+
+                    {aberto && (
+                      <div className="border-t border-borda bg-papel-2 px-3 py-3 min-[780px]:px-4">
+                        <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.08em] text-tinta-3">
+                          Qual ação você quer abrir?
+                        </span>
+                        <ul className="m-0 grid list-none gap-2 p-0">
+                          {grupo.casos.map((caso) => {
+                            const arquivos = caso.total_entregas ?? 0;
+                            return (
+                              <li
+                                key={caso.id}
+                                className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-campo border border-borda bg-papel px-3 py-2"
+                              >
+                                <button
+                                  type="button"
+                                  className="min-w-0 flex-1 cursor-pointer border-none bg-transparent p-0 text-left [font:inherit]"
+                                  onClick={() => onAbrir(caso.id)}
+                                >
+                                  <span className="block truncate text-sm font-semibold text-tinta">
+                                    {nomeCategoria(caso.categoria)}
+                                  </span>
+                                  <span className="block truncate text-xs text-tinta-3">
+                                    {arquivos} {arquivos === 1 ? "arquivo" : "arquivos"}
+                                    {caso.criado_em ? ` · criado em ${new Date(caso.criado_em).toLocaleDateString("pt-BR")}` : ""}
+                                  </span>
+                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className={`${ACAO_ICONE} border-borda-campo bg-papel text-acao hover:border-acao hover:bg-acao-clara`}
+                                    onClick={() => onAbrir(caso.id)}
+                                    title="Abrir caso"
+                                    aria-label={`Abrir ${nomeCategoria(caso.categoria)} de ${caso.cliente}`}
+                                  >
+                                    <FolderOpen size={17} strokeWidth={2.1} aria-hidden />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`${ACAO_ICONE} border-transparent bg-transparent text-tinta-2 hover:border-critico-borda hover:bg-critico-claro hover:text-critico`}
+                                    onClick={() => void excluirCaso(caso)}
+                                    title="Apagar caso"
+                                    aria-label={`Apagar ${nomeCategoria(caso.categoria)} de ${caso.cliente}`}
+                                  >
+                                    <Trash2 size={17} strokeWidth={2.1} aria-hidden />
+                                  </button>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
                   </li>
                 );
               })}
             </ul>
           </div>
 
-          {casosFiltrados.length > POR_PAGINA && (
+          {grupos.length > POR_PAGINA && (
             <div className="mt-3 flex min-w-0 items-center justify-between gap-3 border-t border-borda pt-3">
               <Botao
                 variante="discreto"

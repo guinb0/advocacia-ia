@@ -58,6 +58,7 @@ interface Props {
    * É aqui e não no fim do atendimento porque o caso é o primeiro momento em que
    * existe onde prender a entrevista: `entrevistas.caso_id` é obrigatório. */
   onCasoCriado?: (casoId: string) => Promise<void> | void;
+  onCasoAdicional?: (casoId: string) => Promise<void> | void;
   /** Abre a tela completa com dossiê, análise, contrato e andamento. */
   onAbrirDossie?: (casoId: string) => void;
   /** Abre a leitura analítica e as ações da IA Jurídica para o caso criado. */
@@ -83,6 +84,7 @@ export default function CasoEDocumentos({
   onTelefone,
   onCategoria,
   onCasoCriado,
+  onCasoAdicional,
   onAbrirDossie,
   onAbrirAnalises,
   onEncerrarChamada,
@@ -93,6 +95,10 @@ export default function CasoEDocumentos({
   const [erro, setErro] = useState<string | null>(null);
   const [tentouCriar, setTentouCriar] = useState(false);
   const [criado, setCriado] = useState<CasoCriado | null>(criadoInicial ?? null);
+  const [criados, setCriados] = useState<CasoCriado[]>(criadoInicial ? [criadoInicial] : []);
+  const [adicionais, setAdicionais] = useState<string[]>([]);
+  const [novaAcao, setNovaAcao] = useState("");
+  const [adicionando, setAdicionando] = useState(false);
   const [mostrarCredenciais, setMostrarCredenciais] = useState(true);
   /* Em que sala a conversa estava ANTES de o caso nascer.
    *
@@ -140,10 +146,24 @@ export default function CasoEDocumentos({
       const salaEmCurso = chamada.sala;
       const novo = await onCriar(cliente.trim(), escolhida, "", formatarTelefone(telefoneAtual));
       setCriado(novo);
+      setCriados([novo]);
       setTentouCriar(false);
       // Antes da sala e da documentação: é a primeira coisa que pode ser feita
       // com o caso na mão, e a que se perde para sempre se a aba fechar.
       await onCasoCriado?.(novo.id);
+      const extras: CasoCriado[] = [];
+      for (const codigo of adicionais.filter((c) => c !== escolhida)) {
+        try {
+          const extra = await onCriar(cliente.trim(), codigo, "", formatarTelefone(telefoneAtual));
+          await onCasoAdicional?.(extra.id);
+          extras.push(extra);
+        } catch (e) {
+          setErro(
+            `O caso principal foi criado, mas não consegui criar "${categorias.find((c) => c.codigo === codigo)?.nome ?? codigo}": ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+      if (extras.length > 0) setCriados([novo, ...extras]);
       if (entrevistaId) {
         await solicitarDocumentacao(entrevistaId, novo.id, salaEmCurso || novo.portal.token, cliente.trim());
       }
@@ -174,6 +194,29 @@ export default function CasoEDocumentos({
       setErro(e instanceof Error ? e.message : "Não foi possível criar o caso.");
     } finally {
       setCriando(false);
+    }
+  }
+
+  async function adicionarAcao() {
+    if (!criado || !novaAcao) return;
+    setAdicionando(true);
+    setErro(null);
+    try {
+      const extra = await onCriar(
+        criado.cliente,
+        novaAcao,
+        "",
+        formatarTelefone(telefoneAtual || criado.telefone || ""),
+      );
+      await onCasoAdicional?.(extra.id);
+      setCriados((atuais) => [...atuais, extra]);
+      setCriado(extra);
+      setMostrarCredenciais(true);
+      setNovaAcao("");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível criar o caso.");
+    } finally {
+      setAdicionando(false);
     }
   }
 
@@ -285,6 +328,36 @@ export default function CasoEDocumentos({
                 ))}
               </CampoSeletor>
             </div>
+            {categorias.length > 1 && (
+              <div className="mb-4 max-w-[560px] border border-borda bg-papel-2 px-3 py-3">
+                <strong className="block text-[12px] font-ui text-tinta">
+                  Criar também outros casos para este cliente
+                </strong>
+                <p className="mb-2 mt-1 text-[11.5px] leading-[1.5] font-ui text-tinta-3">
+                  Marque as outras ações cabíveis. Cada uma vira um caso separado, com o próprio
+                  checklist de documentos cobrado do cliente.
+                </p>
+                <div className="grid gap-[6px]">
+                  {categorias
+                    .filter((c) => c.codigo !== escolhida)
+                    .map((c) => (
+                      <label key={c.codigo} className="flex cursor-pointer items-center gap-2 text-[12px] font-ui text-tinta">
+                        <input
+                          type="checkbox"
+                          checked={adicionais.includes(c.codigo)}
+                          onChange={(e) =>
+                            setAdicionais((atuais) =>
+                              e.target.checked ? [...atuais, c.codigo] : atuais.filter((x) => x !== c.codigo),
+                            )
+                          }
+                        />
+                        {c.nome}
+                        {c.codigo === sugerida ? " (sugerido)" : ""}
+                      </label>
+                    ))}
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -326,7 +399,9 @@ export default function CasoEDocumentos({
             document.getElementById(cliente.trim() ? "triagem-cpf" : "triagem-nome")?.focus()
           }
         >
-          Criar caso
+          {adicionais.filter((c) => c !== escolhida).length > 0
+            ? `Criar ${1 + adicionais.filter((c) => c !== escolhida).length} casos`
+            : "Criar caso"}
         </BotaoProcesso>
       </section>
     );
@@ -342,6 +417,65 @@ export default function CasoEDocumentos({
       <span className="block text-[11px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3 mb-2">
         DOCUMENTOS DO CLIENTE
       </span>
+      <div className="mb-4 border border-borda-forte bg-papel-2 p-3">
+        <strong className="mb-2 block text-[12px] font-ui text-tinta">
+          {criados.length > 1
+            ? `${criados.length} casos criados para ${criado.cliente} — escolha qual ação ver`
+            : `Caso criado para ${criado.cliente}`}
+        </strong>
+        {criados.length > 1 && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {criados.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setCriado(item);
+                  setMostrarCredenciais(true);
+                }}
+                className={`cursor-pointer border px-3 py-2 text-[11px] font-semibold font-ui ${
+                  item.id === criado.id
+                    ? "border-tinta bg-tinta text-papel"
+                    : "border-borda-forte bg-papel text-tinta hover:bg-papel-3"
+                }`}
+              >
+                {categorias.find((c) => c.codigo === item.categoria)?.nome ?? item.categoria}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[220px] flex-1">
+            <RotuloCampo htmlFor="nova-acao">Criar outro caso (outra ação) para este cliente</RotuloCampo>
+            <CampoSeletor id="nova-acao" value={novaAcao} onChange={(e) => setNovaAcao(e.target.value)}>
+              <option value="">Escolha o tipo de ação</option>
+              {categorias
+                .filter((c) => !criados.some((item) => item.categoria === c.codigo))
+                .map((c) => (
+                  <option key={c.codigo} value={c.codigo}>
+                    {c.nome}
+                  </option>
+                ))}
+            </CampoSeletor>
+          </div>
+          <BotaoProcesso
+            variante="primario"
+            onClick={adicionarAcao}
+            processando={adicionando}
+            textoProcessando="Criando…"
+            pendencia={!novaAcao ? "Escolha o tipo de ação." : null}
+          >
+            Criar mais este caso
+          </BotaoProcesso>
+        </div>
+        {erro && (
+          <div className="mt-3">
+            <Aviso tom="critico" titulo="Atenção">
+              {erro}
+            </Aviso>
+          </div>
+        )}
+      </div>
       {(onAbrirDossie || onAbrirAnalises) && (
         <div className="mb-4 border border-acao bg-acao-clara p-4">
           <strong className="block text-sm text-tinta">Caso criado. Para onde você quer ir?</strong>
