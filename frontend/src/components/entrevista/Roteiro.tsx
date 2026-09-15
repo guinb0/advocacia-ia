@@ -419,6 +419,7 @@ export default function Roteiro({
    * Pode ser recolhida manualmente para liberar espaço, mas nunca fecha sozinha:
    * o recolhimento automático fazia parecer que os dados tinham sido travados. */
   const [idExpandida, setIdExpandida] = useState(true);
+  const [dadosRevisados, setDadosRevisados] = useState(false);
   /* Quando um trecho de fala foi reconhecido pela última vez.
    *
    * É o único sinal que distingue "conversa em silêncio" de "microfone mudo" —
@@ -1372,7 +1373,7 @@ function preencherMarcadores(
    * rotulada como "Entrevistado". Com a chamada, o cliente ainda nem entrou.
    * Esperar a identificação dá tempo de abrir o Jitsi e receber a faixa remota. */
   useEffect(() => {
-    if (!roteiro || inicioAutomatico.current) return;
+    if (!roteiro || inicioAutomatico.current || !dadosRevisados) return;
     if (faltaParaComecar.length > 0) {
       identificacaoCompletaEm.current = null;
       chaveIdentificacaoCompleta.current = "";
@@ -1396,7 +1397,7 @@ function preencherMarcadores(
       void comecarEntrevista();
     }, restante);
     return () => window.clearTimeout(timer);
-  }, [roteiro, comecarEntrevista, faltaParaComecar.length, chaveIdentificacao]);
+  }, [roteiro, comecarEntrevista, faltaParaComecar.length, chaveIdentificacao, dadosRevisados]);
 
   /* Ao preencher o último dado da identificação (por exemplo, Brasília/DF),
    * a entrevista passa para o modo de leitura e os campos ficam recolhidos no
@@ -1937,6 +1938,24 @@ function preencherMarcadores(
               carregandoMunicipios={carregandoMunicipios}
             />
           ))}
+
+          {!escutando && !dadosRevisados && (
+            <div className="mt-5 pt-4 border-t border-borda-forte">
+              <p className="mt-0 mb-3 text-[13px] leading-[1.5] font-ui text-tinta-2">
+                {faltaParaComecar.length > 0
+                  ? `Preencha ${rotulosPendentes.join(" e ")} e confira os dados acima com o cliente.`
+                  : "Confira os dados acima com o cliente. O roteiro só abre depois da sua confirmação."}
+              </p>
+              <button
+                type="button"
+                className={T_BOTAO}
+                disabled={faltaParaComecar.length > 0}
+                onClick={() => setDadosRevisados(true)}
+              >
+                Revisei todos os dados — abrir o roteiro
+              </button>
+            </div>
+          )}
 
           {false && !escutando && (
             <div className="mt-5 pt-4 border-t border-borda-forte">
