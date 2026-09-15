@@ -46,6 +46,7 @@ import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 // TEMPORÁRIO — ambiente de testes sem consumo de transcrição/IA.
 // Quando o usuário pedir para reativar, troque para `false` ou remova o desvio.
 const TRANSCRICAO_TEMPORARIAMENTE_DESATIVADA = false;
+const INICIO_AUTOMATICO_DA_TRANSCRICAO = false;
 
 const T_BOTAO =
   "border-[1.5px] border-tinta bg-transparent text-tinta text-[11px] font-semibold leading-none font-ui " +
@@ -1367,7 +1368,7 @@ function preencherMarcadores(
    * rotulada como "Entrevistado". Com a chamada, o cliente ainda nem entrou.
    * Esperar a identificação dá tempo de abrir o Jitsi e receber a faixa remota. */
   useEffect(() => {
-    if (!roteiro || inicioAutomatico.current || !dadosRevisados) return;
+    if (!INICIO_AUTOMATICO_DA_TRANSCRICAO || !roteiro || inicioAutomatico.current || !dadosRevisados) return;
     if (faltaParaComecar.length > 0) {
       identificacaoCompletaEm.current = null;
       chaveIdentificacaoCompleta.current = "";
@@ -1598,19 +1599,17 @@ function preencherMarcadores(
           {/* O botão que abre a entrevista inteira. Substitui os 86 ciclos de
               gravar/finalizar: daqui em diante o microfone fica aberto e o
               roteiro se preenche atrás da conversa. */}
-          {false && !escutando ? (
+          {!escutando ? (
             <button
               type="button"
               className={T_BOTAO}
-              onClick={comecarEntrevista}
-              disabled={gravandoId !== null || faltaParaComecar.length > 0}
-              title={
-                faltaParaComecar.length > 0
-                  ? `Digite ${rotulosPendentes.join(" e ")} antes de abrir o microfone`
-                  : ""
-              }
+              onClick={() => {
+                inicioAutomatico.current = true;
+                void comecarEntrevista();
+              }}
+              disabled={gravandoId !== null}
             >
-              Iniciar transcrição e abrir roteiro
+              Iniciar transcrição
             </button>
           ) : null}
 
@@ -1747,11 +1746,24 @@ function preencherMarcadores(
         </p>
       )}
 
-      {!temMic && !escutando && faltaParaComecar.length === 0 && (
-        <p className={T_AVISO}>
-          Autorize o acesso ao microfone no navegador. A gravação e a transcrição começam
-          automaticamente assim que a permissão for concedida.
-        </p>
+      {!escutando && (
+        <div className={T_AVISO_BLOQUEIO}>
+          <strong>A transcrição ainda não começou.</strong> Quando o cliente estiver na linha,
+          clique em <strong>Iniciar transcrição</strong>.{!temMic && " Se o navegador perguntar, autorize o microfone."}
+          <div className="mt-3">
+            <button
+              type="button"
+              className={T_BOTAO}
+              onClick={() => {
+                inicioAutomatico.current = true;
+                void comecarEntrevista();
+              }}
+              disabled={gravandoId !== null}
+            >
+              Iniciar transcrição
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Sem "etapa 1 de 2": o roteiro inteiro já está na tela, e o que a
