@@ -532,12 +532,12 @@ export default function TriagemEntrevista({
       />
 
       {cadastroConfirmado && <div id="proximas-etapas-atendimento">
+      <PainelContrato respostas={qualificacao} />
       <AvaliacaoGoogle
         concluida={avaliacaoConcluida}
         onConcluir={setAvaliacaoConcluida}
         telefone={String(qualificacao.telefone ?? "")}
       />
-      <PainelContrato respostas={qualificacao} />
 
       {/* A revisão continua disponível, mas fica recolhida para que a próxima
         * tarefa do atendimento seja a única coisa dominante na tela. */}
