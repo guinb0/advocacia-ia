@@ -345,6 +345,20 @@ export default function EntrevistaComChamada({
             Roteiro, chamada e fechamento no mesmo fluxo
           </strong>
         </div>
+        {encerrada === null && !escuta && (
+          <button
+            type="button"
+            className="shrink-0 rounded-campo border border-critico bg-critico px-4 py-[10px] font-ui text-[11px] font-bold uppercase leading-none tracking-[0.08em] text-papel hover:opacity-90"
+            onClick={() => roteiro.current?.iniciarTranscricao()}
+          >
+            Iniciar transcrição
+          </button>
+        )}
+        {escuta && (
+          <span className="shrink-0 font-ui text-[11px] font-bold uppercase tracking-[0.08em] text-ok">
+            ● Transcrevendo
+          </span>
+        )}
         <button
           type="button"
           className="shrink-0 rounded-campo border border-borda-forte bg-transparent px-3 py-[9px] font-ui text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-tinta hover:bg-papel-2"

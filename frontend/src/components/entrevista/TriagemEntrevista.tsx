@@ -242,6 +242,14 @@ export default function TriagemEntrevista({
   );
   const edicoesCadastro = useRef<Record<string, string>>({});
   const cpfConsultadoQualificacao = useRef("");
+  const camposDoCpf = useRef<Record<string, string>>({});
+  const montarQualificacao = (respostas: Record<string, string | string[]>) => {
+    const base = completarQualificacao(respostas);
+    for (const [id, valor] of Object.entries(camposDoCpf.current)) {
+      if (!preenchido(base[id])) base[id] = valor;
+    }
+    return completarQualificacao({ ...base, ...edicoesPreenchidas(edicoesCadastro.current) });
+  };
   const [avisoCpf, setAvisoCpf] = useState("");
   const consultarCpfDaQualificacao = (valor: string) => {
     const digitos = valor.replace(/\D/g, "");
@@ -251,6 +259,10 @@ export default function TriagemEntrevista({
     void consultarCpf(digitos)
       .then((consulta) => {
         setAvisoCpf(consulta.aviso || "Dados do CPF preenchidos. Confira com o cliente.");
+        camposDoCpf.current = {
+          ...camposDoCpf.current,
+          ...Object.fromEntries(Object.entries(consulta.campos).filter(([, valor]) => Boolean(valor))),
+        };
         setQualificacao((atuais) => {
           const novas = { ...(atuais ?? {}) };
           for (const [id, valor] of Object.entries(consulta.campos)) {
@@ -654,7 +666,7 @@ export default function TriagemEntrevista({
            * áudio vêm junto, pelos mesmos motivos de sempre. */
           onRespostas={(respostas, relato, entrevistaId, trechos) => {
             setTexto(relato);
-            setQualificacao({ ...completarQualificacao(respostas), ...edicoesPreenchidas(edicoesCadastro.current) });
+            setQualificacao(montarQualificacao(respostas));
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
           }}
@@ -665,7 +677,7 @@ export default function TriagemEntrevista({
              * largura total, embaixo do formulário genérico. */
             chamada.desligar();
             setTexto(relato);
-            setQualificacao({ ...completarQualificacao(respostas), ...edicoesPreenchidas(edicoesCadastro.current) });
+            setQualificacao(montarQualificacao(respostas));
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
             setCadastroConfirmado(true);
