@@ -1282,6 +1282,7 @@ def listar_resumos() -> list[dict[str, Any]]:
                     else embutido.descricao
                 ),
                 "importado": salvo is not None,
+                "original_do_sistema": True,
                 "origem": str((salvo or {}).get("origem") or ""),
                 "criado_por": str((salvo or {}).get("criado_por") or ""),
                 "atualizado_em": str((salvo or {}).get("atualizado_em") or ""),
@@ -1296,6 +1297,7 @@ def listar_resumos() -> list[dict[str, Any]]:
                 "nome": str(salvo.get("nome") or codigo),
                 "descricao": str(salvo.get("descricao") or ""),
                 "importado": True,
+                "original_do_sistema": False,
                 "origem": str(salvo.get("origem") or ""),
                 "criado_por": str(salvo.get("criado_por") or ""),
                 "atualizado_em": str(salvo.get("atualizado_em") or ""),

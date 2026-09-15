@@ -90,7 +90,7 @@ export function criarContextoRevisao(
 ): ContextoRevisaoRoteiro | null {
   if (!roteiro) return null;
   const base = baseContexto(roteiro, preenchimentoAuto);
-  const ids_renderizaveis = base.roteiro.blocos.flatMap((bloco) =>
+  const ids_renderizaveis = base.roteiro.blocos.filter((bloco) => bloco.id !== "abertura").flatMap((bloco) =>
     bloco.perguntas
       .filter((pergunta) => dependenciaAberta(pergunta, respostas))
       .map((pergunta) => pergunta.id),

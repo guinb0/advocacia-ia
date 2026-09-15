@@ -419,7 +419,7 @@ export default function Roteiro({
    * Pode ser recolhida manualmente para liberar espaço, mas nunca fecha sozinha:
    * o recolhimento automático fazia parecer que os dados tinham sido travados. */
   const [idExpandida, setIdExpandida] = useState(true);
-  const [dadosRevisados, setDadosRevisados] = useState(false);
+  const [dadosRevisados, setDadosRevisados] = useState(true);
   /* Quando um trecho de fala foi reconhecido pela última vez.
    *
    * É o único sinal que distingue "conversa em silêncio" de "microfone mudo" —
@@ -1026,7 +1026,7 @@ export default function Roteiro({
         // A qualificação cadastral completa pertence à documentação. O filtro
         // também protege roteiros antigos já salvos no catálogo, que ainda
         // podem carregar esse bloco mesmo após ele sair do roteiro padrão.
-        b.id !== "identificacao" && (!b.modulo || positivos.has(b.modulo)),
+        b.id !== "identificacao" && b.id !== "abertura" && (!b.modulo || positivos.has(b.modulo)),
     );
   }, [roteiro, respostas]);
 
@@ -1339,15 +1339,7 @@ function preencherMarcadores(
     [CAMPOS_DA_IDENTIFICACAO],
   );
 
-  const faltaParaComecar = useMemo(
-    () =>
-      CAMPOS_DA_IDENTIFICACAO.filter((campo) =>
-        "completo" in campo && campo.completo
-          ? !campo.completo(respostas[campo.id])
-          : !respondida(respostas[campo.id]),
-      ).map(({ id, rotulo }) => ({ id, rotulo })),
-    [CAMPOS_DA_IDENTIFICACAO, respostas],
-  );
+  const faltaParaComecar = useMemo(() => [] as { id: string; rotulo: string }[], []);
 
   const rotulosPendentes = useMemo(
     () => faltaParaComecar.map((c) => c.rotulo),
@@ -1508,7 +1500,7 @@ function preencherMarcadores(
     ? idsDaIdentificacao
     : new Set([...idsDaIdentificacao, ...camposPuxados]);
   const blocosNaTela = roteiroRevelado
-    ? roteiro?.blocos ?? []
+    ? (roteiro?.blocos ?? []).filter((b) => b.id !== "abertura")
     : blocosVisiveis
         .map((bloco) => ({
           ...bloco,

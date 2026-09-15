@@ -372,6 +372,7 @@ export interface RoteiroResumo {
   descricao: string;
   /** Tem versão salva no banco. Só nesses cabe "voltar ao original". */
   importado: boolean;
+  original_do_sistema?: boolean;
   /** Nome do arquivo de onde ele veio, quando veio de um. */
   origem: string;
   /** Quem salvou esta versão no catálogo. */
