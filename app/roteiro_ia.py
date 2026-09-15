@@ -27,6 +27,7 @@ lido do documento volta junto, para conferência lado a lado.
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import os
@@ -195,6 +196,9 @@ Responda SOMENTE JSON no formato:
 orientacao interna. Se o documento nao trouxer o texto, devolva "".
 "modulo": null quando o bloco aparece sempre. Quando o bloco so existe se uma
 pergunta de rastreio for positiva, ponha um nome curto do assunto (ex.: "assalto").
+Cada titulo de secao do documento (linhas em MAIUSCULAS, como "SEQUELAS E
+LIMITACOES" ou "PERGUNTA FINAL") vira UM bloco proprio, na ordem do documento.
+Nunca junte duas secoes num bloco so.
 No maximo {MAX_BLOCOS} blocos."""
 
 #: A MESMA estrutura, sem os textos longos. Existe para a segunda tentativa.
@@ -221,12 +225,15 @@ Responda SOMENTE JSON no formato:
 "modulo": null quando o bloco aparece sempre; um nome curto do assunto (ex.:
 "assalto") quando ele so existe se uma pergunta de rastreio for positiva.
 Deixe "objetivo", "abertura" e "instrucao" como "" — nao os preencha.
+Cada titulo de secao do documento (linhas em MAIUSCULAS) vira UM bloco proprio,
+na ordem do documento. Nunca junte duas secoes num bloco so.
 No maximo {MAX_BLOCOS} blocos."""
 
 _INSTRUCAO_PERGUNTAS = f"""Voce recebe o texto de um roteiro de entrevista e o nome de UM bloco dele.
 Devolva as perguntas DESSE BLOCO em JSON, na ordem do documento, com as palavras
 do documento, em portugues e com a acentuacao correta. Nao crie perguntas que o
-texto nao tem.
+texto nao tem. Pegue somente o que esta sob o titulo desse bloco, ate o titulo
+seguinte, e nao deixe nenhuma pergunta desse trecho de fora.
 
 Responda SOMENTE JSON no formato:
 {{"perguntas":[{{"id":"nome_completo","texto":"Qual o seu nome completo?",
@@ -361,6 +368,12 @@ def gerar(
         raise ErroGeracao("Nenhuma pergunta foi reconhecida no documento.")
 
     avisar(97, "Conferindo o roteiro")
+    narrados = [
+        *_paragrafos(esboco.get("saudacao")),
+        *_paragrafos(esboco.get("encerramento")),
+        *(str(b.get(campo) or "") for b in blocos_brutos for campo in ("abertura", "instrucao", "objetivo")),
+    ]
+    completar_perguntas_faltantes(corpo, blocos, ids_usados, ja_perguntadas, narrados)
     nome = str(esboco.get("nome") or Path(origem).stem or "Roteiro importado").strip()
     return {
         "codigo": roteiros.identificador(nome, set(), "roteiro"),
@@ -519,6 +532,111 @@ def _sem_repetidas(
     if repetidas:
         log.info("Bloco '%s': %d pergunta(s) repetidas de outro bloco.", titulo, repetidas)
     return mantidas
+
+
+def _eh_titulo(linha: str) -> bool:
+    letras = [c for c in linha if c.isalpha()]
+    return len(letras) >= 4 and len(linha) <= 90 and not any(c.islower() for c in letras) and not linha.endswith("?")
+
+
+def perguntas_do_texto(corpo: str) -> list[tuple[str, str]]:
+    titulo = ""
+    achadas: list[tuple[str, str]] = []
+    for linha in corpo.splitlines():
+        limpa = linha.strip().strip("*#•·-–—>\t \"“”'").strip()
+        if not limpa:
+            continue
+        if _eh_titulo(limpa.rstrip(":")):
+            titulo = limpa.rstrip(":").strip()
+            continue
+        if limpa.endswith("?") and 12 <= len(limpa) <= 400:
+            achadas.append((titulo, limpa))
+    return achadas
+
+
+def _ja_coberta(chave: str, existentes: list[str]) -> bool:
+    for outra in existentes:
+        if chave == outra or (len(chave) >= 15 and (chave in outra or outra in chave)):
+            return True
+        if difflib.SequenceMatcher(None, chave, outra).ratio() >= 0.85:
+            return True
+    return False
+
+
+def completar_perguntas_faltantes(
+    corpo: str,
+    blocos: list[dict[str, Any]],
+    ids_usados: set[str],
+    ja_perguntadas: set[str],
+    narrados: list[str],
+) -> int:
+    existentes = [_chave_de_texto(p["texto"]) for b in blocos for p in b["perguntas"]]
+    falas = [_chave_de_texto(t) for t in narrados if t]
+    acrescentadas = 0
+    indice_anterior = len(blocos) - 1
+    for titulo, texto in perguntas_do_texto(corpo):
+        chave = _chave_de_texto(texto)
+        if not chave:
+            continue
+        dono = next(
+            (i for i, b in enumerate(blocos) if any(_chave_de_texto(p["texto"]) == chave for p in b["perguntas"])),
+            None,
+        )
+        if dono is not None:
+            indice_anterior = dono
+            continue
+        if _ja_coberta(chave, existentes) or any(chave in fala for fala in falas):
+            continue
+        chave_titulo = _chave_de_texto(titulo)
+        destino = next(
+            (
+                i
+                for i, b in enumerate(blocos)
+                if chave_titulo and (_chave_de_texto(b["titulo"]) == chave_titulo or chave_titulo in _chave_de_texto(b["titulo"]))
+            ),
+            None,
+        )
+        if destino is None:
+            nome_bloco = (titulo or "Perguntas complementares").strip().capitalize()[:200]
+            blocos.insert(
+                indice_anterior + 1,
+                {
+                    "id": roteiros.identificador(nome_bloco, ids_usados, "bloco"),
+                    "titulo": nome_bloco,
+                    "objetivo": "",
+                    "abertura": "",
+                    "instrucao": "",
+                    "modulo": None,
+                    "delegado_a": "",
+                    "perguntas": [],
+                },
+            )
+            destino = indice_anterior + 1
+        blocos[destino]["perguntas"].append(
+            {
+                "id": roteiros.identificador(texto, ids_usados, "p"),
+                "texto": _enunciado(texto),
+                "tipo": "relato",
+                "transcrever": True,
+                "opcoes": [],
+                "dica": "",
+                "obrigatoria": False,
+                "validacao": "",
+                "busca": "",
+                "preenche": "",
+                "fala": {},
+                "depende_de": "",
+                "depende_valor": "",
+                "impedimento": "",
+            }
+        )
+        existentes.append(chave)
+        ja_perguntadas.add(chave)
+        indice_anterior = destino
+        acrescentadas += 1
+    if acrescentadas:
+        log.info("Importação de roteiro: %d pergunta(s) do documento acrescentadas na conferência.", acrescentadas)
+    return acrescentadas
 
 
 def _chave_de_texto(texto: str) -> str:
