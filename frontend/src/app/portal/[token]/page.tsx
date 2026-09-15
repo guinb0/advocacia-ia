@@ -305,7 +305,7 @@ function Checklist({
         <Chamada token={token} />
 
         <div className="mt-5">
-          <EnvioEmLote onEnviar={enviarLote} enviando={enviandoLote} compacto />
+          <EnvioEmLote onEnviar={enviarLote} enviando={enviandoLote} simples />
         </div>
 
         {avisoLote && (

@@ -57,6 +57,35 @@ const CAMPOS_CADASTRAIS = [
   { id: "pis", rotulo: "PIS / PASEP / NIT", grupo: "documentos" },
 ] as const;
 
+const ORIGENS_CADASTRAIS: Record<string, string[]> = {
+  nome: ["nome_completo"],
+  nascimento: ["data_nascimento"],
+  telefone: ["telefone_whatsapp"],
+  endereco: ["endereco_residencial_completo"],
+  mae: ["nome_mae"],
+  profissao: ["funcao", "funcao_atual"],
+  pis: ["pis_pasep_nit"],
+};
+
+function preenchido(valor: string | string[] | undefined): valor is string {
+  return typeof valor === "string" && valor.trim() !== "" && valor.trim().toLowerCase() !== "outra";
+}
+
+function completarQualificacao(
+  respostas: Record<string, string | string[]>,
+): Record<string, string | string[]> {
+  const completas = { ...respostas };
+  for (const [destino, origens] of Object.entries(ORIGENS_CADASTRAIS)) {
+    if (preenchido(completas[destino])) continue;
+    const valor = origens.map((origem) => respostas[origem]).find(preenchido);
+    if (valor) completas[destino] = valor;
+  }
+  if (!preenchido(completas.nacionalidade) && String(completas.cpf ?? "").replace(/\D/g, "").length === 11) {
+    completas.nacionalidade = "Brasileira";
+  }
+  return completas;
+}
+
 function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }: {
   respostas: Record<string, string | string[]>;
   confirmado: boolean;
@@ -104,7 +133,7 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
         <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Etapa 1 · fechamento</span>
         <h3 className="mt-1 text-lg font-semibold text-tinta">Confira os dados cadastrais</h3>
         <p className="mb-0 mt-1 max-w-[72ch] text-xs leading-[1.55] text-tinta-3">
-          Estes campos não fazem parte do roteiro falado. Digite ou corrija agora; e-mail e WhatsApp serão usados no contato com o cliente.
+          Preenchidos automaticamente com a consulta do CPF e as respostas da entrevista. Confira e corrija o que precisar; e-mail e WhatsApp serão usados no contato com o cliente.
         </p>
       </header>
 
@@ -581,7 +610,7 @@ export default function TriagemEntrevista({
            * áudio vêm junto, pelos mesmos motivos de sempre. */
           onRespostas={(respostas, relato, entrevistaId, trechos) => {
             setTexto(relato);
-            setQualificacao({ ...respostas, ...edicoesCadastro.current });
+            setQualificacao({ ...completarQualificacao(respostas), ...edicoesCadastro.current });
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
           }}
@@ -592,7 +621,7 @@ export default function TriagemEntrevista({
              * largura total, embaixo do formulário genérico. */
             chamada.desligar();
             setTexto(relato);
-            setQualificacao({ ...respostas, ...edicoesCadastro.current });
+            setQualificacao({ ...completarQualificacao(respostas), ...edicoesCadastro.current });
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
             setCadastroConfirmado(true);
