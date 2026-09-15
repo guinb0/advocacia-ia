@@ -186,6 +186,19 @@ function carregarJitsi(): Promise<ApiJitsi> {
   return carregando;
 }
 
+export type PermissaoMicrofone = "permitido" | "negado" | "indisponivel";
+
+export async function pedirPermissaoMicrofone(): Promise<PermissaoMicrofone> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return "indisponivel";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((faixa) => faixa.stop());
+    return "permitido";
+  } catch (e) {
+    return e instanceof DOMException && /NotAllowed|Security/i.test(e.name) ? "negado" : "indisponivel";
+  }
+}
+
 export class ChamadaJitsi {
   private api: ApiJitsi | null = null;
   private conexao: ConexaoJitsi | null = null;
