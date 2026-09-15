@@ -24,10 +24,9 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, BookOpenText, FilePenLine, RotateCcw, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, BookOpenText, FilePenLine, Plus, RotateCcw, Trash2 } from "lucide-react";
 
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
-import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
 import { Aviso, Botao, Cartao, Paginacao, Selo, Vazio } from "@/components/ui/Basicos";
 import {
   ApiError,
@@ -46,6 +45,18 @@ function quando(iso: string): string {
 
 const ITENS_POR_PAGINA = 10;
 
+const ROTEIRO_EM_BRANCO: RoteiroCompleto = {
+  codigo: "",
+  nome: "",
+  descricao: "",
+  blocos: [],
+  saudacao: [],
+  encerramento: [],
+  retomadas: [],
+  fechos_por_tipo: {},
+  mapa_rastreio: {},
+};
+
 export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void }) {
   const [roteiros, setRoteiros] = useState<RoteiroResumo[]>([]);
   const [totalRoteiros, setTotalRoteiros] = useState(0);
@@ -59,7 +70,6 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
   const [emEdicao, setEmEdicao] = useState<RoteiroCompleto | null>(null);
   const [origemEmEdicao, setOrigemEmEdicao] = useState("");
   const [abrindo, setAbrindo] = useState<string | null>(null);
-  const [importando, setImportando] = useState(false);
   const [revertendo, setRevertendo] = useState<string | null>(null);
   const [pagina, setPagina] = useState(1);
 
@@ -276,11 +286,18 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
       <aside className="flex min-w-0 flex-col gap-4">
         <Cartao
           titulo="Novo roteiro"
-          subtitulo="Importe um documento do escritório. A proposta abre no editor para revisão antes de virar padrão."
+          subtitulo="Copie o roteiro do documento e cole no editor. Títulos em MAIÚSCULAS viram seções e cada linha vira uma pergunta."
           className="min-w-0 overflow-hidden"
         >
-          <Botao variante="primario" onClick={() => setImportando(true)} bloco>
-            <Upload size={16} aria-hidden /> Importar documento
+          <Botao
+            variante="primario"
+            onClick={() => {
+              setEmEdicao(ROTEIRO_EM_BRANCO);
+              setOrigemEmEdicao("");
+            }}
+            bloco
+          >
+            <Plus size={16} aria-hidden /> Novo roteiro (colar texto)
           </Botao>
         </Cartao>
 
@@ -299,16 +316,6 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
       </aside>
       </div>
 
-      {importando && (
-        <ImportarRoteiro
-          aoImportar={(importado) => {
-            setImportando(false);
-            setEmEdicao(importado.roteiro);
-            setOrigemEmEdicao(importado.origem);
-          }}
-          aoFechar={() => setImportando(false)}
-        />
-      )}
 
       {emEdicao && (
         <EditorRoteiro
