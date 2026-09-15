@@ -1,5 +1,9 @@
 "use client";
 
+import { criarEfeitoFundo, preCarregarFundoVirtual } from "./fundoVirtual";
+
+const FUNDO_ADVOGADO = "/fundo-chamada.jpg";
+
 /* A chamada sobre o Jitsi, usando a lib-jitsi-meet.
  *
  * POR QUE A BIBLIOTECA E NÃO O IFRAME
@@ -95,6 +99,7 @@ interface FaixaJitsi {
   mute(): Promise<void>;
   unmute(): Promise<void>;
   dispose(): Promise<void>;
+  setEffect?(efeito: unknown): Promise<void>;
 }
 
 interface ParticipanteJitsi {
@@ -417,6 +422,7 @@ export class ChamadaJitsi {
 
     const camera = faixas.find((f) => f.getType() === "video") ?? null;
     if (camera) {
+      await this.aplicarFundo(camera);
       this.minhaCamera = camera;
       this.videos.set("eu", camera.getTrack());
     }
@@ -424,9 +430,20 @@ export class ChamadaJitsi {
     await this.conectar(api, salaJitsi, token);
   }
 
+  private async aplicarFundo(camera: FaixaJitsi): Promise<void> {
+    if (this.papel !== "advogado" || !camera.setEffect) return;
+    try {
+      await camera.setEffect(criarEfeitoFundo(FUNDO_ADVOGADO, (m) => this.eventos.onErro?.(m)));
+    } catch {
+      this.eventos.onErro?.("Não foi possível aplicar o fundo virtual. A câmera aparece sem o fundo.");
+    }
+  }
+
   private async abrirCamera(api: ApiJitsi): Promise<void> {
+    if (this.papel === "advogado") preCarregarFundoVirtual(FUNDO_ADVOGADO);
     const faixas = await abrirVideoComFallback(api);
     this.minhaCamera = faixas.find((f) => f.getType() === "video") ?? null;
+    if (this.minhaCamera) await this.aplicarFundo(this.minhaCamera);
     if (this.minhaCamera) this.videos.set("eu", this.minhaCamera.getTrack());
   }
 
