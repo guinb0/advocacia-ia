@@ -22,7 +22,35 @@ function ehNavegadorDeAplicativo(): boolean {
 
 const CAIXA = "mt-4 rounded-campo border-[1.5px] p-4 text-base leading-[1.55] font-ui";
 
+function versaoDoChrome(): number | null {
+  if (typeof navigator === "undefined") return null;
+  const chrome = navigator.userAgent.match(/Chrome\/(\d+)/);
+  return chrome ? Number(chrome[1]) : null;
+}
+
 export default function AtivarMicrofone() {
+  const [chromeAntigo, setChromeAntigo] = useState<number | null>(null);
+
+  useEffect(() => {
+    const versao = versaoDoChrome();
+    if (versao !== null && versao < 100) setChromeAntigo(versao);
+  }, []);
+
+  return (
+    <>
+      {chromeAntigo !== null && (
+        <div className={`${CAIXA} border-atencao bg-papel-2 text-tinta`} role="alert">
+          <strong className="block mb-1">Seu Google Chrome está desatualizado (versão {chromeAntigo})</strong>
+          A chamada pode ficar só “conectando” e não entrar. Abra a <strong>Play Store</strong>, procure por{" "}
+          <strong>Google Chrome</strong>, toque em <strong>Atualizar</strong> e abra este link de novo.
+        </div>
+      )}
+      <PermissaoDoMicrofone />
+    </>
+  );
+}
+
+function PermissaoDoMicrofone() {
   const [estado, setEstado] = useState<Estado>("verificando");
   const [pedindo, setPedindo] = useState(false);
   const [aplicativo, setAplicativo] = useState(false);

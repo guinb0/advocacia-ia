@@ -135,6 +135,17 @@ interface ApiJitsi {
     opcoes: Record<string, unknown>,
   ) => ConexaoJitsi;
   createLocalTracks(opcoes: Record<string, unknown>): Promise<FaixaJitsi[]>;
+  isWebRtcSupported?(): boolean;
+  util?: { browser?: { isSupported?(): boolean; getName?(): string; getVersion?(): string } };
+}
+
+const LIMITE_SERVIDOR_MS = 25_000;
+const LIMITE_AUDIO_MS = 25_000;
+
+function descreverNavegador(): string {
+  if (typeof navigator === "undefined") return "navegador desconhecido";
+  const chrome = navigator.userAgent.match(/Chrome\/(\d+)/);
+  return chrome ? `Chrome ${chrome[1]}` : "este navegador";
 }
 
 declare global {
@@ -232,6 +243,19 @@ export class ChamadaJitsi {
   /** Impede duas recuperações de microfone ao mesmo tempo (`ended` + `mute`). */
   private recuperandoAudio = false;
   private travaTela: WakeLockSentinel | null = null;
+  private limiteAudio: number | null = null;
+
+  private vigiarAudioRemoto(): void {
+    if (this.limiteAudio !== null) window.clearTimeout(this.limiteAudio);
+    this.limiteAudio = window.setTimeout(() => {
+      this.limiteAudio = null;
+      if (this.desligando || this.remotas.size > 0) return;
+      this.eventos.onErro?.(
+        "Você entrou na sala, mas o áudio da outra pessoa não chegou. Saia da chamada e entre de novo; " +
+          `se continuar, troque entre Wi-Fi e 4G ou atualize o Google Chrome (${descreverNavegador()}).`,
+      );
+    }, LIMITE_AUDIO_MS);
+  }
   private aoMudarVisibilidade = () => void this.retomarAoVoltar();
 
   constructor(
@@ -287,6 +311,15 @@ export class ChamadaJitsi {
 
     const api = await carregarJitsi();
     this.api = api;
+    const semWebRtc = api.isWebRtcSupported ? !api.isWebRtcSupported() : false;
+    const naoSuportado = api.util?.browser?.isSupported ? !api.util.browser.isSupported() : false;
+    if (semWebRtc || naoSuportado) {
+      this.mudarEstado("encerrada");
+      throw new Error(
+        `A chamada não funciona no ${descreverNavegador()}, que está desatualizado. ` +
+          "Atualize o Google Chrome pela Play Store e abra o link de novo.",
+      );
+    }
 
     /* Microfone e câmera num pedido SÓ, e não em dois.
      *
@@ -482,11 +515,22 @@ export class ChamadaJitsi {
     this.conexao = conexao;
 
     return new Promise<void>((ok, falhou) => {
+      const limite = window.setTimeout(() => {
+        this.mudarEstado("encerrada");
+        falhou(
+          new Error(
+            "O servidor de chamadas não respondeu. Confira a internet (troque entre Wi-Fi e 4G) " +
+              `e tente de novo. Se continuar, atualize o Google Chrome (${descreverNavegador()}).`,
+          ),
+        );
+      }, LIMITE_SERVIDOR_MS);
       conexao.addEventListener(eventos.CONNECTION_ESTABLISHED, () => {
+        window.clearTimeout(limite);
         this.entrarNaSala(api, sala);
         ok();
       });
       conexao.addEventListener(eventos.CONNECTION_FAILED, () => {
+        window.clearTimeout(limite);
         this.mudarEstado("encerrada");
         falhou(new Error("Não foi possível falar com o servidor de chamadas."));
       });
@@ -518,6 +562,7 @@ export class ChamadaJitsi {
       void this.publicarMicrofone(sala);
       if (this.minhaCamera) void sala.addTrack(this.minhaCamera);
       this.mudarEstado(sala.getParticipantCount() > 0 ? "conectando" : "aguardando");
+      if (sala.getParticipantCount() > 0) this.vigiarAudioRemoto();
       this.anunciarParticipantes();
     });
 
@@ -554,7 +599,10 @@ export class ChamadaJitsi {
       this.soltarFaixa(faixa);
     });
 
-    sala.on(ev.USER_JOINED, () => this.anunciarParticipantes());
+    sala.on(ev.USER_JOINED, () => {
+      if (this.remotas.size === 0) this.vigiarAudioRemoto();
+      this.anunciarParticipantes();
+    });
     sala.on(ev.DISPLAY_NAME_CHANGED, () => this.anunciarParticipantes());
 
     sala.on(ev.USER_LEFT, (...args: unknown[]) => {
@@ -799,6 +847,10 @@ export class ChamadaJitsi {
     document.addEventListener("pointerdown", destravar, true);
     document.addEventListener("keydown", destravar, true);
 
+    if (this.limiteAudio !== null) {
+      window.clearTimeout(this.limiteAudio);
+      this.limiteAudio = null;
+    }
     this.mudarEstado("falando");
     this.eventos.onFaixaRemota?.(faixa.getTrack());
   }
@@ -828,6 +880,10 @@ export class ChamadaJitsi {
   desligar(): void {
     this.desligando = true;
     document.removeEventListener("visibilitychange", this.aoMudarVisibilidade);
+    if (this.limiteAudio !== null) {
+      window.clearTimeout(this.limiteAudio);
+      this.limiteAudio = null;
+    }
     void this.travaTela?.release().catch(() => {});
     this.travaTela = null;
 

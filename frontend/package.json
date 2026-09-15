@@ -8,6 +8,15 @@
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },
+  "browserslist": [
+    "chrome >= 80",
+    "and_chr >= 80",
+    "edge >= 80",
+    "firefox >= 78",
+    "safari >= 14",
+    "ios_saf >= 14",
+    "samsung >= 13"
+  ],
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
     "@tanstack/react-query": "^5.62.0",
