@@ -60,6 +60,7 @@ interface Props {
   erro: string | null;
   /** Levar o roteiro até a pergunta — o painel é índice, não só relatório. */
   onIrPara: (perguntaId: string) => void;
+  onReligar?: () => void;
 }
 
 /* O que o indicador do topo diz, e por que estas palavras.
@@ -101,8 +102,8 @@ function situacao(
       texto: "religando",
       classe: ESTADO_PAUSADO,
       titulo:
-        "A conexão caiu e está voltando sozinha. O que for dito nestes segundos " +
-        "não entra no arquivo; o resto do atendimento continua sendo gravado.",
+        "A conexão caiu e está voltando sozinha. O áudio destes segundos fica " +
+        "guardado no navegador e é enviado para transcrição quando voltar.",
     };
   }
   if (!captando) {
@@ -155,6 +156,7 @@ export default function PainelEscuta({
   chegada,
   erro,
   onIrPara,
+  onReligar,
 }: Props) {
   const obrigatoriasFaltando = faltando.filter((f) => f.obrigatoria);
 
@@ -192,6 +194,22 @@ export default function PainelEscuta({
           {estado.texto}
         </span>
       </div>
+
+      {reconectando && (
+        <div className="mb-3 border-[1.5px] border-atencao px-[11px] py-[10px] font-normal text-[12px] leading-[1.55] font-ui">
+          <strong>A transcrição está religando.</strong> O áudio deste intervalo fica guardado e é
+          transcrito assim que a conexão voltar.
+          {onReligar && (
+            <button
+              type="button"
+              onClick={onReligar}
+              className="ml-2 border border-tinta bg-transparent px-2 py-1 text-[11px] font-semibold cursor-pointer hover:bg-papel-2"
+            >
+              Religar agora
+            </button>
+          )}
+        </div>
+      )}
 
       <section className="mb-[18px] border-b border-borda pb-4" aria-live="polite">
         <span className="block mb-2 text-[9.5px] font-semibold tracking-[0.13em] uppercase text-tinta-3">Transcrição em tempo real</span>

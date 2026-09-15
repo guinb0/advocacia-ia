@@ -228,6 +228,8 @@ export async function encerrarGravacao(entrevistaId: string): Promise<Gravacao |
   return (await resposta.json()) as Gravacao;
 }
 
+const MAX_BLOCOS_PENDENTES = 4800;
+
 export class CapturaEntrevista {
   /* O áudio é gravado no servidor, do mesmo fluxo que alimenta o Whisper — o
    * arquivo é exatamente o que foi transcrito. Este id costura tudo num arquivo
@@ -276,6 +278,12 @@ export class CapturaEntrevista {
   /** Uma recuperação por vez; a troca de microfone dispara vários eventos. */
   private recuperando = false;
   private ouvindoDispositivos = false;
+  private ultimaTrilhaChamada: MediaStreamTrack | null = null;
+  private querGravar = false;
+  private pendentes: ArrayBuffer[] = [];
+  private ultimaMensagemEm = 0;
+  private vigia: ReturnType<typeof setInterval> | null = null;
+  private pularEspera: (() => void) | null = null;
 
   constructor(private eventos: EventosTranscricao = {}) {}
 
@@ -334,6 +342,7 @@ export class CapturaEntrevista {
   async usarTrilha(trilha: MediaStreamTrack): Promise<void> {
     this.desmontar();
     this.origem = "chamada";
+    this.ultimaTrilhaChamada = trilha;
     this.dispositivoAtual = undefined;
     // Uma faixa nova chegando É a recuperação: em produção a fonte é a voz do
     // cliente, e a chamada reentrega a faixa quando ela é renegociada.
@@ -476,7 +485,9 @@ export class CapturaEntrevista {
       void this.aoPerderFonte(motivo);
     };
     trilha.addEventListener("ended", () => cair("trilha encerrada"));
-    trilha.addEventListener("mute", () => cair("trilha muda"));
+    trilha.addEventListener("mute", () => {
+      if (this.origem !== "chamada") cair("trilha muda");
+    });
     this.trilha = trilha;
 
     /* Taxa NATIVA de propósito, e não 16 kHz forçado.
@@ -513,8 +524,12 @@ export class CapturaEntrevista {
       // O filtro de gravação é aqui: mantém a captura aberta sem transmitir
       // nada antes do "podemos começar?". Depois disso não há mais filtro — não
       // existe pausa, e o áudio corre até o encerramento do atendimento.
-      if (!this.gravando || this.ws?.readyState !== WebSocket.OPEN) return;
-      this.ws.send(e.data.buffer as ArrayBuffer);
+      if (this.gravando && this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(e.data.buffer as ArrayBuffer);
+      } else if (this.querGravar && !this.encerrado) {
+        this.pendentes.push(e.data.buffer as ArrayBuffer);
+        if (this.pendentes.length > MAX_BLOCOS_PENDENTES) this.pendentes.shift();
+      }
     };
 
     origem.connect(no);
@@ -537,6 +552,7 @@ export class CapturaEntrevista {
     ws.binaryType = "arraybuffer";
 
     ws.onmessage = (e) => {
+      this.ultimaMensagemEm = Date.now();
       const m = JSON.parse(e.data as string);
       if (m.type === "partial") {
         // Parcial que chega depois do "finalizar" é texto velho: o modelo
@@ -595,8 +611,15 @@ export class CapturaEntrevista {
     };
 
     await new Promise<void>((ok, falhou) => {
-      ws.onopen = () => ok();
-      setTimeout(() => falhou(new Error("O servidor de transcrição não respondeu.")), 10_000);
+      const relogio = setTimeout(() => {
+        ws.onclose = null;
+        ws.close();
+        falhou(new Error("O servidor de transcrição não respondeu."));
+      }, 8_000);
+      ws.onopen = () => {
+        clearTimeout(relogio);
+        ok();
+      };
     });
 
     this.ws = ws;
@@ -621,14 +644,25 @@ export class CapturaEntrevista {
     let espera = 1_000;
     try {
       while (!this.encerrado) {
-        await new Promise((ok) => setTimeout(ok, espera));
+        await new Promise<void>((ok) => {
+          this.pularEspera = () => ok();
+          setTimeout(ok, espera);
+        });
+        this.pularEspera = null;
         if (this.encerrado) return;
         try {
-          await this.iniciarResposta(pergunta ?? "entrevista");
-          this.eventos.onAviso?.("Conexão restabelecida. A gravação continua no mesmo arquivo.");
+          if (!this.trilha && this.ultimaTrilhaChamada?.readyState === "live") {
+            await this.usarTrilha(this.ultimaTrilhaChamada).catch(() => undefined);
+          }
+          await this.abrirSessao(pergunta ?? "entrevista");
+          this.eventos.onAviso?.(
+            this.trilha
+              ? "Conexão restabelecida. A gravação continua no mesmo arquivo."
+              : "Conexão restabelecida. Aguardando o áudio da chamada voltar.",
+          );
           return;
         } catch {
-          espera = Math.min(espera * 2, 15_000);
+          espera = Math.min(espera * 2, 4_000);
         }
       }
     } finally {
@@ -653,7 +687,10 @@ export class CapturaEntrevista {
   /** Começa a transcrever a resposta desta pergunta. */
   async iniciarResposta(perguntaId: string): Promise<void> {
     if (!this.trilha) throw new Error("Ligue o microfone antes de iniciar.");
+    await this.abrirSessao(perguntaId);
+  }
 
+  private async abrirSessao(perguntaId: string): Promise<void> {
     /* Gravar depois de encerrar é OUTRA entrevista, com outro arquivo.
      *
      * Reaproveitar o id faria a conversão seguinte passar por cima do .mp4 que
@@ -678,7 +715,49 @@ export class CapturaEntrevista {
     this.gravando = true;
     this.perguntaEmCurso = perguntaId;
     this.encerrado = false;
+    this.querGravar = true;
+    this.ultimaMensagemEm = Date.now();
     this.eventos.onEstado?.("gravando");
+    const atrasados = this.pendentes.splice(0);
+    for (const bloco of atrasados) ws.send(bloco);
+    if (atrasados.length > 0) {
+      this.eventos.onAviso?.(
+        `Conexão restabelecida: ${Math.round((atrasados.length * 4096) / 16000)}s de áudio guardados durante a queda foram enviados para transcrição.`,
+      );
+    }
+    this.vigiar();
+  }
+
+  private vigiar(): void {
+    if (this.vigia) return;
+    this.vigia = setInterval(() => {
+      if (this.encerrado || !this.querGravar) return;
+      const ws = this.ws;
+      if (ws?.readyState === WebSocket.OPEN && this.gravando) {
+        try {
+          ws.send(JSON.stringify({ type: "ping" }));
+        } catch {
+          ws.close();
+          return;
+        }
+        if (Date.now() - this.ultimaMensagemEm > 30_000) ws.close();
+      } else if (!this.reconectando) {
+        void this.reconectar(this.perguntaEmCurso ?? "entrevista");
+      }
+    }, 10_000);
+  }
+
+  religarAgora(): void {
+    if (this.encerrado || !this.querGravar) return;
+    if (this.reconectando) {
+      this.pularEspera?.();
+      return;
+    }
+    if (this.ws?.readyState === WebSocket.OPEN && this.gravando) {
+      this.ws.close();
+      return;
+    }
+    void this.reconectar(this.perguntaEmCurso ?? "entrevista");
   }
 
   /* NÃO HÁ MAIS PAUSA.
@@ -693,6 +772,8 @@ export class CapturaEntrevista {
   /** Encerra a resposta. O microfone continua aberto para a próxima pergunta. */
   finalizarResposta(): void {
     if (!this.gravando) return;
+    this.querGravar = false;
+    this.pendentes = [];
     this.gravando = false; // para o envio ANTES de avisar o servidor
     this.encerrado = true; // queda daqui em diante é esperada: não reconecta
     const sessao = this.sessaoAtual;
@@ -788,6 +869,10 @@ export class CapturaEntrevista {
     this.recuperando = false;
     this.gravando = false;
     this.encerrado = true;
+    this.querGravar = false;
+    this.pendentes = [];
+    if (this.vigia) clearInterval(this.vigia);
+    this.vigia = null;
     this.sessaoAtual = null;
     this.perguntaEmCurso = null;
     this.ws?.close();
