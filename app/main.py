@@ -75,6 +75,7 @@ from . import (
     historico_alteracoes,
     contrato,
     escuta,
+    google_drive,
     perfis,
     painel as painel_do_caso,
     operacao,
@@ -331,6 +332,7 @@ app.include_router(documentacao.roteador)
 app.include_router(operacao.roteador)
 app.include_router(whatsapp.roteador)
 app.include_router(tipos_documento.roteador)
+app.include_router(google_drive.roteador)
 
 
 @app.exception_handler(duplicidade.DocumentoDuplicado)
@@ -428,6 +430,10 @@ app.add_middleware(
 
 
 armazenamento.inicializar()
+try:
+    google_drive.inicializar()
+except Exception:  # noqa: BLE001
+    log.warning("Tabela de configuração do Google Drive não pôde ser criada", exc_info=True)
 
 
 @app.get("/")

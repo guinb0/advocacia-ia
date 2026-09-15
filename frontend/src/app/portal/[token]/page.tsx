@@ -334,8 +334,12 @@ function Checklist({
         )}
 
         {faltam.length > 0 && (
-          <>
-            <div className="mt-5 mb-0 px-[18px] py-4 border border-acao-borda rounded-campo bg-acao-clara">
+          <details className="mt-6 group">
+            <summary className="flex items-center gap-[10px] cursor-pointer list-none text-acao font-ui text-base font-semibold underline underline-offset-4">
+              Ver o que ainda falta enviar
+              <Selo tom="critico">{faltam.length}</Selo>
+            </summary>
+            <div className="mt-4 mb-0 px-[18px] py-4 border border-acao-borda rounded-campo bg-acao-clara">
               <h2 className="mb-2 mt-0 text-tinta font-ui text-sm font-bold">Como fotografar para dar certo</h2>
               <ul className="m-0 pl-5">
                 <li className="mb-1 text-tinta-2 text-sm leading-[1.55]">
@@ -353,11 +357,7 @@ function Checklist({
               </ul>
             </div>
 
-            <h2 className="flex items-center gap-[10px] mt-7 mb-[10px] text-tinta font-titulo text-lg font-semibold">
-              Ainda falta enviar
-              <Selo tom="critico">{faltam.length}</Selo>
-            </h2>
-            <ul className="list-none m-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
+            <ul className="list-none mt-4 mb-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
               {faltam.map((item) => (
                 <Linha
                   key={item.codigo}
@@ -367,16 +367,16 @@ function Checklist({
                 />
               ))}
             </ul>
-          </>
+          </details>
         )}
 
         {prontos.length > 0 && (
-          <>
-            <h2 className="flex items-center gap-[10px] mt-7 mb-[10px] text-tinta font-titulo text-lg font-semibold">
-              Já recebemos
+          <details className="mt-5">
+            <summary className="flex items-center gap-[10px] cursor-pointer list-none text-tinta-2 font-ui text-base font-semibold underline underline-offset-4">
+              Ver o que já recebemos
               <Selo tom="ok">{prontos.length}</Selo>
-            </h2>
-            <ul className="list-none m-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
+            </summary>
+            <ul className="list-none mt-4 mb-0 p-0 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
               {prontos.map((item) => (
                 <Linha
                   key={item.codigo}
@@ -386,7 +386,7 @@ function Checklist({
                 />
               ))}
             </ul>
-          </>
+          </details>
         )}
 
         <div className="mt-7 pt-4 border-t border-borda text-tinta-3 text-sm leading-[1.6]">

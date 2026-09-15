@@ -86,6 +86,10 @@ function completarQualificacao(
   return completas;
 }
 
+function edicoesPreenchidas(edicoes: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(edicoes).filter(([, valor]) => valor.trim() !== ""));
+}
+
 function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }: {
   respostas: Record<string, string | string[]>;
   confirmado: boolean;
@@ -114,7 +118,7 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
               campo.id === "telefone" ? formatarTelefone(evento.target.value) : evento.target.value,
             )
           }
-          placeholder={campo.id === "telefone" ? "(61) 98180-8863" : undefined}
+          placeholder={campo.id === "telefone" ? "(DDD) 00000-0000" : undefined}
           aria-invalid={campo.id === "telefone" && tentouContinuar && telefoneVazio}
           className={campo.id === "telefone" && tentouContinuar && telefoneVazio ? "border-atencao" : undefined}
           autoComplete="off"
@@ -610,7 +614,7 @@ export default function TriagemEntrevista({
            * áudio vêm junto, pelos mesmos motivos de sempre. */
           onRespostas={(respostas, relato, entrevistaId, trechos) => {
             setTexto(relato);
-            setQualificacao({ ...completarQualificacao(respostas), ...edicoesCadastro.current });
+            setQualificacao({ ...completarQualificacao(respostas), ...edicoesPreenchidas(edicoesCadastro.current) });
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
           }}
@@ -621,7 +625,7 @@ export default function TriagemEntrevista({
              * largura total, embaixo do formulário genérico. */
             chamada.desligar();
             setTexto(relato);
-            setQualificacao({ ...completarQualificacao(respostas), ...edicoesCadastro.current });
+            setQualificacao({ ...completarQualificacao(respostas), ...edicoesPreenchidas(edicoesCadastro.current) });
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
             setCadastroConfirmado(true);
