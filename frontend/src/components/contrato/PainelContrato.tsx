@@ -91,6 +91,7 @@ export default function PainelContrato({ respostas }: Props) {
    * rótulo, sem botão e sem explicação, e não há como saber se a assinatura está
    * desligada, quebrada ou carregando. */
   const [configErro, setConfigErro] = useState<string | null>(null);
+  const [tentativaConfig, setTentativaConfig] = useState(0);
   /* Uma assinatura POR DOCUMENTO: contrato, procuração e declaração.
    *
    * A ZapSign trabalha com um envelope por documento — cada um tem o seu link,
@@ -198,6 +199,7 @@ export default function PainelContrato({ respostas }: Props) {
     // `config` nulo e ESCONDIA o botão de enviar para assinatura — o escritório
     // via só os downloads e nenhum jeito de mandar o cliente assinar.
     let vivo = true;
+    setConfigErro(null);
     void configAssinatura()
       .then((c) => {
         if (!vivo) return;
@@ -212,7 +214,7 @@ export default function PainelContrato({ respostas }: Props) {
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [tentativaConfig]);
 
   /* Retoma o contrato deste cliente depois de um F5. Sem isto, recarregar a
    * página deixaria o contrato tramitando na ZapSign sem nada na tela — e o
@@ -416,6 +418,32 @@ export default function PainelContrato({ respostas }: Props) {
       {/* UM clique para os TRÊS: gera contrato + procuração + declaração e os
         * manda assinar pela conta ZapSign, num login só. Só aparece com o login
         * do site configurado. */}
+      {!config && !configErro && (
+        <div className="mt-4 border-t border-borda pt-4">
+          <BotaoProcesso
+            variante="primario"
+            bloco
+            classeBotao="min-h-12 px-3"
+            onClick={() => undefined}
+            processando
+            textoProcessando="Verificando a ZapSign…"
+          >
+            Enviar para o cliente assinar em um só link (ZapSign + WhatsApp)
+          </BotaoProcesso>
+        </div>
+      )}
+
+      {!config && configErro && (
+        <div className={FALTANDO}>
+          <strong>Não foi possível verificar o envio pela ZapSign.</strong> {configErro}
+          <div className="mt-2">
+            <Botao variante="secundario" pequeno onClick={() => setTentativaConfig((n) => n + 1)}>
+              Tentar de novo
+            </Botao>
+          </div>
+        </div>
+      )}
+
       {config?.navegador && (
         <div className="mt-4 border-t border-borda pt-4">
           <BotaoProcesso

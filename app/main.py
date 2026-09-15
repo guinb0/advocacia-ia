@@ -801,6 +801,7 @@ async def listar_modelos(_autorizado=PodeManterModelos):
     for alvo in contrato.MODELOS:
         codigo = alvo["codigo"]
         registro = guardados.get(codigo)
+        anterior = guardados.get(f"{codigo}{_SUFIXO_ANTERIOR}")
         try:
             caminho = await run_in_threadpool(contrato.caminho_modelo, codigo)
             nome, disponivel = caminho.name, True
@@ -817,9 +818,111 @@ async def listar_modelos(_autorizado=PodeManterModelos):
                 "arquivo": registro["nome_arquivo"] if registro else nome,
                 "enviado_por": registro["enviado_por"] if registro else "",
                 "atualizado_em": registro["atualizado_em"] if registro else "",
+                "tem_anterior": bool(anterior),
+                "anterior_arquivo": anterior["nome_arquivo"] if anterior else "",
             }
         )
     return {"modelos": saida}
+
+
+_SUFIXO_ANTERIOR = "__anterior"
+
+_RESPOSTAS_DE_TESTE = {
+    "nome": "Maria Teste da Silva",
+    "cpf": "11144477735",
+    "estado_civil": "Solteiro(a)",
+    "nacionalidade": "Brasileira",
+    "profissao": "Carteiro",
+    "rg": "1234567",
+    "rg_orgao": "SSP",
+    "rg_uf": "SP",
+    "endereco": "Rua de Teste, 100, Centro, São Paulo/SP, CEP 01001-000",
+    "uf": "SP",
+    "municipio": "São Paulo",
+    "telefone": "11999999999",
+    "email": "teste@exemplo.com",
+}
+
+
+def _testar_modelo(conteudo: bytes) -> dict[str, list[str]]:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as pasta:
+        caminho = Path(pasta) / "modelo.docx"
+        caminho.write_bytes(conteudo)
+        try:
+            marcadores = contrato.marcadores_do_modelo(caminho)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, f"O sistema não conseguiu ler este Word, então o modelo não foi trocado: {exc}") from exc
+        if not marcadores:
+            raise HTTPException(
+                400,
+                "Nenhum campo entre colchetes foi encontrado neste modelo, como [nome completo] ou [CPF]. "
+                "Sem eles o documento sairia sem os dados do cliente, então o modelo não foi trocado.",
+            )
+        valores = contrato.valores_da_entrevista(_RESPOSTAS_DE_TESTE)
+        try:
+            gerado, _faltando = contrato.preencher(valores, caminho)
+            with zipfile.ZipFile(io.BytesIO(gerado)) as zf:
+                if zf.testzip() is not None:
+                    raise ValueError("o documento gerado saiu corrompido")
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, f"O teste de preenchimento falhou, então o modelo não foi trocado: {exc}") from exc
+    preenchiveis = {contrato._chave(f"[{k}]") for k in contrato.valores_da_entrevista({})}
+    return {"marcadores": marcadores, "sem_origem": [m for m in marcadores if m not in preenchiveis]}
+
+
+def _modelo_em_uso(codigo: str) -> tuple[bytes, str, str] | None:
+    registro = armazenamento.obter_modelo(codigo)
+    if registro and registro.get("conteudo"):
+        return registro["conteudo"], str(registro["nome_arquivo"]), str(registro.get("enviado_por") or "")
+    try:
+        caminho = contrato.caminho_modelo(codigo)
+    except contrato.ErroContrato:
+        return None
+    return caminho.read_bytes(), caminho.name, "padrão local"
+
+
+@app.get("/api/modelos/{codigo}/arquivo")
+async def baixar_modelo(codigo: str, _autorizado=PodeManterModelos):
+    try:
+        contrato.modelo(codigo)
+        caminho = await run_in_threadpool(contrato.caminho_modelo, codigo)
+    except contrato.ErroContrato as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(
+        caminho,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=caminho.name,
+    )
+
+
+@app.post("/api/modelos/{codigo}/restaurar-anterior")
+async def restaurar_modelo_anterior(codigo: str, usuario: auth.Usuario = PodeManterModelos):
+    try:
+        alvo = contrato.modelo(codigo)
+    except contrato.ErroContrato as exc:
+        raise HTTPException(404, str(exc)) from exc
+    anterior = await run_in_threadpool(armazenamento.obter_modelo, f"{codigo}{_SUFIXO_ANTERIOR}")
+    if not anterior or not anterior.get("conteudo"):
+        raise HTTPException(404, "Não há versão anterior guardada deste documento.")
+    atual = await run_in_threadpool(_modelo_em_uso, codigo)
+    registro = await run_in_threadpool(
+        armazenamento.salvar_modelo,
+        codigo,
+        nome_arquivo=anterior["nome_arquivo"],
+        conteudo=anterior["conteudo"],
+        enviado_por=usuario.nome,
+    )
+    if atual:
+        await run_in_threadpool(
+            armazenamento.salvar_modelo,
+            f"{codigo}{_SUFIXO_ANTERIOR}",
+            nome_arquivo=atual[1],
+            conteudo=atual[0],
+            enviado_por=atual[2],
+        )
+    return {"codigo": codigo, "rotulo": alvo["rotulo"], **registro}
 
 
 @app.post("/api/modelos/{codigo}", status_code=201)
@@ -848,6 +951,16 @@ async def enviar_modelo(
     if not zipfile.is_zipfile(io.BytesIO(conteudo)):
         raise HTTPException(400, "Este arquivo nao e um .docx valido.")
 
+    teste = await run_in_threadpool(_testar_modelo, conteudo)
+    atual = await run_in_threadpool(_modelo_em_uso, codigo)
+    if atual:
+        await run_in_threadpool(
+            armazenamento.salvar_modelo,
+            f"{codigo}{_SUFIXO_ANTERIOR}",
+            nome_arquivo=atual[1],
+            conteudo=atual[0],
+            enviado_por=atual[2],
+        )
     registro = await run_in_threadpool(
         armazenamento.salvar_modelo,
         codigo,
@@ -855,7 +968,7 @@ async def enviar_modelo(
         conteudo=conteudo,
         enviado_por=usuario.nome,
     )
-    return {"codigo": codigo, "rotulo": alvo["rotulo"], **registro}
+    return {"codigo": codigo, "rotulo": alvo["rotulo"], **registro, **teste}
 
 
 @app.delete("/api/modelos/{codigo}")

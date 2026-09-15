@@ -135,6 +135,12 @@ export interface StatusDrive {
   conta: string;
   pasta_url: string;
   redirect_uri: string;
+  origem: string;
+  client_id: string;
+}
+
+export async function testarDrive(): Promise<{ ok: boolean; mensagem: string }> {
+  return comoJson(await buscar("/api/drive/testar", { method: "POST" }));
 }
 
 export async function statusDrive(): Promise<StatusDrive> {
@@ -196,6 +202,13 @@ export interface ModeloContrato {
   arquivo: string;
   enviado_por?: string;
   atualizado_em?: string;
+  tem_anterior?: boolean;
+  anterior_arquivo?: string;
+}
+
+export interface ResultadoModeloContrato extends ModeloContrato {
+  marcadores?: string[];
+  sem_origem?: string[];
 }
 
 export async function listarModelosContrato(): Promise<ModeloContrato[]> {
@@ -203,10 +216,18 @@ export async function listarModelosContrato(): Promise<ModeloContrato[]> {
   return resposta.modelos;
 }
 
-export async function enviarModeloContrato(codigo: ModeloContrato["codigo"], arquivo: File): Promise<ModeloContrato> {
+export async function enviarModeloContrato(codigo: ModeloContrato["codigo"], arquivo: File): Promise<ResultadoModeloContrato> {
   const form = new FormData();
   form.append("arquivo", arquivo);
   return comoJson(await buscar(`/api/modelos/${encodeURIComponent(codigo)}`, { method: "POST", body: form }));
+}
+
+export async function restaurarModeloContratoAnterior(codigo: ModeloContrato["codigo"]): Promise<ModeloContrato> {
+  return comoJson(await buscar(`/api/modelos/${encodeURIComponent(codigo)}/restaurar-anterior`, { method: "POST" }));
+}
+
+export function urlModeloContrato(codigo: ModeloContrato["codigo"]): string {
+  return urlApi(`/api/modelos/${encodeURIComponent(codigo)}/arquivo`);
 }
 
 /** Skill/prompt que o escritório configura por categoria de petição — issue
