@@ -426,11 +426,9 @@ def _perguntas_abertas(
     não tem pergunta de assalto para responder, e oferecê-las ao modelo é
     convidá-lo a inventar resposta para pergunta que nem foi feita.
     """
-    # `MAPA_RASTREIO` é do módulo, não do roteiro: é a mesma tabela que a rota
-    # `/api/roteiros/{codigo}` anexa à resposta para a tela decidir o que exibir.
     positivos = {
         modulo
-        for pergunta_id, modulo in roteiros.MAPA_RASTREIO.items()
+        for pergunta_id, modulo in roteiros.mapa_rastreio(roteiro).items()
         if str(respostas.get(pergunta_id, "")).strip().lower() == "sim"
     }
 
@@ -1178,10 +1176,11 @@ def _abertas_pelo_rastreio(
     então nada disto roda numa volta comum — é a diferença entre uma chamada por
     trecho e duas só quando a entrevista muda de forma.
     """
+    mapa = roteiros.mapa_rastreio(roteiro)
     positivos = [
         p
         for p in preenchidas
-        if p["pergunta_id"] in roteiros.MAPA_RASTREIO and p["valor"] == "sim"
+        if p["pergunta_id"] in mapa and p["valor"] == "sim"
     ]
     if not positivos:
         return []
@@ -1493,7 +1492,7 @@ def processar_entrevista(
     # Módulos condicionais só existem quando o respectivo rastreio foi positivo.
     positivos = {
         modulo
-        for pergunta_id, modulo in roteiros.MAPA_RASTREIO.items()
+        for pergunta_id, modulo in roteiros.mapa_rastreio(roteiro).items()
         if str(respostas.get(pergunta_id, "")).strip().casefold() == "sim"
     }
     ids_inativos = {

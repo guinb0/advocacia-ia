@@ -65,7 +65,7 @@ export function respostasCompativeis(
   return Object.fromEntries(
     Object.entries(atuais).filter(([id]) => {
       if (!perguntasDoNovo.has(id)) return false;
-      if (CAMPOS_TECNICOS_DIGITADOS.has(id)) return true;
+      if (CAMPOS_TECNICOS_DIGITADOS.has(id) || CAMPOS_AUTO_CPF.has(id)) return true;
       return mesmoRoteiro && perguntasAnteriores.has(id);
     }),
   );

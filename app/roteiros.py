@@ -763,6 +763,45 @@ MAPA_RASTREIO = {
 }
 
 
+def _palavras(texto: str) -> list[str]:
+    limpo = unicodedata.normalize("NFKD", str(texto or "").lower()).encode("ascii", "ignore").decode()
+    return re.findall(r"[a-z0-9]+", limpo)
+
+
+def mapa_rastreio(roteiro: Roteiro) -> dict[str, str]:
+    modulos = list(dict.fromkeys(bloco.modulo for bloco in roteiro.blocos if bloco.modulo))
+    if not modulos:
+        return {}
+    candidatas = [
+        pergunta
+        for bloco in roteiro.blocos
+        if not bloco.modulo
+        for pergunta in bloco.perguntas
+        if pergunta.tipo == "sim_nao"
+    ]
+    ids = {pergunta.id for pergunta in candidatas}
+    mapa = {pid: modulo for pid, modulo in MAPA_RASTREIO.items() if pid in ids and modulo in modulos}
+    for modulo in modulos:
+        if modulo in mapa.values():
+            continue
+        raizes = [palavra[:5] for palavra in _palavras(modulo.replace("_", " ")) if len(palavra) > 2]
+        if not raizes:
+            continue
+        melhor, melhor_pontos = None, 0
+        for pergunta in candidatas:
+            if pergunta.id in mapa:
+                continue
+            palavras = {p[:5] for p in _palavras(pergunta.id.replace("_", " ") + " " + pergunta.texto)}
+            if raizes[0] not in palavras:
+                continue
+            pontos = sum(1 for raiz in raizes if raiz in palavras) + (10 if pergunta.id == modulo else 0)
+            if pontos > melhor_pontos:
+                melhor, melhor_pontos = pergunta, pontos
+        if melhor is not None:
+            mapa[melhor.id] = modulo
+    return mapa
+
+
 def impedimentos(codigo: str, respostas: dict[str, Any]) -> list[dict[str, str]]:
     """As respostas que barram o prosseguimento, com o motivo.
 
@@ -955,12 +994,20 @@ def de_dict(dados: Any) -> Roteiro:
     )
 
 
+_TEXTOS_EQUIVALENTES_IDENTIFICACAO = {"endereco residencial completo incluindo cep"}
+
+
 def _garantir_identificacao(blocos: list[Bloco]) -> list[Bloco]:
     ids_fixos = {pergunta.id for pergunta in ABERTURA.perguntas}
+    textos_fixos = {" ".join(_palavras(p.texto)) for p in ABERTURA.perguntas} | _TEXTOS_EQUIVALENTES_IDENTIFICACAO
     abertura = next((bloco for bloco in blocos if bloco.id == ABERTURA.id), None)
     for bloco in blocos:
         if bloco is not abertura:
-            bloco.perguntas = [p for p in bloco.perguntas if p.id not in ids_fixos]
+            bloco.perguntas = [
+                p
+                for p in bloco.perguntas
+                if p.id not in ids_fixos and " ".join(_palavras(p.texto)) not in textos_fixos
+            ]
     restantes = [bloco for bloco in blocos if bloco is not abertura and bloco.perguntas]
     if abertura is None:
         abertura = replace(ABERTURA, perguntas=[replace(p) for p in ABERTURA.perguntas])

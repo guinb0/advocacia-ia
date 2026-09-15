@@ -42,7 +42,7 @@ const CAMPOS_CADASTRAIS = [
   { id: "telefone", rotulo: "Telefone / WhatsApp", grupo: "essencial", tipo: "tel" },
   { id: "email", rotulo: "E-mail", grupo: "essencial", tipo: "email" },
   { id: "nacionalidade", rotulo: "Nacionalidade", grupo: "qualificacao" },
-  { id: "nascimento", rotulo: "Data de nascimento", grupo: "qualificacao", tipo: "date" },
+  { id: "nascimento", rotulo: "Data de nascimento (dd/mm/aaaa)", grupo: "qualificacao" },
   { id: "profissao", rotulo: "Profissão", grupo: "qualificacao" },
   { id: "estado_civil", rotulo: "Estado civil", grupo: "qualificacao" },
   { id: "rg", rotulo: "RG (número)", grupo: "documentos" },
@@ -111,7 +111,7 @@ function DadosCadastraisFinais({ respostas, confirmado, onAlterar, onContinuar }
       <div className="p-4 sm:p-5">
         <div className="grid gap-4 sm:grid-cols-2">{desenhar("essencial")}</div>
 
-        <details className="mt-5 border-t border-borda pt-4">
+        <details open className="mt-5 border-t border-borda pt-4">
           <summary className="cursor-pointer text-sm font-semibold text-tinta">Qualificação, documentos e endereço</summary>
           <p className="mb-4 mt-1 text-xs text-tinta-3">Preencha o que estiver disponível. Todos os campos permanecem editáveis.</p>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -201,6 +201,7 @@ export default function TriagemEntrevista({
   const [qualificacao, setQualificacao] = useState<Record<string, string | string[]> | null>(
     null,
   );
+  const edicoesCadastro = useRef<Record<string, string>>({});
   const [roteiroAtivo, setRoteiroAtivo] = useState<RoteiroCompleto | null>(null);
   /* O áudio sobrevive à tela em que foi gravado — pelo mesmo motivo da
    * qualificação. Sem guardar o id aqui, o arquivo continuaria no disco e
@@ -438,9 +439,10 @@ export default function TriagemEntrevista({
       <DadosCadastraisFinais
         respostas={qualificacao}
         confirmado={cadastroConfirmado}
-        onAlterar={(id, valor) =>
-          setQualificacao((atuais) => ({ ...(atuais ?? {}), [id]: valor }))
-        }
+        onAlterar={(id, valor) => {
+          edicoesCadastro.current = { ...edicoesCadastro.current, [id]: valor };
+          setQualificacao((atuais) => ({ ...(atuais ?? {}), [id]: valor }));
+        }}
         onContinuar={() => {
           setCadastroConfirmado(true);
           window.setTimeout(() => {
@@ -579,7 +581,7 @@ export default function TriagemEntrevista({
            * áudio vêm junto, pelos mesmos motivos de sempre. */
           onRespostas={(respostas, relato, entrevistaId, trechos) => {
             setTexto(relato);
-            setQualificacao(respostas);
+            setQualificacao({ ...respostas, ...edicoesCadastro.current });
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
           }}
@@ -590,7 +592,7 @@ export default function TriagemEntrevista({
              * largura total, embaixo do formulário genérico. */
             chamada.desligar();
             setTexto(relato);
-            setQualificacao(respostas);
+            setQualificacao({ ...respostas, ...edicoesCadastro.current });
             setAudioEntrevista(entrevistaId);
             setTranscricao(trechos);
             setCadastroConfirmado(true);

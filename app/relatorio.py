@@ -100,7 +100,7 @@ def montar(
 
     positivos = {
         modulo
-        for pergunta_id, modulo in roteiros.MAPA_RASTREIO.items()
+        for pergunta_id, modulo in roteiros.mapa_rastreio(roteiro).items()
         if str(respostas.get(pergunta_id, "")).strip().lower() == "sim"
     }
 

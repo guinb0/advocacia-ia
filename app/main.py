@@ -1950,7 +1950,7 @@ def obter_roteiro(codigo: str):
     roteiro = roteiros.obter(codigo)
     if roteiro is None:
         raise HTTPException(404, f"Roteiro '{codigo}' não encontrado.")
-    return {**roteiro.to_dict(), "mapa_rastreio": roteiros.MAPA_RASTREIO}
+    return {**roteiro.to_dict(), "mapa_rastreio": roteiros.mapa_rastreio(roteiro)}
 
 
 # ------------------------------------------------ roteiro vindo de documento
@@ -2062,7 +2062,7 @@ async def salvar_roteiro(
     roteiros.invalidar_cache()
     return {
         **roteiro.to_dict(),
-        "mapa_rastreio": roteiros.MAPA_RASTREIO,
+        "mapa_rastreio": roteiros.mapa_rastreio(roteiro),
         "atualizado_em": registro.get("atualizado_em", ""),
     }
 

@@ -4,7 +4,7 @@ import { use, useEffect, useState } from "react";
 
 import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
-import type { EstadoChamada } from "@/lib/chamadaJitsi";
+import { pedirPermissaoMicrofone, type EstadoChamada, type PermissaoMicrofone } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
@@ -49,6 +49,12 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
   // Esta página é a própria chamada: enquanto está aberta, o painel flutuante
   // se recolhe. `registrarPainel` é estável, então roda uma vez.
   useEffect(() => chamada.registrarPainel(), [chamada.registrarPainel]);
+
+  const [microfone, setMicrofone] = useState<PermissaoMicrofone | null>(null);
+  useEffect(() => {
+    if (chamada.ativa) return;
+    void pedirPermissaoMicrofone().then(setMicrofone);
+  }, []);
 
   async function entrar() {
     setErro(null);
@@ -191,6 +197,13 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
                 um instante reservado, desligue o microfone.
               </p>
             </>
+          )}
+
+          {microfone === "negado" && !naChamada && (
+            <div className="mt-4 border-[1.5px] border-atencao text-atencao p-3 text-[12.5px] leading-[1.5] font-ui">
+              O microfone está bloqueado neste navegador. No iPhone, toque em “aA” na barra do
+              endereço, depois em Ajustes do Site → Microfone → Permitir, e recarregue a página.
+            </div>
           )}
 
           {(erro || chamada.erro) && (
