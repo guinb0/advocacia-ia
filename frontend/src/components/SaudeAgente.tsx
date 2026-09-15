@@ -11,17 +11,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, ArrowLeft, Database, Gauge, RefreshCcw, ServerCog } from "lucide-react";
 
-import { Aviso, Botao, Campo, Cartao, RotuloCampo, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
+import { Aviso, Botao, Cartao, Selo, Tabela, Th, Vazio } from "@/components/ui/Basicos";
+import CartaoGoogleDrive from "@/components/admin/CartaoGoogleDrive";
 import {
   ApiError,
   conectarWhatsapp,
-  desconectarDrive,
   desconectarWhatsapp,
-  salvarCredenciaisDrive,
-  statusDrive,
   statusWhatsapp,
-  urlConectarDrive,
-  type StatusDrive,
   type StatusWhatsapp,
 } from "@/lib/api";
 import {
@@ -281,186 +277,6 @@ function CartaoWhatsapp() {
             {qr.codigo && <strong className="font-codigo text-tinta">{qr.codigo}</strong>}
           </p>
         </div>
-      )}
-    </Cartao>
-  );
-}
-
-function CartaoGoogleDrive() {
-  const [status, setStatus] = useState<StatusDrive | null>(null);
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [ocupado, setOcupado] = useState<"salvar" | "conectar" | "desconectar" | null>(null);
-  const [aguardando, setAguardando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const [copiado, setCopiado] = useState(false);
-
-  const ler = useCallback(async () => {
-    try {
-      const s = await statusDrive();
-      setStatus(s);
-      if (s.conectado) setAguardando(false);
-    } catch (e) {
-      setErro(e instanceof ApiError ? e.message : "Não foi possível consultar o Google Drive.");
-    }
-  }, []);
-
-  useEffect(() => {
-    void ler();
-  }, [ler]);
-
-  useEffect(() => {
-    if (!aguardando) return;
-    const id = window.setInterval(() => void ler(), 3000);
-    return () => window.clearInterval(id);
-  }, [aguardando, ler]);
-
-  async function executar(acao: "salvar" | "conectar" | "desconectar", tarefa: () => Promise<void>) {
-    setOcupado(acao);
-    setErro(null);
-    try {
-      await tarefa();
-    } catch (e) {
-      setErro(e instanceof ApiError ? e.message : "A operação com o Google Drive falhou.");
-    } finally {
-      setOcupado(null);
-    }
-  }
-
-  const selo = !status
-    ? { tom: "info" as const, texto: "Verificando…" }
-    : status.conectado
-      ? { tom: "ok" as const, texto: "Conectado" }
-      : status.configurado
-        ? { tom: "atencao" as const, texto: "Aguardando conexão" }
-        : { tom: "atencao" as const, texto: "Não configurado" };
-
-  return (
-    <Cartao
-      titulo="Google Drive das gravações"
-      subtitulo="Além de baixar no computador, cada vídeo de entrevista é salvo automaticamente numa pasta do Google Drive do escritório."
-      className="min-w-0 overflow-hidden"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Selo tom={selo.tom} simbolo={status?.conectado ? "✓" : "!"}>{selo.texto}</Selo>
-          {status?.conectado && status.conta && (
-            <span className="text-sm font-semibold text-tinta">{status.conta}</span>
-          )}
-          {status?.pasta_url && (
-            <a className="text-sm text-acao underline" href={status.pasta_url} target="_blank" rel="noreferrer">
-              abrir pasta
-            </a>
-          )}
-        </div>
-        {status?.configurado && !status.conectado && (
-          <Botao
-            variante="primario"
-            pequeno
-            carregando={ocupado === "conectar"}
-            textoCarregando="Abrindo o Google…"
-            onClick={() =>
-              void executar("conectar", async () => {
-                const { url } = await urlConectarDrive();
-                window.open(url, "_blank", "noopener");
-                setAguardando(true);
-              })
-            }
-          >
-            Conectar Google Drive
-          </Botao>
-        )}
-        {status?.conectado && (
-          <Botao
-            variante="secundario"
-            pequeno
-            carregando={ocupado === "desconectar"}
-            textoCarregando="Desconectando…"
-            onClick={() => {
-              if (!window.confirm("Desconectar o Google Drive? As próximas gravações ficarão só no computador.")) return;
-              void executar("desconectar", async () => setStatus(await desconectarDrive()));
-            }}
-          >
-            Desconectar
-          </Botao>
-        )}
-      </div>
-
-      {aguardando && !status?.conectado && (
-        <p className="mt-2 mb-0 text-sm text-atencao">
-          Termine a autorização na aba do Google que abriu. Esta tela atualiza sozinha.
-        </p>
-      )}
-
-      {status && !status.credenciais_do_ambiente && (
-        <details className="mt-4" open={!status.configurado}>
-          <summary className="cursor-pointer text-sm font-semibold text-tinta">
-            {status.configurado ? "Trocar credenciais do Google" : "Configurar credenciais do Google"}
-          </summary>
-          <ol className="mt-2 mb-3 pl-5 text-xs leading-[1.6] text-tinta-2">
-            <li>
-              No Google Cloud Console, crie um projeto e ative a <strong>Google Drive API</strong>.
-            </li>
-            <li>
-              Em “Credenciais”, crie um <strong>ID do cliente OAuth</strong> do tipo “Aplicativo da Web”.
-            </li>
-            <li>
-              Em “URIs de redirecionamento autorizados”, cole:{" "}
-              <code className="font-codigo text-tinta [overflow-wrap:anywhere]">{status.redirect_uri}</code>{" "}
-              <button
-                type="button"
-                className="underline text-acao"
-                onClick={() => {
-                  void navigator.clipboard.writeText(status.redirect_uri).then(() => {
-                    setCopiado(true);
-                    window.setTimeout(() => setCopiado(false), 2000);
-                  });
-                }}
-              >
-                {copiado ? "copiado" : "copiar"}
-              </button>
-            </li>
-            <li>Cole abaixo o Client ID e o Client Secret gerados e salve.</li>
-          </ol>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <RotuloCampo htmlFor="drive-client-id">Client ID</RotuloCampo>
-              <Campo id="drive-client-id" value={clientId} onChange={(e) => setClientId(e.target.value)} autoComplete="off" />
-            </div>
-            <div>
-              <RotuloCampo htmlFor="drive-client-secret">Client Secret</RotuloCampo>
-              <Campo
-                id="drive-client-secret"
-                type="password"
-                value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
-          </div>
-          <Botao
-            variante="primario"
-            pequeno
-            className="mt-3"
-            carregando={ocupado === "salvar"}
-            textoCarregando="Salvando…"
-            disabled={!clientId.trim() || !clientSecret.trim()}
-            onClick={() =>
-              void executar("salvar", async () => {
-                setStatus(await salvarCredenciaisDrive(clientId, clientSecret));
-                setClientSecret("");
-              })
-            }
-          >
-            Salvar credenciais
-          </Botao>
-        </details>
-      )}
-
-      {erro && (
-        <Aviso tom="critico" titulo="Google Drive">
-          {erro}
-        </Aviso>
       )}
     </Cartao>
   );

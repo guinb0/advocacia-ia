@@ -135,6 +135,12 @@ export interface StatusDrive {
   conta: string;
   pasta_url: string;
   redirect_uri: string;
+  origem: string;
+  client_id: string;
+}
+
+export async function testarDrive(): Promise<{ ok: boolean; mensagem: string }> {
+  return comoJson(await buscar("/api/drive/testar", { method: "POST" }));
 }
 
 export async function statusDrive(): Promise<StatusDrive> {

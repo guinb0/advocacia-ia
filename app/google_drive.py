@@ -117,6 +117,8 @@ def _status() -> dict[str, Any]:
         "conta": str(linha["conta_email"] or "") if linha else "",
         "pasta_url": f"https://drive.google.com/drive/folders/{pasta}" if pasta else "",
         "redirect_uri": _redirect_uri(),
+        "origem": URL_PORTAL,
+        "client_id": cid,
     }
 
 
@@ -230,6 +232,14 @@ async def salvar_credenciais(dados: Credenciais) -> dict[str, Any]:
     segredo = dados.client_secret.strip()
     if not cid or not segredo:
         raise HTTPException(422, "Informe o Client ID e o Client Secret.")
+    if not cid.endswith(".apps.googleusercontent.com"):
+        raise HTTPException(
+            422,
+            "Esse não parece ser um Client ID do Google. Ele termina com “.apps.googleusercontent.com”. "
+            "Confira se copiou o ID do cliente, e não o nome ou o número do projeto.",
+        )
+    if cid == segredo:
+        raise HTTPException(422, "O Client Secret é diferente do Client ID. Copie o campo “Chave secreta do cliente”.")
     await run_in_threadpool(
         _salvar, client_id=cid, client_secret_cifrado=cripto.cifrar(segredo)
     )
@@ -261,8 +271,15 @@ async def conectar_drive() -> dict[str, str]:
 
 @roteador.get("/callback")
 def callback(code: str = "", state: str = "", error: str = "") -> HTMLResponse:
+    if error == "access_denied":
+        return _pagina(
+            "O Google não liberou o acesso",
+            "Se você clicou em Cancelar, é só tentar de novo. Se apareceu “Acesso bloqueado” ou “o app não concluiu "
+            "a verificação”, volte ao Google Cloud, abra “Público-alvo” (ou “Tela de consentimento OAuth”) e adicione "
+            "o seu e-mail em “Usuários de teste”. Depois clique em “Conectar Google Drive” de novo.",
+        )
     if error:
-        return _pagina("Conexão cancelada", "O Google Drive não foi conectado.")
+        return _pagina("Conexão não concluída", f"O Google respondeu: {error}. Volte ao sistema e tente de novo.")
     try:
         jwt.decode(state, _segredo_estado(), algorithms=["HS256"])
     except jwt.PyJWTError:
@@ -315,6 +332,29 @@ async def desconectar() -> dict[str, Any]:
         _salvar, refresh_token_cifrado=None, conta_email=None, pasta_id=None, conectado_em=None
     )
     return await run_in_threadpool(_status)
+
+
+def _testar() -> dict[str, Any]:
+    token = _token_acesso()
+    linha = _linha()
+    pasta = str(linha["pasta_id"] or "") if linha else ""
+    if pasta:
+        resposta = httpx.get(
+            f"https://www.googleapis.com/drive/v3/files/{pasta}",
+            params={"fields": "id,name,trashed"},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=20,
+        )
+        if resposta.status_code == 200 and not resposta.json().get("trashed"):
+            return {"ok": True, "mensagem": f"Tudo certo: a pasta “{resposta.json().get('name', NOME_PASTA)}” está acessível e as gravações vão para lá."}
+    pasta = _criar_pasta(token)
+    _salvar(pasta_id=pasta)
+    return {"ok": True, "mensagem": f"Tudo certo: a pasta “{NOME_PASTA}” não existia mais e foi criada de novo."}
+
+
+@roteador.post("/testar", dependencies=[Depends(auth.usuario_atual)])
+async def testar() -> dict[str, Any]:
+    return await run_in_threadpool(_testar)
 
 
 @roteador.post("/gravacoes", dependencies=[Depends(auth.usuario_atual)])
