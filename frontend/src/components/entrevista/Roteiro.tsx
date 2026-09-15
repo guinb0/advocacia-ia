@@ -210,6 +210,7 @@ export interface ManipuladorRoteiro {
   encerrarGravacao: () => Promise<string>;
   /** Fecha a gravação visual somente ao encerrar todo o atendimento. */
   encerrarAtendimento: () => Promise<void>;
+  iniciarTranscricao: () => void;
   /** Tudo que foi transcrito, na ordem, com o instante de cada trecho.
    *
    * É a transcrição BRUTA: a conversa como ela saiu do Whisper, sem passar
@@ -458,6 +459,7 @@ export default function Roteiro({
 
   const captura = useRef<CapturaEntrevista | null>(null);
   const inicioAutomatico = useRef(false);
+  const comecarRef = useRef<() => Promise<void>>(async () => undefined);
   // A pergunta em gravação, lida dentro dos callbacks da captura — que são
   // fixados na construção e não enxergariam o estado do React.
   const emGravacao = useRef<string | null>(null);
@@ -799,6 +801,10 @@ export default function Roteiro({
       encerrarGravacao: async () => {
         return captura.current?.entrevistaId ?? "";
       },
+      iniciarTranscricao: () => {
+        inicioAutomatico.current = true;
+        void comecarRef.current();
+      },
       encerrarAtendimento: async () => {
         // Este é o ÚNICO ponto que para a captura. Assim a transcrição e o
         // áudio incluem o atendimento inteiro, não só o roteiro inicial.
@@ -917,6 +923,7 @@ export default function Roteiro({
   // fora fecha a gravação no fim do atendimento, e não antes.
   const encerrarEscutaRef = useRef(encerrarEscuta);
   encerrarEscutaRef.current = encerrarEscuta;
+  comecarRef.current = comecarEntrevista;
 
   const aceitarSugestao = useCallback((perguntaId: string, valor: string) => {
     setRespostas((r) => ({ ...r, [perguntaId]: valor }));
