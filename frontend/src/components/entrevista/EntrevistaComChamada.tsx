@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Aviso } from "@/components/ui/Basicos";
@@ -15,6 +15,7 @@ import { chaveDasRespostas } from "@/lib/roteiroContexto";
 import type { ContextoRevisaoRoteiro } from "@/lib/types";
 import { montarTranscricaoBruta, type TrechoTranscrito } from "@/lib/transcricao";
 import { baixarTexto as baixarArquivoDeTexto } from "@/lib/baixar";
+import { enviarGravacaoDrive, statusDrive } from "@/lib/api";
 
 /* A tela da entrevista: roteiro à esquerda, chamada à direita.
  *
@@ -268,6 +269,31 @@ export default function EntrevistaComChamada({
     ativa: encerrada === null && !fechando,
   });
 
+  const salvarTranscricao = (trechos: TrechoTranscrito[]) => {
+    const agora = new Date();
+    const d2 = (n: number) => String(n).padStart(2, "0");
+    const nome =
+      `Transcrição completa ${d2(agora.getDate())}-${d2(agora.getMonth() + 1)}-${agora.getFullYear()} ` +
+      `${d2(agora.getHours())}h${d2(agora.getMinutes())}.txt`;
+    const conteudo = montarTranscricaoBruta(trechos) || "Nenhuma fala foi transcrita neste atendimento.";
+    baixarTexto(nome, conteudo);
+    void statusDrive()
+      .then((situacao) =>
+        situacao.conectado
+          ? enviarGravacaoDrive(new Blob([conteudo], { type: "text/plain;charset=utf-8" }), nome)
+          : undefined,
+      )
+      .catch(() => undefined);
+  };
+
+  useEffect(() => {
+    const avisar = (evento: BeforeUnloadEvent) => {
+      if ((roteiro.current?.transcricaoBruta().length ?? 0) > 0) evento.preventDefault();
+    };
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, []);
+
   const aplicarRevisadas = () => {
     if (!revisadas) return;
     const [respostasAtuais, relato, entrevistaId, trechos] = ultimo.current;
@@ -312,6 +338,8 @@ export default function EntrevistaComChamada({
             ) {
               return;
             }
+            const trechosAteAqui = roteiro.current?.transcricaoBruta() ?? [];
+            if (trechosAteAqui.length > 0) salvarTranscricao(trechosAteAqui);
             onFechar();
           }}
         >
@@ -528,7 +556,7 @@ export default function EntrevistaComChamada({
                       (roteiro.current?.temVideoPendente()
                         ? "O vídeo gravado será baixado agora, neste computador. "
                         : "") +
-                        "Finalizar o atendimento para a transcrição e desliga a chamada. Continuar?",
+                        "A transcrição completa da conversa será baixada. Finalizar o atendimento encerra a gravação e desliga a chamada. Continuar?",
                     )
                   ) {
                     return;
@@ -542,11 +570,12 @@ export default function EntrevistaComChamada({
                     const [respostas, relato, entrevistaId] = ultimo.current;
                     const trechos = roteiro.current?.transcricaoBruta() ?? ultimo.current[3];
                     ultimo.current = [respostas, relato, entrevistaId, trechos];
+                    salvarTranscricao(trechos);
                     onConcluir(respostas, relato, entrevistaId, trechos);
                   });
                 }}
               >
-                Finalizar atendimento e baixar gravação
+                Finalizar atendimento e baixar gravação e transcrição
               </BotaoProcesso>
 
               {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}
