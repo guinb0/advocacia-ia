@@ -485,8 +485,12 @@ def atualizar_caso(
     cliente: str | None = None,
     observacao: str | None = None,
     telefone: str | None = None,
+    categoria: str | None = None,
 ) -> bool:
     campos, valores = [], []
+    if categoria is not None:
+        campos.append("categoria = ?")
+        valores.append(categoria.strip())
     if cliente is not None:
         campos.append("cliente = ?")
         valores.append(cliente.strip())

@@ -383,12 +383,14 @@ def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[st
     # Chegou e ninguém soube dizer a que item responde. Fica aqui, visível, com o
     # arquivo guardado — nunca marcado num item por chute (ver `app/roteamento.py`).
     em_triagem: list[dict[str, Any]] = []
+    codigos_da_categoria = {item.codigo for item in categoria.itens}
     for entrega in entregas:
-        if not entrega["itens_atendidos"]:
+        atendidos = [c for c in entrega["itens_atendidos"] if c in codigos_da_categoria]
+        if not atendidos:
             em_triagem.append(entrega)
             continue
         # Uma CIN pode ter sido marcada para atender RG e CPF com o mesmo arquivo.
-        for item_codigo in entrega["itens_atendidos"]:
+        for item_codigo in atendidos:
             por_item.setdefault(item_codigo, []).append(entrega)
 
     itens = []

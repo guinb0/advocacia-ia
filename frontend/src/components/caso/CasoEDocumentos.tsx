@@ -105,7 +105,8 @@ export default function CasoEDocumentos({
   const chamada = useChamada();
   const situacao = useSituacao(criado?.id ?? null);
 
-  const escolhida = sugerida || categorias[0]?.codigo || "";
+  const [categoriaManual, setCategoriaManual] = useState("");
+  const escolhida = (editavel ? sugerida : categoriaManual || sugerida) || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((c) => c.codigo === escolhida);
   const telefoneAtual = telefone ?? "";
   const telefoneVazio = !telefonePreenchido(telefoneAtual);
@@ -265,9 +266,26 @@ export default function CasoEDocumentos({
             </div>
           </div>
         ) : (
-          <p className="mb-3 mt-0 text-[12px] font-ui text-tinta">
-            O caso será criado para <strong>{cliente}</strong> com os dados já coletados na entrevista.
-          </p>
+          <>
+            <p className="mb-3 mt-0 text-[12px] font-ui text-tinta">
+              O caso será criado para <strong>{cliente}</strong> com os dados já coletados na entrevista.
+            </p>
+            <div className="mb-4 max-w-[440px]">
+              <RotuloCampo htmlFor="caso-categoria">Tipo de ação (checklist)</RotuloCampo>
+              <CampoSeletor
+                id="caso-categoria"
+                value={escolhida}
+                onChange={(e) => setCategoriaManual(e.target.value)}
+              >
+                {categorias.map((c) => (
+                  <option key={c.codigo} value={c.codigo}>
+                    {c.nome}
+                    {c.codigo === sugerida ? " (sugerido)" : ""}
+                  </option>
+                ))}
+              </CampoSeletor>
+            </div>
+          </>
         )}
 
         {/* O tipo de ação é o que monta o checklist: escolhido errado, o
@@ -420,6 +438,8 @@ export default function CasoEDocumentos({
           onRemover={situacao.removerEntrega}
           onVincularIdentidade={situacao.vincularIdentidade}
           onReatribuir={situacao.reatribuir}
+          categorias={categorias}
+          onTrocarCategoria={situacao.trocarCategoria}
           dentroDoAtendimento
         />
       ) : (

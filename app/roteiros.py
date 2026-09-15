@@ -25,7 +25,7 @@ import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
 log = logging.getLogger(__name__)
@@ -940,6 +940,7 @@ def de_dict(dados: Any) -> Roteiro:
     if not any(bloco.perguntas for bloco in blocos):
         raise RoteiroInvalido("O roteiro precisa de pelo menos uma pergunta.")
 
+    blocos = _garantir_identificacao(blocos)
     _soltar_dependencias_orfas(blocos)
 
     return Roteiro(
@@ -952,6 +953,22 @@ def de_dict(dados: Any) -> Roteiro:
         retomadas=_lista_de_texto(dados.get("retomadas")),
         fechos_por_tipo=_mapa_de_texto(dados.get("fechos_por_tipo")),
     )
+
+
+def _garantir_identificacao(blocos: list[Bloco]) -> list[Bloco]:
+    ids_fixos = {pergunta.id for pergunta in ABERTURA.perguntas}
+    abertura = next((bloco for bloco in blocos if bloco.id == ABERTURA.id), None)
+    for bloco in blocos:
+        if bloco is not abertura:
+            bloco.perguntas = [p for p in bloco.perguntas if p.id not in ids_fixos]
+    restantes = [bloco for bloco in blocos if bloco is not abertura and bloco.perguntas]
+    if abertura is None:
+        abertura = replace(ABERTURA, perguntas=[replace(p) for p in ABERTURA.perguntas])
+    else:
+        existentes = {p.id for p in abertura.perguntas}
+        faltando = [replace(p) for p in ABERTURA.perguntas if p.id not in existentes]
+        abertura.perguntas = faltando + abertura.perguntas
+    return [abertura, *restantes]
 
 
 def snapshot_ativo(codigo: str, dados: Any | None) -> Roteiro | None:

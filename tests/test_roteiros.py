@@ -259,6 +259,34 @@ def main_teste() -> int:
             f"quem NÃO recebeu é barrado, com motivo — grafia {grafia!r}",
         )
 
+    importado = roteiros.de_dict({
+        "nome": "Roteiro importado sem identificacao",
+        "blocos": [
+            {"id": "identificacao", "titulo": "Identificacao", "perguntas": [
+                {"id": "nome", "texto": "Nome", "tipo": "dado"},
+            ]},
+            {"id": "fatos", "titulo": "Fatos", "perguntas": [
+                {"id": "relato", "texto": "O que aconteceu?", "tipo": "relato"},
+            ]},
+        ],
+    })
+    ids_importado = [b.id for b in importado.blocos]
+    primeiras = [p.id for p in importado.blocos[0].perguntas][:5]
+    todos_importado = [p.id for b in importado.blocos for p in b.perguntas]
+    falhas += not checar(
+        ids_importado[0] == "abertura" and primeiras == ["cpf", "nome", "estado_civil", "uf", "municipio"],
+        f"todo roteiro importado abre pela identificação mínima ({ids_importado}, {primeiras})",
+    )
+    falhas += not checar(
+        "identificacao" not in ids_importado and len(todos_importado) == len(set(todos_importado)),
+        "a identificação não se duplica nem fica escondida em outro bloco",
+    )
+    reimportado = roteiros.de_dict(importado.to_dict())
+    falhas += not checar(
+        [p.id for b in reimportado.blocos for p in b.perguntas] == todos_importado,
+        "salvar e carregar de novo não duplica a identificação",
+    )
+
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     return 1 if falhas else 0
 

@@ -618,6 +618,12 @@ export async function obterCaso(casoId: string): Promise<SituacaoCaso> {
   return comoJson<SituacaoCaso>(await buscar(`/api/casos/${casoId}`));
 }
 
+export async function atualizarCategoriaCaso(casoId: string, categoria: string): Promise<void> {
+  const form = new FormData();
+  form.append("categoria", categoria);
+  await comoJson(await buscar(`/api/casos/${casoId}`, { method: "PATCH", body: form }));
+}
+
 export async function excluirCaso(casoId: string): Promise<void> {
   await comoJson(await buscar(`/api/casos/${casoId}`, { method: "DELETE" }));
 }
