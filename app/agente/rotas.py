@@ -682,15 +682,18 @@ def salvar_rascunho_peticao(
     caso_id: str,
     peca_ref: str,
     secoes: list[dict[str, str]] = Body(..., embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> dict[str, Any]:
     if _peca_local(peca_ref):
         try:
-            return peticao_local.para_api(peticao_local.salvar_secoes(caso_id, secoes))
+            return peticao_local.para_api(
+                peticao_local.salvar_secoes(caso_id, secoes, usuario=usuario.nome)
+            )
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
     if _peca_anexa(caso_id, peca_ref):
         try:
-            return peticao_local.salvar_secoes_anexa(peca_ref, secoes)
+            return peticao_local.salvar_secoes_anexa(peca_ref, secoes, usuario=usuario.nome)
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
     caso_ref = _caso_ref(caso_id)
@@ -731,7 +734,7 @@ def revisar_peticao_com_prompt(
             raise _erro(erro) from erro
     if _peca_anexa(caso_id, peca_ref):
         try:
-            return peticao_fluxo.revisar_peca_anexa(peca_ref, prompt=prompt)
+            return peticao_fluxo.revisar_peca_anexa(peca_ref, prompt=prompt, usuario=usuario.nome)
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
         except ErroDoAgente as erro:
@@ -746,9 +749,11 @@ def revisar_peticao_com_prompt(
 @roteador.get("/casos/{caso_id}/peticao/{peca_ref}/historico")
 def historico_de_peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
     """A rastreabilidade que a issue pede: críticas feitas e versões anteriores."""
-    if not _peca_local(peca_ref):
-        return {"criticas": [], "versoes": []}
-    return peticao_fluxo.historico_de_peticao(caso_id)
+    if _peca_local(peca_ref):
+        return peticao_fluxo.historico_de_peticao(caso_id)
+    if _peca_anexa(caso_id, peca_ref):
+        return peticao_fluxo.historico_de_peticao(caso_id, peca_ref)
+    return {"criticas": [], "versoes": []}
 
 
 # ------------------------------------------------------------------- estilo

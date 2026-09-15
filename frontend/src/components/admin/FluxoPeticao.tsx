@@ -23,6 +23,7 @@ import {
   listarPecasAnexas,
   type PecaAnexa,
   type Peticao,
+  type RevisaoRegistrada,
   type SecaoPeticao,
 } from "@/lib/agente";
 import { baixarArquivo } from "@/lib/baixar";
@@ -77,6 +78,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [revisando, setRevisando] = useState(false);
   const [historico, setHistorico] = useState<HistoricoDePeticao | null>(null);
   const [mostrarHistorico, setMostrarHistorico] = useState(false);
+  const [avisoRevisao, setAvisoRevisao] = useState<string | null>(null);
 
   const recarregar = useCallback(async () => {
     try {
@@ -193,7 +195,16 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setRevisando(true);
     setErro(null);
     setConcluido(null);
+    setAvisoRevisao(null);
     try {
+      const secoesAtuais = peticao.sections ?? [];
+      if (secoesAtuais.some((s) => (edicao[s.code] ?? s.content) !== s.content)) {
+        await salvarRascunhoPeticao(
+          casoId,
+          peticao.id,
+          secoesAtuais.map((s) => ({ code: s.code, content: edicao[s.code] ?? s.content })),
+        );
+      }
       const resultado = await revisarPeticaoComPrompt(
         casoId,
         peticao.id,
@@ -202,14 +213,19 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       );
       setPeticao(resultado.peticao);
       setPromptRevisao("");
+      const revisao = resultado.peticao.revisao ?? resultado.revisao;
+      const alteradas = revisao?.alteradas ?? [];
       setConcluido({
         acao: "revisar",
-        texto: `Revisão aplicada — a petição está na versão ${resultado.peticao.version}.`,
+        texto: `Revisão aplicada — a petição está na versão ${resultado.peticao.version}${
+          alteradas.length ? `. Seções alteradas: ${alteradas.join(", ")}` : ""
+        }.`,
       });
-      setHistorico((atual) => ({
-        criticas: resultado.criticas,
-        versoes: atual?.versoes ?? [],
-      }));
+      if (revisao?.atendeu === false) {
+        setAvisoRevisao(
+          `A conferência automática indica que pode faltar: ${revisao.faltou || "parte do pedido"}. Confira o texto e peça de novo se precisar.`,
+        );
+      }
       await recarregar();
     } catch (e) {
       setErro({
@@ -291,14 +307,29 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
    * (ver `app/peticao_local.revisar_anexa_com_prompt`). */
   const [promptRevisaoAnexa, setPromptRevisaoAnexa] = useState("");
   const [revisandoAnexa, setRevisandoAnexa] = useState(false);
+  const [retornoAnexa, setRetornoAnexa] = useState<{ tom: "ok" | "atencao"; texto: string } | null>(null);
+  const [historicoAnexa, setHistoricoAnexa] = useState<HistoricoDePeticao | null>(null);
+  const [mostrarHistoricoAnexa, setMostrarHistoricoAnexa] = useState(false);
+
+  async function carregarHistoricoAnexa(pecaId: string) {
+    try {
+      setHistoricoAnexa(await historicoDePeticao(casoId, pecaId));
+    } catch {
+      setHistoricoAnexa(null);
+    }
+  }
 
   async function alternarEdicaoAnexa(peca: PecaAnexa) {
     if (anexaAberta === peca.id) {
       setAnexaAberta(null);
       setPeticaoAnexa(null);
       setPromptRevisaoAnexa("");
+      setRetornoAnexa(null);
+      setHistoricoAnexa(null);
       return;
     }
+    setRetornoAnexa(null);
+    void carregarHistoricoAnexa(peca.id);
     setErroAnexa(null);
     setAnexaAberta(peca.id);
     setPromptRevisaoAnexa("");
@@ -326,7 +357,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       }));
       const atualizada = await salvarRascunhoPeticao(casoId, peticaoAnexa.id, secoes);
       setPeticaoAnexa(atualizada);
-      await recarregarAnexas();
+      await Promise.all([recarregarAnexas(), carregarHistoricoAnexa(peticaoAnexa.id)]);
     } catch (e) {
       setErroAnexa(e instanceof Error ? e.message : "Não foi possível salvar esta peça.");
     } finally {
@@ -337,10 +368,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   async function revisarEdicaoAnexa() {
     if (!peticaoAnexa || !promptRevisaoAnexa.trim()) return;
     setErroAnexa(null);
+    setRetornoAnexa(null);
     setRevisandoAnexa(true);
     try {
-      // `generaliza=false`: a peça anexa não ensina a IA nem guarda a crítica —
-      // ver o comentário no estado acima.
+      const secoesAtuais = peticaoAnexa.sections ?? [];
+      if (secoesAtuais.some((s) => (edicaoAnexa[s.code] ?? s.content) !== s.content)) {
+        await salvarRascunhoPeticao(
+          casoId,
+          peticaoAnexa.id,
+          secoesAtuais.map((s) => ({ code: s.code, content: edicaoAnexa[s.code] ?? s.content })),
+        );
+      }
       const resultado = await revisarPeticaoComPrompt(
         casoId,
         peticaoAnexa.id,
@@ -352,7 +390,20 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         Object.fromEntries((resultado.peticao.sections ?? []).map((s) => [s.code, s.content])),
       );
       setPromptRevisaoAnexa("");
-      await recarregarAnexas();
+      const revisao = resultado.peticao.revisao ?? resultado.revisao;
+      const alteradas = revisao?.alteradas ?? [];
+      setRetornoAnexa(
+        revisao?.atendeu === false
+          ? {
+              tom: "atencao",
+              texto: `Revisão aplicada, mas a conferência automática indica que pode faltar: ${revisao.faltou || "parte do pedido"}. Confira o texto.`,
+            }
+          : {
+              tom: "ok",
+              texto: `Revisão aplicada${alteradas.length ? ` em: ${alteradas.join(", ")}` : ""}. A versão anterior ficou no histórico desta peça.`,
+            },
+      );
+      await Promise.all([recarregarAnexas(), carregarHistoricoAnexa(peticaoAnexa.id)]);
     } catch (e) {
       setErroAnexa(e instanceof Error ? e.message : "Não foi possível aplicar a revisão nesta peça.");
     } finally {
@@ -559,6 +610,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                 Aplicar revisão
               </BotaoProcesso>
             </div>
+            {avisoRevisao && (
+              <Aviso tom="atencao" titulo="Confira a revisão">
+                {avisoRevisao}
+              </Aviso>
+            )}
           </div>
         </section>
       )}
@@ -626,8 +682,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                       </BotaoProcesso>
                       {jaGerada && (
                         <span className="text-xs text-tinta-3">
-                          Já redigida — regerar substitui o texto atual, sem histórico. Baixe antes
-                          se quiser guardar.
+                          Já redigida — redigir de novo substitui o texto atual e guarda a versão
+                          anterior no histórico da peça.
                         </span>
                       )}
                     </div>
@@ -756,19 +812,22 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                           )}
                         </div>
 
-                        {/* Revisão por prompt — opcional, mesma qualidade da petição
-                          * inicial. Sem "ensinar a IA" nem versão anterior guardada:
-                          * a peça anexa não tem histórico (nem "gerar de novo" tem,
-                          * ver o aviso acima da lista). */}
+                        {historicoAnexa && historicoAnexa.versoes.length > 0 && (
+                          <HistoricoDeCriticas
+                            historico={historicoAnexa}
+                            aberto={mostrarHistoricoAnexa}
+                            onAlternar={() => setMostrarHistoricoAnexa((atual) => !atual)}
+                          />
+                        )}
+
                         <div className="grid gap-2 border border-borda-forte bg-papel p-3">
                           <RotuloCampo htmlFor={`anexa-${peca.id}-prompt-revisao`}>
                             Pedir uma revisão por prompt (opcional)
                           </RotuloCampo>
                           <p className="text-xs text-tinta-3 m-0">
                             Descreva o que deve mudar nesta peça. A IA aplica só o que você
-                            pedir e preserva o resto do texto. Diferente da petição inicial,
-                            esta peça não guarda versão anterior — reveja o resultado antes
-                            de salvar.
+                            pedir, confere o resultado e preserva o resto do texto. A versão
+                            atual fica guardada no histórico desta peça.
                           </p>
                           <Campo
                             area
@@ -790,6 +849,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                               Aplicar revisão
                             </BotaoProcesso>
                           </div>
+                          {retornoAnexa && (
+                            <Aviso tom={retornoAnexa.tom} titulo={retornoAnexa.tom === "ok" ? undefined : "Confira a revisão"}>
+                              {retornoAnexa.texto}
+                            </Aviso>
+                          )}
                         </div>
                       </div>
                     )}
@@ -857,6 +921,13 @@ function PreviaPeticao({
  * a maioria das visitas à tela não precisa dela; abre com um clique quando
  * alguém precisa auditar o que mudou e por quê.
  */
+function rotuloDaRevisao(revisao?: RevisaoRegistrada | null): string {
+  if (!revisao) return "gerada pela IA";
+  if (revisao.tipo === "prompt") return "revisão por prompt";
+  if (revisao.tipo === "manual") return "edição manual";
+  return "redigida pela IA";
+}
+
 function HistoricoDeCriticas({
   historico,
   aberto,
@@ -866,6 +937,7 @@ function HistoricoDeCriticas({
   aberto: boolean;
   onAlternar: () => void;
 }) {
+  const versoes = [...historico.versoes].reverse();
   return (
     <div className="grid gap-2 border border-borda p-3 bg-papel">
       <button
@@ -874,16 +946,43 @@ function HistoricoDeCriticas({
         onClick={onAlternar}
       >
         <span>
-          Histórico de revisões ({historico.criticas.length} crítica
-          {historico.criticas.length === 1 ? "" : "s"})
+          Histórico de edições ({historico.versoes.length}{" "}
+          {historico.versoes.length === 1 ? "versão anterior" : "versões anteriores"}
+          {historico.criticas.length > 0
+            ? ` · ${historico.criticas.length} ${historico.criticas.length === 1 ? "crítica" : "críticas"}`
+            : ""}
+          )
         </span>
         <span aria-hidden>{aberto ? "▲" : "▼"}</span>
       </button>
-      {aberto && (
+      {aberto && versoes.length > 0 && (
         <ul className="grid gap-3 m-0 p-0 list-none">
-          {historico.criticas.length === 0 && (
-            <li className="text-xs text-tinta-3">Nenhuma crítica registrada ainda.</li>
-          )}
+          {versoes.map((versao) => {
+            const revisao = versao.dados?.revisao;
+            return (
+              <li key={versao.versao} className="grid gap-1 border-l-2 border-borda pl-3">
+                <div className="flex flex-wrap items-baseline gap-x-2 text-xs text-tinta-3">
+                  <strong className="text-tinta-2">Versão {versao.versao}</strong>
+                  <span>{rotuloDaRevisao(revisao)}</span>
+                  {revisao?.usuario && <span>por {revisao.usuario}</span>}
+                  <span>{new Date(revisao?.em || versao.criado_em).toLocaleString("pt-BR")}</span>
+                </div>
+                {revisao?.prompt && (
+                  <p className="text-sm text-tinta-2 m-0 whitespace-pre-wrap">“{revisao.prompt}”</p>
+                )}
+                {(revisao?.alteradas ?? []).length > 0 && (
+                  <p className="text-xs text-tinta-3 m-0">
+                    Seções alteradas: {(revisao?.alteradas ?? []).join(", ")}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {aberto && historico.criticas.length > 0 && (
+        <ul className="grid gap-3 m-0 p-0 list-none">
+          <li className="text-xs font-semibold text-tinta-3 uppercase tracking-wide">Críticas registradas</li>
           {[...historico.criticas].reverse().map((critica) => (
             <li key={critica.id} className="grid gap-1 border-l-2 border-borda pl-3">
               <div className="flex flex-wrap items-baseline gap-x-2 text-xs text-tinta-3">
