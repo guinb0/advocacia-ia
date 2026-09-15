@@ -165,7 +165,12 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
   }, []);
 
   const alternarCamera = useCallback(async () => {
-    setTemCamera(await (chamada.current?.alternarCamera() ?? Promise.resolve(false)));
+    try {
+      setTemCamera(await (chamada.current?.alternarCamera() ?? Promise.resolve(false)));
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível ligar a câmera.");
+      setTemCamera(chamada.current?.temCamera ?? false);
+    }
     // Ligar a câmera encerra o compartilhamento (uma faixa de vídeo por
     // participante), então os dois estados são lidos do objeto, sempre.
     setCompartilhandoTela(chamada.current?.compartilhandoTela ?? false);

@@ -222,6 +222,50 @@ export async function pedirPermissaoMicrofone(): Promise<PermissaoMicrofone> {
   }
 }
 
+function ehCelular(): boolean {
+  return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
+async function abrirVideoComFallback(api: ApiJitsi): Promise<FaixaJitsi[]> {
+  let ultimo: unknown = null;
+  for (const opcoes of [{}, { resolution: 360 }, { resolution: 240, constraints: { video: true } }]) {
+    try {
+      const faixas = await api.createLocalTracks({ devices: ["video"], ...opcoes });
+      if (faixas.some((f) => f.getType() === "video")) return faixas;
+    } catch (e) {
+      ultimo = e;
+      if (/permission|NotAllowed|Security|not_found|NotFound/i.test(textoDoErro(e))) break;
+    }
+  }
+  throw ultimo ?? new Error("Nenhuma câmera encontrada.");
+}
+
+function textoDoErro(e: unknown): string {
+  if (!e || typeof e !== "object") return String(e ?? "");
+  const erro = e as { name?: string; message?: string; gum?: { error?: { name?: string; message?: string } } };
+  return [erro.name, erro.message, erro.gum?.error?.name, erro.gum?.error?.message].filter(Boolean).join(" ");
+}
+
+export function explicarErroCamera(e: unknown): string {
+  const texto = textoDoErro(e);
+  if (/permission|NotAllowed|Security|denied/i.test(texto)) {
+    return "A câmera foi bloqueada. Clique no cadeado ao lado do endereço do site, permita a Câmera e recarregue a página. No Windows, confira também Configurações > Privacidade > Câmera.";
+  }
+  if (/not_found|NotFound|DevicesNotFound/i.test(texto)) {
+    return "Nenhuma câmera foi encontrada. Em notebooks (como Acer), a câmera pode estar desligada pela tecla de atalho (Fn + tecla com ícone de câmera) ou por uma tampinha física.";
+  }
+  if (/NotReadable|TrackStart|Could not start|general|in use/i.test(texto)) {
+    return "A câmera está sendo usada por outro programa (Teams, Zoom, WhatsApp, outra aba) ou foi desligada pela tecla de atalho do notebook. Feche o outro programa e clique em Câmera de novo.";
+  }
+  if (/constraint|Overconstrained/i.test(texto)) {
+    return "A câmera deste computador não aceitou a configuração de vídeo. Clique em Câmera de novo.";
+  }
+  if (/timeout/i.test(texto)) {
+    return "A câmera demorou demais para responder. Feche outros programas que usam a câmera e tente de novo.";
+  }
+  return `Não foi possível abrir a câmera${texto ? ` (${texto})` : ""}.`;
+}
+
 export class ChamadaJitsi {
   private api: ApiJitsi | null = null;
   private conexao: ConexaoJitsi | null = null;
@@ -341,11 +385,12 @@ export class ChamadaJitsi {
      */
     const querCamera = Boolean(opcoes.camera);
     let faixas: FaixaJitsi[] = [];
+    let erroCamera: unknown = null;
     if (querCamera) {
       try {
         faixas = await api.createLocalTracks({ devices: ["audio", "video"] });
-      } catch {
-        this.eventos.onErro?.("Não foi possível abrir a câmera. A chamada segue só com voz.");
+      } catch (e) {
+        erroCamera = e;
         faixas = [];
       }
     }
@@ -354,6 +399,15 @@ export class ChamadaJitsi {
       // a permissão do microfone for negada, o erro sai limpo daqui, sem deixar
       // conexão pendurada no servidor.
       faixas = await api.createLocalTracks({ devices: ["audio"] });
+      if (erroCamera && !ehCelular()) {
+        try {
+          faixas = [...faixas, ...(await abrirVideoComFallback(api))];
+          erroCamera = null;
+        } catch (e) {
+          erroCamera = e;
+        }
+      }
+      if (erroCamera) this.eventos.onErro?.(`${explicarErroCamera(erroCamera)} A chamada segue só com voz.`);
     }
     this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
     if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
@@ -371,7 +425,7 @@ export class ChamadaJitsi {
   }
 
   private async abrirCamera(api: ApiJitsi): Promise<void> {
-    const faixas = await api.createLocalTracks({ devices: ["video"] });
+    const faixas = await abrirVideoComFallback(api);
     this.minhaCamera = faixas.find((f) => f.getType() === "video") ?? null;
     if (this.minhaCamera) this.videos.set("eu", this.minhaCamera.getTrack());
   }
@@ -405,7 +459,12 @@ export class ChamadaJitsi {
      * pé —, então no celular ela ainda pode derrubar o microfone (ver o comentário
      * em `entrar`). Quem conserta é `vigiarMicrofone`: a faixa morta dispara
      * `ended` e volta republicada, sem o usuário precisar desligar a conversa. */
-    await this.abrirCamera(this.api);
+    try {
+      await this.abrirCamera(this.api);
+    } catch (e) {
+      this.eventos.onErro?.(explicarErroCamera(e));
+      return false;
+    }
     if (this.minhaCamera && this.sala) await this.sala.addTrack(this.minhaCamera);
     this.anunciarParticipantes();
     return this.minhaCamera !== null;
