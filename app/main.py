@@ -4049,6 +4049,57 @@ def baixar_entrevista(caso_id: str, entrevista_id: str):
     )
 
 
+GUARDAR_MIDIA_NO_BANCO_ATE = date(2026, 9, 15)
+LIMITE_MIDIA_NO_BANCO = 1536 * 1024 * 1024
+
+
+@app.post("/api/gravacoes-temporarias", status_code=201)
+async def guardar_gravacao_temporaria(
+    arquivo: UploadFile = File(...),
+    tipo: str = Form(""),
+    entrevista_id: str = Form(""),
+    nome: str = Form(""),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    if datetime.now(timezone(timedelta(hours=-3))).date() > GUARDAR_MIDIA_NO_BANCO_ATE:
+        raise HTTPException(410, "O armazenamento temporário de gravações no banco já foi encerrado.")
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > LIMITE_MIDIA_NO_BANCO:
+        raise HTTPException(413, "Arquivo grande demais para guardar no banco.")
+    try:
+        return await run_in_threadpool(
+            armazenamento.salvar_gravacao_temporaria,
+            tipo=(tipo or "video")[:20],
+            entrevista_id=entrevista_id[:64],
+            nome_arquivo=(nome or arquivo.filename or "gravacao")[:400],
+            mime=(arquivo.content_type or "application/octet-stream")[:100],
+            conteudo=conteudo,
+            enviado_por=usuario.nome,
+        )
+    except Exception as exc:
+        log.exception("Falha ao guardar gravação temporária no banco")
+        raise HTTPException(503, f"Não foi possível guardar a gravação no banco: {exc}") from exc
+
+
+@app.get("/api/gravacoes-temporarias")
+def listar_gravacoes_temporarias(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    return {"gravacoes": armazenamento.listar_gravacoes_temporarias()}
+
+
+@app.get("/api/gravacoes-temporarias/{gravacao_id}")
+def baixar_gravacao_temporaria(gravacao_id: str, _usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    registro = armazenamento.obter_gravacao_temporaria(gravacao_id)
+    if not registro:
+        raise HTTPException(404, "Gravação não encontrada.")
+    return Response(
+        content=bytes(registro["conteudo"]),
+        media_type=str(registro["mime"] or "application/octet-stream"),
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(str(registro['nome_arquivo']))}"},
+    )
+
+
 @app.delete("/api/casos/{caso_id}/entrevista/{entrevista_id}")
 def excluir_entrevista(caso_id: str, entrevista_id: str):
     """Remove a entrevista do caso. Os fatos que ela gerou continuam no agente."""
