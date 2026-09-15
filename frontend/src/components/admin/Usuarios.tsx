@@ -235,20 +235,22 @@ export default function Usuarios({ onVoltar }: Props) {
           <LayoutList size={16} aria-hidden />
           {"Perfis e permiss\u00f5es"}
         </button>
+        {(sessao.modulos.includes("contratos") || sessao.modulos.includes("modelos_contrato")) && (
+          <button
+            type="button"
+            onClick={() => setAba("contratos")}
+            aria-current={aba === "contratos" ? "page" : undefined}
+            className={
+              "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
+              (aba === "contratos" ? "bg-acao text-papel shadow-cartao" : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
+            }
+          >
+            <ShieldCheck size={16} aria-hidden />
+            Modelos de contrato
+          </button>
+        )}
         {sessao.modulos.includes("contratos") && (
           <>
-            <button
-              type="button"
-              onClick={() => setAba("contratos")}
-              aria-current={aba === "contratos" ? "page" : undefined}
-              className={
-                "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-campo px-4 text-sm font-semibold transition-colors " +
-                (aba === "contratos" ? "bg-acao text-papel shadow-cartao" : "text-tinta-2 hover:bg-papel-3 hover:text-tinta")
-              }
-            >
-              <ShieldCheck size={16} aria-hidden />
-              Modelos de contrato
-            </button>
             <button
               type="button"
               onClick={() => setAba("assinatura")}

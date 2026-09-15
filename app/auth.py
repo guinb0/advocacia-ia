@@ -341,6 +341,24 @@ def exigir_modulo(modulo: str):
     return verificar
 
 
+def exigir_algum_modulo(*modulos: str):
+    def verificar(usuario: Usuario = Depends(usuario_atual)) -> Usuario:
+        if not ATIVA:
+            return usuario
+        from . import perfis
+
+        permitidos = perfis.modulos_de(list(_papeis_atuais(usuario)))
+        if not any(modulo in permitidos for modulo in modulos):
+            rotulos = [
+                next((m["rotulo"] for m in perfis.MODULOS if m["codigo"] == modulo), modulo)
+                for modulo in modulos
+            ]
+            raise HTTPException(403, f"Seu perfil não tem acesso a {' ou '.join(rotulos)}.")
+        return usuario
+
+    return verificar
+
+
 def _papeis_atuais(usuario: Usuario) -> tuple[str, ...]:
     """Le o perfil atual no banco; o token prova identidade, nao permissao."""
     from . import usuarios

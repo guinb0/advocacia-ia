@@ -570,7 +570,7 @@ def gerar_contrato(pedido: PedidoContrato):
 # chega la: sobe uma vez, fica no banco, vale para todos os conteineres. Ver
 # `contrato.caminho_modelo` e a tabela em `app/banco.py`.
 
-PodeManterModelos = Depends(auth.exigir_modulo("contratos"))
+PodeManterModelos = Depends(auth.exigir_algum_modulo("contratos", "modelos_contrato"))
 PodeManterModeloPeticao = Depends(auth.exigir_modulo("agente"))
 
 
