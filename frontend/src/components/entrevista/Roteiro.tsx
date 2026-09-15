@@ -106,6 +106,7 @@ type TrechoAoVivo = { quando: number; texto: string; quem: "Entrevistador" | "En
  * porque é só `document.getElementById(...).scrollIntoView` — funciona de
  * qualquer lugar da página. */
 export interface EstadoEscuta {
+  onReligar?: () => void;
   transcricao: TrechoAoVivo[];
   parcial: string;
   preenchidas: CampoOuvido[];
@@ -1007,6 +1008,7 @@ export default function Roteiro({
       chegada,
       erro: erroEscuta,
       onIrPara: irPara,
+      onReligar: () => captura.current?.religarAgora(),
     });
   }, [
     escutando, transcricaoVisivel, parcial, ouvidas, sugestoes, lembretes,
