@@ -142,21 +142,24 @@ def revisar_peticao(
     return {
         "peticao": peticao_local.para_api(dados),
         "criticas": peticao_local.historico_de_criticas(caso_id),
+        "revisao": dados.get("revisao"),
     }
 
 
-def revisar_peca_anexa(peca_id: str, *, prompt: str) -> dict[str, Any]:
-    """Revisão por prompt de uma peça anexa — mesmo recurso da petição inicial,
-    sem versão/histórico (ver `peticao_local.revisar_anexa_com_prompt`)."""
+def revisar_peca_anexa(peca_id: str, *, prompt: str, usuario: str = "") -> dict[str, Any]:
     try:
-        dados = peticao_local.revisar_anexa_com_prompt(peca_id, prompt_critica=prompt)
+        dados = peticao_local.revisar_anexa_com_prompt(
+            peca_id, prompt_critica=prompt, usuario=usuario
+        )
     except peticao_local.ErroPeticao as erro:
         raise _erro_peticao(erro) from erro
-    return {"peticao": dados, "criticas": []}
+    return {"peticao": dados, "criticas": [], "revisao": dados.get("revisao")}
 
 
-def historico_de_peticao(caso_id: str) -> dict[str, Any]:
+def historico_de_peticao(caso_id: str, peca_id: str | None = None) -> dict[str, Any]:
     """Rastreabilidade completa: críticas feitas e versões anteriores da petição."""
+    if peca_id:
+        return {"criticas": [], "versoes": peticao_local.historico_de_versoes(caso_id, peca_id)}
     return {
         "criticas": peticao_local.historico_de_criticas(caso_id),
         "versoes": peticao_local.historico_de_versoes(caso_id),

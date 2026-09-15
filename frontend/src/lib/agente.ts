@@ -145,6 +145,17 @@ export interface AchadoRevisao {
   detail?: string;
 }
 
+export interface RevisaoRegistrada {
+  tipo: "prompt" | "manual" | "geracao";
+  prompt?: string;
+  usuario?: string;
+  em?: string;
+  alteradas?: string[];
+  atendeu?: boolean | null;
+  faltou?: string;
+  tentativas?: number;
+}
+
 export interface Peticao {
   id: string;
   document_type: string;
@@ -170,6 +181,7 @@ export interface Peticao {
   reviewed_at?: string | null;
   created_at: string;
   sections?: SecaoPeticao[];
+  revisao?: RevisaoRegistrada | null;
   jurimetria?: {
     disponivel: boolean;
     origem?: string;
@@ -678,7 +690,7 @@ export function revisarPeticaoComPrompt(
   prompt: string,
   /** `false` = lição só deste caso: entra na rastreabilidade e NÃO ensina a IA. */
   generaliza = true,
-): Promise<{ peticao: Peticao; criticas: CriticaDePeticao[] }> {
+): Promise<{ peticao: Peticao; criticas: CriticaDePeticao[]; revisao?: RevisaoRegistrada | null }> {
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/revisar`, {
     method: "POST",
     body: JSON.stringify({ prompt, generaliza }),

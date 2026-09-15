@@ -202,7 +202,7 @@ def obter_peticao_anexa(peca_id: str) -> dict[str, Any] | None:
     return item
 
 
-def registrar_versao_peticao(caso_id: str, dados: dict[str, Any]) -> None:
+def registrar_versao_peticao(caso_id: str, dados: dict[str, Any], chave: str | None = None) -> None:
     """Guarda a versão da petição ANTES de ela ser sobrescrita.
 
     Issue "Permitir alteração da petição por prompt com rastreabilidade" — cada
@@ -211,7 +211,7 @@ def registrar_versao_peticao(caso_id: str, dados: dict[str, Any]) -> None:
     nunca um UPDATE: é histórico, não estado corrente.
     """
     payload = {chave: valor for chave, valor in dados.items() if chave != "_docx"}
-    id_versao = f"{caso_id}:{int(dados.get('version') or 1)}"
+    id_versao = f"{chave or caso_id}:{int(dados.get('version') or 1)}"
     with conectar() as con:
         # MERGE, não INSERT puro: `id` é determinístico (`caso_id:versao`), então uma
         # tentativa repetida (ex.: falha de rede depois de já ter gravado) atualiza a
@@ -241,17 +241,20 @@ def registrar_versao_peticao(caso_id: str, dados: dict[str, Any]) -> None:
         )
 
 
-def listar_versoes_peticao(caso_id: str) -> list[dict[str, Any]]:
+def listar_versoes_peticao(caso_id: str, chave: str | None = None) -> list[dict[str, Any]]:
     """Histórico de versões anteriores desta petição, da mais antiga à mais nova."""
+    prefixo = chave or caso_id
     with conectar() as con:
         linhas = con.execute(
-            "SELECT versao, status, dados_json, criado_em FROM peticao_versoes"
+            "SELECT id, versao, status, dados_json, criado_em FROM peticao_versoes"
             " WHERE caso_id = ? ORDER BY versao",
             (caso_id,),
         ).fetchall()
     resultado = []
     for linha in linhas:
         item = dict(linha)
+        if item.pop("id", None) != f"{prefixo}:{item['versao']}":
+            continue
         try:
             item["dados"] = json.loads(item.pop("dados_json"))
         except (TypeError, json.JSONDecodeError):

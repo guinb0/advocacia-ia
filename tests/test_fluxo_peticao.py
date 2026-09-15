@@ -117,9 +117,9 @@ def _salvar_peticao_local(caso_id: str, dados, docx: bytes) -> None:
     BANCO["docx"] = docx
 
 
-def _registrar_versao_peticao(caso_id: str, dados) -> None:
+def _registrar_versao_peticao(caso_id: str, dados, chave=None) -> None:
     versoes = BANCO["versoes"]
-    identificador = f"{caso_id}:{int(dados.get('version') or 1)}"
+    identificador = f"{chave or caso_id}:{int(dados.get('version') or 1)}"
     for item in versoes:  # type: ignore[union-attr]
         if item["id"] == identificador:
             item["dados"] = dict(dados)
@@ -129,8 +129,12 @@ def _registrar_versao_peticao(caso_id: str, dados) -> None:
     )
 
 
-def _listar_versoes_peticao(caso_id: str):
-    return sorted(BANCO["versoes"], key=lambda v: v["versao"])  # type: ignore[arg-type]
+def _listar_versoes_peticao(caso_id: str, chave=None):
+    prefixo = chave or caso_id
+    return sorted(
+        [v for v in BANCO["versoes"] if v["id"] == f"{prefixo}:{v['versao']}"],  # type: ignore[union-attr]
+        key=lambda v: v["versao"],
+    )
 
 
 def _montar_situacao(caso_id: str):
@@ -368,8 +372,25 @@ def testar_revisao_por_prompt() -> int:
     pedidos = next(s for s in dados["sections"] if s["code"] == "CLAIMS")
     falhas += not checar("dano moral em pedido próprio" in pedidos["content"], "a crítica foi aplicada aos pedidos")
     falhas += not checar(
-        [v["versao"] for v in pl.historico_de_versoes(CASO)] == [1, antes],
+        [v["versao"] for v in pl.historico_de_versoes(CASO)] == list(range(1, antes + 1)),
         f"a versão revisada foi arquivada antes de ser sobrescrita ({[v['versao'] for v in pl.historico_de_versoes(CASO)]})",
+    )
+    falhas += not checar(
+        (dados.get("revisao") or {}).get("tipo") == "prompt"
+        and dados["revisao"].get("prompt") == "separe o dano moral"
+        and "Dos pedidos" in (dados["revisao"].get("alteradas") or []),
+        f"a versão nova registra o prompt e as seções alteradas ({dados.get('revisao')})",
+    )
+    edicao = pl.carregar(CASO)
+    falhas += not checar(
+        (pl.historico_de_versoes(CASO)[-1]["dados"].get("revisao") or {}).get("tipo") == "manual",
+        "a edição à mão anterior também virou versão no histórico",
+    )
+    pedidos_atuais = next(s for s in edicao["sections"] if s["code"] == "CLAIMS")["content"]
+    pl.salvar_secoes(CASO, [{"code": "CLAIMS", "content": pedidos_atuais}], usuario="ana")
+    falhas += not checar(
+        pl.carregar(CASO)["version"] == edicao["version"],
+        "salvar sem mudar nada não cria versão nova",
     )
     falhas += not checar(
         bool(BANCO["criticas"]) and BANCO["criticas"][0]["usuario"] == "ana",  # type: ignore[index]
@@ -741,6 +762,23 @@ def testar_pecas_anexas() -> int:
         pedidos_releitura["content"] == "a) dano moral; b) dano existencial",
         "e a revisão permanece depois de reabrir a peça",
     )
+    versoes_peca = pl.historico_de_versoes(CASO, peca["id"])
+    falhas += not checar(
+        [v["versao"] for v in versoes_peca] == [1, 2],
+        f"a peça anexa guarda a versão gerada e a editada à mão ({[v['versao'] for v in versoes_peca]})",
+    )
+    falhas += not checar(
+        len(versoes_peca) > 1 and (versoes_peca[1]["dados"].get("revisao") or {}).get("tipo") == "manual",
+        "a versão editada à mão fica marcada como edição manual",
+    )
+    falhas += not checar(
+        (resultado_revisao.get("revisao") or {}).get("tipo") == "prompt",
+        "a versão atual da peça registra a revisão por prompt",
+    )
+    falhas += not checar(
+        len(pl.historico_de_versoes(CASO)) == versoes_antes,
+        "o histórico da peça anexa não se mistura com o da petição inicial",
+    )
 
     try:
         pl.revisar_anexa_com_prompt(peca["id"], prompt_critica="   ")
@@ -799,6 +837,104 @@ def testar_pecas_anexas() -> int:
     return falhas
 
 
+def dublar_sequencia(respostas, entradas) -> None:
+    fila = list(respostas)
+
+    def falso(instrucao, entrada, timeout=180.0):
+        entradas.append((instrucao, entrada))
+        item = fila.pop(0) if fila else respostas[-1]
+        return item() if callable(item) else item
+
+    pl._llm_json = falso
+
+
+def testar_revisao_garantida() -> int:
+    falhas = 0
+    atual = pl.carregar(CASO)
+    versao = atual["version"]
+    secoes = [dict(s) for s in atual["sections"] if s["code"] != "JURIMETRY"]
+
+    entradas: list = []
+    dublar_sequencia([{"secoes": secoes}, {"secoes": secoes}], entradas)
+    try:
+        pl.revisar_com_prompt(CASO, prompt_critica="inclua dano material", usuario="ana", generaliza=False)
+        falhas += not checar(False, "revisão que não muda nada é recusada")
+    except pl.ErroPeticao:
+        falhas += not checar(True, "revisão que não muda nada é recusada com erro em português")
+    falhas += not checar(pl.carregar(CASO)["version"] == versao, "e nenhuma versão nova é criada")
+    falhas += not checar(
+        len(entradas) == 2 and "TENTATIVA ANTERIOR FALHOU" in entradas[1][1],
+        "a IA recebe uma segunda tentativa dizendo que nada mudou",
+    )
+
+    entradas = []
+    dublar_sequencia(
+        [
+            {"secoes": [{"code": "CLAIMS", "label": "Dos pedidos", "content": "a) dano moral\n\nb) dano material"}]},
+            {"atendeu": False, "faltou": "faltou o dano estético", "alteradas_sem_pedido": []},
+            {
+                "secoes": [
+                    {"code": "CLAIMS", "content": "a) dano moral\n\nb) dano material\n\nc) dano estético"},
+                    {"code": "FACTS", "content": "fatos reescritos sem ninguém pedir"},
+                ]
+            },
+            {"atendeu": True, "faltou": "", "alteradas_sem_pedido": ["FACTS"]},
+        ],
+        entradas,
+    )
+    dados = pl.revisar_com_prompt(
+        CASO, prompt_critica="inclua dano material e estético nos pedidos", usuario="bia", generaliza=False
+    )
+    por_codigo = {s["code"]: s["content"] for s in dados["sections"]}
+    antes = {s["code"]: s["content"] for s in secoes}
+    falhas += not checar("c) dano estético" in por_codigo["CLAIMS"], "o que faltou foi aplicado na segunda tentativa")
+    falhas += not checar(
+        len(entradas) == 4 and "faltou o dano estético" in entradas[2][1],
+        "a segunda tentativa recebe o que a conferência disse que faltou",
+    )
+    falhas += not checar(por_codigo["FACTS"] == antes["FACTS"], "seção alterada sem pedido volta ao texto original")
+    falhas += not checar(
+        por_codigo["HEADING"] == antes["HEADING"] and por_codigo["CLOSING"] == antes["CLOSING"],
+        "seções que a IA não devolveu continuam intactas",
+    )
+    revisao = dados.get("revisao") or {}
+    falhas += not checar(
+        revisao.get("usuario") == "bia"
+        and revisao.get("alteradas") == ["Dos pedidos"]
+        and revisao.get("atendeu") is True
+        and revisao.get("tentativas") == 2,
+        f"a revisão registra quem pediu, o que mudou e a conferência ({revisao})",
+    )
+    falhas += not checar(dados["version"] == versao + 1, "e cria exatamente uma versão nova")
+    falhas += not checar(
+        pl.historico_de_versoes(CASO)[-1]["versao"] == versao,
+        "a versão anterior à revisão foi guardada no histórico",
+    )
+
+    peticao_skills.instrucoes_da_categoria = lambda categoria: "Cite sempre o nexo causal."
+    peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: ["separe dano moral de material"]
+    try:
+        revisao_prompt = pl._com_skill_do_escritorio(CASO, "CONTRATO", revisao=True)
+        geracao_prompt = pl._com_skill_do_escritorio(CASO, "CONTRATO")
+        falhas += not checar(
+            revisao_prompt.startswith("CONTRATO") and "Cite sempre o nexo causal." in revisao_prompt,
+            "na revisão a skill do escritório continua chegando, depois do formato",
+        )
+        falhas += not checar(
+            "NÃO aplique estas correções por conta própria" in revisao_prompt
+            and "Aplique estas correções diretamente" not in revisao_prompt,
+            "na revisão as correções antigas só orientam, não mudam o que não foi pedido",
+        )
+        falhas += not checar(
+            "Aplique estas correções diretamente" in geracao_prompt,
+            "na geração as correções ensinadas continuam sendo aplicadas",
+        )
+    finally:
+        peticao_skills.instrucoes_da_categoria = lambda categoria: ""
+        peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: []
+    return falhas
+
+
 def main_teste() -> int:
     instalar_dublês()
     _zerar_banco()
@@ -817,6 +953,7 @@ def main_teste() -> int:
         ("11. Skill por categoria de petição", testar_skill_por_categoria),
         ("12. Identidade do reclamante", testar_identidade_do_reclamante),
         ("13. Outras peças do caso", testar_pecas_anexas),
+        ("14. Revisão por prompt garantida", testar_revisao_garantida),
     ):
         print(f"\n{titulo}")
         falhas += teste()

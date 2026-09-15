@@ -254,7 +254,7 @@ def _categoria_do_caso(caso_id: str) -> str:
 CRITICAS_RECENTES_POR_CATEGORIA = 20
 
 
-def _com_skill_do_escritorio(caso_id: str, instrucao: str) -> str:
+def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = False) -> str:
     """Acrescenta o que o escritório já ensinou sobre esta categoria de caso.
 
     Duas fontes, nesta ordem — configuração explícita primeiro, aprendizado
@@ -287,19 +287,36 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str) -> str:
 
     blocos = [instrucao]
     if skill:
-        blocos.append(
-            "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO ===\n" + skill
+        cabecalho = (
+            "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO (padrão de redação do trecho que for alterado) ===\n"
+            if revisao
+            else "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO ===\n"
         )
+        blocos.append(cabecalho + skill)
     if criticas:
         listadas = "\n".join(f"- {c}" for c in criticas)
-        blocos.append(
-            "=== CORREÇÕES QUE O ESCRITÓRIO JÁ PEDIU EM PETIÇÕES DESTA CATEGORIA ===\n"
-            f"{listadas}\n"
-            "Aplique estas correções diretamente, sem repetir o erro que motivou cada uma."
-        )
+        if revisao:
+            blocos.append(
+                "=== CORREÇÕES JÁ PEDIDAS EM PETIÇÕES DESTA CATEGORIA (somente referência) ===\n"
+                f"{listadas}\n"
+                "Nesta revisão NÃO aplique estas correções por conta própria: elas só orientam "
+                "a redação do trecho que a CRÍTICA DO ADVOGADO mandar mudar."
+            )
+        else:
+            blocos.append(
+                "=== CORREÇÕES QUE O ESCRITÓRIO JÁ PEDIU EM PETIÇÕES DESTA CATEGORIA ===\n"
+                f"{listadas}\n"
+                "Aplique estas correções diretamente, sem repetir o erro que motivou cada uma."
+            )
     if len(blocos) == 1:
         return instrucao
-    blocos.append("Aplique o que vier acima sem contrariar o formato de resposta pedido.")
+    if revisao:
+        blocos.append(
+            "A CRÍTICA DO ADVOGADO tem prioridade sobre tudo acima: o que ela não pede não muda. "
+            "Responda no formato pedido."
+        )
+    else:
+        blocos.append("Aplique o que vier acima sem contrariar o formato de resposta pedido.")
     return "\n\n".join(blocos)
 
 
@@ -834,7 +851,9 @@ def obter_anexa(peca_id: str) -> dict[str, Any] | None:
     return para_api(registro["dados"])
 
 
-def salvar_secoes_anexa(peca_id: str, secoes: list[dict[str, str]]) -> dict[str, Any]:
+def salvar_secoes_anexa(
+    peca_id: str, secoes: list[dict[str, str]], usuario: str = ""
+) -> dict[str, Any]:
     """Grava o texto editado de uma peça anexa. Mesma lógica de `salvar_secoes`,
     para a peça irmã em vez da petição inicial — ver `armazenamento.salvar_peticao_anexa`.
     """
@@ -842,11 +861,9 @@ def salvar_secoes_anexa(peca_id: str, secoes: list[dict[str, str]]) -> dict[str,
     if not registro:
         raise ErroPeticao("Peça não encontrada.")
 
-    dados = dict(registro["dados"])
-    por_codigo = {s["code"]: s.get("content", "") for s in secoes if s.get("code")}
-    for secao in dados.get("sections") or []:
-        if secao.get("code") in por_codigo:
-            secao["content"] = por_codigo[secao["code"]]
+    dados, anterior = _aplicar_edicao_manual(dict(registro["dados"]), secoes, usuario)
+    if anterior is not None:
+        armazenamento.registrar_versao_peticao(registro["caso_id"], anterior, chave=peca_id)
     dados["updated_at"] = _agora()
 
     armazenamento.salvar_peticao_anexa(
@@ -946,16 +963,23 @@ Cada content em parágrafos separados por linha em branco.""",
         raise ErroPeticao("O modelo não devolveu texto desta peça.")
 
     agora = _agora()
+    existente = armazenamento.obter_peticao_anexa(peca_id)
+    versao_anexa = 1
+    if existente and existente.get("dados"):
+        armazenamento.registrar_versao_peticao(caso_id, existente["dados"], chave=peca_id)
+        versao_anexa = int(existente["dados"].get("version") or 1) + 1
     dados = {
         "id": peca_id,
         "document_type": "ADDITIONAL_CLAIM",
         "title": titulo,
         "motivo": motivo.strip(),
+        "version": versao_anexa,
         "created_at": agora,
         "updated_at": agora,
         "sections": secoes,
         "pendencias": [str(p) for p in saida.get("pendencias") or [] if str(p).strip()],
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "revisao": {"tipo": "geracao", "usuario": gerada_por, "em": agora, "alteradas": []},
     }
     armazenamento.salvar_peticao_anexa(
         caso_id,
@@ -1000,31 +1024,12 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
         raise ErroPeticao(str(erro)) from erro
 
 
-def _revisar_secoes_via_llm(
-    caso_id: str, secoes_atuais: list[dict[str, Any]], prompt_critica: str
-) -> list[dict[str, Any]]:
-    """O miolo da revisão por prompt: aplica a crítica sobre as seções atuais.
-
-    Compartilhado entre `revisar_com_prompt` (a petição inicial, com versão,
-    histórico e crítica registrada) e `revisar_anexa_com_prompt` (as outras
-    peças, sem nada disso — ver o cabeçalho de `armazenamento.salvar_peticao_anexa`
-    sobre por que elas não têm histórico). O que os dois merecem por igual é a
-    MESMA qualidade de revisão: mesmo prompt, mesmo cuidado de preservar o texto
-    que a crítica não pediu para mudar.
-    """
-    minuta_atual = "\n\n".join(
-        f"### {s.get('label', s.get('code'))}\n{s.get('content', '')}"
-        for s in secoes_atuais
-    )
-
-    saida = _llm_json(
-        _com_skill_do_escritorio(
-            caso_id,
-            """Você é advogado trabalhista revisando uma peça já redigida.
-Aplique a CRÍTICA do advogado sobre a MINUTA ATUAL. Mude SOMENTE o que a crítica pede;
-preserve o restante do texto tal como está, palavra por palavra onde a crítica não manda
-mexer. Não invente fatos novos que não estejam na minuta atual. Devolva as SETE seções
-completas, mesmo as que não mudaram. JSON:
+_INSTRUCAO_REVISAO = """Você é advogado revisando uma peça jurídica já redigida.
+Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL. Mude SOMENTE o que a crítica pede, e
+mude de verdade: todo trecho que a crítica mandar alterar, incluir ou retirar precisa estar
+diferente no texto devolvido. Preserve o restante palavra por palavra. Não invente fatos que
+não estejam na minuta atual. Nunca apague uma seção inteira sem que a crítica peça.
+Devolva as SETE seções completas, com o mesmo "code", mesmo as que não mudaram. JSON:
 {
   "secoes": [
     {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
@@ -1036,26 +1041,128 @@ completas, mesmo as que não mudaram. JSON:
     {"code": "CLOSING", "label": "Fechamento", "content": "..."}
   ]
 }
-Cada content em parágrafos separados por linha em branco.""",
-        ),
-        f"MINUTA ATUAL:\n{minuta_atual}\n\nCRÍTICA DO ADVOGADO:\n{prompt_critica}",
-        timeout=240.0,
+Cada content em parágrafos separados por linha em branco."""
+
+_INSTRUCAO_CONFERENCIA = """Você confere se a revisão de uma peça jurídica foi feita corretamente.
+Recebe o PEDIDO DO ADVOGADO e, para cada seção alterada, o texto ANTES e DEPOIS.
+Seja rigoroso: "atendeu" só é true se TUDO o que o pedido manda estiver no texto DEPOIS.
+Responda APENAS JSON:
+{"atendeu": true, "faltou": "o que do pedido não foi feito, em uma frase; vazio se atendeu",
+ "alteradas_sem_pedido": ["code de seção alterada que o pedido não justifica"]}"""
+
+
+def _texto_normalizado(texto: Any) -> str:
+    return " ".join(str(texto or "").split())
+
+
+def _mesclar_revisao(
+    secoes_atuais: list[dict[str, Any]], revisadas: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    por_codigo = {str(s.get("code") or ""): s for s in revisadas}
+    resultado = []
+    for atual in secoes_atuais:
+        nova = por_codigo.get(str(atual.get("code") or "")) or {}
+        conteudo = str(nova.get("content") or "").strip()
+        resultado.append({**atual, "content": conteudo, "written_by": "agent"} if conteudo else dict(atual))
+    return resultado
+
+
+def _secoes_alteradas(
+    antes: list[dict[str, Any]], depois: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    anteriores = {s.get("code"): _texto_normalizado(s.get("content")) for s in antes}
+    return [s for s in depois if _texto_normalizado(s.get("content")) != anteriores.get(s.get("code"))]
+
+
+def _conferir_revisao(
+    prompt_critica: str,
+    antes: list[dict[str, Any]],
+    alteradas: list[dict[str, Any]],
+) -> dict[str, Any]:
+    anteriores = {s.get("code"): s for s in antes}
+    trechos = "\n\n".join(
+        f"### {s.get('code')} — {s.get('label')}\n"
+        f"ANTES:\n{(anteriores.get(s.get('code')) or {}).get('content', '')}\n"
+        f"DEPOIS:\n{s.get('content', '')}"
+        for s in alteradas
     )
-    secoes = _normalizar_secoes(saida.get("secoes") or [])
-    if not any(secao["content"] for secao in secoes):
-        raise ErroPeticao("O modelo não devolveu texto da peça revisada.")
-    return secoes
+    try:
+        saida = _llm_json(
+            _INSTRUCAO_CONFERENCIA,
+            f"PEDIDO DO ADVOGADO:\n{prompt_critica}\n\nSEÇÕES ALTERADAS:\n{trechos}",
+            timeout=120.0,
+        )
+    except ErroPeticao:
+        return {"atendeu": None, "faltou": "", "alteradas_sem_pedido": []}
+    atendeu = saida.get("atendeu")
+    indevidas = saida.get("alteradas_sem_pedido")
+    return {
+        "atendeu": atendeu if isinstance(atendeu, bool) else None,
+        "faltou": str(saida.get("faltou") or "").strip()[:500],
+        "alteradas_sem_pedido": [str(c) for c in indevidas if isinstance(c, str)]
+        if isinstance(indevidas, list)
+        else [],
+    }
 
 
-def revisar_anexa_com_prompt(peca_id: str, *, prompt_critica: str) -> dict[str, Any]:
-    """Reescreve uma peça anexa a partir de uma crítica em linguagem natural.
+def _revisar_secoes_via_llm(
+    caso_id: str, secoes_atuais: list[dict[str, Any]], prompt_critica: str
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    instrucao = _com_skill_do_escritorio(caso_id, _INSTRUCAO_REVISAO, revisao=True)
+    minuta_atual = "\n\n".join(
+        f"### {s.get('code')} — {s.get('label', s.get('code'))}\n{s.get('content', '')}"
+        for s in secoes_atuais
+    )
+    originais = {s.get("code"): s for s in secoes_atuais}
+    observacao = ""
+    melhor: tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], int] | None = None
 
-    Mesmo recurso que `revisar_com_prompt` oferece à petição inicial — a
-    diferença é que a peça anexa não versiona nem guarda a crítica em
-    `peticao_criticas` (ela já não tem histórico nenhum, nem para "gerar de
-    novo"; ver `armazenamento.salvar_peticao_anexa`). A revisão sobrescreve o
-    texto atual da peça, e é isso que a tela avisa antes de aplicar.
-    """
+    for tentativa in (1, 2):
+        entrada = f"MINUTA ATUAL:\n{minuta_atual}\n\nCRÍTICA DO ADVOGADO:\n{prompt_critica}"
+        if observacao:
+            entrada += (
+                f"\n\nATENÇÃO — A TENTATIVA ANTERIOR FALHOU: {observacao}\n"
+                "Corrija isso agora, mudando somente o que a crítica pede."
+            )
+        saida = _llm_json(instrucao, entrada, timeout=240.0)
+        secoes = _mesclar_revisao(secoes_atuais, _normalizar_secoes(saida.get("secoes") or []))
+        alteradas = _secoes_alteradas(secoes_atuais, secoes)
+        if not alteradas:
+            observacao = "nenhum trecho da minuta foi alterado, mas a crítica pede mudança."
+            continue
+
+        conferencia = _conferir_revisao(prompt_critica, secoes_atuais, alteradas)
+        indevidas = set(conferencia["alteradas_sem_pedido"]) & {s.get("code") for s in alteradas}
+        if indevidas and len(indevidas) < len(alteradas):
+            secoes = [
+                dict(originais[s.get("code")]) if s.get("code") in indevidas else s for s in secoes
+            ]
+            alteradas = _secoes_alteradas(secoes_atuais, secoes)
+
+        melhor = (secoes, alteradas, conferencia, tentativa)
+        if conferencia["atendeu"] is not False:
+            break
+        observacao = conferencia["faltou"] or "a revisão não fez tudo o que a crítica pede."
+
+    if melhor is None:
+        raise ErroPeticao(
+            "A IA não alterou nada na peça, então nenhuma versão nova foi criada. Reescreva o "
+            "pedido dizendo a seção e o que deve mudar (ex.: “em Dos pedidos, separe dano moral "
+            "de dano material”)."
+        )
+
+    secoes, alteradas, conferencia, tentativas = melhor
+    return secoes, {
+        "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
+        "atendeu": conferencia["atendeu"],
+        "faltou": "" if conferencia["atendeu"] is not False else conferencia["faltou"],
+        "tentativas": tentativas,
+    }
+
+
+def revisar_anexa_com_prompt(
+    peca_id: str, *, prompt_critica: str, usuario: str = ""
+) -> dict[str, Any]:
     prompt_critica = prompt_critica.strip()
     if not prompt_critica:
         raise ErroPeticao("Escreva o que deve mudar nesta peça.")
@@ -1064,14 +1171,25 @@ def revisar_anexa_com_prompt(peca_id: str, *, prompt_critica: str) -> dict[str, 
     if not registro:
         raise ErroPeticao("Peça não encontrada.")
 
+    anterior = json.loads(json.dumps(registro["dados"]))
     dados = dict(registro["dados"])
     secoes_atuais = dados.get("sections") or []
     if not secoes_atuais:
         raise ErroPeticao("Esta peça não tem seções para revisar.")
 
-    secoes = _revisar_secoes_via_llm(registro["caso_id"], secoes_atuais, prompt_critica)
+    secoes, conferencia = _revisar_secoes_via_llm(registro["caso_id"], secoes_atuais, prompt_critica)
+    armazenamento.registrar_versao_peticao(registro["caso_id"], anterior, chave=peca_id)
+    agora = _agora()
     dados["sections"] = secoes
-    dados["updated_at"] = _agora()
+    dados["updated_at"] = agora
+    dados["version"] = int(anterior.get("version") or 1) + 1
+    dados["revisao"] = {
+        "tipo": "prompt",
+        "prompt": prompt_critica,
+        "usuario": usuario,
+        "em": agora,
+        **conferencia,
+    }
 
     armazenamento.salvar_peticao_anexa(
         registro["caso_id"],
@@ -1123,7 +1241,7 @@ def revisar_com_prompt(
     if not secoes_atuais:
         raise ErroPeticao("Esta petição não tem seções para revisar.")
 
-    secoes = _revisar_secoes_via_llm(caso_id, secoes_atuais, prompt_critica)
+    secoes, conferencia = _revisar_secoes_via_llm(caso_id, secoes_atuais, prompt_critica)
 
     # 1) snapshot da versão anterior — antes de sobrescrever.
     armazenamento.registrar_versao_peticao(caso_id, atual)
@@ -1135,6 +1253,13 @@ def revisar_com_prompt(
         "version": versao_resultado,
         "status": "IN_REVIEW",
         "sections": secoes,
+        "revisao": {
+            "tipo": "prompt",
+            "prompt": prompt_critica,
+            "usuario": usuario,
+            "em": _agora(),
+            **conferencia,
+        },
     }
     _salvar(caso_id, novos_dados)
 
@@ -1169,24 +1294,47 @@ def historico_de_criticas(caso_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def historico_de_versoes(caso_id: str) -> list[dict[str, Any]]:
+def historico_de_versoes(caso_id: str, peca_id: str | None = None) -> list[dict[str, Any]]:
     """As versões anteriores desta petição — o que ela era antes de cada revisão."""
+    if peca_id:
+        return armazenamento.listar_versoes_peticao(caso_id, chave=peca_id)
     return armazenamento.listar_versoes_peticao(caso_id)
 
 
-def salvar_secoes(caso_id: str, secoes: list[dict[str, str]]) -> dict[str, Any]:
+def _aplicar_edicao_manual(
+    dados: dict[str, Any], secoes: list[dict[str, str]], usuario: str
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    anterior = json.loads(json.dumps(dados))
+    por_codigo = {s["code"]: s.get("content", "") for s in secoes if s.get("code")}
+    atuais = [secao for secao in dados.get("sections") or [] if secao.get("code") != "JURIMETRY"]
+    novas = [
+        {**secao, "content": por_codigo[secao["code"]]} if secao.get("code") in por_codigo else secao
+        for secao in atuais
+    ]
+    alteradas = _secoes_alteradas(atuais, novas)
+    dados["sections"] = novas
+    if not alteradas:
+        return dados, None
+    agora = _agora()
+    dados["version"] = int(anterior.get("version") or 1) + 1
+    dados["revisao"] = {
+        "tipo": "manual",
+        "usuario": usuario,
+        "em": agora,
+        "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
+    }
+    return dados, anterior
+
+
+def salvar_secoes(
+    caso_id: str, secoes: list[dict[str, str]], usuario: str = ""
+) -> dict[str, Any]:
     dados = carregar(caso_id)
     if not dados:
         raise ErroPeticao("Nenhuma petição gerada para este caso.")
-    por_codigo = {s["code"]: s.get("content", "") for s in secoes if s.get("code")}
-    dados["sections"] = [
-        secao
-        for secao in dados.get("sections") or []
-        if secao.get("code") != "JURIMETRY"
-    ]
-    for secao in dados["sections"]:
-        if secao["code"] in por_codigo:
-            secao["content"] = por_codigo[secao["code"]]
+    dados, anterior = _aplicar_edicao_manual(dados, secoes, usuario)
+    if anterior is not None:
+        armazenamento.registrar_versao_peticao(caso_id, anterior)
     return _salvar(caso_id, dados)
 
 
@@ -1211,6 +1359,7 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "blocking_findings": dados.get("blocking_findings", 0),
         "model": dados.get("model"),
         "created_at": dados.get("created_at", _agora()),
+        "revisao": dados.get("revisao") or None,
         "sections": [
             secao
             for secao in dados.get("sections") or []
