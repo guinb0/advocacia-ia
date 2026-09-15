@@ -229,6 +229,7 @@ TABELAS = (
     "auditorias_entrevista",
     "solicitacoes_peticao",
     "modelos_documento",
+    "gravacoes_temporarias",
 )
 
 
@@ -682,6 +683,19 @@ CREATE TABLE {SCHEMA}.{PREFIXO}modelos_documento (
     enviado_por   nvarchar(400)  NOT NULL CONSTRAINT df_acervo_mod_quem DEFAULT N'',
     criado_em     varchar(40)    NOT NULL,
     atualizado_em varchar(40)    NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}gravacoes_temporarias') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}gravacoes_temporarias (
+    id            varchar(64)    NOT NULL CONSTRAINT pk_acervo_grav_temp PRIMARY KEY,
+    tipo          varchar(20)    NOT NULL,
+    entrevista_id varchar(64)    NOT NULL CONSTRAINT df_acervo_grav_temp_ent DEFAULT '',
+    nome_arquivo  nvarchar(400)  NOT NULL,
+    mime          varchar(100)   NOT NULL,
+    tamanho       bigint         NOT NULL,
+    conteudo      varbinary(max) NOT NULL,
+    enviado_por   nvarchar(400)  NOT NULL CONSTRAINT df_acervo_grav_temp_quem DEFAULT N'',
+    criado_em     varchar(40)    NOT NULL
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}roteiros') IS NULL

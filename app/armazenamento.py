@@ -2635,6 +2635,69 @@ def excluir_roteiro(codigo: str) -> bool:
         )
 
 
+def salvar_gravacao_temporaria(
+    *,
+    tipo: str,
+    entrevista_id: str,
+    nome_arquivo: str,
+    mime: str,
+    conteudo: bytes,
+    enviado_por: str = "",
+) -> dict[str, Any]:
+    from uuid import uuid4
+
+    registro = {
+        "id": uuid4().hex,
+        "tipo": tipo,
+        "entrevista_id": entrevista_id,
+        "nome_arquivo": nome_arquivo,
+        "mime": mime,
+        "tamanho": len(conteudo),
+        "enviado_por": enviado_por,
+        "criado_em": agora(),
+    }
+    with conectar() as con:
+        con.execute(
+            """
+            INSERT INTO gravacoes_temporarias
+                   (id, tipo, entrevista_id, nome_arquivo, mime, tamanho, conteudo,
+                    enviado_por, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                registro["id"],
+                tipo,
+                entrevista_id,
+                nome_arquivo,
+                mime,
+                registro["tamanho"],
+                conteudo,
+                enviado_por,
+                registro["criado_em"],
+            ),
+        )
+    return registro
+
+
+def listar_gravacoes_temporarias() -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            """SELECT id, tipo, entrevista_id, nome_arquivo, mime, tamanho, enviado_por,
+                      criado_em
+                 FROM gravacoes_temporarias
+             ORDER BY criado_em DESC"""
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def obter_gravacao_temporaria(gravacao_id: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM gravacoes_temporarias WHERE id = ?", (gravacao_id,)
+        ).fetchone()
+    return dict(linha) if linha else None
+
+
 # --------------------------------------------------- modelos .docx do escritório
 #
 # O contrato de honorários não é versionado (ver o `.gitignore` e o comentário da

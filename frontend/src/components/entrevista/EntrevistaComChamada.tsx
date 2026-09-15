@@ -17,10 +17,11 @@ import {
   apagarCopiaTranscricao,
   lerCopiaTranscricao,
   montarTranscricaoBruta,
+  urlDoAudio,
   type TrechoTranscrito,
 } from "@/lib/transcricao";
 import { baixarTexto as baixarArquivoDeTexto } from "@/lib/baixar";
-import { enviarGravacaoDrive, statusDrive } from "@/lib/api";
+import { enviarGravacaoDrive, guardarGravacaoNoBanco, statusDrive } from "@/lib/api";
 
 /* A tela da entrevista: roteiro à esquerda, chamada à direita.
  *
@@ -283,6 +284,12 @@ export default function EntrevistaComChamada({
     const conteudo = montarTranscricaoBruta(trechos) || "Nenhuma fala foi transcrita neste atendimento.";
     baixarTexto(nome, conteudo);
     apagarCopiaTranscricao();
+    void guardarGravacaoNoBanco(
+      new Blob([conteudo], { type: "text/plain;charset=utf-8" }),
+      nome,
+      "transcricao",
+      ultimo.current[2],
+    ).catch(() => undefined);
     void statusDrive()
       .then((situacao) =>
         situacao.conectado
@@ -587,6 +594,14 @@ export default function EntrevistaComChamada({
                     const trechos = roteiro.current?.transcricaoBruta() ?? ultimo.current[3];
                     ultimo.current = [respostas, relato, entrevistaId, trechos];
                     salvarTranscricao(trechos);
+                    if (entrevistaId) {
+                      void fetch(urlDoAudio(entrevistaId))
+                        .then((resposta) => (resposta.ok ? resposta.blob() : null))
+                        .then((audio) =>
+                          audio ? guardarGravacaoNoBanco(audio, `Audio da entrevista ${entrevistaId}.m4a`, "audio", entrevistaId) : undefined,
+                        )
+                        .catch(() => undefined);
+                    }
                     onConcluir(respostas, relato, entrevistaId, trechos);
                   });
                 }}

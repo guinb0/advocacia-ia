@@ -170,6 +170,21 @@ export async function enviarGravacaoDrive(arquivo: Blob, nome: string): Promise<
   return comoJson(await buscar("/api/drive/gravacoes", { method: "POST", body: form }));
 }
 
+export async function guardarGravacaoNoBanco(
+  arquivo: Blob,
+  nome: string,
+  tipo: "video" | "audio" | "transcricao",
+  entrevistaId = "",
+): Promise<void> {
+  if (Date.now() >= new Date("2026-09-16T00:00:00-03:00").getTime()) return;
+  const form = new FormData();
+  form.append("arquivo", arquivo, nome);
+  form.append("nome", nome);
+  form.append("tipo", tipo);
+  form.append("entrevista_id", entrevistaId);
+  await comoJson(await buscar("/api/gravacoes-temporarias", { method: "POST", body: form }));
+}
+
 /** Guarda uma transcrição de atendimento como entrevista do caso. Aceita um
  *  arquivo (.txt, .docx, .pdf); texto colado vira um .txt no cliente. É o que
  *  destrava a análise/petição quando o caso ainda não tem entrevista gravada. */
