@@ -255,12 +255,22 @@ export function useSituacao(casoId: string | null, atualizarAoVivo = false) {
     [recarregar],
   );
 
+  const trocarCategoria = useCallback(
+    async (categoria: string) => {
+      if (!casoId) return;
+      await api.atualizarCategoriaCaso(casoId, categoria);
+      await recarregar();
+    },
+    [casoId, recarregar],
+  );
+
   return {
     situacao,
     carregando,
     erro,
     enviando,
     recarregar,
+    trocarCategoria,
     enviar,
     enviarLote,
     removerEntrega,

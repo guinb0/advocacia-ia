@@ -2925,8 +2925,11 @@ def atualizar_caso(
     cliente: str | None = Form(None),
     observacao: str | None = Form(None),
     telefone: str | None = Form(None),
+    categoria: str | None = Form(None),
 ):
-    if not armazenamento.atualizar_caso(caso_id, cliente, observacao, telefone):
+    if categoria is not None and categorias.obter(categoria) is None:
+        raise HTTPException(400, f"Categoria '{categoria}' não existe.")
+    if not armazenamento.atualizar_caso(caso_id, cliente, observacao, telefone, categoria):
         raise HTTPException(404, "Caso não encontrado ou nada para atualizar.")
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return armazenamento.obter_caso(caso_id)

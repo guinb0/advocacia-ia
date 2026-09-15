@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import type { SituacaoCaso } from "@/lib/types";
+import type { Categoria, SituacaoCaso } from "@/lib/types";
 import BaixarDocumentos from "@/components/caso/BaixarDocumentos";
-import { Aviso, BarraAbas, BotaoAba, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
+import { Aviso, BarraAbas, BotaoAba, Botao, CampoSeletor, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 import { prazosAcervo, type PrazosAcervo } from "@/lib/api";
 import ItemChecklistLinha from "@/components/caso/ItemChecklistLinha";
 import PainelPortal from "@/components/portal/PainelPortal";
@@ -39,6 +39,8 @@ interface Props {
    * recurso e duração de processo do escritório não são informação dele — além
    * de a rota exigir papel de advogado, o que renderia um bloco quebrado. */
   mostrarPrazos?: boolean;
+  categorias?: Categoria[];
+  onTrocarCategoria?: (categoria: string) => Promise<void>;
 }
 
 /** "há 2 h", "há 3 dias" — a mesma leitura do cabeçalho no desenho. */
@@ -64,8 +66,12 @@ export default function Checklist({
   onReatribuir,
   dentroDoAtendimento = false,
   mostrarPrazos = false,
+  categorias,
+  onTrocarCategoria,
 }: Props) {
   const [filtro, setFiltro] = useState<Filtro>("todos");
+  const [trocando, setTrocando] = useState(false);
+  const [erroTroca, setErroTroca] = useState<string | null>(null);
   const { caso, categoria, progresso, itens } = situacao;
 
   if (!categoria) {
@@ -97,6 +103,31 @@ export default function Checklist({
   ];
 
   const pct = Math.max(0, Math.min(100, progresso.percentual_obrigatorios));
+  const codigoAtual = categoria.codigo;
+
+  async function trocarCategoria(codigo: string) {
+    if (!onTrocarCategoria || codigo === codigoAtual) return;
+    const nome = categorias?.find((c) => c.codigo === codigo)?.nome ?? codigo;
+    const temDocumentos = itens.some((i) => i.entregas.length > 0) || (situacao.triagem?.length ?? 0) > 0;
+    if (
+      temDocumentos &&
+      !window.confirm(
+        `Trocar o tipo do caso para "${nome}" muda o checklist. ` +
+          "Documentos que não fizerem parte do novo tipo vão para a triagem, sem ser apagados. Continuar?",
+      )
+    ) {
+      return;
+    }
+    setTrocando(true);
+    setErroTroca(null);
+    try {
+      await onTrocarCategoria(codigo);
+    } catch (e) {
+      setErroTroca(e instanceof Error ? e.message : "Não foi possível trocar o tipo do caso.");
+    } finally {
+      setTrocando(false);
+    }
+  }
 
   return (
     <>
@@ -106,11 +137,38 @@ export default function Checklist({
 
       <div className="px-6 py-[22px] mb-5 border border-borda-forte rounded-cartao bg-papel shadow-cartao">
         <div className="flex justify-between items-center gap-[14px] mb-[14px] flex-wrap">
-          <Selo tom="info">{categoria.nome}</Selo>
+          {categorias && categorias.length > 0 && onTrocarCategoria ? (
+            <label className="flex items-center gap-2 flex-wrap text-tinta-3 text-xs font-semibold">
+              Tipo de ação
+              <CampoSeletor
+                aria-label="Tipo de ação do caso"
+                value={codigoAtual}
+                disabled={trocando}
+                onChange={(e) => void trocarCategoria(e.target.value)}
+              >
+                {categorias.map((c) => (
+                  <option key={c.codigo} value={c.codigo}>
+                    {c.nome}
+                  </option>
+                ))}
+              </CampoSeletor>
+              {trocando && <span className="font-normal">Trocando…</span>}
+            </label>
+          ) : (
+            <Selo tom="info">{categoria.nome}</Selo>
+          )}
           <span className="text-tinta-3 text-xs tabular-nums">
             atualizado {desde(caso.atualizado_em || caso.criado_em)}
           </span>
         </div>
+
+        {erroTroca && (
+          <div className="mb-[14px]">
+            <Aviso tom="critico" titulo="O tipo do caso não foi trocado">
+              {erroTroca}
+            </Aviso>
+          </div>
+        )}
 
         <div className="flex justify-between items-end gap-6 flex-wrap">
           <div>

@@ -291,6 +291,8 @@ const Telas = (props: HomeViewProps) => {
               onRemover={situacaoCaso.removerEntrega}
               onVincularIdentidade={situacaoCaso.vincularIdentidade}
               onReatribuir={situacaoCaso.reatribuir}
+              categorias={categorias}
+              onTrocarCategoria={situacaoCaso.trocarCategoria}
             />
             {casoAberto && <PainelAnaliseDocumentos casoId={casoAberto} />}
           </>
