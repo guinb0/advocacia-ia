@@ -287,6 +287,53 @@ def main_teste() -> int:
         "salvar e carregar de novo não duplica a identificação",
     )
 
+    com_modulos = roteiros.de_dict({
+        "nome": "Roteiro importado com modulos",
+        "blocos": [
+            {"id": "identificacao", "titulo": "Identificacao", "perguntas": [
+                {"id": "nome_completo", "texto": "Nome completo", "tipo": "dado"},
+                {"id": "telefone_whatsapp", "texto": "Telefone/WhatsApp", "tipo": "dado"},
+                {"id": "endereco_residencial_completo", "texto": "Endereço residencial completo, incluindo CEP", "tipo": "dado"},
+                {"id": "profissao", "texto": "Profissão", "tipo": "dado"},
+            ]},
+            {"id": "triagem", "titulo": "Triagem", "perguntas": [
+                {"id": "vitima_assalto_trabalho", "texto": "O(a) senhor(a) foi vítima de assalto durante o trabalho?", "tipo": "sim_nao"},
+                {"id": "acidente_trabalho", "texto": "O(a) senhor(a) sofreu algum acidente de trabalho?", "tipo": "sim_nao"},
+                {"id": "doenca_trabalho", "texto": "O(a) senhor(a) desenvolveu alguma doença em razão do trabalho?", "tipo": "sim_nao"},
+                {"id": "acidente_fora_trabalho_sequela", "texto": "Sofreu acidente fora do trabalho com sequela permanente?", "tipo": "sim_nao"},
+            ]},
+            {"id": "assalto", "titulo": "Assalto", "modulo": "assalto", "perguntas": [
+                {"id": "anos_dos_assaltos", "texto": "Em que ano(s) ocorreram os assaltos?", "tipo": "dado"},
+            ]},
+            {"id": "acidente_trabalho_2", "titulo": "Acidente de Trabalho", "modulo": "acidente_trabalho", "perguntas": [
+                {"id": "local_acidente", "texto": "Onde ocorreu?", "tipo": "dado"},
+            ]},
+            {"id": "doenca_ocupacional", "titulo": "Doença Ocupacional", "modulo": "doenca_ocupacional", "perguntas": [
+                {"id": "primeiros_sintomas", "texto": "Quando você percebeu os primeiros sintomas?", "tipo": "dado"},
+            ]},
+        ],
+    })
+    mapa_importado = roteiros.mapa_rastreio(com_modulos)
+    falhas += not checar(
+        mapa_importado == {
+            "vitima_assalto_trabalho": "assalto",
+            "acidente_trabalho": "acidente_trabalho",
+            "doenca_trabalho": "doenca_ocupacional",
+        },
+        f"a triagem de roteiro importado abre os módulos certos ({mapa_importado})",
+    )
+    ids_com_modulos = {p.id for b in com_modulos.blocos for p in b.perguntas}
+    falhas += not checar(
+        not {"nome_completo", "telefone_whatsapp", "endereco_residencial_completo"} & ids_com_modulos
+        and "profissao" in ids_com_modulos,
+        "campos da identificação repetidos com outro id saem, o resto do bloco fica",
+    )
+    falhas += not checar(
+        corpo["mapa_rastreio"].get("r_acidente") == "acidente"
+        and corpo["mapa_rastreio"].get("r_assalto") == "assalto",
+        f"o roteiro dos Correios mantém o mapa de rastreio ({corpo['mapa_rastreio']})",
+    )
+
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     return 1 if falhas else 0
 

@@ -618,7 +618,8 @@ def cenario_snapshot_do_roteiro_ativo() -> int:
         "empregado_publico",
         roteiro_ativo=roteiro_ativo,
     )
-    ids = {item["pergunta_id"] for item in r["faltando"]}
+    ids_identificacao = {p.id for p in escuta.roteiros.ABERTURA.perguntas}
+    ids = {item["pergunta_id"] for item in r["faltando"]} - ids_identificacao
     falhas += not checar(
         ids == {"pergunta_exclusiva_da_sessao"},
         f"a escuta usa o snapshot da sessão, não o catálogo ({ids})",
