@@ -189,7 +189,7 @@ export default function GlossarioDocumentos({ onVoltar }: { onVoltar: () => void
   }, [tipos, busca, mostrarDesativados]);
 
   const ativos = tipos.filter((t) => t.ativo).length;
-  const doEscritorio = tipos.filter((t) => !t.sistema).length;
+  const doEscritorio = tipos.length;
 
   function abrirNovo() {
     setPainel({ modo: "novo" });
@@ -405,11 +405,7 @@ export default function GlossarioDocumentos({ onVoltar }: { onVoltar: () => void
                     <strong className="min-w-0 truncate text-tinta text-sm" title={t.nome}>
                       {t.nome}
                     </strong>
-                    {t.sistema ? (
-                      <Selo tom="neutro">do sistema</Selo>
-                    ) : (
-                      <Selo tom="info">do escritório</Selo>
-                    )}
+                    <Selo tom="info">do escritório</Selo>
                     {!t.ativo && (
                       <Selo tom="atencao" simbolo="⏸">
                         desativado
