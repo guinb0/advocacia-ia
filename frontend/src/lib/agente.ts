@@ -158,6 +158,17 @@ export interface RevisaoRegistrada {
   perguntas?: string[];
 }
 
+export interface RevisaoPendente {
+  id: string;
+  status: "PENDING_REVIEW";
+  base_version: number;
+  sections: SecaoPeticao[];
+  prompt: string;
+  usuario?: string;
+  created_at: string;
+  revisao?: RevisaoRegistrada;
+}
+
 export interface Peticao {
   id: string;
   document_type: string;
@@ -184,6 +195,7 @@ export interface Peticao {
   created_at: string;
   sections?: SecaoPeticao[];
   revisao?: RevisaoRegistrada | null;
+  revisao_pendente?: RevisaoPendente | null;
   jurimetria?: {
     disponivel: boolean;
     origem?: string;
@@ -697,6 +709,14 @@ export function revisarPeticaoComPrompt(
     method: "POST",
     body: JSON.stringify({ prompt, generaliza }),
   });
+}
+
+export function aceitarRevisaoPendente(casoId: string, revisaoId: string): Promise<{ peticao: Peticao }> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/local/revisoes/${revisaoId}/aceitar`, { method: "POST" });
+}
+
+export function descartarRevisaoPendente(casoId: string, revisaoId: string): Promise<{ peticao: Peticao }> {
+  return chamar(`/api/agente/casos/${casoId}/peticao/local/revisoes/${revisaoId}/descartar`, { method: "POST" });
 }
 
 /** A rastreabilidade completa desta petição: toda crítica feita e toda versão anterior. */

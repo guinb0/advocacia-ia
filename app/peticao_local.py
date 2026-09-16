@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import unicodedata
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -560,6 +561,32 @@ def _normalizar_secoes(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return secoes
+
+
+def _normalizar_secoes_da_revisao(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normaliza a peça candidata sem impor as oito seções da geração inicial."""
+    resultado: list[dict[str, Any]] = []
+    usados: set[str] = set()
+    for indice, item in enumerate(brutas):
+        if not isinstance(item, dict):
+            continue
+        conteudo = str(item.get("content") or item.get("texto") or "").strip()
+        if not conteudo:
+            continue
+        base = re.sub(r"[^A-Z0-9_]+", "_", str(item.get("code") or item.get("label") or "SECAO").upper()).strip("_")
+        codigo = base[:48] or "SECAO"
+        if codigo in usados:
+            codigo = f"{codigo[:42]}_{indice + 1}"
+        usados.add(codigo)
+        resultado.append({
+            "code": codigo,
+            "label": str(item.get("label") or codigo.replace("_", " ").title()).strip(),
+            "content": conteudo,
+            "written_by": "agent",
+            "supporting_fact_ids": [],
+            "cited_precedent_ids": [],
+        })
+    return resultado
 
 
 def _analisar_jurimetria_da_minuta(
@@ -1428,18 +1455,22 @@ reescrever é justamente o que foi pedido. O limite é outro — nunca invente f
 prova, número de processo, valor ou data que não estejam na minuta atual. Sem
 material novo, aprofunde o RACIOCÍNIO JURÍDICO sobre o que já existe.
 
-Nunca apague uma seção inteira sem que a crítica peça.
 NUNCA devolva a minuta inteira igual ao que recebeu. Se o pedido for vago, ambíguo
 ou parecer já atendido, NÃO pare: aplique a melhor interpretação possível — o
 advogado pediu uma mudança e espera vê-la — e registre em "perguntas" o que
 precisaria confirmar com ele. Perguntar é bem-vindo; devolver o texto intacto, não.
 
-Você pode reescrever QUALQUER seção, inclusive criar e renumerar os títulos e
+Você tem poder total sobre a peça. Pode reescrever, criar, excluir ou reordenar
+seções inteiras quando isso decorrer da crítica, inclusive alterar praticamente
+100% do documento. Se o pedido for pontual, calibre a alteração para ele; se for
+profundo, entregue uma nova versão profunda e completa. Você pode criar e renumerar os títulos e
 subtítulos internos (I –, II –, I.1 –) e mover matéria de uma seção para outra —
 por exemplo tirar as preliminares do DO DIREITO e levá-las para DAS PRELIMINARES.
 Nada aqui é intocável, desde que a crítica do advogado sustente a mudança.
 
-Devolva as OITO seções completas, com o mesmo "code", mesmo as que não mudaram. JSON:
+Devolva a NOVA PEÇA COMPLETA como lista ordenada de seções. Não há quantidade,
+ordem ou código fixos: inclua todas as seções necessárias, inclusive as mantidas.
+Cada `code` deve ser estável, curto e único. JSON:
 {
   "secoes": [
     {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
@@ -1569,7 +1600,6 @@ def _revisar_secoes_via_llm(
         f"### {s.get('code')} — {s.get('label', s.get('code'))}\n{s.get('content', '')}"
         for s in secoes_atuais
     )
-    originais = {s.get("code"): s for s in secoes_atuais}
     observacao = ""
     perguntas: list[str] = []
     melhor: tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], int] | None = None
@@ -1600,9 +1630,10 @@ def _revisar_secoes_via_llm(
             for p in (saida.get("perguntas") or [])
             if str(p).strip()
         ][:5]
-        secoes = _mesclar_revisao(secoes_atuais, _normalizar_secoes(saida.get("secoes") or []))
+        secoes = _normalizar_secoes_da_revisao(saida.get("secoes") or [])
         alteradas = _secoes_alteradas(secoes_atuais, secoes)
-        if not alteradas:
+        mudou_estrutura = [s.get("code") for s in secoes_atuais] != [s.get("code") for s in secoes]
+        if not alteradas and not mudou_estrutura:
             observacao = (
                 "você devolveu a minuta inteira igual. Aplique a melhor interpretação do "
                 "pedido e registre em 'perguntas' o que precisar confirmar."
@@ -1610,20 +1641,11 @@ def _revisar_secoes_via_llm(
             continue
 
         conferencia = _conferir_revisao(prompt_critica, secoes_atuais, alteradas)
-        indevidas = set(conferencia["alteradas_sem_pedido"]) & {s.get("code") for s in alteradas}
         # Pedido GLOBAL não tem seção indevida — e isto não é detalhe: era esta
         # trava que desfazia o trabalho. Em "melhora a fundamentação em todos os
         # pontos", a conferência marcava seções como "não pedidas" e o código
         # restaurava o texto raso original. O advogado via "Seções alteradas:
         # Dos fatos, Do direito" e um texto que continuava do mesmo tamanho.
-        if _pedido_global(prompt_critica):
-            indevidas = set()
-        if indevidas and len(indevidas) < len(alteradas):
-            secoes = [
-                dict(originais[s.get("code")]) if s.get("code") in indevidas else s for s in secoes
-            ]
-            alteradas = _secoes_alteradas(secoes_atuais, secoes)
-
         melhor = (secoes, alteradas, conferencia, tentativa)
         if conferencia["atendeu"] is not False:
             break
@@ -1757,6 +1779,18 @@ def revisar_com_prompt(
     # versões falsas, e o advogado perderia a referência de quando a peça
     # realmente mudou. As perguntas da IA sobem junto — é com elas que ele
     # reescreve o pedido e destrava.
+    if conferencia.get("alterou"):
+        candidato = {
+            "id": uuid.uuid4().hex, "status": "PENDING_REVIEW",
+            "base_version": int(atual.get("version") or 1), "sections": secoes,
+            "prompt": prompt_critica, "usuario": usuario, "generaliza": generaliza,
+            "created_at": _agora(), "revisao": {"tipo": "prompt", "prompt": prompt_critica,
+                "usuario": usuario, "em": _agora(), **conferencia},
+        }
+        novos_dados = {**atual, "revisao_pendente": candidato}
+        _salvar(caso_id, novos_dados)
+        return novos_dados
+
     if not conferencia.get("alterou"):
         return {**atual, "revisao": {
             "tipo": "prompt",
@@ -1807,6 +1841,52 @@ def revisar_com_prompt(
     return novos_dados
 
 
+def aceitar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
+    atual = carregar(caso_id)
+    candidata = (atual or {}).get("revisao_pendente") or {}
+    if not atual or candidata.get("id") != revisao_id:
+        raise ErroPeticao("Revisão pendente não encontrada.")
+    if int(candidata.get("base_version") or 0) != int(atual.get("version") or 1):
+        raise ErroPeticao("A peça mudou após a revisão; gere uma nova comparação.")
+    secoes = candidata.get("sections") or []
+    if not secoes:
+        raise ErroPeticao("A revisão pendente não contém uma peça válida.")
+    armazenamento.registrar_versao_peticao(caso_id, {k: v for k, v in atual.items() if k != "revisao_pendente"})
+    agora = _agora()
+    dados = {k: v for k, v in atual.items() if k != "revisao_pendente"}
+    dados.update({
+        "sections": secoes, "version": int(atual.get("version") or 1) + 1,
+        "status": "IN_REVIEW", "updated_at": agora,
+        "revisao": {"tipo": "prompt", "status": "ACCEPTED", "id": revisao_id,
+            "prompt": candidata.get("prompt", ""), "usuario": candidata.get("usuario", ""),
+            "em": agora, **(candidata.get("revisao") or {})},
+    })
+    _salvar(caso_id, dados)
+    try:
+        peticao_criticas.inicializar()
+        peticao_criticas.registrar(caso_id=caso_id, categoria=_categoria_do_caso(caso_id),
+            versao_origem=int(atual.get("version") or 1), versao_resultado=int(dados["version"]),
+            prompt=str(candidata.get("prompt") or ""), usuario=str(candidata.get("usuario") or ""),
+            generaliza=bool(candidata.get("generaliza", True)))
+    except Exception:
+        log.exception("crítica aceita não pôde ser registrada (caso %s)", caso_id)
+    return dados
+
+
+def descartar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
+    atual = carregar(caso_id)
+    candidata = (atual or {}).get("revisao_pendente") or {}
+    if not atual or candidata.get("id") != revisao_id:
+        raise ErroPeticao("Revisão pendente não encontrada.")
+    dados = {k: v for k, v in atual.items() if k != "revisao_pendente"}
+    descartadas = list(dados.get("revisoes_descartadas") or [])[-19:]
+    descartadas.append({**candidata, "status": "REJECTED", "rejected_at": _agora()})
+    dados["revisoes_descartadas"] = descartadas
+    dados["revisao"] = {"tipo": "prompt", "status": "REJECTED", "id": revisao_id,
+        "prompt": candidata.get("prompt", ""), "usuario": candidata.get("usuario", ""), "em": _agora()}
+    return _salvar(caso_id, dados)
+
+
 def historico_de_criticas(caso_id: str) -> list[dict[str, Any]]:
     """A rastreabilidade que a issue pede: cada crítica deste caso, quem pediu, quando."""
     try:
@@ -1838,6 +1918,9 @@ def _aplicar_edicao_manual(
     dados["sections"] = novas
     if not alteradas:
         return dados, None
+    # Uma edição manual muda a versão-base; a candidata anterior não pode mais
+    # ser aceita por cima dela.
+    dados.pop("revisao_pendente", None)
     agora = _agora()
     dados["version"] = int(anterior.get("version") or 1) + 1
     dados["revisao"] = {
@@ -1883,6 +1966,7 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "model": dados.get("model"),
         "created_at": dados.get("created_at", _agora()),
         "revisao": dados.get("revisao") or None,
+        "revisao_pendente": dados.get("revisao_pendente") or None,
         "sections": [
             secao
             for secao in dados.get("sections") or []

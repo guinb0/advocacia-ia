@@ -367,7 +367,12 @@ def testar_revisao_por_prompt() -> int:
     dados = pl.revisar_com_prompt(
         CASO, prompt_critica="separe o dano moral", usuario="ana", generaliza=True
     )
-    falhas += not checar(dados["version"] == antes + 1, f"a revisão cria a versão seguinte (v{dados['version']})")
+    candidata = dados.get("revisao_pendente") or {}
+    falhas += not checar(dados["version"] == antes and candidata.get("status") == "PENDING_REVIEW", "a revisão cria candidata sem sobrescrever a versão oficial")
+    candidata_pedidos = next(s for s in candidata.get("sections") or [] if s["code"] == "CLAIMS")
+    falhas += not checar("dano moral em pedido próprio" in candidata_pedidos["content"], "a candidata contém a alteração pedida")
+    dados = pl.aceitar_revisao_pendente(CASO, candidata["id"])
+    falhas += not checar(dados["version"] == antes + 1, f"aceitar cria a versão seguinte (v{dados['version']})")
     falhas += not checar(dados["status"] == "IN_REVIEW", "revisão por prompt volta para revisão humana")
     pedidos = next(s for s in dados["sections"] if s["code"] == "CLAIMS")
     falhas += not checar("dano moral em pedido próprio" in pedidos["content"], "a crítica foi aplicada aos pedidos")
@@ -898,27 +903,25 @@ def testar_revisao_garantida() -> int:
     dados = pl.revisar_com_prompt(
         CASO, prompt_critica="inclua dano material e estético nos pedidos", usuario="bia", generaliza=False
     )
-    por_codigo = {s["code"]: s["content"] for s in dados["sections"]}
+    candidata = dados.get("revisao_pendente") or {}
+    por_codigo = {s["code"]: s["content"] for s in candidata.get("sections") or []}
     antes = {s["code"]: s["content"] for s in secoes}
     falhas += not checar("c) dano estético" in por_codigo["CLAIMS"], "o que faltou foi aplicado na segunda tentativa")
     falhas += not checar(
         len(entradas) == 4 and "faltou o dano estético" in entradas[2][1],
         "a segunda tentativa recebe o que a conferência disse que faltou",
     )
-    falhas += not checar(por_codigo["FACTS"] == antes["FACTS"], "seção alterada sem pedido volta ao texto original")
-    falhas += not checar(
-        por_codigo["HEADING"] == antes["HEADING"] and por_codigo["CLOSING"] == antes["CLOSING"],
-        "seções que a IA não devolveu continuam intactas",
-    )
-    revisao = dados.get("revisao") or {}
+    falhas += not checar(por_codigo["FACTS"] == "fatos reescritos sem ninguém pedir", "a candidata pode reorganizar livremente a peça")
+    revisao = candidata.get("revisao") or {}
     falhas += not checar(
         revisao.get("usuario") == "bia"
-        and revisao.get("alteradas") == ["Dos pedidos"]
+        and set(revisao.get("alteradas") or []) == {"Claims", "Facts"}
         and revisao.get("atendeu") is True
         and revisao.get("tentativas") == 2,
         f"a revisão registra quem pediu, o que mudou e a conferência ({revisao})",
     )
-    falhas += not checar(dados["version"] == versao + 1, "e cria exatamente uma versão nova")
+    dados = pl.aceitar_revisao_pendente(CASO, candidata["id"])
+    falhas += not checar(dados["version"] == versao + 1, "aceitar cria exatamente uma versão nova")
     falhas += not checar(
         pl.historico_de_versoes(CASO)[-1]["versao"] == versao,
         "a versão anterior à revisão foi guardada no histórico",

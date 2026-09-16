@@ -11,7 +11,9 @@ import { Aviso, Botao, Cartao, RotuloCampo, Campo } from "@/components/ui/Basico
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
+  aceitarRevisaoPendente,
   buscarPeticao,
+  descartarRevisaoPendente,
   estadoPeticaoFluxo,
   gerarAnaliseEPeticao,
   historicoDePeticao,
@@ -252,7 +254,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       const alteradas = revisao?.alteradas ?? [];
       setConcluido({
         acao: "revisar",
-        texto: `Revisão aplicada — a petição está na versão ${resultado.peticao.version}${
+        texto: `Revisão concluída — compare a candidata antes de aceitar. A peça oficial permanece na versão ${resultado.peticao.version}${
           alteradas.length ? `. Seções alteradas: ${alteradas.join(", ")}` : ""
         }.`,
       });
@@ -280,6 +282,26 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         acao: "revisar",
         texto: e instanceof Error ? e.message : "Não foi possível aplicar a revisão.",
       });
+    } finally {
+      setRevisando(false);
+    }
+  }
+
+  async function decidirRevisao(aceitar: boolean) {
+    const candidata = peticao?.revisao_pendente;
+    if (!peticao || !candidata) return;
+    setRevisando(true);
+    setErro(null);
+    try {
+      const resultado = aceitar
+        ? await aceitarRevisaoPendente(casoId, candidata.id)
+        : await descartarRevisaoPendente(casoId, candidata.id);
+      setPeticao(resultado.peticao);
+      setEdicao(Object.fromEntries((resultado.peticao.sections ?? []).map((s) => [s.code, s.content])));
+      setConcluido({ acao: "revisar", texto: aceitar ? "Revisão aceita e gravada como nova versão." : "Revisão descartada; a peça original foi preservada." });
+      await recarregar();
+    } catch (e) {
+      setErro({ acao: "revisar", texto: e instanceof Error ? e.message : "Não foi possível concluir a revisão." });
     } finally {
       setRevisando(false);
     }
@@ -588,6 +610,16 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             onEditar={(codigo, valor) => setEdicao((atual) => ({ ...atual, [codigo]: valor }))}
           />
 
+          {peticao.revisao_pendente && (
+            <ComparacaoRevisao
+              anterior={peticao.sections ?? []}
+              candidata={peticao.revisao_pendente.sections}
+              revisando={revisando}
+              onAceitar={() => void decidirRevisao(true)}
+              onDescartar={() => void decidirRevisao(false)}
+            />
+          )}
+
           {/* A revisão por prompt vem DEPOIS do texto: ela age sobre o que está
             * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
             * o advogado abria a tela num campo em branco e precisava rolar para
@@ -598,9 +630,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </RotuloCampo>
             <p className="text-xs text-tinta-3 m-0">
               Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
-              pedidos&quot;). A IA aplica só o que você pedir e preserva o resto do texto. A
-              versão atual fica guardada no histórico, e a revisão volta para
-              &quot;em revisão&quot; — precisa aprovar de novo.
+              pedidos&quot;). A IA gera uma nova versão completa para comparação. A versão
+              atual só muda depois que você aceitar a revisão.
             </p>
             <Campo
               area
@@ -1217,4 +1248,50 @@ function ListaRotulo({ titulo, itens }: { titulo: string; itens: string[] }) {
       </ul>
     </div>
   );
+}
+
+function ComparacaoRevisao({
+  anterior, candidata, revisando, onAceitar, onDescartar,
+}: {
+  anterior: SecaoPeticao[]; candidata: SecaoPeticao[]; revisando: boolean;
+  onAceitar: () => void; onDescartar: () => void;
+}) {
+  const porCodigo = new Map(candidata.map((s) => [s.code, s]));
+  const todos = [...anterior, ...candidata.filter((s) => !anterior.some((a) => a.code === s.code))];
+  const mudancas = todos.filter((s) => (porCodigo.get(s.code)?.content ?? "") !== (anterior.find((a) => a.code === s.code)?.content ?? "")).length;
+  return (
+    <section className="border-2 border-acao-borda bg-papel p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div><h3 className={TITULO}>Revisão pendente</h3><p className={SUB}>Compare a peça completa antes de aceitar. {mudancas} seção(ões) com alteração.</p></div>
+        <span className="rounded-full bg-acao-clara px-3 py-1 text-xs font-semibold text-tinta-2">A peça oficial continua preservada</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+        <ColunaComparacao titulo="VERSÃO ANTERIOR" secoes={todos.map((s) => anterior.find((a) => a.code === s.code) ?? { ...s, content: "" })} oposta={porCodigo} tipo="antes" />
+        <ColunaComparacao titulo="NOVA VERSÃO" secoes={todos.map((s) => porCodigo.get(s.code) ?? { ...s, content: "" })} oposta={new Map(anterior.map((s) => [s.code, s]))} tipo="depois" />
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <Botao variante="secundario" pequeno disabled={revisando} onClick={onDescartar}>Descartar revisão</Botao>
+        <Botao variante="primario" pequeno disabled={revisando} onClick={onAceitar}>{revisando ? "Salvando…" : "Aceitar revisão"}</Botao>
+      </div>
+    </section>
+  );
+}
+
+function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoPeticao>; tipo: "antes" | "depois" }) {
+  return <article className="min-w-0 max-h-[70vh] overflow-auto border border-borda bg-papel-2 p-3">
+    <h4 className="sticky top-0 bg-papel-2 py-1 text-xs font-bold tracking-wide text-tinta">{titulo}</h4>
+    {secoes.map((secao, i) => <div key={`${secao.code}-${i}`} className="mb-4 whitespace-pre-wrap text-sm leading-relaxed text-tinta">
+      <p className="mb-1 font-semibold">{secao.label}</p>
+      <TextoComDiff texto={secao.content} outro={oposta.get(secao.code)?.content ?? ""} tipo={tipo} />
+    </div>)}
+  </article>;
+}
+
+function TextoComDiff({ texto, outro, tipo }: { texto: string; outro: string; tipo: "antes" | "depois" }) {
+  if (texto === outro) return <>{texto}</>;
+  const palavras = texto.split(/(\s+)/); const opostas = new Set(outro.split(/(\s+)/).filter(Boolean));
+  return <>{palavras.map((palavra, i) => {
+    const mudou = palavra.trim() && !opostas.has(palavra);
+    return <span key={i} className={mudou ? tipo === "antes" ? "bg-red-100 text-red-900 line-through" : "bg-green-100 text-green-900" : undefined}>{palavra}</span>;
+  })}</>;
 }

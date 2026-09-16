@@ -756,6 +756,22 @@ def historico_de_peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
     return {"criticas": [], "versoes": []}
 
 
+@roteador.post("/casos/{caso_id}/peticao/local/revisoes/{revisao_id}/aceitar")
+def aceitar_revisao_pendente(caso_id: str, revisao_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.aceitar_revisao(caso_id, revisao_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao/local/revisoes/{revisao_id}/descartar")
+def descartar_revisao_pendente(caso_id: str, revisao_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.descartar_revisao(caso_id, revisao_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
 # ------------------------------------------------------------------- estilo
 
 
