@@ -99,6 +99,28 @@ def listar() -> list[dict[str, Any]]:
     return linhas
 
 
+#: Chave da orientação que vale para TODA peça, independente da ação.
+#:
+#: O escritório pediu para parar de configurar por ação: o que ele ensina sobre
+#: como redigir vale para a peça inteira, e dividir por categoria fazia a mesma
+#: instrução ser reescrita cinco vezes. Guardada na MESMA tabela, como uma linha
+#: reservada, porque o formato é idêntico — muda só o escopo de quem a lê.
+#:
+#: O prefixo `__` mantém a chave fora do espaço dos códigos reais de categoria
+#: (`acidente_trabalho_correios` e afins), então nenhuma ação futura colide com
+#: ela por acidente.
+CATEGORIA_GERAL = "__geral__"
+
+
+def instrucoes_gerais() -> str:
+    """A orientação única do escritório, válida para qualquer peça.
+
+    Mesma tolerância a falha de `instrucoes_da_categoria`: instrução é insumo
+    opcional, e o pgvector fora do ar não pode impedir a petição de sair.
+    """
+    return instrucoes_da_categoria(CATEGORIA_GERAL)
+
+
 def instrucoes_da_categoria(categoria: str) -> str:
     """Só o texto, para quem monta o prompt — vazio quando não há skill cadastrada.
 

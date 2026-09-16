@@ -694,44 +694,40 @@ class SkillPeticaoEntrada(BaseModel):
     instrucoes: str = Field(default="", max_length=8000)
 
 
-@app.get("/api/modelos/peticao/skills")
-async def listar_skills_de_peticao(_autorizado=PodeManterModeloPeticao):
-    """Uma linha por categoria — as sem skill cadastrada vêm com instruções vazias."""
+@app.get("/api/modelos/peticao/skill")
+async def obter_skill_de_peticao(_autorizado=PodeManterModeloPeticao):
+    """A orientação ÚNICA do escritório, válida para qualquer peça.
+
+    Era uma skill por categoria de ação. O escritório pediu o contrário: o que
+    ele ensina sobre como redigir vale para a peça inteira, e dividir por ação
+    obrigava a reescrever a mesma instrução cinco vezes — e a lembrar de
+    atualizar as cinco quando o entendimento mudasse.
+    """
     await run_in_threadpool(peticao_skills.inicializar)
-    salvas = {
-        registro["categoria"]: registro
-        for registro in await run_in_threadpool(peticao_skills.listar)
+    registro = await run_in_threadpool(
+        peticao_skills.obter, peticao_skills.CATEGORIA_GERAL
+    ) or {}
+    return {
+        "instrucoes": registro.get("instrucoes", ""),
+        "atualizado_por": registro.get("atualizado_por", ""),
+        "atualizado_em": registro.get("atualizado_em", ""),
     }
-    return [
-        {
-            "categoria": cat.codigo,
-            "nome": cat.nome,
-            "instrucoes": salvas.get(cat.codigo, {}).get("instrucoes", ""),
-            "atualizado_por": salvas.get(cat.codigo, {}).get("atualizado_por", ""),
-            "atualizado_em": salvas.get(cat.codigo, {}).get("atualizado_em", ""),
-        }
-        for cat in categorias.listar()
-    ]
 
 
-@app.put("/api/modelos/peticao/skills/{categoria}")
+@app.put("/api/modelos/peticao/skill")
 async def salvar_skill_de_peticao(
-    categoria: str,
     corpo: SkillPeticaoEntrada,
     usuario: auth.Usuario = PodeManterModeloPeticao,
 ):
-    """Grava a skill desta categoria. Nunca toca nas demais — a chave é a categoria."""
-    if categorias.obter(categoria) is None:
-        raise HTTPException(404, f"Categoria '{categoria}' não existe.")
+    """Grava a orientação geral. Sem categoria no caminho: ela não tem mais dono."""
     await run_in_threadpool(peticao_skills.inicializar)
     registro = await run_in_threadpool(
         peticao_skills.salvar,
-        categoria,
+        peticao_skills.CATEGORIA_GERAL,
         instrucoes=corpo.instrucoes.strip(),
         atualizado_por=usuario.nome,
     )
     return {
-        "categoria": categoria,
         "instrucoes": registro.get("instrucoes", ""),
         "atualizado_por": registro.get("atualizado_por", ""),
         "atualizado_em": registro.get("atualizado_em", ""),

@@ -29,9 +29,9 @@ import {
   ApiError,
   enviarModeloVisualPeticao,
   listarCategorias,
-  listarSkillsDePeticao,
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
+  obterSkillDePeticao,
   restaurarModeloVisualPeticao,
   salvarSkillDePeticao,
   type SkillDePeticao,
@@ -122,10 +122,11 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   // tela não decide nada (nem chama a taxonomia, nem mostra o aviso de "não ativado").
   const [configAgente, setConfigAgente] = useState<ConfigAgente | null>(null);
 
-  // Skill/prompt por categoria de petição — local ao Acervo, funciona com ou sem o
-  // agente jurídico ligado (issue "Configurar skill por modelo de petição").
-  const [skills, setSkills] = useState<SkillDePeticao[]>([]);
-  const [categoriaSkill, setCategoriaSkill] = useState("");
+  // Orientação de redação do escritório — UMA, para toda peça. Era uma por
+  // categoria de ação; virou única porque o que o escritório ensina sobre como
+  // redigir não muda com o tipo da ação. Local ao Acervo, funciona com ou sem o
+  // agente jurídico ligado.
+  const [skill, setSkill] = useState<SkillDePeticao | null>(null);
   const [instrucoesSkill, setInstrucoesSkill] = useState("");
   const [carregandoSkills, setCarregandoSkills] = useState(true);
   const [salvandoSkill, setSalvandoSkill] = useState(false);
@@ -180,34 +181,27 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   }
 
   useEffect(() => {
-    void listarSkillsDePeticao()
-      .then((itens) => {
-        setSkills(itens);
-        setCategoriaSkill((atual) => atual || itens[0]?.categoria || "");
+    void obterSkillDePeticao()
+      .then((salva) => {
+        setSkill(salva);
+        setInstrucoesSkill(salva.instrucoes ?? "");
       })
       .catch((falha) =>
-        setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível carregar as categorias."),
+        setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível carregar a orientação."),
       )
       .finally(() => setCarregandoSkills(false));
   }, []);
 
-  // Troca de categoria: o texto do campo acompanha o que já está salvo para ELA —
-  // sem isto, editar uma categoria e trocar de select levaria o rascunho junto.
-  useEffect(() => {
-    setInstrucoesSkill(skills.find((item) => item.categoria === categoriaSkill)?.instrucoes ?? "");
-  }, [categoriaSkill, skills]);
-
   async function salvarSkill() {
-    if (!categoriaSkill) return;
     setSalvandoSkill(true);
     setErroSkill(null);
     setRecadoSkill(null);
     try {
-      const salvo = await salvarSkillDePeticao(categoriaSkill, instrucoesSkill);
-      setSkills((atual) => atual.map((item) => (item.categoria === categoriaSkill ? { ...item, ...salvo } : item)));
-      setRecadoSkill("Skill salva. As próximas petições desta categoria já usam esta orientação.");
+      const salvo = await salvarSkillDePeticao(instrucoesSkill);
+      setSkill(salvo);
+      setRecadoSkill("Orientação salva. Toda petição gerada a partir de agora já a segue.");
     } catch (falha) {
-      setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível salvar a skill.");
+      setErroSkill(falha instanceof ApiError ? falha.message : "Não foi possível salvar a orientação.");
     } finally {
       setSalvandoSkill(false);
     }
@@ -668,12 +662,12 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         )}
       </Cartao>
 
-      <Cartao titulo="Skill de redação por categoria" className="min-w-0 overflow-hidden">
+      <Cartao titulo="Orientação de redação do escritório" className="min-w-0 overflow-hidden">
         <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
-          Uma orientação extra que a IA segue ao analisar e redigir a petição desta categoria de
-          caso — o que destacar, como abordar a tese, o que nunca pode faltar. Funciona
-          independente do agente jurídico e vale para toda petição gerada a partir de agora
-          nesta categoria; as demais categorias não são afetadas.
+          Uma orientação que a IA segue ao analisar e redigir <strong>qualquer</strong> petição —
+          o que destacar, como abordar a tese, o que nunca pode faltar. Vale para toda peça
+          gerada a partir de agora, sem separar por tipo de ação, e funciona independente do
+          agente jurídico.
         </p>
 
         {erroSkill && (
@@ -683,38 +677,20 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         )}
         {recadoSkill && <Aviso tom="ok">{recadoSkill}</Aviso>}
 
-        <label className={CAMPO}>
-          <span>Categoria (ação)</span>
-          <select
-            className={SELECT}
-            value={categoriaSkill}
-            disabled={carregandoSkills || !skills.length}
-            onChange={(evento) => setCategoriaSkill(evento.target.value)}
-          >
-            {carregandoSkills && <option value="">carregando…</option>}
-            {skills.map((item) => (
-              <option key={item.categoria} value={item.categoria}>
-                {item.nome}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="mt-4 flex flex-col gap-2 text-tinta-3 text-xs">
-          <span>Instruções de redação para esta categoria</span>
+        <label className="flex flex-col gap-2 text-tinta-3 text-xs">
+          <span>Instruções de redação</span>
           <textarea
             className={`${SELECT} min-h-32 resize-y`}
             value={instrucoesSkill}
-            disabled={!categoriaSkill}
+            disabled={carregandoSkills}
             placeholder="Ex.: dar ênfase ao nexo causal entre a doença e a função exercida, sempre pedir dano moral em separado do material."
             onChange={(evento) => setInstrucoesSkill(evento.target.value)}
           />
         </label>
 
-        {skills.find((item) => item.categoria === categoriaSkill)?.atualizado_por && (
+        {skill?.atualizado_por && (
           <p className="mt-2 mb-0 text-[11px] text-tinta-3">
-            Última alteração por{" "}
-            <strong>{skills.find((item) => item.categoria === categoriaSkill)?.atualizado_por}</strong>.
+            Última alteração por <strong>{skill.atualizado_por}</strong>.
           </p>
         )}
 
@@ -724,10 +700,8 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
             onClick={() => salvarSkill()}
             processando={salvandoSkill}
             textoProcessando="Salvando…"
-            pendencia={categoriaSkill ? null : "Escolha a categoria acima."}
-            pendenciaAoClicar
           >
-            Salvar skill desta categoria
+            Salvar orientação
           </BotaoProcesso>
         </div>
       </Cartao>
