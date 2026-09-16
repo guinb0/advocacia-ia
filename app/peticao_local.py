@@ -729,15 +729,84 @@ Cada content em parágrafos separados por linha em branco.""",
     return secoes, [str(p) for p in (saida.get("pendencias") or []) if str(p).strip()]
 
 
+def _precedentes_para_redigir(contexto: str) -> str:
+    """Julgados semelhantes ANTES de redigir, para a IA poder citá-los.
+
+    A jurimetria já existia, mas rodava depois (`_analisar_jurimetria_da_minuta`,
+    chamada com a minuta pronta): ela virava um apêndice auditável e NUNCA
+    chegava ao prompt. Por isso o advogado pedia jurisprudência e o texto saía
+    sem nenhuma — o modelo não tinha como citar o que não recebeu.
+
+    A consulta aqui é o próprio material do caso (entrevista + documentos), e não
+    a minuta, justamente porque a minuta ainda não existe neste ponto.
+
+    Falha não interrompe a geração: sem base, a peça sai como saía antes.
+    """
+    try:
+        similares, _jurisdicao, _uf = jurimetria_caso.buscar_focada(
+            contexto[:12_000], texto_para_uf=contexto
+        )
+    except Exception as erro:
+        log.warning("petição local: precedentes indisponíveis na redação: %s", erro)
+        return ""
+    if not similares:
+        return ""
+    linhas = ["\n\n=== JULGADOS SEMELHANTES (use no DO DIREITO) ==="]
+    for indice, trecho in enumerate(similares[:6], start=1):
+        ref = trecho.referencia()
+        linhas.append(
+            f"\n[J{indice}] processo={ref.get('processo') or ref.get('identificador')} "
+            f"resultado={ref.get('resultado') or 'não informado'} "
+            f"órgão={ref.get('vara') or 'não informado'}\n{trecho.texto[:2200]}"
+        )
+    linhas.append(
+        "\nCite estes julgados pelo número do processo ao fundamentar, explicando a "
+        "aplicação aos fatos deste caso. Nunca invente processo, ementa ou número."
+    )
+    return "\n".join(linhas)
+
+
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    contexto += _precedentes_para_redigir(contexto)
+
+    # As críticas DESTE caso, já aplicadas na geração.
+    #
+    # `_com_skill_do_escritorio` injeta as críticas da CATEGORIA (lições que valem
+    # para todo caso parecido). As deste caso específico — inclusive as marcadas
+    # "só deste caso", que de propósito não instruem a categoria — ficavam de
+    # fora, e gerar de novo desfazia tudo o que o advogado já tinha corrigido
+    # aqui. Ele reescrevia as mesmas críticas a cada geração.
+    try:
+        peticao_criticas.inicializar()
+        deste_caso = [
+            str(c.get("prompt") or "").strip()
+            for c in peticao_criticas.listar_por_caso(caso_id)
+            if str(c.get("prompt") or "").strip()
+        ][-20:]
+    except Exception:
+        log.warning("petição local: críticas do caso indisponíveis", exc_info=True)
+        deste_caso = []
+    if deste_caso:
+        contexto += (
+            "\n\n=== CORREÇÕES JÁ PEDIDAS NESTE CASO (aplique TODAS desde já) ===\n"
+            + "\n".join(f"- {c}" for c in deste_caso)
+            + "\nEstas correções já foram cobradas nesta peça. A minuta nova deve "
+            "nascer com todas aplicadas, sem precisar que sejam pedidas de novo."
+        )
     contexto += (
         "\n\n=== PADRÃO OBRIGATÓRIO DA PEÇA ===\n"
         "Desenvolva os fundamentos com fatos concretos do caso: cada tese deve ter "
-        "pelo menos dois parágrafos e explicar conduta, prova, nexo e consequência, "
-        "sem criar fatos. Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
-        "O valor da causa deve aparecer somente por extenso na seção VALUE. "
+        "pelo menos TRÊS parágrafos densos e explicar conduta, prova, nexo e "
+        "consequência, sem criar fatos. Peça rasa é peça recusada: cada parágrafo "
+        "traz premissa, fundamento legal, aplicação aos fatos e conclusão — nada de "
+        "afirmação solta em uma linha. Quando houver julgados no material abaixo, "
+        "desenvolva-os no texto explicando por que se aplicam a ESTES fatos. "
+        "Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
+        "A seção VALUE contém UMA frase e nada mais: 'Dá-se à causa o valor de "
+        "<extenso> (R$ <número>).' — sem discriminar a soma das parcelas, sem "
+        "explicar a composição, sem texto após o ponto final. "
         "A seção CLOSING deve conter apenas Termos em que, Pede deferimento, local/data "
         "e advogado/OAB, sem escrever o título FECHAMENTO dentro do conteúdo."
     )
@@ -1608,6 +1677,9 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
 _RE_TITULO_CENTRAL = re.compile(r"^[IVXLC]+\s*[–—-]\s*\S")
 #: Subtítulo numerado: "I.1 – Da Gratuidade de Justiça". Fica À ESQUERDA.
 _RE_SUBTITULO = re.compile(r"^[IVXLC]+\.\d+\s*[–—-]\s*\S")
+#: O endereçamento, em qualquer caixa: "Ao Juízo da Vara do Trabalho de …".
+#: Centralizado e convertido para CAIXA ALTA na hora de escrever o parágrafo.
+_RE_ENDERECAMENTO = re.compile(r"^(ao|à|a)\s+(ju[íi]zo|exmo|excelent[íi]ssim)", re.I)
 
 
 def _tipo_de_titulo(linha: str) -> str | None:
@@ -1641,12 +1713,20 @@ def _tipo_de_titulo(linha: str) -> str | None:
         return "esquerda"
     if _RE_TITULO_CENTRAL.match(texto):
         return "central"
+    # Endereçamento: centralizado e em CAIXA ALTA, decidido pelo escritório.
+    #
+    # A IA escreve "Ao Juízo da Vara do Trabalho de Tucuruí/PA" em caixa mista,
+    # então nenhuma das regras acima o alcançava e ele saía como parágrafo
+    # justificado com recuo, no meio do texto corrido.
+    if _RE_ENDERECAMENTO.match(texto):
+        return "endereco"
     if not any(c.islower() for c in texto) and any(c.isalpha() for c in texto):
-        principais = {
-            "DO DIREITO", "DOS FATOS", "DOS PEDIDOS", "DAS PROVAS",
-            "DO VALOR DA CAUSA", "FECHAMENTO",
-        }
-        return "central" if texto in principais else "esquerda"
+        # TODO o título de seção vai à ESQUERDA — inclusive DOS FATOS, DO DIREITO
+        # e DAS PROVAS, que antes iam ao centro. Era essa mistura que deixava a
+        # peça "torta": uns títulos centralizados, outros à esquerda, sem critério
+        # visível para quem lê. Só o endereçamento e o nome da ação ficam no
+        # centro, e os dois têm regra própria.
+        return "esquerda"
     return None
 
 
@@ -1664,7 +1744,12 @@ def _paragrafo_xml(
         # rótulo da seção), a decisão é dele e não se sobrepõe.
         titulo = None if (negrito or centralizado) else _tipo_de_titulo(linha)
         if titulo:
-            alinhamento = "center" if titulo == "central" else "left"
+            # O endereçamento é o único que muda o TEXTO, e não só o alinhamento:
+            # a IA o escreve em caixa mista ("Ao Juízo da Vara do Trabalho de
+            # Tucuruí/PA") e o escritório o quer em caixa alta, centralizado.
+            if titulo == "endereco":
+                texto_xml = escape(linha.strip().upper())
+            alinhamento = "center" if titulo in ("central", "endereco") else "left"
             partes.append(
                 f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
                 f'<w:r><w:rPr><w:b/></w:rPr>'
@@ -1724,7 +1809,14 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         rotulo = str(secao.get("label") or secao.get("code") or "").strip()
         conteudo = str(secao.get("content") or "").strip()
         if rotulo and secao.get("code") not in ("HEADING", "CLOSING"):
-            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True, centralizado=True))
+            # `centralizado=False`: o rótulo da seção fica À ESQUERDA.
+            #
+            # Estava centralizado, e era metade do problema — "DOS FATOS",
+            # "DO DIREITO" e "DAS PROVAS" apareciam no meio da página enquanto
+            # os subtítulos de dentro do conteúdo iam à esquerda. O escritório
+            # quer todos à esquerda; só o endereçamento e o nome da ação ficam
+            # no centro.
+            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True))
         if conteudo:
             # O HEADING NÃO é centralizado por inteiro.
             #
@@ -1772,7 +1864,14 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
-  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
+  <!-- A logo já era centralizada, mas na ÁREA ÚTIL — e as margens são
+       assimétricas (3,00 cm à esquerda, 1,89 cm à direita, medidas na peça de
+       referência). O centro da área útil cai 0,55 cm à direita do centro da
+       FOLHA, e é isso que se vê como logo fora do meio.
+
+       `w:right="629"` (1,11 cm, a diferença entre as margens) devolve o
+       parágrafo ao centro do papel, que é onde o olho espera o timbre. -->
+  <w:p><w:pPr><w:jc w:val="center"/><w:ind w:right="629"/></w:pPr><w:r><w:drawing>
     <wp:inline distT="0" distB="0" distL="0" distR="0">
       <!-- 5,82 × 3,28 cm em EMU (1 cm = 360000), o tamanho do timbre na petição
            de referência. A proporção é a mesma de antes (1,77), então a imagem
