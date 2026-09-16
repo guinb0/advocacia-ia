@@ -12,8 +12,8 @@ O QUE ELE PROTEGE, NA ORDEM DO FLUXO
 
 1. `transcricao` escolhe a entrevista certa (a mais recente COM texto).
 2. `estado` sabe dizer o que já existe antes de qualquer geração.
-3. `gerar_completo` devolve as sete seções, monta o .docx e não vaza o contexto
-   do prompt para a tela.
+3. `gerar_completo` devolve todas as seções de `SECOES_PADRAO`, monta o .docx e
+   não vaza o contexto do prompt para a tela.
 4. Gerar de novo **guarda a versão anterior** antes de sobrescrever — era o
    buraco: revisar por prompt arquivava, gerar de novo apagava.
 5. Editar à mão preserva o texto do advogado e regrava o .docx.
@@ -284,7 +284,7 @@ def testar_geracao() -> int:
     falhas += not checar(peticao["version"] == 1, f"a primeira petição é a versão 1 (veio {peticao['version']})")
     falhas += not checar(
         [s["code"] for s in peticao["sections"]] == [c for c, _ in pl.SECOES_PADRAO],
-        "devolve as sete seções, na ordem padrão",
+        "devolve todas as seções de SECOES_PADRAO, na ordem",
     )
     falhas += not checar(
         "contexto" not in (resultado["analise"] or {}),
@@ -685,7 +685,14 @@ def testar_pecas_anexas() -> int:
     # A listagem, que é o que a tela pinta.
     lista = pl.listar_anexas(CASO)
     falhas += not checar(len(lista) == 1, f"a peça aparece na lista do caso ({len(lista)})")
-    falhas += not checar(lista[0]["secoes"] == 7, f"com as sete seções normalizadas ({lista[0]['secoes']})")
+    # Ancorado em `SECOES_PADRAO` e não no número 7: a peça ganhou DAS PRELIMINARES
+    # e a contagem fixa quebrou o teste sem que nada estivesse errado. A próxima
+    # seção que entrar não vai quebrá-lo de novo pelo mesmo motivo.
+    esperadas = len(pl.SECOES_PADRAO)
+    falhas += not checar(
+        lista[0]["secoes"] == esperadas,
+        f"com as {esperadas} seções normalizadas ({lista[0]['secoes']})",
+    )
 
     # Editar à mão, como a petição inicial — era exatamente isto que faltava: a
     # segunda petição sugerida em diante só dava para baixar, não para editar
