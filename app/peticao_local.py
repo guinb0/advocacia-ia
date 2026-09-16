@@ -30,8 +30,23 @@ from . import casos as casos_ocr
 log = logging.getLogger("peticao_local")
 
 ID_LOCAL = "local"
-DOCX_STYLE_VERSION = 4
+#: Sobe a cada mudança no LAYOUT do .docx. `ler_docx` regrava o binário quando a
+#: versão salva é menor (ver o fim do módulo): sem incrementar aqui, as petições
+#: já geradas continuariam saindo com o layout antigo, e a mudança pareceria não
+#: ter surtido efeito justamente em quem já tem peça no sistema.
+#:
+#: 5 — layout medido na petição de referência do escritório (Auxílio-Acidente,
+#: 8 páginas): corpo serifado, margens 3,0 / 1,89 cm e texto começando em 4,66 cm,
+#: abaixo do timbre.
+DOCX_STYLE_VERSION = 5
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
+#: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
+#:
+#: Era "Arial". A petição de referência é composta em LiberationSerif — a métrica
+#: livre equivalente à Times New Roman —, e peça jurídica saindo em fonte sem
+#: serifa destoava do que o escritório protocola. Quem sobe um modelo continua
+#: mandando na fonte: este valor só vale na ausência dele.
+FONTE_PADRAO = "Times New Roman"
 MODELO_VISUAL_GERAL = "peticao_visual_geral"
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
@@ -77,7 +92,9 @@ def extrair_identidade_visual(conteudo: bytes) -> tuple[bytes, str, str]:
             logo_nome = candidatos[0]
             logo = arquivo.read(logo_nome)
 
-            fonte = "Arial"
+            # Reserva de quando o .docx enviado não declara `rFonts`: cai no mesmo
+            # padrão serifado do resto do sistema, e não mais em Arial.
+            fonte = FONTE_PADRAO
             if "word/styles.xml" in nomes:
                 raiz = ElementTree.fromstring(arquivo.read("word/styles.xml"))
                 ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -165,7 +182,7 @@ def identidade_visual() -> tuple[bytes, str, str, str]:
     if registro:
         logo, fonte, extensao = extrair_identidade_visual(registro["conteudo"])
         return logo, fonte, extensao, registro["nome_arquivo"]
-    return LOGO_LARA_MELO.read_bytes(), "Arial", ".png", "Padrão Lara & Melo"
+    return LOGO_LARA_MELO.read_bytes(), FONTE_PADRAO, ".png", "Padrão Lara & Melo"
 
 
 def _agora() -> str:
@@ -1438,7 +1455,19 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     <w:sectPr>
       <w:headerReference w:type="default" r:id="rIdHeader"/>
       <w:pgSz w:w="11906" w:h="16838"/>
-      <w:pgMar w:top="1985" w:right="1417" w:bottom="1417" w:left="1701" w:header="360"/>
+      <!-- Medido na petição de referência do escritório, página a página (as
+           quatro primeiras dão exatamente o mesmo recorte):
+
+             esquerda  3,00 cm = 1701 twips
+             direita   1,89 cm = 1069 twips
+             topo      4,66 cm = 2642 twips  (onde o TEXTO começa)
+             rodapé    1,25 cm =  708 twips
+             header    1,25 cm =  708 twips  (onde o timbre começa)
+
+           `w:top` é onde o corpo começa, não a borda do papel: entre 1,25 cm e
+           4,66 cm fica a logo, que é cabeçalho e se repete em toda página. Com
+           `w:top` menor que isso o texto subiria por cima do timbre. -->
+      <w:pgMar w:top="2642" w:right="1069" w:bottom="708" w:left="1701" w:header="708"/>
     </w:sectPr>
   </w:body>
 </w:document>"""
@@ -1451,11 +1480,14 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
   <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
     <wp:inline distT="0" distB="0" distL="0" distR="0">
-      <wp:extent cx="1600200" cy="905010"/><wp:docPr id="1" name="Logo do escritório"/>
+      <!-- 5,82 × 3,28 cm em EMU (1 cm = 360000), o tamanho do timbre na petição
+           de referência. A proporção é a mesma de antes (1,77), então a imagem
+           só cresce — não distorce. -->
+      <wp:extent cx="2095200" cy="1180800"/><wp:docPr id="1" name="Logo do escritório"/>
       <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
         <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo-escritorio"/><pic:cNvPicPr/></pic:nvPicPr>
           <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
-          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1600200" cy="905010"/></a:xfrm>
+          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2095200" cy="1180800"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
         </pic:pic>
       </a:graphicData></a:graphic>
