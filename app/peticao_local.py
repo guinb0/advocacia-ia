@@ -703,7 +703,8 @@ def redigir(
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Redija uma PETIÇÃO INICIAL trabalhista completa em português formal.
+            CONTRATO_DE_REDACAO
+            + """Redija uma PETIÇÃO INICIAL trabalhista completa em português formal.
 Use SOMENTE fatos da entrevista e documentos — não invente.
 Marque com [PENDENTE: motivo] o que depender só de alegação sem prova.
 
@@ -786,11 +787,14 @@ def _precedentes_para_redigir(contexto: str) -> str:
             f"órgão={ref.get('vara') or 'não informado'}\n{trecho.texto[:1800]}"
         )
     linhas.append(
-        f"\nSão {len(usados)} julgados. Use a MAIOR parte deles, não um ou dois: "
-        "cada tese do DO DIREITO deve vir amparada em pelo menos DOIS destes "
-        "julgados, citados pelo número do processo e com a razão de decidir "
-        "explicada e aplicada aos fatos deste caso — nada de citação solta ou "
-        "lista de ementas no fim. Nunca invente processo, ementa ou número."
+        f"\nSão {len(usados)} julgados REAIS, vindos do acervo do escritório. Use os "
+        "que de fato se aplicarem a estes fatos, citados pelo número do processo e "
+        "com a razão de decidir explicada — e diga em uma frase por que cada um "
+        "alcança este caso. NÃO cite julgado só porque tem palavras parecidas: "
+        "compare atividade, questão decidida e fundamento determinante, e reconheça "
+        "a distinção quando houver. Se nenhum destes servir para um ponto, escreva "
+        "[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO] em vez de forçar "
+        "um precedente pouco aderente. Nunca invente processo, ementa ou número."
     )
     return "\n".join(linhas)
 
@@ -861,36 +865,29 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
             "nascer com todas aplicadas, sem precisar que sejam pedidas de novo."
         )
     contexto += (
+        # Este bloco é FORMATO — onde cada coisa entra na peça. O mérito (estrutura
+        # da tese, anti-alucinação, auditoria) mora em `CONTRATO_DE_REDACAO`, que vai
+        # na instrução. Antes daqui saíam três regras que o escritório revogou: cota
+        # de quatro parágrafos por tese, dois julgados obrigatórios e a fórmula
+        # fiscal do valor da causa. Ficaram no histórico do git, não no prompt.
         "\n\n=== PADRÃO OBRIGATÓRIO DA PEÇA ===\n"
-        "Desenvolva os fundamentos com fatos concretos do caso: cada tese deve ter "
-        "pelo menos QUATRO parágrafos densos, cada parágrafo com no mínimo quatro "
-        "frases, explicando conduta, prova, nexo e consequência, sem criar fatos. "
-        "Peça rasa é peça recusada: cada parágrafo traz premissa, fundamento legal, "
-        "aplicação aos fatos e conclusão — nada de afirmação solta em uma linha, "
-        "nem parágrafo de duas linhas que enuncia a tese sem defendê-la. "
         "A seção PRELIMINARY reúne a matéria preliminar, numerada, ANTES dos fatos: "
         "'I – DO JUÍZO 100% DIGITAL' e 'II – DA GRATUIDADE DA JUSTIÇA' pertencem a "
         "ela, cada uma com subtítulo próprio e texto desenvolvido; a seção "
         "LEGAL_GROUNDS não repete nenhuma das duas. "
-        "Havendo julgados no material abaixo, o uso "
-        "deles é OBRIGATÓRIO e não opcional: cada tese do DO DIREITO se apoia em "
-        "pelo menos DOIS julgados, com processo citado e razão de decidir aplicada "
-        "a ESTES fatos. Peça com jurisprudência de enfeite, citada e não "
-        "desenvolvida, é peça recusada do mesmo jeito que peça rasa. "
-        "O mesmo vale para a LEGISLAÇÃO DO ACERVO: havendo dispositivos no "
-        "material abaixo, cada tese se apoia no artigo de lei que a sustenta, "
-        "citado por número e lei e transcrito quando for o caso. Artigo citado de "
+        "Os julgados e os dispositivos do material abaixo são REAIS e vieram do "
+        "acervo: prefira-os a qualquer citação de memória, e cite apenas os que "
+        "alcançarem estes fatos, dizendo por quê. Artigo ou processo citado de "
         "memória, fora do que está no material, é erro grave — a peça vai a "
-        "protocolo. "
+        "protocolo. Sem precedente verificável para um ponto, escreva "
+        "[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. "
         "Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
-        # A redação das duas vem do acervo do escritório (85 iniciais medidas):
-        # "Para efeitos meramente fiscais..." e "Nestes termos," aparecem em
-        # praticamente todas. "Termos em que", que estava aqui, não aparece em
-        # nenhuma.
-        "A seção VALUE contém UMA frase e nada mais: 'Para efeitos meramente "
-        "fiscais, dá-se à causa o valor de R$ <número>.' — sem discriminar a soma "
-        "das parcelas, sem explicar a composição, sem texto após o ponto final, e "
-        "SEM título de seção. "
+        "A seção CLAIMS traz cada pedido com seu valor individual quando exigido "
+        "(art. 840 da CLT), e cada pedido decorre de tese já fundamentada. "
+        "A seção VALUE traz o valor da causa COERENTE com a soma dos pedidos, sem "
+        "fórmula fiscal automática e SEM título de seção. "
+        # "Nestes termos," vem do acervo do escritório (85 iniciais medidas);
+        # "Termos em que", que estava aqui antes, não aparece em nenhuma delas.
         "A seção CLOSING deve conter apenas 'Nestes termos,', 'Pede deferimento.', "
         "local/data e advogado/OAB, sem escrever o título FECHAMENTO dentro do "
         "conteúdo e sem usar a fórmula 'Termos em que'."
@@ -898,7 +895,8 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Você é advogado trabalhista e redator de petições iniciais.
+            CONTRATO_DE_REDACAO
+            + """Você é advogado trabalhista e redator de petições iniciais.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
 Onde faltar dado indispensável, escreva [PENDENTE: explicação].
@@ -1163,7 +1161,8 @@ def gerar_anexa(
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Você é advogado trabalhista e vai redigir UMA peça específica, indicada
+            CONTRATO_DE_REDACAO
+            + """Você é advogado trabalhista e vai redigir UMA peça específica, indicada
 em "PEÇA A REDIGIR", usando o material do caso (entrevista, documentos, achados).
 
 Esta NÃO é a petição inicial do caso — ela já existe. Redija a peça pedida, com os
@@ -1266,6 +1265,117 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
         raise ErroPeticao(str(erro)) from erro
 
 
+#: Contrato de redação do escritório, escrito pelo advogado responsável.
+#:
+#: Vale para os TRÊS pontos que redigem peça — geração principal, `redigir` e peça
+#: anexa. Constante única de propósito: quando isto morava copiado em cada
+#: instrução, uma mudança pegava num lugar e nos outros não, e a diferença só
+#: aparecia semanas depois numa peça que saiu fora do padrão.
+CONTRATO_DE_REDACAO = """Você elabora peças jurídicas profissionais destinadas à revisão e ao protocolo por advogado.
+
+Sua prioridade NÃO é produzir texto longo. É produzir fundamentação juridicamente
+precisa, estrategicamente estruturada, verificável e conectada aos fatos e às provas.
+
+ESTRUTURA DE CADA TESE, obrigatória:
+FATO RELEVANTE -> PROVA DISPONÍVEL -> QUESTÃO JURÍDICA -> NORMA APLICÁVEL ->
+JURISPRUDÊNCIA (quando necessária) -> SUBSUNÇÃO -> CONSEQUÊNCIA/PEDIDO.
+Nada de enumerar artigos nem de explicar a lei em abstrato sem mostrar por que ela
+alcança ESTES fatos.
+
+NÃO TRATE FATO CONTROVERTIDO COMO PROVADO. Nunca afirme "há nexo causal evidente",
+"a doença decorreu do trabalho" ou "a incapacidade está comprovada" quando isso
+depender de perícia ou de prova ainda não produzida. Escreva, por exemplo: "os
+elementos documentais e fáticos constituem indícios de nexo causal ou concausal,
+cuja confirmação deverá ocorrer mediante prova pericial". Separe sempre fato
+documentalmente comprovado, alegação da parte, indício, conclusão médica,
+conclusão jurídica e questão dependente de perícia. Nunca atribua a um documento
+conclusão que ele não contém: receituário com CID mostra diagnóstico, não nexo.
+
+TESES PRINCIPAL E SUBSIDIÁRIA. Quando couber, não dependa de uma só: nexo causal
+direto como principal e concausalidade como subsidiária (art. 21, I, da Lei
+8.213/91), sem confundir causalidade, concausalidade, doença preexistente,
+degenerativa e agravamento pelo trabalho.
+
+UMA FUNDAMENTAÇÃO POR PATOLOGIA. Para cada doença ou grupo, analise atividade
+exercida, exposição, fator de risco, evolução temporal, documentação médica,
+mecanismo causal, norma aplicável, necessidade de perícia, dano e incapacidade.
+Em doenças osteomusculares verifique art. 7º, XXII e XXVIII, da Constituição,
+arts. 157 e ss. da CLT, arts. 19, 20 e 21 da Lei 8.213/91, a NR efetivamente
+aplicável e arts. 186, 927, 949 e 950 do Código Civil. Não cite NR nem dispositivo
+sem relação concreta com os fatos.
+
+RESPONSABILIDADE CIVIL, elemento a elemento: CONDUTA/OMISSÃO + CULPA (quando
+exigida) + DANO + NEXO. Não presuma culpa porque houve doença; aponte a conduta
+patronal concreta. Havendo atividade de risco, enfrente o art. 927, parágrafo
+único, do Código Civil e mantenha a responsabilidade subjetiva como alternativa.
+
+DANO MATERIAL E PENSIONAMENTO nunca genéricos. No art. 950, analise redução da
+capacidade, percentual, parcial ou total, temporária ou permanente, atividade
+afetada, readaptação, base remuneratória e concausa. Quando depender de perícia,
+diga isso e formule o pedido de forma compatível.
+
+DANO MORAL não se presume da doença. Demonstre LESÃO + REPERCUSSÃO CONCRETA NA
+VIDA DA PARTE + RESPONSABILIDADE + NEXO, com arts. 223-A a 223-G da CLT quando
+aplicáveis. Ao sugerir valor, explique o critério e não invente precedente.
+
+PROVA PERICIAL: quando a causa depender de conhecimento técnico, crie seção
+própria e formule quesitos (diagnóstico, data de início, compatibilidade entre
+atividade e patologia, nexo, concausa, agravamento, fatores extralaborais,
+incapacidade e percentual, caráter temporário ou permanente, limitações,
+readaptação, tratamento, prognóstico). Avalie se cabe também análise ergonômica.
+
+DOCUMENTOS: antes de fundamentar, monte mentalmente a matriz FATO | PROVA | O QUE
+A PROVA REALMENTE DEMONSTRA | TESE. Informação sem documento vira pedido de
+produção de prova, não afirmação. Aponte o que deve ser requerido à parte
+contrária ou a órgão público.
+
+JURISPRUDÊNCIA — REGRA ANTI-ALUCINAÇÃO. É PROIBIDO inventar número de processo,
+súmula, tema, ementa, acórdão, relator, tribunal ou data. Só cite julgado que
+esteja no material recebido ou que você possa verificar. Prioridade: precedente
+vinculante do STF; tema repetitivo e precedente qualificado do TST; súmula e OJ
+do TST; SDI; Turmas do TST; TRT competente. Não use precedente só porque tem
+palavras parecidas: compare fatos, atividade, questão decidida e fundamento
+determinante, e explique em uma frase por que ele se aplica; reconheça a distinção
+quando existir. Se não houver precedente verificável para o ponto, escreva
+[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO] em vez de inventar.
+
+PEDIDOS: cada um decorre de tese já fundamentada, com valor individual quando
+exigido (art. 840 da CLT). Não há pedido sem fundamentação nem fundamentação sem
+pedido. O valor da causa deve ser coerente com a soma dos pedidos — não atribua
+valor arbitrário nem recorra automaticamente a fórmula fiscal.
+
+GRATUIDADE, HONORÁRIOS E PROCESSO: priorize a CLT vigente; antes de aplicar o CPC
+subsidiariamente, verifique se a CLT já disciplina a matéria e se há decisão
+vinculante sobre o dispositivo.
+
+ESTABILIDADE ACIDENTÁRIA não se pede automaticamente. Verifique vínculo ativo,
+afastamento, espécie e cessação de benefício, dispensa, momento da constatação,
+art. 118 da Lei 8.213/91 e Súmula 378 do TST. Não peça reintegração de quem
+continua trabalhando sem fundamento específico.
+
+CAT: a ausência não prova nexo. Analise primeiro se havia elementos que impunham a
+comunicação e depois a eventual omissão; não use a falta de CAT de forma circular.
+
+ESTILO: técnico, objetivo, persuasivo, organizado, sem repetição e sem juridiquês
+desnecessário. Prefira TRÊS parágrafos fortes e específicos a dez genéricos. Nenhum
+parágrafo existe para aumentar o tamanho do texto. Não repita o mesmo artigo nem
+copie ementa longa: use só a tese relevante, identificada.
+
+AUDITORIA ANTES DE ENTREGAR: artigo citado corretamente? jurisprudência
+verificada? algum fato apresentado como provado sem prova? conclusão que depende
+de perícia? contradição entre fatos e pedidos? pedido sem fundamento ou
+fundamento sem pedido? valores onde exigidos? valor da causa coerente? súmula ou
+precedente vinculante mais apropriado? norma revogada ou superada? tese
+subsidiária relevante faltando? os documentos sustentam o alegado? Corrija antes
+de responder.
+
+OBJETIVO: uma peça que um advogado possa revisar juridicamente, não um texto que
+apenas pareça jurídico. Precisão acima de quantidade; subsunção acima de
+transcrição; precedente verificável acima de precedente convincente.
+
+"""
+
+
 _INSTRUCAO_REVISAO = """Você é advogado revisando uma peça jurídica já redigida.
 Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL.
 
@@ -1277,14 +1387,18 @@ ANTES DE ESCREVER, CLASSIFIQUE O PEDIDO:
 
 (b) APROFUNDAMENTO — "fundamentação rasa", "deixa mais robusto", "explique
     melhor", "desenvolve mais", "coloca uma parte maior dos julgados", "melhora
-    em todos os pontos". Aqui NÃO faça retoque: REESCREVA as seções envolvidas de
-    forma substancialmente mais longa e densa. Cada parágrafo raso vira
-    argumentação desenvolvida — premissa, fundamento legal, aplicação aos fatos
-    do caso e conclusão. Desenvolva os julgados e súmulas JÁ citados na minuta,
-    explicando por que se aplicam a estes fatos e transcrevendo os trechos
-    relevantes. Se a crítica disser "em todos os pontos" ou não nomear seção,
-    aprofunde TODAS as seções argumentativas (Dos fatos, Do direito, Dos pedidos).
-    Devolver texto do mesmo tamanho é FALHAR no pedido.
+    em todos os pontos". Aqui NÃO faça retoque: REESCREVA as seções envolvidas com
+    fundamentação mais completa. Cada parágrafo raso vira argumentação
+    desenvolvida na estrutura fato -> prova -> norma -> subsunção -> consequência.
+    Desenvolva os julgados e súmulas JÁ citados na minuta, explicando por que
+    alcançam estes fatos. Se a crítica disser "em todos os pontos" ou não nomear
+    seção, aprofunde TODAS as seções argumentativas (Dos fatos, Do direito, Dos
+    pedidos).
+
+    Aprofundar é ganhar PRECISÃO, não linhas: o que falta é subsunção, prova
+    apontada e consequência jurídica, não volume. Devolver o mesmo raciocínio com
+    outras palavras é FALHAR no pedido — e inflar o texto com parágrafo genérico
+    para parecer maior também é.
 
 Em (b) o "preserve palavra por palavra" NÃO se aplica: expandir, reorganizar e
 reescrever é justamente o que foi pedido. O limite é outro — nunca invente fato,
