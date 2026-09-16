@@ -8,6 +8,7 @@ import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } f
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
 import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
+import { enviarTranscricaoEntrevista, triarEntrevista } from "@/lib/api";
 
 interface Props {
   casos: Caso[];
@@ -75,6 +76,9 @@ export default function ListaCasos({
   const [cliente, setCliente] = useState("");
   const [telefone, setTelefone] = useState("");
   const [categoria, setCategoria] = useState("");
+  const [entrevistaArquivo, setEntrevistaArquivo] = useState<File | null>(null);
+  const [analisandoEntrevista, setAnalisandoEntrevista] = useState(false);
+  const [resultadoTriagem, setResultadoTriagem] = useState<string | null>(null);
   const [filtroCliente, setFiltroCliente] = useState("");
   const [criando, setCriando] = useState(false);
   const [tentouCriar, setTentouCriar] = useState(false);
@@ -116,19 +120,45 @@ export default function ListaCasos({
 
   async function criar(evento: React.FormEvent) {
     evento.preventDefault();
-    if (!cliente.trim() || !categoriaSelecionada) return;
+    if (!cliente.trim() || !categoriaSelecionada || !entrevistaArquivo) return;
     if (telefoneVazio && !tentouCriar) {
       setTentouCriar(true);
       return;
     }
     setCriando(true);
     try {
-      setNovoPortal(await onCriar(cliente.trim(), categoriaSelecionada, "", formatarTelefone(telefone)));
+      const novo = await onCriar(cliente.trim(), categoriaSelecionada, "", formatarTelefone(telefone));
+      await enviarTranscricaoEntrevista(novo.id, entrevistaArquivo);
+      setNovoPortal(novo);
       setCliente("");
       setTelefone("");
+      setEntrevistaArquivo(null);
+      setResultadoTriagem(null);
       setTentouCriar(false);
     } finally {
       setCriando(false);
+    }
+  }
+
+  async function selecionarEntrevista(arquivo: File | null) {
+    setEntrevistaArquivo(arquivo);
+    setResultadoTriagem(null);
+    if (!arquivo) return;
+    setAnalisandoEntrevista(true);
+    try {
+      const triagem = await triarEntrevista("", arquivo);
+      const sugestao = triagem.sugestoes[0];
+      if (sugestao) setCategoria(sugestao.codigo);
+      if (!cliente.trim() && triagem.dados.cliente) setCliente(triagem.dados.cliente);
+      setResultadoTriagem(
+        sugestao
+          ? `A IA sugere: ${sugestao.nome}. Você pode alterar a escolha abaixo.`
+          : "A entrevista foi salva para o caso; escolha o tipo de ação abaixo.",
+      );
+    } catch (erro) {
+      setResultadoTriagem(erro instanceof Error ? erro.message : "Não foi possível analisar a entrevista.");
+    } finally {
+      setAnalisandoEntrevista(false);
     }
   }
 
@@ -165,6 +195,21 @@ export default function ListaCasos({
         className="min-w-0"
       >
         <form onSubmit={criar}>
+          <div className="mb-4">
+            <RotuloCampo htmlFor="entrevista-inicial">Entrevista do cliente (.txt)</RotuloCampo>
+            <input
+              id="entrevista-inicial"
+              type="file"
+              accept=".txt,text/plain"
+              onChange={(e) => void selecionarEntrevista(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-tinta-2"
+            />
+            <p className="mt-1 text-xs leading-[1.5] text-tinta-3">
+              A IA lê a entrevista, sugere o tipo de ação e gera o resumo do atendimento. A sugestão pode ser alterada.
+            </p>
+            {analisandoEntrevista && <p className="mt-1 text-xs text-tinta-3">Analisando entrevista…</p>}
+            {resultadoTriagem && <p className="mt-1 text-xs text-tinta-2">{resultadoTriagem}</p>}
+          </div>
           <div className="mb-4">
             <RotuloCampo htmlFor="cliente">Nome do cliente</RotuloCampo>
             <Campo
@@ -237,11 +282,13 @@ export default function ListaCasos({
             pendencia={
               !cliente.trim()
                 ? "Digite o nome do cliente para criar o caso."
+                : !entrevistaArquivo
+                  ? "Adicione o TXT da entrevista para a IA analisar o caso."
                 : !categoriaSelecionada
                   ? "Escolha o tipo de ação."
                   : null
             }
-            onPendencia={() => document.getElementById(cliente.trim() ? "categoria" : "cliente")?.focus()}
+            onPendencia={() => document.getElementById(!entrevistaArquivo ? "entrevista-inicial" : cliente.trim() ? "categoria" : "cliente")?.focus()}
           >
             Criar o caso
           </BotaoProcesso>

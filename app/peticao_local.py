@@ -503,7 +503,8 @@ def analisar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Você é advogado trabalhista. Cruze a ENTREVISTA com os DOCUMENTOS (OCR).
+            """Você é advogado. Cruze a ENTREVISTA com os DOCUMENTOS (OCR) e identifique
+a natureza jurídica mais adequada aos fatos, sem presumir relação de trabalho.
 Devolva JSON:
 {
   "resumo": "síntese jurídica em 4-8 frases",
@@ -704,7 +705,8 @@ def redigir(
         _com_skill_do_escritorio(
             caso_id,
             CONTRATO_DE_REDACAO
-            + """Redija uma PETIÇÃO INICIAL trabalhista completa em português formal.
+            + """Redija uma PETIÇÃO INICIAL completa, adequada à natureza da ação indicada
+pelos fatos e pela análise, em português formal.
 Use SOMENTE fatos da entrevista e documentos — não invente.
 Marque com [PENDENTE: motivo] o que depender só de alegação sem prova.
 
@@ -896,7 +898,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         _com_skill_do_escritorio(
             caso_id,
             CONTRATO_DE_REDACAO
-            + """Você é advogado trabalhista e redator de petições iniciais.
+            + """Você é advogado e redator de petições iniciais.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
 Onde faltar dado indispensável, escreva [PENDENTE: explicação].
@@ -1162,7 +1164,7 @@ def gerar_anexa(
         _com_skill_do_escritorio(
             caso_id,
             CONTRATO_DE_REDACAO
-            + """Você é advogado trabalhista e vai redigir UMA peça específica, indicada
+            + """Você é advogado e vai redigir UMA peça específica, indicada
 em "PEÇA A REDIGIR", usando o material do caso (entrevista, documentos, achados).
 
 Esta NÃO é a petição inicial do caso — ela já existe. Redija a peça pedida, com os
@@ -1283,6 +1285,16 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
 #: instrução, uma mudança pegava num lugar e nos outros não, e a diferença só
 #: aparecia semanas depois numa peça que saiu fora do padrão.
 CONTRATO_DE_REDACAO = """Você elabora peças jurídicas profissionais destinadas à revisão e ao protocolo por advogado.
+
+NATUREZA DA AÇÃO, PARTES E COMPETÊNCIA: antes de redigir, identifique pelo pedido e
+pelos fatos se a medida é trabalhista, cível, previdenciária ou de outra jurisdição.
+Não chame automaticamente as partes de reclamante/reclamada nem trate toda pessoa
+jurídica como empregadora: esses termos só cabem em reclamação trabalhista. Em
+ação cível use autor/réu; em demanda previdenciária, autor e INSS, quando for o
+caso. Escolha vara e competência compatíveis com a ação. O endereçamento sempre
+começa por "Ao Juízo da ...", nunca por "Excelentíssimo(a) Senhor(a) Doutor(a)
+Juiz(a)". Não invente comarca, vara, relação de trabalho ou qualidade das partes:
+sinalize o dado ausente como [PENDENTE: ...].
 
 Sua prioridade NÃO é produzir texto longo. É produzir fundamentação juridicamente
 precisa, estrategicamente estruturada, verificável e conectada aos fatos e às provas.
