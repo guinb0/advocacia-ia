@@ -53,6 +53,11 @@ FONTE_PADRAO = "Times New Roman"
 MODELO_VISUAL_GERAL = "peticao_visual_geral"
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
+    # As preliminares saíram de dentro do DO DIREITO e viraram seção própria,
+    # ANTES dos fatos — que é onde o escritório as põe. `_normalizar_secoes`
+    # percorre esta tupla na ordem, então basta a posição aqui para a peça
+    # inteira (prompt, tela, .docx e revisão) passar a respeitá-la.
+    ("PRELIMINARY", "Das preliminares"),
     ("FACTS", "Dos fatos"),
     ("LEGAL_GROUNDS", "Do direito"),
     ("CLAIMS", "Dos pedidos"),
@@ -703,6 +708,7 @@ JSON:
 {
   "secoes": [
     {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
+    {"code": "PRELIMINARY", "label": "Das preliminares", "content": "..."},
     {"code": "FACTS", "label": "Dos fatos", "content": "..."},
     {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
     {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
@@ -775,10 +781,46 @@ def _precedentes_para_redigir(contexto: str) -> str:
     return "\n".join(linhas)
 
 
+def _legislacao_para_redigir(contexto: str) -> str:
+    """O texto legal oficial do acervo, ANTES de redigir.
+
+    Mesmo buraco que `_precedentes_para_redigir` fechou para os julgados, e pelo
+    mesmo motivo: a legislação federal está vetorizada e completa no pgvector
+    (CLT com 819 trechos, CF/88, CPC, Código Civil, CPP e outras), mas NADA dela
+    chegava ao prompt. A IA fundamentava de memória — e artigo citado de memória
+    é artigo que sai com número errado numa peça que vai a protocolo.
+
+    `rag.buscar_legislacao` já filtra `f.tipo='lei'`, então acórdão não entra
+    aqui: julgado tem o canal dele e os dois não se misturam no prompt.
+
+    Falha não interrompe a geração: sem base, a peça sai como saía antes.
+    """
+    try:
+        trechos = rag.buscar_legislacao(contexto[:12_000], limite=10)
+    except Exception as erro:
+        log.warning("petição local: legislação indisponível na redação: %s", erro)
+        return ""
+    if not trechos:
+        return ""
+    linhas = ["\n\n=== LEGISLAÇÃO DO ACERVO (use no DO DIREITO) ==="]
+    for indice, trecho in enumerate(trechos, start=1):
+        titulo = trecho.titulo or trecho.identificador or "lei"
+        linhas.append(f"\n[L{indice}] {titulo}\n{trecho.texto[:1500]}")
+    linhas.append(
+        f"\nSão {len(trechos)} dispositivos legais OFICIAIS do acervo do "
+        "escritório. Cite o artigo pelo número e pela lei, transcreva o "
+        "dispositivo quando ele sustentar a tese e aplique-o aos fatos deste "
+        "caso. Nunca invente número de artigo nem cite dispositivo que não esteja "
+        "acima — se o que você precisa não estiver aqui, fundamente sem inventar."
+    )
+    return "\n".join(linhas)
+
+
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     contexto = _montar_contexto(caso_id, texto_entrevista)
     contexto += _precedentes_para_redigir(contexto)
+    contexto += _legislacao_para_redigir(contexto)
 
     # As críticas DESTE caso, já aplicadas na geração.
     #
@@ -807,14 +849,25 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     contexto += (
         "\n\n=== PADRÃO OBRIGATÓRIO DA PEÇA ===\n"
         "Desenvolva os fundamentos com fatos concretos do caso: cada tese deve ter "
-        "pelo menos TRÊS parágrafos densos e explicar conduta, prova, nexo e "
-        "consequência, sem criar fatos. Peça rasa é peça recusada: cada parágrafo "
-        "traz premissa, fundamento legal, aplicação aos fatos e conclusão — nada de "
-        "afirmação solta em uma linha. Havendo julgados no material abaixo, o uso "
+        "pelo menos QUATRO parágrafos densos, cada parágrafo com no mínimo quatro "
+        "frases, explicando conduta, prova, nexo e consequência, sem criar fatos. "
+        "Peça rasa é peça recusada: cada parágrafo traz premissa, fundamento legal, "
+        "aplicação aos fatos e conclusão — nada de afirmação solta em uma linha, "
+        "nem parágrafo de duas linhas que enuncia a tese sem defendê-la. "
+        "A seção PRELIMINARY reúne a matéria preliminar, numerada, ANTES dos fatos: "
+        "'I – DO JUÍZO 100% DIGITAL' e 'II – DA GRATUIDADE DA JUSTIÇA' pertencem a "
+        "ela, cada uma com subtítulo próprio e texto desenvolvido; a seção "
+        "LEGAL_GROUNDS não repete nenhuma das duas. "
+        "Havendo julgados no material abaixo, o uso "
         "deles é OBRIGATÓRIO e não opcional: cada tese do DO DIREITO se apoia em "
         "pelo menos DOIS julgados, com processo citado e razão de decidir aplicada "
         "a ESTES fatos. Peça com jurisprudência de enfeite, citada e não "
         "desenvolvida, é peça recusada do mesmo jeito que peça rasa. "
+        "O mesmo vale para a LEGISLAÇÃO DO ACERVO: havendo dispositivos no "
+        "material abaixo, cada tese se apoia no artigo de lei que a sustenta, "
+        "citado por número e lei e transcrito quando for o caso. Artigo citado de "
+        "memória, fora do que está no material, é erro grave — a peça vai a "
+        "protocolo. "
         "Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
         # A redação das duas vem do acervo do escritório (85 iniciais medidas):
         # "Para efeitos meramente fiscais..." e "Nestes termos," aparecem em
@@ -859,6 +912,7 @@ Devolva JSON exatamente com:
   },
   "secoes": [
     {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
+    {"code":"PRELIMINARY","label":"Das preliminares","content":"..."},
     {"code":"FACTS","label":"Dos fatos","content":"..."},
     {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
     {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
@@ -1106,6 +1160,7 @@ JSON:
 {
   "secoes": [
     {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
+    {"code":"PRELIMINARY","label":"Das preliminares","content":"..."},
     {"code":"FACTS","label":"Dos fatos","content":"..."},
     {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
     {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
@@ -1142,6 +1197,7 @@ Cada content em parágrafos separados por linha em branco.""",
         "sections": secoes,
         "pendencias": [str(p) for p in saida.get("pendencias") or [] if str(p).strip()],
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "docx_style_version": DOCX_STYLE_VERSION,
         "revisao": {"tipo": "geracao", "usuario": gerada_por, "em": agora, "alteradas": []},
     }
     armazenamento.salvar_peticao_anexa(
@@ -1171,9 +1227,12 @@ def ler_docx_anexa(peca_id: str) -> tuple[str, bytes]:
     if not registro:
         raise ErroPeticao("Peça não encontrada.")
     conteudo = bytes(registro.get("_docx") or b"")
+    dados = registro.get("dados") or {}
+    if int(dados.get("docx_style_version") or 0) < DOCX_STYLE_VERSION:
+        conteudo = montar_docx(dados.get("sections") or [])
     if not conteudo:
         # Regrava a partir do JSON: o texto é a verdade, o binário é derivado.
-        conteudo = montar_docx((registro.get("dados") or {}).get("sections") or [])
+        conteudo = montar_docx(dados.get("sections") or [])
     return str(registro.get("titulo") or "Peça"), conteudo
 
 
@@ -1218,10 +1277,16 @@ ou parecer já atendido, NÃO pare: aplique a melhor interpretação possível �
 advogado pediu uma mudança e espera vê-la — e registre em "perguntas" o que
 precisaria confirmar com ele. Perguntar é bem-vindo; devolver o texto intacto, não.
 
-Devolva as SETE seções completas, com o mesmo "code", mesmo as que não mudaram. JSON:
+Você pode reescrever QUALQUER seção, inclusive criar e renumerar os títulos e
+subtítulos internos (I –, II –, I.1 –) e mover matéria de uma seção para outra —
+por exemplo tirar as preliminares do DO DIREITO e levá-las para DAS PRELIMINARES.
+Nada aqui é intocável, desde que a crítica do advogado sustente a mudança.
+
+Devolva as OITO seções completas, com o mesmo "code", mesmo as que não mudaram. JSON:
 {
   "secoes": [
     {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
+    {"code": "PRELIMINARY", "label": "Das preliminares", "content": "..."},
     {"code": "FACTS", "label": "Dos fatos", "content": "..."},
     {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
     {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
@@ -1725,12 +1790,15 @@ def _tipo_de_titulo(linha: str) -> str | None:
     texto = linha.strip()
     if not texto or len(texto) > 90 or texto.endswith("."):
         return None
-    # O subtítulo é testado ANTES: "I.1 – ..." também casa com o padrão do
-    # título de capítulo, e a ordem inversa o centralizaria por engano.
-    if _RE_SUBTITULO.match(texto):
+    # Título numerado vai à ESQUERDA, subtítulo também.
+    #
+    # "I – PRELIMINARMENTE", "V – DOS DANOS MATERIAIS" estavam saindo no meio da
+    # página porque eu os medi na petição de referência antiga e concluí que eram
+    # centralizados. O escritório não quer isso: título numerado acompanha os
+    # demais, no canto esquerdo. Sobra UM centralizado na peça inteira — o
+    # endereçamento, logo abaixo, que foi pedido expressamente.
+    if _RE_SUBTITULO.match(texto) or _RE_TITULO_CENTRAL.match(texto):
         return "esquerda"
-    if _RE_TITULO_CENTRAL.match(texto):
-        return "central"
     # Endereçamento: centralizado e em CAIXA ALTA, decidido pelo escritório.
     #
     # A IA escreve "Ao Juízo da Vara do Trabalho de Tucuruí/PA" em caixa mista,
