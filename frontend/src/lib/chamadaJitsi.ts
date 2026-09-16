@@ -41,6 +41,16 @@ const BASE_JITSI = process.env.NEXT_PUBLIC_JITSI_URL ?? "http://localhost:8081";
  *  Trazer a aba de volta costuma devolver o áudio em menos de um segundo. */
 const ESPERA_MUDO_MS = 3_000;
 
+/** Quanto se espera, depois que a rede volta, antes de republicar o microfone.
+ *  O ICE precisa terminar de renegociar: republicar no meio da renegociação
+ *  entrega a faixa a um transporte que ainda vai ser trocado. */
+const ESPERA_TRANSPORTE_MS = 1_500;
+
+/** Janela mínima entre duas republicações. Uma troca de rede dispara
+ *  `CONNECTION_INTERRUPTED` e `CONNECTION_RESTORED` várias vezes seguidas, e
+ *  recriar a faixa a cada uma cortaria a voz em vez de devolvê-la. */
+const ESPERA_REPUBLICAR_MS = 8_000;
+
 export type PapelChamada = "advogado" | "cliente";
 
 export type EstadoChamada =
@@ -325,6 +335,9 @@ export class ChamadaJitsi {
   }
   private aoMudarVisibilidade = () => void this.retomarAoVoltar();
   private aoTrocarDispositivos = () => void this.conferirDispositivos();
+  private aoVoltarRede = () => void this.restabelecerAudio("a internet voltou");
+  /** Quando foi a última republicação, para não recriar a faixa em rajada. */
+  private ultimoRestabelecimento = 0;
 
   constructor(
     private papel: PapelChamada,
@@ -445,6 +458,10 @@ export class ChamadaJitsi {
     // ele para decidir se a chamada troca de microfone sozinha.
     void this.conferirDispositivos();
     navigator.mediaDevices?.addEventListener?.("devicechange", this.aoTrocarDispositivos);
+    /* `online` é a rede de segurança do caso Wi-Fi↔4G. O Jitsi costuma emitir
+     * `CONNECTION_RESTORED`, mas nem sempre — e quando não emite, o único aviso
+     * de que a rede voltou é este evento do navegador. */
+    window.addEventListener("online", this.aoVoltarRede);
     void this.manterTelaAcesa();
 
     const camera = faixas.find((f) => f.getType() === "video") ?? null;
@@ -747,6 +764,46 @@ export class ChamadaJitsi {
       this.eventos.onErro?.(`A sala recusou a entrada (${String(args[0])}).`);
     });
 
+    /* TROCAR DE REDE NO MEIO DA CHAMADA — Wi-Fi↔4G, o caso do corredor.
+     *
+     * O cliente sai de casa, o celular larga o Wi-Fi e entra no 4G. A faixa de
+     * áudio NÃO morre nisso: ela continua `live`, o dispositivo é o mesmo.
+     * Então nada do que já existe aqui acorda — `ended` e `mute` não disparam
+     * (a faixa está viva) e `devicechange` também não (o microfone não mudou).
+     * O que morre é o TRANSPORTE: o ICE perde o caminho e renegocia noutro
+     * endereço. A sinalização volta, os retratos continuam, e a voz de saída
+     * fica presa no transporte velho. Só sair e entrar resolvia, porque é isso
+     * que recria e republica a faixa.
+     *
+     * Republicar é a mesma coisa que sair e entrar faz com o microfone, sem
+     * derrubar a sala. `restabelecerAudio` espera o ICE assentar antes, e tem
+     * janela mínima: a troca de rede dispara estes eventos em rajada.
+     *
+     * Os três são opcionais (`ev.X &&`) porque o nome do evento pertence à
+     * versão da lib que o SERVIDOR entrega, e ela é atualizada por fora deste
+     * repositório. Assinar um evento inexistente quebraria a entrada na sala. */
+    if (ev.CONNECTION_INTERRUPTED) {
+      sala.on(ev.CONNECTION_INTERRUPTED, () => {
+        if (this.desligando) return;
+        this.eventos.onErro?.("A conexão oscilou. Continue na tela — estamos religando o áudio.");
+      });
+    }
+    if (ev.CONNECTION_RESTORED) {
+      sala.on(ev.CONNECTION_RESTORED, () => void this.restabelecerAudio("a rede mudou"));
+    }
+    /* Celular que dormiu e acordou cai no mesmo buraco: o transporte morreu
+     * enquanto a tela estava apagada. */
+    if (ev.SUSPEND_DETECTED) {
+      sala.on(ev.SUSPEND_DETECTED, () => void this.restabelecerAudio("o aparelho voltou do repouso"));
+    }
+    /* `iceFailed` é o caso em que o transporte morreu e NÃO se restabeleceu
+     * sozinho — a troca de rede que não fecha caminho novo. `CONNECTION_RESTORED`
+     * nunca chega aqui, justamente porque nada foi restaurado, então sem esta
+     * linha o áudio ficaria mudo esperando um evento que não vem. */
+    if (ev.ICE_FAILED) {
+      sala.on(ev.ICE_FAILED, () => void this.restabelecerAudio("a rota de áudio caiu"));
+    }
+
     sala.join();
   }
 
@@ -822,6 +879,42 @@ export class ChamadaJitsi {
     } catch {
       this.eventos.onErro?.(
         "O microfone foi tomado por outro aplicativo e não voltou. Use “Reativar áudio” para tentar de novo.",
+      );
+    } finally {
+      this.recuperandoAudio = false;
+    }
+  }
+
+  /* Republica o microfone depois de uma troca de rede ou de um despertar.
+   *
+   * Não basta conferir se a faixa está viva: nesse cenário ela ESTÁ viva, e
+   * mesmo assim não chega ao bridge — o problema é o transporte, não a captura.
+   * Por isso aqui se recria e republica sem perguntar, que é o equivalente a
+   * "sair e entrar" aplicado só ao áudio.
+   *
+   * Mudo por escolha não é tocado: devolveria a voz de quem pediu silêncio. */
+  private async restabelecerAudio(motivo: string): Promise<void> {
+    if (this.desligando || !this.sala || this.recuperandoAudio || this.mudoAtual) return;
+
+    const agora = Date.now();
+    if (agora - this.ultimoRestabelecimento < ESPERA_REPUBLICAR_MS) return;
+    this.ultimoRestabelecimento = agora;
+
+    this.recuperandoAudio = true;
+    try {
+      await new Promise<void>((ok) => window.setTimeout(ok, ESPERA_TRANSPORTE_MS));
+      // A espera abre uma janela: desligar, mutar ou sair da sala no meio dela
+      // são todos possíveis, e republicar depois disso seria errado.
+      if (this.desligando || !this.sala || this.mudoAtual) return;
+      if (await this.reativarAudio()) {
+        this.eventos.onErro?.(
+          `A conexão mudou (${motivo}) e o seu microfone foi religado sozinho. ` +
+            "Fale e confira se a barra “Sua voz” se mexe.",
+        );
+      }
+    } catch {
+      this.eventos.onErro?.(
+        "A conexão mudou e o microfone não voltou sozinho. Toque em “Reativar áudio”.",
       );
     } finally {
       this.recuperandoAudio = false;
@@ -1108,7 +1201,9 @@ export class ChamadaJitsi {
     this.desligando = true;
     document.removeEventListener("visibilitychange", this.aoMudarVisibilidade);
     navigator.mediaDevices?.removeEventListener?.("devicechange", this.aoTrocarDispositivos);
+    window.removeEventListener("online", this.aoVoltarRede);
     this.dispositivosConhecidos = [];
+    this.ultimoRestabelecimento = 0;
     if (this.limiteAudio !== null) {
       window.clearTimeout(this.limiteAudio);
       this.limiteAudio = null;
