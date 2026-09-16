@@ -530,18 +530,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       )}
 
       {analise && (
-        <section className="grid gap-2 border-l-[3px] border-ok pl-4">
-          <h3 className="text-sm font-semibold m-0">Análise do caso</h3>
-          <p className={TEXTO}>{analise.resumo}</p>
-          {analise.cruzamento_entrevista_documentos && (
-            <p className={TEXTO}>
-              <span className="text-xs font-semibold text-tinta-3">Entrevista × documentos: </span>
-              {analise.cruzamento_entrevista_documentos}
-            </p>
-          )}
-          {analise.lacunas && analise.lacunas.length > 0 && (
-            <ListaRotulo titulo="Lacunas" itens={analise.lacunas} />
-          )}
+        <section className="grid gap-3 border border-borda bg-papel p-4">
+          <div><h3 className="text-sm font-semibold m-0">Leitura rápida do caso</h3><p className="mt-1 text-sm leading-relaxed text-tinta-2">{analise.resumo}</p></div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <ResumoAnalise titulo="✓ Confirmado por documentos" tom="ok" itens={analise.fatos_confirmados ?? []} vazio="Ainda não há confirmação documental destacada." />
+            <ResumoAnalise titulo="? Depende de prova ou confirmação" tom="atencao" itens={[...(analise.fatos_so_na_entrevista ?? []), ...(analise.lacunas ?? [])]} vazio="Nenhuma pendência relevante apontada." />
+          </div>
+          {analise.cruzamento_entrevista_documentos && <details className="text-sm text-tinta-2"><summary className="cursor-pointer font-semibold">Ver confronto completo: entrevista × documentos</summary><p className="mt-2 leading-relaxed">{analise.cruzamento_entrevista_documentos}</p></details>}
         </section>
       )}
 
@@ -924,7 +919,7 @@ function CampoDoDocumento({
 }: {
   valor: string;
   rotulo: string;
-  formato?: "corpo" | "fechamento";
+  formato?: "corpo" | "fechamento" | "enderecamento";
   onEditar: (valor: string) => void;
 }) {
   const campo = useRef<HTMLTextAreaElement>(null);
@@ -949,7 +944,7 @@ function CampoDoDocumento({
          contêiner, e sem isto a seção editada sairia com a cara errada dentro
          do próprio documento. */
       className={`w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-titulo text-[15px] leading-[1.75] text-tinta focus:outline-none whitespace-pre-wrap ${
-        formato === "fechamento"
+        formato === "fechamento" || formato === "enderecamento"
           ? "text-center"
           : "text-justify [text-indent:1.25cm]"
       }`}
@@ -999,7 +994,7 @@ function PreviaPeticao({
               <CampoDoDocumento
                 valor={edicao[secao.code] ?? secao.content}
                 rotulo={secao.label || secao.code}
-                formato={secao.code === "CLOSING" ? "fechamento" : "corpo"}
+                formato={secao.code === "CLOSING" ? "fechamento" : secao.code === "HEADING" ? "enderecamento" : "corpo"}
                 onEditar={(valor) => onEditar(secao.code, valor)}
               />
             </section>
@@ -1255,6 +1250,15 @@ function ListaRotulo({ titulo, itens }: { titulo: string; itens: string[] }) {
       </ul>
     </div>
   );
+}
+
+function ResumoAnalise({ titulo, tom, itens, vazio }: { titulo: string; tom: "ok" | "atencao"; itens: string[]; vazio: string }) {
+  const unicos = [...new Set(itens.filter(Boolean))];
+  return <div className={`rounded-campo border p-3 ${tom === "ok" ? "border-ok bg-ok-claro" : "border-atencao bg-atencao-claro"}`}>
+    <p className="m-0 text-xs font-bold text-tinta">{titulo} <span className="font-normal text-tinta-3">({unicos.length})</span></p>
+    {unicos.length ? <ul className="mt-2 mb-0 grid gap-1 pl-4 text-xs leading-relaxed text-tinta-2">{unicos.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-2 mb-0 text-xs text-tinta-3">{vazio}</p>}
+    {unicos.length > 5 && <p className="mt-2 mb-0 text-xs text-tinta-3">+ {unicos.length - 5} outros pontos</p>}
+  </div>;
 }
 
 function ComparacaoRevisao({
