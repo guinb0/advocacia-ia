@@ -919,10 +919,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 function CampoDoDocumento({
   valor,
   rotulo,
+  formato = "corpo",
   onEditar,
 }: {
   valor: string;
   rotulo: string;
+  formato?: "corpo" | "fechamento";
   onEditar: (valor: string) => void;
 }) {
   const campo = useRef<HTMLTextAreaElement>(null);
@@ -946,7 +948,11 @@ function CampoDoDocumento({
       /* `font-titulo` explícito: campo de formulário não herda a fonte do
          contêiner, e sem isto a seção editada sairia com a cara errada dentro
          do próprio documento. */
-      className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-titulo text-sm leading-relaxed text-justify text-tinta-2 focus:outline-none"
+      className={`w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-titulo text-[15px] leading-[1.75] text-tinta focus:outline-none whitespace-pre-wrap ${
+        formato === "fechamento"
+          ? "text-center"
+          : "text-justify [text-indent:1.25cm]"
+      }`}
     />
   );
 }
@@ -978,21 +984,22 @@ function PreviaPeticao({
     <div className="grid gap-2">
       {/* Sem `max-h`/`overflow` e sem `sticky`: o documento rola com a página,
           que é o que se espera de um texto que se está escrevendo. */}
-      <div className="font-titulo border border-borda-forte bg-papel shadow-sm p-8">
+      <div className="mx-auto w-full max-w-[850px] font-titulo border border-borda-forte bg-papel shadow-sm px-10 py-12 max-[640px]:px-5 max-[640px]:py-7">
         <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-6">
           {titulo || "Petição inicial"}
         </h1>
-        <div className="grid gap-4">
+        <div className="grid gap-6">
           {secoes.map((secao) => (
-            <section key={secao.code} className="grid gap-2">
-              {secao.label && (
-                <h2 className="text-center text-xs font-bold uppercase tracking-wide text-tinta">
+            <section key={secao.code} className="grid gap-3">
+              {secao.label && !["HEADING", "VALUE", "CLOSING"].includes(secao.code) && (
+                <h2 className="text-left text-sm font-bold uppercase tracking-wide text-tinta">
                   {secao.label}
                 </h2>
               )}
               <CampoDoDocumento
                 valor={edicao[secao.code] ?? secao.content}
                 rotulo={secao.label || secao.code}
+                formato={secao.code === "CLOSING" ? "fechamento" : "corpo"}
                 onEditar={(valor) => onEditar(secao.code, valor)}
               />
             </section>
