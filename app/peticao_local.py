@@ -816,11 +816,17 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "a ESTES fatos. Peça com jurisprudência de enfeite, citada e não "
         "desenvolvida, é peça recusada do mesmo jeito que peça rasa. "
         "Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
-        "A seção VALUE contém UMA frase e nada mais: 'Dá-se à causa o valor de "
-        "<extenso> (R$ <número>).' — sem discriminar a soma das parcelas, sem "
-        "explicar a composição, sem texto após o ponto final. "
-        "A seção CLOSING deve conter apenas Termos em que, Pede deferimento, local/data "
-        "e advogado/OAB, sem escrever o título FECHAMENTO dentro do conteúdo."
+        # A redação das duas vem do acervo do escritório (85 iniciais medidas):
+        # "Para efeitos meramente fiscais..." e "Nestes termos," aparecem em
+        # praticamente todas. "Termos em que", que estava aqui, não aparece em
+        # nenhuma.
+        "A seção VALUE contém UMA frase e nada mais: 'Para efeitos meramente "
+        "fiscais, dá-se à causa o valor de R$ <número>.' — sem discriminar a soma "
+        "das parcelas, sem explicar a composição, sem texto após o ponto final, e "
+        "SEM título de seção. "
+        "A seção CLOSING deve conter apenas 'Nestes termos,', 'Pede deferimento.', "
+        "local/data e advogado/OAB, sem escrever o título FECHAMENTO dentro do "
+        "conteúdo e sem usar a fórmula 'Termos em que'."
     )
     saida = _llm_json(
         _com_skill_do_escritorio(
