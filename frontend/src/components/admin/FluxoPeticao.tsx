@@ -220,12 +220,25 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
           alteradas.length ? `. Seções alteradas: ${alteradas.join(", ")}` : ""
         }.`,
       });
+      if (revisao?.alterou === false) {
+        setConcluido({
+          acao: "revisar",
+          texto: "A IA não identificou uma alteração segura; nenhuma versão nova foi criada.",
+        });
+      }
       if (revisao?.atendeu === false) {
         setAvisoRevisao(
           `A conferência automática indica que pode faltar: ${revisao.faltou || "parte do pedido"}. Confira o texto e peça de novo se precisar.`,
         );
       }
+      if ((revisao?.perguntas ?? []).length > 0) {
+        setAvisoRevisao(`A IA precisa confirmar: ${revisao!.perguntas!.join(" · ")}`);
+      }
       await recarregar();
+      // `recarregar` lê a versão persistida; numa revisão sem alteração ela não
+      // contém o aviso/perguntas retornados pela IA. Reaplica o resultado da
+      // chamada depois da leitura para que a tela não perca esse retorno.
+      setPeticao(resultado.peticao);
     } catch (e) {
       setErro({
         acao: "revisar",
@@ -391,7 +404,14 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       const revisao = resultado.peticao.revisao ?? resultado.revisao;
       const alteradas = revisao?.alteradas ?? [];
       setRetornoAnexa(
-        revisao?.atendeu === false
+        revisao?.alterou === false
+          ? {
+              tom: "atencao",
+              texto: `Nenhuma versão nova foi criada. ${
+                (revisao.perguntas ?? []).join(" · ") || "A IA não identificou uma alteração segura."
+              }`,
+            }
+          : revisao?.atendeu === false
           ? {
               tom: "atencao",
               texto: `Revisão aplicada, mas a conferência automática indica que pode faltar: ${revisao.faltou || "parte do pedido"}. Confira o texto.`,

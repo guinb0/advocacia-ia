@@ -38,7 +38,10 @@ ID_LOCAL = "local"
 #: 5 — layout medido na petição de referência do escritório (Auxílio-Acidente,
 #: 8 páginas): corpo serifado, margens 3,0 / 1,89 cm e texto começando em 4,66 cm,
 #: abaixo do timbre.
-DOCX_STYLE_VERSION = 5
+#: 6 — recuo de 1,25 cm na primeira linha de cada parágrafo, medido na mesma
+#: peça de referência (corpo em 3,0 cm, primeira linha em 4,25 cm), e negrito
+#: inline no nome do autor.
+DOCX_STYLE_VERSION = 6
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 #: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
 #:
@@ -687,6 +690,15 @@ def redigir(
             """Redija uma PETIÇÃO INICIAL trabalhista completa em português formal.
 Use SOMENTE fatos da entrevista e documentos — não invente.
 Marque com [PENDENTE: motivo] o que depender só de alegação sem prova.
+
+ENDEREÇAMENTO (seção HEADING): abra por "Ao Juízo ..." indicando a vara e a
+comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A)
+JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
+**NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
+
+PADRÃO DO ESCRITÓRIO: quando houver orientação ou peça de referência acima,
+siga-a — ela manda sobre o critério geral. Onde ela não disser nada, escolha a
+forma que julgar melhor para a peça, sem inventar fato.
 JSON:
 {
   "secoes": [
@@ -727,6 +739,15 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
 Onde faltar dado indispensável, escreva [PENDENTE: explicação].
+
+ENDEREÇAMENTO (seção HEADING): abra por "Ao Juízo ..." indicando a vara e a
+comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A)
+JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
+**NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
+
+PADRÃO DO ESCRITÓRIO: quando houver orientação ou peça de referência acima,
+siga-a — ela manda sobre o critério geral. Onde ela não disser nada, escolha a
+forma que julgar melhor para a peça, sem inventar fato.
 
 Devolva JSON exatamente com:
 {
@@ -955,6 +976,17 @@ def gerar_anexa(
         )
 
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    # A ação alternativa parte também da minuta principal: só a entrevista
+    # bruta faz o modelo perder datas, valores, documentos e nomes já extraídos.
+    principal = carregar(caso_id)
+    secoes_principais = (principal or {}).get("sections") or []
+    if secoes_principais:
+        contexto += "\n\n=== MINUTA PRINCIPAL (referência factual; não copie pedidos) ===\n"
+        contexto += "\n\n".join(
+            f"### {secao.get('label') or secao.get('code')}\n{secao.get('content') or ''}"
+            for secao in secoes_principais
+            if secao.get("code") != "JURIMETRY"
+        )
     alvo = [f"PEÇA A REDIGIR: {titulo}"]
     if motivo.strip():
         alvo.append(f"POR QUE ELA CABE NESTE CASO: {motivo.strip()}")
@@ -1064,6 +1096,11 @@ Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL. Mude SOMENTE o que a críti
 mude de verdade: todo trecho que a crítica mandar alterar, incluir ou retirar precisa estar
 diferente no texto devolvido. Preserve o restante palavra por palavra. Não invente fatos que
 não estejam na minuta atual. Nunca apague uma seção inteira sem que a crítica peça.
+NUNCA devolva a minuta inteira igual ao que recebeu. Se o pedido for vago, ambíguo
+ou parecer já atendido, NÃO pare: aplique a melhor interpretação possível — o
+advogado pediu uma mudança e espera vê-la — e registre em "perguntas" o que
+precisaria confirmar com ele. Perguntar é bem-vindo; devolver o texto intacto, não.
+
 Devolva as SETE seções completas, com o mesmo "code", mesmo as que não mudaram. JSON:
 {
   "secoes": [
@@ -1074,7 +1111,8 @@ Devolva as SETE seções completas, com o mesmo "code", mesmo as que não mudara
     {"code": "EVIDENCE", "label": "Das provas", "content": "..."},
     {"code": "VALUE", "label": "Do valor da causa", "content": "..."},
     {"code": "CLOSING", "label": "Fechamento", "content": "..."}
-  ]
+  ],
+  "perguntas": ["o que você precisaria confirmar com o advogado; [] se nada"]
 }
 Cada content em parágrafos separados por linha em branco."""
 
@@ -1150,9 +1188,13 @@ def _revisar_secoes_via_llm(
     )
     originais = {s.get("code"): s for s in secoes_atuais}
     observacao = ""
+    perguntas: list[str] = []
     melhor: tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], int] | None = None
 
-    for tentativa in (1, 2):
+    # Três tentativas, e não duas: a SEGUNDA revisão de uma peça é o caso difícil
+    # — a minuta já foi corrigida uma vez, e o modelo tende a concluir que "já
+    # está bom" e devolver tudo igual. Era exatamente aí que a tela quebrava.
+    for tentativa in (1, 2, 3):
         entrada = f"MINUTA ATUAL:\n{minuta_atual}\n\nCRÍTICA DO ADVOGADO:\n{prompt_critica}"
         if observacao:
             entrada += (
@@ -1160,10 +1202,18 @@ def _revisar_secoes_via_llm(
                 "Corrija isso agora, mudando somente o que a crítica pede."
             )
         saida = _llm_json(instrucao, entrada, timeout=240.0)
+        perguntas = [
+            str(p).strip()
+            for p in (saida.get("perguntas") or [])
+            if str(p).strip()
+        ][:5]
         secoes = _mesclar_revisao(secoes_atuais, _normalizar_secoes(saida.get("secoes") or []))
         alteradas = _secoes_alteradas(secoes_atuais, secoes)
         if not alteradas:
-            observacao = "nenhum trecho da minuta foi alterado, mas a crítica pede mudança."
+            observacao = (
+                "você devolveu a minuta inteira igual. Aplique a melhor interpretação do "
+                "pedido e registre em 'perguntas' o que precisar confirmar."
+            )
             continue
 
         conferencia = _conferir_revisao(prompt_critica, secoes_atuais, alteradas)
@@ -1180,17 +1230,26 @@ def _revisar_secoes_via_llm(
         observacao = conferencia["faltou"] or "a revisão não fez tudo o que a crítica pede."
 
     if melhor is None:
-        raise ErroPeticao(
-            "A IA não alterou nada na peça, então nenhuma versão nova foi criada. Reescreva o "
-            "pedido dizendo a seção e o que deve mudar (ex.: “em Dos pedidos, separe dano moral "
-            "de dano material”)."
-        )
+        # NÃO é mais erro, e a diferença importa: levantar aqui abortava a tela e
+        # perdia o pedido do advogado. Agora a peça volta intacta com o aviso —
+        # quem chama decide não criar versão nova — e as perguntas da IA sobem
+        # junto, que é o caminho para destravar o pedido ambíguo.
+        return list(secoes_atuais), {
+            "alteradas": [],
+            "alterou": False,
+            "atendeu": None,
+            "faltou": "",
+            "perguntas": perguntas,
+            "tentativas": 3,
+        }
 
     secoes, alteradas, conferencia, tentativas = melhor
     return secoes, {
         "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
+        "alterou": True,
         "atendeu": conferencia["atendeu"],
         "faltou": "" if conferencia["atendeu"] is not False else conferencia["faltou"],
+        "perguntas": perguntas,
         "tentativas": tentativas,
     }
 
@@ -1213,6 +1272,18 @@ def revisar_anexa_com_prompt(
         raise ErroPeticao("Esta peça não tem seções para revisar.")
 
     secoes, conferencia = _revisar_secoes_via_llm(registro["caso_id"], secoes_atuais, prompt_critica)
+
+    # Mesma regra da petição inicial: sem alteração, sem versão nova. Ver o
+    # comentário em `revisar_com_prompt`.
+    if not conferencia.get("alterou"):
+        return para_api({**dados, "revisao": {
+            "tipo": "prompt",
+            "prompt": prompt_critica,
+            "usuario": usuario,
+            "em": _agora(),
+            **conferencia,
+        }})
+
     armazenamento.registrar_versao_peticao(registro["caso_id"], anterior, chave=peca_id)
     agora = _agora()
     dados["sections"] = secoes
@@ -1277,6 +1348,23 @@ def revisar_com_prompt(
         raise ErroPeticao("Esta petição não tem seções para revisar.")
 
     secoes, conferencia = _revisar_secoes_via_llm(caso_id, secoes_atuais, prompt_critica)
+
+    # Nada mudou: devolve a peça como está, SEM versão nova.
+    #
+    # Antes isto levantava erro e a tela morria — era o defeito da "segunda
+    # revisão". Agora é aviso. Mas também não pode virar versão: gravar snapshot
+    # e incrementar `version` com o texto idêntico encheria o histórico de
+    # versões falsas, e o advogado perderia a referência de quando a peça
+    # realmente mudou. As perguntas da IA sobem junto — é com elas que ele
+    # reescreve o pedido e destrava.
+    if not conferencia.get("alterou"):
+        return {**atual, "revisao": {
+            "tipo": "prompt",
+            "prompt": prompt_critica,
+            "usuario": usuario,
+            "em": _agora(),
+            **conferencia,
+        }}
 
     # 1) snapshot da versão anterior — antes de sobrescrever.
     armazenamento.registrar_versao_peticao(caso_id, atual)
@@ -1428,7 +1516,9 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
     }
 
 
-def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
+def _paragrafo_xml(
+    texto: str, *, negrito: bool = False, centralizado: bool = False
+) -> str:
     linhas = texto.split("\n")
     partes: list[str] = []
     for linha in linhas:
@@ -1436,15 +1526,35 @@ def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
             partes.append("<w:p/>")
             continue
         texto_xml = escape(linha)
-        if negrito:
+        if negrito or centralizado:
+            # `firstLine="0"` ANULA o recuo padrão aqui, e não é detalhe: num
+            # parágrafo centralizado o recuo de primeira linha empurra o texto
+            # para a direita, e o título deixaria de ficar no centro.
+            prefixo = '<w:r><w:rPr><w:b/></w:rPr>' if negrito else '<w:r>'
             partes.append(
-                f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
-                f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+                f'<w:p><w:pPr><w:jc w:val="center"/><w:ind w:firstLine="0"/></w:pPr>'
+                f'{prefixo}<w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
             )
         else:
-            partes.append(
-                f'<w:p><w:r><w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+            # `**assim**` vira negrito DE VERDADE, em run próprio.
+            #
+            # O prompt manda o nome do autor entre asteriscos duplos, e sem esta
+            # conversão eles sairiam literais no .docx — o documento entregue ao
+            # juízo com `**FULANO**` escrito. `re.split` com grupo devolve os
+            # trechos capturados nos índices ímpares: esses são os negritos.
+            #
+            # O escape XML já foi aplicado acima e não toca em `*`, então dividir
+            # aqui é seguro.
+            runs = "".join(
+                (
+                    f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                    if indice % 2
+                    else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                )
+                for indice, parte in enumerate(re.split(r"\*\*(.+?)\*\*", texto_xml))
+                if parte
             )
+            partes.append(f"<w:p>{runs}</w:p>")
     return "".join(partes)
 
 
@@ -1462,7 +1572,9 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         if rotulo and secao.get("code") not in ("HEADING",):
             corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True))
         if conteudo:
-            corpo.append(_paragrafo_xml(conteudo))
+            corpo.append(
+                _paragrafo_xml(conteudo, centralizado=secao.get("code") == "HEADING")
+            )
         corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1520,7 +1632,12 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
       <w:rFonts w:ascii="{fonte_xml}" w:hAnsi="{fonte_xml}" w:eastAsia="{fonte_xml}" w:cs="{fonte_xml}"/>
       <w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR"/>
     </w:rPr></w:rPrDefault>
-    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+    <!-- `firstLine="709"` = 1,25 cm de recuo na primeira linha de cada parágrafo.
+         Medido na petição de referência: o corpo começa em 3,0 cm e a primeira
+         linha de cada parágrafo em 4,25 cm — 20 linhas do documento confirmam
+         essa segunda coluna. Sem isso o texto sai em bloco corrido, que foi a
+         diferença apontada ao comparar a peça gerada com a do escritório. -->
+    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/><w:ind w:firstLine="709"/></w:pPr></w:pPrDefault>
   </w:docDefaults>
   <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
 </w:styles>"""

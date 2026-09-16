@@ -28,7 +28,6 @@ import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   ApiError,
   enviarModeloVisualPeticao,
-  listarCategorias,
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
   obterSkillDePeticao,
@@ -37,7 +36,6 @@ import {
   type SkillDePeticao,
   urlApi,
 } from "@/lib/api";
-import type { ItemChecklist } from "@/lib/types";
 
 /* `.tabela th/td` era seletor descendente; sem equivalente no Tailwind, a regra
  * vira constante e cada célula a carrega. */
@@ -64,9 +62,9 @@ const SELECT =
   "[&>option]:bg-papel [&>option]:text-tinta";
 
 import {
+  ESCOPO_GERAL,
   type ConfigAgente,
   type ConfiguracaoDeGeracao,
-  type NoDaTaxonomia,
   type PecaDeEstilo,
   type PerfilDeEstilo,
   configDoAgente,
@@ -76,7 +74,6 @@ import {
   perfilDeEstilo,
   removerPecaDeEstilo,
   salvarConfiguracaoDeGeracao,
-  taxonomiaDeEstilo,
 } from "@/lib/agente";
 
 const TIPOS = [{ codigo: "INITIAL_PETITION", rotulo: "Petição inicial" }];
@@ -97,8 +94,16 @@ type ItemEnvio = {
 };
 
 export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void }) {
-  const [acoes, setAcoes] = useState<NoDaTaxonomia[]>([]);
-  const [acao, setAcao] = useState("");
+  /* O corpus deixou de ser separado por ação: é um acervo só.
+   *
+   * Com 5 peças divididas entre as ações, nenhum balde chegava à amostra mínima
+   * que o perfil exige, e o padrão nunca se formava — o escritório cadastrava e
+   * não via efeito. Num escopo único, toda peça enviada conta para o mesmo
+   * padrão, que é o que "quanto mais colocarem, melhor" pressupõe.
+   *
+   * Constante, e não estado: a tela não escolhe mais escopo, mas as chamadas ao
+   * agente continuam exigindo um código (a rota é de outro serviço). */
+  const acao = ESCOPO_GERAL;
   const [tipo, setTipo] = useState(TIPOS[0].codigo);
 
   const [pecas, setPecas] = useState<PecaDeEstilo[]>([]);
@@ -106,8 +111,6 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [configuracao, setConfiguracao] = useState<ConfiguracaoDeGeracao | null>(null);
   const [documentoNovo, setDocumentoNovo] = useState("");
   const [salvandoConfiguracao, setSalvandoConfiguracao] = useState(false);
-  /** Checklist do Acervo para a ação escolhida — sugestões clicáveis. */
-  const [checklistAcao, setChecklistAcao] = useState<ItemChecklist[]>([]);
 
   const [enviando, setEnviando] = useState(false);
   const [arrastando, setArrastando] = useState(false);
@@ -137,10 +140,6 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [totalPecas, setTotalPecas] = useState(0);
   const [totalPaginasPecas, setTotalPaginasPecas] = useState(1);
 
-  // Estado separado do `erro` de propósito. A primeira versão usava o mesmo, e o `setErro(null)`
-  // do envio apagava a falha da taxonomia — a tela ficava com o seletor vazio e nenhuma
-  // explicação, que foi exatamente como o defeito apareceu.
-  const [erroDasAcoes, setErroDasAcoes] = useState<string | null>(null);
 
   useEffect(() => {
     void obterModeloVisualPeticao()
@@ -215,60 +214,13 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       .catch(() => setConfigAgente({ ligado: false, disponivel: false, url: "", jurisdicao_padrao: "" }));
   }, []);
 
-  useEffect(() => {
-    // Sem o agente ligado não há taxonomia para buscar — e chamar mesmo assim só
-    // trocaria "não ativado ainda" por um aviso de erro que não é esse o caso.
-    if (!configAgente?.ligado) return;
-    void taxonomiaDeEstilo()
-      .then((itens) => {
-        setAcoes(itens);
-        if (!itens.length) {
-          setErroDasAcoes("O agente respondeu, mas não devolveu nenhuma ação cadastrada.");
-          return;
-        }
-        // A primeira, e não a última: a taxonomia vem ordenada por código, e a última é um
-        // nó folha arbitrário — abrir a tela já apontando para ele confunde mais que ajuda.
-        setAcao((atual) => atual || itens[0].code);
-      })
-      .catch((falha) =>
-        setErroDasAcoes(
-          falha instanceof ApiError
-            ? `Não foi possível carregar as ações: ${falha.message}`
-            : "Não foi possível carregar as ações. O agente jurídico está no ar?",
-        ),
-      );
-    // Uma vez por sessão de "ligado": a taxonomia é YAML versionado, não muda entre requisições.
-  }, [configAgente?.ligado]);
-
-  /* O checklist do caso (Acervo) e a taxonomia do agente usam o mesmo código de
-   * ação (`auxilio_acidente`, etc.). Quando bate, oferecemos os documentos do
-   * checklist como atalho — em vez de digitar "CNIS" / "laudo" à mão. */
-  useEffect(() => {
-    if (!acao) {
-      setChecklistAcao([]);
-      return;
-    }
-    let cancelado = false;
-    void listarCategorias()
-      .then((categorias) => {
-        if (cancelado) return;
-        const chave = acao.trim().toLowerCase();
-        const categoria =
-          categorias.find((c) => c.codigo.toLowerCase() === chave) ??
-          categorias.find((c) => c.codigo.toLowerCase().replace(/-/g, "_") === chave.replace(/-/g, "_"));
-        setChecklistAcao(categoria?.itens ?? []);
-      })
-      .catch(() => {
-        if (!cancelado) setChecklistAcao([]);
-      });
-    return () => {
-      cancelado = true;
-    };
-  }, [acao]);
+  /* A taxonomia de ações e o checklist por ação saíram junto com o seletor:
+   * não há mais escopo a escolher, então não há lista a carregar nem categoria
+   * do Acervo a casar com ela. Uma chamada a menos ao agente na abertura. */
 
   useEffect(() => {
     setPaginaPecas(1);
-  }, [acao, tipo]);
+  }, [tipo]);
 
   const recarregar = useCallback(async () => {
     if (!acao) return;
@@ -314,6 +266,10 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           ? resultadoPerfil.value
           : null,
       );
+      // `acao` é constante agora (o escopo único), então esta conferência deixou
+      // de separar ações e passou a separar ESCOPOS: um perfil global antigo,
+      // devolvido por versão antiga do agente, continua não sendo exibido como
+      // se fosse deste acervo.
     } else if (resultadoPerfil.reason instanceof ApiError && resultadoPerfil.reason.status === 404) {
       setPerfil(null);
     } else {
@@ -321,7 +277,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       falhas.push(
         resultadoPerfil.reason instanceof ApiError
           ? resultadoPerfil.reason.message
-          : "Não foi possível medir o padrão desta ação.",
+          : "Não foi possível medir o padrão do escritório.",
       );
     }
 
@@ -340,7 +296,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       falhas.push(
         resultadoConfig.reason instanceof ApiError
           ? resultadoConfig.reason.message
-          : "Não foi possível carregar a configuração desta ação.",
+          : "Não foi possível carregar a configuração das peças.",
       );
     }
 
@@ -352,7 +308,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   }, [recarregar]);
 
   async function enviar(arquivos: File[]) {
-    if (!arquivos.length || !acao) return;
+    if (!arquivos.length) return;
     setEnviando(true);
     setErro(null);
     setRecado(null);
@@ -372,7 +328,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       const id = lote[indice].id;
       setFilaEnvio((fila) => fila.map((item) => item.id === id ? { ...item, estado: "enviando" } : item));
       try {
-        await enviarPecaDeEstilo(arquivo, acao, tipo);
+        await enviarPecaDeEstilo(arquivo, tipo);
         enviadas += 1;
         setFilaEnvio((fila) => fila.map((item) => item.id === id ? { ...item, estado: "concluido" } : item));
       } catch (falha) {
@@ -458,17 +414,14 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     setDocumentoNovo("");
   }
 
-  const sugestoesChecklist = useMemo(() => {
-    if (!configuracao) return [];
-    const ja = new Set(configuracao.required_documents.map((d) => d.toLocaleLowerCase()));
-    return checklistAcao.filter((item) => !ja.has(item.nome.toLocaleLowerCase()));
-  }, [checklistAcao, configuracao]);
+  /* As sugestões vinham do checklist da AÇÃO escolhida. Sem escopo por ação não
+   * há checklist a oferecer: os documentos exigidos passam a ser digitados, que
+   * é o que já acontecia para qualquer nome fora do checklist. */
 
   const semSecoes = useMemo(
     () => pecas.filter((peca) => !peca.eligibility.eligible_for_section_profile).length,
     [pecas],
   );
-  const acaoSelecionada = acoes.find((item) => item.code === acao);
   const documentosObrigatorios = configuracao?.required_documents.length ?? 0;
   const inicioPecas = totalPecas ? (paginaPecas - 1) * ITENS_POR_PAGINA : 0;
   const fimPecas = Math.min(inicioPecas + pecas.length, totalPecas);
@@ -493,7 +446,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               </h1>
             </div>
             <p className="mt-2 mb-0 max-w-[72ch] text-sm leading-[1.55] text-tinta-3">
-              Configure o padrão de escrita por ação, mantenha documentos exigidos e acompanhe a qualidade das amostras cadastradas.
+              Cadastre as peças do escritório, mantenha os documentos exigidos e acompanhe a qualidade das amostras. Quanto mais peças, mais firme o padrão medido.
             </p>
           </div>
           <div className="grid min-w-[220px] grid-cols-3 gap-2 rounded-campo border border-borda bg-papel p-2 text-center">
@@ -731,22 +684,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         </p>
 
         <div className="mb-[0.9rem] grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-[0.9rem]">
-          <label className={CAMPO}>
-            <span>Ação</span>
-            <select className={SELECT}
-              value={acao}
-              disabled={!acoes.length}
-              onChange={(evento) => setAcao(evento.target.value)}
-            >
-              {!acoes.length && <option value="">carregando as ações…</option>}
-              {acoes.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
+          {/* O seletor de Ação saiu: toda peça entra no mesmo acervo. */}
           <label className={CAMPO}>
             <span>Tipo de peça</span>
             <select className={SELECT} value={tipo} onChange={(evento) => setTipo(evento.target.value)}>
@@ -841,28 +779,19 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           </div>
         )}
 
-        {erroDasAcoes && (
-          <Aviso tom="critico" titulo="Sem a lista de ações não dá para enviar">
-            {erroDasAcoes}
-          </Aviso>
-        )}
       </Cartao>
 
       {configuracao && (
         <Cartao titulo="Configuração da peça" className="min-w-0 overflow-hidden">
           <p className="mt-2 mb-4 text-tinta-3 text-sm leading-[1.5]">
-            Configure este tipo de documento para a ação escolhida. As regras e a checklist
-            acompanham o estilo aprendido e entram diretamente na geração da IA Jurídica.
+            Configure este tipo de documento. As regras e a lista de documentos acompanham o
+            estilo aprendido e entram diretamente na geração da IA Jurídica.
           </p>
           <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-[0.9rem]">
             <label className={CAMPO}>
               <span>Nome do tipo de documento</span>
               <input className={SELECT} value={configuracao.display_name}
                 onChange={(evento) => setConfiguracao({ ...configuracao, display_name: evento.target.value })} />
-            </label>
-            <label className={CAMPO}>
-              <span>Ação vinculada</span>
-              <input className={SELECT} value={acaoSelecionada?.label ?? acao} disabled />
             </label>
           </div>
           <label className="mt-4 flex flex-col gap-2 text-tinta-3 text-xs">
@@ -872,41 +801,12 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               onChange={(evento) => setConfiguracao({ ...configuracao, drafting_instructions: evento.target.value })} />
           </label>
           <div className="mt-4 rounded-campo border border-borda-forte bg-papel-2 px-4 py-3">
-            <strong className="text-sm text-tinta">Documentos relacionados a esta petição / ação</strong>
+            <strong className="text-sm text-tinta">Documentos relacionados a esta petição</strong>
             <p className="mt-1 mb-0 text-xs text-tinta-3 leading-[1.5]">
-              Liste o que a IA precisa ter no dossiê para gerar a peça. Clique nas
-              sugestões do checklist desta ação, ou digite um nome e use Adicionar.
-              Depois clique em <strong>Salvar configuração</strong> — sem salvar, a lista
-              não fica gravada.
+              Liste o que a IA precisa ter no dossiê para gerar a peça: digite um nome e use
+              Adicionar. Depois clique em <strong>Salvar configuração</strong> — sem salvar, a
+              lista não fica gravada.
             </p>
-
-            {sugestoesChecklist.length > 0 && (
-              <div className="mt-3">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-tinta-3">
-                  Checklist desta ação — clique para incluir
-                </span>
-                <ul className="mt-2 flex list-none flex-wrap gap-2 p-0">
-                  {sugestoesChecklist.map((item) => (
-                    <li key={item.codigo}>
-                      <button
-                        type="button"
-                        className={
-                          "rounded-pill border px-3 py-1.5 text-xs cursor-pointer transition-colors " +
-                          (item.obrigatorio
-                            ? "border-acao-borda bg-acao-clara text-acao hover:bg-acao hover:text-papel"
-                            : "border-borda bg-papel text-tinta hover:border-borda-forte hover:bg-papel-3")
-                        }
-                        onClick={() => incluirDocumento(item.nome)}
-                        title={item.obrigatorio ? "Obrigatório no checklist do caso" : "Opcional no checklist do caso"}
-                      >
-                        {item.obrigatorio ? "● " : ""}
-                        {item.nome}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
 
             <div className="mt-3 flex min-w-0 flex-wrap gap-2">
               <input
@@ -954,10 +854,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
               </ul>
             ) : (
               <p className="mt-3 mb-0 text-xs text-tinta-3">
-                Nenhum documento exigido foi cadastrado ainda
-                {checklistAcao.length
-                  ? " — use as sugestões do checklist acima."
-                  : "."}
+                Nenhum documento exigido foi cadastrado ainda.
               </p>
             )}
           </div>
@@ -968,7 +865,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                 onClick={() => salvarConfiguracao()}
                 processando={salvandoConfiguracao}
                 textoProcessando="Salvando…"
-                pendencia={configuracao.display_name.trim() ? null : "Preencha o nome da ação."}
+                pendencia={configuracao.display_name.trim() ? null : "Preencha o nome do tipo de documento."}
                 pendenciaAoClicar
               >
                 Salvar configuração

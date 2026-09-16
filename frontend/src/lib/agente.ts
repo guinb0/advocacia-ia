@@ -151,9 +151,11 @@ export interface RevisaoRegistrada {
   usuario?: string;
   em?: string;
   alteradas?: string[];
+  alterou?: boolean;
   atendeu?: boolean | null;
   faltou?: string;
   tentativas?: number;
+  perguntas?: string[];
 }
 
 export interface Peticao {
@@ -868,15 +870,31 @@ export async function pecasDeEstilo(
   };
 }
 
-/** Sobe uma peça pronta do escritório para o corpus de estilo. */
+/** Escopo único do corpus de estilo — o corpus deixou de ser separado por ação.
+ *
+ * O escritório pediu um acervo só: toda peça que ele sobe serve para a IA saber
+ * COMO ele escreve e o que costuma alegar, e separar por tipo de ação fazia cada
+ * balde começar vazio — com 5 peças por ação, nenhuma chegava à amostra mínima
+ * que o perfil exige, e o padrão nunca se formava.
+ *
+ * As LEITURAS (`pecasDeEstilo`, `perfilDeEstilo`) aceitam omitir o código e já
+ * respondem global; o ENVIO e a configuração exigem um, porque a rota é do
+ * agente jurídico — outro serviço, fora deste repositório. Daí o sentinela: um
+ * código fixo que concentra tudo, em vez de mudar contrato alheio.
+ *
+ * CONSEQUÊNCIA, e ela é real: peças cadastradas antes ficaram no código da ação
+ * delas e não entram neste escopo até serem reenviadas.
+ */
+export const ESCOPO_GERAL = "GERAL";
+
+/** Sobe uma peça pronta do escritório para o corpus de estilo, no escopo único. */
 export async function enviarPecaDeEstilo(
   arquivo: File,
-  taxonomyCode: string,
   documentType = "INITIAL_PETITION",
 ): Promise<{ id: string; word_count: number }> {
   const corpo = new FormData();
   corpo.append("arquivo", arquivo);
-  corpo.append("taxonomy_code", taxonomyCode);
+  corpo.append("taxonomy_code", ESCOPO_GERAL);
   corpo.append("document_type", documentType);
   return chamar(`/api/agente/estilo/pecas`, { method: "POST", body: corpo });
 }

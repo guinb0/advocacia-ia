@@ -256,6 +256,28 @@ def buscar_similares(
     return comparaveis[:limite]
 
 
+def buscar_legislacao(
+    consulta: str, *, limite: int = 6, timeout: float = 120, connect_timeout: int = 10,
+) -> list[TrechoSimilar]:
+    """Recupera texto legal oficial sem o confundir com a amostra processual."""
+    if not consulta.strip():
+        return []
+    embedding = vetor_literal(gerar_embeddings([consulta[:12000]], timeout=timeout)[0])
+    linhas = _consultar_pgvector(
+        """SELECT k.texto, 1-(k.embedding <=> %s::vector) AS similaridade,
+                  f.titulo,f.identificador,f.url,k.metadados
+             FROM knowledge_chunks k JOIN fontes f ON f.id=k.fonte_id
+            WHERE k.embedding IS NOT NULL AND f.tipo='lei'
+            ORDER BY k.embedding <=> %s::vector LIMIT %s""",
+        (embedding, embedding, limite), connect_timeout=connect_timeout,
+    )
+    return [TrechoSimilar(
+        texto=linha["texto"], similaridade=float(linha["similaridade"]),
+        titulo=linha["titulo"], identificador=linha["identificador"],
+        url=linha["url"], metadados=linha["metadados"],
+    ) for linha in linhas]
+
+
 def _estatisticas_amostra(similares: list[TrechoSimilar]) -> dict[str, Any]:
     """Resume somente os processos recuperados, sem vender correlação como previsão."""
     resultados = Counter(
