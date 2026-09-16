@@ -658,12 +658,14 @@ export async function criarCaso(
   categoria: string,
   observacao = "",
   telefone = "",
+  tipoAcao = "",
 ): Promise<CasoCriado> {
   const form = new FormData();
   form.append("cliente", cliente);
   form.append("categoria", categoria);
   form.append("observacao", observacao);
   form.append("telefone", telefone);
+  form.append("tipo_acao", tipoAcao);
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
 }
 

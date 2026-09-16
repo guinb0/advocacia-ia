@@ -295,7 +295,7 @@ def inicializar() -> None:
 
 
 def criar_caso(
-    cliente: str, categoria: str, observacao: str = "", telefone: str = ""
+    cliente: str, categoria: str, observacao: str = "", telefone: str = "", tipo_acao: str = ""
 ) -> dict[str, Any]:
     """Abre o caso. O `telefone` é o WhatsApp que a entrevista colheu.
 
@@ -309,14 +309,15 @@ def criar_caso(
     with conectar() as con:
         con.execute(
             "INSERT INTO casos"
-            " (id, cliente, categoria, observacao, telefone, criado_em, atualizado_em)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " (id, cliente, categoria, observacao, telefone, tipo_acao, criado_em, atualizado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 caso_id,
                 cliente.strip(),
                 categoria,
                 observacao.strip(),
                 telefone.strip(),
+                tipo_acao.strip(),
                 instante,
                 instante,
             ),
@@ -328,6 +329,7 @@ def criar_caso(
         "categoria": categoria,
         "observacao": observacao.strip(),
         "telefone": telefone.strip(),
+        "tipo_acao": tipo_acao.strip(),
         "criado_em": instante,
         "atualizado_em": instante,
     }

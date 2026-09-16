@@ -16,7 +16,7 @@ interface Props {
   carregando: boolean;
   erro: string | null;
   onAbrir: (casoId: string) => void;
-  onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string) => Promise<CasoCriado>;
+  onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string, tipoAcao?: string) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
 }
 
@@ -76,6 +76,7 @@ export default function ListaCasos({
   const [cliente, setCliente] = useState("");
   const [telefone, setTelefone] = useState("");
   const [categoria, setCategoria] = useState("");
+  const [tipoAcao, setTipoAcao] = useState("");
   const [entrevistaArquivo, setEntrevistaArquivo] = useState<File | null>(null);
   const [analisandoEntrevista, setAnalisandoEntrevista] = useState(false);
   const [resultadoTriagem, setResultadoTriagem] = useState<string | null>(null);
@@ -127,11 +128,12 @@ export default function ListaCasos({
     }
     setCriando(true);
     try {
-      const novo = await onCriar(cliente.trim(), categoriaSelecionada, "", formatarTelefone(telefone));
+      const novo = await onCriar(cliente.trim(), categoriaSelecionada, "", formatarTelefone(telefone), tipoAcao.trim());
       await enviarTranscricaoEntrevista(novo.id, entrevistaArquivo);
       setNovoPortal(novo);
       setCliente("");
       setTelefone("");
+      setTipoAcao("");
       setEntrevistaArquivo(null);
       setResultadoTriagem(null);
       setTentouCriar(false);
@@ -148,7 +150,7 @@ export default function ListaCasos({
     try {
       const triagem = await triarEntrevista("", arquivo);
       const sugestao = triagem.sugestoes[0];
-      if (sugestao) setCategoria(sugestao.codigo);
+      if (sugestao) { setCategoria(sugestao.codigo); setTipoAcao(sugestao.nome); }
       if (!cliente.trim() && triagem.dados.cliente) setCliente(triagem.dados.cliente);
       setResultadoTriagem(
         sugestao
@@ -241,6 +243,11 @@ export default function ListaCasos({
             )}
           </div>
 
+          <div className="mb-4">
+            <RotuloCampo htmlFor="tipo-acao-livre">Tipo de ação</RotuloCampo>
+            <Campo id="tipo-acao-livre" value={tipoAcao} onChange={(e) => setTipoAcao(e.target.value)} placeholder="A IA sugere após analisar a transcrição" />
+            <p className="mt-1 text-xs text-tinta-3">Nome livre da ação. A categoria operacional abaixo só define o checklist.</p>
+          </div>
           <div className="mb-4">
             <RotuloCampo htmlFor="categoria">Tipo de ação</RotuloCampo>
             <CampoSeletor

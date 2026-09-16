@@ -714,7 +714,12 @@ AUXILIO_ACIDENTE = _tipificar(
 )
 
 
+CATEGORIA_EM_TRIAGEM = Categoria(
+    codigo="em_triagem", nome="Ação em análise", descricao="A ação ainda será enquadrada pelo advogado; envie os documentos disponíveis.", itens=(),
+)
+
 CATEGORIAS: dict[str, Categoria] = {
+    CATEGORIA_EM_TRIAGEM.codigo: CATEGORIA_EM_TRIAGEM,
     ACIDENTE_TRABALHO_CORREIOS.codigo: ACIDENTE_TRABALHO_CORREIOS,
     ACIDENTE_TRABALHO_GERAL.codigo: ACIDENTE_TRABALHO_GERAL,
     DOENCA_OCUPACIONAL.codigo: DOENCA_OCUPACIONAL,

@@ -2870,6 +2870,7 @@ def criar_caso(
     #: O WhatsApp que a entrevista colheu. Opcional porque o caso também nasce
     #: pela carteira, digitado à mão, onde ninguém perguntou telefone ainda.
     telefone: str = Form(""),
+    tipo_acao: str = Form(""),
 ):
     """Cria o caso já com o portal do cliente pronto.
 
@@ -2879,10 +2880,12 @@ def criar_caso(
     """
     if not cliente.strip():
         raise HTTPException(400, "Informe o nome do cliente.")
+    # A ação exibida é livre; a categoria continua técnica para preservar o
+    # checklist. O fallback evita que uma tese nova impeça a abertura do caso.
     if categorias.obter(categoria) is None:
-        raise HTTPException(400, f"Categoria '{categoria}' não existe.")
+        categoria = "em_triagem"
 
-    caso = armazenamento.criar_caso(cliente, categoria, observacao, telefone)
+    caso = armazenamento.criar_caso(cliente, categoria, observacao, telefone, tipo_acao)
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return {**caso, "portal": _criar_portal(caso["id"])}
 
