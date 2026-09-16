@@ -856,15 +856,21 @@ def testar_revisao_garantida() -> int:
 
     entradas: list = []
     dublar_sequencia([{"secoes": secoes}, {"secoes": secoes}], entradas)
-    try:
-        pl.revisar_com_prompt(CASO, prompt_critica="inclua dano material", usuario="ana", generaliza=False)
-        falhas += not checar(False, "revisão que não muda nada é recusada")
-    except pl.ErroPeticao:
-        falhas += not checar(True, "revisão que não muda nada é recusada com erro em português")
+    # Contrato novo: revisão que não muda nada AVISA, não recusa. Levantar erro
+    # aqui matava a tela e perdia o pedido do advogado; agora a peça volta
+    # intacta com "alterou": False e as perguntas da IA.
+    dados_iguais = pl.revisar_com_prompt(
+        CASO, prompt_critica="inclua dano material", usuario="ana", generaliza=False
+    )
+    revisao_igual = dados_iguais.get("revisao") or {}
+    falhas += not checar(
+        revisao_igual.get("alterou") is False,
+        "revisão que não muda nada avisa em vez de recusar",
+    )
     falhas += not checar(pl.carregar(CASO)["version"] == versao, "e nenhuma versão nova é criada")
     falhas += not checar(
-        len(entradas) == 2 and "TENTATIVA ANTERIOR FALHOU" in entradas[1][1],
-        "a IA recebe uma segunda tentativa dizendo que nada mudou",
+        len(entradas) == 3 and "TENTATIVA ANTERIOR FALHOU" in entradas[1][1],
+        "a IA recebe três tentativas dizendo que nada mudou",
     )
 
     entradas = []
