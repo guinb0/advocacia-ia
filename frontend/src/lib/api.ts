@@ -288,27 +288,25 @@ export function urlModeloContrato(codigo: ModeloContrato["codigo"]): string {
   return urlApi(`/api/modelos/${encodeURIComponent(codigo)}/arquivo`);
 }
 
-/** Skill/prompt que o escritório configura por categoria de petição — issue
- *  "Configurar skill por modelo de petição". Local ao Acervo, não depende do
- *  agente jurídico (`ia-juridica`) estar ativo. */
+/** A orientação de redação do escritório — UMA, para toda peça.
+ *
+ * Era uma por categoria de ação (`/skills/{categoria}`). Virou única porque o
+ * que o escritório ensina sobre como redigir não muda com o tipo da ação, e
+ * manter cinco cópias significava reescrever a mesma instrução cinco vezes. Não
+ * depende do agente jurídico (`ia-juridica`) estar ativo. */
 export interface SkillDePeticao {
-  categoria: string;
-  nome: string;
   instrucoes: string;
   atualizado_por?: string;
   atualizado_em?: string;
 }
 
-export async function listarSkillsDePeticao(): Promise<SkillDePeticao[]> {
-  return comoJson(await buscar("/api/modelos/peticao/skills"));
+export async function obterSkillDePeticao(): Promise<SkillDePeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/skill"));
 }
 
-export async function salvarSkillDePeticao(
-  categoria: string,
-  instrucoes: string,
-): Promise<SkillDePeticao> {
+export async function salvarSkillDePeticao(instrucoes: string): Promise<SkillDePeticao> {
   return comoJson(
-    await buscar(`/api/modelos/peticao/skills/${encodeURIComponent(categoria)}`, {
+    await buscar("/api/modelos/peticao/skill", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ instrucoes }),

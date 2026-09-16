@@ -291,7 +291,25 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     configuração existir.
     """
     categoria = _categoria_do_caso(caso_id)
-    skill = peticao_skills.instrucoes_da_categoria(categoria).strip()
+    # A orientação GERAL vem primeiro; a da categoria, se existir, complementa.
+    #
+    # A configuração da tela passou a ser única (ver `peticao_skills.CATEGORIA_GERAL`):
+    # o que o escritório ensina sobre como redigir não muda com o tipo da ação, e
+    # manter uma cópia por categoria obrigava a reescrever a mesma instrução cinco
+    # vezes — e a lembrar de atualizar as cinco.
+    #
+    # As skills já escritas por categoria continuam sendo LIDAS de propósito.
+    # Parar de lê-las sumiria em silêncio com o que o escritório já tinha
+    # ensinado: não haveria aviso na tela, e o sintoma apareceria semanas depois,
+    # como petição saindo diferente sem ninguém saber por quê.
+    skill = "\n\n".join(
+        parte
+        for parte in (
+            peticao_skills.instrucoes_gerais().strip(),
+            peticao_skills.instrucoes_da_categoria(categoria).strip(),
+        )
+        if parte
+    )
     try:
         peticao_criticas.inicializar()
         criticas = peticao_criticas.ultimas_da_categoria(
