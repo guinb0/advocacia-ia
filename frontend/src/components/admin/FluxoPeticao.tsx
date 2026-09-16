@@ -78,6 +78,42 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [historico, setHistorico] = useState<HistoricoDePeticao | null>(null);
   const [mostrarHistorico, setMostrarHistorico] = useState(false);
   const [avisoRevisao, setAvisoRevisao] = useState<string | null>(null);
+  const [ouvindoRevisao, setOuvindoRevisao] = useState(false);
+  const reconhecimentoRevisao = useRef<SpeechRecognition | null>(null);
+
+  const alternarMicrofoneRevisao = useCallback(() => {
+    if (ouvindoRevisao) {
+      reconhecimentoRevisao.current?.stop();
+      return;
+    }
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) {
+      setAvisoRevisao("Seu navegador não oferece transcrição por voz. Use Chrome ou Edge, ou digite o pedido.");
+      return;
+    }
+    const reconhecimento = new Speech();
+    reconhecimento.lang = "pt-BR";
+    reconhecimento.continuous = true;
+    reconhecimento.interimResults = true;
+    reconhecimento.onresult = (evento) => {
+      let final = "";
+      for (let i = evento.resultIndex; i < evento.results.length; i += 1) {
+        if (evento.results[i].isFinal) final += evento.results[i][0].transcript;
+      }
+      if (final.trim()) setPromptRevisao((atual) => `${atual}${atual.trim() ? " " : ""}${final.trim()}`);
+    };
+    reconhecimento.onerror = () => {
+      setOuvindoRevisao(false);
+      setAvisoRevisao("Não consegui transcrever o áudio. Verifique a permissão do microfone e tente novamente.");
+    };
+    reconhecimento.onend = () => setOuvindoRevisao(false);
+    reconhecimentoRevisao.current = reconhecimento;
+    reconhecimento.start();
+    setAvisoRevisao(null);
+    setOuvindoRevisao(true);
+  }, [ouvindoRevisao]);
+
+  useEffect(() => () => reconhecimentoRevisao.current?.stop(), []);
 
   const recarregar = useCallback(async () => {
     try {
@@ -574,6 +610,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               rows={3}
               placeholder="O que deve mudar nesta petição?"
             />
+            <div className="flex items-center gap-2">
+              <Botao variante="secundario" pequeno onClick={alternarMicrofoneRevisao}>
+                {ouvindoRevisao ? "Parar transcrição" : "🎙️ Falar pedido"}
+              </Botao>
+              {ouvindoRevisao && <span className="text-xs text-tinta-3">Ouvindo em português… fale a alteração desejada.</span>}
+            </div>
             <label className="flex items-start gap-2 text-xs text-tinta-2 cursor-pointer">
               <input
                 type="checkbox"
