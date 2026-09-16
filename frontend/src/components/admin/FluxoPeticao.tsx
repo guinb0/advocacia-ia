@@ -1266,6 +1266,13 @@ function ComparacaoRevisao({
   const comparacaoRef = useRef<HTMLElement>(null);
   const porCodigo = new Map(candidata.map((s) => [s.code, s]));
   const todos = [...anterior, ...candidata.filter((s) => !anterior.some((a) => a.code === s.code))];
+  const anteriorVisivel = todos.map((s) => anterior.find((a) => a.code === s.code) ?? { ...s, content: "" });
+  const candidataVisivel = todos.map((s) => porCodigo.get(s.code) ?? { ...s, content: "" });
+  // Uma seção pode trocar de código/posição numa revisão. Antes isso fazia o
+  // texto idêntico ficar todo verde/vermelho; primeiro pareamos conteúdo igual,
+  // depois caímos no código da seção.
+  const opostasDaAnterior = parearSecoes(anteriorVisivel, candidataVisivel);
+  const opostasDaCandidata = parearSecoes(candidataVisivel, anteriorVisivel);
   const mudancas = todos.filter((s) => (porCodigo.get(s.code)?.content ?? "") !== (anterior.find((a) => a.code === s.code)?.content ?? "")).length;
   useEffect(() => {
     // Ao chegar a candidata, o advogado não precisa procurar a alteração numa
@@ -1286,8 +1293,8 @@ function ComparacaoRevisao({
         <span className="rounded-full bg-acao-clara px-3 py-1 text-xs font-semibold text-tinta-2">A peça oficial continua preservada</span>
       </div>
       <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-        <ColunaComparacao titulo="VERSÃO ANTERIOR" secoes={todos.map((s) => anterior.find((a) => a.code === s.code) ?? { ...s, content: "" })} oposta={porCodigo} tipo="antes" />
-        <ColunaComparacao titulo="NOVA VERSÃO" secoes={todos.map((s) => porCodigo.get(s.code) ?? { ...s, content: "" })} oposta={new Map(anterior.map((s) => [s.code, s]))} tipo="depois" />
+        <ColunaComparacao titulo="VERSÃO ANTERIOR" secoes={anteriorVisivel} oposta={opostasDaAnterior} tipo="antes" />
+        <ColunaComparacao titulo="NOVA VERSÃO" secoes={candidataVisivel} oposta={opostasDaCandidata} tipo="depois" />
       </div>
       <div className="mt-4 flex justify-end gap-2">
         <Botao variante="secundario" pequeno disabled={revisando} onClick={onDescartar}>Descartar revisão</Botao>
@@ -1295,6 +1302,25 @@ function ComparacaoRevisao({
       </div>
     </section>
   );
+}
+
+function normalizarParaComparacao(texto: string): string {
+  return texto.replace(/\s+/g, " ").trim();
+}
+
+function parearSecoes(secoes: SecaoPeticao[], opostas: SecaoPeticao[]): Map<string, SecaoPeticao> {
+  const usados = new Set<number>();
+  const resultado = new Map<string, SecaoPeticao>();
+  secoes.forEach((secao) => {
+    const texto = normalizarParaComparacao(secao.content);
+    let indice = opostas.findIndex((outra, i) => !usados.has(i) && texto !== "" && normalizarParaComparacao(outra.content) === texto);
+    if (indice < 0) indice = opostas.findIndex((outra, i) => !usados.has(i) && outra.code === secao.code);
+    if (indice >= 0) {
+      usados.add(indice);
+      resultado.set(secao.code, opostas[indice]);
+    }
+  });
+  return resultado;
 }
 
 function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoPeticao>; tipo: "antes" | "depois" }) {
@@ -1309,9 +1335,13 @@ function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; se
 
 function TextoComDiff({ texto, outro, tipo }: { texto: string; outro: string; tipo: "antes" | "depois" }) {
   if (texto === outro) return <>{texto}</>;
-  const palavras = texto.split(/(\s+)/); const opostas = new Set(outro.split(/(\s+)/).filter(Boolean));
+  const palavras = texto.split(/(\s+)/);
+  const alteradas = indicesAlterados(texto, outro, tipo);
+  let indicePalavra = 0;
   return <>{palavras.map((palavra, i) => {
-    const mudou = palavra.trim() && !opostas.has(palavra);
+    const ehPalavra = Boolean(palavra.trim());
+    const mudou = ehPalavra && alteradas.has(indicePalavra);
+    if (ehPalavra) indicePalavra += 1;
     return <span
       key={i}
       data-revisao-alteracao={mudou ? "true" : undefined}
@@ -1319,4 +1349,35 @@ function TextoComDiff({ texto, outro, tipo }: { texto: string; outro: string; ti
       className={mudou ? tipo === "antes" ? "bg-red-100 text-red-900 line-through" : "bg-green-100 text-green-900" : undefined}
     >{palavra}</span>;
   })}</>;
+}
+
+/** Diff por sequência (LCS), não por conjunto: repetição e posição importam. */
+function indicesAlterados(texto: string, outro: string, tipo: "antes" | "depois"): Set<number> {
+  const atual = texto.split(/\s+/).filter(Boolean);
+  const comparado = outro.split(/\s+/).filter(Boolean);
+  // Evita custo quadrático impróprio numa peça excepcionalmente grande. O
+  // prefixo/sufixo ainda não marca texto que permaneceu no mesmo lugar.
+  if (atual.length > 1_500 || comparado.length > 1_500) {
+    let inicio = 0; while (atual[inicio] === comparado[inicio]) inicio += 1;
+    let fimAtual = atual.length - 1; let fimComparado = comparado.length - 1;
+    while (fimAtual >= inicio && fimComparado >= inicio && atual[fimAtual] === comparado[fimComparado]) { fimAtual -= 1; fimComparado -= 1; }
+    return new Set(Array.from({ length: Math.max(0, fimAtual - inicio + 1) }, (_, i) => inicio + i));
+  }
+  const linhas = Array.from({ length: atual.length + 1 }, () => new Uint16Array(comparado.length + 1));
+  for (let i = atual.length - 1; i >= 0; i -= 1) for (let j = comparado.length - 1; j >= 0; j -= 1) {
+    linhas[i][j] = atual[i] === comparado[j] ? linhas[i + 1][j + 1] + 1 : Math.max(linhas[i + 1][j], linhas[i][j + 1]);
+  }
+  const mantidos = new Set<number>(); let i = 0; let j = 0;
+  while (i < atual.length && j < comparado.length) {
+    if (atual[i] === comparado[j]) { mantidos.add(i); i += 1; j += 1; }
+    else if (linhas[i + 1][j] >= linhas[i][j + 1]) i += 1;
+    else j += 1;
+  }
+  if (tipo === "antes") return new Set(atual.map((_, indice) => indice).filter((indice) => !mantidos.has(indice)));
+  // Reexecuta invertido para devolver os índices que são realmente novos na candidata.
+  return indicesAlteradosNoComparado(atual, comparado);
+}
+
+function indicesAlteradosNoComparado(antes: string[], depois: string[]): Set<number> {
+  return indicesAlterados(depois.join(" "), antes.join(" "), "antes");
 }
