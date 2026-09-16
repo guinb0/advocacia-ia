@@ -220,6 +220,16 @@ def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
     return dados
 
 
+#: Teto de saída do modelo, em tokens.
+#:
+#: NÃO estava definido, e era ESTE o motivo real das peças curtas. Sem o campo, a
+#: DeepSeek aplica o padrão dela (4096 tokens), e nenhuma instrução de "escreva
+#: mais" vence um corte no transporte: o prompt podia pedir quatro parágrafos por
+#: tese e doze julgados que a resposta parava no mesmo tamanho. A mediana do
+#: acervo do escritório é de 144 parágrafos por peça — não cabe em 4096.
+MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "8192"))
+
+
 def _llm_json(
     instrucao: str, entrada: str, *, timeout: float = 180.0
 ) -> dict[str, Any]:
@@ -235,6 +245,7 @@ def _llm_json(
             json={
                 "model": modelo,
                 "temperature": 0.2,
+                "max_tokens": MAX_TOKENS_RESPOSTA,
                 "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": instrucao},
@@ -727,7 +738,10 @@ Cada content em parágrafos separados por linha em branco.""",
             f"Confirmados: {', '.join(analise.get('fatos_confirmados') or [])}\n\n"
             f"MATERIAL:\n{contexto[:90_000]}"
         ),
-        timeout=240.0,
+        # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
+        # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
+        # respondeu" — que é pior, porque perde o trabalho inteiro.
+        timeout=360.0,
     )
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(s["content"] for s in secoes):
@@ -763,7 +777,7 @@ def _precedentes_para_redigir(contexto: str) -> str:
     # empurraria o prompt para perto do teto e o que entra por último é
     # justamente o que o modelo menos aproveita.
     linhas = ["\n\n=== JULGADOS SEMELHANTES (use no DO DIREITO) ==="]
-    usados = list(similares[:12])
+    usados = list(similares[:18])
     for indice, trecho in enumerate(usados, start=1):
         ref = trecho.referencia()
         linhas.append(
@@ -928,7 +942,10 @@ ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
 Cada content deve conter parágrafos separados por linha em branco.""",
         ),
         contexto,
-        timeout=240.0,
+        # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
+        # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
+        # respondeu" — que é pior, porque perde o trabalho inteiro.
+        timeout=360.0,
     )
     bruto_analise = saida.get("analise") or {}
     analise = {
@@ -1173,7 +1190,10 @@ JSON:
 Cada content em parágrafos separados por linha em branco.""",
         ),
         "\n".join(alvo) + "\n\n" + contexto,
-        timeout=240.0,
+        # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
+        # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
+        # respondeu" — que é pior, porque perde o trabalho inteiro.
+        timeout=360.0,
     )
 
     secoes = _normalizar_secoes(saida.get("secoes") or [])
@@ -1433,7 +1453,11 @@ def _revisar_secoes_via_llm(
                 "as seções envolvidas de forma substancialmente mais longa e "
                 "densa — não basta trocar palavras."
             )
-        saida = _llm_json(instrucao, entrada, timeout=240.0)
+        # 360s como nas de redação: esta chamada REESCREVE a peça inteira, e com o
+        # teto de saída em 8192 a resposta ficou do mesmo tamanho. Pior, ela roda em
+        # laço de até três tentativas — estourar o prazo aqui perde a crítica que o
+        # advogado acabou de escrever, que é o erro mais caro deste fluxo.
+        saida = _llm_json(instrucao, entrada, timeout=360.0)
         perguntas = [
             str(p).strip()
             for p in (saida.get("perguntas") or [])
