@@ -23,6 +23,42 @@ function normalizarFiltro(valor: string): string {
   return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 }
 
+/** Tipos distintos que cabem na linha antes de virarem "+N". */
+const TIPOS_VISIVEIS = 2;
+
+/**
+ * Tipos de ação de um cliente com vários casos: um selo por tipo, com a
+ * quantidade, e não um por caso. Um selo por caso fazia 12 casos de 3 tipos
+ * virarem 12 selos repetidos, e a linha crescia até ocupar a tela.
+ */
+function TiposDoGrupo({ nomes }: { nomes: string[] }) {
+  const contagem = new Map<string, number>();
+  for (const nome of nomes) contagem.set(nome, (contagem.get(nome) ?? 0) + 1);
+  const tipos = [...contagem.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const visiveis = tipos.slice(0, TIPOS_VISIVEIS);
+  const restantes = tipos.length - visiveis.length;
+
+  return (
+    <span
+      className="flex min-w-0 flex-wrap gap-1"
+      title={tipos.map(([nome, total]) => `${nome} (${total})`).join("\n")}
+    >
+      {visiveis.map(([nome, total]) => (
+        // A contagem vai no `simbolo`, que não encolhe: no texto ela sumiria no
+        // "…" de nomes longos como "Acidente do Trabalho (Correios)".
+        <Selo key={nome} tom="info" simbolo={total > 1 ? `${total}×` : undefined}>
+          {nome}
+        </Selo>
+      ))}
+      {restantes > 0 && (
+        <Selo tom="neutro">
+          +{restantes} {restantes === 1 ? "tipo" : "tipos"}
+        </Selo>
+      )}
+    </span>
+  );
+}
+
 const ACAO_ICONE =
   "inline-flex h-9 w-9 items-center justify-center rounded-campo border transition-colors " +
   "duration-[120ms] ease-out disabled:cursor-not-allowed disabled:opacity-60";
@@ -309,13 +345,7 @@ export default function ListaCasos({
                             {nomeCategoria(unico.categoria)}
                           </span>
                         ) : (
-                          <span className="flex flex-wrap gap-1">
-                            {grupo.casos.map((caso) => (
-                              <Selo key={caso.id} tom="info">
-                                {nomeCategoria(caso.categoria)}
-                              </Selo>
-                            ))}
-                          </span>
+                          <TiposDoGrupo nomes={grupo.casos.map((caso) => nomeCategoria(caso.categoria))} />
                         )}
                       </div>
 
