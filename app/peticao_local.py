@@ -41,7 +41,7 @@ ID_LOCAL = "local"
 #: 6 — recuo de 1,25 cm na primeira linha de cada parágrafo, medido na mesma
 #: peça de referência (corpo em 3,0 cm, primeira linha em 4,25 cm), e negrito
 #: inline no nome do autor.
-DOCX_STYLE_VERSION = 6
+DOCX_STYLE_VERSION = 7
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 #: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
 #:
@@ -1846,14 +1846,19 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
 
              esquerda  3,00 cm = 1701 twips
              direita   1,89 cm = 1069 twips
-             topo      4,66 cm = 2642 twips  (onde o TEXTO começa)
              rodapé    1,25 cm =  708 twips
              header    1,25 cm =  708 twips  (onde o timbre começa)
+             topo      4,66 cm = 2642 twips  (onde o TEXTO começava)
 
            `w:top` é onde o corpo começa, não a borda do papel: entre 1,25 cm e
-           4,66 cm fica a logo, que é cabeçalho e se repete em toda página. Com
-           `w:top` menor que isso o texto subiria por cima do timbre. -->
-      <w:pgMar w:top="2642" w:right="1069" w:bottom="708" w:left="1701" w:header="708"/>
+           `w:top` fica a logo, que é cabeçalho e se repete em toda página. Com
+           `w:top` menor que isso o texto subiria por cima do timbre.
+
+           Com a logo reduzida a 2,36 cm de altura, o timbre acaba em 3,61 cm.
+           Mantendo a mesma folga de 0,13 cm da peça de referência, o texto passa
+           a começar em 3,74 cm = 2120 twips. Sem descer `w:top` junto sobraria
+           quase 1 cm de ar entre a logo e o primeiro parágrafo. -->
+      <w:pgMar w:top="2120" w:right="1069" w:bottom="708" w:left="1701" w:header="708"/>
     </w:sectPr>
   </w:body>
 </w:document>"""
@@ -1873,14 +1878,15 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
        parágrafo ao centro do papel, que é onde o olho espera o timbre. -->
   <w:p><w:pPr><w:jc w:val="center"/><w:ind w:right="629"/></w:pPr><w:r><w:drawing>
     <wp:inline distT="0" distB="0" distL="0" distR="0">
-      <!-- 5,82 × 3,28 cm em EMU (1 cm = 360000), o tamanho do timbre na petição
-           de referência. A proporção é a mesma de antes (1,77), então a imagem
-           só cresce — não distorce. -->
-      <wp:extent cx="2095200" cy="1180800"/><wp:docPr id="1" name="Logo do escritório"/>
+      <!-- 4,19 × 2,36 cm em EMU (1 cm = 360000). O timbre da peça de referência
+           tem 5,82 × 3,28 cm; este é ele a 72%, por pedido do escritório. Os dois
+           lados usam o mesmo fator, então a proporção 1,77 se mantém e a imagem
+           encolhe sem distorcer. Mexer aqui obriga a mexer no `w:top` do sectPr. -->
+      <wp:extent cx="1508544" cy="850176"/><wp:docPr id="1" name="Logo do escritório"/>
       <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
         <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo-escritorio"/><pic:cNvPicPr/></pic:nvPicPr>
           <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
-          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2095200" cy="1180800"/></a:xfrm>
+          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1508544" cy="850176"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
         </pic:pic>
       </a:graphicData></a:graphic>
