@@ -225,8 +225,10 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     compartilhandoTela,
     telaDisponivel,
     erro,
-    ativa: estado !== "fora",
-    mostrarDock: estado !== "fora" && paineis === 0,
+    // "encerrada" preserva uma mensagem para a tela que já está aberta, mas
+    // não é uma ligação e jamais pode ressuscitar o painel flutuante.
+    ativa: estado === "aguardando" || estado === "conectando" || estado === "falando",
+    mostrarDock: (estado === "aguardando" || estado === "conectando" || estado === "falando") && paineis === 0,
     registrarPainel,
     entrar,
     desligar: soltar,
