@@ -72,6 +72,10 @@ export interface EventosChamada {
   onEstado?: (estado: EstadoChamada) => void;
   /** A voz do outro lado. No advogado, é o que alimenta o Whisper. */
   onFaixaRemota?: (trilha: MediaStreamTrack) => void;
+  /** A NOSSA voz, para a tela medir se está mesmo saindo som. Vem de novo a
+   *  cada troca de faixa (recuperação, "Reativar áudio"), e `null` ao desligar —
+   *  senão a barra continuaria medindo uma faixa morta e acusaria silêncio. */
+  onFaixaLocal?: (trilha: MediaStreamTrack | null) => void;
   /** A sala inteira mudou: alguém entrou, saiu, ligou câmera ou trocou de nome. */
   onParticipantes?: (lista: Participante[]) => void;
   onErro?: (mensagem: string) => void;
@@ -82,6 +86,14 @@ export interface OpcoesEntrada {
   nome?: string;
   /** Entrar já com a câmera ligada. */
   camera?: boolean;
+  /** O microfone aprovado no teste da tela anterior. Sem isto a chamada abriria
+   *  com o padrão do sistema — que é, com frequência, justamente o que não
+   *  funciona (o do monitor, o fone desconectado). */
+  microfoneId?: string;
+  /** Tentar ligação direta entre os navegadores antes de usar o videobridge.
+   *  Quem decide é o servidor (`CHAMADA_P2P`); o padrão é `false`. Ver o
+   *  comentário em `entrarNaSala`. */
+  p2p?: boolean;
 }
 
 /* A lib-jitsi-meet não publica tipos. Em vez de arrastar um pacote de tipos da
@@ -216,16 +228,13 @@ export async function consultarPermissaoMicrofone(): Promise<PermissaoMicrofone 
   return "perguntar";
 }
 
-export async function pedirPermissaoMicrofone(): Promise<PermissaoMicrofone> {
-  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return "indisponivel";
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((faixa) => faixa.stop());
-    return "permitido";
-  } catch (e) {
-    return e instanceof DOMException && /NotAllowed|Security/i.test(e.name) ? "negado" : "indisponivel";
-  }
-}
+/* `pedirPermissaoMicrofone` existia aqui e foi removida em 16/09/2026.
+ *
+ * Ela pedia o microfone só para conferir a PERMISSÃO e soltava a faixa em
+ * seguida — era o que sustentava o "✓ Microfone ligado" que ficava verde com o
+ * cliente mudo. Quem faz esse trabalho agora é o próprio `AtivarMicrofone`, que
+ * segura a faixa o tempo do teste para MEDIR o som antes de aprovar, e por isso
+ * não podia soltá-la aqui dentro. */
 
 function ehCelular(): boolean {
   return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
@@ -289,6 +298,15 @@ export class ChamadaJitsi {
   private estadoAtual: EstadoChamada = "fora";
   private desligando = false;
   private mudoAtual = false;
+  /** O microfone escolhido na entrada, para as recuperações reabrirem O MESMO —
+   *  reabrir no padrão do sistema devolveria o dispositivo que já falhou. */
+  private microfoneEscolhido: string | undefined;
+  /** Retrato da última lista de microfones, para saber o que entrou ou saiu
+   *  quando o `devicechange` avisa que ela mudou. */
+  private dispositivosConhecidos: string[] = [];
+  /** Tentar ligação direta antes do bridge. Decidido pelo servidor a cada
+   *  entrada, para poder ser revertido sem rebuild do frontend. */
+  private p2pLigado = false;
   /** Impede duas recuperações de microfone ao mesmo tempo (`ended` + `mute`). */
   private recuperandoAudio = false;
   private travaTela: WakeLockSentinel | null = null;
@@ -306,6 +324,7 @@ export class ChamadaJitsi {
     }, LIMITE_AUDIO_MS);
   }
   private aoMudarVisibilidade = () => void this.retomarAoVoltar();
+  private aoTrocarDispositivos = () => void this.conferirDispositivos();
 
   constructor(
     private papel: PapelChamada,
@@ -389,11 +408,14 @@ export class ChamadaJitsi {
      * câmera), cai para áudio puro, que é o que a entrevista realmente exige.
      */
     const querCamera = Boolean(opcoes.camera);
+    this.microfoneEscolhido = opcoes.microfoneId;
+    this.p2pLigado = opcoes.p2p ?? false;
+    const comMicrofone = opcoes.microfoneId ? { micDeviceId: opcoes.microfoneId } : {};
     let faixas: FaixaJitsi[] = [];
     let erroCamera: unknown = null;
     if (querCamera) {
       try {
-        faixas = await api.createLocalTracks({ devices: ["audio", "video"] });
+        faixas = await api.createLocalTracks({ devices: ["audio", "video"], ...comMicrofone });
       } catch (e) {
         erroCamera = e;
         faixas = [];
@@ -403,7 +425,7 @@ export class ChamadaJitsi {
       // Sem câmera, ou com o pedido conjunto recusado: o microfone sozinho. Se
       // a permissão do microfone for negada, o erro sai limpo daqui, sem deixar
       // conexão pendurada no servidor.
-      faixas = await api.createLocalTracks({ devices: ["audio"] });
+      faixas = await api.createLocalTracks({ devices: ["audio"], ...comMicrofone });
       if (erroCamera && !ehCelular()) {
         try {
           faixas = [...faixas, ...(await abrirVideoComFallback(api))];
@@ -417,7 +439,12 @@ export class ChamadaJitsi {
     this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
     if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
     this.vigiarMicrofone();
+    this.eventos.onFaixaLocal?.(this.minhaFaixa.getTrack());
     document.addEventListener("visibilitychange", this.aoMudarVisibilidade);
+    // O retrato inicial da lista; a partir daqui, toda mudança é comparada com
+    // ele para decidir se a chamada troca de microfone sozinha.
+    void this.conferirDispositivos();
+    navigator.mediaDevices?.addEventListener?.("devicechange", this.aoTrocarDispositivos);
     void this.manterTelaAcesa();
 
     const camera = faixas.find((f) => f.getType() === "video") ?? null;
@@ -622,9 +649,36 @@ export class ChamadaJitsi {
   private entrarNaSala(api: ApiJitsi, nome: string): void {
     const ev = api.events.conference;
     const sala = this.conexao!.initJitsiConference(nome, {
-      // P2P ligado: com dois participantes o áudio vai direto entre os
-      // navegadores e o bridge só entra quando o caminho direto falha.
-      p2p: { enabled: true },
+      /* P2P DESLIGADO — e isto é decisão de confiabilidade, não de desempenho.
+       *
+       * Com P2P ligado (como estava até 16/09/2026), uma sala de duas pessoas
+       * tenta ligar os dois navegadores DIRETAMENTE. É mais barato e tem menos
+       * latência, e funciona bem entre dois Wi-Fi domésticos. Só que o cliente
+       * entra pelo celular, e no 4G de operadora o NAT é simétrico: o caminho
+       * direto não fecha. Existe fallback de P2P para o bridge, mas é
+       * justamente ele que falha calado — a sala abre, os retratos aparecem, o
+       * cronômetro anda e ninguém ouve ninguém. Foi o sintoma de 15/09/2026.
+       *
+       * Pelo bridge, o celular não precisa alcançar o outro navegador: ele manda
+       * UDP para um IP PÚBLICO conhecido (o JVB), que é tráfego de saída comum e
+       * atravessa NAT de operadora sem drama. Trocamos banda do servidor —
+       * numa chamada de duas pessoas, desprezível — por áudio que chega.
+       *
+       * Isto NÃO substitui o TURN, que continua pendente: rede corporativa que
+       * bloqueia UDP em porta alta ainda precisa do relay em 443/TCP (ver
+       * `deploy/jitsi/coturn.env.exemplo`). Resolve o caso do 4G, que é o
+       * comum; não resolve o caso do UDP bloqueado, que é o raro.
+       *
+       * O VALOR VEM DO SERVIDOR, E ISSO É O INTERRUPTOR DE EMERGÊNCIA
+       *
+       * Desligar o P2P aposta tudo no videobridge: se ele estiver inalcançável
+       * (`JVB_ADVERTISE_IPS` errado, UDP 10000 fechada no firewall), não sobra
+       * caminho nenhum e TODA chamada emudece — inclusive as que hoje funcionam.
+       * Em 16/09/2026 não foi possível confirmar de fora que a UDP 10000
+       * responde. Por isso o valor não é constante nem `NEXT_PUBLIC_`: ele
+       * chega na resposta da sala, e religar o P2P é mexer em `CHAMADA_P2P` e
+       * reiniciar a API — segundos, não um pipeline de build. */
+      p2p: { enabled: this.p2pLigado },
     });
     this.sala = sala;
 
@@ -826,20 +880,117 @@ export class ChamadaJitsi {
     }
   }
 
-  /** Reabre e republica o microfone sem derrubar vídeo ou sala. */
-  async reativarAudio(): Promise<boolean> {
+  /* Abre uma faixa de áudio, caindo para o padrão se o dispositivo pedido sumiu.
+   *
+   * Insistir no `micDeviceId` escolhido seria o pior dos mundos justamente no
+   * caso mais comum de troca: o fone que se desconectou É o dispositivo pedido,
+   * e `createLocalTracks` nele falha. A chamada ficaria sem voz por fidelidade a
+   * um aparelho que não existe mais. O padrão do sistema é o substituto que o
+   * próprio navegador já elegeu. */
+  private async abrirAudio(microfoneId: string | undefined): Promise<FaixaJitsi[]> {
+    if (!this.api) throw new Error("Chamada não iniciada.");
+    if (microfoneId) {
+      try {
+        return await this.api.createLocalTracks({ devices: ["audio"], micDeviceId: microfoneId });
+      } catch {
+        /* cai para o padrão, abaixo */
+      }
+    }
+    return this.api.createLocalTracks({ devices: ["audio"] });
+  }
+
+  /** Reabre e republica o microfone sem derrubar vídeo ou sala.
+   *
+   *  `microfoneId` troca de dispositivo; omitido, reabre o que está em uso. */
+  async reativarAudio(microfoneId?: string): Promise<boolean> {
     if (!this.api || !this.sala) return false;
     const anterior = this.minhaFaixa;
     if (anterior) {
       await this.sala.removeTrack(anterior).catch(() => {});
       await anterior.dispose().catch(() => {});
     }
-    const faixas = await this.api.createLocalTracks({ devices: ["audio"] });
+    const faixas = await this.abrirAudio(microfoneId ?? this.microfoneEscolhido);
     this.minhaFaixa = faixas.find((f) => f.getType() === "audio") ?? null;
     if (!this.minhaFaixa) throw new Error("Nenhum microfone disponível.");
+    /* O que passa a valer é o que está NO AR, e não o que foi pedido: se o
+     * pedido falhou e caímos no padrão, uma recuperação futura precisa reabrir
+     * este, senão toda troca seguinte tentaria de novo o aparelho que sumiu. */
+    this.microfoneEscolhido =
+      this.minhaFaixa.getTrack().getSettings().deviceId ?? microfoneId ?? this.microfoneEscolhido;
     this.mudoAtual = false;
     this.vigiarMicrofone();
+    this.eventos.onFaixaLocal?.(this.minhaFaixa.getTrack());
     return this.publicarMicrofone(this.sala);
+  }
+
+  /* O cliente TROCA de microfone no meio da chamada, e isso não é acidente.
+   *
+   * Ele começa no microfone do celular, o atendimento se alonga e ele conecta o
+   * fone Bluetooth; ou o fone estava conectado e a bateria acaba. Até aqui nada
+   * disso era percebido: `vigiarMicrofone` só acorda quando a faixa MORRE
+   * (`ended`/`mute`), e conectar um fone novo não mata a faixa antiga — o
+   * microfone do aparelho continua vivo e publicando. A chamada seguia no
+   * dispositivo velho, e o único remédio era desligar e entrar de novo.
+   *
+   * `devicechange` é o evento que faltava. Ele avisa que a LISTA mudou, não o
+   * que mudou nela, então a comparação com o retrato anterior é que diz se um
+   * aparelho entrou (passa a usá-lo: conectar um fone é um pedido explícito) ou
+   * se o que estava em uso saiu (reabre no substituto).
+   *
+   * Mudo por escolha não é tocado: reabrir a faixa devolveria a voz de quem
+   * pediu para não ser ouvido. */
+  private async conferirDispositivos(): Promise<void> {
+    if (this.desligando) return;
+
+    let entradas: MediaDeviceInfo[];
+    try {
+      entradas = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+    } catch {
+      return;
+    }
+
+    const ids = entradas.map((d) => d.deviceId);
+    const antes = this.dispositivosConhecidos;
+    this.dispositivosConhecidos = ids;
+    // Primeiro retrato: só registra. Sem isto, a lista inteira pareceria "nova"
+    // e a chamada trocaria de microfone no instante em que entrasse na sala.
+    //
+    // O retrato é gravado ANTES das guardas abaixo de propósito: a primeira
+    // chamada vem de `entrar`, com a sala ainda por conectar. Guardando por
+    // `!this.sala` antes de gravar, o retrato ficaria vazio e a primeira troca
+    // de microfone da conversa seria engolida como se fosse a inicial.
+    if (antes.length === 0) return;
+
+    // Daqui para baixo é reação, e ela exige sala de pé. Mudo por escolha não é
+    // tocado: reabrir devolveria a voz de quem pediu para não ser ouvido.
+    if (!this.sala || this.recuperandoAudio || this.mudoAtual) return;
+
+    const emUso = this.minhaFaixa?.getTrack().getSettings().deviceId;
+    const sumiu = Boolean(emUso) && !ids.includes(emUso as string);
+    /* `default` e `communications` não são aparelhos: são apelidos do sistema
+     * para "o que estiver valendo". Eles aparecem e somem da lista sozinhos, e
+     * tratá-los como novidade trocaria o microfone sem que nada tivesse mudado. */
+    const novo = ids.find((id) => !antes.includes(id) && id !== "default" && id !== "communications");
+
+    if (!sumiu && !novo) return;
+
+    this.recuperandoAudio = true;
+    try {
+      const trocou = await this.reativarAudio(novo);
+      if (trocou) {
+        this.eventos.onErro?.(
+          sumiu
+            ? "O microfone em uso foi desconectado e a chamada passou para outro. Fale e confira se a barra “Sua voz” se mexe."
+            : "Um microfone novo foi conectado e a chamada passou a usá-lo. Fale e confira se a barra “Sua voz” se mexe.",
+        );
+      }
+    } catch {
+      this.eventos.onErro?.(
+        "O microfone mudou e a chamada não conseguiu abrir o novo. Use “Reativar áudio” para tentar de novo.",
+      );
+    } finally {
+      this.recuperandoAudio = false;
+    }
   }
 
   /** Monta a lista de retratos: eu primeiro, depois quem chegou. */
@@ -956,6 +1107,8 @@ export class ChamadaJitsi {
   desligar(): void {
     this.desligando = true;
     document.removeEventListener("visibilitychange", this.aoMudarVisibilidade);
+    navigator.mediaDevices?.removeEventListener?.("devicechange", this.aoTrocarDispositivos);
+    this.dispositivosConhecidos = [];
     if (this.limiteAudio !== null) {
       window.clearTimeout(this.limiteAudio);
       this.limiteAudio = null;
@@ -967,6 +1120,7 @@ export class ChamadaJitsi {
 
     void this.minhaFaixa?.dispose().catch(() => {});
     this.minhaFaixa = null;
+    this.eventos.onFaixaLocal?.(null);
     void this.minhaCamera?.dispose().catch(() => {});
     this.minhaCamera = null;
     void this.minhaTela?.dispose().catch(() => {});

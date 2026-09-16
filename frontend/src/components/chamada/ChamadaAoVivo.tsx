@@ -7,6 +7,7 @@ import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import { CapturaEntrevista } from "@/lib/transcricao";
 import { Botao } from "@/components/ui/Basicos";
+import IndicadorVoz from "@/components/chamada/IndicadorVoz";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* Entrevista por chamada de voz, do lado do advogado — na tela do checklist.
@@ -51,6 +52,7 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
   const [aviso, setAviso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
+  const [faixaRemota, setFaixaRemota] = useState<MediaStreamTrack | null>(null);
 
   const capturaRef = useRef<CapturaEntrevista | null>(null);
   const contador = useRef(0);
@@ -89,6 +91,7 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
   useEffect(
     () =>
       chamada.aoReceberFaixa((trilha) => {
+        setFaixaRemota(trilha);
         void capturaRef.current
           ?.usarTrilha(trilha)
           .then(() => {
@@ -104,7 +107,10 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
 
   // Cliente saiu: não há mais voz para transcrever.
   useEffect(() => {
-    if (chamada.estado !== "falando") setTemFaixa(false);
+    if (chamada.estado !== "falando") {
+      setTemFaixa(false);
+      setFaixaRemota(null);
+    }
   }, [chamada.estado]);
 
   /* Sair do checklist NÃO desliga a chamada (ela permanece no painel flutuante).
@@ -116,8 +122,8 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
     setErro(null);
     setEntrando(true);
     try {
-      const { token } = await criarSalaChamada(sala);
-      await chamada.entrar(sala, "advogado", { nome: "Escritório" }, token);
+      const { token, p2p } = await criarSalaChamada(sala);
+      await chamada.entrar(sala, "advogado", { nome: "Escritório", p2p }, token);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
@@ -228,6 +234,13 @@ export default function ChamadaAoVivo({ sala, onFala }: Props) {
           {LEGENDA[chamada.estado]}
         </span>
       </div>
+
+      {naChamada && (
+        <>
+          <IndicadorVoz trilha={faixaRemota} titulo="Voz do cliente" />
+          <IndicadorVoz trilha={chamada.faixaLocal} titulo="Sua voz" mudo={chamada.mudo} />
+        </>
+      )}
 
       {(erro || chamada.erro) && (
         <div className="mt-3 border-[1.5px] border-critico text-critico p-[10px] font-normal text-[12px] leading-[1.5] font-ui">

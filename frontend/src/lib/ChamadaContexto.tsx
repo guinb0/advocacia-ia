@@ -38,6 +38,9 @@ import type {
 interface ValorChamada {
   estado: EstadoChamada;
   participantes: Participante[];
+  /** A NOSSA faixa de áudio, para a tela medir se está saindo som de verdade.
+   *  Trocada a cada recuperação do microfone; `null` fora da chamada. */
+  faixaLocal: MediaStreamTrack | null;
   /** A sala em que estamos (ou a última). É o mesmo token do portal do caso. */
   sala: string | null;
   papel: PapelChamada | null;
@@ -76,6 +79,7 @@ const Contexto = createContext<ValorChamada | null>(null);
 export function ProvedorChamada({ children }: { children: React.ReactNode }) {
   const [estado, setEstado] = useState<EstadoChamada>("fora");
   const [participantes, setParticipantes] = useState<Participante[]>([]);
+  const [faixaLocal, setFaixaLocal] = useState<MediaStreamTrack | null>(null);
   const [sala, setSala] = useState<string | null>(null);
   const [papel, setPapel] = useState<PapelChamada | null>(null);
   const [mudo, setMudo] = useState(false);
@@ -109,6 +113,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     setMudo(false);
     setTemCamera(false);
     setParticipantes([]);
+    setFaixaLocal(null);
     setEstado("fora");
   }, []);
 
@@ -127,6 +132,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
           faixaAtual.current = trilha;
           assinantes.current.forEach((cb) => cb(trilha));
         },
+        onFaixaLocal: setFaixaLocal,
         onErro: setErro,
       });
       chamada.current = instancia;
@@ -211,6 +217,7 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
   const valor: ValorChamada = {
     estado,
     participantes,
+    faixaLocal,
     sala,
     papel,
     mudo,

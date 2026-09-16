@@ -39,7 +39,12 @@ include:
       portainer_endpoint_id: "1"
       initial_version: "0.1.0"
       gitlab_variables_environment: "prod"
-      gitlab_variables: '["DOMINIO","SQLSERVER_HOST","SQLSERVER_PASSWORD","PGVECTOR_HOST","PGVECTOR_USER","PGVECTOR_PASSWORD","JWT_SECRET","PORTAL_SEGREDO","DEEPSEEK_API_KEY","OPENROUTER_API_KEY","ZAPSIGN_API_TOKEN","DATAJUD_API_KEY","EVOLUTION_API_URL","EVOLUTION_API_KEY","EVOLUTION_INSTANCE","MISTRAL_API_KEY","DIRECTD_TOKEN","EMBEDDINGS_API_KEY","DATABASE_URL","AGENTE_API_URL","JITSI_PUBLIC_URL","JITSI_JWT_APP_ID","JITSI_JWT_APP_SECRET","VALKEY_PASSWORD","ZAPSIGN_LOGIN_EMAIL","ZAPSIGN_LOGIN_SENHA","SMTP_USUARIO","SMTP_SENHA"]'
+      # `CHAMADA_P2P` nao e segredo, e entra aqui contra a regra do cabecalho de
+      # proposito: e o interruptor de emergencia da chamada, e o valor dele
+      # precisa ser trocavel pela interface do GitLab com o cliente na linha.
+      # Fixo no compose, virar o interruptor exigiria commit + pipeline inteiro.
+      # O compose usa `${CHAMADA_P2P:-0}`, entao a stack sobe mesmo sem ele.
+      gitlab_variables: '["DOMINIO","SQLSERVER_HOST","SQLSERVER_PASSWORD","PGVECTOR_HOST","PGVECTOR_USER","PGVECTOR_PASSWORD","JWT_SECRET","PORTAL_SEGREDO","DEEPSEEK_API_KEY","OPENROUTER_API_KEY","ZAPSIGN_API_TOKEN","DATAJUD_API_KEY","EVOLUTION_API_URL","EVOLUTION_API_KEY","EVOLUTION_INSTANCE","MISTRAL_API_KEY","DIRECTD_TOKEN","EMBEDDINGS_API_KEY","DATABASE_URL","AGENTE_API_URL","JITSI_PUBLIC_URL","JITSI_JWT_APP_ID","JITSI_JWT_APP_SECRET","VALKEY_PASSWORD","ZAPSIGN_LOGIN_EMAIL","ZAPSIGN_LOGIN_SENHA","SMTP_USUARIO","SMTP_SENHA","CHAMADA_P2P"]'
 
 # Correção local do job do componente 1.1.6. O original usa
 # `git tag ... | head -n 1`; o runner executa com `pipefail`, então o Git recebe

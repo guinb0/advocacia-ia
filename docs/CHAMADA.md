@@ -5,31 +5,45 @@ decisões técnicas, o lugar é o `CONTEXTO.md`; aqui é o passo a passo.
 
 ---
 
-## Antes de tudo: hoje isto só funciona na própria máquina
+## Antes de tudo: o que já funciona à distância, e o que ainda derruba a chamada
 
 **Leia esta seção antes de marcar entrevista com cliente de verdade.**
 
-O link que a tela gera é `http://localhost:3000/chamada/<sala>`. `localhost`
-significa "esta máquina" — no celular do cliente, esse endereço aponta para o
-próprio celular dele, e não abre nada.
+> Esta seção dizia, até 16/09/2026, que a chamada "só funciona na própria
+> máquina, falta HTTPS". **Estava desatualizada** e fazia perder tempo
+> procurando problema no lugar errado. O que foi medido:
+> `jitsi.level33lab.cloud` responde por HTTPS e serve
+> `/libs/lib-jitsi-meet.min.js`. Microfone e câmera são liberados normalmente no
+> celular do cliente.
 
-Trocar `localhost` pelo IP da máquina **não resolve**, e o motivo não é de rede:
-navegador só libera microfone e câmera em **contexto seguro** (HTTPS, ou
-`localhost`). Num `http://192.168.x.x:3000` o Chrome e o Safari recusam o
-microfone, e sem microfone não há chamada nem transcrição.
+Em **desenvolvimento**, na sua máquina, continua valendo o `localhost`: o link é
+`http://localhost:3000/chamada/<sala>`, e trocá-lo pelo IP da máquina não
+resolve — navegador só libera microfone em contexto seguro (HTTPS ou
+`localhost`). Para testar sozinho, duas abas na mesma máquina.
 
-Então, hoje:
+Em **produção** (`advocacia.levelhom.com.br`), o cliente entra do celular dele,
+de casa, sem instalar nada. O que ainda falha:
 
 | situação | funciona? |
 |---|---|
-| Testar sozinho, duas abas na mesma máquina | **sim** |
+| Duas abas na mesma máquina (desenvolvimento) | **sim** |
 | Cliente presente na sala, no seu computador | **sim** |
-| Cliente no celular dele, em casa | **não** — falta HTTPS |
+| Cliente no celular dele, em **Wi-Fi** | **sim** |
+| Cliente no celular dele, em **4G** | **sim**, desde que o P2P esteja desligado |
+| Cliente em **rede de empresa** que bloqueia UDP | **não** — falta TURN |
 
-Enquanto isso não muda, a entrevista à distância se faz por telefone com o
-cliente **no viva-voz**, e a transcrição sai do microfone da sala (ver
-`CONTEXTO.md`, seção da entrevista). O que falta para liberar o uso remoto está
-no fim deste documento.
+**O 4G foi resolvido em 16/09/2026 desligando o P2P** (`chamadaJitsi.entrarNaSala`).
+Com P2P ligado, os dois navegadores tentavam se ligar diretamente, e o NAT
+simétrico da operadora não deixava o caminho fechar — a sala abria e ninguém
+ouvia ninguém. Pelo videobridge, o celular só manda UDP para um IP público
+conhecido, que é tráfego de saída comum.
+
+**Ainda falta o TURN**, para a rede que bloqueia UDP em porta alta (parte das
+corporativas, Wi-Fi de hotel). Sem relay em 443/TCP não há caminho nenhum, e o
+sintoma é o mesmo silêncio. Passo a passo em **[TURN.md](TURN.md)**.
+
+Conferência de 30 segundos, com a chamada de pé: abra `chrome://webrtc-internals`
+e procure os candidatos ICE. Só `host` e `srflx` significa que não há relay.
 
 ---
 
@@ -231,9 +245,17 @@ passa.
 **"Permissão de microfone negada"** — no cadeado da barra de endereço, liberar o
 microfone e recarregar.
 
-**Conecta e cai, ou nunca conecta, no 4G do cliente** — falta servidor **TURN**.
-Em algumas redes de celular e corporativas a ligação direta entre navegadores não
-passa, e só STUN não resolve. É item conhecido e ainda não instalado.
+**Entra na sala, os dois retratos aparecem e ninguém ouve ninguém** — é a mídia
+que não achou caminho, e este é o sintoma clássico dela: parece que deu certo.
+Duas causas, nesta ordem:
+
+1. **P2P ligado** — resolvido em 16/09/2026, mas confira se alguém o religou:
+   `p2p: { enabled: false }` em `chamadaJitsi.entrarNaSala`.
+2. **Falta TURN** — para redes que bloqueiam UDP em porta alta. Não está
+   instalado: `turn.level33lab.cloud` não resolve no DNS. Ver [TURN.md](TURN.md).
+
+Saída imediata no meio da entrevista: pedir ao cliente que troque de rede
+(4G ↔ Wi-Fi).
 
 **A chamada some ao recarregar a página** — é o esperado: a sala é efêmera. Abra
 outra e mande o link novo.
@@ -242,15 +264,18 @@ outra e mande o link novo.
 
 ## O que falta para atender cliente à distância
 
-Em ordem de dependência:
+1. ~~**HTTPS**~~ — **feito**. Traefik termina o TLS; o Jitsi responde em
+   `https://jitsi.level33lab.cloud` e o app em `https://advocacia.levelhom.com.br`.
+2. ~~**Endereço alcançável**~~ — **feito**. `URL_PORTAL` sai do `DOMINIO` no
+   compose de produção, e `NEXT_PUBLIC_JITSI_URL` é embutido no build pelo
+   `.gitlab-ci.yml`.
+3. ~~**Mídia que atravessa o NAT do 4G**~~ — **feito** em 16/09/2026, desligando
+   o P2P: a voz passa pelo videobridge em vez de tentar ligação direta.
+4. **TURN** — **pendente**, e é o que ainda falta para rede que bloqueia UDP em
+   porta alta. Passo a passo em [TURN.md](TURN.md).
 
-1. **HTTPS.** Sem certificado, navegador nenhum libera microfone fora do
-   `localhost`. É o bloqueio de verdade — os outros itens não adiantam sem este.
-2. **Endereço alcançável** no `.env`, os dois apontando para o nome público:
-   - `URL_PORTAL` — hoje `http://localhost:3000`, é o que monta o link do convite;
-   - `NEXT_PUBLIC_JITSI_URL` — **não está no `.env`**, então o código cai no
-     padrão `http://localhost:8081`. Publicando, precisa ser declarado.
-3. **TURN**, para os clientes cujas redes não fecham conexão direta.
-
-Vale notar que o portal do cliente tem o mesmo bloqueio, e por outro motivo: ele
-manda a senha do caso em texto claro. HTTPS resolve os dois de uma vez.
+**Um cuidado ao mexer nos endereços:** `PUBLIC_URL` do Jitsi, `JITSI_PUBLIC_URL`
+do compose do Acervo e `NEXT_PUBLIC_JITSI_URL` do build precisam apontar para o
+**mesmo host**. Já estiveram divergentes (`meet.` num, `jitsi.` no outro, com
+`meet.` sequer existindo no DNS), e o efeito é a lib vir de um servidor e o
+websocket ir para outro.

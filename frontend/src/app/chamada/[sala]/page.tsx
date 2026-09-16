@@ -6,6 +6,7 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import AtivarMicrofone from "@/components/chamada/AtivarMicrofone";
+import IndicadorVoz from "@/components/chamada/IndicadorVoz";
 import Retratos from "@/components/ui/Retratos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
@@ -46,6 +47,9 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
    * quem entrou — numa sala com link solto, "Convidado" não diz nada. */
   const [nome, setNome] = useState("");
   const [erro, setErro] = useState<string | null>(null);
+  /* O microfone que passou no teste acima. A chamada abre COM ELE: abrir no
+   * padrão do sistema devolveria justamente o dispositivo que o teste reprovou. */
+  const [microfone, setMicrofone] = useState<string | undefined>(undefined);
 
   // Esta página é a própria chamada: enquanto está aberta, o painel flutuante
   // se recolhe. `registrarPainel` é estável, então roda uma vez.
@@ -55,8 +59,13 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
     setErro(null);
     setEntrando(true);
     try {
-      const { token: jitsiToken } = await criarSalaChamada(sala);
-      await chamada.entrar(sala, "cliente", { nome: nome.trim(), camera }, jitsiToken);
+      const { token: jitsiToken, p2p } = await criarSalaChamada(sala);
+      await chamada.entrar(
+        sala,
+        "cliente",
+        { nome: nome.trim(), camera, microfoneId: microfone, p2p },
+        jitsiToken,
+      );
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
@@ -100,7 +109,7 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
                 aberta durante a conversa.
               </p>
 
-              <AtivarMicrofone />
+              <AtivarMicrofone onMicrofone={setMicrofone} />
 
               <label
                 className="block mt-5 mb-[6px] font-medium text-[13px] leading-[1.3] font-ui text-tinta-3"
@@ -170,6 +179,20 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
                 {situacao[chamada.estado]}
               </p>
 
+              {/* A prova de que a voz está saindo — e o conserto ao alcance da
+                  mão quando não está. Sem isto o cliente idoso só descobre que
+                  está mudo quando o escritório consegue avisá-lo por outro meio. */}
+              <IndicadorVoz
+                trilha={chamada.faixaLocal}
+                titulo="Sua voz"
+                mudo={chamada.mudo}
+                acaoSilencio={
+                  <button type="button" className={SECUNDARIO} onClick={() => void chamada.reativarAudio()}>
+                    Religar meu microfone
+                  </button>
+                }
+              />
+
               <Retratos participantes={chamada.participantes} tamanho="grande" />
 
               <div className="flex gap-[10px] mt-5 flex-wrap">
@@ -183,6 +206,12 @@ export default function PaginaChamada({ params }: { params: Promise<{ sala: stri
                 )}
                 <button type="button" className={SECUNDARIO} onClick={chamada.alternarMudo}>
                   {chamada.mudo ? "Voltar a falar" : "Desligar meu microfone"}
+                </button>
+                {/* As mensagens de falha do microfone mandavam usar "Reativar
+                    áudio", botão que só existia no painel do escritório. Quem
+                    precisa dele é justamente quem está deste lado. */}
+                <button type="button" className={SECUNDARIO} onClick={() => void chamada.reativarAudio()}>
+                  Reativar áudio
                 </button>
                 <button type="button" className={SECUNDARIO} onClick={chamada.desligar}>
                   Sair da chamada
