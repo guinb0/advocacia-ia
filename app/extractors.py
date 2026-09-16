@@ -84,6 +84,7 @@ ROTULOS_TIPO = {
     "cin": "CIN (Carteira de Identidade Nacional)",
     "cnh": "CNH (Carteira Nacional de Habilitação)",
     "ctps": "CTPS (Carteira de Trabalho)",
+    "cnis": "CNIS (Extrato Previdenciário do INSS)",
     "titulo_eleitor": "Título de Eleitor",
     "cartao_sus": "Cartão Nacional de Saúde (SUS)",
     "comprovante_residencia": "Comprovante de Residência",
@@ -105,6 +106,17 @@ PALAVRAS_TIPO: dict[str, list[tuple[str, int]]] = {
         ("MINISTERIO DO TRABALHO", 8), ("SERIE", 4), ("CONTRATO DE TRABALHO", 6),
         ("PIS", 4), ("PIS/PASEP", 6), ("NIT", 3), ("SECRETARIA DE INSPECAO DO TRABALHO", 6),
         ("N DA CARTEIRA", 4), ("QUALIFICACAO CIVIL", 6),
+    ],
+    # CNIS não existia como tipo, e o extrato do INSS caía em "desconhecido" com 7
+    # pontos — tirados de NASCIMENTO e MATRICULA, que o empurravam para CERTIDÃO.
+    # Os marcadores abaixo são do cabeçalho que toda página do extrato repete, e
+    # cada um dos três primeiros sozinho já cruza o limiar de 10. INSS e NIT ficam
+    # baixos de propósito: contracheque e CAT também os citam.
+    "cnis": [
+        ("CADASTRO NACIONAL DE INFORMACOES SOCIAIS", 14), ("EXTRATO PREVIDENCIARIO", 12),
+        ("CNIS", 10), ("RELACOES PREVIDENCIARIAS", 8), ("IDENTIFICACAO DO FILIADO", 8),
+        ("ORIGEM DO VINCULO", 6), ("TIPO FILIADO", 5), ("SEGURADO", 3),
+        ("INSS", 3), ("NIT", 3),
     ],
     "rg": [
         ("CARTEIRA DE IDENTIDADE", 10), ("REGISTRO GERAL", 10), ("SECRETARIA DE SEGURANCA PUBLICA", 8),
@@ -141,6 +153,13 @@ PALAVRAS_TIPO: dict[str, list[tuple[str, int]]] = {
         ("CEMIG", 10), ("ENEL", 10), ("COPASA", 10), ("SABESP", 10), ("EQUATORIAL", 10),
         ("COELBA", 10), ("CPFL", 10), ("NEOENERGIA", 10), ("CELPE", 10), ("CELESC", 10),
         ("COMGAS", 10), ("SANEPAR", 10), ("LIGHT SA", 10), ("CAESB", 10), ("SANEAGO", 10),
+        # Fatura de telefone/internet também prova residência, e o escritório a
+        # recebe assim. O gancho é o título padronizado da nota fiscal de telecom
+        # — não "TIM" ou "CLARO" soltos, que aparecem em qualquer texto — para não
+        # reabrir a porta que o comentário acima fechou contra boleto qualquer.
+        ("FATURA DE SERVICOS DE COMUNICACAO", 12),
+        ("SERVICOS DE COMUNICACAO ELETRONICA", 12),
+        ("TELEFONICA BRASIL", 10), ("CLARO S.A.", 10), ("TIM S.A.", 10), ("VIVO S.A.", 10),
         # Reforços: só ajudam a somar; sozinhos não classificam.
         ("KWH", 6), ("LEITURA ANTERIOR", 4), ("LEITURA ATUAL", 4), ("CONSUMO FATURADO", 4),
         ("INSTALACAO", 3), ("FATURA", 2), ("VENCIMENTO", 2), ("CONSUMO", 2),
@@ -159,6 +178,11 @@ CAMPOS_ESPERADOS: dict[str, list[str]] = {
     "cin": ["cpf", "nome", "data_nascimento"],
     "cnh": ["cpf", "nome", "cnh", "data_nascimento", "data_validade"],
     "ctps": ["nome", "pis", "data_nascimento"],
+    # Vazio de propósito, como "desconhecido": o extrato do INSS é documento
+    # narrativo de várias páginas, não a foto de um cartão com campos fixos.
+    # Exigir campo aqui viraria erro de "campo obrigatório não localizado" em
+    # `pipeline.py`, e o documento certo apareceria na tela como incompleto.
+    "cnis": [],
     "titulo_eleitor": ["titulo_eleitor", "nome"],
     "cartao_sus": ["cns", "nome"],
     "comprovante_residencia": ["cep", "endereco"],
@@ -177,10 +201,34 @@ TIPOS_COM_FILIACAO = frozenset({"rg", "cnh", "cin", "certidao"})
 TIPOS_COM_CPF = frozenset({"cpf", "cnh", "cin"})
 
 
+def _tem_palavra(texto_norm: str, palavra: str) -> bool:
+    """A palavra-chave inteira, não pedaço de outra.
+
+    MEDIDO numa fatura de telefone que virava "CTPS": "NIT" casava dentro de
+    "VLR UNIT" e de "INFINITY", e "CNS" dentro de "CLICNSCORES" — sete pontos
+    tirados do nada, suficientes para cruzar o limiar e rotular uma conta de
+    celular como carteira de trabalho.
+
+    A guarda é por caractere vizinho, e não `\\b`, porque as chaves têm ponto e
+    barra ("PIS/PASEP", "N.REGISTRO", "CAT. HAB") — `\\b` se comporta de forma
+    inesperada quando a chave começa ou termina em pontuação.
+    """
+    chave = _CACHE_PALAVRA.get(palavra)
+    if chave is None:
+        chave = re.compile(
+            r"(?<![A-Z0-9])" + re.escape(palavra) + r"(?![A-Z0-9])"
+        )
+        _CACHE_PALAVRA[palavra] = chave
+    return chave.search(texto_norm) is not None
+
+
+_CACHE_PALAVRA: dict[str, re.Pattern[str]] = {}
+
+
 def classificar(texto_norm: str) -> tuple[str, int, dict[str, int]]:
     pontos: dict[str, int] = {}
     for tipo, palavras in PALAVRAS_TIPO.items():
-        total = sum(peso for palavra, peso in palavras if palavra in texto_norm)
+        total = sum(peso for palavra, peso in palavras if _tem_palavra(texto_norm, palavra))
         if total:
             pontos[tipo] = total
 

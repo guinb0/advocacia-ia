@@ -92,7 +92,7 @@ ACIDENTE_TRABALHO_CORREIOS = Categoria(
         ItemChecklist("DOC.05", 5, "Comprovante de residência", True, tipo_ocr="comprovante_residencia"),
         ItemChecklist("DOC.06", 6, "CTPS e PIS", True, tipo_ocr="ctps"),
         ItemChecklist("DOC.07", 7, "Contracheque do último mês trabalhado", True),
-        ItemChecklist("DOC.08", 8, "CNIS", False),
+        ItemChecklist("DOC.08", 8, "CNIS", False, tipo_ocr="cnis"),
         ItemChecklist("DOC.09", 9, "Ficha de evolução funcional", False),
         ItemChecklist("DOC.10", 10, "CAT (Comunicação de Acidente de Trabalho)", True),
         ItemChecklist("DOC.11", 11, "Boletim de ocorrência", False),
@@ -138,7 +138,7 @@ ACIDENTE_TRABALHO_GERAL = Categoria(
         ItemChecklist("DOC.05", 5, "Comprovante de residência", True, tipo_ocr="comprovante_residencia"),
         ItemChecklist("DOC.06", 6, "CTPS e PIS", True, tipo_ocr="ctps"),
         ItemChecklist("DOC.07", 7, "Contracheque do último mês trabalhado", True),
-        ItemChecklist("DOC.08", 8, "CNIS", True),
+        ItemChecklist("DOC.08", 8, "CNIS", True, tipo_ocr="cnis"),
         ItemChecklist("DOC.09", 9, "Ficha funcional e de evolução funcional", True),
         ItemChecklist("DOC.10", 10, "CAT (Comunicação de Acidente de Trabalho)", True),
         ItemChecklist("DOC.11", 11, "Boletim de ocorrência, quando houver", False),
@@ -204,7 +204,7 @@ DOENCA_OCUPACIONAL = Categoria(
             "Contracheques (holerites) – último mês trabalhado e, se possível, os 3 a 6 meses anteriores",
             True,
         ),
-        ItemChecklist("DOC.08", 8, "CNIS", True),
+        ItemChecklist("DOC.08", 8, "CNIS", True, tipo_ocr="cnis"),
         ItemChecklist("DOC.09", 9, "CAT – Comunicação de Acidente de Trabalho", True),
         ItemChecklist("DOC.10", 10, "Contrato de trabalho e aditivos (se houver)", False),
         ItemChecklist(
@@ -403,7 +403,7 @@ ASSALTO_CARTEIRO = Categoria(
             "Notas fiscais de medicamentos, tratamentos e demais despesas relacionadas",
             False,
         ),
-        ItemChecklist("DOC.19", 19, "Extrato CNIS (histórico previdenciário)", False),
+        ItemChecklist("DOC.19", 19, "Extrato CNIS (histórico previdenciário)", False, tipo_ocr="cnis"),
         ItemChecklist("DOC.20", 20, "Manual da empresa", False),
     ),
 )
@@ -516,6 +516,7 @@ AUXILIO_ACIDENTE = Categoria(
             10,
             "Extrato do CNIS",
             True,
+            tipo_ocr="cnis",
             observacao=(
                 "No Meu INSS, acesse “Extrato de Contribuição (CNIS)” e baixe o PDF "
                 "com o histórico de vínculos, contribuições e remunerações."
