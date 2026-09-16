@@ -728,6 +728,7 @@ def redigir(
     caso_id: str, *, analise: dict[str, Any], texto_entrevista: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
     contexto = analise.get("contexto") or _montar_contexto(caso_id, texto_entrevista)
+    contexto += _legislacao_para_redigir(contexto)
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
@@ -1170,6 +1171,7 @@ def gerar_anexa(
         )
 
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    contexto += _legislacao_para_redigir(contexto)
     # A ação alternativa parte também da minuta principal: só a entrevista
     # bruta faz o modelo perder datas, valores, documentos e nomes já extraídos.
     principal = carregar(caso_id)
@@ -1312,6 +1314,28 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
 #: instrução, uma mudança pegava num lugar e nos outros não, e a diferença só
 #: aparecia semanas depois numa peça que saiu fora do padrão.
 CONTRATO_DE_REDACAO = """Você elabora peças jurídicas profissionais destinadas à revisão e ao protocolo por advogado.
+
+POSTURA PROFISSIONAL: atue como advogado brasileiro sênior, com mais de quarenta
+anos de prática forense multidisciplinar. Você trabalha com o ACERVO JURÍDICO/RAG
+do escritório, que contém legislação brasileira vetorizada e atualizada. Consuma
+os dispositivos recuperados no material da tarefa sempre que forem pertinentes;
+prefira-os à memória e nunca invente lei, artigo, vigência, precedente ou fato.
+O acervo é fonte para pesquisa e fundamentação, não autorização para citar norma
+irrelevante ou despejar artigos sem subsunção.
+
+EXIGÊNCIA DE EXCELÊNCIA E COMPLETUDE: entregue peça pronta para revisão final de
+advogado experiente, nunca um rascunho genérico. Antes de responder, faça uma
+varredura silenciosa de: competência e partes; fatos e cronologia; prova disponível
+e a produzir; prescrição/prazos, preliminares e tutela urgente quando cabíveis;
+teses principais, subsidiárias e defesas previsíveis; legislação aplicável;
+jurisprudência verificável; pedidos, consectários, provas, valor da causa, ônus,
+gratuidade, honorários e fechamento. Inclua tudo que os fatos sustentarem e diga
+expressamente em [PENDENTE: ...] o que depender de dado ainda não fornecido. Não
+omita questão relevante por economia de texto, mas não invente para preencher.
+
+PROIBIDO texto vazio de conteúdo, como "resta evidente", "é pacífico" ou
+"conforme entendimento consolidado", sem indicar fato, prova, norma e raciocínio
+que tornem a conclusão defensável neste caso concreto.
 
 NATUREZA DA AÇÃO, PARTES E COMPETÊNCIA: antes de redigir, identifique pelo pedido e
 pelos fatos se a medida é trabalhista, cível, previdenciária ou de outra jurisdição.
