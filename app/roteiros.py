@@ -754,6 +754,23 @@ EMPREGADO_PUBLICO = Roteiro(
 
 ROTEIROS: dict[str, Roteiro] = {EMPREGADO_PUBLICO.codigo: EMPREGADO_PUBLICO}
 
+#: Códigos que continuam existindo, mas não aparecem no catálogo da tela.
+#:
+#: O escritório parou de atender pelo roteiro dos Correios e não quer mais vê-lo
+#: na lista. Ocultar em vez de apagar é deliberado: `ROTEIROS` é a única fonte
+#: embutida, e remover a entrada faria `obter()` devolver `None` para todo mundo
+#: que ainda chamasse por este código — relatório antigo, auditoria, escuta.
+#: Aqui ele some da vitrine e continua resolvendo para quem pedir pelo nome.
+OCULTOS_NO_CATALOGO = {"empregado_publico"}
+
+#: Roteiro assumido quando quem chama não informa qual usar.
+#:
+#: ATENÇÃO: este código vive no BANCO (foi importado), não neste módulo. Com o
+#: Postgres fora do ar `obter()` devolve `None` e quem dependia do padrão recebe
+#: erro — comportamento diferente do antigo `empregado_publico`, que era
+#: embutido e funcionava offline. Foi uma escolha explícita do escritório.
+ROTEIRO_PADRAO = "auxilio_acidente"
+
 #: Rastreio positivo -> módulos que passam a ser exibidos.
 MAPA_RASTREIO = {
     "r_assalto": "assalto",
@@ -1269,6 +1286,12 @@ def listar_resumos() -> list[dict[str, Any]]:
     resultado: list[dict[str, Any]] = []
     for codigo, embutido in ROTEIROS.items():
         salvo = por_codigo.pop(codigo, None)
+        # O `pop` acontece ANTES de ocultar, e a ordem importa: sem ele, a versão
+        # editada de um roteiro oculto sobraria em `por_codigo` e reapareceria no
+        # laço de baixo como roteiro importado — com selo de origem e botão de
+        # excluir —, que é exatamente o card que se quer fora da tela.
+        if codigo in OCULTOS_NO_CATALOGO:
+            continue
         salvo_ativo = bool(
             salvo and str(salvo.get("atualizado_em") or "") >= _VERSAO_MODULO
         )
