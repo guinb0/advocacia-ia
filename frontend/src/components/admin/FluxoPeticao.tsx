@@ -5,7 +5,7 @@
  * O botão principal fica no cabeçalho do dossiê; aqui só resultado e edição.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Aviso, Botao, Cartao, RotuloCampo, Campo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
@@ -64,7 +64,6 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const salvando = salvandoComo !== null;
   const [erro, setErro] = useState<Retorno>(null);
   const [concluido, setConcluido] = useState<Retorno>(null);
-  const [mostrarPrevia, setMostrarPrevia] = useState(true);
 
   // Revisão por prompt — issue "Permitir alteração da petição por prompt com
   // rastreabilidade". `historico` fica separado de `peticao` porque uma falha
@@ -300,7 +299,6 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [edicaoAnexa, setEdicaoAnexa] = useState<Record<string, string>>({});
   const [carregandoAnexa, setCarregandoAnexa] = useState(false);
   const [salvandoAnexa, setSalvandoAnexa] = useState(false);
-  const [mostrarPreviaAnexa, setMostrarPreviaAnexa] = useState(true);
   /* Revisão por prompt — recurso opcional, oferecido para a peça anexa com a
    * mesma qualidade da petição inicial; sem "ensinar a IA" nem versão anterior
    * guardada, porque a anexa já não tem histórico nem para "gerar de novo"
@@ -476,13 +474,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               Petição inicial — versão {peticao.version}
             </h3>
             <div className="flex gap-2 flex-wrap">
-              <Botao
-                variante="texto"
-                pequeno
-                onClick={() => setMostrarPrevia((atual) => !atual)}
-              >
-                {mostrarPrevia ? "Ocultar prévia" : "Mostrar prévia"}
-              </Botao>
+              {/* O botão de mostrar/ocultar prévia saiu junto com a segunda
+                  coluna: não há mais duas visões do mesmo texto para alternar. */}
               <BotaoProcesso
                 variante="secundario"
                 pequeno
@@ -527,34 +520,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             />
           )}
 
-          <div className={mostrarPrevia ? "grid gap-4 lg:grid-cols-2 lg:items-start" : "grid gap-4"}>
-            <div className="grid gap-4">
-              {(peticao.sections ?? []).map((secao: SecaoPeticao) => (
-                <div key={secao.code} className="grid gap-1">
-                  <RotuloCampo htmlFor={`secao-${secao.code}`}>
-                    {secao.label || secao.code}
-                  </RotuloCampo>
-                  <Campo
-                    area
-                    id={`secao-${secao.code}`}
-                    value={edicao[secao.code] ?? secao.content}
-                    onChange={(e) =>
-                      setEdicao((atual) => ({ ...atual, [secao.code]: e.target.value }))
-                    }
-                    rows={10}
-                  />
-                </div>
-              ))}
-            </div>
-
-            {mostrarPrevia && (
-              <PreviaPeticao
-                titulo={peticao.title}
-                secoes={peticao.sections ?? []}
-                edicao={edicao}
-              />
-            )}
-          </div>
+          {/* UMA COLUNA SÓ — o documento é o próprio editor.
+            *
+            * Havia duas: os campos crus à esquerda e a prévia à direita. O mesmo
+            * texto ocupava a tela duas vezes, e a página ficava tão alta que
+            * rolar virava o trabalho principal. Agora se escreve onde se lê. */}
+          <PreviaPeticao
+            titulo={peticao.title}
+            secoes={peticao.sections ?? []}
+            edicao={edicao}
+            onEditar={(codigo, valor) => setEdicao((atual) => ({ ...atual, [codigo]: valor }))}
+          />
 
           {/* A revisão por prompt vem DEPOIS do texto: ela age sobre o que está
             * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
@@ -756,60 +732,28 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 
                     {anexaAberta === peca.id && peticaoAnexa && (
                       <div className="mt-3 grid gap-3 border-t border-borda pt-3">
-                        <div className="flex justify-end">
-                          <Botao
-                            variante="texto"
-                            pequeno
-                            onClick={() => setMostrarPreviaAnexa((atual) => !atual)}
-                          >
-                            {mostrarPreviaAnexa ? "Ocultar prévia" : "Mostrar prévia"}
-                          </Botao>
-                        </div>
-
-                        <div
-                          className={
-                            mostrarPreviaAnexa
-                              ? "grid gap-4 lg:grid-cols-2 lg:items-start"
-                              : "grid gap-4"
-                          }
-                        >
-                          <div className="grid gap-3">
-                            {(peticaoAnexa.sections ?? []).map((secao: SecaoPeticao) => (
-                              <div key={secao.code} className="grid gap-1">
-                                <RotuloCampo htmlFor={`anexa-${peca.id}-${secao.code}`}>
-                                  {secao.label || secao.code}
-                                </RotuloCampo>
-                                <Campo
-                                  area
-                                  id={`anexa-${peca.id}-${secao.code}`}
-                                  value={edicaoAnexa[secao.code] ?? secao.content}
-                                  onChange={(e) =>
-                                    setEdicaoAnexa((atual) => ({ ...atual, [secao.code]: e.target.value }))
-                                  }
-                                  rows={8}
-                                />
-                              </div>
-                            ))}
-                            <div>
-                              <BotaoProcesso
-                                variante="secundario"
-                                pequeno
-                                processando={salvandoAnexa}
-                                textoProcessando="Salvando…"
-                                onClick={salvarEdicaoAnexa}
-                              >
-                                Salvar edição
-                              </BotaoProcesso>
-                            </div>
+                        {/* Mesma mudança da petição inicial: a peça anexa também
+                          * deixou de ter campo cru de um lado e prévia do outro. */}
+                        <div className="grid gap-3">
+                          <PreviaPeticao
+                            titulo={peticaoAnexa.title}
+                            secoes={peticaoAnexa.sections ?? []}
+                            edicao={edicaoAnexa}
+                            onEditar={(codigo, valor) =>
+                              setEdicaoAnexa((atual) => ({ ...atual, [codigo]: valor }))
+                            }
+                          />
+                          <div>
+                            <BotaoProcesso
+                              variante="secundario"
+                              pequeno
+                              processando={salvandoAnexa}
+                              textoProcessando="Salvando…"
+                              onClick={salvarEdicaoAnexa}
+                            >
+                              Salvar edição
+                            </BotaoProcesso>
                           </div>
-
-                          {mostrarPreviaAnexa && (
-                            <PreviaPeticao
-                              titulo={peticaoAnexa.title}
-                              secoes={peticaoAnexa.sections ?? []}
-                              edicao={edicaoAnexa}
-                            />
-                          )}
                         </div>
 
                         {historicoAnexa && historicoAnexa.versoes.length > 0 && (
@@ -870,45 +814,96 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   );
 }
 
+/** Uma seção do documento, editável, alta o bastante para o próprio texto.
+ *
+ * A altura acompanha o conteúdo de propósito: caixa com rolagem própria dentro
+ * de uma página que também rola é o que tornava a revisão penosa — dois scrolls
+ * concorrentes, e a pessoa perdia o lugar entre eles.
+ *
+ * O ajuste roda a cada mudança de `valor`, e não só ao digitar, porque a revisão
+ * por prompt troca o texto inteiro por fora: a peça revisada chega pronta e
+ * precisa caber sem que ninguém encoste no campo. */
+function CampoDoDocumento({
+  valor,
+  rotulo,
+  onEditar,
+}: {
+  valor: string;
+  rotulo: string;
+  onEditar: (valor: string) => void;
+}) {
+  const campo = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const elemento = campo.current;
+    if (!elemento) return;
+    // Zerar antes de medir: sem isto a altura só cresce, nunca encolhe quando o
+    // texto diminui.
+    elemento.style.height = "auto";
+    elemento.style.height = `${elemento.scrollHeight}px`;
+  }, [valor]);
+
+  return (
+    <textarea
+      ref={campo}
+      aria-label={rotulo}
+      value={valor}
+      onChange={(evento) => onEditar(evento.target.value)}
+      rows={1}
+      /* `font-titulo` explícito: campo de formulário não herda a fonte do
+         contêiner, e sem isto a seção editada sairia com a cara errada dentro
+         do próprio documento. */
+      className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-titulo text-sm leading-relaxed text-justify text-tinta-2 focus:outline-none"
+    />
+  );
+}
+
 /**
- * Prévia ao vivo: lê o mesmo estado `edicao` dos textareas, então cada tecla
- * digitada aparece aqui sem round-trip com a API. É só leitura — quem edita
- * de verdade é o textarea ao lado; isto simula como a peça fica montada.
+ * O DOCUMENTO É O EDITOR.
+ *
+ * Isto já foi só a prévia: havia os campos crus de um lado e esta leitura do
+ * outro, as duas sobre o mesmo estado `edicao`. Escrever num lugar e conferir
+ * noutro dobrava o que havia na tela e alongava a página a ponto de rolar virar
+ * o trabalho principal — foi a queixa que originou esta mudança.
+ *
+ * Agora cada seção é um campo com a tipografia da peça. O estado continua sendo
+ * o mesmo `edicao`, então salvar, revisar por prompt e baixar .docx/PDF não
+ * mudaram de caminho — nenhuma dessas ações sabe que a tela mudou.
  */
 function PreviaPeticao({
   titulo,
   secoes,
   edicao,
+  onEditar,
 }: {
   titulo: string;
   secoes: SecaoPeticao[];
   edicao: Record<string, string>;
+  onEditar: (codigo: string, valor: string) => void;
 }) {
   return (
-    <div className="lg:sticky lg:top-4 grid gap-2">
-      <p className="text-xs font-semibold text-tinta-3 m-0 uppercase tracking-wide">
-        Prévia da petição
-      </p>
-      <div className="font-titulo border border-borda-forte bg-papel shadow-sm p-8 max-h-[80vh] overflow-y-auto">
+    <div className="grid gap-2">
+      {/* Sem `max-h`/`overflow` e sem `sticky`: o documento rola com a página,
+          que é o que se espera de um texto que se está escrevendo. */}
+      <div className="font-titulo border border-borda-forte bg-papel shadow-sm p-8">
         <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-6">
           {titulo || "Petição inicial"}
         </h1>
         <div className="grid gap-4">
-          {secoes.map((secao) => {
-            const conteudo = edicao[secao.code] ?? secao.content;
-            return (
-              <section key={secao.code} className="grid gap-2">
-                {secao.label && (
-                  <h2 className="text-center text-xs font-bold uppercase tracking-wide text-tinta">
-                    {secao.label}
-                  </h2>
-                )}
-                <p className="text-sm leading-relaxed text-justify text-tinta-2 whitespace-pre-wrap m-0">
-                  {conteudo || "—"}
-                </p>
-              </section>
-            );
-          })}
+          {secoes.map((secao) => (
+            <section key={secao.code} className="grid gap-2">
+              {secao.label && (
+                <h2 className="text-center text-xs font-bold uppercase tracking-wide text-tinta">
+                  {secao.label}
+                </h2>
+              )}
+              <CampoDoDocumento
+                valor={edicao[secao.code] ?? secao.content}
+                rotulo={secao.label || secao.code}
+                onEditar={(valor) => onEditar(secao.code, valor)}
+              />
+            </section>
+          ))}
         </div>
       </div>
     </div>
