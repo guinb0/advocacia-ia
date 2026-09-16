@@ -1172,6 +1172,17 @@ e escreva o que for possível com [PENDENTE: explicação] no que faltar.
 Use SOMENTE fatos da entrevista e dos documentos — não invente. A qualificação do
 autor sai do bloco IDENTIDADE DO RECLAMANTE, nunca de nome citado na conversa.
 
+QUALIDADE INEGOCIÁVEL: esta peça alternativa deve ter a mesma profundidade,
+estrutura e padrão profissional da petição principal. Não entregue resumo,
+modelo genérico ou esqueleto só porque é uma ação concorrente. Desenvolva
+integralmente fatos, provas, nexo, dispositivos legais, subsunção e consequência
+jurídica. Inclua todas as preliminares cabíveis, cada tese específica da ação,
+pedidos individualizados coerentes com a fundamentação, provas requeridas, valor
+da causa calculado e fechamento. Reaproveite a riqueza factual da minuta principal
+quando pertinente, mas não copie pedidos de outra ação nem reduza o texto ao
+mínimo. Se uma tese não couber nesta ação, não a invente: explique a distinção
+em `pendencias`.
+
 JSON:
 {
   "secoes": [
