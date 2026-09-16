@@ -27,7 +27,7 @@
 import { useState } from "react";
 
 import { salvarRoteiro } from "@/lib/api";
-import { montarRoteiroColado, roteiroComoTexto } from "@/lib/roteiroColado";
+import { montarRoteiroColado, nomeSugerido, roteiroComoTexto } from "@/lib/roteiroColado";
 import type { Bloco, Pergunta, RoteiroCompleto, TipoResposta } from "@/lib/types";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import { Botao } from "@/components/ui/Basicos";
@@ -115,6 +115,14 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
   const [abertos, setAbertos] = useState<string[]>([]);
   const [textoColado, setTextoColado] = useState(() => roteiroComoTexto(roteiro));
   const [resumoColado, setResumoColado] = useState<string | null>(null);
+  /* Qual texto PRODUZIU o rascunho atual.
+   *
+   * É o que deixa o "Salvar" saber se o textarea tem algo ainda não aplicado.
+   * Igual ao texto colado = nada pendente (foi montado, ou o roteiro acabou de
+   * abrir). Diferente = a pessoa mexeu no texto e não montou, e é esse texto
+   * que ela quer salvar. Comparar assim preserva quem só ajustou campos nos
+   * avançados: o textarea não mudou, então nada é remontado por cima. */
+  const [textoAplicado, setTextoAplicado] = useState(() => roteiroComoTexto(roteiro));
 
   function aplicarTextoColado() {
     const montado = montarRoteiroColado(textoColado, rascunho);
@@ -125,11 +133,43 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
       setErro("Não encontrei perguntas no texto. Confira se os títulos das seções estão em MAIÚSCULAS.");
       return;
     }
-    setRascunho(montado);
+    /* O nome sai do texto quando ninguém o digitou.
+     *
+     * Sem isto, colar o roteiro inteiro e mandar salvar devolvia 422 — o
+     * servidor exige nome, e o campo nasce vazio no roteiro novo. Pedir à mão
+     * um dado que o documento colado já traz é a burocracia que este editor
+     * existe para não ter. Preenchido aqui, e não escondido no envio: aparece
+     * no campo acima, à vista e editável por quem quiser outro. */
+    const nome = rascunho.nome.trim() || nomeSugerido(textoColado);
+    setRascunho({ ...montado, nome });
+    setTextoAplicado(textoColado);
     setErro(null);
     setResumoColado(
-      `Montado: ${montado.blocos.filter((b) => b.id !== "abertura").length} seções e ${perguntas} perguntas. Agora é só salvar.`,
+      `Montado: ${montado.blocos.filter((b) => b.id !== "abertura").length} seções e ${perguntas} perguntas` +
+        (rascunho.nome.trim() ? "" : ` · nome: “${nome}”`) +
+        ". Agora é só salvar.",
     );
+  }
+
+  /* O rascunho com o que ainda estiver pendente no textarea já aplicado.
+   *
+   * "Montar o roteiro com este texto" era um passo OBRIGATÓRIO que não parecia
+   * ser: quem colava o documento e ia direto para uma das duas saídas levava um
+   * roteiro sem seção nenhuma — no "Salvar", a faixa vermelha do servidor
+   * ("O roteiro precisa de pelo menos um bloco"), cobrando um bloco que o texto
+   * colado já continha; no "Usar neste atendimento", pior ainda, um roteiro
+   * vazio entrando no meio da conversa sem erro nenhum.
+   *
+   * As DUAS saídas passam por aqui, e é isso que faz "copiou, colou e já era"
+   * ser verdade. O botão de montar continua existindo para quem quer conferir
+   * antes, mas deixou de ser pedágio. */
+  function roteiroPronto(): RoteiroCompleto {
+    let pronto = rascunho;
+    if (textoColado.trim() && textoColado !== textoAplicado) {
+      pronto = montarRoteiroColado(textoColado, pronto);
+    }
+    if (!pronto.nome.trim()) pronto = { ...pronto, nome: nomeSugerido(textoColado) };
+    return pronto;
   }
 
   function alterar(campos: Partial<RoteiroCompleto>) {
@@ -181,7 +221,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
     setSalvando(true);
     setErro(null);
     try {
-      const salvo = await salvarRoteiro(rascunho, origem);
+      const salvo = await salvarRoteiro(roteiroPronto(), origem);
       aoSalvar?.(salvo);
       aoFechar();
     } catch (e) {
@@ -209,7 +249,10 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
               Editar o roteiro
             </h2>
             <p className="m-0 mt-[3px] text-[11.5px] leading-[1.4] font-ui text-tinta-3">
-              {rascunho.blocos.length} blocos · {totalPerguntas} perguntas
+              {/* "seções", e não "blocos": o texto colado produz seções, e o
+                  editor chamava a mesma coisa de dois nomes — o que lia como
+                  se faltasse criar um "bloco" que o documento já trouxe. */}
+              {rascunho.blocos.length} seções · {totalPerguntas} perguntas
               {origem ? ` · de ${origem}` : ""}
             </p>
           </div>
@@ -224,7 +267,11 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
               pequeno
               aguardando={salvando}
               onClick={() => {
-                aoUsar(rascunho);
+                // `roteiroPronto()` e não `rascunho`: sem isto, colar o texto e
+                // clicar aqui levaria um roteiro SEM PERGUNTAS para dentro do
+                // atendimento — e em silêncio, porque esta saída não passa pela
+                // validação do servidor.
+                aoUsar(roteiroPronto());
                 aoFechar();
               }}
             >
@@ -292,7 +339,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
 
           <details className="border-t border-borda pt-3">
           <summary className="cursor-pointer text-[12px] font-semibold font-ui text-tinta-3">
-            Ajustes avançados por seção (tipo de resposta, opções, condições)
+            Ajustes avançados por seção — opcional, o texto colado já basta
           </summary>
           <Paragrafos
             rotulo="Saudação — lida em voz alta antes da primeira pergunta"
@@ -322,7 +369,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
                       }
                     >
                       <span className="font-semibold text-[14px] font-titulo text-tinta">
-                        {aberto ? "▾" : "▸"} {bloco.titulo || "(bloco sem título)"}
+                        {aberto ? "▾" : "▸"} {bloco.titulo || "(seção sem título)"}
                       </span>
                       <span className="ml-2 text-[11px] font-ui text-tinta-3">
                         {bloco.perguntas.length} perguntas
@@ -333,7 +380,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
                       <button
                         type="button"
                         className={T_MINI}
-                        title="Subir bloco"
+                        title="Subir seção"
                         disabled={iBloco === 0}
                         onClick={() =>
                           alterar({ blocos: mover(rascunho.blocos, iBloco, iBloco - 1) })
@@ -344,7 +391,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
                       <button
                         type="button"
                         className={T_MINI}
-                        title="Descer bloco"
+                        title="Descer seção"
                         disabled={iBloco === rascunho.blocos.length - 1}
                         onClick={() =>
                           alterar({ blocos: mover(rascunho.blocos, iBloco, iBloco + 1) })
@@ -355,7 +402,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
                       <button
                         type="button"
                         className={T_MINI}
-                        title="Remover bloco"
+                        title="Remover seção"
                         onClick={() =>
                           alterar({ blocos: rascunho.blocos.filter((_, i) => i !== iBloco) })
                         }
@@ -455,7 +502,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
                 setAbertos((a) => [...a, `bloco-${rascunho.blocos.length}`]);
               }}
             >
-              + Bloco
+              + Seção
             </Botao>
           </div>
           </details>

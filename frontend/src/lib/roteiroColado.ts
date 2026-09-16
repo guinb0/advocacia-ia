@@ -60,6 +60,35 @@ function acrescentarParagrafo(lista: string[], linha: string): void {
   }
 }
 
+/* Um nome para o roteiro, tirado do próprio texto colado.
+ *
+ * POR QUE ISTO EXISTE
+ *
+ * `roteiros.de_dict` recusa roteiro sem nome ("O roteiro precisa de um nome").
+ * Como o roteiro novo nasce com o campo vazio, colar o documento inteiro e
+ * mandar salvar dava 422 — pedindo à mão um dado que o texto colado já traz.
+ * Era a burocracia entre "colou" e "já era".
+ *
+ * A PRIMEIRA LINHA-TÍTULO COSTUMA SER O NOME DO DOCUMENTO
+ *
+ * Não é acaso: o título de abertura ("ENTREVISTA EMPREGADO PÚBLICO") não tem
+ * perguntas embaixo, então `montarRoteiroColado` o descarta como seção e o
+ * recolhe em `sobra`. Ele não vira bloco justamente por ser o nome do todo — é
+ * o melhor candidato disponível, e sai preenchido no campo, à vista e editável,
+ * em vez de escondido. */
+export function nomeSugerido(texto: string): string {
+  let primeira = "";
+  for (const bruta of texto.split(/\r?\n/)) {
+    const { texto: linha, marcada } = limpar(bruta);
+    if (!linha) continue;
+    if (!marcada && ehTitulo(linha)) return linha.replace(/:$/, "").trim().slice(0, 80);
+    if (!primeira) primeira = linha;
+  }
+  // Sem título em MAIÚSCULAS: a primeira linha serve, e nomear pela data é
+  // melhor que barrar quem acabou de colar um roteiro válido.
+  return (primeira || `Roteiro colado em ${new Date().toLocaleDateString("pt-BR")}`).slice(0, 80);
+}
+
 export function montarRoteiroColado(texto: string, base: RoteiroCompleto): RoteiroCompleto {
   const saudacao: string[] = [];
   const encerramento: string[] = [];

@@ -744,10 +744,12 @@ export default function TriagemEntrevista({
         * vezes. */}
       {!encerrado && (
         <>
-          <span className="block mb-1 text-tinta text-sm font-bold">Validação após a entrevista — quais ações cabem</span>
+          {/* Uma linha, e não título + parágrafo de três linhas: o que este bloco
+              faz cabe numa frase, e o resto era texto que ninguém relê depois da
+              primeira vez. A ressalva que importa (a decisão é da equipe) fica. */}
+          <span className="block mb-1 text-tinta text-sm font-bold">Analisar o relato</span>
           <p className="mb-3 mt-0 max-w-[64ch] text-tinta-3 text-xs leading-[1.55]">
-            Analise o relato antes de pedir a avaliação ao cliente. O sistema sugere as ações cabíveis,
-            mostra o que sustenta cada uma e compara o caso com a base vetorial. A decisão final é da equipe jurídica.
+            O sistema sugere as ações cabíveis e mostra o que sustenta cada uma. A decisão é da equipe jurídica.
           </p>
 
           <div
@@ -774,16 +776,23 @@ export default function TriagemEntrevista({
           if (arquivo && !analisando) void analisar(arquivo);
         }}
       >
-        <RotuloCampo htmlFor="relato-entrevista">Colar entrevista ou arrastar um arquivo</RotuloCampo>
+        {/* Sem rótulo acima da caixa: ele dizia exatamente o que o placeholder já
+            diz, uma linha antes. O nome do campo continua existindo para leitor
+            de tela em `aria-label` — some da tela, não da acessibilidade.
+
+            Esta caixa é o ÚNICO lugar do texto: o arquivo escolhido é lido e cai
+            aqui dentro (`setTexto(relato)` em `analisar`), editável. Não há
+            preview separado para conferir e uma caixa à parte para corrigir. */}
         <Campo
           area
           id="relato-entrevista"
+          aria-label="Colar entrevista ou arrastar um arquivo"
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
           placeholder={
             arrastandoArquivo
               ? "Solte o arquivo aqui"
-              : "Cole o relato ou arraste para cá um arquivo que contenha texto…"
+              : "Cole o relato, ou arraste para cá um arquivo com texto (.txt, .docx, PDF…)"
           }
         />
 
@@ -808,8 +817,12 @@ export default function TriagemEntrevista({
           pequeno
           onClick={() => inputRef.current?.click()}
           aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
+          /* A lista inteira de extensões era um parágrafo embaixo da caixa. Vira
+             `title`: quem precisa saber passa o mouse; quem não precisa deixa de
+             ler quatro linhas de formatos toda vez que abre a tela. */
+          title="Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual."
         >
-          Escolher arquivo com texto
+          Escolher arquivo
         </BotaoProcesso>
 
         <input
@@ -827,9 +840,6 @@ export default function TriagemEntrevista({
           <span className="ml-auto text-tinta-3 text-xs tabular-nums">{texto.trim().length} caracteres</span>
         )}
       </div>
-      <p className="mb-0 mt-2 text-[11px] leading-[1.5] text-tinta-3">
-        Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual.
-      </p>
           </div>
 
           {erro && (
