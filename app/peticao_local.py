@@ -753,6 +753,7 @@ def redigir(
     caso_id: str, *, analise: dict[str, Any], texto_entrevista: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
     contexto = analise.get("contexto") or _montar_contexto(caso_id, texto_entrevista)
+    contexto += _precedentes_para_redigir(contexto)
     contexto += _legislacao_para_redigir(contexto)
     saida = _llm_json(
         _com_skill_do_escritorio(
@@ -869,7 +870,10 @@ def _legislacao_para_redigir(contexto: str) -> str:
     Falha não interrompe a geração: sem base, a peça sai como saía antes.
     """
     try:
-        trechos = rag.buscar_legislacao(contexto[:12_000], limite=10)
+        # Mais de um núcleo jurídico costuma coexistir na mesma inicial
+        # (competência, mérito, prova, consectários). Dez trechos favoreciam a
+        # primeira tese e deixavam as demais com fundamentação de memória.
+        trechos = rag.buscar_legislacao(contexto[:12_000], limite=14)
     except Exception as erro:
         log.warning("petição local: legislação indisponível na redação: %s", erro)
         return ""
@@ -881,10 +885,14 @@ def _legislacao_para_redigir(contexto: str) -> str:
         linhas.append(f"\n[L{indice}] {titulo}\n{trecho.texto[:1500]}")
     linhas.append(
         f"\nSão {len(trechos)} dispositivos legais OFICIAIS do acervo do "
-        "escritório. Cite o artigo pelo número e pela lei, transcreva o "
-        "dispositivo quando ele sustentar a tese e aplique-o aos fatos deste "
-        "caso. Nunca invente número de artigo nem cite dispositivo que não esteja "
-        "acima — se o que você precisa não estiver aqui, fundamente sem inventar."
+        "escritório. Para CADA norma que usar, identifique a espécie, número e "
+        "denominação (quando houver), o artigo/parágrafo/inciso, sintetize com "
+        "precisão o comando normativo e explique a consequência dele PARA ESTES "
+        "fatos; uma referência solta como 'art. 927 do CC' é insuficiente. "
+        "Transcreva só o excerto indispensável quando ele sustentar diretamente a "
+        "tese, sem colar lei em bloco. Nunca invente número de artigo nem cite "
+        "dispositivo que não esteja acima — se o que você precisa não estiver aqui, "
+        "fundamente sem inventar."
     )
     return "\n".join(linhas)
 
@@ -1231,6 +1239,7 @@ def gerar_anexa(
         )
 
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    contexto += _precedentes_para_redigir(contexto)
     contexto += _legislacao_para_redigir(contexto)
     # A ação alternativa parte também da minuta principal: só a entrevista
     # bruta faz o modelo perder datas, valores, documentos e nomes já extraídos.
@@ -1382,6 +1391,24 @@ os dispositivos recuperados no material da tarefa sempre que forem pertinentes;
 prefira-os à memória e nunca invente lei, artigo, vigência, precedente ou fato.
 O acervo é fonte para pesquisa e fundamentação, não autorização para citar norma
 irrelevante ou despejar artigos sem subsunção.
+
+IDENTIFICAÇÃO E EXPLICAÇÃO DA LEI: toda vez que citar uma norma, descreva-a de
+forma profissional no próprio raciocínio: espécie e número da norma (e sua
+denominação, quando houver), artigo/parágrafo/inciso invocado, o conteúdo jurídico
+relevante e o efeito que ele produz no caso. Não escreva apenas “nos termos do art.
+X” nem use citação ornamental. Exemplo de padrão: “O art. X da Lei nº Y/AAAA,
+que assegura/proíbe/condiciona Z, incide porque o documento/fato A demonstra B;
+daí decorre o pedido C.” Não transcreva a lei por volume: use a passagem necessária
+e, em seguida, faça a subsunção concreta.
+
+USO INTENSIVO E CRÍTICO DO ACERVO: em cada tópico jurídico material (competência,
+preliminar, responsabilidade, cada espécie de dano, estabilidade, prescrição,
+prova, consectários e pedido), procure no material recuperado a norma e o julgado
+pertinentes. Desenvolva o tópico em camadas — regra legal explicada, fato e prova
+específicos, aplicação, objeção previsível e consequência processual — em vez de
+um único parágrafo conclusivo. Não use o acervo como enfeite, mas também não deixe
+de usá-lo quando houver fonte aderente. Se a fonte não cobrir o ponto, declare a
+pendência de pesquisa em vez de simular erudição.
 
 EXIGÊNCIA DE EXCELÊNCIA E COMPLETUDE: entregue peça pronta para revisão final de
 advogado experiente, nunca um rascunho genérico. Antes de responder, faça uma
