@@ -22,6 +22,7 @@ from . import (
     analise_documentos,
     armazenamento,
     jurimetria_caso,
+    peticao_aprendizado,
     peticao_criticas,
     peticao_skills,
     rag,
@@ -330,11 +331,17 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
         )
         if parte
     )
+    regras = peticao_aprendizado.regras_para_contexto(categoria=categoria)
     try:
-        peticao_criticas.inicializar()
-        criticas = peticao_criticas.ultimas_da_categoria(
-            categoria, limite=CRITICAS_RECENTES_POR_CATEGORIA
-        )
+        # Compatibilidade com as correções históricas anteriores ao aprendizado
+        # estruturado. Assim que existirem regras ativas, histórico cru não entra
+        # no prompt: uma lista de comentários não é uma base de conhecimento.
+        criticas = []
+        if not regras:
+            peticao_criticas.inicializar()
+            criticas = peticao_criticas.ultimas_da_categoria(
+                categoria, limite=CRITICAS_RECENTES_POR_CATEGORIA
+            )
     except Exception:
         # Mesma régua de `instrucoes_da_categoria`: uma oscilação de rede no
         # pgvector não pode derrubar a geração por causa de um reforço opcional.
@@ -348,6 +355,24 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
             else "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO ===\n"
         )
         blocos.append(cabecalho + skill)
+    if regras:
+        listadas = "\n".join(
+            f"- [{r.get('tipo', 'PREFERENCE')}; confiança {float(r.get('confidence') or 0):.2f}; "
+            f"{int(r.get('observacoes') or 0)} confirmação(ões)] {r.get('texto', '')}"
+            for r in regras
+        )
+        if revisao:
+            blocos.append(
+                "=== REGRAS APRENDIDAS ATIVAS DO ESCRITÓRIO (referência contextual) ===\n"
+                + listadas
+                + "\nA crítica atual prevalece; não use regra aprendida para alterar seção não pedida."
+            )
+        else:
+            blocos.append(
+                "=== REGRAS APRENDIDAS ATIVAS DO ESCRITÓRIO ===\n"
+                + listadas
+                + "\nAplique apenas quando compatíveis com os fatos, a área e este tipo de peça."
+            )
     if criticas:
         listadas = "\n".join(f"- {c}" for c in criticas)
         if revisao:
@@ -866,6 +891,17 @@ def _legislacao_para_redigir(contexto: str) -> str:
 
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
+    generation_id = str(uuid.uuid4())
+    regras_aplicadas = peticao_aprendizado.regras_para_contexto(
+        categoria=_categoria_do_caso(caso_id)
+    )
+    peticao_aprendizado.registrar_execucao(
+        generation_id=generation_id, caso_id=caso_id,
+        skill_name="learned_preferences_retrieval", itens_recuperados=[
+            {"id": r.get("id"), "tipo": r.get("tipo"), "confidence": r.get("confidence")}
+            for r in regras_aplicadas
+        ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
+    )
     contexto = _montar_contexto(caso_id, texto_entrevista)
     contexto += _precedentes_para_redigir(contexto)
     contexto += _legislacao_para_redigir(contexto)
@@ -1006,6 +1042,16 @@ Cada content deve conter parágrafos separados por linha em branco.""",
         raise ErroPeticao("O modelo não devolveu texto da petição.")
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
+    achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
+    peticao_aprendizado.registrar_avaliacao(
+        generation_id=generation_id, caso_id=caso_id, tipo="post_generation", achados=achados_criticos
+    )
+    for nome in ("legal_critic", "style_critic", "consistency_check", "document_generation"):
+        peticao_aprendizado.registrar_execucao(
+            generation_id=generation_id, caso_id=caso_id, skill_name=nome,
+            status="DONE", itens_recuperados=achados_criticos if nome != "document_generation" else [],
+            confidence=1.0 if not achados_criticos else .72,
+        )
     agora = _agora()
     anterior = carregar(caso_id) or {}
     versao = int(anterior.get("version") or 0) + 1
@@ -1022,6 +1068,7 @@ Cada content deve conter parágrafos separados por linha em branco.""",
         armazenamento.registrar_versao_peticao(caso_id, anterior)
     dados = {
         "id": ID_LOCAL,
+        "generation_id": generation_id,
         "document_type": "INITIAL_PETITION",
         "status": "IN_REVIEW",
         "version": versao,
@@ -1039,12 +1086,25 @@ Cada content deve conter parágrafos separados por linha em branco.""",
             "completo": not pendencias and not analise.get("lacunas"),
         },
         "review": {
-            "findings": [],
+            "findings": achados_criticos,
             "summary": analise.get("observacoes", ""),
             "blocking": 0,
         },
         "blocking_findings": 0,
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        # Trace é explicabilidade operacional: fontes/regras/etapas. Não contém
+        # cadeia de pensamento privada do modelo nem texto sensível do caso.
+        "trace": {
+            "generation_id": generation_id,
+            "learned_rules": [
+                {"id": r.get("id"), "tipo": r.get("tipo"), "confidence": r.get("confidence"),
+                 "observacoes": r.get("observacoes")}
+                for r in regras_aplicadas
+            ],
+            "skills": ["learned_preferences_retrieval", "legal_critic", "style_critic",
+                       "consistency_check", "document_generation"],
+            "evaluations": achados_criticos,
+        },
     }
     _salvar(caso_id, dados)
     return dados
@@ -1875,6 +1935,7 @@ def aceitar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
     secoes = candidata.get("sections") or []
     if not secoes:
         raise ErroPeticao("A revisão pendente não contém uma peça válida.")
+    diff_aprovado = peticao_aprendizado.diff_semantico(atual.get("sections") or [], secoes)
     armazenamento.registrar_versao_peticao(caso_id, {k: v for k, v in atual.items() if k != "revisao_pendente"})
     agora = _agora()
     dados = {k: v for k, v in atual.items() if k != "revisao_pendente"}
@@ -1883,7 +1944,7 @@ def aceitar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
         "status": "IN_REVIEW", "updated_at": agora,
         "revisao": {"tipo": "prompt", "status": "ACCEPTED", "id": revisao_id,
             "prompt": candidata.get("prompt", ""), "usuario": candidata.get("usuario", ""),
-            "em": agora, **(candidata.get("revisao") or {})},
+            "em": agora, "semantic_diff": diff_aprovado, **(candidata.get("revisao") or {})},
     })
     _salvar(caso_id, dados)
     try:
@@ -1894,6 +1955,19 @@ def aceitar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
             generaliza=bool(candidata.get("generaliza", True)))
     except Exception:
         log.exception("crítica aceita não pôde ser registrada (caso %s)", caso_id)
+    try:
+        peticao_aprendizado.registrar_feedback(
+            caso_id=caso_id, categoria=_categoria_do_caso(caso_id),
+            advogado=str(candidata.get("usuario") or ""), texto=str(candidata.get("prompt") or ""),
+            geral=bool(candidata.get("generaliza", True)),
+            versao_origem=int(atual.get("version") or 1), versao_resultado=int(dados["version"]),
+        )
+        peticao_aprendizado.registrar_execucao(
+            generation_id=str(atual.get("generation_id") or revisao_id), caso_id=caso_id,
+            skill_name="semantic_diff", itens_recuperados=diff_aprovado, confidence=1.0,
+        )
+    except Exception:
+        log.exception("aprendizado da revisão aceita não pôde ser registrado (caso %s)", caso_id)
     return dados
 
 
@@ -1908,6 +1982,16 @@ def descartar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
     dados["revisoes_descartadas"] = descartadas
     dados["revisao"] = {"tipo": "prompt", "status": "REJECTED", "id": revisao_id,
         "prompt": candidata.get("prompt", ""), "usuario": candidata.get("usuario", ""), "em": _agora()}
+    try:
+        # Rejeição é evidência auditável, mas nunca vira preferência reaproveitável.
+        peticao_aprendizado.registrar_feedback(
+            caso_id=caso_id, categoria=_categoria_do_caso(caso_id),
+            advogado=str(candidata.get("usuario") or ""), texto=str(candidata.get("prompt") or ""),
+            geral=False, versao_origem=int(atual.get("version") or 1),
+            versao_resultado=int(atual.get("version") or 1),
+        )
+    except Exception:
+        log.exception("evento de revisão rejeitada não pôde ser registrado (caso %s)", caso_id)
     return _salvar(caso_id, dados)
 
 
@@ -1979,6 +2063,7 @@ def atualizar_status(caso_id: str, *, status: str) -> dict[str, Any]:
 def para_api(dados: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": dados.get("id", ID_LOCAL),
+        "generation_id": dados.get("generation_id"),
         "document_type": dados.get("document_type", "INITIAL_PETITION"),
         "status": dados.get("status", "IN_REVIEW"),
         "version": dados.get("version", 1),
@@ -1991,6 +2076,7 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "created_at": dados.get("created_at", _agora()),
         "revisao": dados.get("revisao") or None,
         "revisao_pendente": dados.get("revisao_pendente") or None,
+        "trace": dados.get("trace") or {},
         "sections": [
             secao
             for secao in dados.get("sections") or []

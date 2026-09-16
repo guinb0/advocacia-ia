@@ -124,7 +124,7 @@ def gerar_completo(caso_id: str) -> dict[str, Any]:
         "run_id": ID_LOCAL,
         "status": "DONE",
         "requested_at": agora,
-        "generation_id": ID_LOCAL,
+        "generation_id": dados.get("generation_id", ID_LOCAL),
         "pipeline": "local",
         "analise": analise_limpa,
         "peticao": peticao_local.para_api(dados),

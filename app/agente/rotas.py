@@ -31,7 +31,7 @@ from fastapi import (
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .. import armazenamento, auth, contrato, peticao_local
+from .. import armazenamento, auth, contrato, peticao_aprendizado, peticao_local
 from . import conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
 from .config import config
@@ -770,6 +770,12 @@ def descartar_revisao_pendente(caso_id: str, revisao_id: str, usuario: auth.Usua
         return peticao_fluxo.descartar_revisao(caso_id, revisao_id)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
+
+
+@roteador.get("/peticoes/aprendizado/metricas")
+def metricas_de_aprendizado(usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
+    """Painel agregado de regras e etapas; sem expor documentos ou prompts."""
+    return peticao_aprendizado.estatisticas()
 
 
 # ------------------------------------------------------------------- estilo
