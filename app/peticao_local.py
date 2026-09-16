@@ -732,6 +732,15 @@ Cada content em parágrafos separados por linha em branco.""",
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    contexto += (
+        "\n\n=== PADRÃO OBRIGATÓRIO DA PEÇA ===\n"
+        "Desenvolva os fundamentos com fatos concretos do caso: cada tese deve ter "
+        "pelo menos dois parágrafos e explicar conduta, prova, nexo e consequência, "
+        "sem criar fatos. Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
+        "O valor da causa deve aparecer somente por extenso na seção VALUE. "
+        "A seção CLOSING deve conter apenas Termos em que, Pede deferimento, local/data "
+        "e advogado/OAB, sem escrever o título FECHAMENTO dentro do conteúdo."
+    )
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
@@ -1555,7 +1564,11 @@ def _tipo_de_titulo(linha: str) -> str | None:
     if _RE_TITULO_CENTRAL.match(texto):
         return "central"
     if not any(c.islower() for c in texto) and any(c.isalpha() for c in texto):
-        return "central"
+        principais = {
+            "DO DIREITO", "DOS FATOS", "DOS PEDIDOS", "DAS PROVAS",
+            "DO VALOR DA CAUSA", "FECHAMENTO",
+        }
+        return "central" if texto in principais else "esquerda"
     return None
 
 
@@ -1632,8 +1645,8 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             continue
         rotulo = str(secao.get("label") or secao.get("code") or "").strip()
         conteudo = str(secao.get("content") or "").strip()
-        if rotulo and secao.get("code") not in ("HEADING",):
-            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True))
+        if rotulo and secao.get("code") not in ("HEADING", "CLOSING"):
+            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True, centralizado=True))
         if conteudo:
             # O HEADING NÃO é centralizado por inteiro.
             #
@@ -1645,7 +1658,9 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             # o nome do autor saía com os asteriscos literais no documento.
             #
             # Quem decide agora é `_tipo_de_titulo`, linha a linha.
-            corpo.append(_paragrafo_xml(conteudo))
+            corpo.append(
+                _paragrafo_xml(conteudo, centralizado=secao.get("code") == "CLOSING")
+            )
         corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
