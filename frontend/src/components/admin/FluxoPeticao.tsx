@@ -1263,11 +1263,24 @@ function ComparacaoRevisao({
   anterior: SecaoPeticao[]; candidata: SecaoPeticao[]; revisando: boolean;
   onAceitar: () => void; onDescartar: () => void;
 }) {
+  const comparacaoRef = useRef<HTMLElement>(null);
   const porCodigo = new Map(candidata.map((s) => [s.code, s]));
   const todos = [...anterior, ...candidata.filter((s) => !anterior.some((a) => a.code === s.code))];
   const mudancas = todos.filter((s) => (porCodigo.get(s.code)?.content ?? "") !== (anterior.find((a) => a.code === s.code)?.content ?? "")).length;
+  useEffect(() => {
+    // Ao chegar a candidata, o advogado não precisa procurar a alteração numa
+    // peça longa. O primeiro trecho marcado (vermelho ou verde) vira o ponto
+    // de entrada da revisão; `scrollIntoView` também ajusta a coluna rolável.
+    const primeiro = comparacaoRef.current?.querySelector<HTMLElement>("[data-revisao-alteracao='true']");
+    if (!primeiro) return;
+    const quadro = window.requestAnimationFrame(() => {
+      primeiro.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      primeiro.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(quadro);
+  }, [anterior, candidata]);
   return (
-    <section className="border-2 border-acao-borda bg-papel p-4">
+    <section ref={comparacaoRef} className="border-2 border-acao-borda bg-papel p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div><h3 className={TITULO}>Revisão pendente</h3><p className={SUB}>Compare a peça completa antes de aceitar. {mudancas} seção(ões) com alteração.</p></div>
         <span className="rounded-full bg-acao-clara px-3 py-1 text-xs font-semibold text-tinta-2">A peça oficial continua preservada</span>
@@ -1299,6 +1312,11 @@ function TextoComDiff({ texto, outro, tipo }: { texto: string; outro: string; ti
   const palavras = texto.split(/(\s+)/); const opostas = new Set(outro.split(/(\s+)/).filter(Boolean));
   return <>{palavras.map((palavra, i) => {
     const mudou = palavra.trim() && !opostas.has(palavra);
-    return <span key={i} className={mudou ? tipo === "antes" ? "bg-red-100 text-red-900 line-through" : "bg-green-100 text-green-900" : undefined}>{palavra}</span>;
+    return <span
+      key={i}
+      data-revisao-alteracao={mudou ? "true" : undefined}
+      tabIndex={mudou ? -1 : undefined}
+      className={mudou ? tipo === "antes" ? "bg-red-100 text-red-900 line-through" : "bg-green-100 text-green-900" : undefined}
+    >{palavra}</span>;
   })}</>;
 }
