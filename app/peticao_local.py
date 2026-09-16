@@ -41,7 +41,7 @@ ID_LOCAL = "local"
 #: 6 — recuo de 1,25 cm na primeira linha de cada parágrafo, medido na mesma
 #: peça de referência (corpo em 3,0 cm, primeira linha em 4,25 cm), e negrito
 #: inline no nome do autor.
-DOCX_STYLE_VERSION = 7
+DOCX_STYLE_VERSION = 8
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 #: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
 #:
@@ -1739,16 +1739,22 @@ def _paragrafo_xml(
         if not linha.strip():
             partes.append("<w:p/>")
             continue
+        # Uma linha de TÍTULO já é negrito inteiro, então `**` ali não tem o que
+        # converter — e sairia literal no documento entregue ao juízo, que foi o
+        # que aconteceu em "RECLAMAÇÃO TRABALHISTA**". Tira o marcador ANTES de
+        # detectar (senão o asterisco atrapalha o reconhecimento) e de escrever.
+        linha_limpa = linha.replace("**", "")
         texto_xml = escape(linha)
         # Só vale para o CONTEÚDO: quando quem chama já mandou formatar (o
         # rótulo da seção), a decisão é dele e não se sobrepõe.
-        titulo = None if (negrito or centralizado) else _tipo_de_titulo(linha)
+        titulo = None if (negrito or centralizado) else _tipo_de_titulo(linha_limpa)
         if titulo:
             # O endereçamento é o único que muda o TEXTO, e não só o alinhamento:
             # a IA o escreve em caixa mista ("Ao Juízo da Vara do Trabalho de
             # Tucuruí/PA") e o escritório o quer em caixa alta, centralizado.
-            if titulo == "endereco":
-                texto_xml = escape(linha.strip().upper())
+            texto_xml = escape(
+                linha_limpa.strip().upper() if titulo == "endereco" else linha_limpa
+            )
             alinhamento = "center" if titulo in ("central", "endereco") else "left"
             partes.append(
                 f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
@@ -1767,7 +1773,12 @@ def _paragrafo_xml(
                     if negrito or indice % 2
                     else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
                 )
-                for indice, parte in enumerate(re.split(r"\*\*(.+?)\*\*", texto_xml))
+                # O `replace` pega o marcador ÍMPAR, que a `re.split` não casa por
+                # não ter par e deixaria passar literal para o .docx.
+                for indice, parte in enumerate(
+                    p.replace("**", "")
+                    for p in re.split(r"\*\*(.+?)\*\*", texto_xml)
+                )
                 if parte
             )
             partes.append(
@@ -1790,7 +1801,12 @@ def _paragrafo_xml(
                     if indice % 2
                     else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
                 )
-                for indice, parte in enumerate(re.split(r"\*\*(.+?)\*\*", texto_xml))
+                # O `replace` pega o marcador ÍMPAR, que a `re.split` não casa por
+                # não ter par e deixaria passar literal para o .docx.
+                for indice, parte in enumerate(
+                    p.replace("**", "")
+                    for p in re.split(r"\*\*(.+?)\*\*", texto_xml)
+                )
                 if parte
             )
             partes.append(f"<w:p>{runs}</w:p>")
@@ -1808,7 +1824,11 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             continue
         rotulo = str(secao.get("label") or secao.get("code") or "").strip()
         conteudo = str(secao.get("content") or "").strip()
-        if rotulo and secao.get("code") not in ("HEADING", "CLOSING"):
+        # VALUE entra junto de HEADING e CLOSING: o valor da causa NÃO tem título
+        # na peça do escritório — é uma frase solta ("Dá-se à causa o valor de
+        # ..."). O rótulo continua existindo em `SECOES` porque a tela e o prompt
+        # se orientam por ele; só não vira parágrafo no .docx.
+        if rotulo and secao.get("code") not in ("HEADING", "CLOSING", "VALUE"):
             # `centralizado=False`: o rótulo da seção fica À ESQUERDA.
             #
             # Estava centralizado, e era metade do problema — "DOS FATOS",
