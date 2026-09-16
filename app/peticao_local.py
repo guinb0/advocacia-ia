@@ -1101,10 +1101,31 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
 
 
 _INSTRUCAO_REVISAO = """Você é advogado revisando uma peça jurídica já redigida.
-Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL. Mude SOMENTE o que a crítica pede, e
-mude de verdade: todo trecho que a crítica mandar alterar, incluir ou retirar precisa estar
-diferente no texto devolvido. Preserve o restante palavra por palavra. Não invente fatos que
-não estejam na minuta atual. Nunca apague uma seção inteira sem que a crítica peça.
+Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL.
+
+ANTES DE ESCREVER, CLASSIFIQUE O PEDIDO:
+
+(a) PONTUAL — troca um nome, separa um pedido, corrige uma data, ajusta um trecho
+    determinado. Aqui mude SOMENTE o que foi pedido e preserve o restante palavra
+    por palavra.
+
+(b) APROFUNDAMENTO — "fundamentação rasa", "deixa mais robusto", "explique
+    melhor", "desenvolve mais", "coloca uma parte maior dos julgados", "melhora
+    em todos os pontos". Aqui NÃO faça retoque: REESCREVA as seções envolvidas de
+    forma substancialmente mais longa e densa. Cada parágrafo raso vira
+    argumentação desenvolvida — premissa, fundamento legal, aplicação aos fatos
+    do caso e conclusão. Desenvolva os julgados e súmulas JÁ citados na minuta,
+    explicando por que se aplicam a estes fatos e transcrevendo os trechos
+    relevantes. Se a crítica disser "em todos os pontos" ou não nomear seção,
+    aprofunde TODAS as seções argumentativas (Dos fatos, Do direito, Dos pedidos).
+    Devolver texto do mesmo tamanho é FALHAR no pedido.
+
+Em (b) o "preserve palavra por palavra" NÃO se aplica: expandir, reorganizar e
+reescrever é justamente o que foi pedido. O limite é outro — nunca invente fato,
+prova, número de processo, valor ou data que não estejam na minuta atual. Sem
+material novo, aprofunde o RACIOCÍNIO JURÍDICO sobre o que já existe.
+
+Nunca apague uma seção inteira sem que a crítica peça.
 NUNCA devolva a minuta inteira igual ao que recebeu. Se o pedido for vago, ambíguo
 ou parecer já atendido, NÃO pare: aplique a melhor interpretação possível — o
 advogado pediu uma mudança e espera vê-la — e registre em "perguntas" o que
@@ -1128,9 +1149,53 @@ Cada content em parágrafos separados por linha em branco."""
 _INSTRUCAO_CONFERENCIA = """Você confere se a revisão de uma peça jurídica foi feita corretamente.
 Recebe o PEDIDO DO ADVOGADO e, para cada seção alterada, o texto ANTES e DEPOIS.
 Seja rigoroso: "atendeu" só é true se TUDO o que o pedido manda estiver no texto DEPOIS.
+
+Quando o pedido for de APROFUNDAMENTO ("fundamentação rasa", "mais robusto",
+"explique melhor", "em todos os pontos"), duas regras mudam:
+
+- "atendeu" só é true se o texto DEPOIS estiver de fato mais DESENVOLVIDO que o
+  ANTES. Mesmo tamanho com palavras trocadas é false.
+- "alteradas_sem_pedido" fica VAZIO. Pedido global autoriza mexer em qualquer
+  seção argumentativa, e marcar seção ali faria o sistema DESFAZER exatamente a
+  ampliação que o advogado pediu.
+
 Responda APENAS JSON:
 {"atendeu": true, "faltou": "o que do pedido não foi feito, em uma frase; vazio se atendeu",
  "alteradas_sem_pedido": ["code de seção alterada que o pedido não justifica"]}"""
+
+
+#: Como o advogado pede APROFUNDAMENTO, e não um retoque pontual.
+#:
+#: Colhido dos pedidos reais que não estavam funcionando: "Fundamentação muito
+#: rasa, melhora isso em todos os pontos", "Deixa os parágrafos mais robustos",
+#: "Coloca uma parte maior dos julgados e explique melhor os parágrafos".
+#:
+#: Sem acento e em minúsculas — a comparação passa por `_sem_acento`.
+_SINAIS_DE_APROFUNDAMENTO = (
+    "todos os pontos", "em tudo", "mais robust", "robustez", "aprofund",
+    "mais denso", "rasa", "raso", "superficial", "explique melhor",
+    "explica melhor", "desenvolv", "mais longo", "mais extenso", "amplie",
+    "amplia", "detalhe mais", "detalha mais", "mais complet", "enriquec",
+    "melhora isso", "melhore isso", "parte maior", "mais fundament",
+)
+
+
+def _pedido_global(prompt_critica: str) -> bool:
+    """O advogado pediu para APROFUNDAR, e não para mexer num ponto específico?
+
+    Isto decide se a trava de `alteradas_sem_pedido` vale. Num pedido pontual
+    ela protege o texto: impede a IA de reescrever o que ninguém mandou. Num
+    pedido de aprofundamento ela fazia o oposto do pedido — a conferência
+    marcava as seções como "não pedidas" e o código RESTAURAVA o texto raso.
+    O advogado via "Seções alteradas: Dos fatos, Do direito" e um texto do mesmo
+    tamanho de antes. Foi o defeito relatado nas versões 8, 9 e 10 da peça.
+
+    Errar para o lado de considerar global é o lado barato: no máximo a IA
+    aprofunda uma seção a mais, e o advogado revisa o texto de qualquer forma.
+    O caro é o contrário — desfazer em silêncio o que ele pediu três vezes.
+    """
+    texto = _sem_acento(prompt_critica).lower()
+    return any(sinal in texto for sinal in _SINAIS_DE_APROFUNDAMENTO)
 
 
 def _texto_normalizado(texto: Any) -> str:
@@ -1208,7 +1273,13 @@ def _revisar_secoes_via_llm(
         if observacao:
             entrada += (
                 f"\n\nATENÇÃO — A TENTATIVA ANTERIOR FALHOU: {observacao}\n"
-                "Corrija isso agora, mudando somente o que a crítica pede."
+                # NÃO repita aqui "mude somente o que a crítica pede": era o que
+                # estava escrito, e num pedido de aprofundamento essa frase
+                # mandava o modelo fazer o MÍNIMO justamente na segunda chance,
+                # depois de a primeira já ter sido rasa demais.
+                "Corrija isso agora. Se a crítica pede aprofundamento, reescreva "
+                "as seções envolvidas de forma substancialmente mais longa e "
+                "densa — não basta trocar palavras."
             )
         saida = _llm_json(instrucao, entrada, timeout=240.0)
         perguntas = [
@@ -1227,6 +1298,13 @@ def _revisar_secoes_via_llm(
 
         conferencia = _conferir_revisao(prompt_critica, secoes_atuais, alteradas)
         indevidas = set(conferencia["alteradas_sem_pedido"]) & {s.get("code") for s in alteradas}
+        # Pedido GLOBAL não tem seção indevida — e isto não é detalhe: era esta
+        # trava que desfazia o trabalho. Em "melhora a fundamentação em todos os
+        # pontos", a conferência marcava seções como "não pedidas" e o código
+        # restaurava o texto raso original. O advogado via "Seções alteradas:
+        # Dos fatos, Do direito" e um texto que continuava do mesmo tamanho.
+        if _pedido_global(prompt_critica):
+            indevidas = set()
         if indevidas and len(indevidas) < len(alteradas):
             secoes = [
                 dict(originais[s.get("code")]) if s.get("code") in indevidas else s for s in secoes
