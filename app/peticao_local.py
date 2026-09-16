@@ -1516,6 +1516,49 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
     }
 
 
+#: Título de capítulo DENTRO do conteúdo: "I – PRELIMINARES", "II – DOS FATOS".
+#: Romano solto, sem subdivisão. Centralizado, como na peça do escritório.
+_RE_TITULO_CENTRAL = re.compile(r"^[IVXLC]+\s*[–—-]\s*\S")
+#: Subtítulo numerado: "I.1 – Da Gratuidade de Justiça". Fica À ESQUERDA.
+_RE_SUBTITULO = re.compile(r"^[IVXLC]+\.\d+\s*[–—-]\s*\S")
+
+
+def _tipo_de_titulo(linha: str) -> str | None:
+    """`"central"`, `"esquerda"` ou `None` para linha de texto comum.
+
+    POR QUE ISTO EXISTE
+
+    O gerador só sabia formatar o RÓTULO da seção ("DOS FATOS"). Tudo que a IA
+    escreve dentro do `content` saía como parágrafo justificado — inclusive os
+    títulos que a própria peça tem por dentro. Era a diferença de layout que
+    sobrava depois de acertar margens, fonte, entrelinha e recuo: comparada com
+    a petição de referência, "AO JUÍZO…", "AÇÃO DE CONCESSÃO DE…" e
+    "I – PRELIMINARES" apareciam como texto corrido em vez de título.
+
+    As três formas foram medidas na referência, pelo x0 de cada linha (margem
+    esquerda em 3,0 cm):
+
+        AÇÃO DE CONCESSÃO DE AUXÍLIO-ACIDENTE   x0 = 5,74 cm  -> centralizado
+        I – PRELIMINARES                        x0 = 9,06 cm  -> centralizado
+        I.1 – Da Gratuidade de Justiça          x0 = 3,00 cm  -> à esquerda
+
+    Só linha curta e sem ponto final entra. Um parágrafo inteiro em maiúsculas
+    — uma citação transcrita, por exemplo — não é título e não pode virar um.
+    """
+    texto = linha.strip()
+    if not texto or len(texto) > 90 or texto.endswith("."):
+        return None
+    # O subtítulo é testado ANTES: "I.1 – ..." também casa com o padrão do
+    # título de capítulo, e a ordem inversa o centralizaria por engano.
+    if _RE_SUBTITULO.match(texto):
+        return "esquerda"
+    if _RE_TITULO_CENTRAL.match(texto):
+        return "central"
+    if not any(c.islower() for c in texto) and any(c.isalpha() for c in texto):
+        return "central"
+    return None
+
+
 def _paragrafo_xml(
     texto: str, *, negrito: bool = False, centralizado: bool = False
 ) -> str:
@@ -1526,14 +1569,34 @@ def _paragrafo_xml(
             partes.append("<w:p/>")
             continue
         texto_xml = escape(linha)
+        # Só vale para o CONTEÚDO: quando quem chama já mandou formatar (o
+        # rótulo da seção), a decisão é dele e não se sobrepõe.
+        titulo = None if (negrito or centralizado) else _tipo_de_titulo(linha)
+        if titulo:
+            alinhamento = "center" if titulo == "central" else "left"
+            partes.append(
+                f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
+                f'<w:r><w:rPr><w:b/></w:rPr>'
+                f'<w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+            )
+            continue
         if negrito or centralizado:
             # `firstLine="0"` ANULA o recuo padrão aqui, e não é detalhe: num
             # parágrafo centralizado o recuo de primeira linha empurra o texto
             # para a direita, e o título deixaria de ficar no centro.
-            prefixo = '<w:r><w:rPr><w:b/></w:rPr>' if negrito else '<w:r>'
+            alinhamento = "center" if centralizado else "left"
+            runs = "".join(
+                (
+                    f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                    if negrito or indice % 2
+                    else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                )
+                for indice, parte in enumerate(re.split(r"\*\*(.+?)\*\*", texto_xml))
+                if parte
+            )
             partes.append(
-                f'<w:p><w:pPr><w:jc w:val="center"/><w:ind w:firstLine="0"/></w:pPr>'
-                f'{prefixo}<w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+                f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
+                f'{runs}</w:p>'
             )
         else:
             # `**assim**` vira negrito DE VERDADE, em run próprio.
@@ -1572,9 +1635,17 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         if rotulo and secao.get("code") not in ("HEADING",):
             corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True))
         if conteudo:
-            corpo.append(
-                _paragrafo_xml(conteudo, centralizado=secao.get("code") == "HEADING")
-            )
+            # O HEADING NÃO é centralizado por inteiro.
+            #
+            # Centralizar a seção toda punha a qualificação do autor no meio da
+            # página, e na peça de referência ela é justificada com recuo, como
+            # qualquer parágrafo — só o endereçamento ("Ao Juízo…") e o nome da
+            # ação ficam centralizados. Como efeito colateral, o bloco inteiro
+            # caía no ramo de título e a conversão de `**negrito**` nunca rodava:
+            # o nome do autor saía com os asteriscos literais no documento.
+            #
+            # Quem decide agora é `_tipo_de_titulo`, linha a linha.
+            corpo.append(_paragrafo_xml(conteudo))
         corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
