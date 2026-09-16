@@ -165,10 +165,15 @@ de fora. É o bloqueio maior dos três.
 certificado. Com o Traefik na frente e `DISABLE_HTTPS=1` no Jitsi, resolve junto
 com o resto.
 
-**3. TURN** (`deploy/jitsi/docker-compose.coturn.yml`). O áudio vai por UDP na
-10000; funciona na maioria das redes e falha justamente em 4G de operadora e
-rede de empresa. Aí a chamada **abre e ninguém ouve ninguém** — o pior sintoma,
-porque parece que deu certo. O coturn escuta em 443/TCP e repassa.
+**3. TURN** (`deploy/jitsi/docker-compose.coturn.yml`, variáveis em
+`deploy/jitsi/coturn.env.exemplo`). O áudio vai por UDP na 10000; funciona na
+maioria das redes e falha justamente em 4G de operadora e rede de empresa. Aí a
+chamada **abre e ninguém ouve ninguém** — o pior sintoma, porque parece que deu
+certo. O coturn escuta em 443/TCP e repassa.
+
+**Este é o único dos três ainda pendente**, e ele custou uma entrevista real em
+15/09/2026. Enquanto não subir, a orientação ao escritório é pedir que o cliente
+entre pelo Wi-Fi, não pelo 4G.
 
 De brinde, o TURN cala um erro antigo: a `lib-jitsi-meet` pergunta ao Prosody
 por servidores de STUN/TURN assim que conecta (XEP-0215) e não há como desligar
@@ -184,10 +189,12 @@ IPs o cluster tem.
 
 ## Falta você decidir
 
-1. **O domínio de produção.** Homologação já está em
-   `advocacia.levelhom.com.br`. Produção espera a variável `DOMINIO` — sem ela
-   a stack recusa subir, de propósito. `meet.` e `turn.` continuam chute meu,
-   no padrão `<nome>.level33lab.cloud` do vig-agent.
+1. **O domínio do TURN.** O do app e o do Jitsi já estão resolvidos: em
+   16/09/2026 `advocacia.levelhom.com.br` e `jitsi.level33lab.cloud` respondem,
+   os dois em `187.77.239.138`. O que **não existe** é `turn.level33lab.cloud` —
+   e `meet.level33lab.cloud`, que aparecia nos composes, também não: era chute
+   meu e foi corrigido para `jitsi.` onde aparecia. Falta criar o registro do
+   TURN (ou apontar `TURN_HOST` para um nome que exista) antes de subir o coturn.
 2. **O IP público do TURN e do JVB**, e como resolver o conflito da 443.
 3. **O volume `dados/` em Swarm.** `api` e `worker` gravam no mesmo volume
    nomeado — é onde ficam arquivos de caso e contratos assinados. Volume nomeado

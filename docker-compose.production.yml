@@ -179,6 +179,12 @@ services:
       JITSI_PUBLIC_URL: ${JITSI_PUBLIC_URL:-https://jitsi.level33lab.cloud}
       JITSI_JWT_APP_ID: ${JITSI_JWT_APP_ID:-level33-chamadas}
       JITSI_JWT_APP_SECRET: ${JITSI_JWT_APP_SECRET?JITSI_JWT_APP_SECRET is required}
+      # Interruptor de emergencia da chamada. `0` (padrao) manda a voz sempre
+      # pelo videobridge, que e o que faz o 4G do cliente funcionar. Se depois de
+      # um deploy TODA chamada emudecer, o bridge esta inalcancavel: ponha `1`
+      # aqui e reinicie a api — e lido pelo servidor a cada entrada na sala, sem
+      # rebuild do frontend. Ver o comentario em `main.p2p_ligado`.
+      CHAMADA_P2P: ${CHAMADA_P2P:-0}
 
       CELERY_BROKER_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/1
       CELERY_RESULT_BACKEND: redis://:${VALKEY_PASSWORD}@valkey:6379/1

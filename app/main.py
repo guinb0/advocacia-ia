@@ -2655,6 +2655,26 @@ def gerar_token_jitsi(sala: str) -> str | None:
 _salas = chamada.Salas()
 
 
+def p2p_ligado() -> bool:
+    """A chamada tenta ligação direta entre os navegadores antes do bridge?
+
+    PADRÃO DESLIGADO, E O INTERRUPTOR MORA AQUI POR UM MOTIVO
+
+    Com P2P, uma sala de duas pessoas tenta ligar os navegadores diretamente. É
+    mais barato, e falha exatamente onde o cliente está: no 4G, o NAT simétrico
+    da operadora não deixa o caminho direto fechar, e o sintoma é o pior
+    possível — a sala abre, os retratos aparecem e ninguém ouve ninguém. Pelo
+    videobridge o celular só manda UDP para um IP público conhecido.
+
+    Mas desligar o P2P aposta tudo no bridge: se ele estiver inalcançável
+    (`JVB_ADVERTISE_IPS` errado, UDP 10000 fechada), não sobra caminho e TODA
+    chamada emudece. Por isso a decisão é do SERVIDOR, e não do build: religar é
+    `CHAMADA_P2P=1` e reiniciar a API, em segundos. Se fosse `NEXT_PUBLIC_*`,
+    voltar atrás custaria um pipeline inteiro de build com o cliente na linha.
+    """
+    return os.environ.get("CHAMADA_P2P", "0").strip().lower() in {"1", "true", "sim"}
+
+
 @app.get("/api/chamada/config")
 def config_chamada():
     """Servidores ICE para o navegador montar a conexão. Público e sem segredo."""
@@ -2683,7 +2703,12 @@ def criar_sala(payload: dict | None = None):
     if not sala:
         sala = chamada.gerar_sala()
     token = gerar_token_jitsi(sala)
-    return {"sala": sala, "url": f"{URL_PORTAL}/chamada/{sala}", "token": token or ""}
+    return {
+        "sala": sala,
+        "url": f"{URL_PORTAL}/chamada/{sala}",
+        "token": token or "",
+        "p2p": p2p_ligado(),
+    }
 
 
 @app.post("/api/casos/{caso_id}/analise-documentos")
@@ -2749,6 +2774,10 @@ def token_da_sala(sala_id: str):
         "sala": sala_id,
         "url": f"{URL_PORTAL}/chamada/{sala_id}",
         "token": token or "",
+        # O cliente entra por AQUI, e não pela rota de cima. Sem esta linha ele
+        # cairia no padrão do código (P2P desligado) enquanto o escritório
+        # seguiria o servidor — as duas pontas negociando modos diferentes.
+        "p2p": p2p_ligado(),
     }
 
 

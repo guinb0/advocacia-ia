@@ -1111,11 +1111,17 @@ export async function jurimetriaDoCaso(casoId: string, uf = ""): Promise<Jurimet
  *
  * Antes as duas passavam pela mesma rota autenticada, e o link público da
  * chamada abria uma tela de login. */
-export async function criarSalaChamada(sala?: string): Promise<{ sala: string; url: string; token: string }> {
+export async function criarSalaChamada(
+  sala?: string,
+): Promise<{ sala: string; url: string; token: string; p2p: boolean }> {
   const destino = sala
     ? `/api/chamada/sala/${encodeURIComponent(sala)}/token`
     : "/api/chamada/sala";
-  return comoJson<{ sala: string; url: string; token: string }>(
+  /* `p2p` vem do servidor, e não do build, de propósito: é o interruptor de
+   * emergência da chamada. Se o videobridge estiver inalcançável, religá-lo é
+   * uma variável de ambiente e um restart da API — sem rebuild do frontend, que
+   * levaria um pipeline inteiro com o cliente esperando. Ver `CHAMADA_P2P`. */
+  return comoJson<{ sala: string; url: string; token: string; p2p: boolean }>(
     await buscar(destino, { method: "POST" }),
   );
 }

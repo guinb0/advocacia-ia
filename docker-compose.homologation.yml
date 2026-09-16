@@ -147,7 +147,16 @@ services:
       DATAJUD_API_KEY: ${DATAJUD_API_KEY?DATAJUD_API_KEY is required}
 
       AGENTE_API_URL: http://ia-juridica:8011
-      JITSI_PUBLIC_URL: https://meet.level33lab.cloud
+      # `jitsi.` e nao `meet.`: em 16/09/2026 `meet.level33lab.cloud` NAO RESOLVE
+      # no DNS. Quem responde — servindo /libs/lib-jitsi-meet.min.js por HTTPS e
+      # aceitando o websocket — e `jitsi.level33lab.cloud`, que e tambem o que o
+      # .gitlab-ci.yml embute no bundle do frontend. Apontado para o host morto,
+      # o backend monta links de chamada que nao abrem em lugar nenhum.
+      JITSI_PUBLIC_URL: https://jitsi.level33lab.cloud
+      # Interruptor de emergencia da chamada — ver o comentario no compose de
+      # producao e em `main.p2p_ligado`. `1` religa a ligacao direta entre
+      # navegadores se o videobridge estiver inalcancavel.
+      CHAMADA_P2P: ${CHAMADA_P2P:-0}
 
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1

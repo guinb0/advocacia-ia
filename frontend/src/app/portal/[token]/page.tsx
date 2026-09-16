@@ -11,6 +11,7 @@ import type { TomSelo } from "@/lib/formato";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import AtivarMicrofone from "@/components/chamada/AtivarMicrofone";
+import IndicadorVoz from "@/components/chamada/IndicadorVoz";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
 
 /* Cada estado com símbolo, palavra e tom. O cliente lê "Recebido" e "Precisa
@@ -417,6 +418,7 @@ function Chamada({ token }: { token: string }) {
   const chamada = useChamada();
   const [entrando, setEntrando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [microfone, setMicrofone] = useState<string | undefined>(undefined);
 
   // Esta seção mostra a chamada por inteiro: enquanto está na tela, o painel
   // flutuante se recolhe. `registrarPainel` é estável, então roda uma vez.
@@ -426,8 +428,8 @@ function Chamada({ token }: { token: string }) {
     setErro(null);
     setEntrando(true);
     try {
-      const { token: jitsiToken } = await criarSalaChamada(token);
-      await chamada.entrar(token, "cliente", undefined, jitsiToken);
+      const { token: jitsiToken, p2p } = await criarSalaChamada(token);
+      await chamada.entrar(token, "cliente", { microfoneId: microfone, p2p }, jitsiToken);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível entrar na chamada.";
       setErro(
@@ -461,7 +463,7 @@ function Chamada({ token }: { token: string }) {
             Se o escritório combinou uma conversa por voz, toque abaixo. Você fala pelo
             próprio celular, sem instalar nada.
           </p>
-          <AtivarMicrofone />
+          <AtivarMicrofone onMicrofone={setMicrofone} />
           <BotaoProcesso
             variante="primario"
             className="mt-[14px]"
@@ -478,9 +480,23 @@ function Chamada({ token }: { token: string }) {
             {situacao[chamada.estado]}
           </p>
 
+          <IndicadorVoz
+            trilha={chamada.faixaLocal}
+            titulo="Sua voz"
+            mudo={chamada.mudo}
+            acaoSilencio={
+              <Botao variante="secundario" onClick={() => void chamada.reativarAudio()}>
+                Religar meu microfone
+              </Botao>
+            }
+          />
+
           <div className="flex gap-[10px] mt-4 flex-wrap">
             <Botao variante="secundario" onClick={chamada.alternarMudo}>
               {chamada.mudo ? "Voltar a falar" : "Desligar meu microfone"}
+            </Botao>
+            <Botao variante="secundario" onClick={() => void chamada.reativarAudio()}>
+              Reativar áudio
             </Botao>
             <Botao variante="secundario" onClick={chamada.desligar}>
               Sair da chamada

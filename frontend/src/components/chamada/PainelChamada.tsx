@@ -7,6 +7,7 @@ import { criarSalaChamada } from "@/lib/api";
 import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import Retratos from "@/components/ui/Retratos";
+import IndicadorVoz from "@/components/chamada/IndicadorVoz";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 
 /* A chamada ao lado do roteiro — a coluna da direita da entrevista.
@@ -60,10 +61,14 @@ const BOTAO_SECUNDARIO =
 
 export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "roteiro" }: Props) {
   const chamada = useChamada();
-  const [sala, setSala] = useState<{ sala: string; url: string; token: string } | null>(null);
+  const [sala, setSala] = useState<{ sala: string; url: string; token: string; p2p: boolean } | null>(null);
   const [abrindo, setAbrindo] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  /* A voz do entrevistado, para MEDIR. "Áudio conectado" dizia só que a faixa
+   * chegou — fica verde com o cliente mudo, que foi como a chamada de
+   * 15/09/2026 pareceu normal enquanto ninguém era ouvido. */
+  const [faixaRemota, setFaixaRemota] = useState<MediaStreamTrack | null>(null);
 
   // As props chegam por callbacks inline do pai (novos a cada render); o ref
   // deixa as assinaturas serem feitas UMA vez e ainda chamarem o mais recente.
@@ -80,9 +85,19 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
   // A voz do entrevistado alimenta a transcrição. A assinatura entrega a faixa
   // que já chegou (se o painel montou depois dela) e as próximas.
   useEffect(
-    () => chamada.aoReceberFaixa((trilha) => onFaixaRef.current(trilha)),
+    () =>
+      chamada.aoReceberFaixa((trilha) => {
+        setFaixaRemota(trilha);
+        onFaixaRef.current(trilha);
+      }),
     [chamada.aoReceberFaixa],
   );
+
+  // Cliente saiu ou a chamada caiu: não há voz para medir, e uma barra parada
+  // seria lida como "ele está calado".
+  useEffect(() => {
+    if (chamada.estado !== "falando") setFaixaRemota(null);
+  }, [chamada.estado]);
 
   // Sem faixa não há o que transcrever: o cliente saiu, ou a chamada caiu.
   useEffect(() => {
@@ -98,7 +113,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
       // Se já há uma chamada de pé (por exemplo, retomada), reaproveita a sala.
       const nova = sala ?? (await criarSalaChamada());
       setSala(nova);
-      await chamada.entrar(nova.sala, "advogado", { nome: "Escritório" }, nova.token);
+      await chamada.entrar(nova.sala, "advogado", { nome: "Escritório", p2p: nova.p2p }, nova.token);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Não foi possível abrir a chamada.";
       setErro(
@@ -196,6 +211,9 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
             <Volume2 size={15} className={chamada.estado === "falando" ? "text-ok" : "text-atencao"} aria-hidden />
             <span>{chamada.estado === "falando" ? "Áudio conectado" : "Aguardando áudio"}</span>
           </div>
+
+          <IndicadorVoz trilha={faixaRemota} titulo="Voz do cliente" />
+          <IndicadorVoz trilha={chamada.faixaLocal} titulo="Sua voz" mudo={chamada.mudo} />
 
           <Retratos participantes={chamada.participantes} tamanho="coluna" />
 
