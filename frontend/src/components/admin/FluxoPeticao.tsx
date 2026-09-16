@@ -980,7 +980,7 @@ function PreviaPeticao({
       {/* Sem `max-h`/`overflow` e sem `sticky`: o documento rola com a página,
           que é o que se espera de um texto que se está escrevendo. */}
       <div className="mx-auto w-full max-w-[850px] font-titulo border border-borda-forte bg-papel shadow-sm px-10 py-12 max-[640px]:px-5 max-[640px]:py-7">
-        <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-6">
+        <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-10">
           {titulo || "Petição inicial"}
         </h1>
         <div className="grid gap-6">
