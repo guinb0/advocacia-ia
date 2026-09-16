@@ -313,7 +313,7 @@ interface Props {
 }
 
 export default function Roteiro({
-  codigo = "empregado_publico",
+  codigo = "auxilio_acidente",
   onRespostas,
   onEscuta,
   onContextoRevisao,

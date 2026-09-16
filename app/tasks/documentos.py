@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..celery_app import celery_app
-from .. import jobs, pipeline, rag, relatorio
+from .. import jobs, pipeline, rag, relatorio, roteiros
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,7 +43,7 @@ def gerar_relatorio(self, job_id: str, pedido: dict):
                 analise = {"indisponivel": "A análise por precedentes poderá ser gerada depois."}
         jobs.atualizar(job_id, status="PROCESSING", progresso=70)
         pdf, dados = relatorio.gerar_pdf(
-            pedido["respostas"], pedido.get("roteiro", "empregado_publico"),
+            pedido["respostas"], pedido.get("roteiro", roteiros.ROTEIRO_PADRAO),
             pedido.get("entrevistador", ""), analise,
         )
         nome = f"{job_id}.pdf"

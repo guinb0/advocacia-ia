@@ -1000,7 +1000,7 @@ class PedidoRelatorio(BaseModel):
     """As respostas da entrevista concluída."""
 
     respostas: dict[str, Any]
-    roteiro: str = Field(default="empregado_publico", max_length=60)
+    roteiro: str = Field(default=roteiros.ROTEIRO_PADRAO, max_length=60)
     entrevistador: str = Field(default="", max_length=120)
     #: O relato corrido da entrevista — é dele que sai a análise por precedentes.
     #: A tela já o monta para a triagem; mandá-lo aqui evita reconstruí-lo.
@@ -1092,7 +1092,7 @@ class PedidoEscuta(BaseModel):
 
     trecho: str = Field(max_length=8_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
-    roteiro: str = Field(default="empregado_publico", max_length=60)
+    roteiro: str = Field(default=roteiros.ROTEIRO_PADRAO, max_length=60)
     #: Snapshot da versão que está na tela. É necessário para edições usadas
     #: apenas nesta sessão, que ainda não existem no catálogo do servidor.
     roteiro_snapshot: dict[str, Any] | None = None
@@ -1106,7 +1106,7 @@ class PedidoProcessamentoEntrevista(BaseModel):
 
     transcricao: str = Field(min_length=1, max_length=80_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
-    roteiro: str = Field(default="empregado_publico", max_length=60)
+    roteiro: str = Field(default=roteiros.ROTEIRO_PADRAO, max_length=60)
     #: A versão efetivamente exibida, inclusive quando editada só na sessão.
     roteiro_snapshot: dict[str, Any] | None = None
     #: Buscar precedentes no pgvector para sugerir perguntas e apontar lacunas.

@@ -188,7 +188,7 @@ def _quem(frase: str, enunciados: list[list[str]], anterior: str) -> str:
 
 
 def atribuir(
-    trechos: list[dict[str, Any]], codigo_roteiro: str = "empregado_publico"
+    trechos: list[dict[str, Any]], codigo_roteiro: str = roteiros.ROTEIRO_PADRAO
 ) -> dict[str, Any]:
     """Rotula cada frase da transcrição com quem provavelmente a disse.
 

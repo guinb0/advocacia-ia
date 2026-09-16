@@ -85,7 +85,7 @@ def _texto_resposta(valor: Any) -> str:
 
 def montar(
     respostas: dict[str, Any],
-    codigo_roteiro: str = "empregado_publico",
+    codigo_roteiro: str = roteiros.ROTEIRO_PADRAO,
     entrevistador: str = "",
 ) -> dict[str, Any]:
     """A estrutura do relatório, antes de virar arquivo.
@@ -437,7 +437,7 @@ def _partes(corpo: str, com_emblema: bool) -> dict[str, str]:
 
 def gerar_docx(
     respostas: dict[str, Any],
-    codigo_roteiro: str = "empregado_publico",
+    codigo_roteiro: str = roteiros.ROTEIRO_PADRAO,
     entrevistador: str = "",
     analise: dict[str, Any] | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
@@ -475,7 +475,7 @@ def gerar_docx(
 
 def gerar_pdf(
     respostas: dict[str, Any],
-    codigo_roteiro: str = "empregado_publico",
+    codigo_roteiro: str = roteiros.ROTEIRO_PADRAO,
     entrevistador: str = "",
     analise: dict[str, Any] | None = None,
 ) -> tuple[bytes, dict[str, Any]]:

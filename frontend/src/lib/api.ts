@@ -1248,7 +1248,7 @@ export interface RelatorioGerado {
 export async function gerarRelatorio(
   respostas: Record<string, string | string[]>,
   relato = "",
-  roteiro = "empregado_publico",
+  roteiro = "auxilio_acidente",
 ): Promise<RelatorioGerado> {
   const criado = await comoJson<{ job_id: string }>(await buscar("/api/entrevista/relatorio/jobs", {
     method: "POST",
@@ -1510,7 +1510,7 @@ export async function triarEntrevista(texto: string, arquivo?: File): Promise<Tr
 export async function escutarTrecho(
   trecho: string,
   respostas: Record<string, string | string[]>,
-  roteiro = "empregado_publico",
+  roteiro = "auxilio_acidente",
   perguntaAtual = "",
   roteiroSnapshot?: RoteiroCompleto,
 ): Promise<Escuta> {
@@ -1542,7 +1542,7 @@ function explicarRotaDeProcessamento(resposta: Response): Response {
 export async function processarEntrevista(
   transcricao: string,
   respostas: Record<string, string | string[]>,
-  roteiro = "empregado_publico",
+  roteiro = "auxilio_acidente",
   roteiroSnapshot?: RoteiroCompleto,
 ): Promise<ProcessamentoEntrevista> {
   const resposta = await buscar("/api/entrevista/processar", {
