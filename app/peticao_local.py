@@ -751,17 +751,26 @@ def _precedentes_para_redigir(contexto: str) -> str:
         return ""
     if not similares:
         return ""
+    # DOZE julgados, e não seis: com seis o modelo citava um ou dois e dava a
+    # fundamentação por cumprida. O trecho de cada um caiu de 2200 para 1800
+    # caracteres de propósito — dobrar a quantidade sem encolher o recorte
+    # empurraria o prompt para perto do teto e o que entra por último é
+    # justamente o que o modelo menos aproveita.
     linhas = ["\n\n=== JULGADOS SEMELHANTES (use no DO DIREITO) ==="]
-    for indice, trecho in enumerate(similares[:6], start=1):
+    usados = list(similares[:12])
+    for indice, trecho in enumerate(usados, start=1):
         ref = trecho.referencia()
         linhas.append(
             f"\n[J{indice}] processo={ref.get('processo') or ref.get('identificador')} "
             f"resultado={ref.get('resultado') or 'não informado'} "
-            f"órgão={ref.get('vara') or 'não informado'}\n{trecho.texto[:2200]}"
+            f"órgão={ref.get('vara') or 'não informado'}\n{trecho.texto[:1800]}"
         )
     linhas.append(
-        "\nCite estes julgados pelo número do processo ao fundamentar, explicando a "
-        "aplicação aos fatos deste caso. Nunca invente processo, ementa ou número."
+        f"\nSão {len(usados)} julgados. Use a MAIOR parte deles, não um ou dois: "
+        "cada tese do DO DIREITO deve vir amparada em pelo menos DOIS destes "
+        "julgados, citados pelo número do processo e com a razão de decidir "
+        "explicada e aplicada aos fatos deste caso — nada de citação solta ou "
+        "lista de ementas no fim. Nunca invente processo, ementa ou número."
     )
     return "\n".join(linhas)
 
@@ -801,8 +810,11 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "pelo menos TRÊS parágrafos densos e explicar conduta, prova, nexo e "
         "consequência, sem criar fatos. Peça rasa é peça recusada: cada parágrafo "
         "traz premissa, fundamento legal, aplicação aos fatos e conclusão — nada de "
-        "afirmação solta em uma linha. Quando houver julgados no material abaixo, "
-        "desenvolva-os no texto explicando por que se aplicam a ESTES fatos. "
+        "afirmação solta em uma linha. Havendo julgados no material abaixo, o uso "
+        "deles é OBRIGATÓRIO e não opcional: cada tese do DO DIREITO se apoia em "
+        "pelo menos DOIS julgados, com processo citado e razão de decidir aplicada "
+        "a ESTES fatos. Peça com jurisprudência de enfeite, citada e não "
+        "desenvolvida, é peça recusada do mesmo jeito que peça rasa. "
         "Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
         "A seção VALUE contém UMA frase e nada mais: 'Dá-se à causa o valor de "
         "<extenso> (R$ <número>).' — sem discriminar a soma das parcelas, sem "
