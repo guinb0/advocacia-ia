@@ -146,6 +146,19 @@ services:
       DEEPSEEK_BASE_URL: https://api.deepseek.com
       DEEPSEEK_MODEL: deepseek-chat
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY?OPENROUTER_API_KEY is required}
+      # Visao de imagem: a foto que o OCR nao conseguiu ler como documento
+      # (`app/visao_documento.py`, chamado pelo worker-ocr). Conta SEPARADA de
+      # proposito: foto chega pelo portal, em volume que ninguem controla, e
+      # estourar o credito dela nao pode emudecer a transcricao da entrevista,
+      # que roda na outra conta.
+      #
+      # OPCIONAL (`:-`) e nao `?required`, ao contrario das de cima, e a escolha
+      # e deliberada: obrigatoria, a stack INTEIRA se recusaria a subir ate
+      # alguem cadastrar a variavel no GitLab — derrubar producao para adicionar
+      # um recurso. Vazia, `visao_documento._chave()` cai na OPENROUTER_API_KEY
+      # acima: a leitura de imagem continua funcionando, so gasta a conta da
+      # transcricao. Cadastre no escopo prod para valer a separacao.
+      OPENROUTER_VISAO_API_KEY: ${OPENROUTER_VISAO_API_KEY:-}
 
       ZAPSIGN_API_TOKEN: ${ZAPSIGN_API_TOKEN?ZAPSIGN_API_TOKEN is required}
       ZAPSIGN_BASE_URL: https://api.zapsign.com.br/api/v1

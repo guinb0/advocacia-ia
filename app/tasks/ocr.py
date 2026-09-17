@@ -17,6 +17,7 @@ from .. import (
     jobs,
     pipeline,
     roteamento,
+    visao_documento,
 )
 from ..celery_app import celery_app
 
@@ -333,6 +334,44 @@ def processar_entrega(
                 indexacao_documento.aplicar_interpretacao(resultado, semantica)
             except Exception as exc:
                 log.warning("classificação semântica falhou para %s: %s", entrega_id, exc)
+                resultado["classificacao_semantica"] = {
+                    "status": "indisponivel",
+                    "erro": str(exc)[:200],
+                }
+        elif formato_lido and extensao in visao_documento.EXTENSOES_IMAGEM:
+            # A FOTO QUE NÃO É DOCUMENTO — o caso que não caía em ramo nenhum.
+            #
+            # Chegar aqui significa: o OCR rodou (`formato_lido`) e NÃO achou
+            # texto aproveitável (senão o ramo acima teria pego). Num escritório
+            # trabalhista isso quase sempre é a foto do veículo amassado, da
+            # máquina, do local ou da lesão — e até agora ela ia para a triagem
+            # muda, com o advogado abrindo uma a uma para ver o que o cliente
+            # mandou. `valor_documento` não alcança este caso por construção:
+            # ele lê TEXTO, e aqui não há texto para ler.
+            #
+            # O retorno tem a mesma forma do semântico, então segue pelo mesmo
+            # `aplicar_interpretacao` — inclusive a regra de não rebaixar
+            # classificação determinística e de marcar campo interpretado com
+            # confiança zero.
+            try:
+                pendentes = [
+                    {"codigo": esperado.codigo, "nome": esperado.nome}
+                    for esperado in categoria.itens
+                ]
+                visao = visao_documento.ler_imagem(
+                    conteudo, extensao, categoria.nome, pendentes
+                )
+                semantica = {
+                    **visao,
+                    "classificador": "visao",
+                    "tipo_semantico": str(visao.get("documento") or "indefinido"),
+                }
+                resultado["classificacao_semantica"] = semantica
+                indexacao_documento.aplicar_interpretacao(resultado, semantica)
+            except Exception as exc:
+                # Foto não lida não trava o envio: o arquivo continua no caso e
+                # na triagem, exatamente como estava antes desta adição.
+                log.warning("leitura de imagem falhou para %s: %s", entrega_id, exc)
                 resultado["classificacao_semantica"] = {
                     "status": "indisponivel",
                     "erro": str(exc)[:200],
