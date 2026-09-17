@@ -634,10 +634,20 @@ def _analisar_jurimetria_da_minuta(
             consulta, texto_para_uf=texto_para_uf
         )
     except Exception as erro:
-        log.warning("petição local: jurimetria indisponível: %s", erro)
+        # O TIPO do erro vai para o log, e não só a mensagem: "timeout de
+        # conexão" e "senha recusada" apareciam iguais aqui, e mandavam procurar
+        # o problema em lugares opostos (rede x credencial). A busca já tenta as
+        # três camadas de jurisdição com repetição (ver `jurimetria_caso`), então
+        # chegar aqui significa que nenhuma delas respondeu.
+        log.warning(
+            "petição local: jurimetria indisponível (%s): %s",
+            type(erro).__name__,
+            str(erro)[:200],
+        )
         aviso = (
-            "A base de processos semelhantes não respondeu durante a geração. "
-            "Nenhum percentual ou conclusão jurimétrica foi estimado."
+            "A base de processos semelhantes não respondeu durante a geração, "
+            "nem no acervo nacional. Nenhum percentual ou conclusão jurimétrica "
+            "foi estimado — a minuta segue válida, sem o apêndice comparativo."
         )
         return {"disponivel": False, "aviso": aviso, "precedentes": []}, aviso
     if not similares:
