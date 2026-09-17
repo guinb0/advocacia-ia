@@ -7,7 +7,6 @@ import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 import { enviarTranscricaoEntrevista, triarEntrevista } from "@/lib/api";
 
 interface Props {
@@ -74,7 +73,6 @@ export default function ListaCasos({
   onExcluir,
 }: Props) {
   const [cliente, setCliente] = useState("");
-  const [telefone, setTelefone] = useState("");
   const [categoria, setCategoria] = useState("");
   const [tipoAcao, setTipoAcao] = useState("");
   const [entrevistaArquivo, setEntrevistaArquivo] = useState<File | null>(null);
@@ -82,7 +80,6 @@ export default function ListaCasos({
   const [resultadoTriagem, setResultadoTriagem] = useState<string | null>(null);
   const [filtroCliente, setFiltroCliente] = useState("");
   const [criando, setCriando] = useState(false);
-  const [tentouCriar, setTentouCriar] = useState(false);
   /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
    * de 5 em 5 só para exibição — nada é buscado por página. `pagina` pode ficar
    * maior que o total depois de uma exclusão; `paginaAtual` reancora. */
@@ -94,7 +91,6 @@ export default function ListaCasos({
   const [modo, setModo] = useState<"inicio" | "criar" | "ver">("inicio");
   const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
-  const telefoneVazio = !telefonePreenchido(telefone);
   const filtroNormalizado = normalizarFiltro(filtroCliente);
   const casosOrdenados = useMemo(
     () =>
@@ -123,21 +119,15 @@ export default function ListaCasos({
   async function criar(evento: React.FormEvent) {
     evento.preventDefault();
     if (!cliente.trim() || !categoriaSelecionada || !entrevistaArquivo) return;
-    if (telefoneVazio && !tentouCriar) {
-      setTentouCriar(true);
-      return;
-    }
     setCriando(true);
     try {
-      const novo = await onCriar(cliente.trim(), categoriaSelecionada, "", formatarTelefone(telefone), tipoAcao.trim());
+      const novo = await onCriar(cliente.trim(), categoriaSelecionada, "", "", tipoAcao.trim());
       await enviarTranscricaoEntrevista(novo.id, entrevistaArquivo);
       setNovoPortal(novo);
       setCliente("");
-      setTelefone("");
       setTipoAcao("");
       setEntrevistaArquivo(null);
       setResultadoTriagem(null);
-      setTentouCriar(false);
     } finally {
       setCriando(false);
     }
@@ -232,26 +222,6 @@ export default function ListaCasos({
               placeholder="Ex.: Maria Aparecida da Silva"
               autoComplete="off"
             />
-          </div>
-
-          <div className="mb-4">
-            <RotuloCampo htmlFor="telefone">Telefone / WhatsApp do cliente</RotuloCampo>
-            <Campo
-              id="telefone"
-              type="tel"
-              inputMode="tel"
-              value={formatarTelefone(telefone)}
-              onChange={(e) => setTelefone(formatarTelefone(e.target.value))}
-              placeholder="(61) 98180-8863"
-              autoComplete="off"
-              aria-invalid={tentouCriar && telefoneVazio}
-              className={tentouCriar && telefoneVazio ? "border-atencao" : undefined}
-            />
-            {tentouCriar && telefoneVazio && (
-              <p className="mt-[6px] text-xs leading-[1.5] text-atencao">
-                Telefone vazio. Clique em criar novamente para seguir sem WhatsApp automático.
-              </p>
-            )}
           </div>
 
           <div className="mb-4">
