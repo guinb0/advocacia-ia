@@ -16,7 +16,9 @@ param(
     [int]$Porta = 3000,
     [switch]$SemAuth,
     [switch]$SemAgente,
-    [switch]$SemJitsi
+    [switch]$SemJitsi,
+    # Usa o SQL Server em container (127.0.0.1:14333, sa) em vez do definido no .env.
+    [switch]$BancoLocal
 )
 
 $ErrorActionPreference = "Stop"
@@ -265,17 +267,32 @@ if ($SemAuth) {
 if (-not $env:SQLSERVER_PASSWORD) {
     throw "Falta SQLSERVER_PASSWORD no .env. Use uma senha forte para o SQL Server local."
 }
-$portaSqlLocal = if ($env:SQLSERVER_LOCAL_PORT) { $env:SQLSERVER_LOCAL_PORT } else { "14333" }
-$env:SQLSERVER_HOST = "127.0.0.1"
-$env:SQLSERVER_PORT = $portaSqlLocal
-$env:SQLSERVER_USER = "sa"
-Write-Host "Subindo banco local, Redis e observabilidade..." -ForegroundColor Yellow
-docker compose up -d --wait --wait-timeout 120 sqlserver redis jobs-db flower prometheus grafana | Out-Null
-docker compose exec -T sqlserver /bin/bash -ec '
-    /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
-        -v database="$SQLSERVER_DATABASE" \
-        -i /docker-entrypoint-initdb.d/create_local_database.sql
-' | Out-Null
+if ($BancoLocal) {
+    # Só com -BancoLocal: sem a chave, vale o SQL Server do .env. Forçar o local
+    # sempre desviava a máquina de quem usa o Acervo real para um banco vazio.
+    $portaSqlLocal = if ($env:SQLSERVER_LOCAL_PORT) { $env:SQLSERVER_LOCAL_PORT } else { "14333" }
+    $env:SQLSERVER_HOST = "127.0.0.1"
+    $env:SQLSERVER_PORT = $portaSqlLocal
+    $env:SQLSERVER_USER = "sa"
+    Write-Host "Subindo banco local, Redis e observabilidade..." -ForegroundColor Yellow
+    docker compose up -d --wait --wait-timeout 120 sqlserver redis jobs-db flower prometheus grafana | Out-Null
+    # Uma linha só: o script é salvo com CRLF, e um comando de várias linhas chega
+    # ao bash do container com `\r` no fim de cada uma (`$'\r': command not found`).
+    docker compose exec -T sqlserver /bin/bash -ec '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -v database="$SQLSERVER_DATABASE" -i /docker-entrypoint-initdb.d/create_local_database.sql'
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao criar o banco $env:SQLSERVER_DATABASE no SQL Server local." }
+} else {
+    # `$env:` é do processo: uma execução anterior com -BancoLocal na mesma janela
+    # deixa HOST/PORT/USER apontando para o container, e isso venceria o .env. Aqui
+    # o banco é o do arquivo, então esses três são relidos dele.
+    foreach ($linha in Get-Content ".\.env" -Encoding UTF8) {
+        if ($linha -match '^\s*(SQLSERVER_HOST|SQLSERVER_PORT|SQLSERVER_USER)\s*=(.*)$') {
+            Set-Item "env:$($Matches[1])" $Matches[2].Trim().Trim('"').Trim("'")
+        }
+    }
+    Write-Host "SQL Server do .env: $env:SQLSERVER_HOST ($env:SQLSERVER_USER). Use -BancoLocal para o container." -ForegroundColor Green
+    Write-Host "Subindo Redis e observabilidade..." -ForegroundColor Yellow
+    docker compose up -d --wait --wait-timeout 60 redis jobs-db flower prometheus grafana | Out-Null
+}
 # 127.0.0.1 e nao "localhost": no Windows o "localhost" resolve primeiro para o
 # IPv6 ::1, e o encaminhamento IPv6 do Docker Desktop reseta as conexoes do
 # redis-py/kombu (WinError 10054) enquanto o IPv4 funciona. Fixar o loopback
