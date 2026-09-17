@@ -58,10 +58,44 @@ log = logging.getLogger("visao-documento")
 
 TEMPO_MODELO_S = 40.0
 
-#: Extensões que valem uma olhada. PDF fica de fora de propósito: PDF sem texto
-#: é digitalização, e para ela o caminho é o OCR de página inteira, não a
-#: descrição de cena.
-EXTENSOES_IMAGEM = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+#: Extensões que valem uma olhada.
+#:
+#: O `.pdf` esteve FORA daqui, com a justificativa de que "PDF sem texto é
+#: digitalização, e para ela o caminho é o OCR de página inteira". Estava errado
+#: no caso mais comum de todos: o cliente fotografa a lesão no celular e manda
+#: como PDF. Foi o que aconteceu com `FOTOS LESAO POS-OPERATORIO.pdf` — cinco
+#: fotos de pós-operatório num PDF, que o sistema leu como documento sem campos
+#: e classificou como "Indefinido", sem uma palavra sobre o que havia nas fotos.
+#:
+#: `pipeline.decodificar` já rasteriza PDF (`pdf.pdf_para_imagem`), então a
+#: capacidade sempre existiu. As páginas viram UMA imagem empilhada e o modelo
+#: descreve o conjunto — que é o que se quer de um álbum de fotos de lesão.
+EXTENSOES_IMAGEM = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".pdf"}
+
+#: Uma referência de imagem em markdown, que é o que o OCR devolve quando a
+#: página é só foto: `![img-0.jpeg](img-0.jpeg)`.
+_RE_IMAGEM_MD = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+
+
+def so_referencias_de_imagem(texto: str) -> bool:
+    """O "texto" do OCR é só a lista de imagens da página — ou seja, não há texto.
+
+    O PORQUÊ DISTO EXISTIR, E POR QUE CONTAR CARACTERE NÃO BASTA
+
+    `pipeline` decide `texto_utilizavel` por quantidade: 80 caracteres. Um PDF
+    com cinco fotos devolve `![img-0.jpeg](img-0.jpeg)` cinco vezes — 125
+    caracteres, acima do corte. O arquivo era então tratado como documento com
+    texto, ia para o classificador semântico, que lia nomes de arquivo e
+    respondia "Indefinido". A foto nunca era olhada, e a tela dizia
+    "Dados lidos (0)" sem explicar por quê.
+
+    Aqui a pergunta é outra: tirando as referências de imagem, sobrou alguma
+    coisa? Não sobrando, o arquivo é um álbum de fotos, e quem tem de olhar é o
+    modelo de visão — não o de texto.
+    """
+    if not texto:
+        return True
+    return not _RE_IMAGEM_MD.sub(" ", texto).strip()
 
 #: Teto do arquivo enviado. Acima disto a imagem é reduzida antes (ver
 #: `_codificar`), porque base64 de dezenas de MB estoura o corpo do POST.
