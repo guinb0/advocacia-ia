@@ -1,0 +1,10 @@
+[
+  {"id":"constituicao-1988","nome":"Constituição da República Federativa do Brasil de 1988","numero":"Constituição","ano":"1988","url":"https://www.planalto.gov.br/ccivil_03/constituicao/constituicao.htm","areas":["constitucional"],"fonte":"Planalto"},
+  {"id":"clt-1943","nome":"Consolidação das Leis do Trabalho","numero":"Decreto-Lei 5.452","ano":"1943","url":"https://www.planalto.gov.br/ccivil_03/decreto-lei/del5452.htm","areas":["trabalhista"],"fonte":"Planalto"},
+  {"id":"lei-8213-1991","nome":"Planos de Benefícios da Previdência Social","numero":"Lei 8.213","ano":"1991","url":"https://www.planalto.gov.br/ccivil_03/leis/l8213cons.htm","areas":["previdenciário"],"fonte":"Planalto"},
+  {"id":"lei-8212-1991","nome":"Organização da Seguridade Social e Plano de Custeio","numero":"Lei 8.212","ano":"1991","url":"https://www.planalto.gov.br/ccivil_03/leis/l8212cons.htm","areas":["previdenciário"],"fonte":"Planalto"},
+  {"id":"decreto-3048-1999","nome":"Regulamento da Previdência Social","numero":"Decreto 3.048","ano":"1999","url":"https://www.planalto.gov.br/ccivil_03/decreto/d3048compilado.htm","areas":["previdenciário"],"fonte":"Planalto"},
+  {"id":"cpc-2015","nome":"Código de Processo Civil","numero":"Lei 13.105","ano":"2015","url":"https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2015/lei/l13105.htm","areas":["processual civil"],"fonte":"Planalto"},
+  {"id":"codigo-civil-2002","nome":"Código Civil","numero":"Lei 10.406","ano":"2002","url":"https://www.planalto.gov.br/ccivil_03/leis/2002/l10406compilada.htm","areas":["civil"],"fonte":"Planalto"},
+  {"id":"loas-1993","nome":"Lei Orgânica da Assistência Social","numero":"Lei 8.742","ano":"1993","url":"https://www.planalto.gov.br/ccivil_03/leis/l8742.htm","areas":["assistencial"],"fonte":"Planalto"}
+]
