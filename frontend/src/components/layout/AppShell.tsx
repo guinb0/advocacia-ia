@@ -51,7 +51,7 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
      * `lg` NÃO há esse layout — `h-dvh`+`overflow-hidden` aqui deixava o `<main>`
      * sem altura delimitada, o scroll interno não pegava e a topbar `sticky` não
      * grudava. No celular o fluxo é o do documento: a página rola pelo `<body>`
-     * (que já tem `overflow-x:hidden` e `max-width:100vw` em globals.css, o que
+     * (que já tem `overflow-x:hidden` e `max-width:100%` em globals.css, o que
      * mata a rolagem horizontal), e a topbar `sticky top-0` gruda de verdade. */
     <div className="app-shell min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[236px_minmax(0,1fr)]">
       <BarraLateral tela={tela} onNavegar={onNavegar} />
@@ -87,7 +87,11 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
           </div>
         </div>
 
-        <div className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden">
+        {/* `overscroll-contain`: chegar ao fim desta área não pode empurrar a
+            rolagem para o que está atrás dela. Sem isso, o gesto continuava no
+            documento assim que o miolo acabava — a página inteira deslizava e
+            aparecia a faixa vazia sob a barra lateral. */}
+        <div className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden lg:overscroll-contain">
           <div className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pb-16 pt-5 sm:px-6 lg:px-7 [&>*]:min-w-0">
             {children}
           </div>

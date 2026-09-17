@@ -430,7 +430,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
           // Celular: gaveta fixa que desliza. `translate-x` em vez de `display`
           // para a transição existir e para o conteúdo continuar no DOM — um menu
           // que some do DOM perde o foco do teclado no meio da navegação.
-          "fixed inset-y-0 left-0 z-50 w-[264px] max-w-[82vw] overflow-y-auto border-r " +
+          "fixed inset-y-0 left-0 z-50 w-[264px] max-w-[82vw] overflow-y-auto overscroll-contain border-r " +
           "transition-transform duration-200 ease-out " +
           (aberta ? "translate-x-0" : "-translate-x-full") +
           // Desktop: coluna do fluxo, sempre visível, acompanhando a rolagem.
