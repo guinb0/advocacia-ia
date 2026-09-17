@@ -970,6 +970,35 @@ def _legislacao_para_redigir(contexto: str) -> str:
     return "\n".join(linhas)
 
 
+def _padroes_conteudisticos_para_redigir(contexto: str) -> str:
+    """Traz técnica de peças do escritório para influenciar diretamente a minuta.
+
+    Não são fontes jurídicas nem fatos do novo caso. Entram como exemplos de
+    densidade argumentativa, ordem de teses e completude de pedidos, com barreira
+    explícita contra contaminação entre clientes.
+    """
+    try:
+        trechos = rag.buscar_pecas_conteudisticas(contexto[:12_000], limite=8)
+    except Exception as erro:
+        log.warning("petição local: acervo de peças indisponível na redação: %s", erro)
+        return ""
+    if not trechos:
+        return ""
+    linhas = ["\n\n=== PADRÕES CONTEUDÍSTICOS DO ACERVO DO ESCRITÓRIO ==="]
+    for indice, trecho in enumerate(trechos, start=1):
+        classe = "peça complexa" if trecho["categoria"] == "pecas_complexas" else "peça simples"
+        linhas.append(f"\n[P{indice}] referência interna ({classe}; arquivo: {trecho['arquivo']})\n{trecho['texto'][:1_000]}")
+    linhas.append(
+        "\nEstas referências internas servem APENAS para elevar a qualidade: aproveite a "
+        "estrutura lógica, a profundidade, os contrapontos, a explicação de cada fundamento "
+        "e a completude dos pedidos quando forem compatíveis com ESTE caso. NUNCA copie ou "
+        "transporte nomes, CPF, endereço, empresa, datas, valores, documentos, fatos, pedido "
+        "ou citação jurídica de outra referência. Toda afirmação da nova peça deve nascer do "
+        "material deste caso e toda norma ou precedente deve estar no bloco oficial próprio."
+    )
+    return "\n".join(linhas)
+
+
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
@@ -986,6 +1015,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     contexto = _montar_contexto(caso_id, texto_entrevista)
     contexto += _precedentes_para_redigir(contexto)
     contexto += _legislacao_para_redigir(contexto)
+    contexto += _padroes_conteudisticos_para_redigir(contexto)
 
     # As críticas DESTE caso, já aplicadas na geração.
     #
