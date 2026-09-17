@@ -120,34 +120,38 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
         <Selo tom="info">todos são analisados</Selo>
       </div>
 
-      <div className="mt-4 rounded-campo border-2 border-dashed border-acao-borda bg-papel p-3">
-        <button
-          type="button"
-          className={`mr-2 rounded-campo border border-acao-borda bg-acao-clara px-4 py-2 text-sm font-semibold text-acao transition-colors hover:bg-papel ${
-            arrastando ? "border-acao text-acao bg-papel-2" : "border-acao-borda"
-          }`}
-          onClick={() => inputRef.current?.click()}
-          onDragEnter={(evento) => { evento.preventDefault(); setArrastando(true); }}
-          onDragOver={(evento) => evento.preventDefault()}
-          onDragLeave={() => setArrastando(false)}
-          onDrop={(evento) => {
+      <div
+        role="button"
+        tabIndex={enviando ? -1 : 0}
+        aria-label="Escolher ou arrastar arquivos, ZIP ou pasta"
+        className={`mt-4 cursor-pointer rounded-campo border-2 border-dashed p-8 text-center transition-colors ${
+          arrastando ? "border-acao bg-acao-clara" : "border-acao-borda bg-papel hover:bg-acao-clara"
+        } ${enviando ? "cursor-wait opacity-60" : ""}`}
+        onClick={() => !enviando && inputRef.current?.click()}
+        onKeyDown={(evento) => {
+          if (!enviando && (evento.key === "Enter" || evento.key === " ")) {
             evento.preventDefault();
-            setArrastando(false);
-            acrescentar(Array.from(evento.dataTransfer.files));
-          }}
-          disabled={enviando}
-        >
-          <strong>Escolher arquivos ou ZIP</strong>
-          <span className="block mt-1 text-tinta-3">ou arraste para esta área</span>
-        </button>
+            inputRef.current?.click();
+          }
+        }}
+        onDragEnter={(evento) => { evento.preventDefault(); if (!enviando) setArrastando(true); }}
+        onDragOver={(evento) => { evento.preventDefault(); evento.dataTransfer.dropEffect = "copy"; }}
+        onDragLeave={(evento) => { if (evento.currentTarget === evento.target) setArrastando(false); }}
+        onDrop={(evento) => {
+          evento.preventDefault();
+          setArrastando(false);
+          if (!enviando) acrescentar(Array.from(evento.dataTransfer.files));
+        }}
+      >
+        <strong className="block text-base text-acao">Arraste seus documentos aqui ou clique para escolher</strong>
+        <span className="mt-2 block text-sm text-tinta-3">Aceita vários arquivos, ZIP e imagens/PDFs de uma vez.</span>
         <button
           type="button"
-          className="rounded-campo border border-acao-borda bg-acao-clara px-4 py-2 text-sm font-semibold text-acao transition-colors hover:bg-papel"
-          onClick={() => pastaRef.current?.click()}
+          className="mt-3 border-0 bg-transparent p-0 text-sm font-semibold text-acao underline underline-offset-2"
+          onClick={(evento) => { evento.stopPropagation(); pastaRef.current?.click(); }}
           disabled={enviando}
         >
-          <strong>Escolher uma pasta</strong>
-          <span className="block mt-1 text-tinta-3">envia todos os arquivos dela</span>
+          Escolher uma pasta inteira
         </button>
       </div>
       <input
