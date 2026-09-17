@@ -5,9 +5,11 @@
  * O botão principal fica no cabeçalho do dossiê; aqui só resultado e edição.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { Aviso, Botao, Cartao, RotuloCampo, Campo } from "@/components/ui/Basicos";
+import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Mic, MicOff, Search } from "lucide-react";
+
+import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
@@ -25,6 +27,8 @@ import {
   listarPecasAnexas,
   type PecaAnexa,
   type Peticao,
+  pesquisarNaWeb,
+  type ResultadoPesquisaWeb,
   type RevisaoRegistrada,
   type SecaoPeticao,
 } from "@/lib/agente";
@@ -635,15 +639,22 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
             * o advogado abria a tela num campo em branco e precisava rolar para
             * descobrir o que iria alterar. */}
-          <div className="grid gap-2 border border-borda-forte bg-papel p-3">
-            <RotuloCampo htmlFor="prompt-revisao">
-              Pedir uma revisão por prompt
+          <CartaoFerramenta
+            tipo="revisao"
+            icone={<FilePenLine size={18} aria-hidden />}
+            titulo="Pedir uma revisão por prompt"
+            descricao={
+              <>
+                Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
+                pedidos&quot;). A IA gera uma nova versão completa para comparação. A versão
+                atual só muda depois que você aceitar a revisão.
+              </>
+            }
+            selo={<Selo tom="info" simbolo="✎">Altera a petição após aceite</Selo>}
+          >
+            <RotuloCampo htmlFor="prompt-revisao" className="sr-only">
+              O que deve mudar nesta petição
             </RotuloCampo>
-            <p className="text-xs text-tinta-3 m-0">
-              Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
-              pedidos&quot;). A IA gera uma nova versão completa para comparação. A versão
-              atual só muda depois que você aceitar a revisão.
-            </p>
             <Campo
               area
               id="prompt-revisao"
@@ -652,13 +663,16 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               rows={3}
               placeholder="O que deve mudar nesta petição?"
             />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Botao variante="secundario" pequeno onClick={alternarMicrofoneRevisao}>
-                {ouvindoRevisao ? "Parar transcrição" : "🎙️ Falar pedido"}
+                {ouvindoRevisao ? <MicOff size={14} aria-hidden /> : <Mic size={14} aria-hidden />}
+                {ouvindoRevisao ? "Parar transcrição" : "Falar pedido"}
               </Botao>
-              {ouvindoRevisao && <span className="text-xs text-tinta-3">Ouvindo em português… fale a alteração desejada.</span>}
+              {ouvindoRevisao && (
+                <Selo tom="critico" simbolo="●">Ouvindo — fale a alteração</Selo>
+              )}
             </div>
-            <label className="flex items-start gap-2 text-xs text-tinta-2 cursor-pointer">
+            <label className="flex items-start gap-2 rounded-campo border border-borda bg-papel-2 p-2 text-xs text-tinta-2 cursor-pointer">
               <input
                 type="checkbox"
                 className="mt-[2px]"
@@ -695,7 +709,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                 {avisoRevisao}
               </Aviso>
             )}
-          </div>
+          </CartaoFerramenta>
+
+          <PesquisaWeb />
         </section>
       )}
 
@@ -868,15 +884,22 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                           />
                         )}
 
-                        <div className="grid gap-2 border border-borda-forte bg-papel p-3">
-                          <RotuloCampo htmlFor={`anexa-${peca.id}-prompt-revisao`}>
-                            Pedir uma revisão por prompt (opcional)
+                        <CartaoFerramenta
+                          tipo="revisao"
+                          icone={<FilePenLine size={18} aria-hidden />}
+                          titulo="Pedir uma revisão por prompt (opcional)"
+                          descricao={
+                            <>
+                              Descreva o que deve mudar nesta peça. A IA aplica só o que você
+                              pedir, confere o resultado e preserva o resto do texto. A versão
+                              atual fica guardada no histórico desta peça.
+                            </>
+                          }
+                          selo={<Selo tom="info" simbolo="✎">Altera esta peça</Selo>}
+                        >
+                          <RotuloCampo htmlFor={`anexa-${peca.id}-prompt-revisao`} className="sr-only">
+                            O que deve mudar nesta peça
                           </RotuloCampo>
-                          <p className="text-xs text-tinta-3 m-0">
-                            Descreva o que deve mudar nesta peça. A IA aplica só o que você
-                            pedir, confere o resultado e preserva o resto do texto. A versão
-                            atual fica guardada no histórico desta peça.
-                          </p>
                           <Campo
                             area
                             id={`anexa-${peca.id}-prompt-revisao`}
@@ -902,7 +925,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                               {retornoAnexa.texto}
                             </Aviso>
                           )}
-                        </div>
+                        </CartaoFerramenta>
                       </div>
                     )}
                   </li>
@@ -1277,6 +1300,417 @@ function ResumoAnalise({ titulo, tom, itens, vazio }: { titulo: string; tom: "ok
   </div>;
 }
 
+/**
+ * Moldura dos cards de ferramenta abaixo da petição — revisão por prompt e
+ * pesquisa na web.
+ *
+ * Os dois eram caixas cinzas iguais, só com rótulo: não dava para saber de
+ * relance qual mexe na peça e qual só consulta. Agora cada um tem ícone, faixa
+ * lateral e selo próprios (símbolo + palavra, nunca só cor): a revisão usa a
+ * cor de ação — ela altera a petição —; a pesquisa usa o ouro da marca, que não
+ * é cor de estado e não compete com o botão principal.
+ */
+function CartaoFerramenta({
+  tipo,
+  icone,
+  titulo,
+  descricao,
+  selo,
+  children,
+}: {
+  tipo: "revisao" | "pesquisa";
+  icone: ReactNode;
+  titulo: string;
+  descricao: ReactNode;
+  selo?: ReactNode;
+  children: ReactNode;
+}) {
+  const visual =
+    tipo === "revisao"
+      ? { faixa: "border-l-acao", icone: "bg-acao-clara text-acao border-acao-borda" }
+      : { faixa: "border-l-marca-ouro", icone: "bg-marca-ouro-claro text-tinta border-borda-forte" };
+  return (
+    <section
+      className={`grid gap-3 rounded-cartao border border-borda-forte border-l-4 bg-papel p-4 shadow-cartao ${visual.faixa}`}
+    >
+      <header className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className={`flex h-9 w-9 flex-none items-center justify-center rounded-campo border ${visual.icone}`}
+          >
+            {icone}
+          </span>
+          <div className="min-w-0">
+            <h3 className="m-0 font-ui text-base font-semibold text-tinta">{titulo}</h3>
+            <p className="mt-1 mb-0 text-xs leading-relaxed text-tinta-3">{descricao}</p>
+          </div>
+        </div>
+        {selo}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * Dúvida rápida pesquisada na web, sem sair da petição.
+ *
+ * Fica abaixo da revisão por prompt, mas é independente dela: não altera a
+ * peça, não entra no dossiê e não é gravada. As perguntas da sessão ficam só
+ * aqui, na tela, com as fontes à vista — a resposta vem da internet e o
+ * advogado precisa conferir antes de usar (ver `app/pesquisa_web.py`).
+ */
+function PesquisaWeb() {
+  const [pergunta, setPergunta] = useState("");
+  const [pesquisando, setPesquisando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [resultados, setResultados] = useState<ResultadoPesquisaWeb[]>([]);
+
+  async function pesquisar() {
+    const texto = pergunta.trim();
+    if (!texto || pesquisando) return;
+    setPesquisando(true);
+    setErro(null);
+    try {
+      const resultado = await pesquisarNaWeb(texto);
+      setResultados((atuais) => [resultado, ...atuais]);
+      setPergunta("");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível pesquisar agora.");
+    } finally {
+      setPesquisando(false);
+    }
+  }
+
+  return (
+    <CartaoFerramenta
+      tipo="pesquisa"
+      icone={<Globe size={18} aria-hidden />}
+      titulo="Tirar uma dúvida na web"
+      descricao={
+        <>
+          Pesquisa na internet e responde com as fontes (ex.: &quot;prazo prescricional de
+          acidente de trabalho no TST&quot;). Ctrl+Enter também pesquisa.
+        </>
+      }
+      selo={<Selo tom="neutro" simbolo="i">Só consulta · não altera a petição</Selo>}
+    >
+      <RotuloCampo htmlFor="pesquisa-web" className="sr-only">
+        O que você quer pesquisar
+      </RotuloCampo>
+      <Campo
+        area
+        id="pesquisa-web"
+        value={pergunta}
+        onChange={(e) => setPergunta(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            void pesquisar();
+          }
+        }}
+        rows={2}
+        className="min-h-[72px]"
+        maxLength={1000}
+        placeholder="O que você quer pesquisar?"
+      />
+      <div>
+        <BotaoProcesso
+          variante="secundario"
+          pequeno
+          processando={pesquisando}
+          textoProcessando="Pesquisando na web…"
+          dica="Buscando fontes e redigindo a resposta"
+          pendencia={pergunta.trim() ? null : "Escreva acima a sua dúvida."}
+          erro={erro}
+          onClick={pesquisar}
+        >
+          <Search size={14} aria-hidden />
+          Pesquisar
+        </BotaoProcesso>
+      </div>
+
+      {resultados.length > 0 && (
+        <div className="grid gap-3">
+          {resultados.map((resultado, indice) => (
+            <ResultadoDaPesquisa
+              key={`${resultados.length - indice}-${resultado.pergunta}`}
+              resultado={resultado}
+              maisRecente={indice === 0}
+            />
+          ))}
+        </div>
+      )}
+    </CartaoFerramenta>
+  );
+}
+
+function ResultadoDaPesquisa({
+  resultado,
+  maisRecente,
+}: {
+  resultado: ResultadoPesquisaWeb;
+  maisRecente: boolean;
+}) {
+  const semFontes = resultado.fontes.length === 0;
+  return (
+    <article className="overflow-hidden rounded-campo border border-borda-forte bg-papel">
+      <header className="flex flex-wrap items-start justify-between gap-2 border-b border-borda bg-papel-2 px-3 py-2">
+        <div className="min-w-0">
+          <p className="m-0 text-xs font-semibold text-tinta-3">Pergunta</p>
+          <p className="m-0 text-sm font-semibold text-tinta break-words">{resultado.pergunta}</p>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {maisRecente && <Selo tom="info" simbolo="→">Mais recente</Selo>}
+          {semFontes ? (
+            <Selo tom="atencao" simbolo="!">Sem fontes</Selo>
+          ) : (
+            <Selo tom="ok" simbolo="✓">{resultado.fontes.length} fonte(s)</Selo>
+          )}
+        </div>
+      </header>
+
+      <div className="px-3 py-3">
+        <RespostaFormatada texto={resultado.resposta} />
+      </div>
+
+      {!semFontes && (
+        <details className="border-t border-borda px-3 py-2 text-xs text-tinta-2">
+          <summary className="flex cursor-pointer items-center gap-2 font-semibold text-tinta">
+            <BookOpenCheck size={14} aria-hidden />
+            Ver fontes consultadas ({resultado.fontes.length})
+          </summary>
+          <ol className="mt-2 mb-1 grid list-none gap-2 pl-0">
+            {resultado.fontes.map((fonte, i) => (
+              <li key={fonte.url} className="grid grid-cols-[auto_1fr] gap-2 rounded-campo bg-papel-2 p-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-pill bg-acao-clara text-xs font-bold text-acao">
+                  {i + 1}
+                </span>
+                <span className="min-w-0">
+                  <a
+                    href={fonte.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-acao underline break-words"
+                  >
+                    {fonte.titulo || dominioDe(fonte.url)}
+                  </a>
+                  <span className="block text-tinta-3">{dominioDe(fonte.url)}</span>
+                  {fonte.trecho && <span className="mt-1 block leading-relaxed">{fonte.trecho}</span>}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+
+      <p className="m-0 flex items-start gap-2 border-t border-atencao-borda bg-atencao-claro px-3 py-2 text-xs text-atencao">
+        <span aria-hidden className="font-bold">!</span>
+        {semFontes
+          ? "A pesquisa não devolveu fontes — trate a resposta com cautela."
+          : "Conteúdo da internet: confira as fontes antes de usar na petição."}
+      </p>
+    </article>
+  );
+}
+
+function dominioDe(url: string): string {
+  return url.replace(/^https?:\/\/(www\.)?/, "").split(/[/?#]/)[0];
+}
+
+/* ---------------------------------------------------------------------------
+ * Markdown da resposta da pesquisa.
+ *
+ * O modelo responde em markdown livre — às vezes um parágrafo, às vezes títulos,
+ * listas e citação de súmula. Antes tudo caía num único `<p>` com
+ * `whitespace-pre-wrap`: asteriscos e `###` apareciam crus e as listas ficavam
+ * presas ao espaçamento de texto corrido. Aqui cada bloco vira o elemento
+ * certo. É um subconjunto de propósito (sem HTML, sem tabela) e nada é injetado
+ * como HTML — só nós React, então não há risco de script vindo da web.
+ * ------------------------------------------------------------------------- */
+
+type BlocoMd =
+  | { tipo: "titulo"; nivel: number; texto: string }
+  | { tipo: "lista"; ordenada: boolean; itens: { texto: string; nivel: number }[] }
+  | { tipo: "citacao"; linhas: string[] }
+  | { tipo: "separador" }
+  | { tipo: "paragrafo"; linhas: string[] };
+
+const ITEM_MD = /^(\s*)([-*•+]|\d+[.)])\s+(.*)$/;
+const TITULO_MD = /^\s*(#{1,6})\s+(.*?)\s*#*\s*$/;
+const SEPARADOR_MD = /^\s*([-*_])(\s*\1){2,}\s*$/;
+
+function blocosDoMarkdown(texto: string): BlocoMd[] {
+  const blocos: BlocoMd[] = [];
+  const linhas = texto.replace(/\r\n?/g, "\n").split("\n");
+  let i = 0;
+  while (i < linhas.length) {
+    const linha = linhas[i];
+    if (!linha.trim()) {
+      i += 1;
+      continue;
+    }
+    const titulo = linha.match(TITULO_MD);
+    if (titulo) {
+      blocos.push({ tipo: "titulo", nivel: titulo[1].length, texto: titulo[2] });
+      i += 1;
+      continue;
+    }
+    if (SEPARADOR_MD.test(linha)) {
+      blocos.push({ tipo: "separador" });
+      i += 1;
+      continue;
+    }
+    if (/^\s*>/.test(linha)) {
+      const citacao: string[] = [];
+      while (i < linhas.length && /^\s*>/.test(linhas[i])) {
+        citacao.push(linhas[i].replace(/^\s*>\s?/, ""));
+        i += 1;
+      }
+      blocos.push({ tipo: "citacao", linhas: citacao });
+      continue;
+    }
+    const primeiro = linha.match(ITEM_MD);
+    if (primeiro) {
+      const ordenada = /\d/.test(primeiro[2]);
+      const itens: { texto: string; nivel: number }[] = [];
+      while (i < linhas.length) {
+        const atual = linhas[i].match(ITEM_MD);
+        if (atual) {
+          const recuo = atual[1].replace(/\t/g, "  ").length;
+          itens.push({ texto: atual[3], nivel: Math.min(2, Math.floor(recuo / 2)) });
+          i += 1;
+        } else if (linhas[i].trim() && /^\s{2,}/.test(linhas[i]) && itens.length) {
+          // Continuação do item anterior, quebrada em outra linha.
+          itens[itens.length - 1].texto += ` ${linhas[i].trim()}`;
+          i += 1;
+        } else if (!linhas[i].trim() && ITEM_MD.test(linhas[i + 1] ?? "")) {
+          i += 1; // Linha em branco entre itens da mesma lista.
+        } else {
+          break;
+        }
+      }
+      blocos.push({ tipo: "lista", ordenada, itens });
+      continue;
+    }
+    const paragrafo: string[] = [];
+    while (
+      i < linhas.length &&
+      linhas[i].trim() &&
+      !TITULO_MD.test(linhas[i]) &&
+      !/^\s*>/.test(linhas[i]) &&
+      !ITEM_MD.test(linhas[i]) &&
+      !SEPARADOR_MD.test(linhas[i])
+    ) {
+      paragrafo.push(linhas[i].trim());
+      i += 1;
+    }
+    blocos.push({ tipo: "paragrafo", linhas: paragrafo });
+  }
+  return blocos;
+}
+
+function RespostaFormatada({ texto }: { texto: string }) {
+  const blocos = blocosDoMarkdown(texto);
+  if (!blocos.length) return <p className={TEXTO}>A pesquisa não trouxe texto de resposta.</p>;
+  return (
+    <div className="grid gap-3 text-sm leading-relaxed text-tinta-2 break-words">
+      {blocos.map((bloco, i) => {
+        switch (bloco.tipo) {
+          case "titulo":
+            return bloco.nivel <= 2 ? (
+              <h4 key={i} className="m-0 mt-1 font-ui text-base font-semibold text-tinta">
+                <MdEmLinha texto={bloco.texto} />
+              </h4>
+            ) : (
+              <h5 key={i} className="m-0 mt-1 font-ui text-sm font-semibold text-tinta">
+                <MdEmLinha texto={bloco.texto} />
+              </h5>
+            );
+          case "separador":
+            return <hr key={i} className="m-0 border-0 border-t border-borda" />;
+          case "citacao":
+            return (
+              <blockquote key={i} className="m-0 border-l-4 border-acao-borda bg-papel-2 px-3 py-2">
+                {bloco.linhas.map((l, j) => (
+                  <span key={j} className="block">
+                    <MdEmLinha texto={l} />
+                  </span>
+                ))}
+              </blockquote>
+            );
+          case "lista": {
+            const Lista = bloco.ordenada ? "ol" : "ul";
+            return (
+              <Lista
+                key={i}
+                className={`m-0 grid gap-1 pl-5 marker:text-tinta-3 ${bloco.ordenada ? "list-decimal" : "list-disc"}`}
+              >
+                {bloco.itens.map((it, j) => (
+                  <li key={j} style={it.nivel ? { marginLeft: `${it.nivel * 16}px` } : undefined}>
+                    <MdEmLinha texto={it.texto} />
+                  </li>
+                ))}
+              </Lista>
+            );
+          }
+          default:
+            return (
+              <p key={i} className="m-0">
+                {bloco.linhas.map((l, j) => (
+                  <span key={j}>
+                    {j > 0 && " "}
+                    <MdEmLinha texto={l} />
+                  </span>
+                ))}
+              </p>
+            );
+        }
+      })}
+    </div>
+  );
+}
+
+/** Em linha: link `[rótulo](url)`, URL solta, `**negrito**`, `*itálico*` e `código`. */
+function MdEmLinha({ texto }: { texto: string }) {
+  const partes: ReactNode[] = [];
+  const padrao =
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|(?<![\w*])\*([^*\n]+)\*(?!\*)|(https?:\/\/[^\s<>)\]]+)/g;
+  let ultimo = 0;
+  for (const achado of texto.matchAll(padrao)) {
+    const inicio = achado.index ?? 0;
+    if (inicio > ultimo) partes.push(texto.slice(ultimo, inicio));
+    const [, rotulo, url, negrito, negrito2, codigo, italico, urlSolta] = achado;
+    if (url || urlSolta) {
+      const bruta = url || urlSolta;
+      const destino = bruta.replace(/[.,;:]+$/, "");
+      partes.push(
+        <a key={inicio} href={destino} target="_blank" rel="noopener noreferrer" className="text-acao underline break-words">
+          {rotulo ? <MdEmLinha texto={rotulo} /> : dominioDe(destino)}
+        </a>,
+      );
+      if (bruta.length > destino.length) partes.push(bruta.slice(destino.length));
+    } else if (negrito || negrito2) {
+      partes.push(
+        <strong key={inicio} className="text-tinta">
+          <MdEmLinha texto={negrito || negrito2} />
+        </strong>,
+      );
+    } else if (codigo) {
+      partes.push(
+        <code key={inicio} className="rounded-campo bg-papel-3 px-1 font-codigo text-xs text-tinta">
+          {codigo}
+        </code>,
+      );
+    } else if (italico) {
+      partes.push(<em key={inicio}>{italico}</em>);
+    }
+    ultimo = inicio + achado[0].length;
+  }
+  if (ultimo < texto.length) partes.push(texto.slice(ultimo));
+  return <>{partes}</>;
+}
+
 function ComparacaoRevisao({
   anterior, candidata, revisando, onAceitar, onDescartar,
 }: {
@@ -1307,18 +1741,38 @@ function ComparacaoRevisao({
     return () => window.cancelAnimationFrame(quadro);
   }, [anterior, candidata]);
   return (
-    <section ref={comparacaoRef} className="border-2 border-acao-borda bg-papel p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div><h3 className={TITULO}>Revisão pendente</h3><p className={SUB}>Compare a peça completa antes de aceitar. {mudancas} seção(ões) com alteração.</p></div>
-        <span className="rounded-full bg-acao-clara px-3 py-1 text-xs font-semibold text-tinta-2">A peça oficial continua preservada</span>
+    <section
+      ref={comparacaoRef}
+      className="grid gap-3 rounded-cartao border border-atencao-borda border-l-4 border-l-atencao-marca bg-papel p-4 shadow-cartao-forte"
+    >
+      <header className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-campo border border-atencao-borda bg-atencao-claro text-atencao">
+            <GitCompareArrows size={18} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h3 className={TITULO}>Revisão pendente</h3>
+            <p className={SUB}>Compare a peça completa antes de aceitar.</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          <Selo tom="atencao" simbolo="!">Aguardando sua decisão</Selo>
+          <Selo tom="info" simbolo="✎">{mudancas} seção(ões) alterada(s)</Selo>
+        </div>
+      </header>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-campo bg-papel-2 px-3 py-2 text-xs text-tinta-2">
+        <span className="font-semibold text-tinta">Como ler:</span>
+        <span><span className="bg-red-100 px-1 text-red-900 line-through">riscado</span> sai do texto</span>
+        <span><span className="bg-green-100 px-1 text-green-900">destacado</span> entra no texto</span>
+        <span className="text-tinta-3">A peça oficial continua preservada até você aceitar.</span>
       </div>
       <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-        <ColunaComparacao titulo="VERSÃO ANTERIOR" secoes={anteriorVisivel} oposta={opostasDaAnterior} tipo="antes" />
-        <ColunaComparacao titulo="NOVA VERSÃO" secoes={candidataVisivel} oposta={opostasDaCandidata} tipo="depois" />
+        <ColunaComparacao titulo="Versão anterior" secoes={anteriorVisivel} oposta={opostasDaAnterior} tipo="antes" />
+        <ColunaComparacao titulo="Nova versão" secoes={candidataVisivel} oposta={opostasDaCandidata} tipo="depois" />
       </div>
-      <div className="mt-4 flex justify-end gap-2">
-        <Botao variante="secundario" pequeno disabled={revisando} onClick={onDescartar}>Descartar revisão</Botao>
-        <Botao variante="primario" pequeno disabled={revisando} onClick={onAceitar}>{revisando ? "Salvando…" : "Aceitar revisão"}</Botao>
+      <div className="flex flex-wrap justify-end gap-2 border-t border-borda pt-3">
+        <Botao variante="secundario" pequeno disabled={revisando} onClick={onDescartar}>✕ Descartar revisão</Botao>
+        <Botao variante="primario" pequeno disabled={revisando} onClick={onAceitar}>{revisando ? "Salvando…" : "✓ Aceitar revisão"}</Botao>
       </div>
     </section>
   );
@@ -1344,8 +1798,11 @@ function parearSecoes(secoes: SecaoPeticao[], opostas: SecaoPeticao[]): Map<stri
 }
 
 function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoPeticao>; tipo: "antes" | "depois" }) {
-  return <article className="min-w-0 max-h-[70vh] overflow-auto border border-borda bg-papel-2 p-3">
-    <h4 className="sticky top-0 bg-papel-2 py-1 text-xs font-bold tracking-wide text-tinta">{titulo}</h4>
+  return <article className={`min-w-0 max-h-[70vh] overflow-auto rounded-campo border border-borda border-t-4 bg-papel-2 p-3 ${tipo === "antes" ? "border-t-borda-campo" : "border-t-ok"}`}>
+    <h4 className="sticky top-0 z-[1] mb-2 flex items-center justify-between gap-2 bg-papel-2 py-1 text-sm font-semibold text-tinta">
+      {titulo}
+      {tipo === "antes" ? <Selo tom="neutro" simbolo="↺">Atual</Selo> : <Selo tom="ok" simbolo="✓">Proposta da IA</Selo>}
+    </h4>
     {secoes.map((secao, i) => <div key={`${secao.code}-${i}`} className="mb-4 whitespace-pre-wrap text-sm leading-relaxed text-tinta">
       <p className="mb-1 font-semibold">{secao.label}</p>
       <TextoComDiff texto={secao.content} outro={oposta.get(secao.code)?.content ?? ""} tipo={tipo} />

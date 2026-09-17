@@ -719,6 +719,22 @@ export function descartarRevisaoPendente(casoId: string, revisaoId: string): Pro
   return chamar(`/api/agente/casos/${casoId}/peticao/local/revisoes/${revisaoId}/descartar`, { method: "POST" });
 }
 
+export type FonteDaPesquisa = { url: string; titulo: string; trecho: string };
+export type ResultadoPesquisaWeb = {
+  pergunta: string;
+  resposta: string;
+  fontes: FonteDaPesquisa[];
+  modelo: string;
+};
+
+/** Dúvida rápida pesquisada na web (DeepSeek via OpenRouter). Não grava nada no caso. */
+export function pesquisarNaWeb(pergunta: string): Promise<ResultadoPesquisaWeb> {
+  return chamar(`/api/agente/pesquisa-web`, {
+    method: "POST",
+    body: JSON.stringify({ pergunta }),
+  });
+}
+
 /** A rastreabilidade completa desta petição: toda crítica feita e toda versão anterior. */
 export function historicoDePeticao(casoId: string, pecaId: string): Promise<HistoricoDePeticao> {
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/historico`);
