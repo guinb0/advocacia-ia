@@ -1013,14 +1013,26 @@ export default function Roteiro({
       ultimoSom,
       nivelTipico,
       chegada,
-      erro: erroEscuta,
+      /* O ERRO DA TRANSCRIÇÃO PRECISA APARECER AQUI, E NÃO SÓ NA OUTRA COLUNA.
+       *
+       * Este painel é o que diz "ouvindo — nada reconhecido ainda", então é para
+       * ele que se olha quando nada aparece. Só que `erro` aqui era apenas o da
+       * ESCUTA (a leitura do trecho contra o roteiro); a falha da TRANSCRIÇÃO
+       * ia para `erro`, desenhado lá na coluna do roteiro — longe dos olhos de
+       * quem está esperando o texto. O resultado era um painel dizendo
+       * "ouvindo" indefinidamente com a explicação fora do campo de visão.
+       *
+       * A escuta vem primeiro por ser a mais específica; na falta dela, entra o
+       * da captura/transcrição. Erro de carregamento do roteiro não chega aqui:
+       * sem roteiro o componente devolve cedo e este painel nem existe. */
+      erro: erroEscuta ?? erro,
       onIrPara: irPara,
       onReligar: () => captura.current?.religarAgora(),
     });
   }, [
     escutando, transcricaoVisivel, parcial, ouvidas, sugestoes, lembretes,
     faltando, ouvindo, estadoMic, ultimaFala, ultimoSom, nivelTipico, chegada,
-    erroEscuta, irPara,
+    erroEscuta, erro, irPara,
   ]);
   useEffect(() => () => publicarEscuta.current?.(null), []);
 
