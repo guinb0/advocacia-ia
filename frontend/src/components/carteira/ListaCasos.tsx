@@ -91,6 +91,7 @@ export default function ListaCasos({
   /* Credenciais do caso recém-criado. Ficam só em memória: a senha existe em
    * texto claro apenas nesta resposta, e some ao sair da tela. */
   const [novoPortal, setNovoPortal] = useState<CasoCriado | null>(null);
+  const [modo, setModo] = useState<"inicio" | "criar" | "ver">("inicio");
   const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
   const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
   const telefoneVazio = !telefonePreenchido(telefone);
@@ -189,13 +190,23 @@ export default function ListaCasos({
   const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
   const gruposVisiveis = grupos.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
+  if (modo === "inicio") return (
+    <Cartao titulo="Carteira de casos" subtitulo="Escolha o que deseja fazer.">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Botao variante="primario" bloco onClick={() => setModo("criar")}>Criar novo caso</Botao>
+        <Botao variante="secundario" bloco onClick={() => setModo("ver")}>Ver casos</Botao>
+      </div>
+    </Cartao>
+  );
+
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(280px,380px)_minmax(0,1fr)] items-start gap-5 max-[980px]:grid-cols-1">
+    <div className="grid min-w-0 gap-5">
       <Cartao
         titulo="Novo caso"
         subtitulo="Escolher o tipo de ação é o que monta o checklist de documentos do cliente."
-        className="min-w-0"
+        className={modo === "criar" ? "min-w-0" : "hidden"}
       >
+        <div className="mb-4"><Botao variante="secundario" onClick={() => setModo("inicio")}>Voltar</Botao></div>
         <form onSubmit={criar}>
           <div className="mb-4">
             <RotuloCampo htmlFor="entrevista-inicial">Entrevista do cliente (.txt)</RotuloCampo>
@@ -324,13 +335,14 @@ export default function ListaCasos({
 
       <Cartao
         titulo="Casos cadastrados"
-        className="min-w-0 overflow-hidden"
+        className={modo === "ver" ? "min-w-0 overflow-hidden" : "hidden"}
         subtitulo={
           casos.length === 0
             ? "Nenhum caso ainda."
             : `${casosFiltrados.length} de ${casos.length} ${casos.length === 1 ? "caso" : "casos"} — mais recentes primeiro.`
         }
       >
+        <div className="mb-4"><Botao variante="secundario" onClick={() => setModo("inicio")}>Voltar</Botao></div>
         {erro && (
           <div className="mb-[14px]">
             <Aviso tom="critico" titulo="Não foi possível carregar os casos">

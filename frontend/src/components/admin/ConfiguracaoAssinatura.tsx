@@ -17,7 +17,10 @@ import {
   listarProvedoresAssinatura,
   salvarTokenProvedorAssinatura,
   testarProvedorAssinatura,
+  conectarTactiq,
+  statusTactiq,
 } from "@/lib/api";
+import type { StatusTactiq } from "@/lib/api";
 import type { ProvedorAssinatura, StatusProvedorAssinatura } from "@/lib/types";
 import { Aviso, BotaoAba, Botao, Cartao, Campo, RotuloCampo } from "@/components/ui/Basicos";
 
@@ -43,6 +46,8 @@ export default function ConfiguracaoAssinatura() {
   const [ativando, setAtivando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [tactiq, setTactiq] = useState<StatusTactiq | null>(null);
+  const [conectandoTactiq, setConectandoTactiq] = useState(false);
 
   const recarregar = useCallback(async () => {
     try {
@@ -57,7 +62,14 @@ export default function ConfiguracaoAssinatura() {
 
   useEffect(() => {
     void recarregar();
+    void statusTactiq().then(setTactiq).catch(() => setTactiq(null));
   }, [recarregar]);
+
+  async function conectarAoTactiq() {
+    setConectandoTactiq(true);
+    try { window.location.assign((await conectarTactiq()).url); }
+    catch (e) { setErro(e instanceof Error ? e.message : "Não foi possível iniciar a conexão Tactiq."); setConectandoTactiq(false); }
+  }
 
   const atual = provedores?.find((p) => p.provedor === selecionado);
 
@@ -122,6 +134,17 @@ export default function ConfiguracaoAssinatura() {
           </Aviso>
         )}
         {aviso && !erro && <Aviso tom="ok">{aviso}</Aviso>}
+
+        <div className="rounded-xl border border-borda bg-fundo-2 p-4 grid gap-2">
+          <div className="font-semibold text-tinta-1">Transcrições automáticas — Tactiq</div>
+          <p className="text-sm leading-relaxed text-tinta-3 m-0">Conecte sua conta Team para importar transcrições completas de Google Meet, Zoom e Microsoft Teams.</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Botao variante={tactiq?.conectado ? "secundario" : "primario"} carregando={conectandoTactiq} onClick={() => void conectarAoTactiq()}>
+              {tactiq?.conectado ? "Reconectar Tactiq" : "Conectar Tactiq"}
+            </Botao>
+            {tactiq?.conectado && <span className="text-sm text-verde-700">Conta conectada — transcrições prontas para sincronizar.</span>}
+          </div>
+        </div>
 
         <div role="tablist" className="flex gap-2 flex-wrap">
           {(["zapsign", "clicksign", "autentique"] as ProvedorAssinatura[]).map((provedor) => {

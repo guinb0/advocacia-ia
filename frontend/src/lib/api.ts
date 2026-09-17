@@ -1313,6 +1313,14 @@ export async function listarProvedoresAssinatura(): Promise<StatusProvedorAssina
   return dados.provedores;
 }
 
+export interface StatusTactiq { conectado: boolean; conectado_em: string; servidor: string }
+export async function statusTactiq(): Promise<StatusTactiq> {
+  return comoJson<StatusTactiq>(await buscar("/api/tactiq/status"));
+}
+export async function conectarTactiq(): Promise<{ url: string }> {
+  return comoJson<{ url: string }>(await buscar("/api/tactiq/conectar", { method: "POST" }));
+}
+
 /** Cifra e salva o token do escritório para Clicksign/Autentique. Não testa
  *  sozinho — o botão "Testar conexão" (`testarProvedorAssinatura`) faz isso. */
 export async function salvarTokenProvedorAssinatura(

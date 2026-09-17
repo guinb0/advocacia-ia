@@ -120,10 +120,10 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
         <Selo tom="info">todos são analisados</Selo>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 max-[420px]:grid-cols-1">
+      <div className="mt-4 rounded-campo border-2 border-dashed border-acao-borda bg-papel p-3">
         <button
           type="button"
-          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao ${
+          className={`mr-2 rounded-campo border border-acao-borda bg-acao-clara px-4 py-2 text-sm font-semibold text-acao transition-colors hover:bg-papel ${
             arrastando ? "border-acao text-acao bg-papel-2" : "border-acao-borda"
           }`}
           onClick={() => inputRef.current?.click()}
@@ -142,7 +142,7 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
         </button>
         <button
           type="button"
-          className={`px-4 ${compacto ? "py-5" : "py-7"} border-2 border-dashed border-acao-borda rounded-campo bg-papel text-tinta-2 text-sm cursor-pointer transition-colors hover:border-acao hover:text-acao`}
+          className="rounded-campo border border-acao-borda bg-acao-clara px-4 py-2 text-sm font-semibold text-acao transition-colors hover:bg-papel"
           onClick={() => pastaRef.current?.click()}
           disabled={enviando}
         >

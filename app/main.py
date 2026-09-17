@@ -37,7 +37,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -92,6 +92,7 @@ from . import (
     roteiros,
     tipos_documento,
     triagem,
+    tactiq,
     valor_documento,
     whatsapp,
 )
@@ -163,6 +164,10 @@ async def ciclo_de_vida(_: FastAPI):
             await run_in_threadpool(assinatura_config.inicializar)
         except Exception:
             log.exception("Não foi possível inicializar a configuração de assinatura eletrônica")
+        try:
+            await run_in_threadpool(tactiq.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar a conexão Tactiq")
         try:
             # Cria a tabela de contas e garante que exista pelo menos uma, senão um
             # ambiente novo sobe com a autenticação ligada e nenhum jeito de entrar.
@@ -2415,6 +2420,30 @@ def config():
 def eu(usuario: auth.Usuario = Depends(auth.usuario_atual)):
     """Quem está autenticado nesta requisição."""
     return usuario.to_dict()
+
+
+@app.get("/api/tactiq/status")
+def tactiq_status(usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Estado seguro: nunca devolve token ao navegador."""
+    return tactiq.status(usuario.id)
+
+
+@app.post("/api/tactiq/conectar")
+def tactiq_conectar(request: Request, usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    base = str(request.base_url).rstrip("/")
+    return {"url": tactiq.iniciar(usuario.id, f"{base}/api/tactiq/callback")}
+
+
+@app.get("/api/tactiq/callback")
+def tactiq_callback(request: Request, code: str = "", state: str = ""):
+    if not code or not state:
+        raise HTTPException(400, "O Tactiq não devolveu a autorização necessária.")
+    try:
+        tactiq.concluir(state, code, f"{str(request.base_url).rstrip('/')}/api/tactiq/callback")
+    except Exception as exc:
+        log.warning("Falha ao concluir OAuth Tactiq: %s", exc)
+        raise HTTPException(400, str(exc)) from exc
+    return RedirectResponse(f"{URL_PORTAL}/?tactiq=conectado", status_code=303)
 
 
 def _aquecer_modelo() -> None:

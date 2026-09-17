@@ -144,11 +144,16 @@ def montar_validacao(tipo: str, campos: list[Campo], qual: quality.Qualidade) ->
 
     erros: list[str] = []
     avisos: list[str] = []
+    # Fotos de lesão, local, acidente ou máquina são prova visual. Elas não têm
+    # campos cadastrais e a nitidez do OCR não mede se a imagem serve como anexo.
+    # Nunca mandar o cliente reenviar uma fotografia só porque ela não é um RG.
+    evidencia_visual = tipo == "fotos"
 
-    if not qual.legivel:
+    if not qual.legivel and not evidencia_visual:
         erros.append("A imagem não atingiu o nível mínimo de legibilidade para uma extração confiável.")
-    erros.extend(qual.problemas if not qual.legivel else [])
-    if qual.legivel:
+    if not qual.legivel and not evidencia_visual:
+        erros.extend(qual.problemas)
+    if qual.legivel or evidencia_visual:
         avisos.extend(qual.problemas)
 
     if tipo == "desconhecido":
@@ -160,15 +165,18 @@ def montar_validacao(tipo: str, campos: list[Campo], qual: quality.Qualidade) ->
     for nome in baixa_confianca:
         avisos.append(f"Campo '{nome}' foi lido com baixa confiança pelo OCR — confira manualmente.")
 
-    if not campos:
+    if not campos and not evidencia_visual:
         erros.append("Nenhum campo estruturado foi extraído da imagem.")
 
     # Os dados servem para uso automático: nada faltando e nada reprovado no DV.
-    dados_utilizaveis = qual.legivel and not faltando and not invalidos and bool(campos)
+    dados_utilizaveis = evidencia_visual or (qual.legivel and not faltando and not invalidos and bool(campos))
     # A foto em si não tem nenhuma ressalva de qualidade nem campo duvidoso.
     sem_ressalvas = not qual.problemas and not baixa_confianca and tipo != "desconhecido"
 
-    if not qual.legivel or not campos:
+    if evidencia_visual:
+        veredito = "APROVADO_COM_RESSALVAS"
+        resumo = "Imagem preservada como prova visual; OCR e campos estruturados não são exigidos para este tipo de anexo."
+    elif not qual.legivel or not campos:
         veredito = "REPROVADO"
         resumo = "Não foi possível extrair os dados com segurança — solicite uma nova foto ao usuário."
     elif dados_utilizaveis and sem_ressalvas:
@@ -187,6 +195,7 @@ def montar_validacao(tipo: str, campos: list[Campo], qual: quality.Qualidade) ->
         "resumo": resumo,
         "aprovado": veredito == "APROVADO",
         "dados_utilizaveis": dados_utilizaveis,
+        "evidencia_visual": evidencia_visual,
         "imagem_legivel": qual.legivel,
         "score_legibilidade": qual.score,
         "completude_percentual": completude,
