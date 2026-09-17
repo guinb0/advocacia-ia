@@ -268,9 +268,21 @@ html[data-theme="dark"] {
  * prefers-reduced-motion) ficam — elas codificam decisão de design que o
  * Preflight não toma. */
 
+/* `max-width: 100%`, e não `100vw`: no Windows a barra de rolagem clássica come
+ * largura da área de conteúdo, mas NÃO sai de `100vw` — a página ficava ~15px
+ * mais larga que o espaço que tinha e ganhava rolagem horizontal fantasma.
+ *
+ * O `overflow-x: hidden` fica só no `body`. Posto também no `html`, ele tirava o
+ * elemento raiz do estado `visible`, e com isso o navegador deixa de propagar o
+ * overflow do `body` para a janela: o `html` vira uma segunda área rolável (com
+ * `overflow-y` computado como `auto`) por cima da do miolo. Era daí que vinham
+ * as duas barras. */
 html,
 body {
-  max-width: 100vw;
+  max-width: 100%;
+}
+
+body {
   overflow-x: hidden;
 }
 
@@ -289,9 +301,16 @@ body {
  * da barra do conteúdo: as duas disputam a tela e deixam uma faixa vazia no
  * fim da página. Em celular o documento continua sendo a área rolável. */
 @media (min-width: 1024px) {
+  /* O `html` entra junto de propósito: quem decide se a JANELA rola é o elemento
+   * raiz, não o `body`. Contendo só o `body`, sobrava a rolagem do documento —
+   * e ao bater no fim do miolo o gesto passava para ela, arrastando a página e
+   * descobrindo a faixa vazia abaixo da barra lateral (que tem exatamente uma
+   * tela de altura). Em celular o documento continua sendo a área rolável. */
+  html:has(.app-shell),
   body:has(.app-shell) {
     height: 100dvh;
     overflow: hidden;
+    overscroll-behavior: none;
   }
 }
 
