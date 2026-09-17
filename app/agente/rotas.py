@@ -28,12 +28,12 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from .. import armazenamento, auth, contrato, peticao_aprendizado, peticao_local
 from .. import pesquisa_web as pesquisa_web_modulo
-from . import conversas, dossie, espelho, peticao_fluxo
+from . import chat_peticao, conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
 from .config import config
 
@@ -1154,3 +1154,107 @@ def _caso_ref(caso_id: str) -> str:
         return espelho.caso_ref(caso_id)
     except ErroDoAgente as erro:
         raise _erro(erro) from erro
+
+
+# ------------------------------------------------- o chat da petição (dossiê)
+#
+# Outra conversa, outro escopo: esta vive DENTRO do caso, ao lado da minuta, e não
+# aparece no histórico do agente geral (ver `armazenamento.conversa_do_caso`). É uma
+# por caso e por pessoa, e reabre inteira depois do refresh.
+#
+# A resposta vai em SSE porque o modelo escreve em fluxo. Não é enfeite: a
+# investigação encadeia leituras e pode levar dezenas de segundos — sem o fluxo, a
+# tela ficaria parada no "digitando" sem sinal de vida, que foi a queixa que
+# originou a reescrita desta área.
+
+
+@roteador.get("/casos/{caso_id}/chat-peticao")
+def abrir_chat_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
+    """A transcrição inteira desta conversa — é o que o reload da página reabre."""
+    try:
+        return chat_peticao.abrir(caso_id, usuario.id)
+    except chat_peticao.ErroDoChat as erro:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(erro)) from erro
+
+
+@roteador.post("/casos/{caso_id}/chat-peticao/mensagens")
+def responder_no_chat_peticao(
+    caso_id: str,
+    mensagem: str = Body(..., embed=True, min_length=1, max_length=10_000),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> StreamingResponse:
+    """A pergunta, respondida em fluxo (SSE): `etapa`, `delta`, `fim` ou `erro`.
+
+    A falha do modelo NÃO vira status de erro aqui: ela já foi gravada como mensagem
+    na transcrição e chega como evento `erro` dentro do fluxo. Derrubar a conexão com
+    um 502 apagaria da tela a pergunta que o advogado acabou de fazer.
+    """
+
+    def fluxo():
+        try:
+            for evento in chat_peticao.conversar(caso_id, mensagem, usuario.id):
+                yield f"data: {json.dumps(evento, ensure_ascii=False, default=str)}\n\n"
+        except chat_peticao.ErroDoChat as erro:
+            carga = {"tipo": "erro", "texto": str(erro)}
+            yield f"data: {json.dumps(carga, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        fluxo(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Sem isto o nginx da frente junta os pedaços e entrega tudo no fim —
+            # o fluxo existiria no servidor e não na tela.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+class AcaoDoChat(BaseModel):
+    """Uma proposta que o advogado confirmou. O `tipo` diz o que executar."""
+
+    tipo: str
+    pedido: str = ""
+    titulo: str = ""
+    motivo: str = ""
+    pedidos: list[str] = []
+
+
+@roteador.post("/casos/{caso_id}/chat-peticao/acoes")
+def executar_acao_do_chat(
+    caso_id: str,
+    acao: AcaoDoChat,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Executa uma proposta ACEITA. Nada chega aqui sem o clique de quem lê.
+
+    Mesma permissão de gerar e revisar a petição pelos botões: quem pode fazer pelo
+    painel pode fazer pelo chat. O que muda é o registro — a revisão nascida aqui vai
+    para o histórico com `origem: chat`.
+    """
+    return chat_peticao.executar_acao(
+        caso_id,
+        usuario.id,
+        acao.model_dump(),
+        autor=usuario.nome or usuario.id,
+    )
+
+
+@roteador.post("/casos/{caso_id}/chat-peticao/eventos")
+def registrar_evento_do_chat(
+    caso_id: str,
+    tipo: str = Body(..., embed=True, max_length=60),
+    dados: dict[str, Any] = Body(default_factory=dict, embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """A IA contando na conversa o que um BOTÃO da tela acabou de fazer.
+
+    Entra como mensagem normal da transcrição, e não como aviso que some: é depois de
+    uma geração ou de uma análise que o advogado mais precisa saber o que mudou e o
+    que continua sem prova.
+    """
+    mensagem = chat_peticao.registrar_evento(caso_id, usuario.id, tipo, dados)
+    return {"mensagem": mensagem}

@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FluxoPeticao, { type ControlesGeracaoPeticao } from "@/components/admin/FluxoPeticao";
+import { avisarChatDaPeticao } from "@/lib/chatPeticao";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
@@ -550,9 +551,19 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
     setCarregando(true);
     setErro(null);
     try {
-      setAnalise(await analisarDocumentosDoCaso(casoId));
+      const resultado = await analisarDocumentosDoCaso(casoId);
+      setAnalise(resultado);
+      /* A IA conta no chat da petição o que a leitura achou. O painel é aqui, a
+       * conversa é lá embaixo, e sem este aviso ela continuaria falando do caso como
+       * se os anexos nunca tivessem sido lidos. */
+      avisarChatDaPeticao(casoId, "documentos_analisados", {
+        documentos_lidos: resultado.documentos_lidos,
+        achados: (resultado.achados ?? []).length,
+      });
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível analisar os documentos.");
+      const texto = e instanceof Error ? e.message : "Não foi possível analisar os documentos.";
+      setErro(texto);
+      avisarChatDaPeticao(casoId, "falha", { acao: "Analisar os documentos", erro: texto });
     } finally {
       setCarregando(false);
     }

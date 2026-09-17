@@ -132,12 +132,25 @@ def gerar_completo(caso_id: str) -> dict[str, Any]:
 
 
 def revisar_peticao(
-    caso_id: str, *, prompt: str, usuario: str, generaliza: bool = True
+    caso_id: str,
+    *,
+    prompt: str,
+    usuario: str,
+    generaliza: bool = True,
+    origem: str = "painel",
 ) -> dict[str, Any]:
-    """Issue "Permitir alteração da petição por prompt com rastreabilidade"."""
+    """Issue "Permitir alteração da petição por prompt com rastreabilidade".
+
+    `origem` diz de onde veio o pedido — o campo do painel ou o chat ao lado da
+    peça. Ela viaja junto da revisão até o histórico de versões.
+    """
     try:
         dados = peticao_local.revisar_com_prompt(
-            caso_id, prompt_critica=prompt, usuario=usuario, generaliza=generaliza
+            caso_id,
+            prompt_critica=prompt,
+            usuario=usuario,
+            generaliza=generaliza,
+            origem=origem,
         )
     except peticao_local.ErroPeticao as erro:
         raise _erro_peticao(erro) from erro
