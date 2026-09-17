@@ -94,8 +94,40 @@ export interface ModeloVisualPeticao {
   atributos?: AtributosModeloVisual;
 }
 
+export interface ConfiguracaoVisualPeticao {
+  fonte: string;
+  tamanho_fonte_pt: number;
+  espacamento_linha: number;
+  recuo_primeira_linha_cm: number;
+  margem_superior_cm: number;
+  margem_direita_cm: number;
+  margem_inferior_cm: number;
+  margem_esquerda_cm: number;
+  alinhamento_corpo: "justificado" | "esquerda" | "direita";
+  alinhamento_titulos: "esquerda" | "centralizado";
+  altura_logo_cm: number;
+}
+
 export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {
   return comoJson(await buscar("/api/modelos/peticao/visual"));
+}
+
+export async function obterConfiguracaoVisualPeticao(): Promise<ConfiguracaoVisualPeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/visual/configuracao"));
+}
+
+export async function salvarConfiguracaoVisualPeticao(
+  dados: ConfiguracaoVisualPeticao,
+): Promise<ConfiguracaoVisualPeticao> {
+  return comoJson(await buscar("/api/modelos/peticao/visual/configuracao", {
+    method: "PUT", body: JSON.stringify(dados),
+  }));
+}
+
+export async function enviarLogoModeloVisualPeticao(arquivo: File): Promise<{ arquivo: string }> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar("/api/modelos/peticao/visual/logo", { method: "POST", body: form }));
 }
 
 export interface StatusWhatsapp {

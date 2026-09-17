@@ -53,6 +53,21 @@ LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 #: mandando na fonte: este valor só vale na ausência dele.
 FONTE_PADRAO = "Times New Roman"
 MODELO_VISUAL_GERAL = "peticao_visual_geral"
+MODELO_VISUAL_CONFIG = "peticao_visual_config"
+MODELO_VISUAL_LOGO = "peticao_visual_logo"
+CONFIGURACAO_VISUAL_PADRAO: dict[str, Any] = {
+    "fonte": "",
+    "tamanho_fonte_pt": 12,
+    "espacamento_linha": 1.5,
+    "recuo_primeira_linha_cm": 1.25,
+    "margem_superior_cm": 3.74,
+    "margem_direita_cm": 1.89,
+    "margem_inferior_cm": 1.25,
+    "margem_esquerda_cm": 3.0,
+    "alinhamento_corpo": "justificado",
+    "alinhamento_titulos": "esquerda",
+    "altura_logo_cm": 2.36,
+}
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
     # As preliminares saíram de dentro do DO DIREITO e viraram seção própria,
@@ -122,6 +137,22 @@ def extrair_identidade_visual(conteudo: bytes) -> tuple[bytes, str, str]:
         raise ErroPeticao("Não foi possível ler a identidade visual deste .docx.") from erro
 
 
+def extrair_fonte_visual(conteudo: bytes) -> str:
+    """Lê a fonte mesmo quando o arquivo de referência não traz uma logo."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
+            if "word/styles.xml" not in arquivo.namelist():
+                return FONTE_PADRAO
+            raiz = ElementTree.fromstring(arquivo.read("word/styles.xml"))
+            for fontes in raiz.iter(f"{_NS_W}rFonts"):
+                fonte = fontes.attrib.get(f"{_NS_W}ascii") or fontes.attrib.get(f"{_NS_W}hAnsi")
+                if fonte and len(fonte) <= 80:
+                    return fonte
+    except (zipfile.BadZipFile, ElementTree.ParseError, KeyError):
+        pass
+    return FONTE_PADRAO
+
+
 _NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
@@ -189,10 +220,38 @@ def identidade_visual() -> tuple[bytes, str, str, str]:
     except Exception:
         log.warning("modelo visual indisponível no banco; usando Lara & Melo", exc_info=True)
         registro = None
+    logo_separada = armazenamento.obter_modelo(MODELO_VISUAL_LOGO)
+    if logo_separada:
+        extensao = Path(str(logo_separada["nome_arquivo"])).suffix.lower()
+        extensao = ".jpg" if extensao in {".jpg", ".jpeg"} else ".png"
+        fonte = extrair_fonte_visual(registro["conteudo"]) if registro else FONTE_PADRAO
+        return bytes(logo_separada["conteudo"]), fonte, extensao, logo_separada["nome_arquivo"]
     if registro:
-        logo, fonte, extensao = extrair_identidade_visual(registro["conteudo"])
-        return logo, fonte, extensao, registro["nome_arquivo"]
+        try:
+            logo, fonte, extensao = extrair_identidade_visual(registro["conteudo"])
+            return logo, fonte, extensao, registro["nome_arquivo"]
+        except ErroPeticao:
+            return LOGO_LARA_MELO.read_bytes(), extrair_fonte_visual(registro["conteudo"]), ".png", "Logo padrão"
     return LOGO_LARA_MELO.read_bytes(), FONTE_PADRAO, ".png", "Padrão Lara & Melo"
+
+
+def configuracao_visual() -> dict[str, Any]:
+    """Preferências visuais editáveis, com limites seguros para gerar DOCX válido."""
+    configuracao = dict(CONFIGURACAO_VISUAL_PADRAO)
+    try:
+        registro = armazenamento.obter_modelo(MODELO_VISUAL_CONFIG)
+        if registro:
+            recebida = json.loads(bytes(registro["conteudo"]).decode("utf-8"))
+            if isinstance(recebida, dict):
+                configuracao.update({k: v for k, v in recebida.items() if k in configuracao})
+    except Exception:
+        log.warning("configuração visual indisponível; usando padrão", exc_info=True)
+    for campo in ("tamanho_fonte_pt", "espacamento_linha", "recuo_primeira_linha_cm", "margem_superior_cm", "margem_direita_cm", "margem_inferior_cm", "margem_esquerda_cm", "altura_logo_cm"):
+        try:
+            configuracao[campo] = float(configuracao[campo])
+        except (TypeError, ValueError):
+            configuracao[campo] = CONFIGURACAO_VISUAL_PADRAO[campo]
+    return configuracao
 
 
 def _agora() -> str:
@@ -2212,7 +2271,7 @@ def _tipo_de_titulo(linha: str) -> str | None:
 
 
 def _paragrafo_xml(
-    texto: str, *, negrito: bool = False, centralizado: bool = False
+    texto: str, *, negrito: bool = False, centralizado: bool = False, visual: dict[str, Any] | None = None
 ) -> str:
     linhas = texto.split("\n")
     partes: list[str] = []
@@ -2236,7 +2295,9 @@ def _paragrafo_xml(
             texto_xml = escape(
                 linha_limpa.strip().upper() if titulo == "endereco" else linha_limpa
             )
-            alinhamento = "center" if titulo in ("central", "endereco") else "left"
+            alinhamento = "center" if titulo == "endereco" or (
+                titulo == "central" or str((visual or {}).get("alinhamento_titulos")) == "centralizado"
+            ) else "left"
             partes.append(
                 f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
                 f'<w:r><w:rPr><w:b/></w:rPr>'
@@ -2247,7 +2308,9 @@ def _paragrafo_xml(
             # `firstLine="0"` ANULA o recuo padrão aqui, e não é detalhe: num
             # parágrafo centralizado o recuo de primeira linha empurra o texto
             # para a direita, e o título deixaria de ficar no centro.
-            alinhamento = "center" if centralizado else "left"
+            alinhamento = "center" if centralizado or (
+                negrito and str((visual or {}).get("alinhamento_titulos")) == "centralizado"
+            ) else "left"
             runs = "".join(
                 (
                     f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{parte}</w:t></w:r>'
@@ -2296,7 +2359,22 @@ def _paragrafo_xml(
 
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
+    visual = configuracao_visual()
+    fonte = str(visual.get("fonte") or fonte).strip() or fonte
     fonte_xml = escape(fonte, {'"': "&quot;"})
+    def twips(cm: float) -> int:
+        return round(cm / 2.54 * 1440)
+    tamanho = max(8, min(24, float(visual["tamanho_fonte_pt"])))
+    entrelinha = max(1, min(3, float(visual["espacamento_linha"])))
+    recuo = max(0, min(5, float(visual["recuo_primeira_linha_cm"])))
+    margem_topo = max(1.5, min(7, float(visual["margem_superior_cm"])))
+    margem_direita = max(1, min(6, float(visual["margem_direita_cm"])))
+    margem_inferior = max(1, min(6, float(visual["margem_inferior_cm"])))
+    margem_esquerda = max(1, min(6, float(visual["margem_esquerda_cm"])))
+    altura_logo = max(0.5, min(5, float(visual["altura_logo_cm"])))
+    logo_cy = round(altura_logo * 360000)
+    logo_cx = round(logo_cy * 1.774)
+    alinhamento_corpo = {"justificado": "both", "esquerda": "left", "direita": "right"}.get(str(visual.get("alinhamento_corpo")), "both")
     logo_arquivo = f"logo-escritorio{logo_extensao}"
     logo_content_type = "image/jpeg" if logo_extensao == ".jpg" else "image/png"
     corpo: list[str] = []
@@ -2317,7 +2395,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             # os subtítulos de dentro do conteúdo iam à esquerda. O escritório
             # quer todos à esquerda; só o endereçamento e o nome da ação ficam
             # no centro.
-            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True))
+            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True, visual=visual))
         if conteudo:
             # O HEADING NÃO é centralizado por inteiro.
             #
@@ -2330,7 +2408,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             #
             # Quem decide agora é `_tipo_de_titulo`, linha a linha.
             corpo.append(
-                _paragrafo_xml(conteudo, centralizado=secao.get("code") == "CLOSING")
+                _paragrafo_xml(conteudo, centralizado=secao.get("code") == "CLOSING", visual=visual)
             )
         corpo.append("<w:p/>")
 
@@ -2359,7 +2437,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
            Mantendo a mesma folga de 0,13 cm da peça de referência, o texto passa
            a começar em 3,74 cm = 2120 twips. Sem descer `w:top` junto sobraria
            quase 1 cm de ar entre a logo e o primeiro parágrafo. -->
-      <w:pgMar w:top="2120" w:right="1069" w:bottom="708" w:left="1701" w:header="708"/>
+      <w:pgMar w:top="{twips(margem_topo)}" w:right="{twips(margem_direita)}" w:bottom="{twips(margem_inferior)}" w:left="{twips(margem_esquerda)}" w:header="708"/>
     </w:sectPr>
   </w:body>
 </w:document>"""
@@ -2383,11 +2461,11 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
            tem 5,82 × 3,28 cm; este é ele a 72%, por pedido do escritório. Os dois
            lados usam o mesmo fator, então a proporção 1,77 se mantém e a imagem
            encolhe sem distorcer. Mexer aqui obriga a mexer no `w:top` do sectPr. -->
-      <wp:extent cx="1508544" cy="850176"/><wp:docPr id="1" name="Logo do escritório"/>
+      <wp:extent cx="{logo_cx}" cy="{logo_cy}"/><wp:docPr id="1" name="Logo do escritório"/>
       <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
         <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo-escritorio"/><pic:cNvPicPr/></pic:nvPicPr>
           <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
-          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1508544" cy="850176"/></a:xfrm>
+          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{logo_cx}" cy="{logo_cy}"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
         </pic:pic>
       </a:graphicData></a:graphic>
@@ -2400,14 +2478,14 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
   <w:docDefaults>
     <w:rPrDefault><w:rPr>
       <w:rFonts w:ascii="{fonte_xml}" w:hAnsi="{fonte_xml}" w:eastAsia="{fonte_xml}" w:cs="{fonte_xml}"/>
-      <w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR"/>
+      <w:sz w:val="{round(tamanho * 2)}"/><w:szCs w:val="{round(tamanho * 2)}"/><w:lang w:val="pt-BR"/>
     </w:rPr></w:rPrDefault>
     <!-- `firstLine="709"` = 1,25 cm de recuo na primeira linha de cada parágrafo.
          Medido na petição de referência: o corpo começa em 3,0 cm e a primeira
          linha de cada parágrafo em 4,25 cm — 20 linhas do documento confirmam
          essa segunda coluna. Sem isso o texto sai em bloco corrido, que foi a
          diferença apontada ao comparar a peça gerada com a do escritório. -->
-    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/><w:ind w:firstLine="709"/></w:pPr></w:pPrDefault>
+    <w:pPrDefault><w:pPr><w:jc w:val="{alinhamento_corpo}"/><w:spacing w:line="{round(entrelinha * 240)}" w:lineRule="auto"/><w:ind w:firstLine="{twips(recuo)}"/></w:pPr></w:pPrDefault>
   </w:docDefaults>
   <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
 </w:styles>"""

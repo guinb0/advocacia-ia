@@ -28,6 +28,10 @@ import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   ApiError,
   enviarModeloVisualPeticao,
+  enviarLogoModeloVisualPeticao,
+  obterConfiguracaoVisualPeticao,
+  salvarConfiguracaoVisualPeticao,
+  type ConfiguracaoVisualPeticao,
   type ModeloVisualPeticao,
   obterModeloVisualPeticao,
   obterSkillDePeticao,
@@ -120,6 +124,8 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [erroCarregamento, setErroCarregamento] = useState<string | null>(null);
   const [recado, setRecado] = useState<string | null>(null);
   const [modeloVisual, setModeloVisual] = useState<ModeloVisualPeticao | null>(null);
+  const [configVisual, setConfigVisual] = useState<ConfiguracaoVisualPeticao | null>(null);
+  const [salvandoVisual, setSalvandoVisual] = useState(false);
   const [carregandoModeloVisual, setCarregandoModeloVisual] = useState(true);
   // Ligado, desligado ou ainda não sabemos — três estados, não dois: enquanto `null`, a
   // tela não decide nada (nem chama a taxonomia, nem mostra o aviso de "não ativado").
@@ -150,6 +156,39 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       .finally(() => setCarregandoModeloVisual(false));
   }, []);
 
+  useEffect(() => {
+    void obterConfiguracaoVisualPeticao().then(setConfigVisual).catch((falha) => setErro(
+      falha instanceof ApiError ? falha.message : "Não foi possível carregar a configuração visual.",
+    ));
+  }, []);
+
+  async function salvarVisual() {
+    if (!configVisual) return;
+    setSalvandoVisual(true);
+    setErro(null);
+    try {
+      setConfigVisual(await salvarConfiguracaoVisualPeticao(configVisual));
+      setRecado("Modelo visual salvo. As próximas petições já sairão com este padrão.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar o modelo visual.");
+    } finally {
+      setSalvandoVisual(false);
+    }
+  }
+
+  async function trocarLogo(arquivo: File) {
+    setEnviandoVisual(true);
+    try {
+      await enviarLogoModeloVisualPeticao(arquivo);
+      setModeloVisual((atual) => atual ? { ...atual, atualizado_em: new Date().toISOString() } : atual);
+      setRecado("Logo do escritório atualizada.");
+    } catch (falha) {
+      setErro(falha instanceof ApiError ? falha.message : "Não foi possível enviar a logo.");
+    } finally {
+      setEnviandoVisual(false);
+    }
+  }
+
   async function trocarModeloVisual(arquivo: File) {
     setEnviandoVisual(true);
     setErro(null);
@@ -157,6 +196,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     try {
       const salvo = await enviarModeloVisualPeticao(arquivo);
       setModeloVisual(salvo);
+      setConfigVisual(await obterConfiguracaoVisualPeticao());
       setRecado("Modelo visual geral atualizado. As próximas petições usarão essa logo e fonte.");
     } catch (falha) {
       setErro(falha instanceof ApiError ? falha.message : "Não foi possível salvar o modelo visual.");
@@ -569,6 +609,43 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                 )}
               <ItemIdentificado rotulo="Logo" valor="captada do cabeçalho (veja a prévia)" />
             </dl>
+          </div>
+        )}
+
+        {modeloVisual && (
+          <div className="mt-4 grid gap-4 rounded-campo border border-borda bg-papel-2 p-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="min-w-0">
+              <h4 className="m-0 text-sm font-semibold text-tinta">Prévia integral do documento importado</h4>
+              <p className="mt-1 text-xs text-tinta-3">É o próprio modelo convertido para PDF, sem trocar o conteúdo ou o layout.</p>
+              {modeloVisual.origem === "banco" ? (
+                <iframe
+                  className="mt-3 h-[680px] w-full rounded border border-borda bg-white"
+                  src={urlApi(`/api/modelos/peticao/visual/preview?v=${encodeURIComponent(modeloVisual.atualizado_em ?? modeloVisual.arquivo)}`)}
+                  title="Prévia integral do modelo visual"
+                />
+              ) : <p className="mt-3 rounded border border-dashed border-borda p-6 text-sm text-tinta-3">Envie um .docx do escritório para conferir todas as páginas aqui.</p>}
+            </div>
+            <div className="min-w-0">
+              <h4 className="m-0 text-sm font-semibold text-tinta">Formatação editável</h4>
+              <p className="mt-1 text-xs text-tinta-3">A IA extrai o padrão inicial; o escritório confirma ou altera cada medida.</p>
+              {configVisual && <div className="mt-3 grid gap-3">
+                <label className={CAMPO}>Fonte<input className={SELECT} value={configVisual.fonte} placeholder={modeloVisual.fonte} onChange={(e) => setConfigVisual({ ...configVisual, fonte: e.target.value })} /></label>
+                {([
+                  ["tamanho_fonte_pt", "Tamanho da fonte (pt)", 0.5],
+                  ["espacamento_linha", "Espaçamento entre linhas", 0.1],
+                  ["recuo_primeira_linha_cm", "Recuo da primeira linha (cm)", 0.1],
+                  ["margem_superior_cm", "Margem superior (cm)", 0.1],
+                  ["margem_direita_cm", "Margem direita (cm)", 0.1],
+                  ["margem_inferior_cm", "Margem inferior (cm)", 0.1],
+                  ["margem_esquerda_cm", "Margem esquerda (cm)", 0.1],
+                  ["altura_logo_cm", "Altura da logo (cm)", 0.1],
+                ] as const).map(([campo, rotulo, passo]) => <label className={CAMPO} key={campo}>{rotulo}<input type="number" step={passo} className={SELECT} value={configVisual[campo]} onChange={(e) => setConfigVisual({ ...configVisual, [campo]: Number(e.target.value) })} /></label>)}
+                <label className={CAMPO}>Corpo do texto<select className={SELECT} value={configVisual.alinhamento_corpo} onChange={(e) => setConfigVisual({ ...configVisual, alinhamento_corpo: e.target.value as ConfiguracaoVisualPeticao["alinhamento_corpo"] })}><option value="justificado">Justificado</option><option value="esquerda">À esquerda</option><option value="direita">À direita</option></select></label>
+                <label className={CAMPO}>Títulos<select className={SELECT} value={configVisual.alinhamento_titulos} onChange={(e) => setConfigVisual({ ...configVisual, alinhamento_titulos: e.target.value as ConfiguracaoVisualPeticao["alinhamento_titulos"] })}><option value="esquerda">À esquerda</option><option value="centralizado">Centralizado</option></select></label>
+                <label className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-campo border border-borda bg-papel px-3 text-sm font-semibold text-acao"><Upload size={15} />Trocar logo<input className="sr-only" type="file" accept=".png,.jpg,.jpeg" onChange={(e) => { const arquivo = e.target.files?.[0]; e.target.value = ""; if (arquivo) void trocarLogo(arquivo); }} /></label>
+                <BotaoProcesso variante="primario" processando={salvandoVisual} textoProcessando="Salvando…" onClick={() => void salvarVisual()}>Salvar modelo visual</BotaoProcesso>
+              </div>}
+            </div>
           </div>
         )}
 

@@ -601,9 +601,7 @@ async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
             "atualizado_em": "",
             "atributos": {},
         }
-    _logo, fonte, _extensao = await run_in_threadpool(
-        peticao_local.extrair_identidade_visual, registro["conteudo"]
-    )
+    fonte = await run_in_threadpool(peticao_local.extrair_fonte_visual, registro["conteudo"])
     # O que mais o .docx revela do padrão do escritório — tamanho, espaçamento,
     # margens, alinhamento — para a tela mostrar tudo que foi captado.
     atributos = await run_in_threadpool(
@@ -648,6 +646,79 @@ async def logo_do_modelo_visual(_autorizado=PodeManterModeloPeticao):
     )
 
 
+class ConfiguracaoVisualEntrada(BaseModel):
+    fonte: str = ""
+    tamanho_fonte_pt: float = Field(12, ge=8, le=24)
+    espacamento_linha: float = Field(1.5, ge=1, le=3)
+    recuo_primeira_linha_cm: float = Field(1.25, ge=0, le=5)
+    margem_superior_cm: float = Field(3.74, ge=1.5, le=7)
+    margem_direita_cm: float = Field(1.89, ge=1, le=6)
+    margem_inferior_cm: float = Field(1.25, ge=1, le=6)
+    margem_esquerda_cm: float = Field(3.0, ge=1, le=6)
+    alinhamento_corpo: str = "justificado"
+    alinhamento_titulos: str = "esquerda"
+    altura_logo_cm: float = Field(2.36, ge=0.5, le=5)
+
+
+@app.get("/api/modelos/peticao/visual/configuracao")
+async def obter_configuracao_visual_peticao(_autorizado=PodeManterModeloPeticao):
+    return peticao_local.configuracao_visual()
+
+
+@app.put("/api/modelos/peticao/visual/configuracao")
+async def salvar_configuracao_visual_peticao(
+    entrada: ConfiguracaoVisualEntrada,
+    usuario: auth.Usuario = PodeManterModeloPeticao,
+):
+    dados = entrada.model_dump()
+    if dados["alinhamento_corpo"] not in {"justificado", "esquerda", "direita"}:
+        raise HTTPException(422, "Alinhamento do corpo inválido.")
+    if dados["alinhamento_titulos"] not in {"esquerda", "centralizado"}:
+        raise HTTPException(422, "Alinhamento dos títulos inválido.")
+    await run_in_threadpool(
+        armazenamento.salvar_modelo,
+        peticao_local.MODELO_VISUAL_CONFIG,
+        nome_arquivo="configuracao-visual.json",
+        conteudo=json.dumps(dados, ensure_ascii=False).encode("utf-8"),
+        enviado_por=usuario.nome,
+    )
+    return dados
+
+
+@app.post("/api/modelos/peticao/visual/logo", status_code=201)
+async def enviar_logo_do_modelo_visual(
+    arquivo: UploadFile = File(...),
+    usuario: auth.Usuario = PodeManterModeloPeticao,
+):
+    nome = arquivo.filename or "logo-escritorio.png"
+    if Path(nome).suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+        raise HTTPException(400, "Envie a logo em PNG ou JPG.")
+    conteudo = await arquivo.read()
+    if not conteudo or len(conteudo) > MAX_BYTES:
+        raise HTTPException(400, "Logo inválida ou maior que o limite permitido.")
+    await run_in_threadpool(
+        armazenamento.salvar_modelo,
+        peticao_local.MODELO_VISUAL_LOGO,
+        nome_arquivo=nome,
+        conteudo=conteudo,
+        enviado_por=usuario.nome,
+    )
+    return {"arquivo": nome}
+
+
+@app.get("/api/modelos/peticao/visual/preview")
+async def previa_do_modelo_visual(_autorizado=PodeManterModeloPeticao):
+    """PDF do arquivo importado para conferência integral, sem recriar seu layout."""
+    registro = await run_in_threadpool(armazenamento.obter_modelo, peticao_local.MODELO_VISUAL_GERAL)
+    if not registro:
+        raise HTTPException(404, "Envie um modelo .docx para ver sua prévia integral.")
+    try:
+        pdf = await run_in_threadpool(docx_pdf.converter, bytes(registro["conteudo"]))
+    except docx_pdf.ErroConversaoDocx as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return Response(content=pdf, media_type="application/pdf", headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/modelos/peticao/visual", status_code=201)
 async def enviar_modelo_visual_peticao(
     arquivo: UploadFile = File(...),
@@ -662,12 +733,7 @@ async def enviar_modelo_visual_peticao(
         raise HTTPException(400, "Arquivo vazio.")
     if len(conteudo) > MAX_BYTES:
         raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
-    try:
-        _logo, fonte, _extensao = await run_in_threadpool(
-            peticao_local.extrair_identidade_visual, conteudo
-        )
-    except peticao_local.ErroPeticao as exc:
-        raise HTTPException(400, str(exc)) from exc
+    fonte = await run_in_threadpool(peticao_local.extrair_fonte_visual, conteudo)
     registro = await run_in_threadpool(
         armazenamento.salvar_modelo,
         peticao_local.MODELO_VISUAL_GERAL,
@@ -675,7 +741,29 @@ async def enviar_modelo_visual_peticao(
         conteudo=conteudo,
         enviado_por=usuario.nome,
     )
-    return {"arquivo": nome, "origem": "banco", "fonte": fonte, **registro}
+    atributos = await run_in_threadpool(peticao_local.analisar_estilo, conteudo)
+    atual = peticao_local.configuracao_visual()
+    margens = atributos.get("margens_cm") or {}
+    atual.update({
+        "fonte": fonte,
+        "tamanho_fonte_pt": atributos.get("tamanho_fonte_pt", atual["tamanho_fonte_pt"]),
+        "espacamento_linha": atributos.get("espacamento_linha", atual["espacamento_linha"]),
+        "alinhamento_corpo": {"justificado": "justificado", "à esquerda": "esquerda", "à direita": "direita"}.get(
+            atributos.get("alinhamento"), atual["alinhamento_corpo"]
+        ),
+        "margem_superior_cm": margens.get("top", atual["margem_superior_cm"]),
+        "margem_direita_cm": margens.get("right", atual["margem_direita_cm"]),
+        "margem_inferior_cm": margens.get("bottom", atual["margem_inferior_cm"]),
+        "margem_esquerda_cm": margens.get("left", atual["margem_esquerda_cm"]),
+    })
+    await run_in_threadpool(
+        armazenamento.salvar_modelo,
+        peticao_local.MODELO_VISUAL_CONFIG,
+        nome_arquivo="configuracao-visual.json",
+        conteudo=json.dumps(atual, ensure_ascii=False).encode("utf-8"),
+        enviado_por=usuario.nome,
+    )
+    return {"arquivo": nome, "origem": "banco", "fonte": fonte, "atributos": atributos, **registro}
 
 
 @app.delete("/api/modelos/peticao/visual")
