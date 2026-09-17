@@ -55,6 +55,20 @@ services:
       - --denied-peer-ip=10.0.0.0-10.255.255.255
       - --denied-peer-ip=172.16.0.0-172.31.255.255
       - --denied-peer-ip=192.168.0.0-192.168.255.255
+      # A FAIXA DE RELAY PRECISA SER ESTREITA E PUBLICADA — SENAO NADA RELAYA.
+      #
+      # As portas de escuta (3478/5349) so recebem o PEDIDO de alocacao. A midia
+      # em si sai por uma porta sorteada na faixa de relay, que por padrao e
+      # 49152-65535 — 16 mil portas que este compose nao publica e que nenhum
+      # firewall sensato abre. Sem fixar a faixa, o coturn aceita a alocacao, o
+      # navegador ate ganha um candidato `relay`, e a voz sai por uma porta
+      # inalcancavel: o MESMO silencio de nao ter TURN, so que agora com o
+      # `chrome://webrtc-internals` mostrando `relay` e jurando que esta certo.
+      #
+      # 50 portas sobram para uma sala de duas pessoas (sao duas por chamada) e
+      # cabem numa regra de firewall que alguem consegue ler.
+      - --min-port=49160
+      - --max-port=49210
       - --no-cli
       - --no-tlsv1
       - --no-tlsv1_1

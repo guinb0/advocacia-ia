@@ -51,6 +51,48 @@ const ESPERA_TRANSPORTE_MS = 1_500;
  *  recriar a faixa a cada uma cortaria a voz em vez de devolvê-la. */
 const ESPERA_REPUBLICAR_MS = 8_000;
 
+/* QUALIDADE DE VÍDEO — o que se pede, e por que não se pede o máximo.
+ *
+ * Até aqui não havia número nenhum: `createLocalTracks` ia sem `resolution`, e
+ * a lib assumia o padrão dela; a escada de fallback começava em "qualquer
+ * coisa" e descia a 240p ao primeiro tropeço, sem nunca voltar a subir. O
+ * resultado é o que o escritório vê: rosto chapado, ilegível na hora de ler a
+ * expressão de quem responde.
+ *
+ * 720p a 30 fps é o TETO pedido, não o valor fixo. Quem decide o que realmente
+ * sobe é o simulcast do Jitsi, quadro a quadro, conforme a banda medida — por
+ * isso o `min` fica em 180p: numa rede ruim a chamada DEGRADA em vez de travar,
+ * que é exatamente o pedido. Fixar 720p sem mínimo é o que produz a chamada
+ * que congela em vez de ficar feia.
+ *
+ * `ALTURA_RECEPCAO` é a outra metade, e a mais esquecida: sem pedir nada, a
+ * lib entrega ao <video> a camada mais baixa do simulcast (180p). Não adianta o
+ * outro lado ENVIAR 720p se este lado nunca pede mais que 180p — era o caso. */
+const ALTURA_VIDEO = 720;
+const ALTURA_MINIMA = 180;
+const FPS_VIDEO = 30;
+const ALTURA_RECEPCAO = 720;
+
+/** Espera antes da primeira reconexão; dobra a cada tentativa. */
+const ESPERA_RECONEXAO_MS = 3_000;
+/** Quantas vezes a chamada tenta voltar sozinha antes de se dar por encerrada. */
+const MAX_RECONEXOES = 5;
+
+/** Tolerância entre perder a faixa remota e declarar que não há mais voz.
+ *
+ *  Cobre a troca de microfone do outro lado (remove uma faixa, publica outra),
+ *  que é rápida. Curto de propósito: quem de fato saiu já foi anunciado por
+ *  `USER_LEFT`, então esperar aqui não atrasa nada que importe. */
+const ESPERA_TROCA_REMOTA_MS = 2_500;
+
+/** As restrições de câmera pedidas ao navegador. `ideal`, e nunca `exact`:
+ *  `exact` faz a webcam que não tem o modo exato falhar por inteiro, e a
+ *  chamada cai para "sem câmera" em vez de abrir na resolução possível. */
+const VIDEO_PEDIDO = {
+  height: { ideal: ALTURA_VIDEO, min: ALTURA_MINIMA, max: ALTURA_VIDEO },
+  frameRate: { ideal: FPS_VIDEO, max: FPS_VIDEO },
+} as const;
+
 export type PapelChamada = "advogado" | "cliente";
 
 export type EstadoChamada =
@@ -116,6 +158,9 @@ interface FaixaJitsi {
   getVideoType?(): string | undefined;
   getTrack(): MediaStreamTrack;
   getParticipantId?(): string;
+  /** A lib só a expõe em algumas versões; usada para saber se o outro lado se
+   *  calou de propósito, e não para decidir nada crítico. */
+  isMuted?(): boolean;
   attach(elemento: HTMLMediaElement): void;
   detach(elemento: HTMLMediaElement): void;
   mute(): Promise<void>;
@@ -138,6 +183,12 @@ interface ConferenciaJitsi {
   join(senha?: string): void;
   leave(): Promise<void>;
   getParticipantCount(): number;
+  /* Os dois são OPCIONAIS porque a lib vem do servidor, que é atualizado por
+   * fora deste repositório: em versões antigas eles não existem, e chamá-los
+   * sem conferir derrubaria a entrada na sala inteira — por qualidade de
+   * imagem, que é o menor dos problemas quando ninguém consegue entrar. */
+  setReceiverVideoConstraints?(restricoes: Record<string, unknown>): void;
+  setSenderVideoConstraint?(altura: number): Promise<void> | void;
 }
 
 interface ConexaoJitsi {
@@ -252,7 +303,14 @@ function ehCelular(): boolean {
 
 async function abrirVideoComFallback(api: ApiJitsi): Promise<FaixaJitsi[]> {
   let ultimo: unknown = null;
-  for (const opcoes of [{}, { resolution: 360 }, { resolution: 240, constraints: { video: true } }]) {
+  /* A escada começa no que se quer e desce só o necessário. Antes ela começava
+   * em `{}` — "o que vier" — e a webcam que negociasse mal já entregava 240p
+   * para o resto da entrevista, sem nada na tela dizendo por quê. */
+  for (const opcoes of [
+    { resolution: ALTURA_VIDEO, constraints: { video: VIDEO_PEDIDO } },
+    { resolution: 480 },
+    { resolution: 240, constraints: { video: true } },
+  ]) {
     try {
       const faixas = await api.createLocalTracks({ devices: ["video"], ...opcoes });
       if (faixas.some((f) => f.getType() === "video")) return faixas;
@@ -319,8 +377,28 @@ export class ChamadaJitsi {
   private p2pLigado = false;
   /** Impede duas recuperações de microfone ao mesmo tempo (`ended` + `mute`). */
   private recuperandoAudio = false;
+  /** Uma entrada por vez. Ver o comentário em `entrar`. */
+  private entrando = false;
+  /** Uma troca de vídeo por vez (câmera ou tela).
+   *
+   *  O Jitsi aceita UMA faixa de vídeo por participante, e ligar câmera ou tela
+   *  leva vários `await` — pedir o dispositivo, aplicar o fundo, publicar. Dois
+   *  cliques dentro dessa janela (o toque duplo do cliente no celular é o caso
+   *  comum) abriam duas capturas: a segunda morria em "Cannot add second video
+   *  track", com a câmera do aparelho acesa e o botão dizendo o contrário. */
+  private mexendoVideo = false;
+  /** O que é preciso para RECONECTAR sozinho: a lib, a sala e o token. Guardados
+   *  porque quem descobre a queda é um ouvinte, longe de quem chamou `entrar`. */
+  private religar: { api: ApiJitsi; sala: string; token?: string } | null = null;
+  private tentativasReconexao = 0;
+  private temporizadorReconexao: number | null = null;
+  /** O ouvinte global que libera as saídas de áudio no primeiro toque. Um só
+   *  por chamada, e removido no desligamento — ver `garantirDestrave`. */
+  private destravarAudio: (() => void) | null = null;
   private travaTela: WakeLockSentinel | null = null;
   private limiteAudio: number | null = null;
+  /** Espera antes de declarar que não há mais voz do outro lado. Ver `soltarFaixa`. */
+  private esperaSemRemota: number | null = null;
 
   private vigiarAudioRemoto(): void {
     if (this.limiteAudio !== null) window.clearTimeout(this.limiteAudio);
@@ -370,9 +448,47 @@ export class ChamadaJitsi {
     return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getDisplayMedia);
   }
 
-  /** Abre o microfone (e a câmera, se pedida) e entra na sala. */
+  /* Abre o microfone (e a câmera, se pedida) e entra na sala.
+   *
+   * A GUARDA ERA TARDIA DEMAIS — E ESTA É A CORRIDA DA INICIALIZAÇÃO.
+   *
+   * `if (this.sala) return` só protege depois que a sala existe, e ela só nasce
+   * no fim de `conectar`, vários `await` adiante (carregar a lib, abrir o
+   * microfone, falar com o servidor: segundos, no celular). Duas entradas
+   * disparadas nessa janela — o duplo toque do cliente no botão, o React
+   * remontando em StrictMode, a tela que reabre a chamada ao trocar de rota —
+   * passavam as duas pela guarda e abriam DUAS capturas e DUAS conferências. No
+   * celular a segunda captura mata a faixa da primeira (ver o comentário
+   * abaixo), e o resultado é entrar na sala mudo, do jeito mais difícil de
+   * diagnosticar: tudo na tela diz que deu certo.
+   *
+   * A trava é levantada ANTES do primeiro `await` e solta no `finally`, para
+   * uma entrada que falhou não bloquear a próxima tentativa — que é justamente
+   * o que o cliente faz quando o primeiro toque não funciona. */
   async entrar(sala: string, opcoes: OpcoesEntrada = {}, token?: string): Promise<void> {
-    if (this.sala) return;
+    /* `this.sala` é null DURANTE uma reconexão — e essa é a janela perigosa.
+     *
+     * Entre a queda e a religação a sala não existe e `entrando` é falso, então
+     * a guarda deixava passar: um toque em "Entrar" nesses segundos (e é
+     * exatamente aí que a pessoa toca, porque a tela diz "conectando") abria uma
+     * segunda entrada completa, com captura nova, enquanto a primeira ainda ia
+     * voltar sozinha. Duas conferências, o mesmo microfone.
+     *
+     * A guarda é o TEMPORIZADOR, e não `religar`: `religar` fica preenchido
+     * desde a primeira tentativa de conexão e não é limpo quando ela FALHA —
+     * usá-lo aqui trancaria o botão "Entrar" para sempre justamente depois de
+     * uma entrada malsucedida, que é quando a pessoa mais precisa tentar de
+     * novo. O temporizador existe só enquanto há religação de fato agendada. */
+    if (this.sala || this.entrando || this.temporizadorReconexao !== null) return;
+    this.entrando = true;
+    try {
+      await this.entrarInterno(sala, opcoes, token);
+    } finally {
+      this.entrando = false;
+    }
+  }
+
+  private async entrarInterno(sala: string, opcoes: OpcoesEntrada = {}, token?: string): Promise<void> {
     // Tokens do portal usam base64url e podem conter maiúsculas. O Prosody/Jitsi
     // transforma o nome da MUC em minúsculas e rejeita a conferência quando o
     // cliente envia o original misturado ("Invalid conference name"). As duas
@@ -428,7 +544,12 @@ export class ChamadaJitsi {
     let erroCamera: unknown = null;
     if (querCamera) {
       try {
-        faixas = await api.createLocalTracks({ devices: ["audio", "video"], ...comMicrofone });
+        faixas = await api.createLocalTracks({
+          devices: ["audio", "video"],
+          ...comMicrofone,
+          resolution: ALTURA_VIDEO,
+          constraints: { video: VIDEO_PEDIDO },
+        });
       } catch (e) {
         erroCamera = e;
         faixas = [];
@@ -493,6 +614,18 @@ export class ChamadaJitsi {
 
   /** Liga ou desliga a câmera no meio da chamada. Devolve se ficou ligada. */
   async alternarCamera(): Promise<boolean> {
+    // Clique repetido durante a troca não vira segunda captura: devolve o que
+    // está valendo agora, e a troca em curso segue para o seu fim.
+    if (this.mexendoVideo) return this.minhaCamera !== null;
+    this.mexendoVideo = true;
+    try {
+      return await this.alternarCameraInterno();
+    } finally {
+      this.mexendoVideo = false;
+    }
+  }
+
+  private async alternarCameraInterno(): Promise<boolean> {
     if (!this.api) return false;
 
     /* Ligar a câmera durante o compartilhamento encerra o compartilhamento:
@@ -548,6 +681,18 @@ export class ChamadaJitsi {
    * voltaria. Por isso o encerramento passa pelo mesmo caminho nos dois casos.
    */
   async alternarTela(): Promise<boolean> {
+    // Mesma trava da câmera, e pelo mesmo motivo: as duas disputam a única
+    // faixa de vídeo do participante, então a trava tem de ser a mesma.
+    if (this.mexendoVideo) return this.minhaTela !== null;
+    this.mexendoVideo = true;
+    try {
+      return await this.alternarTelaInterno();
+    } finally {
+      this.mexendoVideo = false;
+    }
+  }
+
+  private async alternarTelaInterno(): Promise<boolean> {
     if (!this.api) return false;
     if (this.minhaTela) {
       await this.pararTela();
@@ -617,7 +762,15 @@ export class ChamadaJitsi {
     this.anunciarParticipantes();
   }
 
-  private conectar(api: ApiJitsi, sala: string, token?: string): Promise<void> {
+  /* `religando` muda o que uma falha SIGNIFICA para a tela.
+   *
+   * Na primeira entrada, não conseguir falar com o servidor é o fim: quem
+   * clicou precisa saber que não entrou. Numa religação automática é só mais
+   * uma tentativa que não vingou — a próxima já está agendada, e marcar
+   * "encerrada" no meio faz `ativa` virar falso por um instante, o que
+   * desmonta o painel flutuante e pisca a chamada inteira na tela de quem está
+   * esperando pacientemente, como a própria mensagem mandou. */
+  private conectar(api: ApiJitsi, sala: string, token?: string, religando = false): Promise<void> {
     const eventos = api.events.connection;
     const conexao = new api.JitsiConnection(
       "level33-chamadas",
@@ -633,10 +786,30 @@ export class ChamadaJitsi {
       },
     );
     this.conexao = conexao;
+    // O que a reconexão automática vai precisar, guardado no único ponto em que
+    // as três peças estão à mão ao mesmo tempo.
+    this.religar = { api, sala, token };
 
     return new Promise<void>((ok, falhou) => {
+      /* A TENTATIVA QUE ESTOUROU O PRAZO PRECISA MORRER DE VERDADE.
+       *
+       * Antes o timeout apenas REJEITAVA a promessa e ia embora: a conexão
+       * continuava viva, tentando. Quando ela se estabelecia tarde — e num
+       * celular em rede ruim isso passa dos 25 segundos com frequência —, o
+       * `CONNECTION_ESTABLISHED` chegava e entrava na sala assim mesmo, depois
+       * de quem chamou já ter tratado a entrada como falha e, quase sempre,
+       * tocado em "Entrar" de novo. O resultado eram DUAS conferências vivas na
+       * mesma aba, disputando a mesma faixa de microfone: a sala mostrava a
+       * pessoa duas vezes e o áudio ia por uma das duas, na sorte.
+       *
+       * Com a reconexão automática isso deixou de ser raro, porque cada
+       * religação abre uma tentativa nova. A bandeira fecha a porta: a tentativa
+       * descartada não entra em sala nenhuma, e a conexão pendente é desfeita. */
+      let descartada = false;
       const limite = window.setTimeout(() => {
-        this.mudarEstado("encerrada");
+        descartada = true;
+        void conexao.disconnect().catch(() => {});
+        if (!religando) this.mudarEstado("encerrada");
         falhou(
           new Error(
             "O servidor de chamadas não respondeu. Confira a internet (troque entre Wi-Fi e 4G) " +
@@ -645,22 +818,109 @@ export class ChamadaJitsi {
         );
       }, LIMITE_SERVIDOR_MS);
       conexao.addEventListener(eventos.CONNECTION_ESTABLISHED, () => {
+        if (descartada) return;
         window.clearTimeout(limite);
+        /* O orçamento de tentativas é por QUEDA, não por chamada: uma conexão
+         * que se restabeleceu prova que o caminho existe. Sem zerar aqui, uma
+         * entrevista longa com três oscilações espaçadas esgotaria o limite e
+         * a quarta queda — horas depois — seria tratada como definitiva. */
+        this.tentativasReconexao = 0;
         this.entrarNaSala(api, sala);
         ok();
       });
       conexao.addEventListener(eventos.CONNECTION_FAILED, () => {
         window.clearTimeout(limite);
-        this.mudarEstado("encerrada");
+        // Numa religação o estado fica em "conectando": quem agendou a próxima
+        // tentativa é o `catch` de `agendarReconexao`, e é ele que decide
+        // quando a chamada está mesmo encerrada (ver `MAX_RECONEXOES`).
+        if (!religando) this.mudarEstado("encerrada");
         falhou(new Error("Não foi possível falar com o servidor de chamadas."));
       });
       conexao.addEventListener(eventos.CONNECTION_DISCONNECTED, () => {
         if (this.desligando) return;
-        this.mudarEstado("encerrada");
-        this.eventos.onErro?.("A conexão com o servidor de chamadas caiu.");
+        /* A QUEDA DO SERVIDOR NÃO É MAIS O FIM DA CHAMADA.
+         *
+         * Antes isto marcava "encerrada" e pronto: o Wi-Fi que oscila por dez
+         * segundos, o celular que troca de torre, o contêiner do Jitsi que
+         * reinicia — todos derrubavam a entrevista em definitivo, e a única
+         * saída era o cliente (no celular, no meio de um dia ruim) descobrir
+         * sozinho que precisava abrir o link de novo. A faixa de microfone
+         * continua viva aqui dentro, então reconectar é barato e recupera a
+         * conversa sem pedir nada a ninguém. */
+        this.agendarReconexao();
       });
       conexao.connect();
     });
+  }
+
+  /* Volta para a sala sozinho depois de uma queda, com espera crescente.
+   *
+   * A espera cresce (3s, 6s, 12s…) porque as duas causas comuns pedem tempos
+   * diferentes: a oscilação de rede volta em segundos, e o servidor que
+   * reiniciou leva a primeira meia dúzia. Tentar de meio em meio segundo não
+   * apressa nenhuma das duas e ainda martela o servidor que está subindo.
+   *
+   * Depois de `MAX_RECONEXOES` a chamada é dada por encerrada de verdade: uma
+   * pílula "reconectando…" que nunca converge é pior que o aviso honesto de que
+   * é preciso abrir o link de novo. */
+  private agendarReconexao(): void {
+    const religar = this.religar;
+    if (this.desligando || !religar || this.temporizadorReconexao !== null) return;
+
+    if (this.tentativasReconexao >= MAX_RECONEXOES) {
+      this.eventos.onErro?.(
+        "A conexão com o servidor de chamadas caiu e não voltou. Abra o link da chamada de novo.",
+      );
+      /* DESISTIR TAMBÉM É SOLTAR O MICROFONE.
+       *
+       * Antes isto só mudava o rótulo para "encerrada" e ia embora: a captura
+       * continuava aberta, com a luz do aparelho acesa, gravando uma sala que
+       * não existe mais. Numa conversa de escritório de advocacia é o defeito
+       * mais grave dos três (privacidade, bateria e confiança), e o mais fácil
+       * de não notar — a tela já dizia "encerrada", então ninguém procura.
+       *
+       * `desligar` solta faixas, ouvintes, wake lock e temporizadores; o estado
+       * volta a "encerrada" logo depois porque "fora" apagaria da tela o aviso
+       * que explica o que aconteceu. A mensagem já saiu acima, antes de soltar,
+       * para não depender de nada que o desligamento limpa. */
+      this.desligar();
+      this.mudarEstado("encerrada");
+      return;
+    }
+
+    const espera = ESPERA_RECONEXAO_MS * 2 ** this.tentativasReconexao;
+    this.tentativasReconexao += 1;
+    this.mudarEstado("conectando");
+    this.eventos.onErro?.("A chamada caiu e está voltando sozinha. Continue nesta tela.");
+
+    this.temporizadorReconexao = window.setTimeout(() => {
+      this.temporizadorReconexao = null;
+      if (this.desligando) return;
+
+      // A conferência e a conexão velhas não servem mais: soltá-las antes evita
+      // dois transportes disputando a mesma faixa de microfone.
+      const anterior = this.conexao;
+      this.sala = null;
+      this.conexao = null;
+      /* O QUE A CONFERÊNCIA MORTA DEIXA PARA TRÁS.
+       *
+       * `TRACK_REMOVED` não dispara para uma conferência que caiu — ela não se
+       * despede. Sem soltar à mão, os `<audio>` do outro lado ficam pendurados
+       * no documento e no mapa `remotas`, e os retratos guardam ids de
+       * participante que não existem mais na sala nova.
+       *
+       * Não é só vazamento: `vigiarAudioRemoto` decide se avisa "o áudio da
+       * outra pessoa não chegou" olhando `remotas.size > 0`. Com os elementos
+       * mortos ali dentro, ele conclui que o áudio chegou — e cala justamente
+       * na reconexão, que é quando o áudio mais falha. */
+      this.soltarRemotas();
+      void anterior?.disconnect().catch(() => {});
+
+      void this.conectar(religar.api, religar.sala, religar.token, true).catch(() => {
+        // Falhou de novo: a próxima espera já sai dobrada.
+        this.agendarReconexao();
+      });
+    }, espera);
   }
 
   private entrarNaSala(api: ApiJitsi, nome: string): void {
@@ -703,11 +963,34 @@ export class ChamadaJitsi {
       // O nome vai antes das faixas: quem já está na sala recebe o "entrou"
       // junto do nome, em vez de ver um "participante" anônimo por um segundo.
       if (this.meuNome) sala.setDisplayName(this.meuNome);
-      // Publicação de áudio é confirmada: em alguns navegadores a sala entra
-      // antes de o dispositivo terminar de ficar disponível. Antes uma falha
-      // aqui era silenciosa e a chamada parecia normal, mas sem voz de saída.
-      void this.publicarMicrofone(sala);
-      if (this.minhaCamera) void sala.addTrack(this.minhaCamera);
+      this.pedirQualidade(sala);
+      /* Publicação de áudio é confirmada: em alguns navegadores a sala entra
+       * antes de o dispositivo terminar de ficar disponível. Antes uma falha
+       * aqui era silenciosa e a chamada parecia normal, mas sem voz de saída.
+       *
+       * NA RECONEXÃO, PUBLICAR A MESMA FAIXA NÃO BASTA.
+       *
+       * `this.minhaFaixa` continua sendo o objeto que já foi anexado à
+       * conferência ANTERIOR, e a lib recusa reaproveitá-lo numa conferência
+       * nova. Sem o resgate abaixo, a religação automática terminava com a
+       * pessoa dentro da sala e muda — com uma mensagem mandando apertar
+       * "Reativar áudio" à mão, o que anula o sentido de reconectar sozinho.
+       * `reativarAudio` recria a faixa do zero e republica, que é o que o
+       * "sair e entrar" fazia. */
+      void this.publicarMicrofone(sala).then((publicado) => {
+        if (publicado || this.desligando || this.mudoAtual) return;
+        return this.reativarAudio().then(
+          () => undefined,
+          () => undefined,
+        );
+      });
+      // A câmera ia sem `catch`: falhar aqui virava rejeição solta no console e
+      // uma chamada sem imagem que ninguém sabia explicar.
+      if (this.minhaCamera) {
+        void sala.addTrack(this.minhaCamera).catch(() => {
+          this.eventos.onErro?.("A câmera não voltou depois da reconexão. Ligue-a de novo.");
+        });
+      }
       this.mudarEstado(sala.getParticipantCount() > 0 ? "conectando" : "aguardando");
       if (sala.getParticipantCount() > 0) this.vigiarAudioRemoto();
       this.anunciarParticipantes();
@@ -752,6 +1035,54 @@ export class ChamadaJitsi {
     });
     sala.on(ev.DISPLAY_NAME_CHANGED, () => this.anunciarParticipantes());
 
+    /* A CÂMERA DO OUTRO LADO LIGA E DESLIGA, E A TELA PRECISA SABER.
+     *
+     * `TRACK_ADDED`/`TRACK_REMOVED` não cobrem isto: quando o cliente desliga a
+     * câmera pelo botão dele, a faixa continua publicada e apenas fica MUTED —
+     * nenhum dos dois eventos dispara. O retrato seguia mostrando o último
+     * quadro recebido, congelado, e o advogado ficava esperando a imagem
+     * "voltar" de uma câmera que já estava desligada. Tratando o mute, o
+     * retrato cai para a inicial do nome, que é a verdade. */
+    if (ev.TRACK_MUTE_CHANGED) {
+      sala.on(ev.TRACK_MUTE_CHANGED, (...args: unknown[]) => {
+        const faixa = args[0] as FaixaJitsi;
+        if (faixa.isLocal() || faixa.getType() !== "video") return;
+        const de = faixa.getParticipantId?.();
+        if (!de) return;
+        if (faixa.isMuted?.()) {
+          this.videos.delete(de);
+          this.telas.delete(de);
+        } else {
+          this.videos.set(de, faixa.getTrack());
+          if (faixa.getVideoType?.() === "desktop") this.telas.add(de);
+        }
+        this.anunciarParticipantes();
+      });
+    }
+
+    /* "ENTROU NA SALA MAS NINGUÉM OUVE" TEM UM EVENTO PRÓPRIO, E ELE ERA IGNORADO.
+     *
+     * Quando a mídia do outro lado não encontra caminho, a sinalização continua
+     * de pé: o retrato aparece, o nome aparece, o cronômetro anda. O único
+     * aviso é este evento mudando o status para `interrupted`. Sem ouvi-lo, o
+     * sintoma ficava exatamente como descrito no CHAMADA.md — "parece que deu
+     * certo" — e os dois lados ficavam falando sozinhos até alguém desistir.
+     *
+     * Aqui não se tenta consertar: o remédio (trocar de rede, TURN) está fora
+     * do alcance do navegador. O que se faz é DIZER, que é o que falta. */
+    if (ev.PARTICIPANT_CONN_STATUS_CHANGED) {
+      sala.on(ev.PARTICIPANT_CONN_STATUS_CHANGED, (...args: unknown[]) => {
+        if (this.desligando) return;
+        const situacao = String(args[1] ?? "");
+        if (situacao === "interrupted" || situacao === "inactive") {
+          this.eventos.onErro?.(
+            "A conexão da outra pessoa está instável e o áudio dela pode não estar chegando. " +
+              "Peça para ela trocar entre Wi-Fi e 4G se o silêncio continuar.",
+          );
+        }
+      });
+    }
+
     sala.on(ev.USER_LEFT, (...args: unknown[]) => {
       this.videos.delete(String(args[0]));
       this.telas.delete(String(args[0]));
@@ -760,8 +1091,24 @@ export class ChamadaJitsi {
     });
 
     sala.on(ev.CONFERENCE_FAILED, (...args: unknown[]) => {
+      /* A SALA RECUSOU — E O BOTÃO "ENTRAR" PRECISA VOLTAR A FUNCIONAR.
+       *
+       * `this.sala` é preenchido logo acima, ANTES do `join()`, porque os
+       * ouvintes precisam do objeto. Quando a entrada falha, essa atribuição
+       * fica para trás apontando para uma conferência que nunca entrou — e
+       * `entrar()` começa com `if (this.sala) return`. O efeito era o pior tipo
+       * de defeito: a tela dizia "chamada encerrada", a pessoa tocava em Entrar
+       * e NADA acontecia, sem erro novo, sem log, para sempre. O único jeito de
+       * sair era desligar (botão que, nesse estado, ninguém procura).
+       *
+       * Soltar a referência aqui devolve a segunda tentativa, que numa recusa
+       * transitória (o Prosody ainda subindo, token que acabou de vencer) é
+       * justamente a que funciona. */
+      if (this.sala === sala) this.sala = null;
       this.mudarEstado("encerrada");
-      this.eventos.onErro?.(`A sala recusou a entrada (${String(args[0])}).`);
+      this.eventos.onErro?.(
+        `A sala recusou a entrada (${String(args[0])}). Toque em entrar de novo; se repetir, avise o suporte.`,
+      );
     });
 
     /* TROCAR DE REDE NO MEIO DA CHAMADA — Wi-Fi↔4G, o caso do corredor.
@@ -807,19 +1154,65 @@ export class ChamadaJitsi {
     sala.join();
   }
 
+  /* Pede a qualidade de imagem dos DOIS lados do fluxo.
+   *
+   * Enviar em 720p não basta: o que chega a este navegador é a camada que ELE
+   * pede, e sem pedido a lib assume a mais baixa do simulcast (180p). Era por
+   * isso que os dois lados apareciam borrados mesmo com câmera boa e banda
+   * sobrando — cada um mandava bem e recebia mal.
+   *
+   * Tudo aqui é opcional e engolido em caso de erro: qualidade de imagem não
+   * pode derrubar uma chamada que já está de pé. Pior nítido do que mudo. */
+  private pedirQualidade(sala: ConferenciaJitsi): void {
+    try {
+      sala.setReceiverVideoConstraints?.({
+        // `lastN: -1` = receber todo mundo. Numa sala de dois, restringir não
+        // economiza nada e ainda apaga o retrato de quem entrar em terceiro.
+        lastN: -1,
+        defaultConstraints: { maxHeight: ALTURA_RECEPCAO },
+      });
+    } catch {
+      /* versão da lib sem constraint de recepção: segue no padrão dela */
+    }
+    try {
+      void sala.setSenderVideoConstraint?.(ALTURA_VIDEO);
+    } catch {
+      /* idem, do lado do envio */
+    }
+  }
+
   private async publicarMicrofone(sala: ConferenciaJitsi): Promise<boolean> {
     const faixa = this.minhaFaixa;
     if (!faixa) return false;
-    faixa.getTrack().enabled = true;
+    /* QUEM PEDIU SILÊNCIO CONTINUA EM SILÊNCIO — INCLUSIVE DEPOIS DE UMA QUEDA.
+     *
+     * Isto aqui abria o microfone sem perguntar (`enabled = true`), e até existir
+     * reconexão automática era quase inofensivo: só rodava na entrada, quando
+     * ninguém tinha pedido mudo ainda. Com a religação sozinha virou outra coisa
+     * — a pessoa desliga o microfone para falar com alguém do lado, a conexão
+     * oscila, a chamada volta por conta própria e ela é publicada FALANDO, sem
+     * ter tocado em nada e sem nada na tela dizendo isso. Numa entrevista de
+     * advocacia, onde o cliente desliga o microfone justamente para o que não
+     * quer que seja ouvido, é o pior defeito possível.
+     *
+     * O `mute()` depois do `addTrack` não é redundante com o `enabled`: o
+     * primeiro é o estado que o Jitsi anuncia aos outros participantes (é dele
+     * que sai o ícone de mudo do outro lado), o segundo é a faixa local parar de
+     * entregar amostras. Sem os dois, ou vaza som, ou o outro lado vê alguém
+     * "falando" mudo. */
+    const aberto = !this.mudoAtual;
+    faixa.getTrack().enabled = aberto;
     try {
       await sala.addTrack(faixa);
+      if (!aberto) await faixa.mute().catch(() => {});
       return true;
     } catch {
       await new Promise<void>((ok) => window.setTimeout(ok, 500));
     }
     try {
-      faixa.getTrack().enabled = true;
+      faixa.getTrack().enabled = aberto;
       await sala.addTrack(faixa);
+      if (!aberto) await faixa.mute().catch(() => {});
       return true;
     } catch {
       this.eventos.onErro?.("O microfone não foi publicado na chamada. Use “Reativar áudio” sem desligar a conversa.");
@@ -1156,23 +1549,76 @@ export class ChamadaJitsi {
     trilha.addEventListener("unmute", tocar);
     this.remotas.set(faixa, alto);
 
-    /* No Safari/iOS a faixa pode chegar depois do toque “Entrar”, fora da
-     * janela de autoplay. Qualquer próximo toque do atendente libera todas as
-     * saídas pendentes; não depende de trocar microfone nem de reconectar. */
-    const destravar = () => {
-      for (const audio of this.remotas.values()) void audio.play().catch(() => {});
-      document.removeEventListener("pointerdown", destravar, true);
-      document.removeEventListener("keydown", destravar, true);
-    };
-    document.addEventListener("pointerdown", destravar, true);
-    document.addEventListener("keydown", destravar, true);
+    this.garantirDestrave();
 
     if (this.limiteAudio !== null) {
       window.clearTimeout(this.limiteAudio);
       this.limiteAudio = null;
     }
+    // A voz voltou dentro da janela de tolerância: era troca de dispositivo, e
+    // não saída. O "aguardando" agendado em `soltarFaixa` não chega a valer.
+    if (this.esperaSemRemota !== null) {
+      window.clearTimeout(this.esperaSemRemota);
+      this.esperaSemRemota = null;
+    }
     this.mudarEstado("falando");
     this.eventos.onFaixaRemota?.(faixa.getTrack());
+  }
+
+  /* No Safari/iOS a faixa pode chegar depois do toque “Entrar”, fora da janela
+   * de autoplay. Qualquer próximo toque libera todas as saídas pendentes.
+   *
+   * UM ouvinte por chamada, e não um por faixa. Antes cada faixa remota
+   * registrava o seu par de ouvintes globais, e eles só se removiam ao
+   * DISPARAR: numa chamada que reconecta, ou em que o outro lado troca de
+   * microfone algumas vezes, sobravam ouvintes de faixas já descartadas
+   * pendurados no documento, cada um varrendo o mapa inteiro a cada toque da
+   * tela. Agora o registro é idempotente e o desligamento leva o ouvinte
+   * embora, mesmo que ele nunca tenha disparado. */
+  private garantirDestrave(): void {
+    if (this.destravarAudio) return;
+    const destravar = () => {
+      for (const audio of this.remotas.values()) void audio.play().catch(() => {});
+      this.removerDestrave();
+    };
+    this.destravarAudio = destravar;
+    document.addEventListener("pointerdown", destravar, true);
+    document.addEventListener("keydown", destravar, true);
+  }
+
+  private removerDestrave(): void {
+    const destravar = this.destravarAudio;
+    if (!destravar) return;
+    this.destravarAudio = null;
+    document.removeEventListener("pointerdown", destravar, true);
+    document.removeEventListener("keydown", destravar, true);
+  }
+
+  /** Solta TODAS as saídas de áudio remotas e esquece os retratos dos outros.
+   *
+   *  Usado na reconexão, onde a conferência antiga morre sem emitir
+   *  `TRACK_REMOVED`. Não mexe em `"eu"`: a minha câmera atravessa a queda viva,
+   *  e apagá-la faria o meu próprio retrato piscar a cada oscilação de rede. */
+  private soltarRemotas(): void {
+    for (const faixa of [...this.remotas.keys()]) this.soltarFaixa(faixa);
+    for (const id of [...this.videos.keys()]) if (id !== "eu") this.videos.delete(id);
+    this.telas.clear();
+    /* O vigia do áudio remoto pertencia à sala que caiu.
+     *
+     * Ele dispara uma mensagem que manda "sair da chamada e entrar de novo" —
+     * conselho correto quando a sala está de pé e o áudio não veio, e péssimo
+     * no meio de uma religação automática, onde a orientação é o contrário:
+     * ficar na tela e esperar. Quem entrar na sala nova o rearma. */
+    if (this.limiteAudio !== null) {
+      window.clearTimeout(this.limiteAudio);
+      this.limiteAudio = null;
+    }
+    /* `soltarFaixa` marca "aguardando" ao esvaziar o mapa — o que é correto
+     * quando o outro lado SAIU, e errado aqui: não é que ninguém esteja na
+     * sala, é que a sala caiu e está voltando. Sem esta linha a tela diz
+     * "esperando o outro lado" no meio da reconexão, e quem lê isso desliga. */
+    this.mudarEstado("conectando");
+    this.anunciarParticipantes();
   }
 
   private soltarFaixa(faixa: FaixaJitsi): void {
@@ -1186,14 +1632,54 @@ export class ChamadaJitsi {
     alto.srcObject = null;
     alto.remove();
     this.remotas.delete(faixa);
-    if (this.remotas.size === 0 && !this.desligando) this.mudarEstado("aguardando");
+
+    /* PERDER A FAIXA NÃO É O MESMO QUE PERDER A PESSOA.
+     *
+     * Quando o outro lado troca de microfone — conecta o fone Bluetooth, a
+     * bateria dele acaba, o celular passa para o viva-voz —, a lib remove a
+     * faixa antiga e publica a nova. São dois eventos separados, com um
+     * intervalo curto entre eles, e neste meio o mapa fica vazio. Declarar
+     * "aguardando" na hora fazia a tela anunciar "esperando o cliente" com o
+     * cliente falando do outro lado, e piscar de volta para "em chamada" um
+     * segundo depois. Numa entrevista isso faz o advogado interromper a pessoa
+     * para perguntar se ela ainda está aí.
+     *
+     * Quem sai de verdade é anunciado por `USER_LEFT`, que marca "aguardando"
+     * na hora e sem espera nenhuma — este caminho aqui trata só o silêncio, e
+     * silêncio merece o benefício da dúvida. */
+    if (this.esperaSemRemota !== null) window.clearTimeout(this.esperaSemRemota);
+    this.esperaSemRemota = window.setTimeout(() => {
+      this.esperaSemRemota = null;
+      if (this.remotas.size === 0 && !this.desligando) this.mudarEstado("aguardando");
+    }, ESPERA_TROCA_REMOTA_MS);
   }
 
-  /** Corta o próprio microfone sem sair da chamada. Devolve o estado novo. */
-  alternarMudo(): boolean {
-    if (!this.minhaFaixa) return false;
-    this.mudoAtual = !this.mudoAtual;
-    void (this.mudoAtual ? this.minhaFaixa.mute() : this.minhaFaixa.unmute());
+  /* Corta o próprio microfone sem sair da chamada. Devolve o estado NOVO.
+   *
+   * ESTADO DE MUDO INCONSISTENTE: ERA DAQUI.
+   *
+   * A versão anterior marcava `mudoAtual` e disparava `mute()`/`unmute()` com
+   * `void` — sem esperar e sem conferir. Quando a promessa falhava (e ela falha
+   * de verdade: faixa em republicação, dispositivo tomado por outro app, sala
+   * renegociando), o botão já dizia "mudo" com o microfone ABERTO, ou o
+   * contrário — alguém convencido de estar sendo ouvido e falando para ninguém.
+   * Numa entrevista, o segundo caso é o que custa a conversa inteira.
+   *
+   * Agora o estado só muda depois de a operação confirmar, e volta atrás se ela
+   * falhar. A tela passa a refletir o microfone, e não a intenção do clique. */
+  async alternarMudo(): Promise<boolean> {
+    if (!this.minhaFaixa) return this.mudoAtual;
+    const alvo = !this.mudoAtual;
+    try {
+      await (alvo ? this.minhaFaixa.mute() : this.minhaFaixa.unmute());
+      this.mudoAtual = alvo;
+    } catch {
+      this.eventos.onErro?.(
+        alvo
+          ? "Não foi possível desligar o microfone. Ele continua aberto — fale só o que puder ser ouvido."
+          : "Não foi possível religar o microfone. Toque em “Reativar áudio”.",
+      );
+    }
     return this.mudoAtual;
   }
 
@@ -1204,9 +1690,24 @@ export class ChamadaJitsi {
     window.removeEventListener("online", this.aoVoltarRede);
     this.dispositivosConhecidos = [];
     this.ultimoRestabelecimento = 0;
+    this.entrando = false;
+    this.removerDestrave();
+    // A reconexão pendente precisa morrer aqui: sem isto, desligar durante uma
+    // queda faria a chamada RESSUSCITAR alguns segundos depois, com microfone
+    // aberto, contra a vontade de quem acabou de desligar.
+    this.religar = null;
+    this.tentativasReconexao = 0;
+    if (this.temporizadorReconexao !== null) {
+      window.clearTimeout(this.temporizadorReconexao);
+      this.temporizadorReconexao = null;
+    }
     if (this.limiteAudio !== null) {
       window.clearTimeout(this.limiteAudio);
       this.limiteAudio = null;
+    }
+    if (this.esperaSemRemota !== null) {
+      window.clearTimeout(this.esperaSemRemota);
+      this.esperaSemRemota = null;
     }
     void this.travaTela?.release().catch(() => {});
     this.travaTela = null;

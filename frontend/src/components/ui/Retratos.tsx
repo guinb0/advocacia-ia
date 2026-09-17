@@ -39,7 +39,7 @@ function inicial(nome: string): string {
  * `globals.css`. */
 const TAMANHO_INICIAL = {
   "palco-grande": "w-[clamp(72px,22%,128px)] text-[clamp(1.75rem,7vw,3rem)]",
-  "palco-coluna": "w-[84px] text-[2rem]",
+  "palco-coluna": "w-[clamp(84px,20%,120px)] text-[clamp(2rem,5vw,2.75rem)]",
   canto: "w-10 text-[1.125rem]",
   miniatura: "w-9 text-[1rem]",
 } as const;
@@ -239,12 +239,18 @@ export default function Retratos({
           cheia
             ? `${cheiaCss ? "fixed inset-0 z-[100]" : ""} h-[100dvh] w-screen max-h-none rounded-none border-0`
             : coluna
-              ? "aspect-[4/3] max-h-[360px] rounded-campo"
+              /* A chamada era a menor coisa da tela do advogado: 4/3 travado em
+               * 360px de altura, num painel de 460px de largura. Quem conduz a
+               * entrevista precisa LER O ROSTO de quem responde — hesitação,
+               * constrangimento, a pausa antes de responder sobre o valor —, e
+               * isso não cabe em 360px. 16/9 usa a largura inteira da coluna e
+               * o teto passa a ser a altura da janela, não um número fixo. */
+              ? "aspect-video max-h-[min(52vh,560px)] rounded-campo"
               /* No celular em pe, 16/9 desperdica a tela: a largura toda vira
                * uma faixa de ~190px de altura e o rosto fica do tamanho de uma
                * unha. Retrato 3/4 usa a mesma largura e mais que dobra a altura.
                * De `sm` para cima volta a 16/9, que e a proporcao do monitor. */
-              : "aspect-[3/4] max-h-[62vh] sm:aspect-video sm:max-h-[58vh] rounded-campo"
+              : "aspect-[3/4] max-h-[72vh] sm:aspect-video sm:max-h-[68vh] rounded-campo"
         }`}
       >
         {(podeExpandir || tamanho === "grande") && (
@@ -274,7 +280,7 @@ export default function Retratos({
           <figure
             className={`absolute m-0 border border-[rgba(255,255,255,0.5)] rounded-campo bg-papel-3 shadow-[0_2px_8px_rgba(0,0,0,0.28)] overflow-hidden grid place-items-center [aspect-ratio:4/3] ${
               coluna && !cheia
-                ? "right-2 bottom-2 w-[84px]"
+                ? "right-2 bottom-2 w-[clamp(84px,22%,132px)]"
                 : "right-[10px] bottom-[10px] w-[clamp(84px,26%,168px)]"
             }`}
           >

@@ -1,7 +1,20 @@
 import type { ImageSegmenter } from "@mediapipe/tasks-vision";
 
-const LARGURA = 640;
-const FPS = 15;
+/* O TETO DA IMAGEM DO ADVOGADO MORA AQUI, E NÃO NO JITSI.
+ *
+ * A câmera dele não vai direto para a chamada: ela atravessa este canvas, e o
+ * que o outro lado recebe é `captureStream` DESTE tamanho. Enquanto foi 640x360
+ * a 15 fps, nenhuma configuração de resolução na `chamadaJitsi` tinha efeito no
+ * lado do escritório — o vídeo já chegava reduzido ao Jitsi, que só podia
+ * degradá-lo mais. Era a razão de o advogado aparecer borrado mesmo em conexão
+ * boa, enquanto o cliente (sem fundo virtual, sem canvas) aparecia nítido.
+ *
+ * 960x540 a 24 fps é o meio-termo medido: dobra a área de imagem e ainda cabe
+ * no orçamento de CPU da segmentação, que roda a cada quadro. Subir a 720p aqui
+ * faria a máquina do escritório perder quadros na própria segmentação, que é
+ * pior que a imagem menor — o vídeo trava em vez de ficar macio. */
+const LARGURA = 960;
+const FPS = 24;
 
 let segmentador: Promise<ImageSegmenter> | null = null;
 
