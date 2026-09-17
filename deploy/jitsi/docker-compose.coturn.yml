@@ -85,6 +85,18 @@ services:
         published: 5349
         protocol: tcp
         mode: host
+      # A FAIXA DE RELAY, publicada. Fixa-la no `command` sem abrir aqui nao
+      # resolve nada: o coturn aceitaria a alocacao, o navegador ganharia um
+      # candidato `relay` e a voz sairia por uma porta fechada — o mesmo
+      # silencio de nao ter TURN, agora com o `webrtc-internals` jurando que
+      # esta tudo certo. Precisa casar com --min-port/--max-port acima.
+      #
+      # Sintaxe curta de proposito: a forma longa (`target`/`published`) nao
+      # aceita intervalo, e 50 entradas escritas a mao e o tipo de coisa que
+      # sai do lugar na primeira edicao. Em Swarm isto publica em modo ingress,
+      # nao `host` como as de cima; se o no tiver IP publico direto, trocar por
+      # `network_mode: host` no servico inteiro e mais eficiente.
+      - "49160-49210:49160-49210/udp"
     volumes:
       # O certificado do dominio do TURN. Se o Traefik ja emite por DNS
       # challenge, o caminho mais curto e um job que exporte o par para ca; o
