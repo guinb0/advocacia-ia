@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import os
 from collections.abc import Iterator
 from typing import Any
@@ -111,8 +112,13 @@ Como você trabalha:
    relato é o erro mais grave que você pode cometer aqui.
 4. VOCÊ NÃO ALTERA A PEÇA SOZINHO. Para mudar a petição, gerar outra versão, redigir
    outra peça ou reanalisar os documentos, use a ferramenta de PROPOR correspondente.
-   Ela não executa nada: registra o pedido para o advogado confirmar. Depois de
-   propor, diga em uma frase o que vai acontecer e que depende do aceite dele.
+   Ela não executa nada: registra o pedido para o advogado confirmar.
+   O BOTÃO DE CONFIRMAR NASCE DA CHAMADA DA FERRAMENTA, NUNCA DO SEU TEXTO. Por isso é
+   proibido escrever "registrei", "propus" ou "preparei a alteração" sem ter chamado a
+   ferramenta NESTA resposta: quem lê fica esperando um botão que não existe. Se a
+   pergunta pede uma mudança na peça, a ferramenta vem PRIMEIRO; o texto explica depois.
+   Não repita o que o cartão de confirmação já diz sobre aceitar e comparar — diga o que
+   a alteração faz na peça e o que você precisa confirmar.
    Nunca diga que já alterou, já gerou ou já salvou.
 5. SEJA CURTO E ÚTIL. Sem saudação, sem repetir a pergunta, sem resumo do que você
    leu. Vá ao ponto, aponte o que está frágil e o que falta comprovar.
@@ -685,14 +691,18 @@ def _transmitir(mensagens: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         ) as resposta:
             if resposta.status_code >= 400:
                 resposta.read()
+                detalhe = resposta.text[:400]
                 log.warning(
                     "chat da petição: modelo recusou (%s): %s",
                     resposta.status_code,
-                    resposta.text[:300],
+                    detalhe,
                 )
+                # O detalhe vai junto de propósito: "tente de novo" sozinho manda repetir
+                # um pedido que vai falhar igual, e esconde de quem lê o log a diferença
+                # entre um erro nosso (corpo malformado) e um do serviço.
                 raise ErroDoChat(
                     f"O modelo respondeu {resposta.status_code} e não escreveu a resposta."
-                    " Tente de novo."
+                    f" {detalhe}"
                 )
             for linha in resposta.iter_lines():
                 if not linha or not linha.startswith("data:"):
@@ -724,14 +734,42 @@ def _transmitir(mensagens: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
             "O modelo não respondeu a tempo. A conversa está salva — tente de novo."
         ) from erro
 
-    yield {
-        "tipo": "mensagem",
-        "mensagem": {
-            "role": "assistant",
-            "content": "".join(texto),
-            "tool_calls": [chamadas[i] for i in sorted(chamadas)],
-        },
-    }
+    # `tool_calls` SÓ existe quando houve chamada.
+    #
+    # Mandar a chave com lista vazia é o que a API recusa com 400 ("invalid request") na
+    # rodada seguinte, quando esta mensagem volta no histórico. Passou despercebido
+    # enquanto a resposta sem ferramenta era sempre a ÚLTIMA — ela nunca era reenviada.
+    # A cobrança da promessa (ver `COBRANCA`) criou o primeiro caso em que ela volta, e
+    # três dos seis pedidos medidos morreram aí.
+    mensagem: dict[str, Any] = {"role": "assistant", "content": "".join(texto)}
+    if chamadas:
+        mensagem["tool_calls"] = [chamadas[i] for i in sorted(chamadas)]
+    yield {"tipo": "mensagem", "mensagem": mensagem}
+
+
+#: Quando o modelo AFIRMA ter proposto alguma coisa.
+#:
+#: Medido com dez pedidos seguidos numa peça real: a partir do terceiro, o modelo começou
+#: a imitar as respostas anteriores do próprio histórico ("Registrei o pedido de
+#: revisão…") sem chamar ferramenta nenhuma. A mensagem chegava perfeita e o cartão de
+#: confirmação não existia — o pior tipo de erro desta tela, porque parece sucesso.
+_PROMESSA = re.compile(
+    r"\b(registrei|propus|preparei|deixei registrad[oa])\b", re.IGNORECASE
+)
+
+COBRANCA = (
+    "Você escreveu que registrou/propôs uma alteração, mas NÃO chamou nenhuma ferramenta"
+    " de proposta nesta resposta — então nenhum cartão de confirmação foi criado e o"
+    " advogado ficaria esperando um botão que não existe.\n\n"
+    "Chame agora a ferramenta de propor correspondente, com o pedido escrito de forma"
+    " completa e literal. Se, pensando bem, não havia alteração a propor, responda"
+    " corrigindo o que você disse — sem afirmar que propôs."
+)
+
+
+def prometeu_acao(texto: str) -> bool:
+    """`True` quando o texto afirma ter proposto algo. Falso positivo custa uma rodada."""
+    return bool(_PROMESSA.search(texto or ""))
 
 
 #: O que a tela escreve enquanto a ferramenta roda. Escrito para quem lê, não para
@@ -875,8 +913,11 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     consultas: list[str] = []
     texto = ""
 
+    cobranca_feita = False
     try:
-        for _passo in range(MAXIMO_DE_PASSOS):
+        passo = 0
+        while passo < MAXIMO_DE_PASSOS:
+            passo += 1
             resposta: dict[str, Any] = {}
             for evento in _transmitir(mensagens):
                 if evento["tipo"] == "mensagem":
@@ -887,6 +928,19 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
             chamadas = resposta.get("tool_calls") or []
             mensagens.append(resposta)
             if not chamadas:
+                # Prometeu e não chamou: cobra UMA vez. Sem o teto, um modelo teimoso
+                # ficaria repetindo a promessa enquanto o advogado espera.
+                if not acoes and not cobranca_feita and prometeu_acao(texto):
+                    cobranca_feita = True
+                    log.warning(
+                        "chat da petição: resposta afirmou propor sem chamar ferramenta"
+                        " (caso %s) — cobrando a chamada",
+                        caso_id,
+                    )
+                    mensagens.append({"role": "user", "content": COBRANCA})
+                    yield {"tipo": "recomeco"}
+                    yield {"tipo": "etapa", "texto": "Preparando a alteração para você conferir"}
+                    continue
                 break
 
             for chamada in chamadas:
@@ -919,7 +973,7 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                         "content": json.dumps(resultado, ensure_ascii=False, default=str),
                     }
                 )
-        else:
+        if passo >= MAXIMO_DE_PASSOS and (resposta.get("tool_calls") or []):
             # Esgotou o teto ainda consultando: pede o fechamento com o que houver,
             # em vez de deixar o advogado olhando "digitando" até o prazo estourar.
             mensagens.append(

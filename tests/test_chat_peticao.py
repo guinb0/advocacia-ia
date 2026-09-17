@@ -92,6 +92,10 @@ def instalar_armazenamento() -> ArmazenamentoFalso:
     return falso
 
 
+#: O fluxo de verdade, guardado antes do primeiro dublê — a seção 9 o exercita.
+transmitir_de_verdade = chat_peticao._transmitir
+
+
 def rodadas(*roteiro: dict):
     """Troca o fluxo do modelo por um roteiro fixo, rodada a rodada.
 
@@ -327,6 +331,7 @@ def eventos_falsos(caso_id, pergunta, usuario):
     yield {"tipo": "fim", "mensagem": {"id": "m1", "papel": "ASSISTANT", "conteudo": "pronto"}}
 
 
+conversar_de_verdade = chat_peticao.conversar
 chat_peticao.conversar = eventos_falsos  # type: ignore[assignment]
 
 app = FastAPI()
@@ -350,6 +355,145 @@ checar([e["tipo"] for e in lidos] == ["etapa", "delta", "fim"], "os três evento
 checar(
     lidos[1]["texto"] == "Olha só: «aspas» e acento",
     "e o texto atravessa o SSE sem virar escape — a tela mostra o que o modelo escreveu",
+)
+
+# O dublê era da rota, não da conversa: quem vier depois exercita a função de verdade.
+chat_peticao.conversar = conversar_de_verdade  # type: ignore[assignment]
+
+# --------------------------------------------- 8. prometer não é propor
+
+print("\n8. O modelo diz que propôs, mas não chamou a ferramenta")
+
+falso = instalar_armazenamento()
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+chat_peticao.executar_ferramenta = lambda nome, caso_id, argumentos: {  # type: ignore[assignment]
+    "registrada": True,
+    "tipo": "REVISAR",
+    "pedido": "aumente o valor para R$ 60.000",
+    "sensivel": True,
+}
+rodadas(
+    # A resposta que o modelo deu de verdade na décima pergunta de uma peça real: o texto
+    # perfeito, a ferramenta nunca chamada.
+    {"texto": "Registrei o pedido de revisão. Ele não altera nada por si só."},
+    {"chamadas": [chamada("propor_revisao_da_peticao", {"pedido": "aumente o valor"})]},
+    {"texto": "Preparei a alteração: confirme no cartão acima."},
+)
+
+eventos = list(chat_peticao.conversar("caso-1", "aumenta o valor para 60 mil", "advogado-1"))
+final = eventos[-1]
+acoes = (final["mensagem"]["payload"] or {}).get("acoes") or []
+checar(final["tipo"] == "fim", "a conversa termina normalmente")
+checar(
+    [a["tipo"] for a in acoes] == ["REVISAR"],
+    "a cobrança arranca a chamada que faltava, e o cartão de confirmação existe",
+)
+checar(
+    "Registrei o pedido de revisão. Ele não altera nada por si só."
+    not in final["mensagem"]["conteudo"],
+    "e a mensagem gravada é a corrigida, não a que prometia sem cumprir",
+)
+checar(
+    any(e["tipo"] == "recomeco" for e in eventos),
+    "a tela é avisada de que o parcial não vale mais",
+)
+
+# Sem promessa, nada é cobrado: uma resposta que só explica não pode custar outra volta.
+falso = instalar_armazenamento()
+rodadas({"texto": "A minuta está na versão 3 e tem oito seções."})
+eventos = list(chat_peticao.conversar("caso-1", "em que versão está?", "advogado-1"))
+checar(
+    eventos[-1]["mensagem"]["conteudo"] == "A minuta está na versão 3 e tem oito seções.",
+    "resposta sem promessa passa direto, sem rodada extra",
+)
+
+
+# ------------------------------------- 9. o corpo que sai pela rede, de verdade
+
+print("\n9. O que é enviado ao modelo (sem dublê de `_transmitir`)")
+
+falso = instalar_armazenamento()
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+chat_peticao.executar_ferramenta = lambda nome, caso_id, argumentos: {  # type: ignore[assignment]
+    "existe": True,
+    "versao": 3,
+}
+
+chat_peticao._transmitir = transmitir_de_verdade  # type: ignore[assignment]
+
+corpos_enviados: list[dict] = []
+
+
+class FluxoFalso:
+    """O `httpx.stream` da DeepSeek, com o roteiro de SSE que cada rodada devolve."""
+
+    def __init__(self, linhas):
+        self.status_code = 200
+        self._linhas = linhas
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def iter_lines(self):
+        for linha in self._linhas:
+            yield linha
+
+
+def sse(pedaco: dict) -> str:
+    return "data: " + json.dumps({"choices": [{"delta": pedaco}]}, ensure_ascii=False)
+
+
+ROTEIRO = [
+    # 1ª rodada: o modelo chama uma leitura — e o nome vem num pedaço, os argumentos noutro.
+    [
+        sse({"tool_calls": [{"index": 0, "id": "c1", "type": "function", "function": {"name": "ler_minuta"}}]}),
+        sse({"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}),
+        "data: [DONE]",
+    ],
+    # 2ª rodada: a resposta, em pedaços.
+    [sse({"content": "A minuta "}), sse({"content": "está na versão 3."}), "data: [DONE]"],
+]
+
+
+def stream_falso(metodo, url, *, headers=None, json=None, timeout=None):
+    corpos_enviados.append(json)
+    return FluxoFalso(ROTEIRO[len(corpos_enviados) - 1])
+
+
+chat_peticao.os.environ.setdefault("DEEPSEEK_API_KEY", "chave-de-teste")
+chat_peticao.httpx.stream = stream_falso  # type: ignore[assignment]
+
+eventos = list(chat_peticao.conversar("caso-1", "em que versão está?", "advogado-1"))
+final = eventos[-1]
+
+checar(final["tipo"] == "fim", "a conversa completa com o transporte real")
+checar(
+    final["mensagem"]["conteudo"] == "A minuta está na versão 3.",
+    "os pedaços do fluxo remontam o texto",
+)
+checar(
+    [e["texto"] for e in eventos if e["tipo"] == "delta"] == ["A minuta ", "está na versão 3."],
+    "e cada pedaço chegou à tela conforme saiu do modelo",
+)
+
+enviadas = [m for corpo in corpos_enviados for m in corpo["messages"]]
+checar(
+    all(corpo.get("stream") is True and corpo.get("tools") for corpo in corpos_enviados),
+    "toda rodada vai em fluxo e com o catálogo de ferramentas",
+)
+# A regressão medida contra a API: `tool_calls: []` numa mensagem do assistente faz a
+# rodada seguinte voltar 400, e a resposta morre no meio. Três de seis pedidos reais
+# morreram assim.
+checar(
+    all("tool_calls" not in m or m["tool_calls"] for m in enviadas),
+    "nenhuma mensagem sai com `tool_calls` vazio",
+)
+checar(
+    any(m.get("role") == "tool" for m in enviadas),
+    "o resultado da ferramenta volta ao modelo como mensagem `tool`",
 )
 
 

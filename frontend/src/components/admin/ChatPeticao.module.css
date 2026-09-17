@@ -5,46 +5,73 @@
  * vez — a resposta cita "o item II do dano moral" e o advogado não está mais olhando para
  * ele. Por isso é coluna, e não aba.
  *
+ * A escala aqui é maior do que a do resto do painel de propósito. Isto não é um cartão de
+ * apoio: é onde se trabalha durante minutos seguidos, lendo texto corrido. Com o corpo de
+ * 15px do dossiê, a conversa parecia rodapé do documento ao lado.
+ *
  * Só grade, espaçamento e composição aqui. Cor, fonte, botão e campo vêm de `globals.css`.
  */
 
 .painel {
   display: flex;
   flex-direction: column;
+  position: relative;
   min-height: 0;
   height: 100%;
   border: 1px solid var(--borda-forte);
   border-radius: var(--raio);
   background: var(--papel);
+  box-shadow: var(--sombra-1);
   overflow: hidden;
 }
+
+/* ------------------------------------------------------------------ cabeçalho */
 
 .cabecalho {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 8px 10px 8px 14px;
   border-bottom: 1px solid var(--borda);
   background: var(--papel-2);
 }
 
-.titulo {
+.identidade {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
+}
+
+/* Sem quadro colorido em volta: o ícone acompanha o título na mesma linha. */
+.marca {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--acao);
+}
+
+.titulo {
   font-size: var(--t-base);
   font-weight: 600;
+  line-height: 1.3;
   color: var(--tinta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acoesDoCabecalho {
+  display: flex;
+  gap: 2px;
 }
 
 .iconeBotao {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: var(--raio-sm);
   background: none;
@@ -54,17 +81,23 @@
 
 .iconeBotao:hover {
   background: var(--papel-3);
+  color: var(--tinta-2);
 }
+
+/* ------------------------------------------------------------------- conversa */
 
 .conversa {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
   min-height: 0;
-  padding: 14px;
+  /* Menos recuo embaixo: quem lê está sempre no fim da conversa, e cada pixel de
+   * respiro ali é uma linha de texto a menos na tela. */
+  padding: 16px 14px 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-behavior: smooth;
 }
 
 .vazio {
@@ -74,25 +107,107 @@
   color: var(--tinta-3);
 }
 
+/* O começo da conversa: três coisas para clicar, não um parágrafo explicando.
+ *
+ * Quem abre esta coluna pela primeira vez não sabe o que pode pedir — e um campo de texto
+ * vazio não ensina. Cada cartão é um pedido de verdade, com o que ele faz escrito
+ * embaixo. */
+.comecar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: auto 0;
+  padding: 4px 0;
+}
+
+.convite {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+/* O que o cabeçalho dizia o tempo todo, dito UMA vez — onde a pergunta ainda não foi
+ * feita e a informação decide o que perguntar. */
+.explicacao {
+  margin: -4px 0 2px;
+  font-size: var(--t-sm);
+  line-height: 1.55;
+  color: var(--tinta-3);
+}
+
+.cartoes {
+  display: grid;
+  gap: 8px;
+}
+
+.cartao {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--borda);
+  border-left: 3px solid var(--acao);
+  border-radius: var(--raio-sm);
+  background: var(--papel-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transicao), border-color var(--transicao);
+}
+
+.cartao:hover:not(:disabled) {
+  background: var(--acao-clara);
+  border-color: var(--acao-borda);
+  border-left-color: var(--acao);
+}
+
+.cartao:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.cartao strong {
+  font-size: var(--t-base);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.cartao span {
+  font-size: var(--t-xs);
+  line-height: 1.45;
+  color: var(--tinta-3);
+}
+
+.rodapeDoConvite {
+  margin: 2px 0 0;
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--tinta-3);
+}
+
 .pergunta {
   align-self: flex-end;
-  max-width: 90%;
+  max-width: 85%;
   padding: 9px 13px;
   border-radius: var(--raio) var(--raio) 2px var(--raio);
   background: var(--acao);
   color: #ffffff;
   font-size: var(--t-base);
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
+/* A resposta é TEXTO, não cartão.
+ *
+ * Emoldurar cada resposta em caixa com borda e fundo próprio fazia a conversa parecer
+ * uma pilha de avisos empilhados, e cada moldura custa ~28px de altura que não são
+ * leitura. Quem falou já está dito pelo lado: a pergunta é bolha à direita, a resposta
+ * corre da margem esquerda. */
 .resposta {
-  padding: 11px 13px;
-  border: 1px solid var(--borda);
-  border-radius: var(--raio) var(--raio) var(--raio) 2px;
-  background: var(--papel-2);
+  padding: 0 2px;
   font-size: var(--t-base);
+  line-height: 1.65;
   color: var(--tinta-2);
   word-break: break-word;
 }
@@ -100,7 +215,9 @@
 /* A IA falando sem ter sido perguntada: terminou uma ação e conta o que mudou. A faixa
  * existe para que isso não se confunda com resposta a uma pergunta que ninguém fez. */
 .evento {
+  padding: 11px 13px;
   border-left: 3px solid var(--acao);
+  border-radius: 0 var(--raio-sm) var(--raio-sm) 0;
   background: var(--acao-clara);
 }
 
@@ -118,6 +235,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 0;
   font-size: var(--t-sm);
   color: var(--tinta-3);
 }
@@ -145,13 +263,38 @@
     animation: none;
     opacity: 0.7;
   }
+
+  .conversa {
+    scroll-behavior: auto;
+  }
+}
+
+/* Aparece só quando alguém rolou para cima: enquanto ele existe, a conversa NÃO é
+ * empurrada para o fim sozinha — quem está lendo não perde o lugar por causa de um
+ * pedaço de texto que acabou de chegar. */
+.descer {
+  position: absolute;
+  /* Logo acima do campo, que agora começa com uma linha só. */
+  bottom: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 6px 14px;
+  border: 1px solid var(--acao-borda);
+  border-radius: var(--raio-pill);
+  background: var(--papel);
+  box-shadow: var(--sombra-2);
+  color: var(--acao);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* O que veio da INTERNET. Nunca com a mesma cara do que veio dos autos: misturar as duas
  * origens é o erro que este bloco existe para tornar impossível. */
 .fontes {
-  margin-top: 10px;
-  padding: 8px 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
   border: 1px dashed var(--borda-forte);
   border-radius: var(--raio-sm);
   background: var(--papel);
@@ -168,7 +311,7 @@
 
 .listaDeFontes {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -179,6 +322,8 @@
   display: block;
   color: var(--tinta-3);
 }
+
+/* ------------------------------------------------------------------ composição */
 
 .composicao {
   display: flex;
@@ -196,13 +341,15 @@
 }
 
 .sugestao {
-  padding: 5px 9px;
+  padding: 5px 11px;
   border: 1px solid var(--borda);
   border-radius: var(--raio-pill);
   background: var(--papel-2);
   color: var(--tinta-2);
-  font-size: var(--t-sm);
+  /* Um degrau abaixo do campo: os atalhos são a segunda coisa desta linha. */
+  font-size: var(--t-xs);
   cursor: pointer;
+  transition: border-color var(--transicao), color var(--transicao);
 }
 
 .sugestao:hover:not(:disabled) {
@@ -210,11 +357,22 @@
   color: var(--acao);
 }
 
+/* O mesmo desenho, em tamanho de leitura: no convite este botão é uma das quatro
+ * coisas que a pessoa está escolhendo, e não um atalho ao pé do campo. */
+.sugestaoLarga {
+  align-self: flex-start;
+  padding: 7px 14px;
+  font-size: var(--t-sm);
+}
+
 .sugestao:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
+/* Campo e botão na mesma linha, alinhados por baixo: o campo cresce para cima com o
+ * texto (ver `ajustarAltura` no componente) e o botão continua onde estava. Em coluna
+ * separada, como era antes, o botão sozinho custava 46px de altura permanentes. */
 .linhaDeEnvio {
   display: flex;
   align-items: flex-end;
@@ -223,20 +381,39 @@
 
 .campoDaPergunta {
   flex: 1;
-  min-height: 46px;
-  max-height: 160px;
+  min-width: 0;
+  min-height: 42px;
+  max-height: 168px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-size: var(--t-base);
+  line-height: 1.45;
+  /* A altura é calculada no componente; a alça de redimensionar brigaria com ela. */
   resize: none;
+  overflow-y: auto;
 }
 
 .enviar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  height: 38px;
-  padding-inline: 14px;
+  width: 42px;
+  height: 42px;
+  border: none;
+  border-radius: var(--raio-sm);
+  background: var(--acao);
+  color: #ffffff;
+  cursor: pointer;
+  transition: opacity var(--transicao);
 }
 
-.rodape {
-  margin: 0;
-  font-size: var(--t-xs);
-  line-height: 1.5;
+.enviar:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.enviar:disabled {
+  background: var(--papel-3);
   color: var(--tinta-3);
+  cursor: default;
 }
