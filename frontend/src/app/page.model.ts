@@ -24,6 +24,21 @@ const loginSchema = z.object({
 
 export type LoginFormValues = z.infer<typeof loginSchema>;
 
+/** Para onde ir depois de entrar: a tela que a pessoa tentou abrir, quando o
+ * link veio de um colega (`?destino=`, posto pela guarda em `proxy.ts`), ou a
+ * home de sempre.
+ *
+ * Lido de `window.location` na hora de navegar, e não por `useSearchParams`:
+ * o hook obrigaria esta página a ter um limite de `Suspense` em volta para
+ * continuar pré-renderizável, e o valor só interessa no instante do redirect.
+ * Só caminho interno de `/home` atravessa — destino livre aqui é
+ * redirecionamento aberto, com o login do escritório servindo de trampolim. */
+function destinoDoLink(): string {
+  if (typeof window === "undefined") return "/home";
+  const pedido = new URLSearchParams(window.location.search).get("destino");
+  return pedido && pedido.startsWith("/home") ? pedido : "/home";
+}
+
 /** Em que passo do login a tela está.
  *
  * `credencial` é o formulário de sempre. `codigo` é o segundo fator: a senha já
@@ -86,7 +101,7 @@ export const usePageModel = () => {
         setTrocaDeSenhaAberta(true);
         return;
       }
-      router.push("/home");
+      router.push(destinoDoLink());
     },
     [setCookieLoggedUser, router],
   );
@@ -171,7 +186,7 @@ export const usePageModel = () => {
       onSuccess: () => {
         setTrocaDeSenhaAberta(false);
         toast.success("Senha alterada.");
-        router.push("/home");
+        router.push(destinoDoLink());
       },
     });
   };

@@ -13,7 +13,7 @@
  * e quem cadastrou precisa saber disso na hora, não descobrir meses depois pelo resultado.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ChevronDown,
@@ -145,6 +145,19 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [paginaPecas, setPaginaPecas] = useState(1);
   const [totalPecas, setTotalPecas] = useState(0);
   const [totalPaginasPecas, setTotalPaginasPecas] = useState(1);
+
+  /* O aviso de erro nasce no alto da tela, e o erro que o produz costuma
+   * acontecer lá embaixo — a recusa de um arquivo chega depois que a pessoa
+   * rolou até a área de envio. Pior: um erro que derruba a integração esconde
+   * tudo o que vem abaixo dele, a página encolhe e a rolagem antiga passa a
+   * apontar para o vazio. Sem isto o sintoma é uma tela em branco sem
+   * explicação; com isto, a explicação vem até os olhos. */
+  const avisoDeErro = useRef<HTMLDivElement>(null);
+  const avisoDeCarregamento = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const alvo = erro ? avisoDeErro.current : erroCarregamento ? avisoDeCarregamento.current : null;
+    alvo?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [erro, erroCarregamento]);
 
 
   useEffect(() => {
@@ -509,9 +522,11 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       </section>
 
       {erro && (
-        <Aviso tom="critico" titulo="A ação não foi concluída">
-          {erro}
-        </Aviso>
+        <div ref={avisoDeErro}>
+          <Aviso tom="critico" titulo="A ação não foi concluída">
+            {erro}
+          </Aviso>
+        </div>
       )}
       {recado && <Aviso tom="ok">{recado}</Aviso>}
 
@@ -746,9 +761,11 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
       )}
 
       {configAgente?.ligado && erroCarregamento && (
-        <Aviso tom="critico" titulo="Não foi possível carregar esta ação">
-          {erroCarregamento} Tente novamente antes de alterar os modelos ou a configuração.
-        </Aviso>
+        <div ref={avisoDeCarregamento}>
+          <Aviso tom="critico" titulo="Não foi possível carregar esta ação">
+            {erroCarregamento} Tente novamente antes de alterar os modelos ou a configuração.
+          </Aviso>
+        </div>
       )}
 
       {configAgente?.ligado && (
