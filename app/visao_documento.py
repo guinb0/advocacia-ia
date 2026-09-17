@@ -179,7 +179,16 @@ def _codificar(conteudo: bytes, extensao: str) -> tuple[str, bytes]:
         ".webp": "image/webp", ".bmp": "image/bmp",
         ".tif": "image/tiff", ".tiff": "image/tiff",
     }
-    if len(conteudo) <= _TETO_BYTES:
+    # PDF SEMPRE é rasterizado, tenha o tamanho que tiver.
+    #
+    # O modelo espera uma IMAGEM. Mandar os bytes de um PDF rotulados como
+    # `data:image/jpeg` — que é o que o mapa acima faria, por não ter entrada
+    # para `.pdf` — entrega um arquivo que não é o que o cabeçalho promete. O
+    # `pipeline.decodificar` já empilha as páginas numa imagem só (ver
+    # `pdf.pdf_para_imagem`), que é exatamente o formato certo para um álbum de
+    # fotos: o modelo vê as cinco de uma vez e descreve o conjunto.
+    ehpdf = extensao == ".pdf" or conteudo.lstrip().startswith(b"%PDF-")
+    if not ehpdf and len(conteudo) <= _TETO_BYTES:
         return mime_por_extensao.get(extensao, "image/jpeg"), conteudo
 
     try:
@@ -189,6 +198,13 @@ def _codificar(conteudo: bytes, extensao: str) -> tuple[str, bytes]:
         return mistral_ocr._codificar_para_ocr(imagem)
     except Exception as exc:  # noqa: BLE001 - imagem exótica segue como veio
         log.info("redução da imagem falhou (%s); enviando original", str(exc)[:120])
+        if ehpdf:
+            # Sem rasterizar, um PDF não tem como virar entrada de visão: melhor
+            # dizer que não deu do que mandar bytes que o modelo vai recusar.
+            raise ErroVisao(
+                "Não foi possível converter o PDF em imagem para leitura visual. "
+                "O arquivo segue guardado no caso."
+            ) from exc
         return mime_por_extensao.get(extensao, "image/jpeg"), conteudo
 
 

@@ -318,7 +318,21 @@ def processar_entrega(
             }
             resultado["classificacao_semantica"] = semantica
             indexacao_documento.aplicar_interpretacao(resultado, semantica)
-        elif formato_lido and resultado.get("validacao", {}).get("texto_utilizavel"):
+        elif (
+            formato_lido
+            and resultado.get("validacao", {}).get("texto_utilizavel")
+            # ÁLBUM DE FOTOS NÃO É DOCUMENTO COM TEXTO, por mais caracteres que
+            # o OCR devolva. `texto_utilizavel` conta caracteres (>= 80), e um
+            # PDF com cinco fotos devolve cinco `![img-N.jpeg](img-N.jpeg)` —
+            # 125 caracteres, acima do corte. O arquivo vinha para cá, a
+            # DeepSeek lia nomes de arquivo e respondia "Indefinido" com zero
+            # dados, e a foto nunca era olhada por ninguém. Foi o que aconteceu
+            # com `FOTOS LESAO POS-OPERATORIO.pdf`. Sem texto de verdade, quem
+            # tem de ler é o modelo de visão, no ramo abaixo.
+            and not visao_documento.so_referencias_de_imagem(
+                str(resultado.get("texto_completo") or "")
+            )
+        ):
             # O roteamento determinístico já decidiu o item, mas a interpretação
             # da main ainda agrega achados semânticos úteis ao documento. Ela não
             # muda o destino escolhido acima.
