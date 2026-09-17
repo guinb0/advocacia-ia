@@ -50,6 +50,20 @@ const OPCAO_RESTING = "border-l-transparent hover:bg-papel-3";
 const OPCAO_ESCOLHIDA = "border-l-ok bg-ok-claro";
 const ESTADO_TEXTO = "text-tinta-3 text-xs leading-[1.55]";
 
+function mensagemDeEstrategiaIndisponivel(erro: unknown): string {
+  const mensagem = erro instanceof Error
+    ? erro.message
+    : "Não foi possível consultar os processos semelhantes.";
+
+  // A consulta de precedentes depende do provedor de embeddings. Crédito ou
+  // indisponibilidade dele não pode parecer erro da entrevista nem esconder a
+  // análise principal, que é processada por outro endpoint.
+  if (/\b402\b|payment required|embeddings/i.test(mensagem)) {
+    return "Processos semelhantes estão temporariamente indisponíveis. A análise completa do relato continua disponível acima.";
+  }
+  return mensagem;
+}
+
 const CAMPOS_CADASTRAIS = [
   { id: "nome", rotulo: "Nome completo", grupo: "essencial" },
   { id: "cpf", rotulo: "CPF", grupo: "essencial" },
@@ -505,11 +519,7 @@ export default function TriagemEntrevista({
       if (arquivo && relato) setTexto(relato);
       void analisarEstrategia(relato)
         .then(setEstrategia)
-        .catch((e: unknown) =>
-          setErroEstrategia(
-            e instanceof Error ? e.message : "Não foi possível consultar os processos semelhantes.",
-          ),
-        )
+        .catch((e: unknown) => setErroEstrategia(mensagemDeEstrategiaIndisponivel(e)))
         .finally(() => setAnalisandoEstrategia(false));
 
       /* A LEITURA COMPLETA, EM PARALELO COM A ESTRATÉGIA.

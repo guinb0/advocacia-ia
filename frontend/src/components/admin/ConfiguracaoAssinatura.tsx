@@ -68,6 +68,20 @@ export default function ConfiguracaoAssinatura() {
     });
   }, [recarregar]);
 
+  useEffect(() => {
+    const retorno = new URLSearchParams(window.location.search).get("tactiq");
+    if (!retorno) return;
+    if (retorno === "conectado") {
+      setAviso("Tactiq conectado. As transcrições já podem ser importadas ao criar um caso.");
+      void statusTactiq().then(setTactiq).catch(() => setErro("Não foi possível confirmar o vínculo com o Tactiq."));
+    } else if (retorno === "cancelado") {
+      setErro("A autorização do Tactiq foi cancelada. Você pode tentar conectar novamente.");
+    } else {
+      setErro("O Tactiq não concluiu a autorização. Tente conectar novamente.");
+    }
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
+
   async function conectarAoTactiq() {
     setConectandoTactiq(true);
     try { window.location.assign((await conectarTactiq()).url); }
