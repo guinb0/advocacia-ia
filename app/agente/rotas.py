@@ -32,6 +32,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .. import armazenamento, auth, contrato, peticao_aprendizado, peticao_local
+from .. import pesquisa_web as pesquisa_web_modulo
 from . import conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
 from .config import config
@@ -744,6 +745,18 @@ def revisar_peticao_com_prompt(
     raise HTTPException(
         501, "Revisão por prompt ainda não é suportada nas petições do agente."
     )
+
+
+@roteador.post("/pesquisa-web")
+def pesquisa_web(
+    pergunta: str = Body(..., embed=True),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Dúvida rápida pesquisada na web, ao lado da petição. Nada é gravado no caso."""
+    try:
+        return pesquisa_web_modulo.pesquisar(pergunta)
+    except pesquisa_web_modulo.ErroPesquisa as erro:
+        raise HTTPException(status_code=502, detail=str(erro)) from erro
 
 
 @roteador.get("/casos/{caso_id}/peticao/{peca_ref}/historico")
