@@ -495,8 +495,8 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     documentos = _documentos_ocr(caso_id)
     if documentos:
         linhas.append("\n=== DOCUMENTOS (texto extraído por OCR) ===")
-        for doc in documentos[:20]:
-            linhas.append(f"\n--- {doc['arquivo']} ---\n{doc['texto']}")
+        for numero, doc in enumerate(documentos[:20], 1):
+            linhas.append(f"\n--- DOCUMENTO {numero:02d}: {doc['arquivo']} ---\n{doc['texto']}")
 
     try:
         achados = analise_documentos.analisar(caso_id).get("achados") or []
@@ -1499,6 +1499,9 @@ DOCUMENTOS: antes de fundamentar, monte mentalmente a matriz FATO | PROVA | O QU
 A PROVA REALMENTE DEMONSTRA | TESE. Informação sem documento vira pedido de
 produção de prova, não afirmação. Aponte o que deve ser requerido à parte
 contrária ou a órgão público.
+Quando um fato for extraído de anexo, indique no texto a prova correspondente
+como "Documento NN — nome do arquivo", usando exatamente a numeração do bloco
+DOCUMENTOS recebido. Não cite documento que não esteja no contexto.
 
 JURISPRUDÊNCIA — REGRA ANTI-ALUCINAÇÃO. É PROIBIDO inventar número de processo,
 súmula, tema, ementa, acórdão, relator, tribunal ou data. Só cite julgado que

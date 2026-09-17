@@ -25,6 +25,20 @@ interface Props {
   onRemover: (entregaId: string) => void;
 }
 
+const CONECTIVOS = new Set(["da", "das", "de", "do", "dos", "e", "em", "para", "por"]);
+const SIGLAS = new Set(["ASO", "CAT", "CNPJ", "CPF", "CNH", "CTPS", "INSS", "NIT", "PIS", "PPP", "RG"]);
+
+function tituloDaLeitura(valor: string | null): string {
+  const texto = String(valor ?? "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!texto) return "Documento sem categoria definida";
+  return texto.toLocaleLowerCase("pt-BR").split(" ").map((palavra, indice) => {
+    const maiuscula = palavra.toLocaleUpperCase("pt-BR");
+    if (SIGLAS.has(maiuscula)) return maiuscula;
+    if (indice > 0 && CONECTIVOS.has(palavra)) return palavra;
+    return palavra.charAt(0).toLocaleUpperCase("pt-BR") + palavra.slice(1);
+  }).join(" ");
+}
+
 export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemover }: Props) {
   const [destinos, setDestinos] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState<string | null>(null);
@@ -69,7 +83,7 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
     <section className="mt-5 border border-atencao-borda rounded-cartao bg-atencao-claro overflow-hidden">
       <div className="px-5 py-4 border-b border-atencao-borda">
         <h2 className="flex gap-2 items-center m-0 text-tinta font-titulo text-lg font-semibold">
-          Documentos para identificar <Selo tom="atencao">{entregas.length}</Selo>
+          Sem categoria definida <Selo tom="atencao">{entregas.length}</Selo>
         </h2>
         <p className="mt-1 mb-0 text-tinta-2 text-sm leading-[1.55]">
           O arquivo foi preservado, mas a leitura não encontrou um destino seguro. Confira e escolha
@@ -96,6 +110,10 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                   Abrir documento
                 </Botao>
               </div>
+
+              <p className="mt-2 mb-0 text-sm text-tinta-2">
+                Leitura da IA: <strong className="text-tinta">{tituloDaLeitura(entrega.tipo_detectado)}</strong>
+              </p>
 
               {entrega.alertas?.map((alerta, indice) => (
                 <div className="mt-3" key={indice}>

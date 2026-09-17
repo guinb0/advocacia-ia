@@ -115,6 +115,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
   {
     titulo: "Escritório",
     itens: [
+      { tela: "configuracaoAssinatura", rotulo: "Tactiq" },
       { tela: "operacao", rotulo: "Operação" },
       { tela: "supervisao", rotulo: "Supervisão" },
       // No grupo "Escritório", e não em "Atendimento": manter o catálogo é

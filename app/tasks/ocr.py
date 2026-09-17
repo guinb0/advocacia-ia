@@ -248,6 +248,28 @@ def processar_entrega(
                 tipo_extracao,
                 gerar_arquivos_temporarios=False,
             )
+        elif extensao in {".mp4", ".m4a", ".mp3", ".wav", ".webm"}:
+            # Áudio/vídeo também é prova: transcreve antes de classificar para a
+            # IA poder usar o relato como contexto, em vez de jogá-lo na triagem.
+            try:
+                import av
+                import numpy as np
+                from .. import transcricao
+                import io
+                partes = []
+                with av.open(io.BytesIO(conteudo)) as midia:
+                    resampler = av.audio.resampler.AudioResampler(format="flt", layout="mono", rate=16_000)
+                    for frame in midia.decode(audio=0):
+                        convertido = resampler.resample(frame)
+                        for bloco in (convertido if isinstance(convertido, list) else [convertido]):
+                            partes.append(bloco.to_ndarray().reshape(-1))
+                texto = transcricao._transcrever(np.concatenate(partes)) if partes else ""
+            except Exception as exc:
+                log.warning("transcrição do vídeo falhou para %s: %s", entrega_id, exc)
+                texto = ""
+            if texto.strip():
+                formato_lido = True
+                resultado = pipeline.processar_texto(texto, nome, idioma, tipo_extracao, gerar_arquivos_temporarios=False)
         elif extensao in extracao_office.EXTENSOES_TEXTO:
             # DOCX e TXT já trazem o texto gravado: em vez de preservar sem ler,
             # extrai o texto digital e segue pelo MESMO caminho do OCR (campos +
