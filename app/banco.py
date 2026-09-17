@@ -899,6 +899,17 @@ COLUNAS_NOVAS = (
         "max_envios_dia",
         "int NOT NULL CONSTRAINT df_acervo_cobranca_max_dia DEFAULT 1",
     ),
+    # A que TELA a conversa pertence. `GERAL` é o chat da Carteira (o que já existia);
+    # `PETICAO` é o chat que vive dentro do Dossiê, ao lado da minuta.
+    #
+    # Sem esta coluna as duas se misturariam numa lista só: cada caso passaria a
+    # aparecer no histórico do agente geral como se fosse uma pergunta avulsa, e
+    # apagar essa "conversa" levaria junto a conversa do Dossiê daquele caso.
+    (
+        f"{PREFIXO}conversas",
+        "escopo",
+        "varchar(20) NOT NULL CONSTRAINT df_acervo_conv_escopo DEFAULT 'GERAL'",
+    ),
 )
 
 

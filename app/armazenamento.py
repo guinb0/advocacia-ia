@@ -2306,9 +2306,20 @@ def _normalizar_conversa(linha: banco.Linha) -> dict[str, Any]:
         "usuario": linha["usuario"],
         "caso_id": linha["caso_id"],
         "conversa_ref": linha["conversa_ref"],
+        # A coluna nasceu depois das primeiras conversas: o que foi gravado antes dela
+        # é do agente geral, e é esse o padrão quando o valor não vem.
+        "escopo": _coluna(linha, "escopo") or "GERAL",
         "criado_em": linha["criado_em"],
         "atualizado_em": linha["atualizado_em"],
     }
+
+
+def _coluna(linha: banco.Linha, nome: str) -> Any:
+    """O campo, ou `None` quando a coluna ainda não existe naquele banco."""
+    try:
+        return linha[nome]
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
 def _normalizar_mensagem(linha: banco.Linha) -> dict[str, Any]:
@@ -2332,16 +2343,23 @@ def _normalizar_mensagem(linha: banco.Linha) -> dict[str, Any]:
 
 
 def criar_conversa(
-    titulo: str, *, usuario: str, caso_id: str | None = None, resumo: str = ""
+    titulo: str,
+    *,
+    usuario: str,
+    caso_id: str | None = None,
+    resumo: str = "",
+    escopo: str = "GERAL",
 ) -> dict[str, Any]:
+    """`escopo` diz de que tela a conversa é — ver `conversa_do_caso`."""
     conversa_id = str(uuid.uuid4())
     instante = agora()
     with conectar() as con:
         con.execute(
             "INSERT INTO conversas"
-            " (id, titulo, resumo, usuario, caso_id, conversa_ref, criado_em, atualizado_em)"
-            " VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
-            (conversa_id, titulo, resumo, usuario, caso_id, instante, instante),
+            " (id, titulo, resumo, usuario, caso_id, conversa_ref, escopo,"
+            "  criado_em, atualizado_em)"
+            " VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+            (conversa_id, titulo, resumo, usuario, caso_id, escopo, instante, instante),
         )
     return {
         "id": conversa_id,
@@ -2350,9 +2368,29 @@ def criar_conversa(
         "usuario": usuario,
         "caso_id": caso_id,
         "conversa_ref": None,
+        "escopo": escopo,
         "criado_em": instante,
         "atualizado_em": instante,
     }
+
+
+def conversa_do_caso(
+    usuario: str, caso_id: str, *, escopo: str = "PETICAO"
+) -> dict[str, Any] | None:
+    """A conversa daquela tela, naquele caso, daquela pessoa — se já existe.
+
+    O chat do Dossiê não tem lista de conversas: é UMA por caso, que reabre com o
+    histórico inteiro. Procurar pela tríade (dono, caso, escopo) é o que faz o
+    refresh da página cair na mesma transcrição em vez de abrir outra em branco.
+    """
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT TOP 1 * FROM conversas"
+            " WHERE usuario = ? AND caso_id = ? AND escopo = ?"
+            " ORDER BY atualizado_em DESC",
+            (usuario, caso_id, escopo),
+        ).fetchone()
+    return _normalizar_conversa(linha) if linha else None
 
 
 def _para_like(termo: str) -> str:
@@ -2367,7 +2405,9 @@ def _para_like(termo: str) -> str:
     return f"%{escapado}%"
 
 
-def listar_conversas(usuario: str, *, busca: str = "") -> list[dict[str, Any]]:
+def listar_conversas(
+    usuario: str, *, busca: str = "", escopo: str = "GERAL"
+) -> list[dict[str, Any]]:
     """O histórico de quem perguntou, da mais recente para a mais antiga.
 
     A busca alcança também o TEXTO das mensagens, e não só o título: o título é a primeira
@@ -2378,8 +2418,9 @@ def listar_conversas(usuario: str, *, busca: str = "") -> list[dict[str, Any]]:
     if not termo:
         with conectar() as con:
             linhas = con.execute(
-                "SELECT * FROM conversas WHERE usuario = ? ORDER BY atualizado_em DESC",
-                (usuario,),
+                "SELECT * FROM conversas WHERE usuario = ? AND escopo = ?"
+                " ORDER BY atualizado_em DESC",
+                (usuario, escopo),
             ).fetchall()
         return [_normalizar_conversa(l) for l in linhas]
 
@@ -2388,7 +2429,7 @@ def listar_conversas(usuario: str, *, busca: str = "") -> list[dict[str, Any]]:
         linhas = con.execute(
             """
             SELECT c.* FROM conversas c
-             WHERE c.usuario = ?
+             WHERE c.usuario = ? AND c.escopo = ?
                AND (c.titulo LIKE ? ESCAPE '\\'
                  OR c.resumo LIKE ? ESCAPE '\\'
                  OR EXISTS (SELECT 1 FROM conversa_mensagens m
@@ -2396,7 +2437,7 @@ def listar_conversas(usuario: str, *, busca: str = "") -> list[dict[str, Any]]:
                                AND m.conteudo LIKE ? ESCAPE '\\'))
              ORDER BY c.atualizado_em DESC
             """,
-            (usuario, padrao, padrao, padrao),
+            (usuario, escopo, padrao, padrao, padrao),
         ).fetchall()
     return [_normalizar_conversa(l) for l in linhas]
 

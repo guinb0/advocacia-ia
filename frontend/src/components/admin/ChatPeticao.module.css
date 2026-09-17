@@ -1,0 +1,242 @@
+/* O chat ancorado ao lado da minuta.
+ *
+ * A regra que dá sentido ao componente: a PETIÇÃO não sai da tela. Pedir uma alteração e
+ * não ver o texto que vai mudar é o mesmo defeito que o ajudante do caso já corrigiu uma
+ * vez — a resposta cita "o item II do dano moral" e o advogado não está mais olhando para
+ * ele. Por isso é coluna, e não aba.
+ *
+ * Só grade, espaçamento e composição aqui. Cor, fonte, botão e campo vêm de `globals.css`.
+ */
+
+.painel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+  overflow: hidden;
+}
+
+.cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--borda);
+  background: var(--papel-2);
+}
+
+.titulo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--t-base);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.iconeBotao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--raio-sm);
+  background: none;
+  color: var(--tinta-3);
+  cursor: pointer;
+}
+
+.iconeBotao:hover {
+  background: var(--papel-3);
+}
+
+.conversa {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.vazio {
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  color: var(--tinta-3);
+}
+
+.pergunta {
+  align-self: flex-end;
+  max-width: 90%;
+  padding: 9px 13px;
+  border-radius: var(--raio) var(--raio) 2px var(--raio);
+  background: var(--acao);
+  color: #ffffff;
+  font-size: var(--t-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.resposta {
+  padding: 11px 13px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio) var(--raio) var(--raio) 2px;
+  background: var(--papel-2);
+  font-size: var(--t-base);
+  color: var(--tinta-2);
+  word-break: break-word;
+}
+
+/* A IA falando sem ter sido perguntada: terminou uma ação e conta o que mudou. A faixa
+ * existe para que isso não se confunda com resposta a uma pergunta que ninguém fez. */
+.evento {
+  border-left: 3px solid var(--acao);
+  background: var(--acao-clara);
+}
+
+.selo {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--t-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--tinta-3);
+}
+
+.andamento {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-sm);
+  color: var(--tinta-3);
+}
+
+.ponto {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--acao);
+  animation: pulsar 1.1s ease-in-out infinite;
+}
+
+@keyframes pulsar {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ponto {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/* O que veio da INTERNET. Nunca com a mesma cara do que veio dos autos: misturar as duas
+ * origens é o erro que este bloco existe para tornar impossível. */
+.fontes {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+}
+
+.tituloDasFontes {
+  margin: 0 0 6px;
+  font-size: var(--t-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tinta-3);
+}
+
+.listaDeFontes {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-sm);
+}
+
+.dominio {
+  display: block;
+  color: var(--tinta-3);
+}
+
+.composicao {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--borda);
+  background: var(--papel);
+}
+
+.sugestoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sugestao {
+  padding: 5px 9px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-pill);
+  background: var(--papel-2);
+  color: var(--tinta-2);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.sugestao:hover:not(:disabled) {
+  border-color: var(--acao-borda);
+  color: var(--acao);
+}
+
+.sugestao:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.linhaDeEnvio {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.campoDaPergunta {
+  flex: 1;
+  min-height: 46px;
+  max-height: 160px;
+  resize: none;
+}
+
+.enviar {
+  flex-shrink: 0;
+  height: 38px;
+  padding-inline: 14px;
+}
+
+.rodape {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--tinta-3);
+}

@@ -10,6 +10,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Mic, MicOff, Search } from "lucide-react";
 
 import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
+import ChatPeticao from "@/components/admin/ChatPeticao";
+import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
@@ -32,6 +34,7 @@ import {
   type RevisaoRegistrada,
   type SecaoPeticao,
 } from "@/lib/agente";
+import { avisarChatDaPeticao } from "@/lib/chatPeticao";
 import { baixarArquivo } from "@/lib/baixar";
 
 
@@ -177,9 +180,16 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
           acao: "gerar",
           texto: `Petição gerada (versão ${resultado.peticao.version}) e .docx baixado.`,
         });
+        /* A IA conta no chat o que saiu — versão nova, o que ficou sem comprovação.
+         * Sem isto, a conversa ao lado continuaria falando da peça anterior como se
+         * nada tivesse acontecido, que é justamente quando o advogado mais precisa
+         * saber o que mudou. */
+        avisarChatDaPeticao(casoId, "peticao_gerada", { versao: resultado.peticao.version });
       }
     } catch (e) {
-      setErro({ acao: "gerar", texto: e instanceof Error ? e.message : "Falha ao gerar a petição." });
+      const texto = e instanceof Error ? e.message : "Falha ao gerar a petição.";
+      setErro({ acao: "gerar", texto });
+      avisarChatDaPeticao(casoId, "falha", { acao: "Gerar a petição", erro: texto });
     } finally {
       setOcupado(false);
     }
@@ -224,8 +234,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       const arquivo = await baixarArquivoDaPeticao(casoId, peticao.id, formato);
       baixarArquivo(arquivo, `Peticao inicial - v${atualizada.version}.${formato}`);
       setConcluido({ acao: "salvar", texto: `Versão ${atualizada.version} salva e .${formato} baixado.` });
+      avisarChatDaPeticao(casoId, "versao_salva", { formato, versao: atualizada.version });
     } catch (e) {
-      setErro({ acao: "salvar", texto: e instanceof Error ? e.message : "Não foi possível salvar." });
+      const texto = e instanceof Error ? e.message : "Não foi possível salvar.";
+      setErro({ acao: "salvar", texto });
+      avisarChatDaPeticao(casoId, "falha", { acao: "Salvar a petição", erro: texto });
     } finally {
       setSalvandoComo(null);
     }
@@ -276,16 +289,21 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       if ((revisao?.perguntas ?? []).length > 0) {
         setAvisoRevisao(`A IA precisa confirmar: ${revisao!.perguntas!.join(" · ")}`);
       }
+      if (resultado.peticao.revisao_pendente) {
+        avisarChatDaPeticao(casoId, "revisao_proposta", {
+          pedido: promptRevisao.trim(),
+          alteradas,
+        });
+      }
       await recarregar();
       // `recarregar` lê a versão persistida; numa revisão sem alteração ela não
       // contém o aviso/perguntas retornados pela IA. Reaplica o resultado da
       // chamada depois da leitura para que a tela não perca esse retorno.
       setPeticao(resultado.peticao);
     } catch (e) {
-      setErro({
-        acao: "revisar",
-        texto: e instanceof Error ? e.message : "Não foi possível aplicar a revisão.",
-      });
+      const texto = e instanceof Error ? e.message : "Não foi possível aplicar a revisão.";
+      setErro({ acao: "revisar", texto });
+      avisarChatDaPeticao(casoId, "falha", { acao: "Revisar a petição", erro: texto });
     } finally {
       setRevisando(false);
     }
@@ -303,6 +321,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       setPeticao(resultado.peticao);
       setEdicao(Object.fromEntries((resultado.peticao.sections ?? []).map((s) => [s.code, s.content])));
       setConcluido({ acao: "revisar", texto: aceitar ? "Revisão aceita e gravada como nova versão." : "Revisão descartada; a peça original foi preservada." });
+      avisarChatDaPeticao(casoId, aceitar ? "revisao_aceita" : "revisao_descartada", {
+        pedido: candidata.prompt ?? "",
+      });
       await recarregar();
     } catch (e) {
       setErro({ acao: "revisar", texto: e instanceof Error ? e.message : "Não foi possível concluir a revisão." });
@@ -345,8 +366,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     try {
       await gerarPecaAnexa(casoId, acao);
       await recarregarAnexas();
+      avisarChatDaPeticao(casoId, "peca_anexa_gerada", { titulo: acao.titulo });
     } catch (e) {
-      setErroAnexa(e instanceof Error ? e.message : "Não foi possível gerar esta peça.");
+      const texto = e instanceof Error ? e.message : "Não foi possível gerar esta peça.";
+      setErroAnexa(texto);
+      avisarChatDaPeticao(casoId, "falha", { acao: `Redigir «${acao.titulo}»`, erro: texto });
     } finally {
       setGerandoAnexa(null);
     }
@@ -492,452 +516,517 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   }
 
   const prep = estado?.preparacao;
+  /* Só vale abaixo de `lg`: acima disso a conversa é coluna e está sempre à vista. */
+  const [gaveta, setGaveta] = useState(false);
 
+  /* SPLIT VIEW: o documento à esquerda, a conversa à direita.
+   *
+   * A peça não pode sair da tela enquanto se fala dela. Numa aba, a resposta que cita
+   * "o item II dos pedidos" aponta para algo que o advogado não está mais vendo — o
+   * mesmo defeito que o ajudante do caso já corrigiu uma vez. Abaixo de `lg` não há
+   * largura para as duas colunas: aí a conversa vira gaveta, e o documento continua
+   * com a página inteira. */
   return (
-    <Cartao className="grid gap-4">
-      <header className="grid gap-2">
-        {/* O mesmo `gerar` do botão do cabeçalho do dossiê, repetido aqui: quem
-          * chegou a este cartão rolando a página não precisa voltar ao topo. O erro
-          * já aparece no Aviso logo abaixo, então o botão só mostra o concluído. */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className={TITULO}>Análise e petição</h2>
-          <BotaoProcesso
-            variante="primario"
-            pequeno
-            processando={ocupado}
-            dica="Cruzando entrevista e documentos e redigindo a petição"
-            aguardando={salvando || revisando}
-            concluido={concluidoGerar}
-            onClick={() => void gerar()}
-          >
-            {rotuloGerar}
-          </BotaoProcesso>
-        </div>
-        <p className={SUB}>
-          Cruza a entrevista com os documentos lidos por OCR e redige a petição inicial com
-          DeepSeek.
-        </p>
-      </header>
-
-      {semEntrevista && (
-        <Aviso tom="atencao" titulo="Falta a entrevista">
-          Este caso ainda não tem transcrição do atendimento.
-        </Aviso>
-      )}
-
-      {/* O erro de gerar aparece também aqui, além do botão do cabeçalho: quem já
-        * rolou até este cartão não vê mais o topo. Salvar e revisar mostram o
-        * próprio resultado junto dos seus botões. */}
-      {erro?.acao === "gerar" && (
-        <Aviso tom="critico" titulo="A petição não foi gerada">
-          {erro.texto}
-        </Aviso>
-      )}
-
-      {prep && (
-        <div className="grid grid-cols-2 gap-2 text-xs text-tinta-3">
-          <div className="border border-borda p-2 bg-papel-2">
-            <strong className="block text-tinta-2">{prep.documentos_lidos ?? 0}</strong>
-            docs com texto OCR
-          </div>
-          <div className="border border-borda p-2 bg-papel-2">
-            <strong className="block text-tinta-2">
-              {prep.checklist_entregues ?? 0}/{prep.checklist_obrigatorios ?? "?"}
-            </strong>
-            checklist obrigatório
-          </div>
-        </div>
-      )}
-
-      {analise && (
-        <section className="grid gap-3 border border-borda bg-papel p-4">
-          <div><h3 className="text-sm font-semibold m-0">Leitura rápida do caso</h3><p className="mt-1 text-sm leading-relaxed text-tinta-2">{analise.resumo}</p></div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <ResumoAnalise titulo="✓ Confirmado por documentos" tom="ok" itens={analise.fatos_confirmados ?? []} vazio="Ainda não há confirmação documental destacada." />
-            <ResumoAnalise titulo="? Depende de prova ou confirmação" tom="atencao" itens={[...(analise.fatos_so_na_entrevista ?? []), ...(analise.lacunas ?? [])]} vazio="Nenhuma pendência relevante apontada." />
-          </div>
-          {analise.cruzamento_entrevista_documentos && <details className="text-sm text-tinta-2"><summary className="cursor-pointer font-semibold">Ver confronto completo: entrevista × documentos</summary><p className="mt-2 leading-relaxed">{analise.cruzamento_entrevista_documentos}</p></details>}
-        </section>
-      )}
-
-      {peticao && (
-        <section className="grid gap-3 border border-borda p-4 bg-papel-2">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(21rem,24rem)] lg:items-start">
+      <Cartao className="grid min-w-0 gap-4">
+        <header className="grid gap-2">
+          {/* O mesmo `gerar` do botão do cabeçalho do dossiê, repetido aqui: quem
+            * chegou a este cartão rolando a página não precisa voltar ao topo. O erro
+            * já aparece no Aviso logo abaixo, então o botão só mostra o concluído. */}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold m-0">
-              Petição inicial — versão {peticao.version}
-            </h3>
-            <div className="flex gap-2 flex-wrap">
-              {/* O botão de mostrar/ocultar prévia saiu junto com a segunda
-                  coluna: não há mais duas visões do mesmo texto para alternar. */}
-              <BotaoProcesso
-                variante="secundario"
-                pequeno
-                processando={salvandoComo === "docx"}
-                textoProcessando="Salvando…"
-                aguardando={ocupado || salvandoComo === "pdf"}
-                onClick={() => salvar(false)}
-              >
-                Salvar e baixar .docx
-              </BotaoProcesso>
-              <BotaoProcesso
-                variante="texto"
-                pequeno
-                processando={salvandoComo === "pdf"}
-                textoProcessando="Gerando o PDF…"
-                aguardando={ocupado || salvandoComo === "docx"}
-                onClick={() => salvar(true)}
-              >
-                Baixar PDF
-              </BotaoProcesso>
+            <h2 className={TITULO}>Análise e petição</h2>
+            <BotaoProcesso
+              variante="primario"
+              pequeno
+              processando={ocupado}
+              dica="Cruzando entrevista e documentos e redigindo a petição"
+              aguardando={salvando || revisando}
+              concluido={concluidoGerar}
+              onClick={() => void gerar()}
+            >
+              {rotuloGerar}
+            </BotaoProcesso>
+          </div>
+          <p className={SUB}>
+            Cruza a entrevista com os documentos lidos por OCR e redige a petição inicial com
+            DeepSeek.
+          </p>
+        </header>
+
+        {semEntrevista && (
+          <Aviso tom="atencao" titulo="Falta a entrevista">
+            Este caso ainda não tem transcrição do atendimento.
+          </Aviso>
+        )}
+
+        {/* O erro de gerar aparece também aqui, além do botão do cabeçalho: quem já
+          * rolou até este cartão não vê mais o topo. Salvar e revisar mostram o
+          * próprio resultado junto dos seus botões. */}
+        {erro?.acao === "gerar" && (
+          <Aviso tom="critico" titulo="A petição não foi gerada">
+            {erro.texto}
+          </Aviso>
+        )}
+
+        {prep && (
+          <div className="grid grid-cols-2 gap-2 text-xs text-tinta-3">
+            <div className="border border-borda p-2 bg-papel-2">
+              <strong className="block text-tinta-2">{prep.documentos_lidos ?? 0}</strong>
+              docs com texto OCR
+            </div>
+            <div className="border border-borda p-2 bg-papel-2">
+              <strong className="block text-tinta-2">
+                {prep.checklist_entregues ?? 0}/{prep.checklist_obrigatorios ?? "?"}
+              </strong>
+              checklist obrigatório
             </div>
           </div>
+        )}
 
-          {erro?.acao === "salvar" && (
-            <Aviso tom="critico" titulo="Não foi possível salvar">
-              {erro.texto}
-            </Aviso>
-          )}
-          {concluido?.acao === "salvar" && <Aviso tom="ok">{concluido.texto}</Aviso>}
-
-          {(peticao.readiness?.pendencias ?? []).length > 0 && (
-            <Aviso tom="atencao" titulo="Pontos sem comprovação documental">
-              Revise a minuta antes de protocolar.
-            </Aviso>
-          )}
-
-          {historico && (historico.criticas.length > 0 || historico.versoes.length > 0) && (
-            <HistoricoDeCriticas
-              historico={historico}
-              aberto={mostrarHistorico}
-              onAlternar={() => setMostrarHistorico((atual) => !atual)}
-            />
-          )}
-
-          {/* UMA COLUNA SÓ — o documento é o próprio editor.
-            *
-            * Havia duas: os campos crus à esquerda e a prévia à direita. O mesmo
-            * texto ocupava a tela duas vezes, e a página ficava tão alta que
-            * rolar virava o trabalho principal. Agora se escreve onde se lê. */}
-          <PreviaPeticao
-            titulo={peticao.title}
-            secoes={peticao.sections ?? []}
-            edicao={edicao}
-            onEditar={(codigo, valor) => setEdicao((atual) => ({ ...atual, [codigo]: valor }))}
-          />
-
-          {peticao.revisao_pendente && (
-            <ComparacaoRevisao
-              anterior={peticao.sections ?? []}
-              candidata={peticao.revisao_pendente.sections}
-              revisando={revisando}
-              onAceitar={() => void decidirRevisao(true)}
-              onDescartar={() => void decidirRevisao(false)}
-            />
-          )}
-
-          {/* A revisão por prompt vem DEPOIS do texto: ela age sobre o que está
-            * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
-            * o advogado abria a tela num campo em branco e precisava rolar para
-            * descobrir o que iria alterar. */}
-          <CartaoFerramenta
-            tipo="revisao"
-            icone={<FilePenLine size={18} aria-hidden />}
-            titulo="Pedir uma revisão por prompt"
-            descricao={
-              <>
-                Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
-                pedidos&quot;). A IA gera uma nova versão completa para comparação. A versão
-                atual só muda depois que você aceitar a revisão.
-              </>
-            }
-            selo={<Selo tom="info" simbolo="✎">Altera a petição após aceite</Selo>}
-          >
-            <RotuloCampo htmlFor="prompt-revisao" className="sr-only">
-              O que deve mudar nesta petição
-            </RotuloCampo>
-            <Campo
-              area
-              id="prompt-revisao"
-              value={promptRevisao}
-              onChange={(e) => setPromptRevisao(e.target.value)}
-              rows={3}
-              placeholder="O que deve mudar nesta petição?"
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <Botao variante="secundario" pequeno onClick={alternarMicrofoneRevisao}>
-                {ouvindoRevisao ? <MicOff size={14} aria-hidden /> : <Mic size={14} aria-hidden />}
-                {ouvindoRevisao ? "Parar transcrição" : "Falar pedido"}
-              </Botao>
-              {ouvindoRevisao && (
-                <Selo tom="critico" simbolo="●">Ouvindo — fale a alteração</Selo>
-              )}
+        {analise && (
+          <section className="grid gap-3 border border-borda bg-papel p-4">
+            <div><h3 className="text-sm font-semibold m-0">Leitura rápida do caso</h3><p className="mt-1 text-sm leading-relaxed text-tinta-2">{analise.resumo}</p></div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <ResumoAnalise titulo="✓ Confirmado por documentos" tom="ok" itens={analise.fatos_confirmados ?? []} vazio="Ainda não há confirmação documental destacada." />
+              <ResumoAnalise titulo="? Depende de prova ou confirmação" tom="atencao" itens={[...(analise.fatos_so_na_entrevista ?? []), ...(analise.lacunas ?? [])]} vazio="Nenhuma pendência relevante apontada." />
             </div>
-            <label className="flex items-start gap-2 rounded-campo border border-borda bg-papel-2 p-2 text-xs text-tinta-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-[2px]"
-                checked={ensinarIA}
-                onChange={(e) => setEnsinarIA(e.target.checked)}
-              />
-              <span>
-                Ensinar a IA com esta correção
-                <span className="block text-tinta-3">
-                  Marcado, ela passa a valer para as próximas petições desta mesma
-                  categoria de caso. Desmarque quando o ajuste for só deste cliente
-                  (um nome, um valor, uma data) — a correção continua no histórico
-                  deste caso de qualquer jeito.
-                </span>
-              </span>
-            </label>
-            <div>
-              <BotaoProcesso
-                variante="secundario"
-                pequeno
-                processando={revisando}
-                textoProcessando="Aplicando a revisão…"
-                pendencia={promptRevisao.trim() ? null : "Descreva acima o que deve mudar."}
-                aguardando={salvando || ocupado}
-                erro={erro?.acao === "revisar" ? erro.texto : null}
-                concluido={concluido?.acao === "revisar" ? concluido.texto : null}
-                onClick={revisar}
-              >
-                Aplicar revisão
-              </BotaoProcesso>
+            {analise.cruzamento_entrevista_documentos && <details className="text-sm text-tinta-2"><summary className="cursor-pointer font-semibold">Ver confronto completo: entrevista × documentos</summary><p className="mt-2 leading-relaxed">{analise.cruzamento_entrevista_documentos}</p></details>}
+          </section>
+        )}
+
+        {peticao && (
+          <section className="grid gap-3 border border-borda p-4 bg-papel-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold m-0">
+                Petição inicial — versão {peticao.version}
+              </h3>
+              <div className="flex gap-2 flex-wrap">
+                {/* O botão de mostrar/ocultar prévia saiu junto com a segunda
+                    coluna: não há mais duas visões do mesmo texto para alternar. */}
+                <BotaoProcesso
+                  variante="secundario"
+                  pequeno
+                  processando={salvandoComo === "docx"}
+                  textoProcessando="Salvando…"
+                  aguardando={ocupado || salvandoComo === "pdf"}
+                  onClick={() => salvar(false)}
+                >
+                  Salvar e baixar .docx
+                </BotaoProcesso>
+                <BotaoProcesso
+                  variante="texto"
+                  pequeno
+                  processando={salvandoComo === "pdf"}
+                  textoProcessando="Gerando o PDF…"
+                  aguardando={ocupado || salvandoComo === "docx"}
+                  onClick={() => salvar(true)}
+                >
+                  Baixar PDF
+                </BotaoProcesso>
+              </div>
             </div>
-            {avisoRevisao && (
-              <Aviso tom="atencao" titulo="Confira a revisão">
-                {avisoRevisao}
+
+            {erro?.acao === "salvar" && (
+              <Aviso tom="critico" titulo="Não foi possível salvar">
+                {erro.texto}
               </Aviso>
             )}
-          </CartaoFerramenta>
+            {concluido?.acao === "salvar" && <Aviso tom="ok">{concluido.texto}</Aviso>}
 
-          <PesquisaWeb />
-        </section>
-      )}
+            {(peticao.readiness?.pendencias ?? []).length > 0 && (
+              <Aviso tom="atencao" titulo="Pontos sem comprovação documental">
+                Revise a minuta antes de protocolar.
+              </Aviso>
+            )}
 
-      {/* ------------------------------------------------- outras peças do caso
-        *
-        * O escritório quer poder levar DUAS ações do mesmo acidente sem redigir a
-        * segunda à mão. Até aqui isto não existia: o banco guardava uma peça por
-        * caso (a chave de `peticoes_locais` é o `caso_id`), então gerar a segunda
-        * apagaria a primeira. Agora elas moram em `peticoes_anexas` e a petição
-        * inicial não é tocada.
-        *
-        * O bloco aparece SEMPRE que há minuta, mesmo sem sugestão nenhuma. Antes
-        * ele só existia com a lista cheia — e quem abria a tela sem sugestão não
-        * tinha como saber que a funcionalidade existia. */}
-      {peticao && (
-        <section className="grid gap-3 border border-acao-borda bg-acao-clara p-4">
-          <div>
-            <h3 className="m-0 text-sm font-semibold text-tinta">Outras peças deste caso</h3>
-            <p className="mt-1 text-sm text-tinta-2">
-              Ações possíveis a partir da mesma entrevista e dos mesmos documentos. Gerar uma
-              delas <strong>não altera a petição inicial</strong> acima — cada peça sai com os
-              pedidos próprios dela, para conferir e baixar.
-            </p>
-          </div>
+            {historico && (historico.criticas.length > 0 || historico.versoes.length > 0) && (
+              <HistoricoDeCriticas
+                historico={historico}
+                aberto={mostrarHistorico}
+                onAlternar={() => setMostrarHistorico((atual) => !atual)}
+              />
+            )}
 
-          {erroAnexa && (
-            <Aviso tom="critico" titulo="A peça não foi gerada">
-              {erroAnexa}
-            </Aviso>
-          )}
+            {/* UMA COLUNA SÓ — o documento é o próprio editor.
+              *
+              * Havia duas: os campos crus à esquerda e a prévia à direita. O mesmo
+              * texto ocupava a tela duas vezes, e a página ficava tão alta que
+              * rolar virava o trabalho principal. Agora se escreve onde se lê. */}
+            <PreviaPeticao
+              titulo={peticao.title}
+              secoes={peticao.sections ?? []}
+              edicao={edicao}
+              onEditar={(codigo, valor) => setEdicao((atual) => ({ ...atual, [codigo]: valor }))}
+            />
 
-          {sugestoes.length > 0 ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {sugestoes.map((acao, indice) => {
-                const jaGerada = anexas.find((p) => p.titulo === acao.titulo);
-                return (
-                  <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <strong className="text-sm text-tinta">{acao.titulo}</strong>
-                      <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao">
-                        {acao.prioridade === "principal"
-                          ? "prioritária"
-                          : acao.prioridade === "alternativa"
-                            ? "alternativa"
-                            : "avaliar"}
+            {peticao.revisao_pendente && (
+              <ComparacaoRevisao
+                anterior={peticao.sections ?? []}
+                candidata={peticao.revisao_pendente.sections}
+                revisando={revisando}
+                onAceitar={() => void decidirRevisao(true)}
+                onDescartar={() => void decidirRevisao(false)}
+              />
+            )}
+
+            {/* AS MESMAS FERRAMENTAS DE ANTES, agora recolhidas.
+            *
+            * O chat ao lado faz as duas coisas em linguagem natural — "reescreve o item
+            * II com tom mais técnico", "procura súmula sobre isso" —, mas nenhuma delas
+            * foi removida: quem já trabalha com o campo de revisão continua com ele, e a
+            * pesquisa avulsa segue servindo a quem não quer abrir conversa. Recolhidas
+            * porque duas caixas grandes repetindo o que a coluna da direita faz
+            * empurravam a peça para fora da primeira tela. */}
+          <details className="rounded-cartao border border-borda bg-papel-2 p-3">
+            <summary className="cursor-pointer text-sm font-semibold text-tinta-2">
+              Ferramentas fora do chat: revisão por prompt e pesquisa na web
+            </summary>
+            <div className="grid gap-3 pt-3">
+              {/* A revisão por prompt vem DEPOIS do texto: ela age sobre o que está
+                  * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
+                  * o advogado abria a tela num campo em branco e precisava rolar para
+                  * descobrir o que iria alterar. */}
+                <CartaoFerramenta
+                  tipo="revisao"
+                  icone={<FilePenLine size={18} aria-hidden />}
+                  titulo="Pedir uma revisão por prompt"
+                  descricao={
+                    <>
+                      Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
+                      pedidos&quot;). A IA gera uma nova versão completa para comparação. A versão
+                      atual só muda depois que você aceitar a revisão.
+                    </>
+                  }
+                  selo={<Selo tom="info" simbolo="✎">Altera a petição após aceite</Selo>}
+                >
+                  <RotuloCampo htmlFor="prompt-revisao" className="sr-only">
+                    O que deve mudar nesta petição
+                  </RotuloCampo>
+                  <Campo
+                    area
+                    id="prompt-revisao"
+                    value={promptRevisao}
+                    onChange={(e) => setPromptRevisao(e.target.value)}
+                    rows={3}
+                    placeholder="O que deve mudar nesta petição?"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Botao variante="secundario" pequeno onClick={alternarMicrofoneRevisao}>
+                      {ouvindoRevisao ? <MicOff size={14} aria-hidden /> : <Mic size={14} aria-hidden />}
+                      {ouvindoRevisao ? "Parar transcrição" : "Falar pedido"}
+                    </Botao>
+                    {ouvindoRevisao && (
+                      <Selo tom="critico" simbolo="●">Ouvindo — fale a alteração</Selo>
+                    )}
+                  </div>
+                  <label className="flex items-start gap-2 rounded-campo border border-borda bg-papel-2 p-2 text-xs text-tinta-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-[2px]"
+                      checked={ensinarIA}
+                      onChange={(e) => setEnsinarIA(e.target.checked)}
+                    />
+                    <span>
+                      Ensinar a IA com esta correção
+                      <span className="block text-tinta-3">
+                        Marcado, ela passa a valer para as próximas petições desta mesma
+                        categoria de caso. Desmarque quando o ajuste for só deste cliente
+                        (um nome, um valor, uma data) — a correção continua no histórico
+                        deste caso de qualquer jeito.
                       </span>
-                    </div>
-                    <p className="mb-0 mt-2 text-sm text-tinta-2">{acao.motivo}</p>
-                    {acao.pedidos.length > 0 && (
-                      <p className="mb-0 mt-2 text-xs text-tinta-3">
-                        Pedidos possíveis: {acao.pedidos.join("; ")}
-                      </p>
-                    )}
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <BotaoProcesso
-                        variante={jaGerada ? "secundario" : "primario"}
-                        pequeno
-                        processando={gerandoAnexa === acao.titulo}
-                        textoProcessando="Redigindo a peça…"
-                        aguardando={ocupado || (gerandoAnexa !== null && gerandoAnexa !== acao.titulo)}
-                        onClick={() => gerarAnexa(acao)}
-                      >
-                        {jaGerada ? "Redigir de novo" : "Gerar esta peça"}
-                      </BotaoProcesso>
-                      {jaGerada && (
-                        <span className="text-xs text-tinta-3">
-                          Já redigida — redigir de novo substitui o texto atual e guarda a versão
-                          anterior no histórico da peça.
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="m-0 text-sm text-tinta-3">
-              A análise desta minuta não apontou outra ação cabível a partir deste material.
-              Novas sugestões aparecem aqui quando a petição é gerada de novo — normalmente
-              depois de entrar documento novo no caso.
-            </p>
-          )}
+                    </span>
+                  </label>
+                  <div>
+                    <BotaoProcesso
+                      variante="secundario"
+                      pequeno
+                      processando={revisando}
+                      textoProcessando="Aplicando a revisão…"
+                      pendencia={promptRevisao.trim() ? null : "Descreva acima o que deve mudar."}
+                      aguardando={salvando || ocupado}
+                      erro={erro?.acao === "revisar" ? erro.texto : null}
+                      concluido={concluido?.acao === "revisar" ? concluido.texto : null}
+                      onClick={revisar}
+                    >
+                      Aplicar revisão
+                    </BotaoProcesso>
+                  </div>
+                  {avisoRevisao && (
+                    <Aviso tom="atencao" titulo="Confira a revisão">
+                      {avisoRevisao}
+                    </Aviso>
+                  )}
+                </CartaoFerramenta>
 
-          {anexas.length > 0 && (
-            <div className="grid gap-2 border-t border-acao-borda pt-3">
-              <h4 className="m-0 text-xs font-semibold uppercase tracking-[0.1em] text-tinta-3">
-                Peças já redigidas ({anexas.length} de {maximoAnexas})
-              </h4>
-              <ul className="m-0 grid list-none gap-2 p-0">
-                {anexas.map((peca) => (
-                  <li key={peca.id} className="border border-borda bg-papel p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <strong className="text-sm text-tinta">{peca.titulo}</strong>
-                        <p className="mb-0 mt-1 text-xs text-tinta-3">
-                          {peca.secoes} seções
-                          {peca.gerada_por ? ` · por ${peca.gerada_por}` : ""}
-                          {peca.atualizado_em
-                            ? ` · ${new Date(peca.atualizado_em).toLocaleString("pt-BR")}`
-                            : ""}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <BotaoProcesso
-                          variante={anexaAberta === peca.id ? "secundario" : "primario"}
-                          pequeno
-                          processando={carregandoAnexa && anexaAberta === peca.id}
-                          textoProcessando="Abrindo…"
-                          onClick={() => alternarEdicaoAnexa(peca)}
-                        >
-                          {anexaAberta === peca.id ? "Fechar edição" : "Editar"}
-                        </BotaoProcesso>
-                        <BotaoProcesso
-                          variante="secundario"
-                          pequeno
-                          processando={baixandoAnexa === `${peca.id}:docx`}
-                          textoProcessando="Baixando…"
-                          onClick={() => baixarAnexa(peca, "docx")}
-                        >
-                          .docx
-                        </BotaoProcesso>
-                        <BotaoProcesso
-                          variante="texto"
-                          pequeno
-                          processando={baixandoAnexa === `${peca.id}:pdf`}
-                          textoProcessando="Gerando o PDF…"
-                          onClick={() => baixarAnexa(peca, "pdf")}
-                        >
-                          PDF
-                        </BotaoProcesso>
-                      </div>
-                    </div>
-                    {peca.pendencias.length > 0 && (
-                      <p className="mb-0 mt-2 text-xs text-atencao">
-                        Pendente nesta peça: {peca.pendencias.join("; ")}
-                      </p>
-                    )}
-
-                    {anexaAberta === peca.id && peticaoAnexa && (
-                      <div className="mt-3 grid gap-3 border-t border-borda pt-3">
-                        {/* Mesma mudança da petição inicial: a peça anexa também
-                          * deixou de ter campo cru de um lado e prévia do outro. */}
-                        <div className="grid gap-3">
-                          <PreviaPeticao
-                            titulo={peticaoAnexa.title}
-                            secoes={peticaoAnexa.sections ?? []}
-                            edicao={edicaoAnexa}
-                            onEditar={(codigo, valor) =>
-                              setEdicaoAnexa((atual) => ({ ...atual, [codigo]: valor }))
-                            }
-                          />
-                          <div>
-                            <BotaoProcesso
-                              variante="secundario"
-                              pequeno
-                              processando={salvandoAnexa}
-                              textoProcessando="Salvando…"
-                              onClick={salvarEdicaoAnexa}
-                            >
-                              Salvar edição
-                            </BotaoProcesso>
-                          </div>
-                        </div>
-
-                        {historicoAnexa && historicoAnexa.versoes.length > 0 && (
-                          <HistoricoDeCriticas
-                            historico={historicoAnexa}
-                            aberto={mostrarHistoricoAnexa}
-                            onAlternar={() => setMostrarHistoricoAnexa((atual) => !atual)}
-                          />
-                        )}
-
-                        <CartaoFerramenta
-                          tipo="revisao"
-                          icone={<FilePenLine size={18} aria-hidden />}
-                          titulo="Pedir uma revisão por prompt (opcional)"
-                          descricao={
-                            <>
-                              Descreva o que deve mudar nesta peça. A IA aplica só o que você
-                              pedir, confere o resultado e preserva o resto do texto. A versão
-                              atual fica guardada no histórico desta peça.
-                            </>
-                          }
-                          selo={<Selo tom="info" simbolo="✎">Altera esta peça</Selo>}
-                        >
-                          <RotuloCampo htmlFor={`anexa-${peca.id}-prompt-revisao`} className="sr-only">
-                            O que deve mudar nesta peça
-                          </RotuloCampo>
-                          <Campo
-                            area
-                            id={`anexa-${peca.id}-prompt-revisao`}
-                            value={promptRevisaoAnexa}
-                            onChange={(e) => setPromptRevisaoAnexa(e.target.value)}
-                            rows={3}
-                            placeholder="O que deve mudar nesta peça?"
-                          />
-                          <div>
-                            <BotaoProcesso
-                              variante="secundario"
-                              pequeno
-                              processando={revisandoAnexa}
-                              textoProcessando="Aplicando a revisão…"
-                              pendencia={promptRevisaoAnexa.trim() ? null : "Descreva acima o que deve mudar."}
-                              onClick={revisarEdicaoAnexa}
-                            >
-                              Aplicar revisão
-                            </BotaoProcesso>
-                          </div>
-                          {retornoAnexa && (
-                            <Aviso tom={retornoAnexa.tom} titulo={retornoAnexa.tom === "ok" ? undefined : "Confira a revisão"}>
-                              {retornoAnexa.texto}
-                            </Aviso>
-                          )}
-                        </CartaoFerramenta>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                <PesquisaWeb />
             </div>
-          )}
-        </section>
+          </details>
+          </section>
+        )}
+
+        {/* ------------------------------------------------- outras peças do caso
+          *
+          * O escritório quer poder levar DUAS ações do mesmo acidente sem redigir a
+          * segunda à mão. Até aqui isto não existia: o banco guardava uma peça por
+          * caso (a chave de `peticoes_locais` é o `caso_id`), então gerar a segunda
+          * apagaria a primeira. Agora elas moram em `peticoes_anexas` e a petição
+          * inicial não é tocada.
+          *
+          * O bloco aparece SEMPRE que há minuta, mesmo sem sugestão nenhuma. Antes
+          * ele só existia com a lista cheia — e quem abria a tela sem sugestão não
+          * tinha como saber que a funcionalidade existia. */}
+        {peticao && (
+          <section className="grid gap-3 border border-acao-borda bg-acao-clara p-4">
+            <div>
+              <h3 className="m-0 text-sm font-semibold text-tinta">Outras peças deste caso</h3>
+              <p className="mt-1 text-sm text-tinta-2">
+                Ações possíveis a partir da mesma entrevista e dos mesmos documentos. Gerar uma
+                delas <strong>não altera a petição inicial</strong> acima — cada peça sai com os
+                pedidos próprios dela, para conferir e baixar.
+              </p>
+            </div>
+
+            {erroAnexa && (
+              <Aviso tom="critico" titulo="A peça não foi gerada">
+                {erroAnexa}
+              </Aviso>
+            )}
+
+            {sugestoes.length > 0 ? (
+              <ul className="m-0 grid list-none gap-2 p-0">
+                {sugestoes.map((acao, indice) => {
+                  const jaGerada = anexas.find((p) => p.titulo === acao.titulo);
+                  return (
+                    <li key={`${acao.titulo}-${indice}`} className="border border-borda bg-papel p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <strong className="text-sm text-tinta">{acao.titulo}</strong>
+                        <span className="rounded-pill border border-acao-borda px-2 py-0.5 text-xs text-acao">
+                          {acao.prioridade === "principal"
+                            ? "prioritária"
+                            : acao.prioridade === "alternativa"
+                              ? "alternativa"
+                              : "avaliar"}
+                        </span>
+                      </div>
+                      <p className="mb-0 mt-2 text-sm text-tinta-2">{acao.motivo}</p>
+                      {acao.pedidos.length > 0 && (
+                        <p className="mb-0 mt-2 text-xs text-tinta-3">
+                          Pedidos possíveis: {acao.pedidos.join("; ")}
+                        </p>
+                      )}
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <BotaoProcesso
+                          variante={jaGerada ? "secundario" : "primario"}
+                          pequeno
+                          processando={gerandoAnexa === acao.titulo}
+                          textoProcessando="Redigindo a peça…"
+                          aguardando={ocupado || (gerandoAnexa !== null && gerandoAnexa !== acao.titulo)}
+                          onClick={() => gerarAnexa(acao)}
+                        >
+                          {jaGerada ? "Redigir de novo" : "Gerar esta peça"}
+                        </BotaoProcesso>
+                        {jaGerada && (
+                          <span className="text-xs text-tinta-3">
+                            Já redigida — redigir de novo substitui o texto atual e guarda a versão
+                            anterior no histórico da peça.
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="m-0 text-sm text-tinta-3">
+                A análise desta minuta não apontou outra ação cabível a partir deste material.
+                Novas sugestões aparecem aqui quando a petição é gerada de novo — normalmente
+                depois de entrar documento novo no caso.
+              </p>
+            )}
+
+            {anexas.length > 0 && (
+              <div className="grid gap-2 border-t border-acao-borda pt-3">
+                <h4 className="m-0 text-xs font-semibold uppercase tracking-[0.1em] text-tinta-3">
+                  Peças já redigidas ({anexas.length} de {maximoAnexas})
+                </h4>
+                <ul className="m-0 grid list-none gap-2 p-0">
+                  {anexas.map((peca) => (
+                    <li key={peca.id} className="border border-borda bg-papel p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <strong className="text-sm text-tinta">{peca.titulo}</strong>
+                          <p className="mb-0 mt-1 text-xs text-tinta-3">
+                            {peca.secoes} seções
+                            {peca.gerada_por ? ` · por ${peca.gerada_por}` : ""}
+                            {peca.atualizado_em
+                              ? ` · ${new Date(peca.atualizado_em).toLocaleString("pt-BR")}`
+                              : ""}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <BotaoProcesso
+                            variante={anexaAberta === peca.id ? "secundario" : "primario"}
+                            pequeno
+                            processando={carregandoAnexa && anexaAberta === peca.id}
+                            textoProcessando="Abrindo…"
+                            onClick={() => alternarEdicaoAnexa(peca)}
+                          >
+                            {anexaAberta === peca.id ? "Fechar edição" : "Editar"}
+                          </BotaoProcesso>
+                          <BotaoProcesso
+                            variante="secundario"
+                            pequeno
+                            processando={baixandoAnexa === `${peca.id}:docx`}
+                            textoProcessando="Baixando…"
+                            onClick={() => baixarAnexa(peca, "docx")}
+                          >
+                            .docx
+                          </BotaoProcesso>
+                          <BotaoProcesso
+                            variante="texto"
+                            pequeno
+                            processando={baixandoAnexa === `${peca.id}:pdf`}
+                            textoProcessando="Gerando o PDF…"
+                            onClick={() => baixarAnexa(peca, "pdf")}
+                          >
+                            PDF
+                          </BotaoProcesso>
+                        </div>
+                      </div>
+                      {peca.pendencias.length > 0 && (
+                        <p className="mb-0 mt-2 text-xs text-atencao">
+                          Pendente nesta peça: {peca.pendencias.join("; ")}
+                        </p>
+                      )}
+
+                      {anexaAberta === peca.id && peticaoAnexa && (
+                        <div className="mt-3 grid gap-3 border-t border-borda pt-3">
+                          {/* Mesma mudança da petição inicial: a peça anexa também
+                            * deixou de ter campo cru de um lado e prévia do outro. */}
+                          <div className="grid gap-3">
+                            <PreviaPeticao
+                              titulo={peticaoAnexa.title}
+                              secoes={peticaoAnexa.sections ?? []}
+                              edicao={edicaoAnexa}
+                              onEditar={(codigo, valor) =>
+                                setEdicaoAnexa((atual) => ({ ...atual, [codigo]: valor }))
+                              }
+                            />
+                            <div>
+                              <BotaoProcesso
+                                variante="secundario"
+                                pequeno
+                                processando={salvandoAnexa}
+                                textoProcessando="Salvando…"
+                                onClick={salvarEdicaoAnexa}
+                              >
+                                Salvar edição
+                              </BotaoProcesso>
+                            </div>
+                          </div>
+
+                          {historicoAnexa && historicoAnexa.versoes.length > 0 && (
+                            <HistoricoDeCriticas
+                              historico={historicoAnexa}
+                              aberto={mostrarHistoricoAnexa}
+                              onAlternar={() => setMostrarHistoricoAnexa((atual) => !atual)}
+                            />
+                          )}
+
+                          <CartaoFerramenta
+                            tipo="revisao"
+                            icone={<FilePenLine size={18} aria-hidden />}
+                            titulo="Pedir uma revisão por prompt (opcional)"
+                            descricao={
+                              <>
+                                Descreva o que deve mudar nesta peça. A IA aplica só o que você
+                                pedir, confere o resultado e preserva o resto do texto. A versão
+                                atual fica guardada no histórico desta peça.
+                              </>
+                            }
+                            selo={<Selo tom="info" simbolo="✎">Altera esta peça</Selo>}
+                          >
+                            <RotuloCampo htmlFor={`anexa-${peca.id}-prompt-revisao`} className="sr-only">
+                              O que deve mudar nesta peça
+                            </RotuloCampo>
+                            <Campo
+                              area
+                              id={`anexa-${peca.id}-prompt-revisao`}
+                              value={promptRevisaoAnexa}
+                              onChange={(e) => setPromptRevisaoAnexa(e.target.value)}
+                              rows={3}
+                              placeholder="O que deve mudar nesta peça?"
+                            />
+                            <div>
+                              <BotaoProcesso
+                                variante="secundario"
+                                pequeno
+                                processando={revisandoAnexa}
+                                textoProcessando="Aplicando a revisão…"
+                                pendencia={promptRevisaoAnexa.trim() ? null : "Descreva acima o que deve mudar."}
+                                onClick={revisarEdicaoAnexa}
+                              >
+                                Aplicar revisão
+                              </BotaoProcesso>
+                            </div>
+                            {retornoAnexa && (
+                              <Aviso tom={retornoAnexa.tom} titulo={retornoAnexa.tom === "ok" ? undefined : "Confira a revisão"}>
+                                {retornoAnexa.texto}
+                              </Aviso>
+                            )}
+                          </CartaoFerramenta>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+        )}
+
+        {peticao?.jurimetria && <ModuloJurimetria dados={peticao.jurimetria} />}
+      </Cartao>
+
+      {/* UM só ChatPeticao, sempre montado.
+        *
+        * Montar um para a coluna e outro para a gaveta duplicaria a escuta dos avisos
+        * do painel (`avisarChatDaPeticao`) e a mensagem da IA entraria duas vezes na
+        * transcrição. Aqui só a moldura muda: coluna fixa em tela larga, gaveta
+        * sobreposta abaixo dela. */}
+      <div
+        className={`min-w-0 lg:sticky lg:top-4 lg:block lg:h-[calc(100vh-7rem)] ${
+          gaveta
+            ? "max-lg:fixed max-lg:inset-y-0 max-lg:right-0 max-lg:z-[60] max-lg:w-[min(100vw,26rem)] max-lg:shadow-modal"
+            : "max-lg:hidden"
+        }`}
+      >
+        <ChatPeticao
+          casoId={casoId}
+          aoMudarAPeticao={() => void recarregar()}
+          aoFechar={() => setGaveta(false)}
+        />
+      </div>
+
+      {gaveta && (
+        <button
+          type="button"
+          aria-label="Fechar a conversa"
+          className="fixed inset-0 z-[55] cursor-pointer border-0 bg-black/35 p-0 lg:hidden"
+          onClick={() => setGaveta(false)}
+        />
       )}
 
-      {peticao?.jurimetria && <ModuloJurimetria dados={peticao.jurimetria} />}
-    </Cartao>
+      {!gaveta && (
+        <button
+          type="button"
+          className="botao botao--primario fixed bottom-4 right-4 z-50 shadow-modal lg:hidden"
+          onClick={() => setGaveta(true)}
+        >
+          Falar com a IA
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1512,203 +1601,6 @@ function ResultadoDaPesquisa({
       </p>
     </article>
   );
-}
-
-function dominioDe(url: string): string {
-  return url.replace(/^https?:\/\/(www\.)?/, "").split(/[/?#]/)[0];
-}
-
-/* ---------------------------------------------------------------------------
- * Markdown da resposta da pesquisa.
- *
- * O modelo responde em markdown livre — às vezes um parágrafo, às vezes títulos,
- * listas e citação de súmula. Antes tudo caía num único `<p>` com
- * `whitespace-pre-wrap`: asteriscos e `###` apareciam crus e as listas ficavam
- * presas ao espaçamento de texto corrido. Aqui cada bloco vira o elemento
- * certo. É um subconjunto de propósito (sem HTML, sem tabela) e nada é injetado
- * como HTML — só nós React, então não há risco de script vindo da web.
- * ------------------------------------------------------------------------- */
-
-type BlocoMd =
-  | { tipo: "titulo"; nivel: number; texto: string }
-  | { tipo: "lista"; ordenada: boolean; itens: { texto: string; nivel: number }[] }
-  | { tipo: "citacao"; linhas: string[] }
-  | { tipo: "separador" }
-  | { tipo: "paragrafo"; linhas: string[] };
-
-const ITEM_MD = /^(\s*)([-*•+]|\d+[.)])\s+(.*)$/;
-const TITULO_MD = /^\s*(#{1,6})\s+(.*?)\s*#*\s*$/;
-const SEPARADOR_MD = /^\s*([-*_])(\s*\1){2,}\s*$/;
-
-function blocosDoMarkdown(texto: string): BlocoMd[] {
-  const blocos: BlocoMd[] = [];
-  const linhas = texto.replace(/\r\n?/g, "\n").split("\n");
-  let i = 0;
-  while (i < linhas.length) {
-    const linha = linhas[i];
-    if (!linha.trim()) {
-      i += 1;
-      continue;
-    }
-    const titulo = linha.match(TITULO_MD);
-    if (titulo) {
-      blocos.push({ tipo: "titulo", nivel: titulo[1].length, texto: titulo[2] });
-      i += 1;
-      continue;
-    }
-    if (SEPARADOR_MD.test(linha)) {
-      blocos.push({ tipo: "separador" });
-      i += 1;
-      continue;
-    }
-    if (/^\s*>/.test(linha)) {
-      const citacao: string[] = [];
-      while (i < linhas.length && /^\s*>/.test(linhas[i])) {
-        citacao.push(linhas[i].replace(/^\s*>\s?/, ""));
-        i += 1;
-      }
-      blocos.push({ tipo: "citacao", linhas: citacao });
-      continue;
-    }
-    const primeiro = linha.match(ITEM_MD);
-    if (primeiro) {
-      const ordenada = /\d/.test(primeiro[2]);
-      const itens: { texto: string; nivel: number }[] = [];
-      while (i < linhas.length) {
-        const atual = linhas[i].match(ITEM_MD);
-        if (atual) {
-          const recuo = atual[1].replace(/\t/g, "  ").length;
-          itens.push({ texto: atual[3], nivel: Math.min(2, Math.floor(recuo / 2)) });
-          i += 1;
-        } else if (linhas[i].trim() && /^\s{2,}/.test(linhas[i]) && itens.length) {
-          // Continuação do item anterior, quebrada em outra linha.
-          itens[itens.length - 1].texto += ` ${linhas[i].trim()}`;
-          i += 1;
-        } else if (!linhas[i].trim() && ITEM_MD.test(linhas[i + 1] ?? "")) {
-          i += 1; // Linha em branco entre itens da mesma lista.
-        } else {
-          break;
-        }
-      }
-      blocos.push({ tipo: "lista", ordenada, itens });
-      continue;
-    }
-    const paragrafo: string[] = [];
-    while (
-      i < linhas.length &&
-      linhas[i].trim() &&
-      !TITULO_MD.test(linhas[i]) &&
-      !/^\s*>/.test(linhas[i]) &&
-      !ITEM_MD.test(linhas[i]) &&
-      !SEPARADOR_MD.test(linhas[i])
-    ) {
-      paragrafo.push(linhas[i].trim());
-      i += 1;
-    }
-    blocos.push({ tipo: "paragrafo", linhas: paragrafo });
-  }
-  return blocos;
-}
-
-function RespostaFormatada({ texto }: { texto: string }) {
-  const blocos = blocosDoMarkdown(texto);
-  if (!blocos.length) return <p className={TEXTO}>A pesquisa não trouxe texto de resposta.</p>;
-  return (
-    <div className="grid gap-3 text-sm leading-relaxed text-tinta-2 break-words">
-      {blocos.map((bloco, i) => {
-        switch (bloco.tipo) {
-          case "titulo":
-            return bloco.nivel <= 2 ? (
-              <h4 key={i} className="m-0 mt-1 font-ui text-base font-semibold text-tinta">
-                <MdEmLinha texto={bloco.texto} />
-              </h4>
-            ) : (
-              <h5 key={i} className="m-0 mt-1 font-ui text-sm font-semibold text-tinta">
-                <MdEmLinha texto={bloco.texto} />
-              </h5>
-            );
-          case "separador":
-            return <hr key={i} className="m-0 border-0 border-t border-borda" />;
-          case "citacao":
-            return (
-              <blockquote key={i} className="m-0 border-l-4 border-acao-borda bg-papel-2 px-3 py-2">
-                {bloco.linhas.map((l, j) => (
-                  <span key={j} className="block">
-                    <MdEmLinha texto={l} />
-                  </span>
-                ))}
-              </blockquote>
-            );
-          case "lista": {
-            const Lista = bloco.ordenada ? "ol" : "ul";
-            return (
-              <Lista
-                key={i}
-                className={`m-0 grid gap-1 pl-5 marker:text-tinta-3 ${bloco.ordenada ? "list-decimal" : "list-disc"}`}
-              >
-                {bloco.itens.map((it, j) => (
-                  <li key={j} style={it.nivel ? { marginLeft: `${it.nivel * 16}px` } : undefined}>
-                    <MdEmLinha texto={it.texto} />
-                  </li>
-                ))}
-              </Lista>
-            );
-          }
-          default:
-            return (
-              <p key={i} className="m-0">
-                {bloco.linhas.map((l, j) => (
-                  <span key={j}>
-                    {j > 0 && " "}
-                    <MdEmLinha texto={l} />
-                  </span>
-                ))}
-              </p>
-            );
-        }
-      })}
-    </div>
-  );
-}
-
-/** Em linha: link `[rótulo](url)`, URL solta, `**negrito**`, `*itálico*` e `código`. */
-function MdEmLinha({ texto }: { texto: string }) {
-  const partes: ReactNode[] = [];
-  const padrao =
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|(?<![\w*])\*([^*\n]+)\*(?!\*)|(https?:\/\/[^\s<>)\]]+)/g;
-  let ultimo = 0;
-  for (const achado of texto.matchAll(padrao)) {
-    const inicio = achado.index ?? 0;
-    if (inicio > ultimo) partes.push(texto.slice(ultimo, inicio));
-    const [, rotulo, url, negrito, negrito2, codigo, italico, urlSolta] = achado;
-    if (url || urlSolta) {
-      const bruta = url || urlSolta;
-      const destino = bruta.replace(/[.,;:]+$/, "");
-      partes.push(
-        <a key={inicio} href={destino} target="_blank" rel="noopener noreferrer" className="text-acao underline break-words">
-          {rotulo ? <MdEmLinha texto={rotulo} /> : dominioDe(destino)}
-        </a>,
-      );
-      if (bruta.length > destino.length) partes.push(bruta.slice(destino.length));
-    } else if (negrito || negrito2) {
-      partes.push(
-        <strong key={inicio} className="text-tinta">
-          <MdEmLinha texto={negrito || negrito2} />
-        </strong>,
-      );
-    } else if (codigo) {
-      partes.push(
-        <code key={inicio} className="rounded-campo bg-papel-3 px-1 font-codigo text-xs text-tinta">
-          {codigo}
-        </code>,
-      );
-    } else if (italico) {
-      partes.push(<em key={inicio}>{italico}</em>);
-    }
-    ultimo = inicio + achado[0].length;
-  }
-  if (ultimo < texto.length) partes.push(texto.slice(ultimo));
-  return <>{partes}</>;
 }
 
 function ComparacaoRevisao({

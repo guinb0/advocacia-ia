@@ -459,8 +459,12 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     return "\n\n".join(blocos)
 
 
-def _documentos_ocr(caso_id: str) -> list[dict[str, str]]:
+def documentos_ocr(caso_id: str) -> list[dict[str, str]]:
     """O texto de OCR de cada anexo, em UMA consulta (ver `_documentos_do_caso`).
+
+    Pública porque o chat da petição (`agente/chat_peticao.py`) lê os mesmos anexos
+    para responder "o que o laudo diz?". Duas leituras do mesmo OCR divergiriam no
+    dia em que uma delas passasse a cortar o texto noutro ponto.
 
     Era um `obter_entrega` por arquivo, e a geração da petição abre este caminho
     junto com o da análise: num caso de 46 anexos davam ~180 idas ao banco antes de
@@ -551,7 +555,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
         texto_entrevista[:55_000],
     ]
 
-    documentos = _documentos_ocr(caso_id)
+    documentos = documentos_ocr(caso_id)
     if documentos:
         linhas.append("\n=== DOCUMENTOS (texto extraído por OCR) ===")
         for numero, doc in enumerate(documentos[:20], 1):
@@ -1915,7 +1919,12 @@ def revisar_anexa_com_prompt(
 
 
 def revisar_com_prompt(
-    caso_id: str, *, prompt_critica: str, usuario: str, generaliza: bool = True
+    caso_id: str,
+    *,
+    prompt_critica: str,
+    usuario: str,
+    generaliza: bool = True,
+    origem: str = "painel",
 ) -> dict[str, Any]:
     """Reescreve a petição a partir de uma crítica em linguagem natural.
 
@@ -1968,7 +1977,7 @@ def revisar_com_prompt(
             "base_version": int(atual.get("version") or 1), "sections": secoes,
             "prompt": prompt_critica, "usuario": usuario, "generaliza": generaliza,
             "created_at": _agora(), "revisao": {"tipo": "prompt", "prompt": prompt_critica,
-                "usuario": usuario, "em": _agora(), **conferencia},
+                "usuario": usuario, "origem": origem, "em": _agora(), **conferencia},
         }
         novos_dados = {**atual, "revisao_pendente": candidato}
         _salvar(caso_id, novos_dados)
@@ -1979,6 +1988,7 @@ def revisar_com_prompt(
             "tipo": "prompt",
             "prompt": prompt_critica,
             "usuario": usuario,
+            "origem": origem,
             "em": _agora(),
             **conferencia,
         }}
@@ -1997,6 +2007,9 @@ def revisar_com_prompt(
             "tipo": "prompt",
             "prompt": prompt_critica,
             "usuario": usuario,
+            # De onde veio o pedido: o campo do painel ou o chat ao lado da peça.
+            # Documento jurídico não pode ter edição de origem desconhecida.
+            "origem": origem,
             "em": _agora(),
             **conferencia,
         },

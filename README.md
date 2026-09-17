@@ -48,6 +48,7 @@ Nada de status marcado à mão: tudo é derivado dos arquivos entregues.
 | rodar o projeto pela primeira vez | [`docs/COMECANDO.md`](docs/COMECANDO.md) |
 | entender o que foi decidido e por quê | [`CONTEXTO.md`](CONTEXTO.md) |
 | usar ou consertar a chamada por vídeo | [`docs/CHAMADA.md`](docs/CHAMADA.md) |
+| entender o chat da petição, no Dossiê | [`docs/CHAT-DA-PETICAO.md`](docs/CHAT-DA-PETICAO.md) |
 | saber a direção visual da interface | [`docs/GUIA-VISUAL.md`](docs/GUIA-VISUAL.md) |
 | ver o que cada rota faz, interativo | <http://127.0.0.1:8100/docs> |
 
