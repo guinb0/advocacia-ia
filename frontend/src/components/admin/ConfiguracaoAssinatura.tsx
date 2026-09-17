@@ -62,7 +62,10 @@ export default function ConfiguracaoAssinatura() {
 
   useEffect(() => {
     void recarregar();
-    void statusTactiq().then(setTactiq).catch(() => setTactiq(null));
+    void statusTactiq().then(setTactiq).catch((falha) => {
+      setTactiq(null);
+      setErro(falha instanceof Error ? `Tactiq: ${falha.message}` : "Tactiq está indisponível no momento.");
+    });
   }, [recarregar]);
 
   async function conectarAoTactiq() {

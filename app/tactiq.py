@@ -22,9 +22,15 @@ def inicializar():
 def _linha(usuario_id):
     with conectar() as c: return c.execute(f"SELECT * FROM {TABELA} WHERE usuario_id=?", (usuario_id,)).fetchone()
 def status(usuario_id):
+    # A primeira versão dependia da criação na inicialização da API. Se uma
+    # instância subisse durante uma oscilação do SQL Server, a tabela não nascia
+    # e esta simples leitura devolvia 500 para a tela. Garantir aqui torna a rota
+    # autocorretiva e não expõe token algum.
+    inicializar()
     r=_linha(usuario_id)
-    return {"conectado": bool(r and r['access_token_cifrado']), "conectado_em": str(r['conectado_em'] or '') if r else '', "servidor": MCP}
+    return {"conectado": bool(r and r['access_token_cifrado']), "conectado_em": str(r['conectado_em'] or '') if r else '', "servidor": MCP, "disponivel": True}
 def iniciar(usuario_id, redirect_uri):
+    inicializar()
     verifier=secrets.token_urlsafe(64); state=secrets.token_urlsafe(32)
     challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
     # Registro dinâmico oficial do servidor: não há client secret no frontend.
