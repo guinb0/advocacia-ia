@@ -16,6 +16,11 @@
  *    acontecer escrito, e vira comparação (antes × depois) antes de virar versão.
  * 3. O QUE VEIO DA WEB TEM CARA DE WEB. Fonte e link, em bloco próprio, nunca com a
  *    mesma aparência do que veio dos autos do caso.
+ *
+ * E uma regra de uso, vinda da primeira leitura da tela pronta: quem abre isto não sabe
+ * o que pode pedir. Por isso o começo da conversa não é um campo vazio com uma frase
+ * explicando — são três coisas concretas para clicar, e elas continuam ao alcance como
+ * atalhos depois que a conversa começa.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -34,14 +39,37 @@ import {
   type MensagemDoChat,
 } from "@/lib/chatPeticao";
 
-/* Escritas como um advogado escreveria, e cobrindo as três coisas que o chat faz de
- * diferente: explicar o lastro de um ponto, buscar fora do caso e mudar a peça. */
-const SUGESTOES = [
-  "Por que esse ponto está como pendente de confirmação?",
-  "Mostra o confronto entrevista × documentos",
-  "Procura jurisprudência recente sobre esse pedido",
-  "Reescreve o pedido de dano moral em tom mais técnico",
+/**
+ * O que dá para pedir aqui, em três coisas concretas.
+ *
+ * `envia: true` manda a pergunta como está — ela se basta. As outras duas ESCREVEM o
+ * começo da frase no campo e deixam o cursor no fim: "busque na web" sem o assunto e
+ * "altere a peça" sem dizer o quê não são pedidos, e mandá-las prontas gastaria uma
+ * volta no modelo só para receber de volta "sobre o quê?".
+ */
+const ATALHOS: { rotulo: string; dica: string; texto: string; envia: boolean }[] = [
+  {
+    rotulo: "Entender a peça",
+    dica: "O que ainda não tem prova, o que está frágil, por quê",
+    texto: "O que nesta petição ainda não tem comprovação documental, e por quê?",
+    envia: true,
+  },
+  {
+    rotulo: "Buscar na web",
+    dica: "Jurisprudência, súmula, lei — sempre com a fonte e o link",
+    texto: "Pesquise na web ",
+    envia: false,
+  },
+  {
+    rotulo: "Alterar a petição",
+    dica: "Você vê o antes × depois e decide antes de virar versão",
+    texto: "Altere a petição: ",
+    envia: false,
+  },
 ];
+
+/** O quarto caminho: existe como link no painel, e aqui vira pergunta. */
+const CONFRONTO = "Mostre o confronto entre a entrevista e os documentos.";
 
 interface Props {
   casoId: string;
@@ -50,9 +78,18 @@ interface Props {
   aoMudarAPeticao: () => void;
   /** Fecha a gaveta. Em tela larga o painel é coluna fixa e o botão não aparece. */
   aoFechar?: () => void;
+  /** Alterna entre a coluna normal e a larga. Quem manda na grade é o `FluxoPeticao`. */
+  expandido?: boolean;
+  aoAlternarLargura?: () => void;
 }
 
-export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props) {
+export default function ChatPeticao({
+  casoId,
+  aoMudarAPeticao,
+  aoFechar,
+  expandido,
+  aoAlternarLargura,
+}: Props) {
   const [mensagens, setMensagens] = useState<MensagemDoChat[]>([]);
   const [carregandoHistorico, setCarregandoHistorico] = useState(true);
   const [modeloDisponivel, setModeloDisponivel] = useState(true);
@@ -65,18 +102,59 @@ export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props
    * a transcrição precisa continuar mostrando o que foi proposto e aceito. */
   const [decididas, setDecididas] = useState<Record<string, "aceita" | "descartada">>({});
   const [executando, setExecutando] = useState<string | null>(null);
+  /* Quem rolou para cima está LENDO. Empurrar a conversa para o fim a cada pedaço de
+   * texto que chega arranca do meio da leitura a resposta anterior, e não há como voltar
+   * a ela sem procurar. Enquanto isso, o botão de descer diz que chegou coisa nova. */
+  const [preso, setPreso] = useState(true);
   const conversa = useRef<HTMLDivElement>(null);
+  const campo = useRef<HTMLTextAreaElement>(null);
+  /* De QUAL caso é o que está na tela agora. O Dossiê vive em estado, e não em rota
+   * (ver `app/home/home.model.ts`): voltar no navegador para o dossiê de outro caso
+   * troca o `casoId` SEM remontar este componente. Sem esta referência, uma resposta
+   * ou uma ação pedida no caso anterior voltaria do servidor depois da troca e entraria
+   * na transcrição do caso novo. */
+  const casoNaTela = useRef(casoId);
+  /* A pergunta em voo pertence ao caso em que foi feita: trocar de caso a cancela, em
+   * vez de deixá-la escrevendo no fluxo de outra conversa. */
+  const emVoo = useRef<AbortController | null>(null);
 
-  const rolarParaOFim = useCallback(() => {
-    // `scrollTop` no contêiner, e não `scrollIntoView` no fim: com o painel em coluna
-    // sticky, o `scrollIntoView` arrastava a PÁGINA inteira junto, e o documento ao lado
-    // saía da vista a cada pedaço de resposta que chegava.
+  const descer = useCallback(() => {
+    // `scrollTop` no contêiner, e não `scrollIntoView`: com o painel em coluna sticky, o
+    // `scrollIntoView` arrastava a PÁGINA inteira junto, e o documento ao lado saía da
+    // vista a cada pedaço de resposta que chegava.
     const alvo = conversa.current;
     if (alvo) alvo.scrollTop = alvo.scrollHeight;
+    setPreso(true);
+  }, []);
+
+  const ajustarAltura = useCallback(() => {
+    const alvo = campo.current;
+    if (!alvo) return;
+    // Zerar antes de medir: sem isto o `scrollHeight` nunca diminui e o campo fica
+    // grande para sempre depois de uma pergunta longa.
+    alvo.style.height = "auto";
+    alvo.style.height = `${Math.min(alvo.scrollHeight, 168)}px`;
   }, []);
 
   useEffect(() => {
     let ativo = true;
+    /* Zerar ANTES de buscar o histórico do caso novo. A transcrição é renderizada
+     * mesmo durante o carregamento, então sem esta limpeza a conversa do caso anterior
+     * seguiria na tela sob o aviso "Abrindo a conversa deste caso…" — e o pior: as
+     * propostas já aceitas ou descartadas lá (`decididas`, que é chave de mensagem)
+     * continuariam valendo aqui, além do rascunho no campo e do erro do outro caso. */
+    casoNaTela.current = casoId;
+    emVoo.current?.abort();
+    emVoo.current = null;
+    setMensagens([]);
+    setDecididas({});
+    setExecutando(null);
+    setTexto("");
+    setParcial("");
+    setEtapa("");
+    setEnviando(false);
+    setErro("");
+    setPreso(true);
     setCarregandoHistorico(true);
     void abrirChatDaPeticao(casoId)
       .then((chat) => {
@@ -94,8 +172,15 @@ export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props
   }, [casoId]);
 
   useEffect(() => {
-    rolarParaOFim();
-  }, [mensagens, parcial, etapa, rolarParaOFim]);
+    if (preso) descer();
+  }, [mensagens, parcial, etapa, preso, descer]);
+
+  /* O campo acompanha o que se escreve e para de crescer em ~6 linhas. As três linhas
+   * fixas de antes roubavam altura da leitura mesmo quando a pergunta tinha cinco
+   * palavras — e prendiam o pedido longo numa janelinha com rolagem própria. Rodar isto
+   * por efeito, e não só no `onChange`, cobre também o que o código escreve no campo:
+   * os atalhos que começam a frase e a limpeza depois do envio. */
+  useEffect(ajustarAltura, [texto, ajustarAltura]);
 
   /* O que os BOTÕES do painel fizeram chega por evento de janela (ver
    * `lib/chatPeticao.avisarChatDaPeticao`). A IA conta na conversa o que mudou — é
@@ -106,7 +191,11 @@ export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props
       if (!detail || detail.casoId !== casoId) return;
       try {
         const mensagem = await registrarEventoNoChat(casoId, detail.tipo, detail.dados ?? {});
-        if (mensagem) setMensagens((atuais) => [...atuais, mensagem]);
+        // A ida ao servidor demora: se o dossiê já é outro, a mensagem ficou gravada na
+        // conversa certa e só não pode aparecer nesta.
+        if (mensagem && casoNaTela.current === casoId) {
+          setMensagens((atuais) => [...atuais, mensagem]);
+        }
       } catch {
         /* O aviso é complementar: a ação já aconteceu e o painel já a mostrou. Falhar
          * aqui não pode transformar um sucesso em mensagem de erro. */
@@ -120,64 +209,105 @@ export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props
     async (pergunta: string) => {
       const limpa = pergunta.trim();
       if (!limpa || enviando) return;
+      const controle = new AbortController();
+      emVoo.current?.abort();
+      emVoo.current = controle;
+      /** Esta pergunta ainda é a que está na tela? Deixa de ser quando o caso troca. */
+      const ehDaTela = () => emVoo.current === controle;
       setErro("");
       setTexto("");
       setParcial("");
       setEtapa("Lendo o caso");
       setEnviando(true);
+      setPreso(true);
       try {
-        await perguntarNoChat(casoId, limpa, (evento) => {
-          switch (evento.tipo) {
-            case "pergunta":
-              setMensagens((atuais) => [...atuais, evento.mensagem]);
-              break;
-            case "etapa":
-              setEtapa(evento.texto);
-              break;
-            case "delta":
-              setEtapa("");
-              setParcial((atual) => atual + evento.texto);
-              break;
-            case "recomeco":
-              setParcial("");
-              break;
-            case "fim":
-              setParcial("");
-              setEtapa("");
-              setMensagens((atuais) => [...atuais, evento.mensagem]);
-              break;
-            case "erro":
-              setParcial("");
-              setEtapa("");
-              if (evento.mensagem) setMensagens((atuais) => [...atuais, evento.mensagem!]);
-              else setErro(evento.texto);
-              break;
-          }
-        });
-      } catch (falha) {
-        setErro(
-          falha instanceof Error
-            ? falha.message
-            : "A conversa não chegou ao servidor. Tente de novo.",
+        await perguntarNoChat(
+          casoId,
+          limpa,
+          (evento) => {
+            // Chegou tarde: o dossiê na tela já é outro. A resposta continua gravada na
+            // conversa do caso que a pediu — só não invade a transcrição deste.
+            if (!ehDaTela()) return;
+            switch (evento.tipo) {
+              case "pergunta":
+                setMensagens((atuais) => [...atuais, evento.mensagem]);
+                break;
+              case "etapa":
+                setEtapa(evento.texto);
+                break;
+              case "delta":
+                setEtapa("");
+                setParcial((anterior) => anterior + evento.texto);
+                break;
+              case "recomeco":
+                setParcial("");
+                break;
+              case "fim":
+                setParcial("");
+                setEtapa("");
+                setMensagens((atuais) => [...atuais, evento.mensagem]);
+                break;
+              case "erro":
+                setParcial("");
+                setEtapa("");
+                if (evento.mensagem) setMensagens((atuais) => [...atuais, evento.mensagem!]);
+                else setErro(evento.texto);
+                break;
+            }
+          },
+          controle.signal,
         );
+      } catch (falha) {
+        // O cancelamento pela troca de caso não é falha de ninguém: avisar "a conversa
+        // não chegou ao servidor" no caso recém-aberto seria mentira.
+        if (ehDaTela()) {
+          setErro(
+            falha instanceof Error
+              ? falha.message
+              : "A conversa não chegou ao servidor. Tente de novo.",
+          );
+        }
       } finally {
-        setEnviando(false);
-        setEtapa("");
-        setParcial("");
+        if (ehDaTela()) {
+          emVoo.current = null;
+          setEnviando(false);
+          setEtapa("");
+          setParcial("");
+        }
       }
     },
     [casoId, enviando],
   );
+
+  /** Atalho que não se basta: escreve o começo da frase e devolve o cursor ao campo. */
+  function comecarFrase(inicio: string) {
+    setTexto(inicio);
+    const alvo = campo.current;
+    if (!alvo) return;
+    alvo.focus();
+    // No FIM do texto: o cursor no lugar errado faz a pessoa escrever
+    // "Pesquise na webestabilidade acidentária".
+    requestAnimationFrame(() => alvo.setSelectionRange(inicio.length, inicio.length));
+  }
+
+  function usarAtalho(atalho: (typeof ATALHOS)[number]) {
+    if (atalho.envia) void perguntar(atalho.texto);
+    else comecarFrase(atalho.texto);
+  }
 
   async function decidir(chave: string, acao: AcaoProposta, aceitar: boolean) {
     if (!aceitar) {
       setDecididas((atuais) => ({ ...atuais, [chave]: "descartada" }));
       return;
     }
+    const doCaso = casoId;
     setExecutando(chave);
     setErro("");
     try {
-      const resultado = await executarAcaoDoChat(casoId, acao);
+      const resultado = await executarAcaoDoChat(doCaso, acao);
+      // Gerar ou revisar leva tempo: se o dossiê na tela já é outro, a ação valeu no
+      // caso certo e nada dela pode aparecer — nem o resultado, nem o recarregamento.
+      if (casoNaTela.current !== doCaso) return;
       setMensagens((atuais) => [...atuais, resultado.mensagem]);
       setDecididas((atuais) => ({ ...atuais, [chave]: "aceita" }));
       // Mesmo quando a ação falha, o lado esquerdo é recarregado: uma revisão pode ter
@@ -185,48 +315,109 @@ export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props
       // uma peça mais velha do que a que está no banco.
       aoMudarAPeticao();
     } catch (falha) {
+      if (casoNaTela.current !== doCaso) return;
       setErro(falha instanceof Error ? falha.message : "A ação não pôde ser executada.");
     } finally {
-      setExecutando(null);
+      // A troca de caso já zerou o `executando`; mexer nele aqui apagaria o indicador de
+      // uma ação que esteja rodando no caso agora aberto.
+      if (casoNaTela.current === doCaso) setExecutando(null);
     }
   }
 
+  const conversaVazia = !carregandoHistorico && mensagens.length === 0;
+
   return (
     <aside className={estilos.painel} aria-label="Conversa com a IA sobre esta petição">
+      {/* Uma linha só. O ícone em quadro e a frase explicativa que moravam aqui comiam
+        * altura em TODA a conversa para dizer, o tempo inteiro, algo que só interessa
+        * antes da primeira pergunta — e é onde eles estão agora, no convite abaixo. */}
       <header className={estilos.cabecalho}>
-        <div className={estilos.titulo}>
-          <IconeConversa />
-          <span>Falar com a IA sobre esta peça</span>
+        <div className={estilos.identidade}>
+          <span className={estilos.marca} aria-hidden>
+            <IconeConversa />
+          </span>
+          <strong className={estilos.titulo}>Conversa sobre a peça</strong>
         </div>
-        {aoFechar && (
-          <button
-            type="button"
-            className={`${estilos.iconeBotao} lg:hidden`}
-            onClick={aoFechar}
-            aria-label="Fechar a conversa"
-            title="Fechar"
-          >
-            <IconeFechar />
-          </button>
-        )}
+        <div className={estilos.acoesDoCabecalho}>
+          {aoAlternarLargura && (
+            <button
+              type="button"
+              className={`${estilos.iconeBotao} max-lg:hidden`}
+              onClick={aoAlternarLargura}
+              aria-label={expandido ? "Estreitar a conversa" : "Alargar a conversa"}
+              title={
+                expandido ? "Estreitar — mais espaço para o documento" : "Alargar a conversa"
+              }
+            >
+              <IconeLargura invertido={expandido} />
+            </button>
+          )}
+          {aoFechar && (
+            <button
+              type="button"
+              className={`${estilos.iconeBotao} lg:hidden`}
+              onClick={aoFechar}
+              aria-label="Fechar a conversa"
+              title="Fechar"
+            >
+              <IconeFechar />
+            </button>
+          )}
+        </div>
       </header>
 
-      <div className={estilos.conversa} ref={conversa}>
+      <div
+        className={estilos.conversa}
+        ref={conversa}
+        onScroll={(evento) => {
+          const alvo = evento.currentTarget;
+          // 80px de folga: exigir o fim exato faria o botão piscar durante o streaming,
+          // porque cada pedaço de texto muda a altura embaixo do cursor.
+          setPreso(alvo.scrollHeight - alvo.scrollTop - alvo.clientHeight < 80);
+        }}
+      >
         {carregandoHistorico && <p className={estilos.vazio}>Abrindo a conversa deste caso…</p>}
-
-        {!carregandoHistorico && mensagens.length === 0 && (
-          <p className={estilos.vazio}>
-            Pergunte sobre este caso, peça uma busca na web ou descreva uma alteração na
-            petição. Eu leio a minuta, a entrevista e os documentos antes de responder — e
-            nada na peça muda sem a sua confirmação.
-          </p>
-        )}
 
         {!modeloDisponivel && (
           <Aviso tom="atencao" titulo="A conversa está desligada">
             Falta a chave do modelo no servidor (DEEPSEEK_API_KEY). Os botões de gerar,
             analisar e revisar continuam funcionando normalmente.
           </Aviso>
+        )}
+
+        {conversaVazia && modeloDisponivel && (
+          <div className={estilos.comecar}>
+            <p className={estilos.convite}>Por onde quer começar?</p>
+            <p className={estilos.explicacao}>
+              Leio a minuta, a entrevista e os documentos deste caso antes de responder.
+            </p>
+            <div className={estilos.cartoes}>
+              {ATALHOS.map((atalho) => (
+                <button
+                  key={atalho.rotulo}
+                  type="button"
+                  className={estilos.cartao}
+                  onClick={() => usarAtalho(atalho)}
+                  disabled={enviando}
+                >
+                  <strong>{atalho.rotulo}</strong>
+                  <span>{atalho.dica}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={`${estilos.sugestao} ${estilos.sugestaoLarga}`}
+              onClick={() => void perguntar(CONFRONTO)}
+              disabled={enviando}
+            >
+              Ver o confronto entrevista × documentos
+            </button>
+            <p className={estilos.rodapeDoConvite}>
+              Nada na petição muda sem a sua confirmação — toda alteração passa por uma
+              comparação antes × depois.
+            </p>
+          </div>
         )}
 
         {mensagens.map((mensagem) =>
@@ -269,34 +460,52 @@ export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props
         {erro && <Aviso tom="critico">{erro}</Aviso>}
       </div>
 
+      {!preso && (
+        <button type="button" className={estilos.descer} onClick={descer}>
+          ↓ Ver o que chegou
+        </button>
+      )}
+
+      {/* O rodapé da conversa em UMA linha de campo, e não em três blocos empilhados.
+        *
+        * Antes: chips sempre visíveis + campo de três linhas + botão numa linha própria +
+        * legenda de teclas. Quase 190px de altura fixa comidos da leitura, para dizer
+        * "Enter envia" a cada rolagem. Agora o campo começa com uma linha e cresce com o
+        * que se escreve, e os atalhos recuam assim que há texto — quem já sabe o que
+        * pedir não precisa mais deles. */}
       <div className={estilos.composicao}>
-        {mensagens.length === 0 && (
+        {!conversaVazia && !texto.trim() && (
           <div className={estilos.sugestoes}>
-            {SUGESTOES.map((sugestao) => (
+            {ATALHOS.map((atalho) => (
               <button
-                key={sugestao}
+                key={atalho.rotulo}
                 type="button"
                 className={estilos.sugestao}
-                onClick={() => void perguntar(sugestao)}
+                title={atalho.dica}
+                onClick={() => usarAtalho(atalho)}
                 disabled={enviando || !modeloDisponivel}
               >
-                {sugestao}
+                {atalho.rotulo}
               </button>
             ))}
           </div>
         )}
 
         <div className={estilos.linhaDeEnvio}>
-          {/* Sem rótulo visível: o painel inteiro já se anuncia no cabeçalho, e uma
-            * segunda linha de texto acima do campo empurraria a conversa para cima. */}
+          {/* Sem rótulo visível: o próprio texto de exemplo diz o que se escreve aqui, e
+            * uma linha de rótulo acima do campo empurraria a conversa para cima. */}
           <textarea
+            ref={campo}
             className={`campo campo--area ${estilos.campoDaPergunta}`}
             aria-label="Pergunta ou pedido sobre esta petição"
-            placeholder="Pergunte, peça uma busca na web ou descreva uma alteração…"
+            placeholder="Pergunte ou peça uma alteração — Enter envia"
             value={texto}
-            rows={2}
+            rows={1}
             disabled={!modeloDisponivel}
-            onChange={(evento) => setTexto(evento.target.value)}
+            onChange={(evento) => {
+              setTexto(evento.target.value);
+              ajustarAltura();
+            }}
             onKeyDown={(evento) => {
               // Enter envia, Shift+Enter quebra linha — o hábito de qualquer chat.
               if (evento.key === "Enter" && !evento.shiftKey) {
@@ -307,19 +516,15 @@ export default function ChatPeticao({ casoId, aoMudarAPeticao, aoFechar }: Props
           />
           <button
             type="button"
-            className={`botao botao--primario ${estilos.enviar}`}
+            className={estilos.enviar}
             onClick={() => void perguntar(texto)}
             disabled={enviando || !texto.trim() || !modeloDisponivel}
-            aria-label="Enviar"
+            aria-label={enviando ? "Enviando a pergunta" : "Enviar a pergunta"}
+            title="Enviar · Shift+Enter quebra linha"
           >
-            {enviando ? "…" : "→"}
+            <IconeEnviar />
           </button>
         </div>
-
-        <p className={estilos.rodape}>
-          A conversa fica salva neste caso. Alteração na peça só depois da sua
-          confirmação, e sempre com comparação antes × depois.
-        </p>
       </div>
     </aside>
   );
@@ -474,10 +679,31 @@ function IconeConversa() {
   );
 }
 
+function IconeEnviar() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M5 12h13M12 5l7 7-7 7" />
+    </svg>
+  );
+}
+
 function IconeFechar() {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+/** Setas para fora (alargar) ou para dentro (estreitar). */
+function IconeLargura({ invertido }: { invertido?: boolean }) {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {invertido ? (
+        <path d="M13 5h6v6M19 5l-7 7M11 19H5v-6M5 19l7-7" />
+      ) : (
+        <path d="M19 9V3h-6M13 11l6-6M5 15v6h6M11 13l-6 6" />
+      )}
     </svg>
   );
 }

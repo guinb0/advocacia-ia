@@ -120,7 +120,12 @@ const Telas = (props: HomeViewProps) => {
       <ModuleFrame variant="wide">
         <div className="min-w-0 space-y-5">
           {navegacaoDoCaso}
-          <Dossie casoId={casoAberto} onVoltar={voltarParaCarteira} />
+          {/* `key` no caso: o dossiê inteiro (minuta, histórico de versões e o chat da
+            * petição) é estado de UM caso. Trocar de caso sem sair da tela — que é o
+            * que o voltar/avançar do navegador faz, já que a navegação aqui é por
+            * estado — só trocava a prop, e a árvore seguia mostrando o caso anterior
+            * até cada pedaço recarregar. Remontar é o que garante tela limpa. */}
+          <Dossie key={casoAberto} casoId={casoAberto} onVoltar={voltarParaCarteira} />
         </div>
       </ModuleFrame>
     );

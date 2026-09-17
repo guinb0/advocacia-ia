@@ -12,6 +12,7 @@ import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Mic, MicOff, Searc
 import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
 import ChatPeticao from "@/components/admin/ChatPeticao";
 import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
+import { indicesAlterados, parearSecoes, type SecaoComparavel } from "@/lib/diffPeticao";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
@@ -518,6 +519,10 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const prep = estado?.preparacao;
   /* Só vale abaixo de `lg`: acima disso a conversa é coluna e está sempre à vista. */
   const [gaveta, setGaveta] = useState(false);
+  /* A conversa larga: quem está PEDINDO alterações passa mais tempo lendo a resposta
+   * do que a peça, e uma coluna estreita transforma cada parágrafo em vinte linhas.
+   * A escolha fica com o advogado porque ela muda ao longo do mesmo trabalho. */
+  const [chatLargo, setChatLargo] = useState(false);
 
   /* SPLIT VIEW: o documento à esquerda, a conversa à direita.
    *
@@ -527,7 +532,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
    * largura para as duas colunas: aí a conversa vira gaveta, e o documento continua
    * com a página inteira. */
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(21rem,24rem)] lg:items-start">
+    <div
+      className={`grid gap-4 lg:items-start ${
+        chatLargo
+          ? "lg:grid-cols-[minmax(0,1fr)_minmax(32rem,40rem)]"
+          : "lg:grid-cols-[minmax(0,1fr)_minmax(25rem,29rem)]"
+      }`}
+    >
       <Cartao className="grid min-w-0 gap-4">
         <header className="grid gap-2">
           {/* O mesmo `gerar` do botão do cabeçalho do dossiê, repetido aqui: quem
@@ -995,7 +1006,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         * transcrição. Aqui só a moldura muda: coluna fixa em tela larga, gaveta
         * sobreposta abaixo dela. */}
       <div
-        className={`min-w-0 lg:sticky lg:top-4 lg:block lg:h-[calc(100vh-7rem)] ${
+        className={`min-w-0 lg:sticky lg:top-2 lg:block lg:h-[calc(100dvh-4.8rem)] ${
           gaveta
             ? "max-lg:fixed max-lg:inset-y-0 max-lg:right-0 max-lg:z-[60] max-lg:w-[min(100vw,26rem)] max-lg:shadow-modal"
             : "max-lg:hidden"
@@ -1005,6 +1016,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
           casoId={casoId}
           aoMudarAPeticao={() => void recarregar()}
           aoFechar={() => setGaveta(false)}
+          expandido={chatLargo}
+          aoAlternarLargura={() => setChatLargo((atual) => !atual)}
         />
       </div>
 
@@ -1670,26 +1683,7 @@ function ComparacaoRevisao({
   );
 }
 
-function normalizarParaComparacao(texto: string): string {
-  return texto.replace(/\s+/g, " ").trim();
-}
-
-function parearSecoes(secoes: SecaoPeticao[], opostas: SecaoPeticao[]): Map<string, SecaoPeticao> {
-  const usados = new Set<number>();
-  const resultado = new Map<string, SecaoPeticao>();
-  secoes.forEach((secao) => {
-    const texto = normalizarParaComparacao(secao.content);
-    let indice = opostas.findIndex((outra, i) => !usados.has(i) && texto !== "" && normalizarParaComparacao(outra.content) === texto);
-    if (indice < 0) indice = opostas.findIndex((outra, i) => !usados.has(i) && outra.code === secao.code);
-    if (indice >= 0) {
-      usados.add(indice);
-      resultado.set(secao.code, opostas[indice]);
-    }
-  });
-  return resultado;
-}
-
-function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoPeticao>; tipo: "antes" | "depois" }) {
+function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoComparavel>; tipo: "antes" | "depois" }) {
   return <article className={`min-w-0 max-h-[70vh] overflow-auto rounded-campo border border-borda border-t-4 bg-papel-2 p-3 ${tipo === "antes" ? "border-t-borda-campo" : "border-t-ok"}`}>
     <h4 className="sticky top-0 z-[1] mb-2 flex items-center justify-between gap-2 bg-papel-2 py-1 text-sm font-semibold text-tinta">
       {titulo}
@@ -1705,7 +1699,7 @@ function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; se
 function TextoComDiff({ texto, outro, tipo }: { texto: string; outro: string; tipo: "antes" | "depois" }) {
   if (texto === outro) return <>{texto}</>;
   const palavras = texto.split(/(\s+)/);
-  const alteradas = indicesAlterados(texto, outro, tipo);
+  const alteradas = indicesAlterados(texto, outro);
   let indicePalavra = 0;
   return <>{palavras.map((palavra, i) => {
     const ehPalavra = Boolean(palavra.trim());
@@ -1718,35 +1712,4 @@ function TextoComDiff({ texto, outro, tipo }: { texto: string; outro: string; ti
       className={mudou ? tipo === "antes" ? "bg-red-100 text-red-900 line-through" : "bg-green-100 text-green-900" : undefined}
     >{palavra}</span>;
   })}</>;
-}
-
-/** Diff por sequência (LCS), não por conjunto: repetição e posição importam. */
-function indicesAlterados(texto: string, outro: string, tipo: "antes" | "depois"): Set<number> {
-  const atual = texto.split(/\s+/).filter(Boolean);
-  const comparado = outro.split(/\s+/).filter(Boolean);
-  // Evita custo quadrático impróprio numa peça excepcionalmente grande. O
-  // prefixo/sufixo ainda não marca texto que permaneceu no mesmo lugar.
-  if (atual.length > 1_500 || comparado.length > 1_500) {
-    let inicio = 0; while (atual[inicio] === comparado[inicio]) inicio += 1;
-    let fimAtual = atual.length - 1; let fimComparado = comparado.length - 1;
-    while (fimAtual >= inicio && fimComparado >= inicio && atual[fimAtual] === comparado[fimComparado]) { fimAtual -= 1; fimComparado -= 1; }
-    return new Set(Array.from({ length: Math.max(0, fimAtual - inicio + 1) }, (_, i) => inicio + i));
-  }
-  const linhas = Array.from({ length: atual.length + 1 }, () => new Uint16Array(comparado.length + 1));
-  for (let i = atual.length - 1; i >= 0; i -= 1) for (let j = comparado.length - 1; j >= 0; j -= 1) {
-    linhas[i][j] = atual[i] === comparado[j] ? linhas[i + 1][j + 1] + 1 : Math.max(linhas[i + 1][j], linhas[i][j + 1]);
-  }
-  const mantidos = new Set<number>(); let i = 0; let j = 0;
-  while (i < atual.length && j < comparado.length) {
-    if (atual[i] === comparado[j]) { mantidos.add(i); i += 1; j += 1; }
-    else if (linhas[i + 1][j] >= linhas[i][j + 1]) i += 1;
-    else j += 1;
-  }
-  if (tipo === "antes") return new Set(atual.map((_, indice) => indice).filter((indice) => !mantidos.has(indice)));
-  // Reexecuta invertido para devolver os índices que são realmente novos na candidata.
-  return indicesAlteradosNoComparado(atual, comparado);
-}
-
-function indicesAlteradosNoComparado(antes: string[], depois: string[]): Set<number> {
-  return indicesAlterados(depois.join(" "), antes.join(" "), "antes");
 }
