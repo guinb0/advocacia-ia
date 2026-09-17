@@ -7,6 +7,7 @@ import {
   consultarCpf,
   gravarEntrevistaAoVivo,
   listarAssinaturas,
+  obterRoteiro,
   salvarQualificacaoDoCaso,
   triarEntrevista,
   vincularAssinaturaAoCaso,
@@ -30,6 +31,17 @@ import PainelContrato from "@/components/contrato/PainelContrato";
 import PainelChamada from "@/components/chamada/PainelChamada";
 import { formatarTelefone, telefonePreenchido } from "@/lib/formato";
 import { conferirCpf, formatarCpf } from "@/lib/documentos";
+import { criarContextoRevisao } from "@/lib/roteiroContexto";
+import { lerEntrevista } from "@/lib/preAnalise";
+import { PainelFinal, type ResultadoFinal } from "@/components/entrevista/EntrevistaComChamada";
+
+/* O roteiro contra o qual o relato colado é lido.
+ *
+ * O mesmo padrão do servidor (`roteiros.ROTEIRO_PADRAO`). O relato trazido de
+ * fora não tem roteiro próprio — ninguém conduziu a conversa por um —, e sem um
+ * de referência a IA não tem contra o que dizer "isto aqui ficou sem resposta".
+ * É o que faz a leitura do .txt valer o mesmo que a da entrevista guiada. */
+const ROTEIRO_DA_LEITURA = "auxilio_acidente";
 
 const OPCAO_BASE =
   "flex gap-3 items-start w-full px-[14px] py-3 border-none border-b border-borda border-l-4 bg-transparent " +
@@ -322,6 +334,16 @@ export default function TriagemEntrevista({
   const [estrategia, setEstrategia] = useState<Estrategia | null>(null);
   const [erroEstrategia, setErroEstrategia] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  /* A leitura completa do relato — a mesma da entrevista guiada.
+   *
+   * Até aqui o relato colado recebia só triagem (que ação é) e estratégia (o que
+   * dizem os semelhantes). Faltava a parte mais útil: consolidar o relato contra
+   * um roteiro e dizer o que NÃO foi perguntado, mais a leitura da condução e a
+   * recomendação de abrir ou não o caso. Tudo isso já existia — rodava na
+   * entrevista guiada e era jogado fora aqui. */
+  const [leitura, setLeitura] = useState<ResultadoFinal | null>(null);
+  const [lendo, setLendo] = useState(false);
+  const [erroLeitura, setErroLeitura] = useState<string | null>(null);
   const [arrastandoArquivo, setArrastandoArquivo] = useState(false);
   /* O nome do arquivo trazido, para a tela confirmar o que foi lido.
    *
@@ -489,6 +511,33 @@ export default function TriagemEntrevista({
           ),
         )
         .finally(() => setAnalisandoEstrategia(false));
+
+      /* A LEITURA COMPLETA, EM PARALELO COM A ESTRATÉGIA.
+       *
+       * Em paralelo e não em sequência: são três chamadas ao modelo (consolidar,
+       * triar, recomendar) e quem colou o relato está esperando com a tela
+       * parada. Falhar aqui não derruba nada — a triagem acima já respondeu a
+       * pergunta imediata (que ação é), e esta leitura é o aprofundamento. */
+      void (async () => {
+        setLendo(true);
+        setErroLeitura(null);
+        try {
+          const roteiroBase = await obterRoteiro(ROTEIRO_DA_LEITURA);
+          setRoteiroAtivo(roteiroBase);
+          const contexto = criarContextoRevisao(roteiroBase, true, {});
+          if (!contexto) return;
+          // Respostas vazias: não houve formulário preenchido. Tudo que a
+          // leitura souber vem do relato, que é exatamente o caso de uso.
+          const lida = await lerEntrevista(relato, {}, contexto);
+          setLeitura({ ...lida, provisorio: false });
+        } catch (e) {
+          setErroLeitura(
+            e instanceof Error ? e.message : "Não foi possível ler o relato contra o roteiro.",
+          );
+        } finally {
+          setLendo(false);
+        }
+      })();
       // Confiante aplica direto; ambíguo espera o clique.
       if (r.confiante && r.sugestoes[0]) {
         setEscolhida(r.sugestoes[0].codigo);
@@ -1073,6 +1122,39 @@ export default function TriagemEntrevista({
             >
               Encerrar a gravação do atendimento
             </BotaoProcesso>
+          )}
+        </div>
+      )}
+
+      {/* A leitura completa do relato, no mesmo painel da entrevista guiada.
+        * Vem depois da escolha da ação (que é a decisão imediata) e antes dos
+        * precedentes, que é aprofundamento de mérito. */}
+      {(lendo || leitura || erroLeitura) && (
+        <div className="mt-4 pt-[14px] border-t border-borda" aria-live="polite">
+          <span className="block mb-1 text-tinta text-sm font-bold">Leitura completa do relato</span>
+          <p className="mb-3 mt-0 max-w-[64ch] text-tinta-3 text-xs leading-[1.55]">
+            O mesmo exame da entrevista guiada: o que o relato trouxe, o que ficou sem resposta
+            no roteiro e o que processos semelhantes indicam.
+          </p>
+          {lendo && !leitura && (
+            <p className={ESTADO_TEXTO}>Lendo o relato contra o roteiro do escritório…</p>
+          )}
+          {erroLeitura && (
+            <Aviso tom="atencao" titulo="A leitura completa não foi concluída">
+              {erroLeitura} A triagem acima continua valendo.
+            </Aviso>
+          )}
+          {leitura && (
+            <PainelFinal
+              resultado={leitura}
+              roteiro={roteiroAtivo}
+              onVoltar={() => {}}
+              /* Não há roteiro na tela para onde levar: o relato veio de fora,
+               * e os campos que faltam se resolvem na entrevista, não aqui. */
+              onIrPara={() => {}}
+              podeIrPara={() => false}
+              podeComplementar={false}
+            />
           )}
         </div>
       )}

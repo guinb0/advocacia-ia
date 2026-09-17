@@ -89,7 +89,13 @@ const ENCERRAR_NOTA = "max-w-[46ch] italic font-normal text-[12px] leading-[1.5]
  * `provisorio` é a pré-análise adiantada durante a entrevista (ver
  * `lib/preAnalise.ts`): ela aparece no ato do clique para a entrevistadora ter
  * o que ler, e é trocada pela definitiva assim que o fim da conversa é lido. */
-type ResultadoFinal = LeituraDaEntrevista & { provisorio: boolean };
+/* Exportado porque o relato COLADO passa pela mesma leitura.
+ *
+ * A entrevista guiada e o .txt trazido de fora terminam na mesma pergunta — o
+ * que a conversa trouxe, o que faltou, que ação é e o que os precedentes dizem.
+ * Um segundo painel para responder isso divergiria do primeiro no primeiro
+ * ajuste; é o mesmo componente, alimentado pela mesma `lerEntrevista`. */
+export type ResultadoFinal = LeituraDaEntrevista & { provisorio: boolean };
 
 /* O tipo provável do caso, como a triagem o leu.
  *
@@ -354,7 +360,7 @@ function semQualificacao(itens: PerguntaPendente[], ids: Set<string>): PerguntaP
   return itens.filter((p) => !ids.has(p.pergunta_id));
 }
 
-function PainelFinal({ resultado, roteiro, onVoltar, onIrPara, podeIrPara, podeComplementar = true }: { resultado: ResultadoFinal; roteiro: RoteiroCompleto | null; onVoltar: () => void; onIrPara: (id: string) => void; podeIrPara: (id: string) => boolean; podeComplementar?: boolean }) {
+export function PainelFinal({ resultado, roteiro, onVoltar, onIrPara, podeIrPara, podeComplementar = true }: { resultado: ResultadoFinal; roteiro: RoteiroCompleto | null; onVoltar: () => void; onIrPara: (id: string) => void; podeIrPara: (id: string) => boolean; podeComplementar?: boolean }) {
   const { processamento, avisos, provisorio } = resultado;
   const qualificacao = idsDeQualificacao(roteiro);
   const faltando = semQualificacao(processamento.faltando, qualificacao);
