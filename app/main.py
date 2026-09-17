@@ -2542,15 +2542,24 @@ def tactiq_conectar(request: Request, usuario: auth.Usuario = Depends(auth.usuar
 
 
 @app.get("/api/tactiq/callback")
-def tactiq_callback(request: Request, code: str = "", state: str = ""):
+def tactiq_callback(
+    request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""
+):
+    # O provedor volta pelo navegador, portanto a pessoa precisa cair novamente
+    # DENTRO do escritório — e não na raiz, que é o login. O retorno anterior
+    # para `/?tactiq=conectado` criava a aparência de que a conexão se perdeu.
+    destino = f"{URL_PORTAL}/home?configuracao=configuracaoAssinatura&tactiq="
+    if error:
+        detalhe = (error_description or error)[:180]
+        return RedirectResponse(f"{destino}cancelado&detalhe={quote(detalhe)}", status_code=303)
     if not code or not state:
-        raise HTTPException(400, "O Tactiq não devolveu a autorização necessária.")
+        return RedirectResponse(f"{destino}erro", status_code=303)
     try:
         tactiq.concluir(state, code, _callback_tactiq(request))
     except Exception as exc:
         log.warning("Falha ao concluir OAuth Tactiq: %s", exc)
         raise HTTPException(400, str(exc)) from exc
-    return RedirectResponse(f"{URL_PORTAL}/?tactiq=conectado", status_code=303)
+    return RedirectResponse(f"{destino}conectado", status_code=303)
 
 
 def _aquecer_modelo() -> None:

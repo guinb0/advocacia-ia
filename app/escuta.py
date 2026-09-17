@@ -930,6 +930,37 @@ def _obter_cliente(timeout: float) -> httpx.Client:
         return _cliente
 
 
+def _json_do_modelo(resposta: httpx.Response, *, etapa: str) -> dict[str, Any]:
+    """Aceita JSON puro e o JSON em bloco Markdown devolvido por provedores compatíveis.
+
+    A API OpenAI-compatível nem sempre cumpre `response_format` à risca: alguns
+    gateways devolvem `````json ... ````` ou texto curto antes do objeto. Antes
+    isso fazia a análise inteira desaparecer com "resposta ilegível", embora o
+    conteúdo estivesse lá. A extração continua estrita: só retorna objeto JSON.
+    """
+    try:
+        conteudo = resposta.json()["choices"][0]["message"]["content"]
+        if isinstance(conteudo, dict):
+            return conteudo
+        texto = str(conteudo or "").strip()
+        if texto.startswith("```"):
+            texto = re.sub(r"^```(?:json)?\s*", "", texto, flags=re.IGNORECASE)
+            texto = re.sub(r"\s*```$", "", texto).strip()
+        try:
+            dado = json.loads(texto)
+        except json.JSONDecodeError:
+            inicio, fim = texto.find("{"), texto.rfind("}")
+            if inicio < 0 or fim <= inicio:
+                raise
+            dado = json.loads(texto[inicio:fim + 1])
+        if not isinstance(dado, dict):
+            raise ValueError("raiz não é objeto")
+        return dado
+    except Exception as exc:
+        log.warning("%s devolveu conteúdo não estruturado", etapa)
+        raise ErroEscuta("O processamento devolveu uma resposta ilegível.") from exc
+
+
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
@@ -960,10 +991,7 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         log.warning("Escuta falhou: %s", str(exc)[:160])
         raise ErroEscuta("O modelo não respondeu a tempo. A entrevista pode seguir.") from exc
 
-    try:
-        return json.loads(resposta.json()["choices"][0]["message"]["content"])
-    except Exception as exc:
-        raise ErroEscuta("Resposta ilegível do modelo.") from exc
+    return _json_do_modelo(resposta, etapa="escuta")
 
 
 def _chamar_modelo_consolidado(
@@ -1001,10 +1029,7 @@ def _chamar_modelo_consolidado(
             "Não foi possível organizar a entrevista agora. A transcrição foi preservada."
         ) from exc
 
-    try:
-        return json.loads(resposta.json()["choices"][0]["message"]["content"])
-    except Exception as exc:
-        raise ErroEscuta("O processamento devolveu uma resposta ilegível.") from exc
+    return _json_do_modelo(resposta, etapa="processamento consolidado")
 
 
 # ------------------------------------------------------------------ formato

@@ -56,9 +56,19 @@ JWT_AUDIENCIA = os.getenv("JWT_AUDIENCE", JWT_EMISSOR).strip()
 #: exatamente o problema que a renovação do Keycloak existia para remendar.
 JWT_HORAS = float(os.getenv("JWT_HORAS", "24") or 24)
 
+# O segundo fator protege a senha vazada; repeti-lo a cada novo login no mesmo
+# navegador só cria atrito. Este cookie é uma credencial separada, HttpOnly e
+# assinada, válida somente para pular o segundo fator daquela conta neste
+# dispositivo. Apagar cookies ou trocar de navegador exige o código de novo.
+DISPOSITIVO_CONFIAVEL_DIAS = int(os.getenv("DOIS_FATORES_DISPOSITIVO_DIAS", "30") or 30)
+
 #: O nome do cookie é o mesmo do DFLegal — quem depura um dos dois sistemas
 #: procura por `JwtToken` no navegador e acha.
 COOKIE = os.getenv("JWT_COOKIE", "JwtToken").strip() or "JwtToken"
+COOKIE_DISPOSITIVO_CONFIAVEL = (
+    os.getenv("DOIS_FATORES_COOKIE_DISPOSITIVO", "DispositivoConfiavel").strip()
+    or "DispositivoConfiavel"
+)
 
 #: Domínio do cookie. Vazio = o host que respondeu, que é o certo em
 #: desenvolvimento (`localhost`) e em qualquer implantação de host único.
@@ -111,6 +121,7 @@ def gerar_token(
     perfil: str,
     senha_padrao: bool = False,
     extras: dict[str, Any] | None = None,
+    duracao_horas: float | None = None,
 ) -> str:
     """Assina o token de sessão. Os claims são os mesmos do DFLegal.
 
@@ -129,6 +140,7 @@ def gerar_token(
         )
 
     emitido = _agora()
+    validade = duracao_horas if duracao_horas is not None else JWT_HORAS
     claims: dict[str, Any] = {
         "sub": str(codigo),
         "codigo": str(codigo),
@@ -140,7 +152,7 @@ def gerar_token(
         "iss": JWT_EMISSOR,
         "aud": JWT_AUDIENCIA,
         "iat": emitido,
-        "exp": emitido + timedelta(hours=JWT_HORAS),
+        "exp": emitido + timedelta(hours=validade),
     }
     if extras:
         claims.update(extras)
@@ -180,6 +192,48 @@ def limpar_cookie(resposta: Response) -> None:
         httponly=True,
         secure=COOKIE_SEGURO,
         samesite=COOKIE_SAMESITE,  # type: ignore[arg-type]
+    )
+
+
+def definir_dispositivo_confiavel(resposta: Response, *, codigo: str, email: str) -> None:
+    """Marca este navegador como já validado no segundo fator.
+
+    Não é uma sessão: não libera rota alguma e não substitui `JwtToken`. Só é
+    aceito pela rota de login junto da senha correta da mesma conta.
+    """
+    token = gerar_token(
+        codigo=codigo,
+        nome="Dispositivo confiável",
+        email=email,
+        perfil="dispositivo",
+        extras={"tipo": "dispositivo_confiavel"},
+        duracao_horas=DISPOSITIVO_CONFIAVEL_DIAS * 24,
+    )
+    resposta.set_cookie(
+        COOKIE_DISPOSITIVO_CONFIAVEL,
+        token,
+        max_age=DISPOSITIVO_CONFIAVEL_DIAS * 24 * 3600,
+        httponly=True,
+        secure=COOKIE_SEGURO,
+        samesite=COOKIE_SAMESITE,  # type: ignore[arg-type]
+        path="/",
+        domain=COOKIE_DOMINIO or None,
+    )
+
+
+def dispositivo_confiavel(request: Request, *, codigo: str, email: str) -> bool:
+    """Confere se o cookie de confiança pertence à conta que acabou de logar."""
+    token = request.cookies.get(COOKIE_DISPOSITIVO_CONFIAVEL, "")
+    if not token:
+        return False
+    try:
+        claims = validar_token(token)
+    except HTTPException:
+        return False
+    return (
+        claims.get("tipo") == "dispositivo_confiavel"
+        and str(claims.get("codigo") or "") == str(codigo)
+        and str(claims.get("email") or "").casefold() == email.casefold()
     )
 
 

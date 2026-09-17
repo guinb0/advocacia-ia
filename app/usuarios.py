@@ -587,6 +587,14 @@ def autenticar(pedido: PedidoLogin, request: Request, resposta: Response) -> dic
     if not dois_fatores.exigido_para(pessoa["perfil"]):
         return _emitir_sessao(pessoa, resposta)
 
+    # O código já foi confirmado neste navegador para ESTA conta. A senha segue
+    # obrigatória em todo login; o cookie só evita refazer o segundo fator no
+    # mesmo dispositivo confiável.
+    if auth.dispositivo_confiavel(
+        request, codigo=str(pessoa["codigo"]), email=str(pessoa["email"])
+    ):
+        return _emitir_sessao(pessoa, resposta)
+
     if not dois_fatores.ATIVO:
         # SMTP faltando. Recusar ou deixar passar é escolha de quem implanta, e
         # ela está no `.env` — ver DOIS_FATORES_OBRIGATORIO. O que não pode é o
@@ -617,7 +625,7 @@ def autenticar(pedido: PedidoLogin, request: Request, resposta: Response) -> dic
 
 
 @roteador_sessao.post("/authenticate/verify")
-def confirmar_codigo(pedido: PedidoCodigo, resposta: Response) -> dict[str, Any]:
+def confirmar_codigo(pedido: PedidoCodigo, request: Request, resposta: Response) -> dict[str, Any]:
     """Segundo passo: confere o código e só então abre a sessão.
 
     O captcha NÃO se repete aqui. Ele já filtrou o robô na porta, e o desafio tem
@@ -636,6 +644,11 @@ def confirmar_codigo(pedido: PedidoCodigo, resposta: Response) -> dict[str, Any]
     if not pessoa["ativo"]:
         raise HTTPException(403, "Esta conta está desativada. Procure quem administra.")
     _exigir_perfil_ativo(pessoa)
+    # A confiança fica no navegador que acabou de concluir o código, nunca no
+    # corpo da resposta. Outro dispositivo continua recebendo o desafio próprio.
+    auth.definir_dispositivo_confiavel(
+        resposta, codigo=str(pessoa["codigo"]), email=str(pessoa["email"])
+    )
     return _emitir_sessao(pessoa, resposta)
 
 
