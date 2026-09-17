@@ -280,6 +280,23 @@ def preparar_para_ocr(img_bgr: np.ndarray, lado_maximo: int = 2000) -> np.ndarra
         escala = lado_maximo / maior
         img_bgr = cv2.resize(img_bgr, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA)
 
+    # Fotos recebidas pelo WhatsApp/portal às vezes já chegam reduzidas a poucas
+    # centenas de pixels. O OCR remoto então vê letras minúsculas, mesmo que a
+    # foto original estivesse razoavelmente nítida. Antes de contraste e
+    # nitidez, sobe imagens pequenas até uma área de leitura consistente. A
+    # interpolação cúbica não inventa caracteres: só dá ao reconhecedor mais
+    # pixels para separar os traços que já existem. Nunca ultrapassa o teto
+    # `lado_maximo`, portanto não transforma um anexo pequeno em upload gigante.
+    try:
+        lado_minimo = int(os.getenv("OCR_LADO_MINIMO_ZOOM", "1600"))
+    except ValueError:
+        lado_minimo = 1600
+    maior = max(img_bgr.shape[:2])
+    alvo = min(max(600, lado_minimo), lado_maximo)
+    if maior < alvo:
+        escala = alvo / maior
+        img_bgr = cv2.resize(img_bgr, None, fx=escala, fy=escala, interpolation=cv2.INTER_CUBIC)
+
     # Gamma corrige iluminação global preservando as cores e as bordas. CLAHE
     # sozinho melhora o contraste local, mas não recupera uma foto inteira
     # subexposta ou um papel lavado pelo flash.
