@@ -112,7 +112,23 @@ export default function CasoEDocumentos({
   const situacao = useSituacao(criado?.id ?? null);
 
   const [categoriaManual, setCategoriaManual] = useState("");
-  const escolhida = (editavel ? sugerida : categoriaManual || sugerida) || categorias[0]?.codigo || "";
+  /* SEM ENQUADRAMENTO DA IA, NÃO SE INVENTA UM.
+   *
+   * O `|| categorias[0]?.codigo` valia para os dois fluxos e era o defeito: na
+   * entrevista ao vivo, quando a triagem NÃO fica confiante, ela chama
+   * `onEscolher("")` de propósito — é o jeito de dizer "não sei enquadrar". A
+   * tela então caía no primeiro item do array e o desenhava selecionado, sem o
+   * "(sugerido)" ao lado. O atendente via "Acidente do Trabalho (Correios)"
+   * escolhido e seguia em frente achando que a IA tinha decidido; quem decidiu
+   * foi a ordem do array. E o tipo de ação é o que monta o checklist — errado
+   * ele, o escritório passa a cobrar do cliente documento que a ação não usa.
+   *
+   * Vazio, o botão de criar já exige a escolha ("Escolha o tipo de ação."), que
+   * é a verdade: ninguém enquadrou ainda. No fluxo do .txt o valor é controlado
+   * pelo pai, que já entra com a recomendação — ali o padrão continua. */
+  const escolhida = editavel
+    ? sugerida || categorias[0]?.codigo || ""
+    : categoriaManual || sugerida || "";
   const categoriaEscolhida = categorias.find((c) => c.codigo === escolhida);
   const telefoneAtual = telefone ?? "";
   const telefoneVazio = !telefonePreenchido(telefoneAtual);
@@ -312,6 +328,20 @@ export default function CasoEDocumentos({
           <>
             <p className="mb-3 mt-0 text-[12px] font-ui text-tinta">
               O caso será criado para <strong>{cliente}</strong> com os dados já coletados na entrevista.
+            </p>
+            {/* De quem é o enquadramento, dito com todas as letras. A lista de
+              * opções já marcava "(sugerido)", mas quando a IA não enquadrava
+              * não havia marca nenhuma — e a ausência de marca é exatamente o
+              * que ninguém repara. Dizer "a IA não conseguiu" transforma um
+              * campo pré-preenchido em uma decisão consciente do advogado. */}
+            <p
+              className={`mb-3 mt-0 text-[12px] leading-[1.55] font-ui ${
+                sugerida ? "text-tinta-3" : "text-atencao"
+              }`}
+            >
+              {sugerida
+                ? "Tipo de ação enquadrado pela IA a partir da entrevista — confira antes de criar."
+                : "A IA não enquadrou a ação com segurança nesta entrevista. Escolha o tipo abaixo: é ele que monta o checklist de documentos cobrado do cliente."}
             </p>
             <div className="mb-4 max-w-[440px]">
               <RotuloCampo htmlFor="caso-categoria">Tipo de ação (checklist)</RotuloCampo>

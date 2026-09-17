@@ -727,14 +727,20 @@ CATEGORIAS: dict[str, Categoria] = {
     AUXILIO_ACIDENTE.codigo: AUXILIO_ACIDENTE,
 }
 
-# O escritório tem casos reais nestas quatro categorias. `ASSALTO_CARTEIRO`
-# continua no catálogo para abrir eventual caso histórico, mas não aparece na
-# criação de novos casos enquanto não houver nenhum caso dessa ação.
+# As ações que a triagem pode escolher e que aparecem na criação do caso.
+#
+# `ASSALTO_CARTEIRO` ficava de fora "enquanto não houver nenhum caso dessa ação"
+# — regra que se voltava contra si mesma: a ação não aparecia para ser escolhida,
+# então nunca havia um caso dela, então continuava não aparecendo. E o efeito
+# não era só na lista: a IA da triagem enquadra o relato NESTA lista, de modo que
+# um assalto a carteiro era classificado como outra coisa, com o checklist de
+# documentos errado atrás.
 _CATEGORIAS_ATIVAS = (
     ACIDENTE_TRABALHO_CORREIOS.codigo,
     ACIDENTE_TRABALHO_GERAL.codigo,
     DOENCA_OCUPACIONAL.codigo,
     AUXILIO_ACIDENTE.codigo,
+    ASSALTO_CARTEIRO.codigo,
 )
 
 
