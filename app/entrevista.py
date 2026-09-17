@@ -13,12 +13,15 @@ caminho de documento do checklist, que roda OCR de verdade; devolver texto vazio
 
 from __future__ import annotations
 
+import os
 import re
 import zipfile
 from io import BytesIO
 from pathlib import Path
 
-__all__ = ["EXTENSOES_ENTREVISTA", "ErroDeLeitura", "extrair_texto"]
+import httpx
+
+__all__ = ["EXTENSOES_ENTREVISTA", "ErroDeLeitura", "extrair_texto", "gerar_resumo"]
 
 #: O que o escritório efetivamente produz num atendimento.
 EXTENSOES_ENTREVISTA = {
@@ -28,6 +31,38 @@ EXTENSOES_ENTREVISTA = {
 
 #: Acima disto não é entrevista: é juntada de várias sessões ou arquivo errado.
 LIMITE_CARACTERES = 200_000
+
+
+def gerar_resumo(texto: str) -> str:
+    """Converte a entrevista em resumo jurídico legível, sem criar fatos."""
+    chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not chave or not texto.strip():
+        return ""
+    instrucao = """Resuma a entrevista jurídica abaixo em português do Brasil.
+Não invente fatos, datas, valores ou documentos. Organize em Markdown curto e
+objetivo, usando os títulos: **PARTES E CONTEXTO**, **FATOS RELEVANTES**,
+**DOCUMENTOS E PROVAS MENCIONADOS**, **PONTOS A CONFIRMAR** e **POSSÍVEIS
+ENQUADRAMENTOS JURÍDICOS**. No último tópico, trate como sugestões a confirmar,
+nunca como conclusão. Preserve incertezas e marque dados ausentes como PENDENTE."""
+    try:
+        resposta = httpx.post(
+            os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/") + "/chat/completions",
+            headers={"Authorization": f"Bearer {chave}"},
+            json={
+                "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                "temperature": 0,
+                "max_tokens": 900,
+                "messages": [
+                    {"role": "system", "content": instrucao},
+                    {"role": "user", "content": texto[:80_000]},
+                ],
+            },
+            timeout=90,
+        )
+        resposta.raise_for_status()
+        return str(resposta.json()["choices"][0]["message"]["content"] or "").strip()[:4000]
+    except Exception:
+        return ""
 
 
 class ErroDeLeitura(ValueError):

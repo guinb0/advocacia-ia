@@ -295,7 +295,7 @@ def inicializar() -> None:
 
 
 def criar_caso(
-    cliente: str, categoria: str, observacao: str = "", telefone: str = ""
+    cliente: str, categoria: str, observacao: str = "", telefone: str = "", tipo_acao: str = ""
 ) -> dict[str, Any]:
     """Abre o caso. O `telefone` é o WhatsApp que a entrevista colheu.
 
@@ -309,14 +309,15 @@ def criar_caso(
     with conectar() as con:
         con.execute(
             "INSERT INTO casos"
-            " (id, cliente, categoria, observacao, telefone, criado_em, atualizado_em)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " (id, cliente, categoria, observacao, telefone, tipo_acao, criado_em, atualizado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 caso_id,
                 cliente.strip(),
                 categoria,
                 observacao.strip(),
                 telefone.strip(),
+                tipo_acao.strip(),
                 instante,
                 instante,
             ),
@@ -328,6 +329,7 @@ def criar_caso(
         "categoria": categoria,
         "observacao": observacao.strip(),
         "telefone": telefone.strip(),
+        "tipo_acao": tipo_acao.strip(),
         "criado_em": instante,
         "atualizado_em": instante,
     }
@@ -336,9 +338,17 @@ def criar_caso(
 #: Campos da qualificação do cliente que a consulta por CPF — ou a digitação —
 #: preenche. Vivem numa tabela à parte, 1:1 com o caso: o `casos` segue enxuto e
 #: o cadastro completo tem onde morar. `nome` e `telefone` ficam no próprio caso.
+#: O que a tela mostrava e o banco não guardava: RG, órgão, UF do RG, pai, PIS,
+#: profissão, estado civil e nacionalidade eram digitados na qualificação, usados
+#: pelo contrato (`contrato.valores_da_entrevista` lê todos eles) e perdidos ao
+#: salvar — a linha gravada tinha oito colunas e nenhuma delas. Reabrir o caso
+#: devolvia o cadastro pela metade, e o contrato seguinte nascia com colchetes.
 CAMPOS_QUALIFICACAO = (
     "cpf", "nascimento", "sexo", "nome_mae", "cep", "endereco", "email",
     "renda_estimada",
+    "idade", "nacionalidade", "profissao", "estado_civil",
+    "rg", "rg_orgao", "rg_uf", "nome_pai", "pis", "uf", "municipio",
+    "telefones_extras", "emails_extras", "enderecos_extras",
 )
 
 

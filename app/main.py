@@ -1000,7 +1000,7 @@ class PedidoRelatorio(BaseModel):
     """As respostas da entrevista concluída."""
 
     respostas: dict[str, Any]
-    roteiro: str = Field(default="empregado_publico", max_length=60)
+    roteiro: str = Field(default=roteiros.ROTEIRO_PADRAO, max_length=60)
     entrevistador: str = Field(default="", max_length=120)
     #: O relato corrido da entrevista — é dele que sai a análise por precedentes.
     #: A tela já o monta para a triagem; mandá-lo aqui evita reconstruí-lo.
@@ -1092,7 +1092,7 @@ class PedidoEscuta(BaseModel):
 
     trecho: str = Field(max_length=8_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
-    roteiro: str = Field(default="empregado_publico", max_length=60)
+    roteiro: str = Field(default=roteiros.ROTEIRO_PADRAO, max_length=60)
     #: Snapshot da versão que está na tela. É necessário para edições usadas
     #: apenas nesta sessão, que ainda não existem no catálogo do servidor.
     roteiro_snapshot: dict[str, Any] | None = None
@@ -1106,7 +1106,7 @@ class PedidoProcessamentoEntrevista(BaseModel):
 
     transcricao: str = Field(min_length=1, max_length=80_000)
     respostas: dict[str, Any] = Field(default_factory=dict)
-    roteiro: str = Field(default="empregado_publico", max_length=60)
+    roteiro: str = Field(default=roteiros.ROTEIRO_PADRAO, max_length=60)
     #: A versão efetivamente exibida, inclusive quando editada só na sessão.
     roteiro_snapshot: dict[str, Any] | None = None
     #: Buscar precedentes no pgvector para sugerir perguntas e apontar lacunas.
@@ -2870,6 +2870,7 @@ def criar_caso(
     #: O WhatsApp que a entrevista colheu. Opcional porque o caso também nasce
     #: pela carteira, digitado à mão, onde ninguém perguntou telefone ainda.
     telefone: str = Form(""),
+    tipo_acao: str = Form(""),
 ):
     """Cria o caso já com o portal do cliente pronto.
 
@@ -2879,10 +2880,12 @@ def criar_caso(
     """
     if not cliente.strip():
         raise HTTPException(400, "Informe o nome do cliente.")
+    # A ação exibida é livre; a categoria continua técnica para preservar o
+    # checklist. O fallback evita que uma tese nova impeça a abertura do caso.
     if categorias.obter(categoria) is None:
-        raise HTTPException(400, f"Categoria '{categoria}' não existe.")
+        categoria = "em_triagem"
 
-    caso = armazenamento.criar_caso(cliente, categoria, observacao, telefone)
+    caso = armazenamento.criar_caso(cliente, categoria, observacao, telefone, tipo_acao)
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return {**caso, "portal": _criar_portal(caso["id"])}
 
@@ -2902,6 +2905,23 @@ class QualificacaoCliente(BaseModel):
     endereco: str = ""
     email: str = ""
     renda_estimada: str = ""
+    # Digitados na tela desde sempre, usados pelo contrato e perdidos ao salvar
+    # até aqui — a tabela não tinha onde guardá-los (ver `CAMPOS_QUALIFICACAO`).
+    idade: str = ""
+    nacionalidade: str = ""
+    profissao: str = ""
+    estado_civil: str = ""
+    rg: str = ""
+    rg_orgao: str = ""
+    rg_uf: str = ""
+    nome_pai: str = ""
+    pis: str = ""
+    uf: str = ""
+    municipio: str = ""
+    # O que a consulta por CPF devolve além do primeiro item de cada lista.
+    telefones_extras: str = ""
+    emails_extras: str = ""
+    enderecos_extras: str = ""
 
 
 @app.put("/api/casos/{caso_id}/qualificacao")

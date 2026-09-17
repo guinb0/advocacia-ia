@@ -185,6 +185,25 @@ Desktop resolve — esperar, não.
 A sala é efêmera: existe enquanto houver alguém dentro, e não é gravada em lugar
 nenhum. Fechada a chamada, o link não serve mais.
 
+### A qualidade da imagem, e onde ela é decidida
+
+Revisto em 17/09/2026. A chamada pede **720p a 30 fps como teto**, com mínimo de
+180p — o simulcast do Jitsi escolhe o que cabe na banda, quadro a quadro. É de
+propósito que exista mínimo: numa rede ruim a imagem **piora** em vez de a
+chamada travar.
+
+Dois detalhes que valem lembrar quando alguém reclamar de imagem borrada:
+
+1. **Receber também se pede.** Não adianta o outro lado enviar 720p se este
+   navegador só pede a camada mais baixa do simulcast — era o caso até aqui, e
+   por isso os dois lados apareciam ruins com banda sobrando.
+2. **O advogado tem um teto próprio, no fundo virtual.** A câmera dele atravessa
+   um canvas (`lib/fundoVirtual.ts`) antes de chegar ao Jitsi, e o que sai é do
+   tamanho desse canvas — hoje 960x540 a 24 fps. Mexer na resolução da chamada
+   sem mexer ali não muda nada do lado do escritório. O limite não é a rede, é a
+   CPU da segmentação: subir esse canvas a 720p faz a máquina perder quadros na
+   própria segmentação, e o vídeo trava em vez de ficar macio.
+
 **A chamada não cai ao trocar de tela.** Ao concluir a entrevista e abrir o caso
 para acompanhar os documentos, a ligação continua — ela encolhe para um **painel
 no canto da tela**, com os controles de mudo, câmera e desligar à mão. É o que
@@ -259,6 +278,30 @@ Saída imediata no meio da entrevista: pedir ao cliente que troque de rede
 
 **A chamada some ao recarregar a página** — é o esperado: a sala é efêmera. Abra
 outra e mande o link novo.
+
+**"A chamada caiu e está voltando sozinha"** — não é erro, é a reconexão
+automática. Desde 17/09/2026, perder o servidor de chamadas (Wi-Fi que oscila,
+troca de torre no celular, contêiner do Jitsi reiniciando) não encerra mais a
+entrevista: a chamada tenta voltar cinco vezes, com espera dobrando a cada
+tentativa (3s, 6s, 12s…). O microfone continua aberto aqui dentro o tempo todo,
+então quando ela volta a voz volta junto, sem ninguém precisar reabrir link.
+Esgotadas as tentativas, aí sim aparece "abra o link da chamada de novo".
+
+> Desligar durante uma queda cancela a reconexão pendente. Sem isso a chamada
+> ressuscitaria segundos depois, com o microfone aberto, contra a vontade de
+> quem acabou de desligar.
+
+**Quem estava mudo volta mudo.** A religação republica o microfone no estado em
+que ele estava: se a pessoa tinha desligado o microfone, ele continua desligado
+do outro lado da queda. Isto é garantia, não detalhe de implementação — o
+cliente desliga o microfone justamente para o que não quer que seja ouvido, e
+uma reconexão que o reabrisse sozinha publicaria isso sem ninguém perceber.
+
+**"A conexão da outra pessoa está instável"** — é o aviso novo para o sintoma
+clássico do CHAMADA.md: retratos aparecem, cronômetro anda e ninguém ouve
+ninguém. Antes o navegador sabia disso e não contava (o evento existia e era
+ignorado); agora ele diz. O remédio continua sendo trocar de rede (4G ↔ Wi-Fi)
+ou, no caso corporativo, o TURN que ainda falta.
 
 ---
 

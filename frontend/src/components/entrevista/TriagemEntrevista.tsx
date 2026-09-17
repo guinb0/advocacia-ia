@@ -45,8 +45,21 @@ const CAMPOS_CADASTRAIS = [
   { id: "email", rotulo: "E-mail", grupo: "essencial", tipo: "email" },
   { id: "nacionalidade", rotulo: "Nacionalidade", grupo: "qualificacao" },
   { id: "nascimento", rotulo: "Data de nascimento (dd/mm/aaaa)", grupo: "qualificacao" },
+  /* Sexo, idade e renda VÊM da consulta por CPF e eram gravados no banco — mas
+   * não tinham campo nenhum na tela. O dado era buscado, salvo e invisível:
+   * quem atende não podia conferir com o cliente nem corrigir o que a base
+   * errou. A idade serve de conferência do nascimento: divergiu, um dos dois
+   * está trocado. */
+  { id: "sexo", rotulo: "Sexo", grupo: "qualificacao" },
+  { id: "idade", rotulo: "Idade (da base)", grupo: "qualificacao" },
+  { id: "renda_estimada", rotulo: "Renda estimada (da base)", grupo: "qualificacao" },
   { id: "profissao", rotulo: "Profissão", grupo: "qualificacao" },
   { id: "estado_civil", rotulo: "Estado civil", grupo: "qualificacao" },
+  /* A base devolve LISTAS de telefone, e-mail e endereço, e só o primeiro de
+   * cada uma era aproveitado. O número antigo que ainda atende e o endereço
+   * anterior que aparece num documento do cliente ficavam invisíveis. */
+  { id: "telefones_extras", rotulo: "Outros telefones (da base)", grupo: "qualificacao" },
+  { id: "emails_extras", rotulo: "Outros e-mails (da base)", grupo: "qualificacao" },
   { id: "rg", rotulo: "RG (número)", grupo: "documentos" },
   { id: "rg_orgao", rotulo: "Órgão expedidor", grupo: "documentos" },
   { id: "rg_uf", rotulo: "UF do RG", grupo: "documentos" },
@@ -310,6 +323,12 @@ export default function TriagemEntrevista({
   const [erroEstrategia, setErroEstrategia] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [arrastandoArquivo, setArrastandoArquivo] = useState(false);
+  /* O nome do arquivo trazido, para a tela confirmar o que foi lido.
+   *
+   * Sem isto, escolher um arquivo fazia texto aparecer na caixa sem dizer de
+   * onde veio — e quem trouxe o arquivo errado só descobria depois da análise,
+   * lendo o relato de outro cliente. */
+  const [arquivoNome, setArquivoNome] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   /* -------- atendimento iniciado por um .txt de transcrição --------
@@ -752,9 +771,18 @@ export default function TriagemEntrevista({
             O sistema sugere as ações cabíveis e mostra o que sustenta cada uma. A decisão é da equipe jurídica.
           </p>
 
+          {/* A ÁREA DE SOLTAR ARQUIVO PRECISA EXISTIR ANTES DE VOCÊ ARRASTAR.
+            *
+            * A borda tracejada era `border-transparent` em repouso e só
+            * aparecia durante o arrasto: ou seja, a única pista de que dá para
+            * soltar um arquivo ali surgia depois de a pessoa já ter adivinhado
+            * que dava. Quem não adivinhava só via uma caixa de texto e o
+            * placeholder — que ninguém lê inteiro. Tracejado visível o tempo
+            * todo é o desenho convencional de área de soltura, e é o que faz a
+            * função ser descoberta sem instrução. */}
           <div
         className={`rounded-campo border-2 border-dashed p-3 transition-colors ${
-          arrastandoArquivo ? "border-tinta bg-papel-2" : "border-transparent"
+          arrastandoArquivo ? "border-acao bg-acao-clara" : "border-borda-campo"
         }`}
         onDragEnter={(evento) => {
           evento.preventDefault();
@@ -773,7 +801,10 @@ export default function TriagemEntrevista({
           evento.preventDefault();
           setArrastandoArquivo(false);
           const arquivo = evento.dataTransfer.files?.[0];
-          if (arquivo && !analisando) void analisar(arquivo);
+          if (arquivo && !analisando) {
+            setArquivoNome(arquivo.name);
+            void analisar(arquivo);
+          }
         }}
       >
         {/* Sem rótulo acima da caixa: ele dizia exatamente o que o placeholder já
@@ -792,9 +823,41 @@ export default function TriagemEntrevista({
           placeholder={
             arrastandoArquivo
               ? "Solte o arquivo aqui"
-              : "Cole o relato, ou arraste para cá um arquivo com texto (.txt, .docx, PDF…)"
+              : "Cole aqui o relato da conversa…"
           }
         />
+
+        {/* As duas formas ditas em uma linha, embaixo da caixa: colar (que a
+          * pessoa já está vendo como fazer) e trazer o arquivo. O "escolha um
+          * arquivo" é um link no meio da frase porque é assim que se lê — e
+          * não um terceiro botão disputando atenção com os dois de baixo. */}
+        <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] font-ui text-tinta-3">
+          {arquivoNome ? (
+            <>
+              Lido de <strong className="text-tinta">{arquivoNome}</strong> — confira o texto acima
+              e ajuste se precisar.{" "}
+              <button
+                type="button"
+                className="border-none bg-transparent p-0 underline underline-offset-[3px] text-acao cursor-pointer"
+                onClick={() => inputRef.current?.click()}
+              >
+                trocar o arquivo
+              </button>
+            </>
+          ) : (
+            <>
+              Arraste um arquivo para esta área ou{" "}
+              <button
+                type="button"
+                className="border-none bg-transparent p-0 underline underline-offset-[3px] text-acao cursor-pointer"
+                onClick={() => inputRef.current?.click()}
+              >
+                escolha um arquivo
+              </button>{" "}
+              — aceita .txt, .docx, PDF com texto e outros formatos de texto.
+            </>
+          )}
+        </p>
 
       <div className="flex gap-[10px] items-start flex-wrap mt-3">
         {/* A ação do bloco: sem relato, o clique diz o que falta em vez de o botão
@@ -812,26 +875,32 @@ export default function TriagemEntrevista({
           Analisar o relato
         </BotaoProcesso>
 
+        {/* `secundario`, e não `discreto`: sem borda nem fundo, ele ficava com
+          * cara de botão desabilitado ao lado do primário sólido — e "parece
+          * desabilitado" é o mesmo que não existir para quem bate o olho. */}
         <BotaoProcesso
-          variante="discreto"
-          pequeno
+          variante="secundario"
           onClick={() => inputRef.current?.click()}
           aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
-          /* A lista inteira de extensões era um parágrafo embaixo da caixa. Vira
-             `title`: quem precisa saber passa o mouse; quem não precisa deixa de
-             ler quatro linhas de formatos toda vez que abre a tela. */
           title="Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual."
         >
-          Escolher arquivo
+          {arquivoNome ? "Trocar arquivo" : "Escolher arquivo"}
         </BotaoProcesso>
 
         <input
           ref={inputRef}
           type="file"
           hidden
+          /* Filtra o diálogo do sistema para o que o servidor sabe ler. Sem
+            * isto a pessoa escolhia um .jpg, esperava a análise e recebia um
+            * erro que só aparecia depois da volta ao servidor. */
+          accept=".txt,.md,.docx,.pdf,.csv,.json,.xml,.html,.htm,.rtf,.srt,.vtt,text/*"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) void analisar(f);
+            if (f) {
+              setArquivoNome(f.name);
+              void analisar(f);
+            }
             e.target.value = "";
           }}
         />

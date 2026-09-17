@@ -107,7 +107,11 @@ def cenario_preenchimento() -> int:
         }
     )
 
-    r = escuta.escutar(FALA, {})
+    # O roteiro vai EXPLÍCITO: este cenário testa `tempo_casa` e `r_assalto`, que
+    # são perguntas do roteiro dos Correios. Depender do default era acoplamento
+    # implícito — quando o padrão do sistema mudou, o teste caiu sem que nada
+    # estivesse errado no código.
+    r = escuta.escutar(FALA, {}, "empregado_publico")
     falhas += not checar(r["analisado"] is True, "o trecho foi analisado")
     ids = {p["pergunta_id"] for p in r["preenchidas"]}
     falhas += not checar("tempo_casa" in ids, f"preencheu o tempo de casa ({ids})")
@@ -145,7 +149,7 @@ def cenario_transcricao_preenche_demais_dados() -> int:
             "lembretes": [],
         }
     )
-    r = escuta.escutar(FALA, {})
+    r = escuta.escutar(FALA, {}, "empregado_publico")
     ids = {p["pergunta_id"] for p in r["preenchidas"]}
     falhas += not checar("nascimento" in ids, "data de nascimento ouvida é preenchida")
     falhas += not checar(
@@ -198,7 +202,7 @@ def cenario_nome_e_cpf_sao_digitados() -> int:
             "lembretes": [],
         }
     )
-    r = escuta.escutar(FALA, {})
+    r = escuta.escutar(FALA, {}, "empregado_publico")
     preenchidos = {p["pergunta_id"] for p in r["preenchidas"]}
 
     falhas += not checar(
@@ -224,7 +228,7 @@ def cenario_alucinacao() -> int:
             "lembretes": ["um lembrete em string solta, não em objeto"],
         }
     )
-    r = escuta.escutar(FALA, {})
+    r = escuta.escutar(FALA, {}, "empregado_publico")
     falhas += not checar(
         r["preenchidas"] == [],
         f"id inventado, valor vazio e sim_nao ambíguo são descartados ({r['preenchidas']})",
@@ -242,7 +246,7 @@ def cenario_modulos_fechados() -> int:
     instalar_modelo({"preenchidas": [], "lembretes": []})
 
     # Ninguém respondeu "sim" a assalto: as perguntas do módulo não existem.
-    escuta.escutar(FALA, {})
+    escuta.escutar(FALA, {}, "empregado_publico")
     sem_rastreio = str(visto["prompt"])
     falhas += not checar(
         "as_ocorrencias" not in sem_rastreio,
@@ -254,7 +258,7 @@ def cenario_modulos_fechados() -> int:
     respostas = {"r_assalto": "sim", "tempo_casa": "8 anos", "funcao": "Carteiro Pedestre",
                  "desligamento": "ainda trabalho", "nome": "Maria", "cpf": "111.444.777-35",
                  "r_acidente": "não", "r_doenca": "não", "r_sequela": "não", "r_acao": "não"}
-    escuta.escutar(FALA, respostas)
+    escuta.escutar(FALA, respostas, "empregado_publico")
     com_rastreio = str(visto["prompt"])
     falhas += not checar(
         "as_ocorrencias" in com_rastreio,
@@ -284,7 +288,7 @@ def cenario_trecho_curto() -> int:
     # que interpretar; acima, a chamada acontece mesmo em cima de ruído. É a
     # decisão registrada no módulo, porque o outro lado — perder "motorizado",
     # "cinco anos", "8 vezes" — é pior, e ninguém percebe uma resposta perdida.
-    r = escuta.escutar("é", {})
+    r = escuta.escutar("é", {}, "empregado_publico")
     falhas += not checar(chamou["n"] == 0, "trecho de um caractere não gasta chamada")
     falhas += not checar(r["analisado"] is False, "e sai marcado como não analisado")
     falhas += not checar(
@@ -292,7 +296,7 @@ def cenario_trecho_curto() -> int:
         "mas o painel do que falta vem mesmo assim — é ele abrindo a entrevista",
     )
 
-    escuta.escutar("aham", {})
+    escuta.escutar("aham", {}, "empregado_publico")
     falhas += not checar(
         chamou["n"] == 1,
         "'aham' passa do piso e vai ao modelo — quem julga ambiguidade é ele",
@@ -677,7 +681,7 @@ def cenario_processamento_consolidado() -> int:
     )
 
     iniciais = {"nome": "Maria da Silva", "cpf": "529.982.247-25"}
-    r = escuta.processar_entrevista(FALA, iniciais)
+    r = escuta.processar_entrevista(FALA, iniciais, "empregado_publico")
     falhas += not checar(r["respostas"]["nome"] == "Maria da Silva", "nome digitado é preservado")
     falhas += not checar(r["respostas"]["cpf"] == "529.982.247-25", "CPF digitado é preservado")
     falhas += not checar(r["respostas"]["tempo_casa"] == "oito anos", "relato consolidado preenche o formulário")
@@ -748,7 +752,7 @@ def cenario_citacao_conferida() -> int:
             "incertas": [],
         }
     )
-    r = escuta.processar_entrevista(FALA, {})
+    r = escuta.processar_entrevista(FALA, {}, "empregado_publico")
     falhas += not checar(
         "tempo_casa" not in r["respostas"],
         f"paráfrase não preenche campo ({r['respostas'].get('tempo_casa')!r})",
@@ -775,7 +779,7 @@ def cenario_citacao_conferida() -> int:
             "incertas": [],
         }
     )
-    r = escuta.processar_entrevista(FALA, {})
+    r = escuta.processar_entrevista(FALA, {}, "empregado_publico")
     falhas += not checar(
         r["respostas"].get("tempo_casa") == "oito anos",
         "citação copiada da transcrição preenche normalmente",
@@ -830,7 +834,7 @@ def cenario_recusada_nao_volta_como_ausente() -> int:
             "incertas": [],
         }
     )
-    r = escuta.processar_entrevista(FALA, {})
+    r = escuta.processar_entrevista(FALA, {}, "empregado_publico")
 
     ids_incertos = {i["pergunta_id"] for i in r["incertas"]}
     ids_faltando = {f["pergunta_id"] for f in r["faltando"]}
@@ -880,7 +884,7 @@ def cenario_descarta_nao_informado() -> int:
             "incertas": [],
         }
     )
-    r = escuta.processar_entrevista(FALA, {})
+    r = escuta.processar_entrevista(FALA, {}, "empregado_publico")
     falhas += not checar(
         r["respostas"].get("tempo_casa") == "oito anos",
         "resposta real continua preenchendo",

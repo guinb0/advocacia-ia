@@ -259,6 +259,27 @@ async def _enviar_parcial(ws: WebSocket, sessao: transcricao.AnswerSession) -> N
                 await ws.send_json(
                     {"type": "trecho", "sessionId": sessao.sessao_id, "text": trecho}
                 )
+    except transcricao_openrouter.ErroTranscricao as erro:
+        # FALHA PASSAGEIRA SE DESCARTA; FALHA PERSISTENTE PRECISA APARECER.
+        #
+        # O `except Exception` abaixo engolia esta também, e o raciocínio dele
+        # ("parcial é descartável, o próximo vem com o texto acumulado") só vale
+        # quando o próximo TEM como dar certo. Quando a recusa é da chave, do
+        # crédito ou do modelo, ela se repete em todos — e aí nenhum parcial
+        # chega, nenhum `error` é enviado, e a tela fica em "ouvindo — nada
+        # reconhecido ainda" indefinidamente, com o cliente falando. Foi o
+        # sintoma de 17/09/2026.
+        #
+        # O `ws_transcricao` já trata esta mesma classe mandando o motivo para a
+        # tela, com um comentário dizendo que a lição "custou uma tarde": só que
+        # o parcial roda em tarefa própria, fora daquele `try`, e escapava.
+        # Aqui é o mesmo tratamento, no único lugar que faltava.
+        log.warning("Parcial recusado: %s", erro)
+        try:
+            await ws.send_json({"type": "error", "detail": str(erro)})
+        except Exception:
+            # WebSocket já fechado: o motivo fica no log, que é o que sobra.
+            pass
     except Exception:
         # Parcial é descartável: o próximo já vem com o texto acumulado, e o
         # final é transcrito do áudio inteiro de qualquer jeito.

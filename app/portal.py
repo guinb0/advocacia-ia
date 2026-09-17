@@ -4,9 +4,10 @@ O cliente não tem conta no sistema — recebe um link e uma senha pelo WhatsApp
 O que protege os documentos (CPF, laudos médicos, CAT) é justamente esta senha,
 então tudo aqui é dimensionado para isso:
 
-- Senha gerada por CSPRNG (`secrets`), nunca por `random`, que é previsível.
-- Guardada só como hash PBKDF2 com sal por caso. Nem o banco nem a tela do
-  advogado conseguem revelá-la depois: ela aparece uma única vez, na geração.
+- Senha padrão e igual para todos os casos (`SENHA_PADRAO`), para o cliente não
+  precisar anotar nada. Quem chega ao link chega aos documentos: o que separa um
+  caso do outro é o token de 256 bits da URL, não mais a senha.
+- Guardada só como hash PBKDF2 com sal por caso.
 - Comparação em tempo constante, para a resposta não vazar quantos caracteres
   estavam certos.
 - Tentativas limitadas por caso: sem isso, uma senha de 50 bits ainda cairia se
@@ -28,10 +29,10 @@ from typing import Any
 
 log = logging.getLogger("portal")
 
-# Alfabeto sem caracteres que se confundem quando alguém dita ou digita a senha:
-# sem O/0, I/l/1, e sem letras minúsculas ambíguas. 32 símbolos = 5 bits cada.
-ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-TAMANHO_SENHA = 10  # 10 x 5 bits = 50 bits de entropia
+# Senha fixa do link: o cliente não precisa anotar nada, e o advogado dita sempre
+# a mesma. Em troca, quem tiver o link do caso entra — a proteção real passa a ser
+# o token de 256 bits da URL. Defina PORTAL_SENHA_PADRAO para usar outra.
+SENHA_PADRAO = "123456"
 
 # OWASP recomenda >= 600k iterações para PBKDF2-HMAC-SHA256 (2023).
 ITERACOES = 600_000
@@ -66,9 +67,11 @@ SEGREDO = _segredo_sessao()
 
 
 def gerar_senha() -> str:
-    """Senha de 50 bits, em dois blocos de 5 para facilitar o ditado."""
-    bruta = "".join(secrets.choice(ALFABETO) for _ in range(TAMANHO_SENHA))
-    return f"{bruta[:5]}-{bruta[5:]}"
+    """Senha padrão do link, igual para todos os casos.
+
+    Configurável por `PORTAL_SENHA_PADRAO`; sem isso, `123456`.
+    """
+    return os.getenv("PORTAL_SENHA_PADRAO", "").strip() or SENHA_PADRAO
 
 
 def gerar_token() -> str:

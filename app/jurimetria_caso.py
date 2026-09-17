@@ -93,20 +93,60 @@ def _consulta(sinais: dict[str, Any]) -> str:
 #: vizinhança (mesma região) e, por fim, para o acervo nacional.
 MINIMO_AMOSTRA = 8
 
+#: Prazo e tentativas para alcançar o pgvector, que fica atrás da VPN 10.200/16.
+#:
+#: Era `connect_timeout=5, connect_retries=1` — uma única tentativa, cinco
+#: segundos. Justamente nesta rede, cuja instabilidade `rag._consultar_pgvector`
+#: descreve no próprio docstring ("uma sessão TCP pode morrer mesmo quando a rota
+#: e a porta já voltaram") e para a qual ele mantém repetição automática. Este
+#: caminho desligava a proteção que existe para o problema que ele tem.
+#:
+#: O escritório já pagou esse aprendizado na rota de recomendação, onde está
+#: escrito: "6s era apertado (...) uma oscilação dentro desses 6 segundos virava
+#: 'indisponível' numa consulta que costuma completar" — e o prazo lá virou 20s.
+#: Aqui ficou em 5 até agora, e o sintoma era a minuta sair sem jurimetria.
+CONEXAO_TIMEOUT_S = 20
+CONEXAO_TENTATIVAS = 3
+
 
 def _buscar_por_jurisdicao(consulta: str, uf: str) -> tuple[list[Any], str]:
     """Busca no TRT do estado; sem amostra, abre para a região e depois o país.
 
     Devolve os trechos e a jurisdição de fato usada, para a tela dizer de onde
     vieram os números ("TRT8", "Região Norte", "acervo nacional").
+
+    UMA CAMADA QUE FALHA NÃO DERRUBA AS OUTRAS DUAS.
+
+    As camadas existem porque uma pode não ter amostra e a seguinte ter. Sem o
+    `try` por camada, porém, uma oscilação na PRIMEIRA (a do estado) escapava do
+    laço e matava a busca inteira — inclusive o acervo nacional, que talvez
+    respondesse na hora. Na petição isso aparecia como "a base não respondeu", e
+    a minuta saía sem um número sequer. Só quando TODAS falham é que não há
+    resposta a dar, e aí sim o erro sobe para quem chamou.
     """
     camadas = tribunais.tribunais_por_prioridade(uf)
     ultimo: list[Any] = []
+    falhas: list[Exception] = []
     for indice, trts in enumerate(camadas):
-        achados = rag.buscar_similares(
-            consulta, limite=30, timeout=40, connect_timeout=5, connect_retries=1,
-            tribunais=trts or None,
-        )
+        try:
+            achados = rag.buscar_similares(
+                consulta,
+                limite=30,
+                timeout=40,
+                connect_timeout=CONEXAO_TIMEOUT_S,
+                connect_retries=CONEXAO_TENTATIVAS,
+                tribunais=trts or None,
+            )
+        except Exception as erro:  # noqa: BLE001 - a próxima camada ainda pode responder
+            falhas.append(erro)
+            log.warning(
+                "jurimetria: camada %d/%d (%s) falhou: %s",
+                indice + 1,
+                len(camadas),
+                " + ".join(trts) if trts else "nacional",
+                str(erro)[:160],
+            )
+            continue
         ultimo = achados
         if len(achados) >= MINIMO_AMOSTRA or indice == len(camadas) - 1:
             if trts:
@@ -114,6 +154,10 @@ def _buscar_por_jurisdicao(consulta: str, uf: str) -> tuple[list[Any], str]:
             else:
                 jur = "acervo nacional" if uf else "acervo nacional (sem estado informado)"
             return achados, jur
+    # Nenhuma camada respondeu: aí é indisponibilidade de verdade, e quem chamou
+    # precisa saber o motivo — não um "sem precedentes", que diria outra coisa.
+    if falhas and not ultimo:
+        raise falhas[-1]
     return ultimo, "acervo nacional"
 
 

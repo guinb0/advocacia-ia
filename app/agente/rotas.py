@@ -31,7 +31,7 @@ from fastapi import (
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .. import armazenamento, auth, contrato, peticao_local
+from .. import armazenamento, auth, contrato, peticao_aprendizado, peticao_local
 from . import conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
 from .config import config
@@ -754,6 +754,28 @@ def historico_de_peticao(caso_id: str, peca_ref: str) -> dict[str, Any]:
     if _peca_anexa(caso_id, peca_ref):
         return peticao_fluxo.historico_de_peticao(caso_id, peca_ref)
     return {"criticas": [], "versoes": []}
+
+
+@roteador.post("/casos/{caso_id}/peticao/local/revisoes/{revisao_id}/aceitar")
+def aceitar_revisao_pendente(caso_id: str, revisao_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.aceitar_revisao(caso_id, revisao_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.post("/casos/{caso_id}/peticao/local/revisoes/{revisao_id}/descartar")
+def descartar_revisao_pendente(caso_id: str, revisao_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
+    try:
+        return peticao_fluxo.descartar_revisao(caso_id, revisao_id)
+    except ErroDoAgente as erro:
+        raise _erro(erro) from erro
+
+
+@roteador.get("/peticoes/aprendizado/metricas")
+def metricas_de_aprendizado(usuario: auth.Usuario = Depends(auth.usuario_atual)) -> dict[str, Any]:
+    """Painel agregado de regras e etapas; sem expor documentos ou prompts."""
+    return peticao_aprendizado.estatisticas()
 
 
 # ------------------------------------------------------------------- estilo

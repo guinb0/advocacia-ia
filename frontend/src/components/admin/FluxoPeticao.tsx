@@ -11,7 +11,9 @@ import { Aviso, Botao, Cartao, RotuloCampo, Campo } from "@/components/ui/Basico
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
+  aceitarRevisaoPendente,
   buscarPeticao,
+  descartarRevisaoPendente,
   estadoPeticaoFluxo,
   gerarAnaliseEPeticao,
   historicoDePeticao,
@@ -78,6 +80,42 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [historico, setHistorico] = useState<HistoricoDePeticao | null>(null);
   const [mostrarHistorico, setMostrarHistorico] = useState(false);
   const [avisoRevisao, setAvisoRevisao] = useState<string | null>(null);
+  const [ouvindoRevisao, setOuvindoRevisao] = useState(false);
+  const reconhecimentoRevisao = useRef<SpeechRecognition | null>(null);
+
+  const alternarMicrofoneRevisao = useCallback(() => {
+    if (ouvindoRevisao) {
+      reconhecimentoRevisao.current?.stop();
+      return;
+    }
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) {
+      setAvisoRevisao("Seu navegador não oferece transcrição por voz. Use Chrome ou Edge, ou digite o pedido.");
+      return;
+    }
+    const reconhecimento = new Speech();
+    reconhecimento.lang = "pt-BR";
+    reconhecimento.continuous = true;
+    reconhecimento.interimResults = true;
+    reconhecimento.onresult = (evento) => {
+      let final = "";
+      for (let i = evento.resultIndex; i < evento.results.length; i += 1) {
+        if (evento.results[i].isFinal) final += evento.results[i][0].transcript;
+      }
+      if (final.trim()) setPromptRevisao((atual) => `${atual}${atual.trim() ? " " : ""}${final.trim()}`);
+    };
+    reconhecimento.onerror = () => {
+      setOuvindoRevisao(false);
+      setAvisoRevisao("Não consegui transcrever o áudio. Verifique a permissão do microfone e tente novamente.");
+    };
+    reconhecimento.onend = () => setOuvindoRevisao(false);
+    reconhecimentoRevisao.current = reconhecimento;
+    reconhecimento.start();
+    setAvisoRevisao(null);
+    setOuvindoRevisao(true);
+  }, [ouvindoRevisao]);
+
+  useEffect(() => () => reconhecimentoRevisao.current?.stop(), []);
 
   const recarregar = useCallback(async () => {
     try {
@@ -216,21 +254,54 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       const alteradas = revisao?.alteradas ?? [];
       setConcluido({
         acao: "revisar",
-        texto: `Revisão aplicada — a petição está na versão ${resultado.peticao.version}${
+        texto: `Revisão concluída — compare a candidata antes de aceitar. A peça oficial permanece na versão ${resultado.peticao.version}${
           alteradas.length ? `. Seções alteradas: ${alteradas.join(", ")}` : ""
         }.`,
       });
+      if (revisao?.alterou === false) {
+        setConcluido({
+          acao: "revisar",
+          texto: "A IA não identificou uma alteração segura; nenhuma versão nova foi criada.",
+        });
+      }
       if (revisao?.atendeu === false) {
         setAvisoRevisao(
           `A conferência automática indica que pode faltar: ${revisao.faltou || "parte do pedido"}. Confira o texto e peça de novo se precisar.`,
         );
       }
+      if ((revisao?.perguntas ?? []).length > 0) {
+        setAvisoRevisao(`A IA precisa confirmar: ${revisao!.perguntas!.join(" · ")}`);
+      }
       await recarregar();
+      // `recarregar` lê a versão persistida; numa revisão sem alteração ela não
+      // contém o aviso/perguntas retornados pela IA. Reaplica o resultado da
+      // chamada depois da leitura para que a tela não perca esse retorno.
+      setPeticao(resultado.peticao);
     } catch (e) {
       setErro({
         acao: "revisar",
         texto: e instanceof Error ? e.message : "Não foi possível aplicar a revisão.",
       });
+    } finally {
+      setRevisando(false);
+    }
+  }
+
+  async function decidirRevisao(aceitar: boolean) {
+    const candidata = peticao?.revisao_pendente;
+    if (!peticao || !candidata) return;
+    setRevisando(true);
+    setErro(null);
+    try {
+      const resultado = aceitar
+        ? await aceitarRevisaoPendente(casoId, candidata.id)
+        : await descartarRevisaoPendente(casoId, candidata.id);
+      setPeticao(resultado.peticao);
+      setEdicao(Object.fromEntries((resultado.peticao.sections ?? []).map((s) => [s.code, s.content])));
+      setConcluido({ acao: "revisar", texto: aceitar ? "Revisão aceita e gravada como nova versão." : "Revisão descartada; a peça original foi preservada." });
+      await recarregar();
+    } catch (e) {
+      setErro({ acao: "revisar", texto: e instanceof Error ? e.message : "Não foi possível concluir a revisão." });
     } finally {
       setRevisando(false);
     }
@@ -391,7 +462,14 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       const revisao = resultado.peticao.revisao ?? resultado.revisao;
       const alteradas = revisao?.alteradas ?? [];
       setRetornoAnexa(
-        revisao?.atendeu === false
+        revisao?.alterou === false
+          ? {
+              tom: "atencao",
+              texto: `Nenhuma versão nova foi criada. ${
+                (revisao.perguntas ?? []).join(" · ") || "A IA não identificou uma alteração segura."
+              }`,
+            }
+          : revisao?.atendeu === false
           ? {
               tom: "atencao",
               texto: `Revisão aplicada, mas a conferência automática indica que pode faltar: ${revisao.faltou || "parte do pedido"}. Confira o texto.`,
@@ -468,18 +546,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       )}
 
       {analise && (
-        <section className="grid gap-2 border-l-[3px] border-ok pl-4">
-          <h3 className="text-sm font-semibold m-0">Análise do caso</h3>
-          <p className={TEXTO}>{analise.resumo}</p>
-          {analise.cruzamento_entrevista_documentos && (
-            <p className={TEXTO}>
-              <span className="text-xs font-semibold text-tinta-3">Entrevista × documentos: </span>
-              {analise.cruzamento_entrevista_documentos}
-            </p>
-          )}
-          {analise.lacunas && analise.lacunas.length > 0 && (
-            <ListaRotulo titulo="Lacunas" itens={analise.lacunas} />
-          )}
+        <section className="grid gap-3 border border-borda bg-papel p-4">
+          <div><h3 className="text-sm font-semibold m-0">Leitura rápida do caso</h3><p className="mt-1 text-sm leading-relaxed text-tinta-2">{analise.resumo}</p></div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <ResumoAnalise titulo="✓ Confirmado por documentos" tom="ok" itens={analise.fatos_confirmados ?? []} vazio="Ainda não há confirmação documental destacada." />
+            <ResumoAnalise titulo="? Depende de prova ou confirmação" tom="atencao" itens={[...(analise.fatos_so_na_entrevista ?? []), ...(analise.lacunas ?? [])]} vazio="Nenhuma pendência relevante apontada." />
+          </div>
+          {analise.cruzamento_entrevista_documentos && <details className="text-sm text-tinta-2"><summary className="cursor-pointer font-semibold">Ver confronto completo: entrevista × documentos</summary><p className="mt-2 leading-relaxed">{analise.cruzamento_entrevista_documentos}</p></details>}
         </section>
       )}
 
@@ -548,6 +621,16 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             onEditar={(codigo, valor) => setEdicao((atual) => ({ ...atual, [codigo]: valor }))}
           />
 
+          {peticao.revisao_pendente && (
+            <ComparacaoRevisao
+              anterior={peticao.sections ?? []}
+              candidata={peticao.revisao_pendente.sections}
+              revisando={revisando}
+              onAceitar={() => void decidirRevisao(true)}
+              onDescartar={() => void decidirRevisao(false)}
+            />
+          )}
+
           {/* A revisão por prompt vem DEPOIS do texto: ela age sobre o que está
             * escrito, e pedir a mudança antes de ver a peça invertia a leitura —
             * o advogado abria a tela num campo em branco e precisava rolar para
@@ -558,9 +641,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             </RotuloCampo>
             <p className="text-xs text-tinta-3 m-0">
               Descreva o que deve mudar (ex.: &quot;separe dano moral do material nos
-              pedidos&quot;). A IA aplica só o que você pedir e preserva o resto do texto. A
-              versão atual fica guardada no histórico, e a revisão volta para
-              &quot;em revisão&quot; — precisa aprovar de novo.
+              pedidos&quot;). A IA gera uma nova versão completa para comparação. A versão
+              atual só muda depois que você aceitar a revisão.
             </p>
             <Campo
               area
@@ -570,6 +652,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               rows={3}
               placeholder="O que deve mudar nesta petição?"
             />
+            <div className="flex items-center gap-2">
+              <Botao variante="secundario" pequeno onClick={alternarMicrofoneRevisao}>
+                {ouvindoRevisao ? "Parar transcrição" : "🎙️ Falar pedido"}
+              </Botao>
+              {ouvindoRevisao && <span className="text-xs text-tinta-3">Ouvindo em português… fale a alteração desejada.</span>}
+            </div>
             <label className="flex items-start gap-2 text-xs text-tinta-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -842,10 +930,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 function CampoDoDocumento({
   valor,
   rotulo,
+  formato = "corpo",
   onEditar,
 }: {
   valor: string;
   rotulo: string;
+  formato?: "corpo" | "fechamento" | "enderecamento";
   onEditar: (valor: string) => void;
 }) {
   const campo = useRef<HTMLTextAreaElement>(null);
@@ -869,7 +959,11 @@ function CampoDoDocumento({
       /* `font-titulo` explícito: campo de formulário não herda a fonte do
          contêiner, e sem isto a seção editada sairia com a cara errada dentro
          do próprio documento. */
-      className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-titulo text-sm leading-relaxed text-justify text-tinta-2 focus:outline-none"
+      className={`w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-titulo text-[15px] leading-[1.75] text-tinta focus:outline-none whitespace-pre-wrap ${
+        formato === "fechamento" || formato === "enderecamento"
+          ? "text-center"
+          : "text-justify [text-indent:1.25cm]"
+      }`}
     />
   );
 }
@@ -901,21 +995,22 @@ function PreviaPeticao({
     <div className="grid gap-2">
       {/* Sem `max-h`/`overflow` e sem `sticky`: o documento rola com a página,
           que é o que se espera de um texto que se está escrevendo. */}
-      <div className="font-titulo border border-borda-forte bg-papel shadow-sm p-8">
-        <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-6">
+      <div className="mx-auto w-full max-w-[850px] font-titulo border border-borda-forte bg-papel shadow-sm px-10 py-12 max-[640px]:px-5 max-[640px]:py-7">
+        <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-10">
           {titulo || "Petição inicial"}
         </h1>
-        <div className="grid gap-4">
+        <div className="grid gap-6">
           {secoes.map((secao) => (
-            <section key={secao.code} className="grid gap-2">
-              {secao.label && (
-                <h2 className="text-center text-xs font-bold uppercase tracking-wide text-tinta">
+            <section key={secao.code} className="grid gap-3">
+              {secao.label && !["HEADING", "VALUE", "CLOSING"].includes(secao.code) && (
+                <h2 className="text-left text-sm font-bold uppercase tracking-wide text-tinta">
                   {secao.label}
                 </h2>
               )}
               <CampoDoDocumento
                 valor={edicao[secao.code] ?? secao.content}
                 rotulo={secao.label || secao.code}
+                formato={secao.code === "CLOSING" ? "fechamento" : secao.code === "HEADING" ? "enderecamento" : "corpo"}
                 onEditar={(valor) => onEditar(secao.code, valor)}
               />
             </section>
@@ -1171,4 +1266,138 @@ function ListaRotulo({ titulo, itens }: { titulo: string; itens: string[] }) {
       </ul>
     </div>
   );
+}
+
+function ResumoAnalise({ titulo, tom, itens, vazio }: { titulo: string; tom: "ok" | "atencao"; itens: string[]; vazio: string }) {
+  const unicos = [...new Set(itens.filter(Boolean))];
+  return <div className={`rounded-campo border p-3 ${tom === "ok" ? "border-ok bg-ok-claro" : "border-atencao bg-atencao-claro"}`}>
+    <p className="m-0 text-xs font-bold text-tinta">{titulo} <span className="font-normal text-tinta-3">({unicos.length})</span></p>
+    {unicos.length ? <ul className="mt-2 mb-0 grid gap-1 pl-4 text-xs leading-relaxed text-tinta-2">{unicos.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-2 mb-0 text-xs text-tinta-3">{vazio}</p>}
+    {unicos.length > 5 && <p className="mt-2 mb-0 text-xs text-tinta-3">+ {unicos.length - 5} outros pontos</p>}
+  </div>;
+}
+
+function ComparacaoRevisao({
+  anterior, candidata, revisando, onAceitar, onDescartar,
+}: {
+  anterior: SecaoPeticao[]; candidata: SecaoPeticao[]; revisando: boolean;
+  onAceitar: () => void; onDescartar: () => void;
+}) {
+  const comparacaoRef = useRef<HTMLElement>(null);
+  const porCodigo = new Map(candidata.map((s) => [s.code, s]));
+  const todos = [...anterior, ...candidata.filter((s) => !anterior.some((a) => a.code === s.code))];
+  const anteriorVisivel = todos.map((s) => anterior.find((a) => a.code === s.code) ?? { ...s, content: "" });
+  const candidataVisivel = todos.map((s) => porCodigo.get(s.code) ?? { ...s, content: "" });
+  // Uma seção pode trocar de código/posição numa revisão. Antes isso fazia o
+  // texto idêntico ficar todo verde/vermelho; primeiro pareamos conteúdo igual,
+  // depois caímos no código da seção.
+  const opostasDaAnterior = parearSecoes(anteriorVisivel, candidataVisivel);
+  const opostasDaCandidata = parearSecoes(candidataVisivel, anteriorVisivel);
+  const mudancas = todos.filter((s) => (porCodigo.get(s.code)?.content ?? "") !== (anterior.find((a) => a.code === s.code)?.content ?? "")).length;
+  useEffect(() => {
+    // Ao chegar a candidata, o advogado não precisa procurar a alteração numa
+    // peça longa. O primeiro trecho marcado (vermelho ou verde) vira o ponto
+    // de entrada da revisão; `scrollIntoView` também ajusta a coluna rolável.
+    const primeiro = comparacaoRef.current?.querySelector<HTMLElement>("[data-revisao-alteracao='true']");
+    if (!primeiro) return;
+    const quadro = window.requestAnimationFrame(() => {
+      primeiro.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      primeiro.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(quadro);
+  }, [anterior, candidata]);
+  return (
+    <section ref={comparacaoRef} className="border-2 border-acao-borda bg-papel p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div><h3 className={TITULO}>Revisão pendente</h3><p className={SUB}>Compare a peça completa antes de aceitar. {mudancas} seção(ões) com alteração.</p></div>
+        <span className="rounded-full bg-acao-clara px-3 py-1 text-xs font-semibold text-tinta-2">A peça oficial continua preservada</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+        <ColunaComparacao titulo="VERSÃO ANTERIOR" secoes={anteriorVisivel} oposta={opostasDaAnterior} tipo="antes" />
+        <ColunaComparacao titulo="NOVA VERSÃO" secoes={candidataVisivel} oposta={opostasDaCandidata} tipo="depois" />
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <Botao variante="secundario" pequeno disabled={revisando} onClick={onDescartar}>Descartar revisão</Botao>
+        <Botao variante="primario" pequeno disabled={revisando} onClick={onAceitar}>{revisando ? "Salvando…" : "Aceitar revisão"}</Botao>
+      </div>
+    </section>
+  );
+}
+
+function normalizarParaComparacao(texto: string): string {
+  return texto.replace(/\s+/g, " ").trim();
+}
+
+function parearSecoes(secoes: SecaoPeticao[], opostas: SecaoPeticao[]): Map<string, SecaoPeticao> {
+  const usados = new Set<number>();
+  const resultado = new Map<string, SecaoPeticao>();
+  secoes.forEach((secao) => {
+    const texto = normalizarParaComparacao(secao.content);
+    let indice = opostas.findIndex((outra, i) => !usados.has(i) && texto !== "" && normalizarParaComparacao(outra.content) === texto);
+    if (indice < 0) indice = opostas.findIndex((outra, i) => !usados.has(i) && outra.code === secao.code);
+    if (indice >= 0) {
+      usados.add(indice);
+      resultado.set(secao.code, opostas[indice]);
+    }
+  });
+  return resultado;
+}
+
+function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoPeticao>; tipo: "antes" | "depois" }) {
+  return <article className="min-w-0 max-h-[70vh] overflow-auto border border-borda bg-papel-2 p-3">
+    <h4 className="sticky top-0 bg-papel-2 py-1 text-xs font-bold tracking-wide text-tinta">{titulo}</h4>
+    {secoes.map((secao, i) => <div key={`${secao.code}-${i}`} className="mb-4 whitespace-pre-wrap text-sm leading-relaxed text-tinta">
+      <p className="mb-1 font-semibold">{secao.label}</p>
+      <TextoComDiff texto={secao.content} outro={oposta.get(secao.code)?.content ?? ""} tipo={tipo} />
+    </div>)}
+  </article>;
+}
+
+function TextoComDiff({ texto, outro, tipo }: { texto: string; outro: string; tipo: "antes" | "depois" }) {
+  if (texto === outro) return <>{texto}</>;
+  const palavras = texto.split(/(\s+)/);
+  const alteradas = indicesAlterados(texto, outro, tipo);
+  let indicePalavra = 0;
+  return <>{palavras.map((palavra, i) => {
+    const ehPalavra = Boolean(palavra.trim());
+    const mudou = ehPalavra && alteradas.has(indicePalavra);
+    if (ehPalavra) indicePalavra += 1;
+    return <span
+      key={i}
+      data-revisao-alteracao={mudou ? "true" : undefined}
+      tabIndex={mudou ? -1 : undefined}
+      className={mudou ? tipo === "antes" ? "bg-red-100 text-red-900 line-through" : "bg-green-100 text-green-900" : undefined}
+    >{palavra}</span>;
+  })}</>;
+}
+
+/** Diff por sequência (LCS), não por conjunto: repetição e posição importam. */
+function indicesAlterados(texto: string, outro: string, tipo: "antes" | "depois"): Set<number> {
+  const atual = texto.split(/\s+/).filter(Boolean);
+  const comparado = outro.split(/\s+/).filter(Boolean);
+  // Evita custo quadrático impróprio numa peça excepcionalmente grande. O
+  // prefixo/sufixo ainda não marca texto que permaneceu no mesmo lugar.
+  if (atual.length > 1_500 || comparado.length > 1_500) {
+    let inicio = 0; while (atual[inicio] === comparado[inicio]) inicio += 1;
+    let fimAtual = atual.length - 1; let fimComparado = comparado.length - 1;
+    while (fimAtual >= inicio && fimComparado >= inicio && atual[fimAtual] === comparado[fimComparado]) { fimAtual -= 1; fimComparado -= 1; }
+    return new Set(Array.from({ length: Math.max(0, fimAtual - inicio + 1) }, (_, i) => inicio + i));
+  }
+  const linhas = Array.from({ length: atual.length + 1 }, () => new Uint16Array(comparado.length + 1));
+  for (let i = atual.length - 1; i >= 0; i -= 1) for (let j = comparado.length - 1; j >= 0; j -= 1) {
+    linhas[i][j] = atual[i] === comparado[j] ? linhas[i + 1][j + 1] + 1 : Math.max(linhas[i + 1][j], linhas[i][j + 1]);
+  }
+  const mantidos = new Set<number>(); let i = 0; let j = 0;
+  while (i < atual.length && j < comparado.length) {
+    if (atual[i] === comparado[j]) { mantidos.add(i); i += 1; j += 1; }
+    else if (linhas[i + 1][j] >= linhas[i][j + 1]) i += 1;
+    else j += 1;
+  }
+  if (tipo === "antes") return new Set(atual.map((_, indice) => indice).filter((indice) => !mantidos.has(indice)));
+  // Reexecuta invertido para devolver os índices que são realmente novos na candidata.
+  return indicesAlteradosNoComparado(atual, comparado);
+}
+
+function indicesAlteradosNoComparado(antes: string[], depois: string[]): Set<number> {
+  return indicesAlterados(depois.join(" "), antes.join(" "), "antes");
 }

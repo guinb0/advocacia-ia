@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
+import { Camera, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import { criarSalaChamada } from "@/lib/api";
 import * as portal from "@/lib/apiPortal";
@@ -12,6 +13,7 @@ import { useChamada } from "@/lib/ChamadaContexto";
 import type { EstadoChamada } from "@/lib/chamadaJitsi";
 import AtivarMicrofone from "@/components/chamada/AtivarMicrofone";
 import IndicadorVoz from "@/components/chamada/IndicadorVoz";
+import Retratos from "@/components/ui/Retratos";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
 
 /* Cada estado com símbolo, palavra e tom. O cliente lê "Recebido" e "Precisa
@@ -450,6 +452,8 @@ function Chamada({ token }: { token: string }) {
     falando: "Você está na chamada. Pode falar.",
     encerrada: "A chamada foi encerrada.",
   };
+
+  if (naChamada) return <main className="fixed inset-0 z-50 flex min-h-screen flex-col bg-tinta p-4 text-papel sm:p-7"><header className="flex items-center justify-between"><div><p className="m-0 text-xs font-bold uppercase tracking-[.14em] text-papel/60">Atendimento ao vivo</p><h1 className="m-0 mt-1 text-xl">Conversando com o escritório</h1></div><span className="rounded-full bg-ok px-3 py-1 text-xs font-semibold text-tinta">{situacao[chamada.estado]}</span></header><div className="my-5 min-h-0 flex-1"><Retratos participantes={chamada.participantes} tamanho="coluna" /></div><div className="mx-auto flex gap-3 rounded-cartao bg-papel/10 p-3"><button type="button" aria-label="Microfone" className="rounded-full bg-papel p-4 text-tinta" onClick={chamada.alternarMudo}>{chamada.mudo ? <MicOff /> : <Mic />}</button><button type="button" aria-label="Áudio" className="rounded-full bg-papel p-4 text-tinta" onClick={() => void chamada.reativarAudio()}><Volume2 /></button><button type="button" aria-label="Câmera" className="rounded-full bg-papel p-4 text-tinta" onClick={() => void chamada.alternarCamera()}><Camera /></button><button type="button" aria-label="Encerrar chamada" className="rounded-full bg-critico p-4 text-papel" onClick={chamada.desligar}><PhoneOff /></button></div></main>;
 
   return (
     <div className="mt-6 px-5 pb-5 pt-[18px] border border-borda-forte rounded-cartao bg-papel shadow-cartao">

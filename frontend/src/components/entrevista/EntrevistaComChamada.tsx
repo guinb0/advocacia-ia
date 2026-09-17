@@ -12,7 +12,13 @@ import type { EstadoEscuta, ManipuladorRoteiro } from "@/components/entrevista/R
 import { lerEntrevista, usarPreAnalise } from "@/lib/preAnalise";
 import type { LeituraDaEntrevista } from "@/lib/preAnalise";
 import { chaveDasRespostas } from "@/lib/roteiroContexto";
-import type { ContextoRevisaoRoteiro } from "@/lib/types";
+import type {
+  ContextoRevisaoRoteiro,
+  Estrategia,
+  PerguntaPendente,
+  ProcessamentoEntrevista,
+  RoteiroCompleto,
+} from "@/lib/types";
 import {
   apagarCopiaTranscricao,
   lerCopiaTranscricao,
@@ -85,13 +91,281 @@ const ENCERRAR_NOTA = "max-w-[46ch] italic font-normal text-[12px] leading-[1.5]
  * o que ler, e é trocada pela definitiva assim que o fim da conversa é lido. */
 type ResultadoFinal = LeituraDaEntrevista & { provisorio: boolean };
 
-function PainelFinal({ resultado, onVoltar, onIrPara, podeIrPara, podeComplementar = true }: { resultado: ResultadoFinal; onVoltar: () => void; onIrPara: (id: string) => void; podeIrPara: (id: string) => boolean; podeComplementar?: boolean }) {
+/* O tipo provável do caso, como a triagem o leu.
+ *
+ * Só as três primeiras sugestões: o ranking tem cauda longa e as últimas são
+ * ruído de pontuação. `confiante` é o que decide o tom — a triagem sabe quando
+ * não sabe (duas categorias empatadas, sinal fraco), e esconder essa dúvida é
+ * pior que não sugerir nada: errar a categoria erra o checklist inteiro e o
+ * sistema passa a cobrar documentos que a ação não usa. */
+function TipoProvavel({ triagem }: { triagem: ResultadoFinal["triagem"] }) {
+  if (!triagem || triagem.sugestoes.length === 0) return null;
+  const principais = triagem.sugestoes.slice(0, 3);
+  return (
+    <details open className="mt-3">
+      <summary className="cursor-pointer text-xs font-bold">
+        Tipo provável do caso
+        {!triagem.confiante && <span className="ml-2 font-semibold text-atencao">a confirmar</span>}
+      </summary>
+      <ul className="mt-2 pl-5 text-xs leading-[1.6]">
+        {principais.map((s) => (
+          <li key={s.codigo}>
+            <strong>{s.nome}</strong>{" "}
+            <span className="text-tinta-3 tabular-nums">({Math.round(s.confianca * 100)}%)</span>
+            {s.evidencias.length > 0 && (
+              <span className="text-tinta-3"> — “{s.evidencias.slice(0, 2).join("”; “")}”</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {!triagem.confiante && triagem.motivo && (
+        <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-atencao">{triagem.motivo}</p>
+      )}
+      {/* Duas ações possíveis não é detalhe de classificação: é dinheiro e prazo
+          diferentes, e quem decide precisa ver isso antes de fechar o caso. */}
+      {triagem.concorrentes && (
+        <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-atencao">
+          O relato traz doença crônica <strong>e</strong> acidente súbito — podem ser duas ações.
+        </p>
+      )}
+      {triagem.divergiu && (
+        <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-tinta-3">
+          As duas leituras (modelo e termos) discordaram: confira a categoria à mão.
+        </p>
+      )}
+    </details>
+  );
+}
+
+/* Como a ENTREVISTA foi conduzida — não o caso, a conversa.
+ *
+ * É a única parte da análise que fala com quem está conduzindo, e enquanto dá
+ * para consertar: o cliente ainda está na sala. "Fora do assunto" com uma
+ * pergunta pronta ao lado vale mais que qualquer leitura de mérito depois. */
+function LeituraDaConducao({ insights }: { insights: ProcessamentoEntrevista["insights_entrevista"] }) {
+  if (!insights) return null;
+  const tom =
+    insights.foco === "adequado" ? "text-ok" : insights.foco === "parcial" ? "text-atencao" : "text-critico";
+  const rotulo =
+    insights.foco === "adequado"
+      ? "no assunto"
+      : insights.foco === "parcial"
+        ? "parcialmente no assunto"
+        : "fora do assunto";
+  return (
+    <details open={insights.foco !== "adequado"} className="mt-3">
+      <summary className="cursor-pointer text-xs font-bold">
+        Como a entrevista foi conduzida <span className={`font-semibold ${tom}`}>— {rotulo}</span>
+      </summary>
+      {insights.diagnostico && (
+        <p className="mt-2 mb-0 text-xs leading-[1.6] text-tinta-2">{insights.diagnostico}</p>
+      )}
+      {insights.desvios.length > 0 && (
+        <ul className="mt-2 pl-5 text-xs leading-[1.6] text-tinta-3">
+          {insights.desvios.map((d) => <li key={d}>{d}</li>)}
+        </ul>
+      )}
+      {insights.perguntas_especificas.length > 0 && (
+        <>
+          <strong className="mt-3 block text-xs">Ainda dá para perguntar</strong>
+          <ul className="mt-1 pl-5 text-xs leading-[1.6]">
+            {insights.perguntas_especificas.map((p) => (
+              <li key={p}><strong>Pergunte:</strong> “{p}”</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </details>
+  );
+}
+
+/* O que processos semelhantes mostraram, e o cuidado que isso exige.
+ *
+ * Fechado por padrão, de propósito: é leitura de mérito, e a tela existe para
+ * fechar a ENTREVISTA. Quem quer ler, abre.
+ *
+ * O `aviso` e a `metodologia` do backend vão junto e não são decorativos: isto
+ * é amostra vetorial de processos parecidos, estatística descritiva do que já
+ * foi decidido — não previsão de êxito deste caso. Mostrar percentual sem o
+ * critério ao lado é o caminho curto para alguém prometer resultado ao cliente. */
+function LeituraPorPrecedentes({ analise }: { analise: Estrategia | null }) {
+  if (!analise) return null;
+  const merito = analise.estatisticas?.desfechos_merito;
+  return (
+    <details className="mt-3">
+      <summary className="cursor-pointer text-xs font-bold">
+        O que processos semelhantes mostram
+        {analise.estatisticas?.processos_analisados ? (
+          <span className="ml-2 font-normal text-tinta-3 tabular-nums">
+            ({analise.estatisticas.processos_analisados} analisados)
+          </span>
+        ) : null}
+      </summary>
+
+      {analise.resumo && (
+        <p className="mt-2 mb-0 border-l-4 border-acao bg-acao-clara px-3 py-2 text-xs leading-[1.6]">
+          {analise.resumo}
+        </p>
+      )}
+
+      {merito && merito.processos > 0 && (
+        <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-tinta-3 tabular-nums">
+          {merito.favoraveis} de {merito.processos} com mérito julgado ({merito.percentual}%) — {merito.criterio}
+        </p>
+      )}
+
+      {analise.acoes.length > 0 && (
+        <>
+          <strong className="mt-3 block text-xs">O que costuma sustentar</strong>
+          <ul className="mt-1 pl-5 text-xs leading-[1.6]">
+            {analise.acoes.map((a, i) => (
+              <li key={i}>
+                {a.acao}
+                {a.porque && <span className="text-tinta-3"> — {a.porque}</span>}
+                {a.contrapontos && <span className="text-atencao"> Contraponto: {a.contrapontos}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {analise.riscos.length > 0 && (
+        <>
+          <strong className="mt-3 block text-xs text-atencao">Riscos apontados</strong>
+          <ul className="mt-1 pl-5 text-xs leading-[1.6]">
+            {analise.riscos.map((r, i) => (
+              <li key={i}>
+                {r.risco}
+                {r.contrapontos && <span className="text-tinta-3"> — {r.contrapontos}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {analise.perguntas_criticas && analise.perguntas_criticas.length > 0 && (
+        <>
+          <strong className="mt-3 block text-xs">Perguntas que os precedentes sugerem</strong>
+          <ul className="mt-1 pl-5 text-xs leading-[1.6]">
+            {analise.perguntas_criticas.map((p) => <li key={p}><strong>Pergunte:</strong> “{p}”</li>)}
+          </ul>
+        </>
+      )}
+
+      {analise.lacunas.length > 0 && (
+        <>
+          <strong className="mt-3 block text-xs">Provas que costumam faltar</strong>
+          <ul className="mt-1 pl-5 text-xs leading-[1.6]">
+            {analise.lacunas.map((l) => <li key={l}>{l}</li>)}
+          </ul>
+        </>
+      )}
+
+      {(analise.aviso || analise.metodologia) && (
+        <p className="mt-3 mb-0 border-t border-borda pt-2 text-[11px] leading-[1.5] text-tinta-3">
+          {analise.aviso} {analise.metodologia}
+        </p>
+      )}
+    </details>
+  );
+}
+
+/* A recomendação de triagem: vale abrir o caso?
+ *
+ * Decisão reversível, e o texto diz isso — a rota que a produz é explícita ao
+ * separar triagem de previsão de êxito (`/api/entrevista/recomendacao`). O que
+ * mais importa aqui não é o veredito e sim `lacunas_obrigatorias`: o que falta
+ * conseguir ANTES de aceitar, que ainda dá para pedir com o cliente na sala. */
+function RecomendacaoDeTriagem({ recomendacao }: { recomendacao: ResultadoFinal["recomendacao"] }) {
+  if (!recomendacao) return null;
+  const tom: Record<string, string> = {
+    sim: "text-ok",
+    com_ressalva: "text-atencao",
+    atencao: "text-critico",
+    indefinido: "text-tinta-3",
+  };
+  const rotulo: Record<string, string> = {
+    sim: "vale abrir",
+    com_ressalva: "vale abrir, com ressalva",
+    atencao: "atenção antes de aceitar",
+    indefinido: "sem sinal suficiente",
+  };
+  return (
+    <details open={recomendacao.lacunas_obrigatorias.length > 0} className="mt-3">
+      <summary className="cursor-pointer text-xs font-bold">
+        Triagem do caso{" "}
+        <span className={`font-semibold ${tom[recomendacao.recomendado]}`}>
+          — {rotulo[recomendacao.recomendado]}
+        </span>
+      </summary>
+      {recomendacao.motivo && (
+        <p className="mt-2 mb-0 text-xs leading-[1.6] text-tinta-2">{recomendacao.motivo}</p>
+      )}
+      {recomendacao.lacunas_obrigatorias.length > 0 && (
+        <>
+          <strong className="mt-3 block text-xs">Conseguir antes de aceitar</strong>
+          <ul className="mt-1 pl-5 text-xs leading-[1.6]">
+            {recomendacao.lacunas_obrigatorias.map((l) => <li key={l}>{l}</li>)}
+          </ul>
+        </>
+      )}
+      {!recomendacao.com_precedentes && (
+        <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-atencao">
+          Sem a base de precedentes: esta é a leitura do modelo sobre o relato, e não o que
+          processos semelhantes mostram.
+        </p>
+      )}
+      <p className="mt-3 mb-0 border-t border-borda pt-2 text-[11px] leading-[1.5] text-tinta-3">
+        Decisão de triagem, reversível — não é previsão de êxito.
+        {recomendacao.aviso ? ` ${recomendacao.aviso}` : ""}
+      </p>
+    </details>
+  );
+}
+
+/* A QUALIFICAÇÃO NÃO ENTRA NA CONFERÊNCIA — ela é etapa DEPOIS da entrevista.
+ *
+ * Nome, CPF, estado civil, UF e município são digitados fora da conversa (é o
+ * que `escuta.DADOS_DIGITADOS` fixa do lado do servidor), e o bloco de
+ * qualificação inteiro sai da entrevista por `delegado_a` — hoje ele é de outra
+ * equipe, e o próprio backend tem um `IDS_QUALIFICACAO_POS_ENTREVISTA` com esse
+ * nome. Listar esses campos aqui como "ainda não perguntado" enchia a
+ * conferência de pendência que ninguém ia resolver com o cliente na linha, e
+ * empurrava para baixo o que de fato importa: o que a pessoa contou e o que
+ * ficou faltando DO CASO.
+ *
+ * O filtro sai do roteiro em uso, e não de uma lista de nomes de campo escrita
+ * aqui: roteiro importado de outro escritório nomeia "cpf" como quiser, e a
+ * regra que vale é a mesma do servidor — bloco delegado, campo com dígito
+ * verificador, ou dado digitado por regra. */
+const DADOS_DIGITADOS = new Set(["nome", "cpf", "estado_civil", "uf", "municipio"]);
+
+function idsDeQualificacao(roteiro: RoteiroCompleto | null): Set<string> {
+  const ids = new Set(DADOS_DIGITADOS);
+  for (const bloco of roteiro?.blocos ?? []) {
+    for (const pergunta of bloco.perguntas) {
+      if (bloco.delegado_a || pergunta.validacao) ids.add(pergunta.id);
+    }
+  }
+  return ids;
+}
+
+function semQualificacao(itens: PerguntaPendente[], ids: Set<string>): PerguntaPendente[] {
+  return itens.filter((p) => !ids.has(p.pergunta_id));
+}
+
+function PainelFinal({ resultado, roteiro, onVoltar, onIrPara, podeIrPara, podeComplementar = true }: { resultado: ResultadoFinal; roteiro: RoteiroCompleto | null; onVoltar: () => void; onIrPara: (id: string) => void; podeIrPara: (id: string) => boolean; podeComplementar?: boolean }) {
   const { processamento, avisos, provisorio } = resultado;
+  const qualificacao = idsDeQualificacao(roteiro);
+  const faltando = semQualificacao(processamento.faltando, qualificacao);
+  const incertas = processamento.incertas.filter((p) => !qualificacao.has(p.pergunta_id));
   return (
     <section className="w-full border-l-4 border-tinta bg-papel-2 px-4 py-[14px]" aria-live="polite">
-      <strong className="block text-[14px] text-tinta">Conferência das perguntas do roteiro</strong>
+      <strong className="block text-[14px] text-tinta">Leitura da entrevista</strong>
       <p className="mt-1 text-xs leading-[1.55] text-tinta-3">
-        A IA confere se cada pergunta do roteiro foi respondida. A chamada e a gravação continuam ativas.
+        O que a conversa trouxe do caso, o que ficou faltando e o que processos semelhantes
+        mostram. A qualificação (nome, CPF, endereço) é etapa posterior e não entra aqui.
+        A chamada e a gravação continuam ativas.
       </p>
       {/* Dizer que é preliminar não é detalhe: o fim da conversa é onde ficam os
         * valores e o motivo da saída, e uma revisão que parece completa sem eles
@@ -107,21 +381,34 @@ function PainelFinal({ resultado, onVoltar, onIrPara, podeIrPara, podeComplement
           Voltar e complementar a entrevista
         </BotaoProcesso>
       )}
-      {processamento.faltando.length === 0 && processamento.incertas.length === 0 && (
+
+      {/* A condução vem primeiro porque é a única parte que ainda dá para
+        * consertar: o cliente está na sala. O resto é leitura do caso. */}
+      <LeituraDaConducao insights={processamento.insights_entrevista} />
+
+      {faltando.length === 0 && incertas.length === 0 && (
         <p className="mt-3 mb-0 border-l-[3px] border-ok bg-papel px-3 py-[11px] text-xs font-semibold text-ok">
-          Todas as perguntas do roteiro foram respondidas.
+          A conversa cobriu o que o roteiro pede sobre o caso.
         </p>
       )}
-      {processamento.faltando.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Perguntas do roteiro sem resposta ({processamento.faltando.length})</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.faltando.map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+      {faltando.length > 0 && (
+        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Sobre o caso, ainda sem resposta ({faltando.length})</summary>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{faltando.map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
-      {processamento.incertas.length > 0 && (
-        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que precisa ser confirmado ({processamento.incertas.length})</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{processamento.incertas.slice(0, 10).map((p) => <li key={p.pergunta_id}><strong>Confirme com o cliente:</strong> {p.motivo} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+      {incertas.length > 0 && (
+        <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que precisa ser confirmado ({incertas.length})</summary>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{incertas.slice(0, 10).map((p) => <li key={p.pergunta_id}><strong>Confirme com o cliente:</strong> {p.motivo} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
         </details>
       )}
+
+      {/* Daqui para baixo, a leitura do caso: era tudo calculado a cada passada
+        * — três chamadas por vez, durante a entrevista inteira — e nada disso
+        * chegava à tela. */}
+      <TipoProvavel triagem={resultado.triagem} />
+      <LeituraPorPrecedentes analise={processamento.analise} />
+      <RecomendacaoDeTriagem recomendacao={resultado.recomendacao} />
+
       {avisos.map((aviso) => <p key={aviso} className="mt-3 text-xs text-atencao">{aviso}</p>)}
     </section>
   );
@@ -308,7 +595,17 @@ export default function EntrevistaComChamada({
         </button>
       </div>
 
-      <div className="mx-auto grid max-w-[1500px] grid-cols-[minmax(0,1fr)_minmax(340px,460px)] items-start gap-5 max-[1080px]:grid-cols-[minmax(0,1fr)]">
+      {/* A coluna da chamada cresceu de 340–460px para 440–620px.
+        *
+        * O roteiro à esquerda tem medida fixa de leitura (860px) e não usava a
+        * folga: numa tela de 1500px sobrava espaço vazio entre as duas colunas
+        * enquanto a chamada ficava espremida. Quem conduz passa a entrevista
+        * inteira olhando para o rosto do entrevistado, não para o formulário —
+        * a coluna da direita é que merece a largura excedente.
+        *
+        * O ponto de empilhamento sobe de 1080px para 1240px: com a coluna maior,
+        * entre 1080 e 1240 o roteiro ficava abaixo da medida legível. */}
+      <div className="mx-auto grid max-w-[1500px] grid-cols-[minmax(0,1fr)_minmax(440px,620px)] items-start gap-5 max-[1240px]:grid-cols-[minmax(0,1fr)]">
         <div className="min-w-0">
           {/* Sem `onConcluir`: o roteiro não fecha mais o atendimento sozinho.
             * Ele só reporta o que foi respondido, e quem encerra é o botão lá
@@ -439,7 +736,7 @@ export default function EntrevistaComChamada({
               )}
               {resultadoFinal && (
                 <div className="basis-full w-full">
-                  <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} />
+                  <PainelFinal resultado={resultadoFinal} roteiro={contextoRoteiro?.roteiro ?? null} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} />
                 </div>
               )}
               {resultadoFinal && (
@@ -548,7 +845,7 @@ export default function EntrevistaComChamada({
               </BotaoProcesso>
 
               {consolidando && <Aviso tom="neutro" titulo="Conferindo a entrevista inteira">Organizando campos, tipo provável, lacunas e próximos passos…</Aviso>}
-              {resultadoFinal && <PainelFinal resultado={resultadoFinal} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} podeComplementar={false} />}
+              {resultadoFinal && <PainelFinal resultado={resultadoFinal} roteiro={contextoRoteiro?.roteiro ?? null} onVoltar={voltarAoRoteiro} onIrPara={irParaPergunta} podeIrPara={podeIrParaPergunta} podeComplementar={false} />}
 
               <span className={ENCERRAR_NOTA}>
                 A transcrição de <strong>tudo que foi falado</strong>, do início ao fim, é baixada
@@ -560,7 +857,7 @@ export default function EntrevistaComChamada({
           )}
         </div>
 
-        <div className="min-w-0 sticky top-[86px] self-start max-h-[calc(100vh-104px)] overflow-y-auto rounded-cartao border border-borda-forte bg-papel p-3 shadow-cartao max-[1080px]:order-[-1] max-[1080px]:static max-[1080px]:max-h-none max-[1080px]:overflow-visible">
+        <div className="min-w-0 sticky top-[86px] self-start max-h-[calc(100vh-104px)] overflow-y-auto rounded-cartao border border-borda-forte bg-papel p-3 shadow-cartao max-[1240px]:order-[-1] max-[1240px]:static max-[1240px]:max-h-none max-[1240px]:overflow-visible">
           {/* A faixa da chamada alimenta a transcrição: quando o cliente entra,
            * a voz DELE — isolada da do entrevistador — vira a fonte do roteiro,
            * no lugar do microfone da máquina.

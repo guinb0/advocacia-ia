@@ -14,6 +14,8 @@ log = logging.getLogger("agente")
 
 __all__ = [
     "analisar_entrevista",
+    "aceitar_revisao",
+    "descartar_revisao",
     "estado",
     "gerar_completo",
     "gerar_peticao",
@@ -122,7 +124,7 @@ def gerar_completo(caso_id: str) -> dict[str, Any]:
         "run_id": ID_LOCAL,
         "status": "DONE",
         "requested_at": agora,
-        "generation_id": ID_LOCAL,
+        "generation_id": dados.get("generation_id", ID_LOCAL),
         "pipeline": "local",
         "analise": analise_limpa,
         "peticao": peticao_local.para_api(dados),
@@ -154,6 +156,20 @@ def revisar_peca_anexa(peca_id: str, *, prompt: str, usuario: str = "") -> dict[
     except peticao_local.ErroPeticao as erro:
         raise _erro_peticao(erro) from erro
     return {"peticao": dados, "criticas": [], "revisao": dados.get("revisao")}
+
+
+def aceitar_revisao(caso_id: str, revisao_id: str) -> dict[str, Any]:
+    try:
+        return {"peticao": peticao_local.para_api(peticao_local.aceitar_revisao_pendente(caso_id, revisao_id))}
+    except peticao_local.ErroPeticao as erro:
+        raise _erro_peticao(erro) from erro
+
+
+def descartar_revisao(caso_id: str, revisao_id: str) -> dict[str, Any]:
+    try:
+        return {"peticao": peticao_local.para_api(peticao_local.descartar_revisao_pendente(caso_id, revisao_id))}
+    except peticao_local.ErroPeticao as erro:
+        raise _erro_peticao(erro) from erro
 
 
 def historico_de_peticao(caso_id: str, peca_id: str | None = None) -> dict[str, Any]:

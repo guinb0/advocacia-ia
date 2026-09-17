@@ -92,7 +92,7 @@ ACIDENTE_TRABALHO_CORREIOS = Categoria(
         ItemChecklist("DOC.05", 5, "Comprovante de residência", True, tipo_ocr="comprovante_residencia"),
         ItemChecklist("DOC.06", 6, "CTPS e PIS", True, tipo_ocr="ctps"),
         ItemChecklist("DOC.07", 7, "Contracheque do último mês trabalhado", True),
-        ItemChecklist("DOC.08", 8, "CNIS", False),
+        ItemChecklist("DOC.08", 8, "CNIS", False, tipo_ocr="cnis"),
         ItemChecklist("DOC.09", 9, "Ficha de evolução funcional", False),
         ItemChecklist("DOC.10", 10, "CAT (Comunicação de Acidente de Trabalho)", True),
         ItemChecklist("DOC.11", 11, "Boletim de ocorrência", False),
@@ -138,7 +138,7 @@ ACIDENTE_TRABALHO_GERAL = Categoria(
         ItemChecklist("DOC.05", 5, "Comprovante de residência", True, tipo_ocr="comprovante_residencia"),
         ItemChecklist("DOC.06", 6, "CTPS e PIS", True, tipo_ocr="ctps"),
         ItemChecklist("DOC.07", 7, "Contracheque do último mês trabalhado", True),
-        ItemChecklist("DOC.08", 8, "CNIS", True),
+        ItemChecklist("DOC.08", 8, "CNIS", True, tipo_ocr="cnis"),
         ItemChecklist("DOC.09", 9, "Ficha funcional e de evolução funcional", True),
         ItemChecklist("DOC.10", 10, "CAT (Comunicação de Acidente de Trabalho)", True),
         ItemChecklist("DOC.11", 11, "Boletim de ocorrência, quando houver", False),
@@ -204,7 +204,7 @@ DOENCA_OCUPACIONAL = Categoria(
             "Contracheques (holerites) – último mês trabalhado e, se possível, os 3 a 6 meses anteriores",
             True,
         ),
-        ItemChecklist("DOC.08", 8, "CNIS", True),
+        ItemChecklist("DOC.08", 8, "CNIS", True, tipo_ocr="cnis"),
         ItemChecklist("DOC.09", 9, "CAT – Comunicação de Acidente de Trabalho", True),
         ItemChecklist("DOC.10", 10, "Contrato de trabalho e aditivos (se houver)", False),
         ItemChecklist(
@@ -403,7 +403,7 @@ ASSALTO_CARTEIRO = Categoria(
             "Notas fiscais de medicamentos, tratamentos e demais despesas relacionadas",
             False,
         ),
-        ItemChecklist("DOC.19", 19, "Extrato CNIS (histórico previdenciário)", False),
+        ItemChecklist("DOC.19", 19, "Extrato CNIS (histórico previdenciário)", False, tipo_ocr="cnis"),
         ItemChecklist("DOC.20", 20, "Manual da empresa", False),
     ),
 )
@@ -516,6 +516,7 @@ AUXILIO_ACIDENTE = Categoria(
             10,
             "Extrato do CNIS",
             True,
+            tipo_ocr="cnis",
             observacao=(
                 "No Meu INSS, acesse “Extrato de Contribuição (CNIS)” e baixe o PDF "
                 "com o histórico de vínculos, contribuições e remunerações."
@@ -713,7 +714,12 @@ AUXILIO_ACIDENTE = _tipificar(
 )
 
 
+CATEGORIA_EM_TRIAGEM = Categoria(
+    codigo="em_triagem", nome="Ação em análise", descricao="A ação ainda será enquadrada pelo advogado; envie os documentos disponíveis.", itens=(),
+)
+
 CATEGORIAS: dict[str, Categoria] = {
+    CATEGORIA_EM_TRIAGEM.codigo: CATEGORIA_EM_TRIAGEM,
     ACIDENTE_TRABALHO_CORREIOS.codigo: ACIDENTE_TRABALHO_CORREIOS,
     ACIDENTE_TRABALHO_GERAL.codigo: ACIDENTE_TRABALHO_GERAL,
     DOENCA_OCUPACIONAL.codigo: DOENCA_OCUPACIONAL,
@@ -721,14 +727,20 @@ CATEGORIAS: dict[str, Categoria] = {
     AUXILIO_ACIDENTE.codigo: AUXILIO_ACIDENTE,
 }
 
-# O escritório tem casos reais nestas quatro categorias. `ASSALTO_CARTEIRO`
-# continua no catálogo para abrir eventual caso histórico, mas não aparece na
-# criação de novos casos enquanto não houver nenhum caso dessa ação.
+# As ações que a triagem pode escolher e que aparecem na criação do caso.
+#
+# `ASSALTO_CARTEIRO` ficava de fora "enquanto não houver nenhum caso dessa ação"
+# — regra que se voltava contra si mesma: a ação não aparecia para ser escolhida,
+# então nunca havia um caso dela, então continuava não aparecendo. E o efeito
+# não era só na lista: a IA da triagem enquadra o relato NESTA lista, de modo que
+# um assalto a carteiro era classificado como outra coisa, com o checklist de
+# documentos errado atrás.
 _CATEGORIAS_ATIVAS = (
     ACIDENTE_TRABALHO_CORREIOS.codigo,
     ACIDENTE_TRABALHO_GERAL.codigo,
     DOENCA_OCUPACIONAL.codigo,
     AUXILIO_ACIDENTE.codigo,
+    ASSALTO_CARTEIRO.codigo,
 )
 
 

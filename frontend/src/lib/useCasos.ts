@@ -58,8 +58,9 @@ export function useCasos() {
       categoria: string,
       observacao = "",
       telefone = "",
+      tipoAcao = "",
     ): Promise<CasoCriado> => {
-      const caso = await api.criarCaso(cliente, categoria, observacao, telefone);
+      const caso = await api.criarCaso(cliente, categoria, observacao, telefone, tipoAcao);
       await recarregar();
       return caso;
     },

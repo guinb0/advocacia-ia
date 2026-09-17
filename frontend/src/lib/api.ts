@@ -658,12 +658,14 @@ export async function criarCaso(
   categoria: string,
   observacao = "",
   telefone = "",
+  tipoAcao = "",
 ): Promise<CasoCriado> {
   const form = new FormData();
   form.append("cliente", cliente);
   form.append("categoria", categoria);
   form.append("observacao", observacao);
   form.append("telefone", telefone);
+  form.append("tipo_acao", tipoAcao);
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
 }
 
@@ -691,6 +693,24 @@ export async function salvarQualificacaoDoCaso(
         endereco: texto("endereco"),
         email: texto("email"),
         renda_estimada: texto("renda_estimada"),
+        /* Estes a tela sempre mostrou e o salvamento sempre ignorou: o atendente
+         * preenchia RG, PIS, profissão e o resto, o contrato os usava na hora
+         * (`contrato.valores_da_entrevista`) e nada disso chegava à tabela. Ao
+         * reabrir o caso, o cadastro voltava pela metade. */
+        idade: texto("idade"),
+        nacionalidade: texto("nacionalidade"),
+        profissao: texto("profissao"),
+        estado_civil: texto("estado_civil"),
+        rg: texto("rg"),
+        rg_orgao: texto("rg_orgao"),
+        rg_uf: texto("rg_uf"),
+        nome_pai: texto("pai"),
+        pis: texto("pis"),
+        uf: texto("uf"),
+        municipio: texto("municipio"),
+        telefones_extras: texto("telefones_extras"),
+        emails_extras: texto("emails_extras"),
+        enderecos_extras: texto("enderecos_extras"),
       }),
     }),
   );
@@ -1248,7 +1268,7 @@ export interface RelatorioGerado {
 export async function gerarRelatorio(
   respostas: Record<string, string | string[]>,
   relato = "",
-  roteiro = "empregado_publico",
+  roteiro = "auxilio_acidente",
 ): Promise<RelatorioGerado> {
   const criado = await comoJson<{ job_id: string }>(await buscar("/api/entrevista/relatorio/jobs", {
     method: "POST",
@@ -1510,7 +1530,7 @@ export async function triarEntrevista(texto: string, arquivo?: File): Promise<Tr
 export async function escutarTrecho(
   trecho: string,
   respostas: Record<string, string | string[]>,
-  roteiro = "empregado_publico",
+  roteiro = "auxilio_acidente",
   perguntaAtual = "",
   roteiroSnapshot?: RoteiroCompleto,
 ): Promise<Escuta> {
@@ -1542,7 +1562,7 @@ function explicarRotaDeProcessamento(resposta: Response): Response {
 export async function processarEntrevista(
   transcricao: string,
   respostas: Record<string, string | string[]>,
-  roteiro = "empregado_publico",
+  roteiro = "auxilio_acidente",
   roteiroSnapshot?: RoteiroCompleto,
 ): Promise<ProcessamentoEntrevista> {
   const resposta = await buscar("/api/entrevista/processar", {

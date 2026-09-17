@@ -1347,7 +1347,7 @@ def _mapa_de_fatos_conferido(
 def processar_entrevista(
     transcricao: str,
     respostas_iniciais: dict[str, Any] | None = None,
-    codigo_roteiro: str = "empregado_publico",
+    codigo_roteiro: str = roteiros.ROTEIRO_PADRAO,
     roteiro_ativo: roteiros.Roteiro | None = None,
 ) -> dict[str, Any]:
     """Transforma a conversa completa em respostas revisáveis, numa única leitura.
@@ -1622,7 +1622,7 @@ def processar_entrevista(
 def escutar(
     trecho: str,
     respostas: dict[str, Any],
-    codigo_roteiro: str = "empregado_publico",
+    codigo_roteiro: str = roteiros.ROTEIRO_PADRAO,
     pergunta_atual: str = "",
     roteiro_ativo: roteiros.Roteiro | None = None,
 ) -> dict[str, Any]:

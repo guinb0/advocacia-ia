@@ -203,8 +203,10 @@ export function useCarteira() {
     setPagina(1);
   }, [buscaEfetiva, categoria, situacao, ordenar]);
 
-  const recarregar = useCallback(async () => {
-    setCarregando(true);
+  const recarregar = useCallback(async (silencioso = false) => {
+    // Atualização compartilhada: outro advogado ou o cliente pode ter enviado
+    // um arquivo. Não escondemos a lista já aberta a cada sincronização.
+    if (!silencioso) setCarregando(true);
     try {
       const resposta = await api.obterCarteira(pagina, CASOS_POR_PAGINA, {
         busca: buscaEfetiva,
@@ -220,12 +222,28 @@ export function useCarteira() {
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Falha ao carregar a carteira.");
     } finally {
-      setCarregando(false);
+      if (!silencioso) setCarregando(false);
     }
   }, [pagina, buscaEfetiva, categoria, situacao, ordenar]);
 
   useEffect(() => {
     void recarregar();
+  }, [recarregar]);
+
+  useEffect(() => {
+    // A entrega é persistida antes de o OCR entrar na fila. Consultar a carteira
+    // enquanto esta aba está visível faz o documento aparecer para TODOS os
+    // advogados conectados em até um segundo, inclusive quando veio do portal
+    // do cliente; não depende de F5, de abrir o caso ou de o OCR terminar.
+    const atualizar = () => {
+      if (document.visibilityState === "visible") void recarregar(true);
+    };
+    const id = window.setInterval(atualizar, 1_000);
+    document.addEventListener("visibilitychange", atualizar);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", atualizar);
+    };
   }, [recarregar]);
 
   /* A página já vem ordenada pelo servidor. Reordenar por risco aqui apagava a

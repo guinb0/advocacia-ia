@@ -119,9 +119,21 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
 
   const entrar = useCallback(
     async (novaSala: string, novoPapel: PapelChamada, opcoes?: OpcoesEntrada, token?: string) => {
-      // Já na sala pedida: nada a fazer — é o caso de outra tela "reabrindo" a
-      // chamada que já está de pé, e reabrir de verdade a derrubaria.
-      if (chamada.current && salaRef.current === novaSala) return;
+      /* Já na sala pedida: nada a fazer — é o caso de outra tela "reabrindo" a
+       * chamada que já está de pé, e reabrir de verdade a derrubaria.
+       *
+       * Mas "estar na sala" é sobre uma chamada VIVA. Uma instância que morreu
+       * (a reconexão esgotou as tentativas, o servidor recusou a sala) continua
+       * em `chamada.current` com a mesma sala, e sem esta conferência de estado
+       * a guarda passava a valer para ela: tocar em "Entrar na chamada" de novo
+       * não fazia absolutamente nada, sem mensagem nova, com a tela parada em
+       * "chamada encerrada". Voltar a entrar é justamente o que se espera do
+       * botão nesse momento. */
+      const viva =
+        chamada.current !== null &&
+        chamada.current.estado !== "fora" &&
+        chamada.current.estado !== "encerrada";
+      if (viva && salaRef.current === novaSala) return;
       // Sala diferente (ou papel diferente): fecha a anterior antes.
       if (chamada.current) soltar();
 
@@ -140,7 +152,27 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
       setSala(novaSala);
       setPapel(novoPapel);
       setErro(null);
-      await instancia.entrar(novaSala, opcoes, token);
+      /* UMA ENTRADA QUE FALHOU NÃO PODE OCUPAR A VAGA DA PRÓXIMA.
+       *
+       * `chamada.current` e `salaRef` são gravados ANTES do `await` — precisam
+       * ser, porque os eventos da instância já começam a chegar. Só que, quando
+       * a entrada falha (microfone negado, servidor fora do ar, sala recusada),
+       * a instância morta ficava ali; e a guarda lá em cima — "já estou nesta
+       * sala, não faço nada" — passava a valer para a TENTATIVA SEGUINTE.
+       *
+       * O efeito era exatamente o roteiro mais comum do cliente no celular:
+       * negar o microfone sem querer, liberar no cadeado, tocar em "Entrar na
+       * chamada" de novo... e o botão não fazer nada, sem mensagem nenhuma. O
+       * erro que ele via na tela era o da primeira tentativa, congelado.
+       *
+       * Soltar antes de propagar devolve o estado de "sem chamada", que é o que
+       * de fato aconteceu, e a segunda tentativa volta a valer. */
+      try {
+        await instancia.entrar(novaSala, opcoes, token);
+      } catch (e) {
+        soltar();
+        throw e;
+      }
       /* A câmera pedida na entrada precisa aparecer no ESTADO, não só no vídeo.
        *
        * `soltar` zera `temCamera`, e só `alternarCamera` voltava a escrevê-lo —
@@ -156,8 +188,11 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     [soltar],
   );
 
-  const alternarMudo = useCallback(() => {
-    setMudo(chamada.current?.alternarMudo() ?? false);
+  /* O mudo agora é confirmado pela faixa antes de virar estado (ver
+   * `ChamadaJitsi.alternarMudo`), então a tela espera a resposta em vez de
+   * pintar o botão no otimismo do clique. */
+  const alternarMudo = useCallback(async () => {
+    setMudo((await chamada.current?.alternarMudo()) ?? false);
   }, []);
 
   const reativarAudio = useCallback(async () => {
@@ -225,8 +260,10 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     compartilhandoTela,
     telaDisponivel,
     erro,
-    ativa: estado !== "fora",
-    mostrarDock: estado !== "fora" && paineis === 0,
+    // "encerrada" preserva uma mensagem para a tela que já está aberta, mas
+    // não é uma ligação e jamais pode ressuscitar o painel flutuante.
+    ativa: estado === "aguardando" || estado === "conectando" || estado === "falando",
+    mostrarDock: (estado === "aguardando" || estado === "conectando" || estado === "falando") && paineis === 0,
     registrarPainel,
     entrar,
     desligar: soltar,

@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import unicodedata
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from . import (
     analise_documentos,
     armazenamento,
     jurimetria_caso,
+    peticao_aprendizado,
     peticao_criticas,
     peticao_skills,
     rag,
@@ -38,7 +40,10 @@ ID_LOCAL = "local"
 #: 5 — layout medido na petição de referência do escritório (Auxílio-Acidente,
 #: 8 páginas): corpo serifado, margens 3,0 / 1,89 cm e texto começando em 4,66 cm,
 #: abaixo do timbre.
-DOCX_STYLE_VERSION = 5
+#: 6 — recuo de 1,25 cm na primeira linha de cada parágrafo, medido na mesma
+#: peça de referência (corpo em 3,0 cm, primeira linha em 4,25 cm), e negrito
+#: inline no nome do autor.
+DOCX_STYLE_VERSION = 8
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 #: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
 #:
@@ -50,6 +55,11 @@ FONTE_PADRAO = "Times New Roman"
 MODELO_VISUAL_GERAL = "peticao_visual_geral"
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
+    # As preliminares saíram de dentro do DO DIREITO e viraram seção própria,
+    # ANTES dos fatos — que é onde o escritório as põe. `_normalizar_secoes`
+    # percorre esta tupla na ordem, então basta a posição aqui para a peça
+    # inteira (prompt, tela, .docx e revisão) passar a respeitá-la.
+    ("PRELIMINARY", "Das preliminares"),
     ("FACTS", "Dos fatos"),
     ("LEGAL_GROUNDS", "Do direito"),
     ("CLAIMS", "Dos pedidos"),
@@ -212,6 +222,16 @@ def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
     return dados
 
 
+#: Teto de saída do modelo, em tokens.
+#:
+#: NÃO estava definido, e era ESTE o motivo real das peças curtas. Sem o campo, a
+#: DeepSeek aplica o padrão dela (4096 tokens), e nenhuma instrução de "escreva
+#: mais" vence um corte no transporte: o prompt podia pedir quatro parágrafos por
+#: tese e doze julgados que a resposta parava no mesmo tamanho. A mediana do
+#: acervo do escritório é de 144 parágrafos por peça — não cabe em 4096.
+MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "8192"))
+
+
 def _llm_json(
     instrucao: str, entrada: str, *, timeout: float = 180.0
 ) -> dict[str, Any]:
@@ -227,6 +247,7 @@ def _llm_json(
             json={
                 "model": modelo,
                 "temperature": 0.2,
+                "max_tokens": MAX_TOKENS_RESPOSTA,
                 "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": instrucao},
@@ -310,11 +331,17 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
         )
         if parte
     )
+    regras = peticao_aprendizado.regras_para_contexto(categoria=categoria)
     try:
-        peticao_criticas.inicializar()
-        criticas = peticao_criticas.ultimas_da_categoria(
-            categoria, limite=CRITICAS_RECENTES_POR_CATEGORIA
-        )
+        # Compatibilidade com as correções históricas anteriores ao aprendizado
+        # estruturado. Assim que existirem regras ativas, histórico cru não entra
+        # no prompt: uma lista de comentários não é uma base de conhecimento.
+        criticas = []
+        if not regras:
+            peticao_criticas.inicializar()
+            criticas = peticao_criticas.ultimas_da_categoria(
+                categoria, limite=CRITICAS_RECENTES_POR_CATEGORIA
+            )
     except Exception:
         # Mesma régua de `instrucoes_da_categoria`: uma oscilação de rede no
         # pgvector não pode derrubar a geração por causa de um reforço opcional.
@@ -328,6 +355,24 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
             else "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO ===\n"
         )
         blocos.append(cabecalho + skill)
+    if regras:
+        listadas = "\n".join(
+            f"- [{r.get('tipo', 'PREFERENCE')}; confiança {float(r.get('confidence') or 0):.2f}; "
+            f"{int(r.get('observacoes') or 0)} confirmação(ões)] {r.get('texto', '')}"
+            for r in regras
+        )
+        if revisao:
+            blocos.append(
+                "=== REGRAS APRENDIDAS ATIVAS DO ESCRITÓRIO (referência contextual) ===\n"
+                + listadas
+                + "\nA crítica atual prevalece; não use regra aprendida para alterar seção não pedida."
+            )
+        else:
+            blocos.append(
+                "=== REGRAS APRENDIDAS ATIVAS DO ESCRITÓRIO ===\n"
+                + listadas
+                + "\nAplique apenas quando compatíveis com os fatos, a área e este tipo de peça."
+            )
     if criticas:
         listadas = "\n".join(f"- {c}" for c in criticas)
         if revisao:
@@ -484,7 +529,8 @@ def analisar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Você é advogado trabalhista. Cruze a ENTREVISTA com os DOCUMENTOS (OCR).
+            """Você é advogado. Cruze a ENTREVISTA com os DOCUMENTOS (OCR) e identifique
+a natureza jurídica mais adequada aos fatos, sem presumir relação de trabalho.
 Devolva JSON:
 {
   "resumo": "síntese jurídica em 4-8 frases",
@@ -542,6 +588,32 @@ def _normalizar_secoes(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return secoes
 
 
+def _normalizar_secoes_da_revisao(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normaliza a peça candidata sem impor as oito seções da geração inicial."""
+    resultado: list[dict[str, Any]] = []
+    usados: set[str] = set()
+    for indice, item in enumerate(brutas):
+        if not isinstance(item, dict):
+            continue
+        conteudo = str(item.get("content") or item.get("texto") or "").strip()
+        if not conteudo:
+            continue
+        base = re.sub(r"[^A-Z0-9_]+", "_", str(item.get("code") or item.get("label") or "SECAO").upper()).strip("_")
+        codigo = base[:48] or "SECAO"
+        if codigo in usados:
+            codigo = f"{codigo[:42]}_{indice + 1}"
+        usados.add(codigo)
+        resultado.append({
+            "code": codigo,
+            "label": str(item.get("label") or codigo.replace("_", " ").title()).strip(),
+            "content": conteudo,
+            "written_by": "agent",
+            "supporting_fact_ids": [],
+            "cited_precedent_ids": [],
+        })
+    return resultado
+
+
 def _analisar_jurimetria_da_minuta(
     secoes: list[dict[str, Any]], *, texto_para_uf: str = ""
 ) -> tuple[dict[str, Any], str]:
@@ -562,10 +634,20 @@ def _analisar_jurimetria_da_minuta(
             consulta, texto_para_uf=texto_para_uf
         )
     except Exception as erro:
-        log.warning("petição local: jurimetria indisponível: %s", erro)
+        # O TIPO do erro vai para o log, e não só a mensagem: "timeout de
+        # conexão" e "senha recusada" apareciam iguais aqui, e mandavam procurar
+        # o problema em lugares opostos (rede x credencial). A busca já tenta as
+        # três camadas de jurisdição com repetição (ver `jurimetria_caso`), então
+        # chegar aqui significa que nenhuma delas respondeu.
+        log.warning(
+            "petição local: jurimetria indisponível (%s): %s",
+            type(erro).__name__,
+            str(erro)[:200],
+        )
         aviso = (
-            "A base de processos semelhantes não respondeu durante a geração. "
-            "Nenhum percentual ou conclusão jurimétrica foi estimado."
+            "A base de processos semelhantes não respondeu durante a geração, "
+            "nem no acervo nacional. Nenhum percentual ou conclusão jurimétrica "
+            "foi estimado — a minuta segue válida, sem o apêndice comparativo."
         )
         return {"disponivel": False, "aviso": aviso, "precedentes": []}, aviso
     if not similares:
@@ -681,16 +763,30 @@ def redigir(
     caso_id: str, *, analise: dict[str, Any], texto_entrevista: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
     contexto = analise.get("contexto") or _montar_contexto(caso_id, texto_entrevista)
+    contexto += _precedentes_para_redigir(contexto)
+    contexto += _legislacao_para_redigir(contexto)
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Redija uma PETIÇÃO INICIAL trabalhista completa em português formal.
+            CONTRATO_DE_REDACAO
+            + """Redija uma PETIÇÃO INICIAL completa, adequada à natureza da ação indicada
+pelos fatos e pela análise, em português formal.
 Use SOMENTE fatos da entrevista e documentos — não invente.
 Marque com [PENDENTE: motivo] o que depender só de alegação sem prova.
+
+ENDEREÇAMENTO (seção HEADING): abra por "Ao Juízo ..." indicando a vara e a
+comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A)
+JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
+**NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
+
+PADRÃO DO ESCRITÓRIO: quando houver orientação ou peça de referência acima,
+siga-a — ela manda sobre o critério geral. Onde ela não disser nada, escolha a
+forma que julgar melhor para a peça, sem inventar fato.
 JSON:
 {
   "secoes": [
     {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
+    {"code": "PRELIMINARY", "label": "Das preliminares", "content": "..."},
     {"code": "FACTS", "label": "Dos fatos", "content": "..."},
     {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
     {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
@@ -709,7 +805,10 @@ Cada content em parágrafos separados por linha em branco.""",
             f"Confirmados: {', '.join(analise.get('fatos_confirmados') or [])}\n\n"
             f"MATERIAL:\n{contexto[:90_000]}"
         ),
-        timeout=240.0,
+        # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
+        # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
+        # respondeu" — que é pior, porque perde o trabalho inteiro.
+        timeout=360.0,
     )
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(s["content"] for s in secoes):
@@ -717,16 +816,183 @@ Cada content em parágrafos separados por linha em branco.""",
     return secoes, [str(p) for p in (saida.get("pendencias") or []) if str(p).strip()]
 
 
+def _precedentes_para_redigir(contexto: str) -> str:
+    """Julgados semelhantes ANTES de redigir, para a IA poder citá-los.
+
+    A jurimetria já existia, mas rodava depois (`_analisar_jurimetria_da_minuta`,
+    chamada com a minuta pronta): ela virava um apêndice auditável e NUNCA
+    chegava ao prompt. Por isso o advogado pedia jurisprudência e o texto saía
+    sem nenhuma — o modelo não tinha como citar o que não recebeu.
+
+    A consulta aqui é o próprio material do caso (entrevista + documentos), e não
+    a minuta, justamente porque a minuta ainda não existe neste ponto.
+
+    Falha não interrompe a geração: sem base, a peça sai como saía antes.
+    """
+    try:
+        similares, _jurisdicao, _uf = jurimetria_caso.buscar_focada(
+            contexto[:12_000], texto_para_uf=contexto
+        )
+    except Exception as erro:
+        log.warning("petição local: precedentes indisponíveis na redação: %s", erro)
+        return ""
+    if not similares:
+        return ""
+    # DOZE julgados, e não seis: com seis o modelo citava um ou dois e dava a
+    # fundamentação por cumprida. O trecho de cada um caiu de 2200 para 1800
+    # caracteres de propósito — dobrar a quantidade sem encolher o recorte
+    # empurraria o prompt para perto do teto e o que entra por último é
+    # justamente o que o modelo menos aproveita.
+    linhas = ["\n\n=== JULGADOS SEMELHANTES (use no DO DIREITO) ==="]
+    usados = list(similares[:18])
+    for indice, trecho in enumerate(usados, start=1):
+        ref = trecho.referencia()
+        linhas.append(
+            f"\n[J{indice}] processo={ref.get('processo') or ref.get('identificador')} "
+            f"resultado={ref.get('resultado') or 'não informado'} "
+            f"órgão={ref.get('vara') or 'não informado'}\n{trecho.texto[:1800]}"
+        )
+    linhas.append(
+        f"\nSão {len(usados)} julgados REAIS, vindos do acervo do escritório. Use os "
+        "que de fato se aplicarem a estes fatos, citados pelo número do processo e "
+        "com a razão de decidir explicada — e diga em uma frase por que cada um "
+        "alcança este caso. NÃO cite julgado só porque tem palavras parecidas: "
+        "compare atividade, questão decidida e fundamento determinante, e reconheça "
+        "a distinção quando houver. Se nenhum destes servir para um ponto, escreva "
+        "[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO] em vez de forçar "
+        "um precedente pouco aderente. Nunca invente processo, ementa ou número."
+    )
+    return "\n".join(linhas)
+
+
+def _legislacao_para_redigir(contexto: str) -> str:
+    """O texto legal oficial do acervo, ANTES de redigir.
+
+    Mesmo buraco que `_precedentes_para_redigir` fechou para os julgados, e pelo
+    mesmo motivo: a legislação federal está vetorizada e completa no pgvector
+    (CLT com 819 trechos, CF/88, CPC, Código Civil, CPP e outras), mas NADA dela
+    chegava ao prompt. A IA fundamentava de memória — e artigo citado de memória
+    é artigo que sai com número errado numa peça que vai a protocolo.
+
+    `rag.buscar_legislacao` já filtra `f.tipo='lei'`, então acórdão não entra
+    aqui: julgado tem o canal dele e os dois não se misturam no prompt.
+
+    Falha não interrompe a geração: sem base, a peça sai como saía antes.
+    """
+    try:
+        # Mais de um núcleo jurídico costuma coexistir na mesma inicial
+        # (competência, mérito, prova, consectários). Dez trechos favoreciam a
+        # primeira tese e deixavam as demais com fundamentação de memória.
+        trechos = rag.buscar_legislacao(contexto[:12_000], limite=14)
+    except Exception as erro:
+        log.warning("petição local: legislação indisponível na redação: %s", erro)
+        return ""
+    if not trechos:
+        return ""
+    linhas = ["\n\n=== LEGISLAÇÃO DO ACERVO (use no DO DIREITO) ==="]
+    for indice, trecho in enumerate(trechos, start=1):
+        titulo = trecho.titulo or trecho.identificador or "lei"
+        linhas.append(f"\n[L{indice}] {titulo}\n{trecho.texto[:1500]}")
+    linhas.append(
+        f"\nSão {len(trechos)} dispositivos legais OFICIAIS do acervo do "
+        "escritório. Para CADA norma que usar, identifique a espécie, número e "
+        "denominação (quando houver), o artigo/parágrafo/inciso, sintetize com "
+        "precisão o comando normativo e explique a consequência dele PARA ESTES "
+        "fatos; uma referência solta como 'art. 927 do CC' é insuficiente. "
+        "Transcreva só o excerto indispensável quando ele sustentar diretamente a "
+        "tese, sem colar lei em bloco. Nunca invente número de artigo nem cite "
+        "dispositivo que não esteja acima — se o que você precisa não estiver aqui, "
+        "fundamente sem inventar."
+    )
+    return "\n".join(linhas)
+
+
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
+    generation_id = str(uuid.uuid4())
+    regras_aplicadas = peticao_aprendizado.regras_para_contexto(
+        categoria=_categoria_do_caso(caso_id)
+    )
+    peticao_aprendizado.registrar_execucao(
+        generation_id=generation_id, caso_id=caso_id,
+        skill_name="learned_preferences_retrieval", itens_recuperados=[
+            {"id": r.get("id"), "tipo": r.get("tipo"), "confidence": r.get("confidence")}
+            for r in regras_aplicadas
+        ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
+    )
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    contexto += _precedentes_para_redigir(contexto)
+    contexto += _legislacao_para_redigir(contexto)
+
+    # As críticas DESTE caso, já aplicadas na geração.
+    #
+    # `_com_skill_do_escritorio` injeta as críticas da CATEGORIA (lições que valem
+    # para todo caso parecido). As deste caso específico — inclusive as marcadas
+    # "só deste caso", que de propósito não instruem a categoria — ficavam de
+    # fora, e gerar de novo desfazia tudo o que o advogado já tinha corrigido
+    # aqui. Ele reescrevia as mesmas críticas a cada geração.
+    try:
+        peticao_criticas.inicializar()
+        deste_caso = [
+            str(c.get("prompt") or "").strip()
+            for c in peticao_criticas.listar_por_caso(caso_id)
+            if str(c.get("prompt") or "").strip()
+        ][-20:]
+    except Exception:
+        log.warning("petição local: críticas do caso indisponíveis", exc_info=True)
+        deste_caso = []
+    if deste_caso:
+        contexto += (
+            "\n\n=== CORREÇÕES JÁ PEDIDAS NESTE CASO (aplique TODAS desde já) ===\n"
+            + "\n".join(f"- {c}" for c in deste_caso)
+            + "\nEstas correções já foram cobradas nesta peça. A minuta nova deve "
+            "nascer com todas aplicadas, sem precisar que sejam pedidas de novo."
+        )
+    contexto += (
+        # Este bloco é FORMATO — onde cada coisa entra na peça. O mérito (estrutura
+        # da tese, anti-alucinação, auditoria) mora em `CONTRATO_DE_REDACAO`, que vai
+        # na instrução. Antes daqui saíam três regras que o escritório revogou: cota
+        # de quatro parágrafos por tese, dois julgados obrigatórios e a fórmula
+        # fiscal do valor da causa. Ficaram no histórico do git, não no prompt.
+        "\n\n=== PADRÃO OBRIGATÓRIO DA PEÇA ===\n"
+        "A seção PRELIMINARY reúne a matéria preliminar, numerada, ANTES dos fatos: "
+        "'I – DO JUÍZO 100% DIGITAL' e 'II – DA GRATUIDADE DA JUSTIÇA' pertencem a "
+        "ela, cada uma com subtítulo próprio e texto desenvolvido; a seção "
+        "LEGAL_GROUNDS não repete nenhuma das duas. "
+        "Os julgados e os dispositivos do material abaixo são REAIS e vieram do "
+        "acervo: prefira-os a qualquer citação de memória, e cite apenas os que "
+        "alcançarem estes fatos, dizendo por quê. Artigo ou processo citado de "
+        "memória, fora do que está no material, é erro grave — a peça vai a "
+        "protocolo. Sem precedente verificável para um ponto, escreva "
+        "[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. "
+        "Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
+        "A seção CLAIMS traz cada pedido com seu valor individual quando exigido "
+        "(art. 840 da CLT), e cada pedido decorre de tese já fundamentada. "
+        "A seção VALUE traz o valor da causa COERENTE com a soma dos pedidos, sem "
+        "fórmula fiscal automática e SEM título de seção. "
+        # "Nestes termos," vem do acervo do escritório (85 iniciais medidas);
+        # "Termos em que", que estava aqui antes, não aparece em nenhuma delas.
+        "A seção CLOSING deve conter apenas 'Nestes termos,', 'Pede deferimento.', "
+        "local/data e advogado/OAB, sem escrever o título FECHAMENTO dentro do "
+        "conteúdo e sem usar a fórmula 'Termos em que'."
+    )
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Você é advogado trabalhista e redator de petições iniciais.
+            CONTRATO_DE_REDACAO
+            + """Você é advogado e redator de petições iniciais.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
 Onde faltar dado indispensável, escreva [PENDENTE: explicação].
+
+ENDEREÇAMENTO (seção HEADING): abra por "Ao Juízo ..." indicando a vara e a
+comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A)
+JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
+**NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
+
+PADRÃO DO ESCRITÓRIO: quando houver orientação ou peça de referência acima,
+siga-a — ela manda sobre o critério geral. Onde ela não disser nada, escolha a
+forma que julgar melhor para a peça, sem inventar fato.
 
 Devolva JSON exatamente com:
 {
@@ -742,6 +1008,7 @@ Devolva JSON exatamente com:
   },
   "secoes": [
     {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
+    {"code":"PRELIMINARY","label":"Das preliminares","content":"..."},
     {"code":"FACTS","label":"Dos fatos","content":"..."},
     {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
     {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
@@ -757,7 +1024,10 @@ ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
 Cada content deve conter parágrafos separados por linha em branco.""",
         ),
         contexto,
-        timeout=240.0,
+        # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
+        # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
+        # respondeu" — que é pior, porque perde o trabalho inteiro.
+        timeout=360.0,
     )
     bruto_analise = saida.get("analise") or {}
     analise = {
@@ -790,6 +1060,16 @@ Cada content deve conter parágrafos separados por linha em branco.""",
         raise ErroPeticao("O modelo não devolveu texto da petição.")
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
+    achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
+    peticao_aprendizado.registrar_avaliacao(
+        generation_id=generation_id, caso_id=caso_id, tipo="post_generation", achados=achados_criticos
+    )
+    for nome in ("legal_critic", "style_critic", "consistency_check", "document_generation"):
+        peticao_aprendizado.registrar_execucao(
+            generation_id=generation_id, caso_id=caso_id, skill_name=nome,
+            status="DONE", itens_recuperados=achados_criticos if nome != "document_generation" else [],
+            confidence=1.0 if not achados_criticos else .72,
+        )
     agora = _agora()
     anterior = carregar(caso_id) or {}
     versao = int(anterior.get("version") or 0) + 1
@@ -806,6 +1086,7 @@ Cada content deve conter parágrafos separados por linha em branco.""",
         armazenamento.registrar_versao_peticao(caso_id, anterior)
     dados = {
         "id": ID_LOCAL,
+        "generation_id": generation_id,
         "document_type": "INITIAL_PETITION",
         "status": "IN_REVIEW",
         "version": versao,
@@ -823,12 +1104,25 @@ Cada content deve conter parágrafos separados por linha em branco.""",
             "completo": not pendencias and not analise.get("lacunas"),
         },
         "review": {
-            "findings": [],
+            "findings": achados_criticos,
             "summary": analise.get("observacoes", ""),
             "blocking": 0,
         },
         "blocking_findings": 0,
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        # Trace é explicabilidade operacional: fontes/regras/etapas. Não contém
+        # cadeia de pensamento privada do modelo nem texto sensível do caso.
+        "trace": {
+            "generation_id": generation_id,
+            "learned_rules": [
+                {"id": r.get("id"), "tipo": r.get("tipo"), "confidence": r.get("confidence"),
+                 "observacoes": r.get("observacoes")}
+                for r in regras_aplicadas
+            ],
+            "skills": ["learned_preferences_retrieval", "legal_critic", "style_critic",
+                       "consistency_check", "document_generation"],
+            "evaluations": achados_criticos,
+        },
     }
     _salvar(caso_id, dados)
     return dados
@@ -955,6 +1249,19 @@ def gerar_anexa(
         )
 
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    contexto += _precedentes_para_redigir(contexto)
+    contexto += _legislacao_para_redigir(contexto)
+    # A ação alternativa parte também da minuta principal: só a entrevista
+    # bruta faz o modelo perder datas, valores, documentos e nomes já extraídos.
+    principal = carregar(caso_id)
+    secoes_principais = (principal or {}).get("sections") or []
+    if secoes_principais:
+        contexto += "\n\n=== MINUTA PRINCIPAL (referência factual; não copie pedidos) ===\n"
+        contexto += "\n\n".join(
+            f"### {secao.get('label') or secao.get('code')}\n{secao.get('content') or ''}"
+            for secao in secoes_principais
+            if secao.get("code") != "JURIMETRY"
+        )
     alvo = [f"PEÇA A REDIGIR: {titulo}"]
     if motivo.strip():
         alvo.append(f"POR QUE ELA CABE NESTE CASO: {motivo.strip()}")
@@ -964,7 +1271,8 @@ def gerar_anexa(
     saida = _llm_json(
         _com_skill_do_escritorio(
             caso_id,
-            """Você é advogado trabalhista e vai redigir UMA peça específica, indicada
+            CONTRATO_DE_REDACAO
+            + """Você é advogado e vai redigir UMA peça específica, indicada
 em "PEÇA A REDIGIR", usando o material do caso (entrevista, documentos, achados).
 
 Esta NÃO é a petição inicial do caso — ela já existe. Redija a peça pedida, com os
@@ -974,10 +1282,22 @@ e escreva o que for possível com [PENDENTE: explicação] no que faltar.
 Use SOMENTE fatos da entrevista e dos documentos — não invente. A qualificação do
 autor sai do bloco IDENTIDADE DO RECLAMANTE, nunca de nome citado na conversa.
 
+QUALIDADE INEGOCIÁVEL: esta peça alternativa deve ter a mesma profundidade,
+estrutura e padrão profissional da petição principal. Não entregue resumo,
+modelo genérico ou esqueleto só porque é uma ação concorrente. Desenvolva
+integralmente fatos, provas, nexo, dispositivos legais, subsunção e consequência
+jurídica. Inclua todas as preliminares cabíveis, cada tese específica da ação,
+pedidos individualizados coerentes com a fundamentação, provas requeridas, valor
+da causa calculado e fechamento. Reaproveite a riqueza factual da minuta principal
+quando pertinente, mas não copie pedidos de outra ação nem reduza o texto ao
+mínimo. Se uma tese não couber nesta ação, não a invente: explique a distinção
+em `pendencias`.
+
 JSON:
 {
   "secoes": [
     {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
+    {"code":"PRELIMINARY","label":"Das preliminares","content":"..."},
     {"code":"FACTS","label":"Dos fatos","content":"..."},
     {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
     {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
@@ -990,7 +1310,10 @@ JSON:
 Cada content em parágrafos separados por linha em branco.""",
         ),
         "\n".join(alvo) + "\n\n" + contexto,
-        timeout=240.0,
+        # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
+        # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
+        # respondeu" — que é pior, porque perde o trabalho inteiro.
+        timeout=360.0,
     )
 
     secoes = _normalizar_secoes(saida.get("secoes") or [])
@@ -1014,6 +1337,7 @@ Cada content em parágrafos separados por linha em branco.""",
         "sections": secoes,
         "pendencias": [str(p) for p in saida.get("pendencias") or [] if str(p).strip()],
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "docx_style_version": DOCX_STYLE_VERSION,
         "revisao": {"tipo": "geracao", "usuario": gerada_por, "em": agora, "alteradas": []},
     }
     armazenamento.salvar_peticao_anexa(
@@ -1043,9 +1367,12 @@ def ler_docx_anexa(peca_id: str) -> tuple[str, bytes]:
     if not registro:
         raise ErroPeticao("Peça não encontrada.")
     conteudo = bytes(registro.get("_docx") or b"")
+    dados = registro.get("dados") or {}
+    if int(dados.get("docx_style_version") or 0) < DOCX_STYLE_VERSION:
+        conteudo = montar_docx(dados.get("sections") or [])
     if not conteudo:
         # Regrava a partir do JSON: o texto é a verdade, o binário é derivado.
-        conteudo = montar_docx((registro.get("dados") or {}).get("sections") or [])
+        conteudo = montar_docx(dados.get("sections") or [])
     return str(registro.get("titulo") or "Peça"), conteudo
 
 
@@ -1059,31 +1386,277 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
         raise ErroPeticao(str(erro)) from erro
 
 
+#: Contrato de redação do escritório, escrito pelo advogado responsável.
+#:
+#: Vale para os TRÊS pontos que redigem peça — geração principal, `redigir` e peça
+#: anexa. Constante única de propósito: quando isto morava copiado em cada
+#: instrução, uma mudança pegava num lugar e nos outros não, e a diferença só
+#: aparecia semanas depois numa peça que saiu fora do padrão.
+CONTRATO_DE_REDACAO = """Você elabora peças jurídicas profissionais destinadas à revisão e ao protocolo por advogado.
+
+POSTURA PROFISSIONAL: atue como advogado brasileiro sênior, com mais de quarenta
+anos de prática forense multidisciplinar. Você trabalha com o ACERVO JURÍDICO/RAG
+do escritório, que contém legislação brasileira vetorizada e atualizada. Consuma
+os dispositivos recuperados no material da tarefa sempre que forem pertinentes;
+prefira-os à memória e nunca invente lei, artigo, vigência, precedente ou fato.
+O acervo é fonte para pesquisa e fundamentação, não autorização para citar norma
+irrelevante ou despejar artigos sem subsunção.
+
+IDENTIFICAÇÃO E EXPLICAÇÃO DA LEI: toda vez que citar uma norma, descreva-a de
+forma profissional no próprio raciocínio: espécie e número da norma (e sua
+denominação, quando houver), artigo/parágrafo/inciso invocado, o conteúdo jurídico
+relevante e o efeito que ele produz no caso. Não escreva apenas “nos termos do art.
+X” nem use citação ornamental. Exemplo de padrão: “O art. X da Lei nº Y/AAAA,
+que assegura/proíbe/condiciona Z, incide porque o documento/fato A demonstra B;
+daí decorre o pedido C.” Não transcreva a lei por volume: use a passagem necessária
+e, em seguida, faça a subsunção concreta.
+
+USO INTENSIVO E CRÍTICO DO ACERVO: em cada tópico jurídico material (competência,
+preliminar, responsabilidade, cada espécie de dano, estabilidade, prescrição,
+prova, consectários e pedido), procure no material recuperado a norma e o julgado
+pertinentes. Desenvolva o tópico em camadas — regra legal explicada, fato e prova
+específicos, aplicação, objeção previsível e consequência processual — em vez de
+um único parágrafo conclusivo. Não use o acervo como enfeite, mas também não deixe
+de usá-lo quando houver fonte aderente. Se a fonte não cobrir o ponto, declare a
+pendência de pesquisa em vez de simular erudição.
+
+EXIGÊNCIA DE EXCELÊNCIA E COMPLETUDE: entregue peça pronta para revisão final de
+advogado experiente, nunca um rascunho genérico. Antes de responder, faça uma
+varredura silenciosa de: competência e partes; fatos e cronologia; prova disponível
+e a produzir; prescrição/prazos, preliminares e tutela urgente quando cabíveis;
+teses principais, subsidiárias e defesas previsíveis; legislação aplicável;
+jurisprudência verificável; pedidos, consectários, provas, valor da causa, ônus,
+gratuidade, honorários e fechamento. Inclua tudo que os fatos sustentarem e diga
+expressamente em [PENDENTE: ...] o que depender de dado ainda não fornecido. Não
+omita questão relevante por economia de texto, mas não invente para preencher.
+
+PROIBIDO texto vazio de conteúdo, como "resta evidente", "é pacífico" ou
+"conforme entendimento consolidado", sem indicar fato, prova, norma e raciocínio
+que tornem a conclusão defensável neste caso concreto.
+
+NATUREZA DA AÇÃO, PARTES E COMPETÊNCIA: antes de redigir, identifique pelo pedido e
+pelos fatos se a medida é trabalhista, cível, previdenciária ou de outra jurisdição.
+Não chame automaticamente as partes de reclamante/reclamada nem trate toda pessoa
+jurídica como empregadora: esses termos só cabem em reclamação trabalhista. Em
+ação cível use autor/réu; em demanda previdenciária, autor e INSS, quando for o
+caso. Escolha vara e competência compatíveis com a ação. O endereçamento sempre
+começa por "Ao Juízo da ...", nunca por "Excelentíssimo(a) Senhor(a) Doutor(a)
+Juiz(a)". Não invente comarca, vara, relação de trabalho ou qualidade das partes:
+sinalize o dado ausente como [PENDENTE: ...].
+
+Sua prioridade NÃO é produzir texto longo. É produzir fundamentação juridicamente
+precisa, estrategicamente estruturada, verificável e conectada aos fatos e às provas.
+
+ESTRUTURA DE CADA TESE, obrigatória:
+FATO RELEVANTE -> PROVA DISPONÍVEL -> QUESTÃO JURÍDICA -> NORMA APLICÁVEL ->
+JURISPRUDÊNCIA (quando necessária) -> SUBSUNÇÃO -> CONSEQUÊNCIA/PEDIDO.
+Nada de enumerar artigos nem de explicar a lei em abstrato sem mostrar por que ela
+alcança ESTES fatos.
+
+NÃO TRATE FATO CONTROVERTIDO COMO PROVADO. Nunca afirme "há nexo causal evidente",
+"a doença decorreu do trabalho" ou "a incapacidade está comprovada" quando isso
+depender de perícia ou de prova ainda não produzida. Escreva, por exemplo: "os
+elementos documentais e fáticos constituem indícios de nexo causal ou concausal,
+cuja confirmação deverá ocorrer mediante prova pericial". Separe sempre fato
+documentalmente comprovado, alegação da parte, indício, conclusão médica,
+conclusão jurídica e questão dependente de perícia. Nunca atribua a um documento
+conclusão que ele não contém: receituário com CID mostra diagnóstico, não nexo.
+
+TESES PRINCIPAL E SUBSIDIÁRIA. Quando couber, não dependa de uma só: nexo causal
+direto como principal e concausalidade como subsidiária (art. 21, I, da Lei
+8.213/91), sem confundir causalidade, concausalidade, doença preexistente,
+degenerativa e agravamento pelo trabalho.
+
+UMA FUNDAMENTAÇÃO POR PATOLOGIA. Para cada doença ou grupo, analise atividade
+exercida, exposição, fator de risco, evolução temporal, documentação médica,
+mecanismo causal, norma aplicável, necessidade de perícia, dano e incapacidade.
+Em doenças osteomusculares verifique art. 7º, XXII e XXVIII, da Constituição,
+arts. 157 e ss. da CLT, arts. 19, 20 e 21 da Lei 8.213/91, a NR efetivamente
+aplicável e arts. 186, 927, 949 e 950 do Código Civil. Não cite NR nem dispositivo
+sem relação concreta com os fatos.
+
+RESPONSABILIDADE CIVIL, elemento a elemento: CONDUTA/OMISSÃO + CULPA (quando
+exigida) + DANO + NEXO. Não presuma culpa porque houve doença; aponte a conduta
+patronal concreta. Havendo atividade de risco, enfrente o art. 927, parágrafo
+único, do Código Civil e mantenha a responsabilidade subjetiva como alternativa.
+
+DANO MATERIAL E PENSIONAMENTO nunca genéricos. No art. 950, analise redução da
+capacidade, percentual, parcial ou total, temporária ou permanente, atividade
+afetada, readaptação, base remuneratória e concausa. Quando depender de perícia,
+diga isso e formule o pedido de forma compatível.
+
+DANO MORAL não se presume da doença. Demonstre LESÃO + REPERCUSSÃO CONCRETA NA
+VIDA DA PARTE + RESPONSABILIDADE + NEXO, com arts. 223-A a 223-G da CLT quando
+aplicáveis. Ao sugerir valor, explique o critério e não invente precedente.
+
+PROVA PERICIAL: quando a causa depender de conhecimento técnico, crie seção
+própria e formule quesitos (diagnóstico, data de início, compatibilidade entre
+atividade e patologia, nexo, concausa, agravamento, fatores extralaborais,
+incapacidade e percentual, caráter temporário ou permanente, limitações,
+readaptação, tratamento, prognóstico). Avalie se cabe também análise ergonômica.
+
+DOCUMENTOS: antes de fundamentar, monte mentalmente a matriz FATO | PROVA | O QUE
+A PROVA REALMENTE DEMONSTRA | TESE. Informação sem documento vira pedido de
+produção de prova, não afirmação. Aponte o que deve ser requerido à parte
+contrária ou a órgão público.
+
+JURISPRUDÊNCIA — REGRA ANTI-ALUCINAÇÃO. É PROIBIDO inventar número de processo,
+súmula, tema, ementa, acórdão, relator, tribunal ou data. Só cite julgado que
+esteja no material recebido ou que você possa verificar. Prioridade: precedente
+vinculante do STF; tema repetitivo e precedente qualificado do TST; súmula e OJ
+do TST; SDI; Turmas do TST; TRT competente. Não use precedente só porque tem
+palavras parecidas: compare fatos, atividade, questão decidida e fundamento
+determinante, e explique em uma frase por que ele se aplica; reconheça a distinção
+quando existir. Se não houver precedente verificável para o ponto, escreva
+[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO] em vez de inventar.
+
+PEDIDOS: cada um decorre de tese já fundamentada, com valor individual quando
+exigido (art. 840 da CLT). Não há pedido sem fundamentação nem fundamentação sem
+pedido. O valor da causa deve ser coerente com a soma dos pedidos — não atribua
+valor arbitrário nem recorra automaticamente a fórmula fiscal.
+
+GRATUIDADE, HONORÁRIOS E PROCESSO: priorize a CLT vigente; antes de aplicar o CPC
+subsidiariamente, verifique se a CLT já disciplina a matéria e se há decisão
+vinculante sobre o dispositivo.
+
+ESTABILIDADE ACIDENTÁRIA não se pede automaticamente. Verifique vínculo ativo,
+afastamento, espécie e cessação de benefício, dispensa, momento da constatação,
+art. 118 da Lei 8.213/91 e Súmula 378 do TST. Não peça reintegração de quem
+continua trabalhando sem fundamento específico.
+
+CAT: a ausência não prova nexo. Analise primeiro se havia elementos que impunham a
+comunicação e depois a eventual omissão; não use a falta de CAT de forma circular.
+
+ESTILO: técnico, objetivo, persuasivo, organizado, sem repetição e sem juridiquês
+desnecessário. Prefira TRÊS parágrafos fortes e específicos a dez genéricos. Nenhum
+parágrafo existe para aumentar o tamanho do texto. Não repita o mesmo artigo nem
+copie ementa longa: use só a tese relevante, identificada.
+
+AUDITORIA ANTES DE ENTREGAR: artigo citado corretamente? jurisprudência
+verificada? algum fato apresentado como provado sem prova? conclusão que depende
+de perícia? contradição entre fatos e pedidos? pedido sem fundamento ou
+fundamento sem pedido? valores onde exigidos? valor da causa coerente? súmula ou
+precedente vinculante mais apropriado? norma revogada ou superada? tese
+subsidiária relevante faltando? os documentos sustentam o alegado? Corrija antes
+de responder.
+
+OBJETIVO: uma peça que um advogado possa revisar juridicamente, não um texto que
+apenas pareça jurídico. Precisão acima de quantidade; subsunção acima de
+transcrição; precedente verificável acima de precedente convincente.
+
+"""
+
+
 _INSTRUCAO_REVISAO = """Você é advogado revisando uma peça jurídica já redigida.
-Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL. Mude SOMENTE o que a crítica pede, e
-mude de verdade: todo trecho que a crítica mandar alterar, incluir ou retirar precisa estar
-diferente no texto devolvido. Preserve o restante palavra por palavra. Não invente fatos que
-não estejam na minuta atual. Nunca apague uma seção inteira sem que a crítica peça.
-Devolva as SETE seções completas, com o mesmo "code", mesmo as que não mudaram. JSON:
+Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL.
+
+ANTES DE ESCREVER, CLASSIFIQUE O PEDIDO:
+
+(a) PONTUAL — troca um nome, separa um pedido, corrige uma data, ajusta um trecho
+    determinado. Aqui mude SOMENTE o que foi pedido e preserve o restante palavra
+    por palavra.
+
+(b) APROFUNDAMENTO — "fundamentação rasa", "deixa mais robusto", "explique
+    melhor", "desenvolve mais", "coloca uma parte maior dos julgados", "melhora
+    em todos os pontos". Aqui NÃO faça retoque: REESCREVA as seções envolvidas com
+    fundamentação mais completa. Cada parágrafo raso vira argumentação
+    desenvolvida na estrutura fato -> prova -> norma -> subsunção -> consequência.
+    Desenvolva os julgados e súmulas JÁ citados na minuta, explicando por que
+    alcançam estes fatos. Se a crítica disser "em todos os pontos" ou não nomear
+    seção, aprofunde TODAS as seções argumentativas (Dos fatos, Do direito, Dos
+    pedidos).
+
+    Aprofundar é ganhar PRECISÃO, não linhas: o que falta é subsunção, prova
+    apontada e consequência jurídica, não volume. Devolver o mesmo raciocínio com
+    outras palavras é FALHAR no pedido — e inflar o texto com parágrafo genérico
+    para parecer maior também é.
+
+Em (b) o "preserve palavra por palavra" NÃO se aplica: expandir, reorganizar e
+reescrever é justamente o que foi pedido. O limite é outro — nunca invente fato,
+prova, número de processo, valor ou data que não estejam na minuta atual. Sem
+material novo, aprofunde o RACIOCÍNIO JURÍDICO sobre o que já existe.
+
+NUNCA devolva a minuta inteira igual ao que recebeu. Se o pedido for vago, ambíguo
+ou parecer já atendido, NÃO pare: aplique a melhor interpretação possível — o
+advogado pediu uma mudança e espera vê-la — e registre em "perguntas" o que
+precisaria confirmar com ele. Perguntar é bem-vindo; devolver o texto intacto, não.
+
+Você tem poder total sobre a peça. Pode reescrever, criar, excluir ou reordenar
+seções inteiras quando isso decorrer da crítica, inclusive alterar praticamente
+100% do documento. Se o pedido for pontual, calibre a alteração para ele; se for
+profundo, entregue uma nova versão profunda e completa. Você pode criar e renumerar os títulos e
+subtítulos internos (I –, II –, I.1 –) e mover matéria de uma seção para outra —
+por exemplo tirar as preliminares do DO DIREITO e levá-las para DAS PRELIMINARES.
+Nada aqui é intocável, desde que a crítica do advogado sustente a mudança.
+
+Devolva a NOVA PEÇA COMPLETA como lista ordenada de seções. Não há quantidade,
+ordem ou código fixos: inclua todas as seções necessárias, inclusive as mantidas.
+Cada `code` deve ser estável, curto e único. JSON:
 {
   "secoes": [
     {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
+    {"code": "PRELIMINARY", "label": "Das preliminares", "content": "..."},
     {"code": "FACTS", "label": "Dos fatos", "content": "..."},
     {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
     {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
     {"code": "EVIDENCE", "label": "Das provas", "content": "..."},
     {"code": "VALUE", "label": "Do valor da causa", "content": "..."},
     {"code": "CLOSING", "label": "Fechamento", "content": "..."}
-  ]
+  ],
+  "perguntas": ["o que você precisaria confirmar com o advogado; [] se nada"]
 }
 Cada content em parágrafos separados por linha em branco."""
 
 _INSTRUCAO_CONFERENCIA = """Você confere se a revisão de uma peça jurídica foi feita corretamente.
 Recebe o PEDIDO DO ADVOGADO e, para cada seção alterada, o texto ANTES e DEPOIS.
 Seja rigoroso: "atendeu" só é true se TUDO o que o pedido manda estiver no texto DEPOIS.
+
+Quando o pedido for de APROFUNDAMENTO ("fundamentação rasa", "mais robusto",
+"explique melhor", "em todos os pontos"), duas regras mudam:
+
+- "atendeu" só é true se o texto DEPOIS estiver de fato mais DESENVOLVIDO que o
+  ANTES. Mesmo tamanho com palavras trocadas é false.
+- "alteradas_sem_pedido" fica VAZIO. Pedido global autoriza mexer em qualquer
+  seção argumentativa, e marcar seção ali faria o sistema DESFAZER exatamente a
+  ampliação que o advogado pediu.
+
 Responda APENAS JSON:
 {"atendeu": true, "faltou": "o que do pedido não foi feito, em uma frase; vazio se atendeu",
  "alteradas_sem_pedido": ["code de seção alterada que o pedido não justifica"]}"""
+
+
+#: Como o advogado pede APROFUNDAMENTO, e não um retoque pontual.
+#:
+#: Colhido dos pedidos reais que não estavam funcionando: "Fundamentação muito
+#: rasa, melhora isso em todos os pontos", "Deixa os parágrafos mais robustos",
+#: "Coloca uma parte maior dos julgados e explique melhor os parágrafos".
+#:
+#: Sem acento e em minúsculas — a comparação passa por `_sem_acento`.
+_SINAIS_DE_APROFUNDAMENTO = (
+    "todos os pontos", "em tudo", "mais robust", "robustez", "aprofund",
+    "mais denso", "rasa", "raso", "superficial", "explique melhor",
+    "explica melhor", "desenvolv", "mais longo", "mais extenso", "amplie",
+    "amplia", "detalhe mais", "detalha mais", "mais complet", "enriquec",
+    "melhora isso", "melhore isso", "parte maior", "mais fundament",
+)
+
+
+def _pedido_global(prompt_critica: str) -> bool:
+    """O advogado pediu para APROFUNDAR, e não para mexer num ponto específico?
+
+    Isto decide se a trava de `alteradas_sem_pedido` vale. Num pedido pontual
+    ela protege o texto: impede a IA de reescrever o que ninguém mandou. Num
+    pedido de aprofundamento ela fazia o oposto do pedido — a conferência
+    marcava as seções como "não pedidas" e o código RESTAURAVA o texto raso.
+    O advogado via "Seções alteradas: Dos fatos, Do direito" e um texto do mesmo
+    tamanho de antes. Foi o defeito relatado nas versões 8, 9 e 10 da peça.
+
+    Errar para o lado de considerar global é o lado barato: no máximo a IA
+    aprofunda uma seção a mais, e o advogado revisa o texto de qualquer forma.
+    O caro é o contrário — desfazer em silêncio o que ele pediu três vezes.
+    """
+    texto = _sem_acento(prompt_critica).lower()
+    return any(sinal in texto for sinal in _SINAIS_DE_APROFUNDAMENTO)
 
 
 def _texto_normalizado(texto: Any) -> str:
@@ -1148,49 +1721,78 @@ def _revisar_secoes_via_llm(
         f"### {s.get('code')} — {s.get('label', s.get('code'))}\n{s.get('content', '')}"
         for s in secoes_atuais
     )
-    originais = {s.get("code"): s for s in secoes_atuais}
     observacao = ""
+    perguntas: list[str] = []
     melhor: tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], int] | None = None
 
-    for tentativa in (1, 2):
+    # Três tentativas, e não duas: a SEGUNDA revisão de uma peça é o caso difícil
+    # — a minuta já foi corrigida uma vez, e o modelo tende a concluir que "já
+    # está bom" e devolver tudo igual. Era exatamente aí que a tela quebrava.
+    for tentativa in (1, 2, 3):
         entrada = f"MINUTA ATUAL:\n{minuta_atual}\n\nCRÍTICA DO ADVOGADO:\n{prompt_critica}"
         if observacao:
             entrada += (
                 f"\n\nATENÇÃO — A TENTATIVA ANTERIOR FALHOU: {observacao}\n"
-                "Corrija isso agora, mudando somente o que a crítica pede."
+                # NÃO repita aqui "mude somente o que a crítica pede": era o que
+                # estava escrito, e num pedido de aprofundamento essa frase
+                # mandava o modelo fazer o MÍNIMO justamente na segunda chance,
+                # depois de a primeira já ter sido rasa demais.
+                "Corrija isso agora. Se a crítica pede aprofundamento, reescreva "
+                "as seções envolvidas de forma substancialmente mais longa e "
+                "densa — não basta trocar palavras."
             )
-        saida = _llm_json(instrucao, entrada, timeout=240.0)
-        secoes = _mesclar_revisao(secoes_atuais, _normalizar_secoes(saida.get("secoes") or []))
+        # 360s como nas de redação: esta chamada REESCREVE a peça inteira, e com o
+        # teto de saída em 8192 a resposta ficou do mesmo tamanho. Pior, ela roda em
+        # laço de até três tentativas — estourar o prazo aqui perde a crítica que o
+        # advogado acabou de escrever, que é o erro mais caro deste fluxo.
+        saida = _llm_json(instrucao, entrada, timeout=360.0)
+        perguntas = [
+            str(p).strip()
+            for p in (saida.get("perguntas") or [])
+            if str(p).strip()
+        ][:5]
+        secoes = _normalizar_secoes_da_revisao(saida.get("secoes") or [])
         alteradas = _secoes_alteradas(secoes_atuais, secoes)
-        if not alteradas:
-            observacao = "nenhum trecho da minuta foi alterado, mas a crítica pede mudança."
+        mudou_estrutura = [s.get("code") for s in secoes_atuais] != [s.get("code") for s in secoes]
+        if not alteradas and not mudou_estrutura:
+            observacao = (
+                "você devolveu a minuta inteira igual. Aplique a melhor interpretação do "
+                "pedido e registre em 'perguntas' o que precisar confirmar."
+            )
             continue
 
         conferencia = _conferir_revisao(prompt_critica, secoes_atuais, alteradas)
-        indevidas = set(conferencia["alteradas_sem_pedido"]) & {s.get("code") for s in alteradas}
-        if indevidas and len(indevidas) < len(alteradas):
-            secoes = [
-                dict(originais[s.get("code")]) if s.get("code") in indevidas else s for s in secoes
-            ]
-            alteradas = _secoes_alteradas(secoes_atuais, secoes)
-
+        # Pedido GLOBAL não tem seção indevida — e isto não é detalhe: era esta
+        # trava que desfazia o trabalho. Em "melhora a fundamentação em todos os
+        # pontos", a conferência marcava seções como "não pedidas" e o código
+        # restaurava o texto raso original. O advogado via "Seções alteradas:
+        # Dos fatos, Do direito" e um texto que continuava do mesmo tamanho.
         melhor = (secoes, alteradas, conferencia, tentativa)
         if conferencia["atendeu"] is not False:
             break
         observacao = conferencia["faltou"] or "a revisão não fez tudo o que a crítica pede."
 
     if melhor is None:
-        raise ErroPeticao(
-            "A IA não alterou nada na peça, então nenhuma versão nova foi criada. Reescreva o "
-            "pedido dizendo a seção e o que deve mudar (ex.: “em Dos pedidos, separe dano moral "
-            "de dano material”)."
-        )
+        # NÃO é mais erro, e a diferença importa: levantar aqui abortava a tela e
+        # perdia o pedido do advogado. Agora a peça volta intacta com o aviso —
+        # quem chama decide não criar versão nova — e as perguntas da IA sobem
+        # junto, que é o caminho para destravar o pedido ambíguo.
+        return list(secoes_atuais), {
+            "alteradas": [],
+            "alterou": False,
+            "atendeu": None,
+            "faltou": "",
+            "perguntas": perguntas,
+            "tentativas": 3,
+        }
 
     secoes, alteradas, conferencia, tentativas = melhor
     return secoes, {
         "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
+        "alterou": True,
         "atendeu": conferencia["atendeu"],
         "faltou": "" if conferencia["atendeu"] is not False else conferencia["faltou"],
+        "perguntas": perguntas,
         "tentativas": tentativas,
     }
 
@@ -1213,6 +1815,18 @@ def revisar_anexa_com_prompt(
         raise ErroPeticao("Esta peça não tem seções para revisar.")
 
     secoes, conferencia = _revisar_secoes_via_llm(registro["caso_id"], secoes_atuais, prompt_critica)
+
+    # Mesma regra da petição inicial: sem alteração, sem versão nova. Ver o
+    # comentário em `revisar_com_prompt`.
+    if not conferencia.get("alterou"):
+        return para_api({**dados, "revisao": {
+            "tipo": "prompt",
+            "prompt": prompt_critica,
+            "usuario": usuario,
+            "em": _agora(),
+            **conferencia,
+        }})
+
     armazenamento.registrar_versao_peticao(registro["caso_id"], anterior, chave=peca_id)
     agora = _agora()
     dados["sections"] = secoes
@@ -1278,6 +1892,35 @@ def revisar_com_prompt(
 
     secoes, conferencia = _revisar_secoes_via_llm(caso_id, secoes_atuais, prompt_critica)
 
+    # Nada mudou: devolve a peça como está, SEM versão nova.
+    #
+    # Antes isto levantava erro e a tela morria — era o defeito da "segunda
+    # revisão". Agora é aviso. Mas também não pode virar versão: gravar snapshot
+    # e incrementar `version` com o texto idêntico encheria o histórico de
+    # versões falsas, e o advogado perderia a referência de quando a peça
+    # realmente mudou. As perguntas da IA sobem junto — é com elas que ele
+    # reescreve o pedido e destrava.
+    if conferencia.get("alterou"):
+        candidato = {
+            "id": uuid.uuid4().hex, "status": "PENDING_REVIEW",
+            "base_version": int(atual.get("version") or 1), "sections": secoes,
+            "prompt": prompt_critica, "usuario": usuario, "generaliza": generaliza,
+            "created_at": _agora(), "revisao": {"tipo": "prompt", "prompt": prompt_critica,
+                "usuario": usuario, "em": _agora(), **conferencia},
+        }
+        novos_dados = {**atual, "revisao_pendente": candidato}
+        _salvar(caso_id, novos_dados)
+        return novos_dados
+
+    if not conferencia.get("alterou"):
+        return {**atual, "revisao": {
+            "tipo": "prompt",
+            "prompt": prompt_critica,
+            "usuario": usuario,
+            "em": _agora(),
+            **conferencia,
+        }}
+
     # 1) snapshot da versão anterior — antes de sobrescrever.
     armazenamento.registrar_versao_peticao(caso_id, atual)
 
@@ -1319,6 +1962,76 @@ def revisar_com_prompt(
     return novos_dados
 
 
+def aceitar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
+    atual = carregar(caso_id)
+    candidata = (atual or {}).get("revisao_pendente") or {}
+    if not atual or candidata.get("id") != revisao_id:
+        raise ErroPeticao("Revisão pendente não encontrada.")
+    if int(candidata.get("base_version") or 0) != int(atual.get("version") or 1):
+        raise ErroPeticao("A peça mudou após a revisão; gere uma nova comparação.")
+    secoes = candidata.get("sections") or []
+    if not secoes:
+        raise ErroPeticao("A revisão pendente não contém uma peça válida.")
+    diff_aprovado = peticao_aprendizado.diff_semantico(atual.get("sections") or [], secoes)
+    armazenamento.registrar_versao_peticao(caso_id, {k: v for k, v in atual.items() if k != "revisao_pendente"})
+    agora = _agora()
+    dados = {k: v for k, v in atual.items() if k != "revisao_pendente"}
+    dados.update({
+        "sections": secoes, "version": int(atual.get("version") or 1) + 1,
+        "status": "IN_REVIEW", "updated_at": agora,
+        "revisao": {"tipo": "prompt", "status": "ACCEPTED", "id": revisao_id,
+            "prompt": candidata.get("prompt", ""), "usuario": candidata.get("usuario", ""),
+            "em": agora, "semantic_diff": diff_aprovado, **(candidata.get("revisao") or {})},
+    })
+    _salvar(caso_id, dados)
+    try:
+        peticao_criticas.inicializar()
+        peticao_criticas.registrar(caso_id=caso_id, categoria=_categoria_do_caso(caso_id),
+            versao_origem=int(atual.get("version") or 1), versao_resultado=int(dados["version"]),
+            prompt=str(candidata.get("prompt") or ""), usuario=str(candidata.get("usuario") or ""),
+            generaliza=bool(candidata.get("generaliza", True)))
+    except Exception:
+        log.exception("crítica aceita não pôde ser registrada (caso %s)", caso_id)
+    try:
+        peticao_aprendizado.registrar_feedback(
+            caso_id=caso_id, categoria=_categoria_do_caso(caso_id),
+            advogado=str(candidata.get("usuario") or ""), texto=str(candidata.get("prompt") or ""),
+            geral=bool(candidata.get("generaliza", True)),
+            versao_origem=int(atual.get("version") or 1), versao_resultado=int(dados["version"]),
+        )
+        peticao_aprendizado.registrar_execucao(
+            generation_id=str(atual.get("generation_id") or revisao_id), caso_id=caso_id,
+            skill_name="semantic_diff", itens_recuperados=diff_aprovado, confidence=1.0,
+        )
+    except Exception:
+        log.exception("aprendizado da revisão aceita não pôde ser registrado (caso %s)", caso_id)
+    return dados
+
+
+def descartar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
+    atual = carregar(caso_id)
+    candidata = (atual or {}).get("revisao_pendente") or {}
+    if not atual or candidata.get("id") != revisao_id:
+        raise ErroPeticao("Revisão pendente não encontrada.")
+    dados = {k: v for k, v in atual.items() if k != "revisao_pendente"}
+    descartadas = list(dados.get("revisoes_descartadas") or [])[-19:]
+    descartadas.append({**candidata, "status": "REJECTED", "rejected_at": _agora()})
+    dados["revisoes_descartadas"] = descartadas
+    dados["revisao"] = {"tipo": "prompt", "status": "REJECTED", "id": revisao_id,
+        "prompt": candidata.get("prompt", ""), "usuario": candidata.get("usuario", ""), "em": _agora()}
+    try:
+        # Rejeição é evidência auditável, mas nunca vira preferência reaproveitável.
+        peticao_aprendizado.registrar_feedback(
+            caso_id=caso_id, categoria=_categoria_do_caso(caso_id),
+            advogado=str(candidata.get("usuario") or ""), texto=str(candidata.get("prompt") or ""),
+            geral=False, versao_origem=int(atual.get("version") or 1),
+            versao_resultado=int(atual.get("version") or 1),
+        )
+    except Exception:
+        log.exception("evento de revisão rejeitada não pôde ser registrado (caso %s)", caso_id)
+    return _salvar(caso_id, dados)
+
+
 def historico_de_criticas(caso_id: str) -> list[dict[str, Any]]:
     """A rastreabilidade que a issue pede: cada crítica deste caso, quem pediu, quando."""
     try:
@@ -1350,6 +2063,9 @@ def _aplicar_edicao_manual(
     dados["sections"] = novas
     if not alteradas:
         return dados, None
+    # Uma edição manual muda a versão-base; a candidata anterior não pode mais
+    # ser aceita por cima dela.
+    dados.pop("revisao_pendente", None)
     agora = _agora()
     dados["version"] = int(anterior.get("version") or 1) + 1
     dados["revisao"] = {
@@ -1384,6 +2100,7 @@ def atualizar_status(caso_id: str, *, status: str) -> dict[str, Any]:
 def para_api(dados: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": dados.get("id", ID_LOCAL),
+        "generation_id": dados.get("generation_id"),
         "document_type": dados.get("document_type", "INITIAL_PETITION"),
         "status": dados.get("status", "IN_REVIEW"),
         "version": dados.get("version", 1),
@@ -1395,6 +2112,8 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "model": dados.get("model"),
         "created_at": dados.get("created_at", _agora()),
         "revisao": dados.get("revisao") or None,
+        "revisao_pendente": dados.get("revisao_pendente") or None,
+        "trace": dados.get("trace") or {},
         "sections": [
             secao
             for secao in dados.get("sections") or []
@@ -1428,23 +2147,147 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
     }
 
 
-def _paragrafo_xml(texto: str, *, negrito: bool = False) -> str:
+#: Título de capítulo DENTRO do conteúdo: "I – PRELIMINARES", "II – DOS FATOS".
+#: Romano solto, sem subdivisão. Centralizado, como na peça do escritório.
+_RE_TITULO_CENTRAL = re.compile(r"^[IVXLC]+\s*[–—-]\s*\S")
+#: Subtítulo numerado: "I.1 – Da Gratuidade de Justiça". Fica À ESQUERDA.
+_RE_SUBTITULO = re.compile(r"^[IVXLC]+\.\d+\s*[–—-]\s*\S")
+#: O endereçamento, em qualquer caixa: "Ao Juízo da Vara do Trabalho de …".
+#: Centralizado e convertido para CAIXA ALTA na hora de escrever o parágrafo.
+_RE_ENDERECAMENTO = re.compile(r"^(ao|à|a)\s+(ju[íi]zo|exmo|excelent[íi]ssim)", re.I)
+
+
+def _tipo_de_titulo(linha: str) -> str | None:
+    """`"central"`, `"esquerda"` ou `None` para linha de texto comum.
+
+    POR QUE ISTO EXISTE
+
+    O gerador só sabia formatar o RÓTULO da seção ("DOS FATOS"). Tudo que a IA
+    escreve dentro do `content` saía como parágrafo justificado — inclusive os
+    títulos que a própria peça tem por dentro. Era a diferença de layout que
+    sobrava depois de acertar margens, fonte, entrelinha e recuo: comparada com
+    a petição de referência, "AO JUÍZO…", "AÇÃO DE CONCESSÃO DE…" e
+    "I – PRELIMINARES" apareciam como texto corrido em vez de título.
+
+    As três formas foram medidas na referência, pelo x0 de cada linha (margem
+    esquerda em 3,0 cm):
+
+        AÇÃO DE CONCESSÃO DE AUXÍLIO-ACIDENTE   x0 = 5,74 cm  -> centralizado
+        I – PRELIMINARES                        x0 = 9,06 cm  -> centralizado
+        I.1 – Da Gratuidade de Justiça          x0 = 3,00 cm  -> à esquerda
+
+    Só linha curta e sem ponto final entra. Um parágrafo inteiro em maiúsculas
+    — uma citação transcrita, por exemplo — não é título e não pode virar um.
+    """
+    texto = linha.strip()
+    if not texto or len(texto) > 90 or texto.endswith("."):
+        return None
+    # Título numerado vai à ESQUERDA, subtítulo também.
+    #
+    # "I – PRELIMINARMENTE", "V – DOS DANOS MATERIAIS" estavam saindo no meio da
+    # página porque eu os medi na petição de referência antiga e concluí que eram
+    # centralizados. O escritório não quer isso: título numerado acompanha os
+    # demais, no canto esquerdo. Sobra UM centralizado na peça inteira — o
+    # endereçamento, logo abaixo, que foi pedido expressamente.
+    if _RE_SUBTITULO.match(texto) or _RE_TITULO_CENTRAL.match(texto):
+        return "esquerda"
+    # Endereçamento: centralizado e em CAIXA ALTA, decidido pelo escritório.
+    #
+    # A IA escreve "Ao Juízo da Vara do Trabalho de Tucuruí/PA" em caixa mista,
+    # então nenhuma das regras acima o alcançava e ele saía como parágrafo
+    # justificado com recuo, no meio do texto corrido.
+    if _RE_ENDERECAMENTO.match(texto):
+        return "endereco"
+    if not any(c.islower() for c in texto) and any(c.isalpha() for c in texto):
+        # TODO o título de seção vai à ESQUERDA — inclusive DOS FATOS, DO DIREITO
+        # e DAS PROVAS, que antes iam ao centro. Era essa mistura que deixava a
+        # peça "torta": uns títulos centralizados, outros à esquerda, sem critério
+        # visível para quem lê. Só o endereçamento e o nome da ação ficam no
+        # centro, e os dois têm regra própria.
+        return "esquerda"
+    return None
+
+
+def _paragrafo_xml(
+    texto: str, *, negrito: bool = False, centralizado: bool = False
+) -> str:
     linhas = texto.split("\n")
     partes: list[str] = []
     for linha in linhas:
         if not linha.strip():
             partes.append("<w:p/>")
             continue
+        # Uma linha de TÍTULO já é negrito inteiro, então `**` ali não tem o que
+        # converter — e sairia literal no documento entregue ao juízo, que foi o
+        # que aconteceu em "RECLAMAÇÃO TRABALHISTA**". Tira o marcador ANTES de
+        # detectar (senão o asterisco atrapalha o reconhecimento) e de escrever.
+        linha_limpa = linha.replace("**", "")
         texto_xml = escape(linha)
-        if negrito:
+        # Só vale para o CONTEÚDO: quando quem chama já mandou formatar (o
+        # rótulo da seção), a decisão é dele e não se sobrepõe.
+        titulo = None if (negrito or centralizado) else _tipo_de_titulo(linha_limpa)
+        if titulo:
+            # O endereçamento é o único que muda o TEXTO, e não só o alinhamento:
+            # a IA o escreve em caixa mista ("Ao Juízo da Vara do Trabalho de
+            # Tucuruí/PA") e o escritório o quer em caixa alta, centralizado.
+            texto_xml = escape(
+                linha_limpa.strip().upper() if titulo == "endereco" else linha_limpa
+            )
+            alinhamento = "center" if titulo in ("central", "endereco") else "left"
             partes.append(
-                f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
-                f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+                f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
+                f'<w:r><w:rPr><w:b/></w:rPr>'
+                f'<w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+            )
+            continue
+        if negrito or centralizado:
+            # `firstLine="0"` ANULA o recuo padrão aqui, e não é detalhe: num
+            # parágrafo centralizado o recuo de primeira linha empurra o texto
+            # para a direita, e o título deixaria de ficar no centro.
+            alinhamento = "center" if centralizado else "left"
+            runs = "".join(
+                (
+                    f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                    if negrito or indice % 2
+                    else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                )
+                # O `replace` pega o marcador ÍMPAR, que a `re.split` não casa por
+                # não ter par e deixaria passar literal para o .docx.
+                for indice, parte in enumerate(
+                    p.replace("**", "")
+                    for p in re.split(r"\*\*(.+?)\*\*", texto_xml)
+                )
+                if parte
+            )
+            partes.append(
+                f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
+                f'{runs}</w:p>'
             )
         else:
-            partes.append(
-                f'<w:p><w:r><w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+            # `**assim**` vira negrito DE VERDADE, em run próprio.
+            #
+            # O prompt manda o nome do autor entre asteriscos duplos, e sem esta
+            # conversão eles sairiam literais no .docx — o documento entregue ao
+            # juízo com `**FULANO**` escrito. `re.split` com grupo devolve os
+            # trechos capturados nos índices ímpares: esses são os negritos.
+            #
+            # O escape XML já foi aplicado acima e não toca em `*`, então dividir
+            # aqui é seguro.
+            runs = "".join(
+                (
+                    f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                    if indice % 2
+                    else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
+                )
+                # O `replace` pega o marcador ÍMPAR, que a `re.split` não casa por
+                # não ter par e deixaria passar literal para o .docx.
+                for indice, parte in enumerate(
+                    p.replace("**", "")
+                    for p in re.split(r"\*\*(.+?)\*\*", texto_xml)
+                )
+                if parte
             )
+            partes.append(f"<w:p>{runs}</w:p>")
     return "".join(partes)
 
 
@@ -1459,10 +2302,33 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             continue
         rotulo = str(secao.get("label") or secao.get("code") or "").strip()
         conteudo = str(secao.get("content") or "").strip()
-        if rotulo and secao.get("code") not in ("HEADING",):
+        # VALUE entra junto de HEADING e CLOSING: o valor da causa NÃO tem título
+        # na peça do escritório — é uma frase solta ("Dá-se à causa o valor de
+        # ..."). O rótulo continua existindo em `SECOES` porque a tela e o prompt
+        # se orientam por ele; só não vira parágrafo no .docx.
+        if rotulo and secao.get("code") not in ("HEADING", "CLOSING", "VALUE"):
+            # `centralizado=False`: o rótulo da seção fica À ESQUERDA.
+            #
+            # Estava centralizado, e era metade do problema — "DOS FATOS",
+            # "DO DIREITO" e "DAS PROVAS" apareciam no meio da página enquanto
+            # os subtítulos de dentro do conteúdo iam à esquerda. O escritório
+            # quer todos à esquerda; só o endereçamento e o nome da ação ficam
+            # no centro.
             corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True))
         if conteudo:
-            corpo.append(_paragrafo_xml(conteudo))
+            # O HEADING NÃO é centralizado por inteiro.
+            #
+            # Centralizar a seção toda punha a qualificação do autor no meio da
+            # página, e na peça de referência ela é justificada com recuo, como
+            # qualquer parágrafo — só o endereçamento ("Ao Juízo…") e o nome da
+            # ação ficam centralizados. Como efeito colateral, o bloco inteiro
+            # caía no ramo de título e a conversão de `**negrito**` nunca rodava:
+            # o nome do autor saía com os asteriscos literais no documento.
+            #
+            # Quem decide agora é `_tipo_de_titulo`, linha a linha.
+            corpo.append(
+                _paragrafo_xml(conteudo, centralizado=secao.get("code") == "CLOSING")
+            )
         corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1478,14 +2344,19 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
 
              esquerda  3,00 cm = 1701 twips
              direita   1,89 cm = 1069 twips
-             topo      4,66 cm = 2642 twips  (onde o TEXTO começa)
              rodapé    1,25 cm =  708 twips
              header    1,25 cm =  708 twips  (onde o timbre começa)
+             topo      4,66 cm = 2642 twips  (onde o TEXTO começava)
 
            `w:top` é onde o corpo começa, não a borda do papel: entre 1,25 cm e
-           4,66 cm fica a logo, que é cabeçalho e se repete em toda página. Com
-           `w:top` menor que isso o texto subiria por cima do timbre. -->
-      <w:pgMar w:top="2642" w:right="1069" w:bottom="708" w:left="1701" w:header="708"/>
+           `w:top` fica a logo, que é cabeçalho e se repete em toda página. Com
+           `w:top` menor que isso o texto subiria por cima do timbre.
+
+           Com a logo reduzida a 2,36 cm de altura, o timbre acaba em 3,61 cm.
+           Mantendo a mesma folga de 0,13 cm da peça de referência, o texto passa
+           a começar em 3,74 cm = 2120 twips. Sem descer `w:top` junto sobraria
+           quase 1 cm de ar entre a logo e o primeiro parágrafo. -->
+      <w:pgMar w:top="2120" w:right="1069" w:bottom="708" w:left="1701" w:header="708"/>
     </w:sectPr>
   </w:body>
 </w:document>"""
@@ -1496,16 +2367,24 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
-  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>
+  <!-- A logo já era centralizada, mas na ÁREA ÚTIL — e as margens são
+       assimétricas (3,00 cm à esquerda, 1,89 cm à direita, medidas na peça de
+       referência). O centro da área útil cai 0,55 cm à direita do centro da
+       FOLHA, e é isso que se vê como logo fora do meio.
+
+       `w:right="629"` (1,11 cm, a diferença entre as margens) devolve o
+       parágrafo ao centro do papel, que é onde o olho espera o timbre. -->
+  <w:p><w:pPr><w:jc w:val="center"/><w:ind w:right="629"/></w:pPr><w:r><w:drawing>
     <wp:inline distT="0" distB="0" distL="0" distR="0">
-      <!-- 5,82 × 3,28 cm em EMU (1 cm = 360000), o tamanho do timbre na petição
-           de referência. A proporção é a mesma de antes (1,77), então a imagem
-           só cresce — não distorce. -->
-      <wp:extent cx="2095200" cy="1180800"/><wp:docPr id="1" name="Logo do escritório"/>
+      <!-- 4,19 × 2,36 cm em EMU (1 cm = 360000). O timbre da peça de referência
+           tem 5,82 × 3,28 cm; este é ele a 72%, por pedido do escritório. Os dois
+           lados usam o mesmo fator, então a proporção 1,77 se mantém e a imagem
+           encolhe sem distorcer. Mexer aqui obriga a mexer no `w:top` do sectPr. -->
+      <wp:extent cx="1508544" cy="850176"/><wp:docPr id="1" name="Logo do escritório"/>
       <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
         <pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo-escritorio"/><pic:cNvPicPr/></pic:nvPicPr>
           <pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
-          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2095200" cy="1180800"/></a:xfrm>
+          <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1508544" cy="850176"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
         </pic:pic>
       </a:graphicData></a:graphic>
@@ -1520,7 +2399,12 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
       <w:rFonts w:ascii="{fonte_xml}" w:hAnsi="{fonte_xml}" w:eastAsia="{fonte_xml}" w:cs="{fonte_xml}"/>
       <w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="pt-BR"/>
     </w:rPr></w:rPrDefault>
-    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+    <!-- `firstLine="709"` = 1,25 cm de recuo na primeira linha de cada parágrafo.
+         Medido na petição de referência: o corpo começa em 3,0 cm e a primeira
+         linha de cada parágrafo em 4,25 cm — 20 linhas do documento confirmam
+         essa segunda coluna. Sem isso o texto sai em bloco corrido, que foi a
+         diferença apontada ao comparar a peça gerada com a do escritório. -->
+    <w:pPrDefault><w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/><w:ind w:firstLine="709"/></w:pPr></w:pPrDefault>
   </w:docDefaults>
   <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
 </w:styles>"""

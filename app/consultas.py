@@ -284,6 +284,9 @@ def _qualificacao_directd(retorno: dict[str, Any]) -> dict[str, Any]:
         "nome": (retorno.get("nome") or "").strip(),
         "mae": (retorno.get("nomeMae") or "").strip(),
         "nascimento": _data_flexivel(str(retorno.get("dataNascimento") or "")),
+        # A base devolve a idade já calculada. Vale guardar: é o jeito mais rápido
+        # de flagrar nascimento trocado (a idade não bate com a data digitada).
+        "idade": str(retorno.get("idade") or "").strip(),
         "uf": (endereco0.get("uf") or "").strip(),
         "municipio": (endereco0.get("cidade") or "").strip(),
         "cep": formatar_cep(str(endereco0.get("cep") or "")) if endereco0.get("cep") else "",
@@ -293,6 +296,28 @@ def _qualificacao_directd(retorno: dict[str, Any]) -> dict[str, Any]:
         # Dados que a DirectD traz e o roteiro não tinha — agora com campo próprio.
         "sexo": _sexo_por_extenso(str(retorno.get("sexo") or "")),
         "renda_estimada": _renda_directd(retorno),
+        # TUDO O QUE A BASE MANDOU, E NÃO SÓ O PRIMEIRO DE CADA LISTA.
+        #
+        # `telefones`, `emails` e `enderecos` são LISTAS, e até aqui só o
+        # primeiro item de cada uma era aproveitado (com a preferência pelo
+        # WhatsApp, no caso do telefone). O resto era descartado em silêncio —
+        # justamente o número antigo que ainda atende, o e-mail do trabalho, o
+        # endereço anterior que aparece num documento do cliente. Quem atende
+        # precisa ver o que existe para escolher; a base não sabe qual deles é
+        # o bom.
+        "telefones_extras": ", ".join(
+            f"{numero}{' (WhatsApp)' if item.get('whatsApp') else ''}"
+            for item in telefones
+            if item is not tel and (numero := str(item.get("telefoneComDDD") or "").strip())
+        ),
+        "emails_extras": ", ".join(
+            endereco
+            for item in emails[1:]
+            if (endereco := (item.get("enderecoEmail") or "").strip())
+        ),
+        "enderecos_extras": " | ".join(
+            texto for item in enderecos[1:] if (texto := _endereco_directd(item))
+        ),
     }
     return {chave: valor for chave, valor in campos.items() if valor}
 
@@ -340,10 +365,34 @@ async def _buscar_cpf_directd(d: str, http: httpx.AsyncClient) -> dict[str, Any]
     retorno = corpo.get("retorno") if isinstance(corpo, dict) else None
     if not retorno or not (retorno.get("nome") or retorno.get("dataNascimento")):
         raise ErroConsulta("A base não encontrou dados para este CPF.")
+    # CAMPO VAZIO PRECISA DIZER DE QUEM É A CULPA.
+    #
+    # A base responde 200 com as listas vazias e `nomeMae` nulo com frequência —
+    # medido num CPF real: vieram nome, sexo, nascimento e renda, e nada de
+    # telefone, endereço, e-mail ou mãe. Na tela isso era indistinguível de
+    # defeito nosso: "Dados do CPF preenchidos" e metade dos campos em branco.
+    # Quem atende refazia a consulta, achava que o sistema tinha falhado e só
+    # então digitava à mão.
+    #
+    # Dizer o que a base NÃO tem para este CPF encerra a dúvida em uma linha.
+    faltando = [
+        rotulo
+        for rotulo, veio in (
+            ("telefone", bool(retorno.get("telefones"))),
+            ("endereço", bool(retorno.get("enderecos"))),
+            ("e-mail", bool(retorno.get("emails"))),
+            ("nome da mãe", bool((retorno.get("nomeMae") or "").strip())),
+        )
+        if not veio
+    ]
     return {
         "campos": _qualificacao_directd(retorno),
         "situacao": "regular",
-        "aviso": "",
+        "aviso": (
+            f"A base não tem {', '.join(faltando)} para este CPF — preencha à mão."
+            if faltando
+            else ""
+        ),
         "nome_registro": (retorno.get("nome") or "").strip(),
         "fonte": "DirectD",
     }
