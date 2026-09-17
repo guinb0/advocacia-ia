@@ -41,7 +41,10 @@ def decodificar(bruto: bytes) -> tuple[str,str]:
     for codec, nome in tentativas:
         try:
             texto = bruto.decode(codec)
-            if "\ufffd" not in texto and "Ã" not in texto and "Â" not in texto: return texto, nome
+            # "Ã" existe legitimamente em palavras como "CONSTITUIÇÃO". O que
+            # denuncia mojibake é a sequência UTF-8 mal interpretada (Ã§, Ã£,
+            # Â  etc.), não a letra isolada.
+            if "\ufffd" not in texto and not re.search(r"(?:Ã|Â)[\u0080-\u00bf]", texto): return texto, nome
         except UnicodeDecodeError: pass
     raise ValueError("ENCODING_CORRUPTO: nenhum decoder seguro produziu texto jurídico válido")
 
@@ -52,7 +55,7 @@ def extrair(html: str) -> str:
         linha=re.sub(r"[ \t\r\f\v]+", " ", linha).strip()
         if linha and (not linhas or linhas[-1] != linha): linhas.append(linha)
     texto="\n".join(linhas)
-    if "\ufffd" in texto or "Ã" in texto or "Â" in texto: raise ValueError("ENCODING_CORRUPTO após parser")
+    if "\ufffd" in texto or re.search(r"(?:Ã|Â)[\u0080-\u00bf]", texto): raise ValueError("ENCODING_CORRUPTO após parser")
     return texto
 
 def dispositivos(item, texto):
@@ -65,7 +68,9 @@ def dispositivos(item, texto):
         antes=texto[max(0, inicio-400):inicio].splitlines()[-4:]
         contexto=[x for x in antes if re.match(r"(?i)^(livro|título|capítulo|seção|subseção)", x)]
         prefixo="\n".join([item["nome"], *contexto, f"Art. {ident}"])
-        resultado.append((f"art-{ident}", contexto, parte, f"{prefixo}\n{parte}"))
+        # Constituição e ADCT podem repetir a mesma numeração. A posição torna
+        # a unidade tecnicamente única sem perder o artigo no texto/contexto.
+        resultado.append((f"art-{ident}-{i + 1}", contexto, parte, f"{prefixo}\n{parte}"))
     return resultado
 
 def baixar(url):
@@ -76,6 +81,13 @@ def baixar(url):
             r.raise_for_status(); return r.content, r.status_code
         except httpx.HTTPError as e: ultimo=e; time.sleep(2**tentativa)
     raise RuntimeError(f"DOWNLOAD_FAILED: {ultimo}")
+
+def gerar_em_lotes(textos, *, tamanho=16):
+    """Evita exceder o limite do provedor em diplomas extensos."""
+    vetores=[]
+    for inicio in range(0, len(textos), tamanho):
+        vetores.extend(gerar_embeddings(textos[inicio:inicio+tamanho], timeout=180))
+    return vetores
 
 def aplicar_schema(con):
     sql=(BASE / "sql" / "006_corpus_juridico.sql").read_text(encoding="utf-8")
@@ -97,17 +109,23 @@ def persistir(con, item, texto, url, com_embeddings):
         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PARTIAL',%s,%s::jsonb)
         ON CONFLICT(document_id) DO UPDATE SET retrieved_at=EXCLUDED.retrieved_at,last_checked_at=EXCLUDED.last_checked_at,status='PARTIAL',report=EXCLUDED.report""",
         (item['id'],item['nome'],item['numero'],item['ano'],item['fonte'],url,agora,VERSAO,len(docs),len(docs),len(docs),agora,json.dumps({'sha256':digest,'artigos':len(docs),'encoding':'validado'})))
-        for ordem,(ident,hierarquia,corpo,contexto) in enumerate(docs):
-            h=hashlib.sha256(corpo.encode()).hexdigest()
-            c.execute("SELECT content_hash,version FROM normative_device_versions WHERE document_id=%s AND identifier=%s ORDER BY version DESC LIMIT 1",(item['id'],ident)); anterior=c.fetchone()
-            if not anterior or anterior[0]!=h:
-                if anterior: c.execute("UPDATE normative_device_versions SET valid_until=CURRENT_DATE WHERE document_id=%s AND identifier=%s AND version=%s",(item['id'],ident,anterior[1]))
-                c.execute("INSERT INTO normative_device_versions(document_id,identifier,version,hierarchy,text,content_hash,status,source_url,retrieved_at) VALUES(%s,%s,%s,%s::jsonb,%s,%s,'vigente',%s,%s)",(item['id'],ident,(anterior[1]+1 if anterior else 1),json.dumps({'ancestrais':hierarquia},ensure_ascii=False),corpo,h,url,agora))
-            for alvo in REFERENCIA.findall(corpo): c.execute("INSERT INTO corpus_references(document_id,source_identifier,target_text,reason) VALUES(%s,%s,%s,'referência textual oficial') ON CONFLICT DO NOTHING",(item['id'],ident,alvo))
+        c.execute("SELECT DISTINCT ON(identifier) identifier,content_hash,version FROM normative_device_versions WHERE document_id=%s ORDER BY identifier,version DESC", (item['id'],))
+        anteriores={linha[0]: linha[1:] for linha in c.fetchall()}; novos=[]; encerra=[]; refs=[]
+        for ident,hierarquia,corpo,contexto in docs:
+            h=hashlib.sha256(corpo.encode()).hexdigest(); anterior=anteriores.get(ident)
+            if not anterior or anterior[0] != h:
+                if anterior: encerra.append((item['id'],ident,anterior[1]))
+                novos.append((item['id'],ident,(anterior[1]+1 if anterior else 1),json.dumps({'ancestrais':hierarquia},ensure_ascii=False),corpo,h,url,agora))
+            refs.extend((item['id'],ident,alvo) for alvo in REFERENCIA.findall(corpo))
+        if encerra: c.executemany("UPDATE normative_device_versions SET valid_until=CURRENT_DATE WHERE document_id=%s AND identifier=%s AND version=%s", encerra)
+        if novos: c.executemany("INSERT INTO normative_device_versions(document_id,identifier,version,hierarchy,text,content_hash,status,source_url,retrieved_at) VALUES(%s,%s,%s,%s::jsonb,%s,%s,'vigente',%s,%s) ON CONFLICT(document_id,identifier,version) DO NOTHING", novos)
+        if refs: c.executemany("INSERT INTO corpus_references(document_id,source_identifier,target_text,reason) VALUES(%s,%s,%s,'referência textual oficial') ON CONFLICT DO NOTHING", refs)
         c.execute("INSERT INTO fontes(tipo,titulo,identificador,url) VALUES('lei',%s,%s,%s) ON CONFLICT(tipo,identificador) WHERE identificador IS NOT NULL DO UPDATE SET titulo=EXCLUDED.titulo,url=EXCLUDED.url RETURNING id",(item['nome'],f"corpus-juridico:{item['id']}",url)); fonte=c.fetchone()[0]
         c.execute("DELETE FROM knowledge_chunks WHERE fonte_id=%s",(fonte,))
-        vetores=gerar_embeddings([d[3] for d in docs],timeout=180) if com_embeddings else [None]*len(docs)
-        c.executemany("INSERT INTO knowledge_chunks(fonte_id,ordem,texto,metadados,embedding) VALUES(%s,%s,%s,%s::jsonb,%s::vector)",[(fonte,n,d[3],json.dumps({'origem':'corpus_juridico_oficial','document_id':item['id'],'dispositivo':d[0],'source_url':url,'sha256':hashlib.sha256(d[2].encode()).hexdigest()},ensure_ascii=False),vetor_literal(v) if v else None) for n,(d,v) in enumerate(zip(docs,vetores))])
+        vetores=gerar_em_lotes([d[3] for d in docs]) if com_embeddings else [None]*len(docs)
+        registros=[(fonte,n,d[3],json.dumps({'origem':'corpus_juridico_oficial','document_id':item['id'],'dispositivo':d[0],'source_url':url,'sha256':hashlib.sha256(d[2].encode()).hexdigest()},ensure_ascii=False),vetor_literal(v) if v else None) for n,(d,v) in enumerate(zip(docs,vetores))]
+        for inicio in range(0, len(registros), 16):
+            c.executemany("INSERT INTO knowledge_chunks(fonte_id,ordem,texto,metadados,embedding) VALUES(%s,%s,%s,%s::jsonb,%s::vector)", registros[inicio:inicio + 16])
         c.execute("UPDATE corpus_manifest SET status=%s,total_embeddings=%s WHERE document_id=%s",('COMPLETE' if com_embeddings else 'VALIDATED_PENDING_EMBEDDINGS',sum(v is not None for v in vetores),item['id']))
     con.commit(); return len(docs)
 

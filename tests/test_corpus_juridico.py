@@ -13,3 +13,7 @@ def test_preserva_artigos_e_contexto():
     itens = dispositivos({'nome':'Lei de teste'}, texto)
     assert [x[0] for x in itens] == ['art-1º', 'art-2º']
     assert 'Lei de teste' in itens[0][3]
+
+def test_aceita_acentuacao_portuguesa_legitima():
+    texto, codec = decodificar('CONSTITUIÇÃO DA REPÚBLICA'.encode('utf-8'))
+    assert codec == 'utf-8' and texto.startswith('CONSTITUIÇÃO')
