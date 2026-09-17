@@ -278,6 +278,52 @@ def buscar_legislacao(
     ) for linha in linhas]
 
 
+def buscar_pecas_conteudisticas(
+    consulta: str, *, limite: int = 8, timeout: float = 120, connect_timeout: int = 10,
+) -> list[dict[str, Any]]:
+    """Recupera técnicas de redação de peças do escritório, sem transportar fatos.
+
+    Este acervo é deliberadamente separado de legislação e precedentes: ele serve
+    para mostrar profundidade, encadeamento de teses e cobertura de pedidos. A
+    chamada que o utiliza deve ordenar ao modelo que jamais copie nomes, valores,
+    datas, documentos ou alegações de uma peça de referência.
+    """
+    if not consulta.strip():
+        return []
+    embedding = vetor_literal(gerar_embeddings([consulta[:12000]], timeout=timeout)[0])
+    linhas = _consultar_pgvector(
+        """SELECT c.peca_id, c.texto, p.nome_arquivo, p.categoria,
+                  1 - (c.embedding <=> %s::vector) AS similaridade
+             FROM pecas_conteudo_chunks c
+             JOIN pecas_conteudo p ON p.id = c.peca_id
+            WHERE c.embedding IS NOT NULL
+              AND p.categoria IN ('pecas_simples', 'pecas_complexas')
+            ORDER BY c.embedding <=> %s::vector
+            LIMIT %s""",
+        (embedding, embedding, max(limite * 4, limite)), connect_timeout=connect_timeout,
+    )
+    # Diversidade importa mais que dez trechos da mesma petição: no máximo dois
+    # por arquivo e metade de cada coleção quando houver material aderente.
+    escolhidos: list[dict[str, Any]] = []
+    por_peca: Counter[str] = Counter()
+    por_categoria: Counter[str] = Counter()
+    for linha in linhas:
+        peca_id, categoria = str(linha["peca_id"]), str(linha["categoria"])
+        if por_peca[peca_id] >= 2:
+            continue
+        if por_categoria[categoria] >= max(2, limite // 2):
+            continue
+        escolhidos.append({
+            "texto": str(linha["texto"]), "arquivo": str(linha["nome_arquivo"]),
+            "categoria": categoria, "similaridade": float(linha["similaridade"]),
+        })
+        por_peca[peca_id] += 1
+        por_categoria[categoria] += 1
+        if len(escolhidos) >= limite:
+            break
+    return escolhidos
+
+
 def _estatisticas_amostra(similares: list[TrechoSimilar]) -> dict[str, Any]:
     """Resume somente os processos recuperados, sem vender correlação como previsão."""
     resultados = Counter(
