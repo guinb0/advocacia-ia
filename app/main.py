@@ -2516,10 +2516,29 @@ def tactiq_status(usuario: auth.Usuario = Depends(auth.usuario_atual)):
     return tactiq.status(usuario.id)
 
 
+def _callback_tactiq(request: Request) -> str:
+    """URL pública do OAuth; nunca o host interno api:8100 atrás do proxy."""
+    # Em produção URL_PORTAL é o domínio HTTPS que o advogado abriu. Usar
+    # request.base_url ali registrava http://api:8100 no Tactiq, endereço que
+    # não existe fora da rede Docker e faz o registro dinâmico ser recusado.
+    if URL_PORTAL.startswith("https://"):
+        return f"{URL_PORTAL}/api/tactiq/callback"
+    return f"{str(request.base_url).rstrip('/')}/api/tactiq/callback"
+
+
 @app.post("/api/tactiq/conectar")
 def tactiq_conectar(request: Request, usuario: auth.Usuario = Depends(auth.usuario_atual)):
-    base = str(request.base_url).rstrip("/")
-    return {"url": tactiq.iniciar(usuario.id, f"{base}/api/tactiq/callback")}
+    try:
+        return {"url": tactiq.iniciar(usuario.id, _callback_tactiq(request))}
+    except httpx.HTTPStatusError as exc:
+        log.warning("Tactiq recusou o registro OAuth: %s", exc.response.status_code)
+        raise HTTPException(502, "O Tactiq recusou temporariamente a conexão. Tente novamente em alguns minutos.") from exc
+    except httpx.RequestError as exc:
+        log.warning("Tactiq indisponível: %s", exc)
+        raise HTTPException(503, "Não foi possível alcançar o Tactiq agora. Tente novamente em instantes.") from exc
+    except Exception as exc:
+        log.exception("Falha ao iniciar OAuth Tactiq")
+        raise HTTPException(503, f"Não foi possível preparar a conexão Tactiq: {exc}") from exc
 
 
 @app.get("/api/tactiq/callback")
@@ -2527,7 +2546,7 @@ def tactiq_callback(request: Request, code: str = "", state: str = ""):
     if not code or not state:
         raise HTTPException(400, "O Tactiq não devolveu a autorização necessária.")
     try:
-        tactiq.concluir(state, code, f"{str(request.base_url).rstrip('/')}/api/tactiq/callback")
+        tactiq.concluir(state, code, _callback_tactiq(request))
     except Exception as exc:
         log.warning("Falha ao concluir OAuth Tactiq: %s", exc)
         raise HTTPException(400, str(exc)) from exc
