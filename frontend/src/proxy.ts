@@ -53,8 +53,21 @@ async function sessaoValida(token: string): Promise<boolean> {
   }
 }
 
+/** O endereço que a pessoa tentou abrir, para o login devolvê-la a ele.
+ *
+ * Sem isto, todo link de tela mandado a um colega morre no login: ele entra e cai
+ * na tela de entrada, sem saber para onde deveria ter ido. Só caminho interno
+ * atravessa — um destino absoluto viraria redirecionamento aberto, e o login do
+ * escritório serviria de trampolim para outro site. */
+function destinoDe(request: NextRequest): string {
+  return request.nextUrl.pathname + request.nextUrl.search;
+}
+
 function paraOLogin(request: NextRequest) {
-  const resposta = NextResponse.redirect(new URL("/", request.url));
+  const login = new URL("/", request.url);
+  const destino = destinoDe(request);
+  if (destino !== "/home") login.searchParams.set("destino", destino);
+  const resposta = NextResponse.redirect(login);
   COOKIES_SESSAO.forEach((nome) => resposta.cookies.delete(nome));
   return resposta;
 }
@@ -73,7 +86,9 @@ export async function proxy(request: NextRequest) {
   // Já logado abrindo o login: vai direto para a carteira, em vez de digitar
   // senha de novo por ter clicado no favorito.
   if (caminho === "/" && token && (await sessaoValida(token))) {
-    return NextResponse.redirect(new URL("/home", request.url));
+    const pedido = request.nextUrl.searchParams.get("destino");
+    const destino = pedido && pedido.startsWith("/home") ? pedido : "/home";
+    return NextResponse.redirect(new URL(destino, request.url));
   }
 
   const protegida = PROTEGIDAS.some((rota) => caminho === rota || caminho.startsWith(rota + "/"));

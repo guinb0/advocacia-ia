@@ -74,6 +74,48 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
    * autenticando as APIs do agente. */
 };
 
+/** Toda tela que a URL aceita. Existe em runtime porque `Tela` é só um tipo:
+ * sem esta lista não há como conferir o que veio do endereço, e um `?tela=`
+ * inventado viraria um estado que nenhuma tela sabe renderizar. */
+export const TELAS: readonly Tela[] = [
+  "carteira", "agente", "caso", "dossie", "painel", "jurimetria", "casos", "avulso",
+  "investigacao", "usuarios", "panorama", "operacao", "entrevista", "supervisao", "dados",
+  "saudeAgente", "modelosDePeticao", "configuracaoAssinatura", "catalogoRoteiros",
+  "glossarioDocumentos", "revisao", "followup", "documentacao",
+];
+
+function ehTela(valor: string | null): valor is Tela {
+  return valor !== null && (TELAS as readonly string[]).includes(valor);
+}
+
+/** O que o endereço atual diz: qual tela, e qual caso em foco. */
+function lerEndereco(): { tela: Tela | null; caso: string | null } {
+  if (typeof window === "undefined") return { tela: null, caso: null };
+  const busca = new URLSearchParams(window.location.search);
+  const tela = busca.get("tela");
+  return { tela: ehTela(tela) ? tela : null, caso: busca.get("caso") };
+}
+
+/** Espelha o estado no endereço.
+ *
+ * `history.pushState` direto, e não o roteador do Next, de propósito: trocar de
+ * rota desmontaria a árvore e derrubaria a chamada de vídeo em andamento — que é
+ * a razão de a navegação ser por estado (ver `useHomeModel`). Mexer só na query
+ * dá endereço próprio, F5, voltar/avançar e link para mandar a alguém, sem
+ * remontar nada. */
+function escreverEndereco(tela: Tela, caso: string | null, modo: "push" | "replace"): void {
+  if (typeof window === "undefined") return;
+  const busca = new URLSearchParams(window.location.search);
+  busca.set("tela", tela);
+  if (caso) busca.set("caso", caso);
+  else busca.delete("caso");
+  const query = busca.toString();
+  if (window.location.search === `?${query}`) return;
+  const endereco = `${window.location.pathname}?${query}`;
+  if (modo === "push") window.history.pushState(null, "", endereco);
+  else window.history.replaceState(null, "", endereco);
+}
+
 export function podeAbrirTela(tela: Tela, modulos: string[]): boolean {
   const modulo = MODULO_DA_TELA[tela];
   return !modulo || modulos.includes(modulo);
@@ -147,6 +189,47 @@ export const useHomeModel = () => {
    * não interfere mais. É atalho de conveniência, nunca permissão — quem decide
    * o que cada perfil acessa é `app/perfis.py`, no servidor. */
   const jaDirecionado = useRef(false);
+
+  /* O endereço manda na primeira carga. Recarregar a página numa tela e cair na
+   * de entrada perdia o contexto inteiro — e era o que acontecia enquanto a tela
+   * só existia em estado. Marcar `jaDirecionado` aqui impede que o atalho de
+   * conveniência logo abaixo desfaça o que a pessoa pediu no endereço. */
+  const enderecoRestaurado = useRef(false);
+  useEffect(() => {
+    const endereco = lerEndereco();
+    if (endereco.caso) setCasoAberto(endereco.caso);
+    if (endereco.tela) {
+      jaDirecionado.current = true;
+      setTela(endereco.tela);
+    }
+    enderecoRestaurado.current = true;
+  }, []);
+
+  /* Voltar e avançar do navegador. Sem isto o botão de voltar sairia do sistema
+   * inteiro em vez de desfazer a última troca de tela. */
+  useEffect(() => {
+    function aoVoltar() {
+      const endereco = lerEndereco();
+      setCasoAberto(endereco.caso);
+      if (endereco.tela) setTela(endereco.tela);
+    }
+    window.addEventListener("popstate", aoVoltar);
+    return () => window.removeEventListener("popstate", aoVoltar);
+  }, []);
+
+  /* Estado → endereço. Empilha no histórico só o que a PESSOA pediu: o atalho de
+   * entrada e a guarda de permissão também trocam de tela, e se empilhassem, o
+   * botão de voltar devolveria a uma tela que ninguém escolheu — e que a guarda
+   * desfaria de novo na hora. */
+  const navegacaoDoUsuario = useRef(false);
+  useEffect(() => {
+    /* Enquanto a restauração acima não rodou, `tela` ainda é o padrão do
+     * `useState` — gravá-lo apagaria da URL a tela que a pessoa pediu. */
+    if (sessao.carregando || !enderecoRestaurado.current) return;
+    escreverEndereco(tela, casoAberto, navegacaoDoUsuario.current ? "push" : "replace");
+    navegacaoDoUsuario.current = false;
+  }, [tela, casoAberto, sessao.carregando]);
+
   useEffect(() => {
     if (sessao.carregando) return;
     /* O atalho de entrada, UMA vez. Sem o `jaDirecionado`, `tela` está nas
@@ -186,7 +269,9 @@ export const useHomeModel = () => {
   }, [modulos, sessao.carregando, sessao.papeis, tela]);
 
   function navegar(telaNova: Tela) {
-    if (podeAbrirTela(telaNova, modulos)) setTela(telaNova);
+    if (!podeAbrirTela(telaNova, modulos)) return;
+    navegacaoDoUsuario.current = true;
+    setTela(telaNova);
   }
 
   function abrirCaso(casoId: string) {

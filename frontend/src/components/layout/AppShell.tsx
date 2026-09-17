@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { LogOut } from "lucide-react";
 
 import type { Tela } from "@/app/home/home.model";
@@ -42,6 +42,20 @@ interface AppShellProps {
 
 export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
   const sessao = useSessao();
+  /* A área rolável do layout de painel. Precisa de referência porque o scroll
+   * dela não é o do documento: em `lg+` quem rola é esta `<div>`, e abaixo de
+   * `lg` é o `<body>`. */
+  const areaRolavel = useRef<HTMLDivElement>(null);
+
+  /* Trocar de tela recomeça a leitura do topo.
+   *
+   * Sem isto a posição da tela anterior sobrevive à troca: quem estava no fim de
+   * uma lista longa cai numa tela curta já rolado para baixo do conteúdo dela e
+   * vê uma faixa vazia — sem erro, sem aviso e sem pista de que basta subir. */
+  useEffect(() => {
+    areaRolavel.current?.scrollTo({ top: 0 });
+    window.scrollTo({ top: 0 });
+  }, [tela]);
   const nome = sessao.nome || sessao.usuario || "Usuário";
   const perfil = sessao.papeis[0] || "Perfil ativo";
 
@@ -91,7 +105,10 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
             rolagem para o que está atrás dela. Sem isso, o gesto continuava no
             documento assim que o miolo acabava — a página inteira deslizava e
             aparecia a faixa vazia sob a barra lateral. */}
-        <div className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden lg:overscroll-contain">
+        <div
+          ref={areaRolavel}
+          className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden lg:overscroll-contain"
+        >
           <div className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pb-16 pt-5 sm:px-6 lg:px-7 [&>*]:min-w-0">
             {children}
           </div>

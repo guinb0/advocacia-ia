@@ -19,6 +19,7 @@ import Panorama from "@/components/Panorama";
 import Operacao from "@/components/operacao/Operacao";
 import PainelEnvio from "@/components/caso/PainelEnvio";
 import ProgressoOcr from "@/components/ui/ProgressoOcr";
+import LimiteDeErro from "@/components/ui/LimiteDeErro";
 import ChamadaDoAtendimento from "@/components/chamada/ChamadaDoAtendimento";
 import TriagemEntrevista from "@/components/entrevista/TriagemEntrevista";
 import Supervisao from "@/components/admin/Supervisao";
@@ -52,7 +53,13 @@ type HomeViewProps = ReturnType<typeof useHomeModel>;
  * ganha rolagem horizontal — com a barra lateral empurrada para fora da tela. */
 const HomeView = (props: HomeViewProps) => (
   <AppShell tela={props.tela} onNavegar={props.setTela}>
-    <Telas {...props} />
+    {/* O limite fica AQUI, e não dentro de cada tela: um erro de desenho não pode levar a
+     * casca e o menu embora. Antes disso, uma exceção em qualquer tela deixava a janela em
+     * branco — sem mensagem, sem menu e sem nada para rolar —, e a única saída era o F5.
+     * `chave={props.tela}` faz a navegação valer como nova tentativa. */}
+    <LimiteDeErro chave={props.tela}>
+      <Telas {...props} />
+    </LimiteDeErro>
   </AppShell>
 );
 

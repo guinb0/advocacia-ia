@@ -874,6 +874,41 @@ export interface PaginaPecasDeEstilo {
   paginas: number;
 }
 
+/** Completa o que a peça pode não trazer, para a tela nunca desenhar em cima de nada.
+ *
+ * A tela lê `peca.segmentation.quality` e `peca.eligibility...` direto, sem defesa — e
+ * quando um desses veio faltando (agente de versão diferente, campo novo, registro antigo),
+ * o erro não era um aviso: era o React desmontando a página inteira e deixando a janela em
+ * branco. O formato é garantido aqui, na entrada, uma vez, em vez de espalhar `?.` por cada
+ * leitura e ainda assim esquecer uma.
+ *
+ * `quality` fora das três faixas conhecidas é preservado como veio: quem decide o que fazer
+ * com um valor que não conhece é a tela, que tem um rótulo neutro para isso — silenciar aqui
+ * esconderia do escritório que a peça foi classificada de um jeito que o sistema não explica.
+ */
+function pecaNormalizada(peca: PecaDeEstilo): PecaDeEstilo {
+  return {
+    ...peca,
+    word_count: Number.isFinite(peca?.word_count) ? peca.word_count : 0,
+    segmentation: {
+      quality: peca?.segmentation?.quality,
+      recognized_ratio: Number.isFinite(peca?.segmentation?.recognized_ratio)
+        ? peca.segmentation.recognized_ratio
+        : 0,
+    },
+    eligibility: {
+      eligible_for_document_profile: Boolean(peca?.eligibility?.eligible_for_document_profile),
+      eligible_for_section_profile: Boolean(peca?.eligibility?.eligible_for_section_profile),
+      document_eligibility_reasons: Array.isArray(peca?.eligibility?.document_eligibility_reasons)
+        ? peca.eligibility.document_eligibility_reasons
+        : [],
+      section_eligibility_reasons: Array.isArray(peca?.eligibility?.section_eligibility_reasons)
+        ? peca.eligibility.section_eligibility_reasons
+        : [],
+    },
+  };
+}
+
 export async function pecasDeEstilo(
   taxonomyCode?: string | null,
   opcoes: { pagina?: number; tamanho?: number; documentType?: string | null } = {},
@@ -891,7 +926,7 @@ export async function pecasDeEstilo(
   const dados = await chamar<{ items: PecaDeEstilo[]; total?: number; limit?: number; offset?: number }>(
     `/api/agente/estilo/pecas?${busca}`,
   );
-  const items = Array.isArray(dados.items) ? dados.items : [];
+  const items = (Array.isArray(dados.items) ? dados.items : []).map(pecaNormalizada);
   const total = Number.isFinite(dados.total) ? Math.max(0, dados.total ?? 0) : items.length;
   const limite = Number.isFinite(dados.limit) ? Math.max(1, dados.limit ?? tamanho) : tamanho;
   const deslocamento = Number.isFinite(dados.offset) ? Math.max(0, dados.offset ?? offset) : offset;
