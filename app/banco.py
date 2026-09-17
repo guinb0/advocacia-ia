@@ -383,6 +383,20 @@ CREATE TABLE {SCHEMA}.{PREFIXO}qualificacao (
     endereco       nvarchar(400) NULL,
     email          nvarchar(200) NULL,
     renda_estimada varchar(80)   NULL,
+    idade            varchar(8)    NULL,
+    nacionalidade    nvarchar(80)  NULL,
+    profissao        nvarchar(120) NULL,
+    estado_civil     nvarchar(40)  NULL,
+    rg               nvarchar(40)  NULL,
+    rg_orgao         nvarchar(40)  NULL,
+    rg_uf            varchar(4)    NULL,
+    nome_pai         nvarchar(200) NULL,
+    pis              varchar(24)   NULL,
+    uf               varchar(4)    NULL,
+    municipio        nvarchar(120) NULL,
+    telefones_extras nvarchar(400) NULL,
+    emails_extras    nvarchar(400) NULL,
+    enderecos_extras nvarchar(max) NULL,
     criado_em      varchar(40)   NOT NULL,
     atualizado_em  varchar(40)   NOT NULL,
     CONSTRAINT fk_ocr_qualificacao_caso FOREIGN KEY (caso_id)
@@ -790,6 +804,27 @@ INDICES = (
 #: Só coluna ANULÁVEL, ou com DEFAULT: preencher linha existente é migração de dado, e
 #: migração de dado não cabe num passo de partida que roda a cada subida do servidor.
 COLUNAS_NOVAS = (
+    # A qualificação nasceu com oito colunas, e a tela sempre mostrou o dobro de
+    # campos: RG, órgão, UF do RG, pai, PIS, profissão, estado civil,
+    # nacionalidade, UF e município eram digitados, usados pelo contrato e
+    # descartados no INSERT. `idade` e as três listas de extras vêm da consulta
+    # por CPF, que devolve mais de um telefone, e-mail e endereço — e até aqui
+    # só o primeiro de cada um sobrevivia. Todas anuláveis: linha antiga segue
+    # válida sem migração de dado.
+    (f"{PREFIXO}qualificacao", "idade", "varchar(8) NULL"),
+    (f"{PREFIXO}qualificacao", "nacionalidade", "nvarchar(80) NULL"),
+    (f"{PREFIXO}qualificacao", "profissao", "nvarchar(120) NULL"),
+    (f"{PREFIXO}qualificacao", "estado_civil", "nvarchar(40) NULL"),
+    (f"{PREFIXO}qualificacao", "rg", "nvarchar(40) NULL"),
+    (f"{PREFIXO}qualificacao", "rg_orgao", "nvarchar(40) NULL"),
+    (f"{PREFIXO}qualificacao", "rg_uf", "varchar(4) NULL"),
+    (f"{PREFIXO}qualificacao", "nome_pai", "nvarchar(200) NULL"),
+    (f"{PREFIXO}qualificacao", "pis", "varchar(24) NULL"),
+    (f"{PREFIXO}qualificacao", "uf", "varchar(4) NULL"),
+    (f"{PREFIXO}qualificacao", "municipio", "nvarchar(120) NULL"),
+    (f"{PREFIXO}qualificacao", "telefones_extras", "nvarchar(400) NULL"),
+    (f"{PREFIXO}qualificacao", "emails_extras", "nvarchar(400) NULL"),
+    (f"{PREFIXO}qualificacao", "enderecos_extras", "nvarchar(max) NULL"),
     # O banco é a cópia durável do anexo. O caminho local é só cache: caminhos
     # absolutos quebram quando o projeto muda de pasta ou outro servidor atende.
     (f"{PREFIXO}entregas", "conteudo", "varbinary(max) NULL"),

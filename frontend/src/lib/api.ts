@@ -693,6 +693,24 @@ export async function salvarQualificacaoDoCaso(
         endereco: texto("endereco"),
         email: texto("email"),
         renda_estimada: texto("renda_estimada"),
+        /* Estes a tela sempre mostrou e o salvamento sempre ignorou: o atendente
+         * preenchia RG, PIS, profissão e o resto, o contrato os usava na hora
+         * (`contrato.valores_da_entrevista`) e nada disso chegava à tabela. Ao
+         * reabrir o caso, o cadastro voltava pela metade. */
+        idade: texto("idade"),
+        nacionalidade: texto("nacionalidade"),
+        profissao: texto("profissao"),
+        estado_civil: texto("estado_civil"),
+        rg: texto("rg"),
+        rg_orgao: texto("rg_orgao"),
+        rg_uf: texto("rg_uf"),
+        nome_pai: texto("pai"),
+        pis: texto("pis"),
+        uf: texto("uf"),
+        municipio: texto("municipio"),
+        telefones_extras: texto("telefones_extras"),
+        emails_extras: texto("emails_extras"),
+        enderecos_extras: texto("enderecos_extras"),
       }),
     }),
   );

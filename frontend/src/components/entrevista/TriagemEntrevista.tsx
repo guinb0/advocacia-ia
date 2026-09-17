@@ -45,8 +45,21 @@ const CAMPOS_CADASTRAIS = [
   { id: "email", rotulo: "E-mail", grupo: "essencial", tipo: "email" },
   { id: "nacionalidade", rotulo: "Nacionalidade", grupo: "qualificacao" },
   { id: "nascimento", rotulo: "Data de nascimento (dd/mm/aaaa)", grupo: "qualificacao" },
+  /* Sexo, idade e renda VÊM da consulta por CPF e eram gravados no banco — mas
+   * não tinham campo nenhum na tela. O dado era buscado, salvo e invisível:
+   * quem atende não podia conferir com o cliente nem corrigir o que a base
+   * errou. A idade serve de conferência do nascimento: divergiu, um dos dois
+   * está trocado. */
+  { id: "sexo", rotulo: "Sexo", grupo: "qualificacao" },
+  { id: "idade", rotulo: "Idade (da base)", grupo: "qualificacao" },
+  { id: "renda_estimada", rotulo: "Renda estimada (da base)", grupo: "qualificacao" },
   { id: "profissao", rotulo: "Profissão", grupo: "qualificacao" },
   { id: "estado_civil", rotulo: "Estado civil", grupo: "qualificacao" },
+  /* A base devolve LISTAS de telefone, e-mail e endereço, e só o primeiro de
+   * cada uma era aproveitado. O número antigo que ainda atende e o endereço
+   * anterior que aparece num documento do cliente ficavam invisíveis. */
+  { id: "telefones_extras", rotulo: "Outros telefones (da base)", grupo: "qualificacao" },
+  { id: "emails_extras", rotulo: "Outros e-mails (da base)", grupo: "qualificacao" },
   { id: "rg", rotulo: "RG (número)", grupo: "documentos" },
   { id: "rg_orgao", rotulo: "Órgão expedidor", grupo: "documentos" },
   { id: "rg_uf", rotulo: "UF do RG", grupo: "documentos" },

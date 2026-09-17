@@ -2905,6 +2905,23 @@ class QualificacaoCliente(BaseModel):
     endereco: str = ""
     email: str = ""
     renda_estimada: str = ""
+    # Digitados na tela desde sempre, usados pelo contrato e perdidos ao salvar
+    # até aqui — a tabela não tinha onde guardá-los (ver `CAMPOS_QUALIFICACAO`).
+    idade: str = ""
+    nacionalidade: str = ""
+    profissao: str = ""
+    estado_civil: str = ""
+    rg: str = ""
+    rg_orgao: str = ""
+    rg_uf: str = ""
+    nome_pai: str = ""
+    pis: str = ""
+    uf: str = ""
+    municipio: str = ""
+    # O que a consulta por CPF devolve além do primeiro item de cada lista.
+    telefones_extras: str = ""
+    emails_extras: str = ""
+    enderecos_extras: str = ""
 
 
 @app.put("/api/casos/{caso_id}/qualificacao")
