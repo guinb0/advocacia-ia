@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { CampoOuvido, Lembrete, PerguntaPendente } from "@/lib/types";
 
@@ -87,6 +87,18 @@ const ESTADO_PAUSADO = `${ESTADO_BASE} font-normal text-atencao`;
 const ESTADO_SILENCIO = `${ESTADO_BASE} font-normal text-atencao`;
 /* Microfone mudo: vermelho, porque aqui a entrevista ESTÁ sendo perdida
  * enquanto se conversa. É o único estado do painel que exige ação imediata. */
+const ESTADO_MUDO = `${ESTADO_BASE} font-semibold text-critico`;
+
+/** Tanto tempo sem UM bloco acima do ruído digital e a fonte está muda.
+ *
+ * Som, não fala: microfone aberto de verdade entrega ruído de sala o tempo
+ * todo, e `ultimoSom` já filtra o zero absoluto (ver `onNivel`, no `Roteiro`).
+ * 20s é folga para o começo da captura e curto o bastante para avisar antes de
+ * a entrevista inteira ser perdida. */
+const SEGUNDOS_SEM_SOM = 20;
+/** Abaixo disto há som, mas fraco demais para o modelo reconhecer com segurança
+ *  — e fraco demais para o `tem_fala` do servidor deixar passar. */
+const NIVEL_FRACO = 0.012;
 
 function situacao(
   captando: boolean,
@@ -95,6 +107,7 @@ function situacao(
   ultimaFala: number | null,
   ultimoSom: number | null,
   nivelTipico: number | null,
+  captandoDesde: number | null,
 ): { texto: string; classe: string; titulo: string } {
 
   if (reconectando) {
@@ -113,11 +126,56 @@ function situacao(
       titulo: "Clique em “Começar a entrevista” para abrir o microfone.",
     };
   }
+  /* SEM SOM NENHUM — e este ramo vem ANTES de tudo o que diz "ouvindo".
+   *
+   * `ultimoSom` e `nivelTipico` chegavam aqui e não eram lidos: o painel dizia
+   * "ouvindo — nada reconhecido ainda" com a fonte muda, e continuava dizendo
+   * isso pela entrevista inteira. Quem estava na tela só descobria no fim, na
+   * revisão ("a conversa ainda não produziu transcrição"), com o cliente já
+   * desligado e nada gravado — que é o custo exato que este painel existe para
+   * evitar. Mudo aqui é o que o navegador MEDE na fonte, antes do modelo: não
+   * depende da rede, da OpenRouter nem do roteiro. */
+  /* NUNCA entrou som, e é isso que se mede — não "está quieto agora".
+   *
+   * A tentação era acusar mudo sempre que passassem X segundos desde o último
+   * som, e isso daria alarme falso na hora errada: o limiar do `onNivel` (0,002)
+   * fica ACIMA do ruído de sala com o microfone aberto (medido em 0,0004), então
+   * uma pausa de meio minuto — o cliente lendo um documento, procurando a CAT —
+   * apareceria como microfone quebrado no meio de uma entrevista que está
+   * perfeita. Sem NENHUM som desde que a captura abriu não é pausa: é fonte que
+   * não entrega áudio. Depois do primeiro som, quem fala do silêncio é o ramo
+   * "ouvindo — nada há Xs", que é âmbar e não grita. */
+  if (ultimoSom === null && captandoDesde !== null) {
+    const abertoHa = Date.now() - captandoDesde;
+    if (abertoHa > SEGUNDOS_SEM_SOM * 1000) {
+      return {
+        texto: "microfone mudo",
+        classe: ESTADO_MUDO,
+        titulo:
+          `A captura está aberta há ${Math.round(abertoHa / 1000)}s e nenhum som entrou — ` +
+          "nem ruído de sala. A fonte não está entregando áudio: confira se o microfone " +
+          "certo foi escolhido e se outro programa (ou a própria chamada) não está com ele " +
+          "em uso exclusivo. Enquanto isto durar, nada do que for dito entra na transcrição.",
+      };
+    }
+  }
   if (interpretando) {
     return {
       texto: "interpretando…",
       classe: ESTADO_OUVINDO,
       titulo: "Um trecho da conversa está sendo lido contra o roteiro.",
+    };
+  }
+  /* Som entrando, mas fraco: o servidor descarta como silêncio (`tem_fala`) e o
+   * resultado na tela é idêntico ao de microfone mudo — nada aparece. */
+  if (ultimaFala === null && nivelTipico !== null && nivelTipico < NIVEL_FRACO) {
+    return {
+      texto: "som fraco demais",
+      classe: ESTADO_MUDO,
+      titulo:
+        "O microfone capta, mas o volume típico da fala está abaixo do que o " +
+        "reconhecimento aceita — o servidor trata isso como silêncio. Aproxime o " +
+        "microfone, suba o volume de entrada do sistema ou troque de dispositivo.",
     };
   }
   if (ultimaFala === null) {
@@ -171,6 +229,14 @@ export default function PainelEscuta({
     return () => clearInterval(id);
   }, [captando, reconectando]);
 
+  /* Desde quando a captura está aberta.
+   *
+   * É o que dá sentido a "nenhum som há Xs" quando som NENHUM entrou: sem esta
+   * marca, `ultimoSom === null` não distingue "abriu agora" de "meia hora muda". */
+  const captandoDesde = useRef<number | null>(null);
+  if (captando && captandoDesde.current === null) captandoDesde.current = Date.now();
+  if (!captando) captandoDesde.current = null;
+
   const estado = situacao(
     captando,
     reconectando,
@@ -178,6 +244,7 @@ export default function PainelEscuta({
     ultimaFala,
     ultimoSom,
     nivelTipico,
+    captandoDesde.current,
   );
   const atrasado = captando && !reconectando && chegada !== null && chegada < CHEGADA_MINIMA;
 

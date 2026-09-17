@@ -414,10 +414,26 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   return (
     <Cartao className="grid gap-4">
       <header className="grid gap-2">
-        <h2 className={TITULO}>Análise e petição</h2>
+        {/* O mesmo `gerar` do botão do cabeçalho do dossiê, repetido aqui: quem
+          * chegou a este cartão rolando a página não precisa voltar ao topo. O erro
+          * já aparece no Aviso logo abaixo, então o botão só mostra o concluído. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className={TITULO}>Análise e petição</h2>
+          <BotaoProcesso
+            variante="primario"
+            pequeno
+            processando={ocupado}
+            dica="Cruzando entrevista e documentos e redigindo a petição"
+            aguardando={salvando || revisando}
+            concluido={concluidoGerar}
+            onClick={() => void gerar()}
+          >
+            {rotuloGerar}
+          </BotaoProcesso>
+        </div>
         <p className={SUB}>
           Cruza a entrevista com os documentos lidos por OCR e redige a petição inicial com
-          DeepSeek. Use o botão no topo do dossiê para gerar.
+          DeepSeek.
         </p>
       </header>
 
