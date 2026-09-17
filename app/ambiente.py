@@ -25,7 +25,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-CAMINHO = Path(__file__).resolve().parent.parent / ".env"
+RAIZ = Path(__file__).resolve().parent.parent
+CAMINHO = RAIZ / ".env"
+CAMINHO_LOCAL = RAIZ / ".env.local"
 
 
 def carregar() -> None:
@@ -35,14 +37,19 @@ def carregar() -> None:
     para outro banco, ou trocar de motor de transcrição, numa execução pontual sem
     editar o `.env`. Idempotente — chamar de novo não desfaz nem repõe nada.
     """
-    if not CAMINHO.exists():
-        return
-    for linha in CAMINHO.read_text(encoding="utf-8").splitlines():
-        texto = linha.strip()
-        if not texto or texto.startswith("#") or "=" not in texto:
+    for caminho, sobrescrever in ((CAMINHO, False), (CAMINHO_LOCAL, True)):
+        if not caminho.exists():
             continue
-        chave, _, valor = texto.partition("=")
-        os.environ.setdefault(chave.strip(), valor.strip())
+        for linha in caminho.read_text(encoding="utf-8").splitlines():
+            texto = linha.strip()
+            if not texto or texto.startswith("#") or "=" not in texto:
+                continue
+            chave, _, valor = texto.partition("=")
+            chave, valor = chave.strip(), valor.strip()
+            if sobrescrever:
+                os.environ[chave] = valor
+            else:
+                os.environ.setdefault(chave, valor)
 
 
 def numero(nome: str, padrao: float) -> float:
