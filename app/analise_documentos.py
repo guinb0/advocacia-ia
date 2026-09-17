@@ -366,6 +366,58 @@ def analisar(caso_id: str) -> dict[str, Any]:
     return _analisar_cacheado(caso_id, str(caso.get("atualizado_em") or ""))
 
 
+def relatorio_global(caso_id: str) -> dict[str, Any]:
+    """Camada não destrutiva de relevância para TODOS os documentos do caso.
+
+    A classificação técnica nunca decide descarte: anexo sem OCR ou sem
+    identificação volta como INDETERMINADO e pede revisão humana.
+    """
+    documentos = _documentos_do_caso(caso_id)
+    fatos = _fatos_conhecidos(caso_id)
+    if not documentos:
+        return {
+            "contexto_compreendido": "Não há documento com texto disponível.",
+            "documentos": [],
+            "documentos_faltantes": [],
+            "contradicoes": [],
+            "atencao_humana": ["Envie documentos ou aguarde a leitura OCR."],
+        }
+    leitura = analisar(caso_id)
+    por_arquivo: dict[str, list[dict[str, Any]]] = {}
+    for achado in leitura.get("achados") or []:
+        por_arquivo.setdefault(str(achado.get("documento") or ""), []).append(achado)
+    itens = []
+    for doc in documentos:
+        achados = por_arquivo.get(doc["arquivo"], [])
+        contradiz = any(bool(a.get("contradiz")) for a in achados)
+        if contradiz:
+            relevancia, acao = "ESSENCIAL", "REVISAR_MANUALMENTE"
+        elif achados:
+            relevancia, acao = "RELEVANTE", "PRIORIZAR"
+        else:
+            relevancia, acao = "INDETERMINADO", "REVISAR_MANUALMENTE"
+        itens.append({
+            "id": doc["id"], "arquivo": doc["arquivo"],
+            "tipo_identificado": "Não identificado" if not achados else "Identificado a partir do conteúdo",
+            "confianca": 85 if achados else 0,
+            "resumo": "; ".join(str(a.get("informacao") or "") for a in achados)[:600] or "Sem conclusão automática segura.",
+            "relacao_com_fatos": "; ".join(str(a.get("relevancia") or "") for a in achados)[:600] or "Ainda precisa ser confrontado com a narrativa do caso.",
+            "fatos_comprovados": [str(a.get("informacao") or "") for a in achados],
+            "relevancia": relevancia,
+            "justificativa": "Há informação documental relacionada ao caso." if achados else "Não foi descartado: falta contexto suficiente para concluir sua utilidade.",
+            "relacoes": [],
+            "inconsistencias": [str(a.get("informacao") or "") for a in achados if a.get("contradiz")],
+            "acao_recomendada": acao,
+        })
+    return {
+        "contexto_compreendido": "\n".join(fatos)[:2500] or "Contexto ainda depende da entrevista e dos documentos.",
+        "documentos": itens,
+        "documentos_faltantes": [],
+        "contradicoes": [a for a in leitura.get("achados") or [] if a.get("contradiz")],
+        "atencao_humana": ["Documentos sem achados automáticos foram mantidos como indeterminados, não como irrelevantes."],
+    }
+
+
 @cache_leitura.por_alguns_segundos(300)
 def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
     documentos = _documentos_do_caso(caso_id)

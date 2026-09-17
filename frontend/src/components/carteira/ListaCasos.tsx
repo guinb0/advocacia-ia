@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, Trash2 } from "lucide-react";
+import { CalendarDays, FolderOpen, Loader2, Trash2 } from "lucide-react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { enviarTranscricaoEntrevista, triarEntrevista } from "@/lib/api";
+import { enviarTranscricaoEntrevista, listarReunioesTactiq, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq } from "@/lib/api";
 
 interface Props {
   casos: Caso[];
@@ -78,6 +78,10 @@ export default function ListaCasos({
   const [entrevistaArquivo, setEntrevistaArquivo] = useState<File | null>(null);
   const [analisandoEntrevista, setAnalisandoEntrevista] = useState(false);
   const [resultadoTriagem, setResultadoTriagem] = useState<string | null>(null);
+  const [reunioesTactiq, setReunioesTactiq] = useState<ReuniaoTactiq[] | null>(null);
+  const [carregandoTactiq, setCarregandoTactiq] = useState(false);
+  const [importandoTactiq, setImportandoTactiq] = useState<string | null>(null);
+  const [erroTactiq, setErroTactiq] = useState<string | null>(null);
   const [filtroCliente, setFiltroCliente] = useState("");
   const [criando, setCriando] = useState(false);
   /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
@@ -155,6 +159,34 @@ export default function ListaCasos({
     }
   }
 
+  async function carregarReunioesTactiq() {
+    setCarregandoTactiq(true);
+    setErroTactiq(null);
+    try {
+      setReunioesTactiq(await listarReunioesTactiq());
+    } catch (erro) {
+      setErroTactiq(erro instanceof Error ? erro.message : "Não foi possível carregar as transcrições do Tactiq.");
+    } finally {
+      setCarregandoTactiq(false);
+    }
+  }
+
+  async function importarTranscricaoTactiq(reuniao: ReuniaoTactiq) {
+    setImportandoTactiq(reuniao.id);
+    setErroTactiq(null);
+    try {
+      const transcricao = await obterTranscricaoTactiq(reuniao.id);
+      const nome = `${transcricao.titulo || reuniao.titulo || "entrevista-tactiq"}.txt`.replace(/[\\/:*?"<>|]/g, "-");
+      await selecionarEntrevista(new File([transcricao.texto], nome, { type: "text/plain;charset=utf-8" }));
+      setReunioesTactiq(null);
+      setResultadoTriagem("Transcrição do Tactiq importada e analisada. Confira a sugestão de ação abaixo.");
+    } catch (erro) {
+      setErroTactiq(erro instanceof Error ? erro.message : "Não foi possível importar esta transcrição.");
+    } finally {
+      setImportandoTactiq(null);
+    }
+  }
+
   const nomeCategoria = (codigo: string) =>
     categorias.find((c) => c.codigo === codigo)?.nome ?? codigo;
 
@@ -211,6 +243,31 @@ export default function ListaCasos({
               A IA lê a entrevista, sugere o tipo de ação e gera o resumo do atendimento. A sugestão pode ser alterada.
             </p>
             {analisandoEntrevista && <p className="mt-1 text-xs text-tinta-3">Analisando entrevista…</p>}
+            <div className="mt-3 rounded-campo border border-acao-borda bg-acao-clara p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <strong className="block text-sm text-tinta">Já transcreveu no Tactiq?</strong>
+                  <p className="mt-0.5 text-xs text-tinta-2">Escolha uma reunião para usar a transcrição como entrevista deste caso.</p>
+                </div>
+                <Botao type="button" variante="secundario" onClick={() => void carregarReunioesTactiq()} disabled={carregandoTactiq}>
+                  {carregandoTactiq ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />}
+                  Ver transcrições do Tactiq
+                </Botao>
+              </div>
+              {erroTactiq && <p className="mt-2 text-xs text-critico">{erroTactiq}</p>}
+              {reunioesTactiq && (
+                <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+                  {reunioesTactiq.length === 0 ? <p className="text-xs text-tinta-2">Nenhuma reunião disponível nesta conta Tactiq.</p> : reunioesTactiq.map((reuniao) => (
+                    <div key={reuniao.id} className="flex items-center justify-between gap-3 rounded-campo border border-acao-borda bg-fundo px-3 py-2">
+                      <div className="min-w-0"><strong className="block truncate text-sm text-tinta">{reuniao.titulo}</strong>{reuniao.data && <span className="text-xs text-tinta-3">{reuniao.data}</span>}</div>
+                      <Botao type="button" variante="secundario" onClick={() => void importarTranscricaoTactiq(reuniao)} disabled={importandoTactiq === reuniao.id}>
+                        {importandoTactiq === reuniao.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Usar
+                      </Botao>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             {resultadoTriagem && <p className="mt-1 text-xs text-tinta-2">{resultadoTriagem}</p>}
           </div>
           <div className="mb-4">

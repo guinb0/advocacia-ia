@@ -2516,6 +2516,37 @@ def tactiq_status(usuario: auth.Usuario = Depends(auth.usuario_atual)):
     return tactiq.status(usuario.id)
 
 
+@app.get("/api/tactiq/ferramentas")
+def tactiq_ferramentas(usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Diagnóstico do MCP remoto; não expõe token nem conteúdo de reunião."""
+    try:
+        return {"ferramentas": tactiq.ferramentas(usuario.id)}
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, f"Não foi possível consultar o MCP do Tactiq: {exc}") from exc
+
+
+@app.get("/api/tactiq/reunioes")
+def tactiq_reunioes(usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Lista as reuniões que o advogado já pode ler no Tactiq."""
+    try:
+        return {"reunioes": tactiq.listar_reunioes(usuario.id)}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "Não foi possível carregar as reuniões do Tactiq agora.") from exc
+
+
+@app.get("/api/tactiq/reunioes/{reuniao_id}/transcricao")
+def tactiq_transcricao(reuniao_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Lê a transcrição selecionada sem expor o token Tactiq ao navegador."""
+    try:
+        return tactiq.transcricao(usuario.id, reuniao_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "Não foi possível carregar a transcrição do Tactiq agora.") from exc
+
+
 def _callback_tactiq(request: Request) -> str:
     """URL pública do OAuth; nunca o host interno api:8100 atrás do proxy."""
     # Em produção URL_PORTAL é o domínio HTTPS que o advogado abriu. Usar
@@ -2867,7 +2898,9 @@ def analisar_documentos_do_caso(caso_id: str):
     if armazenamento.obter_caso(caso_id) is None:
         raise HTTPException(404, "Caso não encontrado.")
     try:
-        return analise_documentos.analisar(caso_id)
+        analise = analise_documentos.analisar(caso_id)
+        analise["relatorio_global"] = analise_documentos.relatorio_global(caso_id)
+        return analise
     except analise_documentos.ErroAnaliseDocumentos as exc:
         raise HTTPException(503, str(exc)) from exc
 

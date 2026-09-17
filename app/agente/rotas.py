@@ -949,6 +949,17 @@ def configuracao_de_geracao(
     local = _configuracao_local(taxonomy_code, document_type)
     if local:
         return local
+    # `GERAL` é o escopo interno do escritório para estilo, não um nó da
+    # taxonomia do agente remoto. Consultá-lo lá devolvia "Código de taxonomia
+    # desconhecido" e impedia até abrir a tela de modelos.
+    if taxonomy_code.strip().upper() == "GERAL":
+        return {
+            "taxonomy_code": "GERAL",
+            "document_type": document_type,
+            "display_name": "Padrão geral do escritório",
+            "drafting_instructions": "",
+            "required_documents": [],
+        }
     try:
         remota = Cliente().configuracao_de_geracao(taxonomy_code, document_type)
         return _salvar_configuracao_local(remota)

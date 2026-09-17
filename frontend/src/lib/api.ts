@@ -1352,6 +1352,14 @@ export async function statusTactiq(): Promise<StatusTactiq> {
 export async function conectarTactiq(): Promise<{ url: string }> {
   return comoJson<{ url: string }>(await buscar("/api/tactiq/conectar", { method: "POST" }));
 }
+export interface ReuniaoTactiq { id: string; titulo: string; data: string }
+export async function listarReunioesTactiq(): Promise<ReuniaoTactiq[]> {
+  const dados = await comoJson<{ reunioes: ReuniaoTactiq[] }>(await buscar("/api/tactiq/reunioes"));
+  return dados.reunioes;
+}
+export async function obterTranscricaoTactiq(reuniaoId: string): Promise<{ id: string; titulo: string; texto: string }> {
+  return comoJson(await buscar(`/api/tactiq/reunioes/${encodeURIComponent(reuniaoId)}/transcricao`));
+}
 
 /** Cifra e salva o token do escritório para Clicksign/Autentique. Não testa
  *  sozinho — o botão "Testar conexão" (`testarProvedorAssinatura`) faz isso. */
