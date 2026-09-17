@@ -11,11 +11,26 @@ run.stderr.log
 rag-sincronizacao.log
 
 # Documentos de clientes e o banco dos casos: nunca vão para o repositório.
-dados/
-!dados/
+#
+# `dados/` seguido de `!dados/` NÃO ignorava nada: a segunda linha cancelava a
+# primeira, e `dados/.portal-segredo`, `dados/casos.db`, `dados/entrevistas/` e
+# `dados/contratos/` apareciam como arquivos comuns — um `git add -A` de
+# qualquer pessoa commitaria CPF, laudo, gravação de atendimento e o segredo do
+# portal. Nada disso chegou a ser commitado (conferido em todas as branches),
+# mas a rede estava furada, e o comentário logo abaixo ainda afirmava que
+# "`dados/` ja e ignorado".
+#
+# Apagar só o `!dados/` não resolve: com o DIRETÓRIO ignorado o Git não desce
+# nele, e as exceções dos manifestos deixariam de valer. O padrão que funciona é
+# ignorar o CONTEÚDO (`dados/*`) e reabrir caminho por caminho, um nível de cada
+# vez — por isso cada pasta preservada aparece duas vezes.
+dados/*
+!dados/corpus_juridico/
+dados/corpus_juridico/*
+!dados/corpus_juridico/manifesto.json
 !dados/legislacao_federal/
+dados/legislacao_federal/*
 !dados/legislacao_federal/manifesto.json
-dados/legislacao_federal/bruto/
 
 # Chaves de API. `dados/` ja e ignorado, mas .env na raiz e o lugar obvio onde
 # alguem colocaria a proxima — e sem esta linha ela iria para o repositorio.
