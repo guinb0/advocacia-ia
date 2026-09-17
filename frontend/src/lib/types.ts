@@ -249,6 +249,8 @@ export interface Entrega {
   item_codigo: string;
   arquivo: string;
   tipo_detectado: string | null;
+  /** Nome dado pela IA quando o arquivo não corresponde ao checklist atual. */
+  identificacao_ia?: string | null;
   /** `null` quando não há classificador para o item ou o OCR não reconheceu. */
   tipo_confere: boolean | null;
   veredito: Veredito | null;

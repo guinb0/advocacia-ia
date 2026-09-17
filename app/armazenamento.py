@@ -1422,7 +1422,8 @@ def listar_entregas(caso_id: str) -> list[dict[str, Any]]:
                    veredito, dados_utilizaveis, confirmado_manual, score_legibilidade,
                    itens_atendidos, texto_utilizavel, lote_id, roteamento_origem,
                    roteamento_confianca, roteamento_motivo,
-                   status_proc, erro_proc, criado_em
+                   status_proc, erro_proc, criado_em,
+                   JSON_VALUE(extracao_json, '$.classificacao_semantica.documento') AS identificacao_ia
               FROM entregas
              WHERE caso_id = ?
              ORDER BY criado_em

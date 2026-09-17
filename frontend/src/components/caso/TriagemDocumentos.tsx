@@ -83,11 +83,11 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
     <section className="mt-5 border border-atencao-borda rounded-cartao bg-atencao-claro overflow-hidden">
       <div className="px-5 py-4 border-b border-atencao-borda">
         <h2 className="flex gap-2 items-center m-0 text-tinta font-titulo text-lg font-semibold">
-          Sem categoria definida <Selo tom="atencao">{entregas.length}</Selo>
+          Outros documentos identificados <Selo tom="info">{entregas.length}</Selo>
         </h2>
         <p className="mt-1 mb-0 text-tinta-2 text-sm leading-[1.55]">
-          O arquivo foi preservado, mas a leitura não encontrou um destino seguro. Confira e escolha
-          o item correto; não é necessário enviar novamente.
+          A IA identificou estes arquivos, mas eles não correspondem a um item do checklist deste caso.
+          Eles continuam disponíveis no final e entram como contexto da análise e da petição.
         </p>
       </div>
       <ul className="m-0 p-0 list-none bg-papel">
@@ -97,7 +97,7 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
             <li key={entrega.id} className="px-5 py-4 border-b border-borda last:border-b-0">
               <div className="flex items-center gap-3 flex-wrap">
                 <Selo tom={lendo ? "info" : entrega.status_proc === "erro" ? "critico" : "atencao"}>
-                  {lendo ? "Lendo…" : entrega.status_proc === "erro" ? "Falha na leitura" : "Sem destino"}
+                  {lendo ? "Lendo…" : entrega.status_proc === "erro" ? "Falha na leitura" : "Identificado"}
                 </Selo>
                 <button
                   type="button"
@@ -112,7 +112,7 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
               </div>
 
               <p className="mt-2 mb-0 text-sm text-tinta-2">
-                Leitura da IA: <strong className="text-tinta">{tituloDaLeitura(entrega.tipo_detectado)}</strong>
+                Identificado pela IA: <strong className="text-tinta">{tituloDaLeitura(entrega.identificacao_ia || entrega.tipo_detectado)}</strong>
               </p>
 
               {entrega.alertas?.map((alerta, indice) => (

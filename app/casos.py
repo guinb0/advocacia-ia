@@ -237,7 +237,7 @@ def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[st
 
 
 def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
-    """O que dizer sobre um arquivo que chegou sem destino."""
+    """Documento adicional identificado, mas fora do checklist deste caso."""
     estado = entrega.get("status_proc", "pronto")
     if estado in {"na_fila", "processando"}:
         return ["Documento recebido. A leitura está em andamento."]
@@ -256,9 +256,12 @@ def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
             + " Remova-o se for repetido; se não for, atribua-o ao item — o sistema "
             "pedirá confirmação."
         ]
+    identificado = str(entrega.get("identificacao_ia") or "").strip()
+    if not identificado:
+        identificado = ROTULOS_TIPO.get(entrega.get("tipo_detectado"), "documento adicional")
     return [
-        "Este documento foi lido, mas não foi possível dizer a que item do "
-        "checklist ele responde. Escolha o item certo aqui ao lado."
+        f"A IA identificou este arquivo como {identificado}. Ele não é um item do "
+        "checklist deste caso, mas foi preservado e entra como contexto na análise e na petição."
         + (f" ({motivo})" if motivo else "")
     ]
 

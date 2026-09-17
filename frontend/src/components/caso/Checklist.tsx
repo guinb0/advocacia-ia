@@ -264,13 +264,6 @@ export default function Checklist({
         </Aviso>
       )}
 
-      <TriagemDocumentos
-        entregas={situacao.triagem ?? []}
-        itens={itens}
-        onAtribuir={onReatribuir}
-        onRemover={onRemover}
-      />
-
       <BarraAbas className="mt-5 mb-0" aria-label="Filtrar os documentos">
         {filtros.map((f) => (
           <BotaoAba key={f.id} ativa={filtro === f.id} onClick={() => setFiltro(f.id)}>
@@ -305,6 +298,13 @@ export default function Checklist({
       <div className="mt-5">
         <ResumoDocumentos itens={itens} />
       </div>
+
+      <TriagemDocumentos
+        entregas={situacao.triagem ?? []}
+        itens={itens}
+        onAtribuir={onReatribuir}
+        onRemover={onRemover}
+      />
 
       <div className="flex flex-col gap-5 mt-5">
         {/* Dentro do atendimento a chamada já está na tela e o advogado já
