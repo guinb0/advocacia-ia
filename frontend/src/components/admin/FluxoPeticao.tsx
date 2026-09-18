@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Mic, MicOff, Search } from "lucide-react";
+import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Maximize2, Mic, MicOff, Minimize2, Search } from "lucide-react";
 
 import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
 import ChatPeticao from "@/components/admin/ChatPeticao";
@@ -1623,6 +1623,9 @@ function ComparacaoRevisao({
   onAceitar: () => void; onDescartar: () => void;
 }) {
   const comparacaoRef = useRef<HTMLElement>(null);
+  // Tela cheia: com a peça dividida ao meio, cada coluna fica estreita demais
+  // para o advogado achar a alteração num parágrafo longo.
+  const [expandido, setExpandido] = useState(false);
   const porCodigo = new Map(candidata.map((s) => [s.code, s]));
   const todos = [...anterior, ...candidata.filter((s) => !anterior.some((a) => a.code === s.code))];
   const anteriorVisivel = todos.map((s) => anterior.find((a) => a.code === s.code) ?? { ...s, content: "" });
@@ -1634,9 +1637,9 @@ function ComparacaoRevisao({
   const opostasDaCandidata = parearSecoes(candidataVisivel, anteriorVisivel);
   const mudancas = todos.filter((s) => (porCodigo.get(s.code)?.content ?? "") !== (anterior.find((a) => a.code === s.code)?.content ?? "")).length;
   useEffect(() => {
-    // Ao chegar a candidata, o advogado não precisa procurar a alteração numa
-    // peça longa. O primeiro trecho marcado (vermelho ou verde) vira o ponto
-    // de entrada da revisão; `scrollIntoView` também ajusta a coluna rolável.
+    // Ao chegar a candidata (ou ao expandir), o advogado não precisa procurar a
+    // alteração numa peça longa. O primeiro trecho marcado (vermelho ou verde)
+    // vira o ponto de entrada; `scrollIntoView` também ajusta a coluna rolável.
     const primeiro = comparacaoRef.current?.querySelector<HTMLElement>("[data-revisao-alteracao='true']");
     if (!primeiro) return;
     const quadro = window.requestAnimationFrame(() => {
@@ -1644,11 +1647,27 @@ function ComparacaoRevisao({
       primeiro.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(quadro);
-  }, [anterior, candidata]);
+  }, [anterior, candidata, expandido]);
+  useEffect(() => {
+    if (!expandido) return;
+    const fecharComEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setExpandido(false); };
+    const overflowAnterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", fecharComEsc);
+    return () => {
+      document.body.style.overflow = overflowAnterior;
+      window.removeEventListener("keydown", fecharComEsc);
+    };
+  }, [expandido]);
   return (
     <section
       ref={comparacaoRef}
-      className="grid gap-3 rounded-cartao border border-atencao-borda border-l-4 border-l-atencao-marca bg-papel p-4 shadow-cartao-forte"
+      role={expandido ? "dialog" : undefined}
+      aria-modal={expandido || undefined}
+      aria-label={expandido ? "Revisão pendente em tela cheia" : undefined}
+      className={expandido
+        ? "fixed inset-0 z-50 grid grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3 bg-papel p-4 sm:p-6"
+        : "grid gap-3 rounded-cartao border border-atencao-borda border-l-4 border-l-atencao-marca bg-papel p-4 shadow-cartao-forte"}
     >
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-3">
@@ -1660,20 +1679,31 @@ function ComparacaoRevisao({
             <p className={SUB}>Compare a peça completa antes de aceitar.</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           <Selo tom="atencao" simbolo="!">Aguardando sua decisão</Selo>
           <Selo tom="info" simbolo="✎">{mudancas} seção(ões) alterada(s)</Selo>
         </div>
       </header>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-campo bg-papel-2 px-3 py-2 text-xs text-tinta-2">
-        <span className="font-semibold text-tinta">Como ler:</span>
-        <span><span className="bg-red-100 px-1 text-red-900 line-through">riscado</span> sai do texto</span>
-        <span><span className="bg-green-100 px-1 text-green-900">destacado</span> entra no texto</span>
-        <span className="text-tinta-3">A peça oficial continua preservada até você aceitar.</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-campo bg-papel-2 px-3 py-2 text-xs text-tinta-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-semibold text-tinta">Como ler:</span>
+          <span><span className="bg-red-100 px-1 text-red-900 line-through">vermelho</span> foi apagado</span>
+          <span><span className="bg-green-100 px-1 text-green-900">verde</span> foi adicionado</span>
+          <span className="text-tinta-3">A peça oficial continua preservada até você aceitar.</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpandido((v) => !v)}
+          aria-pressed={expandido}
+          className="inline-flex items-center gap-2 rounded-campo border border-borda-campo bg-papel px-4 py-2 text-sm font-semibold text-tinta shadow-sm transition hover:bg-papel-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        >
+          {expandido ? <Minimize2 size={18} aria-hidden /> : <Maximize2 size={18} aria-hidden />}
+          {expandido ? "Sair da tela cheia" : "Expandir comparação"}
+        </button>
       </div>
-      <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-        <ColunaComparacao titulo="Versão anterior" secoes={anteriorVisivel} oposta={opostasDaAnterior} tipo="antes" />
-        <ColunaComparacao titulo="Nova versão" secoes={candidataVisivel} oposta={opostasDaCandidata} tipo="depois" />
+      <div className={`grid min-h-0 grid-cols-2 gap-3 max-[760px]:grid-cols-1 ${expandido ? "max-[760px]:overflow-auto" : ""}`}>
+        <ColunaComparacao titulo="Versão anterior" secoes={anteriorVisivel} oposta={opostasDaAnterior} tipo="antes" expandido={expandido} />
+        <ColunaComparacao titulo="Nova versão" secoes={candidataVisivel} oposta={opostasDaCandidata} tipo="depois" expandido={expandido} />
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-borda pt-3">
         <Botao variante="secundario" pequeno disabled={revisando} onClick={onDescartar}>✕ Descartar revisão</Botao>
@@ -1683,13 +1713,13 @@ function ComparacaoRevisao({
   );
 }
 
-function ColunaComparacao({ titulo, secoes, oposta, tipo }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoComparavel>; tipo: "antes" | "depois" }) {
-  return <article className={`min-w-0 max-h-[70vh] overflow-auto rounded-campo border border-borda border-t-4 bg-papel-2 p-3 ${tipo === "antes" ? "border-t-borda-campo" : "border-t-ok"}`}>
+function ColunaComparacao({ titulo, secoes, oposta, tipo, expandido }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoComparavel>; tipo: "antes" | "depois"; expandido: boolean }) {
+  return <article className={`min-w-0 overflow-auto rounded-campo border border-borda border-t-4 bg-papel-2 ${expandido ? "h-full min-h-0 p-5" : "max-h-[70vh] p-3"} ${tipo === "antes" ? "border-t-red-500" : "border-t-ok"}`}>
     <h4 className="sticky top-0 z-[1] mb-2 flex items-center justify-between gap-2 bg-papel-2 py-1 text-sm font-semibold text-tinta">
       {titulo}
       {tipo === "antes" ? <Selo tom="neutro" simbolo="↺">Atual</Selo> : <Selo tom="ok" simbolo="✓">Proposta da IA</Selo>}
     </h4>
-    {secoes.map((secao, i) => <div key={`${secao.code}-${i}`} className="mb-4 whitespace-pre-wrap text-sm leading-relaxed text-tinta">
+    {secoes.map((secao, i) => <div key={`${secao.code}-${i}`} className={`mb-4 whitespace-pre-wrap leading-relaxed text-tinta ${expandido ? "text-base" : "text-sm"}`}>
       <p className="mb-1 font-semibold">{secao.label}</p>
       <TextoComDiff texto={secao.content} outro={oposta.get(secao.code)?.content ?? ""} tipo={tipo} />
     </div>)}

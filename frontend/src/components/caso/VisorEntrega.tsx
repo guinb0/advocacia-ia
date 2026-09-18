@@ -62,22 +62,79 @@ function formatarTipoDocumento(tipo: string): string {
     .replace(/\b\p{L}/gu, (letra) => letra.toLocaleUpperCase("pt-BR"));
 }
 
+/** Passar de um documento a outro sem fechar o visor. */
+export interface NavegacaoVisor {
+  /** Posição do documento aberto, começando em 1. */
+  posicao: number;
+  total: number;
+  /** Nome do item do checklist a que o documento pertence. */
+  rotulo?: string;
+  onAnterior: () => void;
+  onProximo: () => void;
+}
+
 interface Props {
   entregaId: string;
   arquivo: string;
   onFechar: () => void;
+  navegacao?: NavegacaoVisor;
 }
 
+const CHAVE_TELA_CHEIA = "visor-entrega:tela-cheia";
+
+/** A preferência de tela cheia vale para os próximos documentos abertos:
+ *  quem precisa do documento grande precisa dele em todos. */
+function lerTelaCheia(): boolean {
+  try {
+    return window.localStorage.getItem(CHAVE_TELA_CHEIA) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function gravarTelaCheia(valor: boolean) {
+  try {
+    window.localStorage.setItem(CHAVE_TELA_CHEIA, valor ? "1" : "0");
+  } catch {
+    /* sem armazenamento (aba anônima): vale só enquanto o visor está aberto */
+  }
+}
+
+/** Tecla digitada num campo é texto, não comando do visor. */
+function digitandoEmCampo(alvo: EventTarget | null): boolean {
+  const el = alvo as HTMLElement | null;
+  return Boolean(el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)));
+}
+
+const BOTAO_CABECALHO =
+  "min-h-10 px-3 py-[6px] text-sm gap-[6px] inline-flex items-center justify-center border border-borda-campo bg-papel text-acao rounded-campo font-ui font-semibold text-center no-underline cursor-pointer transition-[background-color,border-color,color] duration-[120ms] ease-out hover:bg-acao-clara hover:border-acao disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-papel disabled:hover:border-borda-campo";
+
 /** Mostra o arquivo como chegou (sem baixar) e os campos que o OCR extraiu. */
-export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
+export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }: Props) {
   const [detalhe, setDetalhe] = useState<EntregaDetalhe | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [baixandoPdf, setBaixandoPdf] = useState(false);
   const [erroPdf, setErroPdf] = useState<string | null>(null);
+  const [telaCheia, setTelaCheia] = useState(false);
   const fecharRef = useRef<HTMLButtonElement>(null);
   const { url: urlArquivo, erro: erroArquivo } = useArquivoEntrega(entregaId);
 
   useEffect(() => {
+    setTelaCheia(lerTelaCheia());
+  }, []);
+
+  function alternarTelaCheia() {
+    const proximo = !telaCheia;
+    setTelaCheia(proximo);
+    gravarTelaCheia(proximo);
+  }
+
+  useEffect(() => {
+    // O visor continua aberto ao passar para o próximo documento: sem limpar,
+    // os dados do anterior ficariam na tela até os novos chegarem.
+    setDetalhe(null);
+    setErro(null);
+    setErroPdf(null);
     let cancelado = false;
     let temporizador: ReturnType<typeof setTimeout> | undefined;
     async function carregar() {
@@ -100,18 +157,53 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
     };
   }, [entregaId]);
 
-  // Esc fecha; o foco vai para o botão de fechar para quem navega por teclado.
+  // O foco vai para o botão de fechar ao abrir, para quem navega por teclado.
+  // Só ao abrir: passar de documento não pode arrancar o foco de onde está.
   useEffect(() => {
     fecharRef.current?.focus();
+  }, []);
+
+  // O PDF aparece num <iframe>: clicar nele leva o foco para o leitor de PDF
+  // do navegador, que engole as teclas — e ← → paravam de trocar de documento.
+  // Quando o foco entra no iframe, ele volta para o visor. O PDF continua
+  // rolando com a roda do mouse, e os botões dele respondem ao clique.
+  const dialogoRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function aoPerderFoco() {
+      window.setTimeout(() => {
+        if (document.activeElement?.tagName === "IFRAME") dialogoRef.current?.focus();
+      }, 0);
+    }
+    window.addEventListener("blur", aoPerderFoco);
+    return () => window.removeEventListener("blur", aoPerderFoco);
+  }, []);
+
+  // Esc fecha; ← e → passam de documento. Por ref, para o ouvinte não ser
+  // refeito a cada render do checklist (que recria as funções).
+  const teclas = useRef({ onFechar, navegacao });
+  teclas.current = { onFechar, navegacao };
+  const temAnterior = Boolean(navegacao && navegacao.posicao > 1);
+  const temProximo = Boolean(navegacao && navegacao.posicao < navegacao.total);
+  useEffect(() => {
     function aoTeclar(e: KeyboardEvent) {
+      const { onFechar: fechar, navegacao: nav } = teclas.current;
       if (e.key === "Escape") {
         e.stopPropagation();
-        onFechar();
+        fechar();
+        return;
+      }
+      if (!nav || e.altKey || e.ctrlKey || e.metaKey || digitandoEmCampo(e.target)) return;
+      if (e.key === "ArrowLeft" && nav.posicao > 1) {
+        e.preventDefault();
+        nav.onAnterior();
+      } else if (e.key === "ArrowRight" && nav.posicao < nav.total) {
+        e.preventDefault();
+        nav.onProximo();
       }
     }
     window.addEventListener("keydown", aoTeclar, true);
     return () => window.removeEventListener("keydown", aoTeclar, true);
-  }, [onFechar]);
+  }, []);
 
   const extracao = detalhe?.extracao;
   const validacao = extracao?.validacao;
@@ -156,33 +248,86 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
 
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center p-6 z-50 bg-[rgba(20,32,46,0.45)]"
+      className={`fixed inset-0 flex items-center justify-center z-50 bg-[rgba(20,32,46,0.45)] ${telaCheia ? "p-0" : "p-6"}`}
       onClick={(e) => {
         if (e.target === e.currentTarget) onFechar();
       }}
       role="dialog"
       aria-modal="true"
       aria-label={`Documento ${arquivo}`}
+      ref={dialogoRef}
+      tabIndex={-1}
+      style={{ outline: "none" }}
     >
-      <div className="w-[min(1100px,100%)] max-h-full flex flex-col border border-borda-forte rounded-cartao bg-papel shadow-modal overflow-hidden">
+      <div
+        className={
+          telaCheia
+            ? "w-full h-full flex flex-col bg-papel overflow-hidden"
+            : "w-[min(1100px,100%)] max-h-full flex flex-col border border-borda-forte rounded-cartao bg-papel shadow-modal overflow-hidden"
+        }
+      >
         <div className="flex justify-between items-center gap-4 px-5 py-[14px] border-b border-borda bg-papel-2 flex-wrap">
-          <div>
-            <h2 className="m-0 text-lg">Documento enviado</h2>
+          <div className="min-w-0">
+            <h2 className="m-0 text-lg">{navegacao?.rotulo ?? "Documento enviado"}</h2>
             <div className="mt-[2px] text-tinta-3 font-codigo text-xs [overflow-wrap:anywhere]">{arquivo}</div>
           </div>
-          {/* Botão nativo, não o primitivo <Botao>: ele não encaminha `ref`, e
-            * o foco ao abrir depende de um ref real no DOM. */}
-          <button
-            ref={fecharRef}
-            type="button"
-            className="min-h-8 px-[11px] py-[6px] text-xs gap-[6px] inline-flex items-center justify-center border border-borda-campo bg-papel text-acao rounded-campo font-ui font-semibold text-center no-underline cursor-pointer transition-[background-color,border-color,color] duration-[120ms] ease-out hover:bg-acao-clara hover:border-acao"
-            onClick={onFechar}
-          >
-            Fechar ✕
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {navegacao && navegacao.total > 1 && (
+              <div className="flex items-center gap-2" role="group" aria-label="Navegar entre os documentos">
+                <button
+                  type="button"
+                  className={BOTAO_CABECALHO}
+                  onClick={navegacao.onAnterior}
+                  disabled={!temAnterior}
+                  title="Documento anterior (tecla ←)"
+                  aria-keyshortcuts="ArrowLeft"
+                >
+                  <span aria-hidden>←</span> Anterior
+                </button>
+                <span className="min-w-[4.5rem] text-center leading-tight" aria-live="polite">
+                  <span className="block text-tinta-2 text-sm tabular-nums">
+                    {navegacao.posicao} de {navegacao.total}
+                  </span>
+                  <span className="block text-tinta-3 text-xs" aria-hidden>
+                    use ← → do teclado
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className={BOTAO_CABECALHO}
+                  onClick={navegacao.onProximo}
+                  disabled={!temProximo}
+                  title="Próximo documento (tecla →)"
+                  aria-keyshortcuts="ArrowRight"
+                >
+                  Próximo <span aria-hidden>→</span>
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              className={BOTAO_CABECALHO}
+              onClick={alternarTelaCheia}
+              aria-pressed={telaCheia}
+              title={telaCheia ? "Voltar ao tamanho normal" : "Ocupar a página inteira com o documento"}
+            >
+              <span aria-hidden>{telaCheia ? "⤡" : "⤢"}</span> {telaCheia ? "Reduzir" : "Tela cheia"}
+            </button>
+            {/* Botão nativo, não o primitivo <Botao>: ele não encaminha `ref`, e
+              * o foco ao abrir depende de um ref real no DOM. */}
+            <button ref={fecharRef} type="button" className={BOTAO_CABECALHO} onClick={onFechar}>
+              Fechar ✕
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-[minmax(280px,45%)_1fr] max-[900px]:grid-cols-1 overflow-hidden min-h-0">
+        <div
+          className={`grid max-[900px]:grid-cols-1 overflow-hidden min-h-0 ${
+            telaCheia
+              ? "flex-1 grid-cols-[minmax(320px,62%)_1fr] grid-rows-[minmax(0,1fr)] max-[900px]:grid-rows-none max-[900px]:overflow-auto"
+              : "grid-cols-[minmax(280px,45%)_1fr]"
+          }`}
+        >
           <div className="flex items-center justify-center p-[14px] border-r border-borda bg-papel-3 overflow-auto min-h-[260px]">
             {erroArquivo ? (
               <p className="p-6 text-tinta-3 text-sm leading-[1.6] text-center">{erroArquivo}</p>
@@ -190,7 +335,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
               <p className="p-6 text-tinta-3 text-sm leading-[1.6] text-center">Carregando o arquivo…</p>
             ) : ehPdf(arquivo) ? (
               <iframe
-                className="w-full h-[68vh] border-none rounded-campo bg-papel"
+                className={`w-full border-none rounded-campo bg-papel ${telaCheia ? "h-full min-h-[60vh]" : "h-[68vh]"}`}
                 src={urlArquivo}
                 title={`Pré-visualização de ${arquivo}`}
               />
@@ -198,7 +343,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar }: Props) {
               /* eslint-disable-next-line @next/next/no-img-element -- é um
                  object URL de blob, que o otimizador do Next não processa. */
               <img
-                className="max-w-full max-h-[68vh] rounded-campo shadow-cartao-forte object-contain block"
+                className={`max-w-full rounded-campo shadow-cartao-forte object-contain block ${telaCheia ? "max-h-full" : "max-h-[68vh]"}`}
                 src={urlArquivo}
                 alt={`Documento ${arquivo}`}
               />
