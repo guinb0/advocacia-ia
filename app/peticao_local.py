@@ -504,6 +504,74 @@ def documentos_ocr(caso_id: str) -> list[dict[str, str]]:
     return documentos
 
 
+def anexos_do_caso(caso_id: str) -> list[dict[str, Any]]:
+    """TODOS os anexos do caso, lidos ou não, com o que o OCR já organizou.
+
+    `documentos_ocr` serve à geração: só o texto, e só de quem tem texto. O chat da
+    petição precisa de mais, e a falta disso foi medida numa reclamação real: o
+    advogado pediu o número de um documento que estava no caso, o chat procurou pelo
+    NOME do arquivo (`IMG_….jpg`), não achou, e afirmou que o documento não existia —
+    porque o anexo sem texto sumia da lista e o prompt dizia que o que não está na
+    lista não existe.
+
+    Aqui vai cada entrega com o tipo classificado ("CTPS", "RG"), os campos já
+    extraídos (número, série, data) e a situação da leitura (`lido`, `na_fila`,
+    `processando`, `erro`, `sem_texto`). O texto vai INTEIRO: quem busca precisa achar
+    o número no fim do documento, e o corte é feito por quem mostra o trecho.
+    Duas consultas, como `documentos_ocr` — não uma por arquivo.
+    """
+    extracoes = {e["id"]: e.get("extracao") or {} for e in armazenamento.listar_extracoes_do_caso(caso_id)}
+    anexos: list[dict[str, Any]] = []
+    for entrega in armazenamento.listar_entregas(caso_id):
+        extracao = extracoes.get(str(entrega.get("id"))) or {}
+        texto = str(extracao.get("texto_completo") or "").strip()
+        tipo = extracao.get("tipo") if isinstance(extracao.get("tipo"), dict) else {}
+        semantica = extracao.get("classificacao_semantica")
+        semantica = semantica if isinstance(semantica, dict) else {}
+        # O tipo determinístico só reconhece documento de identidade e comprovante;
+        # para o resto ele devolve "Documento não identificado" e quem sabe o que o
+        # anexo é, é a leitura semântica. Medido no caso-gabarito: 6 de 8 anexos
+        # chegavam ao chat como "não identificado" com a semântica certa ao lado.
+        candidatos = (
+            tipo.get("descricao") if str(tipo.get("codigo") or "") not in ("", "desconhecido") else "",
+            semantica.get("documento"),
+            entrega.get("identificacao_ia"),
+            tipo.get("descricao"),
+            entrega.get("tipo_detectado"),
+        )
+        descricao = next(
+            (
+                str(c).strip()
+                for c in candidatos
+                if str(c or "").strip()
+                and str(c).strip().lower() not in ("desconhecido", "documento não identificado", "indefinido")
+            ),
+            "",
+        )
+        campos = [
+            {"rotulo": str(c.get("rotulo") or c.get("nome") or ""), "valor": str(c.get("valor") or "")}
+            for c in (extracao.get("campos") or [])
+            if isinstance(c, dict) and str(c.get("valor") or "").strip()
+        ]
+        status = str(entrega.get("status_proc") or "").lower()
+        if texto:
+            situacao = "lido"
+        elif status in ("na_fila", "processando", "erro"):
+            situacao = status
+        else:
+            situacao = "sem_texto"
+        anexos.append(
+            {
+                "arquivo": str(entrega.get("arquivo") or ""),
+                "tipo": descricao,
+                "campos": campos,
+                "texto": texto,
+                "situacao": situacao,
+            }
+        )
+    return anexos
+
+
 def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
     """Quem é o autor da ação, com a autoridade do CADASTRO — não da transcrição.
 

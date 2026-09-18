@@ -37,6 +37,8 @@ import {
   registrarEventoNoChat,
   type AcaoProposta,
   type AvisoParaOChat,
+  type ConfiancaDaFonte,
+  type FonteDaWeb,
   type MensagemDoChat,
 } from "@/lib/chatPeticao";
 
@@ -594,28 +596,7 @@ function Resposta({
       {proativa && <span className={estilos.selo}>A IA avisou</span>}
       <RespostaFormatada texto={mensagem.conteudo} />
 
-      {mensagem.fontes.length > 0 && (
-        <div className={estilos.fontes}>
-          <p className={estilos.tituloDasFontes}>
-            Da web — confira antes de usar na peça ({mensagem.fontes.length})
-          </p>
-          <ol className={estilos.listaDeFontes}>
-            {mensagem.fontes.map((fonte) => (
-              <li key={fonte.url}>
-                <a
-                  href={fonte.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-acao underline break-words"
-                >
-                  {fonte.titulo || dominioDe(fonte.url)}
-                </a>
-                <span className={estilos.dominio}>{dominioDe(fonte.url)}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
+      {mensagem.fontes.length > 0 && <Fontes fontes={mensagem.fontes} />}
 
       {mensagem.acoes.map((acao, indice) => {
         const chave = `${mensagem.id}:${indice}`;
@@ -629,6 +610,66 @@ function Resposta({
           />
         );
       })}
+    </div>
+  );
+}
+
+/** Como cada camada da hierarquia se apresenta. Palavra + cor, nunca só cor. */
+const CAMADAS: Record<ConfiancaDaFonte, { rotulo: string; classe: string }> = {
+  OFICIAL: { rotulo: "Oficial", classe: "border-ok bg-ok-claro text-ok" },
+  TRIBUNAL: { rotulo: "Tribunal", classe: "border-ok bg-ok-claro text-ok" },
+  PUBLICA: { rotulo: "Órgão público", classe: "border-acao-borda bg-acao-clara text-acao" },
+  SECUNDARIA: { rotulo: "Não oficial", classe: "border-atencao-borda bg-atencao-claro text-atencao" },
+};
+
+/**
+ * As fontes da web, na ordem em que o servidor as classificou: oficial primeiro.
+ *
+ * O aviso do topo muda conforme a busca tenha ou não encontrado norma ou tribunal. Sem
+ * ele, uma resposta inteiramente apoiada em portal jurídico chegava com a mesma cara de
+ * uma apoiada no Planalto — e é dela que sai o número de súmula que vai para a peça.
+ */
+function Fontes({ fontes }: { fontes: FonteDaWeb[] }) {
+  const oficiais = fontes.filter(
+    (f) => f.confianca === "OFICIAL" || f.confianca === "TRIBUNAL",
+  ).length;
+  return (
+    <div className={estilos.fontes}>
+      <p className={estilos.tituloDasFontes}>
+        Da web — {fontes.length} fonte(s)
+        {oficiais > 0 ? `, ${oficiais} oficial(is)` : ", nenhuma oficial"}
+      </p>
+      {oficiais === 0 && (
+        <p className="mb-2 mt-0 text-xs leading-relaxed text-atencao">
+          Nenhuma norma no Planalto, decisão no site do tribunal ou órgão público
+          sustentou esta busca. Confirme na fonte antes de levar para a peça.
+        </p>
+      )}
+      <ol className={estilos.listaDeFontes}>
+        {fontes.map((fonte) => {
+          const camada = CAMADAS[fonte.confianca] ?? CAMADAS.SECUNDARIA;
+          return (
+            <li key={fonte.url}>
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <a
+                  href={fonte.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-acao underline break-words"
+                >
+                  {fonte.titulo || dominioDe(fonte.url)}
+                </a>
+                <span
+                  className={`rounded-pill border px-[6px] py-[1px] text-[11px] font-semibold ${camada.classe}`}
+                >
+                  {camada.rotulo}
+                </span>
+              </span>
+              <span className={estilos.dominio}>{dominioDe(fonte.url)}</span>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
