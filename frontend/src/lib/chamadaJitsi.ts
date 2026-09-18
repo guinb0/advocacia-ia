@@ -93,6 +93,29 @@ const VIDEO_PEDIDO = {
   frameRate: { ideal: FPS_VIDEO, max: FPS_VIDEO },
 } as const;
 
+const TENTATIVAS_VIDEO: ReadonlyArray<Record<string, unknown>> = [
+  { resolution: ALTURA_VIDEO, constraints: { video: VIDEO_PEDIDO } },
+  {
+    resolution: 480,
+    constraints: {
+      video: {
+        height: { ideal: 480, min: ALTURA_MINIMA, max: 480 },
+        frameRate: { ideal: 24, max: 30 },
+      },
+    },
+  },
+  {
+    resolution: 240,
+    constraints: {
+      video: {
+        height: { ideal: 240, min: 120, max: 360 },
+        frameRate: { ideal: 15, max: 24 },
+      },
+    },
+  },
+  { constraints: { video: true } },
+];
+
 export type PapelChamada = "advogado" | "cliente";
 
 export type EstadoChamada =
@@ -301,25 +324,43 @@ function ehCelular(): boolean {
   return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
 
-async function abrirVideoComFallback(api: ApiJitsi): Promise<FaixaJitsi[]> {
+async function abrirComFallback(
+  api: ApiJitsi,
+  devices: string[],
+  opcoesBase: Record<string, unknown> = {},
+): Promise<FaixaJitsi[]> {
   let ultimo: unknown = null;
-  /* A escada começa no que se quer e desce só o necessário. Antes ela começava
-   * em `{}` — "o que vier" — e a webcam que negociasse mal já entregava 240p
-   * para o resto da entrevista, sem nada na tela dizendo por quê. */
-  for (const opcoes of [
-    { resolution: ALTURA_VIDEO, constraints: { video: VIDEO_PEDIDO } },
-    { resolution: 480 },
-    { resolution: 240, constraints: { video: true } },
-  ]) {
+  for (const opcoes of TENTATIVAS_VIDEO) {
     try {
-      const faixas = await api.createLocalTracks({ devices: ["video"], ...opcoes });
-      if (faixas.some((f) => f.getType() === "video")) return faixas;
+      const faixas = await api.createLocalTracks({ devices, ...opcoesBase, ...opcoes });
+      const temVideo = faixas.some((f) => f.getType() === "video");
+      const temAudio = !devices.includes("audio") || faixas.some((f) => f.getType() === "audio");
+      if (temAudio && temVideo) return faixas;
+      await Promise.all(faixas.map((f) => f.dispose().catch(() => undefined)));
+      ultimo = new Error("A câmera não devolveu uma faixa de vídeo.");
     } catch (e) {
       ultimo = e;
-      if (/permission|NotAllowed|Security|not_found|NotFound/i.test(textoDoErro(e))) break;
+      if (erroImpedeFallbackDeVideo(e)) break;
     }
   }
   throw ultimo ?? new Error("Nenhuma câmera encontrada.");
+}
+
+async function abrirVideoComFallback(api: ApiJitsi): Promise<FaixaJitsi[]> {
+  return abrirComFallback(api, ["video"]);
+}
+
+async function abrirAudioEVideoComFallback(
+  api: ApiJitsi,
+  opcoesAudio: Record<string, unknown>,
+): Promise<FaixaJitsi[]> {
+  return abrirComFallback(api, ["audio", "video"], opcoesAudio);
+}
+
+function erroImpedeFallbackDeVideo(e: unknown): boolean {
+  return /permission|NotAllowed|Security|denied|not_found|NotFound|DevicesNotFound|NotReadable|TrackStart|in use/i.test(
+    textoDoErro(e),
+  );
 }
 
 function textoDoErro(e: unknown): string {
@@ -544,12 +585,7 @@ export class ChamadaJitsi {
     let erroCamera: unknown = null;
     if (querCamera) {
       try {
-        faixas = await api.createLocalTracks({
-          devices: ["audio", "video"],
-          ...comMicrofone,
-          resolution: ALTURA_VIDEO,
-          constraints: { video: VIDEO_PEDIDO },
-        });
+        faixas = await abrirAudioEVideoComFallback(api, comMicrofone);
       } catch (e) {
         erroCamera = e;
         faixas = [];
