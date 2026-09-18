@@ -761,6 +761,105 @@ checar(any(a.get("tipo") == "REVISAR" for a in payload.get("acoes", [])), "e a b
 checar("não vou" not in final["mensagem"]["conteudo"].lower(), "e a recusa não fica gravada")
 
 
+# ------------------------------- 13. a pesquisa feita não é refeita na pergunta seguinte
+
+print("\n13. Pesquisas na web lembradas entre perguntas")
+
+sumula = {
+    "pergunta": "Súmula 378 TST estabilidade",
+    "resposta": "A Súmula 378 do TST garante estabilidade ao acidentado.",
+    "fontes": [{"url": "https://www.tst.jus.br/sumulas", "titulo": "TST", "confianca": "TRIBUNAL"}],
+}
+checar(
+    not chat_peticao.citou_sem_conferir("A Súmula nº 378 do TST garante.", [], [], [sumula]),
+    "súmula confirmada numa pesquisa anterior não é cobrada de novo",
+)
+checar(
+    chat_peticao.citou_sem_conferir("A Súmula 443 do TST protege.", [], [], [sumula]),
+    "mas outra súmula, que a pesquisa não cobriu, é",
+)
+checar(
+    chat_peticao.citou_sem_conferir(
+        "A Súmula 378 e a Súmula 443 do TST protegem.", [], [], [sumula]
+    ),
+    "e uma citação coberta não salva a outra no mesmo texto",
+)
+checar(
+    chat_peticao.citou_sem_conferir(
+        "A Súmula 378 do TST e o art. 927 do Código Civil.", [], [], [sumula]
+    ),
+    "nem salva a norma que ninguém conferiu",
+)
+
+falso = instalar_armazenamento()
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+idas_a_internet: list[str] = []
+
+
+def executar_contando(nome, caso_id, argumentos):
+    if nome == "pesquisar_na_web":
+        idas_a_internet.append(argumentos.get("pergunta"))
+        return {"falhou": False, "origem": "web", **{k: v for k, v in sumula.items() if k != "pergunta"}}
+    return {}
+
+
+chat_peticao.executar_ferramenta = executar_contando  # type: ignore[assignment]
+rodadas(
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "Súmula 378 TST estabilidade"})]},
+    {"texto": "A Súmula 378 do TST garante a estabilidade."},
+)
+primeira = list(chat_peticao.conversar("caso-1", "qual a súmula da estabilidade?", "advogado-1"))[-1]
+checar(len(idas_a_internet) == 1, "a primeira pergunta vai à internet")
+checar(
+    (primeira["mensagem"]["payload"] or {}).get("pesquisas", [{}])[0].get("pergunta")
+    == "Súmula 378 TST estabilidade",
+    "e a pesquisa fica gravada na resposta",
+)
+
+sistemas: list[str] = []
+roteiro = iter([
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "súmula 378  tst ESTABILIDADE"})]},
+    {"texto": "Confirmado: Súmula 378 do TST."},
+])
+
+
+def transmitir_espiando(mensagens):
+    sistemas.append(mensagens[0]["content"])
+    atual = next(roteiro)
+    yield {
+        "tipo": "mensagem",
+        "mensagem": {"role": "assistant", "content": atual.get("texto") or "", "tool_calls": atual.get("chamadas") or []},
+    }
+
+
+chat_peticao._transmitir = transmitir_espiando  # type: ignore[assignment]
+segunda = list(chat_peticao.conversar("caso-1", "e confirma essa súmula?", "advogado-1"))
+checar(len(idas_a_internet) == 1, "a mesma pesquisa pedida de novo NÃO vai à internet")
+checar(
+    any(e.get("texto") == "Reaproveitando a pesquisa já feita" for e in segunda if e["tipo"] == "etapa"),
+    "e a tela diz que reaproveitou",
+)
+checar(
+    "PESQUISAS NA WEB JÁ FEITAS" in sistemas[0] and "tst.jus.br/sumulas" in sistemas[0],
+    "a pesquisa anterior entra no contexto, com a fonte",
+)
+checar(not (segunda[-1]["mensagem"]["payload"] or {}).get("pesquisas"), "e não é gravada duas vezes")
+
+rodadas({"texto": "Como vimos, a Súmula 378 do TST garante a estabilidade."})
+terceira = list(chat_peticao.conversar("caso-1", "resume pra mim", "advogado-1"))[-1]
+carga = terceira["mensagem"]["payload"] or {}
+checar(terceira["tipo"] == "fim" and not carga.get("consultas"), "citar o que já foi pesquisado não gera cobrança")
+checar(
+    any(f.get("url") == "https://www.tst.jus.br/sumulas" for f in carga.get("fontes") or []),
+    "e a resposta leva a fonte da pesquisa anterior",
+)
+
+for m in falso.mensagens:
+    if (m.get("payload") or {}).get("pesquisas"):
+        m["criado_em"] = "2020-01-01T00:00:00"
+checar(chat_peticao._pesquisas_da_conversa("conversa-1") == [], "pesquisa vencida não é lembrada")
+
+
 if __name__ == "__main__":
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     raise SystemExit(1 if falhas else 0)

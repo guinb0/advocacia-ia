@@ -38,6 +38,7 @@ import os
 import re
 import unicodedata
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -185,6 +186,10 @@ Como você trabalha:
    use `propor_revisao_da_peticao` para isso: a revisão reescreve texto, não põe
    imagem. Se nenhuma foto servir, peça que ela seja anexada ao caso. Se houver
    dúvida entre fotos, cite os arquivos e pergunte qual antes de propor.
+14. PESQUISAS JÁ FEITAS. Se o contexto trouxer «PESQUISAS NA WEB JÁ FEITAS NESTA
+   CONVERSA», reaproveite-as: o que está ali já foi confirmado, com as fontes. Não
+   pesquise de novo o mesmo assunto — cite a fonte listada. Pesquise só o que for
+   novo ou o que aquelas fontes não cobrem.
 
 Responda em português do Brasil. Markdown simples é bem-vindo (listas, negrito,
 citação); a tela sabe renderizá-lo.\
@@ -1439,19 +1444,67 @@ COBRANCA_RECUSA = (
 )
 
 
-def citou_sem_conferir(texto: str, consultas: list[str], fontes: list[dict]) -> bool:
+def _citacoes(texto: str, padrao: re.Pattern[str]) -> set[tuple[str, str]]:
+    """Cada citação como (espécie, número): «Súmula nº 378» e «sumula 378» se acham."""
+    return {
+        (_normalizar(achado.group(0))[:3], re.sub(r"\D", "", achado.group(0)))
+        for achado in padrao.finditer(texto or "")
+    }
+
+
+def _pesquisas_que_confirmam(
+    texto: str, pesquisas: list[dict[str, Any]], padrao: re.Pattern[str]
+) -> list[dict[str, Any]] | None:
+    """As pesquisas anteriores que cobrem TODAS as citações do texto, ou `None`.
+
+    Basta uma citação fora delas para valer `None`: a súmula confirmada ontem não
+    autoriza a outra, citada hoje de memória no mesmo parágrafo.
+    """
+    faltam = _citacoes(texto, padrao)
+    usadas = []
+    for pesquisa in pesquisas:
+        cobre = faltam & _citacoes(str(pesquisa.get("resposta") or ""), padrao)
+        if cobre:
+            usadas.append(pesquisa)
+            faltam -= cobre
+    return usadas if not faltam else None
+
+
+def fontes_ja_pesquisadas(texto: str, pesquisas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """As fontes das pesquisas anteriores que confirmam o que o texto cita."""
+    fontes = []
+    for padrao in (_CITA_JURISPRUDENCIA, _CITA_NORMA):
+        if _citacoes(texto, padrao):
+            for pesquisa in _pesquisas_que_confirmam(texto, pesquisas, padrao) or []:
+                fontes.extend(pesquisa.get("fontes") or [])
+    return fontes
+
+
+def citou_sem_conferir(
+    texto: str,
+    consultas: list[str],
+    fontes: list[dict],
+    pesquisas: list[dict[str, Any]] | None = None,
+) -> bool:
     """`True` quando a resposta cita norma ou súmula sem ter aberto nada.
 
     A web confirma qualquer uma das duas; ler a minuta ou a análise confirma a norma,
     porque ela já foi conferida quando a peça foi redigida. Jurisprudência não: essa só
-    vale com fonte na mão.
+    vale com fonte na mão — que pode ser uma pesquisa anterior desta conversa, desde
+    que ela cubra cada número citado.
     """
     if "pesquisar_na_web" in consultas and fontes:
         return False
-    if _CITA_JURISPRUDENCIA.search(texto or ""):
+    pesquisas = pesquisas or []
+    if (
+        _CITA_JURISPRUDENCIA.search(texto or "")
+        and _pesquisas_que_confirmam(texto, pesquisas, _CITA_JURISPRUDENCIA) is None
+    ):
         return True
     leu_a_peca = any(c in consultas for c in ("ler_minuta", "ler_analise", "ler_historico"))
-    return bool(_CITA_NORMA.search(texto or "")) and not leu_a_peca
+    if not _CITA_NORMA.search(texto or "") or leu_a_peca:
+        return False
+    return _pesquisas_que_confirmam(texto, pesquisas, _CITA_NORMA) is None
 
 
 def prometeu_acao(texto: str) -> bool:
@@ -1592,6 +1645,84 @@ def _contextos_adicionais_para_o_modelo(conversa_id: str) -> str:
     return "\n\n---\n\n".join(blocos)
 
 
+# --------------------------------------------------- a memória das pesquisas
+#
+# Medido no banco (18/09): 32 pesquisas na web em 66 respostas, e 31 delas repetiam
+# a mesma ferramenta numa resposta seguinte da mesma conversa. O motivo: o histórico
+# só leva o TEXTO (ver `_historico_para_o_modelo`), então a súmula confirmada duas
+# perguntas atrás chegava ao modelo sem fonte — e a cobrança `citou_sem_conferir`
+# mandava pesquisar tudo de novo. A pesquisa é a única consulta que sai do caso (é
+# lenta e custa crédito), e a única cujo resultado não muda quando a peça muda: por
+# isso só ela é lembrada. Minuta e documentos continuam sendo lidos a cada pergunta.
+
+#: Quantas pesquisas anteriores voltam ao contexto, e quanto de cada resposta.
+PESQUISAS_LEMBRADAS = 8
+LIMITE_PESQUISA_LEMBRADA = 1500
+
+#: Pesquisa mais velha que isto é pesquisada de novo: súmula e tese mudam.
+VALIDADE_PESQUISA_DIAS = 30
+
+
+def _instante(valor: Any) -> datetime | None:
+    try:
+        instante = datetime.fromisoformat(str(valor or ""))
+    except ValueError:
+        return None
+    return instante if instante.tzinfo else instante.replace(tzinfo=timezone.utc)
+
+
+def _pesquisas_da_conversa(conversa_id: str) -> list[dict[str, Any]]:
+    """As pesquisas na web que ainda valem, da mais antiga à mais recente.
+
+    Vêm do payload das respostas gravadas, e não de uma tabela: é a conversa que as
+    guarda, e ela já é lida a cada pergunta. Pergunta repetida fica só a última.
+    """
+    limite = datetime.now(timezone.utc) - timedelta(days=VALIDADE_PESQUISA_DIAS)
+    por_pergunta: dict[str, dict[str, Any]] = {}
+    for mensagem in armazenamento.mensagens_da_conversa(conversa_id):
+        if mensagem.get("natureza") != "RESPOSTA":
+            continue
+        quando = _instante(mensagem.get("criado_em"))
+        if quando is not None and quando < limite:
+            continue
+        for pesquisa in (mensagem.get("payload") or {}).get("pesquisas") or []:
+            chave = _normalizar(pesquisa.get("pergunta"))
+            if chave and pesquisa.get("fontes"):
+                por_pergunta.pop(chave, None)
+                por_pergunta[chave] = {**pesquisa, "em": mensagem.get("criado_em")}
+    return list(por_pergunta.values())[-PESQUISAS_LEMBRADAS:]
+
+
+def _bloco_de_pesquisas(pesquisas: list[dict[str, Any]]) -> str:
+    """As pesquisas anteriores, escritas para o modelo reaproveitar."""
+    blocos = []
+    for numero, pesquisa in enumerate(pesquisas, 1):
+        fontes = "\n".join(
+            f"  - {f.get('titulo') or f.get('url')} — {f.get('url')} ({f.get('confianca') or 'sem classificação'})"
+            for f in pesquisa.get("fontes") or []
+        )
+        blocos.append(
+            f"[{numero}] Pesquisado em {str(pesquisa.get('em') or '')[:10]}: «{pesquisa.get('pergunta')}»\n"
+            f"Resposta: {str(pesquisa.get('resposta') or '')[:LIMITE_PESQUISA_LEMBRADA]}\n"
+            f"Fontes:\n{fontes}"
+        )
+    return "\n\n".join(blocos)
+
+
+def _pesquisa_lembrada(pesquisa: dict[str, Any]) -> dict[str, Any]:
+    """Uma pesquisa guardada no formato que `_pesquisar_na_web` devolve."""
+    return {
+        "falhou": False,
+        "origem": "web",
+        "reaproveitada": True,
+        "resposta": pesquisa.get("resposta"),
+        "fontes": pesquisa.get("fontes") or [],
+        "fontes_oficiais": pesquisa.get("fontes_oficiais"),
+        "tem_fonte_oficial": pesquisa.get("tem_fonte_oficial"),
+        "aviso": pesquisa.get("aviso"),
+    }
+
+
 def adicionar_contexto(caso_id: str, usuario: str, *, arquivo: str, relevancia: str, texto: str) -> dict[str, Any]:
     """Registra um anexo contextual, sem confundi-lo com prova já juntada."""
     conversa = _garantir_conversa(caso_id, usuario)
@@ -1656,13 +1787,19 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     }
 
     contexto_adicional = _contextos_adicionais_para_o_modelo(conversa_id)
+    pesquisas_anteriores = _pesquisas_da_conversa(conversa_id)
     mensagens: list[dict[str, Any]] = [
         {"role": "system", "content": INSTRUCAO + "\n\n" + _contexto_do_caso(caso_id)
-         + ("\n\n=== CONTEXTO ADICIONAL ENVIADO PELO ADVOGADO ===\n" + contexto_adicional if contexto_adicional else "")},
+         + ("\n\n=== CONTEXTO ADICIONAL ENVIADO PELO ADVOGADO ===\n" + contexto_adicional if contexto_adicional else "")
+         + ("\n\n=== PESQUISAS NA WEB JÁ FEITAS NESTA CONVERSA ===\n" + _bloco_de_pesquisas(pesquisas_anteriores) if pesquisas_anteriores else "")},
         *historico,
         {"role": "user", "content": pergunta},
     ]
 
+    #: Pergunta normalizada -> pesquisa. A mesma pesquisa pedida de novo sai daqui,
+    #: sem ir à internet; as feitas agora entram para as próximas rodadas também.
+    memoria = {_normalizar(p.get("pergunta")): p for p in pesquisas_anteriores}
+    pesquisas_novas: list[dict[str, Any]] = []
     fontes: list[dict[str, str]] = []
     acoes: list[dict[str, Any]] = []
     consultas: list[str] = []
@@ -1685,7 +1822,9 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
             if not chamadas:
                 # Prometeu e não chamou: cobra UMA vez. Sem o teto, um modelo teimoso
                 # ficaria repetindo a promessa enquanto o advogado espera.
-                if not cobranca_feita and citou_sem_conferir(texto, consultas, fontes):
+                if not cobranca_feita and citou_sem_conferir(
+                    texto, consultas, fontes, list(memoria.values())
+                ):
                     cobranca_feita = True
                     log.warning(
                         "chat da petição: citou norma/súmula sem consultar (caso %s)",
@@ -1748,8 +1887,30 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                 if not isinstance(argumentos, dict):
                     argumentos = {}
 
-                yield {"tipo": "etapa", "texto": ETAPAS.get(nome, "Consultando o caso")}
-                resultado = executar_ferramenta(nome, caso_id, argumentos)
+                lembrada = (
+                    memoria.get(_normalizar(argumentos.get("pergunta")))
+                    if nome == "pesquisar_na_web"
+                    else None
+                )
+                if lembrada:
+                    yield {"tipo": "etapa", "texto": "Reaproveitando a pesquisa já feita"}
+                    resultado = _pesquisa_lembrada(lembrada)
+                else:
+                    yield {"tipo": "etapa", "texto": ETAPAS.get(nome, "Consultando o caso")}
+                    resultado = executar_ferramenta(nome, caso_id, argumentos)
+                    if (
+                        nome == "pesquisar_na_web"
+                        and not resultado.get("falhou")
+                        and resultado.get("fontes")
+                    ):
+                        pesquisa = {
+                            "pergunta": str(argumentos.get("pergunta") or ""),
+                            **{k: resultado.get(k) for k in (
+                                "resposta", "fontes", "fontes_oficiais", "tem_fonte_oficial", "aviso"
+                            )},
+                        }
+                        pesquisas_novas.append(pesquisa)
+                        memoria[_normalizar(pesquisa["pergunta"])] = pesquisa
                 consultas.append(nome)
 
                 vistas = {f["url"] for f in fontes}
@@ -1798,11 +1959,24 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
             " de outro jeito."
         )
 
+    # A citação confirmada numa pesquisa anterior leva a fonte dela: sem isso a
+    # resposta reaproveitada sairia sem link, e o advogado não teria onde conferir.
+    vistas = {f.get("url") for f in fontes}
+    for fonte in fontes_ja_pesquisadas(texto, list(memoria.values())):
+        if fonte.get("url") and fonte["url"] not in vistas:
+            fontes.append(fonte)
+            vistas.add(fonte["url"])
+
     mensagem = _registrar(
         conversa_id,
         texto,
         natureza="RESPOSTA",
-        payload={"fontes": fontes, "acoes": acoes, "consultas": consultas},
+        payload={
+            "fontes": fontes,
+            "acoes": acoes,
+            "consultas": consultas,
+            "pesquisas": pesquisas_novas,
+        },
     )
     yield {"tipo": "fim", "mensagem": mensagem}
 
