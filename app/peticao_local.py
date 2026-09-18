@@ -43,7 +43,7 @@ ID_LOCAL = "local"
 #: 6 — recuo de 1,25 cm na primeira linha de cada parágrafo, medido na mesma
 #: peça de referência (corpo em 3,0 cm, primeira linha em 4,25 cm), e negrito
 #: inline no nome do autor.
-DOCX_STYLE_VERSION = 8
+DOCX_STYLE_VERSION = 9
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 #: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
 #:
@@ -67,6 +67,7 @@ CONFIGURACAO_VISUAL_PADRAO: dict[str, Any] = {
     "alinhamento_corpo": "justificado",
     "alinhamento_titulos": "esquerda",
     "altura_logo_cm": 2.36,
+    "preferir_tabelas": False,
 }
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
@@ -199,6 +200,17 @@ def analisar_estilo(conteudo: bytes) -> dict[str, Any]:
                     }.get(jc, jc)
             if "word/document.xml" in nomes:
                 doc = ElementTree.fromstring(arquivo.read("word/document.xml"))
+                tabelas = list(doc.iter(f"{_NS_W}tbl"))
+                if tabelas:
+                    colunas = []
+                    for tabela in tabelas:
+                        primeira_linha = next(iter(tabela.iter(f"{_NS_W}tr")), None)
+                        if primeira_linha is not None:
+                            colunas.append(len(list(primeira_linha.iter(f"{_NS_W}tc"))))
+                    atributos["tabelas"] = {
+                        "quantidade": len(tabelas),
+                        "colunas_detectadas": sorted({n for n in colunas if n}),
+                    }
                 for mar in doc.iter(f"{_NS_W}pgMar"):
                     def cm(lado: str) -> float | None:
                         v = mar.attrib.get(f"{_NS_W}{lado}")
@@ -447,6 +459,14 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
                 f"{listadas}\n"
                 "Aplique estas correções diretamente, sem repetir o erro que motivou cada uma."
             )
+    if bool(configuracao_visual().get("preferir_tabelas")):
+        blocos.append(
+            "=== PREFERÊNCIA VISUAL DO ESCRITÓRIO ===\n"
+            "Os modelos de referência usam tabelas. Quando houver dados comprovados "
+            "naturalmente estruturados (cronologia, contrato, valores, documentos ou "
+            "histórico médico), prefira uma tabela Markdown no ponto apropriado. Isso "
+            "é preferência, não obrigação; não crie tabela sem utilidade nem invente células."
+        )
     if len(blocos) == 1:
         return instrucao
     if revisao:
@@ -845,6 +865,13 @@ JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim
 PADRÃO DO ESCRITÓRIO: quando houver orientação ou peça de referência acima,
 siga-a — ela manda sobre o critério geral. Onde ela não disser nada, escolha a
 forma que julgar melhor para a peça, sem inventar fato.
+
+TABELAS: você pode usar tabela quando ela tornar dados comprovados mais claros
+(cronologia, contrato, documentos, valores ou histórico médico), ou quando o
+advogado pedir. Escreva-a em Markdown, com cabeçalho e linha separadora, no
+EXATO ponto do `content` em que ela deve aparecer. O sistema a converterá em
+tabela nativa e editável do Word. Não simule tabela com tabs/espaços, não
+invente dados para preencher célula e omita linhas sem informação comprovada.
 JSON:
 {
   "secoes": [
@@ -1685,6 +1712,12 @@ subtítulos internos (I –, II –, I.1 –) e mover matéria de uma seção pa
 por exemplo tirar as preliminares do DO DIREITO e levá-las para DAS PRELIMINARES.
 Nada aqui é intocável, desde que a crítica do advogado sustente a mudança.
 
+TABELAS: quando a crítica pedir uma tabela, ou quando uma tabela tornar fatos
+comprovados mais claros, use Markdown com cabeçalho e linha separadora no ponto
+exato da seção solicitado. A exportação transforma esse bloco em tabela Word
+nativa e editável. Preserve os parágrafos que vêm antes e depois; nunca use
+espaços, tabs ou dados inventados para simular/preencher uma tabela.
+
 Devolva a NOVA PEÇA COMPLETA como lista ordenada de seções. Não há quantidade,
 ordem ou código fixos: inclua todas as seções necessárias, inclusive as mantidas.
 Cada `code` deve ser estável, curto e único. JSON:
@@ -2400,6 +2433,111 @@ def _paragrafo_xml(
     return "".join(partes)
 
 
+_RE_SEPARADOR_TABELA = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
+
+
+def _celulas_tabela_markdown(linha: str) -> list[str]:
+    """Lê uma linha de tabela Markdown sem deixar ``|`` virar texto no Word."""
+    limpa = linha.strip()
+    if limpa.startswith("|"):
+        limpa = limpa[1:]
+    if limpa.endswith("|"):
+        limpa = limpa[:-1]
+    return [celula.strip() for celula in limpa.split("|")]
+
+
+def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
+    """Uma tabela Word nativa, com bordas e expansão automática de linhas.
+
+    O conteúdo chega da IA em Markdown somente como uma representação transitória.
+    O DOCX final recebe ``w:tbl`` editável, nunca barras, tabs ou imagem.
+    """
+    colunas = max(2, len(cabecalho), *(len(linha) for linha in linhas))
+    cabecalho = (cabecalho + [""] * colunas)[:colunas]
+    linhas = [(linha + [""] * colunas)[:colunas] for linha in linhas]
+    # A tabela de dados contratuais do escritório usa rótulo mais estreito e valor
+    # mais largo. Para outras estruturas, as colunas ficam proporcionais e legíveis.
+    if colunas == 2:
+        larguras = [3000, 6000]
+    else:
+        base, resto = divmod(9000, colunas)
+        larguras = [base + (1 if indice < resto else 0) for indice in range(colunas)]
+
+    def celula(texto: str, largura: int, *, destaque: bool = False) -> str:
+        texto = str(texto or "").replace("**", "")
+        partes = texto.split("\n") or [""]
+        runs = "".join(
+            f'<w:r><w:rPr>{"<w:b/>" if destaque else ""}</w:rPr><w:t xml:space="preserve">{escape(parte)}</w:t></w:r>'
+            + ("<w:r><w:br/></w:r>" if indice < len(partes) - 1 else "")
+            for indice, parte in enumerate(partes)
+        )
+        return (
+            f'<w:tc><w:tcPr><w:tcW w:w="{largura}" w:type="dxa"/>'
+            '<w:vAlign w:val="center"/></w:tcPr>'
+            f'<w:p><w:pPr><w:jc w:val="left"/><w:ind w:firstLine="0"/></w:pPr>{runs}</w:p></w:tc>'
+        )
+
+    def linha(valores: list[str], *, destaque: bool = False) -> str:
+        return "<w:tr>" + "".join(
+            celula(valor, larguras[indice], destaque=destaque)
+            for indice, valor in enumerate(valores)
+        ) + "</w:tr>"
+
+    return (
+        '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="autofit"/>'
+        '<w:tblBorders><w:top w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
+        '<w:left w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
+        '<w:bottom w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
+        '<w:right w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
+        '<w:insideH w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
+        '<w:insideV w:val="single" w:sz="8" w:space="0" w:color="000000"/></w:tblBorders>'
+        '<w:tblCellMar><w:top w:w="80" w:type="dxa"/><w:left w:w="80" w:type="dxa"/>'
+        '<w:bottom w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar>'
+        '</w:tblPr><w:tblGrid>'
+        + "".join(f'<w:gridCol w:w="{largura}"/>' for largura in larguras)
+        + "</w:tblGrid>"
+        + linha(cabecalho, destaque=True)
+        + "".join(linha(valores) for valores in linhas)
+        + "</w:tbl>"
+    )
+
+
+def _conteudo_com_tabelas_xml(conteudo: str, *, centralizado: bool, visual: dict[str, Any]) -> str:
+    """Converte blocos Markdown de tabela, mantendo sua posição entre parágrafos."""
+    linhas = conteudo.split("\n")
+    partes: list[str] = []
+    comum: list[str] = []
+
+    def descarregar_comum() -> None:
+        nonlocal comum
+        if comum:
+            partes.append(_paragrafo_xml("\n".join(comum), centralizado=centralizado, visual=visual))
+            comum = []
+
+    indice = 0
+    while indice < len(linhas):
+        atual = linhas[indice]
+        proxima = linhas[indice + 1] if indice + 1 < len(linhas) else ""
+        if "|" in atual and _RE_SEPARADOR_TABELA.match(proxima):
+            cabecalho = _celulas_tabela_markdown(atual)
+            tabela: list[list[str]] = []
+            indice += 2
+            while indice < len(linhas) and "|" in linhas[indice] and linhas[indice].strip():
+                tabela.append(_celulas_tabela_markdown(linhas[indice]))
+                indice += 1
+            if len(cabecalho) >= 2 and tabela:
+                descarregar_comum()
+                partes.append(_tabela_xml(cabecalho, tabela))
+                partes.append("<w:p/>")
+                continue
+            comum.extend([atual, proxima])
+            continue
+        comum.append(atual)
+        indice += 1
+    descarregar_comum()
+    return "".join(partes)
+
+
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
     visual = configuracao_visual()
@@ -2451,7 +2589,11 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             #
             # Quem decide agora é `_tipo_de_titulo`, linha a linha.
             corpo.append(
-                _paragrafo_xml(conteudo, centralizado=secao.get("code") == "CLOSING", visual=visual)
+                _conteudo_com_tabelas_xml(
+                    conteudo,
+                    centralizado=secao.get("code") == "CLOSING",
+                    visual=visual,
+                )
             )
         corpo.append("<w:p/>")
 

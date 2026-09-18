@@ -37,6 +37,8 @@ import {
   obterSkillDePeticao,
   restaurarModeloVisualPeticao,
   salvarSkillDePeticao,
+  estatisticasAcervoConteudistico,
+  type EstatisticasAcervoConteudistico,
   type SkillDePeticao,
   urlApi,
 } from "@/lib/api";
@@ -127,6 +129,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
   const [configVisual, setConfigVisual] = useState<ConfiguracaoVisualPeticao | null>(null);
   const [salvandoVisual, setSalvandoVisual] = useState(false);
   const [carregandoModeloVisual, setCarregandoModeloVisual] = useState(true);
+  const [acervoConteudistico, setAcervoConteudistico] = useState<EstatisticasAcervoConteudistico | null>(null);
   // Ligado, desligado ou ainda não sabemos — três estados, não dois: enquanto `null`, a
   // tela não decide nada (nem chama a taxonomia, nem mostra o aviso de "não ativado").
   const [configAgente, setConfigAgente] = useState<ConfigAgente | null>(null);
@@ -173,6 +176,13 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
     void obterConfiguracaoVisualPeticao().then(setConfigVisual).catch((falha) => setErro(
       falha instanceof ApiError ? falha.message : "Não foi possível carregar a configuração visual.",
     ));
+  }, []);
+
+  useEffect(() => {
+    void estatisticasAcervoConteudistico().then(setAcervoConteudistico).catch(() => {
+      // O restante da configuração visual continua útil se o pgvector oscilar.
+      setAcervoConteudistico(null);
+    });
   }, []);
 
   async function salvarVisual() {
@@ -521,6 +531,23 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
         </div>
       </section>
 
+      <Cartao titulo="Treinamento conteudístico das petições" subtitulo="Estas peças são recuperadas por similaridade antes de cada nova minuta. Elas elevam estrutura e profundidade, sem transportar fatos de outro processo.">
+        <div className="grid gap-3 sm:grid-cols-4">
+          {[
+            ["Peças simples", acervoConteudistico?.simples],
+            ["Peças complexas", acervoConteudistico?.complexas],
+            ["Trechos vetorizados", acervoConteudistico?.trechos],
+            ["Texto corrompido", acervoConteudistico?.corrompidas],
+          ].map(([rotulo, valor]) => (
+            <div key={String(rotulo)} className="rounded-campo border border-borda bg-papel-2 px-4 py-3">
+              <span className="block text-xs text-tinta-3">{rotulo}</span>
+              <strong className="mt-1 block font-codigo text-2xl text-tinta">{valor === undefined ? "—" : Number(valor).toLocaleString("pt-BR")}</strong>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 mb-0 text-xs text-tinta-3">Atualiza ao abrir a tela. O contador de texto corrompido deve permanecer em zero.</p>
+      </Cartao>
+
       {erro && (
         <div ref={avisoDeErro}>
           <Aviso tom="critico" titulo="A ação não foi concluída">
@@ -622,6 +649,12 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                       .join(" · ")}
                   />
                 )}
+              {modeloVisual.atributos?.tabelas && (
+                <ItemIdentificado
+                  rotulo="Tabelas"
+                  valor={`${modeloVisual.atributos.tabelas.quantidade} detectada(s)${modeloVisual.atributos.tabelas.colunas_detectadas.length ? ` · ${modeloVisual.atributos.tabelas.colunas_detectadas.join("/")} coluna(s)` : ""}`}
+                />
+              )}
               <ItemIdentificado rotulo="Logo" valor="captada do cabeçalho (veja a prévia)" />
             </dl>
           </div>
@@ -657,6 +690,7 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
                 ] as const).map(([campo, rotulo, passo]) => <label className={CAMPO} key={campo}>{rotulo}<input type="number" step={passo} className={SELECT} value={configVisual[campo]} onChange={(e) => setConfigVisual({ ...configVisual, [campo]: Number(e.target.value) })} /></label>)}
                 <label className={CAMPO}>Corpo do texto<select className={SELECT} value={configVisual.alinhamento_corpo} onChange={(e) => setConfigVisual({ ...configVisual, alinhamento_corpo: e.target.value as ConfiguracaoVisualPeticao["alinhamento_corpo"] })}><option value="justificado">Justificado</option><option value="esquerda">À esquerda</option><option value="direita">À direita</option></select></label>
                 <label className={CAMPO}>Títulos<select className={SELECT} value={configVisual.alinhamento_titulos} onChange={(e) => setConfigVisual({ ...configVisual, alinhamento_titulos: e.target.value as ConfiguracaoVisualPeticao["alinhamento_titulos"] })}><option value="esquerda">À esquerda</option><option value="centralizado">Centralizado</option></select></label>
+                <label className="flex cursor-pointer items-start gap-2 rounded-campo border border-borda bg-papel px-3 py-2 text-sm text-tinta"><input className="mt-1" type="checkbox" checked={configVisual.preferir_tabelas} onChange={(e) => setConfigVisual({ ...configVisual, preferir_tabelas: e.target.checked })} /><span><strong className="block">Usar tabelas quando ajudarem</strong><span className="text-xs text-tinta-3">A IA reproduz a preferência visual somente para dados comprovados e estruturados.</span></span></label>
                 <label className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-campo border border-borda bg-papel px-3 text-sm font-semibold text-acao"><Upload size={15} />Trocar logo<input className="sr-only" type="file" accept=".png,.jpg,.jpeg" onChange={(e) => { const arquivo = e.target.files?.[0]; e.target.value = ""; if (arquivo) void trocarLogo(arquivo); }} /></label>
                 <BotaoProcesso variante="primario" processando={salvandoVisual} textoProcessando="Salvando…" onClick={() => void salvarVisual()}>Salvar modelo visual</BotaoProcesso>
               </div>}

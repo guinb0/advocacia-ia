@@ -82,6 +82,7 @@ export interface AtributosModeloVisual {
   espacamento_linha?: number;
   alinhamento?: string;
   margens_cm?: { top?: number | null; right?: number | null; bottom?: number | null; left?: number | null };
+  tabelas?: { quantidade: number; colunas_detectadas: number[] };
 }
 
 export interface ModeloVisualPeticao {
@@ -106,6 +107,18 @@ export interface ConfiguracaoVisualPeticao {
   alinhamento_corpo: "justificado" | "esquerda" | "direita";
   alinhamento_titulos: "esquerda" | "centralizado";
   altura_logo_cm: number;
+  preferir_tabelas: boolean;
+}
+
+export interface EstatisticasAcervoConteudistico {
+  simples: number;
+  complexas: number;
+  trechos: number;
+  corrompidas: number;
+}
+
+export async function estatisticasAcervoConteudistico(): Promise<EstatisticasAcervoConteudistico> {
+  return comoJson(await buscar("/api/modelos/peticao/acervo-conteudistico"));
 }
 
 export async function obterModeloVisualPeticao(): Promise<ModeloVisualPeticao> {

@@ -12,10 +12,13 @@ justamente o que o Fast Path proíbe.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+import zipfile
 
 from fastapi import (
     APIRouter,
@@ -31,7 +34,7 @@ from fastapi import (
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from .. import armazenamento, auth, contrato, peticao_aprendizado, peticao_local
+from .. import armazenamento, auth, contrato, entrevista as entrevista_lib, peticao_aprendizado, peticao_local
 from .. import pesquisa_web as pesquisa_web_modulo
 from . import chat_peticao, conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
@@ -1213,6 +1216,56 @@ def responder_no_chat_peticao(
     )
 
 
+def _texto_do_contexto(arquivo: str, conteudo: bytes) -> str:
+    """Extrai texto de anexo contextual; ZIP é lido arquivo a arquivo, com teto."""
+    if not arquivo.lower().endswith(".zip"):
+        return entrevista_lib.extrair_texto(arquivo, conteudo)
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as pacote:
+            itens = [item for item in pacote.infolist() if not item.is_dir()][:30]
+            if not itens:
+                raise ValueError("O ZIP não contém arquivos.")
+            if sum(item.file_size for item in itens) > 25 * 1024 * 1024:
+                raise ValueError("O ZIP tem mais de 25 MB descompactados. Envie em partes menores.")
+            blocos: list[str] = []
+            for item in itens:
+                try:
+                    texto = entrevista_lib.extrair_texto(item.filename, pacote.read(item))
+                except entrevista_lib.ErroDeLeitura:
+                    continue
+                if texto:
+                    blocos.append(f"[ARQUIVO NO ZIP: {Path(item.filename).name}]\n{texto}")
+            if not blocos:
+                raise ValueError("Nenhum arquivo legível foi encontrado no ZIP.")
+            return "\n\n---\n\n".join(blocos)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("O arquivo enviado não é um ZIP válido.") from exc
+
+
+@roteador.post("/casos/{caso_id}/chat-peticao/contextos", status_code=status.HTTP_201_CREATED)
+async def adicionar_contexto_ao_chat(
+    caso_id: str,
+    arquivo: UploadFile = File(...),
+    relevancia: str = Form(""),
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+) -> dict[str, Any]:
+    """Anexa material privado de contexto ao chat sem tratá-lo como prova do checklist."""
+    nome = arquivo.filename or "arquivo-adicional"
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "O arquivo de contexto está vazio.")
+    if len(conteudo) > 30 * 1024 * 1024:
+        raise HTTPException(413, "Envie arquivo de contexto de até 30 MB.")
+    try:
+        texto = _texto_do_contexto(nome, conteudo)
+        mensagem = chat_peticao.adicionar_contexto(
+            caso_id, usuario.id, arquivo=nome, relevancia=relevancia, texto=texto
+        )
+    except (ValueError, entrevista_lib.ErroDeLeitura, chat_peticao.ErroDoChat) as erro:
+        raise HTTPException(422, str(erro)) from erro
+    return {"mensagem": mensagem, "caracteres_lidos": len(texto)}
+
+
 class AcaoDoChat(BaseModel):
     """Uma proposta que o advogado confirmou. O `tipo` diz o que executar."""
 
@@ -1221,6 +1274,7 @@ class AcaoDoChat(BaseModel):
     titulo: str = ""
     motivo: str = ""
     pedidos: list[str] = []
+    generaliza: bool = False
 
 
 @roteador.post("/casos/{caso_id}/chat-peticao/acoes")

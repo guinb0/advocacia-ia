@@ -19,7 +19,7 @@ export type PapelDaMensagem = "USER" | "ASSISTANT";
 /** `RESPOSTA` é o que a IA respondeu; `EVENTO` é o que ela conta sem ter sido
  *  perguntada (uma ação terminou); `ERRO` é a falha que ficou registrada na
  *  transcrição em vez de sumir num toast. */
-export type NaturezaDaMensagem = "PERGUNTA" | "RESPOSTA" | "EVENTO" | "ERRO";
+export type NaturezaDaMensagem = "PERGUNTA" | "RESPOSTA" | "EVENTO" | "ERRO" | "CONTEXTO";
 
 export interface FonteDaWeb {
   url: string;
@@ -37,6 +37,7 @@ export interface AcaoProposta {
   /** Mexe em valor, retira cláusula ou toca na fundamentação: a tela avisa em destaque. */
   sensivel?: boolean;
   oQueAcontece?: string;
+  generaliza?: boolean;
 }
 
 export interface MensagemDoChat {
@@ -122,6 +123,24 @@ export async function abrirChatDaPeticao(casoId: string): Promise<ChatDaPeticao>
     modeloDisponivel: Boolean(corpo.modelo_disponivel),
     webDisponivel: Boolean(corpo.web_disponivel),
   };
+}
+
+export async function adicionarContextoAoChat(
+  casoId: string,
+  arquivo: File,
+  relevancia: string,
+): Promise<{ mensagem: MensagemDoChat; caracteresLidos: number }> {
+  const corpo = new FormData();
+  corpo.append("arquivo", arquivo);
+  corpo.append("relevancia", relevancia);
+  const resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/chat-peticao/contextos`), {
+    method: "POST", credentials: CREDENCIAIS, headers: cabecalhos(), body: corpo,
+  });
+  const dados = await resposta.json().catch(() => null);
+  if (!resposta.ok || !dados) {
+    throw new ApiError(String(dados?.detail ?? `Erro ${resposta.status}`), { status: resposta.status });
+  }
+  return { mensagem: traduzirMensagem(dados.mensagem as MensagemCrua), caracteresLidos: Number(dados.caracteres_lidos ?? 0) };
 }
 
 /** Os eventos do fluxo, já no vocabulário da tela. */
@@ -224,6 +243,7 @@ export async function executarAcaoDoChat(
         titulo: acao.titulo ?? "",
         motivo: acao.motivo ?? "",
         pedidos: acao.pedidos ?? [],
+        generaliza: acao.generaliza === true,
       }),
     },
   );

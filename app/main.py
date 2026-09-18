@@ -579,6 +579,16 @@ PodeManterModelos = Depends(auth.exigir_algum_modulo("contratos", "modelos_contr
 PodeManterModeloPeticao = Depends(auth.exigir_modulo("agente"))
 
 
+@app.get("/api/modelos/peticao/acervo-conteudistico")
+async def estatisticas_acervo_conteudistico(_autorizado=PodeManterModeloPeticao):
+    """Mostra apenas volume e integridade das peças usadas como padrão de redação."""
+    try:
+        return await run_in_threadpool(rag.estatisticas_pecas_conteudisticas)
+    except Exception as exc:
+        log.warning("Acervo conteudístico de peças indisponível: %s", exc)
+        raise HTTPException(503, "Não foi possível consultar o acervo de treinamento agora.") from exc
+
+
 @app.get("/api/modelos/peticao/visual")
 async def obter_modelo_visual_peticao(_autorizado=PodeManterModeloPeticao):
     """Modelo global de marca, separado dos exemplos jurídicos do Style Engine."""
@@ -658,6 +668,7 @@ class ConfiguracaoVisualEntrada(BaseModel):
     alinhamento_corpo: str = "justificado"
     alinhamento_titulos: str = "esquerda"
     altura_logo_cm: float = Field(2.36, ge=0.5, le=5)
+    preferir_tabelas: bool = False
 
 
 @app.get("/api/modelos/peticao/visual/configuracao")
@@ -755,6 +766,7 @@ async def enviar_modelo_visual_peticao(
         "margem_direita_cm": margens.get("right", atual["margem_direita_cm"]),
         "margem_inferior_cm": margens.get("bottom", atual["margem_inferior_cm"]),
         "margem_esquerda_cm": margens.get("left", atual["margem_esquerda_cm"]),
+        "preferir_tabelas": bool((atributos.get("tabelas") or {}).get("quantidade")),
     })
     await run_in_threadpool(
         armazenamento.salvar_modelo,

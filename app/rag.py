@@ -29,15 +29,19 @@ BASE = Path(__file__).resolve().parent.parent
 
 def carregar_env() -> None:
     """Carrega apenas variáveis ausentes; o ambiente do processo sempre prevalece."""
-    caminho = BASE / ".env"
-    if not caminho.is_file():
-        return
-    for linha in caminho.read_text(encoding="utf-8").splitlines():
-        linha = linha.strip()
-        if not linha or linha.startswith("#") or "=" not in linha:
+    for caminho, sobrescrever in ((BASE / ".env", False), (BASE / ".env.local", True)):
+        if not caminho.is_file():
             continue
-        chave, valor = linha.split("=", 1)
-        os.environ.setdefault(chave.strip(), valor.strip().strip('"').strip("'"))
+        for linha in caminho.read_text(encoding="utf-8").splitlines():
+            linha = linha.strip()
+            if not linha or linha.startswith("#") or "=" not in linha:
+                continue
+            chave, valor = linha.split("=", 1)
+            chave, valor = chave.strip(), valor.strip().strip('"').strip("'")
+            if sobrescrever:
+                os.environ[chave] = valor
+            else:
+                os.environ.setdefault(chave, valor)
 
 
 carregar_env()
@@ -322,6 +326,27 @@ def buscar_pecas_conteudisticas(
         if len(escolhidos) >= limite:
             break
     return escolhidos
+
+
+def estatisticas_pecas_conteudisticas() -> dict[str, int]:
+    """Contadores auditáveis exibidos no painel de treinamento do escritório."""
+    linhas = _consultar_pgvector(
+        """SELECT p.categoria, count(DISTINCT p.id) AS pecas, count(c.id) AS trechos,
+                  count(DISTINCT p.id) FILTER (WHERE p.texto_integral LIKE %s) AS corrompidas
+             FROM pecas_conteudo p
+             LEFT JOIN pecas_conteudo_chunks c ON c.peca_id = p.id
+            WHERE p.categoria IN ('pecas_simples', 'pecas_complexas')
+            GROUP BY p.categoria""",
+        ("%\ufffd%",), connect_timeout=10,
+    )
+    resultado = {"simples": 0, "complexas": 0, "trechos": 0, "corrompidas": 0}
+    for linha in linhas:
+        categoria = str(linha["categoria"])
+        chave = "simples" if categoria == "pecas_simples" else "complexas"
+        resultado[chave] = int(linha["pecas"])
+        resultado["trechos"] += int(linha["trechos"])
+        resultado["corrompidas"] += int(linha["corrompidas"])
+    return resultado
 
 
 def _estatisticas_amostra(similares: list[TrechoSimilar]) -> dict[str, Any]:
