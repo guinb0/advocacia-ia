@@ -21,10 +21,20 @@ export type PapelDaMensagem = "USER" | "ASSISTANT";
  *  transcrição em vez de sumir num toast. */
 export type NaturezaDaMensagem = "PERGUNTA" | "RESPOSTA" | "EVENTO" | "ERRO";
 
+/** Em que camada da hierarquia a fonte está — medida no servidor, pelo domínio.
+ *
+ * `OFICIAL` é o texto da norma (Planalto, Diário Oficial, LexML); `TRIBUNAL` é a
+ * jurisprudência no site de quem julgou; `PUBLICA` é outro órgão público; `SECUNDARIA` é
+ * todo o resto. A distinção não é preciosismo: número de súmula tirado de portal e
+ * número de súmula lido no TST têm o mesmo aspecto numa resposta bem escrita, e só um
+ * dos dois sustenta a petição. */
+export type ConfiancaDaFonte = "OFICIAL" | "TRIBUNAL" | "PUBLICA" | "SECUNDARIA";
+
 export interface FonteDaWeb {
   url: string;
   titulo: string;
   trecho: string;
+  confianca: ConfiancaDaFonte;
 }
 
 /** Uma alteração que a IA PROPÔS. Nada aqui aconteceu ainda. */
@@ -97,6 +107,9 @@ export function traduzirMensagem(crua: MensagemCrua): MensagemDoChat {
           url: String(f.url ?? ""),
           titulo: String(f.titulo ?? ""),
           trecho: String(f.trecho ?? ""),
+          // Mensagem gravada antes da classificação existir não tem o campo: tratar como
+          // secundária é o lado seguro — ela vira "confira a fonte", não "é oficial".
+          confianca: (f.confianca as ConfiancaDaFonte) || "SECUNDARIA",
         }))
       : [],
     acoes: Array.isArray(payload.acoes)

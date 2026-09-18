@@ -94,6 +94,9 @@ def instalar_armazenamento() -> ArmazenamentoFalso:
 
 #: O fluxo de verdade, guardado antes do primeiro dublê — a seção 9 o exercita.
 transmitir_de_verdade = chat_peticao._transmitir
+#: Idem para o contexto e o executor, que as seções do fluxo trocam por dublês.
+contexto_de_verdade = chat_peticao._contexto_do_caso
+executar_de_verdade = chat_peticao.executar_ferramenta
 
 
 def rodadas(*roteiro: dict):
@@ -495,6 +498,259 @@ checar(
     any(m.get("role") == "tool" for m in enviadas),
     "o resultado da ferramenta volta ao modelo como mensagem `tool`",
 )
+
+
+# ------------------------------------- 10. citar súmula de memória não passa
+
+print("\n10. Citação de norma e de súmula sem ter consultado nada")
+
+checar(
+    chat_peticao.citou_sem_conferir("A Súmula 378 do TST garante a estabilidade.", [], []),
+    "súmula citada sem consulta alguma é cobrada",
+)
+checar(
+    not chat_peticao.citou_sem_conferir(
+        "A Súmula 378 do TST garante.", ["pesquisar_na_web"], [{"url": "https://tst.jus.br/x"}]
+    ),
+    "com a busca feita e fonte na mão, passa",
+)
+checar(
+    chat_peticao.citou_sem_conferir(
+        "A Súmula 378 do TST garante.", ["ler_minuta"], []
+    ),
+    "ler a minuta NÃO autoriza citar jurisprudência — número de súmula muda",
+)
+checar(
+    not chat_peticao.citou_sem_conferir(
+        "O art. 118 da Lei 8.213/1991 está na fundamentação.", ["ler_minuta"], []
+    ),
+    "mas a norma que está na própria peça, sim: ela já foi conferida na redação",
+)
+checar(
+    chat_peticao.citou_sem_conferir("O art. 118 da Lei 8.213/1991 garante.", [], []),
+    "e a mesma norma sem abrir nada é cobrada",
+)
+checar(
+    not chat_peticao.citou_sem_conferir("A minuta tem 8 seções e está na versão 3.", [], []),
+    "resposta sem citação nenhuma não paga pedágio",
+)
+
+# O laço cobra UMA vez e a resposta gravada é a corrigida — mesmo mecanismo da promessa.
+falso = instalar_armazenamento()
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+chat_peticao.executar_ferramenta = lambda nome, caso_id, argumentos: {  # type: ignore[assignment]
+    "falhou": False,
+    "origem": "web",
+    "resposta": "Súmula 378 do TST.",
+    "fontes": [{"url": "https://www.tst.jus.br/sumulas", "titulo": "TST", "confianca": "TRIBUNAL"}],
+    "tem_fonte_oficial": True,
+}
+rodadas(
+    # O que ele fez na prova de fogo: transcreveu a súmula de cabeça e ofereceu um link
+    # que nunca abriu.
+    {"texto": "A Súmula 378 do TST trata da estabilidade acidentária."},
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "Súmula 378 TST"})]},
+    {"texto": "Súmula 378 do TST, confirmada no site do tribunal."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "qual a súmula da estabilidade?", "advogado-1"))
+final = eventos[-1]
+checar(final["tipo"] == "fim", "a conversa termina normalmente")
+checar(
+    "pesquisar_na_web" in (final["mensagem"]["payload"] or {}).get("consultas", []),
+    "a cobrança leva o modelo à busca que faltava",
+)
+checar(
+    (final["mensagem"]["payload"] or {}).get("fontes"),
+    "e a resposta gravada já vai com a fonte",
+)
+
+
+# ----------------------------------- 11. oferecer a consulta não é fazer a consulta
+
+print("\n11. A oferta que não vira consulta")
+
+checar(
+    chat_peticao.ofereceu_sem_fazer("O que eu poderia fazer é consultar a jurimetria.", []),
+    "«eu poderia consultar» sem ter consultado é cobrado",
+)
+checar(
+    chat_peticao.ofereceu_sem_fazer("Posso pesquisar na web, se você quiser.", []),
+    "e «posso pesquisar se você quiser» também — a pergunta já foi feita uma vez",
+)
+checar(
+    not chat_peticao.ofereceu_sem_fazer(
+        "Consultei a jurimetria: 12 processos analisados.", ["ler_jurimetria"]
+    ),
+    "quem consultou não é cobrado",
+)
+checar(
+    not chat_peticao.ofereceu_sem_fazer("Não posso aplicar a alteração sozinho.", []),
+    "e a recusa de aplicar sozinho não é oferta de consulta",
+)
+
+# A cobrança é BASTIDOR: a resposta gravada não pode comentar a própria correção.
+for cobranca in (chat_peticao.COBRANCA, chat_peticao.COBRANCA_FONTE, chat_peticao.COBRANCA_OFERTA):
+    checar(
+        "primeira e única resposta" in cobranca and "RESPOSTA INTEIRA" in cobranca,
+        "a cobrança manda responder à pergunta original, sem narrar a correção",
+    )
+
+falso = instalar_armazenamento()
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+chat_peticao.executar_ferramenta = lambda nome, caso_id, argumentos: {  # type: ignore[assignment]
+    "existe": True,
+    "processos_analisados": 12,
+    "desfechos_merito": {"favoraveis": 7, "processos": 12},
+}
+rodadas(
+    {"texto": "O que eu poderia fazer é consultar a jurimetria do escritório."},
+    {"chamadas": [chamada("ler_jurimetria", {})]},
+    {"texto": "Em 12 casos parecidos, 7 foram favoráveis no mérito."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "qual a chance deste caso?", "advogado-1"))
+final = eventos[-1]
+checar(
+    "ler_jurimetria" in (final["mensagem"]["payload"] or {}).get("consultas", []),
+    "a cobrança transforma a oferta na consulta que faltava",
+)
+checar(
+    final["mensagem"]["conteudo"].startswith("Em 12 casos"),
+    "e o que fica gravado é a resposta medida, não a promessa de medir",
+)
+
+
+# ------------------------- 12. achar o documento que existe e pedir o que falta
+
+print("\n12. Achar o dado no documento, e pedir o anexo em vez de recusar")
+
+from app import peticao_local  # noqa: E402
+
+
+class ArmazenamentoDeAnexos:
+    """Três entregas: a CTPS com nome de foto, um RG ainda na fila, um holerite."""
+
+    def listar_entregas(self, caso_id):
+        return [
+            {"id": 1, "arquivo": "IMG_4411.jpg", "tipo_detectado": "CTPS", "status_proc": "pronto"},
+            {"id": 2, "arquivo": "WhatsApp Image 2026.jpeg", "tipo_detectado": "desconhecido", "status_proc": "na_fila"},
+            {"id": 3, "arquivo": "scan_003.pdf", "tipo_detectado": "HOLERITE", "status_proc": "pronto"},
+        ]
+
+    def listar_extracoes_do_caso(self, caso_id):
+        cabecalho = "MINISTERIO DO TRABALHO E EMPREGO " * 40  # empurra o número para longe do começo
+        return [
+            {
+                "id": "1",
+                "arquivo": "IMG_4411.jpg",
+                "extracao": {
+                    "tipo": {"descricao": "Carteira de Trabalho (CTPS)"},
+                    "campos": [{"nome": "numero", "rotulo": "Número", "valor": "1234567"},
+                               {"nome": "serie", "rotulo": "Série", "valor": "0012"}],
+                    "texto_completo": cabecalho + "CARTEIRA DE TRABALHO Nº 1234567 SÉRIE 0012-DF PIS 123.45678.90-1",
+                },
+            },
+            {
+                "id": "3",
+                "arquivo": "scan_003.pdf",
+                "extracao": {
+                    "tipo": {"descricao": "Holerite"},
+                    "campos": [],
+                    "texto_completo": "RECIBO DE PAGAMENTO cargo AUXILIAR salário 2.100,00",
+                },
+            },
+        ]
+
+
+peticao_local.armazenamento = ArmazenamentoDeAnexos()  # type: ignore[assignment]
+anexos = peticao_local.anexos_do_caso("caso-1")
+checar(len(anexos) == 3, "o anexo ainda sem OCR continua na lista (antes sumia)")
+checar(anexos[1]["situacao"] == "na_fila", "e sai marcado como aguardando leitura")
+checar(anexos[0]["tipo"].startswith("Carteira de Trabalho"), "o tipo classificado acompanha o arquivo")
+checar(len(anexos[0]["texto"]) > 1000, "o texto vem inteiro, sem o corte de quem lê")
+
+busca = executar_de_verdade("buscar_nos_documentos", "caso-1", {"termo": "número da CTPS"})
+checar(busca["encontrado"], "«número da CTPS» acha a CTPS cujo arquivo se chama IMG_4411.jpg")
+checar(busca["resultados"][0]["arquivo"] == "IMG_4411.jpg", "e ela vem em primeiro")
+checar(
+    any("1234567" in t for t in busca["resultados"][0]["trechos"]),
+    "com o trecho EM VOLTA do achado, mesmo depois de 1.300 caracteres de cabeçalho",
+)
+checar(
+    any(c["valor"] == "1234567" for c in busca["resultados"][0]["campos_extraidos"]),
+    "e com os campos já extraídos pelo OCR",
+)
+checar(
+    any(a["arquivo"].startswith("WhatsApp") for a in busca.get("anexos_sem_texto_lido", [])),
+    "o anexo sem leitura é avisado — pode ser o documento",
+)
+
+sinonimo = executar_de_verdade("buscar_nos_documentos", "caso-1", {"termo": "carteira de trabalho"})
+checar(sinonimo["resultados"][0]["arquivo"] == "IMG_4411.jpg", "«carteira de trabalho» acha a mesma CTPS")
+
+numero = executar_de_verdade("buscar_nos_documentos", "caso-1", {"termo": "12345678901"})
+checar(numero["encontrado"], "o PIS digitado sem pontuação acha o PIS que o OCR leu com pontos")
+
+sigla = executar_de_verdade("buscar_nos_documentos", "caso-1", {"termo": "RG"})
+checar(
+    not any(r["arquivo"] == "scan_003.pdf" for r in sigla["resultados"]),
+    "«RG» não casa dentro de «cargo»",
+)
+checar(not sigla["encontrado"] and "orientacao" in sigla, "e o não-achado vem com a orientação de pedir o anexo")
+
+por_tipo = executar_de_verdade("ler_documentos", "caso-1", {"arquivo": "CTPS"})
+checar(
+    len(por_tipo["documentos"]) == 1 and por_tipo["documentos"][0]["arquivo"] == "IMG_4411.jpg",
+    "ler_documentos também acha pelo tipo, não só pelo nome",
+)
+
+chat_peticao.peticao_local.carregar = lambda caso_id: None  # type: ignore[assignment]
+contexto = contexto_de_verdade("caso-1")
+checar("IMG_4411.jpg (Carteira de Trabalho (CTPS))" in contexto, "o contexto mostra o tipo junto do arquivo")
+checar("SEM texto lido" in contexto and "WhatsApp" in contexto, "e os anexos que existem mas não foram lidos")
+checar("NÃO está nos autos" not in contexto, "e não manda mais negar o que não está na lista")
+
+print("\n   a recusa")
+checar(
+    chat_peticao.recusou("Não encontrei o documento, então não vou incluir o número.", []),
+    "«não vou incluir» é recusa",
+)
+checar(
+    chat_peticao.recusou("O número da CTPS não consta nos autos.", []),
+    "negar o documento sem ter buscado é cobrado",
+)
+checar(
+    not chat_peticao.recusou(
+        "Procurei nos 3 anexos e o número da CTPS não consta. Pode anexar a CTPS ou me informar o número?",
+        ["buscar_nos_documentos"],
+    ),
+    "buscou, não achou e pediu o anexo: é a resposta certa",
+)
+checar(
+    not chat_peticao.recusou("Não há prova documental das horas extras; testemunha resolveria.", []),
+    "«não há prova» é análise, não recusa",
+)
+checar(
+    not chat_peticao.recusou("Não posso aplicar a alteração sozinho.", []),
+    "e a regra de não aplicar sozinho também não",
+)
+checar("primeira e única resposta" in chat_peticao.COBRANCA_RECUSA, "a cobrança da recusa também é bastidor")
+checar("NÃO EXISTE" not in chat_peticao.INSTRUCAO, "a instrução não manda mais tratar ausência como inexistência")
+
+falso = instalar_armazenamento()
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+chat_peticao.executar_ferramenta = executar_de_verdade  # type: ignore[assignment]
+rodadas(
+    {"texto": "Não encontrei esse documento no caso, então não vou incluir o número."},
+    {"chamadas": [chamada("buscar_nos_documentos", {"termo": "CTPS"})]},
+    {"chamadas": [chamada("propor_revisao_da_peticao", {"pedido": "inclua na qualificação a CTPS nº 1234567, série 0012-DF"})]},
+    {"texto": "Achei na CTPS (IMG_4411.jpg): nº 1234567, série 0012-DF. Deixei a inclusão pronta para você confirmar."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "coloca o número da CTPS, está no caso", "advogado-1"))
+final = eventos[-1]
+payload = final["mensagem"]["payload"] or {}
+checar("buscar_nos_documentos" in payload.get("consultas", []), "a recusa vira busca")
+checar(any(a.get("tipo") == "REVISAR" for a in payload.get("acoes", [])), "e a busca vira a proposta pedida")
+checar("não vou" not in final["mensagem"]["conteudo"].lower(), "e a recusa não fica gravada")
 
 
 if __name__ == "__main__":
