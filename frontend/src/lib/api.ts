@@ -821,6 +821,27 @@ export async function obterDocumentosPendentes(
   );
 }
 
+/** Documento cujo conteúdo lido (campos e texto do OCR) casou com a busca. */
+export interface AchadoNoConteudo {
+  entrega_id: string;
+  arquivo: string;
+  /** Itens do checklist que o documento atende. */
+  itens: string[];
+  /** Onde o termo apareceu: "CEP: 70000-000" ou um trecho do texto. */
+  onde: string[];
+}
+
+export async function buscarNoConteudoDoCaso(
+  casoId: string,
+  consulta: string,
+  sinal?: AbortSignal,
+): Promise<AchadoNoConteudo[]> {
+  const query = new URLSearchParams({ q: consulta }).toString();
+  return comoJson<AchadoNoConteudo[]>(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/documentos/busca?${query}`, { signal: sinal }),
+  );
+}
+
 // ------------------------------------------------------ roteiro de entrevista
 
 const TTL_ROTEIROS_MS = 30_000;

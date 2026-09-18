@@ -21,6 +21,7 @@ import httpx
 from . import (
     analise_documentos,
     armazenamento,
+    conferencia_peticao,
     jurimetria_caso,
     peticao_aprendizado,
     peticao_criticas,
@@ -1094,6 +1095,141 @@ def _padroes_conteudisticos_para_redigir(contexto: str) -> str:
     return "\n".join(linhas)
 
 
+# ------------------------------------------------ conferência contra os autos
+
+
+def _fontes_da_conferencia(
+    caso_id: str, *, texto_entrevista: str | None = None, material: str = ""
+) -> conferencia_peticao.Fontes:
+    """O que a peça pode afirmar: anexos, entrevista, cadastro e o material do acervo.
+
+    `numerados` repete a numeração do bloco DOCUMENTOS de `_montar_contexto` — é por
+    ela que a peça cita "Documento NN", e é contra ela que a citação é conferida.
+    """
+    if texto_entrevista is None:
+        entrevistas = [e for e in armazenamento.listar_entrevistas(caso_id) if str(e.get("texto") or "").strip()]
+        texto_entrevista = str(entrevistas[0]["texto"]) if entrevistas else ""
+    caso = armazenamento.obter_caso(caso_id) or {}
+    try:
+        qualificacao = armazenamento.obter_qualificacao(caso_id) or {}
+    except Exception:  # noqa: BLE001 — cadastro ausente só estreita as fontes
+        qualificacao = {}
+    return conferencia_peticao.Fontes(
+        anexos=anexos_do_caso(caso_id),
+        numerados=[d["arquivo"] for d in documentos_ocr(caso_id)[:20]],
+        entrevista=texto_entrevista,
+        cadastro=" ".join(str(v) for v in [caso.get("cliente"), *qualificacao.values()] if v),
+        material=material,
+    )
+
+
+def _achados_da_peca(secoes: list[dict[str, Any]], violacoes: list[Any]) -> list[dict[str, Any]]:
+    """Os achados de forma (`avaliar_documento`) e os da conferência, no formato da tela."""
+    return [
+        *(_achado_legivel(a) for a in peticao_aprendizado.avaliar_documento(secoes)),
+        *conferencia_peticao.como_achados(violacoes),
+    ]
+
+
+def _achado_legivel(achado: dict[str, Any]) -> dict[str, Any]:
+    """Achado antigo (`code`, `critic`) no formato que a tela espera.
+
+    A tela faz `achado.category.toLowerCase()`: achado sem `category` derrubava o
+    cartão inteiro da petição. Os de `avaliar_documento` nasciam assim.
+    """
+    if achado.get("category") and achado.get("message"):
+        return achado
+    codigo = str(achado.get("code") or achado.get("critic") or "AVISO")
+    mensagens = {
+        "MISSING_SECTION": "Seção obrigatória sem texto.",
+        "FACTS_TOO_SHORT": "Os fatos estão curtos demais para sustentar os pedidos.",
+        "GROUNDS_TOO_SHORT": "A fundamentação está curta demais.",
+        "PENDING_INFORMATION": "A peça tem pontos marcados como [PENDENTE] para completar antes do protocolo.",
+    }
+    return {
+        "severity": "BLOCKING" if str(achado.get("severity") or "").upper() == "BLOCKING" else "WARNING",
+        "category": codigo,
+        "section": str(achado.get("section") or ""),
+        "message": str(achado.get("message") or mensagens.get(codigo, codigo)),
+        "detail": achado.get("detail"),
+    }
+
+
+def _conferir_contra_os_autos(
+    caso_id: str,
+    secoes: list[dict[str, Any]],
+    *,
+    texto_entrevista: str | None = None,
+    material: str = "",
+    corrigir: bool = True,
+) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
+    """Confere a peça contra os autos e, se `corrigir`, pede UMA rodada de correção.
+
+    Devolve as seções (corrigidas e com as citações não verificadas carimbadas), as
+    violações que SOBRARAM e o registro do que aconteceu, para o trace da geração.
+
+    A correção é uma revisão com a lista exata dos defeitos — não uma nova geração —
+    para não trocar um defeito conhecido por outro desconhecido. Se ela falhar ou não
+    resolver, a peça sai RETIDA com os achados: nunca em silêncio.
+    """
+    fontes = _fontes_da_conferencia(caso_id, texto_entrevista=texto_entrevista, material=material)
+    violacoes = conferencia_peticao.conferir(secoes, fontes)
+    iniciais = [v.codigo for v in violacoes if v.bloqueia]
+    corrigiu = False
+    if corrigir and iniciais:
+        try:
+            corrigidas, info = _revisar_secoes_via_llm(
+                caso_id, secoes, conferencia_peticao.instrucao_de_correcao(violacoes, fontes)
+            )
+            if info.get("alterou"):
+                # Só o CONTEÚDO das seções devolvidas muda. A revisão descarta seção
+                # vazia e pode renomear código; aqui a estrutura é a das oito seções
+                # da geração, e perder uma na correção seria trocar defeito por defeito.
+                por_codigo = {s["code"]: s["content"] for s in corrigidas}
+                secoes = [
+                    {**s, "content": por_codigo[s["code"]]} if s["code"] in por_codigo else s
+                    for s in secoes
+                ]
+                corrigiu = True
+                violacoes = conferencia_peticao.conferir(secoes, fontes)
+        except ErroPeticao:
+            log.warning("petição local: correção da conferência falhou (caso %s)", caso_id, exc_info=True)
+    secoes = conferencia_peticao.marcar_citacoes_nao_verificadas(secoes, violacoes)
+    registro = {
+        "violacoes_iniciais": iniciais,
+        "rodada_de_correcao": corrigiu,
+        "violacoes_restantes": [v.codigo for v in violacoes if v.bloqueia],
+        "citacoes_nao_verificadas": sum(1 for v in violacoes if v.codigo == "CITACAO_NAO_VERIFICADA"),
+    }
+    if iniciais:
+        log.warning("petição local: conferência do caso %s: %s", caso_id, registro)
+    return secoes, violacoes, registro
+
+
+def _aplicar_conferencia(dados: dict[str, Any], secoes: list[dict[str, Any]], violacoes: list[Any]) -> None:
+    """Grava na peça os achados e quantos deles a retêm."""
+    achados = _achados_da_peca(secoes, violacoes)
+    bloqueantes = sum(1 for a in achados if a["severity"] == "BLOCKING")
+    dados["review"] = {**(dados.get("review") or {}), "findings": achados, "blocking": bloqueantes}
+    dados["blocking_findings"] = bloqueantes
+
+
+def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
+    """Depois de edição humana: confere de novo, sem correção automática.
+
+    Quem editou foi o advogado — reescrever por cima dele seria pior que o defeito.
+    Mas o achado volta a refletir o texto que ELE deixou, inclusive sumindo quando
+    ele corrige.
+    """
+    secoes = [s for s in dados.get("sections") or [] if s.get("code") != "JURIMETRY"]
+    try:
+        _, violacoes, _ = _conferir_contra_os_autos(caso_id, secoes, corrigir=False)
+    except Exception:  # noqa: BLE001 — conferência não pode impedir salvar a edição
+        log.warning("petição local: reconferência falhou (caso %s)", caso_id, exc_info=True)
+        return
+    _aplicar_conferencia(dados, secoes, violacoes)
+
+
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
@@ -1108,9 +1244,28 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
     contexto = _montar_contexto(caso_id, texto_entrevista)
-    contexto += _precedentes_para_redigir(contexto)
-    contexto += _legislacao_para_redigir(contexto)
-    contexto += _padroes_conteudisticos_para_redigir(contexto)
+    precedentes = _precedentes_para_redigir(contexto)
+    legislacao = _legislacao_para_redigir(contexto)
+    padroes = _padroes_conteudisticos_para_redigir(contexto)
+    contexto += precedentes + legislacao + padroes
+    # O QUE FALTOU, DITO AO MODELO E GRAVADO NA PEÇA.
+    #
+    # As três buscas caem para "" em silêncio (banco fora, embeddings sem crédito — o
+    # 402 do OpenRouter de 18/09/2026). O contrato de redação continuava dizendo "você
+    # trabalha com o ACERVO", o modelo acreditava ter fonte e citava súmula de memória.
+    insumos = {
+        "precedentes": bool(precedentes),
+        "legislacao": bool(legislacao),
+        "pecas_modelo": bool(padroes),
+    }
+    if not precedentes and not legislacao:
+        contexto += (
+            "\n\n=== AVISO: NENHUMA FONTE DO ACERVO FOI RECUPERADA NESTA GERAÇÃO ===\n"
+            "Não há julgado, súmula, tema nem texto de lei no material. NÃO cite súmula,"
+            " OJ, tema ou processo por número: onde a tese precisar de precedente, escreva"
+            " [PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. Artigo de lei só"
+            " quando for indispensável e de redação notória; na dúvida, [CONFERIR: art. ...]."
+        )
 
     # As críticas DESTE caso, já aplicadas na geração.
     #
@@ -1147,6 +1302,13 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "'I – DO JUÍZO 100% DIGITAL' e 'II – DA GRATUIDADE DA JUSTIÇA' pertencem a "
         "ela, cada uma com subtítulo próprio e texto desenvolvido; a seção "
         "LEGAL_GROUNDS não repete nenhuma das duas. "
+        # A gratuidade é obrigatória no padrão e pede prova — foi para "cumprir" isso
+        # que o modelo inventou "declaração de hipossuficiência anexa (Documento 09)".
+        "Na gratuidade, só diga que a declaração de hipossuficiência está anexa se "
+        "ela estiver entre os DOCUMENTOS; senão, escreva [PENDENTE: juntar declaração "
+        "de hipossuficiência assinada]. "
+        f"DATA DE HOJE: {datetime.now().strftime('%d/%m/%Y')} — use-a para prazos, "
+        "prescrição e para saber se a estabilidade ainda está em curso. "
         "Os julgados e os dispositivos do material abaixo são REAIS e vieram do "
         "acervo: prefira-os a qualquer citação de memória, e cite apenas os que "
         "alcançarem estes fatos, dizendo por quê. Artigo ou processo citado de "
@@ -1164,9 +1326,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "local/data e advogado/OAB, sem escrever o título FECHAMENTO dentro do "
         "conteúdo e sem usar a fórmula 'Termos em que'."
     )
-    saida = _llm_json(
-        _com_skill_do_escritorio(
-            caso_id,
+    instrucao_base = (
             CONTRATO_DE_REDACAO
             + """Você é advogado e redator de petições iniciais.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
@@ -1209,8 +1369,14 @@ Devolva JSON exatamente com:
 Em `acoes_sugeridas`, inclua de zero a três peças DIFERENTES da minuta principal,
 somente se os fatos realmente apontarem para elas. Não sugira duplicata, recurso,
 ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
-Cada content deve conter parágrafos separados por linha em branco.""",
-        ),
+Cada content deve conter parágrafos separados por linha em branco."""
+    )
+    instrucao = _com_skill_do_escritorio(caso_id, instrucao_base)
+    # Sem orientação do escritório a instrução volta intocada — e a peça sai do
+    # prompt genérico. Isso tem de constar da peça, não só do log.
+    insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
+    saida = _llm_json(
+        instrucao,
         contexto,
         # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
         # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
@@ -1246,6 +1412,12 @@ Cada content deve conter parágrafos separados por linha em branco.""",
     secoes = _normalizar_secoes(saida.get("secoes") or [])
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
+    # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
+    # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
+    # cliente, súmula de memória). Ver `conferencia_peticao`.
+    secoes, violacoes, conferencia = _conferir_contra_os_autos(
+        caso_id, secoes, texto_entrevista=texto_entrevista, material=contexto
+    )
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
@@ -1287,16 +1459,11 @@ Cada content deve conter parágrafos separados por linha em branco.""",
         "readiness": {
             "ready": True,
             "blocking_issues": [],
-            "warnings": analise.get("lacunas") or [],
+            "warnings": [*_avisos_de_insumo(insumos), *(analise.get("lacunas") or [])],
             "pendencias": pendencias or analise.get("fatos_so_na_entrevista") or [],
             "completo": not pendencias and not analise.get("lacunas"),
         },
-        "review": {
-            "findings": achados_criticos,
-            "summary": analise.get("observacoes", ""),
-            "blocking": 0,
-        },
-        "blocking_findings": 0,
+        "review": {"summary": analise.get("observacoes", "")},
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
         # Trace é explicabilidade operacional: fontes/regras/etapas. Não contém
         # cadeia de pensamento privada do modelo nem texto sensível do caso.
@@ -1310,10 +1477,30 @@ Cada content deve conter parágrafos separados por linha em branco.""",
             "skills": ["learned_preferences_retrieval", "legal_critic", "style_critic",
                        "consistency_check", "document_generation"],
             "evaluations": achados_criticos,
+            "insumos": insumos,
+            "conferencia": conferencia,
         },
     }
+    _aplicar_conferencia(dados, secoes, violacoes)
     _salvar(caso_id, dados)
     return dados
+
+
+def _avisos_de_insumo(insumos: dict[str, bool]) -> list[str]:
+    """O que faltou na geração, em frase — aparece em «O que faltava quando a peça foi gerada»."""
+    nomes = {
+        "orientacao_do_escritorio": "a orientação do escritório (skill e regras aprendidas)",
+        "pecas_modelo": "as peças-modelo do acervo do escritório",
+        "precedentes": "os julgados do acervo",
+        "legislacao": "o texto de lei do acervo",
+    }
+    faltou = [nomes[chave] for chave, presente in insumos.items() if not presente and chave in nomes]
+    if not faltou:
+        return []
+    return [
+        "Gerada SEM " + ", ".join(faltou) + " — o acervo não respondeu. A peça saiu do modelo"
+        " genérico; gere de novo quando o acervo voltar."
+    ]
 
 
 #: Quantas peças anexas um caso pode ter. Três é o teto do que a análise sugere
@@ -1583,10 +1770,11 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
 CONTRATO_DE_REDACAO = """Você elabora peças jurídicas profissionais destinadas à revisão e ao protocolo por advogado.
 
 POSTURA PROFISSIONAL: atue como advogado brasileiro sênior, com mais de quarenta
-anos de prática forense multidisciplinar. Você trabalha com o ACERVO JURÍDICO/RAG
-do escritório, que contém legislação brasileira vetorizada e atualizada. Consuma
-os dispositivos recuperados no material da tarefa sempre que forem pertinentes;
-prefira-os à memória e nunca invente lei, artigo, vigência, precedente ou fato.
+anos de prática forense multidisciplinar. Quando o material da tarefa trouxer os
+blocos do ACERVO JURÍDICO do escritório (legislação, julgados, peças), consuma os
+dispositivos recuperados sempre que forem pertinentes e prefira-os à memória.
+Quando o material NÃO trouxer esses blocos, você não tem fonte nesta tarefa: não
+simule que tem. Nunca invente lei, artigo, vigência, precedente ou fato.
 O acervo é fonte para pesquisa e fundamentação, não autorização para citar norma
 irrelevante ou despejar artigos sem subsunção.
 
@@ -1690,10 +1878,24 @@ contrária ou a órgão público.
 Quando um fato for extraído de anexo, indique no texto a prova correspondente
 como "Documento NN — nome do arquivo", usando exatamente a numeração do bloco
 DOCUMENTOS recebido. Não cite documento que não esteja no contexto.
+A referência "(Documento NN)" só acompanha frase cujo conteúdo ESTEJA naquele
+documento. Fato que só aparece na entrevista leva "conforme relato do autor" — nunca
+o número de um documento que não o contém (a CAT não prova que a trava estava
+quebrada só porque descreve a queda).
+NUNCA diga que um documento está "anexo", "juntado", "acostado" ou "incluso" se ele
+não estiver no bloco DOCUMENTOS — inclusive declaração de hipossuficiência,
+procuração, laudo, exame e cartão de ponto. Se a peça precisar dele, escreva
+[PENDENTE: juntar <documento>].
+Todo número de documento do cliente (CPF, RG, CTPS, PIS, NB, CAT, CNPJ, data) sai
+copiado dos DOCUMENTOS, da qualificação ou da entrevista. Número que não está lá não
+entra: vira [PENDENTE: <dado>].
 
 JURISPRUDÊNCIA — REGRA ANTI-ALUCINAÇÃO. É PROIBIDO inventar número de processo,
-súmula, tema, ementa, acórdão, relator, tribunal ou data. Só cite julgado que
-esteja no material recebido ou que você possa verificar. Prioridade: precedente
+súmula, tema, ementa, acórdão, relator, tribunal ou data. Só cite súmula, OJ, tema
+ou julgado que esteja NO MATERIAL RECEBIDO — a sua memória não é verificação: é
+dela que saiu "Súmula 6 do TST" para acúmulo de função, quando a Súmula 6 trata de
+equiparação salarial. Toda citação é conferida depois contra o material; a que não
+estiver lá sai carimbada na peça como não verificada. Prioridade: precedente
 vinculante do STF; tema repetitivo e precedente qualificado do TST; súmula e OJ
 do TST; SDI; Turmas do TST; TRT competente. Não use precedente só porque tem
 palavras parecidas: compare fatos, atividade, questão decidida e fundamento
@@ -1705,6 +1907,21 @@ PEDIDOS: cada um decorre de tese já fundamentada, com valor individual quando
 exigido (art. 840 da CLT). Não há pedido sem fundamentação nem fundamentação sem
 pedido. O valor da causa deve ser coerente com a soma dos pedidos — não atribua
 valor arbitrário nem recorra automaticamente a fórmula fiscal.
+Na reclamação trabalhista, TODO pedido de pagamento traz o valor NA PRÓPRIA LINHA do
+pedido — "a apurar em liquidação" não basta (art. 840, § 1º, da CLT). O valor é
+ESTIMADO com o critério escrito ao lado, a partir dos dados dos documentos (ex.:
+"2 h/dia × 22 dias × 22 meses × valor-hora de R$ 10,82 × 1,5"). É PROIBIDO criar
+pedido ou parcela sem fato que o sustente, e PROIBIDO ajustar parcela para o total
+dar número redondo: o valor da causa é a soma, seja ela qual for.
+
+O QUE NÃO SERVE AO CLIENTE NÃO ENTRA NA PEÇA. Verba que você concluiu ser indevida
+(multa sem atraso, direito que os fatos não dão) não vira tópico "não se aplica" na
+petição: a peça é do cliente. Essa conclusão vai em `analise.observacoes`.
+E o contrário também vale: tirar o tópico NÃO é motivo para PEDIR a verba. Se os
+documentos mostram que a rescisão foi paga e homologada no prazo, a multa do art. 477
+simplesmente não aparece — nem como tópico, nem como pedido.
+Gratuidade, citação, provas, custas e honorários não levam valor próprio: não
+escreva "R$ 0,00" para eles nem coloque custas como pedido com valor.
 
 GRATUIDADE, HONORÁRIOS E PROCESSO: priorize a CLT vigente; antes de aplicar o CPC
 subsidiariamente, verifique se a CLT já disciplina a matéria e se há decisão
@@ -1713,7 +1930,10 @@ vinculante sobre o dispositivo.
 ESTABILIDADE ACIDENTÁRIA não se pede automaticamente. Verifique vínculo ativo,
 afastamento, espécie e cessação de benefício, dispensa, momento da constatação,
 art. 118 da Lei 8.213/91 e Súmula 378 do TST. Não peça reintegração de quem
-continua trabalhando sem fundamento específico.
+continua trabalhando sem fundamento específico. Compare o fim da estabilidade com a
+DATA DE HOJE (vem no material): se o período já terminou, não peça reintegração — só
+a indenização dos salários e consectários DA DISPENSA ATÉ O FIM do período, não de
+doze meses cheios.
 
 CAT: a ausência não prova nexo. Analise primeiro se havia elementos que impunham a
 comunicação e depois a eventual omissão; não use a falta de CAT de forma circular.
@@ -2103,6 +2323,15 @@ def revisar_com_prompt(
     # realmente mudou. As perguntas da IA sobem junto — é com elas que ele
     # reescreve o pedido e destrava.
     if conferencia.get("alterou"):
+        # A revisão pedida pelo advogado (ou pelo chat) também passa pela conferência.
+        # Sem correção automática: o pedido foi DELE, e reescrever por cima mudaria o
+        # que ele pediu. Mas a súmula de memória sai carimbada e o achado aparece na
+        # comparação, antes de ele aceitar.
+        try:
+            secoes, violacoes, _ = _conferir_contra_os_autos(caso_id, secoes, corrigir=False)
+            conferencia["conferencia_autos"] = conferencia_peticao.como_achados(violacoes)
+        except Exception:  # noqa: BLE001 — conferência não pode perder o pedido do advogado
+            log.warning("petição local: conferência da revisão falhou (caso %s)", caso_id, exc_info=True)
         candidato = {
             "id": uuid.uuid4().hex, "status": "PENDING_REVIEW",
             "base_version": int(atual.get("version") or 1), "sections": secoes,
@@ -2189,6 +2418,7 @@ def aceitar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
             "prompt": candidata.get("prompt", ""), "usuario": candidata.get("usuario", ""),
             "em": agora, "semantic_diff": diff_aprovado, **(candidata.get("revisao") or {})},
     })
+    _reconferir(caso_id, dados)
     _salvar(caso_id, dados)
     try:
         peticao_criticas.inicializar()
@@ -2292,6 +2522,7 @@ def salvar_secoes(
     dados, anterior = _aplicar_edicao_manual(dados, secoes, usuario)
     if anterior is not None:
         armazenamento.registrar_versao_peticao(caso_id, anterior)
+        _reconferir(caso_id, dados)
     return _salvar(caso_id, dados)
 
 
@@ -2312,7 +2543,12 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "version": dados.get("version", 1),
         "title": dados.get("title", "Petição inicial"),
         "readiness": dados.get("readiness") or {},
-        "review": dados.get("review") or {},
+        # Petições gravadas antes da conferência têm achados sem `category`, e a tela
+        # faz `category.toLowerCase()`: normaliza aqui para não derrubar o cartão.
+        "review": {
+            **(dados.get("review") or {}),
+            "findings": [_achado_legivel(a) for a in (dados.get("review") or {}).get("findings") or []],
+        },
         "jurimetria": dados.get("jurimetria") or {},
         "blocking_findings": dados.get("blocking_findings", 0),
         "model": dados.get("model"),
