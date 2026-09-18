@@ -71,7 +71,6 @@ const ESPERA_REPUBLICAR_MS = 8_000;
 const ALTURA_VIDEO = 720;
 const ALTURA_MINIMA = 180;
 const FPS_VIDEO = 30;
-const ALTURA_RECEPCAO = 720;
 
 /** Espera antes da primeira reconexão; dobra a cada tentativa. */
 const ESPERA_RECONEXAO_MS = 3_000;
@@ -84,37 +83,6 @@ const MAX_RECONEXOES = 5;
  *  que é rápida. Curto de propósito: quem de fato saiu já foi anunciado por
  *  `USER_LEFT`, então esperar aqui não atrasa nada que importe. */
 const ESPERA_TROCA_REMOTA_MS = 2_500;
-
-/** As restrições de câmera pedidas ao navegador. `ideal`, e nunca `exact`:
- *  `exact` faz a webcam que não tem o modo exato falhar por inteiro, e a
- *  chamada cai para "sem câmera" em vez de abrir na resolução possível. */
-const VIDEO_PEDIDO = {
-  height: { ideal: ALTURA_VIDEO, min: ALTURA_MINIMA, max: ALTURA_VIDEO },
-  frameRate: { ideal: FPS_VIDEO, max: FPS_VIDEO },
-} as const;
-
-const TENTATIVAS_VIDEO: ReadonlyArray<Record<string, unknown>> = [
-  { resolution: ALTURA_VIDEO, constraints: { video: VIDEO_PEDIDO } },
-  {
-    resolution: 480,
-    constraints: {
-      video: {
-        height: { ideal: 480, min: ALTURA_MINIMA, max: 480 },
-        frameRate: { ideal: 24, max: 30 },
-      },
-    },
-  },
-  {
-    resolution: 240,
-    constraints: {
-      video: {
-        height: { ideal: 240, min: 120, max: 360 },
-        frameRate: { ideal: 15, max: 24 },
-      },
-    },
-  },
-  { constraints: { video: true } },
-];
 
 export type PapelChamada = "advogado" | "cliente";
 
@@ -210,6 +178,7 @@ interface ConferenciaJitsi {
    * fora deste repositório: em versões antigas eles não existem, e chamá-los
    * sem conferir derrubaria a entrada na sala inteira — por qualidade de
    * imagem, que é o menor dos problemas quando ninguém consegue entrar. */
+  setReceiverConstraints?(restricoes: Record<string, unknown>): void;
   setReceiverVideoConstraints?(restricoes: Record<string, unknown>): void;
   setSenderVideoConstraint?(altura: number): Promise<void> | void;
 }
@@ -324,13 +293,53 @@ function ehCelular(): boolean {
   return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
 
+type PerfilVideo = {
+  altura: 720 | 480 | 240;
+  fps: 30 | 24 | 15;
+};
+
+function escolherPerfilVideo(): PerfilVideo {
+  const navegador = navigator as Navigator & {
+    connection?: { effectiveType?: string; saveData?: boolean };
+    deviceMemory?: number;
+  };
+  const rede = navegador.connection;
+  if (rede?.saveData || ["slow-2g", "2g", "3g"].includes(rede?.effectiveType ?? "")) {
+    return { altura: 240, fps: 15 };
+  }
+  if (ehCelular() && ((navegador.deviceMemory ?? 8) <= 4 || navigator.hardwareConcurrency <= 4)) {
+    return { altura: 480, fps: 24 };
+  }
+  return { altura: ALTURA_VIDEO, fps: FPS_VIDEO };
+}
+
+function tentativasVideo(perfil: PerfilVideo): ReadonlyArray<Record<string, unknown>> {
+  const alturas = [...new Set([perfil.altura, 480, 240])].filter((altura) => altura <= perfil.altura);
+  return [
+    ...alturas.map((altura) => {
+      const fps = altura === perfil.altura ? perfil.fps : altura === 480 ? 24 : 15;
+      return {
+        resolution: altura,
+        constraints: {
+          video: {
+            height: { ideal: altura, min: altura === 240 ? 120 : ALTURA_MINIMA, max: altura },
+            frameRate: { ideal: fps, max: fps },
+          },
+        },
+      };
+    }),
+    { constraints: { video: true } },
+  ];
+}
+
 async function abrirComFallback(
   api: ApiJitsi,
   devices: string[],
   opcoesBase: Record<string, unknown> = {},
+  perfil = escolherPerfilVideo(),
 ): Promise<FaixaJitsi[]> {
   let ultimo: unknown = null;
-  for (const opcoes of TENTATIVAS_VIDEO) {
+  for (const opcoes of tentativasVideo(perfil)) {
     try {
       const faixas = await api.createLocalTracks({ devices, ...opcoesBase, ...opcoes });
       const temVideo = faixas.some((f) => f.getType() === "video");
@@ -346,15 +355,16 @@ async function abrirComFallback(
   throw ultimo ?? new Error("Nenhuma câmera encontrada.");
 }
 
-async function abrirVideoComFallback(api: ApiJitsi): Promise<FaixaJitsi[]> {
-  return abrirComFallback(api, ["video"]);
+async function abrirVideoComFallback(api: ApiJitsi, perfil: PerfilVideo): Promise<FaixaJitsi[]> {
+  return abrirComFallback(api, ["video"], {}, perfil);
 }
 
 async function abrirAudioEVideoComFallback(
   api: ApiJitsi,
   opcoesAudio: Record<string, unknown>,
+  perfil: PerfilVideo,
 ): Promise<FaixaJitsi[]> {
-  return abrirComFallback(api, ["audio", "video"], opcoesAudio);
+  return abrirComFallback(api, ["audio", "video"], opcoesAudio, perfil);
 }
 
 function erroImpedeFallbackDeVideo(e: unknown): boolean {
@@ -410,6 +420,7 @@ export class ChamadaJitsi {
   /** O microfone escolhido na entrada, para as recuperações reabrirem O MESMO —
    *  reabrir no padrão do sistema devolveria o dispositivo que já falhou. */
   private microfoneEscolhido: string | undefined;
+  private perfilVideo: PerfilVideo = { altura: ALTURA_VIDEO, fps: FPS_VIDEO };
   /** Retrato da última lista de microfones, para saber o que entrou ou saiu
    *  quando o `devicechange` avisa que ela mudou. */
   private dispositivosConhecidos: string[] = [];
@@ -580,12 +591,13 @@ export class ChamadaJitsi {
     const querCamera = Boolean(opcoes.camera);
     this.microfoneEscolhido = opcoes.microfoneId;
     this.p2pLigado = opcoes.p2p ?? false;
+    this.perfilVideo = escolherPerfilVideo();
     const comMicrofone = opcoes.microfoneId ? { micDeviceId: opcoes.microfoneId } : {};
     let faixas: FaixaJitsi[] = [];
     let erroCamera: unknown = null;
     if (querCamera) {
       try {
-        faixas = await abrirAudioEVideoComFallback(api, comMicrofone);
+        faixas = await abrirAudioEVideoComFallback(api, comMicrofone, this.perfilVideo);
       } catch (e) {
         erroCamera = e;
         faixas = [];
@@ -598,7 +610,7 @@ export class ChamadaJitsi {
       faixas = await api.createLocalTracks({ devices: ["audio"], ...comMicrofone });
       if (erroCamera && !ehCelular()) {
         try {
-          faixas = [...faixas, ...(await abrirVideoComFallback(api))];
+          faixas = [...faixas, ...(await abrirVideoComFallback(api, this.perfilVideo))];
           erroCamera = null;
         } catch (e) {
           erroCamera = e;
@@ -642,7 +654,8 @@ export class ChamadaJitsi {
 
   private async abrirCamera(api: ApiJitsi): Promise<void> {
     if (this.papel === "advogado") preCarregarFundoVirtual(FUNDO_ADVOGADO);
-    const faixas = await abrirVideoComFallback(api);
+    this.perfilVideo = escolherPerfilVideo();
+    const faixas = await abrirVideoComFallback(api, this.perfilVideo);
     this.minhaCamera = faixas.find((f) => f.getType() === "video") ?? null;
     if (this.minhaCamera) await this.aplicarFundo(this.minhaCamera);
     if (this.minhaCamera) this.videos.set("eu", this.minhaCamera.getTrack());
@@ -1201,17 +1214,19 @@ export class ChamadaJitsi {
    * pode derrubar uma chamada que já está de pé. Pior nítido do que mudo. */
   private pedirQualidade(sala: ConferenciaJitsi): void {
     try {
-      sala.setReceiverVideoConstraints?.({
+      const restricoes = {
         // `lastN: -1` = receber todo mundo. Numa sala de dois, restringir não
         // economiza nada e ainda apaga o retrato de quem entrar em terceiro.
         lastN: -1,
-        defaultConstraints: { maxHeight: ALTURA_RECEPCAO },
-      });
+        defaultConstraints: { maxHeight: this.perfilVideo.altura },
+      };
+      if (sala.setReceiverConstraints) sala.setReceiverConstraints(restricoes);
+      else sala.setReceiverVideoConstraints?.(restricoes);
     } catch {
       /* versão da lib sem constraint de recepção: segue no padrão dela */
     }
     try {
-      void sala.setSenderVideoConstraint?.(ALTURA_VIDEO);
+      void sala.setSenderVideoConstraint?.(this.perfilVideo.altura);
     } catch {
       /* idem, do lado do envio */
     }
