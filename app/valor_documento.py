@@ -173,7 +173,13 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
                 "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
-                "max_tokens": 800,
+                # Era 800, e 800 cortava o JSON no meio justamente nos documentos
+                # mais ricos: medido no caso-gabarito (18/09), CTPS e TRCT bateram o
+                # teto nas duas tentativas (`finish_reason=length`), carta do INSS e
+                # CAT em uma de duas (713 e 781 tokens). O documento ia para a
+                # triagem como "não identificado", sem campo nenhum — e o chat não
+                # achava o número da CTPS que estava no caso.
+                "max_tokens": 2000,
                 "messages": [
                     {"role": "system", "content": INSTRUCAO},
                     {"role": "user", "content": mensagem},
@@ -188,9 +194,14 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
             "O modelo não respondeu. O documento está guardado; tente a leitura de novo."
         ) from exc
 
+    escolha: dict[str, Any] = {}
     try:
-        return json.loads(resposta.json()["choices"][0]["message"]["content"])
+        escolha = resposta.json()["choices"][0]
+        return json.loads(escolha["message"]["content"])
     except Exception as exc:
+        # Resposta cortada pelo teto é o caso comum de "ilegível", e ele não é
+        # aleatório: é o documento com mais dado. Sem isto no log, parece instabilidade.
+        log.warning("Leitura do documento ilegível (finish_reason=%s)", escolha.get("finish_reason"))
         raise ErroValor("Resposta ilegível do modelo.") from exc
 
 

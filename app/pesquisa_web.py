@@ -53,6 +53,15 @@ INSTRUCAO = (
     "Você apoia advogados brasileiros que estão redigindo uma petição e precisam "
     "tirar uma dúvida. Responda em português do Brasil usando os resultados da "
     "busca na web.\n\n"
+    "HIERARQUIA DAS FONTES — não é preferência de estilo, é o que sustenta a peça:\n"
+    "1. Texto oficial da norma (planalto.gov.br, in.gov.br, senado, câmara) e "
+    "jurisprudência no site do PRÓPRIO tribunal (stf, stj, tst, trf, trt, tj).\n"
+    "2. Órgãos públicos e CNJ.\n"
+    "3. Qualquer outra coisa — portal, blog, escritório, banco de ementas privado — "
+    "só serve para ACHAR a fonte oficial, nunca para substituí-la. Se a resposta "
+    "depender só disso, diga isso com todas as letras.\n"
+    "Nunca cite número de súmula, artigo ou tese sem a fonte oficial junto. Um "
+    "número de súmula errado numa petição é erro que o juiz vê antes do advogado.\n\n"
     "Forma da resposta:\n"
     "- Comece pela resposta direta, em uma ou duas frases, sem preâmbulo.\n"
     "- Ajuste o tamanho à pergunta: dúvida simples cabe em um parágrafo; tema "
@@ -64,8 +73,8 @@ INSTRUCAO = (
     "- Cite as fontes em linha, como links markdown junto da afirmação. NÃO "
     "termine com uma lista de fontes — a tela já mostra as fontes consultadas.\n\n"
     "Conteúdo:\n"
-    "- Prefira fontes oficiais: planalto.gov.br, tribunais (STF, STJ, TST, TRFs, "
-    "TJs, TRTs), CNJ e órgãos públicos.\n"
+    "- Use as fontes na ordem da hierarquia acima e diga quando a melhor que você "
+    "achou não for oficial.\n"
     "- Quando houver divergência jurisprudencial, exceções ou a resposta "
     "depender de detalhe do caso, diga isso explicitamente.\n"
     "- Se os resultados não sustentarem uma resposta segura, diga que não "
@@ -135,16 +144,81 @@ def pesquisar(pergunta: str) -> dict[str, Any]:
     if isinstance(conteudo, list):
         conteudo = "".join(p.get("text", "") for p in conteudo if isinstance(p, dict))
 
+    fontes = _fontes(mensagem.get("annotations"))
     return {
         "pergunta": pergunta,
         "resposta": str(conteudo).strip(),
-        "fontes": _fontes(mensagem.get("annotations")),
+        "fontes": fontes,
+        # Medido aqui, e não pelo modelo: é o que permite à tela e ao chat dizerem
+        # "isto não tem fonte oficial" sem depender de o modelo confessar.
+        "tem_fonte_oficial": any(
+            f["confianca"] in ("OFICIAL", "TRIBUNAL") for f in fontes
+        ),
         "modelo": corpo.get("model") or MODELO,
     }
 
 
+#: Domínios de NORMA e de ATO OFICIAL — o texto da lei como ele é publicado.
+_OFICIAIS = (
+    "planalto.gov.br",
+    "in.gov.br",
+    "senado.leg.br",
+    "camara.leg.br",
+    "senado.gov.br",
+    "camara.gov.br",
+    "normas.leg.br",
+    "lexml.gov.br",
+)
+
+#: Sufixos restritos por quem os concede. `.jus.br` é do Judiciário, `.mp.br` do
+#: Ministério Público, `.gov.br`/`.leg.br` do Executivo e do Legislativo — ninguém
+#: registra um deles para hospedar um blog.
+_JUDICIARIO = "jus.br"
+_PUBLICOS = ("gov.br", "leg.br", "mp.br", "def.br")
+
+
+def _sob(dominio: str, sufixo: str) -> bool:
+    """O domínio É o sufixo ou está debaixo dele.
+
+    A comparação precisa das duas pontas: `gov.br` sozinho (o portal único do governo)
+    e `www.planalto.gov.br`. Só o `endswith` deixava `gov.br` cair em "secundária", que
+    é o oposto do que ele é.
+    """
+    return dominio == sufixo or dominio.endswith("." + sufixo)
+
+
+def _confianca(url: str) -> str:
+    """Em que camada da hierarquia esta fonte está.
+
+    `OFICIAL` é o texto da norma; `TRIBUNAL` é a jurisprudência no site de quem julgou;
+    `PUBLICA` é outro órgão público; `SECUNDARIA` é todo o resto — portal, blog,
+    escritório, banco de ementas privado.
+
+    Por DOMÍNIO e determinística de propósito: perguntar ao modelo se a fonte dele é
+    confiável é perguntar à parte interessada. O domínio é o único sinal que não depende
+    de quem escreveu a resposta.
+    """
+    dominio = url.split("//", 1)[-1].split("/", 1)[0].lower().removeprefix("www.")
+    if any(_sob(dominio, oficial) for oficial in _OFICIAIS):
+        return "OFICIAL"
+    if _sob(dominio, _JUDICIARIO):
+        return "TRIBUNAL"
+    if any(_sob(dominio, publico) for publico in _PUBLICOS):
+        return "PUBLICA"
+    return "SECUNDARIA"
+
+
+#: A ordem em que as fontes aparecem para quem lê. Oficial primeiro, sempre.
+_PESO = {"OFICIAL": 0, "TRIBUNAL": 1, "PUBLICA": 2, "SECUNDARIA": 3}
+
+
 def _fontes(anotacoes: Any) -> list[dict[str, str]]:
-    """`url_citation` da OpenRouter, sem repetir URL e sem o texto inteiro da página."""
+    """`url_citation` da OpenRouter, sem repetir URL e sem o texto inteiro da página.
+
+    Cada fonte sai classificada e a lista sai ORDENADA pela hierarquia: quem lê de cima
+    para baixo lê primeiro o que sustenta a peça. Sem isso, um blog jurídico bem escrito
+    chegava na primeira posição com a mesma cara do Planalto.
+    """
     fontes: list[dict[str, str]] = []
     vistas: set[str] = set()
     for item in anotacoes or []:
@@ -161,6 +235,8 @@ def _fontes(anotacoes: Any) -> list[dict[str, str]]:
                 "url": url,
                 "titulo": str(citacao.get("title") or "").strip(),
                 "trecho": trecho[:300] + ("…" if len(trecho) > 300 else ""),
+                "confianca": _confianca(url),
             }
         )
+    fontes.sort(key=lambda f: _PESO.get(f["confianca"], 9))
     return fontes

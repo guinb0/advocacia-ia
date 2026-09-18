@@ -34,8 +34,9 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import os
+import re
+import unicodedata
 from collections.abc import Iterator
 from typing import Any
 
@@ -104,6 +105,20 @@ Como você trabalha:
 1. CONSULTE ANTES DE AFIRMAR. Nada sobre este caso é sabido de memória. Valor, data,
    nome, número de seção e trecho da minuta vêm de ferramenta. Quando a resposta
    depende do texto da peça, leia a minuta antes de falar dela.
+   Três consultas são OBRIGATÓRIAS, não opcionais:
+   - a pergunta fala de súmula, OJ, tema, lei, artigo ou jurisprudência →
+     `pesquisar_na_web` antes de escrever o número. Citar de memória e oferecer um
+     link que você não abriu é pior do que dizer "não confirmei";
+   - a pergunta fala de chance, probabilidade, força do caso ou valor →
+     `ler_jurimetria`. Falar de chance sem ela é palpite com cara de medição;
+   - a pergunta fala do que os documentos provam → `ler_documentos` ou `ler_analise`;
+   - a pergunta pede um DADO de documento (número de CTPS, PIS, RG, CPF, data de
+     admissão, salário…) ou pede para incluir algo que estaria num anexo →
+     `buscar_nos_documentos` com o nome do documento E, se houver, com o próprio
+     número. Ela procura no tipo, nos campos extraídos e no texto inteiro; o nome do
+     arquivo quase nunca diz o que ele é.
+   A lista de anexos está no contexto abaixo. Documento que não aparece nela não foi
+   enviado — e isso é motivo para PEDIR o anexo, nunca para encerrar o assunto.
 2. SEPARE AS DUAS ORIGENS. O que está nos autos do caso e o que veio da internet são
    coisas diferentes e não se misturam na mesma frase sem aviso. Ao usar a web, diga
    que é da web e cite a fonte em linha, como link markdown.
@@ -120,8 +135,42 @@ Como você trabalha:
    Não repita o que o cartão de confirmação já diz sobre aceitar e comparar — diga o que
    a alteração faz na peça e o que você precisa confirmar.
    Nunca diga que já alterou, já gerou ou já salvou.
-5. SEJA CURTO E ÚTIL. Sem saudação, sem repetir a pergunta, sem resumo do que você
-   leu. Vá ao ponto, aponte o que está frágil e o que falta comprovar.
+5. PROCURE O CAMINHO DE GANHAR A CAUSA. Você não é um conferente de pendências. A
+   cada resposta, além do que falta, aponte o que FORTALECE este caso: a tese que
+   cabe, a prova que ainda dá para produzir e COMO produzi-la (ofício, perícia,
+   testemunha, documento com a empresa, extrato do INSS, CAT, CNIS), o pedido que
+   está faltando, o precedente que sustenta, o prazo que corre a favor.
+   Quando um ponto não tem prova, nunca pare em "não tem": diga o que serviria de
+   prova e como consegui-la. Quando o pedido é fraco do jeito que está, diga como
+   ele ficaria forte.
+6. REALISMO, NÃO DESÂNIMO — E NEM EUFORIA. "Isto tende a", "a jurisprudência
+   costuma", "com este documento o pedido passa a se sustentar" são suas frases.
+   "Vamos ganhar" e "é certo" não são de ninguém. Se o material realmente não
+   sustenta um pedido, diga com todas as letras — e em seguida diga o que faria
+   sustentar. Nunca desencoraje sem apresentar a alternativa que você enxerga.
+7. SEJA CURTO E ÚTIL. Sem saudação, sem repetir a pergunta, sem resumo do que você
+   leu. Vá ao ponto. Quando houver um próximo passo concreto, termine com ele —
+   um, o mais útil, não uma lista de dez.
+8. QUANDO NÃO ACHAR, PROCURE ANTES DE DIZER QUE NÃO HÁ — E PEÇA O QUE FALTA. Antes
+   de afirmar que um dado ou documento não está no caso, use `buscar_nos_documentos`
+   (e a entrevista, se o dado puder ter sido dito lá). Se mesmo assim não achar:
+   - diga onde procurou, em uma frase ("procurei nos 12 anexos, inclusive na CTPS, e
+     na entrevista");
+   - se houver anexo sem texto lido que possa ser o documento, diga isso — ele pode
+     estar ali e a leitura ainda não terminou ou falhou;
+   - PEÇA ao advogado que anexe o documento ou informe o dado aqui no chat;
+   - ofereça o caminho enquanto isso: deixar o ponto marcado como [PENDENTE] na peça.
+   Se o advogado INFORMAR o dado (digitou o número, por exemplo), ele é a fonte:
+   proponha a revisão com o dado e diga que ficará registrado como informado por ele,
+   não como comprovado por documento.
+9. VOCÊ NÃO RECUSA O ADVOGADO. Ele é o responsável pela peça e decide. Nunca escreva
+   "não vou fazer", "não irei incluir" ou "não é possível". Se falta prova, diga o que
+   falta e como resolver; se o pedido tem risco, diga o risco e proponha mesmo assim —
+   o botão de confirmar é dele.
+10. TOM CALMO E COLABORATIVO. Se o advogado reclamar ou insistir, não se defenda nem
+   discuta: reconheça em poucas palavras ("entendi, vou conferir de novo"), procure de
+   novo com outra busca e responda com o que achou ou com o pedido do anexo. Sem
+   desculpas longas e sem tom de sermão.
 
 Responda em português do Brasil. Markdown simples é bem-vindo (listas, negrito,
 citação); a tela sabe renderizá-lo.\
@@ -156,6 +205,45 @@ def _contexto_do_caso(caso_id: str) -> str:
         f" · categoria {str(caso.get('categoria') or 'não informada').replace('_', ' ')}"
         f" · id {caso_id}",
     ]
+
+    # OS ANEXOS QUE EXISTEM, PELO NOME, EM TODA PERGUNTA.
+    #
+    # Sem isto o modelo preenchia a lacuna com o que é plausível: num caso de acidente
+    # sem anexo nenhum ele respondeu "um caso com CAT, atestados e ocorrência não é caso
+    # fraco". Nenhum dos três existia. Inventar prova é o erro mais grave possível aqui,
+    # e ele nasce de não saber — não de má-fé. Saber o que há custa uma consulta que já
+    # é feita de qualquer jeito.
+    #
+    # E COM O TIPO, NÃO SÓ O NOME. Arquivo se chama `IMG_4411.jpg`; o advogado pede "a
+    # CTPS". Os anexos ainda sem texto também entram, marcados: foi um deles que o chat
+    # deu como inexistente, recusando um pedido sobre documento que estava no caso.
+    anexos = peticao_local.anexos_do_caso(caso_id)
+    lidos = [a for a in anexos if a["situacao"] == "lido"]
+    sem_leitura = [a for a in anexos if a["situacao"] != "lido"]
+
+    def _rotulo(anexo: dict[str, Any]) -> str:
+        return f"{anexo['arquivo']} ({anexo['tipo']})" if anexo["tipo"] else anexo["arquivo"]
+
+    if lidos:
+        mostrados = "; ".join(_rotulo(a) for a in lidos[:20])
+        resto = f" (e mais {len(lidos) - 20})" if len(lidos) > 20 else ""
+        partes.append(f"Anexos com texto lido por OCR ({len(lidos)}): {mostrados}{resto}.")
+    if sem_leitura:
+        partes.append(
+            f"Anexos enviados SEM texto lido ({len(sem_leitura)}): "
+            + "; ".join(f"{_rotulo(a)} — {_SITUACAO[a['situacao']]}" for a in sem_leitura[:10])
+            + ". Eles existem no caso; só não dá para citar o conteúdo deles."
+        )
+    if not anexos:
+        partes.append(
+            "Anexos: NENHUM documento foi enviado neste caso. Nada aqui está comprovado"
+            " por documento — não afirme que há CAT, laudo, atestado ou contracheque; se"
+            " um deles for necessário, peça ao advogado que o anexe."
+        )
+    elif not lidos:
+        partes.append(
+            "Nenhum anexo tem texto lido ainda: não cite conteúdo de documento como prova."
+        )
     if not peticao:
         partes.append(
             "Minuta: ainda NÃO existe petição gerada para este caso. Para criá-la, a"
@@ -239,27 +327,228 @@ def _ler_analise(caso_id: str) -> dict[str, Any]:
     }
 
 
+#: O que a leitura de um anexo diz a quem lê o resultado, por situação.
+_SITUACAO = {
+    "na_fila": "enviado, aguardando a leitura por OCR",
+    "processando": "enviado, sendo lido por OCR agora",
+    "erro": "enviado, mas a leitura por OCR falhou",
+    "sem_texto": "enviado, mas o OCR não tirou texto dele",
+}
+
+
+def _normalizar(texto: str) -> str:
+    """Minúsculo e sem acento: «Carteira de Trabalho» e «carteira de trabalho» se acham."""
+    sem_acento = unicodedata.normalize("NFKD", str(texto or ""))
+    return " ".join("".join(c for c in sem_acento if not unicodedata.combining(c)).lower().split())
+
+
+def _numeros_colados(texto: str) -> str:
+    """Tira os separadores DENTRO dos números: «123.456.789-00» vira «12345678900».
+
+    O advogado digita o número de um jeito e o OCR leu de outro. Colar só o que está
+    entre dígitos preserva a fronteira entre números vizinhos — tirar todo não-dígito
+    juntaria a data com o CPF da linha de baixo e acharia número que não existe.
+    """
+    return re.sub(r"(?<=\d)[\s./-](?=\d)", "", str(texto or ""))
+
+
+#: O nome que o advogado usa e o que está escrito no documento raramente coincidem.
+_SINONIMOS = (
+    ("ctps", "carteira de trabalho"),
+    ("rg", "identidade", "registro geral"),
+    ("pis", "nis", "pasep"),
+    ("cnh", "habilitacao"),
+    ("trct", "termo de rescisao", "rescisao"),
+    ("cat", "comunicacao de acidente"),
+    ("aso", "atestado de saude ocupacional"),
+    ("holerite", "contracheque", "recibo de pagamento"),
+    ("comprovante de residencia", "comprovante de endereco"),
+)
+
+_PALAVRAS_VAZIAS = {
+    "numero", "num", "no", "nº", "n", "do", "da", "de", "dos", "das", "o", "a", "os", "as",
+    "e", "em", "um", "uma", "documento", "doc", "anexo", "que", "com", "para",
+}
+
+
+def _termos_de_busca(termo: str) -> list[str]:
+    """O termo inteiro, os sinônimos dele e as palavras que significam alguma coisa."""
+    inteiro = _normalizar(termo)
+    termos = [inteiro] if inteiro else []
+    for grupo in _SINONIMOS:
+        if any(re.search(rf"\b{re.escape(s)}\b", inteiro) for s in grupo):
+            termos.extend(s for s in grupo if s not in termos)
+    for palavra in re.findall(r"[a-z0-9]+", inteiro):
+        if len(palavra) >= 3 and palavra not in _PALAVRAS_VAZIAS and palavra not in termos:
+            termos.append(palavra)
+    return termos
+
+
+def _padrao(termo: str) -> re.Pattern[str]:
+    """Sigla curta casa como palavra inteira: «rg» não pode achar «cargo», nem «cat»
+    achar «indicativo». Termo longo casa como pedaço, que é como o OCR o quebra."""
+    if len(termo) <= 4:
+        return re.compile(rf"(?<![a-z0-9]){re.escape(termo)}(?![a-z0-9])")
+    return re.compile(re.escape(termo))
+
+
+def _contem(texto: str, termos: list[str]) -> bool:
+    return any(_padrao(t).search(texto) for t in termos)
+
+
+def _trechos(texto: str, termos: list[str], digitos: str, teto: int = 3) -> list[str]:
+    """O pedaço do documento EM VOLTA do que foi achado — não o começo dele.
+
+    O corte pelo começo era o outro jeito de «não achar»: o número da CTPS na página
+    de qualificação, depois de 900 caracteres de cabeçalho, nunca chegava ao modelo.
+    """
+    normal = _normalizar(texto)
+    colado = _numeros_colados(normal)
+    posicoes: list[int] = []
+    if digitos:
+        # A posição vem do texto colado; o recorte sai dele também, e é ele que o
+        # modelo lê — o número aparece inteiro, sem os pontos que o OCR pôs no meio.
+        base = colado
+        inicio = colado.find(digitos)
+        while inicio >= 0 and len(posicoes) < teto:
+            posicoes.append(inicio)
+            inicio = colado.find(digitos, inicio + 1)
+    else:
+        base = normal
+        for termo in termos:
+            for achado in _padrao(termo).finditer(normal):
+                if len(posicoes) >= teto:
+                    break
+                posicoes.append(achado.start())
+            if len(posicoes) >= teto:
+                break
+    trechos: list[str] = []
+    for posicao in sorted(set(posicoes))[:teto]:
+        de, ate = max(0, posicao - 250), posicao + 350
+        trechos.append(("… " if de else "") + base[de:ate].strip() + (" …" if ate < len(base) else ""))
+    return trechos
+
+
+def _buscar_nos_documentos(caso_id: str, termo: str = "") -> dict[str, Any]:
+    """Procura no nome, no tipo, nos campos extraídos e no texto INTEIRO de cada anexo."""
+    termo = " ".join(str(termo or "").split())
+    if not termo:
+        return {"erro": "Diga o que procurar (ex.: «CTPS», «PIS», «123.456.789-00»)."}
+    anexos = peticao_local.anexos_do_caso(caso_id)
+    sem_leitura = [
+        {"arquivo": a["arquivo"], "tipo": a["tipo"], "situacao": _SITUACAO[a["situacao"]]}
+        for a in anexos
+        if a["situacao"] != "lido"
+    ]
+    termos = _termos_de_busca(termo)
+    digitos = re.sub(r"\D", "", termo)
+    # Número só é procurado como número quando o termo É um número. «CTPS 2019» busca
+    # a CTPS; «123.456» busca o 123456.
+    procura_numero = len(digitos) >= 4 and len(digitos) >= len(re.sub(r"\s", "", termo)) * 0.6
+
+    resultados = []
+    for anexo in anexos:
+        rotulo = _normalizar(f"{anexo['arquivo']} {anexo['tipo']}")
+        campos = " ".join(f"{c['rotulo']} {c['valor']}" for c in anexo["campos"])
+        if procura_numero:
+            no_rotulo = False
+            nos_campos = digitos in _numeros_colados(campos)
+            no_texto = digitos in _numeros_colados(_normalizar(anexo["texto"]))
+            pontos = 3 * nos_campos + 2 * no_texto
+        else:
+            no_rotulo = _contem(rotulo, termos)
+            nos_campos = _contem(_normalizar(campos), termos)
+            texto = _normalizar(anexo["texto"])
+            no_texto = _contem(texto, termos)
+            # O termo inteiro vale mais que uma palavra solta dele.
+            pontos = 4 * no_rotulo + 2 * nos_campos + no_texto + 2 * _contem(texto, termos[:1])
+        if not pontos:
+            continue
+        resultados.append(
+            (
+                pontos,
+                {
+                    "arquivo": anexo["arquivo"],
+                    "tipo": anexo["tipo"] or "não classificado",
+                    "situacao": "lido" if anexo["situacao"] == "lido" else _SITUACAO[anexo["situacao"]],
+                    "achado_em": [
+                        onde
+                        for onde, sim in (
+                            ("nome/tipo do anexo", no_rotulo),
+                            ("campos extraídos", nos_campos),
+                            ("texto do OCR", no_texto),
+                        )
+                        if sim
+                    ],
+                    "campos_extraidos": anexo["campos"][:20],
+                    "trechos": _trechos(anexo["texto"], termos, digitos if procura_numero else "")
+                    or ([anexo["texto"][:1200]] if no_rotulo and anexo["texto"] else []),
+                },
+            )
+        )
+    resultados.sort(key=lambda r: -r[0])
+    saida: dict[str, Any] = {
+        "termo": termo,
+        "procurado_em": f"{len(anexos)} anexo(s): nome, tipo, campos extraídos e texto completo",
+        "encontrado": bool(resultados),
+        "resultados": [r for _p, r in resultados[:6]],
+    }
+    if sem_leitura:
+        saida["anexos_sem_texto_lido"] = sem_leitura
+    if not resultados:
+        saida["orientacao"] = (
+            "Não achei nos anexos lidos. Isso NÃO prova que o documento não existe:"
+            " confira a entrevista (`ler_entrevista`) e, se ainda assim não houver, diga"
+            " com calma onde procurou e PEÇA ao advogado que anexe o documento ou informe"
+            " o dado. Se houver anexo sem texto lido, diga que ele pode ser o documento."
+        )
+    return saida
+
+
 def _ler_documentos(caso_id: str, arquivo: str = "") -> dict[str, Any]:
-    procurado = " ".join(str(arquivo or "").split()).lower()
-    lidos = peticao_local.documentos_ocr(caso_id)
-    if not lidos:
-        return {"documentos": [], "aviso": "Nenhum anexo deste caso tem texto lido por OCR."}
-    escolhidos = [d for d in lidos if procurado in str(d["arquivo"]).lower()] if procurado else lidos
+    procurado = _normalizar(" ".join(str(arquivo or "").split()))
+    anexos = peticao_local.anexos_do_caso(caso_id)
+    if not anexos:
+        return {
+            "documentos": [],
+            "aviso": "Nenhum anexo foi enviado neste caso. Se o documento é necessário, peça ao advogado que o anexe.",
+        }
+    termos = _termos_de_busca(procurado) if procurado else []
+    escolhidos = (
+        [a for a in anexos if _contem(_normalizar(f"{a['arquivo']} {a['tipo']}"), termos)]
+        if procurado
+        else anexos
+    )
     if procurado and not escolhidos:
         return {
             "documentos": [],
-            "aviso": f"Nenhum anexo com «{arquivo}» no nome.",
-            "arquivos_disponiveis": [d["arquivo"] for d in lidos],
+            "aviso": (
+                f"Nenhum anexo com «{arquivo}» no nome ou no tipo. Isso não quer dizer que"
+                " o dado não esteja no caso: use `buscar_nos_documentos` para procurar no"
+                " texto e nos campos de cada anexo."
+            ),
+            "anexos_disponiveis": [
+                {"arquivo": a["arquivo"], "tipo": a["tipo"] or "não classificado"} for a in anexos
+            ],
         }
     # Com nome, vai o texto que couber; sem nome, vai um panorama — devolver o OCR
-    # de quarenta anexos numa só ferramenta estoura a janela e piora a resposta.
+    # de quarenta anexos numa só ferramenta estoura a janela e piora a resposta. Os
+    # campos extraídos vão sempre: são curtos e é neles que mora o número pedido.
     limite = LIMITE_DOCUMENTO if procurado else 900
     return {
         "documentos": [
-            {"arquivo": d["arquivo"], "texto": d["texto"][:limite]}
-            for d in escolhidos[: (8 if procurado else 25)]
+            {
+                "arquivo": a["arquivo"],
+                "tipo": a["tipo"] or "não classificado",
+                "situacao": "lido" if a["situacao"] == "lido" else _SITUACAO[a["situacao"]],
+                "campos_extraidos": a["campos"][:20],
+                "texto": a["texto"][:limite],
+                **({"texto_cortado": True} if len(a["texto"]) > limite else {}),
+            }
+            for a in escolhidos[: (8 if procurado else 25)]
         ],
-        "total_no_caso": len(lidos),
+        "total_no_caso": len(anexos),
+        "dica": "Para achar um número ou dado no meio do texto, use `buscar_nos_documentos`.",
     }
 
 
@@ -305,6 +594,39 @@ def _ler_historico(caso_id: str) -> dict[str, Any]:
     }
 
 
+def _ler_jurimetria(caso_id: str) -> dict[str, Any]:
+    """O que o acervo do escritório mediu sobre casos parecidos com este.
+
+    É o que permite falar de chance com lastro em vez de palpite: a jurimetria da minuta
+    vem de busca vetorial no acervo (ver `peticao_local._analisar_jurimetria_da_minuta`),
+    com processos, desfechos e as distinções que derrubaram casos semelhantes.
+    """
+    dados = (peticao_local.carregar(caso_id) or {}).get("jurimetria") or {}
+    if not dados or not dados.get("disponivel"):
+        return {
+            "existe": False,
+            "aviso": str(dados.get("aviso") or "")
+            or (
+                "A jurimetria só é medida quando a petição é gerada. Sem ela, não afirme"
+                " probabilidade de êxito."
+            ),
+        }
+    estatisticas = dados.get("estatisticas") or {}
+    return {
+        "existe": True,
+        "jurisdicao": dados.get("jurisdicao"),
+        "sintese": dados.get("sintese"),
+        "processos_analisados": estatisticas.get("processos_analisados"),
+        "desfechos_merito": estatisticas.get("desfechos_merito"),
+        "fundamentos_que_ajudam": dados.get("fundamentos") or [],
+        # O que DERRUBOU casos parecidos. É a parte que o advogado precisa ver antes de
+        # protocolar, e a que uma resposta animada esquece de contar.
+        "riscos_e_distincoes": dados.get("riscos") or [],
+        "precedentes": (dados.get("precedentes") or [])[:8],
+        "aviso": dados.get("aviso"),
+    }
+
+
 def _pesquisar_na_web(caso_id: str, pergunta: str) -> dict[str, Any]:
     """A única ferramenta cuja resposta NÃO vem do caso. Volta com as fontes."""
     try:
@@ -314,12 +636,30 @@ def _pesquisar_na_web(caso_id: str, pergunta: str) -> dict[str, Any]:
         # advogado que a busca não foi feita, em vez de responder de memória como se
         # tivesse consultado.
         return {"falhou": True, "motivo": str(erro), "fontes": []}
+    fontes = resultado.get("fontes") or []
+    oficiais = [f for f in fontes if f.get("confianca") in ("OFICIAL", "TRIBUNAL")]
+    aviso = (
+        "Conteúdo da internet: cite a fonte em linha e não misture com o que está nos"
+        " autos."
+    )
+    if not oficiais:
+        # O caso que mais importa: o modelo achou alguma coisa, mas nada no Planalto,
+        # em tribunal ou em órgão público. Numa petição isso é diferença entre
+        # fundamentar e repetir o que um portal escreveu.
+        aviso += (
+            " ATENÇÃO: NENHUMA fonte oficial (norma no Planalto, jurisprudência no site"
+            " do tribunal, órgão público) sustentou esta busca — só fontes secundárias."
+            " Diga isso ao advogado e não cite número de súmula, artigo ou tese como se"
+            " estivesse confirmado."
+        )
     return {
         "falhou": False,
         "origem": "web",
         "resposta": resultado.get("resposta"),
-        "fontes": resultado.get("fontes") or [],
-        "aviso": "Conteúdo da internet: cite a fonte em linha e não misture com o que está nos autos.",
+        "fontes": fontes,
+        "fontes_oficiais": len(oficiais),
+        "tem_fonte_oficial": bool(oficiais),
+        "aviso": aviso,
     }
 
 
@@ -465,13 +805,35 @@ CATALOGO: dict[str, tuple[Any, dict[str, Any], bool]] = {
         _ler_documentos,
         {
             "description": (
-                "O texto lido por OCR dos anexos do caso. Sem `arquivo`, devolve um"
-                " panorama de todos; com `arquivo` (parte do nome basta), devolve o"
-                " texto daquele documento para você citar o trecho."
+                "Os anexos do caso com tipo, campos extraídos e texto do OCR. Sem"
+                " `arquivo`, devolve um panorama de todos; com `arquivo` (parte do nome"
+                " ou o tipo, como «CTPS», basta), devolve o texto daquele documento para"
+                " você citar o trecho. Para achar um dado no meio do texto, prefira"
+                " `buscar_nos_documentos`."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {"arquivo": {"type": "string"}},
+            },
+        },
+        False,
+    ),
+    "buscar_nos_documentos": (
+        _buscar_nos_documentos,
+        {
+            "description": (
+                "Procura um documento ou dado em TODOS os anexos do caso: no nome, no"
+                " tipo classificado (CTPS, RG, TRCT…), nos campos já extraídos e no texto"
+                " completo do OCR. Devolve o trecho em volta do que achou e os anexos que"
+                " ainda não têm texto lido. `termo` pode ser o documento («CTPS»,"
+                " «carteira de trabalho»), o dado («PIS») ou o próprio número"
+                " («123.456.789-00»; pontuação não importa). Use SEMPRE antes de dizer"
+                " que algo não está no caso."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"termo": {"type": "string"}},
+                "required": ["termo"],
             },
         },
         False,
@@ -493,6 +855,21 @@ CATALOGO: dict[str, tuple[Any, dict[str, Any], bool]] = {
             "description": (
                 "As versões anteriores da minuta e as críticas registradas: quem pediu"
                 " o quê, quando, e de qual versão para qual."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+        False,
+    ),
+    "ler_jurimetria": (
+        _ler_jurimetria,
+        {
+            "description": (
+                "O que o acervo do escritório mediu em casos parecidos com este:"
+                " processos analisados, quantos foram favoráveis no mérito, os"
+                " fundamentos que ajudaram e os riscos que derrubaram casos"
+                " semelhantes. Use quando a pergunta for sobre chance, estratégia,"
+                " valor ou o que fortalece a peça. Sem ela, não afirme probabilidade"
+                " de êxito."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -757,14 +1134,178 @@ _PROMESSA = re.compile(
     r"\b(registrei|propus|preparei|deixei registrad[oa])\b", re.IGNORECASE
 )
 
+#: O fecho comum às cobranças.
+#:
+#: Sem ele, a rodada extra vira o assunto: perguntado sobre a CHANCE do caso, o modelo
+#: respondeu "você está certo, eu tinha citado a súmula de memória" e entregou uma aula
+#: sobre a Súmula 378 — correta, e sobre outra coisa. A cobrança é um bastidor; quem lê
+#: nunca soube que houve uma primeira tentativa.
+_FECHO_DA_COBRANCA = (
+    "\n\nDepois de fazer isso, escreva a RESPOSTA INTEIRA à pergunta do advogado — a"
+    " correção é parte dela, não o assunto dela. Não mencione esta mensagem, não diga"
+    " que se corrigiu e não comece com «você está certo»: para quem lê, esta é a"
+    " primeira e única resposta.\n\n"
+    # A pergunta vai JUNTO, escrita de novo. Sem isso, a cobrança passa a ser a última
+    # mensagem do usuário e o modelo responde a ela ou à pergunta anterior da conversa:
+    # medido ao vivo — perguntado se o caso era fraco, ele respondeu sobre porcentagem
+    # de êxito, que era o assunto de duas perguntas antes.
+    "A pergunta do advogado, para você não perder o fio, foi exatamente esta:\n«{pergunta}»"
+)
+
 COBRANCA = (
     "Você escreveu que registrou/propôs uma alteração, mas NÃO chamou nenhuma ferramenta"
     " de proposta nesta resposta — então nenhum cartão de confirmação foi criado e o"
     " advogado ficaria esperando um botão que não existe.\n\n"
     "Chame agora a ferramenta de propor correspondente, com o pedido escrito de forma"
     " completa e literal. Se, pensando bem, não havia alteração a propor, responda"
-    " corrigindo o que você disse — sem afirmar que propôs."
+    " corrigindo o que você disse — sem afirmar que propôs." + _FECHO_DA_COBRANCA
 )
+
+
+#: Citação de JURISPRUDÊNCIA: número e texto exatos, e que mudam com o tempo.
+#:
+#: Súmula, OJ e tema repetitivo são o que o modelo mais gosta de citar de memória — na
+#: prova de fogo ele transcreveu a Súmula 378 do TST sem buscar nada e ainda ofereceu
+#: um link genérico do tribunal como se tivesse conferido. Numa petição, número de
+#: súmula errado é erro que o juiz vê antes do advogado.
+_CITA_JURISPRUDENCIA = re.compile(
+    r"\b(s[úu]mula|orienta[çc][ãa]o\s+jurisprudencial|oj|tema)\s*n?[ºo°]?\s*\d+",
+    re.IGNORECASE,
+)
+
+#: Citação de NORMA. Mais tolerante: se veio da própria minuta, já foi conferida quando
+#: a peça foi redigida — por isso ler a minuta basta, e só a citação sem consulta alguma
+#: é cobrada.
+_CITA_NORMA = re.compile(
+    r"\bart(?:igo|\.)\s*\d+|\blei\s+n?[ºo°]?\s*[\d.]{3,}", re.IGNORECASE
+)
+
+COBRANCA_FONTE = (
+    "Você citou súmula, orientação jurisprudencial, tema ou norma por número SEM ter"
+    " consultado nada nesta resposta. Número e texto de súmula mudam, e o advogado vai"
+    " copiar isso para a peça.\n\n"
+    "Faça uma destas duas coisas agora: chame `pesquisar_na_web` para confirmar na fonte"
+    " oficial (Planalto, site do tribunal) e cite o link que voltar; ou reescreva a"
+    " resposta sem o número, dizendo que não confirmou. Não invente link de fonte."
+    + _FECHO_DA_COBRANCA
+)
+
+#: Oferecer a consulta em vez de fazê-la.
+#:
+#: "O que eu poderia fazer é consultar a jurimetria" é uma resposta que empurra para o
+#: advogado o trabalho de pedir de novo o que já foi pedido. As ferramentas estão na mão
+#: do modelo: se ele sabe qual usar, o momento de usar é agora.
+_OFERECEU = re.compile(
+    # Até trinta caracteres entre o verbo e a ação, porque o modelo escreve "o que eu
+    # poderia FAZER É consultar a jurimetria" — e era essa forma que escapava.
+    r"(poderia|posso|consigo)[^.]{0,30}?(consultar|pesquisar|buscar|medir|verificar|conferir)"
+    r"|se\s+(voc[êe]|quiser|quiseres)[^.]{0,40}\s(consulto|pesquiso|busco|verifico)"
+    r"|o\s+que\s+mediria\s+isso",
+    re.IGNORECASE,
+)
+
+COBRANCA_OFERTA = (
+    "Você OFERECEU uma consulta em vez de fazê-la. As ferramentas estão na sua mão e a"
+    " pergunta já foi feita: pedir permissão para consultar devolve ao advogado o"
+    " trabalho de pedir duas vezes.\n\n"
+    "Chame agora a ferramenta que você mencionou e responda com o que ela devolver."
+    + _FECHO_DA_COBRANCA
+)
+
+
+#: Falar DA ferramenta sem chamá-la.
+#:
+#: A forma mais comum não é a oferta explícita ("posso consultar"), é a explicação:
+#: "chance de êxito aqui só sai da jurimetria — o acervo do escritório mediu casos
+#: parecidos". Para quem lê, isso é a mesma coisa que não responder: a ferramenta está
+#: na mão de quem escreveu a frase.
+_NOME_DA_FERRAMENTA = (
+    ("jurimetria", "ler_jurimetria"),
+    ("pesquisa na web", "pesquisar_na_web"),
+    ("pesquisar na web", "pesquisar_na_web"),
+    ("busca na web", "pesquisar_na_web"),
+)
+
+
+def ofereceu_sem_fazer(texto: str, consultas: list[str]) -> bool:
+    """`True` quando o texto propõe (ou descreve) uma consulta que não foi feita."""
+    texto = texto or ""
+    minusculo = texto.lower()
+    for nome, ferramenta in _NOME_DA_FERRAMENTA:
+        if nome in minusculo and ferramenta not in consultas:
+            return True
+    return bool(_OFERECEU.search(texto)) and not consultas
+
+
+#: Recusar o pedido do advogado.
+#:
+#: Reclamação real: o advogado pediu para incluir o número de um documento que estava
+#: no caso; o chat respondeu que não o achou e que não faria o pedido. O advogado é o
+#: responsável pela peça — o chat diz o que falta, pede o anexo e propõe; quem decide é
+#: o botão de confirmar. «Não posso aplicar sozinho» NÃO é recusa (é a regra da tela),
+#: por isso os verbos aqui são os de atender o pedido, não os de aplicar a alteração.
+_RECUSA = re.compile(
+    r"\bn[ãa]o\s+(?:vou|irei|posso|consigo|tenho\s+como|[ée]\s+poss[íi]vel|d[áa]\s+para)\s+"
+    r"(?:fazer|incluir|adicionar|inserir|colocar|acrescentar|atender|realizar|cumprir|"
+    r"seguir|preencher|usar|utilizar)\b"
+    r"|\bn[ãa]o\s+(?:farei|incluirei|adicionarei|colocarei|inserirei|atenderei)\b"
+    r"|\bme\s+recuso\b",
+    re.IGNORECASE,
+)
+
+#: Dar o documento como inexistente. Só vale como defeito quando NÃO houve busca: depois
+#: de `buscar_nos_documentos`, "não está no caso" é informação — desde que venha com o
+#: pedido do anexo.
+#: Presa a documento, anexo ou número: "não há prova de horas extras" é análise, não
+#: negação de documento, e cobrar isso gastaria uma rodada em toda resposta jurídica.
+_NEGA_EXISTENCIA = re.compile(
+    r"\bn[ãa]o\s+(?:existe|consta|encontrei|localizei|achei)\b[^.\n]{0,80}?"
+    r"\b(?:document|anex|n[úu]mero|autos|ctps|carteira|rg\b|pis\b|cpf\b)"
+    r"|\b(?:document|anex|n[úu]mero|ctps|carteira)[^.\n]{0,80}?"
+    r"\bn[ãa]o\s+(?:existe|consta|foi\s+(?:encontrad|localizad|enviad|anexad)|est[áa])",
+    re.IGNORECASE,
+)
+_PEDE_ANEXO = re.compile(r"\b(?:anex|envi[ae]|mand[ae]|inform[ae]|me\s+pass[ae])", re.IGNORECASE)
+
+
+def recusou(texto: str, consultas: list[str]) -> bool:
+    """`True` quando a resposta recusa o pedido ou nega o documento sem ter procurado."""
+    texto = texto or ""
+    if _RECUSA.search(texto):
+        return True
+    if not _NEGA_EXISTENCIA.search(texto):
+        return False
+    return "buscar_nos_documentos" not in consultas or not _PEDE_ANEXO.search(texto)
+
+
+COBRANCA_RECUSA = (
+    "Você recusou o pedido do advogado ou deu um documento como inexistente sem esgotar a"
+    " busca. O advogado é o responsável pela peça: você não recusa, você resolve ou pede"
+    " o que falta.\n\n"
+    "Faça agora, nesta ordem: (1) se ainda não usou, chame `buscar_nos_documentos` com o"
+    " nome do documento e, se houver, com o número; (2) se achar, responda com o dado e o"
+    " trecho e proponha a alteração pedida; (3) se não achar, diga em uma frase onde"
+    " procurou, avise se algum anexo sem texto lido pode ser o documento, e PEÇA com"
+    " calma que o advogado anexe o documento ou informe o dado — oferecendo deixar o"
+    " ponto como [PENDENTE] enquanto isso; (4) se o advogado já informou o dado na"
+    " conversa, proponha a revisão com ele. Nada de «não vou», «não é possível» ou"
+    " «não farei»." + _FECHO_DA_COBRANCA
+)
+
+
+def citou_sem_conferir(texto: str, consultas: list[str], fontes: list[dict]) -> bool:
+    """`True` quando a resposta cita norma ou súmula sem ter aberto nada.
+
+    A web confirma qualquer uma das duas; ler a minuta ou a análise confirma a norma,
+    porque ela já foi conferida quando a peça foi redigida. Jurisprudência não: essa só
+    vale com fonte na mão.
+    """
+    if "pesquisar_na_web" in consultas and fontes:
+        return False
+    if _CITA_JURISPRUDENCIA.search(texto or ""):
+        return True
+    leu_a_peca = any(c in consultas for c in ("ler_minuta", "ler_analise", "ler_historico"))
+    return bool(_CITA_NORMA.search(texto or "")) and not leu_a_peca
 
 
 def prometeu_acao(texto: str) -> bool:
@@ -778,9 +1319,11 @@ ETAPAS = {
     "ler_minuta": "Lendo a minuta",
     "ler_analise": "Consultando a análise do caso",
     "ler_documentos": "Lendo os documentos anexados",
+    "buscar_nos_documentos": "Procurando nos documentos do caso",
     "ler_entrevista": "Relendo a entrevista",
     "ler_historico": "Conferindo o histórico de versões",
-    "pesquisar_na_web": "Pesquisando na web",
+    "ler_jurimetria": "Consultando casos semelhantes do escritório",
+    "pesquisar_na_web": "Pesquisando na web (fontes oficiais primeiro)",
     "propor_revisao_da_peticao": "Preparando a alteração para você conferir",
     "propor_geracao_da_peticao": "Preparando a proposta de gerar a peça",
     "propor_analise_de_documentos": "Preparando a proposta de reler os anexos",
@@ -930,6 +1473,43 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
             if not chamadas:
                 # Prometeu e não chamou: cobra UMA vez. Sem o teto, um modelo teimoso
                 # ficaria repetindo a promessa enquanto o advogado espera.
+                if not cobranca_feita and citou_sem_conferir(texto, consultas, fontes):
+                    cobranca_feita = True
+                    log.warning(
+                        "chat da petição: citou norma/súmula sem consultar (caso %s)",
+                        caso_id,
+                    )
+                    mensagens.append(
+                        {"role": "user", "content": COBRANCA_FONTE.format(pergunta=pergunta)}
+                    )
+                    yield {"tipo": "recomeco"}
+                    yield {"tipo": "etapa", "texto": "Conferindo a citação na fonte oficial"}
+                    continue
+                if not cobranca_feita and ofereceu_sem_fazer(texto, consultas):
+                    cobranca_feita = True
+                    log.warning(
+                        "chat da petição: ofereceu consulta em vez de fazer (caso %s)",
+                        caso_id,
+                    )
+                    mensagens.append(
+                        {"role": "user", "content": COBRANCA_OFERTA.format(pergunta=pergunta)}
+                    )
+                    yield {"tipo": "recomeco"}
+                    yield {"tipo": "etapa", "texto": "Consultando o que faltava"}
+                    continue
+                if not cobranca_feita and recusou(texto, consultas):
+                    cobranca_feita = True
+                    log.warning(
+                        "chat da petição: recusou o pedido ou negou documento sem buscar"
+                        " (caso %s)",
+                        caso_id,
+                    )
+                    mensagens.append(
+                        {"role": "user", "content": COBRANCA_RECUSA.format(pergunta=pergunta)}
+                    )
+                    yield {"tipo": "recomeco"}
+                    yield {"tipo": "etapa", "texto": "Procurando nos documentos do caso"}
+                    continue
                 if not acoes and not cobranca_feita and prometeu_acao(texto):
                     cobranca_feita = True
                     log.warning(
@@ -937,7 +1517,9 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                         " (caso %s) — cobrando a chamada",
                         caso_id,
                     )
-                    mensagens.append({"role": "user", "content": COBRANCA})
+                    mensagens.append(
+                        {"role": "user", "content": COBRANCA.format(pergunta=pergunta)}
+                    )
                     yield {"tipo": "recomeco"}
                     yield {"tipo": "etapa", "texto": "Preparando a alteração para você conferir"}
                     continue
