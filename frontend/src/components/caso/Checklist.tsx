@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Categoria, SituacaoCaso } from "@/lib/types";
 import BaixarDocumentos from "@/components/caso/BaixarDocumentos";
 import { Aviso, BarraAbas, BotaoAba, Botao, CampoSeletor, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
-import { prazosAcervo, type PrazosAcervo } from "@/lib/api";
+import { buscarNoConteudoDoCaso, prazosAcervo, type PrazosAcervo } from "@/lib/api";
 import ItemChecklistLinha from "@/components/caso/ItemChecklistLinha";
 import PainelPortal from "@/components/portal/PainelPortal";
 import PedidoCliente from "@/components/caso/PedidoCliente";
@@ -14,6 +14,35 @@ import ResumoDocumentos from "@/components/caso/ResumoDocumentos";
 import TriagemDocumentos from "@/components/caso/TriagemDocumentos";
 
 type Filtro = "todos" | "pendentes" | "enviados";
+
+function IconeLupa(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  );
+}
+
+/** Sem acento e em minúsculas: "certidao" acha "Certidão". */
+function normalizar(texto: string): string {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/** Tudo o que o advogado pode lembrar de um item: nome, número, observação,
+ *  tipo do glossário e o nome dos arquivos que já chegaram para ele. */
+function textoDoItem(item: SituacaoCaso["itens"][number]): string {
+  return normalizar(
+    [
+      item.nome,
+      String(item.numero),
+      item.codigo,
+      item.observacao,
+      item.tipo_documento ?? "",
+      ...item.entregas.flatMap((e) => [e.arquivo, e.identificacao_ia ?? ""]),
+    ].join(" "),
+  );
+}
 
 interface Props {
   situacao: SituacaoCaso;
@@ -41,7 +70,12 @@ interface Props {
   mostrarPrazos?: boolean;
   categorias?: Categoria[];
   onTrocarCategoria?: (categoria: string) => Promise<void>;
+  /** A busca também procura no CONTEÚDO lido dos arquivos (campos e texto do
+   *  OCR), no servidor. Desligado no portal do cliente, que não tem acesso à rota. */
+  buscarNoConteudo?: boolean;
 }
+
+type AchadosPorItem = Map<string, { arquivo: string; onde: string[] }[]>;
 
 /** "há 2 h", "há 3 dias" — a mesma leitura do cabeçalho no desenho. */
 function desde(iso: string): string {
@@ -68,8 +102,65 @@ export default function Checklist({
   mostrarPrazos = false,
   categorias,
   onTrocarCategoria,
+  buscarNoConteudo = false,
 }: Props) {
   const [filtro, setFiltro] = useState<Filtro>("todos");
+  const [busca, setBusca] = useState("");
+  const campoBusca = useRef<HTMLInputElement>(null);
+  const [achados, setAchados] = useState<{ consulta: string; porItem: AchadosPorItem } | null>(null);
+  const [buscandoConteudo, setBuscandoConteudo] = useState(false);
+  const casoId = situacao.caso.id;
+
+  // Busca no conteúdo dos arquivos: espera a pessoa parar de digitar e cancela
+  // a consulta anterior, para a resposta de "ce" não sobrescrever a de "cep".
+  useEffect(() => {
+    const consulta = busca.trim();
+    if (!buscarNoConteudo || consulta.length < 2) {
+      setAchados(null);
+      setBuscandoConteudo(false);
+      return;
+    }
+    const controle = new AbortController();
+    setBuscandoConteudo(true);
+    const espera = window.setTimeout(() => {
+      buscarNoConteudoDoCaso(casoId, consulta, controle.signal)
+        .then((resultado) => {
+          const porItem: AchadosPorItem = new Map();
+          for (const r of resultado) {
+            for (const codigo of r.itens) {
+              const lista = porItem.get(codigo) ?? [];
+              lista.push({ arquivo: r.arquivo, onde: r.onde });
+              porItem.set(codigo, lista);
+            }
+          }
+          setAchados({ consulta, porItem });
+        })
+        .catch(() => {
+          if (!controle.signal.aborted) setAchados(null);
+        })
+        .finally(() => {
+          if (!controle.signal.aborted) setBuscandoConteudo(false);
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(espera);
+      controle.abort();
+    };
+  }, [busca, buscarNoConteudo, casoId]);
+
+  // "/" leva à busca de qualquer ponto da página, como em sites de busca —
+  // menos quando a pessoa já está digitando em outro campo.
+  useEffect(() => {
+    function aoTeclar(e: KeyboardEvent) {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const alvo = e.target as HTMLElement | null;
+      if (alvo && (alvo.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName))) return;
+      e.preventDefault();
+      campoBusca.current?.focus();
+    }
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, []);
   const [trocando, setTrocando] = useState(false);
   const [erroTroca, setErroTroca] = useState<string | null>(null);
   const { caso, categoria, progresso, itens } = situacao;
@@ -88,18 +179,31 @@ export default function Checklist({
   }
 
   const naoResolvidos = itens.filter((i) => i.status !== "entregue").length;
-  const enviados = itens.filter((i) => i.status === "entregue").length;
 
-  const visiveis = itens.filter((item) => {
+  // A busca vale para as três abas; as contagens mostram o que ela deixou.
+  const termos = normalizar(busca).split(/\s+/).filter(Boolean);
+  // Só vale o resultado do servidor que responde à busca que está no campo.
+  const noConteudo = achados && achados.consulta === busca.trim() ? achados.porItem : null;
+  const encontrados =
+    termos.length === 0
+      ? itens
+      : itens.filter((item) => {
+          const texto = textoDoItem(item);
+          return termos.every((t) => texto.includes(t)) || Boolean(noConteudo?.has(item.codigo));
+        });
+  const achadosPendentes = encontrados.filter((i) => i.status !== "entregue").length;
+  const achadosEnviados = encontrados.length - achadosPendentes;
+
+  const visiveis = encontrados.filter((item) => {
     if (filtro === "pendentes") return item.status !== "entregue";
     if (filtro === "enviados") return item.status === "entregue";
     return true;
   });
 
   const filtros: { id: Filtro; nome: string }[] = [
-    { id: "todos", nome: `Todos (${itens.length})` },
-    { id: "pendentes", nome: `Pendentes (${naoResolvidos})` },
-    { id: "enviados", nome: `Enviados (${enviados})` },
+    { id: "todos", nome: `Todos (${encontrados.length})` },
+    { id: "pendentes", nome: `Pendentes (${achadosPendentes})` },
+    { id: "enviados", nome: `Enviados (${achadosEnviados})` },
   ];
 
   const pct = Math.max(0, Math.min(100, progresso.percentual_obrigatorios));
@@ -255,25 +359,90 @@ export default function Checklist({
         </div>
       )}
 
-      <EnvioEmLote onEnviar={onEnviarLote} enviando={enviando === "__lote__"} />
+      {/* Card de busca logo abaixo do cabeçalho: é a primeira coisa que o
+        * advogado procura quando o checklist é longo. Fica ACIMA do envio em
+        * lote, que é uma área de arraste alta e empurrava a lista para fora
+        * da primeira tela. */}
+      <section
+        aria-label="Encontrar documento no checklist"
+        className="flex items-center gap-x-5 gap-y-3 flex-wrap px-5 py-4 border border-acao-borda border-l-4 border-l-acao rounded-cartao bg-papel shadow-cartao"
+      >
+        <div className="flex items-center gap-3 shrink-0">
+          <span
+            aria-hidden="true"
+            className="flex items-center justify-center w-10 h-10 rounded-full bg-acao-clara text-acao"
+          >
+            <IconeLupa className="w-5 h-5" />
+          </span>
+          <div>
+            <h3 className="m-0 text-tinta font-titulo text-base font-semibold leading-tight">
+              Encontrar documento
+            </h3>
+            <p className="m-0 mt-[2px] text-tinta-3 text-xs">
+              {itens.length} {itens.length === 1 ? "item" : "itens"} no checklist
+            </p>
+          </div>
+        </div>
 
-      {dentroDoAtendimento && (
-        <Aviso tom="info" titulo="Classificação automática incorreta?">
-          Em cada arquivo recebido, use <strong>Corrigir classificação</strong>. A correção
-          ajusta o checklist e passa a orientar as próximas classificações do escritório.
-        </Aviso>
-      )}
+        <label className="relative flex-1 min-w-[240px]">
+          <span className="sr-only">Buscar documento no checklist</span>
+          <IconeLupa
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-tinta-3"
+          />
+          <input
+            ref={campoBusca}
+            type="search"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setBusca("");
+            }}
+            placeholder={
+              buscarNoConteudo
+                ? "Nome, número, arquivo ou o que está escrito nele — ex.: RG, CEP, 70000-000"
+                : "Digite o nome, o número ou o arquivo — ex.: RG, certidão, comprovante"
+            }
+            className="w-full min-h-[44px] pl-10 pr-12 py-[10px] border-2 border-borda-campo rounded-campo bg-papel text-tinta text-base placeholder:text-tinta-3 transition-[border-color,box-shadow] duration-[120ms] ease-out hover:border-acao focus:border-acao focus:shadow-[0_0_0_3px_var(--acao-clara)] focus:outline-none"
+          />
+          {busca && buscandoConteudo && (
+            <span className="absolute right-10 top-1/2 -translate-y-1/2 text-tinta-3 text-xs" role="status">
+              buscando…
+            </span>
+          )}
+          {!busca && (
+            <kbd
+              aria-hidden="true"
+              title="Atalho: tecle / para buscar"
+              className="absolute right-3 top-1/2 -translate-y-1/2 px-[7px] py-[1px] border border-borda rounded bg-papel-2 text-tinta-3 text-xs font-mono"
+            >
+              /
+            </kbd>
+          )}
+        </label>
 
-      <BarraAbas className="mt-5 mb-0" aria-label="Filtrar os documentos">
-        {filtros.map((f) => (
-          <BotaoAba key={f.id} ativa={filtro === f.id} onClick={() => setFiltro(f.id)}>
-            {f.nome}
-          </BotaoAba>
-        ))}
-      </BarraAbas>
+        <BarraAbas className="mb-0 shrink-0" aria-label="Filtrar os documentos por situação">
+          {filtros.map((f) => (
+            <BotaoAba key={f.id} ativa={filtro === f.id} onClick={() => setFiltro(f.id)}>
+              {f.nome}
+            </BotaoAba>
+          ))}
+        </BarraAbas>
+      </section>
 
       {visiveis.length === 0 ? (
-        <Vazio className="mt-4">Nada aqui — tudo resolvido neste filtro.</Vazio>
+        termos.length > 0 ? (
+          <Vazio className="mt-4">
+            {buscandoConteudo
+              ? "Procurando também dentro dos arquivos…"
+              : `Nenhum documento corresponde a “${busca.trim()}” neste filtro.`}{" "}
+            <button type="button" className="underline text-acao" onClick={() => setBusca("")}>
+              Limpar busca
+            </button>
+          </Vazio>
+        ) : (
+          <Vazio className="mt-4">Nada aqui — tudo resolvido neste filtro.</Vazio>
+        )
       ) : (
         <div className="mt-4 border border-borda-forte rounded-cartao bg-papel shadow-cartao overflow-hidden">
           <ul className="list-none m-0 p-0">
@@ -289,10 +458,22 @@ export default function Checklist({
                 onVincularIdentidade={onVincularIdentidade}
                 onReatribuir={onReatribuir}
                 dentroDoAtendimento={dentroDoAtendimento}
+                achadoNoConteudo={noConteudo?.get(item.codigo)}
               />
             ))}
           </ul>
         </div>
+      )}
+
+      <div className="mt-5">
+        <EnvioEmLote onEnviar={onEnviarLote} enviando={enviando === "__lote__"} />
+      </div>
+
+      {dentroDoAtendimento && (
+        <Aviso tom="info" titulo="Classificação automática incorreta?">
+          Em cada arquivo recebido, use <strong>Corrigir classificação</strong>. A correção
+          ajusta o checklist e passa a orientar as próximas classificações do escritório.
+        </Aviso>
       )}
 
       <div className="mt-5">

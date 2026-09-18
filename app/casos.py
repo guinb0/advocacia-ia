@@ -365,6 +365,93 @@ def anexar_observacoes_cruzadas(caso_id: str, situacao: dict[str, Any]) -> dict[
     return situacao
 
 
+# Busca no CONTEÚDO dos documentos do caso.
+#
+# A busca do checklist na tela só enxerga nome do item e nome do arquivo; quem
+# digita "CEP" ou o próprio número do CEP quer achar o comprovante de residência
+# pelo que está ESCRITO nele. Os campos extraídos e o texto do OCR ficam em
+# `extracao_json`, que a lista do checklist não carrega (é grande) — por isso a
+# busca é uma rota à parte, chamada só quando alguém digita.
+
+_TRECHO_RAIO = 40
+
+
+def _so_digitos(texto: str) -> str:
+    return re.sub(r"\D", "", texto)
+
+
+def _termo_casa(termo: str, texto_norm: str, digitos: str) -> bool:
+    """Termo com número casa também ignorando pontuação: 70000000 acha 70.000-000."""
+    if termo in texto_norm:
+        return True
+    so_num = _so_digitos(termo)
+    return len(so_num) >= 3 and so_num == re.sub(r"[.\-/ ]", "", termo) and so_num in digitos
+
+
+def _trecho(texto: str, termos: list[str]) -> str:
+    """Pedaço do texto do OCR em volta do primeiro termo encontrado."""
+    plano = re.sub(r"\s+", " ", texto).strip()
+    norm = _norm_busca(plano)
+    for termo in termos:
+        pos = norm.find(termo)
+        if pos >= 0:
+            ini, fim = max(0, pos - _TRECHO_RAIO), min(len(plano), pos + len(termo) + _TRECHO_RAIO)
+            return ("…" if ini else "") + plano[ini:fim].strip() + ("…" if fim < len(plano) else "")
+    return ""
+
+
+def buscar_no_conteudo(caso_id: str, consulta: str) -> list[dict[str, Any]] | None:
+    """Documentos do caso cujo conteúdo lido contém TODOS os termos da consulta.
+
+    Procura nos campos extraídos (rótulo e valor — "CEP: 70000-000") e no texto
+    completo do OCR. Devolve, por documento, os itens do checklist que ele atende
+    e onde o termo apareceu, para a tela mostrar o porquê do resultado.
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        return None
+    termos = [t for t in _norm_busca(consulta).split(" ") if t]
+    if not termos:
+        return []
+    atendidos = {
+        str(e["id"]): e.get("itens_atendidos") or [] for e in armazenamento.listar_entregas(caso_id)
+    }
+    resultados: list[dict[str, Any]] = []
+    for doc in armazenamento.listar_extracoes_do_caso(caso_id):
+        extracao = doc["extracao"]
+        campos = [c for c in extracao.get("campos") or [] if isinstance(c, dict)]
+        texto = str(extracao.get("texto_completo") or "")
+        tipo = extracao.get("tipo") if isinstance(extracao.get("tipo"), dict) else {}
+        pedacos = [f"{c.get('rotulo') or c.get('nome') or ''} {c.get('valor') or ''}" for c in campos]
+        pedacos += [str(tipo.get("descricao") or ""), texto]
+        tudo = _norm_busca(" ".join(pedacos))
+        digitos = _so_digitos(tudo)
+        if not all(_termo_casa(t, tudo, digitos) for t in termos):
+            continue
+
+        # O "onde": primeiro os campos (mais legíveis), depois um trecho do texto.
+        onde: list[str] = []
+        for c in campos:
+            rotulo = str(c.get("rotulo") or c.get("nome") or "")
+            valor = str(c.get("valor") or "")
+            alvo = _norm_busca(f"{rotulo} {valor}")
+            if valor and any(_termo_casa(t, alvo, _so_digitos(alvo)) for t in termos):
+                onde.append(f"{rotulo}: {valor}" if rotulo else valor)
+        if not onde and texto:
+            trecho = _trecho(texto, termos)
+            if trecho:
+                onde.append(trecho)
+
+        resultados.append(
+            {
+                "entrega_id": doc["id"],
+                "arquivo": doc["arquivo"],
+                "itens": atendidos.get(doc["id"]) or [doc["item_codigo"]],
+                "onde": onde[:3],
+            }
+        )
+    return resultados
+
+
 def situacao_de(caso: dict[str, Any], entregas: list[dict[str, Any]]) -> dict[str, Any]:
     """A mesma situação, a partir de dados já em mãos — sem tocar no banco.
 

@@ -175,6 +175,8 @@ def _obter_peticao_anexa(peca_id):
 def instalar_dublês() -> None:
     """Troca TODO acesso externo por versões em memória."""
     armazenamento.obter_caso = _obter_caso
+    # Sem este dublê a qualificação ia ao SQL Server do `.env` — que é o de produção.
+    armazenamento.obter_qualificacao = lambda caso_id: {}
     armazenamento.listar_entrevistas = _listar_entrevistas
     armazenamento.listar_entregas = _listar_entregas
     armazenamento.obter_entrega = _obter_entrega
