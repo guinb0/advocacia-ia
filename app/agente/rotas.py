@@ -1285,6 +1285,11 @@ class AcaoDoChat(BaseModel):
     motivo: str = ""
     pedidos: list[str] = []
     generaliza: bool = False
+    # INCLUIR_FOTO: qual anexo, onde e com que legenda.
+    anexo_id: str = ""
+    secao: str = ""
+    depois_de: str = ""
+    legenda: str = ""
 
 
 @roteador.post("/casos/{caso_id}/chat-peticao/acoes")
