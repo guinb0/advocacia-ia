@@ -28,6 +28,7 @@ import { createPortal } from "react-dom";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
 import VisorEntrega from "@/components/caso/VisorEntrega";
+import { baixarArquivoEntrega } from "@/lib/api";
 import {
   DocumentosCitaveis,
   RespostaFormatada,
@@ -724,7 +725,41 @@ const ROTULOS: Record<AcaoProposta["tipo"], string> = {
   GERAR: "Gerar a petição de novo",
   ANALISAR_DOCUMENTOS: "Reler os documentos",
   PECA_ANEXA: "Redigir outra peça",
+  INCLUIR_FOTO: "Incluir foto na petição",
 };
+
+/** A foto que vai entrar na peça, para o advogado ver ANTES de confirmar.
+ *
+ * Busca com o Bearer (`<img src>` direto levaria 401) e solta o object URL ao sair. */
+function MiniaturaDaFoto({ anexoId, arquivo }: { anexoId: string; arquivo?: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [falhou, setFalhou] = useState(false);
+  useEffect(() => {
+    let ativo = true;
+    let criada: string | null = null;
+    baixarArquivoEntrega(anexoId)
+      .then((blob) => {
+        if (!ativo) return;
+        criada = URL.createObjectURL(blob);
+        setUrl(criada);
+      })
+      .catch(() => ativo && setFalhou(true));
+    return () => {
+      ativo = false;
+      if (criada) URL.revokeObjectURL(criada);
+    };
+  }, [anexoId]);
+  if (falhou) return <p className="mb-0 mt-2 text-xs text-tinta-3">Não consegui mostrar a foto {arquivo}.</p>;
+  if (!url) return <p className="mb-0 mt-2 text-xs text-tinta-3">Carregando a foto…</p>;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={arquivo ?? "Foto do caso"}
+      className="mt-2 max-h-48 max-w-full rounded-campo border border-borda object-contain"
+    />
+  );
+}
 
 /**
  * A proposta, com o que ela faz escrito antes dos botões.
@@ -765,6 +800,14 @@ function PropostaDeAcao({
         <p className="mb-0 mt-2 text-sm text-tinta-2">
           Pedido: <span className="text-tinta">“{acao.pedido}”</span>
         </p>
+      )}
+      {acao.tipo === "INCLUIR_FOTO" && acao.anexoId && (
+        <>
+          <MiniaturaDaFoto anexoId={acao.anexoId} arquivo={acao.arquivo} />
+          {acao.legenda && (
+            <p className="mb-0 mt-1 text-xs italic text-tinta-2">Legenda: {acao.legenda}</p>
+          )}
+        </>
       )}
       {acao.titulo && acao.tipo === "PECA_ANEXA" && (
         <p className="mb-0 mt-2 text-sm text-tinta-2">Peça: {acao.titulo}</p>

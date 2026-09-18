@@ -1962,6 +1962,10 @@ transcrição; precedente verificável acima de precedente convincente.
 _INSTRUCAO_REVISAO = """Você é advogado revisando uma peça jurídica já redigida.
 Aplique a CRÍTICA DO ADVOGADO sobre a MINUTA ATUAL.
 
+Linhas no formato [[FOTO:…]] são fotos inseridas na peça. Copie-as IGUAIS, na mesma
+posição em relação ao texto em volta, salvo se a crítica pedir para tirar ou mover a
+foto.
+
 ANTES DE ESCREVER, CLASSIFIQUE O PEDIDO:
 
 (a) PONTUAL — troca um nome, separa um pedido, corrige uma data, ajusta um trecho
@@ -2205,6 +2209,7 @@ def _revisar_secoes_via_llm(
         }
 
     secoes, alteradas, conferencia, tentativas = melhor
+    secoes = _preservar_fotos(secoes_atuais, secoes, prompt_critica)
     return secoes, {
         "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
         "alterou": True,
@@ -2781,6 +2786,225 @@ def _paragrafo_xml(
     return "".join(partes)
 
 
+# ------------------------------------------------------------------ fotos na peça
+#
+# A foto vive no TEXTO da seção, como uma linha `[[FOTO:<id do anexo>|legenda]]`.
+# Assim ela passa por tudo o que já existe para texto sem caminho paralelo: versão,
+# histórico, comparação antes × depois, edição manual (mover ou apagar a linha move ou
+# apaga a foto) e peças anexas. Só `montar_docx` sabe que a linha é imagem.
+
+#: Linha inteira de foto. O id é o da ENTREGA — é ele que acha o arquivo no acervo.
+_RE_FOTO = re.compile(r"^\s*\[\[FOTO:([\w-]+)(?:\|([^\]]*))?\]\]\s*$")
+_EXTENSOES_DE_FOTO = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic", ".heif")
+#: Foto de celular chega com 4000 px e 5 MB; numa peça, 1600 px bastam e o .docx
+#: continua anexável no PJe.
+_LADO_MAXIMO_PX = 1600
+#: Uma foto de pé não pode ocupar a página inteira e empurrar o texto para a próxima.
+_ALTURA_MAXIMA_FOTO_CM = 12.0
+
+
+def eh_foto(arquivo: str) -> bool:
+    return Path(str(arquivo or "")).suffix.lower() in _EXTENSOES_DE_FOTO
+
+
+def marcador_de_foto(anexo_id: str, legenda: str = "") -> str:
+    # `]` e `|` fechariam o marcador antes da hora e a legenda sairia cortada.
+    legenda = " ".join(str(legenda or "").replace("]", ")").replace("|", "/").split())
+    return f"[[FOTO:{anexo_id}|{legenda}]]" if legenda else f"[[FOTO:{anexo_id}]]"
+
+
+def _marcadores_de_foto(conteudo: Any) -> list[str]:
+    return [linha.strip() for linha in str(conteudo or "").split("\n") if _RE_FOTO.match(linha)]
+
+
+def preparar_foto(anexo_id: str) -> tuple[bytes, int, int] | None:
+    """A foto como JPEG pronto para o Word: `(bytes, largura_px, altura_px)`.
+
+    Gira pelo EXIF antes de tudo: foto de celular vem "deitada" no arquivo com a
+    rotação só anotada, e o Word não lê essa anotação — o machucado sairia de lado.
+    Transparência vira fundo branco e o lado maior cai para 1600 px. `None` quando
+    o anexo não existe ou não abre como imagem (PDF, HEIC sem decodificador).
+    """
+    entrega = armazenamento.obter_entrega(anexo_id)
+    if not entrega:
+        return None
+    caminho = armazenamento.caminho_duravel_da_entrega(anexo_id)
+    bruto = caminho.read_bytes() if caminho else armazenamento.conteudo_arquivo_entrega(entrega)
+    if not bruto:
+        return None
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(bruto)) as original:
+            imagem = ImageOps.exif_transpose(original)
+            if imagem.mode not in ("RGB", "L"):
+                rgba = imagem.convert("RGBA")
+                imagem = Image.new("RGB", rgba.size, "white")
+                imagem.paste(rgba, mask=rgba.getchannel("A"))
+            imagem = imagem.convert("RGB")
+            imagem.thumbnail((_LADO_MAXIMO_PX, _LADO_MAXIMO_PX))
+            saida = io.BytesIO()
+            imagem.save(saida, "JPEG", quality=85)
+            return saida.getvalue(), imagem.width, imagem.height
+    except Exception as erro:  # noqa: BLE001 — anexo ilegível vira pendência na peça
+        log.warning("foto %s não abriu como imagem: %s", anexo_id, erro)
+        return None
+
+
+def _largura_util_cm(visual: dict[str, Any]) -> float:
+    esquerda = max(1, min(6, float(visual["margem_esquerda_cm"])))
+    direita = max(1, min(6, float(visual["margem_direita_cm"])))
+    return 21.0 - esquerda - direita
+
+
+def _foto_xml(linha: str, *, fotos: list[tuple[str, bytes]], visual: dict[str, Any]) -> str:
+    """A foto centralizada, com a legenda em itálico logo abaixo.
+
+    `fotos` acumula `(rId, jpeg)` para `montar_docx` gravar em `word/media`.
+    """
+    achado = _RE_FOTO.match(linha)
+    anexo_id, legenda = achado.group(1), (achado.group(2) or "").strip()
+    sem_recuo = '<w:ind w:firstLine="0"/>'
+    foto = preparar_foto(anexo_id)
+    if foto is None:
+        # Nunca some em silêncio: o advogado precisa ver que ali faltou a foto.
+        aviso = escape(f"[PENDENTE: foto não encontrada nos anexos{' — ' + legenda if legenda else ''}]")
+        return (
+            f'<w:p><w:pPr>{sem_recuo}<w:jc w:val="center"/></w:pPr>'
+            f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{aviso}</w:t></w:r></w:p>'
+        )
+    jpeg, largura_px, altura_px = foto
+    # Não amplia além de ~150 dpi: foto pequena esticada até a margem fica borrada.
+    largura_cm = min(_largura_util_cm(visual), largura_px / 150 * 2.54)
+    altura_cm = largura_cm * altura_px / largura_px
+    if altura_cm > _ALTURA_MAXIMA_FOTO_CM:
+        altura_cm = _ALTURA_MAXIMA_FOTO_CM
+        largura_cm = altura_cm * largura_px / altura_px
+    cx, cy = round(largura_cm * 360000), round(altura_cm * 360000)
+    numero = len(fotos) + 1
+    rel_id = f"rIdFoto{numero}"
+    fotos.append((rel_id, jpeg))
+    # id 1 é a logo do cabeçalho; as fotos começam em 100 para nunca colidir.
+    doc_id = 100 + numero
+    nome = escape(legenda or f"Foto {numero}", {'"': "&quot;"})
+    xml = (
+        f'<w:p><w:pPr><w:keepNext/>{sem_recuo}<w:jc w:val="center"/></w:pPr><w:r><w:drawing>'
+        f'<wp:inline distT="0" distB="0" distL="0" distR="0">'
+        f'<wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{doc_id}" name="{nome}"/>'
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        f'<pic:pic><pic:nvPicPr><pic:cNvPr id="{doc_id}" name="foto-{numero}.jpeg"/><pic:cNvPicPr/></pic:nvPicPr>'
+        f'<pic:blipFill><a:blip r:embed="{rel_id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+        f'<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'
+        "</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+    )
+    if legenda:
+        xml += (
+            f'<w:p><w:pPr>{sem_recuo}<w:jc w:val="center"/></w:pPr>'
+            f'<w:r><w:rPr><w:i/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+            f'<w:t xml:space="preserve">{escape(legenda)}</w:t></w:r></w:p>'
+        )
+    return xml
+
+
+def _preservar_fotos(
+    antes: list[dict[str, Any]], depois: list[dict[str, Any]], critica: str
+) -> list[dict[str, Any]]:
+    """Devolve à revisão as fotos que a IA deixou cair.
+
+    O modelo reescreve a seção inteira e trata `[[FOTO:…]]` como ruído; sem isto,
+    pedir "melhore os fatos" apagava a foto do machucado. Se a crítica fala de foto
+    ou imagem, quem decide é ela (tirar ou mover é pedido legítimo).
+    """
+    if re.search(r"\b(fotos?|imagens?|figuras?)\b", critica or "", re.IGNORECASE):
+        return depois
+    resultado = [dict(s) for s in depois]
+    if not resultado:
+        return resultado
+    presentes = {m for s in resultado for m in _marcadores_de_foto(s.get("content"))}
+    por_codigo = {s.get("code"): s for s in resultado}
+    for secao in antes:
+        faltando = [m for m in _marcadores_de_foto(secao.get("content")) if m not in presentes]
+        if not faltando:
+            continue
+        destino = por_codigo.get(secao.get("code")) or resultado[-1]
+        destino["content"] = str(destino.get("content") or "").rstrip() + "\n\n" + "\n".join(faltando)
+        presentes.update(faltando)
+    return resultado
+
+
+def _achar_secao(secoes: list[dict[str, Any]], secao: str) -> dict[str, Any]:
+    """Pelo código ("FACTS") ou pelo rótulo ("Dos fatos"); vazio = última seção."""
+    procurado = _sem_acento(secao).strip().lower()
+    if procurado:
+        for candidata in secoes:
+            codigo = str(candidata.get("code") or "").lower()
+            rotulo = _sem_acento(str(candidata.get("label") or "")).lower()
+            if procurado in (codigo, rotulo) or (len(procurado) >= 4 and procurado in rotulo):
+                return candidata
+        raise ErroPeticao(
+            f"Não achei a seção «{secao}» na petição. Seções: "
+            + "; ".join(str(s.get("label") or s.get("code")) for s in secoes)
+        )
+    return secoes[-1]
+
+
+def inserir_foto(
+    caso_id: str,
+    anexo_id: str,
+    *,
+    secao: str = "",
+    depois_de: str = "",
+    legenda: str = "",
+    usuario: str = "",
+) -> dict[str, Any]:
+    """Põe uma foto do caso dentro da petição, sem IA no meio.
+
+    `secao` vazio = fim da petição (última seção). `depois_de` é um trecho do texto:
+    a foto entra logo abaixo do parágrafo que o contém; sem ele, no fim da seção.
+    Vira edição manual comum — versão nova, histórico, desfazível.
+    """
+    dados = carregar(caso_id)
+    if not dados:
+        raise ErroPeticao("Nenhuma petição gerada para este caso.")
+    entrega = armazenamento.obter_entrega(anexo_id)
+    if not entrega or str(entrega.get("caso_id")) != str(caso_id):
+        raise ErroPeticao("Esse anexo não é deste caso.")
+    arquivo = str(entrega.get("arquivo") or "")
+    if not eh_foto(arquivo):
+        raise ErroPeticao(f"«{arquivo}» não é uma foto (jpg, png…).")
+    if preparar_foto(anexo_id) is None:
+        raise ErroPeticao(f"Não consegui abrir «{arquivo}» como imagem.")
+
+    secoes = [s for s in dados.get("sections") or [] if s.get("code") != "JURIMETRY"]
+    if not secoes:
+        raise ErroPeticao("A petição não tem seções.")
+    alvo = _achar_secao(secoes, secao)
+    marcador = marcador_de_foto(anexo_id, legenda)
+    linhas = str(alvo.get("content") or "").rstrip().split("\n")
+    posicao = "no fim da seção"
+    trecho = _sem_acento(" ".join(depois_de.split())).lower()
+    indice = next(
+        (i for i, linha in enumerate(linhas) if trecho and trecho in _sem_acento(" ".join(linha.split())).lower()),
+        None,
+    )
+    if indice is not None:
+        linhas[indice + 1:indice + 1] = ["", marcador, ""]
+        posicao = "logo abaixo do parágrafo indicado"
+    else:
+        if depois_de.strip():
+            posicao = "no fim da seção (não achei o trecho indicado)"
+        linhas += ["", marcador]
+    conteudo = "\n".join(linhas)
+    peticao = salvar_secoes(caso_id, [{"code": str(alvo.get("code")), "content": conteudo}], usuario)
+    return {
+        "peticao": peticao,
+        "secao": str(alvo.get("label") or alvo.get("code")),
+        "posicao": posicao,
+        "arquivo": arquivo,
+    }
+
+
 _RE_SEPARADOR_TABELA = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
 
@@ -2850,8 +3074,14 @@ def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
     )
 
 
-def _conteudo_com_tabelas_xml(conteudo: str, *, centralizado: bool, visual: dict[str, Any]) -> str:
-    """Converte blocos Markdown de tabela, mantendo sua posição entre parágrafos."""
+def _conteudo_com_tabelas_xml(
+    conteudo: str,
+    *,
+    centralizado: bool,
+    visual: dict[str, Any],
+    fotos: list[tuple[str, bytes]] | None = None,
+) -> str:
+    """Converte blocos Markdown de tabela (e linhas de foto), mantendo a posição."""
     linhas = conteudo.split("\n")
     partes: list[str] = []
     comum: list[str] = []
@@ -2866,6 +3096,11 @@ def _conteudo_com_tabelas_xml(conteudo: str, *, centralizado: bool, visual: dict
     while indice < len(linhas):
         atual = linhas[indice]
         proxima = linhas[indice + 1] if indice + 1 < len(linhas) else ""
+        if fotos is not None and _RE_FOTO.match(atual):
+            descarregar_comum()
+            partes.append(_foto_xml(atual, fotos=fotos, visual=visual))
+            indice += 1
+            continue
         if "|" in atual and _RE_SEPARADOR_TABELA.match(proxima):
             cabecalho = _celulas_tabela_markdown(atual)
             tabela: list[list[str]] = []
@@ -2907,6 +3142,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     logo_arquivo = f"logo-escritorio{logo_extensao}"
     logo_content_type = "image/jpeg" if logo_extensao == ".jpg" else "image/png"
     corpo: list[str] = []
+    fotos: list[tuple[str, bytes]] = []
     for secao in secoes:
         if secao.get("code") == "JURIMETRY":
             continue
@@ -2941,13 +3177,17 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
                     conteudo,
                     centralizado=secao.get("code") == "CLOSING",
                     visual=visual,
+                    fotos=fotos,
                 )
             )
         corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
- xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+ xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
   <w:body>
     {"".join(corpo)}
     <w:sectPr>
@@ -2975,7 +3215,9 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
   </w:body>
 </w:document>"""
 
-    cabecalho_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    # f-string: sem o `f`, `{logo_cx}` ia literal para o XML e o Word recusava abrir
+    # o arquivo inteiro (o LibreOffice, que gera o PDF, tolerava e escondia o defeito).
+    cabecalho_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
@@ -3032,6 +3274,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Default Extension="{logo_extensao.lstrip('.')}" ContentType="{logo_content_type}"/>
+  {'<Default Extension="jpeg" ContentType="image/jpeg"/>' if fotos else ""}
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
@@ -3048,12 +3291,21 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         arquivo.writestr("word/header1.xml", cabecalho_xml)
         arquivo.writestr("word/styles.xml", estilos_xml)
         arquivo.writestr(f"word/media/{logo_arquivo}", logo)
+        # `.jpeg`, e não `.jpg`: a logo pode ser `.jpg`, e dois <Default> para a
+        # mesma extensão tornam o pacote inválido para o Word.
+        relacoes_fotos = ""
+        for rel_id, jpeg in fotos:
+            numero = rel_id.removeprefix("rIdFoto")
+            arquivo.writestr(f"word/media/foto-{numero}.jpeg", jpeg)
+            relacoes_fotos += (
+                f'\n  <Relationship Id="{rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/foto-{numero}.jpeg"/>'
+            )
         arquivo.writestr(
             "word/_rels/document.xml.rels",
-            """<?xml version="1.0" encoding="UTF-8"?>
+            f"""<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
-  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>{relacoes_fotos}
 </Relationships>""",
         )
         arquivo.writestr(
