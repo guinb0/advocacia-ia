@@ -76,6 +76,9 @@ interface Props {
   dentroDoAtendimento?: boolean;
   /** Onde a busca do checklist achou o termo DENTRO dos arquivos deste item. */
   achadoNoConteudo?: { arquivo: string; onde: string[] }[];
+  /** Abre a entrega no visor do checklist, que navega entre todos os
+   *  documentos. Sem ele, a linha abre um visor só deste arquivo. */
+  onAbrirEntrega?: (entregaId: string) => void;
 }
 
 export default function ItemChecklistLinha({
@@ -89,11 +92,17 @@ export default function ItemChecklistLinha({
   onReatribuir,
   dentroDoAtendimento = false,
   achadoNoConteudo,
+  onAbrirEntrega,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
   /** Entrega aberta no visor (arquivo + campos extraídos). */
   const [visor, setVisor] = useState<{ id: string; arquivo: string } | null>(null);
+
+  function abrir(entrega: { id: string; arquivo: string }) {
+    if (onAbrirEntrega) onAbrirEntrega(entrega.id);
+    else setVisor({ id: entrega.id, arquivo: entrega.arquivo });
+  }
 
   /* Seleção para o pacote (ZIP ou PDF único). Guarda os ids marcados; um id de
    * entrega que depois some (removida) fica no conjunto sem efeito — é
@@ -338,7 +347,7 @@ export default function ItemChecklistLinha({
               <button
                 type="button"
                 className="flex-1 min-w-[150px] py-[2px] border-none bg-transparent text-acao font-codigo text-xs text-left underline underline-offset-2 [overflow-wrap:anywhere] cursor-pointer hover:text-acao-forte"
-                onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
+                onClick={() => abrir(entrega)}
                 title="Abrir o documento e os dados extraídos"
               >
                 {entrega.arquivo}
@@ -351,7 +360,7 @@ export default function ItemChecklistLinha({
               <Botao
                 variante="secundario"
                 pequeno
-                onClick={() => setVisor({ id: entrega.id, arquivo: entrega.arquivo })}
+                onClick={() => abrir(entrega)}
               >
                 Ver o que foi lido
               </Botao>

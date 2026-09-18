@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Categoria, SituacaoCaso } from "@/lib/types";
 import BaixarDocumentos from "@/components/caso/BaixarDocumentos";
@@ -12,6 +12,7 @@ import PedidoCliente from "@/components/caso/PedidoCliente";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
 import ResumoDocumentos from "@/components/caso/ResumoDocumentos";
 import TriagemDocumentos from "@/components/caso/TriagemDocumentos";
+import VisorEntrega from "@/components/caso/VisorEntrega";
 
 type Filtro = "todos" | "pendentes" | "enviados";
 
@@ -163,6 +164,10 @@ export default function Checklist({
   }, []);
   const [trocando, setTrocando] = useState(false);
   const [erroTroca, setErroTroca] = useState<string | null>(null);
+  /** Entrega aberta no visor. Mora aqui, e não na linha, para o visor poder
+   *  passar ao documento seguinte sem fechar e reabrir. */
+  const [aberta, setAberta] = useState<string | null>(null);
+  const fecharVisor = useCallback(() => setAberta(null), []);
   const { caso, categoria, progresso, itens } = situacao;
 
   if (!categoria) {
@@ -199,6 +204,20 @@ export default function Checklist({
     if (filtro === "enviados") return item.status === "entregue";
     return true;
   });
+
+  // A ordem de navegação é a da lista na tela, com a busca e o filtro atuais.
+  // Uma CIN que vale para RG e CPF aparece nos dois itens e é visitada uma vez.
+  const sequencia: { id: string; arquivo: string; rotulo: string }[] = [];
+  const jaNaSequencia = new Set<string>();
+  for (const item of visiveis) {
+    for (const entrega of item.entregas) {
+      if (jaNaSequencia.has(entrega.id)) continue;
+      jaNaSequencia.add(entrega.id);
+      sequencia.push({ id: entrega.id, arquivo: entrega.arquivo, rotulo: item.nome });
+    }
+  }
+  const posicaoAberta = aberta ? sequencia.findIndex((e) => e.id === aberta) : -1;
+  const entregaAberta = posicaoAberta >= 0 ? sequencia[posicaoAberta] : null;
 
   const filtros: { id: Filtro; nome: string }[] = [
     { id: "todos", nome: `Todos (${encontrados.length})` },
@@ -459,10 +478,28 @@ export default function Checklist({
                 onReatribuir={onReatribuir}
                 dentroDoAtendimento={dentroDoAtendimento}
                 achadoNoConteudo={noConteudo?.get(item.codigo)}
+                onAbrirEntrega={setAberta}
               />
             ))}
           </ul>
         </div>
+      )}
+
+      {/* Some sozinho se o documento aberto deixar a lista (removido, ou fora
+        * do filtro depois de uma reclassificação). */}
+      {entregaAberta && (
+        <VisorEntrega
+          entregaId={entregaAberta.id}
+          arquivo={entregaAberta.arquivo}
+          onFechar={fecharVisor}
+          navegacao={{
+            posicao: posicaoAberta + 1,
+            total: sequencia.length,
+            rotulo: entregaAberta.rotulo,
+            onAnterior: () => setAberta(sequencia[Math.max(0, posicaoAberta - 1)].id),
+            onProximo: () => setAberta(sequencia[Math.min(sequencia.length - 1, posicaoAberta + 1)].id),
+          }}
+        />
       )}
 
       <div className="mt-5">

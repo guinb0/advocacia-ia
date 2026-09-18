@@ -16,6 +16,10 @@ export function useArquivoEntrega(entregaId: string | null) {
 
   useEffect(() => {
     if (!entregaId) return;
+    // Ao trocar de entrega (navegação no visor), não mostra o arquivo anterior
+    // — que acaba de ser revogado — nem o erro dele enquanto o novo chega.
+    setUrl(null);
+    setErro(null);
     let cancelado = false;
     let criada: string | null = null;
 
