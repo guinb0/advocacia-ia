@@ -10,7 +10,9 @@
  * só nós React, então não há risco de script vindo da web.
  */
 
-import type { ReactNode } from "react";
+"use client";
+
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 const TEXTO = "text-sm leading-relaxed text-tinta-2 m-0";
 
@@ -171,15 +173,142 @@ export function RespostaFormatada({ texto }: { texto: string }) {
   );
 }
 
+/* ---------------------------------------------------------------------------
+ * Documentos citados viram link.
+ *
+ * O chat da petição cita "a CTPS (IMG_4411.jpg)" e o advogado tinha de sair da
+ * conversa e procurar no checklist qual dos arquivos era aquele. Dentro de um
+ * `DocumentosCitaveis`, o nome do arquivo — ou o tipo, quando só UM anexo tem aquele
+ * tipo — vira um botão que abre o documento. Fora dele (a pesquisa na web do
+ * FluxoPeticao), nada muda.
+ *
+ * Tipo repetido não vira link: "o contracheque" num caso com três contracheques não
+ * diz qual abrir, e abrir o errado é pior do que não abrir.
+ * ------------------------------------------------------------------------- */
+
+export interface DocumentoCitavelMd {
+  id: string;
+  arquivo: string;
+  tipo: string;
+}
+
+interface Citaveis {
+  padrao: RegExp;
+  porChave: Map<string, DocumentoCitavelMd>;
+  aoAbrir: (documento: DocumentoCitavelMd) => void;
+}
+
+const ContextoCitaveis = createContext<Citaveis | null>(null);
+
+const escapar = (texto: string) => texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function montarCitaveis(
+  documentos: DocumentoCitavelMd[],
+  aoAbrir: Citaveis["aoAbrir"],
+): Citaveis | null {
+  const porChave = new Map<string, DocumentoCitavelMd>();
+  const repetidas = new Set<string>();
+  const registrar = (chave: string, documento: DocumentoCitavelMd) => {
+    const limpa = chave.trim().toLowerCase();
+    if (limpa.length < 2) return;
+    const outro = porChave.get(limpa);
+    if (outro && outro.id !== documento.id) repetidas.add(limpa);
+    else porChave.set(limpa, documento);
+  };
+  for (const documento of documentos) {
+    registrar(documento.arquivo, documento);
+    // O modelo às vezes escreve o nome sem a extensão ("IMG_4411"). Curto demais
+    // ("doc") casaria com palavra comum.
+    const semExtensao = documento.arquivo.replace(/\.[a-z0-9]{2,5}$/i, "");
+    if (semExtensao !== documento.arquivo && semExtensao.length >= 6) registrar(semExtensao, documento);
+    if (documento.tipo) registrar(documento.tipo, documento);
+  }
+  for (const chave of repetidas) porChave.delete(chave);
+  if (!porChave.size) return null;
+  const chaves = [...porChave.keys()].sort((a, b) => b.length - a.length).map(escapar);
+  return {
+    // Fronteira de palavra que entende acento: o `\b` do JS não vê "é" como letra.
+    padrao: new RegExp(`(?<![\\p{L}\\p{N}_])(?:${chaves.join("|")})(?![\\p{L}\\p{N}_])`, "giu"),
+    porChave,
+    aoAbrir,
+  };
+}
+
+export function DocumentosCitaveis({
+  documentos,
+  aoAbrir,
+  children,
+}: {
+  documentos: DocumentoCitavelMd[];
+  aoAbrir: (documento: DocumentoCitavelMd) => void;
+  children: ReactNode;
+}) {
+  const valor = useMemo(() => montarCitaveis(documentos, aoAbrir), [documentos, aoAbrir]);
+  return <ContextoCitaveis.Provider value={valor}>{children}</ContextoCitaveis.Provider>;
+}
+
+function LinkDoDocumento({
+  documento,
+  aoAbrir,
+  children,
+}: {
+  documento: DocumentoCitavelMd;
+  aoAbrir: Citaveis["aoAbrir"];
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => aoAbrir(documento)}
+      title={`Abrir ${documento.arquivo}${documento.tipo ? ` (${documento.tipo})` : ""}`}
+      className="inline cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[length:inherit] text-acao underline decoration-dotted underline-offset-2 hover:decoration-solid"
+    >
+      <IconeDocumento />
+      {children}
+    </button>
+  );
+}
+
+function IconeDocumento() {
+  return (
+    <svg className="mr-[2px] inline-block align-[-2px]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+    </svg>
+  );
+}
+
+/** Texto corrido com os documentos citados trocados por link. */
+function comDocumentos(texto: string, citaveis: Citaveis | null, base: number): ReactNode[] {
+  if (!citaveis) return [texto];
+  const partes: ReactNode[] = [];
+  let ultimo = 0;
+  for (const achado of texto.matchAll(citaveis.padrao)) {
+    const documento = citaveis.porChave.get(achado[0].toLowerCase());
+    if (!documento) continue;
+    const inicio = achado.index ?? 0;
+    if (inicio > ultimo) partes.push(texto.slice(ultimo, inicio));
+    partes.push(
+      <LinkDoDocumento key={`doc-${base + inicio}`} documento={documento} aoAbrir={citaveis.aoAbrir}>
+        {achado[0]}
+      </LinkDoDocumento>,
+    );
+    ultimo = inicio + achado[0].length;
+  }
+  if (ultimo < texto.length) partes.push(texto.slice(ultimo));
+  return partes;
+}
+
 /** Em linha: link `[rótulo](url)`, URL solta, `**negrito**`, `*itálico*` e `código`. */
 function MdEmLinha({ texto }: { texto: string }) {
+  const citaveis = useContext(ContextoCitaveis);
   const partes: ReactNode[] = [];
   const padrao =
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|(?<![\w*])\*([^*\n]+)\*(?!\*)|(https?:\/\/[^\s<>)\]]+)/g;
   let ultimo = 0;
   for (const achado of texto.matchAll(padrao)) {
     const inicio = achado.index ?? 0;
-    if (inicio > ultimo) partes.push(texto.slice(ultimo, inicio));
+    if (inicio > ultimo) partes.push(...comDocumentos(texto.slice(ultimo, inicio), citaveis, ultimo));
     const [, rotulo, url, negrito, negrito2, codigo, italico, urlSolta] = achado;
     if (url || urlSolta) {
       const bruta = url || urlSolta;
@@ -196,6 +325,13 @@ function MdEmLinha({ texto }: { texto: string }) {
           <MdEmLinha texto={negrito || negrito2} />
         </strong>,
       );
+    } else if (codigo && citaveis?.porChave.has(codigo.trim().toLowerCase())) {
+      // O modelo costuma pôr o nome do arquivo entre crases.
+      partes.push(
+        <LinkDoDocumento key={inicio} documento={citaveis.porChave.get(codigo.trim().toLowerCase())!} aoAbrir={citaveis.aoAbrir}>
+          <code className="rounded-campo bg-papel-3 px-1 font-codigo text-xs">{codigo}</code>
+        </LinkDoDocumento>,
+      );
     } else if (codigo) {
       partes.push(
         <code key={inicio} className="rounded-campo bg-papel-3 px-1 font-codigo text-xs text-tinta">
@@ -203,10 +339,10 @@ function MdEmLinha({ texto }: { texto: string }) {
         </code>,
       );
     } else if (italico) {
-      partes.push(<em key={inicio}>{italico}</em>);
+      partes.push(<em key={inicio}>{comDocumentos(italico, citaveis, inicio)}</em>);
     }
     ultimo = inicio + achado[0].length;
   }
-  if (ultimo < texto.length) partes.push(texto.slice(ultimo));
+  if (ultimo < texto.length) partes.push(...comDocumentos(texto.slice(ultimo), citaveis, ultimo));
   return <>{partes}</>;
 }

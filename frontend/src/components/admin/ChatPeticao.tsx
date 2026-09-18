@@ -24,20 +24,29 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
-import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
+import VisorEntrega from "@/components/caso/VisorEntrega";
+import {
+  DocumentosCitaveis,
+  RespostaFormatada,
+  dominioDe,
+  type DocumentoCitavelMd,
+} from "@/components/ui/Markdown";
 import estilos from "@/components/admin/ChatPeticao.module.css";
 import {
   EVENTO_DO_CHAT,
   abrirChatDaPeticao,
   adicionarContextoAoChat,
   executarAcaoDoChat,
+  listarDocumentosDoChat,
   perguntarNoChat,
   registrarEventoNoChat,
   type AcaoProposta,
   type AvisoParaOChat,
   type ConfiancaDaFonte,
+  type DocumentoCitavel,
   type FonteDaWeb,
   type MensagemDoChat,
 } from "@/lib/chatPeticao";
@@ -108,6 +117,11 @@ export default function ChatPeticao({
    * a transcrição precisa continuar mostrando o que foi proposto e aceito. */
   const [decididas, setDecididas] = useState<Record<string, "aceita" | "descartada">>({});
   const [executando, setExecutando] = useState<string | null>(null);
+  /* Os anexos que a resposta pode citar. O nome do arquivo (ou o tipo, quando é único)
+   * vira link e abre o documento aqui mesmo, no visor do checklist — antes o advogado
+   * lia "a CTPS (IMG_4411.jpg)" e tinha de ir ao checklist procurar o arquivo. */
+  const [documentos, setDocumentos] = useState<DocumentoCitavel[]>([]);
+  const [documentoAberto, setDocumentoAberto] = useState<DocumentoCitavelMd | null>(null);
   /* Quem rolou para cima está LENDO. Empurrar a conversa para o fim a cada pedaço de
    * texto que chega arranca do meio da leitura a resposta anterior, e não há como voltar
    * a ela sem procurar. Enquanto isso, o botão de descer diz que chegou coisa nova. */
@@ -153,6 +167,8 @@ export default function ChatPeticao({
     emVoo.current?.abort();
     emVoo.current = null;
     setMensagens([]);
+    setDocumentos([]);
+    setDocumentoAberto(null);
     setDecididas({});
     setExecutando(null);
     setTexto("");
@@ -167,6 +183,7 @@ export default function ChatPeticao({
         if (!ativo) return;
         setMensagens(chat.mensagens);
         setModeloDisponivel(chat.modeloDisponivel);
+        setDocumentos(chat.documentos);
       })
       .catch((falha) => {
         if (ativo) setErro(falha instanceof Error ? falha.message : "Não foi possível abrir a conversa.");
@@ -175,6 +192,17 @@ export default function ChatPeticao({
     return () => {
       ativo = false;
     };
+  }, [casoId]);
+
+  /** Relê os anexos: o que foi enviado pelo checklist com a conversa aberta também
+   *  precisa virar link. Falhar aqui só deixa a lista como estava. */
+  const atualizarDocumentos = useCallback(() => {
+    const doCaso = casoId;
+    void listarDocumentosDoChat(doCaso)
+      .then((lista) => {
+        if (casoNaTela.current === doCaso) setDocumentos(lista);
+      })
+      .catch(() => {});
   }, [casoId]);
 
   useEffect(() => {
@@ -252,6 +280,7 @@ export default function ChatPeticao({
                 setParcial("");
                 setEtapa("");
                 setMensagens((atuais) => [...atuais, evento.mensagem]);
+                atualizarDocumentos();
                 break;
               case "erro":
                 setParcial("");
@@ -282,7 +311,7 @@ export default function ChatPeticao({
         }
       }
     },
-    [casoId, enviando],
+    [casoId, enviando, atualizarDocumentos],
   );
 
   /** Atalho que não se basta: escreve o começo da frase e devolve o cursor ao campo. */
@@ -387,6 +416,7 @@ export default function ChatPeticao({
         </div>
       </header>
 
+      <DocumentosCitaveis documentos={documentos} aoAbrir={setDocumentoAberto}>
       <div
         className={estilos.conversa}
         ref={conversa}
@@ -480,6 +510,21 @@ export default function ChatPeticao({
 
         {erro && <Aviso tom="critico">{erro}</Aviso>}
       </div>
+      </DocumentosCitaveis>
+
+      {/* No portal, e acima da gaveta: em tela estreita o chat é gaveta `z-[60]`, e o
+        * visor (`z-50`) abriria por baixo dela. */}
+      {documentoAberto &&
+        createPortal(
+          <div className="relative z-[70]">
+            <VisorEntrega
+              entregaId={documentoAberto.id}
+              arquivo={documentoAberto.arquivo}
+              onFechar={() => setDocumentoAberto(null)}
+            />
+          </div>,
+          document.body,
+        )}
 
       {!preso && (
         <button type="button" className={estilos.descer} onClick={descer}>
