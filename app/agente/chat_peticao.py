@@ -1006,14 +1006,24 @@ def executar_ferramenta(
 
 def _configurado() -> tuple[str, str, str]:
     chave = os.getenv("OPENAI_API_KEY", "").strip()
-    if not chave:
-        raise ErroDoChat(
-            "O chat da petição está desligado: falta OPENAI_API_KEY no ambiente. Os"
-            " botões de gerar, analisar e revisar continuam funcionando."
-        )
-    base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    modelo = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"
-    return chave, base, modelo
+    if chave:
+        base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        modelo = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"
+        return chave, base, modelo
+
+    # Durante uma publicação, os segredos novos podem chegar ao container alguns
+    # segundos depois do código. A chave já usada pelo escritório continua sendo uma
+    # contingência segura: assim a tela nunca fica inutilizada no meio do atendimento.
+    chave_legada = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if chave_legada:
+        base_legada = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
+        modelo_legado = os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+        return chave_legada, base_legada, modelo_legado
+
+    raise ErroDoChat(
+        "O chat da petição está desligado: falta uma chave de modelo no ambiente. Os"
+        " botões de gerar, analisar e revisar continuam funcionando."
+    )
 
 
 def _juntar_chamadas(acumulado: dict[int, dict[str, Any]], pedacos: list[Any]) -> None:
@@ -1381,7 +1391,10 @@ def abrir(caso_id: str, usuario: str) -> dict[str, Any]:
         # A tela precisa saber se o modelo está ligado ANTES de alguém digitar: um
         # campo que aceita a pergunta e só depois diz "falta a chave no .env" é o
         # tipo de erro silencioso que este módulo existe para não repetir.
-        "modelo_disponivel": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+        "modelo_disponivel": bool(
+            os.getenv("OPENAI_API_KEY", "").strip()
+            or os.getenv("DEEPSEEK_API_KEY", "").strip()
+        ),
         "web_disponivel": pesquisa_web_modulo.configurada(),
     }
 
