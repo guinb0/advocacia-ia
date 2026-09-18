@@ -10,7 +10,7 @@ import re
 import unicodedata
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
@@ -563,6 +563,7 @@ def anexos_do_caso(caso_id: str) -> list[dict[str, Any]]:
             situacao = "sem_texto"
         anexos.append(
             {
+                "id": str(entrega.get("id") or ""),
                 "arquivo": str(entrega.get("arquivo") or ""),
                 "tipo": descricao,
                 "campos": campos,
@@ -1565,7 +1566,7 @@ def salvar_secoes_anexa(
     if not registro:
         raise ErroPeticao("Peça não encontrada.")
 
-    dados, anterior = _aplicar_edicao_manual(dict(registro["dados"]), secoes, usuario)
+    dados, anterior, _alterou = _aplicar_edicao_manual(dict(registro["dados"]), secoes, usuario)
     if anterior is not None:
         armazenamento.registrar_versao_peticao(registro["caso_id"], anterior, chave=peca_id)
     dados["updated_at"] = _agora()
@@ -2485,9 +2486,41 @@ def historico_de_versoes(caso_id: str, peca_id: str | None = None) -> list[dict[
     return armazenamento.listar_versoes_peticao(caso_id)
 
 
+#: Quanto tempo sem digitar encerra uma "sessão de edição".
+#:
+#: A tela grava sozinha a cada pausa na digitação. Sem agrupar, cada pausa viraria
+#: uma versão nova no histórico — dezenas por parágrafo reescrito, e o histórico
+#: deixaria de servir para achar "o que a peça era antes de eu mexer". Edições
+#: manuais seguidas do MESMO usuário, com intervalo menor que isto, somam-se na
+#: mesma versão; a versão anterior à sessão já foi arquivada na primeira gravação.
+JANELA_EDICAO_MANUAL = timedelta(
+    minutes=float(os.getenv("PETICAO_JANELA_EDICAO_MINUTOS", "10"))
+)
+
+
+def _continua_sessao_manual(revisao: Any, usuario: str, agora: datetime) -> bool:
+    if not isinstance(revisao, dict) or revisao.get("tipo") != "manual":
+        return False
+    if str(revisao.get("usuario") or "") != usuario:
+        return False
+    try:
+        ultima = datetime.fromisoformat(str(revisao.get("em") or ""))
+    except ValueError:
+        return False
+    if ultima.tzinfo is None:
+        ultima = ultima.replace(tzinfo=timezone.utc)
+    return timedelta(0) <= agora - ultima <= JANELA_EDICAO_MANUAL
+
+
 def _aplicar_edicao_manual(
     dados: dict[str, Any], secoes: list[dict[str, str]], usuario: str
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
+    """Aplica o texto editado. Devolve `(dados, anterior, alterou)`.
+
+    `anterior` é a versão a arquivar — `None` quando nada mudou OU quando a edição
+    continua a sessão manual em curso (ver `JANELA_EDICAO_MANUAL`), caso em que a
+    versão já está aberta e o arquivo do "antes" já foi feito.
+    """
     anterior = json.loads(json.dumps(dados))
     por_codigo = {s["code"]: s.get("content", "") for s in secoes if s.get("code")}
     atuais = [secao for secao in dados.get("sections") or [] if secao.get("code") != "JURIMETRY"]
@@ -2498,19 +2531,29 @@ def _aplicar_edicao_manual(
     alteradas = _secoes_alteradas(atuais, novas)
     dados["sections"] = novas
     if not alteradas:
-        return dados, None
+        return dados, None, False
     # Uma edição manual muda a versão-base; a candidata anterior não pode mais
     # ser aceita por cima dela.
     dados.pop("revisao_pendente", None)
-    agora = _agora()
+    agora = datetime.now(timezone.utc)
+    rotulos = [str(s.get("label") or s.get("code")) for s in alteradas]
+    revisao_atual = anterior.get("revisao")
+    if _continua_sessao_manual(revisao_atual, usuario, agora):
+        ja_alteradas = list(revisao_atual.get("alteradas") or [])
+        dados["revisao"] = {
+            **revisao_atual,
+            "em": agora.isoformat(),
+            "alteradas": ja_alteradas + [r for r in rotulos if r not in ja_alteradas],
+        }
+        return dados, None, True
     dados["version"] = int(anterior.get("version") or 1) + 1
     dados["revisao"] = {
         "tipo": "manual",
         "usuario": usuario,
-        "em": agora,
-        "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
+        "em": agora.isoformat(),
+        "alteradas": rotulos,
     }
-    return dados, anterior
+    return dados, anterior, True
 
 
 def salvar_secoes(
@@ -2519,9 +2562,10 @@ def salvar_secoes(
     dados = carregar(caso_id)
     if not dados:
         raise ErroPeticao("Nenhuma petição gerada para este caso.")
-    dados, anterior = _aplicar_edicao_manual(dados, secoes, usuario)
+    dados, anterior, alterou = _aplicar_edicao_manual(dados, secoes, usuario)
     if anterior is not None:
         armazenamento.registrar_versao_peticao(caso_id, anterior)
+    if alterou:
         _reconferir(caso_id, dados)
     return _salvar(caso_id, dados)
 

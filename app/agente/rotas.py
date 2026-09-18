@@ -1182,6 +1182,16 @@ def abrir_chat_peticao(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(erro)) from erro
 
 
+@roteador.get("/casos/{caso_id}/chat-peticao/documentos")
+def documentos_do_chat_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> list[dict[str, str]]:
+    """Os anexos que a resposta pode citar como link. A tela relê depois de cada
+    resposta: um documento enviado pelo checklist com a conversa aberta também
+    precisa virar link."""
+    return chat_peticao.documentos_citaveis(caso_id)
+
+
 @roteador.post("/casos/{caso_id}/chat-peticao/mensagens")
 def responder_no_chat_peticao(
     caso_id: str,

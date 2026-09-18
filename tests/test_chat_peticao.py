@@ -667,6 +667,14 @@ checar(len(anexos) == 3, "o anexo ainda sem OCR continua na lista (antes sumia)"
 checar(anexos[1]["situacao"] == "na_fila", "e sai marcado como aguardando leitura")
 checar(anexos[0]["tipo"].startswith("Carteira de Trabalho"), "o tipo classificado acompanha o arquivo")
 checar(len(anexos[0]["texto"]) > 1000, "o texto vem inteiro, sem o corte de quem lê")
+checar(anexos[0]["id"] == "1", "o anexo leva o id da entrega — é ele que abre o arquivo")
+
+citaveis = chat_peticao.documentos_citaveis("caso-1")
+checar(len(citaveis) == 3, "a tela recebe TODOS os anexos como citáveis, lidos ou não")
+checar(
+    citaveis[0] == {"id": "1", "arquivo": "IMG_4411.jpg", "tipo": anexos[0]["tipo"], "situacao": "lido"},
+    "com id, arquivo, tipo e situação — e sem o texto do OCR",
+)
 
 busca = executar_de_verdade("buscar_nos_documentos", "caso-1", {"termo": "número da CTPS"})
 checar(busca["encontrado"], "«número da CTPS» acha a CTPS cujo arquivo se chama IMG_4411.jpg")
