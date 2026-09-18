@@ -401,8 +401,8 @@ export default function ChatPeticao({
 
         {!modeloDisponivel && (
           <Aviso tom="atencao" titulo="A conversa está desligada">
-            Falta a chave do modelo no servidor (DEEPSEEK_API_KEY). Os botões de gerar,
-            analisar e revisar continuam funcionando normalmente.
+            Falta uma chave de modelo no servidor. Os botões de gerar, analisar e revisar
+            continuam funcionando normalmente.
           </Aviso>
         )}
 
