@@ -58,6 +58,34 @@ def _token(usuario_id):
     return cripto.decifrar(linha['access_token_cifrado'])
 
 
+def _renovar_token(usuario_id):
+    """Troca um access token expirado sem mandar o advogado ao OAuth de novo."""
+    linha = _linha(usuario_id)
+    if not linha or not linha['refresh_token_cifrado']:
+        raise ValueError("A conexão Tactiq expirou. Conecte novamente para importar as transcrições.")
+    refresh = cripto.decifrar(linha['refresh_token_cifrado'])
+    resposta = httpx.post(
+        f"{MCP}/oauth/token",
+        data={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": linha['client_id']},
+        timeout=25,
+    )
+    if resposta.status_code in {400, 401, 403}:
+        raise ValueError("A conexão Tactiq expirou ou foi revogada. Conecte novamente para importar as transcrições.")
+    resposta.raise_for_status()
+    dados = resposta.json()
+    access = str(dados.get("access_token") or "").strip()
+    if not access:
+        raise ValueError("O Tactiq não devolveu um novo token de acesso. Conecte novamente.")
+    refresh_novo = str(dados.get("refresh_token") or refresh)
+    with conectar() as banco:
+        banco.execute(
+            f"UPDATE {TABELA} SET access_token_cifrado=?, refresh_token_cifrado=?, atualizado_em=? WHERE usuario_id=?",
+            (cripto.cifrar(access), cripto.cifrar(refresh_novo), agora(), usuario_id),
+        )
+        banco.commit()
+    return access
+
+
 def _json_mcp(resposta):
     """MCP remoto pode devolver JSON puro ou evento SSE; aceita ambos."""
     resposta.raise_for_status()
@@ -75,7 +103,11 @@ def _mcp(usuario_id, acao):
     """Abre uma sessão MCP remota e executa uma operação autenticada."""
     cabecalho = {"Authorization": f"Bearer {_token(usuario_id)}", "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
     with httpx.Client(timeout=45) as cliente:
-        resposta_inicio = cliente.post(MCP, json={"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"advocacia-ia","version":"1.0"}}}, headers=cabecalho)
+        pedido_inicio = {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"advocacia-ia","version":"1.0"}}}
+        resposta_inicio = cliente.post(MCP, json=pedido_inicio, headers=cabecalho)
+        if resposta_inicio.status_code == 401:
+            cabecalho["Authorization"] = f"Bearer {_renovar_token(usuario_id)}"
+            resposta_inicio = cliente.post(MCP, json=pedido_inicio, headers=cabecalho)
         inicio = _json_mcp(resposta_inicio)
         sessao = resposta_inicio.headers.get("mcp-session-id") or inicio.get("result", {}).get("sessionId") or ""
         if sessao:
@@ -108,6 +140,20 @@ def _texto_resultado(resultado):
     try:
         return json.loads(bruto)
     except ValueError:
+        # Alguns gateways MCP acrescentam uma mensagem curta antes/depois do
+        # JSON. A transcrição continua válida: procura cada bloco JSON sem
+        # confundir uma resposta textual legítima com erro de formato.
+        for texto in textos:
+            try:
+                return json.loads(texto.strip())
+            except ValueError:
+                inicio = texto.find("{")
+                fim = texto.rfind("}")
+                if inicio >= 0 and fim > inicio:
+                    try:
+                        return json.loads(texto[inicio : fim + 1])
+                    except ValueError:
+                        pass
         return bruto
 
 
@@ -121,6 +167,13 @@ def _ferramenta(ferramentas, *termos):
     if not candidatas:
         raise ValueError("O Tactiq não disponibilizou esta consulta. Reconecte e aprove a permissão para detalhes das reuniões.")
     return min(candidatas, key=lambda item: len(str(item.get("name") or "")))
+
+
+def _ferramenta_por_nome(ferramentas, nome):
+    encontrada = next((item for item in ferramentas if item.get("name") == nome), None)
+    if not encontrada:
+        raise ValueError("O Tactiq não disponibilizou esta consulta. Reconecte e aprove a permissão para detalhes das reuniões.")
+    return encontrada
 
 
 def _coletar_reunioes(valor, saida):
@@ -139,10 +192,15 @@ def _coletar_reunioes(valor, saida):
 def listar_reunioes(usuario_id):
     def executar(cliente, cabecalho):
         disponiveis = _ferramentas_na_sessao(cliente, cabecalho)
+        # `list_spaces` também menciona "meeting" na descrição, mas não lista
+        # reuniões. O MCP atual fornece explicitamente esta ferramenta.
         try:
-            ferramenta = _ferramenta(disponiveis, "meeting", "list")
+            ferramenta = _ferramenta_por_nome(disponiveis, "list_recent_meetings")
         except ValueError:
-            ferramenta = _ferramenta(disponiveis, "meeting", "search")
+            try:
+                ferramenta = _ferramenta(disponiveis, "meeting", "list")
+            except ValueError:
+                ferramenta = _ferramenta(disponiveis, "meeting", "search")
         propriedades = (ferramenta.get("inputSchema") or {}).get("properties") or {}
         argumentos = next(({nome: 50} for nome in ("limit", "page_size", "pageSize") if nome in propriedades), {})
         dados = _texto_resultado(_chamar(cliente, cabecalho, ferramenta["name"], argumentos))
@@ -156,27 +214,33 @@ def transcricao(usuario_id, reuniao_id):
     def executar(cliente, cabecalho):
         disponiveis = _ferramentas_na_sessao(cliente, cabecalho)
         try:
-            ferramenta = _ferramenta(disponiveis, "meeting", "detail")
+            ferramenta = _ferramenta_por_nome(disponiveis, "get_transcript")
         except ValueError:
             ferramenta = _ferramenta(disponiveis, "transcript")
         propriedades = (ferramenta.get("inputSchema") or {}).get("properties") or {}
-        campo_id = next((nome for nome in ("meeting_id", "meetingId", "id") if nome in propriedades), None)
+        campo_id = next((nome for nome in ("meetingId", "meeting_id", "id") if nome in propriedades), None)
         if not campo_id:
             raise ValueError("O Tactiq não informou como identificar a reunião selecionada.")
-        dados = _texto_resultado(_chamar(cliente, cabecalho, ferramenta["name"], {campo_id: reuniao_id}))
-        if isinstance(dados, str):
-            texto, titulo = dados, "Transcrição Tactiq"
-        else:
-            texto, titulo, pilha = "", "Transcrição Tactiq", [dados]
-            while pilha:
-                atual = pilha.pop()
-                if isinstance(atual, dict):
-                    titulo = str(atual.get("title") or atual.get("name") or titulo)
-                    for chave, valor in atual.items():
-                        if chave.lower() in {"transcript", "transcription", "full_transcript", "text"} and isinstance(valor, str) and len(valor) > len(texto): texto = valor
-                        elif isinstance(valor, (dict, list)): pilha.append(valor)
-                elif isinstance(atual, list): pilha.extend(atual)
-            if not texto: texto = json.dumps(dados, ensure_ascii=False, indent=2)
+        pagina, entradas, titulo = 1, [], "Transcrição Tactiq"
+        while pagina <= 100:
+            argumentos = {campo_id: reuniao_id}
+            if "page" in propriedades:
+                argumentos["page"] = pagina
+            dados = _texto_resultado(_chamar(cliente, cabecalho, ferramenta["name"], argumentos))
+            if not isinstance(dados, dict):
+                raise ValueError("O Tactiq devolveu uma transcrição em formato inesperado.")
+            titulo = str(dados.get("title") or titulo)
+            for entrada in dados.get("entries") or []:
+                if not isinstance(entrada, dict) or not str(entrada.get("text") or "").strip():
+                    continue
+                falante = str(entrada.get("speaker") or "").strip()
+                texto_entrada = str(entrada.get("text") or "").strip()
+                entradas.append(f"{falante}: {texto_entrada}" if falante else texto_entrada)
+            total = int(dados.get("totalPages") or pagina)
+            if pagina >= total or not dados.get("hasMore"):
+                break
+            pagina += 1
+        texto = "\n\n".join(entradas)
         if len(texto.strip()) < 20:
             raise ValueError("Esta reunião ainda não possui transcrição disponível no Tactiq.")
         return {"id": reuniao_id, "titulo": titulo, "texto": texto.strip()}

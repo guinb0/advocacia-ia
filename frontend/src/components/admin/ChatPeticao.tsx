@@ -31,6 +31,7 @@ import estilos from "@/components/admin/ChatPeticao.module.css";
 import {
   EVENTO_DO_CHAT,
   abrirChatDaPeticao,
+  adicionarContextoAoChat,
   executarAcaoDoChat,
   perguntarNoChat,
   registrarEventoNoChat,
@@ -100,6 +101,9 @@ export default function ChatPeticao({
   const [etapa, setEtapa] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
+  const [arquivoContexto, setArquivoContexto] = useState<File | null>(null);
+  const [relevanciaContexto, setRelevanciaContexto] = useState("");
+  const [enviandoContexto, setEnviandoContexto] = useState(false);
   /* As propostas já decididas nesta sessão. Some o par de botões sem apagar a mensagem:
    * a transcrição precisa continuar mostrando o que foi proposto e aceito. */
   const [decididas, setDecididas] = useState<Record<string, "aceita" | "descartada">>({});
@@ -297,7 +301,7 @@ export default function ChatPeticao({
     else comecarFrase(atalho.texto);
   }
 
-  async function decidir(chave: string, acao: AcaoProposta, aceitar: boolean) {
+  async function decidir(chave: string, acao: AcaoProposta, aceitar: boolean, generaliza = false) {
     if (!aceitar) {
       setDecididas((atuais) => ({ ...atuais, [chave]: "descartada" }));
       return;
@@ -306,7 +310,7 @@ export default function ChatPeticao({
     setExecutando(chave);
     setErro("");
     try {
-      const resultado = await executarAcaoDoChat(doCaso, acao);
+      const resultado = await executarAcaoDoChat(doCaso, { ...acao, generaliza });
       // Gerar ou revisar leva tempo: se o dossiê na tela já é outro, a ação valeu no
       // caso certo e nada dela pode aparecer — nem o resultado, nem o recarregamento.
       if (casoNaTela.current !== doCaso) return;
@@ -327,6 +331,21 @@ export default function ChatPeticao({
   }
 
   const conversaVazia = !carregandoHistorico && mensagens.length === 0;
+  async function enviarContexto() {
+    if (!arquivoContexto || enviandoContexto) return;
+    setEnviandoContexto(true);
+    setErro("");
+    try {
+      const resultado = await adicionarContextoAoChat(casoId, arquivoContexto, relevanciaContexto);
+      setMensagens((atuais) => [...atuais, resultado.mensagem]);
+      setArquivoContexto(null);
+      setRelevanciaContexto("");
+    } catch (falha) {
+      setErro(falha instanceof Error ? falha.message : "Não foi possível adicionar o arquivo como contexto.");
+    } finally {
+      setEnviandoContexto(false);
+    }
+  }
 
   return (
     <aside className={estilos.painel} aria-label="Conversa com a IA sobre esta petição">
@@ -493,6 +512,17 @@ export default function ChatPeticao({
           </div>
         )}
 
+        <div className="mb-2 rounded-campo border border-borda bg-papel-2 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <label className="min-w-0 cursor-pointer text-xs font-semibold text-acao">
+              + Adicionar arquivo de contexto
+              <input className="sr-only" type="file" accept=".zip,.pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.rtf,.srt,.vtt" onChange={(evento) => setArquivoContexto(evento.target.files?.[0] ?? null)} />
+            </label>
+            {arquivoContexto && <span className="max-w-[155px] truncate text-xs text-tinta-3" title={arquivoContexto.name}>{arquivoContexto.name}</span>}
+          </div>
+          {arquivoContexto && <div className="mt-2 flex gap-2"><input className="campo min-w-0 flex-1 text-xs" value={relevanciaContexto} onChange={(evento) => setRelevanciaContexto(evento.target.value)} placeholder="Por que este arquivo é relevante?" /><Botao variante="secundario" pequeno disabled={enviandoContexto} onClick={() => void enviarContexto()}>{enviandoContexto ? "Lendo…" : "Adicionar"}</Botao></div>}
+        </div>
+
         <div className={estilos.linhaDeEnvio}>
           {/* Sem rótulo visível: o próprio texto de exemplo diz o que se escreve aqui, e
             * uma linha de rótulo acima do campo empurraria a conversa para cima. */}
@@ -542,7 +572,7 @@ function Resposta({
   mensagem: MensagemDoChat;
   decididas: Record<string, "aceita" | "descartada">;
   executando: string | null;
-  aoDecidir: (chave: string, acao: AcaoProposta, aceitar: boolean) => void;
+  aoDecidir: (chave: string, acao: AcaoProposta, aceitar: boolean, generaliza?: boolean) => void;
   aoRepetir: () => void;
 }) {
   if (mensagem.natureza === "ERRO") {
@@ -576,7 +606,7 @@ function Resposta({
             acao={acao}
             decisao={decididas[chave]}
             ocupado={executando === chave}
-            aoDecidir={(aceitar) => aoDecidir(chave, acao, aceitar)}
+            aoDecidir={(aceitar, generaliza) => aoDecidir(chave, acao, aceitar, generaliza)}
           />
         );
       })}
@@ -668,8 +698,9 @@ function PropostaDeAcao({
   acao: AcaoProposta;
   decisao?: "aceita" | "descartada";
   ocupado: boolean;
-  aoDecidir: (aceitar: boolean) => void;
+  aoDecidir: (aceitar: boolean, generaliza?: boolean) => void;
 }) {
+  const [ensinarIa, setEnsinarIa] = useState(false);
   return (
     <section className="mt-3 rounded-campo border border-acao-borda border-l-4 border-l-acao bg-papel p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -698,9 +729,21 @@ function PropostaDeAcao({
         <p className="mb-0 mt-2 text-xs leading-relaxed text-tinta-3">{acao.oQueAcontece}</p>
       )}
 
+      {acao.tipo === "REVISAR" && !decisao && (
+        <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-campo border border-borda bg-papel-2 p-2 text-xs leading-relaxed text-tinta-2">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-acao"
+            checked={ensinarIa}
+            onChange={(evento) => setEnsinarIa(evento.target.checked)}
+          />
+          <span><strong className="text-tinta">Ensinar a IA com esta revisão</strong><br />Use apenas para regra geral do escritório. Nomes, valores, datas e ajustes deste cliente devem ficar desmarcados.</span>
+        </label>
+      )}
+
       {!decisao && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Botao variante="primario" pequeno disabled={ocupado} onClick={() => aoDecidir(true)}>
+          <Botao variante="primario" pequeno disabled={ocupado} onClick={() => aoDecidir(true, ensinarIa)}>
             {ocupado ? "Executando…" : "Confirmar"}
           </Botao>
           <Botao variante="secundario" pequeno disabled={ocupado} onClick={() => aoDecidir(false)}>
