@@ -301,7 +301,13 @@ def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
 #: mais" vence um corte no transporte: o prompt podia pedir quatro parágrafos por
 #: tese e doze julgados que a resposta parava no mesmo tamanho. A mediana do
 #: acervo do escritório é de 144 parágrafos por peça — não cabe em 4096.
-MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "8192"))
+#:
+#: E 8192 também não coube (18/09): a revisão devolve a peça INTEIRA em JSON, e numa
+#: inicial de 23 mil caracteres com uma seção nova pedida pelo chat a resposta
+#: parou em exatos 8192 tokens, no meio dos pedidos. JSON sem fechar virava "o
+#: modelo não respondeu" — três vezes seguidas no mesmo caso. Por isso 100000 (a
+#: API aceita até 393216, medido). Omitir o campo NÃO serve — volta ao padrão de 4096.
+MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "100000"))
 
 
 def _llm_json(
@@ -329,7 +335,18 @@ def _llm_json(
             timeout=timeout,
         )
         resposta.raise_for_status()
-        conteudo = resposta.json()["choices"][0]["message"]["content"]
+        escolha = resposta.json()["choices"][0]
+        conteudo = escolha["message"]["content"]
+        if escolha.get("finish_reason") == "length":
+            # Cortado pelo teto de saída: o JSON chega sem fechar. Dizer "não
+            # respondeu" mandava tentar de novo um pedido que falha igual.
+            log.warning(
+                "petição local: resposta cortada no teto de %s tokens", MAX_TOKENS_RESPOSTA
+            )
+            raise ErroPeticao(
+                "A resposta do modelo passou do tamanho máximo e foi cortada. Peça a"
+                " alteração em partes menores."
+            )
         saida = json.loads(conteudo)
     # `IndexError` e `TypeError` não estavam aqui, e é justamente o que um
     # provedor devolve quando filtra a resposta: HTTP 200 com `choices: []`. O
