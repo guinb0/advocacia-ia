@@ -74,6 +74,8 @@ interface Props {
     opcoes?: OpcoesReclassificacao,
   ) => Promise<void> | void;
   dentroDoAtendimento?: boolean;
+  /** Onde a busca do checklist achou o termo DENTRO dos arquivos deste item. */
+  achadoNoConteudo?: { arquivo: string; onde: string[] }[];
 }
 
 export default function ItemChecklistLinha({
@@ -86,6 +88,7 @@ export default function ItemChecklistLinha({
   onVincularIdentidade,
   onReatribuir,
   dentroDoAtendimento = false,
+  achadoNoConteudo,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
@@ -433,6 +436,20 @@ export default function ItemChecklistLinha({
           ))}
           </ul>
         </>
+      )}
+
+      {achadoNoConteudo && achadoNoConteudo.length > 0 && (
+        <ul className="list-none mt-2 mb-0 p-0 flex flex-col gap-1" aria-label="Encontrado no conteúdo do documento">
+          {achadoNoConteudo.map((a) => (
+            <li
+              key={a.arquivo}
+              className="px-[11px] py-[6px] border border-acao-borda rounded-campo bg-acao-clara text-xs leading-[1.5] text-tinta-2 [overflow-wrap:anywhere]"
+            >
+              <span className="font-semibold text-acao">Encontrado em {a.arquivo}</span>
+              {a.onde.length > 0 && <> — {a.onde.join(" · ")}</>}
+            </li>
+          ))}
+        </ul>
       )}
 
       {visor && (

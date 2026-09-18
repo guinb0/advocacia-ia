@@ -3362,6 +3362,15 @@ def documentos_pendentes_do_caso(caso_id: str, incluir_opcionais: bool = False):
     return pendentes
 
 
+@app.get("/api/casos/{caso_id}/documentos/busca")
+def buscar_nos_documentos_do_caso(caso_id: str, q: str = ""):
+    """Documentos cujo conteúdo lido (campos e texto do OCR) contém a busca."""
+    resultados = casos.buscar_no_conteudo(caso_id, q[:200])
+    if resultados is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    return resultados
+
+
 # O antigo `_ler_documento` (OCR do checklist numa thread da API) saiu daqui: quem
 # lê o documento agora é `tasks.ocr.processar_entrega`, no worker que já mantém o
 # Paddle aquecido. A ponte com o agente jurídico foi junto — a task chama
