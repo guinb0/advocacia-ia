@@ -39,7 +39,7 @@ export interface FonteDaWeb {
 
 /** Uma alteração que a IA PROPÔS. Nada aqui aconteceu ainda. */
 export interface AcaoProposta {
-  tipo: "REVISAR" | "GERAR" | "ANALISAR_DOCUMENTOS" | "PECA_ANEXA";
+  tipo: "REVISAR" | "GERAR" | "ANALISAR_DOCUMENTOS" | "PECA_ANEXA" | "INCLUIR_FOTO";
   pedido?: string;
   titulo?: string;
   motivo?: string;
@@ -48,6 +48,12 @@ export interface AcaoProposta {
   sensivel?: boolean;
   oQueAcontece?: string;
   generaliza?: boolean;
+  /** INCLUIR_FOTO: a entrega que vira imagem na peça, onde e com que legenda. */
+  anexoId?: string;
+  arquivo?: string;
+  secao?: string;
+  depoisDe?: string;
+  legenda?: string;
 }
 
 export interface MensagemDoChat {
@@ -115,6 +121,11 @@ function traduzirAcao(bruta: Record<string, unknown>): AcaoProposta {
     pedidos: Array.isArray(bruta.pedidos) ? bruta.pedidos.map((p) => String(p)) : undefined,
     sensivel: Boolean(bruta.sensivel),
     oQueAcontece: bruta.o_que_acontece ? String(bruta.o_que_acontece) : undefined,
+    anexoId: bruta.anexo_id ? String(bruta.anexo_id) : undefined,
+    arquivo: bruta.arquivo ? String(bruta.arquivo) : undefined,
+    secao: bruta.secao ? String(bruta.secao) : undefined,
+    depoisDe: bruta.depois_de ? String(bruta.depois_de) : undefined,
+    legenda: bruta.legenda ? String(bruta.legenda) : undefined,
   };
 }
 
@@ -290,6 +301,10 @@ export async function executarAcaoDoChat(
         motivo: acao.motivo ?? "",
         pedidos: acao.pedidos ?? [],
         generaliza: acao.generaliza === true,
+        anexo_id: acao.anexoId ?? "",
+        secao: acao.secao ?? "",
+        depois_de: acao.depoisDe ?? "",
+        legenda: acao.legenda ?? "",
       }),
     },
   );

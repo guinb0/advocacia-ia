@@ -179,6 +179,12 @@ Como você trabalha:
    contexto, junto do que ele é — "a CTPS (IMG_4411.jpg)". A tela transforma esse
    nome num link que abre o documento; sem ele, o advogado tem de ir ao checklist
    procurar qual dos arquivos é o citado.
+13. FOTOS NA PEÇA. Quando o advogado pedir uma foto na petição ("a foto do machucado
+   no fim da petição"), use `listar_fotos` para achar qual é e depois
+   `propor_inclusao_de_foto` com o lugar pedido e uma legenda descritiva curta. Não
+   use `propor_revisao_da_peticao` para isso: a revisão reescreve texto, não põe
+   imagem. Se nenhuma foto servir, peça que ela seja anexada ao caso. Se houver
+   dúvida entre fotos, cite os arquivos e pergunte qual antes de propor.
 
 Responda em português do Brasil. Markdown simples é bem-vindo (listas, negrito,
 citação); a tela sabe renderizá-lo.\
@@ -774,6 +780,92 @@ def _propor_peca_anexa(
     }
 
 
+def _fotos_do_caso(caso_id: str) -> list[dict[str, Any]]:
+    return [a for a in peticao_local.anexos_do_caso(caso_id) if peticao_local.eh_foto(a["arquivo"])]
+
+
+def _listar_fotos(caso_id: str) -> dict[str, Any]:
+    """As fotos anexadas ao caso, com o que se sabe de cada uma e se já estão na peça."""
+    fotos = _fotos_do_caso(caso_id)
+    if not fotos:
+        return {
+            "fotos": [],
+            "orientacao": (
+                "Nenhuma foto foi anexada a este caso. Peça ao advogado que anexe a foto"
+                " no checklist de documentos e depois peça de novo."
+            ),
+        }
+    peticao = peticao_local.carregar(caso_id) or {}
+    na_peca = {
+        m for s in peticao.get("sections") or [] for m in peticao_local._marcadores_de_foto(s.get("content"))
+    }
+    return {
+        "fotos": [
+            {
+                "arquivo": f["arquivo"],
+                "o_que_e": f["tipo"] or "não classificada",
+                "texto_lido": f["texto"][:300],
+                "ja_esta_na_peticao": any(f"[[FOTO:{f['id']}" in m for m in na_peca),
+            }
+            for f in fotos
+        ],
+        "orientacao": (
+            "O nome do arquivo raramente diz o que a foto mostra. Se mais de uma foto"
+            " pode ser a pedida e nada acima as distingue, cite os arquivos e pergunte"
+            " qual — o advogado abre cada uma pelo link."
+        ),
+    }
+
+
+def _propor_inclusao_de_foto(
+    caso_id: str,
+    arquivo: str = "",
+    secao: str = "",
+    depois_de: str = "",
+    legenda: str = "",
+    motivo: str = "",
+) -> dict[str, Any]:
+    fotos = _fotos_do_caso(caso_id)
+    procurado = _normalizar(" ".join(str(arquivo or "").split()))
+    candidatas = [
+        f for f in fotos
+        if procurado and (procurado == _normalizar(f["arquivo"]) or procurado == str(f["id"]).lower())
+    ] or [f for f in fotos if procurado and procurado in _normalizar(f"{f['arquivo']} {f['tipo']}")]
+    if len(candidatas) != 1:
+        return {
+            "registrada": False,
+            "erro": (
+                "Não identifiquei UMA foto com esse nome."
+                if fotos
+                else "Não há foto anexada a este caso: peça ao advogado que a anexe."
+            ),
+            "fotos_do_caso": [f["arquivo"] for f in (candidatas or fotos)][:15],
+        }
+    foto = candidatas[0]
+    if not peticao_local.carregar(caso_id):
+        return {"registrada": False, "erro": "Ainda não há petição gerada para receber a foto."}
+    legenda = " ".join(str(legenda or "").split())
+    onde = f"na seção «{secao}»" if secao else "no fim da petição"
+    if depois_de:
+        onde += f", logo abaixo do trecho «{depois_de[:80]}»"
+    return {
+        "registrada": True,
+        "tipo": "INCLUIR_FOTO",
+        "anexo_id": foto["id"],
+        "arquivo": foto["arquivo"],
+        "secao": secao,
+        "depois_de": depois_de,
+        "legenda": legenda,
+        "motivo": motivo,
+        "pedido": f"Incluir a foto {foto['arquivo']} {onde}" + (f", com a legenda «{legenda}»" if legenda else ""),
+        "o_que_acontece": (
+            "Quando confirmado, a foto entra na peça (Word e PDF) com a legenda abaixo,"
+            " numa versão nova — a anterior fica no histórico. Na tela de edição ela"
+            " aparece como a linha [[FOTO:…]]: mover ou apagar a linha move ou tira a foto."
+        ),
+    }
+
+
 #: Nome da ferramenta -> (função, esquema para o modelo, altera alguma coisa?).
 #:
 #: A terceira posição é a fronteira do módulo: `False` executa na hora, `True` só
@@ -900,6 +992,42 @@ CATALOGO: dict[str, tuple[Any, dict[str, Any], bool]] = {
             },
         },
         False,
+    ),
+    "listar_fotos": (
+        _listar_fotos,
+        {
+            "description": (
+                "As fotos anexadas ao caso (jpg, png…), com o que cada uma é, o texto"
+                " lido nela e se já está na petição. Use antes de propor incluir foto."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+        False,
+    ),
+    "propor_inclusao_de_foto": (
+        _propor_inclusao_de_foto,
+        {
+            "description": (
+                "Registra o pedido de pôr uma FOTO anexada dentro da petição, para o"
+                " advogado confirmar. NÃO altera nada. `arquivo` é o nome exato do anexo"
+                " (de `listar_fotos`). `secao` é o rótulo ou código da seção (vazio ="
+                " fim da petição). `depois_de` é um trecho literal do parágrafo abaixo do"
+                " qual a foto entra (vazio = fim da seção). `legenda` sai em itálico"
+                " embaixo da foto (ex.: «Foto 1 – lesão no antebraço esquerdo»)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "arquivo": {"type": "string"},
+                    "secao": {"type": "string"},
+                    "depois_de": {"type": "string"},
+                    "legenda": {"type": "string"},
+                    "motivo": {"type": "string"},
+                },
+                "required": ["arquivo"],
+            },
+        },
+        True,
     ),
     "propor_revisao_da_peticao": (
         _propor_revisao,
@@ -1346,6 +1474,8 @@ ETAPAS = {
     "propor_geracao_da_peticao": "Preparando a proposta de gerar a peça",
     "propor_analise_de_documentos": "Preparando a proposta de reler os anexos",
     "propor_peca_anexa": "Preparando a proposta da outra peça",
+    "listar_fotos": "Procurando as fotos do caso",
+    "propor_inclusao_de_foto": "Preparando a foto para você conferir",
 }
 
 
@@ -1816,6 +1946,26 @@ def _executar(caso_id: str, autor: str, acao: dict[str, Any]) -> tuple[str, dict
         if pendencias:
             texto += "\n\nPendente nesta peça: " + _lista(pendencias) + "."
         return texto, {"peca_id": peca.get("id"), "titulo": titulo}
+
+    if tipo == "INCLUIR_FOTO":
+        anexo_id = str(acao.get("anexo_id") or "").strip()
+        if not anexo_id:
+            raise ErroDoChat("A proposta não diz qual foto incluir.")
+        resultado = peticao_local.inserir_foto(
+            caso_id,
+            anexo_id,
+            secao=str(acao.get("secao") or ""),
+            depois_de=str(acao.get("depois_de") or ""),
+            legenda=str(acao.get("legenda") or ""),
+            usuario=autor,
+        )
+        peticao = resultado["peticao"]
+        texto = (
+            f"Incluí a foto {resultado['arquivo']} na seção «{resultado['secao']}»,"
+            f" {resultado['posicao']}. A petição está na **versão {peticao.get('version')}**;"
+            " a anterior ficou no histórico. Ela já sai no Word e no PDF."
+        )
+        return texto, {"peticao_id": peticao.get("id"), "versao": peticao.get("version")}
 
     raise ErroDoChat(f"Não sei executar a ação «{tipo}».")
 
