@@ -72,6 +72,29 @@ export interface ChatDaPeticao {
   /** Sem chave do modelo o campo de pergunta não deve nem aceitar texto. */
   modeloDisponivel: boolean;
   webDisponivel: boolean;
+  /** Os anexos que a resposta pode citar — cada um vira link para o visor. */
+  documentos: DocumentoCitavel[];
+}
+
+/** Um anexo do caso, do jeito que a resposta o cita: pelo nome do arquivo ou pelo tipo. */
+export interface DocumentoCitavel {
+  /** Id da entrega — é o que o `VisorEntrega` abre. */
+  id: string;
+  arquivo: string;
+  tipo: string;
+  situacao: string;
+}
+
+function traduzirDocumentos(brutos: unknown): DocumentoCitavel[] {
+  if (!Array.isArray(brutos)) return [];
+  return (brutos as Record<string, unknown>[])
+    .map((d) => ({
+      id: String(d.id ?? ""),
+      arquivo: String(d.arquivo ?? ""),
+      tipo: String(d.tipo ?? ""),
+      situacao: String(d.situacao ?? ""),
+    }))
+    .filter((d) => d.id && d.arquivo);
 }
 
 interface MensagemCrua {
@@ -128,6 +151,7 @@ export async function abrirChatDaPeticao(casoId: string): Promise<ChatDaPeticao>
     mensagens: MensagemCrua[];
     modelo_disponivel: boolean;
     web_disponivel: boolean;
+    documentos?: unknown;
   }>(`/api/agente/casos/${casoId}/chat-peticao`);
   return {
     id: corpo.id,
@@ -135,7 +159,16 @@ export async function abrirChatDaPeticao(casoId: string): Promise<ChatDaPeticao>
     mensagens: (corpo.mensagens ?? []).map(traduzirMensagem),
     modeloDisponivel: Boolean(corpo.modelo_disponivel),
     webDisponivel: Boolean(corpo.web_disponivel),
+    documentos: traduzirDocumentos(corpo.documentos),
   };
+}
+
+/** Relê os anexos citáveis: um documento enviado pelo checklist com a conversa aberta
+ *  também precisa virar link na próxima resposta. */
+export async function listarDocumentosDoChat(casoId: string): Promise<DocumentoCitavel[]> {
+  return traduzirDocumentos(
+    await chamarAgente<unknown>(`/api/agente/casos/${casoId}/chat-peticao/documentos`),
+  );
 }
 
 export async function adicionarContextoAoChat(

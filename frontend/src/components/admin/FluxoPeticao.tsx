@@ -37,6 +37,7 @@ import {
 } from "@/lib/agente";
 import { avisarChatDaPeticao } from "@/lib/chatPeticao";
 import { baixarArquivo } from "@/lib/baixar";
+import { useEdicaoAutoSalva, type SituacaoDoSalvamento } from "@/lib/useEdicaoAutoSalva";
 
 
 const TITULO = "font-ui text-lg font-semibold m-0";
@@ -67,7 +68,6 @@ type Props = {
 export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao }: Props) {
   const [estado, setEstado] = useState<EstadoPeticaoFluxo | null>(null);
   const [peticao, setPeticao] = useState<Peticao | null>(null);
-  const [edicao, setEdicao] = useState<Record<string, string>>({});
   const [ocupado, setOcupado] = useState(false);
   /** Qual formato está sendo salvo: cada botão de download mostra só o próprio andamento. */
   const [salvandoComo, setSalvandoComo] = useState<"docx" | "pdf" | null>(null);
@@ -147,10 +147,18 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     void recarregar();
   }, [recarregar]);
 
-  useEffect(() => {
-    if (!peticao?.sections) return;
-    setEdicao(Object.fromEntries(peticao.sections.map((s) => [s.code, s.content])));
-  }, [peticao?.id, peticao?.sections]);
+  /* Cada pausa na digitação grava — antes só o botão "Salvar e baixar" levava a
+   * edição ao banco, e quem saía da tela sem clicar perdia o que escreveu. */
+  const autoSalvo = useEdicaoAutoSalva({
+    chave: peticao?.id ?? null,
+    secoes: peticao?.sections,
+    salvar: (pecaId, secoes) => salvarRascunhoPeticao(casoId, pecaId, secoes),
+    onSalvo: (atualizada) => {
+      setPeticao(atualizada);
+      historicoDePeticao(casoId, "local").then(setHistorico, () => undefined);
+    },
+  });
+  const edicao = autoSalvo.edicao;
 
   const gerar = useCallback(async () => {
     // A minuta já salva é carregada ao voltar ao dossiê. Nunca mande outra
@@ -226,6 +234,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setErro(null);
     setConcluido(null);
     try {
+      await autoSalvo.descarregar();
       const secoes = (peticao.sections ?? []).map((s) => ({
         code: s.code,
         content: edicao[s.code] ?? s.content,
@@ -252,6 +261,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setConcluido(null);
     setAvisoRevisao(null);
     try {
+      await autoSalvo.descarregar();
       const secoesAtuais = peticao.sections ?? [];
       if (secoesAtuais.some((s) => (edicao[s.code] ?? s.content) !== s.content)) {
         await salvarRascunhoPeticao(
@@ -313,6 +323,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   async function decidirRevisao(aceitar: boolean) {
     const candidata = peticao?.revisao_pendente;
     if (!peticao || !candidata) return;
+    // Gravar a digitação pendente agora descartaria a candidata no servidor
+    // (edição manual muda a versão-base) — a decisão sobre ela vem primeiro.
+    autoSalvo.substituir(peticao.sections);
     setRevisando(true);
     setErro(null);
     try {
@@ -320,7 +333,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         ? await aceitarRevisaoPendente(casoId, candidata.id)
         : await descartarRevisaoPendente(casoId, candidata.id);
       setPeticao(resultado.peticao);
-      setEdicao(Object.fromEntries((resultado.peticao.sections ?? []).map((s) => [s.code, s.content])));
+      autoSalvo.substituir(resultado.peticao.sections);
       setConcluido({ acao: "revisar", texto: aceitar ? "Revisão aceita e gravada como nova versão." : "Revisão descartada; a peça original foi preservada." });
       avisarChatDaPeticao(casoId, aceitar ? "revisao_aceita" : "revisao_descartada", {
         pedido: candidata.prompt ?? "",
@@ -396,9 +409,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
    * `buscarPeticao`/`salvarRascunhoPeticao`, que já são genéricas por `pecaId`. */
   const [anexaAberta, setAnexaAberta] = useState<string | null>(null);
   const [peticaoAnexa, setPeticaoAnexa] = useState<Peticao | null>(null);
-  const [edicaoAnexa, setEdicaoAnexa] = useState<Record<string, string>>({});
   const [carregandoAnexa, setCarregandoAnexa] = useState(false);
-  const [salvandoAnexa, setSalvandoAnexa] = useState(false);
   /* Revisão por prompt — recurso opcional, oferecido para a peça anexa com a
    * mesma qualidade da petição inicial; sem "ensinar a IA" nem versão anterior
    * guardada, porque a anexa já não tem histórico nem para "gerar de novo"
@@ -408,6 +419,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [retornoAnexa, setRetornoAnexa] = useState<{ tom: "ok" | "atencao"; texto: string } | null>(null);
   const [historicoAnexa, setHistoricoAnexa] = useState<HistoricoDePeticao | null>(null);
   const [mostrarHistoricoAnexa, setMostrarHistoricoAnexa] = useState(false);
+  const autoSalvoAnexa = useEdicaoAutoSalva({
+    chave: peticaoAnexa?.id ?? null,
+    secoes: peticaoAnexa?.sections,
+    salvar: (pecaId, secoes) => salvarRascunhoPeticao(casoId, pecaId, secoes),
+    onSalvo: (atualizada, pecaId) => {
+      setPeticaoAnexa(atualizada);
+      historicoDePeticao(casoId, pecaId).then(setHistoricoAnexa, () => undefined);
+      void recarregarAnexas();
+    },
+  });
+  const edicaoAnexa = autoSalvoAnexa.edicao;
 
   async function carregarHistoricoAnexa(pecaId: string) {
     try {
@@ -435,31 +457,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     try {
       const dados = await buscarPeticao(casoId, peca.id);
       setPeticaoAnexa(dados);
-      setEdicaoAnexa(Object.fromEntries((dados.sections ?? []).map((s) => [s.code, s.content])));
     } catch (e) {
       setErroAnexa(e instanceof Error ? e.message : "Não foi possível abrir esta peça para edição.");
       setAnexaAberta(null);
     } finally {
       setCarregandoAnexa(false);
-    }
-  }
-
-  async function salvarEdicaoAnexa() {
-    if (!peticaoAnexa) return;
-    setErroAnexa(null);
-    setSalvandoAnexa(true);
-    try {
-      const secoes = (peticaoAnexa.sections ?? []).map((s) => ({
-        code: s.code,
-        content: edicaoAnexa[s.code] ?? s.content,
-      }));
-      const atualizada = await salvarRascunhoPeticao(casoId, peticaoAnexa.id, secoes);
-      setPeticaoAnexa(atualizada);
-      await Promise.all([recarregarAnexas(), carregarHistoricoAnexa(peticaoAnexa.id)]);
-    } catch (e) {
-      setErroAnexa(e instanceof Error ? e.message : "Não foi possível salvar esta peça.");
-    } finally {
-      setSalvandoAnexa(false);
     }
   }
 
@@ -469,6 +471,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setRetornoAnexa(null);
     setRevisandoAnexa(true);
     try {
+      await autoSalvoAnexa.descarregar();
       const secoesAtuais = peticaoAnexa.sections ?? [];
       if (secoesAtuais.some((s) => (edicaoAnexa[s.code] ?? s.content) !== s.content)) {
         await salvarRascunhoPeticao(
@@ -484,9 +487,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         false,
       );
       setPeticaoAnexa(resultado.peticao);
-      setEdicaoAnexa(
-        Object.fromEntries((resultado.peticao.sections ?? []).map((s) => [s.code, s.content])),
-      );
+      autoSalvoAnexa.substituir(resultado.peticao.sections);
       setPromptRevisaoAnexa("");
       const revisao = resultado.peticao.revisao ?? resultado.revisao;
       const alteradas = revisao?.alteradas ?? [];
@@ -608,9 +609,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
         {peticao && (
           <section className="grid gap-3 border border-borda p-4 bg-papel-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold m-0">
-                Petição inicial — versão {peticao.version}
-              </h3>
+              <div className="grid gap-0.5">
+                <h3 className="text-sm font-semibold m-0">
+                  Petição inicial — versão {peticao.version}
+                </h3>
+                <IndicadorDeSalvamento
+                  situacao={autoSalvo.situacao}
+                  salvoEm={autoSalvo.salvoEm}
+                  erro={autoSalvo.erro}
+                  onTentarDeNovo={() => void autoSalvo.descarregar().catch(() => undefined)}
+                />
+              </div>
               <div className="flex gap-2 flex-wrap">
                 {/* O botão de mostrar/ocultar prévia saiu junto com a segunda
                     coluna: não há mais duas visões do mesmo texto para alternar. */}
@@ -667,7 +676,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               titulo={peticao.title}
               secoes={peticao.sections ?? []}
               edicao={edicao}
-              onEditar={(codigo, valor) => setEdicao((atual) => ({ ...atual, [codigo]: valor }))}
+              onEditar={autoSalvo.editar}
             />
 
             {peticao.revisao_pendente && (
@@ -919,21 +928,14 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                               titulo={peticaoAnexa.title}
                               secoes={peticaoAnexa.sections ?? []}
                               edicao={edicaoAnexa}
-                              onEditar={(codigo, valor) =>
-                                setEdicaoAnexa((atual) => ({ ...atual, [codigo]: valor }))
-                              }
+                              onEditar={autoSalvoAnexa.editar}
                             />
-                            <div>
-                              <BotaoProcesso
-                                variante="secundario"
-                                pequeno
-                                processando={salvandoAnexa}
-                                textoProcessando="Salvando…"
-                                onClick={salvarEdicaoAnexa}
-                              >
-                                Salvar edição
-                              </BotaoProcesso>
-                            </div>
+                            <IndicadorDeSalvamento
+                              situacao={autoSalvoAnexa.situacao}
+                              salvoEm={autoSalvoAnexa.salvoEm}
+                              erro={autoSalvoAnexa.erro}
+                              onTentarDeNovo={() => void autoSalvoAnexa.descarregar().catch(() => undefined)}
+                            />
                           </div>
 
                           {historicoAnexa && historicoAnexa.versoes.length > 0 && (
@@ -1105,6 +1107,47 @@ function CampoDoDocumento({
  * o mesmo `edicao`, então salvar, revisar por prompt e baixar .docx/PDF não
  * mudaram de caminho — nenhuma dessas ações sabe que a tela mudou.
  */
+/** Onde está a edição: gravada, esperando a pausa, gravando ou com falha. */
+function IndicadorDeSalvamento({
+  situacao,
+  salvoEm,
+  erro,
+  onTentarDeNovo,
+}: {
+  situacao: SituacaoDoSalvamento;
+  salvoEm: Date | null;
+  erro: string | null;
+  onTentarDeNovo: () => void;
+}) {
+  if (situacao === "erro") {
+    return (
+      <p className="m-0 text-xs text-critico" role="status">
+        Não foi possível salvar automaticamente{erro ? `: ${erro}` : ""}. Tentando de novo…{" "}
+        <button
+          type="button"
+          className="bg-transparent border-0 p-0 underline cursor-pointer text-inherit"
+          onClick={onTentarDeNovo}
+        >
+          Tentar agora
+        </button>
+      </p>
+    );
+  }
+  const texto =
+    situacao === "salvando"
+      ? "Salvando…"
+      : situacao === "pendente"
+        ? "Alterações não salvas…"
+        : salvoEm
+          ? `Salvo automaticamente às ${salvoEm.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+          : "As alterações são salvas automaticamente";
+  return (
+    <p className="m-0 text-xs text-tinta-3" role="status" aria-live="polite">
+      {texto}
+    </p>
+  );
+}
+
 function PreviaPeticao({
   titulo,
   secoes,

@@ -362,6 +362,43 @@ def testar_edicao_a_mao() -> int:
     return falhas
 
 
+def testar_salvamento_automatico() -> int:
+    """A tela grava a cada pausa na digitação — isso não pode virar uma versão por pausa."""
+    falhas = 0
+    antes = pl.carregar(CASO)["version"]
+    arquivadas = len(pl.historico_de_versoes(CASO))
+    pl.salvar_secoes(CASO, [{"code": "FACTS", "content": "Rascunho 1"}], usuario="ana")
+    pl.salvar_secoes(CASO, [{"code": "FACTS", "content": "Rascunho 1, continuado"}], usuario="ana")
+    dados = pl.salvar_secoes(CASO, [{"code": "CLAIMS", "content": "a) reintegração imediata"}], usuario="ana")
+    falhas += not checar(
+        dados["version"] == antes + 1,
+        f"três gravações seguidas do mesmo usuário são UMA versão nova (v{antes} -> v{dados['version']})",
+    )
+    falhas += not checar(
+        len(pl.historico_de_versoes(CASO)) == arquivadas + 1,
+        "e só a versão de antes da sessão vai para o histórico",
+    )
+    falhas += not checar(
+        next(s for s in dados["sections"] if s["code"] == "FACTS")["content"] == "Rascunho 1, continuado"
+        and next(s for s in dados["sections"] if s["code"] == "CLAIMS")["content"] == "a) reintegração imediata",
+        "o texto mais recente de cada seção é o que fica gravado",
+    )
+    falhas += not checar(
+        set((dados.get("revisao") or {}).get("alteradas") or []) >= {"Dos fatos", "Dos pedidos"},
+        f"a versão registra todas as seções mexidas na sessão ({(dados.get('revisao') or {}).get('alteradas')})",
+    )
+    outro = pl.salvar_secoes(CASO, [{"code": "FACTS", "content": "Rascunho do Bruno"}], usuario="bruno")
+    falhas += not checar(outro["version"] == antes + 2, "outro usuário abre versão própria")
+    janela = pl.JANELA_EDICAO_MANUAL
+    pl.JANELA_EDICAO_MANUAL = pl.timedelta(0)
+    try:
+        depois = pl.salvar_secoes(CASO, [{"code": "FACTS", "content": "Voltou do almoço"}], usuario="bruno")
+    finally:
+        pl.JANELA_EDICAO_MANUAL = janela
+    falhas += not checar(depois["version"] == antes + 3, "passada a janela, a edição abre versão nova")
+    return falhas
+
+
 def testar_revisao_por_prompt() -> int:
     falhas = 0
     antes = pl.carregar(CASO)["version"]
@@ -964,6 +1001,7 @@ def main_teste() -> int:
         ("4. O arquivo .docx", testar_docx),
         ("5. Gerar de novo sem perder o anterior", testar_gerar_de_novo_guarda_a_anterior),
         ("6. Edição à mão", testar_edicao_a_mao),
+        ("6b. Salvamento automático agrupa a sessão", testar_salvamento_automatico),
         ("7. Revisão por prompt", testar_revisao_por_prompt),
         ("8. Crítica em branco", testar_revisao_vazia),
         ("9. Resposta estranha do modelo", testar_resposta_estranha_do_modelo),
