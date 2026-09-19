@@ -12,7 +12,7 @@
 
 "use client";
 
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 const TEXTO = "text-sm leading-relaxed text-tinta-2 m-0";
 
@@ -182,8 +182,9 @@ export function RespostaFormatada({ texto }: { texto: string }) {
  * tipo — vira um botão que abre o documento. Fora dele (a pesquisa na web do
  * FluxoPeticao), nada muda.
  *
- * Tipo repetido não vira link: "o contracheque" num caso com três contracheques não
- * diz qual abrir, e abrir o errado é pior do que não abrir.
+ * Tipo repetido não abre um documento ao acaso: "o contracheque" num caso com três
+ * contracheques não diz qual abrir, e abrir o errado é pior do que não abrir. O clique
+ * abre uma lista curta com os arquivos daquele tipo, e a escolha abre o preview.
  * ------------------------------------------------------------------------- */
 
 export interface DocumentoCitavelMd {
@@ -194,7 +195,8 @@ export interface DocumentoCitavelMd {
 
 interface Citaveis {
   padrao: RegExp;
-  porChave: Map<string, DocumentoCitavelMd>;
+  /** Mais de um documento por chave = ambíguo: o clique pede a escolha. */
+  porChave: Map<string, DocumentoCitavelMd[]>;
   aoAbrir: (documento: DocumentoCitavelMd) => void;
 }
 
@@ -206,14 +208,13 @@ function montarCitaveis(
   documentos: DocumentoCitavelMd[],
   aoAbrir: Citaveis["aoAbrir"],
 ): Citaveis | null {
-  const porChave = new Map<string, DocumentoCitavelMd>();
-  const repetidas = new Set<string>();
+  const porChave = new Map<string, DocumentoCitavelMd[]>();
   const registrar = (chave: string, documento: DocumentoCitavelMd) => {
     const limpa = chave.trim().toLowerCase();
     if (limpa.length < 2) return;
-    const outro = porChave.get(limpa);
-    if (outro && outro.id !== documento.id) repetidas.add(limpa);
-    else porChave.set(limpa, documento);
+    const lista = porChave.get(limpa);
+    if (!lista) porChave.set(limpa, [documento]);
+    else if (!lista.some((d) => d.id === documento.id)) lista.push(documento);
   };
   for (const documento of documentos) {
     registrar(documento.arquivo, documento);
@@ -221,9 +222,15 @@ function montarCitaveis(
     // ("doc") casaria com palavra comum.
     const semExtensao = documento.arquivo.replace(/\.[a-z0-9]{2,5}$/i, "");
     if (semExtensao !== documento.arquivo && semExtensao.length >= 6) registrar(semExtensao, documento);
-    if (documento.tipo) registrar(documento.tipo, documento);
+    if (documento.tipo) {
+      registrar(documento.tipo, documento);
+      // «Carteira de Trabalho (CTPS)»: o modelo escreve só uma das duas formas.
+      const sigla = documento.tipo.match(/\(([^)]{2,20})\)/)?.[1];
+      const semSigla = documento.tipo.replace(/\s*\([^)]*\)\s*/g, " ").trim();
+      if (sigla) registrar(sigla, documento);
+      if (semSigla && semSigla !== documento.tipo && semSigla.length >= 3) registrar(semSigla, documento);
+    }
   }
-  for (const chave of repetidas) porChave.delete(chave);
   if (!porChave.size) return null;
   const chaves = [...porChave.keys()].sort((a, b) => b.length - a.length).map(escapar);
   return {
@@ -247,25 +254,79 @@ export function DocumentosCitaveis({
   return <ContextoCitaveis.Provider value={valor}>{children}</ContextoCitaveis.Provider>;
 }
 
+/** O documento citado, em VERDE: é o sinal de «isto está nos autos e abre aqui». */
+const ESTILO_DO_LINK =
+  "inline cursor-pointer rounded-campo border-0 bg-ok-claro px-[3px] py-[1px] font-[inherit] text-[length:inherit] font-medium text-ok underline decoration-dotted underline-offset-2 hover:decoration-solid";
+
 function LinkDoDocumento({
-  documento,
+  documentos,
   aoAbrir,
   children,
 }: {
-  documento: DocumentoCitavelMd;
+  documentos: DocumentoCitavelMd[];
   aoAbrir: Citaveis["aoAbrir"];
   children: ReactNode;
 }) {
+  const [escolhendo, setEscolhendo] = useState(false);
+  const raiz = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!escolhendo) return;
+    const fora = (evento: MouseEvent) => {
+      if (raiz.current && !raiz.current.contains(evento.target as Node)) setEscolhendo(false);
+    };
+    const esc = (evento: KeyboardEvent) => {
+      if (evento.key === "Escape") setEscolhendo(false);
+    };
+    document.addEventListener("mousedown", fora);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fora);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [escolhendo]);
+
+  const unico = documentos.length === 1 ? documentos[0] : null;
   return (
-    <button
-      type="button"
-      onClick={() => aoAbrir(documento)}
-      title={`Abrir ${documento.arquivo}${documento.tipo ? ` (${documento.tipo})` : ""}`}
-      className="inline cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[length:inherit] text-acao underline decoration-dotted underline-offset-2 hover:decoration-solid"
-    >
-      <IconeDocumento />
-      {children}
-    </button>
+    <span ref={raiz} className="relative inline">
+      <button
+        type="button"
+        onClick={() => (unico ? aoAbrir(unico) : setEscolhendo((aberto) => !aberto))}
+        title={
+          unico
+            ? `Ver ${unico.arquivo}${unico.tipo ? ` (${unico.tipo})` : ""} sem sair da conversa`
+            : `${documentos.length} documentos deste tipo — escolha qual ver`
+        }
+        aria-haspopup={unico ? undefined : "menu"}
+        aria-expanded={unico ? undefined : escolhendo}
+        className={ESTILO_DO_LINK}
+      >
+        <IconeDocumento />
+        {children}
+        {!unico && <span className="ml-[2px] text-[10px]" aria-hidden>▾</span>}
+      </button>
+      {escolhendo && (
+        <span
+          role="menu"
+          className="absolute left-0 top-full z-20 mt-1 grid min-w-[220px] max-w-[300px] gap-[2px] rounded-campo border border-borda bg-papel p-1 text-left text-xs shadow-lg"
+        >
+          {documentos.map((documento) => (
+            <button
+              key={documento.id}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setEscolhendo(false);
+                aoAbrir(documento);
+              }}
+              className="flex cursor-pointer flex-col items-start rounded-campo border-0 bg-transparent px-2 py-[5px] text-left font-[inherit] text-tinta hover:bg-ok-claro"
+            >
+              <span className="break-all font-medium text-ok">{documento.arquivo}</span>
+              {documento.tipo && <span className="text-tinta-3">{documento.tipo}</span>}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -284,12 +345,12 @@ function comDocumentos(texto: string, citaveis: Citaveis | null, base: number): 
   const partes: ReactNode[] = [];
   let ultimo = 0;
   for (const achado of texto.matchAll(citaveis.padrao)) {
-    const documento = citaveis.porChave.get(achado[0].toLowerCase());
-    if (!documento) continue;
+    const documentos = citaveis.porChave.get(achado[0].toLowerCase());
+    if (!documentos?.length) continue;
     const inicio = achado.index ?? 0;
     if (inicio > ultimo) partes.push(texto.slice(ultimo, inicio));
     partes.push(
-      <LinkDoDocumento key={`doc-${base + inicio}`} documento={documento} aoAbrir={citaveis.aoAbrir}>
+      <LinkDoDocumento key={`doc-${base + inicio}`} documentos={documentos} aoAbrir={citaveis.aoAbrir}>
         {achado[0]}
       </LinkDoDocumento>,
     );
@@ -328,7 +389,7 @@ function MdEmLinha({ texto }: { texto: string }) {
     } else if (codigo && citaveis?.porChave.has(codigo.trim().toLowerCase())) {
       // O modelo costuma pôr o nome do arquivo entre crases.
       partes.push(
-        <LinkDoDocumento key={inicio} documento={citaveis.porChave.get(codigo.trim().toLowerCase())!} aoAbrir={citaveis.aoAbrir}>
+        <LinkDoDocumento key={inicio} documentos={citaveis.porChave.get(codigo.trim().toLowerCase())!} aoAbrir={citaveis.aoAbrir}>
           <code className="rounded-campo bg-papel-3 px-1 font-codigo text-xs">{codigo}</code>
         </LinkDoDocumento>,
       );

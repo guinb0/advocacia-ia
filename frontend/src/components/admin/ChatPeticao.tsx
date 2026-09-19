@@ -23,12 +23,12 @@
  * atalhos depois que a conversa começa.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
 import VisorEntrega from "@/components/caso/VisorEntrega";
-import { baixarArquivoEntrega } from "@/lib/api";
+import { baixarArquivoEntrega, enviarDocumentosEmLote } from "@/lib/api";
 import {
   DocumentosCitaveis,
   RespostaFormatada,
@@ -79,6 +79,12 @@ const ATALHOS: { rotulo: string; dica: string; texto: string; envia: boolean }[]
     texto: "Altere a petição: ",
     envia: false,
   },
+  {
+    rotulo: "Incluir trecho ou print",
+    dica: "Um trecho de documento ou um print, na seção que você escolher",
+    texto: "Inclua na petição, na seção ",
+    envia: false,
+  },
 ];
 
 /** O quarto caminho: existe como link no painel, e aqui vira pergunta. */
@@ -114,6 +120,10 @@ export default function ChatPeticao({
   const [arquivoContexto, setArquivoContexto] = useState<File | null>(null);
   const [relevanciaContexto, setRelevanciaContexto] = useState("");
   const [enviandoContexto, setEnviandoContexto] = useState(false);
+  /* Os prints que acabaram de virar anexo do caso, à espera de o advogado dizer em que
+   * seção entram. */
+  const [enviandoPrint, setEnviandoPrint] = useState(false);
+  const [printsAnexados, setPrintsAnexados] = useState<string[]>([]);
   /* As propostas já decididas nesta sessão. Some o par de botões sem apagar a mensagem:
    * a transcrição precisa continuar mostrando o que foi proposto e aceito. */
   const [decididas, setDecididas] = useState<Record<string, "aceita" | "descartada">>({});
@@ -138,6 +148,33 @@ export default function ChatPeticao({
   /* A pergunta em voo pertence ao caso em que foi feita: trocar de caso a cancela, em
    * vez de deixá-la escrevendo no fluxo de outra conversa. */
   const emVoo = useRef<AbortController | null>(null);
+  /* Uma confirmação em andamento por vez. O `disabled` do botão só vale depois do próximo
+   * render: dois cliques no mesmo quadro executariam a proposta duas vezes — e uma
+   * revisão executada duas vezes substitui a comparação que a primeira abriu. */
+  const confirmando = useRef(false);
+
+  /* O que o servidor já executou. Sem isto, o F5 devolvia o botão «Confirmar» a
+   * propostas que já tinham sido aplicadas, e um segundo clique as repetia. A prova é a
+   * mensagem de sucesso gravada DEPOIS da proposta, com a mesma ação. */
+  const executadas = useMemo(() => {
+    const saida: Record<string, "aceita"> = {};
+    mensagens.forEach((mensagem, indice) => {
+      mensagem.acoes.forEach((acao, posicao) => {
+        const alvo = acao.pedido || acao.titulo || acao.anexoId || "";
+        const feita = mensagens.slice(indice + 1).some((seguinte) => {
+          const feito = seguinte.acaoExecutada;
+          return (
+            !!feito &&
+            feito.tipo === acao.tipo &&
+            (feito.pedido || feito.titulo || feito.anexoId || "") === alvo
+          );
+        });
+        if (feita) saida[`${mensagem.id}:${posicao}`] = "aceita";
+      });
+    });
+    return saida;
+  }, [mensagens]);
+  const decisoes = useMemo(() => ({ ...decididas, ...executadas }), [decididas, executadas]);
 
   const descer = useCallback(() => {
     // `scrollTop` no contêiner, e não `scrollIntoView`: com o painel em coluna sticky, o
@@ -173,6 +210,7 @@ export default function ChatPeticao({
     setDecididas({});
     setExecutando(null);
     setTexto("");
+    setPrintsAnexados([]);
     setParcial("");
     setEtapa("");
     setEnviando(false);
@@ -240,6 +278,31 @@ export default function ChatPeticao({
     return () => window.removeEventListener(EVENTO_DO_CHAT, aoAvisar);
   }, [casoId]);
 
+  /* A conexão caiu no meio da resposta (rede móvel, tela bloqueada, proxy). O servidor
+   * termina de escrever e grava a resposta de qualquer jeito: espera por ela em vez de
+   * deixar a pergunta sem retorno — e sem o advogado ter de perguntar tudo de novo. */
+  const aguardarResposta = useCallback(async (doCaso: string) => {
+    setEtapa("A conexão caiu. Buscando a resposta no servidor");
+    for (let tentativa = 0; tentativa < 20; tentativa += 1) {
+      await new Promise((resolver) => setTimeout(resolver, 3000));
+      if (casoNaTela.current !== doCaso) return;
+      try {
+        const chat = await abrirChatDaPeticao(doCaso);
+        if (casoNaTela.current !== doCaso) return;
+        const ultima = chat.mensagens[chat.mensagens.length - 1];
+        if (ultima && ultima.papel === "ASSISTANT") {
+          setMensagens(chat.mensagens);
+          return;
+        }
+      } catch {
+        /* Sem rede ainda: a próxima volta tenta de novo. */
+      }
+    }
+    if (casoNaTela.current === doCaso) {
+      setErro("A resposta não chegou. Reabra a conversa em instantes — ela fica salva no servidor.");
+    }
+  }, []);
+
   const perguntar = useCallback(
     async (pergunta: string) => {
       const limpa = pergunta.trim();
@@ -251,12 +314,13 @@ export default function ChatPeticao({
       const ehDaTela = () => emVoo.current === controle;
       setErro("");
       setTexto("");
+      setPrintsAnexados([]);
       setParcial("");
       setEtapa("Lendo o caso");
       setEnviando(true);
       setPreso(true);
       try {
-        await perguntarNoChat(
+        const concluiu = await perguntarNoChat(
           casoId,
           limpa,
           (evento) => {
@@ -293,6 +357,7 @@ export default function ChatPeticao({
           },
           controle.signal,
         );
+        if (!concluiu && ehDaTela()) await aguardarResposta(casoId);
       } catch (falha) {
         // O cancelamento pela troca de caso não é falha de ninguém: avisar "a conversa
         // não chegou ao servidor" no caso recém-aberto seria mentira.
@@ -312,7 +377,7 @@ export default function ChatPeticao({
         }
       }
     },
-    [casoId, enviando, atualizarDocumentos],
+    [casoId, enviando, atualizarDocumentos, aguardarResposta],
   );
 
   /** Atalho que não se basta: escreve o começo da frase e devolve o cursor ao campo. */
@@ -336,6 +401,8 @@ export default function ChatPeticao({
       setDecididas((atuais) => ({ ...atuais, [chave]: "descartada" }));
       return;
     }
+    if (confirmando.current) return;
+    confirmando.current = true;
     const doCaso = casoId;
     setExecutando(chave);
     setErro("");
@@ -345,7 +412,10 @@ export default function ChatPeticao({
       // caso certo e nada dela pode aparecer — nem o resultado, nem o recarregamento.
       if (casoNaTela.current !== doCaso) return;
       setMensagens((atuais) => [...atuais, resultado.mensagem]);
-      setDecididas((atuais) => ({ ...atuais, [chave]: "aceita" }));
+      // Só uma ação que DEU CERTO fecha o cartão. Marcá-lo «Executada» quando o servidor
+      // devolveu falha tirava o botão e deixava o advogado sem como tentar de novo — a
+      // mensagem de erro da ação não tem «tentar de novo» — e ele tinha de pedir tudo outra vez.
+      if (resultado.ok) setDecididas((atuais) => ({ ...atuais, [chave]: "aceita" }));
       // Mesmo quando a ação falha, o lado esquerdo é recarregado: uma revisão pode ter
       // sido gravada e a falha vir do passo seguinte, e a tela não pode ficar mostrando
       // uma peça mais velha do que a que está no banco.
@@ -357,10 +427,59 @@ export default function ChatPeticao({
       // A troca de caso já zerou o `executando`; mexer nele aqui apagaria o indicador de
       // uma ação que esteja rodando no caso agora aberto.
       if (casoNaTela.current === doCaso) setExecutando(null);
+      confirmando.current = false;
     }
   }
 
   const conversaVazia = !carregandoHistorico && mensagens.length === 0;
+
+  /* Print colado (Ctrl+V) ou escolhido no botão: vira ANEXO do caso, e não texto solto.
+   * É assim que o chat consegue oferecê-lo na peça — a ferramenta de foto só enxerga o que
+   * está nos anexos — e que o print continua disponível no checklist. */
+  async function anexarPrint(arquivos: File[]) {
+    const imagens = arquivos.filter((arquivo) => arquivo.type.startsWith("image/"));
+    if (!imagens.length || enviandoPrint) return;
+    const doCaso = casoId;
+    setEnviandoPrint(true);
+    setErro("");
+    try {
+      const carimbo = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+      // A captura colada chega sempre como «image.png»: dois prints teriam o MESMO nome e o
+      // chat não saberia distinguir qual dos dois o advogado quer.
+      const nomeados = imagens.map((arquivo, indice) => {
+        if (arquivo.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(arquivo.name)) return arquivo;
+        const extensao = (arquivo.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        const sufixo = imagens.length > 1 ? `-${indice + 1}` : "";
+        return new File([arquivo], `print-${carimbo}${sufixo}.${extensao}`, { type: arquivo.type });
+      });
+      const resultado = await enviarDocumentosEmLote(doCaso, nomeados);
+      if (casoNaTela.current !== doCaso) return;
+      const nomes = resultado.recebidos.map((recebido) => recebido.arquivo);
+      if (resultado.recusados.length) {
+        setErro(
+          "Não foi possível anexar: " +
+            resultado.recusados.map((recusado) => `${recusado.arquivo} (${recusado.motivo})`).join("; "),
+        );
+      }
+      if (nomes.length) {
+        setPrintsAnexados(nomes);
+        setTexto((atual) =>
+          atual.trim() ? atual : `Inclua o print «${nomes.join("», «")}» na seção `,
+        );
+        atualizarDocumentos();
+        const alvo = campo.current;
+        if (alvo) requestAnimationFrame(() => alvo.setSelectionRange(alvo.value.length, alvo.value.length));
+        alvo?.focus();
+      }
+    } catch (falha) {
+      if (casoNaTela.current === doCaso) {
+        setErro(falha instanceof Error ? falha.message : "Não foi possível anexar o print.");
+      }
+    } finally {
+      if (casoNaTela.current === doCaso) setEnviandoPrint(false);
+    }
+  }
+
   async function enviarContexto() {
     if (!arquivoContexto || enviandoContexto) return;
     setEnviandoContexto(true);
@@ -481,7 +600,7 @@ export default function ChatPeticao({
             <Resposta
               key={mensagem.id}
               mensagem={mensagem}
-              decididas={decididas}
+              decididas={decisoes}
               executando={executando}
               aoDecidir={decidir}
               aoRepetir={() => void perguntar(mensagem.perguntaOriginal)}
@@ -560,6 +679,23 @@ export default function ChatPeticao({
 
         <div className="mb-2 rounded-campo border border-borda bg-papel-2 p-2">
           <div className="flex items-center justify-between gap-2">
+            <label
+              className="min-w-0 cursor-pointer text-xs font-semibold text-acao"
+              title="Ou cole a imagem direto no campo da conversa (Ctrl+V)"
+            >
+              {enviandoPrint ? "Anexando o print…" : "+ Enviar print"}
+              <input
+                className="sr-only"
+                type="file"
+                accept="image/*"
+                multiple
+                disabled={enviandoPrint || !modeloDisponivel}
+                onChange={(evento) => {
+                  void anexarPrint(Array.from(evento.target.files ?? []));
+                  evento.target.value = "";
+                }}
+              />
+            </label>
             <label className="min-w-0 cursor-pointer text-xs font-semibold text-acao">
               + Adicionar arquivo de contexto
               <input className="sr-only" type="file" accept=".zip,.pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.rtf,.srt,.vtt" onChange={(evento) => setArquivoContexto(evento.target.files?.[0] ?? null)} />
@@ -568,6 +704,13 @@ export default function ChatPeticao({
           </div>
           {arquivoContexto && <div className="mt-2 flex gap-2"><input className="campo min-w-0 flex-1 text-xs" value={relevanciaContexto} onChange={(evento) => setRelevanciaContexto(evento.target.value)} placeholder="Por que este arquivo é relevante?" /><Botao variante="secundario" pequeno disabled={enviandoContexto} onClick={() => void enviarContexto()}>{enviandoContexto ? "Lendo…" : "Adicionar"}</Botao></div>}
         </div>
+
+        {printsAnexados.length > 0 && (
+          <p className="mb-2 mt-0 text-xs leading-relaxed text-ok">
+            ✓ Anexado ao caso: {printsAnexados.join(", ")}. Diga em que seção da petição ele entra
+            (e, se quiser, depois de qual parágrafo).
+          </p>
+        )}
 
         <div className={estilos.linhaDeEnvio}>
           {/* Sem rótulo visível: o próprio texto de exemplo diz o que se escreve aqui, e
@@ -584,9 +727,20 @@ export default function ChatPeticao({
               setTexto(evento.target.value);
               ajustarAltura();
             }}
+            onPaste={(evento) => {
+              // Só toma o colar quando há IMAGEM: texto colado segue o caminho normal.
+              const imagens = Array.from(evento.clipboardData?.files ?? []).filter((arquivo) =>
+                arquivo.type.startsWith("image/"),
+              );
+              if (!imagens.length) return;
+              evento.preventDefault();
+              void anexarPrint(imagens);
+            }}
             onKeyDown={(evento) => {
               // Enter envia, Shift+Enter quebra linha — o hábito de qualquer chat.
-              if (evento.key === "Enter" && !evento.shiftKey) {
+              // `isComposing`: o Enter que confirma uma letra acentuada (teclado móvel,
+              // acento morto) não é o Enter de enviar — e enviava a pergunta pela metade.
+              if (evento.key === "Enter" && !evento.shiftKey && !evento.nativeEvent.isComposing) {
                 evento.preventDefault();
                 void perguntar(texto);
               }
@@ -725,7 +879,8 @@ const ROTULOS: Record<AcaoProposta["tipo"], string> = {
   GERAR: "Gerar a petição de novo",
   ANALISAR_DOCUMENTOS: "Reler os documentos",
   PECA_ANEXA: "Redigir outra peça",
-  INCLUIR_FOTO: "Incluir foto na petição",
+  INCLUIR_FOTO: "Incluir foto ou print na petição",
+  INCLUIR_TRECHO: "Incluir trecho de documento",
 };
 
 /** A foto que vai entrar na peça, para o advogado ver ANTES de confirmar.
@@ -804,10 +959,25 @@ function PropostaDeAcao({
       {acao.tipo === "INCLUIR_FOTO" && acao.anexoId && (
         <>
           <MiniaturaDaFoto anexoId={acao.anexoId} arquivo={acao.arquivo} />
+          {acao.arquivo && (
+            <div className="mt-1 text-xs">
+              <RespostaFormatada texto={`Arquivo: ${acao.arquivo}`} />
+            </div>
+          )}
           {acao.legenda && (
             <p className="mb-0 mt-1 text-xs italic text-tinta-2">Legenda: {acao.legenda}</p>
           )}
         </>
+      )}
+      {acao.tipo === "INCLUIR_TRECHO" && acao.trecho && (
+        <blockquote className="mb-0 ml-0 mr-0 mt-2 border-0 border-l-4 border-solid border-ok bg-ok-claro px-3 py-2 text-sm leading-relaxed text-tinta">
+          “{acao.trecho}”
+          {acao.arquivo && (
+            <div className="mt-1 text-xs">
+              <RespostaFormatada texto={`Fonte: ${acao.arquivo}`} />
+            </div>
+          )}
+        </blockquote>
       )}
       {acao.titulo && acao.tipo === "PECA_ANEXA" && (
         <p className="mb-0 mt-2 text-sm text-tinta-2">Peça: {acao.titulo}</p>
