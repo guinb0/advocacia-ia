@@ -10,6 +10,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import uuid
 import zipfile
 
@@ -3495,16 +3496,13 @@ async def _registrar_documento(
                 400, f"Item '{item}' não pertence ao checklist de {categoria.nome}."
             )
 
-    # Valida a opção manual antes de gastar o OCR, para o erro sair na hora.
+    # CPF e RG são itens autônomos. Mantemos o parâmetro apenas para responder
+    # claramente a clientes antigos; novos envios não podem quitá-los juntos.
     if usar_para_rg_e_cpf:
-        if item_checklist is None:
-            raise HTTPException(
-                400, "A identidade unificada exige o item RG ou CPF no envio."
-            )
-        try:
-            casos.itens_para_identidade_unificada(categoria, item_checklist)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(
+            400,
+            "CPF e RG são documentos distintos e devem ser enviados/classificados separadamente.",
+        )
 
     conteudo = await _ler_upload(arquivo)
     nome = arquivo.filename or "sem-nome"
@@ -3651,6 +3649,78 @@ def _e_lixo_de_zip(nome: str) -> bool:
     )
 
 
+_MARCADORES_DE_ENTREVISTA = (
+    "entrevista",
+    "transcricao",
+    "tactiq",
+    "google meet",
+    "google-meet",
+    "zoom",
+    "microsoft teams",
+    "microsoft-teams",
+    "reuniao com cliente",
+    "atendimento cliente",
+)
+
+
+def _arquivo_parece_entrevista(nome: str) -> bool:
+    """Reconhece transcrição já pronta dentro de um lote/ZIP.
+
+    Não basta a extensão: um PDF ou DOCX pode ser qualquer prova. O nome precisa
+    também trazer um marcador de entrevista, para não tirar um documento do
+    checklist por engano. A normalização cobre ``transcrição`` e caminhos internos
+    de ZIP como ``Cliente/Entrevista inicial.txt``.
+    """
+    base = unicodedata.normalize("NFKD", Path(nome).name).encode("ascii", "ignore").decode().casefold()
+    extensao = Path(base).suffix
+    return extensao in entrevista_lib.EXTENSOES_ENTREVISTA and any(
+        marcador in base for marcador in _MARCADORES_DE_ENTREVISTA
+    )
+
+
+async def _registrar_entrevista_do_lote(caso: dict[str, Any], arquivo: Any) -> dict[str, str] | None:
+    """Move uma transcrição identificada no lote para a linha do tempo do caso.
+
+    Só a assume como entrevista depois de extrair texto de verdade. Se o arquivo
+    estiver corrompido, for uma imagem ou tiver nome enganoso, o fluxo normal de
+    documentos continua responsável por guardá-lo e classificá-lo.
+    """
+    nome = Path(getattr(arquivo, "filename", "") or "entrevista.txt").name
+    try:
+        conteudo = await arquivo.read()
+        if not conteudo or len(conteudo) > MAX_BYTES:
+            return None
+        texto = entrevista_lib.extrair_texto(nome, conteudo)
+    except entrevista_lib.ErroDeLeitura:
+        return None
+
+    destino = armazenamento.DIR_ARQUIVOS / caso["id"] / "entrevistas"
+    destino.mkdir(parents=True, exist_ok=True)
+    caminho = destino / f"{uuid.uuid4().hex[:8]}-{nome}"
+    caminho.write_bytes(conteudo)
+    entrevista = armazenamento.registrar_entrevista(
+        caso["id"],
+        arquivo=nome,
+        caminho=caminho,
+        texto=texto,
+        entrevistador="Importada com documentos",
+    )
+    threading.Thread(
+        target=_ler_entrevista_no_agente,
+        args=(caso["id"], entrevista["id"]),
+        name=f"agente-entrevista-{entrevista['id'][:8]}",
+        daemon=True,
+    ).start()
+    if texto:
+        threading.Thread(
+            target=_resumir_entrevista_em_fundo,
+            args=(entrevista["id"], texto),
+            name=f"resumo-entrevista-{entrevista['id'][:8]}",
+            daemon=True,
+        ).start()
+    return {"arquivo": nome, "entrevista_id": entrevista["id"], "tipo": "entrevista"}
+
+
 async def _expandir_zips(arquivos: list[Any]) -> list[Any]:
     """Troca cada `.zip` pelos arquivos que ele contém; deixa os demais intactos.
 
@@ -3727,6 +3797,14 @@ async def _registrar_lote(
     for arquivo in arquivos:
         nome = arquivo.filename or "sem-nome"
         try:
+            # ZIP com uma entrevista pronta não é "documento sem destino": entra
+            # no mesmo acervo da entrevista feita no sistema, de onde a análise e
+            # a geração de peça já sabem consumi-la.
+            if _arquivo_parece_entrevista(nome):
+                entrevista_importada = await _registrar_entrevista_do_lote(caso, arquivo)
+                if entrevista_importada is not None:
+                    aceitos.append(entrevista_importada)
+                    continue
             registro = await _registrar_documento(
                 caso, None, arquivo, idioma, False, lote_id
             )

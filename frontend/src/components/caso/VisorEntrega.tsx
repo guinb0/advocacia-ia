@@ -325,7 +325,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
           className={`grid max-[900px]:grid-cols-1 overflow-hidden min-h-0 ${
             telaCheia
               ? "flex-1 grid-cols-[minmax(320px,62%)_1fr] grid-rows-[minmax(0,1fr)] max-[900px]:grid-rows-none max-[900px]:overflow-auto"
-              : "grid-cols-[minmax(280px,45%)_1fr]"
+              : "grid-cols-[minmax(280px,62%)_1fr]"
           }`}
         >
           <div className="flex items-center justify-center p-[14px] border-r border-borda bg-papel-3 overflow-auto min-h-[260px]">

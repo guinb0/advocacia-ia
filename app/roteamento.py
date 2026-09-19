@@ -106,13 +106,14 @@ def _deterministico(
         if _evita_classificacao_ctps(texto):
             return None
 
-    # CIN e CNH trazem identidade e CPF no mesmo arquivo, e só valem pelos dois
-    # quando os dados saíram legíveis — a mesma regra do envio manual.
+    # CIN e CNH são documentos de identificação válidos, mas identidade e CPF
+    # são exigências autônomas no checklist jurídico. Portanto uma delas atende
+    # somente o item RG; o CPF precisa ter seu próprio documento/registro.
     if casos.cobre_rg_e_cpf(extracao):
-        rg_cpf = [i.codigo for i in categoria.itens if i.tipo_ocr in {"rg", "cpf"}]
-        if len(rg_cpf) == 2:
+        itens_rg = _itens_por_tipo(categoria, "rg")
+        if itens_rg:
             rotulo = tipo.get("descricao_detectado") or detectado
-            return rg_cpf, 95, f"{rotulo} legível: vale como identidade e como CPF."
+            return [i.codigo for i in itens_rg], 95, f"{rotulo} legível: vale como documento de identidade."
 
     encontrados = _itens_por_tipo(categoria, detectado)
     if not encontrados:
