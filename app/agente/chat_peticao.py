@@ -36,7 +36,9 @@ import json
 import logging
 import os
 import re
+import time
 import unicodedata
+import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -69,10 +71,15 @@ ESCOPO = "PETICAO"
 
 #: Quantas rodadas de ferramenta antes de o modelo ter de responder com o que tem.
 #:
-#: Cinco cobre o caminho mais longo que faz sentido aqui (minuta -> análise ->
-#: documentos -> histórico -> web). Sem teto, uma pergunta vaga faz o modelo ler o
-#: caso em círculo enquanto o advogado espera com a tela em "digitando".
-MAXIMO_DE_PASSOS = 5
+#: Cobre o caminho mais longo que faz sentido aqui (minuta -> análise -> documentos
+#: -> histórico -> web) MAIS as cobranças (ver as quatro flags `cobranca_*_feita`
+#: em `conversar`): cada uma consome uma rodada própria, e desde que elas passaram
+#: a ser independentes uma da outra, um pedido complexo pode disparar mais de uma
+#: na mesma resposta. Sem folga aqui, o teto era atingido antes da ferramenta de
+#: propor ser chamada, e o advogado via a mesma promessa vazia que a correção
+#: existe para evitar. Sem teto nenhum, uma pergunta vaga faz o modelo ler o caso
+#: em círculo enquanto o advogado espera com a tela em "digitando".
+MAXIMO_DE_PASSOS = 8
 
 #: Quantas trocas anteriores acompanham a pergunta.
 #:
@@ -84,6 +91,11 @@ LIMITE_CONTEXTO_ADICIONAL = 24_000
 
 #: Prazo de cada chamada ao modelo. Alto porque a investigação encadeia leituras.
 TEMPO_DO_MODELO_S = 120
+
+#: Respostas do serviço de modelo que valem uma segunda tentativa: limite de uso e falha
+#: passageira do provedor. Só se repete antes de qualquer texto ter chegado à tela.
+STATUS_TRANSITORIOS = {429, 500, 502, 503, 504}
+PAUSA_ANTES_DE_REPETIR_S = 1.5
 
 #: Teto de caracteres por documento lido na ferramenta de OCR.
 LIMITE_DOCUMENTO = 4000
@@ -130,6 +142,18 @@ Como você trabalha:
 4. VOCÊ NÃO ALTERA A PEÇA SOZINHO. Para mudar a petição, gerar outra versão, redigir
    outra peça ou reanalisar os documentos, use a ferramenta de PROPOR correspondente.
    Ela não executa nada: registra o pedido para o advogado confirmar.
+   `propor_revisao_da_peticao` NÃO é só para trocar palavras: cobre criar um tópico
+   novo (seção inteira que ainda não existe na peça), excluir ou reordenar seções,
+   mover trecho de uma seção para outra e reescrever praticamente o documento
+   inteiro — descreva no `pedido` exatamente o que deve ser criado ou mudado
+   ("acrescente um tópico novo, Da Rescisão Indireta, entre Dos Fatos e Do Direito,
+   com..."), e quem aplica a reescrita decide os títulos e a estrutura a partir
+   disso. Nunca responda que não é possível criar um tópico: proponha.
+   Pedido de mudança na peça não precisa começar por «altere»: «tira esse pedido»,
+   «coloca o número da CTPS», «aumenta o valor», «troca reclamante por autor» são
+   pedidos de alteração, e a ferramenta vem antes de qualquer conversa sobre eles.
+   Se já existe uma revisão aguardando decisão, PROPONHA MESMO ASSIM e avise numa frase
+   que confirmar a nova comparação substitui a que está aberta.
    O BOTÃO DE CONFIRMAR NASCE DA CHAMADA DA FERRAMENTA, NUNCA DO SEU TEXTO. Por isso é
    proibido escrever "registrei", "propus" ou "preparei a alteração" sem ter chamado a
    ferramenta NESTA resposta: quem lê fica esperando um botão que não existe. Se a
@@ -180,13 +204,24 @@ Como você trabalha:
    contexto, junto do que ele é — "a CTPS (IMG_4411.jpg)". A tela transforma esse
    nome num link que abre o documento; sem ele, o advogado tem de ir ao checklist
    procurar qual dos arquivos é o citado.
-13. FOTOS NA PEÇA. Quando o advogado pedir uma foto na petição ("a foto do machucado
-   no fim da petição"), use `listar_fotos` para achar qual é e depois
-   `propor_inclusao_de_foto` com o lugar pedido e uma legenda descritiva curta. Não
-   use `propor_revisao_da_peticao` para isso: a revisão reescreve texto, não põe
-   imagem. Se nenhuma foto servir, peça que ela seja anexada ao caso. Se houver
-   dúvida entre fotos, cite os arquivos e pergunte qual antes de propor.
-14. PESQUISAS JÁ FEITAS. Se o contexto trouxer «PESQUISAS NA WEB JÁ FEITAS NESTA
+13. FOTOS E PRINTS NA PEÇA. Quando o advogado pedir uma foto ou um print (captura de
+   tela, conversa de WhatsApp em imagem) na petição ("a foto do machucado no fim da
+   petição", "o print da conversa nos fatos"), use `listar_fotos` para achar qual é e
+   depois `propor_inclusao_de_foto` com o lugar pedido e uma legenda descritiva curta.
+   Não use `propor_revisao_da_peticao` para isso: a revisão reescreve texto, não põe
+   imagem. Se nenhuma imagem servir, peça que ela seja anexada ao caso (o advogado
+   pode colar o print no campo da conversa). Se houver dúvida entre imagens, cite os
+   arquivos e pergunte qual antes de propor.
+14. TRECHOS DE DOCUMENTO NA PEÇA. Quando o advogado pedir para «colocar o trecho X do
+   documento Y» na petição, ou quando uma citação literal fortalecer um ponto, ache a
+   passagem com `buscar_nos_documentos` (ou `ler_documentos`) e use
+   `propor_inclusao_de_trecho` com o trecho COPIADO palavra por palavra, a seção pedida
+   e, se houver, o parágrafo depois do qual entra. Nunca resuma, corrija nem junte
+   pedaços: o trecho é citação e vai para o juízo. Se a ferramenta disser que o trecho
+   não está no documento, procure de novo — não o «arrume» até passar. Se o documento
+   ainda não tem texto lido, diga isso e ofereça a alternativa de descrever o fato com
+   a indicação do documento.
+15. PESQUISAS JÁ FEITAS. Se o contexto trouxer «PESQUISAS NA WEB JÁ FEITAS NESTA
    CONVERSA», reaproveite-as: o que está ali já foi confirmado, com as fontes. Não
    pesquise de novo o mesmo assunto — cite a fonte listada. Pesquise só o que for
    novo ou o que aquelas fontes não cobrem.
@@ -284,8 +319,9 @@ def _contexto_do_caso(caso_id: str) -> str:
     if peticao.get("revisao_pendente"):
         partes.append(
             "ATENÇÃO: há uma revisão aguardando decisão do advogado (comparação aberta"
-            " ao lado). Enquanto ela não for aceita ou descartada, propor outra revisão"
-            " só confunde — avise-o disso."
+            " ao lado). Se ele pedir outra alteração, PROPONHA normalmente — o cartão de"
+            " confirmação é dele — e avise, numa frase, que confirmar a nova comparação"
+            " substitui a que está aberta. Nunca deixe de propor por causa disso."
         )
     if anexas:
         partes.append(
@@ -719,9 +755,19 @@ def _sensivel(pedido: str) -> bool:
     return any(termo in texto for termo in _TERMOS_SENSIVEIS)
 
 
+def _limpar_texto(texto: str) -> str:
+    """Tira o excesso de espaço mas MANTÉM as quebras de linha.
+
+    Achatar tudo numa linha só juntava os parágrafos de um trecho colado pelo advogado
+    («troque o parágrafo por este: …») e a revisão recebia um bloco sem estrutura.
+    """
+    linhas = [" ".join(linha.split()) for linha in str(texto or "").splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(linhas)).strip()
+
+
 def _propor_revisao(caso_id: str, pedido: str = "", motivo: str = "") -> dict[str, Any]:
     del caso_id  # a proposta é do chat; quem a executa é `executar_acao`
-    pedido = " ".join(str(pedido or "").split())
+    pedido = _limpar_texto(pedido)
     if not pedido:
         return {"registrada": False, "erro": "Escreva o que deve mudar na petição."}
     return {
@@ -818,6 +864,73 @@ def _listar_fotos(caso_id: str) -> dict[str, Any]:
             "O nome do arquivo raramente diz o que a foto mostra. Se mais de uma foto"
             " pode ser a pedida e nada acima as distingue, cite os arquivos e pergunte"
             " qual — o advogado abre cada uma pelo link."
+        ),
+    }
+
+
+def _propor_inclusao_de_trecho(
+    caso_id: str,
+    arquivo: str = "",
+    trecho: str = "",
+    secao: str = "",
+    depois_de: str = "",
+    motivo: str = "",
+) -> dict[str, Any]:
+    trecho = _limpar_texto(trecho).replace("\n", " ")
+    if not trecho:
+        return {"registrada": False, "erro": "Copie do documento o trecho que deve entrar na petição."}
+    anexos = peticao_local.anexos_do_caso(caso_id)
+    procurado = _normalizar(" ".join(str(arquivo or "").split()))
+    candidatos = [
+        a for a in anexos
+        if procurado and (procurado == _normalizar(a["arquivo"]) or procurado == str(a["id"]).lower())
+    ] or [a for a in anexos if procurado and procurado in _normalizar(f"{a['arquivo']} {a['tipo']}")]
+    if len(candidatos) != 1:
+        return {
+            "registrada": False,
+            "erro": (
+                "Não identifiquei UM documento com esse nome."
+                if anexos
+                else "Não há documento anexado a este caso: peça ao advogado que o anexe."
+            ),
+            "documentos_do_caso": [a["arquivo"] for a in (candidatos or anexos)][:15],
+        }
+    anexo = candidatos[0]
+    if len(trecho) > peticao_local.LIMITE_TRECHO:
+        return {
+            "registrada": False,
+            "erro": f"O trecho passa de {peticao_local.LIMITE_TRECHO} caracteres: cite só a passagem que interessa.",
+        }
+    if not peticao_local.trecho_esta_no_documento(anexo["texto"], trecho):
+        return {
+            "registrada": False,
+            "erro": (
+                f"Esse trecho NÃO aparece no texto lido de «{anexo['arquivo']}». Localize a"
+                " passagem com `buscar_nos_documentos` e copie-a palavra por palavra — não"
+                " resuma nem reescreva. Se o documento ainda não tem texto lido, avise o"
+                " advogado."
+            ),
+        }
+    if not peticao_local.carregar(caso_id):
+        return {"registrada": False, "erro": "Ainda não há petição gerada para receber o trecho."}
+    onde = f"na seção «{secao}»" if secao else "no fim da petição"
+    if depois_de:
+        onde += f", logo abaixo do trecho «{depois_de[:80]}»"
+    return {
+        "registrada": True,
+        "tipo": "INCLUIR_TRECHO",
+        "anexo_id": anexo["id"],
+        "arquivo": anexo["arquivo"],
+        "trecho": trecho,
+        "secao": secao,
+        "depois_de": depois_de,
+        "motivo": motivo,
+        "pedido": f"Incluir um trecho de {anexo['arquivo']} {onde}",
+        "o_que_acontece": (
+            "Quando confirmado, o trecho entra na peça como citação recuada, com a fonte"
+            " ao lado, numa versão nova — a anterior fica no histórico. É texto do"
+            " documento, sem reescrita. Na tela de edição ele aparece como uma linha"
+            " começando com «>»: apagar a linha tira a citação."
         ),
     }
 
@@ -1002,8 +1115,9 @@ CATALOGO: dict[str, tuple[Any, dict[str, Any], bool]] = {
         _listar_fotos,
         {
             "description": (
-                "As fotos anexadas ao caso (jpg, png…), com o que cada uma é, o texto"
-                " lido nela e se já está na petição. Use antes de propor incluir foto."
+                "As IMAGENS anexadas ao caso (jpg, png…) — fotos, prints e capturas de tela"
+                " —, com o que cada uma é, o texto lido nela e se já está na petição. Use"
+                " antes de propor incluir foto ou print."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -1013,7 +1127,8 @@ CATALOGO: dict[str, tuple[Any, dict[str, Any], bool]] = {
         _propor_inclusao_de_foto,
         {
             "description": (
-                "Registra o pedido de pôr uma FOTO anexada dentro da petição, para o"
+                "Registra o pedido de pôr uma FOTO ou um PRINT (captura de tela, conversa de"
+                " WhatsApp em imagem) anexado dentro da petição, para o"
                 " advogado confirmar. NÃO altera nada. `arquivo` é o nome exato do anexo"
                 " (de `listar_fotos`). `secao` é o rótulo ou código da seção (vazio ="
                 " fim da petição). `depois_de` é um trecho literal do parágrafo abaixo do"
@@ -1030,6 +1145,33 @@ CATALOGO: dict[str, tuple[Any, dict[str, Any], bool]] = {
                     "motivo": {"type": "string"},
                 },
                 "required": ["arquivo"],
+            },
+        },
+        True,
+    ),
+    "propor_inclusao_de_trecho": (
+        _propor_inclusao_de_trecho,
+        {
+            "description": (
+                "Registra o pedido de pôr um TRECHO LITERAL de um documento do caso dentro"
+                " da petição, como citação com a fonte, para o advogado confirmar. NÃO"
+                " altera nada. `arquivo` é o nome do anexo; `trecho` é a passagem COPIADA"
+                " palavra por palavra do texto lido do documento (de `buscar_nos_documentos`"
+                " ou `ler_documentos`) — nunca resumida nem reescrita, e recusada se não"
+                " estiver no documento. `secao` é o rótulo ou código da seção (vazio = fim da"
+                " petição). `depois_de` é um trecho literal do parágrafo abaixo do qual a"
+                " citação entra (vazio = fim da seção)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "arquivo": {"type": "string"},
+                    "trecho": {"type": "string"},
+                    "secao": {"type": "string"},
+                    "depois_de": {"type": "string"},
+                    "motivo": {"type": "string"},
+                },
+                "required": ["arquivo", "trecho"],
             },
         },
         True,
@@ -1189,78 +1331,96 @@ def _juntar_chamadas(acumulado: dict[int, dict[str, Any]], pedacos: list[Any]) -
             atual["function"]["arguments"] += funcao["arguments"]
 
 
-def _transmitir(mensagens: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+def _transmitir(
+    mensagens: list[dict[str, Any]], *, ferramentas: bool = True
+) -> Iterator[dict[str, Any]]:
     """Uma rodada com o modelo, em fluxo. Emite `delta` e termina em `mensagem`.
 
     As ferramentas vão em TODA rodada: é o que permite ao modelo consultar de novo
-    depois de ler algo — "vi a pendência do valor, agora deixa eu ver o documento".
+    depois de ler algo — "vi a pendência do valor, agora deixa eu ver o documento". A
+    única exceção é o fechamento por limite de rodadas (`ferramentas=False`): ali o
+    modelo TEM de escrever, e com as ferramentas à vista ele chamava mais uma e a
+    resposta saía vazia.
+
+    Limite de uso e falha passageira do provedor valem UMA segunda tentativa, desde que
+    nada tenha chegado à tela: repetir depois de meia resposta duplicaria o texto.
     """
     chave, base, modelo = _configurado()
-    corpo = {
+    corpo: dict[str, Any] = {
         "model": modelo,
         # Baixa, não zero: aqui se conversa. Zero deixava a resposta com a mesma
         # abertura sempre, e o advogado lia a terceira pergunta como eco da primeira.
         "temperature": 0.2,
         "messages": mensagens,
-        "tools": esquemas(),
-        "tool_choice": "auto",
         "stream": True,
     }
+    if ferramentas:
+        corpo["tools"] = esquemas()
+        corpo["tool_choice"] = "auto"
 
     texto: list[str] = []
     chamadas: dict[int, dict[str, Any]] = {}
-    try:
-        with httpx.stream(
-            "POST",
-            base + "/chat/completions",
-            headers={"Authorization": f"Bearer {chave}"},
-            json=corpo,
-            timeout=TEMPO_DO_MODELO_S,
-        ) as resposta:
-            if resposta.status_code >= 400:
-                resposta.read()
-                detalhe = resposta.text[:400]
-                log.warning(
-                    "chat da petição: modelo recusou (%s): %s",
-                    resposta.status_code,
-                    detalhe,
-                )
-                # O detalhe vai junto de propósito: "tente de novo" sozinho manda repetir
-                # um pedido que vai falhar igual, e esconde de quem lê o log a diferença
-                # entre um erro nosso (corpo malformado) e um do serviço.
-                raise ErroDoChat(
-                    f"O modelo respondeu {resposta.status_code} e não escreveu a resposta."
-                    f" {detalhe}"
-                )
-            for linha in resposta.iter_lines():
-                if not linha or not linha.startswith("data:"):
-                    continue
-                carga = linha[5:].strip()
-                if carga == "[DONE]":
-                    break
-                try:
-                    pedaco = json.loads(carga)
-                except json.JSONDecodeError:
-                    continue
-                escolha = (pedaco.get("choices") or [{}])[0]
-                delta = escolha.get("delta") or {}
-                if delta.get("tool_calls"):
-                    _juntar_chamadas(chamadas, delta["tool_calls"])
-                    if texto:
-                        # O modelo começou a escrever e mudou de ideia: vai consultar
-                        # antes. O que já apareceu na tela não é a resposta, e deixá-lo
-                        # ali faria a resposta final parecer uma segunda tentativa.
-                        texto.clear()
-                        yield {"tipo": "recomeco"}
-                conteudo = delta.get("content")
-                if conteudo:
-                    texto.append(conteudo)
-                    yield {"tipo": "delta", "texto": conteudo}
-    except httpx.HTTPError as erro:
-        log.warning("chat da petição: modelo não respondeu: %s", str(erro)[:200])
-        raise ErroDoChat(
-            "O modelo não respondeu a tempo. A conversa está salva — tente de novo."
-        ) from erro
+    for tentativa in (1, 2):
+        try:
+            with httpx.stream(
+                "POST",
+                base + "/chat/completions",
+                headers={"Authorization": f"Bearer {chave}"},
+                json=corpo,
+                timeout=TEMPO_DO_MODELO_S,
+            ) as resposta:
+                if resposta.status_code >= 400:
+                    resposta.read()
+                    detalhe = resposta.text[:400]
+                    log.warning(
+                        "chat da petição: modelo recusou (%s): %s",
+                        resposta.status_code,
+                        detalhe,
+                    )
+                    if tentativa == 1 and resposta.status_code in STATUS_TRANSITORIOS:
+                        time.sleep(PAUSA_ANTES_DE_REPETIR_S)
+                        continue
+                    # O detalhe vai junto de propósito: "tente de novo" sozinho manda
+                    # repetir um pedido que vai falhar igual, e esconde de quem lê o log
+                    # a diferença entre um erro nosso (corpo malformado) e um do serviço.
+                    raise ErroDoChat(
+                        f"O modelo respondeu {resposta.status_code} e não escreveu a resposta."
+                        f" {detalhe}"
+                    )
+                for linha in resposta.iter_lines():
+                    if not linha or not linha.startswith("data:"):
+                        continue
+                    carga = linha[5:].strip()
+                    if carga == "[DONE]":
+                        break
+                    try:
+                        pedaco = json.loads(carga)
+                    except json.JSONDecodeError:
+                        continue
+                    escolha = (pedaco.get("choices") or [{}])[0]
+                    delta = escolha.get("delta") or {}
+                    if delta.get("tool_calls"):
+                        _juntar_chamadas(chamadas, delta["tool_calls"])
+                        if texto:
+                            # O modelo começou a escrever e mudou de ideia: vai consultar
+                            # antes. O que já apareceu na tela não é a resposta, e deixá-lo
+                            # ali faria a resposta final parecer uma segunda tentativa.
+                            texto.clear()
+                            yield {"tipo": "recomeco"}
+                    conteudo = delta.get("content")
+                    if conteudo:
+                        texto.append(conteudo)
+                        yield {"tipo": "delta", "texto": conteudo}
+            break
+        except httpx.HTTPError as erro:
+            if tentativa == 1 and not texto and not chamadas:
+                log.warning("chat da petição: falha de rede com o modelo, repetindo: %s", str(erro)[:200])
+                time.sleep(PAUSA_ANTES_DE_REPETIR_S)
+                continue
+            log.warning("chat da petição: modelo não respondeu: %s", str(erro)[:200])
+            raise ErroDoChat(
+                "O modelo não respondeu a tempo. A conversa está salva — tente de novo."
+            ) from erro
 
     # `tool_calls` SÓ existe quando houve chamada.
     #
@@ -1271,6 +1431,11 @@ def _transmitir(mensagens: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
     # três dos seis pedidos medidos morreram aí.
     mensagem: dict[str, Any] = {"role": "assistant", "content": "".join(texto)}
     if chamadas:
+        for indice in chamadas:
+            # Alguns provedores não mandam o id: a resposta da ferramenta precisa de um
+            # para apontar de volta, e um id vazio é recusado na rodada seguinte.
+            if not chamadas[indice]["id"]:
+                chamadas[indice]["id"] = f"call_{uuid.uuid4().hex[:12]}"
         mensagem["tool_calls"] = [chamadas[i] for i in sorted(chamadas)]
     yield {"tipo": "mensagem", "mensagem": mensagem}
 
@@ -1281,9 +1446,80 @@ def _transmitir(mensagens: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
 #: a imitar as respostas anteriores do próprio histórico ("Registrei o pedido de
 #: revisão…") sem chamar ferramenta nenhuma. A mensagem chegava perfeita e o cartão de
 #: confirmação não existia — o pior tipo de erro desta tela, porque parece sucesso.
+#:
+#: Não só «registrei/propus»: o modelo também promete no futuro («vou ajustar»), afirma que
+#: já mudou («alterei») ou empurra para um botão que não criou («confirme no cartão»).
 _PROMESSA = re.compile(
-    r"\b(registrei|propus|preparei|deixei registrad[oa])\b", re.IGNORECASE
+    r"\b(registrei|propus|preparei|deixei registrad[oa])\b"
+    r"|\b(?:j[áa]\s+)?(?:alterei|ajustei|corrigi|inclu[íi]|acrescentei|adicionei|removi|retirei"
+    r"|troquei|substitu[íi]|atualizei|reescrevi|mudei)\b"
+    r"|\b(?:vou|irei)\s+(?:agora\s+)?(?:alterar|ajustar|corrigir|incluir|acrescentar"
+    r"|adicionar|remover|retirar|trocar|substituir|atualizar|reescrever|mudar|fazer\s+a\s+(?:altera|mudan))"
+    r"|\bfarei\s+(?:agora\s+)?(?:a\s+(?:altera|mudan)|o\s+ajuste)"
+    r"|\bconfirme\s+(?:abaixo|acima|no\s+cart[ãa]o|no\s+bot[ãa]o)"
+    r"|\bclique\s+em\s+confirmar|\bbot[ãa]o\s+(?:de\s+)?confirmar",
+    re.IGNORECASE,
 )
+
+#: O advogado PEDIU uma alteração da peça — visto pela mensagem dele, não pela resposta.
+#:
+#: Antes só o texto do modelo era examinado. Sem o prefixo do atalho «Altere a petição: »,
+#: um pedido escrito direto («aumenta o valor pra 60 mil») dependia do humor do modelo
+#: para virar proposta: às vezes ele só conversava e o cartão de confirmação não nascia.
+_VERBO_DE_EDICAO = (
+    r"(?:alter(?:e|a|ar)|mud(?:e|a|ar)|troc(?:que|a|ar)|substitu(?:a|i|ir)|corrij(?:a)"
+    r"|corrig(?:e|ir)|ajust(?:e|a|ar)|inclu(?:a|i|ir)|adicion(?:e|a|ar)|acrescent(?:e|a|ar)"
+    r"|coloc(?:que|a|ar)|insir(?:a)|inser(?:e|ir)|remov(?:a|e|er)|retir(?:e|a|ar)"
+    r"|exclu(?:a|i|ir)|apag(?:ue|a|ar)|tir(?:e|a|ar)|reescrev(?:a|e|er)|complement(?:e|a|ar)"
+    r"|atualiz(?:e|a|ar)|reduz(?:a|e|ir)|aument(?:e|a|ar)|diminu(?:a|i|ir)|reorden(?:e|a|ar)"
+    r"|ponh(?:a)|p[õo]e)"
+)
+_ABRE_COM_VERBO = re.compile(
+    r"^\W*(?:(?:por\s+favor|pf|ent[ãa]o|agora|ok|certo|e|tamb[ée]m|mas|olha|bom)\W+)*"
+    + _VERBO_DE_EDICAO
+    + r"\b",
+    re.IGNORECASE,
+)
+_PEDE_EDUCADO = re.compile(
+    r"\b(?:pode(?:ria)?|consegue|d[áa]\s+(?:pra|para)|quero|queria|preciso|precisa|gostaria(?:\s+de)?)"
+    r"\s+(?:que\s+)?(?:(?:voc[êe]|vc|tu|a\s+ia)\s+)?(?:por\s+favor\s+)?"
+    + _VERBO_DE_EDICAO
+    + r"\b",
+    re.IGNORECASE,
+)
+#: Quando o pedido fala DA peça. Só com isto o servidor cria a proposta por conta própria:
+#: «tire uma dúvida» tem o mesmo verbo e não é alteração de petição nenhuma.
+_ALVO_NA_PECA = re.compile(
+    r"peti[çc][ãa]o|pe[çc]a\b|minuta|se[çc][ãa]o|t[óo]pico|pedido|par[áa]grafo|cl[áa]usula"
+    r"|\bitem\b|t[íi]tulo|\btexto\b|valor|fatos|fundament|dano|rescis|verba|indeniza"
+    r"|hora|sal[áa]rio|\bdata\b|\bnome\b|n[úu]mero|cpf|ctps|reclamante|reclamad|\bautor\b",
+    re.IGNORECASE,
+)
+_FALA_DE_FOTO = re.compile(
+    r"\b(?:foto|fotografia|imagem|print|captura|trecho|cita[çc][ãa]o|transcri[çc][ãa]o)s?\b"
+    r"|\bcite\b|\bcitar\b|\btranscreva\b",
+    re.IGNORECASE,
+)
+
+
+def pediu_alteracao(pergunta: str) -> bool:
+    """`True` quando a mensagem do advogado é um pedido para mudar a peça."""
+    pergunta = pergunta or ""
+    return bool(_ABRE_COM_VERBO.search(pergunta) or _PEDE_EDUCADO.search(pergunta))
+
+
+def _cabe_proposta_de_reserva(pergunta: str, texto: str) -> bool:
+    """A resposta acabou sem cartão, e o pedido é claramente uma alteração da peça.
+
+    Foto tem ferramenta própria e pergunta de volta é esclarecimento legítimo: em
+    nenhum dos dois o servidor decide pelo modelo.
+    """
+    return (
+        pediu_alteracao(pergunta)
+        and bool(_ALVO_NA_PECA.search(pergunta))
+        and not _FALA_DE_FOTO.search(pergunta)
+        and not (texto or "").rstrip().endswith("?")
+    )
 
 #: O fecho comum às cobranças.
 #:
@@ -1310,6 +1546,16 @@ COBRANCA = (
     "Chame agora a ferramenta de propor correspondente, com o pedido escrito de forma"
     " completa e literal. Se, pensando bem, não havia alteração a propor, responda"
     " corrigindo o que você disse — sem afirmar que propôs." + _FECHO_DA_COBRANCA
+)
+
+COBRANCA_PEDIDO = (
+    "O advogado pediu para mudar a petição, mas você NÃO chamou nenhuma ferramenta de"
+    " proposta nesta resposta — então nenhum cartão de confirmação foi criado e ele"
+    " teria de pedir de novo.\n\n"
+    "Chame agora `propor_revisao_da_peticao` (ou a proposta específica: foto, geração,"
+    " outra peça), com o pedido escrito de forma completa e literal, aproveitando o que"
+    " ele disse. Só não proponha se faltar uma informação sem a qual a alteração não pode"
+    " ser escrita — e então faça UMA pergunta objetiva." + _FECHO_DA_COBRANCA
 )
 
 
@@ -1529,10 +1775,17 @@ ETAPAS = {
     "propor_peca_anexa": "Preparando a proposta da outra peça",
     "listar_fotos": "Procurando as fotos do caso",
     "propor_inclusao_de_foto": "Preparando a foto para você conferir",
+    "propor_inclusao_de_trecho": "Conferindo o trecho no documento",
 }
 
 
 # ---------------------------------------------------------------- a transcrição
+
+
+#: O que só o servidor usa. O texto extraído de um arquivo de contexto chega a 200 mil
+#: caracteres e as pesquisas guardam a resposta inteira: mandá-los ao navegador a cada
+#: abertura da conversa engordava a tela sem que ela lesse nada disso.
+_SO_DO_SERVIDOR = ("texto_extraido", "pesquisas")
 
 
 def _como_mensagem(registro: dict[str, Any]) -> dict[str, Any]:
@@ -1541,7 +1794,9 @@ def _como_mensagem(registro: dict[str, Any]) -> dict[str, Any]:
         "papel": registro["papel"],
         "conteudo": registro["conteudo"],
         "natureza": registro["natureza"],
-        "payload": registro.get("payload") or {},
+        "payload": {
+            k: v for k, v in (registro.get("payload") or {}).items() if k not in _SO_DO_SERVIDOR
+        },
         "criado_em": registro["criado_em"],
     }
 
@@ -1602,23 +1857,71 @@ def documentos_citaveis(caso_id: str) -> list[dict[str, str]]:
     ]
 
 
-def _historico_para_o_modelo(conversa_id: str) -> list[dict[str, str]]:
+#: Ação proposta -> ferramenta que a criou, e os campos dela que a ferramenta recebe.
+_FERRAMENTA_DA_ACAO = {
+    "REVISAR": ("propor_revisao_da_peticao", ("pedido", "motivo")),
+    "GERAR": ("propor_geracao_da_peticao", ("motivo",)),
+    "ANALISAR_DOCUMENTOS": ("propor_analise_de_documentos", ("motivo",)),
+    "PECA_ANEXA": ("propor_peca_anexa", ("titulo", "motivo", "pedidos")),
+    "INCLUIR_FOTO": ("propor_inclusao_de_foto", ("arquivo", "secao", "depois_de", "legenda", "motivo")),
+    "INCLUIR_TRECHO": ("propor_inclusao_de_trecho", ("arquivo", "trecho", "secao", "depois_de", "motivo")),
+}
+
+
+def _historico_para_o_modelo(conversa_id: str) -> list[dict[str, Any]]:
     """As últimas trocas, no vocabulário do modelo.
 
-    Só o TEXTO volta — nunca as propostas nem as fontes de antes. A minuta atual
-    entra pelo contexto a cada pergunta, e reaproveitar o texto de uma versão
-    anterior como se fosse o de agora é a maneira mais silenciosa de responder
-    sobre uma peça que já mudou.
+    O TEXTO das respostas volta, mas as propostas voltam como o que foram: chamadas de
+    ferramenta com o resultado. Sem isso o modelo relia as próprias respostas
+    («Preparei a alteração…») sem nenhuma chamada por trás e passava a imitá-las — dizia
+    que propunha e o cartão de confirmação não existia. As fontes de antes continuam de
+    fora: a minuta atual entra pelo contexto a cada pergunta, e reaproveitar o texto de
+    uma versão anterior é a maneira mais silenciosa de responder sobre uma peça que já
+    mudou. Erros também ficam de fora: uma falha de ontem não é fala do assistente.
     """
     recentes = armazenamento.mensagens_da_conversa(conversa_id)[-TROCAS_DE_CONTEXTO:]
-    return [
-        {
-            "role": "user" if m["papel"] == "USER" else "assistant",
-            "content": str(m["conteudo"])[:4000],
-        }
-        for m in recentes
-        if str(m.get("conteudo") or "").strip()
-    ]
+    historico: list[dict[str, Any]] = []
+    for m in recentes:
+        conteudo = str(m.get("conteudo") or "").strip()
+        if not conteudo or m.get("natureza") == "ERRO":
+            continue
+        if m["papel"] == "USER":
+            historico.append({"role": "user", "content": conteudo[:4000]})
+            continue
+        chamadas: list[dict[str, Any]] = []
+        resultados: list[dict[str, Any]] = []
+        for acao in (m.get("payload") or {}).get("acoes") or []:
+            ferramenta = _FERRAMENTA_DA_ACAO.get(str(acao.get("tipo") or ""))
+            if not ferramenta:
+                continue
+            nome, campos = ferramenta
+            identificador = f"hist_{uuid.uuid4().hex[:12]}"
+            argumentos = {c: acao[c] for c in campos if acao.get(c)}
+            chamadas.append(
+                {
+                    "id": identificador,
+                    "type": "function",
+                    "function": {
+                        "name": nome,
+                        "arguments": json.dumps(argumentos, ensure_ascii=False),
+                    },
+                }
+            )
+            resultados.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": identificador,
+                    "content": json.dumps(
+                        {"registrada": True, "tipo": acao.get("tipo"), "aguarda_confirmacao": True},
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+        if chamadas:
+            historico.append({"role": "assistant", "content": "", "tool_calls": chamadas})
+            historico.extend(resultados)
+        historico.append({"role": "assistant", "content": conteudo[:4000]})
+    return historico
 
 
 def _contextos_adicionais_para_o_modelo(conversa_id: str) -> str:
@@ -1770,7 +2073,7 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     precisa ver na conversa que a resposta não veio — do contrário a pergunta fica
     na tela sem retorno e ele não sabe se ela chegou a ser feita.
     """
-    pergunta = " ".join(str(pergunta or "").split())
+    pergunta = _limpar_texto(pergunta)
     if not pergunta:
         raise ErroDoChat("Escreva a sua pergunta.")
     conversa = _garantir_conversa(caso_id, usuario)
@@ -1805,7 +2108,18 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     consultas: list[str] = []
     texto = ""
 
-    cobranca_feita = False
+    # Uma flag POR TIPO de cobrança, não uma só compartilhada entre as quatro.
+    #
+    # Era uma flag única, e isso desarmava as outras três assim que a primeira
+    # disparasse: se a resposta citasse norma sem conferir E, três rodadas
+    # depois, prometesse "registrei a alteração" sem chamar a ferramenta, só a
+    # primeira era cobrada — a promessa vazia passava direto, sem cartão de
+    # confirmação nenhum. Era exatamente o pedido de revisão que o advogado via
+    # sumir: o chat dizia que ia mudar e não mudava.
+    cobranca_fonte_feita = False
+    cobranca_oferta_feita = False
+    cobranca_recusa_feita = False
+    cobranca_promessa_feita = False
     try:
         passo = 0
         while passo < MAXIMO_DE_PASSOS:
@@ -1822,10 +2136,10 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
             if not chamadas:
                 # Prometeu e não chamou: cobra UMA vez. Sem o teto, um modelo teimoso
                 # ficaria repetindo a promessa enquanto o advogado espera.
-                if not cobranca_feita and citou_sem_conferir(
+                if not cobranca_fonte_feita and citou_sem_conferir(
                     texto, consultas, fontes, list(memoria.values())
                 ):
-                    cobranca_feita = True
+                    cobranca_fonte_feita = True
                     log.warning(
                         "chat da petição: citou norma/súmula sem consultar (caso %s)",
                         caso_id,
@@ -1836,8 +2150,8 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                     yield {"tipo": "recomeco"}
                     yield {"tipo": "etapa", "texto": "Conferindo a citação na fonte oficial"}
                     continue
-                if not cobranca_feita and ofereceu_sem_fazer(texto, consultas):
-                    cobranca_feita = True
+                if not cobranca_oferta_feita and ofereceu_sem_fazer(texto, consultas):
+                    cobranca_oferta_feita = True
                     log.warning(
                         "chat da petição: ofereceu consulta em vez de fazer (caso %s)",
                         caso_id,
@@ -1848,8 +2162,8 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                     yield {"tipo": "recomeco"}
                     yield {"tipo": "etapa", "texto": "Consultando o que faltava"}
                     continue
-                if not cobranca_feita and recusou(texto, consultas):
-                    cobranca_feita = True
+                if not cobranca_recusa_feita and recusou(texto, consultas):
+                    cobranca_recusa_feita = True
                     log.warning(
                         "chat da petição: recusou o pedido ou negou documento sem buscar"
                         " (caso %s)",
@@ -1861,15 +2175,23 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                     yield {"tipo": "recomeco"}
                     yield {"tipo": "etapa", "texto": "Procurando nos documentos do caso"}
                     continue
-                if not acoes and not cobranca_feita and prometeu_acao(texto):
-                    cobranca_feita = True
+                prometeu = prometeu_acao(texto)
+                pediu_sem_cartao = pediu_alteracao(pergunta) and not texto.rstrip().endswith("?")
+                if not acoes and not cobranca_promessa_feita and (prometeu or pediu_sem_cartao):
+                    cobranca_promessa_feita = True
                     log.warning(
-                        "chat da petição: resposta afirmou propor sem chamar ferramenta"
+                        "chat da petição: %s sem chamar ferramenta de proposta"
                         " (caso %s) — cobrando a chamada",
+                        "resposta afirmou propor" if prometeu else "pedido de alteração ficou",
                         caso_id,
                     )
                     mensagens.append(
-                        {"role": "user", "content": COBRANCA.format(pergunta=pergunta)}
+                        {
+                            "role": "user",
+                            "content": (COBRANCA if prometeu else COBRANCA_PEDIDO).format(
+                                pergunta=pergunta
+                            ),
+                        }
                     )
                     yield {"tipo": "recomeco"}
                     yield {"tipo": "etapa", "texto": "Preparando a alteração para você conferir"}
@@ -1940,7 +2262,7 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                     ),
                 }
             )
-            for evento in _transmitir(mensagens):
+            for evento in _transmitir(mensagens, ferramentas=False):
                 if evento["tipo"] == "mensagem":
                     texto = str(evento["mensagem"].get("content") or "")
                 else:
@@ -1958,6 +2280,24 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
             "Não consegui formular a resposta desta vez. Reescreva a pergunta ou peça"
             " de outro jeito."
         )
+
+    # Última rede: o pedido é claramente uma alteração da peça e, mesmo depois da
+    # cobrança, o modelo não chamou a ferramenta. O cartão nasce aqui — quem decide
+    # continua sendo o clique em Confirmar, então o pior caso é um «Agora não».
+    if not acoes and _cabe_proposta_de_reserva(pergunta, texto):
+        reserva = _propor_revisao(caso_id, pedido=pergunta, motivo="Pedido feito na conversa.")
+        if reserva.get("registrada"):
+            log.warning(
+                "chat da petição: modelo não propôs a alteração pedida (caso %s) — proposta"
+                " criada pelo servidor",
+                caso_id,
+            )
+            acoes.append({k: v for k, v in reserva.items() if k != "registrada"})
+            texto = (
+                texto.rstrip()
+                + "\n\nRegistrei o seu pedido como alteração da petição: confirme no cartão"
+                " abaixo para aplicá-lo."
+            )
 
     # A citação confirmada numa pesquisa anterior leva a fonte dela: sem isso a
     # resposta reaproveitada sairia sem link, e o advogado não teria onde conferir.
@@ -2028,6 +2368,7 @@ def _executar(caso_id: str, autor: str, acao: dict[str, Any]) -> tuple[str, dict
         # IA com ele é decisão à parte, que o campo de revisão do painel oferece
         # com a caixa marcada — aqui a conversa é rápida e ninguém leu essa
         # consequência antes de apertar "confirmar".
+        anterior = (peticao_local.carregar(caso_id) or {}).get("revisao_pendente") or {}
         resultado = peticao_fluxo.revisar_peticao(
             caso_id, prompt=pedido, usuario=autor,
             generaliza=bool(acao.get("generaliza", False)), origem="chat"
@@ -2049,6 +2390,12 @@ def _executar(caso_id: str, autor: str, acao: dict[str, Any]) -> tuple[str, dict
             perguntas = _lista(revisao.get("perguntas"))
             if perguntas:
                 texto += f"\n\nAntes de aceitar, confirme comigo: {perguntas}"
+            if anterior and anterior.get("id") != pendente.get("id"):
+                texto += (
+                    "\n\n**Atenção:** esta comparação substituiu a que estava aberta"
+                    f" («{str(anterior.get('prompt') or 'revisão anterior')[:120]}»), que foi"
+                    " descartada. Se precisar dela, peça de novo."
+                )
             return texto, {"peticao_id": peticao.get("id"), "revisao_id": pendente.get("id")}
 
         perguntas = _lista(revisao.get("perguntas"))
@@ -2138,6 +2485,27 @@ def _executar(caso_id: str, autor: str, acao: dict[str, Any]) -> tuple[str, dict
             f"Incluí a foto {resultado['arquivo']} na seção «{resultado['secao']}»,"
             f" {resultado['posicao']}. A petição está na **versão {peticao.get('version')}**;"
             " a anterior ficou no histórico. Ela já sai no Word e no PDF."
+        )
+        return texto, {"peticao_id": peticao.get("id"), "versao": peticao.get("version")}
+
+    if tipo == "INCLUIR_TRECHO":
+        anexo_id = str(acao.get("anexo_id") or "").strip()
+        trecho = str(acao.get("trecho") or "").strip()
+        if not anexo_id or not trecho:
+            raise ErroDoChat("A proposta não diz de qual documento nem qual trecho incluir.")
+        resultado = peticao_local.inserir_trecho(
+            caso_id,
+            anexo_id,
+            trecho,
+            secao=str(acao.get("secao") or ""),
+            depois_de=str(acao.get("depois_de") or ""),
+            usuario=autor,
+        )
+        peticao = resultado["peticao"]
+        texto = (
+            f"Incluí o trecho de {resultado['arquivo']} na seção «{resultado['secao']}»,"
+            f" {resultado['posicao']}, como citação com a fonte. A petição está na"
+            f" **versão {peticao.get('version')}**; a anterior ficou no histórico."
         )
         return texto, {"peticao_id": peticao.get("id"), "versao": peticao.get("version")}
 

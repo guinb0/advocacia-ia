@@ -15,6 +15,8 @@ import hashlib
 import io
 import json
 import logging
+import queue
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -1205,13 +1207,40 @@ def responder_no_chat_peticao(
     um 502 apagaria da tela a pergunta que o advogado acabou de fazer.
     """
 
-    def fluxo():
+    fila: queue.Queue[dict[str, Any] | None] = queue.Queue()
+
+    def produzir() -> None:
+        """A resposta é gerada FORA da conexão do navegador.
+
+        Quando quem lê fechava a aba (ou o celular bloqueava a tela) no meio da
+        resposta, o gerador era interrompido e nada era gravado: a pergunta ficava na
+        conversa sem retorno. Numa thread própria a resposta termina e fica salva —
+        quem voltar a abrir a conversa a encontra.
+        """
         try:
             for evento in chat_peticao.conversar(caso_id, mensagem, usuario.id):
-                yield f"data: {json.dumps(evento, ensure_ascii=False, default=str)}\n\n"
+                fila.put(evento)
         except chat_peticao.ErroDoChat as erro:
-            carga = {"tipo": "erro", "texto": str(erro)}
-            yield f"data: {json.dumps(carga, ensure_ascii=False)}\n\n"
+            fila.put({"tipo": "erro", "texto": str(erro)})
+        except Exception:  # noqa: BLE001 — a tela precisa de um desfecho, nunca do silêncio
+            log.exception("chat da petição: falha ao produzir a resposta do caso %s", caso_id)
+            fila.put({"tipo": "erro", "texto": "Não consegui responder agora. Tente de novo."})
+        finally:
+            fila.put(None)
+
+    def fluxo():
+        threading.Thread(target=produzir, name="chat-peticao", daemon=True).start()
+        while True:
+            try:
+                evento = fila.get(timeout=15)
+            except queue.Empty:
+                # Comentário SSE: mantém a conexão viva num proxy que corta a que fica
+                # calada, e a tela o ignora (só lê as linhas `data:`).
+                yield ": aguardando\n\n"
+                continue
+            if evento is None:
+                return
+            yield f"data: {json.dumps(evento, ensure_ascii=False, default=str)}\n\n"
 
     return StreamingResponse(
         fluxo(),
@@ -1290,6 +1319,8 @@ class AcaoDoChat(BaseModel):
     secao: str = ""
     depois_de: str = ""
     legenda: str = ""
+    # INCLUIR_TRECHO: a passagem literal do documento (`anexo_id`) que entra como citação.
+    trecho: str = ""
 
 
 @roteador.post("/casos/{caso_id}/chat-peticao/acoes")

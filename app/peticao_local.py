@@ -1983,6 +1983,10 @@ Linhas no formato [[FOTO:…]] são fotos inseridas na peça. Copie-as IGUAIS, n
 posição em relação ao texto em volta, salvo se a crítica pedir para tirar ou mover a
 foto.
 
+Linhas que começam com «> » são CITAÇÕES LITERAIS de documento (com a fonte entre
+parênteses). Copie-as IGUAIS, palavra por palavra, salvo se a crítica pedir para tirar,
+mover ou alterar a citação. Nunca resuma nem reescreva o que o documento diz.
+
 ANTES DE ESCREVER, CLASSIFIQUE O PEDIDO:
 
 (a) PONTUAL — troca um nome, separa um pedido, corrige uma data, ajusta um trecho
@@ -2227,6 +2231,7 @@ def _revisar_secoes_via_llm(
 
     secoes, alteradas, conferencia, tentativas = melhor
     secoes = _preservar_fotos(secoes_atuais, secoes, prompt_critica)
+    secoes = _preservar_citacoes(secoes_atuais, secoes, prompt_critica)
     return secoes, {
         "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
         "alterou": True,
@@ -2716,6 +2721,26 @@ def _tipo_de_titulo(linha: str) -> str | None:
     return None
 
 
+#: Linha de citação: `> texto`. É como um trecho de documento entra na peça.
+_RE_TRECHO = re.compile(r"^\s*>\s?(.*\S.*)$")
+
+
+def _trecho_xml(texto: str) -> str:
+    """Citação transcrita: recuo de 4 cm à esquerda, corpo menor e entrelinha simples.
+
+    É a forma da citação direta longa (ABNT) e é o que separa, na leitura do juiz, o
+    que o documento diz do que a peça argumenta. Sem o recuo, um trecho copiado de laudo
+    ou de conversa parecia texto do próprio advogado.
+    """
+    corpo = escape(texto.replace("**", "").strip())
+    return (
+        '<w:p><w:pPr><w:spacing w:line="240" w:lineRule="auto" w:after="120"/>'
+        '<w:ind w:left="2268" w:firstLine="0"/><w:jc w:val="both"/></w:pPr>'
+        f'<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+        f'<w:t xml:space="preserve">{corpo}</w:t></w:r></w:p>'
+    )
+
+
 def _paragrafo_xml(
     texto: str, *, negrito: bool = False, centralizado: bool = False, visual: dict[str, Any] | None = None
 ) -> str:
@@ -2724,6 +2749,10 @@ def _paragrafo_xml(
     for linha in linhas:
         if not linha.strip():
             partes.append("<w:p/>")
+            continue
+        citacao = _RE_TRECHO.match(linha)
+        if citacao:
+            partes.append(_trecho_xml(citacao.group(1)))
             continue
         # Uma linha de TÍTULO já é negrito inteiro, então `**` ali não tem o que
         # converter — e sairia literal no documento entregue ao juízo, que foi o
@@ -2950,6 +2979,36 @@ def _preservar_fotos(
     return resultado
 
 
+def _preservar_citacoes(
+    antes: list[dict[str, Any]], depois: list[dict[str, Any]], critica: str
+) -> list[dict[str, Any]]:
+    """Devolve à revisão as citações literais de documento que a IA parafraseou ou deixou cair.
+
+    Mesma ideia das fotos: o modelo reescreve a seção inteira e trata `> …` como texto
+    seu. Citação alterada deixa de ser citação — e ninguém percebe, porque parece igual.
+    Se a crítica fala de citação/trecho, quem decide é ela.
+    """
+    if re.search(r"\b(cita[çc][ãa]o|cita[çc][õo]es|trechos?|transcri[çc][ãa]o|transcri[çc][õo]es)\b", critica or "", re.IGNORECASE):
+        return depois
+    resultado = [dict(s) for s in depois]
+    if not resultado:
+        return resultado
+
+    def citacoes(conteudo: Any) -> list[str]:
+        return [linha.strip() for linha in str(conteudo or "").split("\n") if _RE_TRECHO.match(linha)]
+
+    presentes = {c for s in resultado for c in citacoes(s.get("content"))}
+    por_codigo = {s.get("code"): s for s in resultado}
+    for secao in antes:
+        faltando = [c for c in citacoes(secao.get("content")) if c not in presentes]
+        if not faltando:
+            continue
+        destino = por_codigo.get(secao.get("code")) or resultado[-1]
+        destino["content"] = str(destino.get("content") or "").rstrip() + "\n\n" + "\n\n".join(faltando)
+        presentes.update(faltando)
+    return resultado
+
+
 def _achar_secao(secoes: list[dict[str, Any]], secao: str) -> dict[str, Any]:
     """Pelo código ("FACTS") ou pelo rótulo ("Dos fatos"); vazio = última seção."""
     procurado = _sem_acento(secao).strip().lower()
@@ -3019,6 +3078,85 @@ def inserir_foto(
         "secao": str(alvo.get("label") or alvo.get("code")),
         "posicao": posicao,
         "arquivo": arquivo,
+    }
+
+
+#: Teto de um trecho citado: acima disso é transcrever o documento, não citá-lo.
+LIMITE_TRECHO = 1500
+
+
+def _compacto(texto: str) -> str:
+    """Sem acento, sem caixa e com espaço/quebra de linha colapsados: a base da conferência
+    de um trecho contra o texto que o OCR leu (que quebra linha no meio da frase)."""
+    return " ".join(_sem_acento(str(texto or "")).lower().split())
+
+
+def trecho_esta_no_documento(texto_do_documento: str, trecho: str) -> bool:
+    """`True` só quando o trecho aparece, palavra por palavra, no texto lido do documento.
+
+    A citação vai para uma peça entregue ao juízo: um trecho «de memória», mesmo quase
+    igual, é citação falsa. Espaço e acento não contam; palavra trocada conta.
+    """
+    alvo = _compacto(trecho)
+    return len(alvo) >= 8 and alvo in _compacto(texto_do_documento)
+
+
+def inserir_trecho(
+    caso_id: str,
+    anexo_id: str,
+    trecho: str,
+    *,
+    secao: str = "",
+    depois_de: str = "",
+    usuario: str = "",
+) -> dict[str, Any]:
+    """Põe um trecho LITERAL de um documento do caso dentro da petição, sem IA no meio.
+
+    Entra como citação (`> trecho (Fonte: tipo — arquivo)`), com a fonte ao lado. Recusa
+    o que não está no texto lido do documento. Vira edição manual comum: versão nova,
+    histórico, desfazível.
+    """
+    trecho = " ".join(str(trecho or "").split())
+    if not trecho:
+        raise ErroPeticao("Diga qual trecho do documento deve entrar na petição.")
+    if len(trecho) > LIMITE_TRECHO:
+        raise ErroPeticao(
+            f"O trecho tem {len(trecho)} caracteres; o máximo é {LIMITE_TRECHO}. Cite só a passagem que interessa."
+        )
+    dados = carregar(caso_id)
+    if not dados:
+        raise ErroPeticao("Nenhuma petição gerada para este caso.")
+    anexo = next((a for a in anexos_do_caso(caso_id) if a["id"] == str(anexo_id)), None)
+    if not anexo:
+        raise ErroPeticao("Esse anexo não é deste caso.")
+    if not trecho_esta_no_documento(anexo["texto"], trecho):
+        raise ErroPeticao(
+            f"Esse trecho não aparece no texto lido de «{anexo['arquivo']}». Só entra na petição"
+            " o que o documento diz, palavra por palavra."
+        )
+    secoes = [s for s in dados.get("sections") or [] if s.get("code") != "JURIMETRY"]
+    if not secoes:
+        raise ErroPeticao("A petição não tem seções.")
+    alvo = _achar_secao(secoes, secao)
+    fonte = f"{anexo['tipo']} — {anexo['arquivo']}" if anexo["tipo"] else anexo["arquivo"]
+    citacao = f"> {trecho} (Fonte: {fonte})"
+    linhas = str(alvo.get("content") or "").rstrip().split("\n")
+    posicao = "no fim da seção"
+    procurado = _compacto(depois_de)
+    indice = next((i for i, linha in enumerate(linhas) if procurado and procurado in _compacto(linha)), None)
+    if indice is not None:
+        linhas[indice + 1:indice + 1] = ["", citacao, ""]
+        posicao = "logo abaixo do parágrafo indicado"
+    else:
+        if depois_de.strip():
+            posicao = "no fim da seção (não achei o trecho indicado)"
+        linhas += ["", citacao]
+    peticao = salvar_secoes(caso_id, [{"code": str(alvo.get("code")), "content": "\n".join(linhas)}], usuario)
+    return {
+        "peticao": peticao,
+        "secao": str(alvo.get("label") or alvo.get("code")),
+        "posicao": posicao,
+        "arquivo": anexo["arquivo"],
     }
 
 

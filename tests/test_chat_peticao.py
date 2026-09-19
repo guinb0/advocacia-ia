@@ -411,6 +411,83 @@ checar(
 )
 
 
+# ------------------ 8b. pedir a alteração sem o atalho também gera o cartão
+
+print("\n8b. Pedido de alteração escrito direto, sem «Altere a petição:»")
+
+pedidos = {
+    "aumenta o valor para 60 mil": True,
+    "Tira o pedido de horas extras da petição": True,
+    "por favor, inclua o número da CTPS": True,
+    "Altere a petição: troque reclamante por autor": True,
+    "pode ajustar o valor da causa?": True,
+    "quero que você remova o item de dano moral": True,
+    "Devo incluir dano moral na petição?": False,
+    "em que versão está?": False,
+    "quero saber se devo incluir dano moral": False,
+    "o que ainda não tem comprovação documental?": False,
+}
+for frase, esperado in pedidos.items():
+    checar(chat_peticao.pediu_alteracao(frase) is esperado, f"«{frase}» → {'pedido' if esperado else 'pergunta'}")
+
+for frase in ("Vou ajustar o valor agora.", "Já alterei o pedido.", "Confirme no cartão abaixo.", "Farei a alteração."):
+    checar(chat_peticao.prometeu_acao(frase), f"promessa reconhecida: «{frase}»")
+checar(not chat_peticao.prometeu_acao("A minuta está na versão 3."), "resposta comum não é promessa")
+
+# O modelo só conversou; a cobrança (por causa do PEDIDO, sem promessa nenhuma) arranca a ferramenta.
+falso = instalar_armazenamento()
+rodadas(
+    {"texto": "O valor da causa hoje é R$ 40.000."},
+    {"chamadas": [chamada("propor_revisao_da_peticao", {"pedido": "aumente o valor para R$ 60.000"})]},
+    {"texto": "Deixei o ajuste do valor pronto para você conferir."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "aumenta o valor para 60 mil", "advogado-1"))
+acoes = (eventos[-1]["mensagem"]["payload"] or {}).get("acoes") or []
+checar([a["tipo"] for a in acoes] == ["REVISAR"], "pedido sem promessa: a cobrança faz nascer o cartão")
+
+# O modelo teima e nunca chama a ferramenta: o servidor cria a proposta.
+falso = instalar_armazenamento()
+rodadas(
+    {"texto": "O valor da causa hoje é R$ 40.000."},
+    {"texto": "Entendi, o valor atual é R$ 40.000."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "aumenta o valor da causa para 60 mil", "advogado-1"))
+final = eventos[-1]["mensagem"]
+acoes = (final["payload"] or {}).get("acoes") or []
+checar(
+    [a["tipo"] for a in acoes] == ["REVISAR"] and acoes[0]["pedido"] == "aumenta o valor da causa para 60 mil",
+    "modelo teimoso: o servidor cria o cartão com o pedido literal do advogado",
+)
+checar("confirme no cartão" in final["conteudo"], "e a resposta avisa onde está o botão")
+
+# Pergunta de volta é esclarecimento legítimo: nada é forçado.
+falso = instalar_armazenamento()
+rodadas({"texto": "Qual valor você quer colocar na petição?"})
+eventos = list(chat_peticao.conversar("caso-1", "ajusta o valor da petição", "advogado-1"))
+checar(
+    not ((eventos[-1]["mensagem"]["payload"] or {}).get("acoes")),
+    "esclarecimento do modelo não vira cartão nem gasta rodada extra",
+)
+
+# Foto tem ferramenta própria: o servidor não a converte em revisão de texto.
+falso = instalar_armazenamento()
+rodadas({"texto": "Não achei essa foto."}, {"texto": "Não achei essa foto no caso."})
+eventos = list(chat_peticao.conversar("caso-1", "inclua a foto do machucado na petição", "advogado-1"))
+checar(
+    not ((eventos[-1]["mensagem"]["payload"] or {}).get("acoes")),
+    "pedido de foto sem ferramenta não vira revisão de texto",
+)
+
+# Pergunta que só contém o verbo não pode gerar cartão.
+falso = instalar_armazenamento()
+rodadas({"texto": "Vale a pena incluir, sim: há prova documental."})
+eventos = list(chat_peticao.conversar("caso-1", "Devo incluir dano moral na petição?", "advogado-1"))
+checar(
+    not ((eventos[-1]["mensagem"]["payload"] or {}).get("acoes")),
+    "«Devo incluir…?» é consulta: responde e pronto",
+)
+
+
 # ------------------------------------- 9. o corpo que sai pela rede, de verdade
 
 print("\n9. O que é enviado ao modelo (sem dublê de `_transmitir`)")
@@ -810,10 +887,15 @@ rodadas(
 )
 primeira = list(chat_peticao.conversar("caso-1", "qual a súmula da estabilidade?", "advogado-1"))[-1]
 checar(len(idas_a_internet) == 1, "a primeira pergunta vai à internet")
+gravada = next(m for m in falso.mensagens if m["id"] == primeira["mensagem"]["id"])
 checar(
-    (primeira["mensagem"]["payload"] or {}).get("pesquisas", [{}])[0].get("pergunta")
+    (gravada["payload"] or {}).get("pesquisas", [{}])[0].get("pergunta")
     == "Súmula 378 TST estabilidade",
     "e a pesquisa fica gravada na resposta",
+)
+checar(
+    "pesquisas" not in (primeira["mensagem"]["payload"] or {}),
+    "mas não viaja de volta ao navegador, que não a lê",
 )
 
 sistemas: list[str] = []
@@ -858,6 +940,148 @@ for m in falso.mensagens:
     if (m.get("payload") or {}).get("pesquisas"):
         m["criado_em"] = "2020-01-01T00:00:00"
 checar(chat_peticao._pesquisas_da_conversa("conversa-1") == [], "pesquisa vencida não é lembrada")
+
+
+# ------------------------------------------- robustez do transporte e do histórico
+
+print("\n13. Robustez: falha passageira, id de chamada, histórico e fechamento")
+
+chat_peticao._transmitir = transmitir_de_verdade  # type: ignore[assignment]
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+chat_peticao.executar_ferramenta = lambda nome, caso_id, argumentos: {"existe": True}  # type: ignore[assignment]
+chat_peticao.PAUSA_ANTES_DE_REPETIR_S = 0
+
+
+class FluxoComStatus(FluxoFalso):
+    def __init__(self, status, linhas=(), texto=""):
+        super().__init__(list(linhas))
+        self.status_code = status
+        self.text = texto
+
+    def read(self):
+        return b""
+
+
+def usar_fluxos(*fluxos):
+    enviados: list[dict] = []
+
+    def falso_stream(metodo, url, *, headers=None, json=None, timeout=None):
+        enviados.append(json)
+        return fluxos[len(enviados) - 1]
+
+    chat_peticao.httpx.stream = falso_stream  # type: ignore[assignment]
+    return enviados
+
+
+OK = [sse({"content": "Tudo certo."}), "data: [DONE]"]
+
+falso = instalar_armazenamento()
+enviados = usar_fluxos(FluxoComStatus(503, texto="sobrecarga"), FluxoFalso(OK))
+eventos = list(chat_peticao.conversar("caso-1", "em que versão está?", "advogado-1"))
+checar(
+    eventos[-1]["tipo"] == "fim" and eventos[-1]["mensagem"]["conteudo"] == "Tudo certo.",
+    "503 do provedor: a segunda tentativa salva a resposta",
+)
+checar(len(enviados) == 2, "e foram exatamente duas idas ao modelo")
+
+falso = instalar_armazenamento()
+enviados = usar_fluxos(FluxoComStatus(400, texto="corpo inválido"), FluxoFalso(OK))
+eventos = list(chat_peticao.conversar("caso-1", "em que versão está?", "advogado-1"))
+checar(eventos[-1]["tipo"] == "erro" and len(enviados) == 1, "400 é erro nosso: não se repete")
+
+falso = instalar_armazenamento()
+enviados = usar_fluxos(
+    FluxoFalso(
+        [
+            sse({"tool_calls": [{"index": 0, "type": "function", "function": {"name": "ler_minuta", "arguments": "{}"}}]}),
+            "data: [DONE]",
+        ]
+    ),
+    FluxoFalso(OK),
+)
+list(chat_peticao.conversar("caso-1", "em que versão está?", "advogado-1"))
+segunda = enviados[1]["messages"]
+chamada_enviada = next(m for m in segunda if m.get("tool_calls"))["tool_calls"][0]
+resposta_da_ferramenta = next(m for m in segunda if m["role"] == "tool")
+checar(
+    bool(chamada_enviada["id"]) and resposta_da_ferramenta["tool_call_id"] == chamada_enviada["id"],
+    "provedor sem id de chamada: o servidor cria um, e a resposta da ferramenta aponta para ele",
+)
+
+# O histórico leva as propostas como chamadas reais — e deixa os erros de fora.
+falso = instalar_armazenamento()
+falso.registrar_mensagem("conversa-1", papel="USER", conteudo="tira o dano moral", natureza="PERGUNTA")
+falso.registrar_mensagem(
+    "conversa-1",
+    papel="ASSISTANT",
+    conteudo="Preparei a alteração.",
+    natureza="RESPOSTA",
+    payload={"acoes": [{"tipo": "REVISAR", "pedido": "retire o dano moral", "sensivel": True}]},
+)
+falso.registrar_mensagem("conversa-1", papel="ASSISTANT", conteudo="Não consegui responder", natureza="ERRO")
+historico = chat_peticao._historico_para_o_modelo("conversa-1")
+checar(
+    [m["role"] for m in historico] == ["user", "assistant", "tool", "assistant"],
+    "a proposta volta como chamada + resultado, antes do texto que a acompanhou",
+)
+checar(
+    historico[1]["tool_calls"][0]["function"]["name"] == "propor_revisao_da_peticao"
+    and "retire o dano moral" in historico[1]["tool_calls"][0]["function"]["arguments"],
+    "com a ferramenta e o pedido de verdade",
+)
+checar(
+    historico[2]["tool_call_id"] == historico[1]["tool_calls"][0]["id"]
+    and all("Não consegui responder" not in str(m.get("content")) for m in historico),
+    "o resultado aponta para a chamada, e a falha antiga não entra",
+)
+
+# Esgotou as rodadas: o fechamento é feito SEM ferramentas.
+falso = instalar_armazenamento()
+usos: list[bool] = []
+chamadas_sem_fim = [{"chamadas": [chamada("ler_minuta", {})]} for _ in range(chat_peticao.MAXIMO_DE_PASSOS)]
+sequencia = iter([*chamadas_sem_fim, {"texto": "Apurei o que deu: a minuta está na versão 3."}])
+
+
+def fecha_sem_ferramentas(mensagens, ferramentas=True):
+    usos.append(ferramentas)
+    atual = next(sequencia)
+    yield {
+        "tipo": "mensagem",
+        "mensagem": {
+            "role": "assistant",
+            "content": atual.get("texto") or "",
+            "tool_calls": atual.get("chamadas") or [],
+        },
+    }
+
+
+chat_peticao._transmitir = fecha_sem_ferramentas  # type: ignore[assignment]
+eventos = list(chat_peticao.conversar("caso-1", "olha tudo", "advogado-1"))
+checar(usos[-1] is False and all(usos[:-1]), "o fechamento por limite de rodadas não oferece ferramentas")
+checar(
+    eventos[-1]["mensagem"]["conteudo"] == "Apurei o que deu: a minuta está na versão 3.",
+    "e a resposta final chega, em vez de «não consegui formular»",
+)
+
+# O que só o servidor usa não viaja ao navegador.
+visto = chat_peticao._como_mensagem(
+    {
+        "id": "m", "papel": "USER", "conteudo": "x", "natureza": "CONTEXTO", "criado_em": "",
+        "payload": {"arquivo": "a.pdf", "texto_extraido": "x" * 1000, "pesquisas": [{"a": 1}]},
+    }
+)
+checar(visto["payload"] == {"arquivo": "a.pdf"}, "texto extraído e pesquisas ficam no servidor")
+
+# Quebras de linha do pedido sobrevivem.
+checar(
+    chat_peticao._limpar_texto("troque   o trecho:\n\n\n\nnovo   parágrafo\r\nlinha dois")
+    == "troque o trecho:\n\nnovo parágrafo\nlinha dois",
+    "espaço demais sai, parágrafo fica",
+)
+checar(
+    chat_peticao._propor_revisao("caso-1", pedido="troque por:\nA\nB")["pedido"] == "troque por:\nA\nB",
+    "o pedido de revisão mantém os parágrafos que o advogado colou",
+)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ export interface FonteDaWeb {
 
 /** Uma alteração que a IA PROPÔS. Nada aqui aconteceu ainda. */
 export interface AcaoProposta {
-  tipo: "REVISAR" | "GERAR" | "ANALISAR_DOCUMENTOS" | "PECA_ANEXA" | "INCLUIR_FOTO";
+  tipo: "REVISAR" | "GERAR" | "ANALISAR_DOCUMENTOS" | "PECA_ANEXA" | "INCLUIR_FOTO" | "INCLUIR_TRECHO";
   pedido?: string;
   titulo?: string;
   motivo?: string;
@@ -54,6 +54,8 @@ export interface AcaoProposta {
   secao?: string;
   depoisDe?: string;
   legenda?: string;
+  /** INCLUIR_TRECHO: a passagem literal do documento (`anexoId`) que entra como citação. */
+  trecho?: string;
 }
 
 export interface MensagemDoChat {
@@ -69,6 +71,9 @@ export interface MensagemDoChat {
   podeRepetir: boolean;
   /** A pergunta que produziu a falha — é ela que o "tentar de novo" reenvia. */
   perguntaOriginal: string;
+  /** Em mensagem de EVENTO nascida de uma proposta confirmada: qual proposta foi
+   *  executada. É o que faz o cartão continuar «Executada» depois do refresh. */
+  acaoExecutada?: { tipo: string; pedido: string; titulo: string; anexoId: string };
 }
 
 export interface ChatDaPeticao {
@@ -126,6 +131,7 @@ function traduzirAcao(bruta: Record<string, unknown>): AcaoProposta {
     secao: bruta.secao ? String(bruta.secao) : undefined,
     depoisDe: bruta.depois_de ? String(bruta.depois_de) : undefined,
     legenda: bruta.legenda ? String(bruta.legenda) : undefined,
+    trecho: bruta.trecho ? String(bruta.trecho) : undefined,
   };
 }
 
@@ -152,6 +158,23 @@ export function traduzirMensagem(crua: MensagemCrua): MensagemDoChat {
       : [],
     podeRepetir: Boolean(payload.pode_repetir),
     perguntaOriginal: payload.pergunta ? String(payload.pergunta) : "",
+    acaoExecutada: acaoExecutadaDe(crua, payload),
+  };
+}
+
+/** Só vale a mensagem de sucesso (EVENTO) gerada pelo chat: a falha da mesma ação também
+ *  guarda a proposta, e ela NÃO pode marcar o cartão como executado. */
+function acaoExecutadaDe(
+  crua: MensagemCrua,
+  payload: Record<string, unknown>,
+): MensagemDoChat["acaoExecutada"] {
+  const acao = payload.acao as Record<string, unknown> | undefined;
+  if (crua.natureza !== "EVENTO" || payload.origem !== "chat" || !acao) return undefined;
+  return {
+    tipo: String(acao.tipo ?? ""),
+    pedido: String(acao.pedido ?? ""),
+    titulo: String(acao.titulo ?? ""),
+    anexoId: String(acao.anexo_id ?? ""),
   };
 }
 
@@ -221,7 +244,7 @@ export async function perguntarNoChat(
   mensagem: string,
   aoEvento: (evento: EventoDoChat) => void,
   sinal?: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   const resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/chat-peticao/mensagens`), {
     method: "POST",
     credentials: CREDENCIAIS,
@@ -245,44 +268,63 @@ export async function perguntarNoChat(
    * sobra, uma resposta longa perde justamente o fim — que é onde vem a mensagem
    * gravada, com as fontes e as propostas. */
   let sobra = "";
+  /* `true` só quando o servidor entregou o desfecho (`fim` ou `erro`). Uma conexão que
+   * cai no meio devolve `false`: quem chamou sabe que a resposta pode estar pronta no
+   * servidor sem ter chegado aqui, e vai buscá-la em vez de mostrar uma tela muda. */
+  let concluiu = false;
 
-  for (;;) {
-    const { done, value } = await leitor.read();
-    if (done) break;
-    sobra += decodificador.decode(value, { stream: true });
-    const partes = sobra.split("\n\n");
-    sobra = partes.pop() ?? "";
-    for (const parte of partes) {
-      const linha = parte.split("\n").find((l) => l.startsWith("data:"));
-      if (!linha) continue;
-      let bruto: Record<string, unknown>;
-      try {
-        bruto = JSON.parse(linha.slice(5).trim());
-      } catch {
-        continue;
-      }
-      const tipo = String(bruto.tipo ?? "");
-      if (tipo === "conversa" && bruto.pergunta) {
-        aoEvento({ tipo: "pergunta", mensagem: traduzirMensagem(bruto.pergunta as MensagemCrua) });
-      } else if (tipo === "etapa") {
-        aoEvento({ tipo: "etapa", texto: String(bruto.texto ?? "") });
-      } else if (tipo === "delta") {
-        aoEvento({ tipo: "delta", texto: String(bruto.texto ?? "") });
-      } else if (tipo === "recomeco") {
-        aoEvento({ tipo: "recomeco" });
-      } else if (tipo === "fim") {
-        aoEvento({ tipo: "fim", mensagem: traduzirMensagem(bruto.mensagem as MensagemCrua) });
-      } else if (tipo === "erro") {
-        aoEvento({
-          tipo: "erro",
-          texto: String(bruto.texto ?? "Não foi possível responder."),
-          mensagem: bruto.mensagem
-            ? traduzirMensagem(bruto.mensagem as MensagemCrua)
-            : undefined,
-        });
-      }
+  function tratar(parte: string) {
+    const linha = parte.split("\n").find((l) => l.startsWith("data:"));
+    if (!linha) return;
+    let bruto: Record<string, unknown>;
+    try {
+      bruto = JSON.parse(linha.slice(5).trim());
+    } catch {
+      return;
+    }
+    const tipo = String(bruto.tipo ?? "");
+    if (tipo === "conversa" && bruto.pergunta) {
+      aoEvento({ tipo: "pergunta", mensagem: traduzirMensagem(bruto.pergunta as MensagemCrua) });
+    } else if (tipo === "etapa") {
+      aoEvento({ tipo: "etapa", texto: String(bruto.texto ?? "") });
+    } else if (tipo === "delta") {
+      aoEvento({ tipo: "delta", texto: String(bruto.texto ?? "") });
+    } else if (tipo === "recomeco") {
+      aoEvento({ tipo: "recomeco" });
+    } else if (tipo === "fim") {
+      concluiu = true;
+      aoEvento({ tipo: "fim", mensagem: traduzirMensagem(bruto.mensagem as MensagemCrua) });
+    } else if (tipo === "erro") {
+      concluiu = true;
+      aoEvento({
+        tipo: "erro",
+        texto: String(bruto.texto ?? "Não foi possível responder."),
+        mensagem: bruto.mensagem
+          ? traduzirMensagem(bruto.mensagem as MensagemCrua)
+          : undefined,
+      });
     }
   }
+
+  for (;;) {
+    let leitura: ReadableStreamReadResult<Uint8Array>;
+    try {
+      leitura = await leitor.read();
+    } catch (falha) {
+      // Cancelado por nós (troca de caso): não é queda de conexão.
+      if (sinal?.aborted) throw falha;
+      return concluiu;
+    }
+    if (leitura.done) break;
+    sobra += decodificador.decode(leitura.value, { stream: true });
+    const partes = sobra.split("\n\n");
+    sobra = partes.pop() ?? "";
+    partes.forEach(tratar);
+  }
+  // O último evento pode chegar sem a linha em branco que o fecha — e é justamente o `fim`.
+  sobra += decodificador.decode();
+  if (sobra.trim()) tratar(sobra);
+  return concluiu;
 }
 
 /** Executa uma proposta que o advogado confirmou. Nada é aplicado sem passar por aqui. */
@@ -305,6 +347,7 @@ export async function executarAcaoDoChat(
         secao: acao.secao ?? "",
         depois_de: acao.depoisDe ?? "",
         legenda: acao.legenda ?? "",
+        trecho: acao.trecho ?? "",
       }),
     },
   );
