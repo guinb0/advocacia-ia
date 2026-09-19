@@ -62,7 +62,7 @@ export default function ConfiguracaoAssinatura() {
 
   useEffect(() => {
     void recarregar();
-    void statusTactiq().then(setTactiq).catch((falha) => {
+    void statusTactiq(true).then(setTactiq).catch((falha) => {
       setTactiq(null);
       setErro(falha instanceof Error ? `Tactiq: ${falha.message}` : "Tactiq está indisponível no momento.");
     });
@@ -160,6 +160,7 @@ export default function ConfiguracaoAssinatura() {
               {tactiq?.conectado ? "Reconectar Tactiq" : "Conectar Tactiq"}
             </Botao>
             {tactiq?.conectado && <span className="text-sm text-verde-700">Conta conectada — transcrições prontas para sincronizar.</span>}
+            {tactiq && !tactiq.conectado && tactiq.motivo && <span className="text-sm text-critico">{tactiq.motivo}</span>}
           </div>
         </div>
 

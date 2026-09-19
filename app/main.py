@@ -2523,9 +2523,9 @@ def eu(usuario: auth.Usuario = Depends(auth.usuario_atual)):
 
 
 @app.get("/api/tactiq/status")
-def tactiq_status(usuario: auth.Usuario = Depends(auth.usuario_atual)):
-    """Estado seguro: nunca devolve token ao navegador."""
-    return tactiq.status(usuario.id)
+def tactiq_status(verificar: bool = False, usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Estado seguro: nunca devolve token ao navegador. `verificar` testa o token no Tactiq."""
+    return tactiq.status(usuario.id, verificar)
 
 
 @app.get("/api/tactiq/ferramentas")

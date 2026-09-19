@@ -1379,9 +1379,9 @@ export async function listarProvedoresAssinatura(): Promise<StatusProvedorAssina
   return dados.provedores;
 }
 
-export interface StatusTactiq { conectado: boolean; conectado_em: string; servidor: string; disponivel?: boolean }
-export async function statusTactiq(): Promise<StatusTactiq> {
-  return comoJson<StatusTactiq>(await buscar("/api/tactiq/status"));
+export interface StatusTactiq { conectado: boolean; conectado_em: string; servidor: string; disponivel?: boolean; motivo?: string }
+export async function statusTactiq(verificar = false): Promise<StatusTactiq> {
+  return comoJson<StatusTactiq>(await buscar(`/api/tactiq/status${verificar ? "?verificar=true" : ""}`));
 }
 export async function conectarTactiq(): Promise<{ url: string }> {
   return comoJson<{ url: string }>(await buscar("/api/tactiq/conectar", { method: "POST" }));
