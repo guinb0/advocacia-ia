@@ -51,14 +51,26 @@
   color: var(--acao);
 }
 
+.blocoDoTitulo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .titulo {
   font-size: var(--t-base);
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
   color: var(--tinta);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.subtitulo {
+  font-size: var(--t-xs);
+  line-height: 1.3;
+  color: var(--tinta-3);
 }
 
 .acoesDoCabecalho {
@@ -79,9 +91,29 @@
   cursor: pointer;
 }
 
-.iconeBotao:hover {
+.iconeBotao:hover:not(:disabled) {
   background: var(--papel-3);
   color: var(--tinta-2);
+}
+
+.iconeBotao:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* «Nova conversa» é a ação principal do cabeçalho: ganha a cor de ação. */
+.iconeDestaque {
+  color: var(--acao);
+}
+
+.iconeDestaque:hover:not(:disabled) {
+  background: var(--acao-clara);
+  color: var(--acao);
+}
+
+.iconeAtivo {
+  background: var(--acao-clara);
+  color: var(--acao);
 }
 
 /* ------------------------------------------------------------------- conversa */
@@ -232,10 +264,14 @@
 }
 
 .andamento {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  align-self: flex-start;
   gap: 8px;
   margin: 0;
+  padding: 6px 12px;
+  border-radius: var(--raio-pill);
+  background: var(--papel-2);
   font-size: var(--t-sm);
   color: var(--tinta-3);
 }
@@ -401,7 +437,7 @@
   width: 42px;
   height: 42px;
   border: none;
-  border-radius: var(--raio-sm);
+  border-radius: var(--raio-pill);
   background: var(--acao);
   color: #ffffff;
   cursor: pointer;
@@ -409,11 +445,257 @@
 }
 
 .enviar:hover:not(:disabled) {
-  opacity: 0.9;
+  opacity: 0.92;
+  box-shadow: var(--sombra-2);
 }
 
 .enviar:disabled {
   background: var(--papel-3);
   color: var(--tinta-3);
   cursor: default;
+}
+
+/* ------------------------------------------------------------ base do caso */
+
+/* Uma faixa fina, sempre à vista: mostra que o chat NÃO está relendo tudo a cada pergunta.
+ * Quem vê «8 documentos lidos · 3 pesquisas» entende por que a resposta veio rápido. */
+.contexto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--borda);
+  background: var(--papel);
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+.contextoRotulo {
+  margin-right: 2px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chip {
+  padding: 2px 8px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-pill);
+  background: var(--papel-2);
+  color: var(--tinta-2);
+  white-space: nowrap;
+}
+
+.chipAtencao {
+  border-color: var(--atencao-borda);
+  background: var(--atencao-claro);
+  color: var(--atencao);
+}
+
+.atualizarBase {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--raio-pill);
+  background: none;
+  color: var(--acao);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.atualizarBase:hover:not(:disabled) {
+  background: var(--acao-clara);
+}
+
+.atualizarBase:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.girar {
+  animation: girar 0.9s linear infinite;
+}
+
+@keyframes girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .girar {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------- histórico */
+
+/* Fecha ao clicar fora: o fundo é transparente e cobre o painel inteiro. */
+.fundoDoHistorico {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+}
+
+.historico {
+  position: absolute;
+  top: 54px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70%, 420px);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+  box-shadow: var(--sombra-2);
+  overflow: hidden;
+}
+
+.historicoTopo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--borda);
+  background: var(--papel-2);
+  font-size: var(--t-sm);
+  color: var(--tinta);
+}
+
+.novaNoHistorico {
+  padding: 4px 10px;
+  border: 1px solid var(--acao-borda);
+  border-radius: var(--raio-pill);
+  background: var(--acao-clara);
+  color: var(--acao);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.novaNoHistorico:hover {
+  background: var(--acao);
+  color: #ffffff;
+}
+
+.listaDeConversas {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.itemDaConversa {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--raio-sm);
+  border-left: 3px solid transparent;
+}
+
+.itemDaConversa:hover {
+  background: var(--papel-2);
+}
+
+.itemAtivo {
+  border-left-color: var(--acao);
+  background: var(--acao-clara);
+}
+
+.itemCorpo {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.itemTitulo {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--tinta);
+}
+
+.itemMeta {
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+/* A lixeira só aparece quando a linha está em foco: sempre visível, viraria convite a
+ * apagar por engano. No toque, onde não há hover, ela fica visível. */
+.itemExcluir {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  border: none;
+  border-radius: var(--raio-sm);
+  background: none;
+  color: var(--tinta-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transicao), color var(--transicao);
+}
+
+.itemDaConversa:hover .itemExcluir,
+.itemExcluir:focus-visible {
+  opacity: 1;
+}
+
+.itemExcluir:hover {
+  color: var(--critico);
+}
+
+@media (hover: none) {
+  .itemExcluir {
+    opacity: 0.7;
+  }
+}
+
+/* ------------------------------------------------------------------ entrada */
+
+/* Mensagem nova entra com um deslize curto: dá continuidade ao que chega sem chamar
+ * atenção. Só a última costuma ser nova (as anteriores já estão na tela, e a animação
+ * roda uma vez na montagem), e quem prefere menos movimento não a vê. */
+.pergunta,
+.resposta {
+  animation: entrar 0.18s ease-out;
+}
+
+@keyframes entrar {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pergunta,
+  .resposta {
+    animation: none;
+  }
 }

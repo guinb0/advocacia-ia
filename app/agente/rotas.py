@@ -1175,13 +1175,50 @@ def _caso_ref(caso_id: str) -> str:
 
 @roteador.get("/casos/{caso_id}/chat-peticao")
 def abrir_chat_peticao(
-    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+    caso_id: str,
+    conversa_id: str = "",
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> dict[str, Any]:
-    """A transcrição inteira desta conversa — é o que o reload da página reabre."""
+    """A transcrição inteira de uma conversa — é o que o reload da página reabre.
+
+    Sem `conversa_id`, a mais recente desta pessoa neste caso.
+    """
     try:
-        return chat_peticao.abrir(caso_id, usuario.id)
+        return chat_peticao.abrir(caso_id, usuario.id, conversa_id)
     except chat_peticao.ErroDoChat as erro:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(erro)) from erro
+
+
+@roteador.get("/casos/{caso_id}/chat-peticao/conversas")
+def listar_conversas_do_chat_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> list[dict[str, Any]]:
+    """O histórico do chat desta petição: as conversas desta pessoa, da mais recente."""
+    return chat_peticao.listar_conversas(caso_id, usuario.id)
+
+
+@roteador.post("/casos/{caso_id}/chat-peticao/conversas", status_code=status.HTTP_201_CREATED)
+def nova_conversa_do_chat_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
+    """Abre um chat em branco (ou devolve o que já está em branco) e o entrega aberto."""
+    try:
+        return chat_peticao.nova_conversa(caso_id, usuario.id)
+    except chat_peticao.ErroDoChat as erro:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(erro)) from erro
+
+
+@roteador.delete(
+    "/casos/{caso_id}/chat-peticao/conversas/{conversa_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def excluir_conversa_do_chat_peticao(
+    caso_id: str, conversa_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> Response:
+    try:
+        chat_peticao.excluir_conversa(caso_id, usuario.id, conversa_id)
+    except chat_peticao.ErroDoChat as erro:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(erro)) from erro
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @roteador.get("/casos/{caso_id}/chat-peticao/documentos")
@@ -1194,10 +1231,27 @@ def documentos_do_chat_peticao(
     return chat_peticao.documentos_citaveis(caso_id)
 
 
+@roteador.get("/casos/{caso_id}/chat-peticao/contexto")
+def contexto_do_chat_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
+    """Os números da base de contexto do caso: documentos lidos, pesquisas e buscas já feitas."""
+    return chat_peticao.resumo_do_contexto(caso_id)
+
+
+@roteador.post("/casos/{caso_id}/chat-peticao/contexto/atualizar")
+def atualizar_contexto_do_chat_peticao(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
+    """Refaz o levantamento dos documentos do caso (as pesquisas na web continuam guardadas)."""
+    return chat_peticao.atualizar_contexto(caso_id)
+
+
 @roteador.post("/casos/{caso_id}/chat-peticao/mensagens")
 def responder_no_chat_peticao(
     caso_id: str,
     mensagem: str = Body(..., embed=True, min_length=1, max_length=10_000),
+    conversa_id: str = Body("", embed=True),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> StreamingResponse:
     """A pergunta, respondida em fluxo (SSE): `etapa`, `delta`, `fim` ou `erro`.
@@ -1218,7 +1272,7 @@ def responder_no_chat_peticao(
         quem voltar a abrir a conversa a encontra.
         """
         try:
-            for evento in chat_peticao.conversar(caso_id, mensagem, usuario.id):
+            for evento in chat_peticao.conversar(caso_id, mensagem, usuario.id, conversa_id):
                 fila.put(evento)
         except chat_peticao.ErroDoChat as erro:
             fila.put({"tipo": "erro", "texto": str(erro)})
@@ -1286,6 +1340,7 @@ async def adicionar_contexto_ao_chat(
     caso_id: str,
     arquivo: UploadFile = File(...),
     relevancia: str = Form(""),
+    conversa_id: str = Form(""),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> dict[str, Any]:
     """Anexa material privado de contexto ao chat sem tratá-lo como prova do checklist."""
@@ -1298,7 +1353,7 @@ async def adicionar_contexto_ao_chat(
     try:
         texto = _texto_do_contexto(nome, conteudo)
         mensagem = chat_peticao.adicionar_contexto(
-            caso_id, usuario.id, arquivo=nome, relevancia=relevancia, texto=texto
+            caso_id, usuario.id, arquivo=nome, relevancia=relevancia, texto=texto, conversa_id=conversa_id
         )
     except (ValueError, entrevista_lib.ErroDeLeitura, chat_peticao.ErroDoChat) as erro:
         raise HTTPException(422, str(erro)) from erro
@@ -1321,6 +1376,8 @@ class AcaoDoChat(BaseModel):
     legenda: str = ""
     # INCLUIR_TRECHO: a passagem literal do documento (`anexo_id`) que entra como citação.
     trecho: str = ""
+    # Em qual conversa do histórico o resultado é registrado (vazio = a mais recente).
+    conversa_id: str = ""
 
 
 @roteador.post("/casos/{caso_id}/chat-peticao/acoes")
@@ -1335,12 +1392,18 @@ def executar_acao_do_chat(
     painel pode fazer pelo chat. O que muda é o registro — a revisão nascida aqui vai
     para o histórico com `origem: chat`.
     """
-    return chat_peticao.executar_acao(
-        caso_id,
-        usuario.id,
-        acao.model_dump(),
-        autor=usuario.nome or usuario.id,
-    )
+    dados = acao.model_dump()
+    conversa_id = str(dados.pop("conversa_id", "") or "")
+    try:
+        return chat_peticao.executar_acao(
+            caso_id,
+            usuario.id,
+            dados,
+            autor=usuario.nome or usuario.id,
+            conversa_id=conversa_id,
+        )
+    except chat_peticao.ErroDoChat as erro:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(erro)) from erro
 
 
 @roteador.post("/casos/{caso_id}/chat-peticao/eventos")
@@ -1348,6 +1411,7 @@ def registrar_evento_do_chat(
     caso_id: str,
     tipo: str = Body(..., embed=True, max_length=60),
     dados: dict[str, Any] = Body(default_factory=dict, embed=True),
+    conversa_id: str = Body("", embed=True),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> dict[str, Any]:
     """A IA contando na conversa o que um BOTÃO da tela acabou de fazer.
@@ -1356,5 +1420,8 @@ def registrar_evento_do_chat(
     uma geração ou de uma análise que o advogado mais precisa saber o que mudou e o
     que continua sem prova.
     """
-    mensagem = chat_peticao.registrar_evento(caso_id, usuario.id, tipo, dados)
+    try:
+        mensagem = chat_peticao.registrar_evento(caso_id, usuario.id, tipo, dados, conversa_id)
+    except chat_peticao.ErroDoChat as erro:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(erro)) from erro
     return {"mensagem": mensagem}

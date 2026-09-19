@@ -76,10 +76,56 @@ export interface MensagemDoChat {
   acaoExecutada?: { tipo: string; pedido: string; titulo: string; anexoId: string };
 }
 
+/** Uma conversa do histórico do chat desta petição. */
+export interface ResumoDaConversa {
+  id: string;
+  titulo: string;
+  criadoEm: string;
+  atualizadoEm: string;
+  /** Quantas perguntas o advogado fez — zero é uma conversa em branco. */
+  perguntas: number;
+}
+
+/** O que a base de contexto do caso já tem (documentos lidos, pesquisas e buscas feitas). */
+export interface ResumoDoContexto {
+  documentosLidos: number;
+  documentosSemLeitura: number;
+  pesquisas: number;
+  buscas: number;
+  atualizadoEm: string;
+  indisponivel: boolean;
+}
+
+function traduzirConversa(bruta: Record<string, unknown>): ResumoDaConversa {
+  return {
+    id: String(bruta.id ?? ""),
+    titulo: String(bruta.titulo ?? "Conversa"),
+    criadoEm: String(bruta.criado_em ?? ""),
+    atualizadoEm: String(bruta.atualizado_em ?? ""),
+    perguntas: Number(bruta.perguntas ?? 0),
+  };
+}
+
+function traduzirContexto(bruto: unknown): ResumoDoContexto | null {
+  if (!bruto || typeof bruto !== "object") return null;
+  const c = bruto as Record<string, unknown>;
+  return {
+    documentosLidos: Number(c.documentos_lidos ?? 0),
+    documentosSemLeitura: Number(c.documentos_sem_leitura ?? 0),
+    pesquisas: Number(c.pesquisas ?? 0),
+    buscas: Number(c.buscas ?? 0),
+    atualizadoEm: String(c.atualizado_em ?? ""),
+    indisponivel: Boolean(c.indisponivel),
+  };
+}
+
 export interface ChatDaPeticao {
   id: string;
   casoId: string;
   mensagens: MensagemDoChat[];
+  /** O histórico: as conversas desta pessoa sobre esta petição, da mais recente. */
+  conversas: ResumoDaConversa[];
+  contexto: ResumoDoContexto | null;
   /** Sem chave do modelo o campo de pergunta não deve nem aceitar texto. */
   modeloDisponivel: boolean;
   webDisponivel: boolean;
@@ -178,23 +224,69 @@ function acaoExecutadaDe(
   };
 }
 
-export async function abrirChatDaPeticao(casoId: string): Promise<ChatDaPeticao> {
-  const corpo = await chamarAgente<{
-    id: string;
-    caso_id: string;
-    mensagens: MensagemCrua[];
-    modelo_disponivel: boolean;
-    web_disponivel: boolean;
-    documentos?: unknown;
-  }>(`/api/agente/casos/${casoId}/chat-peticao`);
+interface ChatCru {
+  id: string;
+  caso_id: string;
+  mensagens: MensagemCrua[];
+  modelo_disponivel: boolean;
+  web_disponivel: boolean;
+  documentos?: unknown;
+  contexto?: unknown;
+  conversas?: Record<string, unknown>[];
+}
+
+function traduzirChat(corpo: ChatCru): ChatDaPeticao {
   return {
     id: corpo.id,
     casoId: corpo.caso_id,
     mensagens: (corpo.mensagens ?? []).map(traduzirMensagem),
+    conversas: (corpo.conversas ?? []).map(traduzirConversa),
+    contexto: traduzirContexto(corpo.contexto),
     modeloDisponivel: Boolean(corpo.modelo_disponivel),
     webDisponivel: Boolean(corpo.web_disponivel),
     documentos: traduzirDocumentos(corpo.documentos),
   };
+}
+
+/** Abre uma conversa. Sem `conversaId`, a mais recente desta pessoa neste caso. */
+export async function abrirChatDaPeticao(casoId: string, conversaId?: string): Promise<ChatDaPeticao> {
+  const consulta = conversaId ? `?conversa_id=${encodeURIComponent(conversaId)}` : "";
+  return traduzirChat(await chamarAgente<ChatCru>(`/api/agente/casos/${casoId}/chat-peticao${consulta}`));
+}
+
+/** Um chat em branco (ou o que já está em branco), já aberto. */
+export async function criarConversaDoChat(casoId: string): Promise<ChatDaPeticao> {
+  return traduzirChat(
+    await chamarAgente<ChatCru>(`/api/agente/casos/${casoId}/chat-peticao/conversas`, { method: "POST" }),
+  );
+}
+
+/** O histórico do chat desta petição, da conversa mais recente para a mais antiga. */
+export async function listarConversasDoChat(casoId: string): Promise<ResumoDaConversa[]> {
+  const lista = await chamarAgente<Record<string, unknown>[]>(
+    `/api/agente/casos/${casoId}/chat-peticao/conversas`,
+  );
+  return (lista ?? []).map(traduzirConversa);
+}
+
+export async function excluirConversaDoChat(casoId: string, conversaId: string): Promise<void> {
+  await chamarAgente<null>(
+    `/api/agente/casos/${casoId}/chat-peticao/conversas/${encodeURIComponent(conversaId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function obterContextoDoChat(casoId: string): Promise<ResumoDoContexto | null> {
+  return traduzirContexto(await chamarAgente<unknown>(`/api/agente/casos/${casoId}/chat-peticao/contexto`));
+}
+
+/** Refaz o levantamento dos documentos do caso. As pesquisas na web continuam guardadas. */
+export async function atualizarContextoDoChat(casoId: string): Promise<ResumoDoContexto | null> {
+  return traduzirContexto(
+    await chamarAgente<unknown>(`/api/agente/casos/${casoId}/chat-peticao/contexto/atualizar`, {
+      method: "POST",
+    }),
+  );
 }
 
 /** Relê os anexos citáveis: um documento enviado pelo checklist com a conversa aberta
@@ -209,10 +301,12 @@ export async function adicionarContextoAoChat(
   casoId: string,
   arquivo: File,
   relevancia: string,
+  conversaId = "",
 ): Promise<{ mensagem: MensagemDoChat; caracteresLidos: number }> {
   const corpo = new FormData();
   corpo.append("arquivo", arquivo);
   corpo.append("relevancia", relevancia);
+  corpo.append("conversa_id", conversaId);
   const resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/chat-peticao/contextos`), {
     method: "POST", credentials: CREDENCIAIS, headers: cabecalhos(), body: corpo,
   });
@@ -244,12 +338,13 @@ export async function perguntarNoChat(
   mensagem: string,
   aoEvento: (evento: EventoDoChat) => void,
   sinal?: AbortSignal,
+  conversaId = "",
 ): Promise<boolean> {
   const resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/chat-peticao/mensagens`), {
     method: "POST",
     credentials: CREDENCIAIS,
     headers: cabecalhos({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ mensagem }),
+    body: JSON.stringify({ mensagem, conversa_id: conversaId }),
     signal: sinal,
   });
 
@@ -331,6 +426,7 @@ export async function perguntarNoChat(
 export async function executarAcaoDoChat(
   casoId: string,
   acao: AcaoProposta,
+  conversaId = "",
 ): Promise<{ ok: boolean; mensagem: MensagemDoChat }> {
   const corpo = await chamarAgente<{ ok: boolean; mensagem: MensagemCrua }>(
     `/api/agente/casos/${casoId}/chat-peticao/acoes`,
@@ -348,6 +444,7 @@ export async function executarAcaoDoChat(
         depois_de: acao.depoisDe ?? "",
         legenda: acao.legenda ?? "",
         trecho: acao.trecho ?? "",
+        conversa_id: conversaId,
       }),
     },
   );
@@ -359,10 +456,11 @@ export async function registrarEventoNoChat(
   casoId: string,
   tipo: string,
   dados: Record<string, unknown> = {},
+  conversaId = "",
 ): Promise<MensagemDoChat | null> {
   const corpo = await chamarAgente<{ mensagem: MensagemCrua | null }>(
     `/api/agente/casos/${casoId}/chat-peticao/eventos`,
-    { method: "POST", body: JSON.stringify({ tipo, dados }) },
+    { method: "POST", body: JSON.stringify({ tipo, dados, conversa_id: conversaId }) },
   );
   return corpo.mensagem ? traduzirMensagem(corpo.mensagem) : null;
 }

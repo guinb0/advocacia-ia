@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.agente import chat_peticao, rotas  # noqa: E402
+from app.agente import chat_peticao, contexto_caso, rotas  # noqa: E402
 
 falhas = 0
 
@@ -86,9 +86,19 @@ class ArmazenamentoFalso:
         return True
 
 
+#: A base de contexto do caso, em memória. SEM isto o teste gravaria no SQL Server de
+#: verdade (o `.env` da máquina aponta para ele) a cada pergunta simulada.
+BASE_EM_MEMORIA: dict[str, dict] = {}
+contexto_caso._ler = lambda caso_id: json.loads(json.dumps(BASE_EM_MEMORIA.get(caso_id, {})))  # type: ignore[assignment]
+contexto_caso._gravar = lambda caso_id, dados: BASE_EM_MEMORIA.__setitem__(  # type: ignore[assignment]
+    caso_id, json.loads(json.dumps(dados, default=str))
+)
+
+
 def instalar_armazenamento() -> ArmazenamentoFalso:
     falso = ArmazenamentoFalso()
     chat_peticao.armazenamento = falso  # type: ignore[assignment]
+    BASE_EM_MEMORIA.clear()
     return falso
 
 
@@ -107,7 +117,7 @@ def rodadas(*roteiro: dict):
     """
     sequencia = iter(roteiro)
 
-    def falso(mensagens):
+    def falso(mensagens, **_):
         atual = next(sequencia)
         for pedaco in (atual.get("texto") or ""):
             yield {"tipo": "delta", "texto": pedaco}
@@ -261,7 +271,7 @@ print("\n4. A falha do modelo vira mensagem, não exceção")
 falso = instalar_armazenamento()
 
 
-def modelo_fora_do_ar(mensagens):
+def modelo_fora_do_ar(mensagens, **_):
     raise chat_peticao.ErroDoChat("O modelo não respondeu a tempo.")
     yield  # pragma: no cover — só para a função ser um gerador
 
@@ -328,7 +338,7 @@ checar("Dos pedidos" in resumida, "e o rótulo de cada seção sempre acompanha 
 print("\n7. A rota: o fluxo chega à tela como Server-Sent Events")
 
 
-def eventos_falsos(caso_id, pergunta, usuario):
+def eventos_falsos(caso_id, pergunta, usuario, conversa_id=""):
     yield {"tipo": "etapa", "texto": "Lendo a minuta"}
     yield {"tipo": "delta", "texto": "Olha só: «aspas» e acento"}
     yield {"tipo": "fim", "mensagem": {"id": "m1", "papel": "ASSISTANT", "conteudo": "pronto"}}
@@ -905,7 +915,7 @@ roteiro = iter([
 ])
 
 
-def transmitir_espiando(mensagens):
+def transmitir_espiando(mensagens, **_):
     sistemas.append(mensagens[0]["content"])
     atual = next(roteiro)
     yield {
@@ -1042,7 +1052,7 @@ chamadas_sem_fim = [{"chamadas": [chamada("ler_minuta", {})]} for _ in range(cha
 sequencia = iter([*chamadas_sem_fim, {"texto": "Apurei o que deu: a minuta está na versão 3."}])
 
 
-def fecha_sem_ferramentas(mensagens, ferramentas=True):
+def fecha_sem_ferramentas(mensagens, ferramentas=True, **_):
     usos.append(ferramentas)
     atual = next(sequencia)
     yield {
@@ -1082,6 +1092,290 @@ checar(
     chat_peticao._propor_revisao("caso-1", pedido="troque por:\nA\nB")["pedido"] == "troque por:\nA\nB",
     "o pedido de revisão mantém os parágrafos que o advogado colou",
 )
+
+
+# ------------------------------------------------ 14. consulta repetida na mesma resposta
+
+print("\n14. Não repetir pesquisa nem leitura")
+
+MEMORIA = {
+    "sumula 378 tst estabilidade": {
+        "pergunta": "Súmula 378 TST estabilidade acidentária",
+        "resposta": "A Súmula 378 do TST garante a estabilidade.",
+        "fontes": [{"url": "https://tst.jus.br/s378", "titulo": "TST", "trecho": "", "confianca": "TRIBUNAL"}],
+    }
+}
+checar(
+    chat_peticao._pesquisa_parecida("estabilidade acidentária, Súmula 378 do TST", MEMORIA) is not None,
+    "a mesma pergunta com outras palavras é a mesma pesquisa",
+)
+checar(
+    chat_peticao._pesquisa_parecida("súmula 378 tst estabilidade", MEMORIA) is not None,
+    "e a idêntica continua sendo",
+)
+checar(
+    chat_peticao._pesquisa_parecida("Súmula 378 do STJ", MEMORIA) is None,
+    "mesmo número em OUTRO tribunal não é a mesma pesquisa",
+)
+checar(
+    chat_peticao._pesquisa_parecida("prescrição bienal nas ações trabalhistas", MEMORIA) is None,
+    "assunto diferente pesquisa de novo",
+)
+checar(
+    chat_peticao._chave_da_leitura("ler_minuta", {"completo": True})
+    == chat_peticao._chave_da_leitura("ler_minuta", {"completo": True})
+    and chat_peticao._chave_da_leitura("ler_minuta", {"completo": True})
+    != chat_peticao._chave_da_leitura("ler_minuta", {"completo": False})
+    and chat_peticao._chave_da_leitura("pesquisar_na_web", {"pergunta": "x"}) == ""
+    and chat_peticao._chave_da_leitura("propor_revisao_da_peticao", {"pedido": "x"}) == "",
+    "só leitura é deduplicada: web e propostas ficam de fora",
+)
+
+WEB = {
+    "falhou": False,
+    "resposta": "A Súmula 378 do TST garante a estabilidade.",
+    "fontes": [{"url": "https://tst.jus.br/s378", "titulo": "TST", "trecho": "", "confianca": "TRIBUNAL"}],
+    "fontes_oficiais": 1,
+    "tem_fonte_oficial": True,
+    "aviso": "",
+}
+idas: list[tuple[str, dict]] = []
+
+
+def contando(nome, caso_id, argumentos):
+    idas.append((nome, argumentos))
+    return dict(WEB) if nome == "pesquisar_na_web" else {"existe": True}
+
+
+chat_peticao.executar_ferramenta = contando  # type: ignore[assignment]
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+
+falso = instalar_armazenamento()
+idas.clear()
+rodadas(
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "Súmula 378 TST estabilidade acidentária"}), chamada("ler_minuta", {})]},
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "estabilidade acidentária, Súmula 378 do TST"}), chamada("ler_minuta", {})]},
+    {"texto": "A Súmula 378 do TST garante a estabilidade."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "vale a estabilidade?", "advogado-1"))
+nomes = [n for n, _ in idas]
+checar(eventos[-1]["tipo"] == "fim", "a conversa termina normalmente")
+checar(nomes.count("pesquisar_na_web") == 1, "a pesquisa reformulada NÃO vai de novo à internet")
+checar(nomes.count("ler_minuta") == 1, "a minuta idêntica não é lida duas vezes na mesma resposta")
+
+falso = instalar_armazenamento()
+idas.clear()
+rodadas(
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "Súmula 378 TST"}), chamada("pesquisar_na_web", {"pergunta": "Súmula 378 STJ"})]},
+    {"texto": "A Súmula 378 do TST garante a estabilidade; a do STJ é outro assunto."},
+)
+list(chat_peticao.conversar("caso-1", "compare as súmulas", "advogado-1"))
+checar([n for n, _ in idas].count("pesquisar_na_web") == 2, "tribunais diferentes: duas pesquisas, como deve ser")
+
+falso = instalar_armazenamento()
+idas.clear()
+assuntos = [
+    "dano moral acidente de trabalho valor médio",
+    "prescrição bienal ações trabalhistas",
+    "banco de horas compensação acordo individual",
+    "adicional de insalubridade grau máximo",
+]
+rodadas(
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": a}) for a in assuntos]},
+    {"texto": "Apurei o que deu; o quarto ponto ficou sem conferir."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "pesquise tudo isso", "advogado-1"))
+checar(
+    [n for n, _ in idas].count("pesquisar_na_web") == chat_peticao.LIMITE_PESQUISAS_POR_RESPOSTA,
+    f"assuntos diferentes pesquisam, mas só até {chat_peticao.LIMITE_PESQUISAS_POR_RESPOSTA} por resposta",
+)
+checar(eventos[-1]["tipo"] == "fim", "e a resposta sai mesmo assim, dizendo o que ficou sem conferir")
+
+
+# ------------------------------------------------ 15. a base de contexto e a via rápida
+
+print("\n15. O que já foi levantado fica com o caso; pedido de alteração vai pela via rápida")
+
+chat_peticao._contexto_do_caso = contexto_de_verdade  # type: ignore[assignment]
+idas15: list[str] = []
+
+
+def delegando(nome, caso_id, argumentos):
+    idas15.append(nome)
+    if nome == "pesquisar_na_web":
+        return dict(WEB)
+    return executar_de_verdade(nome, caso_id, argumentos)
+
+
+chat_peticao.executar_ferramenta = delegando  # type: ignore[assignment]
+chat_peticao.peticao_local.carregar = lambda caso_id: None  # type: ignore[assignment]
+
+# 15a. o prompt leva a base: documentos, campos extraídos e buscas.
+capturado: list[str] = []
+
+
+def espia(mensagens, ferramentas=True, forcar=None):
+    capturado.append(mensagens[0]["content"])
+    yield {"tipo": "mensagem", "mensagem": {"role": "assistant", "content": "Consta na base."}}
+
+
+chat_peticao._transmitir = espia  # type: ignore[assignment]
+falso = instalar_armazenamento()
+list(chat_peticao.conversar("caso-1", "o que consta na CTPS?", "advogado-1"))
+checar("BASE DE CONTEXTO DO CASO" in capturado[0], "o prompt leva a base de contexto do caso")
+checar("IMG_4411.jpg" in capturado[0] and "1234567" in capturado[0], "com os documentos e o número que o OCR extraiu")
+checar("USE-A ANTES DE CONSULTAR DE NOVO" in capturado[0], "e a ordem de usá-la antes de consultar")
+checar("USE-O PRIMEIRO" in chat_peticao.INSTRUCAO, "as regras mandam usar a base primeiro")
+
+# 15b. a análise que já mora na petição entra no contexto.
+peticao_com_analise = {
+    "version": 2,
+    "title": "Petição inicial",
+    "status": "IN_REVIEW",
+    "sections": [{"code": "FACTS", "label": "Dos fatos", "content": "x"}],
+    "analise": {
+        "resumo": "Vínculo de 2019 a 2024.",
+        "fatos_confirmados": ["Admissão em 03/03/2019 confirmada pela CTPS"],
+        "lacunas": ["Horas extras sem comprovação"],
+        "acoes_sugeridas": ["Ação de reintegração"],
+    },
+}
+chat_peticao.peticao_local.carregar = lambda caso_id: peticao_com_analise  # type: ignore[assignment]
+chat_peticao.peticao_local.listar_anexas = lambda caso_id: []  # type: ignore[assignment]
+contexto = contexto_de_verdade("caso-1")
+checar(
+    "ANÁLISE JÁ FEITA" in contexto and "Admissão em 03/03/2019" in contexto and "Horas extras sem comprovação" in contexto,
+    "a análise entrevista × documentos da própria petição vai no contexto (sem `ler_analise`)",
+)
+chat_peticao.peticao_local.carregar = lambda caso_id: None  # type: ignore[assignment]
+
+# 15c. a pesquisa de um advogado serve ao outro: a base é do CASO, não da conversa.
+falso = instalar_armazenamento()
+idas15.clear()
+rodadas(
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "Súmula 378 TST estabilidade acidentária"})]},
+    {"texto": "A Súmula 378 do TST garante a estabilidade."},
+)
+list(chat_peticao.conversar("caso-1", "vale a estabilidade?", "advogado-1"))
+checar(idas15.count("pesquisar_na_web") == 1, "o primeiro advogado pesquisa")
+checar(len(BASE_EM_MEMORIA["caso-1"]["pesquisas"]) == 1, "e a pesquisa fica guardada no caso")
+
+chat_peticao.armazenamento = ArmazenamentoFalso()  # type: ignore[assignment]  # outra conversa; a base fica
+idas15.clear()
+rodadas(
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "estabilidade acidentária, Súmula 378 do TST"})]},
+    {"texto": "A Súmula 378 do TST garante a estabilidade."},
+)
+list(chat_peticao.conversar("caso-1", "e a estabilidade?", "advogado-2"))
+checar(idas15.count("pesquisar_na_web") == 0, "o segundo advogado, em outra conversa, NÃO refaz a pesquisa")
+
+# 15d. a busca nos documentos também (a base da 15c continua: é do caso).
+chat_peticao.armazenamento = ArmazenamentoFalso()  # type: ignore[assignment]
+idas15.clear()
+rodadas(
+    {"chamadas": [chamada("buscar_nos_documentos", {"termo": "número da CTPS"})]},
+    {"texto": "O número da CTPS é 1234567 (IMG_4411.jpg)."},
+)
+list(chat_peticao.conversar("caso-1", "qual o número da CTPS?", "advogado-1"))
+checar(idas15.count("buscar_nos_documentos") == 1, "a primeira busca roda")
+checar(len(BASE_EM_MEMORIA["caso-1"]["buscas"]) == 1, "e o que ela achou fica guardado")
+chat_peticao.armazenamento = ArmazenamentoFalso()  # type: ignore[assignment]
+idas15.clear()
+rodadas(
+    {"chamadas": [chamada("buscar_nos_documentos", {"termo": "Número da CTPS"})]},
+    {"texto": "O número da CTPS é 1234567."},
+)
+eventos = list(chat_peticao.conversar("caso-1", "e o número da carteira?", "advogado-2"))
+checar("buscar_nos_documentos" not in idas15, "a mesma busca não é refeita nos documentos")
+checar(eventos[-1]["tipo"] == "fim", "e a resposta sai normalmente")
+
+# 15e. anexo novo: as buscas caem, as pesquisas ficam.
+anexos_de_antes = peticao_local.anexos_do_caso
+peticao_local.anexos_do_caso = lambda caso_id: [  # type: ignore[assignment]
+    *anexos_de_antes(caso_id),
+    {"id": "9", "arquivo": "laudo.pdf", "tipo": "Laudo médico", "situacao": "lido", "campos": [], "texto": "lesão"},
+]
+contexto_de_verdade("caso-1")
+checar(BASE_EM_MEMORIA["caso-1"]["buscas"] == [], "documento novo: as buscas antigas caem")
+checar(len(BASE_EM_MEMORIA["caso-1"]["pesquisas"]) == 1, "e as pesquisas na web continuam")
+peticao_local.anexos_do_caso = anexos_de_antes  # type: ignore[assignment]
+
+# 15f. VIA RÁPIDA: um único pedido ao modelo, com a proposta forçada, e a resposta na hora.
+falso = instalar_armazenamento()
+chat_peticao.executar_ferramenta = executar_de_verdade  # type: ignore[assignment]
+forcados: list[str | None] = []
+sequencia_rapida = iter(
+    [{"chamadas": [chamada("propor_revisao_da_peticao", {"pedido": "aumente o valor da causa para R$ 60.000"})]}]
+)
+
+
+def rapida(mensagens, ferramentas=True, forcar=None):
+    forcados.append(forcar)
+    atual = next(sequencia_rapida)  # uma SEGUNDA ida ao modelo estouraria aqui
+    yield {"tipo": "mensagem", "mensagem": {"role": "assistant", "content": "", "tool_calls": atual["chamadas"]}}
+
+
+chat_peticao._transmitir = rapida  # type: ignore[assignment]
+eventos = list(chat_peticao.conversar("caso-1", "aumenta o valor da causa para 60 mil", "advogado-1"))
+final = eventos[-1]["mensagem"]
+cartoes = (final["payload"] or {}).get("acoes") or []
+checar(forcados == ["propor_revisao_da_peticao"], "pedido de alteração: UMA ida ao modelo, com a proposta forçada")
+checar([a["tipo"] for a in cartoes] == ["REVISAR"], "o cartão de confirmação existe")
+checar(final["conteudo"].startswith("Preparei a alteração pedida"), "a resposta é escrita na hora, sem outra volta")
+checar("valor, pedido ou fundamentação" in final["conteudo"], "e avisa quando a alteração é sensível")
+checar(any(e["tipo"] == "delta" for e in eventos), "o texto chega à tela em fluxo, como sempre")
+
+for frase in (
+    "posso tirar o pedido de horas extras da petição?",
+    "inclua a foto do machucado na petição",
+    "como está o valor da causa?",
+):
+    forcados = []
+
+    def sem_forcar(mensagens, ferramentas=True, forcar=None):
+        forcados.append(forcar)
+        yield {"tipo": "mensagem", "mensagem": {"role": "assistant", "content": "Resposta."}}
+
+    chat_peticao._transmitir = sem_forcar  # type: ignore[assignment]
+    list(chat_peticao.conversar("caso-1", frase, "advogado-1"))
+    checar(all(f is None for f in forcados), f"«{frase}» segue o caminho normal (pode consultar e perguntar)")
+
+# O provedor que não aceita `tool_choice` específico: volta ao modo normal, sem quebrar.
+chat_peticao._transmitir = transmitir_de_verdade  # type: ignore[assignment]
+chat_peticao.PAUSA_ANTES_DE_REPETIR_S = 0
+recebidos: list = []
+
+
+class RecusaForcar(FluxoFalso):
+    def __init__(self, status, linhas=(), texto=""):
+        super().__init__(list(linhas))
+        self.status_code = status
+        self.text = texto
+
+    def read(self):
+        return b""
+
+
+def stream_que_recusa(metodo, url, *, headers=None, json=None, timeout=None):
+    recebidos.append(json["tool_choice"])
+    if len(recebidos) == 1:
+        return RecusaForcar(400, texto="tool_choice inválido")
+    return FluxoFalso(
+        [
+            sse({"tool_calls": [{"index": 0, "id": "c9", "type": "function", "function": {"name": "propor_revisao_da_peticao", "arguments": '{"pedido": "aumente o valor"}'}}]}),
+            "data: [DONE]",
+        ]
+    )
+
+
+chat_peticao.httpx.stream = stream_que_recusa  # type: ignore[assignment]
+falso = instalar_armazenamento()
+eventos = list(chat_peticao.conversar("caso-1", "aumenta o valor da causa para 60 mil", "advogado-1"))
+checar(
+    isinstance(recebidos[0], dict) and recebidos[1] == "auto",
+    "provedor recusou a proposta forçada: a segunda tentativa usa o modo normal",
+)
+checar(eventos[-1]["tipo"] == "fim", "e o pedido é atendido do mesmo jeito")
 
 
 if __name__ == "__main__":
