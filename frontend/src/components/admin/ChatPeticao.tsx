@@ -23,7 +23,7 @@
  * atalhos depois que a conversa começa.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
@@ -40,8 +40,13 @@ import {
   EVENTO_DO_CHAT,
   abrirChatDaPeticao,
   adicionarContextoAoChat,
+  atualizarContextoDoChat,
+  criarConversaDoChat,
+  excluirConversaDoChat,
   executarAcaoDoChat,
+  listarConversasDoChat,
   listarDocumentosDoChat,
+  obterContextoDoChat,
   perguntarNoChat,
   registrarEventoNoChat,
   type AcaoProposta,
@@ -50,6 +55,8 @@ import {
   type DocumentoCitavel,
   type FonteDaWeb,
   type MensagemDoChat,
+  type ResumoDaConversa,
+  type ResumoDoContexto,
 } from "@/lib/chatPeticao";
 
 /**
@@ -117,6 +124,17 @@ export default function ChatPeticao({
   const [etapa, setEtapa] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
+  /* O histórico: qual conversa está aberta, quais existem e o que a base do caso já tem.
+   * `alvo` é o que se PEDIU abrir (null = a mais recente); vive junto do caso para que
+   * trocar de petição nunca herde a conversa escolhida na anterior. */
+  const [alvo, setAlvo] = useState<{ caso: string; id: string | null }>({ caso: casoId, id: null });
+  const [recarga, setRecarga] = useState(0);
+  const [conversaId, setConversaId] = useState("");
+  const [conversas, setConversas] = useState<ResumoDaConversa[]>([]);
+  const [contexto, setContexto] = useState<ResumoDoContexto | null>(null);
+  const [historicoAberto, setHistoricoAberto] = useState(false);
+  const [atualizandoBase, setAtualizandoBase] = useState(false);
+  const idAlvo = alvo.caso === casoId ? alvo.id : null;
   const [arquivoContexto, setArquivoContexto] = useState<File | null>(null);
   const [relevanciaContexto, setRelevanciaContexto] = useState("");
   const [enviandoContexto, setEnviandoContexto] = useState(false);
@@ -145,6 +163,10 @@ export default function ChatPeticao({
    * ou uma ação pedida no caso anterior voltaria do servidor depois da troca e entraria
    * na transcrição do caso novo. */
   const casoNaTela = useRef(casoId);
+  /* E de QUAL conversa do caso. Trocar pelo histórico é como trocar de caso: uma resposta
+   * ou uma ação que volte do servidor depois da troca ficou gravada na conversa certa, e
+   * não pode aparecer nesta. */
+  const conversaNaTela = useRef("");
   /* A pergunta em voo pertence ao caso em que foi feita: trocar de caso a cancela, em
    * vez de deixá-la escrevendo no fluxo de outra conversa. */
   const emVoo = useRef<AbortController | null>(null);
@@ -196,12 +218,13 @@ export default function ChatPeticao({
 
   useEffect(() => {
     let ativo = true;
-    /* Zerar ANTES de buscar o histórico do caso novo. A transcrição é renderizada
-     * mesmo durante o carregamento, então sem esta limpeza a conversa do caso anterior
-     * seguiria na tela sob o aviso "Abrindo a conversa deste caso…" — e o pior: as
-     * propostas já aceitas ou descartadas lá (`decididas`, que é chave de mensagem)
-     * continuariam valendo aqui, além do rascunho no campo e do erro do outro caso. */
+    /* Zerar ANTES de buscar a conversa nova. A transcrição é renderizada mesmo durante o
+     * carregamento, então sem esta limpeza a conversa anterior seguiria na tela sob o aviso
+     * "Abrindo a conversa…" — e o pior: as propostas já aceitas ou descartadas lá
+     * (`decididas`, que é chave de mensagem) continuariam valendo aqui, além do rascunho no
+     * campo e do erro da outra. Vale para trocar de caso E de conversa. */
     casoNaTela.current = casoId;
+    conversaNaTela.current = "";
     emVoo.current?.abort();
     emVoo.current = null;
     setMensagens([]);
@@ -216,10 +239,15 @@ export default function ChatPeticao({
     setEnviando(false);
     setErro("");
     setPreso(true);
+    setHistoricoAberto(false);
     setCarregandoHistorico(true);
-    void abrirChatDaPeticao(casoId)
+    void abrirChatDaPeticao(casoId, idAlvo ?? undefined)
       .then((chat) => {
         if (!ativo) return;
+        conversaNaTela.current = chat.id;
+        setConversaId(chat.id);
+        setConversas(chat.conversas);
+        setContexto(chat.contexto);
         setMensagens(chat.mensagens);
         setModeloDisponivel(chat.modeloDisponivel);
         setDocumentos(chat.documentos);
@@ -231,6 +259,22 @@ export default function ChatPeticao({
     return () => {
       ativo = false;
     };
+  }, [casoId, idAlvo, recarga]);
+
+  /* O histórico e a base do caso mudam a cada resposta: o título nasce da primeira pergunta,
+   * a conversa sobe para o topo e o que já foi levantado cresce. */
+  const renovarLaterais = useCallback(() => {
+    const doCaso = casoId;
+    void listarConversasDoChat(doCaso)
+      .then((lista) => {
+        if (casoNaTela.current === doCaso) setConversas(lista);
+      })
+      .catch(() => {});
+    void obterContextoDoChat(doCaso)
+      .then((resumo) => {
+        if (casoNaTela.current === doCaso) setContexto(resumo);
+      })
+      .catch(() => {});
   }, [casoId]);
 
   /** Relê os anexos: o que foi enviado pelo checklist com a conversa aberta também
@@ -262,11 +306,12 @@ export default function ChatPeticao({
     async function aoAvisar(evento: Event) {
       const { detail } = evento as CustomEvent<AvisoParaOChat>;
       if (!detail || detail.casoId !== casoId) return;
+      const daConversa = conversaNaTela.current;
       try {
-        const mensagem = await registrarEventoNoChat(casoId, detail.tipo, detail.dados ?? {});
-        // A ida ao servidor demora: se o dossiê já é outro, a mensagem ficou gravada na
-        // conversa certa e só não pode aparecer nesta.
-        if (mensagem && casoNaTela.current === casoId) {
+        const mensagem = await registrarEventoNoChat(casoId, detail.tipo, detail.dados ?? {}, daConversa);
+        // A ida ao servidor demora: se o dossiê (ou a conversa) já é outro, a mensagem ficou
+        // gravada no lugar certo e só não pode aparecer nesta.
+        if (mensagem && casoNaTela.current === casoId && conversaNaTela.current === daConversa) {
           setMensagens((atuais) => [...atuais, mensagem]);
         }
       } catch {
@@ -281,14 +326,15 @@ export default function ChatPeticao({
   /* A conexão caiu no meio da resposta (rede móvel, tela bloqueada, proxy). O servidor
    * termina de escrever e grava a resposta de qualquer jeito: espera por ela em vez de
    * deixar a pergunta sem retorno — e sem o advogado ter de perguntar tudo de novo. */
-  const aguardarResposta = useCallback(async (doCaso: string) => {
+  const aguardarResposta = useCallback(async (doCaso: string, daConversa: string) => {
+    const continua = () => casoNaTela.current === doCaso && conversaNaTela.current === daConversa;
     setEtapa("A conexão caiu. Buscando a resposta no servidor");
     for (let tentativa = 0; tentativa < 20; tentativa += 1) {
       await new Promise((resolver) => setTimeout(resolver, 3000));
-      if (casoNaTela.current !== doCaso) return;
+      if (!continua()) return;
       try {
-        const chat = await abrirChatDaPeticao(doCaso);
-        if (casoNaTela.current !== doCaso) return;
+        const chat = await abrirChatDaPeticao(doCaso, daConversa || undefined);
+        if (!continua()) return;
         const ultima = chat.mensagens[chat.mensagens.length - 1];
         if (ultima && ultima.papel === "ASSISTANT") {
           setMensagens(chat.mensagens);
@@ -298,7 +344,7 @@ export default function ChatPeticao({
         /* Sem rede ainda: a próxima volta tenta de novo. */
       }
     }
-    if (casoNaTela.current === doCaso) {
+    if (continua()) {
       setErro("A resposta não chegou. Reabra a conversa em instantes — ela fica salva no servidor.");
     }
   }, []);
@@ -310,6 +356,7 @@ export default function ChatPeticao({
       const controle = new AbortController();
       emVoo.current?.abort();
       emVoo.current = controle;
+      const daConversa = conversaNaTela.current;
       /** Esta pergunta ainda é a que está na tela? Deixa de ser quando o caso troca. */
       const ehDaTela = () => emVoo.current === controle;
       setErro("");
@@ -346,6 +393,7 @@ export default function ChatPeticao({
                 setEtapa("");
                 setMensagens((atuais) => [...atuais, evento.mensagem]);
                 atualizarDocumentos();
+                renovarLaterais();
                 break;
               case "erro":
                 setParcial("");
@@ -356,8 +404,9 @@ export default function ChatPeticao({
             }
           },
           controle.signal,
+          daConversa,
         );
-        if (!concluiu && ehDaTela()) await aguardarResposta(casoId);
+        if (!concluiu && ehDaTela()) await aguardarResposta(casoId, daConversa);
       } catch (falha) {
         // O cancelamento pela troca de caso não é falha de ninguém: avisar "a conversa
         // não chegou ao servidor" no caso recém-aberto seria mentira.
@@ -377,7 +426,7 @@ export default function ChatPeticao({
         }
       }
     },
-    [casoId, enviando, atualizarDocumentos, aguardarResposta],
+    [casoId, enviando, atualizarDocumentos, aguardarResposta, renovarLaterais],
   );
 
   /** Atalho que não se basta: escreve o começo da frase e devolve o cursor ao campo. */
@@ -404,13 +453,15 @@ export default function ChatPeticao({
     if (confirmando.current) return;
     confirmando.current = true;
     const doCaso = casoId;
+    const daConversa = conversaNaTela.current;
+    const continua = () => casoNaTela.current === doCaso && conversaNaTela.current === daConversa;
     setExecutando(chave);
     setErro("");
     try {
-      const resultado = await executarAcaoDoChat(doCaso, { ...acao, generaliza });
-      // Gerar ou revisar leva tempo: se o dossiê na tela já é outro, a ação valeu no
-      // caso certo e nada dela pode aparecer — nem o resultado, nem o recarregamento.
-      if (casoNaTela.current !== doCaso) return;
+      const resultado = await executarAcaoDoChat(doCaso, { ...acao, generaliza }, daConversa);
+      // Gerar ou revisar leva tempo: se o dossiê (ou a conversa) na tela já é outro, a ação
+      // valeu no lugar certo e nada dela pode aparecer — nem o resultado, nem o recarregamento.
+      if (!continua()) return;
       setMensagens((atuais) => [...atuais, resultado.mensagem]);
       // Só uma ação que DEU CERTO fecha o cartão. Marcá-lo «Executada» quando o servidor
       // devolveu falha tirava o botão e deixava o advogado sem como tentar de novo — a
@@ -421,17 +472,76 @@ export default function ChatPeticao({
       // uma peça mais velha do que a que está no banco.
       aoMudarAPeticao();
     } catch (falha) {
-      if (casoNaTela.current !== doCaso) return;
+      if (!continua()) return;
       setErro(falha instanceof Error ? falha.message : "A ação não pôde ser executada.");
     } finally {
       // A troca de caso já zerou o `executando`; mexer nele aqui apagaria o indicador de
       // uma ação que esteja rodando no caso agora aberto.
-      if (casoNaTela.current === doCaso) setExecutando(null);
+      if (continua()) setExecutando(null);
       confirmando.current = false;
     }
   }
 
   const conversaVazia = !carregandoHistorico && mensagens.length === 0;
+  const conversaAtual = conversas.find((c) => c.id === conversaId);
+  const tituloAtual =
+    conversaAtual && conversaAtual.perguntas > 0 ? conversaAtual.titulo : "Nova conversa";
+
+  function abrirConversa(id: string) {
+    setHistoricoAberto(false);
+    if (id === conversaId) return;
+    setAlvo({ caso: casoId, id });
+  }
+
+  /* Um chat em branco. Se este já está em branco não abre outro: encheria o histórico de
+   * conversas vazias a cada clique. */
+  async function novaConversa() {
+    setHistoricoAberto(false);
+    if (conversaAtual && conversaAtual.perguntas === 0 && mensagens.length === 0) {
+      campo.current?.focus();
+      return;
+    }
+    try {
+      const chat = await criarConversaDoChat(casoId);
+      setAlvo({ caso: casoId, id: chat.id });
+      requestAnimationFrame(() => campo.current?.focus());
+    } catch (falha) {
+      setErro(falha instanceof Error ? falha.message : "Não foi possível abrir uma nova conversa.");
+    }
+  }
+
+  async function excluirConversa(conversa: ResumoDaConversa) {
+    if (!window.confirm(`Excluir a conversa «${conversa.titulo}»? Ela some do histórico.`)) return;
+    try {
+      await excluirConversaDoChat(casoId, conversa.id);
+      setConversas((atuais) => atuais.filter((c) => c.id !== conversa.id));
+      if (conversa.id === conversaId) {
+        // A que estava aberta saiu: cai na mais recente (ou numa em branco). O `recarga` força a
+        // releitura mesmo quando o alvo já era «a mais recente».
+        setAlvo({ caso: casoId, id: null });
+        setRecarga((n) => n + 1);
+      }
+    } catch (falha) {
+      setErro(falha instanceof Error ? falha.message : "Não foi possível excluir a conversa.");
+    }
+  }
+
+  /* Refaz o levantamento dos documentos. As pesquisas na web continuam guardadas. */
+  async function atualizarBase() {
+    if (atualizandoBase) return;
+    const doCaso = casoId;
+    setAtualizandoBase(true);
+    try {
+      const resumo = await atualizarContextoDoChat(doCaso);
+      if (casoNaTela.current === doCaso) setContexto(resumo);
+    } catch (falha) {
+      if (casoNaTela.current === doCaso) {
+        setErro(falha instanceof Error ? falha.message : "Não foi possível atualizar a base do caso.");
+      }
+    } finally {
+      setAtualizandoBase(false);
+    }
+  }
 
   /* Print colado (Ctrl+V) ou escolhido no botão: vira ANEXO do caso, e não texto solto.
    * É assim que o chat consegue oferecê-lo na peça — a ferramenta de foto só enxerga o que
@@ -485,7 +595,7 @@ export default function ChatPeticao({
     setEnviandoContexto(true);
     setErro("");
     try {
-      const resultado = await adicionarContextoAoChat(casoId, arquivoContexto, relevanciaContexto);
+      const resultado = await adicionarContextoAoChat(casoId, arquivoContexto, relevanciaContexto, conversaNaTela.current);
       setMensagens((atuais) => [...atuais, resultado.mensagem]);
       setArquivoContexto(null);
       setRelevanciaContexto("");
@@ -506,9 +616,34 @@ export default function ChatPeticao({
           <span className={estilos.marca} aria-hidden>
             <IconeConversa />
           </span>
-          <strong className={estilos.titulo}>Conversa sobre a peça</strong>
+          <div className={estilos.blocoDoTitulo}>
+            <strong className={estilos.titulo} title={tituloAtual}>
+              {tituloAtual}
+            </strong>
+            <span className={estilos.subtitulo}>Conversa sobre a peça</span>
+          </div>
         </div>
         <div className={estilos.acoesDoCabecalho}>
+          <button
+            type="button"
+            className={`${estilos.iconeBotao} ${estilos.iconeDestaque}`}
+            onClick={() => void novaConversa()}
+            disabled={carregandoHistorico}
+            aria-label="Nova conversa"
+            title="Nova conversa"
+          >
+            <IconeMais />
+          </button>
+          <button
+            type="button"
+            className={`${estilos.iconeBotao} ${historicoAberto ? estilos.iconeAtivo : ""}`}
+            onClick={() => setHistoricoAberto((aberto) => !aberto)}
+            aria-label="Histórico de conversas"
+            aria-expanded={historicoAberto}
+            title={`Histórico de conversas${conversas.length ? ` (${conversas.length})` : ""}`}
+          >
+            <IconeHistorico />
+          </button>
           {aoAlternarLargura && (
             <button
               type="button"
@@ -535,6 +670,95 @@ export default function ChatPeticao({
           )}
         </div>
       </header>
+
+      {contexto && !contexto.indisponivel && (
+        <div
+          className={estilos.contexto}
+          title="O que o chat já levantou fica guardado com a petição: ele não relê os documentos nem refaz a pesquisa a cada pergunta."
+        >
+          <span className={estilos.contextoRotulo}>Base do caso</span>
+          <span className={estilos.chip}>
+            {contexto.documentosLidos} {contexto.documentosLidos === 1 ? "documento lido" : "documentos lidos"}
+          </span>
+          {contexto.documentosSemLeitura > 0 && (
+            <span className={`${estilos.chip} ${estilos.chipAtencao}`}>
+              {contexto.documentosSemLeitura} sem leitura
+            </span>
+          )}
+          {contexto.pesquisas > 0 && (
+            <span className={estilos.chip}>
+              {contexto.pesquisas} {contexto.pesquisas === 1 ? "pesquisa" : "pesquisas"}
+            </span>
+          )}
+          {contexto.buscas > 0 && (
+            <span className={estilos.chip}>
+              {contexto.buscas} {contexto.buscas === 1 ? "busca" : "buscas"}
+            </span>
+          )}
+          <button
+            type="button"
+            className={estilos.atualizarBase}
+            onClick={() => void atualizarBase()}
+            disabled={atualizandoBase}
+            title="Refazer o levantamento dos documentos (as pesquisas na web continuam guardadas)"
+          >
+            <IconeAtualizar girando={atualizandoBase} />
+            {atualizandoBase ? "Atualizando…" : "Atualizar"}
+          </button>
+        </div>
+      )}
+
+      {historicoAberto && (
+        <>
+          <div className={estilos.fundoDoHistorico} onClick={() => setHistoricoAberto(false)} aria-hidden />
+          <div className={estilos.historico} role="menu" aria-label="Histórico de conversas">
+            <div className={estilos.historicoTopo}>
+              <strong>Conversas desta petição</strong>
+              <button type="button" className={estilos.novaNoHistorico} onClick={() => void novaConversa()}>
+                + Nova conversa
+              </button>
+            </div>
+            {conversas.length === 0 ? (
+              <p className={estilos.vazio}>Nenhuma conversa ainda.</p>
+            ) : (
+              <ul className={estilos.listaDeConversas}>
+                {conversas.map((c) => (
+                  <li
+                    key={c.id}
+                    className={`${estilos.itemDaConversa} ${c.id === conversaId ? estilos.itemAtivo : ""}`}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={estilos.itemCorpo}
+                      onClick={() => abrirConversa(c.id)}
+                    >
+                      <span className={estilos.itemTitulo}>
+                        {c.perguntas > 0 ? c.titulo : "Nova conversa"}
+                      </span>
+                      <span className={estilos.itemMeta}>
+                        {quando(c.atualizadoEm)} ·{" "}
+                        {c.perguntas === 0
+                          ? "em branco"
+                          : `${c.perguntas} ${c.perguntas === 1 ? "pergunta" : "perguntas"}`}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={estilos.itemExcluir}
+                      onClick={() => void excluirConversa(c)}
+                      aria-label={`Excluir a conversa ${c.titulo}`}
+                      title="Excluir esta conversa"
+                    >
+                      <IconeLixeira />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
 
       <DocumentosCitaveis documentos={documentos} aoAbrir={setDocumentoAberto}>
       <div
@@ -677,33 +901,41 @@ export default function ChatPeticao({
           </div>
         )}
 
-        <div className="mb-2 rounded-campo border border-borda bg-papel-2 p-2">
-          <div className="flex items-center justify-between gap-2">
-            <label
-              className="min-w-0 cursor-pointer text-xs font-semibold text-acao"
-              title="Ou cole a imagem direto no campo da conversa (Ctrl+V)"
-            >
-              {enviandoPrint ? "Anexando o print…" : "+ Enviar print"}
-              <input
-                className="sr-only"
-                type="file"
-                accept="image/*"
-                multiple
-                disabled={enviandoPrint || !modeloDisponivel}
-                onChange={(evento) => {
-                  void anexarPrint(Array.from(evento.target.files ?? []));
-                  evento.target.value = "";
-                }}
-              />
-            </label>
-            <label className="min-w-0 cursor-pointer text-xs font-semibold text-acao">
-              + Adicionar arquivo de contexto
-              <input className="sr-only" type="file" accept=".zip,.pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.rtf,.srt,.vtt" onChange={(evento) => setArquivoContexto(evento.target.files?.[0] ?? null)} />
-            </label>
-            {arquivoContexto && <span className="max-w-[155px] truncate text-xs text-tinta-3" title={arquivoContexto.name}>{arquivoContexto.name}</span>}
-          </div>
-          {arquivoContexto && <div className="mt-2 flex gap-2"><input className="campo min-w-0 flex-1 text-xs" value={relevanciaContexto} onChange={(evento) => setRelevanciaContexto(evento.target.value)} placeholder="Por que este arquivo é relevante?" /><Botao variante="secundario" pequeno disabled={enviandoContexto} onClick={() => void enviarContexto()}>{enviandoContexto ? "Lendo…" : "Adicionar"}</Botao></div>}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className={ESTILO_DO_CHIP} title="Ou cole a imagem direto no campo da conversa (Ctrl+V)">
+            <IconeImagem />
+            {enviandoPrint ? "Anexando…" : "Enviar print"}
+            <input
+              className="sr-only"
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={enviandoPrint || !modeloDisponivel}
+              onChange={(evento) => {
+                void anexarPrint(Array.from(evento.target.files ?? []));
+                evento.target.value = "";
+              }}
+            />
+          </label>
+          <label className={ESTILO_DO_CHIP} title="Material de consulta: não é tratado como prova do caso">
+            <IconeClipe />
+            Arquivo de contexto
+            <input className="sr-only" type="file" accept=".zip,.pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.rtf,.srt,.vtt" onChange={(evento) => setArquivoContexto(evento.target.files?.[0] ?? null)} />
+          </label>
+          {arquivoContexto && (
+            <span className="max-w-[160px] truncate text-xs text-tinta-3" title={arquivoContexto.name}>
+              {arquivoContexto.name}
+            </span>
+          )}
         </div>
+        {arquivoContexto && (
+          <div className="flex gap-2">
+            <input className="campo min-w-0 flex-1 text-xs" value={relevanciaContexto} onChange={(evento) => setRelevanciaContexto(evento.target.value)} placeholder="Por que este arquivo é relevante?" />
+            <Botao variante="secundario" pequeno disabled={enviandoContexto} onClick={() => void enviarContexto()}>
+              {enviandoContexto ? "Lendo…" : "Adicionar"}
+            </Botao>
+          </div>
+        )}
 
         {printsAnexados.length > 0 && (
           <p className="mb-2 mt-0 text-xs leading-relaxed text-ok">
@@ -874,6 +1106,10 @@ function Fontes({ fontes }: { fontes: FonteDaWeb[] }) {
   );
 }
 
+/** Os botões de anexar ao pé do campo: chips discretos, no lugar de links soltos. */
+const ESTILO_DO_CHIP =
+  "inline-flex cursor-pointer items-center gap-1.5 rounded-pill border border-borda bg-papel-2 px-2.5 py-1 text-xs font-medium text-tinta-2 transition-colors hover:border-acao-borda hover:text-acao";
+
 const ROTULOS: Record<AcaoProposta["tipo"], string> = {
   REVISAR: "Alterar a petição",
   GERAR: "Gerar a petição de novo",
@@ -936,10 +1172,22 @@ function PropostaDeAcao({
   aoDecidir: (aceitar: boolean, generaliza?: boolean) => void;
 }) {
   const [ensinarIa, setEnsinarIa] = useState(false);
+  // O cartão muda de cara conforme o que se decidiu: a cor diz, à distância, se ainda há algo
+  // esperando o clique (azul), se pede leitura mais lenta (âmbar) ou se já foi resolvido.
+  const tom = decisao === "aceita" ? "aceita" : decisao === "descartada" ? "descartada" : acao.sensivel ? "sensivel" : "pendente";
+  const estilo = {
+    aceita: { caixa: "border-ok", topo: "bg-ok-claro text-ok" },
+    descartada: { caixa: "border-borda opacity-80", topo: "bg-papel-2 text-tinta-3" },
+    sensivel: { caixa: "border-atencao-borda", topo: "bg-atencao-claro text-atencao" },
+    pendente: { caixa: "border-acao-borda", topo: "bg-acao-clara text-acao" },
+  }[tom];
   return (
-    <section className="mt-3 rounded-campo border border-acao-borda border-l-4 border-l-acao bg-papel p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <strong className="text-sm text-tinta">{ROTULOS[acao.tipo] ?? "Ação"}</strong>
+    <section className={`mt-3 overflow-hidden rounded-campo border bg-papel shadow-sm ${estilo.caixa}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 ${estilo.topo}`}>
+        <span className="inline-flex items-center gap-2 text-sm font-semibold">
+          <IconeDaAcao tipo={acao.tipo} />
+          {ROTULOS[acao.tipo] ?? "Ação"}
+        </span>
         {decisao === "aceita" ? (
           <Selo tom="ok" simbolo="✓">Executada</Selo>
         ) : decisao === "descartada" ? (
@@ -951,8 +1199,9 @@ function PropostaDeAcao({
         )}
       </div>
 
+      <div className="px-3 pb-3 pt-2">
       {acao.pedido && (
-        <p className="mb-0 mt-2 text-sm text-tinta-2">
+        <p className="mb-0 mt-0 text-sm text-tinta-2">
           Pedido: <span className="text-tinta">“{acao.pedido}”</span>
         </p>
       )}
@@ -1000,16 +1249,59 @@ function PropostaDeAcao({
       )}
 
       {!decisao && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Botao variante="primario" pequeno disabled={ocupado} onClick={() => aoDecidir(true, ensinarIa)}>
-            {ocupado ? "Executando…" : "Confirmar"}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Botao variante="primario" disabled={ocupado} carregando={ocupado} onClick={() => aoDecidir(true, ensinarIa)}>
+            {!ocupado && <IconeConfirmar />}
+            {ocupado ? "Aplicando…" : acao.tipo === "REVISAR" ? "Confirmar alteração" : "Confirmar"}
           </Botao>
-          <Botao variante="secundario" pequeno disabled={ocupado} onClick={() => aoDecidir(false)}>
+          <Botao variante="secundario" disabled={ocupado} onClick={() => aoDecidir(false)}>
             Agora não
           </Botao>
         </div>
       )}
+      </div>
     </section>
+  );
+}
+
+function IconeConfirmar() {
+  return (
+    <svg className="mr-1.5 inline-block align-[-2px]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </svg>
+  );
+}
+
+/** Um ícone por tipo de proposta: o olho reconhece a natureza do cartão antes de ler. */
+function IconeDaAcao({ tipo }: { tipo: AcaoProposta["tipo"] }) {
+  const caminhos: Record<AcaoProposta["tipo"], ReactNode> = {
+    REVISAR: <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />,
+    GERAR: <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M9 14h6M9 17h6" />,
+    ANALISAR_DOCUMENTOS: <path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4.3-4.3" />,
+    PECA_ANEXA: <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M12 12v6M9 15h6" />,
+    INCLUIR_FOTO: <path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 16l-5-5-8 8" />,
+    INCLUIR_TRECHO: <path d="M7 7h4v4H7zM13 7h4v4h-4zM7 11c0 3 1 5 3 6M13 11c0 3 1 5 3 6" />,
+  };
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {caminhos[tipo] ?? caminhos.REVISAR}
+    </svg>
+  );
+}
+
+function IconeImagem() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 16l-5-5-8 8" />
+    </svg>
+  );
+}
+
+function IconeClipe() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 11l-8.6 8.6a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.6 8.6a2 2 0 0 1-3-3L15 7" />
+    </svg>
   );
 }
 
@@ -1027,6 +1319,55 @@ function IconeEnviar() {
       <path d="M5 12h13M12 5l7 7-7 7" />
     </svg>
   );
+}
+
+function IconeMais() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function IconeHistorico() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <path d="M3 3v5h5M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function IconeAtualizar({ girando }: { girando?: boolean }) {
+  return (
+    <svg className={girando ? estilos.girar : undefined} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8" />
+      <path d="M21 3v5h-5M3 21v-5h5" />
+    </svg>
+  );
+}
+
+function IconeLixeira() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5" />
+    </svg>
+  );
+}
+
+/** «hoje 14:32», «ontem», «12/09»: o bastante para reconhecer a conversa no histórico. */
+function quando(iso: string): string {
+  const data = new Date(iso);
+  if (Number.isNaN(data.getTime())) return "";
+  const hoje = new Date();
+  const mesmoDia = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const ontem = new Date(hoje);
+  ontem.setDate(hoje.getDate() - 1);
+  if (mesmoDia(data, hoje)) {
+    return `hoje ${data.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  if (mesmoDia(data, ontem)) return "ontem";
+  return data.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
 function IconeFechar() {

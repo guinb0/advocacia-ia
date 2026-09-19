@@ -47,7 +47,7 @@ import httpx
 
 from .. import analise_documentos, armazenamento, peticao_local
 from .. import pesquisa_web as pesquisa_web_modulo
-from . import peticao_fluxo
+from . import contexto_caso, peticao_fluxo
 from .cliente import ErroDoAgente
 
 log = logging.getLogger("agente")
@@ -119,7 +119,14 @@ Como você trabalha:
 1. CONSULTE ANTES DE AFIRMAR. Nada sobre este caso é sabido de memória. Valor, data,
    nome, número de seção e trecho da minuta vêm de ferramenta. Quando a resposta
    depende do texto da peça, leia a minuta antes de falar dela.
-   Três consultas são OBRIGATÓRIAS, não opcionais:
+   O contexto abaixo traz o que JÁ FOI LEVANTADO neste caso: a «BASE DE CONTEXTO DO
+   CASO» (documentos resumidos e buscas já feitas), a «ANÁLISE JÁ FEITA» da própria
+   petição e as «PESQUISAS NA WEB JÁ FEITAS». USE-O PRIMEIRO e responda com ele — sem
+   chamar `ler_documentos`, `ler_analise` nem `pesquisar_na_web` de novo para o que já
+   está ali. Consulte só um DETALHE que a base não traz (o texto completo de um
+   documento, outro trecho, outro dado, um assunto novo), e faça a consulta ESPECÍFICA,
+   não a geral.
+   Três consultas são OBRIGATÓRIAS quando a resposta NÃO está já na base:
    - a pergunta fala de súmula, OJ, tema, lei, artigo ou jurisprudência →
      `pesquisar_na_web` antes de escrever o número. Citar de memória e oferecer um
      link que você não abriu é pior do que dizer "não confirmei";
@@ -131,6 +138,10 @@ Como você trabalha:
      `buscar_nos_documentos` com o nome do documento E, se houver, com o próprio
      número. Ela procura no tipo, nos campos extraídos e no texto inteiro; o nome do
      arquivo quase nunca diz o que ele é.
+   NÃO REPITA CONSULTA. Uma pesquisa por ASSUNTO: não refaça a mesma busca com outras
+   palavras, e se «PESQUISAS NA WEB JÁ FEITAS» já cobre o ponto, cite aquela fonte.
+   Cada leitura (minuta, análise, um documento) uma vez por resposta — o resultado já
+   está na conversa.
    A lista de anexos está no contexto abaixo. Documento que não aparece nela não foi
    enviado — e isso é motivo para PEDIR o anexo, nunca para encerrar o assunto.
 2. SEPARE AS DUAS ORIGENS. O que está nos autos do caso e o que veio da internet são
@@ -298,11 +309,17 @@ def _contexto_do_caso(caso_id: str) -> str:
         partes.append(
             "Nenhum anexo tem texto lido ainda: não cite conteúdo de documento como prova."
         )
+    # O que já foi levantado neste caso — documentos resumidos, buscas já feitas. Vai em
+    # TODA pergunta para o modelo não reler o que já sabe (ver `contexto_caso`).
+    base = contexto_caso.bloco_para_o_modelo(contexto_caso.obter(caso_id, anexos))
+
     if not peticao:
         partes.append(
             "Minuta: ainda NÃO existe petição gerada para este caso. Para criá-la, a"
             " ferramenta é propor_geracao_da_peticao."
         )
+        if base:
+            partes.append(base)
         return "\n".join(partes)
 
     pendencias = (peticao.get("readiness") or {}).get("pendencias") or []
@@ -328,7 +345,45 @@ def _contexto_do_caso(caso_id: str) -> str:
             "Outras peças já redigidas neste caso: "
             + "; ".join(str(p.get("titulo") or "") for p in anexas)
         )
+    analise = _bloco_da_analise(peticao)
+    if analise:
+        partes.append(analise)
+    if base:
+        partes.append(base)
     return "\n".join(partes)
+
+
+def _item_da_analise(item: Any, limite: int = 220) -> str:
+    if isinstance(item, str):
+        return " ".join(item.split())[:limite]
+    return " ".join(json.dumps(item, ensure_ascii=False, default=str).split())[:limite]
+
+
+def _bloco_da_analise(peticao: dict[str, Any]) -> str:
+    """A análise entrevista × documentos, que já mora DENTRO da petição, no contexto.
+
+    Ela foi feita quando a peça foi gerada e é a leitura mais cara do caso. Chamar
+    `ler_analise` a cada pergunta só para ter de novo o que a petição já guarda era
+    exatamente a consulta repetida que esta base existe para evitar.
+    """
+    analise = peticao.get("analise") or {}
+    if not analise:
+        return ""
+    linhas = ["=== ANÁLISE JÁ FEITA (da própria petição: entrevista × documentos) ==="]
+    if analise.get("resumo"):
+        linhas.append("Resumo: " + _item_da_analise(analise["resumo"], 600))
+    for titulo, itens in (
+        ("Confirmado por documentos", analise.get("fatos_confirmados")),
+        (
+            "Depende de prova ou confirmação",
+            [*(analise.get("fatos_so_na_entrevista") or []), *(analise.get("lacunas") or [])],
+        ),
+        ("Outras ações cabíveis", analise.get("acoes_sugeridas")),
+    ):
+        itens = [_item_da_analise(i) for i in (itens or [])[:8]]
+        if itens:
+            linhas.append(f"{titulo}:\n" + "\n".join(f"- {i}" for i in itens))
+    return "\n".join(linhas) if len(linhas) > 1 else ""
 
 
 # ------------------------------------------------------------- as ferramentas
@@ -1332,7 +1387,7 @@ def _juntar_chamadas(acumulado: dict[int, dict[str, Any]], pedacos: list[Any]) -
 
 
 def _transmitir(
-    mensagens: list[dict[str, Any]], *, ferramentas: bool = True
+    mensagens: list[dict[str, Any]], *, ferramentas: bool = True, forcar: str | None = None
 ) -> Iterator[dict[str, Any]]:
     """Uma rodada com o modelo, em fluxo. Emite `delta` e termina em `mensagem`.
 
@@ -1356,7 +1411,11 @@ def _transmitir(
     }
     if ferramentas:
         corpo["tools"] = esquemas()
-        corpo["tool_choice"] = "auto"
+        # `forcar` obriga a chamar UMA ferramenta (a via rápida da alteração). Se o provedor
+        # não aceitar a forma, a segunda tentativa volta para o modo normal.
+        corpo["tool_choice"] = (
+            {"type": "function", "function": {"name": forcar}} if forcar else "auto"
+        )
 
     texto: list[str] = []
     chamadas: dict[int, dict[str, Any]] = {}
@@ -1377,6 +1436,9 @@ def _transmitir(
                         resposta.status_code,
                         detalhe,
                     )
+                    if tentativa == 1 and forcar and resposta.status_code in (400, 422):
+                        corpo["tool_choice"] = "auto"
+                        continue
                     if tentativa == 1 and resposta.status_code in STATUS_TRANSITORIOS:
                         time.sleep(PAUSA_ANTES_DE_REPETIR_S)
                         continue
@@ -1801,17 +1863,34 @@ def _como_mensagem(registro: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _garantir_conversa(caso_id: str, usuario: str) -> dict[str, Any]:
-    """A conversa deste caso, desta pessoa. Criada na primeira vez e só nela."""
-    conversa = armazenamento.conversa_do_caso(usuario, caso_id, escopo=ESCOPO)
-    if conversa:
-        return conversa
+TITULO_DA_CONVERSA_NOVA = "Nova conversa"
+
+
+def _conversa_do_caso_e_da_pessoa(
+    conversa_id: str, caso_id: str, usuario: str
+) -> dict[str, Any]:
+    """A conversa pedida, só se for DESTA pessoa, DESTE caso e DESTA tela.
+
+    Sem isto, o id de uma conversa viraria chave para ler ou escrever no chat de outro
+    advogado — ou no de outro caso, misturando as petições.
+    """
+    conversa = armazenamento.obter_conversa(conversa_id)
+    if (
+        not conversa
+        or conversa.get("usuario") != usuario
+        or str(conversa.get("caso_id") or "") != str(caso_id)
+        or conversa.get("escopo") != ESCOPO
+    ):
+        raise ErroDoChat("Essa conversa não existe mais neste caso.")
+    return conversa
+
+
+def _criar_conversa(caso_id: str, usuario: str, titulo: str = "") -> dict[str, Any]:
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
         raise ErroDoChat("Esse caso não está mais no acervo.")
-    cliente = str(caso.get("cliente") or "caso sem cliente")
     return armazenamento.criar_conversa(
-        f"Petição — {cliente}",
+        titulo or TITULO_DA_CONVERSA_NOVA,
         usuario=usuario,
         caso_id=caso_id,
         resumo="Chat da petição",
@@ -1819,9 +1898,66 @@ def _garantir_conversa(caso_id: str, usuario: str) -> dict[str, Any]:
     )
 
 
-def abrir(caso_id: str, usuario: str) -> dict[str, Any]:
+def _garantir_conversa(caso_id: str, usuario: str, conversa_id: str = "") -> dict[str, Any]:
+    """A conversa pedida — ou, sem pedido, a mais recente deste caso e desta pessoa.
+
+    Criada na primeira vez. O histórico (`listar_conversas`) permite ter várias por
+    caso: sem `conversa_id`, o refresh da página cai na última que se usou.
+    """
+    if conversa_id:
+        return _conversa_do_caso_e_da_pessoa(conversa_id, caso_id, usuario)
+    conversa = armazenamento.conversa_do_caso(usuario, caso_id, escopo=ESCOPO)
+    if conversa:
+        return conversa
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise ErroDoChat("Esse caso não está mais no acervo.")
+    cliente = str(caso.get("cliente") or "caso sem cliente")
+    return _criar_conversa(caso_id, usuario, f"Petição — {cliente}")
+
+
+def _titulo_da_pergunta(pergunta: str) -> str:
+    """A primeira pergunta, em uma linha: é o que identifica a conversa no histórico."""
+    linha = " ".join(str(pergunta or "").split())
+    return (linha[:57] + "…") if len(linha) > 58 else linha
+
+
+def listar_conversas(caso_id: str, usuario: str) -> list[dict[str, Any]]:
+    """O histórico do chat desta petição: as conversas desta pessoa, da mais recente."""
+    return [
+        {
+            "id": c["id"],
+            "titulo": c["titulo"],
+            "criado_em": c["criado_em"],
+            "atualizado_em": c["atualizado_em"],
+            "perguntas": int(c.get("perguntas") or 0),
+        }
+        for c in armazenamento.listar_conversas_do_caso(usuario, caso_id, escopo=ESCOPO)
+    ]
+
+
+def nova_conversa(caso_id: str, usuario: str) -> dict[str, Any]:
+    """Abre um chat em branco — a menos que já haja um em branco, que é reaproveitado.
+
+    O contexto do CASO (documentos lidos, pesquisas e buscas já feitas) é da petição e
+    não da conversa: o chat novo já nasce sabendo o que os anteriores levantaram.
+    """
+    for existente in listar_conversas(caso_id, usuario):
+        if existente["perguntas"] == 0:
+            return abrir(caso_id, usuario, existente["id"])
+    conversa = _criar_conversa(caso_id, usuario)
+    return abrir(caso_id, usuario, conversa["id"])
+
+
+def excluir_conversa(caso_id: str, usuario: str, conversa_id: str) -> None:
+    _conversa_do_caso_e_da_pessoa(conversa_id, caso_id, usuario)
+    armazenamento.excluir_conversa(conversa_id, usuario)
+
+
+def abrir(caso_id: str, usuario: str, conversa_id: str = "") -> dict[str, Any]:
     """A conversa com o histórico inteiro — é o que o refresh da página reabre."""
-    conversa = _garantir_conversa(caso_id, usuario)
+    conversa = _garantir_conversa(caso_id, usuario, conversa_id)
+    anexos = peticao_local.anexos_do_caso(caso_id)
     return {
         "id": conversa["id"],
         "caso_id": conversa["caso_id"],
@@ -1838,8 +1974,18 @@ def abrir(caso_id: str, usuario: str) -> dict[str, Any]:
             or os.getenv("DEEPSEEK_API_KEY", "").strip()
         ),
         "web_disponivel": pesquisa_web_modulo.configurada(),
-        "documentos": documentos_citaveis(caso_id),
+        "documentos": _citaveis_de(anexos),
+        "contexto": contexto_caso.resumo(contexto_caso.obter(caso_id, anexos)),
+        "conversas": listar_conversas(caso_id, usuario),
     }
+
+
+def _citaveis_de(anexos: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {"id": a["id"], "arquivo": a["arquivo"], "tipo": a["tipo"], "situacao": a["situacao"]}
+        for a in anexos
+        if a.get("id") and a.get("arquivo")
+    ]
 
 
 def documentos_citaveis(caso_id: str) -> list[dict[str, str]]:
@@ -1850,11 +1996,20 @@ def documentos_citaveis(caso_id: str) -> list[dict[str, str]]:
     advogado tinha de sair da conversa e caçar o arquivo no checklist. O texto do
     OCR fica de fora: a tela só precisa saber o que é clicável.
     """
-    return [
-        {"id": a["id"], "arquivo": a["arquivo"], "tipo": a["tipo"], "situacao": a["situacao"]}
-        for a in peticao_local.anexos_do_caso(caso_id)
-        if a.get("id") and a.get("arquivo")
-    ]
+    return _citaveis_de(peticao_local.anexos_do_caso(caso_id))
+
+
+def resumo_do_contexto(caso_id: str) -> dict[str, Any]:
+    """O que a base de contexto do caso já tem — só os números, para a tela."""
+    return contexto_caso.resumo(contexto_caso.obter(caso_id, peticao_local.anexos_do_caso(caso_id)))
+
+
+def atualizar_contexto(caso_id: str) -> dict[str, Any]:
+    """Refaz o levantamento dos documentos e descarta as buscas antigas, a pedido do advogado.
+
+    As pesquisas na web ficam: não dependem dos anexos e valem por 30 dias.
+    """
+    return contexto_caso.resumo(contexto_caso.refazer(caso_id, peticao_local.anexos_do_caso(caso_id)))
 
 
 #: Ação proposta -> ferramenta que a criou, e os campos dela que a ferramenta recebe.
@@ -1959,7 +2114,7 @@ def _contextos_adicionais_para_o_modelo(conversa_id: str) -> str:
 # isso só ela é lembrada. Minuta e documentos continuam sendo lidos a cada pergunta.
 
 #: Quantas pesquisas anteriores voltam ao contexto, e quanto de cada resposta.
-PESQUISAS_LEMBRADAS = 8
+PESQUISAS_LEMBRADAS = 10
 LIMITE_PESQUISA_LEMBRADA = 1500
 
 #: Pesquisa mais velha que isto é pesquisada de novo: súmula e tese mudam.
@@ -2012,6 +2167,126 @@ def _bloco_de_pesquisas(pesquisas: list[dict[str, Any]]) -> str:
     return "\n\n".join(blocos)
 
 
+#: Quantas pesquisas na web uma única resposta pode fazer. Medido: 24 das 39 chamadas de
+#: `pesquisar_na_web` gravadas foram a mesma ferramenta repetida na mesma resposta.
+LIMITE_PESQUISAS_POR_RESPOSTA = 3
+
+#: Semelhança (palavras em comum / palavras no total) a partir da qual duas perguntas de
+#: pesquisa são a mesma. Com o MESMO número de súmula/OJ/tema, basta bem menos: quem cita
+#: «Súmula 378» está perguntando da Súmula 378, com as palavras que for.
+PARECIDA_A_PARTIR_DE = 0.6
+PARECIDA_COM_MESMO_NUMERO = 0.34
+
+_VAZIAS_DA_PESQUISA = {
+    "para", "com", "sobre", "qual", "quais", "como", "que", "uma", "uns", "das", "dos",
+    "nas", "nos", "pela", "pelo", "por", "sem", "seu", "sua", "isso", "esta", "este",
+    "essa", "esse", "quando", "onde", "existe", "existem", "atual", "atualmente",
+}
+
+
+_TRIBUNAIS = {"tst", "stj", "stf", "trt", "tcu", "tnu", "trf", "tjs"}
+
+
+def _palavras_da_pesquisa(pergunta: Any) -> set[str]:
+    limpa = re.sub(r"[^\w\s]", " ", _normalizar(str(pergunta or "")))
+    return {p for p in limpa.split() if len(p) > 2 and p not in _VAZIAS_DA_PESQUISA}
+
+
+def _pesquisa_parecida(
+    pergunta: Any, memoria: dict[str, dict[str, Any]]
+) -> dict[str, Any] | None:
+    """A pesquisa já feita que responde a esta, ainda que escrita com outras palavras.
+
+    Antes só a pergunta IDÊNTICA (depois de normalizada) era reaproveitada, e o modelo
+    reformula: «súmula 378 TST estabilidade» e «estabilidade acidentária, Súmula 378 do
+    TST» são a mesma ida à internet. Duas perguntas contam como a mesma quando dividem a
+    maior parte das palavras — ou o mesmo número de súmula, OJ ou tema.
+    """
+    exata = memoria.get(_normalizar(str(pergunta or "")))
+    if exata:
+        return exata
+    palavras = _palavras_da_pesquisa(pergunta)
+    if len(palavras) < 2:
+        return None
+    numeros = _citacoes(str(pergunta or ""), _CITA_JURISPRUDENCIA)
+    melhor: dict[str, Any] | None = None
+    melhor_nota = 0.0
+    for candidata in memoria.values():
+        outras = _palavras_da_pesquisa(candidata.get("pergunta"))
+        if not outras:
+            continue
+        # Mesmo número em tribunais diferentes NÃO é a mesma pesquisa: a Súmula 378 do
+        # TST e a do STJ não têm nada em comum além do número.
+        if palavras & _TRIBUNAIS != outras & _TRIBUNAIS:
+            continue
+        nota = len(palavras & outras) / len(palavras | outras)
+        mesmo_numero = bool(numeros) and numeros == _citacoes(
+            str(candidata.get("pergunta") or ""), _CITA_JURISPRUDENCIA
+        )
+        minimo = PARECIDA_COM_MESMO_NUMERO if mesmo_numero else PARECIDA_A_PARTIR_DE
+        if nota >= minimo and nota > melhor_nota:
+            melhor, melhor_nota = candidata, nota
+    return melhor
+
+
+def _chave_da_leitura(nome: str, argumentos: dict[str, Any]) -> str:
+    """Identifica uma leitura (ferramenta + argumentos) para não repeti-la na mesma resposta.
+
+    Vazia para o que NÃO se deduplica: a web (tem a memória por semelhança) e as
+    propostas (cada uma vira um cartão).
+    """
+    entrada = CATALOGO.get(nome)
+    if entrada is None or entrada[2] or nome == "pesquisar_na_web":
+        return ""
+    normalizados = {
+        k: (_normalizar(v) if isinstance(v, str) else v) for k, v in sorted(argumentos.items())
+    }
+    return nome + "|" + json.dumps(normalizados, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _pesquisas_do_caso(conversa_id: str, base: dict[str, Any]) -> list[dict[str, Any]]:
+    """As pesquisas que valem para ESTA resposta: as do caso (qualquer advogado) e as desta
+    conversa, sem repetir a mesma pergunta — a mais recente fica."""
+    por_pergunta: dict[str, dict[str, Any]] = {}
+    todas = [*_pesquisas_da_conversa(conversa_id), *contexto_caso.pesquisas_validas(base)]
+    for pesquisa in sorted(todas, key=lambda p: str(p.get("em") or "")):
+        chave = _normalizar(pesquisa.get("pergunta"))
+        if chave and pesquisa.get("fontes"):
+            por_pergunta.pop(chave, None)
+            por_pergunta[chave] = pesquisa
+    return list(por_pergunta.values())[-PESQUISAS_LEMBRADAS:]
+
+
+def _cabe_via_rapida(pergunta: str) -> bool:
+    """Pedido claro de alteração do TEXTO da peça: vale forçar a proposta e responder na hora.
+
+    Mesmas condições da proposta de reserva, e mais uma: pergunta («posso trocar…?») e
+    pedido de foto, print ou trecho seguem pelo caminho normal, que pode consultar e
+    perguntar de volta.
+    """
+    return (
+        pediu_alteracao(pergunta)
+        and bool(_ALVO_NA_PECA.search(pergunta))
+        and not _FALA_DE_FOTO.search(pergunta)
+        and not pergunta.rstrip().endswith("?")
+    )
+
+
+def _texto_da_via_rapida(caso_id: str, acao: dict[str, Any]) -> str:
+    texto = "Preparei a alteração pedida. Confira o que vai mudar e confirme no cartão abaixo."
+    if acao.get("sensivel"):
+        texto += " Ela mexe em valor, pedido ou fundamentação: leia com calma antes de confirmar."
+    try:
+        pendente = (peticao_local.carregar(caso_id) or {}).get("revisao_pendente")
+    except Exception:  # noqa: BLE001 — o aviso é complementar
+        pendente = None
+    if pendente:
+        texto += (
+            " Já existe uma comparação aberta ao lado: confirmar esta a substitui."
+        )
+    return texto
+
+
 def _pesquisa_lembrada(pesquisa: dict[str, Any]) -> dict[str, Any]:
     """Uma pesquisa guardada no formato que `_pesquisar_na_web` devolve."""
     return {
@@ -2026,9 +2301,11 @@ def _pesquisa_lembrada(pesquisa: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def adicionar_contexto(caso_id: str, usuario: str, *, arquivo: str, relevancia: str, texto: str) -> dict[str, Any]:
+def adicionar_contexto(
+    caso_id: str, usuario: str, *, arquivo: str, relevancia: str, texto: str, conversa_id: str = ""
+) -> dict[str, Any]:
     """Registra um anexo contextual, sem confundi-lo com prova já juntada."""
-    conversa = _garantir_conversa(caso_id, usuario)
+    conversa = _garantir_conversa(caso_id, usuario, conversa_id)
     nome = str(arquivo or "arquivo adicional").strip()[:300]
     explicacao = " ".join(str(relevancia or "").split())[:2_000]
     extraido = str(texto or "").strip()
@@ -2062,7 +2339,9 @@ def _registrar(
 # ------------------------------------------------------------------ a conversa
 
 
-def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, Any]]:
+def conversar(
+    caso_id: str, pergunta: str, usuario: str, conversa_id: str = ""
+) -> Iterator[dict[str, Any]]:
     """Responde a uma pergunta, em fluxo. Cada item é um evento para a tela.
 
     Os eventos: `conversa` (qual é, e a pergunta já gravada), `etapa` (o que está
@@ -2076,13 +2355,20 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     pergunta = _limpar_texto(pergunta)
     if not pergunta:
         raise ErroDoChat("Escreva a sua pergunta.")
-    conversa = _garantir_conversa(caso_id, usuario)
+    conversa = _garantir_conversa(caso_id, usuario, conversa_id)
     conversa_id = conversa["id"]
 
     historico = _historico_para_o_modelo(conversa_id)
     registro_da_pergunta = armazenamento.registrar_mensagem(
         conversa_id, papel="USER", conteudo=pergunta, natureza="PERGUNTA"
     )
+    if not historico:
+        # A primeira pergunta dá nome à conversa no histórico. Falhar aqui não pode
+        # custar a resposta: o nome é só rótulo.
+        try:
+            armazenamento.atualizar_conversa(conversa_id, titulo=_titulo_da_pergunta(pergunta))
+        except Exception:  # noqa: BLE001
+            log.warning("chat da petição: não consegui nomear a conversa %s", conversa_id)
     yield {
         "tipo": "conversa",
         "conversa_id": conversa_id,
@@ -2090,9 +2376,12 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     }
 
     contexto_adicional = _contextos_adicionais_para_o_modelo(conversa_id)
-    pesquisas_anteriores = _pesquisas_da_conversa(conversa_id)
+    contexto_do_caso = _contexto_do_caso(caso_id)
+    # Depois de `_contexto_do_caso`, que é quem mantém a base em dia com os anexos.
+    base_do_caso = contexto_caso.lida(caso_id)
+    pesquisas_anteriores = _pesquisas_do_caso(conversa_id, base_do_caso)
     mensagens: list[dict[str, Any]] = [
-        {"role": "system", "content": INSTRUCAO + "\n\n" + _contexto_do_caso(caso_id)
+        {"role": "system", "content": INSTRUCAO + "\n\n" + contexto_do_caso
          + ("\n\n=== CONTEXTO ADICIONAL ENVIADO PELO ADVOGADO ===\n" + contexto_adicional if contexto_adicional else "")
          + ("\n\n=== PESQUISAS NA WEB JÁ FEITAS NESTA CONVERSA ===\n" + _bloco_de_pesquisas(pesquisas_anteriores) if pesquisas_anteriores else "")},
         *historico,
@@ -2106,6 +2395,10 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     fontes: list[dict[str, str]] = []
     acoes: list[dict[str, Any]] = []
     consultas: list[str] = []
+    #: As leituras já feitas NESTA resposta (ferramenta + argumentos) e quantas vezes a web
+    #: foi consultada agora — a base das duas travas contra consulta repetida.
+    ja_consultadas: set[str] = set()
+    pesquisas_feitas_agora = 0
     texto = ""
 
     # Uma flag POR TIPO de cobrança, não uma só compartilhada entre as quatro.
@@ -2120,12 +2413,16 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
     cobranca_oferta_feita = False
     cobranca_recusa_feita = False
     cobranca_promessa_feita = False
+    # VIA RÁPIDA: pedido claro de alteração da peça. Só a proposta é forçada na primeira
+    # rodada, e a resposta é escrita aqui — sem ler nada e sem uma segunda ida ao modelo.
+    via_rapida = _cabe_via_rapida(pergunta)
     try:
         passo = 0
         while passo < MAXIMO_DE_PASSOS:
             passo += 1
             resposta: dict[str, Any] = {}
-            for evento in _transmitir(mensagens):
+            forcar = "propor_revisao_da_peticao" if (via_rapida and passo == 1) else None
+            for evento in (_transmitir(mensagens, forcar=forcar) if forcar else _transmitir(mensagens)):
                 if evento["tipo"] == "mensagem":
                     resposta = evento["mensagem"]
                 else:
@@ -2209,17 +2506,51 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                 if not isinstance(argumentos, dict):
                     argumentos = {}
 
+                chave_da_leitura = _chave_da_leitura(nome, argumentos)
+                repetida = chave_da_leitura in ja_consultadas
                 lembrada = (
-                    memoria.get(_normalizar(argumentos.get("pergunta")))
+                    _pesquisa_parecida(argumentos.get("pergunta"), memoria)
                     if nome == "pesquisar_na_web"
                     else None
                 )
-                if lembrada:
+                busca_guardada = (
+                    contexto_caso.busca_lembrada(base_do_caso, argumentos.get("termo"))
+                    if nome == "buscar_nos_documentos" and not repetida
+                    else None
+                )
+                if repetida:
+                    # O resultado já está mais acima na conversa: devolvê-lo de novo
+                    # só encheria o contexto (uma minuta inteira, a cada repetição).
+                    resultado = {
+                        "ja_consultado": True,
+                        "orientacao": (
+                            "Você já fez esta mesma consulta nesta resposta: o resultado está"
+                            " acima. Use-o, e só consulte de novo se for outro assunto."
+                        ),
+                    }
+                elif lembrada:
                     yield {"tipo": "etapa", "texto": "Reaproveitando a pesquisa já feita"}
                     resultado = _pesquisa_lembrada(lembrada)
+                elif busca_guardada:
+                    yield {"tipo": "etapa", "texto": "Reaproveitando a busca já feita nos documentos"}
+                    resultado = busca_guardada
+                elif nome == "pesquisar_na_web" and pesquisas_feitas_agora >= LIMITE_PESQUISAS_POR_RESPOSTA:
+                    resultado = {
+                        "falhou": True,
+                        "motivo": (
+                            f"Limite de {LIMITE_PESQUISAS_POR_RESPOSTA} pesquisas na web por"
+                            " resposta. Responda com o que já apurou e diga o que ficou sem"
+                            " conferir."
+                        ),
+                        "fontes": [],
+                    }
                 else:
                     yield {"tipo": "etapa", "texto": ETAPAS.get(nome, "Consultando o caso")}
                     resultado = executar_ferramenta(nome, caso_id, argumentos)
+                    if nome == "pesquisar_na_web":
+                        pesquisas_feitas_agora += 1
+                    if chave_da_leitura:
+                        ja_consultadas.add(chave_da_leitura)
                     if (
                         nome == "pesquisar_na_web"
                         and not resultado.get("falhou")
@@ -2233,7 +2564,11 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                         }
                         pesquisas_novas.append(pesquisa)
                         memoria[_normalizar(pesquisa["pergunta"])] = pesquisa
-                consultas.append(nome)
+                        contexto_caso.registrar_pesquisa(caso_id, pesquisa)
+                    elif nome == "buscar_nos_documentos":
+                        contexto_caso.registrar_busca(caso_id, str(argumentos.get("termo") or ""), resultado)
+                if not repetida:
+                    consultas.append(nome)
 
                 vistas = {f["url"] for f in fontes}
                 for fonte in resultado.get("fontes") or []:
@@ -2250,6 +2585,12 @@ def conversar(caso_id: str, pergunta: str, usuario: str) -> Iterator[dict[str, A
                         "content": json.dumps(resultado, ensure_ascii=False, default=str),
                     }
                 )
+            if forcar and acoes:
+                # A proposta nasceu na primeira rodada: o texto que a acompanha não precisa de
+                # outra ida ao modelo (segundos de espera) para dizer o que o cartão já diz.
+                texto = _texto_da_via_rapida(caso_id, acoes[-1])
+                yield {"tipo": "delta", "texto": texto}
+                break
         if passo >= MAXIMO_DE_PASSOS and (resposta.get("tool_calls") or []):
             # Esgotou o teto ainda consultando: pede o fechamento com o que houver,
             # em vez de deixar o advogado olhando "digitando" até o prazo estourar.
@@ -2513,7 +2854,7 @@ def _executar(caso_id: str, autor: str, acao: dict[str, Any]) -> tuple[str, dict
 
 
 def executar_acao(
-    caso_id: str, usuario: str, acao: dict[str, Any], *, autor: str = ""
+    caso_id: str, usuario: str, acao: dict[str, Any], *, autor: str = "", conversa_id: str = ""
 ) -> dict[str, Any]:
     """Executa uma proposta aceita e grava o resultado na conversa.
 
@@ -2524,7 +2865,7 @@ def executar_acao(
     Nunca levanta por falha da ação: a falha vira mensagem com `pode_repetir`, que é
     o que permite à tela oferecer "tentar de novo" sem perder o que foi pedido.
     """
-    conversa = _garantir_conversa(caso_id, usuario)
+    conversa = _garantir_conversa(caso_id, usuario, conversa_id)
     try:
         texto, extra = _executar(caso_id, autor or usuario, acao)
     except (ErroDoChat, ErroDoAgente, peticao_local.ErroPeticao) as erro:
@@ -2650,7 +2991,11 @@ def _texto_do_evento(caso_id: str, tipo: str, dados: dict[str, Any]) -> str:
 
 
 def registrar_evento(
-    caso_id: str, usuario: str, tipo: str, dados: dict[str, Any] | None = None
+    caso_id: str,
+    usuario: str,
+    tipo: str,
+    dados: dict[str, Any] | None = None,
+    conversa_id: str = "",
 ) -> dict[str, Any] | None:
     """A IA contando, na conversa, o que uma ação da tela acabou de fazer.
 
@@ -2661,7 +3006,7 @@ def registrar_evento(
     texto = _texto_do_evento(caso_id, str(tipo or ""), dados)
     if not texto:
         return None
-    conversa = _garantir_conversa(caso_id, usuario)
+    conversa = _garantir_conversa(caso_id, usuario, conversa_id)
     return _registrar(
         conversa["id"],
         texto,

@@ -2393,6 +2393,28 @@ def conversa_do_caso(
     return _normalizar_conversa(linha) if linha else None
 
 
+def listar_conversas_do_caso(
+    usuario: str, caso_id: str, *, escopo: str = "PETICAO"
+) -> list[dict[str, Any]]:
+    """As conversas desta pessoa sobre ESTE caso, da mais recente para a mais antiga.
+
+    É o histórico do chat da petição: cada uma reabre com a transcrição inteira.
+    `perguntas` diz quantas o advogado fez — conversa com zero é uma em branco, e a tela
+    não deixa acumular várias delas.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT c.*,"
+            " (SELECT COUNT(*) FROM conversa_mensagens m"
+            "   WHERE m.conversa_id = c.id AND m.natureza = 'PERGUNTA') AS perguntas"
+            " FROM conversas c"
+            " WHERE c.usuario = ? AND c.caso_id = ? AND c.escopo = ?"
+            " ORDER BY c.atualizado_em DESC",
+            (usuario, caso_id, escopo),
+        ).fetchall()
+    return [{**_normalizar_conversa(l), "perguntas": int(l["perguntas"] or 0)} for l in linhas]
+
+
 def _para_like(termo: str) -> str:
     """Escapa o que o `LIKE` do SQL Server trata como curinga.
 
