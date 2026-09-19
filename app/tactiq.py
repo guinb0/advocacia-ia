@@ -1,6 +1,6 @@
 """Conexão OAuth (PKCE) por advogado com o MCP remoto do Tactiq."""
 from __future__ import annotations
-import base64, hashlib, json, os, secrets
+import base64, hashlib, json, os, secrets, threading
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 import httpx
@@ -16,38 +16,82 @@ IF OBJECT_ID('{TABELA}') IS NULL CREATE TABLE {TABELA} (
  state_cifrado nvarchar(max) NULL, verifier_cifrado nvarchar(max) NULL,
  conectado_em varchar(40) NULL, atualizado_em varchar(40) NOT NULL
 )"""
+ESQUEMA_PENDENTE = f"IF COL_LENGTH('{TABELA}','pendente_client_id') IS NULL ALTER TABLE {TABELA} ADD pendente_client_id nvarchar(300) NULL"
+MSG_EXPIRADA = "A conexão Tactiq expirou ou foi revogada. Conecte novamente para importar as transcrições."
+MSG_CHAVE = "Não foi possível abrir a conexão Tactiq salva com a chave atual do servidor. Conecte novamente."
+ERROS_REVOGACAO = {"invalid_grant", "invalid_client", "unauthorized_client"}
+_travas: dict[str, threading.Lock] = {}
+_travas_guarda = threading.Lock()
+
+
+class _NaoAutorizado(Exception):
+    pass
+
+
 def agora(): return datetime.now(timezone.utc).isoformat()
 def inicializar():
-    with conectar() as c: c.execute(ESQUEMA); c.commit()
+    with conectar() as c:
+        c.execute(ESQUEMA)
+        c.execute(ESQUEMA_PENDENTE)
+        c.commit()
 def _linha(usuario_id):
     with conectar() as c: return c.execute(f"SELECT * FROM {TABELA} WHERE usuario_id=?", (usuario_id,)).fetchone()
-def status(usuario_id):
-    # A primeira versão dependia da criação na inicialização da API. Se uma
-    # instância subisse durante uma oscilação do SQL Server, a tabela não nascia
-    # e esta simples leitura devolvia 500 para a tela. Garantir aqui torna a rota
-    # autocorretiva e não expõe token algum.
+def _trava(usuario_id):
+    with _travas_guarda:
+        return _travas.setdefault(usuario_id, threading.Lock())
+def _decifrar(valor):
+    try:
+        return cripto.decifrar(valor)
+    except cripto.ErroCripto as exc:
+        raise ValueError(MSG_CHAVE) from exc
+def _limpar_tokens(usuario_id):
+    with conectar() as c:
+        c.execute(f"UPDATE {TABELA} SET access_token_cifrado=NULL, refresh_token_cifrado=NULL, atualizado_em=? WHERE usuario_id=?", (agora(), usuario_id)); c.commit()
+
+
+def status(usuario_id, verificar=False):
     inicializar()
     r=_linha(usuario_id)
-    return {"conectado": bool(r and r['access_token_cifrado']), "conectado_em": str(r['conectado_em'] or '') if r else '', "servidor": MCP, "disponivel": True}
+    dados={"conectado": bool(r and r['access_token_cifrado']), "conectado_em": str(r['conectado_em'] or '') if r else '', "servidor": MCP, "disponivel": True, "motivo": ""}
+    if not dados["conectado"]:
+        return dados
+    try:
+        _decifrar(r['access_token_cifrado'])
+        if verificar:
+            _mcp(usuario_id, lambda cliente, cabecalho: True)
+    except ValueError as exc:
+        dados.update(conectado=False, motivo=str(exc))
+    except httpx.HTTPError:
+        dados["motivo"] = "O Tactiq não respondeu agora; a conexão foi mantida."
+    return dados
 def iniciar(usuario_id, redirect_uri):
     inicializar()
     verifier=secrets.token_urlsafe(64); state=secrets.token_urlsafe(32)
     challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
-    # Registro dinâmico oficial do servidor: não há client secret no frontend.
     reg=httpx.post(f"{MCP}/oauth/register",json={"client_name":"Advocacia IA","redirect_uris":[redirect_uri],"token_endpoint_auth_method":"none"},timeout=20)
     reg.raise_for_status(); client_id=reg.json()['client_id']
     with conectar() as c:
-        c.execute(f"DELETE FROM {TABELA} WHERE usuario_id=?",(usuario_id,))
-        c.execute(f"INSERT INTO {TABELA}(usuario_id,client_id,state_cifrado,verifier_cifrado,atualizado_em) VALUES(?,?,?,?,?)",(usuario_id,client_id,cripto.cifrar(state),cripto.cifrar(verifier),agora())); c.commit()
+        if c.execute(f"SELECT 1 FROM {TABELA} WHERE usuario_id=?",(usuario_id,)).fetchone():
+            c.execute(f"UPDATE {TABELA} SET pendente_client_id=?,state_cifrado=?,verifier_cifrado=?,atualizado_em=? WHERE usuario_id=?",(client_id,cripto.cifrar(state),cripto.cifrar(verifier),agora(),usuario_id))
+        else:
+            c.execute(f"INSERT INTO {TABELA}(usuario_id,client_id,pendente_client_id,state_cifrado,verifier_cifrado,atualizado_em) VALUES(?,?,?,?,?,?)",(usuario_id,client_id,client_id,cripto.cifrar(state),cripto.cifrar(verifier),agora()))
+        c.commit()
     return f"{MCP}/oauth/authorize?"+urlencode({"response_type":"code","client_id":client_id,"redirect_uri":redirect_uri,"scope":"mcp:meetings:own mcp:meetings:shared mcp:meetings:spaces mcp:meetings:details","state":state,"code_challenge":challenge,"code_challenge_method":"S256"})
+def _confere_state(linha, state):
+    try:
+        return secrets.compare_digest(cripto.decifrar(linha['state_cifrado']),state)
+    except cripto.ErroCripto:
+        return False
 def concluir(state, code, redirect_uri):
+    inicializar()
     with conectar() as c:
         linhas=c.execute(f"SELECT * FROM {TABELA} WHERE state_cifrado IS NOT NULL").fetchall()
-    linha=next((r for r in linhas if secrets.compare_digest(cripto.decifrar(r['state_cifrado']),state)),None)
+    linha=next((r for r in linhas if _confere_state(r,state)),None)
     if not linha: raise ValueError("Conexão Tactiq expirada ou inválida. Comece novamente.")
-    resp=httpx.post(f"{MCP}/oauth/token",data={"grant_type":"authorization_code","code":code,"redirect_uri":redirect_uri,"client_id":linha['client_id'],"code_verifier":cripto.decifrar(linha['verifier_cifrado'])},timeout=25); resp.raise_for_status(); tok=resp.json()
-    with conectar() as c:
-        c.execute(f"UPDATE {TABELA} SET access_token_cifrado=?,refresh_token_cifrado=?,state_cifrado=NULL,verifier_cifrado=NULL,conectado_em=?,atualizado_em=? WHERE usuario_id=?",(cripto.cifrar(tok['access_token']),cripto.cifrar(tok.get('refresh_token','')),agora(),agora(),linha['usuario_id'])); c.commit()
+    client_id=linha['pendente_client_id'] or linha['client_id']
+    resp=httpx.post(f"{MCP}/oauth/token",data={"grant_type":"authorization_code","code":code,"redirect_uri":redirect_uri,"client_id":client_id,"code_verifier":cripto.decifrar(linha['verifier_cifrado'])},timeout=25); resp.raise_for_status(); tok=resp.json()
+    with _trava(linha['usuario_id']), conectar() as c:
+        c.execute(f"UPDATE {TABELA} SET client_id=?,pendente_client_id=NULL,access_token_cifrado=?,refresh_token_cifrado=?,state_cifrado=NULL,verifier_cifrado=NULL,conectado_em=?,atualizado_em=? WHERE usuario_id=?",(client_id,cripto.cifrar(tok['access_token']),cripto.cifrar(tok.get('refresh_token','')),agora(),agora(),linha['usuario_id'])); c.commit()
     return linha['usuario_id']
 
 
@@ -55,35 +99,52 @@ def _token(usuario_id):
     linha = _linha(usuario_id)
     if not linha or not linha['access_token_cifrado']:
         raise ValueError("Conecte o Tactiq antes de importar uma transcrição.")
-    return cripto.decifrar(linha['access_token_cifrado'])
+    return _decifrar(linha['access_token_cifrado'])
 
 
-def _renovar_token(usuario_id):
-    """Troca um access token expirado sem mandar o advogado ao OAuth de novo."""
-    linha = _linha(usuario_id)
-    if not linha or not linha['refresh_token_cifrado']:
-        raise ValueError("A conexão Tactiq expirou. Conecte novamente para importar as transcrições.")
-    refresh = cripto.decifrar(linha['refresh_token_cifrado'])
-    resposta = httpx.post(
-        f"{MCP}/oauth/token",
-        data={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": linha['client_id']},
-        timeout=25,
-    )
-    if resposta.status_code in {400, 401, 403}:
-        raise ValueError("A conexão Tactiq expirou ou foi revogada. Conecte novamente para importar as transcrições.")
-    resposta.raise_for_status()
-    dados = resposta.json()
-    access = str(dados.get("access_token") or "").strip()
-    if not access:
-        raise ValueError("O Tactiq não devolveu um novo token de acesso. Conecte novamente.")
-    refresh_novo = str(dados.get("refresh_token") or refresh)
-    with conectar() as banco:
-        banco.execute(
-            f"UPDATE {TABELA} SET access_token_cifrado=?, refresh_token_cifrado=?, atualizado_em=? WHERE usuario_id=?",
-            (cripto.cifrar(access), cripto.cifrar(refresh_novo), agora(), usuario_id),
+def _erro_oauth(resposta):
+    try:
+        erro = str((resposta.json() or {}).get("error") or "")
+    except ValueError:
+        erro = ""
+    return erro or ("invalid_client" if resposta.status_code == 401 else "")
+
+
+def _renovar_token(usuario_id, token_falho):
+    """Renova o access token uma única vez por vez: chamadas paralelas reaproveitam o token novo."""
+    with _trava(usuario_id):
+        linha = _linha(usuario_id)
+        if not linha or not linha['refresh_token_cifrado']:
+            raise ValueError(MSG_EXPIRADA)
+        atual = _decifrar(linha['access_token_cifrado']) if linha['access_token_cifrado'] else ""
+        if atual and atual != token_falho:
+            return atual
+        refresh = _decifrar(linha['refresh_token_cifrado'])
+        resposta = httpx.post(
+            f"{MCP}/oauth/token",
+            data={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": linha['client_id']},
+            timeout=25,
         )
-        banco.commit()
-    return access
+        if resposta.status_code >= 400:
+            if _erro_oauth(resposta) in ERROS_REVOGACAO:
+                outra = _linha(usuario_id)
+                if outra and outra['access_token_cifrado'] and outra['refresh_token_cifrado'] and _decifrar(outra['refresh_token_cifrado']) != refresh:
+                    return _decifrar(outra['access_token_cifrado'])
+                _limpar_tokens(usuario_id)
+                raise ValueError(MSG_EXPIRADA)
+            resposta.raise_for_status()
+        dados = resposta.json()
+        access = str(dados.get("access_token") or "").strip()
+        if not access:
+            raise ValueError("O Tactiq não devolveu um novo token de acesso. Conecte novamente.")
+        refresh_novo = str(dados.get("refresh_token") or refresh)
+        with conectar() as banco:
+            banco.execute(
+                f"UPDATE {TABELA} SET access_token_cifrado=?, refresh_token_cifrado=?, atualizado_em=? WHERE usuario_id=?",
+                (cripto.cifrar(access), cripto.cifrar(refresh_novo), agora(), usuario_id),
+            )
+            banco.commit()
+        return access
 
 
 def _json_mcp(resposta):
@@ -94,30 +155,44 @@ def _json_mcp(resposta):
     except ValueError:
         for linha in resposta.text.splitlines():
             if linha.startswith("data:"):
-                import json
                 return json.loads(linha[5:].strip())
     raise ValueError("O servidor MCP devolveu uma resposta sem JSON.")
 
 
-def _mcp(usuario_id, acao):
-    """Abre uma sessão MCP remota e executa uma operação autenticada."""
-    cabecalho = {"Authorization": f"Bearer {_token(usuario_id)}", "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+def _post(cliente, cabecalho, corpo):
+    resposta = cliente.post(MCP, json=corpo, headers=cabecalho)
+    if resposta.status_code == 401:
+        raise _NaoAutorizado()
+    return resposta
+
+
+def _sessao(token, acao):
+    cabecalho = {"Authorization": f"Bearer {token}", "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
     with httpx.Client(timeout=45) as cliente:
-        pedido_inicio = {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"advocacia-ia","version":"1.0"}}}
-        resposta_inicio = cliente.post(MCP, json=pedido_inicio, headers=cabecalho)
-        if resposta_inicio.status_code == 401:
-            cabecalho["Authorization"] = f"Bearer {_renovar_token(usuario_id)}"
-            resposta_inicio = cliente.post(MCP, json=pedido_inicio, headers=cabecalho)
+        resposta_inicio = _post(cliente, cabecalho, {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"advocacia-ia","version":"1.0"}}})
         inicio = _json_mcp(resposta_inicio)
         sessao = resposta_inicio.headers.get("mcp-session-id") or inicio.get("result", {}).get("sessionId") or ""
         if sessao:
             cabecalho["Mcp-Session-Id"] = sessao
-        cliente.post(MCP, json={"jsonrpc":"2.0","method":"notifications/initialized","params":{}}, headers=cabecalho).raise_for_status()
+        _post(cliente, cabecalho, {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}).raise_for_status()
         return acao(cliente, cabecalho)
 
 
+def _mcp(usuario_id, acao):
+    """Abre uma sessão MCP remota; um 401 em qualquer etapa renova o token e refaz a sessão uma vez."""
+    token = _token(usuario_id)
+    try:
+        return _sessao(token, acao)
+    except _NaoAutorizado:
+        token = _renovar_token(usuario_id, token)
+    try:
+        return _sessao(token, acao)
+    except _NaoAutorizado as exc:
+        raise ValueError("O Tactiq recusou o token renovado. Conecte novamente.") from exc
+
+
 def _ferramentas_na_sessao(cliente, cabecalho):
-    resposta = _json_mcp(cliente.post(MCP, json={"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}, headers=cabecalho))
+    resposta = _json_mcp(_post(cliente, cabecalho, {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
     return resposta.get("result", {}).get("tools", [])
 
 
@@ -126,7 +201,7 @@ def ferramentas(usuario_id):
 
 
 def _chamar(cliente, cabecalho, nome, argumentos):
-    resposta = _json_mcp(cliente.post(MCP, json={"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":nome,"arguments":argumentos}}, headers=cabecalho))
+    resposta = _json_mcp(_post(cliente, cabecalho, {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":nome,"arguments":argumentos}}))
     if resposta.get("error"):
         raise ValueError(str(resposta["error"].get("message") or "O Tactiq recusou a consulta."))
     return resposta.get("result", {})
