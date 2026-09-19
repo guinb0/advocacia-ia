@@ -668,6 +668,10 @@ def tipo_confere(
     if identidade_unificada and item.tipo_ocr in {"rg", "cpf"}:
         # Antes só a CIN valia; a CNH entrou porque imprime RG e CPF juntos.
         return tipo_detectado in TIPOS_IDENTIDADE_UNIFICADA
+    # CIN/CNH são aceitas para identificar a pessoa, mas não substituem o
+    # documento de CPF no checklist: são provas juridicamente distintas.
+    if item.tipo_ocr == "rg" and tipo_detectado in TIPOS_IDENTIDADE_UNIFICADA:
+        return True
     return tipo_detectado == item.tipo_ocr
 
 

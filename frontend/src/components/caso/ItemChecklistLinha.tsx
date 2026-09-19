@@ -88,14 +88,12 @@ export default function ItemChecklistLinha({
   enviando,
   onEnviar,
   onRemover,
-  onVincularIdentidade,
   onReatribuir,
   dentroDoAtendimento = false,
   achadoNoConteudo,
   onAbrirEntrega,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [usarParaRgECpf, setUsarParaRgECpf] = useState(false);
   /** Entrega aberta no visor (arquivo + campos extraídos). */
   const [visor, setVisor] = useState<{ id: string; arquivo: string } | null>(null);
 
@@ -152,7 +150,6 @@ export default function ItemChecklistLinha({
   }
   const estadoModelo = useModelo();
   const aparencia = APARENCIA[item.status];
-  const podeUsarParaAmbos = item.tipo_ocr === "rg" || item.tipo_ocr === "cpf";
   const lendoAgora = item.entregas.some((entrega) => entrega.status_proc === "processando");
   const aguardandoNaFila =
     !lendoAgora && item.entregas.some((entrega) => entrega.status_proc === "na_fila");
@@ -216,10 +213,9 @@ export default function ItemChecklistLinha({
           hidden
           onChange={(e) => {
             const arquivo = e.target.files?.[0];
-            if (arquivo) onEnviar(item.codigo, arquivo, usarParaRgECpf);
+            if (arquivo) onEnviar(item.codigo, arquivo);
             // Zera para permitir reenviar o mesmo arquivo depois de corrigi-lo.
             e.target.value = "";
-            setUsarParaRgECpf(false);
           }}
         />
 
@@ -252,21 +248,6 @@ export default function ItemChecklistLinha({
         <ProgressoOcr modeloPronto={estadoModelo === "pronto"} naFila={!enviando && aguardandoNaFila} />
       )}
 
-      {podeUsarParaAmbos && (
-        <Marcacao className="mt-2 ml-9 max-w-[74ch]">
-          <input
-            type="checkbox"
-            checked={usarParaRgECpf}
-            onChange={(e) => setUsarParaRgECpf(e.target.checked)}
-            disabled={enviando}
-          />
-          <span>
-            Este arquivo vale como RG <strong>e</strong> CPF (documento de identidade
-            unificado). A CNH e a CIN já são reconhecidas sozinhas — marque só se a leitura não
-            tiver identificado.
-          </span>
-        </Marcacao>
-      )}
 
       {item.entregas.length > 0 && (
         <>
@@ -353,10 +334,6 @@ export default function ItemChecklistLinha({
                 {entrega.arquivo}
               </button>
 
-              {(entrega.itens_atendidos?.length ?? 1) > 1 && (
-                <Selo tom="info">Vale para RG e CPF</Selo>
-              )}
-
               <Botao
                 variante="secundario"
                 pequeno
@@ -365,17 +342,6 @@ export default function ItemChecklistLinha({
                 Ver o que foi lido
               </Botao>
 
-              {podeUsarParaAmbos && (entrega.itens_atendidos?.length ?? 1) === 1 && (
-                <BotaoProcesso
-                  variante="discreto"
-                  pequeno
-                  onClick={() => onVincularIdentidade(entrega.id, item.codigo)}
-                  aguardando={enviando ? "Aguarde: o arquivo novo ainda está sendo enviado." : false}
-                  title="Confirme somente se este for um documento de identidade unificado"
-                >
-                  Usar também como {item.tipo_ocr === "rg" ? "CPF" : "RG"}
-                </BotaoProcesso>
-              )}
 
               <Botao variante="perigo" pequeno onClick={() => onRemover(entrega.id)}>
                 Remover

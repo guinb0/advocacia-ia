@@ -318,49 +318,69 @@ def _llm_json(
         raise ErroPeticao("DEEPSEEK_API_KEY ausente — configure no .env.")
     base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     modelo = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-    try:
-        resposta = httpx.post(
-            f"{base}/chat/completions",
-            headers={"Authorization": f"Bearer {chave}"},
-            json={
-                "model": modelo,
-                "temperature": 0.2,
-                "max_tokens": MAX_TOKENS_RESPOSTA,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": instrucao},
-                    {"role": "user", "content": entrada[:120_000]},
-                ],
-            },
-            timeout=timeout,
-        )
-        resposta.raise_for_status()
-        escolha = resposta.json()["choices"][0]
-        conteudo = escolha["message"]["content"]
-        if escolha.get("finish_reason") == "length":
-            # Cortado pelo teto de saída: o JSON chega sem fechar. Dizer "não
-            # respondeu" mandava tentar de novo um pedido que falha igual.
+    # Duas tentativas, não uma: um pedido grande — criar um tópico novo reescreve
+    # a peça inteira — já leva dezenas de segundos, e um timeout de rede isolado
+    # (a resposta estava a caminho, a conexão caiu) derrubava o pedido inteiro na
+    # hora, sem tentar de novo. Quem lia via "o modelo não respondeu" depois de
+    # já ter esperado o tempo todo — e tinha de repetir o pedido do zero. Não
+    # cobre o corte por tamanho (`finish_reason == "length"`): repetir um pedido
+    # que já estourou o teto falharia do mesmo jeito, então esse caso sai direto
+    # com a mensagem própria, sem consumir a segunda tentativa.
+    ultimo_erro: Exception | None = None
+    for tentativa in (1, 2):
+        try:
+            resposta = httpx.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {chave}"},
+                json={
+                    "model": modelo,
+                    "temperature": 0.2,
+                    "max_tokens": MAX_TOKENS_RESPOSTA,
+                    "response_format": {"type": "json_object"},
+                    "messages": [
+                        {"role": "system", "content": instrucao},
+                        {"role": "user", "content": entrada[:120_000]},
+                    ],
+                },
+                timeout=timeout,
+            )
+            resposta.raise_for_status()
+            escolha = resposta.json()["choices"][0]
+            conteudo = escolha["message"]["content"]
+            if escolha.get("finish_reason") == "length":
+                # Cortado pelo teto de saída: o JSON chega sem fechar. Dizer "não
+                # respondeu" mandava tentar de novo um pedido que falha igual.
+                log.warning(
+                    "petição local: resposta cortada no teto de %s tokens", MAX_TOKENS_RESPOSTA
+                )
+                raise ErroPeticao(
+                    "A resposta do modelo passou do tamanho máximo e foi cortada. Peça a"
+                    " alteração em partes menores."
+                )
+            saida = json.loads(conteudo)
+        except ErroPeticao:
+            raise
+        # `IndexError` e `TypeError` não estavam aqui, e é justamente o que um
+        # provedor devolve quando filtra a resposta: HTTP 200 com `choices: []`. O
+        # erro subia cru e a tela mostrava 500 sem dizer nada ao advogado, que ficava
+        # sem saber se devia tentar de novo — e devia.
+        except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as erro:
+            ultimo_erro = erro
             log.warning(
-                "petição local: resposta cortada no teto de %s tokens", MAX_TOKENS_RESPOSTA
+                "petição local: LLM falhou (tentativa %s/2): %s", tentativa, erro
             )
-            raise ErroPeticao(
-                "A resposta do modelo passou do tamanho máximo e foi cortada. Peça a"
-                " alteração em partes menores."
-            )
-        saida = json.loads(conteudo)
-    # `IndexError` e `TypeError` não estavam aqui, e é justamente o que um
-    # provedor devolve quando filtra a resposta: HTTP 200 com `choices: []`. O
-    # erro subia cru e a tela mostrava 500 sem dizer nada ao advogado, que ficava
-    # sem saber se devia tentar de novo — e devia.
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as erro:
-        log.warning("petição local: LLM falhou: %s", erro)
-        raise ErroPeticao("O modelo não respondeu — tente de novo.") from erro
-    if not isinstance(saida, dict):
-        # JSON válido que não é objeto (uma lista, um número) quebraria adiante,
-        # no `.get` de quem chamou, longe daqui.
-        log.warning("petição local: LLM devolveu %s em vez de objeto", type(saida).__name__)
-        raise ErroPeticao("O modelo não respondeu no formato esperado — tente de novo.")
-    return saida
+            continue
+        if not isinstance(saida, dict):
+            # JSON válido que não é objeto (uma lista, um número) quebraria adiante,
+            # no `.get` de quem chamou, longe daqui.
+            log.warning("petição local: LLM devolveu %s em vez de objeto", type(saida).__name__)
+            ultimo_erro = None
+            break
+        return saida
+
+    if ultimo_erro is not None:
+        raise ErroPeticao("O modelo não respondeu — tente de novo.") from ultimo_erro
+    raise ErroPeticao("O modelo não respondeu no formato esperado — tente de novo.")
 
 
 def _categoria_do_caso(caso_id: str) -> str:
@@ -3184,10 +3204,13 @@ def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
     linhas = [(linha + [""] * colunas)[:colunas] for linha in linhas]
     # A tabela de dados contratuais do escritório usa rótulo mais estreito e valor
     # mais largo. Para outras estruturas, as colunas ficam proporcionais e legíveis.
+    # Uma largura ligeiramente menor que a área útil deixa a tabela respirar dentro
+    # da página, em vez de parecer uma grade colada às margens. O valor é em twips.
+    largura_total = 7800
     if colunas == 2:
-        larguras = [3000, 6000]
+        larguras = [2400, 5400]
     else:
-        base, resto = divmod(9000, colunas)
+        base, resto = divmod(largura_total, colunas)
         larguras = [base + (1 if indice < resto else 0) for indice in range(colunas)]
 
     def celula(texto: str, largura: int, *, destaque: bool = False) -> str:
@@ -3211,15 +3234,16 @@ def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
         ) + "</w:tr>"
 
     return (
-        '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="autofit"/>'
-        '<w:tblBorders><w:top w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
-        '<w:left w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
-        '<w:bottom w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
-        '<w:right w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
-        '<w:insideH w:val="single" w:sz="8" w:space="0" w:color="000000"/>'
-        '<w:insideV w:val="single" w:sz="8" w:space="0" w:color="000000"/></w:tblBorders>'
-        '<w:tblCellMar><w:top w:w="80" w:type="dxa"/><w:left w:w="80" w:type="dxa"/>'
-        '<w:bottom w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar>'
+        f'<w:tbl><w:tblPr><w:tblW w:w="{largura_total}" w:type="dxa"/><w:jc w:val="center"/>'
+        '<w:tblLayout w:type="fixed"/>'
+        '<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+        '<w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+        '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+        '<w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+        '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+        '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders>'
+        '<w:tblCellMar><w:top w:w="50" w:type="dxa"/><w:left w:w="50" w:type="dxa"/>'
+        '<w:bottom w:w="50" w:type="dxa"/><w:right w:w="50" w:type="dxa"/></w:tblCellMar>'
         '</w:tblPr><w:tblGrid>'
         + "".join(f'<w:gridCol w:w="{largura}"/>' for largura in larguras)
         + "</w:tblGrid>"
