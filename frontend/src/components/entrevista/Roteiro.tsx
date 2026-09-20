@@ -1698,6 +1698,7 @@ function preencherMarcadores(
         * da conversa — e porque ele não é guardado em lugar nenhum, então quem
         * quiser precisa ver a opção antes, não depois. */}
       <VideoDaEntrevista automatico
+        entrevistaId={() => captura.current?.entrevistaId ?? ""}
         onPendente={(pendente) => {
           videoPendente.current = pendente;
         }}

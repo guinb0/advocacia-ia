@@ -2431,6 +2431,23 @@ def conversar(
             chamadas = resposta.get("tool_calls") or []
             mensagens.append(resposta)
             if not chamadas:
+                # A via rápida pediu explicitamente a ferramenta de proposta. Alguns
+                # provedores, porém, devolvem texto normal ou argumentos vazios mesmo
+                # com `tool_choice` forçado. Não deixamos o advogado com uma promessa
+                # sem cartão: neste caminho o pedido literal já é uma proposta segura,
+                # pois nada é alterado antes do clique de confirmação.
+                if via_rapida and passo == 1 and not acoes and not texto.strip():
+                    reserva = _propor_revisao(
+                        caso_id,
+                        pedido=pergunta,
+                        motivo="Pedido direto feito no chat.",
+                    )
+                    if reserva.get("registrada"):
+                        acoes.append({k: v for k, v in reserva.items() if k != "registrada"})
+                        texto = _texto_da_via_rapida(caso_id, acoes[-1])
+                        yield {"tipo": "recomeco"}
+                        yield {"tipo": "delta", "texto": texto}
+                        break
                 # Prometeu e não chamou: cobra UMA vez. Sem o teto, um modelo teimoso
                 # ficaria repetindo a promessa enquanto o advogado espera.
                 if not cobranca_fonte_feita and citou_sem_conferir(

@@ -12,7 +12,7 @@ import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Maximize2, Mic, Mi
 import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
 import ChatPeticao from "@/components/admin/ChatPeticao";
 import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
-import { indicesAlterados, parearSecoes, type SecaoComparavel } from "@/lib/diffPeticao";
+import { alinharSecoes, indicesAlterados, type LinhaComparacao } from "@/lib/diffPeticao";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
@@ -1669,16 +1669,11 @@ function ComparacaoRevisao({
   // Tela cheia: com a peça dividida ao meio, cada coluna fica estreita demais
   // para o advogado achar a alteração num parágrafo longo.
   const [expandido, setExpandido] = useState(false);
-  const porCodigo = new Map(candidata.map((s) => [s.code, s]));
-  const todos = [...anterior, ...candidata.filter((s) => !anterior.some((a) => a.code === s.code))];
-  const anteriorVisivel = todos.map((s) => anterior.find((a) => a.code === s.code) ?? { ...s, content: "" });
-  const candidataVisivel = todos.map((s) => porCodigo.get(s.code) ?? { ...s, content: "" });
-  // Uma seção pode trocar de código/posição numa revisão. Antes isso fazia o
-  // texto idêntico ficar todo verde/vermelho; primeiro pareamos conteúdo igual,
-  // depois caímos no código da seção.
-  const opostasDaAnterior = parearSecoes(anteriorVisivel, candidataVisivel);
-  const opostasDaCandidata = parearSecoes(candidataVisivel, anteriorVisivel);
-  const mudancas = todos.filter((s) => (porCodigo.get(s.code)?.content ?? "") !== (anterior.find((a) => a.code === s.code)?.content ?? "")).length;
+  // Uma seção pode trocar de código/posição numa revisão. A linha preserva o par
+  // achado por conteúdo antes de cair no código, portanto texto idêntico não vira
+  // duas seções inteiras em vermelho e verde.
+  const linhas = alinharSecoes(anterior, candidata);
+  const mudancas = linhas.filter((linha) => linha.antes.content !== linha.depois.content).length;
   useEffect(() => {
     // Ao chegar a candidata (ou ao expandir), o advogado não precisa procurar a
     // alteração numa peça longa. O primeiro trecho marcado (vermelho ou verde)
@@ -1745,8 +1740,8 @@ function ComparacaoRevisao({
         </button>
       </div>
       <div className={`grid min-h-0 grid-cols-2 gap-3 max-[760px]:grid-cols-1 ${expandido ? "max-[760px]:overflow-auto" : ""}`}>
-        <ColunaComparacao titulo="Versão anterior" secoes={anteriorVisivel} oposta={opostasDaAnterior} tipo="antes" expandido={expandido} />
-        <ColunaComparacao titulo="Nova versão" secoes={candidataVisivel} oposta={opostasDaCandidata} tipo="depois" expandido={expandido} />
+        <ColunaComparacao titulo="Versão anterior" linhas={linhas} tipo="antes" expandido={expandido} />
+        <ColunaComparacao titulo="Nova versão" linhas={linhas} tipo="depois" expandido={expandido} />
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-borda pt-3">
         <Botao variante="secundario" pequeno disabled={revisando} onClick={onDescartar}>✕ Descartar revisão</Botao>
@@ -1756,16 +1751,20 @@ function ComparacaoRevisao({
   );
 }
 
-function ColunaComparacao({ titulo, secoes, oposta, tipo, expandido }: { titulo: string; secoes: SecaoPeticao[]; oposta: Map<string, SecaoComparavel>; tipo: "antes" | "depois"; expandido: boolean }) {
+function ColunaComparacao({ titulo, linhas, tipo, expandido }: { titulo: string; linhas: LinhaComparacao[]; tipo: "antes" | "depois"; expandido: boolean }) {
   return <article className={`min-w-0 overflow-auto rounded-campo border border-borda border-t-4 bg-papel-2 ${expandido ? "h-full min-h-0 p-5" : "max-h-[70vh] p-3"} ${tipo === "antes" ? "border-t-red-500" : "border-t-ok"}`}>
     <h4 className="sticky top-0 z-[1] mb-2 flex items-center justify-between gap-2 bg-papel-2 py-1 text-sm font-semibold text-tinta">
       {titulo}
       {tipo === "antes" ? <Selo tom="neutro" simbolo="↺">Atual</Selo> : <Selo tom="ok" simbolo="✓">Proposta da IA</Selo>}
     </h4>
-    {secoes.map((secao, i) => <div key={`${secao.code}-${i}`} className={`mb-4 whitespace-pre-wrap leading-relaxed text-tinta ${expandido ? "text-base" : "text-sm"}`}>
+    {linhas.map((linha, i) => {
+      const secao = tipo === "antes" ? linha.antes : linha.depois;
+      const oposta = tipo === "antes" ? linha.depois : linha.antes;
+      return <div key={`${linha.antes.code}:${linha.depois.code}-${i}`} className={`mb-4 whitespace-pre-wrap leading-relaxed text-tinta ${expandido ? "text-base" : "text-sm"}`}>
       <p className="mb-1 font-semibold">{secao.label}</p>
-      <TextoComDiff texto={secao.content} outro={oposta.get(secao.code)?.content ?? ""} tipo={tipo} />
-    </div>)}
+      <TextoComDiff texto={secao.content} outro={oposta.content} tipo={tipo} />
+    </div>;
+    })}
   </article>;
 }
 

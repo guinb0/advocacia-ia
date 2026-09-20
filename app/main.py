@@ -4371,7 +4371,8 @@ def baixar_entrevista(caso_id: str, entrevista_id: str):
     )
 
 
-GUARDAR_MIDIA_NO_BANCO_ATE = date(2026, 9, 15)
+# O vídeo das entrevistas é persistente: cada pedaço é salvo no banco e fica
+# disponível para a supervisão depois que o atendimento termina.
 LIMITE_MIDIA_NO_BANCO = 1536 * 1024 * 1024
 
 
@@ -4383,8 +4384,6 @@ async def guardar_gravacao_temporaria(
     nome: str = Form(""),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
-    if datetime.now(timezone(timedelta(hours=-3))).date() > GUARDAR_MIDIA_NO_BANCO_ATE:
-        raise HTTPException(410, "O armazenamento temporário de gravações no banco já foi encerrado.")
     conteudo = await arquivo.read()
     if not conteudo:
         raise HTTPException(400, "Arquivo vazio.")
@@ -4410,11 +4409,6 @@ def listar_gravacoes_temporarias(_usuario: auth.Usuario = Depends(auth.usuario_a
     return {"gravacoes": armazenamento.listar_gravacoes_temporarias()}
 
 
-def _exigir_midia_no_banco_liberada() -> None:
-    if datetime.now(timezone(timedelta(hours=-3))).date() > GUARDAR_MIDIA_NO_BANCO_ATE:
-        raise HTTPException(410, "O armazenamento temporário de gravações no banco já foi encerrado.")
-
-
 class PedidoTrechoTranscricao(BaseModel):
     entrevista_id: str = Field(min_length=1, max_length=64)
     quando: int = 0
@@ -4425,11 +4419,11 @@ class PedidoTrechoTranscricao(BaseModel):
 async def guardar_pedaco_de_video(
     arquivo: UploadFile = File(...),
     sessao_id: str = Form(...),
+    entrevista_id: str = Form(""),
     ordem: int = Form(...),
     nome: str = Form(""),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
-    _exigir_midia_no_banco_liberada()
     sessao = sessao_id.strip()[:64]
     if not sessao or ordem < 0:
         raise HTTPException(400, "Sessão ou ordem inválida.")
@@ -4442,6 +4436,7 @@ async def guardar_pedaco_de_video(
         await run_in_threadpool(
             armazenamento.salvar_pedaco_gravacao,
             sessao_id=sessao,
+            entrevista_id=entrevista_id.strip()[:64],
             ordem=ordem,
             nome_arquivo=(nome or arquivo.filename or "Entrevista.webm")[:400],
             mime=(arquivo.content_type or "application/octet-stream")[:100],
@@ -4477,7 +4472,6 @@ def guardar_trecho_de_transcricao(
     pedido: PedidoTrechoTranscricao,
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
-    _exigir_midia_no_banco_liberada()
     try:
         armazenamento.salvar_trecho_transcricao(
             entrevista_id=pedido.entrevista_id,

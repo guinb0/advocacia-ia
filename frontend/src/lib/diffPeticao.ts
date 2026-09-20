@@ -36,6 +36,31 @@ export function parearSecoes(secoes: SecaoComparavel[], opostas: SecaoComparavel
   return resultado;
 }
 
+/** Uma linha visual da comparação. O código de uma seção pode mudar quando a IA
+ * reorganiza a peça; por isso a tela precisa renderizar o PAR encontrado, em vez de
+ * montar as duas colunas separadamente por `code`. */
+export interface LinhaComparacao {
+  antes: SecaoComparavel;
+  depois: SecaoComparavel;
+}
+
+export function alinharSecoes(antes: SecaoComparavel[], depois: SecaoComparavel[]): LinhaComparacao[] {
+  const pares = parearSecoes(antes, depois);
+  const usados = new Set<string>();
+  const linhas = antes.map((secao) => {
+    const oposta = pares.get(secao.code);
+    if (oposta) usados.add(oposta.code);
+    return {
+      antes: secao,
+      depois: oposta ?? { ...secao, content: "" },
+    };
+  });
+  depois.filter((secao) => !usados.has(secao.code)).forEach((secao) => {
+    linhas.push({ antes: { ...secao, content: "" }, depois: secao });
+  });
+  return linhas;
+}
+
 /**
  * As palavras de `texto` que NÃO existem em `outro` na mesma sequência.
  *

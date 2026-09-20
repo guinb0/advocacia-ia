@@ -2775,6 +2775,7 @@ def obter_gravacao_temporaria(gravacao_id: str) -> dict[str, Any] | None:
 def salvar_pedaco_gravacao(
     *,
     sessao_id: str,
+    entrevista_id: str = "",
     ordem: int,
     nome_arquivo: str,
     mime: str,
@@ -2787,10 +2788,10 @@ def salvar_pedaco_gravacao(
         con.execute(
             """
             INSERT INTO gravacoes_pedacos
-                   (id, sessao_id, ordem, nome_arquivo, mime, conteudo, enviado_por, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   (id, sessao_id, entrevista_id, ordem, nome_arquivo, mime, conteudo, enviado_por, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (identificador, sessao_id, ordem, nome_arquivo, mime, conteudo, enviado_por, agora()),
+            (identificador, sessao_id, entrevista_id, ordem, nome_arquivo, mime, conteudo, enviado_por, agora()),
         )
 
 

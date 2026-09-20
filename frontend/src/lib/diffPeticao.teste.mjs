@@ -25,7 +25,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { indicesAlterados, parearSecoes } from "./diffPeticao.ts";
+import { alinharSecoes, indicesAlterados, parearSecoes } from "./diffPeticao.ts";
 
 let falhas = 0;
 function checar(condicao, descricao) {
@@ -114,6 +114,14 @@ checar(
 checar(
   indicesAlterados("o acidente ocorreu em 14/08/2024", par.get("FACTS").content).size === 0,
   "e por isso não aparece toda marcada",
+);
+const linhasReordenadas = alinharSecoes(
+  [{ code: "FACTS", content: "o acidente ocorreu em 14/08/2024" }],
+  [{ code: "FATOS", content: "o acidente ocorreu em 14/08/2024" }],
+);
+checar(
+  linhasReordenadas.length === 1 && linhasReordenadas[0].antes.content === linhasReordenadas[0].depois.content,
+  "a tela mantém o par numa única linha quando o código muda",
 );
 
 console.log("\n4. Peça longa (acima do teto do LCS)");
