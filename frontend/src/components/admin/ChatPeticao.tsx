@@ -121,6 +121,10 @@ export default function ChatPeticao({
   const [modeloDisponivel, setModeloDisponivel] = useState(true);
   const [texto, setTexto] = useState("");
   const [parcial, setParcial] = useState("");
+  /* Se o modelo começa a responder e depois percebe que precisa consultar algo,
+   * preservamos o rascunho, claramente marcado, em vez de fazê-lo sumir. */
+  const [rascunhoEmConferencia, setRascunhoEmConferencia] = useState("");
+  const parcialNaTela = useRef("");
   const [etapa, setEtapa] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
@@ -235,6 +239,8 @@ export default function ChatPeticao({
     setTexto("");
     setPrintsAnexados([]);
     setParcial("");
+    parcialNaTela.current = "";
+    setRascunhoEmConferencia("");
     setEtapa("");
     setEnviando(false);
     setErro("");
@@ -363,6 +369,8 @@ export default function ChatPeticao({
       setTexto("");
       setPrintsAnexados([]);
       setParcial("");
+      parcialNaTela.current = "";
+      setRascunhoEmConferencia("");
       setEtapa("Lendo o caso");
       setEnviando(true);
       setPreso(true);
@@ -383,13 +391,21 @@ export default function ChatPeticao({
                 break;
               case "delta":
                 setEtapa("");
-                setParcial((anterior) => anterior + evento.texto);
+                setParcial((anterior) => {
+                  const atualizado = anterior + evento.texto;
+                  parcialNaTela.current = atualizado;
+                  return atualizado;
+                });
                 break;
               case "recomeco":
+                if (parcialNaTela.current.trim()) setRascunhoEmConferencia(parcialNaTela.current);
+                parcialNaTela.current = "";
                 setParcial("");
                 break;
               case "fim":
                 setParcial("");
+                parcialNaTela.current = "";
+                setRascunhoEmConferencia("");
                 setEtapa("");
                 setMensagens((atuais) => [...atuais, evento.mensagem]);
                 atualizarDocumentos();
@@ -397,6 +413,8 @@ export default function ChatPeticao({
                 break;
               case "erro":
                 setParcial("");
+                parcialNaTela.current = "";
+                setRascunhoEmConferencia("");
                 setEtapa("");
                 if (evento.mensagem) setMensagens((atuais) => [...atuais, evento.mensagem!]);
                 else setErro(evento.texto);
@@ -423,6 +441,8 @@ export default function ChatPeticao({
           setEnviando(false);
           setEtapa("");
           setParcial("");
+          parcialNaTela.current = "";
+          setRascunhoEmConferencia("");
         }
       }
     },
@@ -782,9 +802,10 @@ export default function ChatPeticao({
 
         {conversaVazia && modeloDisponivel && (
           <div className={estilos.comecar}>
-            <p className={estilos.convite}>Por onde quer começar?</p>
+            <p className={estilos.convite}>Escreva livremente ou escolha uma sugestão</p>
             <p className={estilos.explicacao}>
-              Leio a minuta, a entrevista e os documentos deste caso antes de responder.
+              O campo abaixo está sempre disponível; estes botões são apenas atalhos. Leio a
+              minuta, a entrevista e os documentos deste caso antes de responder.
             </p>
             <div className={estilos.cartoes}>
               {ATALHOS.map((atalho) => (
@@ -837,6 +858,13 @@ export default function ChatPeticao({
             <span className={estilos.ponto} aria-hidden />
             {etapa}…
           </p>
+        )}
+
+        {rascunhoEmConferencia && (
+          <div className={`${estilos.resposta} ${estilos.rascunhoEmConferencia}`}>
+            <p className={estilos.avisoRascunho}>Rascunho em conferência</p>
+            <RespostaFormatada texto={rascunhoEmConferencia} />
+          </div>
         )}
 
         {parcial && (

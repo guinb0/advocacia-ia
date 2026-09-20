@@ -25,6 +25,20 @@
   overflow: hidden;
 }
 
+/* A resposta provisória continua legível durante uma consulta, mas não se
+ * confunde com a resposta final que será salva na conversa. */
+.rascunhoEmConferencia {
+  opacity: .72;
+  border-style: dashed;
+}
+
+.avisoRascunho {
+  margin: 0 0 8px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--tinta-3);
+}
+
 /* ------------------------------------------------------------------ cabeçalho */
 
 .cabecalho {
