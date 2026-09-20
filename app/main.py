@@ -4419,6 +4419,7 @@ class PedidoTrechoTranscricao(BaseModel):
 async def guardar_pedaco_de_video(
     arquivo: UploadFile = File(...),
     sessao_id: str = Form(...),
+    entrevista_id: str = Form(""),
     ordem: int = Form(...),
     nome: str = Form(""),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
@@ -4435,6 +4436,7 @@ async def guardar_pedaco_de_video(
         await run_in_threadpool(
             armazenamento.salvar_pedaco_gravacao,
             sessao_id=sessao,
+            entrevista_id=entrevista_id.strip()[:64],
             ordem=ordem,
             nome_arquivo=(nome or arquivo.filename or "Entrevista.webm")[:400],
             mime=(arquivo.content_type or "application/octet-stream")[:100],

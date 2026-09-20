@@ -25,6 +25,7 @@ export type ControlesVideo = {
 };
 
 interface Props {
+  entrevistaId?: () => string;
   /** Avisa que há vídeo gravado e ainda não baixado — o que se perde ao sair. */
   onPendente?: (pendente: boolean) => void;
   automatico?: boolean;
@@ -47,6 +48,7 @@ const BOTAO_DESTAQUE =
   "tracking-[0.1em] uppercase px-[13px] py-[9px] cursor-pointer inline-block no-underline hover:bg-tinta hover:border-tinta";
 
 export default function VideoDaEntrevista({
+  entrevistaId,
   onPendente,
   automatico = false,
   onControles,
@@ -89,7 +91,7 @@ export default function VideoDaEntrevista({
           };
         }
         const { id, nome } = sessaoVideo.current;
-        if (id) void enviarPedacoGravacao(id, ordem, pedaco, nome);
+        if (id) void enviarPedacoGravacao(id, ordem, pedaco, nome, entrevistaId?.() ?? "");
       },
       onEstado: setEstado,
       onPronto: (pronto) => {

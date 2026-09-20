@@ -245,6 +245,7 @@ export function enviarPedacoGravacao(
   ordem: number,
   pedaco: Blob,
   nome: string,
+  entrevistaId = "",
 ): Promise<void> {
   return comRetentativas(async () => {
     const form = new FormData();
@@ -252,6 +253,7 @@ export function enviarPedacoGravacao(
     form.append("sessao_id", sessaoId);
     form.append("ordem", String(ordem));
     form.append("nome", nome);
+    form.append("entrevista_id", entrevistaId);
     await comoJson(await buscar("/api/gravacoes-temporarias/pedacos", { method: "POST", body: form }));
   });
 }
