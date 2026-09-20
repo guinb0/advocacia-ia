@@ -33,7 +33,7 @@ import type {
   PerguntaPendente,
   RoteiroCompleto,
 } from "@/lib/types";
-import { CapturaEntrevista, guardarCopiaTranscricao } from "@/lib/transcricao";
+import { CapturaEntrevista, encerrarGravacaoEmEmergencia, guardarCopiaTranscricao } from "@/lib/transcricao";
 import type { EstadoCaptura } from "@/lib/transcricao";
 import Conducao from "@/components/entrevista/Conducao";
 import ConferenciaResposta from "@/components/entrevista/ConferenciaResposta";
@@ -769,6 +769,12 @@ export default function Roteiro({
     },
     [],
   );
+
+  useEffect(() => {
+    const emergencia = () => encerrarGravacaoEmEmergencia(captura.current?.entrevistaId ?? "");
+    window.addEventListener("pagehide", emergencia);
+    return () => window.removeEventListener("pagehide", emergencia);
+  }, []);
 
   useImperativeHandle(
     ref,
