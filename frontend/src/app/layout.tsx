@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Archivo, IBM_Plex_Mono, Newsreader } from "next/font/google";
 
 import DockChamada from "@/components/chamada/DockChamada";
+import DiagnosticoJitsi from "@/components/chamada/DiagnosticoJitsi";
 import AlternadorTema from "@/components/ui/AlternadorTema";
 import { ContextWrapper } from "@/contexts/ContextWrapper";
 import { ProvedorChamada } from "@/lib/ChamadaContexto";
@@ -87,6 +88,7 @@ export default function RootLayout({
             {children}
             <AlternadorTema />
             <DockChamada />
+            <DiagnosticoJitsi />
           </ProvedorChamada>
           <Toaster />
         </ContextWrapper>

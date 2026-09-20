@@ -719,6 +719,7 @@ IF OBJECT_ID('{SCHEMA}.{PREFIXO}gravacoes_pedacos') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}gravacoes_pedacos (
     id            varchar(100)   NOT NULL CONSTRAINT pk_acervo_grav_pedacos PRIMARY KEY,
     sessao_id     varchar(64)    NOT NULL,
+    entrevista_id varchar(64)    NOT NULL CONSTRAINT df_acervo_grav_ped_entrevista DEFAULT '',
     ordem         int            NOT NULL,
     nome_arquivo  nvarchar(400)  NOT NULL,
     mime          varchar(100)   NOT NULL,
@@ -804,6 +805,7 @@ INDICES = (
 #: Só coluna ANULÁVEL, ou com DEFAULT: preencher linha existente é migração de dado, e
 #: migração de dado não cabe num passo de partida que roda a cada subida do servidor.
 COLUNAS_NOVAS = (
+    (f"{PREFIXO}gravacoes_pedacos", "entrevista_id", "varchar(64) NOT NULL CONSTRAINT df_acervo_grav_ped_entrevista DEFAULT ''"),
     # A qualificação nasceu com oito colunas, e a tela sempre mostrou o dobro de
     # campos: RG, órgão, UF do RG, pai, PIS, profissão, estado civil,
     # nacionalidade, UF e município eram digitados, usados pelo contrato e

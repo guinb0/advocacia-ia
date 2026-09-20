@@ -1,6 +1,7 @@
 "use client";
 
 import { criarEfeitoFundo, preCarregarFundoVirtual } from "./fundoVirtual";
+import { diagnosticoJitsiAtivo, erroDiagnosticoJitsi, registrarDiagnosticoJitsi, retratoDiagnosticoJitsi } from "./diagnosticoJitsi";
 
 const FUNDO_ADVOGADO = "/fundo-chamada.jpg";
 
@@ -71,7 +72,6 @@ const ESPERA_REPUBLICAR_MS = 8_000;
 const ALTURA_VIDEO = 720;
 const ALTURA_MINIMA = 180;
 const FPS_VIDEO = 30;
-const ALTURA_RECEPCAO = 720;
 
 /** Espera antes da primeira reconexão; dobra a cada tentativa. */
 const ESPERA_RECONEXAO_MS = 3_000;
@@ -84,14 +84,6 @@ const MAX_RECONEXOES = 5;
  *  que é rápida. Curto de propósito: quem de fato saiu já foi anunciado por
  *  `USER_LEFT`, então esperar aqui não atrasa nada que importe. */
 const ESPERA_TROCA_REMOTA_MS = 2_500;
-
-/** As restrições de câmera pedidas ao navegador. `ideal`, e nunca `exact`:
- *  `exact` faz a webcam que não tem o modo exato falhar por inteiro, e a
- *  chamada cai para "sem câmera" em vez de abrir na resolução possível. */
-const VIDEO_PEDIDO = {
-  height: { ideal: ALTURA_VIDEO, min: ALTURA_MINIMA, max: ALTURA_VIDEO },
-  frameRate: { ideal: FPS_VIDEO, max: FPS_VIDEO },
-} as const;
 
 export type PapelChamada = "advogado" | "cliente";
 
@@ -187,6 +179,7 @@ interface ConferenciaJitsi {
    * fora deste repositório: em versões antigas eles não existem, e chamá-los
    * sem conferir derrubaria a entrada na sala inteira — por qualidade de
    * imagem, que é o menor dos problemas quando ninguém consegue entrar. */
+  setReceiverConstraints?(restricoes: Record<string, unknown>): void;
   setReceiverVideoConstraints?(restricoes: Record<string, unknown>): void;
   setSenderVideoConstraint?(altura: number): Promise<void> | void;
 }
@@ -252,11 +245,15 @@ function carregarJitsi(): Promise<ApiJitsi> {
       // `disableAudioLevels` desliga o medidor de volume, que roda um timer por
       // participante e não serve para nada aqui — quem mede áudio é o Whisper.
       api.init({ disableAudioLevels: true });
-      api.setLogLevel(api.logLevels.ERROR);
+      // Em diagnóstico preservamos os avisos da própria lib; fora dele, mantém o
+      // console limpo para o uso normal.
+      api.setLogLevel(diagnosticoJitsiAtivo() ? (api.logLevels.WARN ?? api.logLevels.ERROR) : api.logLevels.ERROR);
+      registrarDiagnosticoJitsi("JITSI_READY", { webRtc: api.isWebRtcSupported?.() ?? "desconhecido" });
       ok(api);
     };
     script.onerror = () => {
       carregando = null;
+      registrarDiagnosticoJitsi("JITSI_LOAD_FAILURE", { base: BASE_JITSI });
       // Sem comando de terminal: quem lê isto é quem está tentando abrir a
       // chamada com o cliente esperando, não quem administra o servidor. O
       // comando de subir o Jitsi está no docs/CHAMADA.md, que é onde o suporte
@@ -301,25 +298,84 @@ function ehCelular(): boolean {
   return typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
 
-async function abrirVideoComFallback(api: ApiJitsi): Promise<FaixaJitsi[]> {
+type PerfilVideo = {
+  altura: 720 | 480 | 240;
+  fps: 30 | 24 | 15;
+};
+
+function escolherPerfilVideo(): PerfilVideo {
+  const navegador = navigator as Navigator & {
+    connection?: { effectiveType?: string; saveData?: boolean };
+    deviceMemory?: number;
+  };
+  const rede = navegador.connection;
+  if (rede?.saveData || ["slow-2g", "2g", "3g"].includes(rede?.effectiveType ?? "")) {
+    return { altura: 240, fps: 15 };
+  }
+  if (ehCelular() && ((navegador.deviceMemory ?? 8) <= 4 || navigator.hardwareConcurrency <= 4)) {
+    return { altura: 480, fps: 24 };
+  }
+  return { altura: ALTURA_VIDEO, fps: FPS_VIDEO };
+}
+
+function tentativasVideo(perfil: PerfilVideo): ReadonlyArray<Record<string, unknown>> {
+  const alturas = [...new Set([perfil.altura, 480, 240])].filter((altura) => altura <= perfil.altura);
+  return [
+    ...alturas.map((altura) => {
+      const fps = altura === perfil.altura ? perfil.fps : altura === 480 ? 24 : 15;
+      return {
+        resolution: altura,
+        constraints: {
+          video: {
+            height: { ideal: altura, min: altura === 240 ? 120 : ALTURA_MINIMA, max: altura },
+            frameRate: { ideal: fps, max: fps },
+          },
+        },
+      };
+    }),
+    { constraints: { video: true } },
+  ];
+}
+
+async function abrirComFallback(
+  api: ApiJitsi,
+  devices: string[],
+  opcoesBase: Record<string, unknown> = {},
+  perfil = escolherPerfilVideo(),
+): Promise<FaixaJitsi[]> {
   let ultimo: unknown = null;
-  /* A escada começa no que se quer e desce só o necessário. Antes ela começava
-   * em `{}` — "o que vier" — e a webcam que negociasse mal já entregava 240p
-   * para o resto da entrevista, sem nada na tela dizendo por quê. */
-  for (const opcoes of [
-    { resolution: ALTURA_VIDEO, constraints: { video: VIDEO_PEDIDO } },
-    { resolution: 480 },
-    { resolution: 240, constraints: { video: true } },
-  ]) {
+  for (const opcoes of tentativasVideo(perfil)) {
     try {
-      const faixas = await api.createLocalTracks({ devices: ["video"], ...opcoes });
-      if (faixas.some((f) => f.getType() === "video")) return faixas;
+      const faixas = await api.createLocalTracks({ devices, ...opcoesBase, ...opcoes });
+      const temVideo = faixas.some((f) => f.getType() === "video");
+      const temAudio = !devices.includes("audio") || faixas.some((f) => f.getType() === "audio");
+      if (temAudio && temVideo) return faixas;
+      await Promise.all(faixas.map((f) => f.dispose().catch(() => undefined)));
+      ultimo = new Error("A câmera não devolveu uma faixa de vídeo.");
     } catch (e) {
       ultimo = e;
-      if (/permission|NotAllowed|Security|not_found|NotFound/i.test(textoDoErro(e))) break;
+      if (erroImpedeFallbackDeVideo(e)) break;
     }
   }
   throw ultimo ?? new Error("Nenhuma câmera encontrada.");
+}
+
+async function abrirVideoComFallback(api: ApiJitsi, perfil: PerfilVideo): Promise<FaixaJitsi[]> {
+  return abrirComFallback(api, ["video"], {}, perfil);
+}
+
+async function abrirAudioEVideoComFallback(
+  api: ApiJitsi,
+  opcoesAudio: Record<string, unknown>,
+  perfil: PerfilVideo,
+): Promise<FaixaJitsi[]> {
+  return abrirComFallback(api, ["audio", "video"], opcoesAudio, perfil);
+}
+
+function erroImpedeFallbackDeVideo(e: unknown): boolean {
+  return /permission|NotAllowed|Security|denied|not_found|NotFound|DevicesNotFound|NotReadable|TrackStart|in use/i.test(
+    textoDoErro(e),
+  );
 }
 
 function textoDoErro(e: unknown): string {
@@ -369,6 +425,7 @@ export class ChamadaJitsi {
   /** O microfone escolhido na entrada, para as recuperações reabrirem O MESMO —
    *  reabrir no padrão do sistema devolveria o dispositivo que já falhou. */
   private microfoneEscolhido: string | undefined;
+  private perfilVideo: PerfilVideo = { altura: ALTURA_VIDEO, fps: FPS_VIDEO };
   /** Retrato da última lista de microfones, para saber o que entrou ou saiu
    *  quando o `devicechange` avisa que ela mudou. */
   private dispositivosConhecidos: string[] = [];
@@ -412,8 +469,17 @@ export class ChamadaJitsi {
     }, LIMITE_AUDIO_MS);
   }
   private aoMudarVisibilidade = () => void this.retomarAoVoltar();
-  private aoTrocarDispositivos = () => void this.conferirDispositivos();
-  private aoVoltarRede = () => void this.restabelecerAudio("a internet voltou");
+  private aoTrocarDispositivos = () => {
+    registrarDiagnosticoJitsi("DEVICE_CHANGED");
+    void this.conferirDispositivos();
+  };
+  private aoVoltarRede = () => {
+    registrarDiagnosticoJitsi("NETWORK_STATE_CHANGED", { online: true });
+    void this.restabelecerAudio("a internet voltou");
+  };
+  private aoPerderRede = () => {
+    registrarDiagnosticoJitsi("NETWORK_STATE_CHANGED", { online: false });
+  };
   /** Quando foi a última republicação, para não recriar a faixa em rajada. */
   private ultimoRestabelecimento = 0;
 
@@ -480,6 +546,7 @@ export class ChamadaJitsi {
      * uma entrada malsucedida, que é quando a pessoa mais precisa tentar de
      * novo. O temporizador existe só enquanto há religação de fato agendada. */
     if (this.sala || this.entrando || this.temporizadorReconexao !== null) return;
+    registrarDiagnosticoJitsi("JITSI_INIT", { cameraSolicitada: Boolean(opcoes.camera), microfoneEscolhido: Boolean(opcoes.microfoneId) });
     this.entrando = true;
     try {
       await this.entrarInterno(sala, opcoes, token);
@@ -499,6 +566,13 @@ export class ChamadaJitsi {
     this.desligando = false;
     this.meuNome = (opcoes.nome ?? "").trim();
     this.mudarEstado("conectando");
+    void retratoDiagnosticoJitsi().then((retrato) => {
+      registrarDiagnosticoJitsi("MEDIA_CAPABILITIES", retrato);
+      registrarDiagnosticoJitsi("PERMISSION_STATE", {
+        camera: retrato.permissao_camera,
+        microfone: retrato.permissao_microphone,
+      });
+    });
 
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error(
@@ -539,19 +613,20 @@ export class ChamadaJitsi {
     const querCamera = Boolean(opcoes.camera);
     this.microfoneEscolhido = opcoes.microfoneId;
     this.p2pLigado = opcoes.p2p ?? false;
+    this.perfilVideo = escolherPerfilVideo();
     const comMicrofone = opcoes.microfoneId ? { micDeviceId: opcoes.microfoneId } : {};
     let faixas: FaixaJitsi[] = [];
     let erroCamera: unknown = null;
     if (querCamera) {
       try {
-        faixas = await api.createLocalTracks({
-          devices: ["audio", "video"],
-          ...comMicrofone,
-          resolution: ALTURA_VIDEO,
-          constraints: { video: VIDEO_PEDIDO },
-        });
+        registrarDiagnosticoJitsi("CAMERA_REQUEST", { juntoComMicrofone: true });
+        registrarDiagnosticoJitsi("MIC_REQUEST", { dispositivoEscolhido: Boolean(opcoes.microfoneId) });
+        faixas = await abrirAudioEVideoComFallback(api, comMicrofone, this.perfilVideo);
+        registrarDiagnosticoJitsi("CAMERA_SUCCESS");
+        registrarDiagnosticoJitsi("MIC_SUCCESS");
       } catch (e) {
         erroCamera = e;
+        registrarDiagnosticoJitsi("CAMERA_FAILURE", erroDiagnosticoJitsi(e));
         faixas = [];
       }
     }
@@ -559,10 +634,17 @@ export class ChamadaJitsi {
       // Sem câmera, ou com o pedido conjunto recusado: o microfone sozinho. Se
       // a permissão do microfone for negada, o erro sai limpo daqui, sem deixar
       // conexão pendurada no servidor.
-      faixas = await api.createLocalTracks({ devices: ["audio"], ...comMicrofone });
+      try {
+        registrarDiagnosticoJitsi("MIC_REQUEST", { dispositivoEscolhido: Boolean(opcoes.microfoneId) });
+        faixas = await api.createLocalTracks({ devices: ["audio"], ...comMicrofone });
+        registrarDiagnosticoJitsi("MIC_SUCCESS");
+      } catch (erro) {
+        registrarDiagnosticoJitsi("MIC_FAILURE", erroDiagnosticoJitsi(erro));
+        throw erro;
+      }
       if (erroCamera && !ehCelular()) {
         try {
-          faixas = [...faixas, ...(await abrirVideoComFallback(api))];
+          faixas = [...faixas, ...(await abrirVideoComFallback(api, this.perfilVideo))];
           erroCamera = null;
         } catch (e) {
           erroCamera = e;
@@ -579,10 +661,13 @@ export class ChamadaJitsi {
     // ele para decidir se a chamada troca de microfone sozinha.
     void this.conferirDispositivos();
     navigator.mediaDevices?.addEventListener?.("devicechange", this.aoTrocarDispositivos);
+    registrarDiagnosticoJitsi("DEVICE_WATCHING");
     /* `online` é a rede de segurança do caso Wi-Fi↔4G. O Jitsi costuma emitir
      * `CONNECTION_RESTORED`, mas nem sempre — e quando não emite, o único aviso
      * de que a rede voltou é este evento do navegador. */
     window.addEventListener("online", this.aoVoltarRede);
+    window.addEventListener("offline", this.aoPerderRede);
+    registrarDiagnosticoJitsi("NETWORK_STATE_CHANGED", { online: navigator.onLine });
     void this.manterTelaAcesa();
 
     const camera = faixas.find((f) => f.getType() === "video") ?? null;
@@ -606,7 +691,8 @@ export class ChamadaJitsi {
 
   private async abrirCamera(api: ApiJitsi): Promise<void> {
     if (this.papel === "advogado") preCarregarFundoVirtual(FUNDO_ADVOGADO);
-    const faixas = await abrirVideoComFallback(api);
+    this.perfilVideo = escolherPerfilVideo();
+    const faixas = await abrirVideoComFallback(api, this.perfilVideo);
     this.minhaCamera = faixas.find((f) => f.getType() === "video") ?? null;
     if (this.minhaCamera) await this.aplicarFundo(this.minhaCamera);
     if (this.minhaCamera) this.videos.set("eu", this.minhaCamera.getTrack());
@@ -826,9 +912,11 @@ export class ChamadaJitsi {
          * a quarta queda — horas depois — seria tratada como definitiva. */
         this.tentativasReconexao = 0;
         this.entrarNaSala(api, sala);
+        registrarDiagnosticoJitsi("CONNECTION_ESTABLISHED");
         ok();
       });
       conexao.addEventListener(eventos.CONNECTION_FAILED, () => {
+        registrarDiagnosticoJitsi("CONNECTION_FAILED");
         window.clearTimeout(limite);
         // Numa religação o estado fica em "conectando": quem agendou a próxima
         // tentativa é o `catch` de `agendarReconexao`, e é ele que decide
@@ -837,6 +925,7 @@ export class ChamadaJitsi {
         falhou(new Error("Não foi possível falar com o servidor de chamadas."));
       });
       conexao.addEventListener(eventos.CONNECTION_DISCONNECTED, () => {
+        registrarDiagnosticoJitsi("CONNECTION_INTERRUPTED");
         if (this.desligando) return;
         /* A QUEDA DO SERVIDOR NÃO É MAIS O FIM DA CHAMADA.
          *
@@ -960,6 +1049,7 @@ export class ChamadaJitsi {
     this.sala = sala;
 
     sala.on(ev.CONFERENCE_JOINED, () => {
+      registrarDiagnosticoJitsi("CONFERENCE_JOINED");
       // O nome vai antes das faixas: quem já está na sala recebe o "entrou"
       // junto do nome, em vez de ver um "participante" anônimo por um segundo.
       if (this.meuNome) sala.setDisplayName(this.meuNome);
@@ -999,6 +1089,7 @@ export class ChamadaJitsi {
     sala.on(ev.TRACK_ADDED, (...args: unknown[]) => {
       const faixa = args[0] as FaixaJitsi;
       if (faixa.isLocal()) return;
+      registrarDiagnosticoJitsi("TRACK_CREATED", { tipo: faixa.getType(), remoto: true });
 
       if (faixa.getType() === "video") {
         const de = faixa.getParticipantId?.();
@@ -1017,6 +1108,7 @@ export class ChamadaJitsi {
 
     sala.on(ev.TRACK_REMOVED, (...args: unknown[]) => {
       const faixa = args[0] as FaixaJitsi;
+      registrarDiagnosticoJitsi("TRACK_REMOVED", { tipo: faixa.getType(), remoto: !faixa.isLocal() });
       if (faixa.getType() === "video") {
         const de = faixa.getParticipantId?.();
         if (de) {
@@ -1030,6 +1122,7 @@ export class ChamadaJitsi {
     });
 
     sala.on(ev.USER_JOINED, () => {
+      registrarDiagnosticoJitsi("PARTICIPANT_JOINED");
       if (this.remotas.size === 0) this.vigiarAudioRemoto();
       this.anunciarParticipantes();
     });
@@ -1047,6 +1140,7 @@ export class ChamadaJitsi {
       sala.on(ev.TRACK_MUTE_CHANGED, (...args: unknown[]) => {
         const faixa = args[0] as FaixaJitsi;
         if (faixa.isLocal() || faixa.getType() !== "video") return;
+        registrarDiagnosticoJitsi(faixa.isMuted?.() ? "TRACK_MUTED" : "TRACK_UNMUTED", { tipo: "video", remoto: true });
         const de = faixa.getParticipantId?.();
         if (!de) return;
         if (faixa.isMuted?.()) {
@@ -1084,6 +1178,7 @@ export class ChamadaJitsi {
     }
 
     sala.on(ev.USER_LEFT, (...args: unknown[]) => {
+      registrarDiagnosticoJitsi("PARTICIPANT_LEFT");
       this.videos.delete(String(args[0]));
       this.telas.delete(String(args[0]));
       if (sala.getParticipantCount() === 0) this.mudarEstado("aguardando");
@@ -1131,12 +1226,16 @@ export class ChamadaJitsi {
      * repositório. Assinar um evento inexistente quebraria a entrada na sala. */
     if (ev.CONNECTION_INTERRUPTED) {
       sala.on(ev.CONNECTION_INTERRUPTED, () => {
+        registrarDiagnosticoJitsi("ICE_STATE_CHANGED", { estado: "interrupted" });
         if (this.desligando) return;
         this.eventos.onErro?.("A conexão oscilou. Continue na tela — estamos religando o áudio.");
       });
     }
     if (ev.CONNECTION_RESTORED) {
-      sala.on(ev.CONNECTION_RESTORED, () => void this.restabelecerAudio("a rede mudou"));
+      sala.on(ev.CONNECTION_RESTORED, () => {
+        registrarDiagnosticoJitsi("ICE_STATE_CHANGED", { estado: "restored" });
+        void this.restabelecerAudio("a rede mudou");
+      });
     }
     /* Celular que dormiu e acordou cai no mesmo buraco: o transporte morreu
      * enquanto a tela estava apagada. */
@@ -1148,7 +1247,10 @@ export class ChamadaJitsi {
      * nunca chega aqui, justamente porque nada foi restaurado, então sem esta
      * linha o áudio ficaria mudo esperando um evento que não vem. */
     if (ev.ICE_FAILED) {
-      sala.on(ev.ICE_FAILED, () => void this.restabelecerAudio("a rota de áudio caiu"));
+      sala.on(ev.ICE_FAILED, () => {
+        registrarDiagnosticoJitsi("ICE_STATE_CHANGED", { estado: "failed" });
+        void this.restabelecerAudio("a rota de áudio caiu");
+      });
     }
 
     sala.join();
@@ -1165,17 +1267,19 @@ export class ChamadaJitsi {
    * pode derrubar uma chamada que já está de pé. Pior nítido do que mudo. */
   private pedirQualidade(sala: ConferenciaJitsi): void {
     try {
-      sala.setReceiverVideoConstraints?.({
+      const restricoes = {
         // `lastN: -1` = receber todo mundo. Numa sala de dois, restringir não
         // economiza nada e ainda apaga o retrato de quem entrar em terceiro.
         lastN: -1,
-        defaultConstraints: { maxHeight: ALTURA_RECEPCAO },
-      });
+        defaultConstraints: { maxHeight: this.perfilVideo.altura },
+      };
+      if (sala.setReceiverConstraints) sala.setReceiverConstraints(restricoes);
+      else sala.setReceiverVideoConstraints?.(restricoes);
     } catch {
       /* versão da lib sem constraint de recepção: segue no padrão dela */
     }
     try {
-      void sala.setSenderVideoConstraint?.(ALTURA_VIDEO);
+      void sala.setSenderVideoConstraint?.(this.perfilVideo.altura);
     } catch {
       /* idem, do lado do envio */
     }
@@ -1436,6 +1540,7 @@ export class ChamadaJitsi {
     }
 
     const ids = entradas.map((d) => d.deviceId);
+    registrarDiagnosticoJitsi("DEVICE_LIST", { microfones: ids.length });
     const antes = this.dispositivosConhecidos;
     this.dispositivosConhecidos = ids;
     // Primeiro retrato: só registra. Sem isto, a lista inteira pareceria "nova"
@@ -1535,11 +1640,15 @@ export class ChamadaJitsi {
     // alimenta o WebAudio (é o silêncio descrito acima). Como a entrevista só
     // chega aqui depois de vários cliques, o gesto de usuário já existe; o
     // `play()` explícito converte esse gesto em reprodução de fato.
-    const tocar = () => void alto.play().catch(() => {
+    const tocar = () => void alto.play().then(
+      () => registrarDiagnosticoJitsi("REMOTE_AUDIO_PLAYING"),
+      (erro) => {
+        registrarDiagnosticoJitsi("AUTOPLAY_BLOCKED", erroDiagnosticoJitsi(erro));
       /* Em iPhone/iPad a primeira tentativa pode cair antes de o WebRTC marcar
        * a faixa como utilizável. Os eventos abaixo tentam de novo quando ela
        * efetivamente fica pronta, sem exibir um erro falso para a entrevista. */
-    });
+      },
+    );
     tocar();
     alto.addEventListener("loadedmetadata", tocar, { once: true });
     alto.addEventListener("canplay", tocar, { once: true });
@@ -1684,10 +1793,12 @@ export class ChamadaJitsi {
   }
 
   desligar(): void {
+    registrarDiagnosticoJitsi("JITSI_DISPOSE");
     this.desligando = true;
     document.removeEventListener("visibilitychange", this.aoMudarVisibilidade);
     navigator.mediaDevices?.removeEventListener?.("devicechange", this.aoTrocarDispositivos);
     window.removeEventListener("online", this.aoVoltarRede);
+    window.removeEventListener("offline", this.aoPerderRede);
     this.dispositivosConhecidos = [];
     this.ultimoRestabelecimento = 0;
     this.entrando = false;

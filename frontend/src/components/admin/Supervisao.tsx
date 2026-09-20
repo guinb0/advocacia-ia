@@ -376,6 +376,18 @@ export default function Supervisao({ onVoltar }: Props) {
                             </span>
                           </span>
                         </button>
+                        {e.gravacao_id && (
+                          <div
+                            className="ml-3 mr-2 mb-2 rounded-campo border border-borda bg-papel-2 px-3 py-2"
+                            onClick={(evento) => evento.stopPropagation()}
+                            onKeyDown={(evento) => evento.stopPropagation()}
+                          >
+                            <AudioDaEntrevista
+                              entrevistaId={e.gravacao_id}
+                              titulo="PRÉVIA DA GRAVAÇÃO"
+                            />
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
