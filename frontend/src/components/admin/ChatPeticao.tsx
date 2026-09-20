@@ -603,7 +603,7 @@ export default function ChatPeticao({
           })),
         ]);
         setTexto((atual) =>
-          atual.trim() ? atual : `Inclua o print «${nomes.join("», «")}» na seção `,
+          atual.trim() ? atual : `Em qual seção da petição você quer adicionar o print «${nomes.join("», «")}»? Se quiser, informe também depois de qual parágrafo.`,
         );
         atualizarDocumentos();
         const alvo = campo.current;
@@ -988,7 +988,7 @@ export default function ChatPeticao({
                 </div>
               ))}
             </div>
-            <p className="mb-0 mt-2">Anexado ao caso: {printsAnexados.join(", ")}. Diga em que seção da petição ele entra.</p>
+            <p className="mb-0 mt-2">Anexado ao caso: {printsAnexados.join(", ")}. A pergunta sobre a seção já foi colocada no campo abaixo.</p>
           </div>
         )}
 
