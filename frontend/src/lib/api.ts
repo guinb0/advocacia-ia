@@ -221,7 +221,6 @@ export async function guardarGravacaoNoBanco(
   tipo: "video" | "audio" | "transcricao",
   entrevistaId = "",
 ): Promise<void> {
-  if (Date.now() >= new Date("2026-09-16T00:00:00-03:00").getTime()) return;
   const form = new FormData();
   form.append("arquivo", arquivo, nome);
   form.append("nome", nome);
@@ -230,10 +229,7 @@ export async function guardarGravacaoNoBanco(
   await comoJson(await buscar("/api/gravacoes-temporarias", { method: "POST", body: form }));
 }
 
-const MIDIA_NO_BANCO_ATE = new Date("2026-09-16T00:00:00-03:00").getTime();
-
 async function comRetentativas(enviar: () => Promise<unknown>, tentativas = 5): Promise<void> {
-  if (Date.now() >= MIDIA_NO_BANCO_ATE) return;
   for (let tentativa = 1; tentativa <= tentativas; tentativa++) {
     try {
       await enviar();
