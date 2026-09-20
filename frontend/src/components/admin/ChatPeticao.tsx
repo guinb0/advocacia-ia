@@ -146,6 +146,7 @@ export default function ChatPeticao({
    * seção entram. */
   const [enviandoPrint, setEnviandoPrint] = useState(false);
   const [printsAnexados, setPrintsAnexados] = useState<string[]>([]);
+  const [previewsPrint, setPreviewsPrint] = useState<Array<{ nome: string; url: string; largura: number }>>([]);
   /* As propostas já decididas nesta sessão. Some o par de botões sem apagar a mensagem:
    * a transcrição precisa continuar mostrando o que foi proposto e aceito. */
   const [decididas, setDecididas] = useState<Record<string, "aceita" | "descartada">>({});
@@ -593,6 +594,14 @@ export default function ChatPeticao({
       }
       if (nomes.length) {
         setPrintsAnexados(nomes);
+        setPreviewsPrint((atuais) => [
+          ...atuais,
+          ...nomeados.slice(0, nomes.length).map((arquivo, indice) => ({
+            nome: nomes[indice] ?? arquivo.name,
+            url: URL.createObjectURL(arquivo),
+            largura: 100,
+          })),
+        ]);
         setTexto((atual) =>
           atual.trim() ? atual : `Inclua o print «${nomes.join("», «")}» na seção `,
         );
@@ -966,10 +975,21 @@ export default function ChatPeticao({
         )}
 
         {printsAnexados.length > 0 && (
-          <p className="mb-2 mt-0 text-xs leading-relaxed text-ok">
-            ✓ Anexado ao caso: {printsAnexados.join(", ")}. Diga em que seção da petição ele entra
-            (e, se quiser, depois de qual parágrafo).
-          </p>
+          <div className="mb-2 mt-0 rounded-campo border border-ok-borda bg-ok-claro p-2 text-xs leading-relaxed text-tinta-2">
+            <p className="mb-2 mt-0 text-ok">✓ Preview do anexo. Ajuste a largura antes de pedir a inserção:</p>
+            <div className="flex flex-wrap gap-3">
+              {previewsPrint.map((preview, indice) => (
+                <div key={`${preview.nome}-${indice}`} className="min-w-[180px] max-w-full">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={preview.url} alt={preview.nome} style={{ width: `${preview.largura}%` }} className="max-h-64 object-contain border border-borda rounded-campo" />
+                  <label className="mt-1 block text-[11px]">Largura {preview.largura}%
+                    <input className="ml-2 align-middle" type="range" min="25" max="100" value={preview.largura} onChange={(evento) => setPreviewsPrint((atuais) => atuais.map((item, i) => i === indice ? { ...item, largura: Number(evento.target.value) } : item))} />
+                  </label>
+                </div>
+              ))}
+            </div>
+            <p className="mb-0 mt-2">Anexado ao caso: {printsAnexados.join(", ")}. Diga em que seção da petição ele entra.</p>
+          </div>
         )}
 
         <div className={estilos.linhaDeEnvio}>
