@@ -15,7 +15,7 @@
  * Preencher a variável continua valendo, e é o que serve quando o serviço mora
  * atrás de um domínio ou de outra porta — mas aí o valor tem de ser alcançável
  * por quem ABRE o sistema, não por quem o hospeda. */
-const BASE_TRANSCRICAO =
+export const BASE_TRANSCRICAO =
   process.env.NEXT_PUBLIC_TRANSCRICAO_API ||
   (typeof window !== "undefined"
     ? window.location.origin
@@ -226,6 +226,11 @@ export async function encerrarGravacao(entrevistaId: string): Promise<Gravacao |
   if (resposta.status === 404) return null;
   if (!resposta.ok) throw new Error("Não foi possível fechar a gravação do áudio.");
   return (await resposta.json()) as Gravacao;
+}
+
+export function encerrarGravacaoEmEmergencia(entrevistaId: string): void {
+  if (!entrevistaId || typeof navigator === "undefined") return;
+  navigator.sendBeacon(`${BASE_TRANSCRICAO}/entrevista/${encodeURIComponent(entrevistaId)}/encerrar-emergencia`);
 }
 
 const MAX_BLOCOS_PENDENTES = 4800;

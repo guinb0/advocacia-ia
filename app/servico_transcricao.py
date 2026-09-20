@@ -182,6 +182,14 @@ async def encerrar_gravacao(entrevista_id: str):
     except gravacao.ErroGravacao as exc:
         raise HTTPException(404, str(exc)) from exc
 
+@app.post("/entrevista/{entrevista_id}/encerrar-emergencia")
+async def encerrar_gravacao_emergencia(entrevista_id: str):
+    """Fecha o arquivo quando a aba morreu antes do botao de encerrar."""
+    try:
+        return await run_in_threadpool(_gravacoes.encerrar, entrevista_id)
+    except gravacao.ErroGravacao as exc:
+        raise HTTPException(404, str(exc)) from exc
+
 
 @app.get("/entrevista/{entrevista_id}/audio")
 def baixar_audio(entrevista_id: str):
