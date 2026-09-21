@@ -873,6 +873,57 @@ export default function TriagemEntrevista({
           }
         }}
       >
+        {/* O ENVIO DO ARQUIVO É A AÇÃO PRINCIPAL DESTE BLOCO, e por isso tem cara
+          * de ação: ícone, título, botão grande e a consequência dita antes do
+          * clique (o arquivo analisa, sugere a ação E liga a gravação). Antes era
+          * um botão do mesmo tamanho do "Analisar" e uma frase miúda no rodapé. */}
+        <div className="flex flex-col items-center gap-2 px-3 pt-4 pb-5 text-center">
+          <span
+            aria-hidden
+            className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors ${
+              arrastandoArquivo ? "bg-acao text-papel" : "bg-acao-clara text-acao"
+            }`}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+          </span>
+          <span className="text-tinta text-base font-bold">
+            {arrastandoArquivo ? "Solte o arquivo para enviar" : "Enviar a transcrição da conversa"}
+          </span>
+          <p className="m-0 max-w-[52ch] text-tinta-2 text-xs leading-[1.55]">
+            Arraste o arquivo para esta área ou use o botão. Aceita .txt, .docx, PDF com texto e
+            legendas (.srt, .vtt).
+          </p>
+          <BotaoProcesso
+            variante="primario"
+            onClick={() => inputRef.current?.click()}
+            aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
+            classeBotao="min-h-12 px-6 text-base font-bold"
+            title="Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual."
+          >
+            {arquivoNome ? "Enviar outro arquivo" : "Escolher arquivo .txt"}
+          </BotaoProcesso>
+          <p className="m-0 max-w-[52ch] text-tinta-3 text-[11.5px] leading-[1.5]">
+            {arquivoNome ? (
+              <>
+                Último arquivo: <strong className="text-tinta">{arquivoNome}</strong>. O texto lido
+                está na caixa abaixo.
+              </>
+            ) : (
+              "Ao enviar, o sistema lê a conversa, sugere a ação cabível e inicia a gravação do atendimento."
+            )}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 px-1 pb-3 text-tinta-3 text-xs" aria-hidden>
+          <span className="h-px flex-1 bg-borda" />
+          ou cole o texto da conversa
+          <span className="h-px flex-1 bg-borda" />
+        </div>
+
         {/* Sem rótulo acima da caixa: ele dizia exatamente o que o placeholder já
             diz, uma linha antes. O nome do campo continua existindo para leitor
             de tela em `aria-label` — some da tela, não da acessibilidade.
@@ -893,43 +944,11 @@ export default function TriagemEntrevista({
           }
         />
 
-        {/* As duas formas ditas em uma linha, embaixo da caixa: colar (que a
-          * pessoa já está vendo como fazer) e trazer o arquivo. O "escolha um
-          * arquivo" é um link no meio da frase porque é assim que se lê — e
-          * não um terceiro botão disputando atenção com os dois de baixo. */}
-        <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] font-ui text-tinta-3">
-          {arquivoNome ? (
-            <>
-              Lido de <strong className="text-tinta">{arquivoNome}</strong> — confira o texto acima
-              e ajuste se precisar.{" "}
-              <button
-                type="button"
-                className="border-none bg-transparent p-0 underline underline-offset-[3px] text-acao cursor-pointer"
-                onClick={() => inputRef.current?.click()}
-              >
-                trocar o arquivo
-              </button>
-            </>
-          ) : (
-            <>
-              Arraste um arquivo para esta área ou{" "}
-              <button
-                type="button"
-                className="border-none bg-transparent p-0 underline underline-offset-[3px] text-acao cursor-pointer"
-                onClick={() => inputRef.current?.click()}
-              >
-                escolha um arquivo
-              </button>{" "}
-              — aceita .txt, .docx, PDF com texto e outros formatos de texto.
-            </>
-          )}
-        </p>
-
       <div className="flex gap-[10px] items-start flex-wrap mt-3">
         {/* A ação do bloco: sem relato, o clique diz o que falta em vez de o botão
           * ficar cinza sem explicação. */}
         <BotaoProcesso
-          variante="primario"
+          variante="secundario"
           onClick={() => analisar()}
           processando={analisando}
           textoProcessando="Analisando o relato…"
@@ -938,19 +957,7 @@ export default function TriagemEntrevista({
           pendenciaAoClicar
           onPendencia={() => document.getElementById("relato-entrevista")?.focus()}
         >
-          Analisar o relato
-        </BotaoProcesso>
-
-        {/* `secundario`, e não `discreto`: sem borda nem fundo, ele ficava com
-          * cara de botão desabilitado ao lado do primário sólido — e "parece
-          * desabilitado" é o mesmo que não existir para quem bate o olho. */}
-        <BotaoProcesso
-          variante="primario"
-          onClick={() => inputRef.current?.click()}
-          aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
-          title="Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual."
-        >
-          {arquivoNome ? "Trocar arquivo .txt" : "Escolher arquivo .txt"}
+          Analisar texto colado
         </BotaoProcesso>
 
         <input
