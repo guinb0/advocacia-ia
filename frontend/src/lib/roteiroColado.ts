@@ -165,6 +165,39 @@ export function montarRoteiroColado(texto: string, base: RoteiroCompleto): Rotei
     ultimo.instrucao = juntar(ultimo.instrucao, sobra);
   }
 
+  /* Um roteiro pronto não precisa vir diagramado em blocos para ser útil.
+   *
+   * Os blocos continuam sendo a estrutura interna que permite à entrevista
+   * exibir as perguntas, mas não devem ser uma tarefa de quem está apenas
+   * colando o documento. Quando o texto não traz títulos em maiúsculas (ou
+   * traz uma lista simples de perguntas), agrupamos suas linhas em uma única
+   * seção. Assim "colar e salvar" não termina no erro de que falta um bloco.
+   */
+  if (finais.length === 0) {
+    const linhas = texto
+      .split(/\r?\n/)
+      .map((bruta) => limpar(bruta).texto)
+      .filter(Boolean);
+    const titulo = nomeSugerido(texto);
+    const perguntas = linhas
+      .filter((linha, indice) => !(indice === 0 && linha === titulo))
+      .filter((linha) => !ehInstrucao(linha))
+      .map(perguntaColada);
+
+    if (perguntas.length > 0) {
+      finais.push({
+        id: "",
+        titulo: "Perguntas do roteiro",
+        perguntas,
+        modulo: null,
+        objetivo: "",
+        abertura: "",
+        instrucao: "",
+        delegado_a: "",
+      });
+    }
+  }
+
   return {
     ...base,
     saudacao,

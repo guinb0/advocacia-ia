@@ -137,6 +137,7 @@ def _perguntas_do_roteiro(codigo: str) -> list[dict[str, Any]]:
                     "id": pergunta.id,
                     "texto": pergunta.texto,
                     "bloco": bloco.titulo,
+                    "expectativa": (bloco.objetivo or bloco.instrucao).strip(),
                     "obrigatoria": bool(pergunta.obrigatoria),
                 }
             )
@@ -215,6 +216,7 @@ def auditar(texto: str, codigo_roteiro: str = "") -> dict[str, Any]:
 
     catalogo = "\n".join(
         f"- {p['id']} [{p['bloco']}]{' (obrigatória)' if p['obrigatoria'] else ''}: {p['texto']}"
+        f"{' — expectativa: ' + p['expectativa'] if p['expectativa'] else ''}"
         for p in perguntas
     )
     roteiro = roteiros.obter(codigo)

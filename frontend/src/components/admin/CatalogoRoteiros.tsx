@@ -27,6 +27,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, BookOpenText, FilePenLine, Plus, RotateCcw, Trash2 } from "lucide-react";
 
 import EditorRoteiro from "@/components/entrevista/EditorRoteiro";
+import ImportarRoteiro from "@/components/entrevista/ImportarRoteiro";
 import { Aviso, Botao, Cartao, Paginacao, Selo, Vazio } from "@/components/ui/Basicos";
 import {
   ApiError,
@@ -69,6 +70,7 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
   /** Qual roteiro está aberto no editor, já com blocos e perguntas. */
   const [emEdicao, setEmEdicao] = useState<RoteiroCompleto | null>(null);
   const [origemEmEdicao, setOrigemEmEdicao] = useState("");
+  const [importando, setImportando] = useState(false);
   const [abrindo, setAbrindo] = useState<string | null>(null);
   const [revertendo, setRevertendo] = useState<string | null>(null);
   const [pagina, setPagina] = useState(1);
@@ -286,19 +288,28 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
       <aside className="flex min-w-0 flex-col gap-4">
         <Cartao
           titulo="Novo roteiro"
-          subtitulo="Copie o roteiro do documento e cole no editor. Títulos em MAIÚSCULAS viram seções e cada linha vira uma pergunta."
+          subtitulo="Envie o documento ou cole o texto. O roteiro salvo fica disponível imediatamente para toda a equipe, inclusive em produção."
           className="min-w-0 overflow-hidden"
         >
-          <Botao
-            variante="primario"
-            onClick={() => {
-              setEmEdicao(ROTEIRO_EM_BRANCO);
-              setOrigemEmEdicao("");
-            }}
-            bloco
-          >
-            <Plus size={16} aria-hidden /> Novo roteiro (colar texto)
-          </Botao>
+          <div className="flex flex-col gap-2">
+            <Botao
+              variante="primario"
+              onClick={() => setImportando(true)}
+              bloco
+            >
+              <FilePenLine size={16} aria-hidden /> Enviar roteiro pronto
+            </Botao>
+            <Botao
+              variante="secundario"
+              onClick={() => {
+                setEmEdicao(ROTEIRO_EM_BRANCO);
+                setOrigemEmEdicao("");
+              }}
+              bloco
+            >
+              <Plus size={16} aria-hidden /> Colar texto
+            </Botao>
+          </div>
         </Cartao>
 
         <Cartao titulo="Uso no atendimento" className="min-w-0 overflow-hidden">
@@ -330,6 +341,16 @@ export default function CatalogoRoteiros({ onVoltar }: { onVoltar: () => void })
             void recarregar();
           }}
           aoFechar={() => setEmEdicao(null)}
+        />
+      )}
+      {importando && (
+        <ImportarRoteiro
+          aoImportar={(importado) => {
+            setImportando(false);
+            setEmEdicao(importado.roteiro);
+            setOrigemEmEdicao(importado.origem);
+          }}
+          aoFechar={() => setImportando(false)}
         />
       )}
     </div>
