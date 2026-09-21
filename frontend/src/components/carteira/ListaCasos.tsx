@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, FolderOpen, Loader2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CalendarDays, FolderOpen, Loader2, Trash2, Upload } from "lucide-react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
@@ -120,6 +120,8 @@ export default function ListaCasos({
     setPagina(1);
   }, [filtroNormalizado]);
 
+  const entrevistaInputRef = useRef<HTMLInputElement>(null);
+
   async function criar(evento: React.FormEvent) {
     evento.preventDefault();
     if (!cliente.trim() || !categoriaSelecionada || !entrevistaArquivo) return;
@@ -232,12 +234,20 @@ export default function ListaCasos({
         <form onSubmit={criar}>
           <div className="mb-4">
             <RotuloCampo htmlFor="entrevista-inicial">Entrevista do cliente (.txt)</RotuloCampo>
+            <div className="flex flex-wrap items-center gap-3">
+              <Botao type="button" variante="primario" onClick={() => entrevistaInputRef.current?.click()} disabled={analisandoEntrevista}>
+                <Upload className="h-4 w-4" />
+                {entrevistaArquivo ? "Trocar arquivo .txt" : "Escolher arquivo .txt"}
+              </Botao>
+              <span className="text-sm text-tinta-2">{entrevistaArquivo ? entrevistaArquivo.name : "Nenhum arquivo escolhido"}</span>
+            </div>
             <input
+              ref={entrevistaInputRef}
               id="entrevista-inicial"
               type="file"
               accept=".txt,text/plain"
-              onChange={(e) => void selecionarEntrevista(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-tinta-2"
+              onChange={(e) => { void selecionarEntrevista(e.target.files?.[0] ?? null); e.target.value = ""; }}
+              className="hidden"
             />
             <p className="mt-1 text-xs leading-[1.5] text-tinta-3">
               A IA lê a entrevista, sugere o tipo de ação e gera o resumo do atendimento. A sugestão pode ser alterada.
