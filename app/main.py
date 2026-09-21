@@ -46,6 +46,7 @@ from starlette.concurrency import run_in_threadpool
 from . import (
     agente,
     advbox,
+    indexacao_roteiro,
     analise_documentos,
     analise_resposta,
     armazenamento,
@@ -2266,9 +2267,22 @@ class PedidoSalvarRoteiro(BaseModel):
     origem: str = Field(default="", max_length=400)
 
 
+def _indexar_roteiro_salvo(roteiro: roteiros.Roteiro) -> None:
+    """Indexação é complemento da revisão, nunca motivo para perder um roteiro."""
+    try:
+        resultado = indexacao_roteiro.indexar(roteiro)
+        log.info("Roteiro '%s' indexado: %d expectativa(s)", roteiro.codigo, resultado["chunks"])
+    except Exception:
+        # A revisão sempre lê o roteiro salvo diretamente. Se pgvector ou o
+        # provedor de embeddings oscilarem, salvar o trabalho do escritório
+        # continua sendo mais importante que atualizar este índice auxiliar.
+        log.warning("Indexação vetorial do roteiro '%s' falhou", roteiro.codigo, exc_info=True)
+
+
 @app.post("/api/roteiros", status_code=201)
 async def salvar_roteiro(
     pedido: PedidoSalvarRoteiro,
+    tarefas: BackgroundTasks,
     usuario: auth.Usuario = PodeManterRoteiros,
 ):
     """Grava o roteiro no catálogo. Regrava, se o código já existir.
@@ -2298,6 +2312,7 @@ async def salvar_roteiro(
         raise HTTPException(503, f"Não foi possível salvar o roteiro: {exc}") from exc
 
     roteiros.invalidar_cache()
+    tarefas.add_task(_indexar_roteiro_salvo, roteiro)
     return {
         **roteiro.to_dict(),
         "mapa_rastreio": roteiros.mapa_rastreio(roteiro),
@@ -2306,7 +2321,7 @@ async def salvar_roteiro(
 
 
 @app.delete("/api/roteiros/{codigo}")
-async def excluir_roteiro(codigo: str, _autorizado=PodeManterRoteiros):
+async def excluir_roteiro(codigo: str, tarefas: BackgroundTasks, _autorizado=PodeManterRoteiros):
     """Tira o roteiro do catálogo.
 
     Num roteiro importado isto o apaga. Num que também existe em
@@ -2318,6 +2333,7 @@ async def excluir_roteiro(codigo: str, _autorizado=PodeManterRoteiros):
         raise HTTPException(404, f"Roteiro '{codigo}' não está salvo no catálogo.")
 
     roteiros.invalidar_cache()
+    tarefas.add_task(indexacao_roteiro.remover, codigo)
     return {"codigo": codigo, "revertido_para_o_modulo": codigo in roteiros.ROTEIROS}
 
 
