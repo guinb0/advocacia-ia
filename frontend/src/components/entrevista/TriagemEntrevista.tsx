@@ -98,6 +98,13 @@ const CAMPOS_CADASTRAIS = [
   { id: "pis", rotulo: "PIS / PASEP / NIT", grupo: "documentos" },
 ] as const;
 
+function formatarDataNascimento(valor: string): string {
+  const digitos = valor.replace(/\D/g, "").slice(0, 8);
+  if (digitos.length <= 2) return digitos;
+  if (digitos.length <= 4) return `${digitos.slice(0, 2)}/${digitos.slice(2)}`;
+  return `${digitos.slice(0, 2)}/${digitos.slice(2, 4)}/${digitos.slice(4)}`;
+}
+
 const ORIGENS_CADASTRAIS: Record<string, string[]> = {
   nome: ["nome_completo"],
   nascimento: ["data_nascimento"],
@@ -157,10 +164,10 @@ function DadosCadastraisFinais({ respostas, confirmado, avisoCpf, onAlterar, onC
           onChange={(evento) =>
             onAlterar(
               campo.id,
-              campo.id === "telefone" ? formatarTelefone(evento.target.value) : evento.target.value,
+              campo.id === "telefone" ? formatarTelefone(evento.target.value) : campo.id === "nascimento" ? formatarDataNascimento(evento.target.value) : evento.target.value,
             )
           }
-          placeholder={campo.id === "telefone" ? "(DDD) 00000-0000" : undefined}
+          placeholder={campo.id === "telefone" ? "(DDD) 00000-0000" : campo.id === "nascimento" ? "dd/mm/aaaa" : undefined}
           aria-invalid={campo.id === "telefone" && tentouContinuar && telefoneVazio}
           className={campo.id === "telefone" && tentouContinuar && telefoneVazio ? "border-atencao" : undefined}
           autoComplete="off"
@@ -938,12 +945,12 @@ export default function TriagemEntrevista({
           * cara de botão desabilitado ao lado do primário sólido — e "parece
           * desabilitado" é o mesmo que não existir para quem bate o olho. */}
         <BotaoProcesso
-          variante="secundario"
+          variante="primario"
           onClick={() => inputRef.current?.click()}
           aguardando={analisando ? "Aguarde a análise em andamento terminar." : false}
           title="Aceita texto simples, DOCX, PDF com texto, CSV, JSON, XML, HTML, RTF, legendas e outras extensões cujo conteúdo seja textual."
         >
-          {arquivoNome ? "Trocar arquivo" : "Escolher arquivo"}
+          {arquivoNome ? "Trocar arquivo .txt" : "Escolher arquivo .txt"}
         </BotaoProcesso>
 
         <input
