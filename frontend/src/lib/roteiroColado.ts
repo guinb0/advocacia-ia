@@ -181,7 +181,6 @@ export function montarRoteiroColado(texto: string, base: RoteiroCompleto): Rotei
     const titulo = nomeSugerido(texto);
     const perguntas = linhas
       .filter((linha, indice) => !(indice === 0 && linha === titulo))
-      .filter((linha) => !ehInstrucao(linha))
       .map(perguntaColada);
 
     if (perguntas.length > 0) {

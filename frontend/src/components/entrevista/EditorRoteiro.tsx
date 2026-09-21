@@ -130,7 +130,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
       .filter((b) => b.id !== "abertura")
       .reduce((soma, b) => soma + b.perguntas.length, 0);
     if (perguntas === 0) {
-      setErro("Não encontrei perguntas no texto. Confira se os títulos das seções estão em MAIÚSCULAS.");
+      setErro("Cole o texto do roteiro para continuar.");
       return;
     }
     /* O nome sai do texto quando ninguém o digitou.
