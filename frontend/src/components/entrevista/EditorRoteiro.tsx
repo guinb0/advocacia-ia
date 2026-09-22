@@ -165,7 +165,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
    * antes, mas deixou de ser pedágio. */
   function roteiroPronto(): RoteiroCompleto {
     let pronto = rascunho;
-    if (textoColado.trim() && textoColado !== textoAplicado) {
+    if (textoColado.trim() && (textoColado !== textoAplicado || pronto.blocos.length === 0)) {
       pronto = montarRoteiroColado(textoColado, pronto);
     }
     if (!pronto.nome.trim()) pronto = { ...pronto, nome: nomeSugerido(textoColado) };
@@ -249,10 +249,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
               Editar o roteiro
             </h2>
             <p className="m-0 mt-[3px] text-[11.5px] leading-[1.4] font-ui text-tinta-3">
-              {/* "seções", e não "blocos": o texto colado produz seções, e o
-                  editor chamava a mesma coisa de dois nomes — o que lia como
-                  se faltasse criar um "bloco" que o documento já trouxe. */}
-              {rascunho.blocos.length} seções · {totalPerguntas} perguntas
+              {totalPerguntas} perguntas
               {origem ? ` · de ${origem}` : ""}
             </p>
           </div>
@@ -294,13 +291,20 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
 
           <div className="mb-5 border border-acao bg-acao-clara px-3 py-3">
             <span className="block text-[13px] font-semibold font-ui text-tinta">
-              Roteiro completo — cole o texto do documento (Ctrl+C / Ctrl+V)
+              Crie o roteiro — dê um título e cole o texto
             </span>
             <p className="mb-2 mt-1 text-[11.5px] leading-[1.5] font-ui text-tinta-2">
-              Títulos em MAIÚSCULAS viram seções e cada linha abaixo deles vira uma pergunta. O que
-              vem antes do primeiro título é a saudação; o que vem depois de “Encerramento” é lido no
-              final. Linhas entre parênteses são orientação à atendente.
+              Não precisa criar seção, bloco ou formatar o documento. Cole como ele estiver; cada linha vira uma pergunta.
             </p>
+            <label className="block mb-3">
+              <span className={T_ROTULO}>Título do roteiro</span>
+              <input
+                className={T_CAMPO}
+                value={rascunho.nome}
+                onChange={(e) => alterar({ nome: e.target.value })}
+                placeholder="Ex.: Rescisão indireta"
+              />
+            </label>
             <textarea
               className={`${T_CAMPO} min-h-[320px]`}
               value={textoColado}
@@ -312,21 +316,13 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Botao variante="primario" pequeno onClick={aplicarTextoColado}>
-                Montar o roteiro com este texto
+                Criar roteiro
               </Botao>
               {resumoColado && <span className="text-[11.5px] font-ui text-ok">{resumoColado}</span>}
             </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 mb-5">
-            <label className="block">
-              <span className={T_ROTULO}>Nome do roteiro</span>
-              <input
-                className={T_CAMPO}
-                value={rascunho.nome}
-                onChange={(e) => alterar({ nome: e.target.value })}
-              />
-            </label>
             <label className="block">
               <span className={T_ROTULO}>Descrição</span>
               <input
@@ -337,7 +333,7 @@ export default function EditorRoteiro({ roteiro, origem = "", aoUsar, aoSalvar, 
             </label>
           </div>
 
-          <details className="border-t border-borda pt-3">
+          <details className="hidden border-t border-borda pt-3">
           <summary className="cursor-pointer text-[12px] font-semibold font-ui text-tinta-3">
             Ajustes avançados por seção — opcional, o texto colado já basta
           </summary>
