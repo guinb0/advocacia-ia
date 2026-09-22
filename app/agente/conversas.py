@@ -190,7 +190,7 @@ def responder(
     else:
         decisao = conversa_geral.rotear(pergunta, casos, caso_fixado=conversa["caso_id"])
         if decisao.natureza == conversa_geral.ESCOLHA:
-            resposta = _escolher_entre(decisao.candidatos)
+            resposta = escolher_entre(decisao.candidatos)
         elif decisao.natureza == conversa_geral.SISTEMA:
             resposta = _do_glossario(decisao.verbete, pergunta, conversa_id)
         elif decisao.natureza == conversa_geral.CASO and decisao.caso_id:
@@ -395,7 +395,7 @@ def _do_acervo(pergunta: str, conversa_id: str) -> dict[str, Any]:
 _MAXIMO_DE_CANDIDATOS = 8
 
 
-def _escolher_entre(candidatos: list[dict[str, Any]]) -> dict[str, Any]:
+def escolher_entre(candidatos: list[dict[str, Any]]) -> dict[str, Any]:
     """A pergunta nomeou mais de um caso.
 
     Escolher um seria adivinhar; responder sobre os dois seria a pergunta de acervo que
@@ -427,6 +427,12 @@ def _escolher_entre(candidatos: list[dict[str, Any]]) -> dict[str, Any]:
         "conteudo": texto,
         "payload": {"candidatos": _distinguir(mostrados)},
     }
+
+
+#: O nome antigo. O chat do escritório (`app/chat/sessoes.py`) reaproveita esta lista, e
+#: uma função pública é mais honesta do que um sublinhado chamado de fora — mas o apelido
+#: fica porque `tests/test_conversas.py` importa por ele.
+_escolher_entre = escolher_entre
 
 
 def _distinguir(casos: list[dict[str, Any]]) -> list[dict[str, Any]]:

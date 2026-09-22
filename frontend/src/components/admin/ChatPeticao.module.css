@@ -20,7 +20,7 @@
   height: 100%;
   border: 1px solid var(--borda-forte);
   border-radius: var(--raio);
-  background: var(--papel);
+  background: var(--papel-chat);
   box-shadow: var(--sombra-1);
   overflow: hidden;
 }
@@ -48,7 +48,7 @@
   gap: 10px;
   padding: 8px 10px 8px 14px;
   border-bottom: 1px solid var(--borda);
-  background: var(--papel-2);
+  background: var(--papel);
 }
 
 .identidade {
@@ -195,7 +195,7 @@
   border: 1px solid var(--borda);
   border-left: 3px solid var(--acao);
   border-radius: var(--raio-sm);
-  background: var(--papel-2);
+  background: var(--papel);
   text-align: left;
   cursor: pointer;
   transition: background var(--transicao), border-color var(--transicao);
@@ -285,7 +285,7 @@
   margin: 0;
   padding: 6px 12px;
   border-radius: var(--raio-pill);
-  background: var(--papel-2);
+  background: var(--papel);
   font-size: var(--t-sm);
   color: var(--tinta-3);
 }
@@ -394,7 +394,7 @@
   padding: 5px 11px;
   border: 1px solid var(--borda);
   border-radius: var(--raio-pill);
-  background: var(--papel-2);
+  background: var(--papel);
   color: var(--tinta-2);
   /* Um degrau abaixo do campo: os atalhos são a segunda coisa desta linha. */
   font-size: var(--t-xs);
@@ -496,7 +496,7 @@
   padding: 2px 8px;
   border: 1px solid var(--borda);
   border-radius: var(--raio-pill);
-  background: var(--papel-2);
+  background: var(--papel);
   color: var(--tinta-2);
   white-space: nowrap;
 }
@@ -615,10 +615,11 @@
   align-items: stretch;
   border-radius: var(--raio-sm);
   border-left: 3px solid transparent;
+  background: var(--papel-chat);
 }
 
 .itemDaConversa:hover {
-  background: var(--papel-2);
+  background: var(--papel-3);
 }
 
 .itemAtivo {

@@ -50,7 +50,7 @@ from . import ferramentas
 
 log = logging.getLogger("agente")
 
-__all__ = ["Analise", "ErroDoAnalista", "responder"]
+__all__ = ["Analise", "ErroDoAnalista", "ligado", "responder"]
 
 
 class ErroDoAnalista(RuntimeError):
@@ -88,7 +88,10 @@ Como você trabalha:
 
 1. PRIMEIRO CONSULTE, DEPOIS FALE. Você não sabe nada sobre este acervo de memória. Todo
    número, nome, data e estado vem de uma ferramenta. Se a pergunta pede algo que nenhuma
-   ferramenta alcança, diga isso — é resposta melhor do que uma aproximação.
+   ferramenta alcança, diga isso — é resposta melhor do que uma aproximação. Mas se ela
+   menciona os casos, o acervo ou o escritório, CONSULTE ANTES DE NEGAR: perguntado "há
+   algum caso parecido com X?", a resposta se constrói olhando os casos, e não de cabeça.
+   "Não temos nada assim" sem ter olhado é palpite, mesmo quando acerta.
 2. ENCADEIE. Se só souber o nome do cliente, ache o caso com `listar_casos` e depois abra
    o `dossie_do_caso`. Se a resposta depende de documentos, consulte os documentos. Use
    quantas ferramentas precisar.
@@ -100,6 +103,17 @@ Como você trabalha:
    aqui.
 5. NÃO DÊ CONSELHO JURÍDICO CONCLUSIVO. Você não decide tese, não afirma que a ação
    ganha, não estima valor. Aponta o que o material sustenta.
+6. A PRIMEIRA FRASE RESPONDE A PERGUNTA QUE FOI FEITA, e é CURTA — uma ou duas linhas.
+   O número, a lista ou o "nenhum" pedido vem antes da leitura crítica; ela vem depois, e
+   é o que dá valor à resposta. Quando a resposta for negativa ou zero, diga NA MESMA
+   FRASE o que existe no lugar. Perguntado "quantos casos faltam fazer a petição?", abrir
+   com "nenhum caso tem petição faltando" faz quem lê rápido entender o oposto do que o
+   acervo diz. O certo é: "nenhum dos 24 casos tem petição gerada; três estão prontos
+   para isso".
+7. ESCREVA PARA SER LIDO EM PÉ. Parágrafos curtos, e lista quando houver mais de três
+   itens para enumerar. Um bloco único de quinze linhas não se lê, por mais certo que
+   esteja. Identifique o caso pelo NOME do cliente; o identificador interno só entra
+   quando dois casos do mesmo nome precisam ser distinguidos.
 
 Responda em português do Brasil, direto, sem saudação e sem repetir a pergunta.\
 """
@@ -108,7 +122,7 @@ FORMATO = """\
 Escreva a resposta final como JSON, exatamente nesta forma:
 
 {
-  "resposta": "O texto que o advogado lê. Direto, com a leitura crítica do que você achou.",
+  "resposta": "Três casos estão parados esperando documento.\n\n- **Maria Santos** — falta a CAT, parado há 12 dias\n- **João Lima** — falta o CNIS, parado há 9 dias\n- **Ana Souza** — comprovante de residência ilegível, parado há 6 dias\n\nOs três são de Doença Ocupacional, e nos três o documento que falta é do INSS ou da empresa — nenhum depende do cliente. Vale cobrar os três no mesmo pedido.",
   "afirmacoes": [
     {
       "statement": "63 casos estão sem movimentação há mais de 5 dias",
@@ -128,7 +142,8 @@ Escreva a resposta final como JSON, exatamente nesta forma:
   ],
   "pendencias": [
     "Valor de causa não é medido por nenhuma ferramenta deste sistema."
-  ]
+  ],
+  "para_a_web": ""
 }
 
 Regras do formato, todas obrigatórias:
@@ -142,7 +157,22 @@ Regras do formato, todas obrigatórias:
 - `INFERENCE`, `HYPOTHESIS` e `RECOMMENDATION` são sua leitura, e podem ir sem referência.
 - `pendencias` é o que faltou para responder melhor: dado que nenhuma ferramenta alcança,
   consulta que falhou, ou informação que só o advogado tem. Vazio se não faltou nada.
-- Não repita no `resposta` nada que você não consiga sustentar em `afirmacoes`.\
+- Não repita no `resposta` nada que você não consiga sustentar em `afirmacoes`.
+- `para_a_web` é para a pergunta de DUAS METADES: uma sobre o escritório e outra sobre o
+  mundo. "Há algum caso no sistema parecido com o julgamento do ministro X, e como anda
+  esse julgamento?" — a primeira metade é sua, a segunda não existe em ferramenta nenhuma
+  e a internet responde. Escreva ali a segunda metade como uma pergunta completa e
+  autossuficiente ("como está o julgamento do ministro X no STF em 2026?"), que alguém
+  vai buscar na web e juntar à sua resposta.
+  Deixe VAZIO quando a pergunta for só sobre o acervo — inclusive quando faltar dado. Um
+  número que este sistema não mede é `pendencias`, não busca na internet: o que falta ali
+  é medição do escritório, e a web não tem como suprir.
+- O `resposta` é markdown e usa `\n` de verdade: primeira frase, linha em branco, depois
+  o resto. Lista com `- ` quando houver mais de três itens. O exemplo acima é a forma
+  esperada — um bloco corrido de quinze linhas não se lê, por mais certo que esteja.
+- NÃO comece com uma negativa que possa ser lida ao contrário. "Nenhum caso tem petição
+  faltando" soa como "está tudo peticionado" e diz o oposto disso. Afirme o ESTADO:
+  "nenhum dos 24 casos tem petição gerada".\
 """
 
 
@@ -159,9 +189,26 @@ class Analise:
     casos: list[str] = field(default_factory=list)
     #: Preenchido quando o guardrail reprovou a resposta inteira.
     recusa: str | None = None
+    #: A parte da pergunta que o ACERVO não responde e a internet responderia.
+    #:
+    #: Vem do próprio modelo, no JSON da redação. Existe para a pergunta de duas metades
+    #: — "há caso parecido no sistema, e como anda esse julgamento?" —, em que responder
+    #: só a primeira deixa a segunda sumir sem que ninguém perceba. Quem consome isto é
+    #: `app/chat/sessoes.py`, que busca na web e entrega as duas respostas juntas.
+    para_a_web: str = ""
 
 
 # ------------------------------------------------------------------- o modelo
+
+
+def ligado() -> bool:
+    """Há chave para o analista trabalhar?
+
+    Existe para que quem pergunta isso — a tela do chat, hoje — não precise ler a
+    variável de ambiente por conta própria: no dia em que o analista mudar de provedor,
+    muda aqui e em nenhum outro lugar.
+    """
+    return bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
 
 
 def _configurado() -> tuple[str, str, str]:
@@ -388,4 +435,7 @@ def responder(pergunta: str, historico: list[dict[str, str]] | None = None) -> A
         pendencias=pendencias,
         consultas=consultas,
         casos=_casos_citados(afirmacoes),
+        # Cortado: é uma PERGUNTA que vai para a busca, não um texto livre. Sem teto, um
+        # modelo prolixo mandaria três parágrafos para o buscador procurar.
+        para_a_web=" ".join(str(bruto.get("para_a_web") or "").split())[:300],
     )

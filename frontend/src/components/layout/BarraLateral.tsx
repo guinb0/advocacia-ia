@@ -89,6 +89,9 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
   {
     titulo: "Atendimento",
     itens: [
+      // Primeiro da lista de propósito: é a tela de onde se pergunta qualquer coisa,
+      // inclusive "por onde eu começo".
+      { tela: "chat", rotulo: "Chat" },
       { tela: "entrevista", rotulo: "Entrevista guiada" },
       // O dossiê, o painel, a jurimetria e o checklist são leituras de UM caso.
       // Acendem a carteira para a barra não ficar sem resposta quando o advogado

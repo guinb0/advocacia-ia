@@ -223,6 +223,10 @@ TABELAS = (
     # de `_qualificar` já recusa prefixo de nome maior, e uma não alcança a outra.
     "conversa_mensagens",
     "conversas",
+    # O chat do escritório. `chat_mensagens` antes de `chat_sessoes` pela mesma razão
+    # de leitura do par acima.
+    "chat_mensagens",
+    "chat_sessoes",
     "automacoes_whatsapp",
     "cobrancas_documentos",
     "ligacoes",
@@ -658,6 +662,56 @@ CREATE TABLE {SCHEMA}.{PREFIXO}conversa_mensagens (
         REFERENCES {SCHEMA}.{PREFIXO}conversas (id) ON DELETE CASCADE
 );
 
+-- O CHAT do escritório: a tela única onde se pergunta qualquer coisa.
+--
+-- POR QUE TABELA PRÓPRIA, E NÃO `conversas`
+--
+-- `conversas` guarda as transcrições do agente geral e do chat da petição, cada uma
+-- com o seu `escopo`. O chat tem uma regra que nenhuma das duas tem: **oito sessões
+-- por pessoa**, e a nona apaga a mais antiga. Misturá-lo ali faria essa poda passar
+-- por cima do histórico do Dossiê — que ninguém pediu para apagar — e obrigaria toda
+-- consulta das outras telas a filtrar por escopo para não contar sessão podada.
+--
+-- `caso_id` continua SEM chave estrangeira, pelo motivo de sempre: a sessão começa
+-- antes de haver caso e sobrevive ao caso apagado. Quem lê trata o caso sumido como
+-- estado, e não como linha órfã.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}chat_sessoes') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}chat_sessoes (
+    id            varchar(64)   NOT NULL CONSTRAINT pk_acervo_chat_sessoes PRIMARY KEY,
+    usuario       varchar(160)  NOT NULL,
+    titulo        nvarchar(300) NOT NULL,
+    resumo        nvarchar(300) NOT NULL CONSTRAINT df_acervo_chat_resumo DEFAULT N'',
+    caso_id       varchar(64)   NULL,
+    -- O fio do agente jurídico, quando a sessão falou de um caso. É o que faz a
+    -- segunda pergunta sobre o mesmo caso continuar o assunto em vez de recomeçar.
+    conversa_ref  varchar(80)   NULL,
+    -- Sobre o que esta conversa está falando, e para onde foi a última pergunta. É o
+    -- contexto que toda pergunta herda — ver `app/chat/contexto.py`.
+    assunto       nvarchar(300) NOT NULL CONSTRAINT df_acervo_chat_assunto DEFAULT N'',
+    ultimo_destino varchar(20)  NOT NULL CONSTRAINT df_acervo_chat_destino DEFAULT '',
+    criado_em     varchar(40)   NOT NULL,
+    atualizado_em varchar(40)   NOT NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}chat_mensagens') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}chat_mensagens (
+    id        varchar(64)   NOT NULL CONSTRAINT pk_acervo_chat_msg PRIMARY KEY,
+    sessao_id varchar(64)   NOT NULL,
+    -- A ORDEM é coluna, e não o instante: `criado_em` tem precisão de segundos, e
+    -- pergunta e resposta caem no mesmo segundo com facilidade. Foi o defeito que
+    -- `conversa_mensagens` levou uma migração para corrigir; aqui já nasce certo.
+    ordem     int           NOT NULL CONSTRAINT df_acervo_chat_msg_ordem DEFAULT 0,
+    papel     varchar(20)   NOT NULL,
+    conteudo  nvarchar(max) NOT NULL CONSTRAINT df_acervo_chat_conteudo DEFAULT N'',
+    natureza  varchar(30)   NOT NULL CONSTRAINT df_acervo_chat_natureza DEFAULT 'ANALISE',
+    -- Lastro, fontes da web e os atalhos da resposta. Sem gravá-los, reabrir a sessão
+    -- amanhã mostraria a conclusão sem o que a sustenta e sem os caminhos que ela abriu.
+    payload   nvarchar(max) NOT NULL CONSTRAINT df_acervo_chat_payload DEFAULT N'{{}}',
+    criado_em varchar(40)   NOT NULL,
+    CONSTRAINT fk_acervo_chat_msg_sessao FOREIGN KEY (sessao_id)
+        REFERENCES {SCHEMA}.{PREFIXO}chat_sessoes (id) ON DELETE CASCADE
+);
+
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}ufs') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}ufs (
     id int NOT NULL CONSTRAINT pk_acervo_ufs PRIMARY KEY,
@@ -791,6 +845,12 @@ INDICES = (
     # antes de `criado_em` porque é ela que decide o empate — ver `COLUNAS_NOVAS`.
     f"CREATE INDEX idx_acervo_conv_msg_conversa ON {SCHEMA}.{PREFIXO}conversa_mensagens"
     f" (conversa_id, ordem, criado_em)",
+    # A barra lateral do chat abre com as sessões de quem entrou, da mais recente para
+    # a mais antiga — e é a mesma ordem que decide qual cai quando passa de oito.
+    f"CREATE INDEX idx_acervo_chat_sessoes_usuario ON {SCHEMA}.{PREFIXO}chat_sessoes"
+    f" (usuario, atualizado_em DESC)",
+    f"CREATE INDEX idx_acervo_chat_msg_sessao ON {SCHEMA}.{PREFIXO}chat_mensagens"
+    f" (sessao_id, ordem, criado_em)",
 )
 
 
@@ -911,6 +971,30 @@ COLUNAS_NOVAS = (
         f"{PREFIXO}conversas",
         "escopo",
         "varchar(20) NOT NULL CONSTRAINT df_acervo_conv_escopo DEFAULT 'GERAL'",
+    ),
+    # O CONTEXTO DA SESSÃO DE CHAT: sobre o que se está falando, e para onde foi a
+    # última pergunta.
+    #
+    # Sem isso, cada pergunta chegava sozinha ao destino e "videos sobre" — logo depois
+    # de "como fazer um bolo de chocolate" — virava uma busca por duas palavras sem
+    # assunto, que devolveu cinco vídeos em espanhol sobre agentes de IA. Colar a
+    # pergunta anterior resolvia UM caso e quebrava no seguinte: a anterior também pode
+    # ser dependente ("videos sobre" → "e sem açúcar?"), e aí o assunto já tinha se
+    # perdido.
+    #
+    # O assunto é estado da conversa, e estado da conversa mora na conversa.
+    (
+        f"{PREFIXO}chat_sessoes",
+        "assunto",
+        "nvarchar(300) NOT NULL CONSTRAINT df_acervo_chat_assunto DEFAULT N''",
+    ),
+    # Para onde a última pergunta foi. É o que faz a pergunta de acompanhamento seguir o
+    # mesmo caminho: "e quanto tempo?" depois de uma resposta do acervo é acervo, e
+    # depois de uma resposta da web é web.
+    (
+        f"{PREFIXO}chat_sessoes",
+        "ultimo_destino",
+        "varchar(20) NOT NULL CONSTRAINT df_acervo_chat_destino DEFAULT ''",
     ),
 )
 

@@ -204,6 +204,85 @@ checar(recebidos and recebidos[0]["argumentos"] == {}, "argumento ilegível vira
 checar(analise.conteudo == "segue", "e a resposta continua sendo produzida")
 
 
+print("\n7. O que o dossiê chama de «faltando» é o que falta mesmo")
+
+# Medido no acervo local em 22/09: um caso com os 23 obrigatórios ENTREGUES aparecia com
+# os 23 "faltando", ao lado de um progresso dizendo 23/23 e zero pendentes. A causa era
+# uma comparação com um status que não existe (`!= "ok"`, quando os estados são
+# `entregue`, `conferir` e `pendente`), e o efeito era o pior possível: o analista lia a
+# contradição e acusava o sistema de se contradizer — com razão.
+CHECKLIST = {
+    "categoria": "doenca_ocupacional",
+    "progresso": {"obrigatorios_total": 4, "obrigatorios_entregues": 2},
+    "itens": [
+        {"rotulo": "RG", "obrigatorio": True, "status": "entregue"},
+        {"rotulo": "CPF", "obrigatorio": True, "status": "entregue"},
+        {"rotulo": "CAT", "obrigatorio": True, "status": "pendente"},
+        {"rotulo": "PPP", "obrigatorio": True, "status": "conferir"},
+        {"rotulo": "Fotos", "obrigatorio": False, "status": "pendente"},
+    ],
+}
+
+analista.ferramentas.dossie.montar = lambda caso_id, recuperar=True: {  # type: ignore[assignment]
+    "caso": {"cliente": "Cliente Instruído Um", "criado_em": "2026-07-01T10:00:00"},
+    "checklist": CHECKLIST,
+    "contrato": {},
+    "entrevistas": [],
+    "agente": {"vinculado": False},
+}
+
+# A função direto, e não por `executar`: a seção 6 dublou o despachante para medir
+# outra coisa, e aqui o que se quer provar é a REGRA do dossiê.
+faltando = analista.ferramentas._dossie_do_caso("caso-1").dados["checklist"][
+    "obrigatorios_faltando"
+]
+checar(faltando == ["CAT", "PPP"], "falta é o que não chegou e o que não passou — nada mais")
+checar("RG" not in faltando and "CPF" not in faltando, "documento entregue NÃO é cobrado de novo")
+checar("Fotos" not in faltando, "e item opcional não entra na lista de obrigatórios")
+
+
+print("\n8. O contrato do prompt: o que foi acrescentado não pode ter levado nada")
+
+# ESTE TESTE NÃO MEDE O MODELO — mede o texto que mandamos a ele.
+#
+# Instrução é código que ninguém compila: dá para apagar uma regra inteira sem que nada
+# quebre, e o efeito só aparece semanas depois, numa resposta que afirma o que não mediu.
+# Em 22/09 a instrução ganhou duas regras (responder na primeira frase, e escrever para
+# ser lido); estas verificações existem para que a próxima edição não leve junto as que
+# sustentam o resto do sistema.
+ESSENCIAIS = {
+    "PRIMEIRO CONSULTE": "todo número vem de ferramenta, nunca de memória",
+    "ENCADEIE": "uma consulta pode levar à seguinte",
+    "SEJA CRÍTICO": "a leitura vale mais que o relatório",
+    "NUNCA CONFUNDA RELATO COM PROVA": "o erro mais grave que este sistema pode cometer",
+    "NÃO DÊ CONSELHO JURÍDICO CONCLUSIVO": "não decide tese nem estima valor",
+    "PRIMEIRA FRASE": "responde a pergunta que foi feita",
+    "ESCREVA PARA SER LIDO": "parágrafo curto e lista, não bloco corrido",
+}
+for marca, porque in ESSENCIAIS.items():
+    checar(marca in analista.INSTRUCAO, f"a instrução ainda diz «{marca}» — {porque}")
+
+# O guardrail de lastro é a razão de existir do formato fechado.
+checar(
+    "SÓ podem ser usados com `refs` preenchido" in analista.FORMATO,
+    "o formato ainda exige referência para afirmação factual",
+)
+checar(
+    "DESCARTADA" in analista.FORMATO,
+    "e ainda avisa que a afirmação sem lastro é descartada",
+)
+checar(
+    all(n in analista.FORMATO.replace("NATUREZAS_VALIDAS", ", ".join(analista._NATUREZAS))
+        for n in ("PROVEN_FACT", "ALLEGED_FACT", "RECOMMENDATION")),
+    "as naturezas continuam na lista que o modelo recebe",
+)
+
+# O exemplo da resposta ensina a FORMA, e é ele que o modelo copia. Sem quebra de linha
+# no exemplo, a resposta volta a sair em bloco único — medido, não suposto.
+checar("\n" in analista.FORMATO.split('"resposta": "')[1].split('",')[0],
+       "o exemplo de resposta continua mostrando quebra de linha")
+
+
 # O placar e a saída ficam sob a guarda de `__main__`, como nos demais testes da casa
 # (ver `tests/test_perfis.py`). Solto no nível do módulo, o `SystemExit` era disparado
 # durante o IMPORT do arquivo — e como o nome começa com `test_`, qualquer `pytest`
