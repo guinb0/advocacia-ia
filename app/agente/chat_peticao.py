@@ -1512,14 +1512,23 @@ def _transmitir(
 #: Não só «registrei/propus»: o modelo também promete no futuro («vou ajustar»), afirma que
 #: já mudou («alterei») ou empurra para um botão que não criou («confirme no cartão»).
 _PROMESSA = re.compile(
-    r"\b(registrei|propus|preparei|deixei registrad[oa])\b"
+    # O VERBO: o modelo diz que fez.
+    r"\b(registrei|propus|preparei|deixei (?:registrad|pront)[oa]s?)\b"
     r"|\b(?:j[áa]\s+)?(?:alterei|ajustei|corrigi|inclu[íi]|acrescentei|adicionei|removi|retirei"
     r"|troquei|substitu[íi]|atualizei|reescrevi|mudei)\b"
     r"|\b(?:vou|irei)\s+(?:agora\s+)?(?:alterar|ajustar|corrigir|incluir|acrescentar"
     r"|adicionar|remover|retirar|trocar|substituir|atualizar|reescrever|mudar|fazer\s+a\s+(?:altera|mudan))"
     r"|\bfarei\s+(?:agora\s+)?(?:a\s+(?:altera|mudan)|o\s+ajuste)"
     r"|\bconfirme\s+(?:abaixo|acima|no\s+cart[ãa]o|no\s+bot[ãa]o)"
-    r"|\bclique\s+em\s+confirmar|\bbot[ãa]o\s+(?:de\s+)?confirmar",
+    r"|\bclique\s+em\s+confirmar|\bbot[ãa]o\s+(?:de\s+)?confirmar"
+    # O ESTADO, que escapava de todas as formas acima (18/09, sete respostas numa só
+    # conversa): o modelo não diz que registrou, diz que ESTÁ registrado — "o pedido de
+    # revisão está registrado e aguarda sua confirmação" — e nenhum cartão existia.
+    # Presas ao estado do pedido, e não ao verbo "registrar": "confirme e eu registro"
+    # é pergunta legítima.
+    r"|\b(?:est[áa]|fica|ficou|foi)\s+registrad[oa]s?\b"
+    r"|\baguarda(?:ndo)?\s+(?:a\s+)?sua\s+confirma[çc][ãa]o\b"
+    r"|\bcart[ãa]o\b[^.\n]{0,40}\b(?:aberto|acima|abaixo|na\s+sua\s+tela|que\s+ficou)\b",
     re.IGNORECASE,
 )
 
@@ -1606,8 +1615,10 @@ COBRANCA = (
     " de proposta nesta resposta — então nenhum cartão de confirmação foi criado e o"
     " advogado ficaria esperando um botão que não existe.\n\n"
     "Chame agora a ferramenta de propor correspondente, com o pedido escrito de forma"
-    " completa e literal. Se, pensando bem, não havia alteração a propor, responda"
-    " corrigindo o que você disse — sem afirmar que propôs." + _FECHO_DA_COBRANCA
+    " completa e literal. Cartão de uma resposta ANTERIOR não conta: ele pode já ter"
+    " sido usado ou ter falhado, e o advogado espera o cartão nesta resposta. Se,"
+    " pensando bem, não havia alteração a propor, responda corrigindo o que você disse"
+    " — sem afirmar que propôs nem que o pedido está registrado." + _FECHO_DA_COBRANCA
 )
 
 COBRANCA_PEDIDO = (
@@ -1813,6 +1824,26 @@ def citou_sem_conferir(
     if not _CITA_NORMA.search(texto or "") or leu_a_peca:
         return False
     return _pesquisas_que_confirmam(texto, pesquisas, _CITA_NORMA) is None
+
+
+#: O que a resposta ganha quando afirma um pedido registrado e nenhum cartão existe.
+AVISO_SEM_CARTAO = (
+    "\n\n> **Atenção:** nenhum cartão de confirmação foi criado nesta resposta, então a"
+    " alteração descrita acima ainda não pode ser aplicada. Peça de novo («faça o pedido"
+    " de revisão») para o cartão aparecer."
+)
+
+
+def _nome_e_argumentos(chamada: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Nome e argumentos de uma chamada de ferramenta. Argumento ilegível vira `{}`."""
+    nome = (chamada.get("function") or {}).get("name") or ""
+    bruto = (chamada.get("function") or {}).get("arguments") or "{}"
+    try:
+        argumentos = json.loads(bruto) if isinstance(bruto, str) else dict(bruto)
+    except json.JSONDecodeError:
+        argumentos = {}
+        log.warning("chat da petição: argumentos ilegíveis em %s", nome)
+    return nome, argumentos if isinstance(argumentos, dict) else {}
 
 
 def prometeu_acao(texto: str) -> bool:
@@ -2489,6 +2520,10 @@ def conversar(
                     yield {"tipo": "recomeco"}
                     yield {"tipo": "etapa", "texto": "Procurando nos documentos do caso"}
                     continue
+                # Esta cobrança tem flag PRÓPRIA (`cobranca_promessa_feita`), e é por
+                # isso que ela existe: com uma flag só para as quatro, a de fonte vinha
+                # antes e gastava a vez — citou o Tema 125 de memória, foi cobrado,
+                # pesquisou e respondeu "o pedido está registrado" sem cartão nenhum.
                 prometeu = prometeu_acao(texto)
                 pediu_sem_cartao = pediu_alteracao(pergunta) and not texto.rstrip().endswith("?")
                 if not acoes and not cobranca_promessa_feita and (prometeu or pediu_sem_cartao):
@@ -2513,15 +2548,7 @@ def conversar(
                 break
 
             for chamada in chamadas:
-                nome = (chamada.get("function") or {}).get("name") or ""
-                bruto = (chamada.get("function") or {}).get("arguments") or "{}"
-                try:
-                    argumentos = json.loads(bruto) if isinstance(bruto, str) else dict(bruto)
-                except json.JSONDecodeError:
-                    argumentos = {}
-                    log.warning("chat da petição: argumentos ilegíveis em %s", nome)
-                if not isinstance(argumentos, dict):
-                    argumentos = {}
+                nome, argumentos = _nome_e_argumentos(chamada)
 
                 chave_da_leitura = _chave_da_leitura(nome, argumentos)
                 repetida = chave_da_leitura in ja_consultadas
@@ -2620,11 +2647,27 @@ def conversar(
                     ),
                 }
             )
+            final: dict[str, Any] = {}
             for evento in _transmitir(mensagens, ferramentas=False):
                 if evento["tipo"] == "mensagem":
-                    texto = str(evento["mensagem"].get("content") or "")
+                    final = evento["mensagem"]
+                    texto = str(final.get("content") or "")
                 else:
                     yield evento
+            # As ferramentas NÃO vão nesta rodada (o `ferramentas=False` acima): com
+            # elas à vista o modelo chamava mais uma e a resposta saía vazia. O laço
+            # abaixo é a rede para o provedor que devolve chamada assim mesmo — e aí só
+            # a PROPOSTA roda. Consulta acabou (o teto é este), mas jogar fora um cartão
+            # pedido deixava o texto dizendo "deixei a revisão para você confirmar" com
+            # nenhum cartão na tela.
+            for chamada in final.get("tool_calls") or []:
+                nome, argumentos = _nome_e_argumentos(chamada)
+                if not (CATALOGO.get(nome) or (None, None, False))[2]:
+                    continue
+                resultado = executar_ferramenta(nome, caso_id, argumentos)
+                consultas.append(nome)
+                if resultado.get("registrada"):
+                    acoes.append({k: v for k, v in resultado.items() if k != "registrada"})
     except ErroDoChat as erro:
         yield _falha(conversa_id, str(erro), pergunta)
         return
@@ -2656,6 +2699,14 @@ def conversar(
                 + "\n\nRegistrei o seu pedido como alteração da petição: confirme no cartão"
                 " abaixo para aplicá-lo."
             )
+
+    if not acoes and prometeu_acao(texto):
+        # Nem a cobrança nem a proposta de reserva resolveram: o texto afirma um pedido
+        # registrado e não há cartão nenhum. Medido em 17/09: cobrado, o modelo respondeu
+        # "eu já registrei". Sem este aviso o advogado procura um botão que não existe —
+        # o pior erro desta tela, porque parece sucesso.
+        log.warning("chat da petição: promessa sem cartão chegou ao fim (caso %s)", caso_id)
+        texto += AVISO_SEM_CARTAO
 
     # A citação confirmada numa pesquisa anterior leva a fonte dela: sem isso a
     # resposta reaproveitada sairia sem link, e o advogado não teria onde conferir.

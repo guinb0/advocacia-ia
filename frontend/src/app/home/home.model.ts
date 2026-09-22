@@ -9,6 +9,7 @@ import { useChamada } from "@/lib/ChamadaContexto";
 /** A carteira é a porta de entrada; as outras telas são destinos dela. */
 export type Tela =
   | "carteira"
+  | "chat"
   | "agente"
   | "caso"
   | "dossie"
@@ -64,6 +65,13 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   /* A TELA de manutenção pede o módulo; consultar o glossário não pede — a
    * reclassificação, dentro do caso, lê a lista sem passar por aqui. */
   glossarioDocumentos: "glossario_documentos",
+  /* O `chat` de propósito NÃO está aqui — como `modelosDePeticao`.
+   *
+   * Ele é a porta única de perguntas, e quem limita o que cada pessoa vê são os
+   * destinos, no servidor: o caso só responde sobre caso do acervo, os documentos
+   * passam pela mesma rota autenticada do dossiê. Exigir um módulo aqui esconderia a
+   * tela inteira de quem pode perguntar sobre metade do que ela alcança.
+   */
   /* `modelosDePeticao` de propósito NÃO está aqui.
    *
    * Na barra horizontal antiga o item aparecia para todo mundo (filtro de
@@ -78,7 +86,7 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
  * sem esta lista não há como conferir o que veio do endereço, e um `?tela=`
  * inventado viraria um estado que nenhuma tela sabe renderizar. */
 export const TELAS: readonly Tela[] = [
-  "carteira", "agente", "caso", "dossie", "painel", "jurimetria", "casos", "avulso",
+  "carteira", "chat", "agente", "caso", "dossie", "painel", "jurimetria", "casos", "avulso",
   "investigacao", "usuarios", "panorama", "operacao", "entrevista", "supervisao", "dados",
   "saudeAgente", "modelosDePeticao", "configuracaoAssinatura", "catalogoRoteiros",
   "glossarioDocumentos", "revisao", "followup", "documentacao",

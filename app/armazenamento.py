@@ -2593,6 +2593,238 @@ def mensagens_da_conversa(conversa_id: str) -> list[dict[str, Any]]:
     return [_normalizar_mensagem(l) for l in linhas]
 
 
+# ------------------------------------------------------------------ chat
+#
+# O chat do escritório tem tabelas próprias (`chat_sessoes` / `chat_mensagens`) e uma
+# regra que as conversas do agente não têm: OITO sessões por pessoa. A nona não é
+# recusada — ela apaga a mais antiga, que é o que um chat faz e o que o advogado espera
+# ao começar a falar de outro assunto.
+#
+# O teto mora aqui, e não na tela, porque a tela não é a única a escrever: podar só na
+# listagem deixaria a nona sessão gravada e invisível, ocupando banco para sempre.
+
+#: Quantas sessões de chat cada pessoa mantém. Passou disso, a mais antiga sai.
+TETO_DE_SESSOES = 8
+
+
+def _normalizar_sessao(linha: banco.Linha) -> dict[str, Any]:
+    return {
+        "id": linha["id"],
+        "usuario": linha["usuario"],
+        "titulo": linha["titulo"],
+        "resumo": linha["resumo"] or "",
+        "caso_id": linha["caso_id"],
+        "conversa_ref": linha["conversa_ref"],
+        # As duas colunas nasceram depois das primeiras sessões: `_coluna` devolve `None`
+        # no banco que ainda não recebeu o ALTER, e conversa sem assunto é conversa nova.
+        "assunto": _coluna(linha, "assunto") or "",
+        "ultimo_destino": _coluna(linha, "ultimo_destino") or "",
+        "criado_em": linha["criado_em"],
+        "atualizado_em": linha["atualizado_em"],
+    }
+
+
+def criar_sessao_de_chat(usuario: str, *, titulo: str = "Nova conversa") -> dict[str, Any]:
+    """Abre a sessão e devolve o registro. O título real chega com a primeira pergunta."""
+    sessao_id = str(uuid.uuid4())
+    instante = agora()
+    with conectar() as con:
+        con.execute(
+            "INSERT INTO chat_sessoes"
+            " (id, usuario, titulo, resumo, caso_id, conversa_ref, criado_em, atualizado_em)"
+            " VALUES (?, ?, ?, N'', NULL, NULL, ?, ?)",
+            (sessao_id, usuario, titulo, instante, instante),
+        )
+    return {
+        "id": sessao_id,
+        "usuario": usuario,
+        "titulo": titulo,
+        "resumo": "",
+        "caso_id": None,
+        "conversa_ref": None,
+        "assunto": "",
+        "ultimo_destino": "",
+        "criado_em": instante,
+        "atualizado_em": instante,
+    }
+
+
+def listar_sessoes_de_chat(
+    usuario: str, *, limite: int = TETO_DE_SESSOES
+) -> list[dict[str, Any]]:
+    """As sessões da pessoa, da mais recente para a mais antiga, no máximo `limite`.
+
+    Vai com a contagem de perguntas: é ela que distingue, na barra lateral, uma sessão
+    em branco recém-aberta de uma conversa de verdade.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            f"SELECT TOP {int(limite)} s.*,"
+            "       (SELECT COUNT(*) FROM chat_mensagens m"
+            "         WHERE m.sessao_id = s.id AND m.papel = 'USER') AS perguntas"
+            "  FROM chat_sessoes s WHERE s.usuario = ?"
+            " ORDER BY s.atualizado_em DESC, s.criado_em DESC",
+            (usuario,),
+        ).fetchall()
+    return [
+        {**_normalizar_sessao(l), "perguntas": int(l["perguntas"] or 0)} for l in linhas
+    ]
+
+
+def obter_sessao_de_chat(sessao_id: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM chat_sessoes WHERE id = ?", (sessao_id,)
+        ).fetchone()
+    return _normalizar_sessao(linha) if linha else None
+
+
+def atualizar_sessao_de_chat(
+    sessao_id: str,
+    *,
+    titulo: str | None = None,
+    resumo: str | None = None,
+    caso_id: str | None = None,
+    conversa_ref: str | None = None,
+    assunto: str | None = None,
+    ultimo_destino: str | None = None,
+    soltar_caso: bool = False,
+) -> None:
+    """Toca a sessão. `atualizado_em` sobe sempre — é o que ordena a barra lateral.
+
+    Campo não informado NÃO é apagado: uma pergunta sobre o sistema, no meio de uma
+    conversa sobre um caso, chega aqui sem `caso_id`, e tratar isso como "solte o caso"
+    desfaria o assunto a cada explicação de termo. Soltar é pedido em voz alta, com
+    `soltar_caso`.
+    """
+    campos = ["atualizado_em = ?"]
+    valores: list[Any] = [agora()]
+
+    if titulo is not None:
+        campos.append("titulo = ?")
+        valores.append(titulo)
+    if resumo is not None:
+        campos.append("resumo = ?")
+        valores.append(resumo)
+    if soltar_caso:
+        campos.extend(["caso_id = NULL", "conversa_ref = NULL"])
+    elif caso_id is not None:
+        campos.append("caso_id = ?")
+        valores.append(caso_id)
+    if conversa_ref is not None:
+        campos.append("conversa_ref = ?")
+        valores.append(conversa_ref)
+    if assunto is not None:
+        campos.append("assunto = ?")
+        valores.append(assunto[:300])
+    if ultimo_destino is not None:
+        campos.append("ultimo_destino = ?")
+        valores.append(ultimo_destino[:20])
+
+    valores.append(sessao_id)
+    with conectar() as con:
+        con.execute(
+            f"UPDATE chat_sessoes SET {', '.join(campos)} WHERE id = ?", valores
+        )
+
+
+def excluir_sessao_de_chat(sessao_id: str, usuario: str) -> bool:
+    """Apaga a sessão de QUEM a abriu. As mensagens vão junto, pelo CASCADE."""
+    with conectar() as con:
+        cur = con.execute(
+            "DELETE FROM chat_sessoes WHERE id = ? AND usuario = ?", (sessao_id, usuario)
+        )
+        return cur.rowcount > 0
+
+
+def podar_sessoes_de_chat(usuario: str, *, teto: int = TETO_DE_SESSOES) -> list[str]:
+    """Apaga o que passou do teto e devolve os ids que saíram.
+
+    Devolve os ids para que a tela saiba o que sumiu: barra lateral que encolhe sozinha,
+    sem dizer o quê, parece defeito — e a sessão apagada não volta.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT id FROM chat_sessoes WHERE usuario = ? AND id NOT IN"
+            f" (SELECT TOP {int(teto)} id FROM chat_sessoes WHERE usuario = ?"
+            "   ORDER BY atualizado_em DESC, criado_em DESC)",
+            (usuario, usuario),
+        ).fetchall()
+        apagadas = [l["id"] for l in linhas]
+        for sessao_id in apagadas:
+            con.execute("DELETE FROM chat_sessoes WHERE id = ?", (sessao_id,))
+    return apagadas
+
+
+def registrar_mensagem_de_chat(
+    sessao_id: str,
+    *,
+    papel: str,
+    conteudo: str,
+    natureza: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Grava a mensagem no fim da sessão, com a ordem explícita."""
+    mensagem_id = str(uuid.uuid4())
+    instante = agora()
+    carga = json.dumps(payload or {}, ensure_ascii=False, default=str)
+    with conectar() as con:
+        # APELIDO nas duas colunas: sem ele o driver devolve nome vazio para ambas e a
+        # linha (dicionário por nome de coluna) chega com uma só.
+        atual = con.execute(
+            "SELECT ISNULL(MAX(ordem), 0) AS maior, COUNT(*) AS total"
+            " FROM chat_mensagens WHERE sessao_id = ?",
+            (sessao_id,),
+        ).fetchone()
+        ordem = (max(int(atual["maior"]), int(atual["total"])) if atual else 0) + 1
+        con.execute(
+            "INSERT INTO chat_mensagens"
+            " (id, sessao_id, ordem, papel, conteudo, natureza, payload, criado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (mensagem_id, sessao_id, ordem, papel, conteudo, natureza, carga, instante),
+        )
+    return {
+        "id": mensagem_id,
+        "sessao_id": sessao_id,
+        "ordem": ordem,
+        "papel": papel,
+        "conteudo": conteudo,
+        "natureza": natureza,
+        "payload": payload or {},
+        "criado_em": instante,
+    }
+
+
+def mensagens_do_chat(sessao_id: str) -> list[dict[str, Any]]:
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT * FROM chat_mensagens WHERE sessao_id = ?"
+            " ORDER BY ordem, criado_em, id",
+            (sessao_id,),
+        ).fetchall()
+    return [_normalizar_mensagem_de_chat(l) for l in linhas]
+
+
+def _normalizar_mensagem_de_chat(linha: banco.Linha) -> dict[str, Any]:
+    """O `payload` volta como dicionário — a tela lê `atalhos`, não uma string JSON."""
+    try:
+        payload = json.loads(linha["payload"] or "{}")
+    except (TypeError, ValueError):
+        # A transcrição não se perde por causa do lastro: o texto continua valendo, e
+        # carga ilegível vira ausência de atalhos, não erro de tela.
+        log.warning("payload ilegível na mensagem de chat %s", linha["id"])
+        payload = {}
+    return {
+        "id": linha["id"],
+        "sessao_id": linha["sessao_id"],
+        "papel": linha["papel"],
+        "conteudo": linha["conteudo"],
+        "natureza": linha["natureza"],
+        "payload": payload if isinstance(payload, dict) else {},
+        "criado_em": linha["criado_em"],
+    }
+
+
 # ------------------------------------------------------- catálogo de roteiros
 #
 # O roteiro do `app/roteiros.py` é código: veio de um `.docx` transcrito à mão.

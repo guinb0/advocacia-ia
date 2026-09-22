@@ -33,6 +33,10 @@
   --papel: #ffffff; /* cartão, painel, modal */
   --papel-2: #f7f9fc; /* área rebaixada: campo, bloco de código, zona de envio */
   --papel-3: #e6ecf2; /* hover de linha e de item selecionado */
+  /* Superfície de leitura longa: o chat e os cartões do histórico. Branco puro numa
+   * coluna que se lê por minutos cansa; este degrau dá contorno ao texto sem virar
+   * cinza de campo desabilitado. Contraste preservado: --tinta 15,6:1 · --tinta-2 9,1:1. */
+  --papel-chat: #edf2f7;
 
   /* ----------------------------------------------------------------- tinta */
   --tinta: #102033; /* títulos e números */
@@ -125,6 +129,7 @@ html[data-theme="dark"] {
   --papel: #151f2b;
   --papel-2: #192532;
   --papel-3: #223142;
+  --papel-chat: #1d2937;
 
   --tinta: #f0f5fb;
   --tinta-2: #cfdae7;
@@ -189,6 +194,7 @@ html[data-theme="dark"] {
   --color-papel: var(--papel);
   --color-papel-2: var(--papel-2);
   --color-papel-3: var(--papel-3);
+  --color-papel-chat: var(--papel-chat);
 
   --color-tinta: var(--tinta);
   --color-tinta-2: var(--tinta-2);

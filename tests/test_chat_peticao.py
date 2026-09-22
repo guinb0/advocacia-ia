@@ -1377,6 +1377,78 @@ checar(
 )
 checar(eventos[-1]["tipo"] == "fim", "e o pedido é atendido do mesmo jeito")
 
+# A seção acima deixa `httpx.stream` dublado; daqui para baixo quem manda é o
+# roteiro de `rodadas()`, que troca o `_transmitir` inteiro.
+
+# ---------------------------- 16. o cartão de confirmar existe sempre que é prometido
+
+print("\n16. «Está registrado e aguarda sua confirmação» sem cartão nenhum")
+
+for frase in (
+    # As frases de verdade, da conversa de 18/09 em que o cartão nunca apareceu.
+    "O pedido de revisão está registrado e aguarda sua confirmação: criar a seção.",
+    "O pedido já está registrado e é exatamente esse.",
+    "Fora isso, o tópico está registrado e aguardando sua confirmação.",
+    "A confirmação é sua, no cartão que já está aberto.",
+    "Deixei pronta a inclusão para você confirmar.",
+):
+    checar(chat_peticao.prometeu_acao(frase), f"é promessa: «{frase[:45]}…»")
+for frase in (
+    "Me confirme o estado civil e eu registro a revisão.",
+    "Quer que eu registre essa revisão?",
+    chat_peticao.AVISO_SEM_CARTAO,
+):
+    checar(not chat_peticao.prometeu_acao(frase), f"não é promessa: «{frase.strip()[:45]}…»")
+
+
+def executar_cartao(nome, caso_id, argumentos):
+    if nome == "pesquisar_na_web":
+        return {"falhou": False, "resposta": "Tema 125 do TST.", "fontes": [{"url": "https://tst.jus.br/t125", "confianca": "TRIBUNAL"}]}
+    if nome.startswith("propor_"):
+        return {"registrada": True, "tipo": "REVISAR", "pedido": argumentos.get("pedido")}
+    return {}
+
+
+# A cobrança de fonte vem primeiro e NÃO gasta a da promessa — foi o que aconteceu.
+falso = instalar_armazenamento()
+chat_peticao._contexto_do_caso = lambda caso_id: "Caso: Maria Santos"  # type: ignore[assignment]
+chat_peticao.executar_ferramenta = executar_cartao  # type: ignore[assignment]
+rodadas(
+    {"texto": "Pelo Tema 125 do TST, a seção se sustenta."},
+    {"chamadas": [chamada("pesquisar_na_web", {"pergunta": "Tema 125 TST"})]},
+    {"texto": "O pedido de revisão está registrado e aguarda sua confirmação."},
+    {"chamadas": [chamada("propor_revisao_da_peticao", {"pedido": "criar a seção"})]},
+    {"texto": "Deixei a revisão para você conferir no cartão abaixo."},
+)
+final = list(chat_peticao.conversar("caso-1", "cria a seção de concausalidade", "advogado-1"))[-1]
+carga = final["mensagem"]["payload"] or {}
+checar([a["tipo"] for a in carga.get("acoes") or []] == ["REVISAR"], "depois da cobrança de fonte, a promessa ainda é cobrada e o cartão sai")
+
+# O modelo insiste que já registrou: a resposta não pode chegar parecendo sucesso.
+falso = instalar_armazenamento()
+rodadas(
+    {"texto": "O pedido de revisão está registrado e aguarda sua confirmação."},
+    {"texto": "Eu já registrei o pedido, é só confirmar no cartão."},
+)
+final = list(chat_peticao.conversar("caso-1", "e o botão?", "advogado-1"))[-1]
+checar(not (final["mensagem"]["payload"] or {}).get("acoes"), "sem chamada, sem cartão")
+checar(
+    "nenhum cartão de confirmação foi criado" in final["mensagem"]["conteudo"],
+    "e a resposta avisa que não há cartão, em vez de prometer um",
+)
+
+# Proposta chamada na rodada de fechamento (teto de consultas) não se perde mais.
+falso = instalar_armazenamento()
+consulta = {"chamadas": [chamada("ler_minuta", {})]}
+rodadas(
+    *([consulta] * chat_peticao.MAXIMO_DE_PASSOS),
+    {"texto": "Deixei a revisão para você conferir.", "chamadas": [chamada("propor_revisao_da_peticao", {"pedido": "criar a seção"})]},
+)
+final = list(chat_peticao.conversar("caso-1", "revisa tudo", "advogado-1"))[-1]
+carga = final["mensagem"]["payload"] or {}
+checar([a["tipo"] for a in carga.get("acoes") or []] == ["REVISAR"], "a proposta da rodada de fechamento vira cartão")
+checar("nenhum cartão" not in final["mensagem"]["conteudo"], "e aí não há aviso de falta de cartão")
+
 
 if __name__ == "__main__":
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
