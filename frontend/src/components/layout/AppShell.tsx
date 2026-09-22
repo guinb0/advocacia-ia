@@ -10,6 +10,7 @@ import BarraLateral from "./BarraLateral";
 
 const ROTULO_TELA: Record<Tela, string> = {
   carteira: "Carteira",
+  chat: "Chat",
   agente: "Agente",
   caso: "Checklist do caso",
   dossie: "Dossiê do caso",

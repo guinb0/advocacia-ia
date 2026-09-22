@@ -1,0 +1,659 @@
+/* O chat do escritório: histórico à esquerda, conversa no resto da tela.
+ *
+ * Três decisões de grade sustentam o desenho, e todas as três já foram aprendidas na
+ * tela do agente geral:
+ *
+ * - a coluna do histórico é FIXA (272px) e rola sozinha. Ela é índice; índice que
+ *   empurra o conteúdo deixa de servir;
+ * - a conversa tem largura de leitura (~780px) mesmo num monitor de 1440. Linha de texto
+ *   com 1300px faz o olho perder o começo da linha seguinte;
+ * - a altura é do VIEWPORT, não do conteúdo. O campo de escrever fica colado embaixo e o
+ *   histórico de mensagens rola atrás dele — que é o que qualquer pessoa espera de um
+ *   chat, e o que some assim que a página inteira passa a rolar junto.
+ *
+ * Só grade, espaçamento e composição aqui. Cor, fonte, botão e campo vêm de
+ * `globals.css` (`docs/GUIA-VISUAL.md`), e por isso o tema escuro sai de graça.
+ */
+
+.pagina {
+  display: flex;
+  align-items: stretch;
+  /* O que sobra da janela depois da topbar e do respiro do `AppShell`. Em `lg+` quem
+   * rola é a área interna; abaixo disso a página volta a ser um documento comum. */
+  height: calc(100dvh - 118px);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel-chat);
+  box-shadow: var(--sombra-1);
+}
+
+/* ------------------------------------------------------------------ histórico */
+
+.historico {
+  display: flex;
+  flex-direction: column;
+  width: 272px;
+  flex-shrink: 0;
+  min-height: 0;
+  border-right: 1px solid var(--borda);
+  background: var(--papel);
+}
+
+.blocoDoTopo {
+  display: grid;
+  gap: 8px;
+  padding: 14px 14px 10px;
+}
+
+.tituloDoHistorico {
+  font-size: var(--t-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tinta-3);
+}
+
+.lista {
+  flex: 1;
+  min-height: 0;
+  padding: 0 8px 8px;
+  overflow-y: auto;
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 3px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel-chat);
+}
+
+.item:hover {
+  background: var(--papel-3);
+}
+
+/* A sessão aberta ganha contorno e papel de ação. Os demais cartões têm fundo próprio
+ * agora, então papel branco sozinho não distinguiria mais a conversa aberta. */
+.itemAberto,
+.itemAberto:hover {
+  border-color: var(--acao-borda);
+  background: var(--acao-clara);
+}
+
+.abrirItem {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 4px 9px 10px;
+  border: none;
+  background: none;
+  font-family: var(--fonte-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tituloDoItem {
+  overflow: hidden;
+  font-size: var(--t-sm);
+  line-height: 1.35;
+  color: var(--tinta);
+  /* Duas linhas: título de conversa é uma pergunta, e uma linha corta quase todas no
+   * meio de uma palavra. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.itemAberto .tituloDoItem {
+  font-weight: 600;
+}
+
+.contextoDoItem {
+  display: flex;
+  gap: 6px;
+  font-size: var(--t-xs);
+  line-height: 1.35;
+  color: var(--tinta-3);
+}
+
+.apagarItem {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin: 6px 6px 0 0;
+  border: none;
+  border-radius: var(--raio-sm);
+  background: none;
+  color: var(--tinta-3);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-xs);
+  /* Invisível até a linha ser apontada ou focada: um ✕ em cada linha transforma o
+   * histórico num painel de exclusão. `:focus-visible` mantém o teclado alcançando. */
+  opacity: 0;
+  cursor: pointer;
+}
+
+.item:hover .apagarItem,
+.apagarItem:focus-visible {
+  opacity: 1;
+}
+
+.apagarItem:hover {
+  background: var(--critico-claro);
+  color: var(--critico);
+}
+
+.itemAConfirmar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  border-color: var(--critico-borda);
+  background: var(--critico-claro);
+}
+
+.perguntaDeExclusao {
+  font-size: var(--t-sm);
+  color: var(--tinta);
+}
+
+.acoesDaExclusao {
+  display: flex;
+  gap: 6px;
+}
+
+.vazioDoHistorico {
+  margin: 12px 6px;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--tinta-3);
+}
+
+/* O teto fica escrito, e não só aplicado. "7 de 8" antes da poda explica por que a
+ * próxima conversa vai empurrar uma para fora — depois, seria só uma sumiço. */
+.rodapeDoHistorico {
+  padding: 10px 14px;
+  border-top: 1px solid var(--borda);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--tinta-3);
+}
+
+/* ------------------------------------------------------------------ conversa */
+
+.conversa {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.tituloDaConversa {
+  min-width: 0;
+  font-family: var(--fonte-ui);
+  font-size: var(--t-base);
+  font-weight: 600;
+  color: var(--tinta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selosDoCabecalho {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mensagens {
+  flex: 1;
+  min-height: 0;
+  padding: 20px 18px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.fio {
+  display: grid;
+  gap: 18px;
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+/* ------------------------------------------------------------------ mensagens */
+
+.pergunta {
+  justify-self: end;
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: var(--raio) var(--raio) 2px var(--raio);
+  background: var(--acao);
+  color: var(--nav-texto);
+  font-size: var(--t-base);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.resposta {
+  display: grid;
+  gap: 10px;
+  justify-self: stretch;
+}
+
+.origemDaResposta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.corpoDaResposta {
+  overflow-wrap: anywhere;
+}
+
+.blocoDeApoio {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--tinta-2);
+}
+
+.tituloDoBloco {
+  font-size: var(--t-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tinta-3);
+}
+
+.listaSimples {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+/* ------------------------------------------------------------------- atalhos */
+
+.atalhos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.atalho {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--acao-borda);
+  border-radius: var(--raio-pill);
+  background: var(--acao-clara);
+  color: var(--acao);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--transicao), border-color var(--transicao);
+}
+
+.atalho:hover {
+  border-color: var(--acao);
+  background: var(--papel-3);
+}
+
+/* O par "Abrir" / "Ver aqui" anda junto e precisa parecer um controle só: dois botões
+ * soltos lado a lado leem como duas ações sem relação. */
+.parDeAtalhos {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.parDeAtalhos .atalho:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.parDeAtalhos .atalho:last-child {
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background: var(--papel);
+}
+
+/* -------------------------------------------------------- painel de documentos */
+
+.painel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+}
+
+.cabecalhoDoPainel {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nomeDoPainel {
+  font-family: var(--fonte-ui);
+  font-size: var(--t-base);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.listaDeArquivos {
+  display: grid;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.arquivo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--raio-sm);
+  font-size: var(--t-sm);
+  color: var(--tinta-2);
+}
+
+.arquivo:hover {
+  background: var(--papel-3);
+}
+
+.nomeDoArquivo {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tinta);
+}
+
+.abrirArquivo {
+  flex-shrink: 0;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--acao);
+  text-decoration: none;
+}
+
+.abrirArquivo:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------- abertura */
+
+.abertura {
+  display: grid;
+  gap: 16px;
+  align-content: center;
+  width: 100%;
+  max-width: 780px;
+  height: 100%;
+  margin: 0 auto;
+  padding-bottom: 24px;
+}
+
+.saudacao {
+  font-family: var(--fonte-titulo);
+  font-size: var(--t-xl);
+  line-height: 1.25;
+  color: var(--tinta);
+}
+
+.explicacao {
+  font-size: var(--t-base);
+  line-height: 1.6;
+  color: var(--tinta-2);
+}
+
+.sugestoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.sugestao {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+  font-family: var(--fonte-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transicao), background var(--transicao);
+}
+
+.sugestao:hover {
+  border-color: var(--acao);
+  background: var(--acao-clara);
+}
+
+.tituloDaSugestao {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.exemploDaSugestao {
+  font-size: var(--t-xs);
+  line-height: 1.45;
+  color: var(--tinta-3);
+}
+
+/* ------------------------------------------------------------------- escrever */
+
+.rodape {
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--borda);
+  background: var(--papel-chat);
+}
+
+.formulario {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+.modos {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.modo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 11px;
+  border: 1px solid var(--borda-campo);
+  border-radius: var(--raio-pill);
+  background: var(--papel);
+  color: var(--tinta-2);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modoLigado {
+  border-color: var(--acao);
+  background: var(--acao);
+  color: var(--nav-texto);
+}
+
+.modo:disabled {
+  border-color: var(--borda);
+  color: var(--tinta-desabilitada);
+  cursor: not-allowed;
+}
+
+.caixaDeTexto {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--borda-campo);
+  border-radius: var(--raio);
+  background: var(--papel);
+}
+
+.caixaDeTexto:focus-within {
+  border-color: var(--acao);
+  outline: 2px solid var(--foco);
+  outline-offset: 1px;
+}
+
+.entrada {
+  flex: 1;
+  min-width: 0;
+  max-height: 160px;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: var(--tinta);
+  font-family: var(--fonte-ui);
+  font-size: var(--t-base);
+  line-height: 1.5;
+  resize: none;
+}
+
+.entrada:focus {
+  outline: none;
+}
+
+.dicaDoRodape {
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+/* ------------------------------------------------------- seletor de caso (`#`) */
+
+.seletorDeCaso {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: min(420px, 100%);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  background: var(--papel);
+  box-shadow: var(--sombra-2);
+}
+
+.opcaoDeCaso {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--raio-sm);
+  background: none;
+  font-family: var(--fonte-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.opcaoDeCaso:hover,
+.opcaoAtiva {
+  background: var(--acao-clara);
+}
+
+.nomeDaOpcao {
+  font-size: var(--t-sm);
+  color: var(--tinta);
+}
+
+.detalheDaOpcao {
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
+}
+
+/* -------------------------------------------------------------------- celular
+ *
+ * Abaixo de `lg` a coluna do histórico sairia com metade da largura útil. Ela vira
+ * gaveta: fechada por padrão, aberta pelo botão do cabeçalho e fechando sozinha ao
+ * escolher uma conversa — quem tocou numa conversa quer a conversa. */
+@media (max-width: 1023px) {
+  .pagina {
+    position: relative;
+    height: calc(100dvh - 150px);
+  }
+
+  .historico {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    width: min(300px, 86vw);
+    transform: translateX(-102%);
+    transition: transform var(--transicao);
+    box-shadow: var(--sombra-2);
+  }
+
+  .historicoAberto {
+    transform: translateX(0);
+  }
+
+  .pergunta {
+    max-width: 92%;
+  }
+}
+
+/* O botão da gaveta só existe onde a gaveta existe. */
+.botaoDaGaveta {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .botaoDaGaveta {
+    display: inline-flex;
+  }
+}

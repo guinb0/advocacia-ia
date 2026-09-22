@@ -7,6 +7,7 @@ import AppShell from "@/components/layout/AppShell";
 import ModuleFrame from "@/components/layout/ModuleFrame";
 import AgenteGeral from "@/components/AgenteGeral";
 import Carteira from "@/components/carteira/Carteira";
+import Chat from "@/components/chat/Chat";
 import Checklist from "@/components/caso/Checklist";
 import CasoWorkspaceTabs from "@/components/caso/CasoWorkspaceTabs";
 import Dados from "@/components/caso/Dados";
@@ -37,7 +38,7 @@ import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import { useSessao } from "@/lib/auth";
 
 
-import { CABECALHO, useHomeModel } from "./home.model";
+import { CABECALHO, TELAS, useHomeModel, type Tela } from "./home.model";
 
 type HomeViewProps = ReturnType<typeof useHomeModel>;
 
@@ -95,6 +96,30 @@ const Telas = (props: HomeViewProps) => {
           onAbrir={abrirCaso}
           onNovoCaso={() => setTela("casos")}
           onNavegar={setTela}
+        />
+      </ModuleFrame>
+    );
+  }
+
+  /* O chat não pede caso aberto — e é a única tela que não pede NADA: ele existe para
+   * a pergunta que se faz antes de saber onde procurar. Os atalhos da resposta é que
+   * levam ao caso, ao checklist ou ao painel.
+   *
+   * `variant="workspace"` (largura cheia) porque o desenho dele já contém a própria
+   * largura de leitura: o miolo tem 780px no meio de uma casca que usa a tela toda. */
+  if (tela === "chat") {
+    return (
+      <ModuleFrame variant="workspace">
+        <Chat
+          onAbrirCaso={abrirDossie}
+          onNavegar={(destino, casoId) => {
+            if (casoId) {
+              if (destino === "dossie") abrirDossie(casoId);
+              else abrirCaso(casoId);
+              return;
+            }
+            if ((TELAS as readonly string[]).includes(destino)) setTela(destino as Tela);
+          }}
         />
       </ModuleFrame>
     );

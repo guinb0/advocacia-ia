@@ -78,7 +78,13 @@ INSTRUCAO = (
     "- Quando houver divergência jurisprudencial, exceções ou a resposta "
     "depender de detalhe do caso, diga isso explicitamente.\n"
     "- Se os resultados não sustentarem uma resposta segura, diga que não "
-    "encontrou em vez de responder de memória."
+    "encontrou em vez de responder de memória.\n"
+    # Medido em 22/09: pedido um vídeo da receita, o modelo respondeu com
+    # `youtube.com/watch?v=exemplo` — um endereço que ele inventou. Link fabricado é
+    # pior que link nenhum: parece conferível e só falha depois do clique.
+    "- NUNCA escreva um endereço que não esteja nos resultados da busca. Nem como "
+    "exemplo, nem como ilustração, nem com o final trocado. Se pedirem um vídeo e "
+    "não houver link nos resultados, diga que não encontrou."
 )
 
 
@@ -90,8 +96,26 @@ def configurada() -> bool:
     return bool(os.getenv("OPENROUTER_API_KEY", "").strip())
 
 
-def pesquisar(pergunta: str) -> dict[str, Any]:
-    """Resposta + fontes. Levanta `ErroPesquisa` com texto pronto para a tela."""
+#: Quantas trocas anteriores acompanham a pergunta. Quatro (duas perguntas e duas
+#: respostas) é o que faz "e como faz?" continuar o assunto de antes.
+_TROCAS_DE_CONTEXTO = 4
+
+#: Quanto de cada mensagem antiga vai junto. A resposta anterior inteira são milhares de
+#: caracteres, e o que se quer dela é o ASSUNTO, não o texto.
+_TRECHO_DA_TROCA = 600
+
+
+def pesquisar(
+    pergunta: str, historico: list[dict[str, str]] | None = None
+) -> dict[str, Any]:
+    """Resposta + fontes. Levanta `ErroPesquisa` com texto pronto para a tela.
+
+    `historico` são as últimas trocas da conversa, no formato do modelo. Sem ele,
+    "e como faz?" chegava sozinho ao buscador — e voltava uma aula de gramática sobre a
+    expressão "como faz", porque era literalmente isso que estava sendo perguntado. A
+    pergunta de acompanhamento é a forma mais natural de conversar, e era justamente a
+    que não funcionava.
+    """
     pergunta = (pergunta or "").strip()
     if not pergunta:
         raise ErroPesquisa("Escreva a pergunta que deseja pesquisar.")
@@ -118,6 +142,7 @@ def pesquisar(pergunta: str) -> dict[str, Any]:
                 "plugins": [{"id": "web", "max_results": MAX_RESULTADOS}],
                 "messages": [
                     {"role": "system", "content": INSTRUCAO},
+                    *_trocas(historico),
                     {"role": "user", "content": pergunta},
                 ],
             },
@@ -156,6 +181,29 @@ def pesquisar(pergunta: str) -> dict[str, Any]:
         ),
         "modelo": corpo.get("model") or MODELO,
     }
+
+
+#: A resolução de referência — entender "videos sobre" como "videos sobre bolo de
+#: chocolate" — NÃO mora mais aqui.
+#:
+#: Ela viveu neste arquivo por uma tarde, colando a pergunta anterior na atual quando a
+#: atual era curta. Quebrava com duas perguntas dependentes seguidas, e não tinha como
+#: saber para onde a conversa vinha indo. Virou estado da sessão (`app/chat/contexto.py`),
+#: que é onde assunto de conversa mora. A pergunta chega aqui já resolvida.
+
+def _trocas(historico: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    """As mensagens anteriores, cortadas e no formato que a API aceita.
+
+    Só `user` e `assistant`, e nada além do texto: o lastro, as fontes e os atalhos da
+    resposta anterior não ajudam a buscar e custariam a janela inteira.
+    """
+    limpas: list[dict[str, str]] = []
+    for troca in (historico or [])[-_TROCAS_DE_CONTEXTO:]:
+        papel = "user" if troca.get("role") == "user" else "assistant"
+        conteudo = " ".join(str(troca.get("content") or "").split())[:_TRECHO_DA_TROCA]
+        if conteudo:
+            limpas.append({"role": papel, "content": conteudo})
+    return limpas
 
 
 #: Domínios de NORMA e de ATO OFICIAL — o texto da lei como ele é publicado.

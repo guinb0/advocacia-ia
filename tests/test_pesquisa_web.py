@@ -149,6 +149,61 @@ checar(
 checar(quebrada["fontes"] == [], "e sem fonte nenhuma para citar")
 
 
+print("\n5. O fio da conversa chega ao modelo, e endereço não se inventa")
+
+# A busca recebe as últimas trocas — é o que faz a resposta continuar o assunto em vez de
+# recomeçar. Quem resolve a REFERÊNCIA ("videos sobre" → "videos sobre bolo de
+# chocolate") é o contexto da sessão, testado em `tests/test_chat.py`: aqui se prova que
+# o histórico atravessa até o corpo da requisição.
+enviado = {}
+
+
+def capturar(metodo_ou_url=None, *args, **kwargs):
+    enviado.update(kwargs.get("json") or {})
+
+    class Resposta:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "model": "x",
+                "choices": [{"message": {"content": "ok", "annotations": []}}],
+            }
+
+    return Resposta()
+
+
+import importlib  # noqa: E402
+import os  # noqa: E402
+
+# A seção 4 trocou `pesquisar` por um dublê que só levanta erro; aqui a função de verdade
+# é necessária. Recarregar é mais honesto que guardar uma referência no topo do arquivo e
+# torcer para ninguém mexer nela.
+pesquisa_web = importlib.reload(pesquisa_web)
+os.environ["OPENROUTER_API_KEY"] = "chave-de-teste"
+pesquisa_web.httpx.post = capturar  # type: ignore[assignment]
+pesquisa_web.pesquisar(
+    "videos sobre bolo de chocolate",
+    [
+        {"role": "user", "content": "como fazer um bolo de chocolate"},
+        {"role": "assistant", "content": "Aqui vai a receita: ..."},
+    ],
+)
+papeis = [m["role"] for m in enviado.get("messages", [])]
+checar(papeis == ["system", "user", "assistant", "user"], "o histórico vai antes da pergunta")
+checar(
+    enviado["messages"][-1]["content"] == "videos sobre bolo de chocolate",
+    "e a pergunta chega como o chat a montou, sem ser reescrita aqui",
+)
+checar(
+    "NUNCA escreva um endereço" in pesquisa_web.INSTRUCAO,
+    "a instrução ainda proíbe link que não veio dos resultados",
+)
+
+
 if __name__ == "__main__":
     print(f"\n{'TODOS OS TESTES PASSARAM' if not falhas else f'{falhas} FALHA(S)'}")
     raise SystemExit(1 if falhas else 0)

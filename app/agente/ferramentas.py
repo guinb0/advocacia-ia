@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .. import armazenamento
+from ..casos import CONFERIR, ENTREGUE, PENDENTE
 from . import conversa_geral, dossie
 from .cliente import Cliente, ErroDoAgente
 
@@ -160,6 +161,17 @@ def _listar_casos(
             }
         )
 
+    # O CORTE VEM DEPOIS DA ORDEM, e não é detalhe de apresentação.
+    #
+    # A lista sai na ordem do panorama e é truncada em 25. Num acervo maior que isso, o
+    # caso mais parado podia ficar de fora do corte — e a pergunta que mais se faz aqui
+    # ("qual está parado há mais tempo?") era respondida com o mais parado ENTRE OS 25
+    # PRIMEIROS, com toda a confiança do mundo e sem nada denunciando o erro.
+    #
+    # Ordenado por tempo sem movimentação, o corte passa a guardar exatamente o que a
+    # pergunta procura. Caso sem medição (`None`) vai para o fim: ausência de dado não
+    # pode competir com 40 dias parado.
+    achados.sort(key=lambda caso: caso["dias_sem_movimentacao"] or -1, reverse=True)
     teto = max(1, min(int(limite or _TETO_DA_LISTA), _TETO_DA_LISTA))
     mostrados = achados[:teto]
     return Resultado(
@@ -198,10 +210,21 @@ def _dossie_do_caso(caso_id: str) -> Resultado:
 
     agente = montado.get("agente") or {}
     checklist = montado.get("checklist") or {}
+    # O STATUS NUNCA FOI "ok", e por isso esta lista mentia.
+    #
+    # Os estados do checklist são `entregue`, `conferir` e `pendente` (ver `app/casos.py`)
+    # — "ok" não existe em lugar nenhum. A comparação era verdadeira para TODO item, então
+    # um caso com os 23 obrigatórios entregues aparecia com os 23 "faltando", ao lado de um
+    # progresso dizendo 23/23 e zero pendentes. O analista leu as duas coisas e, com razão,
+    # acusou o sistema de se contradizer.
+    #
+    # Falta é o que NÃO chegou (`pendente`) e o que chegou e não passou (`conferir`). Esta
+    # é a mesma regra de `casos.documentos_pendentes_da_situacao`, que é o que a tela cobra
+    # do cliente — duas respostas diferentes para "o que falta" seriam pior que nenhuma.
     faltando = [
         item["rotulo"]
         for item in checklist.get("itens") or []
-        if item.get("obrigatorio") and item.get("status") != "ok"
+        if item.get("obrigatorio") and item.get("status") in (PENDENTE, CONFERIR)
     ]
 
     return Resultado(

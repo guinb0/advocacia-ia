@@ -62,6 +62,7 @@ from . import (
     carteira,
     casos,
     categorias,
+    chat,
     chamada,
     consultas,
     conversao_pdf,
@@ -336,6 +337,8 @@ app.include_router(usuarios.roteador_sessao)
 app.include_router(supervisao.roteador)
 app.include_router(dados.roteador)
 app.include_router(documentacao.roteador)
+# A tela única de perguntas: web, acervo, caso e documentos (ver `app/chat/`).
+app.include_router(chat.roteador)
 app.include_router(operacao.roteador)
 app.include_router(whatsapp.roteador)
 app.include_router(tipos_documento.roteador)
