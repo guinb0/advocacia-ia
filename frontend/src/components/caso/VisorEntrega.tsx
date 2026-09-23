@@ -17,6 +17,21 @@ function ehTexto(nome: string): boolean {
   return nome.toLowerCase().endsWith(".txt");
 }
 
+function ehDocx(nome: string): boolean {
+  return nome.toLowerCase().endsWith(".docx");
+}
+
+// O que um <img> realmente sabe desenhar. Antes, TUDO que não era PDF nem .txt
+// caía no <img>: .doc, planilha, áudio, vídeo e zip viravam o ícone de imagem
+// quebrada, sem uma linha explicando por quê — o mesmo sintoma que o .docx
+// tinha. O que não estiver aqui é anunciado como formato para baixar.
+const EXTENSOES_IMAGEM = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".avif"];
+
+function ehImagem(nome: string): boolean {
+  const minusculo = nome.toLowerCase();
+  return EXTENSOES_IMAGEM.some((ext) => minusculo.endsWith(ext));
+}
+
 const ROTULOS_TIPO_DOCUMENTO: Record<string, string> = {
   "DOCUMENT.ID": "Documento de identidade",
   "DOCUMENT.CPF": "CPF",
@@ -123,6 +138,8 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
   const fecharRef = useRef<HTMLButtonElement>(null);
   const { url: urlArquivo, erro: erroArquivo } = useArquivoEntrega(entregaId);
   const [textoArquivo, setTextoArquivo] = useState<string | null>(null);
+  const [urlDocxPdf, setUrlDocxPdf] = useState<string | null>(null);
+  const [erroDocx, setErroDocx] = useState<string | null>(null);
 
   useEffect(() => {
     setTelaCheia(lerTelaCheia());
@@ -148,6 +165,36 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
       cancelado = true;
     };
   }, [urlArquivo, arquivo]);
+
+  // .docx não é imagem nem PDF: o navegador não sabe desenhá-lo, e o visor
+  // caía no <img>, que só desenha imagem — daí o documento "não abrir" na tela
+  // embora baixasse inteiro. O servidor já converte Word em PDF pelo
+  // LibreOffice da imagem (`app/conversao_pdf.py`); é esse PDF que aparece aqui.
+  useEffect(() => {
+    setUrlDocxPdf(null);
+    setErroDocx(null);
+    if (!ehDocx(arquivo)) return;
+    let cancelado = false;
+    let criada: string | null = null;
+    baixarArquivoEntregaPdf(entregaId)
+      .then(({ arquivo: blob }) => {
+        if (cancelado) return;
+        criada = URL.createObjectURL(blob);
+        setUrlDocxPdf(criada);
+      })
+      .catch((e: unknown) => {
+        if (!cancelado) {
+          setErroDocx(
+            e instanceof Error ? e.message : "Não foi possível exibir este documento Word.",
+          );
+        }
+      });
+    return () => {
+      cancelado = true;
+      // Sem revogar, cada documento aberto vaza um PDF até recarregar a página.
+      if (criada) URL.revokeObjectURL(criada);
+    };
+  }, [entregaId, arquivo]);
 
   function alternarTelaCheia() {
     const proximo = !telaCheia;
@@ -357,6 +404,35 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
           <div className="flex items-center justify-center p-[14px] border-r border-borda bg-papel-3 overflow-auto min-h-[260px]">
             {erroArquivo ? (
               <p className="p-6 text-tinta-3 text-sm leading-[1.6] text-center">{erroArquivo}</p>
+            ) : ehDocx(arquivo) ? (
+              erroDocx ? (
+                /* Servidor sem LibreOffice (o ambiente local, por exemplo): em
+                   vez de uma tela vazia, mostra o texto que o próprio .docx já
+                   trouxe lido — não é o documento diagramado, mas dá para
+                   conferir o conteúdo sem sair da tela. */
+                <div className="flex flex-col gap-3 w-full h-full p-3">
+                  <p className="text-tinta-3 text-sm leading-[1.6] text-center">
+                    {erroDocx} Use “Baixar o arquivo” para abrir o documento no Word.
+                  </p>
+                  {textoCompleto && (
+                    <pre
+                      className={`w-full whitespace-pre-wrap break-words rounded-campo bg-papel p-4 text-sm text-tinta font-codigo overflow-auto ${telaCheia ? "flex-1 min-h-[50vh]" : "h-[58vh]"}`}
+                    >
+                      {textoCompleto}
+                    </pre>
+                  )}
+                </div>
+              ) : !urlDocxPdf ? (
+                <p className="p-6 text-tinta-3 text-sm leading-[1.6] text-center">
+                  Preparando o documento Word para exibição…
+                </p>
+              ) : (
+                <iframe
+                  className={`w-full border-none rounded-campo bg-papel ${telaCheia ? "h-full min-h-[60vh]" : "h-[68vh]"}`}
+                  src={urlDocxPdf}
+                  title={`Pré-visualização de ${arquivo}`}
+                />
+              )
             ) : !urlArquivo ? (
               <p className="p-6 text-tinta-3 text-sm leading-[1.6] text-center">Carregando o arquivo…</p>
             ) : ehPdf(arquivo) ? (
@@ -371,7 +447,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
               >
                 {textoArquivo ?? "Carregando o texto…"}
               </pre>
-            ) : (
+            ) : ehImagem(arquivo) ? (
               /* eslint-disable-next-line @next/next/no-img-element -- é um
                  object URL de blob, que o otimizador do Next não processa. */
               <img
@@ -379,6 +455,11 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
                 src={urlArquivo}
                 alt={`Documento ${arquivo}`}
               />
+            ) : (
+              <p className="p-6 text-tinta-3 text-sm leading-[1.6] text-center">
+                Este formato não pode ser exibido no navegador. O arquivo está preservado: use
+                “Baixar o arquivo” para abri-lo no programa correspondente.
+              </p>
             )}
           </div>
 

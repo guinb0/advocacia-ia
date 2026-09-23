@@ -1,7 +1,9 @@
 """Conversão de entregas para PDF, sob demanda.
 
 O original continua sendo a fonte da verdade. PDF volta intacto; imagem vira
-uma ou mais páginas PDF sem passar novamente por OCR ou IA.
+uma ou mais páginas PDF sem passar novamente por OCR ou IA; .docx é convertido
+pelo LibreOffice já instalado na imagem (o mesmo de `app/docx_pdf.py`, que gera
+o PDF do contrato).
 """
 
 from __future__ import annotations
@@ -26,6 +28,11 @@ class PdfConvertido:
 
 EXTENSOES_IMAGEM = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
+# Word moderno (.docx) é zip com XML: nem imagem nem PDF. Sem esta conversão o
+# visor do checklist não tinha como mostrar a peça na tela — só baixar. `.doc`
+# binário fica de fora de propósito, como em `app/extracao_office.py`.
+EXTENSOES_DOCX = {".docx"}
+
 # 2400 px preserva texto pequeno para leitura e impressão, mas evita colocar no
 # PDF os 12–48 megapixels inteiros de uma foto de celular.
 MAX_LADO_PDF = 2400
@@ -43,10 +50,13 @@ def converter_para_pdf(origem: Path, nome_original: str, destino: Path) -> PdfCo
     download = nome_pdf(nome_original)
     if ext == ".pdf":
         return PdfConvertido(origem, False, download)
+    if ext in EXTENSOES_DOCX:
+        return _converter_docx(origem, destino, download)
     if ext not in EXTENSOES_IMAGEM:
         raise ErroConversaoPdf(
             "Este tipo de arquivo ainda não pode ser convertido para PDF. "
-            "Hoje o sistema converte imagens e preserva PDFs originais."
+            "Hoje o sistema converte imagens e documentos Word (.docx) e "
+            "preserva PDFs originais."
         )
 
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +81,21 @@ def converter_para_pdf(origem: Path, nome_original: str, destino: Path) -> PdfCo
     finally:
         for pagina in locals().get("paginas", []):
             pagina.close()
+    return PdfConvertido(destino, True, download)
+
+
+def _converter_docx(origem: Path, destino: Path, download: str) -> PdfConvertido:
+    """Roda o LibreOffice headless e grava o PDF resultante em `destino`."""
+    from . import docx_pdf
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        pdf = docx_pdf.converter(origem.read_bytes())
+    except docx_pdf.ErroConversaoDocx as exc:
+        raise ErroConversaoPdf(str(exc)) from exc
+    except OSError as exc:
+        raise ErroConversaoPdf("Não foi possível ler o documento Word.") from exc
+    destino.write_bytes(pdf)
     return PdfConvertido(destino, True, download)
 
 
@@ -106,7 +131,7 @@ def mesclar_em_pdf(
             ext = origem.suffix.lower()
             if ext == ".pdf":
                 caminho_pdf = origem
-            elif ext in EXTENSOES_IMAGEM:
+            elif ext in EXTENSOES_IMAGEM or ext in EXTENSOES_DOCX:
                 tmp = destino.with_name(f"{destino.stem}-parte-{indice}.pdf")
                 converter_para_pdf(origem, nome_original, tmp)
                 temporarios.append(tmp)
@@ -114,7 +139,7 @@ def mesclar_em_pdf(
             else:
                 raise ErroConversaoPdf(
                     f"'{nome_original}' não pode entrar no PDF combinado — hoje "
-                    "só PDF e imagem são aceitos nesse formato."
+                    "só PDF, imagem e .docx são aceitos nesse formato."
                 )
 
             with pdf_mod.PDFIUM_LOCK:

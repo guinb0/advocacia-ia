@@ -121,3 +121,105 @@ def test_ordem_das_propriedades_do_run_segue_o_esquema():
 def test_tamanho_absurdo_é_limitado(tam, esperado):
     run = _run_com(_documento(f"[[tam={tam}]]x[[/tam]]"), "x")
     assert run.find("w:rPr/w:sz", NS).get("{%s}val" % NS["w"]) == esperado
+
+
+# ----------------------------------------------------------------- tachado, tabulação
+#
+# O que a barra e a régua da tela aplicam precisa existir NO DOCUMENTO. Um
+# controle que só mexe no HTML da prévia é pior que controle nenhum: o advogado
+# formata, baixa o .docx e a formatação não está lá.
+
+
+def test_tachado_vira_propriedade_do_run():
+    raiz = _documento("Valor [[s]]antigo[[/s]] corrigido")
+    assert _run_com(raiz, "antigo").find("w:rPr/w:strike", NS) is not None
+    assert _run_com(raiz, "Valor ").find("w:rPr/w:strike", NS) is None
+
+
+def test_tabulação_vira_elemento_e_não_espaço():
+    (paragrafo,) = _paragrafos(_documento("a) horas extras\tR$ 12.400,00"))
+    assert paragrafo.find(".//w:tab", NS) is not None
+    assert "\t" not in "".join(paragrafo.itertext())
+
+
+def test_ordem_das_propriedades_do_run_com_tachado():
+    raiz = _documento("[[u]][[i]][[s]][[cor=#112233]][[tam=12]]**tudo**[[/tam]][[/cor]][[/s]][[/i]][[/u]]")
+    filhos = [re.sub(r"\{.*\}", "", f.tag) for f in _run_com(raiz, "tudo").find("w:rPr", NS)]
+    assert filhos == ["b", "i", "strike", "color", "sz", "szCs", "u"]
+
+
+# ----------------------------------------------------------------------------- régua
+
+
+def _ind(paragrafo: ElementTree.Element) -> dict[str, str]:
+    no = paragrafo.find("w:pPr/w:ind", NS)
+    return {} if no is None else {k.split("}")[-1]: v for k, v in no.attrib.items()}
+
+
+def test_recuos_da_régua_viram_twips():
+    (paragrafo,) = _paragrafos(_documento("[[par=esq:2;dir:1]]Recuado dos dois lados"))
+    assert _ind(paragrafo) == {"left": "1134", "right": "567"}
+
+
+def test_primeira_linha_negativa_vira_deslocamento():
+    """`w:firstLine` negativo o Word ignora; deslocamento é `w:hanging` positivo."""
+    (paragrafo,) = _paragrafos(_documento("[[par=esq:1.25;pri:-1.25]]a) o pedido"))
+    assert _ind(paragrafo) == {"left": "709", "hanging": "709"}
+
+
+def test_medida_da_régua_vence_o_recuo_zerado_do_centralizado():
+    """Centralizar zera o recuo por conta própria — mas não por cima de quem arrastou."""
+    (paragrafo,) = _paragrafos(_documento("[[alin=centro]][[par=pri:1]]No meio, com recuo pedido"))
+    assert _ind(paragrafo) == {"firstLine": "567"}
+    assert paragrafo.find("w:pPr/w:jc", NS).get("{%s}val" % NS["w"]) == "center"
+
+
+def test_marcadores_de_parágrafo_em_qualquer_ordem():
+    (paragrafo,) = _paragrafos(_documento("[[par=esq:3]][[alin=direita]]Ordem inversa"))
+    assert _ind(paragrafo)["left"] == "1701"
+    assert paragrafo.find("w:pPr/w:jc", NS).get("{%s}val" % NS["w"]) == "right"
+
+
+def test_medida_absurda_da_régua_é_limitada():
+    (paragrafo,) = _paragrafos(_documento("[[par=esq:99;dir:99]]Exagero"))
+    assert _ind(paragrafo) == {"left": "5669", "right": "5669"}  # 10 cm, o teto
+
+
+# ----------------------------------------------------------------- quebra de página
+
+
+def test_quebra_de_página_vira_br_do_tipo_page():
+    raiz = _documento("Fim dos fatos\n[[pagina]]\nDOS PEDIDOS")
+    quebra = raiz.find('.//w:br[@w:type="page"]', NS)
+    assert quebra is not None
+    assert "[[" not in "".join(raiz.itertext())
+
+
+def test_quebra_de_página_só_vale_sozinha_na_linha():
+    """`[[pagina]]` no meio de uma frase é texto que a pessoa digitou, não comando."""
+    raiz = _documento("o prazo [[pagina]] venceu")
+    assert raiz.find('.//w:br[@w:type="page"]', NS) is None
+
+
+def test_medida_inválida_some_sem_levar_o_texto():
+    (paragrafo,) = _paragrafos(_documento("[[par=esq:abc;dir:1]]Texto que fica"))
+    assert "Texto que fica" in "".join(paragrafo.itertext())
+    assert _ind(paragrafo) == {"right": "567"}
+
+
+def test_parágrafo_sem_marcador_continua_herdando_o_estilo():
+    (paragrafo,) = _paragrafos(_documento("Texto corrido sem nada aplicado"))
+    assert paragrafo.find("w:pPr", NS) is None
+
+
+def test_linha_só_com_marcador_de_parágrafo_é_linha_em_branco():
+    raiz = _documento("A\n[[par=esq:2]]\nB")
+    assert [("".join(p.itertext())) for p in _paragrafos(raiz)][:2] == ["A", "B"]
+
+
+def test_tabela_continua_reconhecida_com_marcador_de_parágrafo_na_frente():
+    raiz = _documento(
+        "[[par=esq:2]]| Informação | Dado |\n| --- | --- |\n| Cargo | Agente |"
+    )
+    assert raiz.find(".//w:tbl", NS) is not None
+    assert "[[" not in "".join(raiz.itertext())
