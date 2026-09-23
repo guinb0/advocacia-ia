@@ -109,6 +109,7 @@ from .cache_leitura import por_alguns_segundos
 from .agente import dossie as dossie_agente
 from .celery_app import celery_app
 from .extractors import ROTULOS_TIPO
+from .tasks.manutencao import _leitor_de_documentos_ativo
 from .tasks.ocr import processar_documento, processar_entrega
 from .tasks.documentos import gerar_relatorio as gerar_relatorio_job
 from .tasks.ia import gerar_estrategia as gerar_estrategia_job
@@ -5005,6 +5006,10 @@ def baixar_selecao_de_documentos_em_pdf(
     )
 
 
+class _JaEmLeitura(Exception):
+    """A entrega já está sendo processada por um worker agora."""
+
+
 def _reenfileirar_leitura(
     entrega_id: str,
     caso_id: str,
@@ -5013,15 +5018,24 @@ def _reenfileirar_leitura(
     arquivo: str,
     itens_atendidos: list[str],
     usuario: str,
+    em_leitura: set[str],
 ):
     """O miolo de "tentar novamente": restaura o arquivo e manda de volta ao worker.
 
     Usado tanto pelo botão de UM documento quanto pelo de TODOS os documentos
     com erro de um caso — a lógica de reenfileirar é a mesma, só muda quem
     decide a lista de entregas. Levanta `RuntimeError` quando o arquivo já não
-    existe (nem disco, nem banco) e deixa qualquer outra falha (fila
-    indisponível) subir crua, para o chamador decidir como registrar.
+    existe (nem disco, nem banco) e `_JaEmLeitura` quando um worker já está com
+    esta entrega em mãos — mandar de novo criaria DUAS tarefas correndo para o
+    mesmo documento, e a que terminar por último vence calada, sem erro nenhum
+    visível: o documento aparece "recusado" ou com resultado trocado sem
+    motivo aparente, porque duas leituras concorrentes escreveram por cima uma
+    da outra. `em_leitura` vem pronto do chamador para não repetir o `inspect`
+    do broker a cada entrega, num lote com várias.
     """
+    if entrega_id in em_leitura:
+        raise _JaEmLeitura("Esta entrega já está sendo lida agora por um worker.")
+
     caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
     if caminho is None:
         raise RuntimeError(
@@ -5080,6 +5094,7 @@ def tentar_novamente_entrega(
     if categoria is None:
         raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
 
+    _, em_leitura = _leitor_de_documentos_ativo()
     try:
         tarefa = _reenfileirar_leitura(
             entrega_id,
@@ -5089,7 +5104,10 @@ def tentar_novamente_entrega(
             entrega["arquivo"],
             entrega.get("itens_atendidos") or [],
             _autor_da_acao(usuario),
+            em_leitura,
         )
+    except _JaEmLeitura as exc:
+        raise HTTPException(409, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
@@ -5125,6 +5143,7 @@ def tentar_novamente_caso(
 
     com_erro = [e for e in armazenamento.listar_entregas(caso_id) if e.get("status_proc") == "erro"]
     quem = _autor_da_acao(usuario)
+    _, em_leitura = _leitor_de_documentos_ativo()
     falharam: list[dict[str, str]] = []
     reenfileiradas = 0
     for entrega in com_erro:
@@ -5137,8 +5156,11 @@ def tentar_novamente_caso(
                 entrega["arquivo"],
                 entrega.get("itens_atendidos") or [],
                 quem,
+                em_leitura,
             )
             reenfileiradas += 1
+        except _JaEmLeitura:
+            continue  # já sendo lida agora (ex.: retry automático em andamento) — nada a fazer
         except Exception as exc:
             falharam.append({"entrega_id": entrega["id"], "arquivo": entrega["arquivo"], "motivo": str(exc)[:200]})
 
