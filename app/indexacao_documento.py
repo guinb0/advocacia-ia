@@ -16,6 +16,8 @@ from . import rag, valor_documento
 
 log = logging.getLogger("indexacao-documento")
 
+MINIMO_CARACTERES_EMBEDDING = int(os.getenv("EMBEDDINGS_MIN_CHARS", "500"))
+
 
 def classificar(
     extracao: dict[str, Any], categoria: str = "",
@@ -88,6 +90,9 @@ def _fragmentar(texto: str, tamanho: int = 1800, sobreposicao: int = 240) -> lis
 def indexar(entrega_id: str, caso_id: str, arquivo: str, extracao: dict[str, Any]) -> dict[str, int]:
     """Gera embeddings no OpenRouter e grava no PGVector de forma idempotente."""
     texto = str(extracao.get("texto_completo") or "").strip()
+    if len(texto) < MINIMO_CARACTERES_EMBEDDING:
+        log.info("embedding ignorado para %s: texto curto (%d caracteres)", entrega_id, len(texto))
+        return {"chunks": 0}
     chunks = _fragmentar(texto)
     if not chunks:
         return {"chunks": 0}

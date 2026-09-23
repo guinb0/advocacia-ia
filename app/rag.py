@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 import psycopg
 from psycopg.rows import dict_row
+from . import custos_api
 
 # As funções, e não o módulo: `buscar_similares` tem um PARÂMETRO chamado
 # `tribunais` (a lista de regionais a filtrar), que sombrearia o módulo dentro dela.
@@ -127,6 +128,7 @@ def gerar_embeddings(textos: list[str], *, timeout: float = 120) -> list[list[fl
         timeout=timeout,
     )
     resposta.raise_for_status()
+    custos_api.registrar("openrouter", _obrigatoria("EMBEDDINGS_MODEL_NAME"), "embeddings", resposta)
     dados = sorted(resposta.json()["data"], key=lambda item: item["index"])
     vetores = [item["embedding"] for item in dados]
     if len(vetores) != len(textos) or any(len(v) != dimensoes for v in vetores):
