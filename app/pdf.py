@@ -15,11 +15,13 @@ import numpy as np
 # que ele não tolera, não importa a operação.
 PDFIUM_LOCK = threading.Lock()
 
-# Nenhum teto de PÁGINAS: um PDF de 500 páginas é aceito e rasterizado por
-# inteiro. Quem protege a memória é o teto de PIXELS abaixo — `_escala_efetiva`
-# derruba o DPI para o documento inteiro caber nele, em vez de recusar o
-# arquivo. Rasterizar num DPI menor é pior para o OCR (mais chance de errar
-# dígito de CPF ou código de CID) mas ainda lê algo; recusar não lê nada.
+# Teto de PÁGINAS: acima disso o arquivo é recusado antes de gastar tempo
+# rasterizando. O teto de PIXELS abaixo continua sendo quem protege a memória
+# dentro desse limite — `_escala_efetiva` derruba o DPI para o documento
+# inteiro caber nele, em vez de recusar o arquivo. Rasterizar num DPI menor é
+# pior para o OCR (mais chance de errar dígito de CPF ou código de CID) mas
+# ainda lê algo; recusar não lê nada.
+MAX_PAGINAS = int(os.getenv("OCR_PDF_MAX_PAGINAS", "350"))
 #
 # A CONTA, para dimensionar o teto de pixels:
 #
@@ -72,6 +74,10 @@ def pdf_para_imagem(conteudo: bytes) -> np.ndarray:
                 total_paginas = len(documento)
                 if total_paginas == 0:
                     raise ValueError("O PDF não contém páginas.")
+                if total_paginas > MAX_PAGINAS:
+                    raise ValueError(
+                        f"O PDF tem {total_paginas} páginas; o limite é {MAX_PAGINAS}."
+                    )
 
                 tamanhos = [documento.get_page_size(i) for i in range(total_paginas)]
                 escala = _escala_efetiva(tamanhos)
