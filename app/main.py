@@ -5019,8 +5019,11 @@ def _reenfileirar_leitura(
     itens_atendidos: list[str],
     usuario: str,
     em_leitura: set[str],
+    *,
+    worker_ativo: bool,
+    tarefas_locais: BackgroundTasks,
 ):
-    """O miolo de "tentar novamente": restaura o arquivo e manda de volta ao worker.
+    """O miolo de "tentar novamente": restaura o arquivo e manda de volta pro OCR.
 
     Usado tanto pelo botão de UM documento quanto pelo de TODOS os documentos
     com erro de um caso — a lógica de reenfileirar é a mesma, só muda quem
@@ -5028,10 +5031,16 @@ def _reenfileirar_leitura(
     existe (nem disco, nem banco) e `_JaEmLeitura` quando um worker já está com
     esta entrega em mãos — mandar de novo criaria DUAS tarefas correndo para o
     mesmo documento, e a que terminar por último vence calada, sem erro nenhum
-    visível: o documento aparece "recusado" ou com resultado trocado sem
-    motivo aparente, porque duas leituras concorrentes escreveram por cima uma
-    da outra. `em_leitura` vem pronto do chamador para não repetir o `inspect`
+    visível. `em_leitura` vem pronto do chamador para não repetir o `inspect`
     do broker a cada entrega, num lote com várias.
+
+    `worker_ativo=False` (ninguém consumindo `gpu_background`, `_leitor_de_
+    documentos_ativo` não achou worker nenhum) é o caso do dia: mandar pro
+    Celery só empilharia mais uma mensagem que ninguém vai buscar — o botão
+    pareceria funcionar e não mudaria nada, de novo. Sem worker, a PRÓPRIA API
+    processa o documento (`processar_entrega.apply`, execução local, sem
+    broker) numa tarefa de background do FastAPI: mais lento que um worker
+    dedicado, mas não depende de ninguém reiniciar container nenhum.
     """
     if entrega_id in em_leitura:
         raise _JaEmLeitura("Esta entrega já está sendo lida agora por um worker.")
@@ -5052,25 +5061,28 @@ def _reenfileirar_leitura(
             caso_id=caso_id,
         )
 
-    return processar_entrega.apply_async(
-        args=(
-            entrega_id,
-            caso_id,
-            str(caminho),
-            arquivo,
-            item_codigo,
-            categoria.codigo,
-            "pt",
-            len(itens_atendidos) > 1,
-        ),
-        queue="gpu_background",
-        priority=7,
+    args = (
+        entrega_id,
+        caso_id,
+        str(caminho),
+        arquivo,
+        item_codigo,
+        categoria.codigo,
+        "pt",
+        len(itens_atendidos) > 1,
     )
+    if worker_ativo:
+        return processar_entrega.apply_async(args=args, queue="gpu_background", priority=7)
+
+    tarefas_locais.add_task(processar_entrega.apply, args=args)
+    return None
 
 
 @app.post("/api/entregas/{entrega_id}/tentar-novamente")
 def tentar_novamente_entrega(
-    entrega_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+    entrega_id: str,
+    tarefas: BackgroundTasks,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
     """Reenfileira a leitura de um documento que falhou, sem reenviar o arquivo.
 
@@ -5094,7 +5106,7 @@ def tentar_novamente_entrega(
     if categoria is None:
         raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
 
-    _, em_leitura = _leitor_de_documentos_ativo()
+    worker_ativo, em_leitura = _leitor_de_documentos_ativo()
     try:
         tarefa = _reenfileirar_leitura(
             entrega_id,
@@ -5105,6 +5117,8 @@ def tentar_novamente_entrega(
             entrega.get("itens_atendidos") or [],
             _autor_da_acao(usuario),
             em_leitura,
+            worker_ativo=worker_ativo,
+            tarefas_locais=tarefas,
         )
     except _JaEmLeitura as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -5119,13 +5133,15 @@ def tentar_novamente_entrega(
     return {
         "entrega": armazenamento.obter_entrega(entrega_id),
         "processando": True,
-        "task_id": tarefa.id,
+        "task_id": tarefa.id if tarefa is not None else None,
     }
 
 
 @app.post("/api/casos/{caso_id}/tentar-novamente")
 def tentar_novamente_caso(
-    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+    caso_id: str,
+    tarefas: BackgroundTasks,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
 ):
     """Reprocessa de novo TODO documento com falha OU parado na triagem, de uma vez.
 
@@ -5139,7 +5155,10 @@ def tentar_novamente_caso(
 
     Documento que já está no checklist (não em triagem, sem erro) não é
     tocado; um que falhar ao reenfileirar entra em `falharam` sem travar os
-    demais.
+    demais. Sem worker consumindo `gpu_background`, cada entrega processa
+    localmente, uma de cada vez, em segundo plano na própria API (ver
+    `_reenfileirar_leitura`) — mais lento, mas não fica parado esperando um
+    worker que não vai aparecer.
     """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
@@ -5153,7 +5172,7 @@ def tentar_novamente_caso(
         if e.get("status_proc") == "erro" or e.get("item_codigo") == categorias.ITEM_TRIAGEM
     ]
     quem = _autor_da_acao(usuario)
-    _, em_leitura = _leitor_de_documentos_ativo()
+    worker_ativo, em_leitura = _leitor_de_documentos_ativo()
     falharam: list[dict[str, str]] = []
     reenfileiradas = 0
     for entrega in com_erro:
@@ -5167,6 +5186,8 @@ def tentar_novamente_caso(
                 entrega.get("itens_atendidos") or [],
                 quem,
                 em_leitura,
+                worker_ativo=worker_ativo,
+                tarefas_locais=tarefas,
             )
             reenfileiradas += 1
         except _JaEmLeitura:
