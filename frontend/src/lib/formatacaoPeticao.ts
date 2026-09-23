@@ -8,27 +8,17 @@
  *
  *   **negrito**                        (já existia, vindo da IA)
  *   [[i]]…[[/i]]   [[u]]…[[/u]]        itálico, sublinhado
- *   [[tam=14]]…[[/tam]]                tamanho em pontos
- *   [[cor=#c00000]]…[[/cor]]           cor do texto
  *   [[alin=centro]] no início da linha esquerda | centro | direita | justificado
+ *
+ * `[[tam=14]]` e `[[cor=#c00000]]` continuam sendo LIDOS, nunca escritos: a
+ * barra não oferece mais tamanho nem cor, mas peças gravadas antes disso têm
+ * essas marcações no texto e, sem interpretá-las, elas apareceriam cruas na
+ * tela do advogado.
  *
  * As duas funções aqui precisam ser inversas uma da outra: o que o editor
  * escreve tem de voltar igual ao ser reaberto, senão editar duas vezes deforma
- * a peça. Os limites (tamanho, cor) são os MESMOS do gerador — o que a tela
- * aceita é o que o Word vai receber.
+ * a peça.
  */
-
-export const TAMANHOS_PT = [8, 10, 11, 12, 14, 16, 18, 24] as const;
-
-/** Cores de caneta de revisão, não paleta de design: o que um advogado usa para
- *  marcar um trecho na peça. */
-export const CORES = [
-  { nome: "Padrão", valor: "" },
-  { nome: "Vermelho", valor: "#C00000" },
-  { nome: "Azul", valor: "#1F4E79" },
-  { nome: "Verde", valor: "#1C6B3E" },
-  { nome: "Cinza", valor: "#65758A" },
-] as const;
 
 export type Alinhamento = "esquerda" | "centro" | "direita" | "justificado";
 
