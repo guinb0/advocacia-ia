@@ -112,6 +112,49 @@ def test_entrega_usa_o_pipeline_do_worker(tmp_path, monkeypatch):
     assert concluidas == [("entrega-1", resultado, True, ["DOC.03"])]
 
 
+def test_ocr_isolado_interrompe_leitura_que_nao_responde(tmp_path, monkeypatch):
+    entrada = tmp_path / "parado.pdf"
+    entrada.write_bytes(b"documento")
+
+    class ProcessoParado:
+        def start(self):
+            pass
+
+        def terminate(self):
+            self.terminado = True
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return False
+
+    class Conexao:
+        def poll(self, _limite):
+            return False
+
+        def close(self):
+            pass
+
+    class Contexto:
+        def Pipe(self, duplex=False):
+            return Conexao(), Conexao()
+
+        def Process(self, **_kwargs):
+            return ProcessoParado()
+
+    monkeypatch.setenv("OCR_ISOLAR_PROCESSO", "1")
+    monkeypatch.setenv("OCR_EXECUCAO_TIMEOUT_S", "1")
+    monkeypatch.setattr(ocr.multiprocessing, "get_context", lambda _modo: Contexto())
+
+    try:
+        ocr._executar_ocr(str(entrada), "parado.pdf", "pt", None)
+    except TimeoutError as exc:
+        assert "limite de 1s" in str(exc)
+    else:
+        raise AssertionError("OCR parado deveria ser interrompido")
+
+
 def test_ocr_atualiza_estado_e_remove_upload(tmp_path, monkeypatch):
     entrada = tmp_path / "entrada.upload"
     entrada.write_bytes(b"imagem")

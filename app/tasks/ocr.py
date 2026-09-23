@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import logging
+import multiprocessing
+import os
 
 import httpx
 from celery.signals import worker_ready
@@ -26,9 +28,76 @@ from ..celery_app import celery_app
 log = logging.getLogger("ocr-worker")
 
 
+def _processar_em_subprocesso(
+    conexao,
+    conteudo: bytes,
+    nome: str,
+    idioma: str,
+    tipo: str | None,
+    gerar_arquivos_temporarios: bool,
+) -> None:
+    """Executa o OCR fora do processo que consome a fila."""
+    try:
+        conexao.send(("ok", pipeline.processar(
+            conteudo, nome, idioma, tipo,
+            gerar_arquivos_temporarios=gerar_arquivos_temporarios,
+        )))
+    except BaseException as exc:  # fronteira de processo: devolve o erro ao pai
+        conexao.send(("erro", f"{type(exc).__name__}: {exc}"))
+    finally:
+        conexao.close()
+
+
 def _executar_ocr(caminho: str, nome: str, idioma: str, tipo: str | None) -> dict:
-    conteudo = Path(caminho).read_bytes()
-    return pipeline.processar(conteudo, nome, idioma, tipo)
+    return _executar_ocr_conteudo(Path(caminho).read_bytes(), nome, idioma, tipo)
+
+
+def _executar_ocr_conteudo(
+    conteudo: bytes,
+    nome: str,
+    idioma: str,
+    tipo: str | None,
+    *,
+    gerar_arquivos_temporarios: bool = True,
+) -> dict:
+    # Em producao, cada leitura nasce em processo limpo. Se OpenCV ou PDFium
+    # travar em codigo C, matar o filho libera o consumidor para a proxima
+    # entrega, em vez de congelar toda a triagem atras de um documento.
+    # `spawn` e intencional: `fork` herdaria o estado que causou o deadlock.
+    if os.getenv("OCR_ISOLAR_PROCESSO", "0").strip().lower() in {"0", "false", "nao"}:
+        return pipeline.processar(
+            conteudo, nome, idioma, tipo,
+            gerar_arquivos_temporarios=gerar_arquivos_temporarios,
+        )
+
+    limite = float(os.getenv("OCR_EXECUCAO_TIMEOUT_S", "600"))
+    if limite <= 0:
+        raise ValueError("OCR_EXECUCAO_TIMEOUT_S deve ser maior que zero.")
+
+    contexto = multiprocessing.get_context("spawn")
+    pai, filho = contexto.Pipe(duplex=False)
+    processo = contexto.Process(
+        target=_processar_em_subprocesso,
+        args=(filho, conteudo, nome, idioma, tipo, gerar_arquivos_temporarios),
+        daemon=True,
+    )
+    processo.start()
+    filho.close()
+    try:
+        if not pai.poll(limite):
+            processo.terminate()
+            processo.join(timeout=10)
+            raise TimeoutError(f"OCR excedeu o limite de {limite:.0f}s; leitura interrompida.")
+        estado, valor = pai.recv()
+    finally:
+        pai.close()
+        if processo.is_alive():
+            processo.join(timeout=1)
+
+    processo.join(timeout=1)
+    if estado == "erro":
+        raise RuntimeError(valor)
+    return valor
 
 
 def _ler_anexo(entrega_id: str, caminho: str) -> bytes:
@@ -259,7 +328,7 @@ def processar_entrega(
             )
         elif extensao in pipeline.EXTENSOES_OCR:
             formato_lido = True
-            resultado = pipeline.processar(
+            resultado = _executar_ocr_conteudo(
                 conteudo,
                 nome,
                 idioma,
