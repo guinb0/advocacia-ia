@@ -5,8 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Categoria, SituacaoCaso } from "@/lib/types";
 import BaixarDocumentos from "@/components/caso/BaixarDocumentos";
 import { Aviso, BarraAbas, BotaoAba, Botao, CampoSeletor, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
-import { buscarNoConteudoDoCaso, prazosAcervo, type PrazosAcervo } from "@/lib/api";
+import { buscarNoConteudoDoCaso, prazosAcervo, tentarNovamenteCaso, type PrazosAcervo } from "@/lib/api";
 import ItemChecklistLinha from "@/components/caso/ItemChecklistLinha";
+import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import PainelPortal from "@/components/portal/PainelPortal";
 import PedidoCliente from "@/components/caso/PedidoCliente";
 import EnvioEmLote from "@/components/caso/EnvioEmLote";
@@ -111,6 +112,8 @@ export default function Checklist({
   const [achados, setAchados] = useState<{ consulta: string; porItem: AchadosPorItem } | null>(null);
   const [buscandoConteudo, setBuscandoConteudo] = useState(false);
   const casoId = situacao.caso.id;
+  const [tentandoTodosDeNovo, setTentandoTodosDeNovo] = useState(false);
+  const [resultadoTentarTodos, setResultadoTentarTodos] = useState<string | null>(null);
 
   // Busca no conteúdo dos arquivos: espera a pessoa parar de digitar e cancela
   // a consulta anterior, para a resposta de "ce" não sobrescrever a de "cep".
@@ -184,6 +187,29 @@ export default function Checklist({
   }
 
   const naoResolvidos = itens.filter((i) => i.status !== "entregue").length;
+
+  // Conta em erro no checklist E na triagem: as duas telas mostram "Falha na
+  // leitura" separadamente, mas o botão abaixo resolve as duas de um clique.
+  const totalComErro =
+    itens.reduce((soma, item) => soma + item.entregas.filter((e) => e.status_proc === "erro").length, 0)
+    + (situacao.triagem ?? []).filter((e) => e.status_proc === "erro").length;
+
+  async function tentarTodosDeNovo() {
+    setTentandoTodosDeNovo(true);
+    setResultadoTentarTodos(null);
+    try {
+      const resultado = await tentarNovamenteCaso(casoId);
+      setResultadoTentarTodos(
+        resultado.falharam.length === 0
+          ? `${resultado.reenfileiradas} documento(s) reenviado(s) para leitura.`
+          : `${resultado.reenfileiradas} reenviado(s); ${resultado.falharam.length} não puderam ser reenviados (arquivo perdido — peça o reenvio).`,
+      );
+    } catch (e) {
+      setResultadoTentarTodos(e instanceof Error ? e.message : "Não foi possível tentar de novo.");
+    } finally {
+      setTentandoTodosDeNovo(false);
+    }
+  }
 
   // A busca vale para as três abas; as contagens mostram o que ela deixou.
   const termos = normalizar(busca).split(/\s+/).filter(Boolean);
@@ -516,6 +542,25 @@ export default function Checklist({
       <div className="mt-5">
         <ResumoDocumentos itens={itens} />
       </div>
+
+      {totalComErro > 0 && (
+        <div className="mt-5">
+          <Aviso tom="critico" titulo={`${totalComErro} documento(s) com falha na leitura`}>
+            <div className="flex items-center gap-3 flex-wrap mt-2">
+              <BotaoProcesso
+                variante="secundario"
+                pequeno
+                onClick={tentarTodosDeNovo}
+                processando={tentandoTodosDeNovo}
+                textoProcessando="Reenviando todos…"
+              >
+                Tentar novamente todos
+              </BotaoProcesso>
+              {resultadoTentarTodos && <span className="text-sm text-tinta-2">{resultadoTentarTodos}</span>}
+            </div>
+          </Aviso>
+        </div>
+      )}
 
       <TriagemDocumentos
         entregas={situacao.triagem ?? []}

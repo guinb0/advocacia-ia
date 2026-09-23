@@ -5005,6 +5005,55 @@ def baixar_selecao_de_documentos_em_pdf(
     )
 
 
+def _reenfileirar_leitura(
+    entrega_id: str,
+    caso_id: str,
+    categoria: categorias.Categoria,
+    item_codigo: str,
+    arquivo: str,
+    itens_atendidos: list[str],
+    usuario: str,
+):
+    """O miolo de "tentar novamente": restaura o arquivo e manda de volta ao worker.
+
+    Usado tanto pelo botão de UM documento quanto pelo de TODOS os documentos
+    com erro de um caso — a lógica de reenfileirar é a mesma, só muda quem
+    decide a lista de entregas. Levanta `RuntimeError` quando o arquivo já não
+    existe (nem disco, nem banco) e deixa qualquer outra falha (fila
+    indisponível) subir crua, para o chamador decidir como registrar.
+    """
+    caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+    if caminho is None:
+        raise RuntimeError(
+            "O arquivo enviado não está mais no servidor. Peça o reenvio do documento."
+        )
+
+    with sessao_banco():
+        armazenamento.marcar_entrega_processando(entrega_id)
+        historico_alteracoes.registrar(
+            historico_alteracoes.ENTIDADE_ENTREGA,
+            entrega_id,
+            "reprocessamento_manual",
+            usuario=usuario,
+            caso_id=caso_id,
+        )
+
+    return processar_entrega.apply_async(
+        args=(
+            entrega_id,
+            caso_id,
+            str(caminho),
+            arquivo,
+            item_codigo,
+            categoria.codigo,
+            "pt",
+            len(itens_atendidos) > 1,
+        ),
+        queue="gpu_background",
+        priority=7,
+    )
+
+
 @app.post("/api/entregas/{entrega_id}/tentar-novamente")
 def tentar_novamente_entrega(
     entrega_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
@@ -5031,37 +5080,18 @@ def tentar_novamente_entrega(
     if categoria is None:
         raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
 
-    caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
-    if caminho is None:
-        raise HTTPException(
-            409, "O arquivo enviado não está mais no servidor. Peça o reenvio do documento."
-        )
-
-    with sessao_banco():
-        armazenamento.marcar_entrega_processando(entrega_id)
-        historico_alteracoes.registrar(
-            historico_alteracoes.ENTIDADE_ENTREGA,
-            entrega_id,
-            "reprocessamento_manual",
-            usuario=_autor_da_acao(usuario),
-            caso_id=entrega["caso_id"],
-        )
-
     try:
-        tarefa = processar_entrega.apply_async(
-            args=(
-                entrega_id,
-                entrega["caso_id"],
-                str(caminho),
-                entrega["arquivo"],
-                entrega["item_codigo"],
-                categoria.codigo,
-                "pt",
-                len(entrega.get("itens_atendidos") or []) > 1,
-            ),
-            queue="gpu_background",
-            priority=7,
+        tarefa = _reenfileirar_leitura(
+            entrega_id,
+            entrega["caso_id"],
+            categoria,
+            entrega["item_codigo"],
+            entrega["arquivo"],
+            entrega.get("itens_atendidos") or [],
+            _autor_da_acao(usuario),
         )
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
         armazenamento.falhar_entrega(entrega_id, "Fila de OCR indisponível.")
         raise HTTPException(
@@ -5073,6 +5103,46 @@ def tentar_novamente_entrega(
         "processando": True,
         "task_id": tarefa.id,
     }
+
+
+@app.post("/api/casos/{caso_id}/tentar-novamente")
+def tentar_novamente_caso(
+    caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+):
+    """Reenfileira TODOS os documentos com falha de leitura deste caso, de uma vez.
+
+    Pensado para o acumulado de um provedor de OCR fora do ar por um tempo:
+    em vez de abrir documento por documento e clicar em cada um, um clique só
+    manda todos de volta à fila. Documento que não está em erro não é tocado;
+    um que falhar ao reenfileirar entra em `falharam` sem travar os demais.
+    """
+    caso = armazenamento.obter_caso(caso_id)
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
+
+    com_erro = [e for e in armazenamento.listar_entregas(caso_id) if e.get("status_proc") == "erro"]
+    quem = _autor_da_acao(usuario)
+    falharam: list[dict[str, str]] = []
+    reenfileiradas = 0
+    for entrega in com_erro:
+        try:
+            _reenfileirar_leitura(
+                entrega["id"],
+                caso_id,
+                categoria,
+                entrega["item_codigo"],
+                entrega["arquivo"],
+                entrega.get("itens_atendidos") or [],
+                quem,
+            )
+            reenfileiradas += 1
+        except Exception as exc:
+            falharam.append({"entrega_id": entrega["id"], "arquivo": entrega["arquivo"], "motivo": str(exc)[:200]})
+
+    return {"reenfileiradas": reenfileiradas, "falharam": falharam}
 
 
 @app.delete("/api/entregas/{entrega_id}")
