@@ -8,7 +8,7 @@ import type {
   ItemSituacao,
   OpcoesReclassificacao,
 } from "@/lib/types";
-import { duplicidadesDoErro } from "@/lib/api";
+import { duplicidadesDoErro, tentarNovamenteEntrega } from "@/lib/api";
 import AvisoDuplicidade from "@/components/caso/AvisoDuplicidade";
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
@@ -42,6 +42,8 @@ function tituloDaLeitura(valor: string | null): string {
 export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemover }: Props) {
   const [destinos, setDestinos] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState<string | null>(null);
+  const [tentandoDeNovo, setTentandoDeNovo] = useState<string | null>(null);
+  const [erroTentativa, setErroTentativa] = useState<Record<string, string>>({});
   const [visor, setVisor] = useState<{ id: string; arquivo: string } | null>(null);
   /** Suspeita de duplicidade por documento, esperando a pessoa decidir. */
   const [suspeitas, setSuspeitas] = useState<
@@ -76,6 +78,27 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
       }
     } finally {
       setSalvando(null);
+    }
+  }
+
+  async function tentarDeNovo(entregaId: string) {
+    setTentandoDeNovo(entregaId);
+    setErroTentativa((atual) => {
+      const resto = { ...atual };
+      delete resto[entregaId];
+      return resto;
+    });
+    try {
+      // A tela volta a mostrar "Lendo…" sozinha: `situacao` é repolido a cada
+      // 4s, e o backend já marcou a entrega como "processando" antes de responder.
+      await tentarNovamenteEntrega(entregaId);
+    } catch (e) {
+      setErroTentativa((atual) => ({
+        ...atual,
+        [entregaId]: e instanceof Error ? e.message : "Não foi possível tentar de novo.",
+      }));
+    } finally {
+      setTentandoDeNovo(null);
     }
   }
 
@@ -120,6 +143,23 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                   <Aviso tom={entrega.status_proc === "erro" ? "critico" : "atencao"}>{alerta}</Aviso>
                 </div>
               ))}
+
+              {entrega.status_proc === "erro" && (
+                <div className="flex gap-2 items-center mt-3 flex-wrap">
+                  <BotaoProcesso
+                    variante="secundario"
+                    pequeno
+                    onClick={() => tentarDeNovo(entrega.id)}
+                    processando={tentandoDeNovo === entrega.id}
+                    textoProcessando="Reenviando para leitura…"
+                  >
+                    Tentar novamente
+                  </BotaoProcesso>
+                  {erroTentativa[entrega.id] && (
+                    <span className="text-xs text-critico">{erroTentativa[entrega.id]}</span>
+                  )}
+                </div>
+              )}
 
               {suspeitas[entrega.id] && (
                 <div className="mt-3">

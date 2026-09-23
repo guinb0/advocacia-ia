@@ -5005,6 +5005,76 @@ def baixar_selecao_de_documentos_em_pdf(
     )
 
 
+@app.post("/api/entregas/{entrega_id}/tentar-novamente")
+def tentar_novamente_entrega(
+    entrega_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
+):
+    """Reenfileira a leitura de um documento que falhou, sem reenviar o arquivo.
+
+    `falhar_entrega` nunca apaga o binário — ele continua em disco ou no SQL
+    Server (`caminho_duravel_da_entrega` restaura dos dois) — mas até aqui não
+    havia como pedir uma nova leitura sem excluir a entrega e reenviar o mesmo
+    arquivo. Um 402/429 na hora errada (crédito ou quota esgotados do lado do
+    provedor de OCR) deixava o documento órfão na triagem por falta de botão,
+    não por falta de arquivo.
+    """
+    entrega = armazenamento.obter_entrega(entrega_id)
+    if entrega is None:
+        raise HTTPException(404, "Entrega não encontrada.")
+    if entrega.get("status_proc") != "erro":
+        raise HTTPException(409, "Esta entrega não está com falha de leitura.")
+
+    caso = armazenamento.obter_caso(entrega["caso_id"])
+    if caso is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    categoria = categorias.obter(caso["categoria"])
+    if categoria is None:
+        raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
+
+    caminho = armazenamento.caminho_duravel_da_entrega(entrega_id)
+    if caminho is None:
+        raise HTTPException(
+            409, "O arquivo enviado não está mais no servidor. Peça o reenvio do documento."
+        )
+
+    with sessao_banco():
+        armazenamento.marcar_entrega_processando(entrega_id)
+        historico_alteracoes.registrar(
+            historico_alteracoes.ENTIDADE_ENTREGA,
+            entrega_id,
+            "reprocessamento_manual",
+            usuario=_autor_da_acao(usuario),
+            caso_id=entrega["caso_id"],
+        )
+
+    try:
+        tarefa = processar_entrega.apply_async(
+            args=(
+                entrega_id,
+                entrega["caso_id"],
+                str(caminho),
+                entrega["arquivo"],
+                entrega["item_codigo"],
+                categoria.codigo,
+                "pt",
+                len(entrega.get("itens_atendidos") or []) > 1,
+            ),
+            queue="gpu_background",
+            priority=7,
+        )
+    except Exception as exc:
+        armazenamento.falhar_entrega(entrega_id, "Fila de OCR indisponível.")
+        raise HTTPException(
+            503, "Fila de leitura indisponível. Tente novamente."
+        ) from exc
+
+    return {
+        "entrega": armazenamento.obter_entrega(entrega_id),
+        "processando": True,
+        "task_id": tarefa.id,
+    }
+
+
 @app.delete("/api/entregas/{entrega_id}")
 def excluir_entrega(
     entrega_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
