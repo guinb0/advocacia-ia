@@ -5127,12 +5127,19 @@ def tentar_novamente_entrega(
 def tentar_novamente_caso(
     caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
 ):
-    """Reenfileira TODOS os documentos com falha de leitura deste caso, de uma vez.
+    """Reprocessa de novo TODO documento com falha OU parado na triagem, de uma vez.
 
-    Pensado para o acumulado de um provedor de OCR fora do ar por um tempo:
-    em vez de abrir documento por documento e clicar em cada um, um clique só
-    manda todos de volta à fila. Documento que não está em erro não é tocado;
-    um que falhar ao reenfileirar entra em `falharam` sem travar os demais.
+    Dois problemas diferentes levam ao mesmo lugar (a tela do caso cheia de
+    "outros documentos"): (1) falha real de leitura (`status_proc = 'erro'`) e
+    (2) leitura que funcionou mas não bateu com nenhum item do checklist —
+    documento fica "Identificado" só sem categoria certeira. O primeiro é
+    resolvido só repetindo; o segundo pode ter sido corrigido desde então (item
+    novo no checklist, categoria do caso ajustada) e merece uma segunda chance
+    de rotear — por isso reprocessa os DOIS, não só o que está em erro.
+
+    Documento que já está no checklist (não em triagem, sem erro) não é
+    tocado; um que falhar ao reenfileirar entra em `falharam` sem travar os
+    demais.
     """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
@@ -5141,7 +5148,10 @@ def tentar_novamente_caso(
     if categoria is None:
         raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
 
-    com_erro = [e for e in armazenamento.listar_entregas(caso_id) if e.get("status_proc") == "erro"]
+    com_erro = [
+        e for e in armazenamento.listar_entregas(caso_id)
+        if e.get("status_proc") == "erro" or e.get("item_codigo") == categorias.ITEM_TRIAGEM
+    ]
     quem = _autor_da_acao(usuario)
     _, em_leitura = _leitor_de_documentos_ativo()
     falharam: list[dict[str, str]] = []

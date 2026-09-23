@@ -188,11 +188,14 @@ export default function Checklist({
 
   const naoResolvidos = itens.filter((i) => i.status !== "entregue").length;
 
-  // Conta em erro no checklist E na triagem: as duas telas mostram "Falha na
-  // leitura" separadamente, mas o botão abaixo resolve as duas de um clique.
-  const totalComErro =
+  // Conta erro no checklist E na triagem inteira: documento parado na
+  // triagem não tem erro nenhum (leu certo, só não bateu com item do
+  // checklist), mas "reanalisar" tenta rotear de novo mesmo assim — o
+  // checklist pode ter mudado desde a primeira leitura. Por isso o botão
+  // aparece SEMPRE que há qualquer coisa fora do checklist, não só erro.
+  const totalParaReanalisar =
     itens.reduce((soma, item) => soma + item.entregas.filter((e) => e.status_proc === "erro").length, 0)
-    + (situacao.triagem ?? []).filter((e) => e.status_proc === "erro").length;
+    + (situacao.triagem ?? []).length;
 
   async function tentarTodosDeNovo() {
     setTentandoTodosDeNovo(true);
@@ -543,24 +546,33 @@ export default function Checklist({
         <ResumoDocumentos itens={itens} />
       </div>
 
-      {totalComErro > 0 && (
-        <div className="mt-5">
-          <Aviso tom="critico" titulo={`${totalComErro} documento(s) com falha na leitura`}>
-            <div className="flex items-center gap-3 flex-wrap mt-2">
-              <BotaoProcesso
-                variante="secundario"
-                pequeno
-                onClick={tentarTodosDeNovo}
-                processando={tentandoTodosDeNovo}
-                textoProcessando="Reenviando todos…"
-              >
-                Tentar novamente todos
-              </BotaoProcesso>
-              {resultadoTentarTodos && <span className="text-sm text-tinta-2">{resultadoTentarTodos}</span>}
-            </div>
-          </Aviso>
-        </div>
-      )}
+      {/* Sempre visível, com ou sem nada pendente: documento na triagem não tem
+        * erro (leu certo, só não bateu com item do checklist), então o gatilho
+        * certo não é "há erro" — é "existe algo fora do checklist para tentar
+        * rotear de novo", e isso pode não estar óbvio para quem olha a tela. */}
+      <div className="mt-5">
+        <Aviso
+          tom={totalParaReanalisar > 0 ? "critico" : "info"}
+          titulo={
+            totalParaReanalisar > 0
+              ? `${totalParaReanalisar} documento(s) fora do checklist ou com falha na leitura`
+              : "Reanalisar documentos"
+          }
+        >
+          <div className="flex items-center gap-3 flex-wrap mt-2">
+            <BotaoProcesso
+              variante="secundario"
+              pequeno
+              onClick={tentarTodosDeNovo}
+              processando={tentandoTodosDeNovo}
+              textoProcessando="Reprocessando…"
+            >
+              Reanalisar documentos
+            </BotaoProcesso>
+            {resultadoTentarTodos && <span className="text-sm text-tinta-2">{resultadoTentarTodos}</span>}
+          </div>
+        </Aviso>
+      </div>
 
       <TriagemDocumentos
         entregas={situacao.triagem ?? []}
