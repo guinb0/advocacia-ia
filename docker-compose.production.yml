@@ -311,9 +311,20 @@ services:
       start_period: 30s
 
   # OCR isolado: uma leitura longa nao bloqueia IA, documentos e manutencao.
+  #
+  # --pool=solo, nao prefork (o padrao do Celery): OpenCV (cv2) e pypdfium2 sao
+  # bibliotecas em C com estado interno global, e pypdfium2 o proprio codigo ja
+  # documenta como "nao e thread-safe" (ver PDFIUM_LOCK em app/pdf.py). Um
+  # worker prefork bifurca (fork) o processo para cada child -- se a lib ja
+  # tinha estado inicializado no pai, o filho herda mutex pela metade e pode
+  # travar (deadlock) para sempre no primeiro documento que tocar essa lib, sem
+  # crash, sem erro no log. Com --concurrency=1 isso trava a fila inteira atras
+  # de um documento so. scripts/diagnostico_fila_ocr.py ja recomendava solo;
+  # o compose nunca tinha sido atualizado para bater com essa recomendacao.
+  # Sem fork, --concurrency não se aplica ao pool solo.
   worker-ocr:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
-    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h"]
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "-Q", "gpu_background", "-n", "ocr@%h"]
     environment: *ambiente_api
     volumes:
       - dados:/app/dados
