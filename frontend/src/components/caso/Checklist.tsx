@@ -394,7 +394,12 @@ export default function Checklist({
           * CIN que atende RG e CPF aparece em dois itens e é um arquivo só. */}
         <BaixarDocumentos
           casoId={caso.id}
-          total={new Set(itens.flatMap((i) => i.entregas.map((e) => e.id))).size}
+          total={
+            new Set([
+              ...itens.flatMap((i) => i.entregas.map((e) => e.id)),
+              ...(situacao.triagem ?? []).map((e) => e.id),
+            ]).size
+          }
           pronto={progresso.pronto}
         />
       </div>
