@@ -53,11 +53,25 @@ function celulasMd(linha: string): string[] {
   return limpa.split("|").map((celula) => celula.trim());
 }
 
+/**
+ * Começa uma tabela COMPLETA aqui? Cabeçalho, separadora e ao menos uma linha
+ * de dados.
+ *
+ * A linha de dados é exigida AQUI, e não depois de ler o bloco, por causa do
+ * streaming: a resposta do chat é desenhada enquanto chega, e existe um instante
+ * em que o modelo já mandou o cabeçalho e a separadora e ainda não mandou a
+ * primeira linha. Reconhecer isso como tabela e desistir depois deixava o laço
+ * de `blocosDoMarkdown` sem avançar o índice — travava a tela no meio da
+ * resposta, e de fora parecia que a IA tinha parado de fazer tabela.
+ */
 function ehInicioDeTabela(linhas: string[], i: number): boolean {
+  const dados = linhas[i + 2] ?? "";
   return (
     (linhas[i] ?? "").includes("|") &&
     SEPARADOR_TABELA_MD.test(linhas[i + 1] ?? "") &&
-    celulasMd(linhas[i]).length >= 2
+    celulasMd(linhas[i]).length >= 2 &&
+    dados.includes("|") &&
+    dados.trim() !== ""
   );
 }
 
@@ -105,18 +119,17 @@ function blocosDoMarkdown(texto: string): BlocoMd[] {
         corpo.push(celulasMd(linhas[i]));
         i += 1;
       }
-      // Sem linha de dados não é tabela em lugar nenhum — nem aqui, nem no
-      // editor da peça, nem no gerador do .docx. Cai como parágrafo.
-      if (corpo.length) {
-        blocos.push({
-          tipo: "tabela",
-          cabecalho,
-          corpo,
-          markdown: linhas.slice(inicio, i).join("\n"),
-        });
-        continue;
-      }
-      i = inicio;
+      // `ehInicioDeTabela` já garantiu a primeira linha de dados, então o índice
+      // andou pelo menos três linhas. NÃO pode haver caminho de volta aqui: um
+      // ramo que devolva o índice ao ponto de partida trava o laço, porque o
+      // parágrafo lá embaixo também se recusa a consumir a linha de uma tabela.
+      blocos.push({
+        tipo: "tabela",
+        cabecalho,
+        corpo,
+        markdown: linhas.slice(inicio, i).join("\n"),
+      });
+      continue;
     }
     const primeiro = linha.match(ITEM_MD);
     if (primeiro) {
