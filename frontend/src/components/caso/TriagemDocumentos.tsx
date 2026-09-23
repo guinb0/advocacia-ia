@@ -175,34 +175,39 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                 </div>
               )}
 
-              {!lendo && (
-                <div className="flex gap-2 items-end mt-3 flex-wrap">
-                  <label className="flex-1 min-w-[240px] text-xs text-tinta-3">
-                    Item correto do checklist
-                    <select
-                      className="block w-full min-h-10 mt-1 px-3 border border-borda-campo rounded-campo bg-papel text-tinta text-sm"
-                      value={destinos[entrega.id] ?? ""}
-                      onChange={(evento) => setDestinos((atual) => ({ ...atual, [entrega.id]: evento.target.value }))}
+              <div className="flex gap-2 items-end mt-3 flex-wrap">
+                {!lendo && (
+                  <>
+                    <label className="flex-1 min-w-[240px] text-xs text-tinta-3">
+                      Item correto do checklist
+                      <select
+                        className="block w-full min-h-10 mt-1 px-3 border border-borda-campo rounded-campo bg-papel text-tinta text-sm"
+                        value={destinos[entrega.id] ?? ""}
+                        onChange={(evento) => setDestinos((atual) => ({ ...atual, [entrega.id]: evento.target.value }))}
+                      >
+                        <option value="">Escolha o documento…</option>
+                        {itens.map((item) => (
+                          <option key={item.codigo} value={item.codigo}>{item.nome} ({item.codigo})</option>
+                        ))}
+                      </select>
+                    </label>
+                    <BotaoProcesso
+                      variante="primario"
+                      onClick={() => atribuir(entrega)}
+                      processando={salvando === entrega.id}
+                      textoProcessando="Atribuindo…"
+                      pendencia={destinos[entrega.id] ? null : "Escolha ao lado o item correto do checklist."}
+                      pendenciaAoClicar
                     >
-                      <option value="">Escolha o documento…</option>
-                      {itens.map((item) => (
-                        <option key={item.codigo} value={item.codigo}>{item.nome} ({item.codigo})</option>
-                      ))}
-                    </select>
-                  </label>
-                  <BotaoProcesso
-                    variante="primario"
-                    onClick={() => atribuir(entrega)}
-                    processando={salvando === entrega.id}
-                    textoProcessando="Atribuindo…"
-                    pendencia={destinos[entrega.id] ? null : "Escolha ao lado o item correto do checklist."}
-                    pendenciaAoClicar
-                  >
-                    Atribuir ao item
-                  </BotaoProcesso>
-                  <Botao variante="perigo" onClick={() => onRemover(entrega.id)}>Remover</Botao>
-                </div>
-              )}
+                      Atribuir ao item
+                    </BotaoProcesso>
+                  </>
+                )}
+                {/* Disponível mesmo "Lendo…": documento preso (worker travado,
+                  * bug de classificação) precisa poder ser excluído e
+                  * reenviado sem esperar a leitura nunca terminar. */}
+                <Botao variante="perigo" onClick={() => onRemover(entrega.id)}>Remover</Botao>
+              </div>
             </li>
           );
         })}
