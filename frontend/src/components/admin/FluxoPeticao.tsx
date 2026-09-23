@@ -1224,19 +1224,31 @@ function PreviaPeticao({
        por baixo do painel do chat. Item de grade não encolhe abaixo do próprio
        conteúdo a não ser que se mande. */
     <div className="grid min-w-0 gap-2" ref={moldura}>
-      {/* A barra fica FORA da folha e ocupa a coluna inteira: ela é controle, não
-          documento. Dentro da folha ela disputava os 16 cm da mancha de texto com
-          o documento, quebrava em duas fileiras e encolhia junto com a página. */}
-      <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
+      {/* BARRA E RÉGUA GRUDAM NO TOPO, JUNTAS.
 
-      {/* A régua também fica fora — pelo mesmo motivo, e para os marcadores não
-          encolherem com a página até virarem alvos de dois pixels. Mas ela é
-          alinhada com a mancha de texto: a caixa abaixo tem a largura e a margem
-          da folha JÁ ESCALADAS, de modo que o zero da régua cai exatamente sobre
-          a primeira letra do parágrafo. */}
-      <div className="mx-auto" style={{ width: `${21 * escala}cm`, maxWidth: "100%" }}>
-        <div style={{ marginLeft: `${3 * escala}cm`, width: `${LARGURA_UTIL_CM * escala}cm` }}>
-          <ReguaDeTabulacao ativo={selecao} aoAplicar={aplicar} />
+          As duas ficam fora da folha: são controle, não documento. Dentro dela
+          disputavam os 16 cm da mancha de texto, a barra quebrava em fileiras e
+          os marcadores da régua encolhiam junto com a página até virarem alvos
+          de dois pixels.
+
+          E ficam no MESMO `sticky`, não um cada: a barra muda de altura conforme
+          quebra em duas fileiras, então fixar a régua por um `top` calculado
+          erraria a altura toda vez que a coluna mudasse de largura. A régua
+          sozinha subia com o texto, e quem estava recuando um parágrafo da
+          página dez tinha de voltar ao começo da peça para alcançá-la.
+
+          O fundo é opaco de propósito: sem ele o texto rolaria por baixo e
+          apareceria entre os botões. */}
+      <div className="sticky top-0 z-10 grid gap-2 bg-papel pb-1">
+        <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
+
+        {/* A régua é alinhada com a mancha de texto: esta caixa tem a largura e a
+            margem da folha JÁ ESCALADAS, de modo que o zero da régua cai
+            exatamente sobre a primeira letra do parágrafo. */}
+        <div className="mx-auto" style={{ width: `${21 * escala}cm`, maxWidth: "100%" }}>
+          <div style={{ marginLeft: `${3 * escala}cm`, width: `${LARGURA_UTIL_CM * escala}cm` }}>
+            <ReguaDeTabulacao ativo={selecao} aoAplicar={aplicar} />
+          </div>
         </div>
       </div>
 
