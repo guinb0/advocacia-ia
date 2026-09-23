@@ -885,7 +885,9 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
     # identificados" da tela) — sem isto o "baixar tudo" excluía calado
     # exatamente os arquivos que ainda não têm classificação confirmada, que
     # são os que mais precisam ir junto para alguém olhar. Entram por último,
-    # depois do último número do checklist, para não embaralhar a ordem dele.
+    # depois do último número do checklist (nunca um "99" fixo — categoria com
+    # mais de 99 itens colidiria com um item real), para não embaralhar a
+    # ordem dele.
     numero_triagem = max((n for n, _ in incluidos.values()), default=0) + 1
     for entrega in situacao.get("triagem") or []:
         incluidos.setdefault(entrega["id"], (numero_triagem, "Outros documentos identificados"))
