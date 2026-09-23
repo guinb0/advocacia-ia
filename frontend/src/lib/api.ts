@@ -714,6 +714,19 @@ export async function criarCaso(
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
 }
 
+/** Cria o caso pelo nome e importa todos os documentos de uma pasta ZIP. */
+export async function criarCasoPorZip(
+  cliente: string,
+  categoria: string,
+  arquivo: File,
+): Promise<CasoCriado> {
+  const form = new FormData();
+  form.append("cliente", cliente);
+  form.append("categoria", categoria);
+  form.append("arquivo", arquivo);
+  return comoJson<CasoCriado>(await buscar("/api/casos/importar-zip", { method: "POST", body: form }));
+}
+
 /** Grava a qualificação do cliente (o que o CPF puxou + o que foi digitado) no caso.
  *
  * Vai só o cadastro — nome e telefone já vivem no próprio caso. Campo vazio segue
