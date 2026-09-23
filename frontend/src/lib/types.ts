@@ -160,7 +160,65 @@ export interface ImpactoTipoDocumento {
   efeitos: { codigo: string; renomear: string; sinonimos: string; desativar: string };
 }
 
-/** Uma linha do histórico de alterações (glossário ou documento). */
+// -------------------------------------------------------- tipos de caso
+// O catálogo de ações do escritório (`app/tipos_caso.py`). As cinco escritas em
+// `app/categorias.py` aparecem como `sistema`: delas só `ativo` se edita.
+
+/** Uma expressão que a triagem procura no relato, com o peso que ela soma. */
+export interface PistaTipoCaso {
+  expressao: string;
+  peso: number;
+}
+
+/** Um item do checklist de uma ação criada pelo escritório. */
+export interface ItemTipoCaso {
+  /** Vazio em item que ainda não foi salvo; o servidor dá o código, e ele não muda. */
+  codigo: string;
+  numero: number;
+  nome: string;
+  obrigatorio: boolean;
+  /** Código do glossário que o item pede; `null` quando nenhum tipo serve. */
+  tipo_documento: string | null;
+  observacao: string;
+}
+
+export interface TipoCaso {
+  /** Fica gravado em cada caso; nunca muda. */
+  codigo: string;
+  nome: string;
+  descricao: string;
+  /** Como o modelo da triagem reconhece esta ação no relato. */
+  quando_usar: string;
+  pistas: PistaTipoCaso[];
+  ativo: boolean;
+  /** Ação escrita em `app/categorias.py`: só ativar e desativar. */
+  sistema: boolean;
+  /** Muda a cada edição. A edição devolve a que leu, para não apagar a de outra pessoa. */
+  versao: number;
+  criado_em: string;
+  criado_por: string;
+  atualizado_em: string;
+  atualizado_por: string;
+  itens: ItemTipoCaso[];
+  total_obrigatorios: number;
+}
+
+/** O que muda — e o que não muda — ao editar ou desativar uma ação. */
+export interface ImpactoTipoCaso {
+  tipo: TipoCaso;
+  casos: number;
+  /** Itens que já receberam documento: não podem sair do checklist. */
+  itens_com_documento: { codigo: string; nome: string; documentos: number }[];
+  efeitos: {
+    codigo: string;
+    renomear: string;
+    checklist: string;
+    pistas: string;
+    desativar: string;
+  };
+}
+
+/** Uma linha do histórico de alterações (glossário, tipo de caso ou documento). */
 export interface EventoHistorico {
   id: string;
   entidade: string;

@@ -30,6 +30,7 @@ const ROTULO_TELA: Record<Tela, string> = {
   configuracaoAssinatura: "Tactiq e assinatura eletrônica",
   catalogoRoteiros: "Roteiros",
   glossarioDocumentos: "Glossário de documentos",
+  tiposDeCaso: "Tipos de caso",
   revisao: "Revisão do roteiro",
   followup: "Follow-up",
   documentacao: "Documentação",

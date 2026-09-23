@@ -161,6 +161,19 @@ MODULOS: tuple[dict[str, str], ...] = (
         "grupo": "Escritório",
         "ordem": 115,
     },
+    {
+        "codigo": "tipos_caso",
+        "rotulo": "Tipos de caso",
+        "descricao": (
+            "Criar e editar as ações que o escritório aceita: o checklist de cada "
+            "uma e as pistas que a triagem usa. Consultar a lista é livre."
+        ),
+        "rota": "tiposDeCaso",
+        # Ao lado do glossário, e pela mesma razão: quem decide o vocabulário dos
+        # documentos é quem decide quais ações o escritório atende.
+        "grupo": "Escritório",
+        "ordem": 116,
+    },
 )
 CODIGOS_MODULOS = tuple(m["codigo"] for m in MODULOS)
 
@@ -176,7 +189,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "modulos": (
             "entrevista", "casos", "documentos", "operacao", "agente", "contratos",
             "investigacao", "usuarios", "roteiros", "revisao",
-            "glossario_documentos",
+            "glossario_documentos", "tipos_caso",
         ),
     },
     {
@@ -192,7 +205,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         # escritório é o gestor, e o vocabulário dos documentos é cadastro dele.
         "modulos": (
             "casos", "documentos", "supervisao", "metricas", "operacao", "agente", "usuarios",
-            "roteiros", "revisao", "glossario_documentos",
+            "roteiros", "revisao", "glossario_documentos", "tipos_caso",
         ),
     },
     {
