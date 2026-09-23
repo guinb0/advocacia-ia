@@ -127,6 +127,13 @@ export default function ListaCasos({
   const pacoteInputRef = useRef<HTMLInputElement>(null);
   const [pacoteArquivo, setPacoteArquivo] = useState<File | null>(null);
   const [importandoPacote, setImportandoPacote] = useState(false);
+  const [arrastandoPacote, setArrastandoPacote] = useState(false);
+
+  function selecionarPacote(arquivo: File | null) {
+    if (!arquivo) return;
+    if (!arquivo.name.toLowerCase().endsWith(".zip")) return;
+    setPacoteArquivo(arquivo);
+  }
 
   async function importarPacote(evento: React.FormEvent) {
     evento.preventDefault();
@@ -427,17 +434,31 @@ export default function ListaCasos({
           <p className="mt-1 text-sm text-tinta-2">
             Informe o nome, escolha a ação e envie uma pasta ZIP. Os documentos entram na triagem e uma entrevista em TXT, MD, DOCX ou PDF é vinculada automaticamente.
           </p>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Botao type="button" variante="secundario" onClick={() => pacoteInputRef.current?.click()} disabled={importandoPacote}>
-              <Upload className="h-4 w-4" />
-              {pacoteArquivo ? "Trocar pasta ZIP" : "Escolher pasta ZIP"}
-            </Botao>
-            <span className="text-sm text-tinta-2">{pacoteArquivo ? pacoteArquivo.name : "Nenhum ZIP escolhido"}</span>
+          <div
+            className={`mt-4 rounded-xl border-2 border-dashed p-5 text-center transition-colors ${arrastandoPacote ? "border-acao bg-acao-clara" : "border-borda bg-papel-2"}`}
+            onDragEnter={(evento) => { evento.preventDefault(); setArrastandoPacote(true); }}
+            onDragOver={(evento) => { evento.preventDefault(); evento.dataTransfer.dropEffect = "copy"; }}
+            onDragLeave={(evento) => { evento.preventDefault(); setArrastandoPacote(false); }}
+            onDrop={(evento) => {
+              evento.preventDefault();
+              setArrastandoPacote(false);
+              selecionarPacote(evento.dataTransfer.files?.[0] ?? null);
+            }}
+          >
+            <Upload className="mx-auto h-6 w-6 text-acao" />
+            <p className="mt-2 text-sm font-medium text-tinta">Arraste o arquivo ZIP aqui</p>
+            <p className="mt-1 text-sm text-tinta-2">ou escolha o arquivo pelo botão</p>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+              <Botao type="button" variante="secundario" onClick={() => pacoteInputRef.current?.click()} disabled={importandoPacote}>
+                {pacoteArquivo ? "Trocar arquivo ZIP" : "Escolher arquivo ZIP"}
+              </Botao>
+              <span className="text-sm text-tinta-2">{pacoteArquivo ? pacoteArquivo.name : "Nenhum ZIP escolhido"}</span>
+            </div>
             <input
               ref={pacoteInputRef}
               type="file"
               accept=".zip,application/zip,application/x-zip-compressed"
-              onChange={(e) => { setPacoteArquivo(e.target.files?.[0] ?? null); e.target.value = ""; }}
+              onChange={(e) => { selecionarPacote(e.target.files?.[0] ?? null); e.target.value = ""; }}
               className="hidden"
             />
           </div>
