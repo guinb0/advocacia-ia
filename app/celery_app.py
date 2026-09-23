@@ -29,6 +29,12 @@ ambiente.carregar()
 BROKER = os.getenv("CELERY_BROKER_URL", "redis://localhost:6380/0")
 BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6380/1")
 
+# Se um processo morre depois de reservar uma mensagem do Redis, ela só volta à
+# fila quando vence a visibilidade. Seis horas faziam um documento parecer
+# "processando" durante praticamente o dia inteiro. A janela precisa ser maior
+# que o limite duro de uma leitura (30 min), mas só por uma margem pequena.
+VISIBILIDADE_CELERY_S = int(os.getenv("CELERY_VISIBILITY_TIMEOUT", "2100"))
+
 celery_app = Celery(
     "advocacia",
     broker=BROKER,
@@ -59,7 +65,7 @@ celery_app.conf.update(
     task_time_limit=1800,
     result_expires=86_400,
     broker_transport_options={
-        "visibility_timeout": 21_600,
+        "visibility_timeout": VISIBILIDADE_CELERY_S,
         "priority_steps": list(range(10)),
         "queue_order_strategy": "priority",
     },
