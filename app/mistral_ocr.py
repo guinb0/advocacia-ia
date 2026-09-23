@@ -69,6 +69,37 @@ def _codificar_para_ocr(img_bgr: np.ndarray) -> tuple[str, bytes]:
 #: Linha de separação de tabela markdown: `| --- | :---: |`. Não é conteúdo.
 _SEPARADOR_TABELA = re.compile(r"^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$")
 
+#: Respostas da Mistral que valem repetir: limite de uso e falha passageira do
+#: provedor. Sem isto, um pico de upload (vários anexos do mesmo caso de uma
+#: vez) esbarra no limite de taxa da conta e o primeiro 429 já derruba o
+#: arquivo inteiro — o escritório via "erro no documento" onde bastava esperar.
+_STATUS_TRANSITORIOS = {429, 500, 502, 503, 504}
+_TENTATIVAS_OCR = int(os.getenv("MISTRAL_OCR_TENTATIVAS", "4"))
+
+
+def _post_com_repeticao(cliente: httpx.Client, url: str, *, headers: dict, json: dict) -> "httpx.Response":
+    """POST ao OCR da Mistral repetindo em 429 e falha passageira do provedor.
+
+    Usa `Retry-After` quando o provedor manda; sem ele, espera crescente
+    (1s, 2s, 4s...) para não martelar a API bem no instante em que ela pediu
+    para esperar.
+    """
+    resposta = None
+    for tentativa in range(_TENTATIVAS_OCR):
+        resposta = cliente.post(url, headers=headers, json=json)
+        if resposta.status_code not in _STATUS_TRANSITORIOS:
+            return resposta
+        if tentativa < _TENTATIVAS_OCR - 1:
+            cabecalho = resposta.headers.get("Retry-After")
+            pausa = min(float(cabecalho) if cabecalho else 2.0 ** tentativa, 30.0)
+            log.warning(
+                "Mistral OCR respondeu %d; repetindo em %.1fs (tentativa %d/%d).",
+                resposta.status_code, pausa, tentativa + 2, _TENTATIVAS_OCR,
+            )
+            time.sleep(pausa)
+    assert resposta is not None
+    return resposta
+
 
 def _celulas(texto: str) -> list[str]:
     """Uma linha de markdown vira as CÉLULAS dela, não uma linha só.
@@ -154,7 +185,8 @@ def rodar_ocr_com_tempo(
     }
     url_base = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai").rstrip("/")
     with httpx.Client(timeout=float(os.getenv("MISTRAL_OCR_TIMEOUT", "90"))) as cliente:
-        resposta = cliente.post(
+        resposta = _post_com_repeticao(
+            cliente,
             f"{url_base}/v1/ocr",
             headers={"Authorization": f"Bearer {chave}"},
             json=payload,
@@ -198,7 +230,8 @@ def markdown_do_pdf(conteudo: bytes, tempo_limite: float | None = None) -> str:
 
     inicio = time.perf_counter()
     with httpx.Client(timeout=espera) as cliente:
-        resposta = cliente.post(
+        resposta = _post_com_repeticao(
+            cliente,
             f"{url_base}/v1/ocr",
             headers={"Authorization": f"Bearer {chave}"},
             json={
