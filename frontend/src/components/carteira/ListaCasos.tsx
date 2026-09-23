@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, FolderOpen, Loader2, Trash2 } from "lucide-react";
+import { CalendarDays, Download, FolderOpen, Loader2, Trash2 } from "lucide-react";
 
 import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { enviarTranscricaoEntrevista, listarReunioesTactiq, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq } from "@/lib/api";
+import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, listarReunioesTactiq, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq } from "@/lib/api";
+import { baixarArquivo } from "@/lib/baixar";
 
 interface Props {
   casos: Caso[];
@@ -195,6 +196,58 @@ export default function ListaCasos({
   const nomeCategoria = (codigo: string) =>
     categorias.find((c) => c.codigo === codigo)?.nome ?? codigo;
 
+  /* Mesmo pacote do botão dentro do caso (`BaixarDocumentos`): tudo que o
+   * cliente enviou, na ordem do checklist. Só um download por vez — o ZIP é
+   * montado no servidor a cada pedido e pode passar de centenas de MB. */
+  const [baixandoId, setBaixandoId] = useState<string | null>(null);
+  const [avisoDownload, setAvisoDownload] = useState<{ tom: "atencao" | "critico"; titulo: string; texto: string } | null>(null);
+
+  async function baixarDocumentos(caso: Caso) {
+    if (baixandoId) return;
+    setBaixandoId(caso.id);
+    setAvisoDownload(null);
+    try {
+      const pacote = await baixarDocumentosDoCaso(caso.id);
+      baixarArquivo(pacote.arquivo, pacote.nome);
+      /* Pacote incompleto que desce calado é pior que erro: ninguém confere o
+       * que não sabe que faltou. */
+      if (pacote.faltando > 0) {
+        setAvisoDownload({
+          tom: "atencao",
+          titulo: `O pacote de ${caso.cliente} saiu incompleto`,
+          texto: `${pacote.faltando} ${pacote.faltando === 1 ? "arquivo constava" : "arquivos constavam"} no caso mas não ${pacote.faltando === 1 ? "está" : "estão"} mais no disco. Abra o caso e confira o checklist.`,
+        });
+      }
+    } catch (e) {
+      setAvisoDownload({
+        tom: "critico",
+        titulo: `Não foi possível baixar os documentos de ${caso.cliente}`,
+        texto: e instanceof Error ? e.message : "Não foi possível montar o pacote.",
+      });
+    } finally {
+      setBaixandoId(null);
+    }
+  }
+
+  function botaoBaixar(caso: Caso) {
+    const arquivos = caso.total_entregas ?? 0;
+    const baixando = baixandoId === caso.id;
+    return (
+      <button
+        type="button"
+        className={`${ACAO_ICONE} border-borda-campo bg-papel text-acao hover:border-acao hover:bg-acao-clara`}
+        onClick={() => void baixarDocumentos(caso)}
+        disabled={arquivos === 0 || baixandoId !== null}
+        title={arquivos === 0 ? "Sem documentos enviados" : baixando ? "Montando o pacote…" : `Baixar os ${arquivos} documentos (.zip)`}
+        aria-label={`Baixar os documentos de ${caso.cliente} em .zip`}
+      >
+        {baixando
+          ? <Loader2 size={17} strokeWidth={2.1} className="animate-spin" aria-hidden />
+          : <Download size={17} strokeWidth={2.1} aria-hidden />}
+      </button>
+    );
+  }
+
   async function excluirCaso(caso: Caso) {
     const confirmado = window.confirm(
       `Apagar o caso de ${caso.cliente} (${nomeCategoria(caso.categoria)})?\n\nEssa ação remove o caso e os arquivos vinculados. Não continue se clicou sem querer.`,
@@ -378,6 +431,14 @@ export default function ListaCasos({
           </div>
         )}
 
+        {avisoDownload && (
+          <div className="mb-[14px]">
+            <Aviso tom={avisoDownload.tom} titulo={avisoDownload.titulo}>
+              {avisoDownload.texto}
+            </Aviso>
+          </div>
+        )}
+
         <div className="mb-4">
           <RotuloCampo htmlFor="filtro-casos-cliente">Filtrar por nome do caso</RotuloCampo>
           <Campo
@@ -461,6 +522,7 @@ export default function ListaCasos({
                         >
                           <FolderOpen size={17} strokeWidth={2.1} aria-hidden />
                         </button>
+                        {unico && botaoBaixar(unico)}
                         {unico && (
                           <button
                             type="button"
@@ -511,6 +573,7 @@ export default function ListaCasos({
                                   >
                                     <FolderOpen size={17} strokeWidth={2.1} aria-hidden />
                                   </button>
+                                  {botaoBaixar(caso)}
                                   <button
                                     type="button"
                                     className={`${ACAO_ICONE} border-transparent bg-transparent text-tinta-2 hover:border-critico-borda hover:bg-critico-claro hover:text-critico`}

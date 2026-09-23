@@ -123,16 +123,18 @@ export default function ItemChecklistLinha({
     });
   }
 
-  async function baixarSelecao(formato: "zip" | "pdf") {
-    if (idsMarcados.length === 0) return;
+  /* `ids` é a seleção marcada por padrão; "Baixar todos" passa todas as
+   * entregas do item, sem obrigar a marcar uma por uma. */
+  async function baixarSelecao(formato: "zip" | "pdf", ids: string[] = idsMarcados) {
+    if (ids.length === 0) return;
     setBaixando(formato);
     setErroZip(null);
     setFaltandoZip(0);
     try {
       const pacote =
         formato === "zip"
-          ? await baixarSelecaoDeDocumentos(casoId, item.codigo, idsMarcados)
-          : await baixarSelecaoEmPdf(casoId, item.codigo, idsMarcados);
+          ? await baixarSelecaoDeDocumentos(casoId, item.codigo, ids)
+          : await baixarSelecaoEmPdf(casoId, item.codigo, ids);
       setFaltandoZip(pacote.faltando);
       /* Mesmo motivo de `BaixarDocumentos`: o blob veio por `fetch` (o link cru
        * não manda o Bearer), e sem revogar a URL o pacote fica preso na
@@ -268,6 +270,19 @@ export default function ItemChecklistLinha({
                 Selecionar {item.entregas.length === 1 ? "o arquivo" : "todos"}
               </span>
             </Marcacao>
+            <Botao
+              variante="secundario"
+              pequeno
+              onClick={() => void baixarSelecao("zip", idsEntregas)}
+              disabled={!!baixando}
+              title="Baixa todos os arquivos deste item num ZIP, sem precisar marcar"
+            >
+              {baixando === "zip"
+                ? "Montando o pacote…"
+                : idsEntregas.length === 1
+                  ? "Baixar o arquivo (.zip)"
+                  : `Baixar todos os ${idsEntregas.length} (.zip)`}
+            </Botao>
             <Botao
               variante="secundario"
               pequeno
