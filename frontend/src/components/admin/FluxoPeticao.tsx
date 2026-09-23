@@ -42,6 +42,7 @@ import {
   BarraDeFormatacao,
   CampoDeTitulo,
   CampoDoDocumento,
+  LARGURA_UTIL_CM,
   ReguaDeTabulacao,
   useSelecaoFormatada,
 } from "@/components/admin/EditorDoDocumento";
@@ -1117,6 +1118,41 @@ function IndicadorDeSalvamento({
   );
 }
 
+/** Largura da folha A4 em pixels CSS: 21 cm a 96 dpi. */
+const LARGURA_DA_FOLHA_PX = (21 / 2.54) * 96;
+
+/**
+ * Quanto a folha precisa encolher para caber na coluna do documento.
+ *
+ * A peça é desenhada em centímetros de verdade — é o que faz a régua valer. Só
+ * que com a conversa aberta ao lado não sobram 21 cm de tela, e uma folha em
+ * medida fixa não encolhe: ela vira a largura MÍNIMA da coluna e empurra o
+ * layout, que foi o documento passando por baixo do painel do chat.
+ *
+ * A saída é medir o espaço e escalar a folha inteira, em vez de estreitá-la:
+ * estreitar mudaria onde a linha quebra, e a prévia deixaria de ser a página.
+ */
+function useEscalaDaFolha() {
+  const moldura = useRef<HTMLDivElement>(null);
+  const [escala, setEscala] = useState(1);
+
+  useEffect(() => {
+    const alvo = moldura.current;
+    if (!alvo || typeof ResizeObserver === "undefined") return;
+    const observador = new ResizeObserver(([entrada]) => {
+      const largura = entrada.contentRect.width;
+      if (!largura) return;
+      // Nunca AUMENTA: a peça em tela larga fica no tamanho do papel, e não
+      // esticada até a borda do monitor.
+      setEscala(Math.min(1, largura / LARGURA_DA_FOLHA_PX));
+    });
+    observador.observe(alvo);
+    return () => observador.disconnect();
+  }, []);
+
+  return { moldura, escala };
+}
+
 /** A peça como está na tela — para as gravações explícitas (salvar e baixar,
  *  revisar por prompt), que mandam a peça inteira em vez de só o pendente. */
 function secoesDaTela(
@@ -1165,6 +1201,7 @@ function PreviaPeticao({
      uma dúzia de vezes dentro da peça. */
   const [campoAtivo, setCampoAtivo] = useState<HTMLDivElement | null>(null);
   const selecao = useSelecaoFormatada(campoAtivo);
+  const { moldura, escala } = useEscalaDaFolha();
 
   const aplicar = useCallback(
     (acao: (raiz: HTMLElement) => void) => {
@@ -1182,22 +1219,51 @@ function PreviaPeticao({
   );
 
   return (
-    <div className="grid gap-2">
+    /* `min-w-0`: sem isto a folha de 21 cm vira a largura MÍNIMA da coluna, e a
+       coluna do documento cresce por cima da conversa ao lado — a peça passava
+       por baixo do painel do chat. Item de grade não encolhe abaixo do próprio
+       conteúdo a não ser que se mande. */
+    <div className="grid min-w-0 gap-2" ref={moldura}>
+      {/* A barra fica FORA da folha e ocupa a coluna inteira: ela é controle, não
+          documento. Dentro da folha ela disputava os 16 cm da mancha de texto com
+          o documento, quebrava em duas fileiras e encolhia junto com a página. */}
+      <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
+
+      {/* A régua também fica fora — pelo mesmo motivo, e para os marcadores não
+          encolherem com a página até virarem alvos de dois pixels. Mas ela é
+          alinhada com a mancha de texto: a caixa abaixo tem a largura e a margem
+          da folha JÁ ESCALADAS, de modo que o zero da régua cai exatamente sobre
+          a primeira letra do parágrafo. */}
+      <div className="mx-auto" style={{ width: `${21 * escala}cm`, maxWidth: "100%" }}>
+        <div style={{ marginLeft: `${3 * escala}cm`, width: `${LARGURA_UTIL_CM * escala}cm` }}>
+          <ReguaDeTabulacao ativo={selecao} aoAplicar={aplicar} />
+        </div>
+      </div>
+
       {/* Sem `max-h`/`overflow` e sem `sticky`: o documento rola com a página,
           que é o que se espera de um texto que se está escrevendo.
 
-          A LARGURA É A DO PAPEL, não um número redondo de pixels. A caixa tem
-          21 cm (A4) e as margens do modelo do escritório, então a coluna de
+          A LARGURA É A DO PAPEL, não um número redondo de pixels. A folha tem
+          21 cm (A4) e as margens do modelo do escritório, então a mancha de
           texto mede exatamente os `LARGURA_UTIL_CM` da régua: 2 cm arrastados
           ali são os 2 cm que o Word vai mostrar. Com a caixa em pixels
           arbitrários, a régua seria um desenho bonito e mentiroso.
 
           A fonte segue o mesmo raciocínio — 12 pt e entrelinha 1,5, como em
           `CONFIGURACAO_VISUAL_PADRAO` —, de modo que a linha quebra na tela
-          onde quebra no papel. */}
-      <div className="mx-auto w-[21cm] max-w-full font-titulo text-[12pt] leading-[1.5] border border-borda-forte bg-papel shadow-sm pl-[3cm] pr-[1.89cm] py-12 max-[820px]:px-5 max-[820px]:py-7">
-        <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
-        <ReguaDeTabulacao ativo={selecao} aoAplicar={aplicar} />
+          onde quebra no papel.
+
+          `zoom` para caber, e não uma largura menor: com a conversa aberta não há
+          21 cm de tela, e estreitar a folha faria a linha quebrar num lugar que o
+          papel não quebra. O `zoom` diminui a folha INTEIRA — margens, letra e
+          recuos na mesma proporção —, então o que se vê continua sendo a página,
+          só que de mais longe. É `zoom` e não `transform: scale` porque o `zoom`
+          é layout de verdade: a folha ocupa o espaço que aparenta ocupar, em vez
+          de deixar um buraco do tamanho original embaixo. */}
+      <div
+        className="mx-auto w-[21cm] font-titulo text-[12pt] leading-[1.5] border border-borda-forte bg-papel shadow-sm pl-[3cm] pr-[1.89cm] py-12"
+        style={{ zoom: escala }}
+      >
         <h1 className="mb-10">
           <CampoDeTitulo
             valor={titulo}

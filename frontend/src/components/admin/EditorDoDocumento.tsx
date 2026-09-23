@@ -180,7 +180,7 @@ function primeiraMaiuscula(texto: string): string {
 }
 
 const CLASSE_BOTAO_BARRA =
-  "inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-campo border border-borda-campo px-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex h-7 min-w-7 items-center justify-center gap-1 rounded-campo border border-borda-campo px-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40";
 
 export function BarraDeFormatacao({
   ativo,
@@ -200,7 +200,7 @@ export function BarraDeFormatacao({
     /* `sticky`: a barra acompanha quem rola o documento. Sem isto, formatar um
        trecho do fim da peça obrigaria a subir até o topo a cada clique. */
     <div
-      className="sticky top-0 z-10 -mx-1 mb-2 flex flex-wrap items-center gap-1 border-b border-borda bg-papel px-1 py-2"
+      className="sticky top-0 z-10 flex flex-wrap items-center gap-1 rounded-campo border border-borda bg-papel px-2 py-1.5"
       role="toolbar"
       aria-label="Formatação do texto"
       /* A barra não pode roubar o cursor: sem isto, clicar em "negrito" tira o
@@ -226,7 +226,7 @@ export function BarraDeFormatacao({
           title={rotulo}
           onClick={() => aoAplicar(() => document.execCommand(comando))}
         >
-          <Icone size={15} aria-hidden />
+          <Icone size={14} aria-hidden />
           <span className="sr-only">{rotulo}</span>
         </button>
       ))}
@@ -248,7 +248,7 @@ export function BarraDeFormatacao({
           title={rotulo}
           onClick={() => aoAplicar(() => document.execCommand(comando))}
         >
-          <Icone size={15} aria-hidden />
+          <Icone size={14} aria-hidden />
           <span className="sr-only">{rotulo}</span>
         </button>
       ))}
@@ -269,7 +269,7 @@ export function BarraDeFormatacao({
           title={rotulo}
           onClick={() => aoAplicar(() => document.execCommand(comando))}
         >
-          <Icone size={15} aria-hidden />
+          <Icone size={14} aria-hidden />
           <span className="sr-only">{rotulo}</span>
         </button>
       ))}
@@ -292,7 +292,7 @@ export function BarraDeFormatacao({
           )
         }
       >
-        <IndentIncrease size={15} aria-hidden />
+        <IndentIncrease size={14} aria-hidden />
         <span className="sr-only">Aumentar recuo</span>
       </button>
       <button
@@ -311,7 +311,7 @@ export function BarraDeFormatacao({
           )
         }
       >
-        <IndentDecrease size={15} aria-hidden />
+        <IndentDecrease size={14} aria-hidden />
         <span className="sr-only">Diminuir recuo</span>
       </button>
 
@@ -327,7 +327,7 @@ export function BarraDeFormatacao({
           aoAplicar(() => document.execCommand("insertHTML", false, `${HTML_DA_QUEBRA}<div><br></div>`))
         }
       >
-        <SeparatorHorizontal size={15} aria-hidden />
+        <SeparatorHorizontal size={14} aria-hidden />
         <span className="sr-only">Inserir quebra de página</span>
       </button>
 
@@ -340,7 +340,7 @@ export function BarraDeFormatacao({
         title="MAIÚSCULAS"
         onClick={() => aoAplicar((raiz) => mudarCaixa(raiz, (t) => t.toLocaleUpperCase("pt-BR")))}
       >
-        <CaseUpper size={15} aria-hidden />
+        <CaseUpper size={14} aria-hidden />
         <span className="sr-only">Maiúsculas</span>
       </button>
       <button
@@ -350,7 +350,7 @@ export function BarraDeFormatacao({
         title="minúsculas"
         onClick={() => aoAplicar((raiz) => mudarCaixa(raiz, (t) => t.toLocaleLowerCase("pt-BR")))}
       >
-        <CaseLower size={15} aria-hidden />
+        <CaseLower size={14} aria-hidden />
         <span className="sr-only">Minúsculas</span>
       </button>
       <button
@@ -383,7 +383,7 @@ export function BarraDeFormatacao({
           })
         }
       >
-        <RemoveFormatting size={15} aria-hidden />
+        <RemoveFormatting size={14} aria-hidden />
         <span className="sr-only">Limpar formatação</span>
       </button>
     </div>
@@ -509,7 +509,14 @@ export function ReguaDeTabulacao({
             style={{ left: `${(cm / LARGURA_UTIL_CM) * 100}%` }}
           >
             <span className="block h-1.5 w-px bg-tinta-3" aria-hidden />
-            <span className="-translate-x-1/2 text-[9px] leading-none text-tinta-3" aria-hidden>
+            {/* O primeiro e o último número não são centrados na marca: metade
+                deles cairia fora da régua e o "0" aparecia cortado ao meio. */}
+            <span
+              className={`block text-[9px] leading-none text-tinta-3 ${
+                cm === 0 ? "" : cm === centimetros[centimetros.length - 1] ? "-translate-x-full" : "-translate-x-1/2"
+              }`}
+              aria-hidden
+            >
               {cm}
             </span>
           </span>
