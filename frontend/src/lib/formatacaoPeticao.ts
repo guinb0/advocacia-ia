@@ -63,6 +63,39 @@ const RE_ALINHAMENTO = /^\s*\[\[alin=(esquerda|centro|direita|justificado)\]\]/;
 const RE_PARAGRAFO = /^\s*\[\[par=([^\]]*)\]\]/;
 const RE_COR = /^#?[0-9a-fA-F]{6}$/;
 
+/* ---------------------------------------------------------------------- fotos
+ *
+ * A foto mora no texto da seção como `[[FOTO:<id da entrega>|legenda]]`, linha
+ * inteira — é `app/peticao_local` quem a embute no .docx. O chat já sabia pôr o
+ * marcador ali ("Incluí a foto … Ela já sai no Word e no PDF"), mas a TELA não
+ * sabia lê-lo: a linha aparecia crua, com colchetes e o id do anexo. Quem
+ * mandava um print via a IA dizer que tinha incluído e nada mudar na peça.
+ *
+ * O `<img>` não pode apontar direto para a API: `<img src>` dispara um GET sem
+ * o cabeçalho de autorização e leva 401 (o mesmo motivo de `useArquivoEntrega`).
+ * Por isso o desenho sai daqui SEM a imagem, só com o lugar dela marcado, e
+ * quem a busca é o campo do documento, por `fetch` autenticado.
+ */
+
+/** Mesmo marcador do gerador (`_RE_FOTO`, em `app/peticao_local.py`). */
+const RE_FOTO = /^\s*\[\[FOTO:([\w-]+)(?:\|([^\]]*))?\]\]\s*$/;
+
+function htmlDaFoto(anexoId: string, legenda: string): string {
+  const alvo = escaparHtml(anexoId);
+  const texto = escaparHtml(legenda);
+  return (
+    `<figure data-foto="${alvo}" contenteditable="false" ` +
+    'style="margin:10pt 0;text-align:center;text-indent:0">' +
+    `<img alt="${texto || "Foto anexada à peça"}" ` +
+    'style="max-width:100%;max-height:12cm;display:inline-block;' +
+    'min-height:2em;background:rgba(0,0,0,.05)">' +
+    (legenda
+      ? `<figcaption data-legenda style="margin-top:4pt;font-size:10pt;font-style:italic">${texto}</figcaption>`
+      : "<figcaption data-legenda hidden></figcaption>") +
+    "</figure>"
+  );
+}
+
 /** Quebra de página: a linha inteira é o marcador, e nada mais cabe nela. */
 const RE_QUEBRA = /^\s*\[\[pagina\]\]\s*$/;
 export const MARCA_DE_QUEBRA = "[[pagina]]";
@@ -407,6 +440,8 @@ export function htmlDeTabelaNova(colunas: number, linhas: number): string {
 function linhaParaHtml(linhaBruta: string): string {
   {
       if (RE_QUEBRA.test(linhaBruta)) return HTML_DA_QUEBRA;
+      const foto = RE_FOTO.exec(linhaBruta);
+      if (foto) return htmlDaFoto(foto[1], (foto[2] ?? "").trim());
       const { alinhamento, paragrafo, resto } = separarMarcadoresDeLinha(linhaBruta);
       const estilo = estilosDoParagrafo(alinhamento, paragrafo);
       const trechos = trechosDaLinha(resto);
@@ -456,13 +491,16 @@ export function paraHtml(texto: string): string {
 export function semMarcacao(texto: string): string {
   return (texto || "")
     .split("\n")
-    .map((linha) =>
-      RE_QUEBRA.test(linha)
-        ? ""
-        : trechosDaLinha(separarMarcadoresDeLinha(linha).resto)
-            .map(({ texto: pedaco }) => pedaco)
-            .join(""),
-    )
+    .map((linha) => {
+      if (RE_QUEBRA.test(linha)) return "";
+      // O id do anexo não é texto da peça; a legenda é. Sem isto, trocar só a
+      // legenda de uma foto contaria como parágrafo inteiro reescrito.
+      const foto = RE_FOTO.exec(linha);
+      if (foto) return (foto[2] ?? "").trim();
+      return trechosDaLinha(separarMarcadoresDeLinha(linha).resto)
+        .map(({ texto: pedaco }) => pedaco)
+        .join("");
+    })
     .join("\n");
 }
 
@@ -599,6 +637,17 @@ function linhaParaTexto(bloco: Element): string {
   // desenho. Sem esta saída, o leitor comum a devolveria como linha vazia e a
   // quebra sumiria no primeiro salvamento.
   if (bloco instanceof HTMLElement && bloco.dataset.quebra === "1") return MARCA_DE_QUEBRA;
+  // A foto também não tem texto que sirva: o que volta ao texto da seção é o
+  // marcador, montado com o id do anexo e a legenda que estão no próprio nó.
+  // `|` e `]` na legenda fechariam o marcador antes da hora — viram `/`, como
+  // já faz `marcador_de_foto` no `app/peticao_local.py`.
+  if (bloco instanceof HTMLElement && bloco.dataset.foto) {
+    const legenda = (bloco.querySelector("[data-legenda]")?.textContent ?? "")
+      .replace(/\s+/g, " ")
+      .replace(/[|\]]/g, "/")
+      .trim();
+    return `[[FOTO:${bloco.dataset.foto}${legenda ? `|${legenda}` : ""}]]`;
+  }
   const trechos: { texto: string; formato: Formato }[] = [];
   const caminhante = document.createTreeWalker(bloco, NodeFilter.SHOW_TEXT);
   for (let no = caminhante.nextNode(); no; no = caminhante.nextNode()) {
@@ -652,7 +701,12 @@ export function paraTexto(raiz: HTMLElement): string {
       linhas.push(...tabelaParaTexto(no));
       continue;
     }
-    if (no instanceof HTMLElement && ["DIV", "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3"].includes(no.tagName)) {
+    // `FIGURE` entra na lista por causa da foto: ela é o único bloco da peça
+    // que não é um parágrafo, e sem isto cairia em `soltos` e voltaria vazia.
+    if (
+      no instanceof HTMLElement &&
+      ["DIV", "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3", "FIGURE"].includes(no.tagName)
+    ) {
       descarregarSoltos();
       linhas.push(linhaParaTexto(no));
       continue;
