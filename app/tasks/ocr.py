@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import logging
 
+import httpx
 from celery.signals import worker_ready
 
 from .. import (
@@ -149,7 +150,7 @@ def aquecer_worker_ocr(sender=None, **_kwargs):
         from ..ocr_engine import aquecer
 
         aquecer()
-        log.info("Mistral OCR configurada no worker %s.", hostname)
+        log.info("OCR configurado no worker %s.", hostname)
     except Exception:
         # O primeiro job tenta novamente; worker vivo é melhor que abortar toda
         # a fila por uma falha transitória de modelo no boot.
@@ -190,7 +191,13 @@ def processar_documento(self, job_id: str, caminho: str, nome: str, idioma: str,
 @celery_app.task(
     bind=True,
     name="app.tasks.ocr.processar_entrega",
-    autoretry_for=(OSError, TimeoutError),
+    # `httpx.HTTPError` cobre 402/429/5xx e queda de conexão dos provedores de
+    # OCR: sem isto, um provedor fora do ar marcava a entrega em 'erro' na
+    # primeira falha, sem repetir sozinho — só o botão manual reenfileirava.
+    # Três tentativas automáticas (backoff crescente até 60s) cobrem o caso de
+    # instabilidade curta; esgotadas, a entrega fica em 'erro' de verdade e o
+    # botão "Tentar novamente" continua disponível.
+    autoretry_for=(OSError, TimeoutError, httpx.HTTPError),
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
@@ -248,7 +255,10 @@ def processar_entrega(
                 tipo_extracao,
                 gerar_arquivos_temporarios=False,
             )
-        elif extensao in {".mp4", ".m4a", ".mp3", ".wav", ".webm"}:
+        elif extensao in {".mp4", ".m4a", ".mp3", ".wav", ".webm", ".opus", ".ogg", ".oga", ".3gp"}:
+            # `.opus`/`.ogg` são o formato de áudio de voz do WhatsApp — sem eles
+            # aqui, o áudio exportado do WhatsApp caía direto em "formato
+            # preservado sem OCR" e nunca era transcrito.
             # Áudio/vídeo também é prova: transcreve antes de classificar para a
             # IA poder usar o relato como contexto, em vez de jogá-lo na triagem.
             try:
