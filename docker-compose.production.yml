@@ -160,6 +160,15 @@ services:
       # transcricao. Cadastre no escopo prod para valer a separacao.
       OPENROUTER_VISAO_API_KEY: ${OPENROUTER_VISAO_API_KEY:-}
 
+      # OCR de reserva: entra só quando a Mistral esgota as tentativas de
+      # `mistral_ocr._post_com_repeticao` (rate limit sustentado ou queda do
+      # provedor) — não substitui a Mistral, socorre quando ela já falhou de
+      # verdade. OPCIONAL pelo mesmo motivo da chave de visão acima: sem ela,
+      # `mistral_ocr._fallback_chave()` cai na OPENROUTER_VISAO_API_KEY e depois
+      # na OPENROUTER_API_KEY, e o upload segue funcionando — só sem reserva
+      # própria. Cadastre no escopo prod para ter conta isolada.
+      OPENROUTER_OCR_FALLBACK_KEY: ${OPENROUTER_OCR_FALLBACK_KEY:-}
+
       ZAPSIGN_API_TOKEN: ${ZAPSIGN_API_TOKEN?ZAPSIGN_API_TOKEN is required}
       ZAPSIGN_BASE_URL: https://api.zapsign.com.br/api/v1
       ZAPSIGN_AUTH_MODE: assinaturaTela
