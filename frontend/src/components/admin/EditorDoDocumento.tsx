@@ -295,10 +295,12 @@ export function BarraDeFormatacao({
     }`;
 
   return (
-    /* `sticky`: a barra acompanha quem rola o documento. Sem isto, formatar um
-       trecho do fim da peça obrigaria a subir até o topo a cada clique. */
+    /* Quem gruda no topo é o invólucro lá na tela da petição, com a barra E a
+       régua dentro. As duas juntas num `sticky` só, e não cada uma com o seu:
+       a barra quebra em duas fileiras conforme a largura da coluna, então um
+       `top` calculado para a régua erraria a altura toda vez que isso mudasse. */
     <div
-      className="sticky top-0 z-10 flex flex-wrap items-center gap-1 rounded-campo border border-borda bg-papel px-2 py-1.5"
+      className="flex flex-wrap items-center gap-1 rounded-campo border border-borda bg-papel px-2 py-1.5"
       role="toolbar"
       aria-label="Formatação do texto"
       /* A barra não pode roubar o cursor: sem isto, clicar em "negrito" tira o
@@ -637,7 +639,9 @@ export function ReguaDeTabulacao({
 
   return (
     <div
-      className={`mb-3 select-none ${ativo ? "" : "opacity-45"}`}
+      /* Sem margem própria: a régua vive dentro do bloco que gruda no topo, e
+         cada pixel a mais ali é pixel a menos de peça na tela. */
+      className={`select-none ${ativo ? "" : "opacity-45"}`}
       onMouseDown={(evento) => evento.preventDefault()}
     >
       <div
