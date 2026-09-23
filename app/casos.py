@@ -880,6 +880,7 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
         for entrega in item["entregas"]:
             incluidos.setdefault(entrega["id"], (item["numero"], item["nome"]))
 
+<<<<<<< Updated upstream
     # `situacao["itens"]` é só o checklist. O que a IA não conseguiu encaixar
     # num item mora em `situacao["triagem"]` (a seção "Outros documentos
     # identificados" da tela) — sem isto o "baixar tudo" excluía calado
@@ -889,6 +890,15 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
     numero_triagem = max((n for n, _ in incluidos.values()), default=0) + 1
     for entrega in situacao.get("triagem") or []:
         incluidos.setdefault(entrega["id"], (numero_triagem, "Outros documentos identificados"))
+=======
+    # Arquivo que chegou e ainda não foi atribuído a nenhum item mora em
+    # `triagem`, fora de `itens`. Sem isto ele ficava de fora do pacote calado:
+    # o escritório levava um ZIP "completo" e o documento por identificar — que
+    # pode ser justamente o obrigatório que falta — ficava para trás. Vai por
+    # último (prefixo 99) e com nome próprio, para não se passar por item.
+    for entrega in situacao.get("triagem") or []:
+        incluidos.setdefault(entrega["id"], (99, "Para identificar"))
+>>>>>>> Stashed changes
 
     guardados: list[str] = []
     faltando: list[str] = []

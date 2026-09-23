@@ -44,7 +44,9 @@ ID_LOCAL = "local"
 #: 6 — recuo de 1,25 cm na primeira linha de cada parágrafo, medido na mesma
 #: peça de referência (corpo em 3,0 cm, primeira linha em 4,25 cm), e negrito
 #: inline no nome do autor.
-DOCX_STYLE_VERSION = 9
+#: 10 — formatação vinda do editor da tela (itálico, sublinhado, tamanho, cor e
+#: alinhamento por parágrafo) interpretada no .docx.
+DOCX_STYLE_VERSION = 10
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
 #: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
 #:
@@ -2007,6 +2009,11 @@ Linhas que começam com «> » são CITAÇÕES LITERAIS de documento (com a font
 parênteses). Copie-as IGUAIS, palavra por palavra, salvo se a crítica pedir para tirar,
 mover ou alterar a citação. Nunca resuma nem reescreva o que o documento diz.
 
+Marcações de formatação feitas pelo advogado — [[i]]…[[/i]], [[u]]…[[/u]],
+[[tam=14]]…[[/tam]], [[cor=#c00000]]…[[/cor]] e [[alin=centro]] no começo da linha —
+são parte do texto: mantenha-as em volta das mesmas palavras e no mesmo parágrafo. Se
+reescrever um trecho marcado, leve a marcação junto; não crie marcações novas.
+
 ANTES DE ESCREVER, CLASSIFIQUE O PEDIDO:
 
 (a) PONTUAL — troca um nome, separa um pedido, corrige uma data, ajusta um trecho
@@ -2745,19 +2752,153 @@ def _tipo_de_titulo(linha: str) -> str | None:
 _RE_TRECHO = re.compile(r"^\s*>\s?(.*\S.*)$")
 
 
-def _trecho_xml(texto: str) -> str:
+# ------------------------------------------------------------- formatação no texto
+#
+# O editor da tela deixa a pessoa formatar trechos (itálico, sublinhado, tamanho,
+# cor) e parágrafos (alinhamento). A formatação vive NO TEXTO da seção, como
+# marcações, pelo mesmo motivo das fotos: assim ela atravessa versão, histórico,
+# revisão por IA e chat sem caminho paralelo. Só o .docx sabe o que elas significam.
+#
+#   **negrito**                      (já existia)
+#   [[i]]…[[/i]]   [[u]]…[[/u]]      itálico, sublinhado
+#   [[tam=14]]…[[/tam]]              tamanho em pontos
+#   [[cor=#c00000]]…[[/cor]]         cor do texto
+#   [[alin=centro]] no início da linha   esquerda | centro | direita | justificado
+#
+# As marcações não atravessam linhas: cada linha é interpretada sozinha. Marcação
+# sem par é ignorada em vez de sair literal no documento entregue ao juízo.
+_RE_MARCACAO = re.compile(r"\*\*|\[\[(/?)(i|u|tam|cor)(?:=([^\]\s]*))?\]\]")
+_RE_ALINHAMENTO_LINHA = re.compile(r"^\s*\[\[alin=(esquerda|centro|direita|justificado)\]\]")
+_ALINHAMENTOS_DOCX = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
+_RE_COR = re.compile(r"^#?[0-9a-fA-F]{6}$")
+_TAMANHO_MIN_PT, _TAMANHO_MAX_PT = 6.0, 72.0
+
+
+def _sem_alinhamento(linha: str) -> tuple[str | None, str]:
+    """Separa o `[[alin=…]]` do começo da linha: (valor do docx ou None, resto)."""
+    achado = _RE_ALINHAMENTO_LINHA.match(linha)
+    if not achado:
+        return None, linha
+    return _ALINHAMENTOS_DOCX[achado.group(1)], linha[achado.end():]
+
+
+def _trechos_formatados(linha: str) -> list[tuple[str, dict[str, Any]]]:
+    """Quebra uma linha (sem o `[[alin]]`) em trechos de texto com a formatação de cada um."""
+    pedacos = list(_RE_MARCACAO.finditer(linha))
+    # `**` sem par no fim da linha é texto, como sempre foi (o `re.split` antigo
+    # também não o casava): tratá-lo como abertura de negrito apagaria o resto.
+    negritos = [m for m in pedacos if m.group(0) == "**"]
+    sem_par = negritos[-1] if len(negritos) % 2 else None
+
+    negrito = italico = sublinhado = False
+    tamanhos: list[float] = []
+    cores: list[str] = []
+    saida: list[tuple[str, dict[str, Any]]] = []
+
+    def emitir(texto: str) -> None:
+        if not texto:
+            return
+        formato = {
+            "b": negrito,
+            "i": italico,
+            "u": sublinhado,
+            "tam": tamanhos[-1] if tamanhos else None,
+            "cor": cores[-1] if cores else None,
+        }
+        if saida and saida[-1][1] == formato:
+            saida[-1] = (saida[-1][0] + texto, formato)
+        else:
+            saida.append((texto, formato))
+
+    posicao = 0
+    for m in pedacos:
+        emitir(linha[posicao:m.start()])
+        posicao = m.end()
+        if m.group(0) == "**":
+            if m is sem_par:
+                # Sem par: some, exatamente como o `.replace("**", "")` de antes.
+                continue
+            negrito = not negrito
+            continue
+        fechando, nome, valor = m.group(1) == "/", m.group(2), m.group(3)
+        if nome == "i":
+            italico = not fechando
+        elif nome == "u":
+            sublinhado = not fechando
+        elif nome == "tam":
+            if fechando:
+                if tamanhos:
+                    tamanhos.pop()
+            else:
+                try:
+                    tamanhos.append(max(_TAMANHO_MIN_PT, min(_TAMANHO_MAX_PT, float(valor or ""))))
+                except ValueError:
+                    pass  # `[[tam=abc]]` não vale: a marcação some, o texto fica.
+        elif nome == "cor":
+            if fechando:
+                if cores:
+                    cores.pop()
+            elif valor and _RE_COR.match(valor):
+                cores.append(valor.lstrip("#").upper())
+    emitir(linha[posicao:])
+    return saida
+
+
+def _sem_formatacao(texto: str) -> str:
+    """O texto da linha sem nenhuma marcação (nem o `[[alin]]`) — para detectar título."""
+    _, resto = _sem_alinhamento(texto)
+    return "".join(pedaco for pedaco, _ in _trechos_formatados(resto))
+
+
+def _runs_xml(
+    trechos: list[tuple[str, dict[str, Any]]],
+    *,
+    negrito: bool = False,
+    tamanho_pt: float | None = None,
+    maiusculas: bool = False,
+) -> str:
+    """Os `<w:r>` de uma linha. `negrito` força negrito; `tamanho_pt` é o padrão do trecho."""
+    runs: list[str] = []
+    for texto, formato in trechos:
+        if maiusculas:
+            texto = texto.upper()
+        # Ordem do esquema (CT_RPr): b, i, color, sz, szCs, u. O Word tolera
+        # trocas, mas o LibreOffice e o validador não são obrigados a tolerar.
+        props = ""
+        if negrito or formato["b"]:
+            props += "<w:b/>"
+        if formato["i"]:
+            props += "<w:i/>"
+        if formato["cor"]:
+            props += f'<w:color w:val="{formato["cor"]}"/>'
+        tamanho = formato["tam"] or tamanho_pt
+        if tamanho:
+            meio_pontos = round(tamanho * 2)
+            props += f'<w:sz w:val="{meio_pontos}"/><w:szCs w:val="{meio_pontos}"/>'
+        if formato["u"]:
+            props += '<w:u w:val="single"/>'
+        runs.append(
+            f'<w:r>{f"<w:rPr>{props}</w:rPr>" if props else ""}'
+            f'<w:t xml:space="preserve">{escape(texto)}</w:t></w:r>'
+        )
+    return "".join(runs)
+
+
+def _trecho_xml(texto: str, *, alinhamento: str | None = None) -> str:
     """Citação transcrita: recuo de 4 cm à esquerda, corpo menor e entrelinha simples.
 
     É a forma da citação direta longa (ABNT) e é o que separa, na leitura do juiz, o
     que o documento diz do que a peça argumenta. Sem o recuo, um trecho copiado de laudo
     ou de conversa parecia texto do próprio advogado.
     """
-    corpo = escape(texto.replace("**", "").strip())
+    # Sem negrito: a citação é o que o documento diz, e sempre saiu assim (o `**`
+    # que a IA põe em volta de um trecho não deve virar destaque na transcrição).
+    trechos = [(t, {**f, "b": False}) for t, f in _trechos_formatados(texto.strip())]
+    # Citação é sempre em corpo menor; o tamanho só muda se a pessoa pediu um.
     return (
         '<w:p><w:pPr><w:spacing w:line="240" w:lineRule="auto" w:after="120"/>'
-        '<w:ind w:left="2268" w:firstLine="0"/><w:jc w:val="both"/></w:pPr>'
-        f'<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
-        f'<w:t xml:space="preserve">{corpo}</w:t></w:r></w:p>'
+        f'<w:ind w:left="2268" w:firstLine="0"/><w:jc w:val="{alinhamento or "both"}"/></w:pPr>'
+        f'{_runs_xml(trechos, tamanho_pt=10)}</w:p>'
     )
 
 
@@ -2766,20 +2907,26 @@ def _paragrafo_xml(
 ) -> str:
     linhas = texto.split("\n")
     partes: list[str] = []
-    for linha in linhas:
+    for linha_bruta in linhas:
+        if not linha_bruta.strip():
+            partes.append("<w:p/>")
+            continue
+        # O alinhamento escolhido na tela vale sobre qualquer decisão automática
+        # (título, fechamento, corpo): foi a pessoa que pediu, olhando a peça.
+        alinhamento_pedido, linha = _sem_alinhamento(linha_bruta)
         if not linha.strip():
             partes.append("<w:p/>")
             continue
         citacao = _RE_TRECHO.match(linha)
         if citacao:
-            partes.append(_trecho_xml(citacao.group(1)))
+            partes.append(_trecho_xml(citacao.group(1), alinhamento=alinhamento_pedido))
             continue
         # Uma linha de TÍTULO já é negrito inteiro, então `**` ali não tem o que
         # converter — e sairia literal no documento entregue ao juízo, que foi o
         # que aconteceu em "RECLAMAÇÃO TRABALHISTA**". Tira o marcador ANTES de
         # detectar (senão o asterisco atrapalha o reconhecimento) e de escrever.
-        linha_limpa = linha.replace("**", "")
-        texto_xml = escape(linha)
+        linha_limpa = _sem_formatacao(linha)
+        trechos = _trechos_formatados(linha)
         # Só vale para o CONTEÚDO: quando quem chama já mandou formatar (o
         # rótulo da seção), a decisão é dele e não se sobrepõe.
         titulo = None if (negrito or centralizado) else _tipo_de_titulo(linha_limpa)
@@ -2787,68 +2934,47 @@ def _paragrafo_xml(
             # O endereçamento é o único que muda o TEXTO, e não só o alinhamento:
             # a IA o escreve em caixa mista ("Ao Juízo da Vara do Trabalho de
             # Tucuruí/PA") e o escritório o quer em caixa alta, centralizado.
-            texto_xml = escape(
-                linha_limpa.strip().upper() if titulo == "endereco" else linha_limpa
+            alinhamento = alinhamento_pedido or (
+                "center" if titulo == "endereco" or (
+                    titulo == "central" or str((visual or {}).get("alinhamento_titulos")) == "centralizado"
+                ) else "left"
             )
-            alinhamento = "center" if titulo == "endereco" or (
-                titulo == "central" or str((visual or {}).get("alinhamento_titulos")) == "centralizado"
-            ) else "left"
             partes.append(
-                f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
-                f'<w:r><w:rPr><w:b/></w:rPr>'
-                f'<w:t xml:space="preserve">{texto_xml}</w:t></w:r></w:p>'
+                f'<w:p><w:pPr><w:ind w:firstLine="0"/><w:jc w:val="{alinhamento}"/></w:pPr>'
+                f'{_runs_xml(trechos, negrito=True, maiusculas=titulo == "endereco")}</w:p>'
             )
             continue
         if negrito or centralizado:
             # `firstLine="0"` ANULA o recuo padrão aqui, e não é detalhe: num
             # parágrafo centralizado o recuo de primeira linha empurra o texto
             # para a direita, e o título deixaria de ficar no centro.
-            alinhamento = "center" if centralizado or (
-                negrito and str((visual or {}).get("alinhamento_titulos")) == "centralizado"
-            ) else "left"
-            runs = "".join(
-                (
-                    f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{parte}</w:t></w:r>'
-                    if negrito or indice % 2
-                    else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
-                )
-                # O `replace` pega o marcador ÍMPAR, que a `re.split` não casa por
-                # não ter par e deixaria passar literal para o .docx.
-                for indice, parte in enumerate(
-                    p.replace("**", "")
-                    for p in re.split(r"\*\*(.+?)\*\*", texto_xml)
-                )
-                if parte
+            alinhamento = alinhamento_pedido or (
+                "center" if centralizado or (
+                    negrito and str((visual or {}).get("alinhamento_titulos")) == "centralizado"
+                ) else "left"
             )
             partes.append(
-                f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:ind w:firstLine="0"/></w:pPr>'
-                f'{runs}</w:p>'
+                f'<w:p><w:pPr><w:ind w:firstLine="0"/><w:jc w:val="{alinhamento}"/></w:pPr>'
+                f'{_runs_xml(trechos, negrito=negrito)}</w:p>'
             )
         else:
             # `**assim**` vira negrito DE VERDADE, em run próprio.
             #
             # O prompt manda o nome do autor entre asteriscos duplos, e sem esta
             # conversão eles sairiam literais no .docx — o documento entregue ao
-            # juízo com `**FULANO**` escrito. `re.split` com grupo devolve os
-            # trechos capturados nos índices ímpares: esses são os negritos.
-            #
-            # O escape XML já foi aplicado acima e não toca em `*`, então dividir
-            # aqui é seguro.
-            runs = "".join(
-                (
-                    f'<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{parte}</w:t></w:r>'
-                    if indice % 2
-                    else f'<w:r><w:t xml:space="preserve">{parte}</w:t></w:r>'
+            # juízo com `**FULANO**` escrito. `_trechos_formatados` cuida disso e
+            # do `**` sem par, que some em vez de sair literal.
+            if alinhamento_pedido:
+                # Centralizar ou alinhar à direita com o recuo padrão de 1,25 cm
+                # empurra o texto para o lado; à esquerda e justificado o recuo
+                # continua sendo o do corpo da peça.
+                recuo = '<w:ind w:firstLine="0"/>' if alinhamento_pedido in ("center", "right") else ""
+                partes.append(
+                    f'<w:p><w:pPr>{recuo}<w:jc w:val="{alinhamento_pedido}"/></w:pPr>'
+                    f'{_runs_xml(trechos)}</w:p>'
                 )
-                # O `replace` pega o marcador ÍMPAR, que a `re.split` não casa por
-                # não ter par e deixaria passar literal para o .docx.
-                for indice, parte in enumerate(
-                    p.replace("**", "")
-                    for p in re.split(r"\*\*(.+?)\*\*", texto_xml)
-                )
-                if parte
-            )
-            partes.append(f"<w:p>{runs}</w:p>")
+            else:
+                partes.append(f"<w:p>{_runs_xml(trechos)}</w:p>")
     return "".join(partes)
 
 
@@ -3214,7 +3340,9 @@ def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
         larguras = [base + (1 if indice < resto else 0) for indice in range(colunas)]
 
     def celula(texto: str, largura: int, *, destaque: bool = False) -> str:
-        texto = str(texto or "").replace("**", "")
+        # A célula é texto simples: formatação de trecho feita na tela sobre uma
+        # linha de tabela não pode sair literal (`[[i]]`) dentro da grade.
+        texto = "\n".join(_sem_formatacao(parte) for parte in str(texto or "").split("\n"))
         partes = texto.split("\n") or [""]
         runs = "".join(
             f'<w:r><w:rPr>{"<w:b/>" if destaque else ""}</w:rPr><w:t xml:space="preserve">{escape(parte)}</w:t></w:r>'
@@ -3261,7 +3389,15 @@ def _conteudo_com_tabelas_xml(
     fotos: list[tuple[str, bytes]] | None = None,
 ) -> str:
     """Converte blocos Markdown de tabela (e linhas de foto), mantendo a posição."""
-    linhas = conteudo.split("\n")
+    # Linha de tabela ou de foto pode ter ganhado um `[[alin=…]]` na tela; o
+    # marcador não pode esconder a `|` nem o `[[FOTO:…]]` do reconhecimento. As
+    # linhas comuns seguem com o marcador, que `_paragrafo_xml` sabe ler.
+    linhas = [
+        linha if not _RE_ALINHAMENTO_LINHA.match(linha) or not (
+            "|" in linha or "[[FOTO:" in linha
+        ) else _sem_alinhamento(linha)[1].lstrip()
+        for linha in conteudo.split("\n")
+    ]
     partes: list[str] = []
     comum: list[str] = []
 
