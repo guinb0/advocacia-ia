@@ -7,7 +7,7 @@
  * revisa uma peça precisa grifar um trecho, pôr um título no meio da página,
  * destacar um valor em vermelho — e fazia isso baixando o .docx, editando no
  * Word e perdendo o vínculo com o caso. Agora a barra de ferramentas aplica
- * negrito, itálico, sublinhado, tamanho, cor e alinhamento direto na peça.
+ * negrito, itálico, sublinhado e alinhamento direto na peça.
  *
  * COMO A FORMATAÇÃO SOBREVIVE
  *
@@ -18,7 +18,7 @@
  * POR QUE `contentEditable` E NÃO UMA BIBLIOTECA
  *
  * O que se formata aqui cabe em `document.execCommand`: negrito, itálico,
- * sublinhado, cor e alinhamento. Trazer um editor inteiro (TipTap e afins)
+ * sublinhado e alinhamento. Trazer um editor inteiro (TipTap e afins)
  * custaria o dobro do peso da tela para ganhar tabela e lista, que a peça já
  * resolve por outro caminho. `execCommand` está obsoleto no papel e implementado
  * em todos os navegadores — inclusive porque é ele que dá o Ctrl+B de graça.
@@ -27,12 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Italic, Underline } from "lucide-react";
 
-import { CORES, TAMANHOS_PT, paraHtml, paraTexto } from "@/lib/formatacaoPeticao";
-
-/** Marca de tamanho que o `execCommand` sabe aplicar, e que trocamos depois pelo
- *  tamanho em pontos de verdade. `fontSize` só aceita 1–7 e escreve `<font>`;
- *  o 7 é o menos provável de aparecer por outro motivo. */
-const TAMANHO_SENTINELA = "7";
+import { paraHtml, paraTexto } from "@/lib/formatacaoPeticao";
 
 export type EstadoDaSelecao = {
   negrito: boolean;
@@ -42,31 +37,6 @@ export type EstadoDaSelecao = {
 
 function comandoPossivel(): boolean {
   return typeof document !== "undefined" && typeof document.execCommand === "function";
-}
-
-/** Aplica um tamanho em pontos à seleção.
- *
- * `execCommand("fontSize")` só entende a escala 1–7 do HTML antigo. O caminho é
- * marcar a seleção com um valor sentinela e trocar os elementos marcados pelo
- * tamanho real — assim quem quebra a seleção em pedaços continua sendo o
- * navegador, que é a parte difícil. */
-function aplicarTamanho(raiz: HTMLElement, pontos: number | null) {
-  document.execCommand("fontSize", false, TAMANHO_SENTINELA);
-  for (const marcado of Array.from(raiz.querySelectorAll(`font[size="${TAMANHO_SENTINELA}"]`))) {
-    if (!pontos) {
-      // "Padrão da peça": o trecho perde o tamanho próprio e volta a herdar o
-      // do documento, incluindo o que um `<span>` de fora tivesse imposto.
-      for (const dentro of Array.from(marcado.querySelectorAll<HTMLElement>("[style*='font-size']"))) {
-        dentro.style.removeProperty("font-size");
-      }
-      marcado.replaceWith(...Array.from(marcado.childNodes));
-      continue;
-    }
-    const span = document.createElement("span");
-    span.style.fontSize = `${pontos}pt`;
-    while (marcado.firstChild) span.appendChild(marcado.firstChild);
-    marcado.replaceWith(span);
-  }
 }
 
 export function BarraDeFormatacao({
@@ -127,49 +97,6 @@ export function BarraDeFormatacao({
         <Underline size={15} aria-hidden />
         <span className="sr-only">Sublinhado</span>
       </button>
-
-      <span className="mx-1 h-5 w-px bg-borda" aria-hidden />
-
-      <label className="sr-only" htmlFor="editor-tamanho">Tamanho da letra</label>
-      <select
-        id="editor-tamanho"
-        className="h-8 rounded-campo border border-borda-campo bg-papel px-1 text-sm text-tinta disabled:opacity-40"
-        disabled={desabilitado}
-        value=""
-        title="Tamanho da letra"
-        onChange={(evento) => {
-          const valor = evento.target.value;
-          evento.target.value = "";
-          aoAplicar((raiz) => aplicarTamanho(raiz, valor ? Number(valor) : null));
-        }}
-      >
-        <option value="">Tamanho</option>
-        {TAMANHOS_PT.map((pt) => (
-          <option key={pt} value={pt}>{pt} pt</option>
-        ))}
-        <option value="0">Padrão da peça</option>
-      </select>
-
-      <label className="sr-only" htmlFor="editor-cor">Cor do texto</label>
-      <select
-        id="editor-cor"
-        className="h-8 rounded-campo border border-borda-campo bg-papel px-1 text-sm text-tinta disabled:opacity-40"
-        disabled={desabilitado}
-        value=""
-        title="Cor do texto"
-        onChange={(evento) => {
-          const valor = evento.target.value;
-          evento.target.value = "";
-          // Sem cor escolhida, volta ao preto da peça: `execCommand` não tem
-          // "remover cor", então a cor do corpo é a própria remoção.
-          aoAplicar(() => document.execCommand("foreColor", false, valor || "#102033"));
-        }}
-      >
-        <option value="">Cor</option>
-        {CORES.map((cor) => (
-          <option key={cor.nome} value={cor.valor}>{cor.nome}</option>
-        ))}
-      </select>
 
       <span className="mx-1 h-5 w-px bg-borda" aria-hidden />
 
