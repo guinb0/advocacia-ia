@@ -1971,6 +1971,13 @@ export async function excluirEntrega(entregaId: string): Promise<void> {
   await comoJson(await buscar(`/api/entregas/${entregaId}`, { method: "DELETE" }));
 }
 
+/** Reenfileira a leitura de uma entrega com "Falha na leitura", sem reenviar o arquivo. */
+export async function tentarNovamenteEntrega(entregaId: string): Promise<void> {
+  await comoJson(
+    await buscar(`/api/entregas/${entregaId}/tentar-novamente`, { method: "POST" }),
+  );
+}
+
 /** A entrega com a extração completa — os campos que o visor mostra. */
 export async function obterEntrega(entregaId: string): Promise<EntregaDetalhe> {
   return comoJson<EntregaDetalhe>(await buscar(`/api/entregas/${entregaId}`));
