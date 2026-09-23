@@ -3869,8 +3869,31 @@ async def enviar_documentos_em_lote(
     return await _registrar_lote(caso, arquivos, idioma)
 
 
-@app.post("/api/casos/importar-zip", status_code=201)
+async def _importar_zip_do_caso_em_fundo(
+    caso_id: str, caminho_zip: str, nome: str, idioma: str
+) -> None:
+    """Registra o conteúdo de um ZIP depois de a tela já ter recebido o caso.
+
+    Descompactar e criar até duzentas entregas pode levar bastante tempo em disco
+    ou no banco. Não é OCR, mas também não deve segurar a tela de criação.
+    """
+    caminho = Path(caminho_zip)
+    try:
+        caso = armazenamento.obter_caso(caso_id)
+        if caso is None:
+            return
+        conteudo = await run_in_threadpool(caminho.read_bytes)
+        await _registrar_lote(caso, [_ArquivoEmMemoria(nome, conteudo)], idioma)
+        listar_casos.limpar_cache()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - o caso já existe; registrar o erro é suficiente
+        log.exception("Falha ao importar o ZIP do caso %s", caso_id)
+    finally:
+        caminho.unlink(missing_ok=True)
+
+
+@app.post("/api/casos/importar-zip", status_code=202)
 async def criar_caso_por_zip(
+    tarefas: BackgroundTasks,
     cliente: str = Form(...),
     categoria: str = Form("em_triagem"),
     arquivo: UploadFile = File(...),
@@ -3890,14 +3913,27 @@ async def criar_caso_por_zip(
     if categorias.obter(categoria) is None:
         categoria = "em_triagem"
 
-    caso = armazenamento.criar_caso(cliente.strip(), categoria)
+    conteudo = await _ler_upload(arquivo)
+    # Confere apenas o índice do ZIP agora. A leitura e o cadastro de cada
+    # documento ficam para depois da resposta, para a página não parecer travada.
     try:
-        lote = await _registrar_lote(caso, [arquivo], idioma)
-    except Exception:
-        armazenamento.excluir_caso(caso["id"])
-        raise
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as z:
+            z.infolist()
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(400, f"'{nome}' não é um ZIP válido ou está corrompido.") from exc
+
+    caso = armazenamento.criar_caso(cliente.strip(), categoria)
+    pasta = armazenamento.DIR_ARQUIVOS / caso["id"] / "importacoes"
+    pasta.mkdir(parents=True, exist_ok=True)
+    caminho = pasta / f"{uuid.uuid4().hex}.zip"
+    caminho.write_bytes(conteudo)
+    tarefas.add_task(_importar_zip_do_caso_em_fundo, caso["id"], str(caminho), nome, idioma)
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
-    return {**caso, "portal": _criar_portal(caso["id"]), "lote": lote}
+    return {
+        **caso,
+        "portal": _criar_portal(caso["id"]),
+        "lote": {"processando": True, "mensagem": "Importação do ZIP iniciada."},
+    }
 
 
 def _autor_da_acao(usuario: auth.Usuario) -> str:
