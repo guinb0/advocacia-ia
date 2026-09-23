@@ -290,11 +290,122 @@ function trechosDaLinha(linha: string): { texto: string; formato: Formato }[] {
   return saida;
 }
 
-/** O texto da seção como HTML para o editor: uma `<div>` por linha. */
-export function paraHtml(texto: string): string {
-  return (texto || "")
-    .split("\n")
-    .map((linhaBruta) => {
+/* -------------------------------------------------------------------- tabelas
+ *
+ * A tabela mora no texto da seção como Markdown — cabeçalho, linha separadora e
+ * corpo —, e é `app/peticao_local._conteudo_com_tabelas_xml` que a transforma em
+ * `w:tbl` nativa do Word. Isso já existia e já funcionava: a IA sabe escrever a
+ * tabela quando o advogado pede uma cronologia ou um quadro de gastos.
+ *
+ * O que não existia era a TELA. A prévia mostrava `| Data | Fato |` cru, então
+ * ninguém via a tabela antes de baixar o .docx nem conseguia mexer numa célula.
+ * As três funções abaixo fecham essa ponta, e o dialeto aceito aqui é o MESMO do
+ * gerador — `_RE_SEPARADOR_TABELA` e `_celulas_tabela_markdown` são o espelho.
+ *
+ * Célula é TEXTO PURO, sem negrito nem itálico, porque é assim que ela chega ao
+ * Word: `_tabela_xml` passa cada célula por `_sem_formatacao`. Aceitar marcação
+ * aqui seria prometer um destaque que o documento não teria.
+ */
+
+const RE_SEPARADOR_TABELA = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
+function celulasDaLinha(linha: string): string[] {
+  let limpa = linha.trim();
+  if (limpa.startsWith("|")) limpa = limpa.slice(1);
+  if (limpa.endsWith("|")) limpa = limpa.slice(0, -1);
+  return limpa.split("|").map((celula) => celula.trim());
+}
+
+/** Lê uma tabela que comece na linha `inicio`. `null` quando não há uma ali. */
+function lerTabelaMarkdown(
+  linhas: string[],
+  inicio: number,
+): { cabecalho: string[]; corpo: string[][]; fim: number } | null {
+  const primeira = linhas[inicio] ?? "";
+  if (!primeira.includes("|") || !RE_SEPARADOR_TABELA.test(linhas[inicio + 1] ?? "")) return null;
+  const cabecalho = celulasDaLinha(primeira);
+  if (cabecalho.length < 2) return null;
+  const corpo: string[][] = [];
+  let fim = inicio + 2;
+  while (fim < linhas.length && linhas[fim].includes("|") && linhas[fim].trim()) {
+    corpo.push(celulasDaLinha(linhas[fim]));
+    fim += 1;
+  }
+  // Sem corpo o gerador do .docx também desiste e devolve as linhas como texto;
+  // desenhar uma tabela aqui mostraria na tela algo que o Word não faria.
+  return corpo.length ? { cabecalho, corpo, fim } : null;
+}
+
+const ESTILO_DA_TABELA =
+  "width:100%;border-collapse:collapse;margin:8pt 0;text-indent:0;font-size:11pt";
+const ESTILO_DA_CELULA =
+  "border:1px solid currentColor;padding:4pt 6pt;text-align:left;vertical-align:top;text-indent:0";
+
+function htmlDaTabela(cabecalho: string[], corpo: string[][]): string {
+  const colunas = Math.max(2, cabecalho.length, ...corpo.map((linha) => linha.length));
+  const completar = (linha: string[]) =>
+    [...linha, ...Array(Math.max(0, colunas - linha.length)).fill("")].slice(0, colunas);
+  const celulas = (linha: string[], marca: "th" | "td") =>
+    completar(linha)
+      .map(
+        (celula) =>
+          `<${marca} style="${ESTILO_DA_CELULA}${marca === "th" ? ";font-weight:700" : ""}">` +
+          `${escaparHtml(celula) || "<br>"}</${marca}>`,
+      )
+      .join("");
+  return (
+    `<table data-tabela="1" style="${ESTILO_DA_TABELA}">` +
+    `<thead><tr>${celulas(cabecalho, "th")}</tr></thead><tbody>` +
+    corpo.map((linha) => `<tr>${celulas(linha, "td")}</tr>`).join("") +
+    "</tbody></table>"
+  );
+}
+
+/** Uma tabela do editor de volta às linhas Markdown do texto da seção. */
+function tabelaParaTexto(tabela: HTMLTableElement): string[] {
+  const grade = Array.from(tabela.rows).map((linha) =>
+    Array.from(linha.cells).map((celula) =>
+      // `|` dentro da célula fecharia a coluna antes da hora e desmontaria a
+      // tabela inteira na volta — vira `/`, como já se faz na legenda da foto.
+      (celula.textContent ?? "")
+        .replace(/ /g, " ")
+        .replace(/\s+/g, " ")
+        .replace(/\|/g, "/")
+        .trim(),
+    ),
+  );
+  if (grade.length < 2) return [];
+  const colunas = Math.max(2, ...grade.map((linha) => linha.length));
+  const completar = (linha: string[]) =>
+    [...linha, ...Array(Math.max(0, colunas - linha.length)).fill("")].slice(0, colunas);
+  const [cabecalho, ...corpo] = grade;
+  return [
+    `| ${completar(cabecalho).join(" | ")} |`,
+    `| ${Array(colunas).fill("---").join(" | ")} |`,
+    ...corpo.map((linha) => `| ${completar(linha).join(" | ")} |`),
+  ];
+}
+
+/** Há uma tabela Markdown neste texto? Serve para a colagem decidir se entra
+ *  como texto puro ou como HTML — colar uma tabela vinda do chat precisa
+ *  desenhar a grade na hora, e não mostrar barras até recarregar a tela. */
+export function temTabelaMarkdown(texto: string): boolean {
+  const linhas = (texto || "").split("\n");
+  return linhas.some((_, indice) => lerTabelaMarkdown(linhas, indice) !== null);
+}
+
+/** Uma tabela vazia para o botão da barra: cabeçalho mais duas linhas. */
+export function htmlDeTabelaNova(colunas: number, linhas: number): string {
+  const vazia = Array(Math.max(2, colunas)).fill("");
+  return htmlDaTabela(
+    vazia.map((_, indice) => `Coluna ${indice + 1}`),
+    Array(Math.max(1, linhas)).fill(vazia),
+  );
+}
+
+/** Uma linha da seção como `<div>` do editor. */
+function linhaParaHtml(linhaBruta: string): string {
+  {
       if (RE_QUEBRA.test(linhaBruta)) return HTML_DA_QUEBRA;
       const { alinhamento, paragrafo, resto } = separarMarcadoresDeLinha(linhaBruta);
       const estilo = estilosDoParagrafo(alinhamento, paragrafo);
@@ -316,8 +427,26 @@ export function paraHtml(texto: string): string {
         })
         .join("");
       return `<div${estilo}>${corpo}</div>`;
-    })
-    .join("");
+  }
+}
+
+/** O texto da seção como HTML para o editor: uma `<div>` por linha, e uma
+ *  `<table>` de verdade onde o texto traz uma tabela Markdown. */
+export function paraHtml(texto: string): string {
+  const linhas = (texto || "").split("\n");
+  const saida: string[] = [];
+  let indice = 0;
+  while (indice < linhas.length) {
+    const tabela = lerTabelaMarkdown(linhas, indice);
+    if (tabela) {
+      saida.push(htmlDaTabela(tabela.cabecalho, tabela.corpo));
+      indice = tabela.fim;
+      continue;
+    }
+    saida.push(linhaParaHtml(linhas[indice]));
+    indice += 1;
+  }
+  return saida.join("");
 }
 
 /** O texto sem nenhuma marcação, para onde se LÊ a peça em vez de editá-la —
@@ -516,6 +645,11 @@ export function paraTexto(raiz: HTMLElement): string {
     if (no instanceof HTMLElement && no.tagName === "BR") {
       descarregarSoltos();
       linhas.push("");
+      continue;
+    }
+    if (no instanceof HTMLTableElement) {
+      descarregarSoltos();
+      linhas.push(...tabelaParaTexto(no));
       continue;
     }
     if (no instanceof HTMLElement && ["DIV", "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3"].includes(no.tagName)) {
