@@ -75,11 +75,17 @@ _SEPARADOR_TABELA = re.compile(r"^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$")
 #: arquivo inteiro — o escritório via "erro no documento" onde bastava esperar.
 _STATUS_TRANSITORIOS = {429, 500, 502, 503, 504}
 
-#: Sete tentativas, com teto de espera de 60s por tentativa, cobrem quase dois
-#: minutos de rate limit sustentado (1+2+4+8+16+32+60s de espera cumulativa)
-#: antes de desistir — o suficiente para um pico de upload esvaziar sozinho.
-_TENTATIVAS_OCR = int(os.getenv("MISTRAL_OCR_TENTATIVAS", "7"))
-_PAUSA_MAXIMA_S = float(os.getenv("MISTRAL_OCR_PAUSA_MAXIMA_S", "60"))
+#: Quatro tentativas com teto de 8s de espera (1+2+4s de espera cumulativa,
+#: ~15s no pior caso com o tempo das próprias chamadas) — o suficiente para um
+#: PICO de upload esvaziar sozinho. Deliberadamente CURTO: `pipeline.py` chama
+#: o OCR várias vezes por página (até 4 rotações), e um teto alto aqui
+#: multiplicava minutos de espera por chamada — com o worker processando um
+#: documento por vez, isso empilhava a fila inteira atrás de UM documento
+#: preso, e para o advogado parecia "ficou lendo para sempre". Rate limit
+#: SUSTENTADO (cota esgotada, não pico) deve cair para a reserva rápido, não
+#: bloquear a fila tentando de novo.
+_TENTATIVAS_OCR = int(os.getenv("MISTRAL_OCR_TENTATIVAS", "4"))
+_PAUSA_MAXIMA_S = float(os.getenv("MISTRAL_OCR_PAUSA_MAXIMA_S", "8"))
 
 
 def _post_com_repeticao(cliente: httpx.Client, url: str, *, headers: dict, json: dict) -> "httpx.Response":
@@ -193,6 +199,10 @@ def _ocr_via_fallback(mime: str, dados_img: bytes) -> dict:
         json={
             "model": modelo,
             "temperature": 0,
+            # Documento de página cheia em fonte pequena passa fácil das 2000
+            # tokens padrão do provedor e corta o texto no meio — o mesmo
+            # defeito já visto em `analise_documentos._chamar_modelo`.
+            "max_tokens": int(os.getenv("OPENROUTER_OCR_FALLBACK_MAX_TOKENS", "8000")),
             "messages": [
                 {"role": "system", "content": _INSTRUCAO_FALLBACK},
                 {
