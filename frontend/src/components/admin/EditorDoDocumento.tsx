@@ -7,8 +7,8 @@
  * revisa uma peça precisa grifar um trecho, pôr um título no meio da página,
  * recuar um parágrafo — e fazia isso baixando o .docx, editando no Word e
  * perdendo o vínculo com o caso. Agora a barra e a régua aplicam negrito,
- * itálico, sublinhado, tachado, alinhamento, recuos, caixa, tabulação e
- * quebra de página direto na peça.
+ * itálico, sublinhado, tachado, alinhamento, recuos, caixa, tabulação, quebra
+ * de página e TABELA direto na peça.
  *
  * COMO A FORMATAÇÃO SOBREVIVE
  *
@@ -23,10 +23,11 @@
  * POR QUE `contentEditable` E NÃO UMA BIBLIOTECA
  *
  * O que se formata aqui cabe em `document.execCommand` mais alguns ajustes de
- * estilo no bloco do parágrafo. Trazer um editor inteiro (TipTap e afins)
- * custaria o dobro do peso da tela para ganhar tabela e lista, que a peça já
- * resolve por outro caminho. `execCommand` está obsoleto no papel e implementado
- * em todos os navegadores — inclusive porque é ele que dá o Ctrl+B de graça.
+ * estilo no bloco do parágrafo e na `<table>`. Trazer um editor inteiro (TipTap
+ * e afins) custaria o dobro do peso da tela para ganhar lista numerada, que a
+ * peça resolve por outro caminho. `execCommand` está obsoleto no papel e
+ * implementado em todos os navegadores — inclusive porque é ele que dá o Ctrl+B
+ * de graça.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,13 +39,16 @@ import {
   Bold,
   CaseLower,
   CaseUpper,
+  Columns3,
   IndentDecrease,
   IndentIncrease,
   Italic,
   Redo2,
   RemoveFormatting,
+  Rows3,
   SeparatorHorizontal,
   Strikethrough,
+  Table,
   Underline,
   Undo2,
 } from "lucide-react";
@@ -55,8 +59,10 @@ import {
   aplicarFormatoDeParagrafo,
   formatoDeParagrafoDoBloco,
   formatoEfetivoDoBloco,
+  htmlDeTabelaNova,
   paraHtml,
   paraTexto,
+  temTabelaMarkdown,
   type FormatoDeParagrafo,
 } from "@/lib/formatacaoPeticao";
 
@@ -93,6 +99,8 @@ export type EstadoDaSelecao = {
   tachado: boolean;
   /** O formato do parágrafo onde está o cursor — o que a régua mostra. */
   paragrafo: FormatoDeParagrafo;
+  /** O cursor está dentro de uma tabela: só então os botões dela aparecem. */
+  naTabela: boolean;
 };
 
 function comandoPossivel(): boolean {
@@ -170,6 +178,96 @@ function mudarCaixa(raiz: HTMLElement, transformar: (texto: string) => string) {
     const texto = no.nodeValue ?? "";
     no.nodeValue = texto.slice(0, inicio) + transformar(texto.slice(inicio, fim)) + texto.slice(fim);
   }
+}
+
+/* ------------------------------------------------------------------ tabelas
+ *
+ * A tabela é uma `<table>` de verdade no editor e volta ao texto como Markdown
+ * (ver `lib/formatacaoPeticao.ts`), que é o que o gerador do .docx converte em
+ * tabela nativa do Word. Aqui ficam só os comandos: criar, e acrescentar ou
+ * tirar linha e coluna depois de criada.
+ */
+
+/** A célula onde está o cursor, se houver uma. */
+function celulaDaSelecao(raiz: HTMLElement): HTMLTableCellElement | null {
+  const no = document.getSelection()?.anchorNode ?? null;
+  if (!no || !raiz.contains(no)) return null;
+  const elemento = no instanceof Element ? no : no.parentElement;
+  const celula = elemento?.closest("th,td") ?? null;
+  return celula instanceof HTMLTableCellElement ? celula : null;
+}
+
+/** Copia uma célula vazia com o mesmo estilo da vizinha — assim a grade não
+ *  ganha uma casa sem borda no meio. */
+function celulaVazia(modelo: HTMLTableCellElement, marca: "th" | "td"): HTMLTableCellElement {
+  const nova = document.createElement(marca);
+  nova.setAttribute("style", modelo.getAttribute("style") ?? "");
+  nova.innerHTML = "<br>";
+  return nova;
+}
+
+function mexerNaTabela(raiz: HTMLElement, acao: "linha+" | "linha-" | "coluna+" | "coluna-") {
+  const celula = celulaDaSelecao(raiz);
+  const tabela = celula?.closest("table");
+  if (!celula || !(tabela instanceof HTMLTableElement)) return;
+  const linha = celula.parentElement as HTMLTableRowElement | null;
+  if (!linha) return;
+  const corpo = tabela.tBodies[0];
+  if (!corpo) return;
+
+  if (acao === "linha+") {
+    const modelo = corpo.rows[corpo.rows.length - 1] ?? linha;
+    const nova = corpo.insertRow(linha.parentElement === corpo ? linha.rowIndex : corpo.rows.length);
+    for (const celulaModelo of Array.from(modelo.cells)) nova.appendChild(celulaVazia(celulaModelo, "td"));
+    return;
+  }
+  if (acao === "linha-") {
+    // O cabeçalho não sai, e o corpo nunca fica vazio: sem nenhuma linha de
+    // dados o gerador do .docx desiste da tabela e devolve as barras como texto.
+    if (linha.parentElement !== corpo || corpo.rows.length <= 1) return;
+    linha.remove();
+    return;
+  }
+  const coluna = celula.cellIndex;
+  if (acao === "coluna+") {
+    for (const linhaDaTabela of Array.from(tabela.rows)) {
+      const vizinha = linhaDaTabela.cells[Math.min(coluna, linhaDaTabela.cells.length - 1)];
+      if (!vizinha) continue;
+      const marca = vizinha.tagName === "TH" ? "th" : "td";
+      linhaDaTabela.insertBefore(celulaVazia(vizinha, marca), linhaDaTabela.cells[coluna + 1] ?? null);
+    }
+    return;
+  }
+  // Duas colunas é o mínimo que o gerador reconhece como tabela.
+  if (tabela.rows[0] && tabela.rows[0].cells.length <= 2) return;
+  for (const linhaDaTabela of Array.from(tabela.rows)) {
+    linhaDaTabela.cells[coluna]?.remove();
+  }
+}
+
+/** Tab dentro da tabela anda de célula em célula, como no Word. Devolve `false`
+ *  quando não havia tabela, para o Tab voltar a escrever uma tabulação. */
+function andarNaTabela(raiz: HTMLElement, paraTras: boolean): boolean {
+  const celula = celulaDaSelecao(raiz);
+  const tabela = celula?.closest("table");
+  if (!celula || !(tabela instanceof HTMLTableElement)) return false;
+  const todas = Array.from(tabela.querySelectorAll<HTMLTableCellElement>("th,td"));
+  const atual = todas.indexOf(celula);
+  let alvo = todas[atual + (paraTras ? -1 : 1)];
+  if (!alvo && !paraTras) {
+    // Tab na última célula cria a linha seguinte — é como se preenche uma
+    // cronologia sem tirar as mãos do teclado.
+    mexerNaTabela(raiz, "linha+");
+    alvo = Array.from(tabela.querySelectorAll<HTMLTableCellElement>("th,td")).pop() ?? null!;
+  }
+  if (!alvo) return false;
+  const intervalo = document.createRange();
+  intervalo.selectNodeContents(alvo);
+  intervalo.collapse(true);
+  const selecao = document.getSelection();
+  selecao?.removeAllRanges();
+  selecao?.addRange(intervalo);
+  return true;
 }
 
 /** "Primeira Maiúscula", palavra a palavra. */
@@ -330,6 +428,52 @@ export function BarraDeFormatacao({
         <SeparatorHorizontal size={14} aria-hidden />
         <span className="sr-only">Inserir quebra de página</span>
       </button>
+
+      {/* Tabela: cronologia, quadro de gastos, relação de documentos. O texto
+          leva a tabela em Markdown e o gerador a converte em `w:tbl` nativa —
+          ela sai do Word editável, não como imagem nem como texto alinhado a
+          tabulação. */}
+      <button
+        type="button"
+        className={classe()}
+        disabled={desabilitado}
+        title="Inserir tabela (3 colunas × 2 linhas)"
+        onClick={() =>
+          aoAplicar(() =>
+            document.execCommand("insertHTML", false, `${htmlDeTabelaNova(3, 2)}<div><br></div>`),
+          )
+        }
+      >
+        <Table size={14} aria-hidden />
+        <span className="sr-only">Inserir tabela</span>
+      </button>
+
+      {/* Só com o cursor dentro da tabela: quatro botões a mais na barra o tempo
+          todo, para quem não está mexendo em tabela nenhuma, é ruído. */}
+      {ativo?.naTabela && (
+        <>
+          {([
+            ["linha+", Rows3, "Acrescentar linha"],
+            ["linha-", Rows3, "Tirar esta linha"],
+            ["coluna+", Columns3, "Acrescentar coluna"],
+            ["coluna-", Columns3, "Tirar esta coluna"],
+          ] as const).map(([acao, Icone, rotulo]) => (
+            <button
+              key={acao}
+              type="button"
+              className={classe()}
+              title={rotulo}
+              onClick={() => aoAplicar((raiz) => mexerNaTabela(raiz, acao))}
+            >
+              <Icone size={14} aria-hidden />
+              <span className="text-[10px] font-semibold" aria-hidden>
+                {acao.endsWith("+") ? "+" : "−"}
+              </span>
+              <span className="sr-only">{rotulo}</span>
+            </button>
+          ))}
+        </>
+      )}
 
       <span className="mx-1 h-5 w-px bg-borda" aria-hidden />
 
@@ -718,19 +862,37 @@ export function CampoDoDocumento({
         emitir();
         onFoco?.(null);
       }}
-      /* Tab escreve uma tabulação em vez de pular para o próximo campo.
-         Shift+Tab continua saindo do documento — quem navega por teclado precisa
-         de uma saída, e o recuo do parágrafo está na barra e na régua. */
+      /* Tab escreve uma tabulação em vez de pular para o próximo campo — mas
+         DENTRO de uma tabela ele anda de célula em célula, como no Word, e na
+         última célula cria a linha seguinte. Shift+Tab fora da tabela continua
+         saindo do documento: quem navega por teclado precisa de uma saída, e o
+         recuo do parágrafo está na barra e na régua. */
       onKeyDown={(evento) => {
-        if (evento.key !== "Tab" || evento.shiftKey) return;
+        if (evento.key !== "Tab") return;
+        const raiz = campo.current;
+        if (raiz && andarNaTabela(raiz, evento.shiftKey)) {
+          evento.preventDefault();
+          return;
+        }
+        if (evento.shiftKey) return;
         evento.preventDefault();
         document.execCommand("insertText", false, "\t");
       }}
       /* Colar de um .docx traz fonte, cor de fundo e tabela da origem: entra só
-         o texto, e a formatação é a que se aplica aqui. */
+         o texto, e a formatação é a que se aplica aqui.
+
+         A EXCEÇÃO é a tabela. Quem copia uma cronologia da conversa está colando
+         Markdown; entrando como texto puro, ela apareceria como um monte de
+         barras até a próxima recarga da tela — o texto gravado até estaria
+         certo, mas ninguém confia no que não vê. Desenhada na hora, a tabela
+         entra no ponto exato em que o cursor estava. */
       onPaste={(evento) => {
         evento.preventDefault();
         const texto = evento.clipboardData.getData("text/plain");
+        if (temTabelaMarkdown(texto)) {
+          document.execCommand("insertHTML", false, paraHtml(texto));
+          return;
+        }
         document.execCommand("insertText", false, texto);
       }}
       /* `break-spaces`: no `pre-wrap` os espaços do fim da linha ficam
@@ -763,6 +925,7 @@ export function useSelecaoFormatada(campoAtivo: HTMLDivElement | null): EstadoDa
         sublinhado: document.queryCommandState("underline"),
         tachado: document.queryCommandState("strikeThrough"),
         paragrafo: paragrafoDaSelecao(campoAtivo),
+        naTabela: celulaDaSelecao(campoAtivo) !== null,
       });
     };
     conferir();

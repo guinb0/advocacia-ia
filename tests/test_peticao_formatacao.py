@@ -223,3 +223,44 @@ def test_tabela_continua_reconhecida_com_marcador_de_parágrafo_na_frente():
     )
     assert raiz.find(".//w:tbl", NS) is not None
     assert "[[" not in "".join(raiz.itertext())
+
+
+# ------------------------------------------------------------------------ tabelas
+#
+# A tabela que o editor grava é a MESMA que a IA escreve: cabeçalho, linha
+# separadora e corpo, em Markdown. Estes testes travam esse contrato — a tela
+# escreve neste formato e o Word tem de receber `w:tbl`, não barras.
+
+
+def test_cronologia_em_markdown_vira_tabela_nativa():
+    raiz = _documento(
+        "Os fatos seguem a ordem abaixo.\n"
+        "\n"
+        "| Data | Fato | Documento |\n"
+        "| --- | --- | --- |\n"
+        "| 12/03/2019 | Admissão | CTPS, fl. 3 |\n"
+        "| 04/08/2024 | Dispensa | TRCT |"
+    )
+    tabela = raiz.find(".//w:tbl", NS)
+    assert tabela is not None
+    linhas = tabela.findall("w:tr", NS)
+    assert len(linhas) == 3  # cabeçalho + duas linhas de dados
+    celulas = ["".join(c.itertext()) for c in linhas[0].findall("w:tc", NS)]
+    assert celulas == ["Data", "Fato", "Documento"]
+    primeira = ["".join(c.itertext()) for c in linhas[1].findall("w:tc", NS)]
+    assert primeira == ["12/03/2019", "Admissão", "CTPS, fl. 3"]
+    texto = "".join(raiz.itertext())
+    assert "|" not in texto and "---" not in texto
+    assert "Os fatos seguem a ordem abaixo." in texto
+
+
+def test_cabeçalho_da_tabela_sai_em_negrito():
+    raiz = _documento("| Item | Valor |\n| --- | --- |\n| Perícia | R$ 2.500,00 |")
+    cabecalho = raiz.find(".//w:tbl/w:tr", NS)
+    assert all(run.find("w:rPr/w:b", NS) is not None for run in cabecalho.iter("{%s}r" % NS["w"]))
+
+
+def test_tabela_sem_linha_de_dados_continua_texto():
+    """Mesmo critério da tela: sem corpo não há tabela, e as barras viram texto."""
+    raiz = _documento("| A | B |\n| --- | --- |")
+    assert raiz.find(".//w:tbl", NS) is None
