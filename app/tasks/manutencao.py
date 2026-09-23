@@ -57,6 +57,8 @@ def _leitor_de_documentos_ativo() -> tuple[bool, set[str]]:
         inspecao = celery_app.control.inspect(timeout=3)
         filas = inspecao.active_queues() or {}
         ativas = inspecao.active() or {}
+        reservadas = inspecao.reserved() or {}
+        agendadas = inspecao.scheduled() or {}
     except Exception:  # noqa: BLE001 - fronteira com o broker
         log.warning("não foi possível inspecionar os workers", exc_info=True)
         return False, set()
@@ -64,12 +66,32 @@ def _leitor_de_documentos_ativo() -> tuple[bool, set[str]]:
     consumindo = any(
         q.get("name") == "gpu_background" for fila in filas.values() for q in fila
     )
-    # O primeiro argumento de `processar_entrega` é o id da entrega.
+    # O primeiro argumento de `processar_entrega` é o id da entrega. `reserved`
+    # é a tarefa que um worker já recebeu mas ainda não começou (mesmo formato
+    # de `active`); `scheduled` é o retry automático esperando o backoff — a
+    # tarefa some de `active` durante essa espera, mas `falhar_entrega` já
+    # marcou a entrega como 'erro' bem antes de ela voltar a rodar. Sem contar
+    # `scheduled` aqui, um clique em "tentar novamente" durante essa janela
+    # cria uma SEGUNDA tarefa correndo contra a mesma entrega — a que terminar
+    # por último vence calada, e o documento parece "recusado" sem motivo.
     em_leitura = {
         str(tarefa["args"][0])
         for tarefas in ativas.values()
         for tarefa in tarefas
         if tarefa.get("name", "").endswith("processar_entrega") and tarefa.get("args")
+    }
+    em_leitura |= {
+        str(tarefa["args"][0])
+        for tarefas in reservadas.values()
+        for tarefa in tarefas
+        if tarefa.get("name", "").endswith("processar_entrega") and tarefa.get("args")
+    }
+    em_leitura |= {
+        str(tarefa["request"]["args"][0])
+        for tarefas in agendadas.values()
+        for tarefa in tarefas
+        if tarefa.get("request", {}).get("name", "").endswith("processar_entrega")
+        and tarefa.get("request", {}).get("args")
     }
     return consumindo, em_leitura
 
