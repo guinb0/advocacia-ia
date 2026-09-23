@@ -46,6 +46,7 @@ import httpx
 import numpy as np
 
 from . import ambiente
+from . import custos_api
 
 # Antes das constantes abaixo, que são lidas do ambiente na importação. O processo
 # da 8200 pode subir sem o `iniciar.ps1` — ver o cabeçalho de `app/ambiente.py`.
@@ -346,6 +347,7 @@ def _uma_requisicao(audio: np.ndarray, chave: str, tempo_limite: float) -> str:
             timeout=tempo_limite,
         )
         resposta.raise_for_status()
+        custos_api.registrar("openrouter", MODELO, "transcricao", resposta)
     except httpx.HTTPStatusError as exc:
         # 200 CARACTERES ERA POUCO, e o corte custou um diagnostico errado.
         #

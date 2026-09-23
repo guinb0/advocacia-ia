@@ -100,9 +100,14 @@ def ocr_com_rotacao_medido(
     passadas = 1
 
     if melhor_pt < 60:  # provavelmente a foto está deitada
+        # Cada rotação é outra inferência paga. Uma segunda opinião basta na
+        # operação normal; deixe as três rotações só para diagnóstico explícito.
+        max_rotacoes = max(0, int(os.getenv("OCR_MAX_ROTACOES", "1")))
         for rot, code in ((90, cv2.ROTATE_90_CLOCKWISE),
                           (180, cv2.ROTATE_180),
                           (270, cv2.ROTATE_90_COUNTERCLOCKWISE)):
+            if passadas > max_rotacoes:
+                break
             # A Mistral já classifica a orientação. Esta segunda defesa não pode
             # transformar uma foto ruim em quatro inferências de ~50 segundos.
             # Zero desliga o teto para benchmarks específicos.

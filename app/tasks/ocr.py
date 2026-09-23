@@ -234,7 +234,7 @@ def aquecer_worker_ocr(sender=None, **_kwargs):
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
-    retry_kwargs={"max_retries": 3},
+    retry_kwargs={"max_retries": 1},
 )
 def processar_documento(self, job_id: str, caminho: str, nome: str, idioma: str, tipo: str | None):
     inicio = datetime.now(timezone.utc)
@@ -271,7 +271,7 @@ def processar_documento(self, job_id: str, caminho: str, nome: str, idioma: str,
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
-    retry_kwargs={"max_retries": 3},
+    retry_kwargs={"max_retries": 1},
 )
 def processar_entrega(
     self,
@@ -444,6 +444,7 @@ def processar_entrega(
             and not visao_documento.so_referencias_de_imagem(
                 str(resultado.get("texto_completo") or "")
             )
+            and destino.origem != roteamento.DETERMINISTICO
         ):
             # O roteamento determinístico já decidiu o item, mas a interpretação
             # da main ainda agrega achados semânticos úteis ao documento. Ela não
@@ -570,7 +571,11 @@ def processar_entrega(
         )
         if destino.em_triagem:
             log.info("entrega %s ficou em triagem: %s", entrega_id, destino.motivo)
-        if resultado.get("classificacao_semantica", {}).get("tipo_semantico"):
+        if (
+            resultado.get("classificacao_semantica", {}).get("tipo_semantico")
+            and not destino.em_triagem
+            and destino.origem != roteamento.DUPLICIDADE
+        ):
             try:
                 indexacao_documento.indexar(entrega_id, caso_id, nome, resultado)
             except Exception:

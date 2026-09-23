@@ -13,6 +13,7 @@ import httpx
 import numpy as np
 
 from . import ambiente
+from . import custos_api
 from .extractors import Linha
 
 # Pelo mesmo motivo do `transcricao_openrouter`: este módulo lê `MISTRAL_API_KEY`
@@ -84,7 +85,7 @@ _STATUS_TRANSITORIOS = {429, 500, 502, 503, 504}
 #: preso, e para o advogado parecia "ficou lendo para sempre". Rate limit
 #: SUSTENTADO (cota esgotada, não pico) deve cair para a reserva rápido, não
 #: bloquear a fila tentando de novo.
-_TENTATIVAS_OCR = int(os.getenv("MISTRAL_OCR_TENTATIVAS", "4"))
+_TENTATIVAS_OCR = int(os.getenv("MISTRAL_OCR_TENTATIVAS", "2"))
 _PAUSA_MAXIMA_S = float(os.getenv("MISTRAL_OCR_PAUSA_MAXIMA_S", "8"))
 
 
@@ -230,6 +231,7 @@ def _ocr_via_openrouter(mime: str, dados_img: bytes) -> dict:
             json=payload,
         )
     resposta.raise_for_status()
+    custos_api.registrar("openrouter", modelo, "ocr", resposta)
     texto = str(resposta.json()["choices"][0]["message"]["content"] or "").strip()
     return {"pages": [{"markdown": texto,
                         "confidence_scores": {"average_page_confidence_score": _CONFIANCA_OPENROUTER}}]}
@@ -256,6 +258,7 @@ def _ocr_via_mistral(chave: str, mime: str, dados_img: bytes) -> dict:
             json=payload,
         )
     resposta.raise_for_status()
+    custos_api.registrar("mistral", payload["model"], "ocr", resposta)
     return resposta.json()
 
 

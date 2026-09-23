@@ -51,6 +51,7 @@ import re
 from typing import Any
 
 import httpx
+from . import custos_api
 
 log = logging.getLogger("valor-documento")
 
@@ -188,6 +189,9 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
             timeout=TEMPO_MODELO_S,
         )
         resposta.raise_for_status()
+        custos_api.registrar(
+            "deepseek", os.getenv("DEEPSEEK_MODEL", "deepseek-chat"), "classificacao_documento", resposta
+        )
     except httpx.HTTPError as exc:
         log.warning("Leitura do documento falhou: %s", str(exc)[:160])
         raise ErroValor(
