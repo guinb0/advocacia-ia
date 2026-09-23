@@ -38,7 +38,13 @@ import {
 import { avisarChatDaPeticao } from "@/lib/chatPeticao";
 import { baixarArquivo } from "@/lib/baixar";
 import { useEdicaoAutoSalva, type SituacaoDoSalvamento } from "@/lib/useEdicaoAutoSalva";
-import { BarraDeFormatacao, CampoDoDocumento, useSelecaoFormatada } from "@/components/admin/EditorDoDocumento";
+import {
+  BarraDeFormatacao,
+  CampoDeTitulo,
+  CampoDoDocumento,
+  ReguaDeTabulacao,
+  useSelecaoFormatada,
+} from "@/components/admin/EditorDoDocumento";
 import { semMarcacao } from "@/lib/formatacaoPeticao";
 
 
@@ -154,7 +160,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const autoSalvo = useEdicaoAutoSalva({
     chave: peticao?.id ?? null,
     secoes: peticao?.sections,
-    salvar: (pecaId, secoes) => salvarRascunhoPeticao(casoId, pecaId, secoes),
+    titulo: peticao?.title,
+    salvar: (pecaId, envio) =>
+      salvarRascunhoPeticao(casoId, pecaId, envio.secoes, envio.titulo),
     onSalvo: (atualizada) => {
       setPeticao(atualizada);
       historicoDePeticao(casoId, "local").then(setHistorico, () => undefined);
@@ -237,11 +245,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setConcluido(null);
     try {
       await autoSalvo.descarregar();
-      const secoes = (peticao.sections ?? []).map((s) => ({
-        code: s.code,
-        content: edicao[s.code] ?? s.content,
-      }));
-      const atualizada = await salvarRascunhoPeticao(casoId, peticao.id, secoes);
+      const atualizada = await salvarRascunhoPeticao(
+        casoId,
+        peticao.id,
+        secoesDaTela(peticao.sections, edicao, autoSalvo.rotulos),
+        autoSalvo.titulo,
+      );
       setPeticao(atualizada);
       const arquivo = await baixarArquivoDaPeticao(casoId, peticao.id, formato);
       baixarArquivo(arquivo, `Peticao inicial - v${atualizada.version}.${formato}`);
@@ -265,11 +274,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     try {
       await autoSalvo.descarregar();
       const secoesAtuais = peticao.sections ?? [];
-      if (secoesAtuais.some((s) => (edicao[s.code] ?? s.content) !== s.content)) {
+      if (haEdicaoNaTela(secoesAtuais, edicao, autoSalvo.rotulos)) {
         await salvarRascunhoPeticao(
           casoId,
           peticao.id,
-          secoesAtuais.map((s) => ({ code: s.code, content: edicao[s.code] ?? s.content })),
+          secoesDaTela(secoesAtuais, edicao, autoSalvo.rotulos),
         );
       }
       const resultado = await revisarPeticaoComPrompt(
@@ -424,7 +433,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const autoSalvoAnexa = useEdicaoAutoSalva({
     chave: peticaoAnexa?.id ?? null,
     secoes: peticaoAnexa?.sections,
-    salvar: (pecaId, secoes) => salvarRascunhoPeticao(casoId, pecaId, secoes),
+    titulo: peticaoAnexa?.title,
+    salvar: (pecaId, envio) =>
+      salvarRascunhoPeticao(casoId, pecaId, envio.secoes, envio.titulo),
     onSalvo: (atualizada, pecaId) => {
       setPeticaoAnexa(atualizada);
       historicoDePeticao(casoId, pecaId).then(setHistoricoAnexa, () => undefined);
@@ -475,11 +486,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     try {
       await autoSalvoAnexa.descarregar();
       const secoesAtuais = peticaoAnexa.sections ?? [];
-      if (secoesAtuais.some((s) => (edicaoAnexa[s.code] ?? s.content) !== s.content)) {
+      if (haEdicaoNaTela(secoesAtuais, edicaoAnexa, autoSalvoAnexa.rotulos)) {
         await salvarRascunhoPeticao(
           casoId,
           peticaoAnexa.id,
-          secoesAtuais.map((s) => ({ code: s.code, content: edicaoAnexa[s.code] ?? s.content })),
+          secoesDaTela(secoesAtuais, edicaoAnexa, autoSalvoAnexa.rotulos),
         );
       }
       const resultado = await revisarPeticaoComPrompt(
@@ -675,10 +686,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               * texto ocupava a tela duas vezes, e a página ficava tão alta que
               * rolar virava o trabalho principal. Agora se escreve onde se lê. */}
             <PreviaPeticao
-              titulo={peticao.title}
+              titulo={autoSalvo.titulo || peticao.title}
               secoes={peticao.sections ?? []}
               edicao={edicao}
+              rotulos={autoSalvo.rotulos}
               onEditar={autoSalvo.editar}
+              onEditarRotulo={autoSalvo.editarRotulo}
+              onEditarTitulo={autoSalvo.editarTitulo}
             />
 
             {peticao.revisao_pendente && (
@@ -927,10 +941,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                             * deixou de ter campo cru de um lado e prévia do outro. */}
                           <div className="grid gap-3">
                             <PreviaPeticao
-                              titulo={peticaoAnexa.title}
+                              titulo={autoSalvoAnexa.titulo || peticaoAnexa.title}
                               secoes={peticaoAnexa.sections ?? []}
                               edicao={edicaoAnexa}
+                              rotulos={autoSalvoAnexa.rotulos}
                               onEditar={autoSalvoAnexa.editar}
+                              onEditarRotulo={autoSalvoAnexa.editarRotulo}
+                              onEditarTitulo={autoSalvoAnexa.editarTitulo}
                             />
                             <IndicadorDeSalvamento
                               situacao={autoSalvoAnexa.situacao}
@@ -1100,16 +1117,48 @@ function IndicadorDeSalvamento({
   );
 }
 
+/** A peça como está na tela — para as gravações explícitas (salvar e baixar,
+ *  revisar por prompt), que mandam a peça inteira em vez de só o pendente. */
+function secoesDaTela(
+  secoes: SecaoPeticao[] | undefined,
+  edicao: Record<string, string>,
+  rotulos: Record<string, string>,
+): { code: string; content: string; label: string }[] {
+  return (secoes ?? []).map((s) => ({
+    code: s.code,
+    content: edicao[s.code] ?? s.content,
+    label: rotulos[s.code] ?? s.label,
+  }));
+}
+
+/** Há algo na tela que o servidor ainda não tem — texto ou título de tópico. */
+function haEdicaoNaTela(
+  secoes: SecaoPeticao[],
+  edicao: Record<string, string>,
+  rotulos: Record<string, string>,
+): boolean {
+  return secoes.some(
+    (s) => (edicao[s.code] ?? s.content) !== s.content || (rotulos[s.code] ?? s.label) !== s.label,
+  );
+}
+
 function PreviaPeticao({
   titulo,
   secoes,
   edicao,
+  rotulos,
   onEditar,
+  onEditarRotulo,
+  onEditarTitulo,
 }: {
   titulo: string;
   secoes: SecaoPeticao[];
   edicao: Record<string, string>;
+  /** O título de cada tópico, por código de seção, como está na tela. */
+  rotulos: Record<string, string>;
   onEditar: (codigo: string, valor: string) => void;
+  onEditarRotulo: (codigo: string, valor: string) => void;
+  onEditarTitulo: (valor: string) => void;
 }) {
   /* Uma barra só, no topo do documento, agindo sobre a seção em foco — como em
      qualquer editor de texto. Barra por seção repetiria os mesmos oito botões
@@ -1135,23 +1184,47 @@ function PreviaPeticao({
   return (
     <div className="grid gap-2">
       {/* Sem `max-h`/`overflow` e sem `sticky`: o documento rola com a página,
-          que é o que se espera de um texto que se está escrevendo. */}
-      <div className="mx-auto w-full max-w-[850px] font-titulo border border-borda-forte bg-papel shadow-sm px-10 py-12 max-[640px]:px-5 max-[640px]:py-7">
+          que é o que se espera de um texto que se está escrevendo.
+
+          A LARGURA É A DO PAPEL, não um número redondo de pixels. A caixa tem
+          21 cm (A4) e as margens do modelo do escritório, então a coluna de
+          texto mede exatamente os `LARGURA_UTIL_CM` da régua: 2 cm arrastados
+          ali são os 2 cm que o Word vai mostrar. Com a caixa em pixels
+          arbitrários, a régua seria um desenho bonito e mentiroso.
+
+          A fonte segue o mesmo raciocínio — 12 pt e entrelinha 1,5, como em
+          `CONFIGURACAO_VISUAL_PADRAO` —, de modo que a linha quebra na tela
+          onde quebra no papel. */}
+      <div className="mx-auto w-[21cm] max-w-full font-titulo text-[12pt] leading-[1.5] border border-borda-forte bg-papel shadow-sm pl-[3cm] pr-[1.89cm] py-12 max-[820px]:px-5 max-[820px]:py-7">
         <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
-        <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-10">
-          {titulo || "Petição inicial"}
+        <ReguaDeTabulacao ativo={selecao} aoAplicar={aplicar} />
+        <h1 className="mb-10">
+          <CampoDeTitulo
+            valor={titulo}
+            rotulo="Nome da peça"
+            centralizado
+            onEditar={onEditarTitulo}
+          />
         </h1>
         <div className="grid gap-6">
           {secoes.map((secao) => (
             <section key={secao.code} className="grid gap-3">
-              {secao.label && !["HEADING", "VALUE", "CLOSING"].includes(secao.code) && (
-                <h2 className="text-left text-sm font-bold uppercase tracking-wide text-tinta">
-                  {secao.label}
+              {/* HEADING, VALUE e CLOSING não têm título NA PEÇA — o endereçamento,
+                  o valor da causa e o fecho entram como frase solta (ver o
+                  `montar_docx`). Editar um rótulo que o .docx ignora seria
+                  prometer uma mudança que não aparece no documento. */}
+              {!["HEADING", "VALUE", "CLOSING"].includes(secao.code) && (
+                <h2>
+                  <CampoDeTitulo
+                    valor={rotulos[secao.code] ?? secao.label}
+                    rotulo={`Título do tópico ${secao.label || secao.code}`}
+                    onEditar={(valor) => onEditarRotulo(secao.code, valor)}
+                  />
                 </h2>
               )}
               <CampoDoDocumento
                 valor={edicao[secao.code] ?? secao.content}
-                rotulo={secao.label || secao.code}
+                rotulo={rotulos[secao.code] || secao.label || secao.code}
                 formato={secao.code === "CLOSING" ? "fechamento" : secao.code === "HEADING" ? "enderecamento" : "corpo"}
                 onEditar={(valor) => onEditar(secao.code, valor)}
                 onFoco={setCampoAtivo}
