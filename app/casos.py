@@ -854,7 +854,10 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
     O escritório baixava documento por documento, clicando em cada linha do
     checklist — trinta arquivos, trinta cliques, e a certeza de esquecer um.
     O pacote sai na ordem do checklist e com o nome do item em cada arquivo,
-    porque do outro lado alguém vai conferir contra a mesma lista.
+    porque do outro lado alguém vai conferir contra a mesma lista. O que ainda
+    não tem item (a triagem, "Outros documentos identificados" na tela) entra
+    também, por último — "baixar tudo" que pulasse justamente o que não foi
+    classificado ainda seria pior que não ter o atalho.
 
     Escreve em disco em vez de montar na memória: são fotos e PDFs de
     digitalização, e um caso instruído passa fácil de cem megabytes — segurar
@@ -876,6 +879,16 @@ def montar_zip(caso_id: str, destino: Path) -> dict[str, Any] | None:
     for item in situacao["itens"]:
         for entrega in item["entregas"]:
             incluidos.setdefault(entrega["id"], (item["numero"], item["nome"]))
+
+    # `situacao["itens"]` é só o checklist. O que a IA não conseguiu encaixar
+    # num item mora em `situacao["triagem"]` (a seção "Outros documentos
+    # identificados" da tela) — sem isto o "baixar tudo" excluía calado
+    # exatamente os arquivos que ainda não têm classificação confirmada, que
+    # são os que mais precisam ir junto para alguém olhar. Entram por último,
+    # depois do último número do checklist, para não embaralhar a ordem dele.
+    numero_triagem = max((n for n, _ in incluidos.values()), default=0) + 1
+    for entrega in situacao.get("triagem") or []:
+        incluidos.setdefault(entrega["id"], (numero_triagem, "Outros documentos identificados"))
 
     guardados: list[str] = []
     faltando: list[str] = []

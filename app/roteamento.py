@@ -42,6 +42,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from . import armazenamento, casos, tipos_documento, valor_documento
 from .categorias import ITEM_TRIAGEM, Categoria, ItemChecklist
 
@@ -165,7 +167,15 @@ def _semantico(
             correcoes=correcoes,
         )
     except valor_documento.ErroValor as exc:
-        # Modelo fora do ar, ou texto curto demais: o documento fica em triagem,
+        if isinstance(exc.__cause__, httpx.HTTPError):
+            # Falha de REDE/API (DeepSeek fora do ar, rate limit) é passageira:
+            # deixa subir para o autoretry da task (`processar_entrega`, que já
+            # repete em `httpx.HTTPError`) em vez de desistir na hora e mandar
+            # calado para a triagem. Texto curto ou chave ausente continuam
+            # indo direto para triagem abaixo — repetir não resolveria nenhum
+            # dos dois.
+            raise exc.__cause__ from exc
+        # Chave ausente ou texto curto demais: o documento fica em triagem,
         # que é honesto. Derrubar a leitura inteira por isso perderia o OCR.
         log.info("leitura semântica indisponível: %s", str(exc)[:160])
         return None

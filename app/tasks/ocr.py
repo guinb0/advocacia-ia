@@ -423,6 +423,33 @@ def processar_entrega(
                     "erro": str(exc)[:200],
                 }
 
+        if (
+            formato_lido
+            and extensao in visao_documento.EXTENSOES_IMAGEM
+            and self.request.retries > 0
+            and not (resultado.get("classificacao_semantica") or {}).get("tipo_semantico")
+        ):
+            # Ainda sem categoria numa tentativa automática (2ª/3ª do
+            # `autoretry_for`): repetir a MESMA leitura de texto tende a
+            # repetir a mesma falha. Pede uma segunda opinião ao modelo de
+            # visão sobre a imagem original — abordagem diferente, chance real
+            # de destravar o que o texto não deu conta.
+            try:
+                pendentes = [
+                    {"codigo": esperado.codigo, "nome": esperado.nome}
+                    for esperado in categoria.itens
+                ]
+                visao = visao_documento.ler_imagem(conteudo, extensao, categoria.nome, pendentes)
+                semantica = {
+                    **visao,
+                    "classificador": "visao_retry",
+                    "tipo_semantico": str(visao.get("documento") or "indefinido"),
+                }
+                resultado["classificacao_semantica"] = semantica
+                indexacao_documento.aplicar_interpretacao(resultado, semantica)
+            except Exception as exc:
+                log.warning("segunda opinião por visão (retry) falhou para %s: %s", entrega_id, exc)
+
         # A identidade unificada marcada à mão continua valendo sobre tudo: quem
         # marcou olhou o documento, e nenhum classificador desmente isso.
         if usar_para_rg_e_cpf and item is not None:
