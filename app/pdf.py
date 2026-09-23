@@ -118,3 +118,55 @@ def pdf_para_imagem(conteudo: bytes) -> np.ndarray:
         imagem_final[y : y + h, x : x + w] = imagem
         y += h + ESPACO_ENTRE_PAGINAS
     return imagem_final
+
+
+#: Média de caracteres por página abaixo da qual o "texto nativo" é
+#: watermark/rodapé, não o corpo do documento — a página real ainda é uma
+#: digitalização embutida, e rasterizar+OCR continua sendo o caminho certo.
+#: Um PDF do portal do INSS ou da Justiça tem centenas de caracteres por
+#: página; um PDF escaneado com OCR já embutido pelo scanner às vezes carrega
+#: metadado esparso que não chega perto disso.
+MIN_CARACTERES_POR_PAGINA_NATIVA = int(os.getenv("PDF_MIN_CARACTERES_POR_PAGINA", "60"))
+
+
+def extrair_texto_nativo(conteudo: bytes) -> str:
+    """O texto JÁ DIGITAL de um PDF, ou string vazia se ele não tiver (ou for pouco).
+
+    PDF gerado por sistema (protocolo do INSS, petição, portal da Justiça) já
+    tem o texto gravado — rasterizar a página inteira e mandar para o OCR
+    joga fora essa fidelidade e ainda arrisca errar dígito de número de
+    processo ou CID que já estava perfeito no arquivo. Aqui não há CUSTO de
+    render nem chamada de API: é leitura direta do PDF, e o teto de páginas
+    de `pdf_para_imagem` não se aplica — não existe pixel a limitar.
+
+    Vazio (string vazia) é o sinal para `tasks/ocr.py` cair no caminho de
+    sempre (rasterizar + OCR): PDF sem camada de texto (foto virou PDF) ou
+    com só metadado esparso continua precisando de OCR de verdade.
+    """
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return ""
+
+    try:
+        with PDFIUM_LOCK:
+            with pdfium.PdfDocument(conteudo) as documento:
+                textos = []
+                for pagina in documento:
+                    pagina_texto = pagina.get_textpage()
+                    try:
+                        textos.append(pagina_texto.get_text_range().strip())
+                    finally:
+                        pagina_texto.close()
+                        pagina.close()
+    except Exception:
+        return ""
+
+    if not textos:
+        return ""
+    total_chars = sum(len(t) for t in textos)
+    if total_chars < MIN_CARACTERES_POR_PAGINA_NATIVA * len(textos):
+        return ""
+    # Duas quebras entre páginas: o mesmo critério de `mistral_ocr.markdown_do_pdf`
+    # — o que lê depois precisa saber onde uma página termina e a outra começa.
+    return "\n\n".join(t for t in textos if t)

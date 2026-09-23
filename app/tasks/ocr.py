@@ -16,6 +16,7 @@ from .. import (
     historico_alteracoes,
     indexacao_documento,
     jobs,
+    pdf,
     pipeline,
     roteamento,
     visao_documento,
@@ -246,7 +247,17 @@ def processar_entrega(
         extensao = Path(nome).suffix.lower()
         formato_lido = False
         resultado: dict | None = None
-        if extensao in pipeline.EXTENSOES_OCR:
+        texto_nativo_pdf = pdf.extrair_texto_nativo(conteudo) if extensao == ".pdf" else ""
+        if texto_nativo_pdf:
+            # PDF gerado por sistema (protocolo do INSS, petição, portal da
+            # Justiça) já tem o texto gravado — ler direto é mais fiel, mais
+            # rápido e não gasta chamada de OCR. `pdf_para_imagem` nem entra
+            # em jogo aqui, então o teto de páginas dele também não se aplica.
+            formato_lido = True
+            resultado = pipeline.processar_texto(
+                texto_nativo_pdf, nome, idioma, tipo_extracao, gerar_arquivos_temporarios=False
+            )
+        elif extensao in pipeline.EXTENSOES_OCR:
             formato_lido = True
             resultado = pipeline.processar(
                 conteudo,
