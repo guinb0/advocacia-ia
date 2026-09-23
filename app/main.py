@@ -4814,7 +4814,11 @@ def baixar_arquivo_entrega(entrega_id: str, download: bool = False):
 
 @app.get("/api/entregas/{entrega_id}/arquivo.pdf")
 def baixar_arquivo_entrega_pdf(entrega_id: str):
-    """Preserva PDF original ou converte uma imagem apenas para o download."""
+    """Preserva PDF original; converte imagem e .docx.
+
+    Não serve só ao download: o visor do checklist pede este PDF para mostrar um
+    .docx na tela — o navegador não desenha Word, e sem isto o documento só
+    podia ser baixado."""
     entrega = armazenamento.obter_entrega(entrega_id)
     if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")

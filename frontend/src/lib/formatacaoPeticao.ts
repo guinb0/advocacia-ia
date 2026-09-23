@@ -8,12 +8,23 @@
  *
  *   **negrito**                        (já existia, vindo da IA)
  *   [[i]]…[[/i]]   [[u]]…[[/u]]        itálico, sublinhado
- *   [[alin=centro]] no início da linha esquerda | centro | direita | justificado
+ *   [[s]]…[[/s]]                       tachado
+ *   uma tabulação literal (\t)         parada de tabulação dentro da linha
+ *   [[alin=centro]]                    no início da linha
+ *   [[par=esq:2;pri:-1.25;dir:0]]      no início da linha: os recuos
+ *   [[pagina]]                         sozinho na linha: quebra de página
  *
  * `[[tam=14]]` e `[[cor=#c00000]]` continuam sendo LIDOS, nunca escritos: a
  * barra não oferece mais tamanho nem cor, mas peças gravadas antes disso têm
  * essas marcações no texto e, sem interpretá-las, elas apareceriam cruas na
  * tela do advogado.
+ *
+ * POR QUE `[[par]]` É SEPARADO DE `[[alin]]`
+ *
+ * `[[alin]]` já existia dos dois lados da ponte — tela e gerador do .docx — e
+ * há peças gravadas com ele. Dobrar o significado de um marcador em uso obriga
+ * a mudar os dois leitores no mesmo instante, sob pena de uma peça antiga abrir
+ * errada. O marcador novo carrega só o que é novo, e os dois convivem.
  *
  * As duas funções aqui precisam ser inversas uma da outra: o que o editor
  * escreve tem de voltar igual ao ser reaberto, senão editar duas vezes deforma
@@ -41,14 +52,36 @@ const CSS_ALINHAMENTO: Record<string, Alinhamento> = {
 const TAMANHO_MIN_PT = 6;
 const TAMANHO_MAX_PT = 72;
 
-const RE_MARCACAO = /\*\*|\[\[(\/?)(i|u|tam|cor)(?:=([^\]\s]*))?\]\]/g;
+/** Os limites dos recuos, em centímetros. O recuo da primeira linha aceita
+ *  negativo: é o "deslocamento" do Word, com a primeira linha saindo à esquerda
+ *  do resto do parágrafo — a forma de escrever "a) …" com o texto alinhado. */
+export const RECUO_MAX_CM = 10;
+export const RECUO_PRIMEIRA_MIN_CM = -5;
+
+const RE_MARCACAO = /\*\*|\[\[(\/?)(i|u|s|tam|cor)(?:=([^\]\s]*))?\]\]/g;
 const RE_ALINHAMENTO = /^\s*\[\[alin=(esquerda|centro|direita|justificado)\]\]/;
+const RE_PARAGRAFO = /^\s*\[\[par=([^\]]*)\]\]/;
 const RE_COR = /^#?[0-9a-fA-F]{6}$/;
+
+/** Quebra de página: a linha inteira é o marcador, e nada mais cabe nela. */
+const RE_QUEBRA = /^\s*\[\[pagina\]\]\s*$/;
+export const MARCA_DE_QUEBRA = "[[pagina]]";
+
+/** A quebra desenhada na prévia.
+ *
+ * `contenteditable="false"`: quebra não é texto e não se digita dentro dela —
+ * sem isto o cursor entra no bloco e o que se escrever ali some ao gravar.
+ * Estilo embutido, e não classe: este HTML nasce de uma string em tempo de
+ * execução, que o gerador de CSS não varre. */
+export const HTML_DA_QUEBRA =
+  '<div data-quebra="1" contenteditable="false" style="margin:12pt 0;border-top:1px dashed currentColor;' +
+  'opacity:.45;text-align:center;font-size:9pt;text-indent:0;user-select:none">Quebra de página</div>';
 
 type Formato = {
   negrito: boolean;
   italico: boolean;
   sublinhado: boolean;
+  tachado: boolean;
   tamanho: number | null;
   cor: string | null;
 };
@@ -57,18 +90,122 @@ const SEM_FORMATO: Formato = {
   negrito: false,
   italico: false,
   sublinhado: false,
+  tachado: false,
   tamanho: null,
   cor: null,
 };
 
-function mesmoFormato(a: Formato, b: Formato): boolean {
-  return (
-    a.negrito === b.negrito &&
-    a.italico === b.italico &&
-    a.sublinhado === b.sublinhado &&
-    a.tamanho === b.tamanho &&
-    a.cor === b.cor
+/** O que se ajusta num parágrafo inteiro. `null` em qualquer campo significa
+ *  "o padrão da peça" — e é diferente de zero: zero é uma escolha, e vale
+ *  contra o padrão configurado no modelo do escritório. */
+export type FormatoDeParagrafo = {
+  esquerda: number | null;
+  primeira: number | null;
+  direita: number | null;
+};
+
+export const SEM_PARAGRAFO: FormatoDeParagrafo = {
+  esquerda: null,
+  primeira: null,
+  direita: null,
+};
+
+/** As chaves do marcador `[[par=…]]`, na ordem em que são escritas. */
+const CAMPOS_DE_PARAGRAFO = [
+  ["esq", "esquerda"],
+  ["pri", "primeira"],
+  ["dir", "direita"],
+] as const;
+
+function numeroOuNulo(texto: string | undefined): number | null {
+  if (texto === undefined || texto.trim() === "") return null;
+  const valor = Number(texto);
+  return Number.isFinite(valor) ? valor : null;
+}
+
+function limitar(valor: number, minimo: number, maximo: number): number {
+  return Math.max(minimo, Math.min(maximo, valor));
+}
+
+/** Arredonda para duas casas: sem isto, arrastar a régua grava `1.2500000003`
+ *  e o texto da peça muda a cada arrasto sem nada ter mudado de verdade. */
+function duasCasas(valor: number): number {
+  return Math.round(valor * 100) / 100;
+}
+
+function normalizarParagrafo(bruto: FormatoDeParagrafo): FormatoDeParagrafo {
+  return {
+    esquerda: bruto.esquerda === null ? null : duasCasas(limitar(bruto.esquerda, 0, RECUO_MAX_CM)),
+    primeira:
+      bruto.primeira === null
+        ? null
+        : duasCasas(limitar(bruto.primeira, RECUO_PRIMEIRA_MIN_CM, RECUO_MAX_CM)),
+    direita: bruto.direita === null ? null : duasCasas(limitar(bruto.direita, 0, RECUO_MAX_CM)),
+  };
+}
+
+function lerParagrafo(corpo: string): FormatoDeParagrafo {
+  const valores = new Map<string, string>();
+  for (const par of corpo.split(";")) {
+    const [chave, valor] = par.split(":");
+    if (chave && valor !== undefined) valores.set(chave.trim(), valor.trim());
+  }
+  const bruto = { ...SEM_PARAGRAFO };
+  for (const [chave, campo] of CAMPOS_DE_PARAGRAFO) {
+    bruto[campo] = numeroOuNulo(valores.get(chave));
+  }
+  return normalizarParagrafo(bruto);
+}
+
+function escreverParagrafo(formato: FormatoDeParagrafo): string {
+  const partes = CAMPOS_DE_PARAGRAFO.filter(([, campo]) => formato[campo] !== null).map(
+    ([chave, campo]) => `${chave}:${formato[campo]}`,
   );
+  return partes.length ? `[[par=${partes.join(";")}]]` : "";
+}
+
+/** Tira do início da linha os marcadores que valem para o parágrafo inteiro.
+ *
+ * Aceita-os em qualquer ordem e em qualquer quantidade: o que o editor escreve
+ * é sempre `[[alin]]` e depois `[[par]]`, mas um texto vindo do chat ou de uma
+ * revisão da IA pode chegar na outra ordem, e a linha não pode abrir com o
+ * marcador aparecendo cru. */
+function separarMarcadoresDeLinha(linha: string): {
+  alinhamento: Alinhamento | null;
+  paragrafo: FormatoDeParagrafo;
+  resto: string;
+} {
+  let resto = linha;
+  let alinhamento: Alinhamento | null = null;
+  let paragrafo = { ...SEM_PARAGRAFO };
+  for (;;) {
+    const alin = RE_ALINHAMENTO.exec(resto);
+    if (alin) {
+      alinhamento = alin[1] as Alinhamento;
+      resto = resto.slice(alin[0].length);
+      continue;
+    }
+    const par = RE_PARAGRAFO.exec(resto);
+    if (par) {
+      paragrafo = lerParagrafo(par[1]);
+      resto = resto.slice(par[0].length);
+      continue;
+    }
+    break;
+  }
+  return { alinhamento, paragrafo, resto };
+}
+
+function estilosDoParagrafo(
+  alinhamento: Alinhamento | null,
+  paragrafo: FormatoDeParagrafo,
+): string {
+  const estilos: string[] = [];
+  if (alinhamento) estilos.push(`text-align:${ALINHAMENTO_CSS[alinhamento]}`);
+  if (paragrafo.esquerda !== null) estilos.push(`margin-left:${paragrafo.esquerda}cm`);
+  if (paragrafo.direita !== null) estilos.push(`margin-right:${paragrafo.direita}cm`);
+  if (paragrafo.primeira !== null) estilos.push(`text-indent:${paragrafo.primeira}cm`);
+  return estilos.length ? ` style="${estilos.join(";")}"` : "";
 }
 
 function escaparHtml(texto: string): string {
@@ -79,7 +216,18 @@ function escaparHtml(texto: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Quebra uma linha (já sem o `[[alin]]`) nos trechos e seus formatos. */
+function mesmoFormato(a: Formato, b: Formato): boolean {
+  return (
+    a.negrito === b.negrito &&
+    a.italico === b.italico &&
+    a.sublinhado === b.sublinhado &&
+    a.tachado === b.tachado &&
+    a.tamanho === b.tamanho &&
+    a.cor === b.cor
+  );
+}
+
+/** Quebra uma linha (já sem os marcadores de parágrafo) nos trechos e formatos. */
 function trechosDaLinha(linha: string): { texto: string; formato: Formato }[] {
   const marcas = [...linha.matchAll(RE_MARCACAO)];
   // `**` sem par é texto solto, não abertura de negrito: tratá-lo como abertura
@@ -91,6 +239,7 @@ function trechosDaLinha(linha: string): { texto: string; formato: Formato }[] {
   let negrito = false;
   let italico = false;
   let sublinhado = false;
+  let tachado = false;
   const tamanhos: number[] = [];
   const cores: string[] = [];
   const saida: { texto: string; formato: Formato }[] = [];
@@ -101,6 +250,7 @@ function trechosDaLinha(linha: string): { texto: string; formato: Formato }[] {
       negrito,
       italico,
       sublinhado,
+      tachado,
       tamanho: tamanhos.length ? tamanhos[tamanhos.length - 1] : null,
       cor: cores.length ? cores[cores.length - 1] : null,
     };
@@ -122,6 +272,7 @@ function trechosDaLinha(linha: string): { texto: string; formato: Formato }[] {
     const valor = marca[3];
     if (nome === "i") italico = !fechando;
     else if (nome === "u") sublinhado = !fechando;
+    else if (nome === "s") tachado = !fechando;
     else if (nome === "tam") {
       if (fechando) tamanhos.pop();
       else {
@@ -144,10 +295,10 @@ export function paraHtml(texto: string): string {
   return (texto || "")
     .split("\n")
     .map((linhaBruta) => {
-      const achado = RE_ALINHAMENTO.exec(linhaBruta);
-      const linha = achado ? linhaBruta.slice(achado[0].length) : linhaBruta;
-      const estilo = achado ? ` style="text-align:${ALINHAMENTO_CSS[achado[1] as Alinhamento]}"` : "";
-      const trechos = trechosDaLinha(linha);
+      if (RE_QUEBRA.test(linhaBruta)) return HTML_DA_QUEBRA;
+      const { alinhamento, paragrafo, resto } = separarMarcadoresDeLinha(linhaBruta);
+      const estilo = estilosDoParagrafo(alinhamento, paragrafo);
+      const trechos = trechosDaLinha(resto);
       // `<br>` para a linha vazia não sumir: `<div></div>` tem altura zero e o
       // parágrafo em branco entre blocos desapareceria da tela.
       if (!trechos.length) return `<div${estilo}><br></div>`;
@@ -157,6 +308,7 @@ export function paraHtml(texto: string): string {
           if (formato.tamanho) estilos.push(`font-size:${formato.tamanho}pt`);
           if (formato.cor) estilos.push(`color:${formato.cor}`);
           let html = escaparHtml(pedaco);
+          if (formato.tachado) html = `<s>${html}</s>`;
           if (formato.sublinhado) html = `<u>${html}</u>`;
           if (formato.italico) html = `<i>${html}</i>`;
           if (formato.negrito) html = `<b>${html}</b>`;
@@ -175,13 +327,13 @@ export function paraHtml(texto: string): string {
 export function semMarcacao(texto: string): string {
   return (texto || "")
     .split("\n")
-    .map((linha) => {
-      const achado = RE_ALINHAMENTO.exec(linha);
-      const resto = achado ? linha.slice(achado[0].length) : linha;
-      return trechosDaLinha(resto)
-        .map(({ texto: pedaco }) => pedaco)
-        .join("");
-    })
+    .map((linha) =>
+      RE_QUEBRA.test(linha)
+        ? ""
+        : trechosDaLinha(separarMarcadoresDeLinha(linha).resto)
+            .map(({ texto: pedaco }) => pedaco)
+            .join(""),
+    )
     .join("\n");
 }
 
@@ -210,14 +362,18 @@ function formatoDoNo(no: Node, limite: Element): Formato {
       if (tag === "B" || tag === "STRONG") formato.negrito = true;
       if (tag === "I" || tag === "EM") formato.italico = true;
       if (tag === "U") formato.sublinhado = true;
+      if (tag === "S" || tag === "STRIKE" || tag === "DEL") formato.tachado = true;
       const estilo = atual.style;
       // O navegador escreve o negrito ora como `<b>`, ora como `font-weight`,
       // conforme o `styleWithCSS`; ler os dois evita perder a formatação.
       if (estilo.fontWeight === "bold" || Number(estilo.fontWeight) >= 600) formato.negrito = true;
       if (estilo.fontStyle === "italic") formato.italico = true;
-      if (estilo.textDecorationLine?.includes("underline") || estilo.textDecoration?.includes("underline")) {
-        formato.sublinhado = true;
-      }
+      // Sublinhado e tachado moram na MESMA propriedade quando o navegador
+      // escreve por CSS (`text-decoration: underline line-through`): ler uma e
+      // ignorar a outra apagava o tachado ao gravar.
+      const decoracao = `${estilo.textDecorationLine || ""} ${estilo.textDecoration || ""}`;
+      if (decoracao.includes("underline")) formato.sublinhado = true;
+      if (decoracao.includes("line-through")) formato.tachado = true;
       if (formato.cor === null && estilo.color) formato.cor = corParaHex(estilo.color);
       if (formato.tamanho === null && estilo.fontSize) {
         const pt = /^([\d.]+)pt$/.exec(estilo.fontSize);
@@ -239,13 +395,81 @@ function marcar(texto: string, formato: Formato): string {
   if (formato.negrito) saida = `**${saida}**`;
   if (formato.italico) saida = `[[i]]${saida}[[/i]]`;
   if (formato.sublinhado) saida = `[[u]]${saida}[[/u]]`;
+  if (formato.tachado) saida = `[[s]]${saida}[[/s]]`;
   if (formato.tamanho) saida = `[[tam=${formato.tamanho}]]${saida}[[/tam]]`;
   if (formato.cor) saida = `[[cor=${formato.cor}]]${saida}[[/cor]]`;
   return saida;
 }
 
+/** Lê em centímetros uma medida escrita no estilo do bloco. O navegador devolve
+ *  a unidade como ela foi escrita — e é sempre este módulo que a escreve —, mas
+ *  um texto colado pode trazer `px`, e cair para zero seria pior que converter. */
+function paraCentimetros(medida: string): number | null {
+  const achado = /^(-?[\d.]+)(cm|mm|in|pt|px)$/.exec(medida.trim());
+  if (!achado) return null;
+  const valor = Number(achado[1]);
+  if (!Number.isFinite(valor)) return null;
+  const emCm: Record<string, number> = { cm: 1, mm: 0.1, in: 2.54, pt: 2.54 / 72, px: 2.54 / 96 };
+  return duasCasas(valor * emCm[achado[2]]);
+}
+
+/** O formato de parágrafo de um bloco do editor. */
+export function formatoDeParagrafoDoBloco(bloco: Element): FormatoDeParagrafo {
+  if (!(bloco instanceof HTMLElement)) return { ...SEM_PARAGRAFO };
+  const estilo = bloco.style;
+  return normalizarParagrafo({
+    esquerda: estilo.marginLeft ? paraCentimetros(estilo.marginLeft) : null,
+    primeira: estilo.textIndent ? paraCentimetros(estilo.textIndent) : null,
+    direita: estilo.marginRight ? paraCentimetros(estilo.marginRight) : null,
+  });
+}
+
+/**
+ * O formato de parágrafo COMO ELE APARECE, somando o que a peça já impunha.
+ *
+ * `formatoDeParagrafoDoBloco` lê o que está escrito NAQUELE parágrafo, que é o
+ * que precisa voltar ao texto; este lê o que a pessoa enxerga. Os dois são
+ * diferentes e os dois são necessários: o corpo da peça já entra com 1,25 cm de
+ * recuo de primeira linha vindo do estilo. A régua alimentada
+ * pelo primeiro mostraria zero embaixo de um texto visivelmente recuado — e
+ * arrastar o marcador daria um salto.
+ */
+export function formatoEfetivoDoBloco(bloco: Element): FormatoDeParagrafo {
+  if (!(bloco instanceof HTMLElement) || typeof window === "undefined") {
+    return { ...SEM_PARAGRAFO };
+  }
+  const calculado = window.getComputedStyle(bloco);
+  const cm = (valor: string): number => {
+    const px = Number.parseFloat(valor);
+    return Number.isFinite(px) ? duasCasas((px * 2.54) / 96) : 0;
+  };
+  return {
+    esquerda: cm(calculado.marginLeft),
+    primeira: cm(calculado.textIndent),
+    direita: cm(calculado.marginRight),
+  };
+}
+
+/** Grava no bloco o formato de parágrafo. Campo `null` volta ao padrão da peça
+ *  — removendo a propriedade, e não escrevendo zero: um zero explícito venceria
+ *  o recuo configurado no modelo do escritório. */
+export function aplicarFormatoDeParagrafo(bloco: HTMLElement, formato: FormatoDeParagrafo) {
+  const limpo = normalizarParagrafo(formato);
+  const escrever = (propriedade: string, valor: string | null) => {
+    if (valor === null) bloco.style.removeProperty(propriedade);
+    else bloco.style.setProperty(propriedade, valor);
+  };
+  escrever("margin-left", limpo.esquerda === null ? null : `${limpo.esquerda}cm`);
+  escrever("margin-right", limpo.direita === null ? null : `${limpo.direita}cm`);
+  escrever("text-indent", limpo.primeira === null ? null : `${limpo.primeira}cm`);
+}
+
 /** Uma linha do editor de volta a texto com marcações. */
 function linhaParaTexto(bloco: Element): string {
+  // A quebra de página não tem texto NENHUM — o rótulo que aparece na prévia é
+  // desenho. Sem esta saída, o leitor comum a devolveria como linha vazia e a
+  // quebra sumiria no primeiro salvamento.
+  if (bloco instanceof HTMLElement && bloco.dataset.quebra === "1") return MARCA_DE_QUEBRA;
   const trechos: { texto: string; formato: Formato }[] = [];
   const caminhante = document.createTreeWalker(bloco, NodeFilter.SHOW_TEXT);
   for (let no = caminhante.nextNode(); no; no = caminhante.nextNode()) {
@@ -263,11 +487,14 @@ function linhaParaTexto(bloco: Element): string {
     .join("");
   const alinhamento =
     bloco instanceof HTMLElement ? CSS_ALINHAMENTO[bloco.style.textAlign] : undefined;
-  // ` `: o navegador põe espaço-duro ao digitar espaços seguidos. No texto
+  const paragrafo = escreverParagrafo(formatoDeParagrafoDoBloco(bloco));
+  // `&nbsp;`: o navegador põe espaço-duro ao digitar espaços seguidos. No texto
   // gravado ele viraria um caractere invisível diferente, que o Word mostra mas
-  // ninguém consegue procurar nem apagar.
+  // ninguém consegue procurar nem apagar. A TABULAÇÃO, ao contrário, fica: ela
+  // é uma parada de tabulação pedida, e o gerador do .docx a converte em `w:tab`.
   const limpo = corpo.replace(/ /g, " ");
-  return alinhamento && limpo.trim() ? `[[alin=${alinhamento}]]${limpo}` : limpo;
+  if (!limpo.trim()) return limpo;
+  return `${alinhamento ? `[[alin=${alinhamento}]]` : ""}${paragrafo}${limpo}`;
 }
 
 /** O conteúdo do editor de volta ao texto da seção. */

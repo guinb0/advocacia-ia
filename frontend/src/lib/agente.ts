@@ -650,14 +650,20 @@ export function buscarPeticao(casoId: string, pecaId: string): Promise<Peticao> 
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}`);
 }
 
+/** Grava a peça em edição.
+ *
+ * `label` é o título do tópico ("DOS FATOS") e `titulo` é o nome da peça: os
+ * dois são opcionais e o backend só toca no que vem no envio, de modo que quem
+ * grava só o corpo de uma seção não apaga o título dela. */
 export function salvarRascunhoPeticao(
   casoId: string,
   pecaId: string,
-  secoes: { code: string; content: string }[],
+  secoes: { code: string; content: string; label?: string }[],
+  titulo?: string,
 ): Promise<Peticao> {
   return chamar(`/api/agente/casos/${casoId}/peticao/${pecaId}/rascunho`, {
     method: "PUT",
-    body: JSON.stringify({ secoes }),
+    body: JSON.stringify(titulo === undefined ? { secoes } : { secoes, titulo }),
   });
 }
 

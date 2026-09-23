@@ -40,6 +40,23 @@ def main() -> int:
         assert compacto.caminho.stat().st_size < 20 * 1024 * 1024
         assert compacto.caminho.stat().st_size < grande.stat().st_size
 
+        # .docx passa pelo LibreOffice (`app/docx_pdf.py`), que não existe em
+        # toda máquina de teste: o que importa aqui é o roteamento — .docx deixa
+        # de cair na recusa por "tipo não suportado" e vira PDF temporário.
+        docx = raiz / "qualificacao.docx"
+        docx.write_bytes(b"PK\x03\x04fingindo-ser-docx")
+        from app import docx_pdf
+
+        real = docx_pdf.converter
+        docx_pdf.converter = lambda conteudo: b"%PDF-1.7\nword"
+        try:
+            do_word = conversao_pdf.converter_para_pdf(docx, "Qualificacao.docx", raiz / "word.pdf")
+            assert do_word.temporario
+            assert do_word.caminho.read_bytes().startswith(b"%PDF-")
+            assert do_word.nome_download == "Qualificacao.pdf"
+        finally:
+            docx_pdf.converter = real
+
         texto = raiz / "relato.txt"
         texto.write_text("não suportado", encoding="utf-8")
         try:
