@@ -169,6 +169,10 @@ services:
       # depois na OPENROUTER_API_KEY — o OCR continua funcionando, só sem conta
       # isolada. Cadastre no escopo prod para separar o custo.
       OPENROUTER_OCR_FALLBACK_KEY: ${OPENROUTER_OCR_FALLBACK_KEY:-}
+      # Cada leitura ganha um subprocesso descartável. Se uma biblioteca C
+      # travar, o timeout mata só aquele filho e a triagem continua.
+      OCR_ISOLAR_PROCESSO: "1"
+      OCR_EXECUCAO_TIMEOUT_S: "600"
 
       ZAPSIGN_API_TOKEN: ${ZAPSIGN_API_TOKEN?ZAPSIGN_API_TOKEN is required}
       ZAPSIGN_BASE_URL: https://api.zapsign.com.br/api/v1
