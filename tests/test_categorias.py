@@ -28,15 +28,27 @@ from tests.ler_checklist_docx import ler  # noqa: E402
 DIR_DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 
-def test_only_categories_with_real_cases_are_offered_for_new_cases() -> None:
+def test_as_acoes_do_codigo_aparecem_na_criacao_do_caso() -> None:
+    """As cinco do `.docx`, na ordem em que o escritório as enumera.
+
+    O teste antigo cobrava quatro e tratava o assalto a carteiro como histórico. Ele
+    voltou para a lista de propósito (ver `_CATEGORIAS_ATIVAS`): enquanto ficava de
+    fora, a triagem enquadrava o assalto em outra ação e o checklist vinha errado.
+
+    Sem banco — que é como esta suíte roda —, `listar` devolve só as do código: as
+    criadas na tela de tipos de caso entram por `app/tipos_caso.py`.
+    """
     assert [categoria.codigo for categoria in listar()] == [
         "acidente_trabalho_correios",
         "acidente_trabalho_geral",
         "doenca_ocupacional",
         "auxilio_acidente",
+        "assalto_carteiro",
     ]
-    # Compatibilidade: um caso histórico de assalto ainda pode ser aberto.
-    assert obter("assalto_carteiro") is not None
+    # A sentinela não é ação: não se escolhe "em análise" ao abrir um caso, mas o
+    # caso em triagem precisa que ela responda.
+    assert "em_triagem" not in [c.codigo for c in listar()]
+    assert obter("em_triagem") is not None
 CHECKLISTS = (
     (
         ACIDENTE_TRABALHO_CORREIOS,

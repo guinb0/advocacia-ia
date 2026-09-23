@@ -797,10 +797,59 @@ def _com_itens_do_glossario(categoria: Categoria) -> Categoria:
     return replace(categoria, itens=categoria.itens + tuple(novos)) if novos else categoria
 
 
+# ------------------------------------------ ações criadas pelo escritório
+#
+# As cinco acima são o checklist do escritório, conferido contra o `.docx`. A sexta em
+# diante nasce na tela (`app/tipos_caso.py`), e daqui em diante as duas origens são a
+# mesma coisa para quem consome: `catalogo`, `listar` e `obter` devolvem `Categoria`
+# sem dizer de onde ela veio.
+#
+# O import é tardio de propósito: `tipos_caso` precisa das dataclasses e do catálogo
+# fixo deste módulo, e importá-lo aqui no topo fecharia o ciclo.
+
+
+def _do_escritorio() -> dict[str, Categoria]:
+    from . import tipos_caso
+
+    return tipos_caso.criados()
+
+
+def _desligadas() -> set[str]:
+    from . import tipos_caso
+
+    return tipos_caso.desativados()
+
+
+def catalogo() -> dict[str, Categoria]:
+    """Toda ação que existe, ativa ou não — para quem precisa reconhecer um código.
+
+    É o que o glossário usa para saber em que tipos de caso um documento pode ser
+    pedido, e o que `obter` consulta. Inclui a sentinela `em_triagem`.
+    """
+    return {**CATEGORIAS, **_do_escritorio()}
+
+
 def listar() -> list[Categoria]:
-    return [_com_itens_do_glossario(CATEGORIAS[codigo]) for codigo in _CATEGORIAS_ATIVAS]
+    """As ações que a triagem pode escolher e que aparecem na criação do caso.
+
+    As do código primeiro, na ordem em que o escritório as enumera; as criadas depois,
+    por nome. Desativada não entra — nem a do código, que a tela de tipos de caso
+    também desliga.
+    """
+    desligadas = _desligadas()
+    fixas = [CATEGORIAS[codigo] for codigo in _CATEGORIAS_ATIVAS if codigo not in desligadas]
+    criadas = sorted(
+        (c for codigo, c in _do_escritorio().items() if codigo not in desligadas),
+        key=lambda c: c.nome,
+    )
+    return [_com_itens_do_glossario(c) for c in (*fixas, *criadas)]
 
 
 def obter(codigo: str) -> Categoria | None:
-    categoria = CATEGORIAS.get(codigo)
+    """A ação pelo código, ATIVA OU NÃO.
+
+    Desativada continua respondendo de propósito: o caso aberto antes do desligamento
+    precisa do seu checklist para continuar sendo atendido.
+    """
+    categoria = catalogo().get(codigo)
     return _com_itens_do_glossario(categoria) if categoria else None

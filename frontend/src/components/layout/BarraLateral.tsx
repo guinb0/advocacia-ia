@@ -47,6 +47,7 @@ import {
   FolderKanban,
   HeartPulse,
   LayoutDashboard,
+  Layers,
   LibraryBig,
   LogOut,
   Menu,
@@ -126,6 +127,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
       { tela: "catalogoRoteiros", rotulo: "Roteiros" },
       { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
+      { tela: "tiposDeCaso", rotulo: "Tipos de caso" },
       /* A Administração é o único item com filhos, e por um motivo prático: o que
        * mora dentro dela é ajuste de escritório, feito uma vez e revisto raramente
        * (quem entra, o que cada perfil acessa, por onde os documentos saem para
@@ -180,6 +182,7 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   followup: PhoneCall,
   catalogoRoteiros: BookOpen,
   glossarioDocumentos: Tags,
+  tiposDeCaso: Layers,
   usuarios: Users,
   saudeAgente: HeartPulse,
   modelosDePeticao: PenLine,

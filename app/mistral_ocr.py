@@ -306,8 +306,9 @@ def markdown_do_pdf(conteudo: bytes, tempo_limite: float | None = None) -> str:
     como `image_url`. Isso serve a um RG ou a um contracheque — uma página, dois
     campos. Para um roteiro de entrevista não serve, por dois motivos:
 
-    - `pdf.MAX_PAGINAS_PDF` recusa acima de 10 páginas, e roteiro de escritório
-      passa disso. Um documento de 20 páginas nem chegaria ao OCR;
+    - a imagem única de `pdf_para_imagem` empilha todas as páginas e reduz a
+      escala para caber no teto de pixels — num roteiro de dezenas de páginas
+      isso já compromete a nitidez antes mesmo de chegar ao OCR;
     - a imagem única perde a divisão em páginas, e o `_linhas_da_resposta`
       ainda achata os títulos (`lstrip("#")`) para caber no formato de linha do
       pipeline.

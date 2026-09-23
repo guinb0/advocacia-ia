@@ -74,7 +74,6 @@ export default function ListaCasos({
 }: Props) {
   const [cliente, setCliente] = useState("");
   const [categoria, setCategoria] = useState("");
-  const [tipoAcao, setTipoAcao] = useState("");
   const [entrevistaArquivo, setEntrevistaArquivo] = useState<File | null>(null);
   const [analisandoEntrevista, setAnalisandoEntrevista] = useState(false);
   const [resultadoTriagem, setResultadoTriagem] = useState<string | null>(null);
@@ -127,11 +126,17 @@ export default function ListaCasos({
     if (!cliente.trim() || !categoriaSelecionada || !entrevistaArquivo) return;
     setCriando(true);
     try {
-      const novo = await onCriar(cliente.trim(), categoriaSelecionada, "", "", tipoAcao.trim());
+      /* `tipo_acao` guarda o NOME da ação escolhida. Antes vinha de um campo de
+       * texto livre logo acima do seletor, com o MESMO rótulo "Tipo de ação" — e a
+       * IA o preenchia com o nome da categoria de baixo. Dois campos iguais na tela
+       * para um dado que ninguém lê de volta (nem o servidor nem outra tela);
+       * o catálogo de tipos de caso é a resposta para "qual é a ação". */
+      const novo = await onCriar(
+        cliente.trim(), categoriaSelecionada, "", "", categoriaEscolhida?.nome ?? "",
+      );
       await enviarTranscricaoEntrevista(novo.id, entrevistaArquivo);
       setNovoPortal(novo);
       setCliente("");
-      setTipoAcao("");
       setEntrevistaArquivo(null);
       setResultadoTriagem(null);
     } finally {
@@ -147,7 +152,7 @@ export default function ListaCasos({
     try {
       const triagem = await triarEntrevista("", arquivo);
       const sugestao = triagem.sugestoes[0];
-      if (sugestao) { setCategoria(sugestao.codigo); setTipoAcao(sugestao.nome); }
+      if (sugestao) setCategoria(sugestao.codigo);
       if (!cliente.trim() && triagem.dados.cliente) setCliente(triagem.dados.cliente);
       setResultadoTriagem(
         sugestao
@@ -291,11 +296,6 @@ export default function ListaCasos({
             />
           </div>
 
-          <div className="mb-4">
-            <RotuloCampo htmlFor="tipo-acao-livre">Tipo de ação</RotuloCampo>
-            <Campo id="tipo-acao-livre" value={tipoAcao} onChange={(e) => setTipoAcao(e.target.value)} placeholder="A IA sugere após analisar a transcrição" />
-            <p className="mt-1 text-xs text-tinta-3">Nome livre da ação. A categoria operacional abaixo só define o checklist.</p>
-          </div>
           <div className="mb-4">
             <RotuloCampo htmlFor="categoria">Tipo de ação</RotuloCampo>
             <CampoSeletor

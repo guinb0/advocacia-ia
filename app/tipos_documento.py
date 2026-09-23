@@ -481,8 +481,8 @@ def categorias_marcadas(codigo: str) -> list[str]:
     é a de marcação, e marcações salvas juntas empatam no mesmo segundo.
     """
     marcadas = {m["categoria"] for m in _marcacoes() if m["codigo"] == codigo}
-    return [c for c in categorias.CATEGORIAS if c in marcadas] + sorted(
-        marcadas - set(categorias.CATEGORIAS)
+    return [c for c in categorias.catalogo() if c in marcadas] + sorted(
+        marcadas - set(categorias.catalogo())
     )
 
 
@@ -500,7 +500,7 @@ def _itens_fixos(codigo: str) -> list[dict[str, Any]]:
             "nome": item.nome,
             "do_glossario": False,
         }
-        for categoria in categorias.CATEGORIAS.values()
+        for categoria in categorias.catalogo().values()
         for item in categoria.itens
         if item.tipo_documento == codigo
     ]
@@ -518,7 +518,7 @@ def itens_do_checklist(
     itens = _itens_fixos(codigo)
     ja_pedem = {i["categoria"] for i in itens}
     for codigo_categoria in categorias_marcadas(codigo) if marcadas is None else marcadas:
-        categoria = categorias.CATEGORIAS.get(codigo_categoria)
+        categoria = categorias.catalogo().get(codigo_categoria)
         if categoria is None or categoria.codigo in ja_pedem:
             continue
         itens.append(
@@ -540,11 +540,11 @@ def validar_categorias(bruto: Any, codigo: str) -> list[str]:
     mostra essa linha marcada e travada, e gravá-la não acrescentaria nada.
     """
     pedidos = {str(c or "").strip() for c in bruto or []} - {""}
-    desconhecidos = sorted(pedidos - set(categorias.CATEGORIAS))
+    desconhecidos = sorted(pedidos - set(categorias.catalogo()))
     if desconhecidos:
         raise ErroGlossario(f"Tipo de caso inexistente: {', '.join(desconhecidos)}.")
     fixos = {i["categoria"] for i in _itens_fixos(codigo)}
-    return [c for c in categorias.CATEGORIAS if c in pedidos and c not in fixos]
+    return [c for c in categorias.catalogo() if c in pedidos and c not in fixos]
 
 
 def motivo_bloqueio_desativacao(
@@ -751,8 +751,8 @@ def _marcadas_no_banco(con: Any, codigo: str) -> list[str]:
     }
     # Na ordem do catálogo, a mesma de `validar_categorias`: senão `antes` e `depois`
     # do histórico acusariam mudança que é só de ordem.
-    return [c for c in categorias.CATEGORIAS if c in gravadas] + sorted(
-        gravadas - set(categorias.CATEGORIAS)
+    return [c for c in categorias.catalogo() if c in gravadas] + sorted(
+        gravadas - set(categorias.catalogo())
     )
 
 
@@ -778,7 +778,7 @@ def _recusar_desmarcacao_com_documentos(con: Any, codigo: str, desmarcadas: list
     for codigo_categoria in desmarcadas:
         total = _documentos_no_item(con, codigo_categoria, codigo)
         if total:
-            categoria = categorias.CATEGORIAS.get(codigo_categoria)
+            categoria = categorias.catalogo().get(codigo_categoria)
             raise ConflitoGlossario(
                 f"“{categoria.nome if categoria else codigo_categoria}” não pode ser "
                 f"desmarcado: {total} documento(s) já entregue(s) neste item em casos "

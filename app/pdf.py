@@ -15,29 +15,26 @@ import numpy as np
 # que ele não tolera, não importa a operação.
 PDFIUM_LOCK = threading.Lock()
 
-# Quantas páginas um único PDF pode trazer, e quantos pixels a rasterização toda
-# pode ocupar. Os dois andam JUNTOS, e é por isso que estão lado a lado.
+# Nenhum teto de PÁGINAS: um PDF de 500 páginas é aceito e rasterizado por
+# inteiro. Quem protege a memória é o teto de PIXELS abaixo — `_escala_efetiva`
+# derruba o DPI para o documento inteiro caber nele, em vez de recusar o
+# arquivo. Rasterizar num DPI menor é pior para o OCR (mais chance de errar
+# dígito de CPF ou código de CID) mas ainda lê algo; recusar não lê nada.
 #
-# A CONTA, porque mexer num sem o outro não aumenta nada de verdade:
+# A CONTA, para dimensionar o teto de pixels:
 #
 #   uma A4 a 180 DPI (escala 2,5) ≈ 1487 × 2105 ≈ 3,13M pixels
-#   20 páginas ≈ 63M pixels ≈ 188 MB na imagem final (3 bytes por pixel)
-#
-# Com o teto antigo de 24M, um PDF de 20 páginas até era aceito — mas
-# `_escala_efetiva` derrubava a escala para ~1,0 (≈72 DPI) para caber, e é
-# exatamente aí que o OCR passa a errar dígito de CPF e código de CID. Subir o
-# número de páginas sem subir o teto de pixels troca "recusa o arquivo" por
-# "lê o arquivo errado", que é pior: o erro deixa de aparecer.
+#   20 páginas nesse DPI ≈ 63M pixels ≈ 188 MB na imagem final (3 bytes/pixel)
 #
 # CUSTO REAL, declarado: o laço acumula as páginas numa lista ANTES de montar a
-# imagem final, então o pico é ~2× o tamanho dela (~376 MB em 20 páginas).
-# `PDFIUM_LOCK` serializa as conversões, então é um pico por vez — mas ele
-# divide a memória do processo com o resto da API.
+# imagem final, então o pico é ~2× o tamanho dela. `PDFIUM_LOCK` serializa as
+# conversões, então é um pico por vez — mas ele divide a memória do processo
+# com o resto da API. Um documento de centenas de páginas ainda cabe no teto de
+# pixels (a escala só cai), então o pico de memória não cresce com a página —
+# cresce só se o teto de pixels for aumentado.
 #
-# Ambos por variável de ambiente, como os outros tetos do projeto
-# (`MAX_PAGINAS_PDF_SELECAO`, `OCR_PDF_ESCALA`): o documento que hoje não cabe é
+# Por variável de ambiente, como os outros tetos do projeto (`OCR_PDF_ESCALA`):
 # ajustável em produção sem novo deploy.
-MAX_PAGINAS_PDF = int(os.getenv("MAX_PAGINAS_PDF", "20"))
 MAX_PIXELS_RENDERIZADOS = int(os.getenv("OCR_PDF_MAX_PIXELS", str(64_000_000)))
 # Escala-ALVO da rasterização. 2.5 ≈ 180 DPI: o dígito do CPF e o código do CID
 # saem mais nítidos que a 144 DPI de antes, e é aí que o OCR ganha precisão. Não
@@ -75,10 +72,6 @@ def pdf_para_imagem(conteudo: bytes) -> np.ndarray:
                 total_paginas = len(documento)
                 if total_paginas == 0:
                     raise ValueError("O PDF não contém páginas.")
-                if total_paginas > MAX_PAGINAS_PDF:
-                    raise ValueError(
-                        f"PDF com {total_paginas} páginas. O limite é de {MAX_PAGINAS_PDF} páginas por envio."
-                    )
 
                 tamanhos = [documento.get_page_size(i) for i in range(total_paginas)]
                 escala = _escala_efetiva(tamanhos)

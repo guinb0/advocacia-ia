@@ -310,7 +310,7 @@ export default function CasoEDocumentos({
               )}
             </div>
             <div>
-              <RotuloCampo htmlFor="triagem-categoria">Tipo de ação (checklist)</RotuloCampo>
+              <RotuloCampo htmlFor="triagem-categoria">Tipo de ação</RotuloCampo>
               <CampoSeletor
                 id="triagem-categoria"
                 value={escolhida}
@@ -344,7 +344,7 @@ export default function CasoEDocumentos({
                 : "A IA não enquadrou a ação com segurança nesta entrevista. Escolha o tipo abaixo: é ele que monta o checklist de documentos cobrado do cliente."}
             </p>
             <div className="mb-4 max-w-[440px]">
-              <RotuloCampo htmlFor="caso-categoria">Tipo de ação (checklist)</RotuloCampo>
+              <RotuloCampo htmlFor="caso-categoria">Tipo de ação</RotuloCampo>
               <CampoSeletor
                 id="caso-categoria"
                 value={escolhida}
