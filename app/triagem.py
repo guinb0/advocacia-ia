@@ -202,6 +202,21 @@ class Sugestao:
         }
 
 
+def _pistas() -> dict[str, list[tuple[str, int]]]:
+    """As pistas do código mais as das ações criadas pelo escritório.
+
+    Sem isto, uma ação cadastrada na tela de tipos de caso nunca seria sugerida: a
+    triagem só pontuaria as cinco escritas aqui, e o relato dela cairia na categoria
+    vizinha — com o checklist errado atrás. Uma ação do escritório que use um código do
+    código teria as pistas trocadas, e não somadas; por isso `criados()` nunca devolve
+    código já usado aqui (`tipos_caso.criar` recusa).
+    """
+    # Import tardio: `tipos_caso` lê `app/categorias.py`, que não depende da triagem.
+    from . import tipos_caso
+
+    return {**PISTAS, **tipos_caso.pistas_de_triagem()}
+
+
 def _trecho_ao_redor(texto: str, termo: str, janela: int = 60) -> str:
     """Devolve o pedaço do relato que gerou a pontuação, para o advogado conferir."""
     i = texto.find(termo)
@@ -224,7 +239,7 @@ def classificar_entrevista(texto: str) -> dict[str, Any]:
     pontos: dict[str, int] = {}
     evidencias: dict[str, list[str]] = {}
 
-    for codigo, pistas in PISTAS.items():
+    for codigo, pistas in _pistas().items():
         for termo, peso in pistas:
             # Uma vez por termo, como antes: repetir a mesma expressão não é
             # mais evidência, é a pessoa repetindo a mesma coisa.
@@ -371,6 +386,35 @@ Responda APENAS JSON:
  "duvida": <true se o relato for ambíguo>,
  "insuficiente": <true se não há fato concreto para classificar>}"""
 
+#: Onde as ações criadas pelo escritório entram na instrução: depois das cinco acima e
+#: antes das regras de decisão. Se alguém reescrever a instrução e tirar esta frase, o
+#: bloco não teria onde entrar — `tests/test_tipos_caso.py` acusa.
+MARCA_DECISAO = "COMO DECIDIR:"
+
+#: Quantas ações a instrução acima descreve. A numeração das criadas continua daqui.
+CATEGORIAS_NA_INSTRUCAO = 5
+
+
+def instrucao() -> str:
+    """A instrução com as ações que o escritório criou na tela de tipos de caso.
+
+    O modelo só escolhe entre as categorias que a instrução descreve. Sem este
+    acréscimo, o relato de uma ação nova seria enquadrado na vizinha mais parecida — e
+    o caso nasceria com o checklist de outra coisa.
+    """
+    # Import tardio: `tipos_caso` lê `app/categorias.py`, que não depende da triagem.
+    from . import tipos_caso
+
+    extras = tipos_caso.descricoes_para_o_modelo()
+    if not extras:
+        return INSTRUCAO
+    linhas = []
+    for posicao, (codigo, nome, quando) in enumerate(extras, start=CATEGORIAS_NA_INSTRUCAO + 1):
+        linhas.append(f"{posicao}. {codigo} — {nome}")
+        if quando:
+            linhas.append(f"   {quando}")
+    return INSTRUCAO.replace(MARCA_DECISAO, "\n".join(linhas) + "\n\n" + MARCA_DECISAO, 1)
+
 
 def _chave_llm() -> str:
     """Chave do ambiente ou de `dados/.env.local` (fora do versionamento)."""
@@ -409,7 +453,7 @@ def classificar_com_llm(texto: str) -> dict[str, Any] | None:
             json={
                 "model": MODELO_LLM,
                 "messages": [
-                    {"role": "system", "content": INSTRUCAO},
+                    {"role": "system", "content": instrucao()},
                     {"role": "user", "content": texto[:12000]},
                 ],
                 # Triagem precisa ser reproduzível: o mesmo relato deve dar a

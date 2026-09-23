@@ -93,6 +93,7 @@ from . import (
     revisao,
     roteamento,
     roteiros,
+    tipos_caso,
     tipos_documento,
     triagem,
     tactiq,
@@ -195,6 +196,12 @@ async def ciclo_de_vida(_: FastAPI):
             await run_in_threadpool(tipos_documento.inicializar)
         except Exception:
             log.exception("Não foi possível inicializar o glossário de tipos de documento")
+        try:
+            # Depois do glossário: o checklist de uma ação criada aqui aponta para
+            # os tipos de documento, e a validação precisa deles no lugar.
+            await run_in_threadpool(tipos_caso.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar o catálogo de tipos de caso")
     yield
 
 
@@ -342,6 +349,7 @@ app.include_router(chat.roteador)
 app.include_router(operacao.roteador)
 app.include_router(whatsapp.roteador)
 app.include_router(tipos_documento.roteador)
+app.include_router(tipos_caso.roteador)
 app.include_router(google_drive.roteador)
 
 
@@ -4862,8 +4870,9 @@ MAX_ITENS_ZIP_SELECAO = int(os.getenv("MAX_ITENS_ZIP_SELECAO", "50"))
 MAX_BYTES_ZIP_SELECAO = int(
     os.getenv("MAX_BYTES_ZIP_SELECAO", str(200 * 1024 * 1024))
 )
-#: Teto de páginas do PDF combinado. Bem acima do `pdf.MAX_PAGINAS_PDF` (que é
-#: por ARQUIVO enviado): aqui é a soma de vários documentos já aceitos no caso.
+#: Teto de páginas do PDF combinado (soma de vários documentos já aceitos no
+#: caso). `pdf.pdf_para_imagem`, que roda o OCR por ARQUIVO enviado, não tem
+#: teto de páginas — só de pixels renderizados (`pdf.MAX_PIXELS_RENDERIZADOS`).
 MAX_PAGINAS_PDF_SELECAO = int(os.getenv("MAX_PAGINAS_PDF_SELECAO", "300"))
 
 

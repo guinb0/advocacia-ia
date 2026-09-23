@@ -33,6 +33,7 @@ import Resultado from "@/components/caso/Resultado";
 import CentralDocumentacao from "@/components/documentacao/CentralDocumentacao";
 import CatalogoRoteiros from "@/components/admin/CatalogoRoteiros";
 import GlossarioDocumentos from "@/components/admin/GlossarioDocumentos";
+import TiposDeCaso from "@/components/admin/TiposDeCaso";
 import { useCasos, useCategorias } from "@/lib/useCasos";
 import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import { useSessao } from "@/lib/auth";
@@ -296,6 +297,14 @@ const Telas = (props: HomeViewProps) => {
     return (
       <ModuleFrame variant="compact">
         <GlossarioDocumentos onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
+  if (tela === "tiposDeCaso") {
+    return (
+      <ModuleFrame variant="wide">
+        <TiposDeCaso onVoltar={voltarParaCarteira} />
       </ModuleFrame>
     );
   }

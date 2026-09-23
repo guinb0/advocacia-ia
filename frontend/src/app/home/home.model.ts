@@ -29,6 +29,7 @@ export type Tela =
   | "configuracaoAssinatura"
   | "catalogoRoteiros"
   | "glossarioDocumentos"
+  | "tiposDeCaso"
   | "revisao"
   | "followup"
   | "documentacao";
@@ -65,6 +66,9 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   /* A TELA de manutenção pede o módulo; consultar o glossário não pede — a
    * reclassificação, dentro do caso, lê a lista sem passar por aqui. */
   glossarioDocumentos: "glossario_documentos",
+  /* Mesma regra do glossário: manter o catálogo pede o módulo, consultá-lo não —
+   * a criação do caso lê a lista de ações sem passar por aqui. */
+  tiposDeCaso: "tipos_caso",
   /* O `chat` de propósito NÃO está aqui — como `modelosDePeticao`.
    *
    * Ele é a porta única de perguntas, e quem limita o que cada pessoa vê são os
@@ -89,7 +93,7 @@ export const TELAS: readonly Tela[] = [
   "carteira", "chat", "agente", "caso", "dossie", "painel", "jurimetria", "casos", "avulso",
   "investigacao", "usuarios", "panorama", "operacao", "entrevista", "supervisao", "dados",
   "saudeAgente", "modelosDePeticao", "configuracaoAssinatura", "catalogoRoteiros",
-  "glossarioDocumentos", "revisao", "followup", "documentacao",
+  "glossarioDocumentos", "tiposDeCaso", "revisao", "followup", "documentacao",
 ];
 
 function ehTela(valor: string | null): valor is Tela {

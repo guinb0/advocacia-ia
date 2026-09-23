@@ -38,6 +38,7 @@ from .banco import PREFIXO, SCHEMA, conectar
 
 __all__ = [
     "ENTIDADE_ENTREGA",
+    "ENTIDADE_TIPO_CASO",
     "ENTIDADE_TIPO_DOCUMENTO",
     "houve",
     "inicializar",
@@ -46,6 +47,8 @@ __all__ = [
 ]
 
 ENTIDADE_TIPO_DOCUMENTO = "tipo_documento"
+#: Uma ação do escritório criada ou editada na tela de tipos de caso.
+ENTIDADE_TIPO_CASO = "tipo_caso"
 ENTIDADE_ENTREGA = "entrega"
 
 _TABELA = f"{SCHEMA}.{PREFIXO}historico_alteracoes"

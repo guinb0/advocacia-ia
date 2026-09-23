@@ -245,11 +245,14 @@ nada de cliente — é consultado, não alimentado.
 
 ## Categorias e checklists
 
-Cada tipo de ação tem um checklist de documentos a cobrar do cliente. Eles ficam em
-[`app/categorias.py`](app/categorias.py), transcritos dos documentos que o escritório
-manda em `.docx` (guardados em [`docs/`](docs/)).
+Cada tipo de ação tem um checklist de documentos a cobrar do cliente. As cinco do
+escritório ficam em [`app/categorias.py`](app/categorias.py), transcritas dos documentos
+que ele manda em `.docx` (guardados em [`docs/`](docs/)). As demais são **cadastro**: o
+gestor cria a ação pela tela *Tipos de caso* (ver
+[`app/tipos_caso.py`](app/tipos_caso.py)), monta o checklist escolhendo tipos do
+glossário e escreve as pistas que a triagem usa — sem mexer no código.
 
-Implementadas até agora:
+Do código, conferidas contra o `.docx`:
 
 | Categoria | Documentos | Obrigatórios |
 |---|---|---|
@@ -273,6 +276,10 @@ se o arquivo enviado é mesmo o documento pedido.
 Ele imprime cada linha marcando `[X]` para os itens em vermelho. Transcreva o resultado
 para uma nova `Categoria` em `app/categorias.py` e rode `tests.test_categorias`, que
 compara a lista do código com o `.docx` item a item — nome, numeração e obrigatoriedade.
+
+Esse caminho é para os checklists que o escritório assina em `.docx` e quer conferidos
+por teste. Ação nova sem `.docx` por trás nasce na tela *Tipos de caso*, que também
+cadastra o texto que o modelo da triagem lê e as pistas que ela pontua.
 
 ## API
 
@@ -309,7 +316,9 @@ nova nasce fechada (ver `PUBLICAS` em `main.py`).
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/api/categorias` · `/api/categorias/{codigo}` | categorias e seus checklists |
+| `GET` | `/api/categorias` · `/api/categorias/{codigo}` | categorias e seus checklists (do código e criadas) |
+| `GET` `POST` `PUT` | `/api/tipos-caso` · `/api/tipos-caso/{codigo}` | catálogo de ações; criar e editar pedem o módulo `tipos_caso` |
+| `GET` | `/api/tipos-caso/{codigo}/impacto` · `/historico` | quantos casos usam a ação, e quem a alterou |
 | `POST` `GET` | `/api/casos` | cria (`cliente`, `categoria`) e lista |
 | `GET` `PATCH` `DELETE` | `/api/casos/{id}` | checklist com status; renomear; apagar caso **e arquivos** |
 | `GET` `POST` | `/api/casos/{id}/ligacoes` | histórico e confirmação de ligação realizada |
@@ -485,7 +494,8 @@ app/                     backend (FastAPI)
   contrato.py            preenche o .docx do escritório. Não redige cláusula
   assinatura.py          assinatura eletrônica (ZapSign) e quem já assinou
   ── caso e documentos
-  categorias.py          categorias de processo e seus checklists
+  categorias.py          categorias de processo e seus checklists (as do .docx)
+  tipos_caso.py          catálogo de ações mantido pelo gestor: checklist e pistas
   casos.py               status de cada item e o texto do pedido ao cliente
   painel.py              o caso medido no tempo: etapas, comparação, riscos
   panorama.py            o escritório inteiro, com a MESMA medição do painel
