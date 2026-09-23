@@ -1978,6 +1978,18 @@ export async function tentarNovamenteEntrega(entregaId: string): Promise<void> {
   );
 }
 
+export interface ResultadoTentarNovamenteCaso {
+  reenfileiradas: number;
+  falharam: { entrega_id: string; arquivo: string; motivo: string }[];
+}
+
+/** Reenfileira TODO documento com "Falha na leitura" do caso, de uma vez. */
+export async function tentarNovamenteCaso(casoId: string): Promise<ResultadoTentarNovamenteCaso> {
+  return comoJson<ResultadoTentarNovamenteCaso>(
+    await buscar(`/api/casos/${casoId}/tentar-novamente`, { method: "POST" }),
+  );
+}
+
 /** A entrega com a extração completa — os campos que o visor mostra. */
 export async function obterEntrega(entregaId: string): Promise<EntregaDetalhe> {
   return comoJson<EntregaDetalhe>(await buscar(`/api/entregas/${entregaId}`));
