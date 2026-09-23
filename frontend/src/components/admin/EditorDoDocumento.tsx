@@ -53,6 +53,7 @@ import {
   Undo2,
 } from "lucide-react";
 
+import { baixarArquivoEntrega } from "@/lib/api";
 import {
   HTML_DA_QUEBRA,
   SEM_PARAGRAFO,
@@ -268,6 +269,59 @@ function andarNaTabela(raiz: HTMLElement, paraTras: boolean): boolean {
   selecao?.removeAllRanges();
   selecao?.addRange(intervalo);
   return true;
+}
+
+/* -------------------------------------------------------------------- fotos
+ *
+ * `paraHtml` desenha o lugar da foto, mas não a imagem: `<img src>` dispara um
+ * GET sem o cabeçalho de autorização e leva 401 (o mesmo motivo de
+ * `useArquivoEntrega`). O arquivo vem por `fetch` autenticado e vira um blob
+ * local, que só então entra no `src`.
+ */
+
+/** Um blob por anexo, para a peça inteira e para toda a vida da página.
+ *
+ * Sem o cache, cada redesenho do campo — e ele redesenha a cada revisão, a cada
+ * chat, a cada versão aceita — baixaria a foto de novo. Nada é revogado: são
+ * poucas fotos por peça, e revogar um blob que outro `<img>` ainda usa deixaria
+ * a imagem quebrada na tela. */
+const FOTOS_EM_CACHE = new Map<string, Promise<string>>();
+
+function urlDaFoto(anexoId: string): Promise<string> {
+  const guardada = FOTOS_EM_CACHE.get(anexoId);
+  if (guardada) return guardada;
+  const promessa = baixarArquivoEntrega(anexoId).then((blob) => URL.createObjectURL(blob));
+  // Falha não fica no cache: a próxima abertura da peça tenta de novo, em vez
+  // de mostrar o buraco para sempre por causa de uma rede ruim.
+  promessa.catch(() => FOTOS_EM_CACHE.delete(anexoId));
+  FOTOS_EM_CACHE.set(anexoId, promessa);
+  return promessa;
+}
+
+/** Preenche as fotos que `paraHtml` deixou marcadas dentro de um campo. */
+function carregarFotos(raiz: HTMLElement) {
+  for (const figura of Array.from(raiz.querySelectorAll<HTMLElement>("figure[data-foto]"))) {
+    const imagem = figura.querySelector("img");
+    const anexoId = figura.dataset.foto;
+    if (!imagem || !anexoId || imagem.getAttribute("src")) continue;
+    void urlDaFoto(anexoId).then(
+      (url) => {
+        // O campo pode ter sido redesenhado enquanto a foto vinha; sem esta
+        // conferência, escreveríamos num nó que já saiu da tela.
+        if (imagem.isConnected) imagem.src = url;
+      },
+      () => {
+        if (!figura.isConnected) return;
+        // Dizer o que houve, em vez de deixar o quadro cinza para sempre: a
+        // foto continua na peça e no .docx, é só a prévia que não a alcançou.
+        imagem.remove();
+        const aviso = document.createElement("span");
+        aviso.textContent = "Não foi possível carregar esta foto aqui — ela continua na peça.";
+        aviso.setAttribute("style", "font-size:10pt;font-style:italic;opacity:.6");
+        figura.prepend(aviso);
+      },
+    );
+  }
 }
 
 /** "Primeira Maiúscula", palavra a palavra. */
@@ -839,6 +893,9 @@ export function CampoDoDocumento({
     if (!elemento || valor === ultimoEmitido.current) return;
     elemento.innerHTML = paraHtml(valor);
     ultimoEmitido.current = valor;
+    // `paraHtml` deixa a foto marcada e vazia; a imagem em si depende de uma
+    // busca autenticada, que só pode acontecer aqui.
+    carregarFotos(elemento);
   }, [valor]);
 
   const emitir = useCallback(() => {
