@@ -149,6 +149,14 @@ REGRAS ABSOLUTAS
   quando foi ou de quem é, diga que não dá.
 - Se a foto for, afinal, um documento (papel, tela, formulário), diga isso em
   `documento` e descreva o que se lê nele.
+- Se a foto for um PRINT DE CONVERSA (WhatsApp ou similar): em `documento`,
+  diga "Print de conversa (WhatsApp)" ou equivalente. Em `achados`, registre
+  o nome do contato/grupo, e cada mensagem relevante como
+  campo="Mensagem (horário)", valor=o texto dela. Para um balão de ÁUDIO,
+  FOTO ou VÍDEO sem texto — só ícone e duração —, registre isso como achado
+  também ("campo": "Vídeo enviado (horário)", "valor": "duração 0:14, sem
+  texto para transcrever"), mas NUNCA invente o que o áudio/vídeo mostra ou
+  diz a partir do ícone: só o que está visivelmente escrito na tela.
 
 Responda SOMENTE JSON:
 {"documento":"o que a foto é, em poucas palavras",
@@ -158,8 +166,8 @@ Responda SOMENTE JSON:
  "sugere_pedir":["documento que confirmaria o que a foto sugere"]}
 
 `documento`: use termos como "Foto de veículo danificado", "Foto de lesão
-corporal", "Foto de local de trabalho", "Foto de equipamento", "Foto sem
-conteúdo identificável".
+corporal", "Foto de local de trabalho", "Foto de equipamento", "Print de
+conversa (WhatsApp)", "Foto sem conteúdo identificável".
 `achados`: no máximo 6, cada um sobre algo efetivamente visível.
 `atencao`: inclua SEMPRE o que a foto não prova sozinha.
 `sugere_pedir`: o documento que transformaria isto em prova (CAT, laudo, boletim
