@@ -383,6 +383,7 @@ const Telas = (props: HomeViewProps) => {
           erro={listaCasos.erro}
           onAbrir={abrirCaso}
           onCriar={listaCasos.criar}
+          onImportarZip={listaCasos.importarZip}
           onExcluir={listaCasos.excluir}
         />
       ) : tela === "entrevista" ? (

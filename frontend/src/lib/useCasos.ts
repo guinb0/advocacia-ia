@@ -75,7 +75,16 @@ export function useCasos() {
     [recarregar],
   );
 
-  return { casos, carregando, erro, recarregar, criar, excluir };
+  const importarZip = useCallback(
+    async (cliente: string, categoria: string, arquivo: File): Promise<CasoCriado> => {
+      const caso = await api.criarCasoPorZip(cliente, categoria, arquivo);
+      await recarregar();
+      return caso;
+    },
+    [recarregar],
+  );
+
+  return { casos, carregando, erro, recarregar, criar, importarZip, excluir };
 }
 
 /** Situação de um caso: checklist com status, progresso e envio de documentos. */

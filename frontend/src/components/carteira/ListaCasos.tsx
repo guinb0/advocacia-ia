@@ -18,6 +18,7 @@ interface Props {
   erro: string | null;
   onAbrir: (casoId: string) => void;
   onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string, tipoAcao?: string) => Promise<CasoCriado>;
+  onImportarZip: (cliente: string, categoria: string, arquivo: File) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
 }
 
@@ -68,6 +69,7 @@ const ACAO_ICONE =
 export default function ListaCasos({
   casos,
   categorias,
+  onImportarZip,
   carregando,
   erro,
   onAbrir,
@@ -122,6 +124,23 @@ export default function ListaCasos({
   }, [filtroNormalizado]);
 
   const entrevistaInputRef = useRef<HTMLInputElement>(null);
+  const pacoteInputRef = useRef<HTMLInputElement>(null);
+  const [pacoteArquivo, setPacoteArquivo] = useState<File | null>(null);
+  const [importandoPacote, setImportandoPacote] = useState(false);
+
+  async function importarPacote(evento: React.FormEvent) {
+    evento.preventDefault();
+    if (!cliente.trim() || !categoriaSelecionada || !pacoteArquivo) return;
+    setImportandoPacote(true);
+    try {
+      const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo);
+      setNovoPortal(novo);
+      setCliente("");
+      setPacoteArquivo(null);
+    } finally {
+      setImportandoPacote(false);
+    }
+  }
 
   async function criar(evento: React.FormEvent) {
     evento.preventDefault();
@@ -292,11 +311,11 @@ export default function ListaCasos({
         <div className="mb-4"><Botao variante="secundario" onClick={() => setModo("inicio")}>Voltar</Botao></div>
         <form onSubmit={criar}>
           <div className="mb-4">
-            <RotuloCampo htmlFor="entrevista-inicial">Entrevista do cliente (.txt)</RotuloCampo>
+            <RotuloCampo htmlFor="entrevista-inicial">Entrevista do cliente</RotuloCampo>
             <div className="flex flex-wrap items-center gap-3">
               <Botao type="button" variante="primario" onClick={() => entrevistaInputRef.current?.click()} disabled={analisandoEntrevista}>
                 <Upload className="h-4 w-4" />
-                {entrevistaArquivo ? "Trocar arquivo .txt" : "Escolher arquivo .txt"}
+                {entrevistaArquivo ? "Trocar entrevista" : "Escolher entrevista"}
               </Botao>
               <span className="text-sm text-tinta-2">{entrevistaArquivo ? entrevistaArquivo.name : "Nenhum arquivo escolhido"}</span>
             </div>
@@ -304,7 +323,6 @@ export default function ListaCasos({
               ref={entrevistaInputRef}
               id="entrevista-inicial"
               type="file"
-              accept=".txt,text/plain"
               onChange={(e) => { void selecionarEntrevista(e.target.files?.[0] ?? null); e.target.value = ""; }}
               className="hidden"
             />
@@ -392,7 +410,7 @@ export default function ListaCasos({
               !cliente.trim()
                 ? "Digite o nome do cliente para criar o caso."
                 : !entrevistaArquivo
-                  ? "Adicione o TXT da entrevista para a IA analisar o caso."
+                  ? "Adicione a entrevista para a IA analisar o caso."
                 : !categoriaSelecionada
                   ? "Escolha o tipo de ação."
                   : null
@@ -400,6 +418,39 @@ export default function ListaCasos({
             onPendencia={() => document.getElementById(!entrevistaArquivo ? "entrevista-inicial" : cliente.trim() ? "categoria" : "cliente")?.focus()}
           >
             Criar o caso
+          </BotaoProcesso>
+        </form>
+
+        <div className="my-6 border-t border-borda" />
+        <form onSubmit={importarPacote}>
+          <h3 className="text-base font-semibold text-tinta">Criar pelo pacote do cliente</h3>
+          <p className="mt-1 text-sm text-tinta-2">
+            Informe o nome, escolha a ação e envie uma pasta ZIP. Os documentos entram na triagem e uma entrevista em TXT, MD, DOCX ou PDF é vinculada automaticamente.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Botao type="button" variante="secundario" onClick={() => pacoteInputRef.current?.click()} disabled={importandoPacote}>
+              <Upload className="h-4 w-4" />
+              {pacoteArquivo ? "Trocar pasta ZIP" : "Escolher pasta ZIP"}
+            </Botao>
+            <span className="text-sm text-tinta-2">{pacoteArquivo ? pacoteArquivo.name : "Nenhum ZIP escolhido"}</span>
+            <input
+              ref={pacoteInputRef}
+              type="file"
+              accept=".zip,application/zip,application/x-zip-compressed"
+              onChange={(e) => { setPacoteArquivo(e.target.files?.[0] ?? null); e.target.value = ""; }}
+              className="hidden"
+            />
+          </div>
+          <BotaoProcesso
+            type="submit"
+            variante="secundario"
+            bloco
+            className="mt-4"
+            processando={importandoPacote}
+            textoProcessando="Montando o caso e importando a pasta…"
+            pendencia={!cliente.trim() ? "Digite o nome do cliente acima." : !pacoteArquivo ? "Escolha a pasta ZIP." : null}
+          >
+            Criar caso com ZIP
           </BotaoProcesso>
         </form>
 

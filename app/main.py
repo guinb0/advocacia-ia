@@ -3869,6 +3869,37 @@ async def enviar_documentos_em_lote(
     return await _registrar_lote(caso, arquivos, idioma)
 
 
+@app.post("/api/casos/importar-zip", status_code=201)
+async def criar_caso_por_zip(
+    cliente: str = Form(...),
+    categoria: str = Form("em_triagem"),
+    arquivo: UploadFile = File(...),
+    idioma: str = Form("pt"),
+):
+    """Abre um caso e importa uma pasta ZIP de uma vez.
+
+    A pasta é expandida pelo mesmo caminho seguro do envio em lote. Arquivos
+    chamados entrevista/transcrição em TXT, MD, DOCX ou PDF são promovidos à
+    entrevista do caso; todos os demais entram na triagem para o OCR decidir.
+    """
+    nome = Path(arquivo.filename or "").name
+    if not cliente.strip():
+        raise HTTPException(400, "Informe o nome do cliente.")
+    if Path(nome).suffix.lower() != ".zip":
+        raise HTTPException(400, "Envie uma pasta compactada no formato .zip.")
+    if categorias.obter(categoria) is None:
+        categoria = "em_triagem"
+
+    caso = armazenamento.criar_caso(cliente.strip(), categoria)
+    try:
+        lote = await _registrar_lote(caso, [arquivo], idioma)
+    except Exception:
+        armazenamento.excluir_caso(caso["id"])
+        raise
+    listar_casos.limpar_cache()  # type: ignore[attr-defined]
+    return {**caso, "portal": _criar_portal(caso["id"]), "lote": lote}
+
+
 def _autor_da_acao(usuario: auth.Usuario) -> str:
     return usuario.nome or usuario.usuario or usuario.id or "escritório"
 
