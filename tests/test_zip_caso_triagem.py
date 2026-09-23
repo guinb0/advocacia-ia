@@ -70,12 +70,14 @@ def test_zip_inclui_documentos_em_triagem_e_em_leitura() -> None:
     assert resumo["arquivos"] == 3
     assert resumo["faltando"] == []
     with zipfile.ZipFile(destino) as pacote:
+        # Número dinâmico (último do checklist + 1), não um "99" fixo: uma
+        # categoria com mais de 99 itens colidiria com um item real.
         assert sorted(pacote.namelist()) == [
             "01 - RG - rg.pdf",
             "02 - CPF - lendo.pdf",
-            "99 - Para identificar - solto.pdf",
+            "03 - Outros documentos identificados - solto.pdf",
         ]
-        assert pacote.read("99 - Para identificar - solto.pdf") == b"nao identificado"
+        assert pacote.read("03 - Outros documentos identificados - solto.pdf") == b"nao identificado"
 
 
 def test_zip_sem_triagem_continua_igual() -> None:
