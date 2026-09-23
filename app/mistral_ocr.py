@@ -152,23 +152,39 @@ def _celulas(texto: str) -> list[str]:
 _PASSO_COLUNA = 1_000.0
 
 
-#: Credencial e modelo do ÚLTIMO RECURSO, usado só quando a Mistral esgota as
-#: tentativas de `_post_com_repeticao` e continua indisponível. Reaproveita a
-#: chave de visão que já existe para fotos (`app/visao_documento.py`) — abrir
-#: uma credencial nova só para um caminho que roda raramente custaria mais em
-#: manutenção do que economizaria. Sem nenhuma das duas, o fallback fica
-#: inerte e o erro sobe como sempre subiu: a Mistral continua sendo obrigatória.
-_URL_FALLBACK = "https://openrouter.ai/api/v1/chat/completions"
+#: OpenRouter (Gemini) é o motor PRINCIPAL de leitura: mais barato que a
+#: Mistral e sem o teto de plano gratuito dela (rate limit agressivo, US$10/mês
+#: — ver decisão registrada em 2026-09-23). Reaproveita a chave de visão que já
+#: existe para fotos (`app/visao_documento.py`) por padrão, mas aceita uma
+#: própria via `OPENROUTER_OCR_FALLBACK_KEY` para isolar custo/quota se quiser.
+#: Sem nenhuma das duas, este caminho fica inerte e quem lê é só a Mistral —
+#: exatamente o comportamento de antes desta mudança.
+_URL_OPENROUTER = "https://openrouter.ai/api/v1/chat/completions"
 
-_INSTRUCAO_FALLBACK = (
-    "Transcreva TODO o texto visível nesta imagem de documento, na ordem de "
-    "leitura. Se houver tabela ou campos alinhados em colunas, represente em "
-    "markdown de tabela. Responda SOMENTE o texto transcrito, sem comentário, "
-    "sem explicação, sem cercas de código."
+_INSTRUCAO_OCR_OPENROUTER = (
+    "Transcreva TODO o texto visível nesta imagem, na ordem de leitura. Se "
+    "houver tabela ou campos alinhados em colunas, represente em markdown de "
+    "tabela.\n\n"
+    "Se a imagem for um PRINT DE CONVERSA (WhatsApp ou similar), transcreva "
+    "cada mensagem como 'remetente (horário): texto', na ordem em que aparecem. "
+    "Para um balão de ÁUDIO, FOTO ou VÍDEO embutido na conversa — que não tem "
+    "texto para transcrever —, descreva o que o balão MOSTRA entre colchetes: "
+    "'[áudio, duração X]', '[foto: o que a miniatura mostra]', '[vídeo, "
+    "duração X]'. Nunca invente o conteúdo de um áudio a partir do ícone — só "
+    "o que está visivelmente escrito (duração, remetente, legenda, se houver).\n\n"
+    "Responda SOMENTE o texto transcrito, sem comentário, sem explicação, sem "
+    "cercas de código."
 )
 
+#: Sem `confidence_scores` real vindo de um modelo de chat, um valor baixo
+#: (ex.: 0.5) derrubaria `quality.avaliar` — o portão de legibilidade exige
+#: `confianca_ocr >= 0.60` — e marcaria como ILEGÍVEL todo documento lido por
+#: aqui, mesmo os bem transcritos. 0.85 reflete que o modelo geralmente acerta
+#: a transcrição, sem fingir a precisão por página que só a Mistral mede.
+_CONFIANCA_OPENROUTER = float(os.getenv("OPENROUTER_OCR_CONFIANCA", "0.85"))
 
-def _fallback_chave() -> str:
+
+def _chave_openrouter() -> str:
     return (
         os.getenv("OPENROUTER_OCR_FALLBACK_KEY", "").strip()
         or os.getenv("OPENROUTER_VISAO_API_KEY", "").strip()
@@ -176,48 +192,71 @@ def _fallback_chave() -> str:
     )
 
 
-def _fallback_disponivel() -> bool:
-    return bool(_fallback_chave())
+def _openrouter_disponivel() -> bool:
+    return bool(_chave_openrouter())
 
 
-def _ocr_via_fallback(mime: str, dados_img: bytes) -> dict:
-    """Lê a mesma imagem pelo modelo de visão da OpenRouter, esgotada a Mistral.
+def _ocr_via_openrouter(mime: str, dados_img: bytes) -> dict:
+    """Lê a imagem pelo modelo de visão da OpenRouter — motor principal.
 
     Devolve no MESMO formato de resposta da Mistral (`{"pages": [...]}`) para
-    que `_linhas_da_resposta` sirva sem ramo especial. A confiança fixa em 0.5
-    é deliberada: não há `confidence_scores` real vindo de um modelo de chat,
-    e marcar "meio a meio" evita que o campo extraído daqui pareça tão certo
-    quanto um lido pela Mistral — quem consome a confiança já sabe tratar isso
-    como "confira antes de usar".
+    que `_linhas_da_resposta` sirva sem ramo especial.
     """
-    chave = _fallback_chave()
-    modelo = os.getenv("OPENROUTER_MODELO_OCR_FALLBACK", "").strip() or "google/gemini-3.7-flash"
+    chave = _chave_openrouter()
+    modelo = os.getenv("OPENROUTER_MODELO_OCR", "").strip() or "google/gemini-3.7-flash"
     b64 = base64.b64encode(dados_img).decode("ascii")
-    resposta = httpx.post(
-        _URL_FALLBACK,
-        headers={"Authorization": f"Bearer {chave}"},
-        json={
-            "model": modelo,
-            "temperature": 0,
-            # Documento de página cheia em fonte pequena passa fácil das 2000
-            # tokens padrão do provedor e corta o texto no meio — o mesmo
-            # defeito já visto em `analise_documentos._chamar_modelo`.
-            "max_tokens": int(os.getenv("OPENROUTER_OCR_FALLBACK_MAX_TOKENS", "8000")),
-            "messages": [
-                {"role": "system", "content": _INSTRUCAO_FALLBACK},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                    ],
-                },
-            ],
-        },
-        timeout=float(os.getenv("OPENROUTER_OCR_FALLBACK_TIMEOUT", "60")),
-    )
+    payload = {
+        "model": modelo,
+        "temperature": 0,
+        # Documento de página cheia em fonte pequena passa fácil das 2000
+        # tokens padrão do provedor e corta o texto no meio — o mesmo
+        # defeito já visto em `analise_documentos._chamar_modelo`.
+        "max_tokens": int(os.getenv("OPENROUTER_OCR_MAX_TOKENS", "8000")),
+        "messages": [
+            {"role": "system", "content": _INSTRUCAO_OCR_OPENROUTER},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                ],
+            },
+        ],
+    }
+    with httpx.Client(timeout=float(os.getenv("OPENROUTER_OCR_TIMEOUT", "60"))) as cliente:
+        resposta = _post_com_repeticao(
+            cliente,
+            _URL_OPENROUTER,
+            headers={"Authorization": f"Bearer {chave}"},
+            json=payload,
+        )
     resposta.raise_for_status()
     texto = str(resposta.json()["choices"][0]["message"]["content"] or "").strip()
-    return {"pages": [{"markdown": texto, "confidence_scores": {"average_page_confidence_score": 0.5}}]}
+    return {"pages": [{"markdown": texto,
+                        "confidence_scores": {"average_page_confidence_score": _CONFIANCA_OPENROUTER}}]}
+
+
+def _ocr_via_mistral(chave: str, mime: str, dados_img: bytes) -> dict:
+    """Lê a imagem pela Mistral — reserva, usada quando a OpenRouter falha ou não está configurada."""
+    payload = {
+        "model": os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest"),
+        "document": {
+            "type": "image_url",
+            "image_url": f"data:{mime};base64," + base64.b64encode(dados_img).decode("ascii"),
+        },
+        "include_blocks": True,
+        "confidence_scores_granularity": "page",
+        "include_image_base64": False,
+    }
+    url_base = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai").rstrip("/")
+    with httpx.Client(timeout=float(os.getenv("MISTRAL_OCR_TIMEOUT", "90"))) as cliente:
+        resposta = _post_com_repeticao(
+            cliente,
+            f"{url_base}/v1/ocr",
+            headers={"Authorization": f"Bearer {chave}"},
+            json=payload,
+        )
+    resposta.raise_for_status()
+    return resposta.json()
 
 
 def _linhas_da_resposta(dados: dict) -> list[Linha]:
@@ -254,55 +293,46 @@ def _linhas_da_resposta(dados: dict) -> list[Linha]:
 def rodar_ocr_com_tempo(
     img_bgr: np.ndarray, lang: str = "pt"
 ) -> tuple[list[Linha], dict[str, float]]:
-    """Envia uma imagem à API OCR e devolve o formato interno do pipeline."""
+    """Envia uma imagem ao OCR e devolve o formato interno do pipeline.
+
+    OpenRouter (Gemini) é tentado PRIMEIRO — mais barato e sem o teto de plano
+    gratuito que a Mistral tem hoje (rate limit agressivo, US$10/mês). A
+    Mistral vira RESERVA: melhor estrutura de tabela e confiança por página de
+    verdade, mas só entra se o OpenRouter não responder depois do retry, ou se
+    não houver credencial de OpenRouter configurada.
+    """
     del lang  # O modelo é multilíngue e detecta o idioma automaticamente.
-    chave = os.getenv("MISTRAL_API_KEY", "").strip()
-    if not chave:
-        raise RuntimeError("MISTRAL_API_KEY não configurada")
     mime, dados_img = _codificar_para_ocr(img_bgr)
-
     inicio = time.perf_counter()
-    payload = {
-        "model": os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest"),
-        "document": {
-            "type": "image_url",
-            "image_url": f"data:{mime};base64," + base64.b64encode(dados_img).decode("ascii"),
-        },
-        "include_blocks": True,
-        "confidence_scores_granularity": "page",
-        "include_image_base64": False,
-    }
-    url_base = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai").rstrip("/")
-    esgotada = False
-    dados_resposta: dict = {}
-    try:
-        with httpx.Client(timeout=float(os.getenv("MISTRAL_OCR_TIMEOUT", "90"))) as cliente:
-            resposta = _post_com_repeticao(
-                cliente,
-                f"{url_base}/v1/ocr",
-                headers={"Authorization": f"Bearer {chave}"},
-                json=payload,
-            )
-        resposta.raise_for_status()
-        dados_resposta = resposta.json()
-    except httpx.HTTPError as exc:
-        esgotada = True
-        erro_mistral = exc
 
-    if esgotada:
-        if not _fallback_disponivel():
-            raise erro_mistral  # sem reserva, o erro sobe como sempre subiu
-        log.warning(
-            "Mistral OCR esgotou %d tentativa(s); lendo via OpenRouter como reserva.",
-            _TENTATIVAS_OCR,
-        )
-        dados_resposta = _ocr_via_fallback(mime, dados_img)
+    usou_mistral = False
+    dados_resposta: dict = {}
+    erro_openrouter: Exception | None = None
+
+    if _openrouter_disponivel():
+        try:
+            dados_resposta = _ocr_via_openrouter(mime, dados_img)
+        except httpx.HTTPError as exc:
+            erro_openrouter = exc
+            log.warning("OpenRouter esgotou tentativas de OCR (%s); tentando a Mistral.", exc)
+    else:
+        erro_openrouter = RuntimeError("Nenhuma credencial de OpenRouter configurada para OCR.")
+
+    if not dados_resposta:
+        chave_mistral = os.getenv("MISTRAL_API_KEY", "").strip()
+        if not chave_mistral:
+            raise erro_openrouter
+        usou_mistral = True
+        try:
+            dados_resposta = _ocr_via_mistral(chave_mistral, mime, dados_img)
+        except httpx.HTTPError:
+            raise  # nem OpenRouter nem Mistral leram: o erro da Mistral é o mais recente
 
     inferencia = time.perf_counter() - inicio
     linhas = _linhas_da_resposta(dados_resposta)
     total = time.perf_counter() - inicio
     log.info("OCR concluído em %.2fs (%d linhas)%s.", total, len(linhas),
-              " via reserva" if esgotada else "")
+              " via Mistral (reserva)" if usou_mistral else " via OpenRouter")
     return linhas, {"fila_s": 0.0, "inferencia_s": inferencia,
                     "pos_processamento_s": total - inferencia, "total_s": total}
 
