@@ -38,6 +38,8 @@ import {
 import { avisarChatDaPeticao } from "@/lib/chatPeticao";
 import { baixarArquivo } from "@/lib/baixar";
 import { useEdicaoAutoSalva, type SituacaoDoSalvamento } from "@/lib/useEdicaoAutoSalva";
+import { BarraDeFormatacao, CampoDoDocumento, useSelecaoFormatada } from "@/components/admin/EditorDoDocumento";
+import { semMarcacao } from "@/lib/formatacaoPeticao";
 
 
 const TITULO = "font-ui text-lg font-semibold m-0";
@@ -1045,56 +1047,6 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   );
 }
 
-/** Uma seção do documento, editável, alta o bastante para o próprio texto.
- *
- * A altura acompanha o conteúdo de propósito: caixa com rolagem própria dentro
- * de uma página que também rola é o que tornava a revisão penosa — dois scrolls
- * concorrentes, e a pessoa perdia o lugar entre eles.
- *
- * O ajuste roda a cada mudança de `valor`, e não só ao digitar, porque a revisão
- * por prompt troca o texto inteiro por fora: a peça revisada chega pronta e
- * precisa caber sem que ninguém encoste no campo. */
-function CampoDoDocumento({
-  valor,
-  rotulo,
-  formato = "corpo",
-  onEditar,
-}: {
-  valor: string;
-  rotulo: string;
-  formato?: "corpo" | "fechamento" | "enderecamento";
-  onEditar: (valor: string) => void;
-}) {
-  const campo = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const elemento = campo.current;
-    if (!elemento) return;
-    // Zerar antes de medir: sem isto a altura só cresce, nunca encolhe quando o
-    // texto diminui.
-    elemento.style.height = "auto";
-    elemento.style.height = `${elemento.scrollHeight}px`;
-  }, [valor]);
-
-  return (
-    <textarea
-      ref={campo}
-      aria-label={rotulo}
-      value={valor}
-      onChange={(evento) => onEditar(evento.target.value)}
-      rows={1}
-      /* `font-titulo` explícito: campo de formulário não herda a fonte do
-         contêiner, e sem isto a seção editada sairia com a cara errada dentro
-         do próprio documento. */
-      className={`w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-titulo text-[15px] leading-[1.75] text-tinta focus:outline-none whitespace-pre-wrap ${
-        formato === "fechamento" || formato === "enderecamento"
-          ? "text-center"
-          : "text-justify [text-indent:1.25cm]"
-      }`}
-    />
-  );
-}
-
 /**
  * O DOCUMENTO É O EDITOR.
  *
@@ -1159,11 +1111,33 @@ function PreviaPeticao({
   edicao: Record<string, string>;
   onEditar: (codigo: string, valor: string) => void;
 }) {
+  /* Uma barra só, no topo do documento, agindo sobre a seção em foco — como em
+     qualquer editor de texto. Barra por seção repetiria os mesmos oito botões
+     uma dúzia de vezes dentro da peça. */
+  const [campoAtivo, setCampoAtivo] = useState<HTMLDivElement | null>(null);
+  const selecao = useSelecaoFormatada(campoAtivo);
+
+  const aplicar = useCallback(
+    (acao: (raiz: HTMLElement) => void) => {
+      if (!campoAtivo) return;
+      campoAtivo.focus();
+      // `styleWithCSS`: sem isto o navegador escreve `<font color=…>`, marcação
+      // que o leitor de formatação não reconhece e que se perderia ao salvar.
+      document.execCommand("styleWithCSS", false, "true");
+      acao(campoAtivo);
+      // `execCommand` não dispara `input` em todos os navegadores; sem este
+      // aviso a formatação aplicada pela barra não chegaria ao salvamento.
+      campoAtivo.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    [campoAtivo],
+  );
+
   return (
     <div className="grid gap-2">
       {/* Sem `max-h`/`overflow` e sem `sticky`: o documento rola com a página,
           que é o que se espera de um texto que se está escrevendo. */}
       <div className="mx-auto w-full max-w-[850px] font-titulo border border-borda-forte bg-papel shadow-sm px-10 py-12 max-[640px]:px-5 max-[640px]:py-7">
+        <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
         <h1 className="text-center text-sm font-bold uppercase tracking-wide text-tinta mb-10">
           {titulo || "Petição inicial"}
         </h1>
@@ -1180,6 +1154,7 @@ function PreviaPeticao({
                 rotulo={secao.label || secao.code}
                 formato={secao.code === "CLOSING" ? "fechamento" : secao.code === "HEADING" ? "enderecamento" : "corpo"}
                 onEditar={(valor) => onEditar(secao.code, valor)}
+                onFoco={setCampoAtivo}
               />
             </section>
           ))}
@@ -1762,7 +1737,9 @@ function ColunaComparacao({ titulo, linhas, tipo, expandido }: { titulo: string;
       const oposta = tipo === "antes" ? linha.depois : linha.antes;
       return <div key={`${linha.antes.code}:${linha.depois.code}-${i}`} className={`mb-4 whitespace-pre-wrap leading-relaxed text-tinta ${expandido ? "text-base" : "text-sm"}`}>
       <p className="mb-1 font-semibold">{secao.label}</p>
-      <TextoComDiff texto={secao.content} outro={oposta.content} tipo={tipo} />
+      {/* Sem as marcações: aqui se compara o que a peça DIZ. Formatação virando
+          palavra alterada esconderia a mudança de texto que importa. */}
+      <TextoComDiff texto={semMarcacao(secao.content)} outro={semMarcacao(oposta.content)} tipo={tipo} />
     </div>;
     })}
   </article>;
