@@ -13,6 +13,10 @@ function ehPdf(nome: string): boolean {
   return nome.toLowerCase().endsWith(".pdf");
 }
 
+function ehTexto(nome: string): boolean {
+  return nome.toLowerCase().endsWith(".txt");
+}
+
 const ROTULOS_TIPO_DOCUMENTO: Record<string, string> = {
   "DOCUMENT.ID": "Documento de identidade",
   "DOCUMENT.CPF": "CPF",
@@ -118,10 +122,32 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
   const [telaCheia, setTelaCheia] = useState(false);
   const fecharRef = useRef<HTMLButtonElement>(null);
   const { url: urlArquivo, erro: erroArquivo } = useArquivoEntrega(entregaId);
+  const [textoArquivo, setTextoArquivo] = useState<string | null>(null);
 
   useEffect(() => {
     setTelaCheia(lerTelaCheia());
   }, []);
+
+  // .txt não é imagem nem PDF: sem isto, o visor tentava mostrar o blob num
+  // <img>, que só sabe desenhar imagem — o arquivo "não abria" porque nunca
+  // havia como um <img> renderizar texto puro, por mais que o download
+  // funcionasse. O conteúdo já está no navegador (blob local); só falta ler.
+  useEffect(() => {
+    setTextoArquivo(null);
+    if (!urlArquivo || !ehTexto(arquivo)) return;
+    let cancelado = false;
+    fetch(urlArquivo)
+      .then((r) => r.text())
+      .then((texto) => {
+        if (!cancelado) setTextoArquivo(texto);
+      })
+      .catch(() => {
+        if (!cancelado) setTextoArquivo("Não foi possível exibir o conteúdo deste arquivo de texto.");
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [urlArquivo, arquivo]);
 
   function alternarTelaCheia() {
     const proximo = !telaCheia;
@@ -339,6 +365,12 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
                 src={urlArquivo}
                 title={`Pré-visualização de ${arquivo}`}
               />
+            ) : ehTexto(arquivo) ? (
+              <pre
+                className={`w-full whitespace-pre-wrap break-words rounded-campo bg-papel p-4 text-sm text-tinta font-codigo overflow-auto ${telaCheia ? "h-full min-h-[60vh]" : "h-[68vh]"}`}
+              >
+                {textoArquivo ?? "Carregando o texto…"}
+              </pre>
             ) : (
               /* eslint-disable-next-line @next/next/no-img-element -- é um
                  object URL de blob, que o otimizador do Next não processa. */
