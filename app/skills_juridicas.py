@@ -60,10 +60,15 @@ def listar() -> list[dict[str, Any]]:
     inicializar()
     with peticao_skills._conectar(row_factory=peticao_skills.dict_row) as con:
         linhas = con.execute(
-            "SELECT id, nome, descricao, jsonb_object_length(referencias_json) AS referencias, "
+            "SELECT id, nome, descricao, referencias_json, "
             "criado_em, atualizado_em FROM skills_juridicas ORDER BY nome"
         ).fetchall()
-    return [{**linha, "criado_em": str(linha["criado_em"]), "atualizado_em": str(linha["atualizado_em"])} for linha in linhas]
+    return [{
+        **linha,
+        "referencias": len(dict(linha.pop("referencias_json") or {})),
+        "criado_em": str(linha["criado_em"]),
+        "atualizado_em": str(linha["atualizado_em"]),
+    } for linha in linhas]
 
 
 def obter(skill_id: str) -> dict[str, Any] | None:
