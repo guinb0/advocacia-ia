@@ -382,6 +382,7 @@ const Telas = (props: HomeViewProps) => {
           carregando={listaCasos.carregando}
           erro={listaCasos.erro}
           onAbrir={abrirCaso}
+          onAbrirDossie={abrirDossie}
           onCriar={listaCasos.criar}
           onImportarZip={listaCasos.importarZip}
           onExcluir={listaCasos.excluir}

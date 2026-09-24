@@ -60,6 +60,7 @@ from . import (
     jurimetria_caso,
     captcha,
     carteira,
+    case_brief_estado,
     casos,
     categorias,
     chat,
@@ -201,6 +202,10 @@ async def ciclo_de_vida(_: FastAPI):
             await run_in_threadpool(historico_alteracoes.inicializar)
         except Exception:
             log.exception("Não foi possível inicializar o histórico de alterações")
+        try:
+            await run_in_threadpool(case_brief_estado.inicializar)
+        except Exception:
+            log.exception("Não foi possível inicializar o estado do case brief")
         try:
             # Sem os tipos de sistema, a reclassificação cai no nome do item de
             # checklist — o comportamento de antes do glossário, e não uma falha.
@@ -2993,9 +2998,61 @@ def analisar_documentos_do_caso(caso_id: str):
     try:
         analise = analise_documentos.analisar(caso_id)
         analise["relatorio_global"] = analise_documentos.relatorio_global(caso_id)
-        return analise
     except analise_documentos.ErroAnaliseDocumentos as exc:
         raise HTTPException(503, str(exc)) from exc
+    # `fato_id` é o MESMO id que `case_brief.montar` atribui (mesma ordem, mesma
+    # lista) — é por ele que a tela confirma/corrige/rejeita um achado em
+    # `POST /api/casos/{caso_id}/insights/{fato_id}/estado`, e é por ele que a
+    # próxima geração aplica a resposta do advogado em vez de perguntar de novo.
+    try:
+        estados = case_brief_estado.estados_do_caso(caso_id)
+    except Exception:
+        estados = {}
+    for indice, achado in enumerate(analise.get("achados") or [], start=1):
+        fato_id = f"fato-{indice}"
+        achado["fato_id"] = fato_id
+        if fato_id in estados:
+            achado["estado"] = estados[fato_id]["estado"]
+    for indice, evento in enumerate(analise.get("cronologia") or [], start=1):
+        fato_id = f"evento-{indice}"
+        evento["fato_id"] = fato_id
+        if fato_id in estados:
+            evento["estado"] = estados[fato_id]["estado"]
+    return analise
+
+
+class _EstadoInsightPayload(BaseModel):
+    estado: str
+    valor_corrigido: str = ""
+    observacao: str = ""
+
+
+@app.post("/api/casos/{caso_id}/insights/{fato_id}/estado")
+def definir_estado_insight(
+    caso_id: str,
+    fato_id: str,
+    payload: _EstadoInsightPayload,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    """O advogado confirma, corrige ou rejeita um achado da análise.
+
+    A partir daqui essa resposta vale para toda geração seguinte deste caso —
+    ver `case_brief.montar`, que aplica o estado por cima da leitura crua dos
+    documentos. Não pergunta de novo o que já foi respondido.
+    """
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+    try:
+        return case_brief_estado.definir_estado(
+            caso_id,
+            fato_id,
+            payload.estado,
+            valor_corrigido=payload.valor_corrigido,
+            observacao=payload.observacao,
+            usuario=_autor_da_acao(usuario),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/casos/{caso_id}/jurimetria")
@@ -3976,7 +4033,7 @@ async def _importar_zip_do_caso_em_fundo(
     """
     caminho = Path(caminho_zip)
     try:
-        caso = armazenamento.obter_caso(caso_id)
+        caso = await run_in_threadpool(armazenamento.obter_caso, caso_id)
         if caso is None:
             return
         conteudo = await run_in_threadpool(caminho.read_bytes)
@@ -3986,6 +4043,34 @@ async def _importar_zip_do_caso_em_fundo(
         log.exception("Falha ao importar o ZIP do caso %s", caso_id)
     finally:
         caminho.unlink(missing_ok=True)
+
+
+#: Casos cujo ZIP já foi agendado para importação em fundo — evita reagendar
+#: (e reler um arquivo já apagado) quando um retry cai no mesmo caso memoizado
+#: por `_criar_caso_por_zip_idempotente`. Guarda só o instante do agendamento
+#: para podar entradas mais velhas que a janela de memoização (60s) a cada
+#: chamada, em vez de crescer para sempre.
+_casos_zip_agendados: dict[str, float] = {}
+_trava_casos_zip_agendados = threading.Lock()
+
+
+@por_alguns_segundos(60, maximo=64)
+def _criar_caso_por_zip_idempotente(
+    cliente: str, categoria: str, nome: str, conteudo: bytes, skill_juridica_id: str
+) -> dict[str, Any]:
+    """Cria o caso e grava o ZIP em disco — parte síncrona de `criar_caso_por_zip`.
+
+    Memoizada por (cliente, categoria, nome, conteúdo, skill_juridica_id): um
+    duplo clique ou um reload da tela enquanto o upload ainda está "Montando"
+    reenvia a mesma requisição, byte a byte, e cairia aqui de novo. Sem isso,
+    cada retry criava um caso novo com seu próprio ZIP em disco.
+    """
+    caso = armazenamento.criar_caso(cliente, categoria, skill_juridica_id=skill_juridica_id)
+    pasta = armazenamento.DIR_ARQUIVOS / caso["id"] / "importacoes"
+    pasta.mkdir(parents=True, exist_ok=True)
+    caminho = pasta / f"{uuid.uuid4().hex}.zip"
+    caminho.write_bytes(conteudo)
+    return {"caso": caso, "caminho": str(caminho)}
 
 
 @app.post("/api/casos/importar-zip", status_code=202)
@@ -4022,15 +4107,22 @@ async def criar_caso_por_zip(
     except zipfile.BadZipFile as exc:
         raise HTTPException(400, f"'{nome}' não é um ZIP válido ou está corrompido.") from exc
 
-    caso = armazenamento.criar_caso(
-        cliente.strip(), categoria, skill_juridica_id=skill_juridica_id
+    resultado = await run_in_threadpool(
+        _criar_caso_por_zip_idempotente, cliente.strip(), categoria, nome, conteudo, skill_juridica_id
     )
-    pasta = armazenamento.DIR_ARQUIVOS / caso["id"] / "importacoes"
-    pasta.mkdir(parents=True, exist_ok=True)
-    caminho = pasta / f"{uuid.uuid4().hex}.zip"
-    caminho.write_bytes(conteudo)
-    tarefas.add_task(_importar_zip_do_caso_em_fundo, caso["id"], str(caminho), nome, idioma)
-    listar_casos.limpar_cache()  # type: ignore[attr-defined]
+    caso = resultado["caso"]
+    agora = time.monotonic()
+    with _trava_casos_zip_agendados:
+        for antigo_id, quando in list(_casos_zip_agendados.items()):
+            if agora - quando > 60:
+                del _casos_zip_agendados[antigo_id]
+        ja_agendado = caso["id"] in _casos_zip_agendados
+        _casos_zip_agendados[caso["id"]] = agora
+    if not ja_agendado:
+        tarefas.add_task(
+            _importar_zip_do_caso_em_fundo, caso["id"], resultado["caminho"], nome, idioma
+        )
+        listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return {
         **caso,
         "portal": _criar_portal(caso["id"]),
@@ -5207,13 +5299,13 @@ def _reenfileirar_leitura(
     visível. `em_leitura` vem pronto do chamador para não repetir o `inspect`
     do broker a cada entrega, num lote com várias.
 
-    `worker_ativo=False` (ninguém consumindo `gpu_background`, `_leitor_de_
-    documentos_ativo` não achou worker nenhum) é o caso do dia: mandar pro
-    Celery só empilharia mais uma mensagem que ninguém vai buscar — o botão
-    pareceria funcionar e não mudaria nada, de novo. Sem worker, a PRÓPRIA API
-    processa o documento (`processar_entrega.apply`, execução local, sem
-    broker) numa tarefa de background do FastAPI: mais lento que um worker
-    dedicado, mas não depende de ninguém reiniciar container nenhum.
+    Três níveis, na ordem: a fila SQL durável (`_fila_sql_ocr_ativa`, a
+    migração para fora do Celery) quando estiver ligada; senão, com worker
+    Celery ativo (`worker_ativo`, de `_leitor_de_documentos_ativo`), manda pra
+    `gpu_background`; sem os dois, a PRÓPRIA API processa o documento
+    (`processar_entrega.apply`, execução local, sem broker) numa tarefa de
+    background do FastAPI — mais lento, mas não depende de ninguém reiniciar
+    container nenhum.
     """
     if entrega_id in em_leitura:
         raise _JaEmLeitura("Esta entrega já está sendo lida agora por um worker.")
@@ -5311,7 +5403,7 @@ def tentar_novamente_entrega(
     return {
         "entrega": armazenamento.obter_entrega(entrega_id),
         "processando": True,
-        "task_id": tarefa.id if tarefa is not None else None,
+        "task_id": tarefa.id if hasattr(tarefa, "id") else tarefa,
     }
 
 
@@ -5333,10 +5425,9 @@ def tentar_novamente_caso(
 
     Documento que já está no checklist (não em triagem, sem erro) não é
     tocado; um que falhar ao reenfileirar entra em `falharam` sem travar os
-    demais. Sem worker consumindo `gpu_background`, cada entrega processa
-    localmente, uma de cada vez, em segundo plano na própria API (ver
-    `_reenfileirar_leitura`) — mais lento, mas não fica parado esperando um
-    worker que não vai aparecer.
+    demais. Usa a fila SQL durável quando ligada, senão worker Celery ativo,
+    senão cada entrega processa localmente, uma de cada vez, em segundo plano
+    na própria API (ver `_reenfileirar_leitura`).
     """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:

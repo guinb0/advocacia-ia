@@ -1136,6 +1136,9 @@ export async function listarMunicipios(uf: string): Promise<MunicipioLocalidade[
 
 // ----------------------------------------------------------------- chamada
 
+/** Estado humano sobre um achado/evento — ver `case_brief_estado` no backend. */
+export type EstadoInsight = "DETECTED" | "CONFIRMED" | "CORRECTED" | "REJECTED" | "NEEDS_CONFIRMATION";
+
 export interface AchadoDocumento {
   informacao: string;
   documento: string;
@@ -1152,6 +1155,12 @@ export interface AchadoDocumento {
   papel?: string;
   /** O documento contradiz o que a entrevista registrou. */
   contradiz: boolean;
+  /** Id estável (`fato-N`) usado para confirmar/corrigir/rejeitar este achado
+   *  — o mesmo id que o case brief usa na geração da peça. */
+  fato_id?: string;
+  /** Presente só quando o advogado já reagiu a este achado. Sem o campo, o
+   *  estado é implicitamente DETECTED (a IA achou, ninguém revisou ainda). */
+  estado?: EstadoInsight;
 }
 
 /** Um gasto comprovado num documento (nota, recibo, comprovante). A lista vem
@@ -1168,7 +1177,10 @@ export interface GastoDocumento {
 
 export interface AnaliseDocumentos {
   achados: AchadoDocumento[];
-  cronologia?: Array<{ data: string; evento: string; documento: string; entrega_id: string; citacao: string }>;
+  cronologia?: Array<{
+    data: string; evento: string; documento: string; entrega_id: string; citacao: string;
+    fato_id?: string; estado?: EstadoInsight;
+  }>;
   /** Gastos dos documentos, em ordem cronológica, ligados ao arquivo de origem. */
   gastos?: GastoDocumento[];
   documentos_lidos: number;
@@ -1183,6 +1195,27 @@ export interface AnaliseDocumentos {
 export async function analisarDocumentosDoCaso(casoId: string): Promise<AnaliseDocumentos> {
   return comoJson(
     await buscar(`/api/casos/${encodeURIComponent(casoId)}/analise-documentos`, { method: "POST" }),
+  );
+}
+
+/** Confirma, corrige ou rejeita um achado/evento — vale a partir daqui para
+ *  toda geração seguinte deste caso (ver `case_brief_estado` no backend). */
+export async function definirEstadoInsight(
+  casoId: string,
+  fatoId: string,
+  estado: EstadoInsight,
+  opcoes?: { valorCorrigido?: string; observacao?: string },
+): Promise<{ estado: EstadoInsight }> {
+  return comoJson(
+    await buscar(`/api/casos/${encodeURIComponent(casoId)}/insights/${encodeURIComponent(fatoId)}/estado`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        estado,
+        valor_corrigido: opcoes?.valorCorrigido ?? "",
+        observacao: opcoes?.observacao ?? "",
+      }),
+    }),
   );
 }
 
