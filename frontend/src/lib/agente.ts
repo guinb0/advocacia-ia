@@ -639,6 +639,10 @@ export interface ProgressoPeticao {
   generation_id: string | null;
   blocking_findings: number;
   erro?: string;
+  /** Frase humana da etapa atual ("Redigindo a petição…"). */
+  etapa?: string;
+  passo?: number;
+  passos_totais?: number;
 }
 
 /** Onde a redação está agora. `desde` é o `requested_at` devolvido pelo POST. */
@@ -652,13 +656,18 @@ export function progressoPeticao(casoId: string, desde: string): Promise<Progres
 export async function aguardarPeticaoPronta(
   casoId: string,
   requestedAt: string,
-  opcoes?: { intervaloMs?: number; tetoMs?: number },
+  opcoes?: {
+    intervaloMs?: number;
+    tetoMs?: number;
+    onProgresso?: (progresso: ProgressoPeticao) => void;
+  },
 ): Promise<ProgressoPeticao> {
-  const intervalo = opcoes?.intervaloMs ?? 4000;
+  const intervalo = opcoes?.intervaloMs ?? 2500;
   const teto = opcoes?.tetoMs ?? 10 * 60 * 1000;
   const inicio = Date.now();
   while (Date.now() - inicio < teto) {
     const progresso = await progressoPeticao(casoId, requestedAt);
+    opcoes?.onProgresso?.(progresso);
     if (progresso.status === "DONE") return progresso;
     if (progresso.status === "FAILED") {
       throw new ApiError(progresso.erro || "A geração da petição falhou.", { status: 502 });

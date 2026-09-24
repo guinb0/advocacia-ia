@@ -63,6 +63,10 @@ export type ControlesGeracaoPeticao = {
    * resultado aqui, quem clicava lá em cima não via nem o erro nem o fim. */
   erro: string | null;
   concluido: string | null;
+  /** Etapa ao vivo enquanto a peça nasce ("Redigindo a petição…"). */
+  etapa: string | null;
+  passo: number;
+  passosTotais: number;
 };
 
 type AcaoPeticao = "gerar" | "salvar" | "revisar";
@@ -79,6 +83,11 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [estado, setEstado] = useState<EstadoPeticaoFluxo | null>(null);
   const [peticao, setPeticao] = useState<Peticao | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [andamento, setAndamento] = useState<{
+    etapa: string;
+    passo: number;
+    total: number;
+  } | null>(null);
   /** Qual formato está sendo salvo: cada botão de download mostra só o próprio andamento. */
   const [salvandoComo, setSalvandoComo] = useState<"docx" | "pdf" | null>(null);
   const salvando = salvandoComo !== null;
@@ -187,13 +196,22 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setErro(null);
     setConcluido(null);
     setOcupado(true);
+    setAndamento({ etapa: "Preparando a geração…", passo: 0, total: 8 });
     try {
       // 202 imediato: a redação (até ~6 min com dezenas de anexos) não cabe no
       // timeout do Traefik. Sem o polling a tela via "Erro 502" com a peça ainda
       // nascendo no servidor.
       const disparo = await gerarAnaliseEPeticao(casoId);
       if (disparo.status === "RUNNING" && disparo.requested_at) {
-        await aguardarPeticaoPronta(casoId, disparo.requested_at);
+        await aguardarPeticaoPronta(casoId, disparo.requested_at, {
+          onProgresso: (p) => {
+            setAndamento({
+              etapa: p.etapa || "Redigindo a petição…",
+              passo: p.passo ?? p.completed_steps ?? 0,
+              total: p.passos_totais ?? 8,
+            });
+          },
+        });
       }
       const pronta = disparo.peticao ?? (await buscarPeticao(casoId, "local"));
       setPeticao(pronta);
@@ -214,12 +232,13 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       avisarChatDaPeticao(casoId, "falha", { acao: "Gerar a petição", erro: texto });
     } finally {
       setOcupado(false);
+      setAndamento(null);
     }
   }, [casoId, peticao, recarregar]);
 
   const semEntrevista = !temEntrevista && !estado?.entrevista?.texto;
   const rotuloGerar = ocupado
-    ? "Redigindo a petição… (pode levar alguns minutos)"
+    ? andamento?.etapa || "Redigindo a petição…"
     : peticao
       ? "Gerar de novo"
       : "Gerar análise e petição";
@@ -237,8 +256,20 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       rotulo: rotuloGerar,
       erro: erroGerar,
       concluido: concluidoGerar,
+      etapa: andamento?.etapa ?? null,
+      passo: andamento?.passo ?? 0,
+      passosTotais: andamento?.total ?? 8,
     });
-  }, [onControlesGeracao, gerar, ocupado, semEntrevista, rotuloGerar, erroGerar, concluidoGerar]);
+  }, [
+    onControlesGeracao,
+    gerar,
+    ocupado,
+    semEntrevista,
+    rotuloGerar,
+    erroGerar,
+    concluidoGerar,
+    andamento,
+  ]);
 
   async function salvar(baixarPdf = false) {
     if (!peticao) return;
@@ -567,7 +598,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               variante="primario"
               pequeno
               processando={ocupado}
-              dica="Cruzando entrevista e documentos e redigindo a petição"
+              textoProcessando={andamento?.etapa || "Redigindo a petição…"}
+              dica={
+                ocupado && andamento
+                  ? `Etapa ${Math.min(andamento.passo, andamento.total)} de ${andamento.total}`
+                  : "Cruzando entrevista e documentos e redigindo a petição"
+              }
               aguardando={salvando || revisando}
               concluido={concluidoGerar}
               onClick={() => void gerar()}
@@ -575,6 +611,43 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               {rotuloGerar}
             </BotaoProcesso>
           </div>
+          {ocupado && andamento ? (
+            <div
+              className="grid gap-2 rounded-lg border border-borda bg-papel-2 px-3 py-3"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <p className="m-0 font-medium text-tinta">{andamento.etapa}</p>
+                <p className="m-0 shrink-0 tabular-nums text-tinta-3">
+                  {Math.min(andamento.passo, andamento.total)}/{andamento.total}
+                </p>
+              </div>
+              <div
+                className="h-2 overflow-hidden rounded-pill bg-papel-3"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={andamento.total}
+                aria-valuenow={Math.min(andamento.passo, andamento.total)}
+                aria-label={andamento.etapa}
+              >
+                <div
+                  className="h-full rounded-pill bg-acao transition-[width] duration-500 ease-out"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round((Math.max(andamento.passo, 0.35) / andamento.total) * 100),
+                    )}%`,
+                  }}
+                />
+              </div>
+              <p className="m-0 text-xs text-tinta-3">
+                A peça está sendo escrita no servidor — pode levar alguns minutos com muitos
+                documentos. Não feche esta página.
+              </p>
+            </div>
+          ) : null}
           <p className={SUB}>
             Cruza a entrevista com os documentos lidos por OCR e redige a petição inicial com
             DeepSeek.

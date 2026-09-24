@@ -107,6 +107,7 @@ def _disparar_peticao_em_background(
     )
 
     def trabalhar() -> None:
+        token = peticao_local.marcar_solicitacao_em_curso(solicitacao)
         try:
             acao()
             armazenamento.concluir_solicitacao_peticao(solicitacao)
@@ -114,6 +115,8 @@ def _disparar_peticao_em_background(
         except Exception as erro:
             log.exception("petição local falhou caso=%s solicitacao=%s", caso_id, solicitacao)
             armazenamento.concluir_solicitacao_peticao(solicitacao, str(erro))
+        finally:
+            peticao_local.limpar_solicitacao_em_curso(token)
 
     threading.Thread(
         target=trabalhar, name=f"peticao-{caso_id[:8]}", daemon=True
@@ -125,6 +128,9 @@ def _disparar_peticao_em_background(
         "generation_id": None,
         "pipeline": "local",
         "solicitacao_id": solicitacao,
+        "etapa": "Preparando a geração…",
+        "passo": 0,
+        "passos_totais": peticao_local.PASSOS_GERACAO,
     }
 
 

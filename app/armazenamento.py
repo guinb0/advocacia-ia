@@ -637,19 +637,42 @@ def registrar_solicitacao_peticao(
     with conectar() as con:
         con.execute(
             "INSERT INTO solicitacoes_peticao "
-            "(id, caso_id, solicitante_id, solicitante_nome, origem, status, solicitada_em) "
-            "VALUES (?, ?, ?, ?, ?, 'requested', ?)",
-            (identificador, caso_id, solicitante_id.strip(), solicitante_nome.strip(), origem, momento),
+            "(id, caso_id, solicitante_id, solicitante_nome, origem, status, solicitada_em, "
+            "etapa, passo, passos_totais) "
+            "VALUES (?, ?, ?, ?, ?, 'requested', ?, ?, 0, 8)",
+            (
+                identificador,
+                caso_id,
+                solicitante_id.strip(),
+                solicitante_nome.strip(),
+                origem,
+                momento,
+                "Preparando a geração…",
+            ),
         )
     return identificador, momento
 
 
-def concluir_solicitacao_peticao(identificador: str, erro: str = "") -> None:
-    status = "failed" if erro else "completed"
+def atualizar_progresso_solicitacao(
+    identificador: str, etapa: str, passo: int, passos_totais: int = 8
+) -> None:
+    """Atualiza o rótulo que a tela mostra enquanto a peça ainda não terminou."""
     with conectar() as con:
         con.execute(
-            "UPDATE solicitacoes_peticao SET status = ?, concluida_em = ?, erro = ? WHERE id = ?",
-            (status, agora(), erro[:1000] or None, identificador),
+            "UPDATE solicitacoes_peticao SET etapa = ?, passo = ?, passos_totais = ? WHERE id = ?",
+            (etapa[:240], max(0, passo), max(1, passos_totais), identificador),
+        )
+
+
+def concluir_solicitacao_peticao(identificador: str, erro: str = "") -> None:
+    status = "failed" if erro else "completed"
+    etapa = "Não foi possível concluir." if erro else "Petição pronta."
+    passo = 0 if erro else 8
+    with conectar() as con:
+        con.execute(
+            "UPDATE solicitacoes_peticao SET status = ?, concluida_em = ?, erro = ?, "
+            "etapa = ?, passo = ?, passos_totais = 8 WHERE id = ?",
+            (status, agora(), erro[:1000] or None, etapa, passo, identificador),
         )
 
 
@@ -657,7 +680,8 @@ def ultima_solicitacao_peticao(caso_id: str) -> dict[str, Any] | None:
     """Última solicitação de geração deste caso (para polling assíncrono)."""
     with conectar() as con:
         linha = con.execute(
-            "SELECT TOP 1 id, status, solicitada_em, concluida_em, erro, origem "
+            "SELECT TOP 1 id, status, solicitada_em, concluida_em, erro, origem, "
+            "etapa, passo, passos_totais "
             "FROM solicitacoes_peticao WHERE caso_id = ? ORDER BY solicitada_em DESC",
             (caso_id,),
         ).fetchone()

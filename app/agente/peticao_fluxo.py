@@ -111,6 +111,7 @@ def gerar_peticao(caso_id: str, *, opcao: int = 0) -> dict[str, Any]:
 
 def gerar_completo(caso_id: str) -> dict[str, Any]:
     """Analisa entrevista + OCR e redige a petição (síncrono)."""
+    peticao_local.avancar_etapa("Lendo a transcrição da entrevista…", 1)
     ent = transcricao(caso_id)
     try:
         dados = peticao_local.gerar(caso_id, texto_entrevista=ent["texto"])

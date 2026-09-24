@@ -687,6 +687,9 @@ CREATE TABLE {SCHEMA}.{PREFIXO}solicitacoes_peticao (
     solicitada_em    varchar(40)   NOT NULL,
     concluida_em     varchar(40)   NULL,
     erro             nvarchar(1000) NULL,
+    etapa            nvarchar(240) NULL,
+    passo            int           NULL,
+    passos_totais    int           NULL,
     CONSTRAINT fk_acervo_solicitacoes_peticao_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
@@ -1072,6 +1075,11 @@ COLUNAS_NOVAS = (
         "ultimo_destino",
         "varchar(20) NOT NULL CONSTRAINT df_acervo_chat_destino DEFAULT ''",
     ),
+    # Andamento ao vivo da redação (polling em `/peticao/progresso`). Sem isto a
+    # tela só dizia "Redigindo…" enquanto o modelo trabalhava por vários minutos.
+    (f"{PREFIXO}solicitacoes_peticao", "etapa", "nvarchar(240) NULL"),
+    (f"{PREFIXO}solicitacoes_peticao", "passo", "int NULL"),
+    (f"{PREFIXO}solicitacoes_peticao", "passos_totais", "int NULL"),
 )
 
 

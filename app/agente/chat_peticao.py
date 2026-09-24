@@ -2835,12 +2835,15 @@ def _executar(caso_id: str, autor: str, acao: dict[str, Any]) -> tuple[str, dict
         )
 
         def trabalhar() -> None:
+            token = peticao_local.marcar_solicitacao_em_curso(solicitacao)
             try:
                 peticao_fluxo.gerar_completo(caso_id)
                 armazenamento.concluir_solicitacao_peticao(solicitacao)
             except Exception as erro:  # noqa: BLE001 — thread de fundo
                 log.exception("chat: geração da petição falhou caso=%s", caso_id)
                 armazenamento.concluir_solicitacao_peticao(solicitacao, str(erro))
+            finally:
+                peticao_local.limpar_solicitacao_em_curso(token)
 
         threading.Thread(
             target=trabalhar, name=f"chat-peticao-{caso_id[:8]}", daemon=True

@@ -372,7 +372,12 @@ export default function Dossie({
           <BotaoProcesso
             variante="primario"
             processando={Boolean(geracaoPeticao?.ocupado)}
-            dica="Cruzando entrevista e documentos e redigindo a petição"
+            textoProcessando={geracaoPeticao?.etapa || geracaoPeticao?.rotulo || "Redigindo…"}
+            dica={
+              geracaoPeticao?.ocupado && geracaoPeticao.etapa
+                ? `Etapa ${Math.min(geracaoPeticao.passo, geracaoPeticao.passosTotais)} de ${geracaoPeticao.passosTotais}`
+                : "Cruzando entrevista e documentos e redigindo a petição"
+            }
             pendencia={
               !geracaoPeticao
                 ? "Preparando o painel da petição…"
@@ -388,6 +393,36 @@ export default function Dossie({
             <span className="min-w-0 truncate">{geracaoPeticao?.rotulo ?? "Gerar análise e petição"}</span>
           </BotaoProcesso>
         </div>
+        {geracaoPeticao?.ocupado && geracaoPeticao.etapa ? (
+          <div className="border-b border-borda px-4 py-3 sm:px-5" role="status" aria-live="polite">
+            <div className="mb-2 flex items-baseline justify-between gap-3 text-sm">
+              <p className="m-0 font-medium text-tinta">{geracaoPeticao.etapa}</p>
+              <p className="m-0 shrink-0 tabular-nums text-tinta-3">
+                {Math.min(geracaoPeticao.passo, geracaoPeticao.passosTotais)}/
+                {geracaoPeticao.passosTotais}
+              </p>
+            </div>
+            <div
+              className="h-2 overflow-hidden rounded-pill bg-papel-3"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={geracaoPeticao.passosTotais}
+              aria-valuenow={Math.min(geracaoPeticao.passo, geracaoPeticao.passosTotais)}
+            >
+              <div
+                className="h-full rounded-pill bg-acao transition-[width] duration-500 ease-out"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.round(
+                      (Math.max(geracaoPeticao.passo, 0.35) / geracaoPeticao.passosTotais) * 100,
+                    ),
+                  )}%`,
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
       </header>
 
       {aviso && <Aviso tom="ok">{aviso}</Aviso>}

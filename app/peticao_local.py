@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import io
 import json
 import logging
@@ -50,6 +51,34 @@ ID_LOCAL = "local"
 #: alinhamento por parágrafo) interpretada no .docx.
 DOCX_STYLE_VERSION = 10
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
+
+#: Solicitação em curso nesta thread (setada pelo POST 202). Sem isto cada etapa
+#: de `gerar` não saberia qual linha de `solicitacoes_peticao` atualizar.
+_SOLICITACAO_EM_CURSO: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "solicitacao_peticao", default=None
+)
+
+PASSOS_GERACAO = 8
+
+
+def marcar_solicitacao_em_curso(solicitacao_id: str | None) -> contextvars.Token[str | None]:
+    """Usado pela rota assíncrona: a thread de fundo aponta o progresso para este id."""
+    return _SOLICITACAO_EM_CURSO.set(solicitacao_id)
+
+
+def limpar_solicitacao_em_curso(token: contextvars.Token[str | None]) -> None:
+    _SOLICITACAO_EM_CURSO.reset(token)
+
+
+def avancar_etapa(etapa: str, passo: int, total: int = PASSOS_GERACAO) -> None:
+    """Grava o andamento para o polling da tela. Sem solicitação aberta, é no-op."""
+    sid = _SOLICITACAO_EM_CURSO.get()
+    if not sid:
+        return
+    try:
+        armazenamento.atualizar_progresso_solicitacao(sid, etapa, passo, total)
+    except Exception:  # noqa: BLE001 — progresso não pode derrubar a redação
+        log.warning("petição local: falha ao gravar progresso solicitacao=%s", sid, exc_info=True)
 
 
 def _fonte_padrao() -> str:
@@ -1508,6 +1537,7 @@ def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
+    avancar_etapa("Lendo entrevista e documentos…", 1)
     regras_aplicadas = peticao_aprendizado.regras_para_contexto(
         categoria=_categoria_do_caso(caso_id)
     )
@@ -1519,17 +1549,20 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    avancar_etapa("Montando o resumo jurídico do caso…", 2)
     try:
         brief = case_brief.montar(caso_id)
     except Exception as erro:
         log.warning("petição local: case brief indisponível para trace/cobertura: %s", erro)
         brief = None
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
+    avancar_etapa("Buscando precedentes, legislação e modelos…", 3)
     precedentes = _precedentes_para_redigir(contexto)
     legislacao = _legislacao_para_redigir(contexto)
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria
     )
+    avancar_etapa("Planejando a estrutura da peça…", 4)
     plano = _outline_juridico(contexto)
     outline = _outline_para_redigir(plano)
     contexto += precedentes + legislacao + padroes + outline
@@ -1665,6 +1698,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # Sem orientação do escritório a instrução volta intocada — e a peça sai do
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
+    avancar_etapa("Redigindo a petição (pode levar alguns minutos)…", 5)
     saida = _llm_json(
         instrucao,
         contexto,
@@ -1673,6 +1707,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
         # respondeu" — que é pior, porque perde o trabalho inteiro.
         timeout=360.0,
     )
+    avancar_etapa("Organizando as seções da minuta…", 6)
     bruto_analise = saida.get("analise") or {}
     analise = {
         "resumo": str(bruto_analise.get("resumo") or "").strip(),
@@ -1705,6 +1740,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
     # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
     # cliente, súmula de memória). Ver `conferencia_peticao`.
+    avancar_etapa("Conferindo a peça contra os autos…", 7)
     secoes, violacoes, conferencia = _conferir_contra_os_autos(
         caso_id, secoes, texto_entrevista=texto_entrevista, material=contexto
     )
@@ -1745,6 +1781,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # a petição anterior continua inteira no lugar e é só tentar de novo.
     if anterior:
         armazenamento.registrar_versao_peticao(caso_id, anterior)
+    avancar_etapa("Gravando a minuta no dossiê…", 8)
     dados = {
         "id": ID_LOCAL,
         "generation_id": generation_id,
@@ -3040,17 +3077,26 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
             "completed_steps": len(dados.get("sections") or []),
             "generation_id": ID_LOCAL,
             "blocking_findings": dados.get("blocking_findings", 0),
+            "etapa": "Petição pronta.",
+            "passo": PASSOS_GERACAO,
+            "passos_totais": PASSOS_GERACAO,
         }
 
     solicitacao = armazenamento.ultima_solicitacao_peticao(caso_id)
     if solicitacao and str(solicitacao.get("solicitada_em") or "") >= desde:
+        etapa = str(solicitacao.get("etapa") or "").strip() or "Redigindo a petição…"
+        passo = int(solicitacao.get("passo") or 0)
+        total = int(solicitacao.get("passos_totais") or PASSOS_GERACAO) or PASSOS_GERACAO
         if solicitacao.get("status") == "failed":
             return {
                 "status": "FAILED",
-                "completed_steps": 0,
+                "completed_steps": passo,
                 "generation_id": None,
                 "blocking_findings": 0,
                 "erro": solicitacao.get("erro") or "A geração da petição falhou.",
+                "etapa": etapa,
+                "passo": passo,
+                "passos_totais": total,
             }
         if solicitacao.get("status") == "completed":
             # Peça gravada mas `updated_at` às vezes não bate com `desde`
@@ -3061,13 +3107,28 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
                 "completed_steps": secoes,
                 "generation_id": ID_LOCAL if dados else None,
                 "blocking_findings": (dados or {}).get("blocking_findings", 0),
+                "etapa": "Petição pronta.",
+                "passo": total,
+                "passos_totais": total,
             }
+        return {
+            "status": "RUNNING",
+            "completed_steps": passo,
+            "generation_id": None,
+            "blocking_findings": 0,
+            "etapa": etapa,
+            "passo": passo,
+            "passos_totais": total,
+        }
 
     return {
         "status": "RUNNING",
         "completed_steps": 0,
         "generation_id": None,
         "blocking_findings": 0,
+        "etapa": "Preparando a geração…",
+        "passo": 0,
+        "passos_totais": PASSOS_GERACAO,
     }
 
 
