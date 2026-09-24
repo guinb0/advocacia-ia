@@ -3026,22 +3026,43 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
 
 
 def progresso(caso_id: str, desde: str) -> dict[str, Any]:
+    """Andamento da geração local — não prende a request HTTP no LLM.
+
+    A geração assíncrona grava `solicitacoes_peticao` no início. Sem isto, um
+    502 do Traefik (timeout ~60s) cortava a tela enquanto o modelo ainda
+    escrevia por até 6 minutos — e a peça às vezes nascia sem o advogado ver.
+    """
     dados = carregar(caso_id)
-    if not dados:
-        return {
-            "status": "RUNNING",
-            "completed_steps": 0,
-            "generation_id": None,
-            "blocking_findings": 0,
-        }
-    criado = str(dados.get("updated_at") or dados.get("created_at") or "")
-    if criado and criado >= desde:
+    criado = str((dados or {}).get("updated_at") or (dados or {}).get("created_at") or "")
+    if dados and criado and criado >= desde:
         return {
             "status": "DONE",
             "completed_steps": len(dados.get("sections") or []),
             "generation_id": ID_LOCAL,
             "blocking_findings": dados.get("blocking_findings", 0),
         }
+
+    solicitacao = armazenamento.ultima_solicitacao_peticao(caso_id)
+    if solicitacao and str(solicitacao.get("solicitada_em") or "") >= desde:
+        if solicitacao.get("status") == "failed":
+            return {
+                "status": "FAILED",
+                "completed_steps": 0,
+                "generation_id": None,
+                "blocking_findings": 0,
+                "erro": solicitacao.get("erro") or "A geração da petição falhou.",
+            }
+        if solicitacao.get("status") == "completed":
+            # Peça gravada mas `updated_at` às vezes não bate com `desde`
+            # (formato/fuso). Sem isto o polling ficava em RUNNING para sempre.
+            secoes = len((dados or {}).get("sections") or [])
+            return {
+                "status": "DONE",
+                "completed_steps": secoes,
+                "generation_id": ID_LOCAL if dados else None,
+                "blocking_findings": (dados or {}).get("blocking_findings", 0),
+            }
+
     return {
         "status": "RUNNING",
         "completed_steps": 0,

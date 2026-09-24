@@ -17,6 +17,7 @@ import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
   aceitarRevisaoPendente,
+  aguardarPeticaoPronta,
   buscarPeticao,
   descartarRevisaoPendente,
   estadoPeticaoFluxo,
@@ -187,25 +188,26 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setConcluido(null);
     setOcupado(true);
     try {
-      const resultado = await gerarAnaliseEPeticao(casoId);
-      if (resultado.peticao) {
-        setPeticao(resultado.peticao);
-        if (resultado.analise) {
-          setEstado((atual) => ({ ...(atual ?? {}), analise: resultado.analise }));
-        }
-        await recarregar();
-        const arquivo = await baixarArquivoDaPeticao(casoId, "local", "docx");
-        baixarArquivo(arquivo, `Peticao inicial - v${resultado.peticao.version}.docx`);
-        setConcluido({
-          acao: "gerar",
-          texto: `Petição gerada (versão ${resultado.peticao.version}) e .docx baixado.`,
-        });
-        /* A IA conta no chat o que saiu — versão nova, o que ficou sem comprovação.
-         * Sem isto, a conversa ao lado continuaria falando da peça anterior como se
-         * nada tivesse acontecido, que é justamente quando o advogado mais precisa
-         * saber o que mudou. */
-        avisarChatDaPeticao(casoId, "peticao_gerada", { versao: resultado.peticao.version });
+      // 202 imediato: a redação (até ~6 min com dezenas de anexos) não cabe no
+      // timeout do Traefik. Sem o polling a tela via "Erro 502" com a peça ainda
+      // nascendo no servidor.
+      const disparo = await gerarAnaliseEPeticao(casoId);
+      if (disparo.status === "RUNNING" && disparo.requested_at) {
+        await aguardarPeticaoPronta(casoId, disparo.requested_at);
       }
+      const pronta = disparo.peticao ?? (await buscarPeticao(casoId, "local"));
+      setPeticao(pronta);
+      if (disparo.analise) {
+        setEstado((atual) => ({ ...(atual ?? {}), analise: disparo.analise }));
+      }
+      await recarregar();
+      const arquivo = await baixarArquivoDaPeticao(casoId, "local", "docx");
+      baixarArquivo(arquivo, `Peticao inicial - v${pronta.version}.docx`);
+      setConcluido({
+        acao: "gerar",
+        texto: `Petição gerada (versão ${pronta.version}) e .docx baixado.`,
+      });
+      avisarChatDaPeticao(casoId, "peticao_gerada", { versao: pronta.version });
     } catch (e) {
       const texto = e instanceof Error ? e.message : "Falha ao gerar a petição.";
       setErro({ acao: "gerar", texto });
@@ -217,7 +219,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 
   const semEntrevista = !temEntrevista && !estado?.entrevista?.texto;
   const rotuloGerar = ocupado
-    ? "Analisando e redigindo…"
+    ? "Redigindo a petição… (pode levar alguns minutos)"
     : peticao
       ? "Gerar de novo"
       : "Gerar análise e petição";

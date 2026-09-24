@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
 import uuid
@@ -2817,23 +2818,40 @@ def _executar(caso_id: str, autor: str, acao: dict[str, Any]) -> tuple[str, dict
         return texto, {"alterou": False}
 
     if tipo == "GERAR":
-        resultado = peticao_fluxo.gerar_completo(caso_id)
-        peticao = resultado.get("peticao") or {}
-        pendencias = (peticao.get("readiness") or {}).get("pendencias") or []
-        texto = (
-            f"Gerei a petição a partir da entrevista e dos documentos: agora é a"
-            f" **versão {peticao.get('version')}**, com"
-            f" {len(peticao.get('sections') or [])} seções. A versão anterior ficou no"
-            " histórico."
-        )
-        if pendencias:
-            texto += (
-                "\n\nContinuam sem comprovação documental: "
-                + _lista(pendencias)
-                + ".\n\nQuer que eu procure esses pontos nos anexos ou que eu os marque"
-                " como pendentes no texto?"
+        # NÃO roda síncrono: com dezenas de anexos a redação passa dos 60s do
+        # Traefik e a confirmação no chat virava "Erro 502" com a peça ainda
+        # nascendo. Dispara em background; o botão do dossiê já faz o polling.
+        em_curso = armazenamento.ultima_solicitacao_peticao(caso_id)
+        if em_curso and em_curso.get("status") == "requested":
+            return (
+                "Já estou redigindo a petição em segundo plano. Aguarde alguns "
+                "minutos e atualize o dossiê — a nova versão aparece sozinha quando "
+                "terminar.",
+                {"solicitacao_id": em_curso.get("id"), "andamento": True},
             )
-        return texto, {"peticao_id": peticao.get("id"), "versao": peticao.get("version")}
+
+        solicitacao, solicitado = armazenamento.registrar_solicitacao_peticao(
+            caso_id, autor or "chat", autor or "chat", "chat-gerar"
+        )
+
+        def trabalhar() -> None:
+            try:
+                peticao_fluxo.gerar_completo(caso_id)
+                armazenamento.concluir_solicitacao_peticao(solicitacao)
+            except Exception as erro:  # noqa: BLE001 — thread de fundo
+                log.exception("chat: geração da petição falhou caso=%s", caso_id)
+                armazenamento.concluir_solicitacao_peticao(solicitacao, str(erro))
+
+        threading.Thread(
+            target=trabalhar, name=f"chat-peticao-{caso_id[:8]}", daemon=True
+        ).start()
+        return (
+            "Comecei a redigir a petição em segundo plano. Com muitos documentos "
+            "isso leva alguns minutos (não é timeout da tela). Quando terminar, "
+            "atualize o dossiê ou use o botão «Gerar análise e petição» — o "
+            "andamento aparece lá.",
+            {"solicitacao_id": solicitacao, "requested_at": solicitado, "andamento": True},
+        )
 
     if tipo == "ANALISAR_DOCUMENTOS":
         analise = analise_documentos.analisar(caso_id)

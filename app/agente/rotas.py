@@ -81,7 +81,7 @@ def _erro(erro: ErroDoAgente) -> HTTPException:
 
 
 def _gerar_peticao_registrada(caso_id: str, usuario: auth.Usuario, origem: str, acao: Any) -> dict[str, Any]:
-    solicitacao = armazenamento.registrar_solicitacao_peticao(
+    solicitacao, _solicitada_em = armazenamento.registrar_solicitacao_peticao(
         caso_id, usuario.id, usuario.nome, origem
     )
     try:
@@ -91,6 +91,41 @@ def _gerar_peticao_registrada(caso_id: str, usuario: auth.Usuario, origem: str, 
         raise
     armazenamento.concluir_solicitacao_peticao(solicitacao)
     return resultado
+
+
+def _disparar_peticao_em_background(
+    caso_id: str, usuario: auth.Usuario, origem: str, acao: Any
+) -> dict[str, Any]:
+    """Devolve 202 na hora; a redação (até ~6 min) corre fora da request HTTP.
+
+    Com 58 documentos o LLM passa fácil dos 60s do Traefik — a tela via 502
+    enquanto a peça ainda nascia no servidor. O polling em `/peticao/progresso`
+    acompanha a solicitação e a peça gravada.
+    """
+    solicitacao, solicitado_em = armazenamento.registrar_solicitacao_peticao(
+        caso_id, usuario.id, usuario.nome, origem
+    )
+
+    def trabalhar() -> None:
+        try:
+            acao()
+            armazenamento.concluir_solicitacao_peticao(solicitacao)
+            log.info("petição local pronta caso=%s solicitacao=%s origem=%s", caso_id, solicitacao, origem)
+        except Exception as erro:
+            log.exception("petição local falhou caso=%s solicitacao=%s", caso_id, solicitacao)
+            armazenamento.concluir_solicitacao_peticao(solicitacao, str(erro))
+
+    threading.Thread(
+        target=trabalhar, name=f"peticao-{caso_id[:8]}", daemon=True
+    ).start()
+    return {
+        "run_id": solicitacao,
+        "status": "RUNNING",
+        "requested_at": solicitado_em,
+        "generation_id": None,
+        "pipeline": "local",
+        "solicitacao_id": solicitacao,
+    }
 
 
 @roteador.get("/config")
@@ -417,13 +452,11 @@ def gerar_peticao(
 
     Fluxo: transcrição → análise resumida → duas estratégias → redação no modelo
     treinado em Modelos de Petição. Use as rotas `/peticao-fluxo/*` para passo a passo.
+    Responde 202: a peça aparece no dossiê quando `/peticao/progresso` marcar DONE.
     """
-    try:
-        return _gerar_peticao_registrada(
-            caso_id, usuario, "peticao", lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
-        )
-    except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+    return _disparar_peticao_em_background(
+        caso_id, usuario, "peticao", lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao)
+    )
 
 
 @roteador.get("/casos/{caso_id}/peticao-fluxo")
@@ -451,32 +484,30 @@ def estrategias_peticao_fluxo(caso_id: str) -> dict[str, Any]:
         raise _erro(erro) from erro
 
 
-@roteador.post("/casos/{caso_id}/peticao-fluxo/completo")
+@roteador.post("/casos/{caso_id}/peticao-fluxo/completo", status_code=status.HTTP_202_ACCEPTED)
 def gerar_analise_e_peticao(
     caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)
 ) -> dict[str, Any]:
-    """Analisa entrevista + OCR e redige a petição (síncrono, sem agente)."""
-    try:
-        return _gerar_peticao_registrada(
-            caso_id, usuario, "peticao-fluxo-completo", lambda: peticao_fluxo.gerar_completo(caso_id)
-        )
-    except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+    """Analisa entrevista + OCR e redige a petição em background (sem agente).
+
+    202 + polling: a redação leva minutos com dezenas de anexos; prender a
+    request no Traefik virava 502 na tela.
+    """
+    return _disparar_peticao_em_background(
+        caso_id, usuario, "peticao-fluxo-completo", lambda: peticao_fluxo.gerar_completo(caso_id)
+    )
 
 
-@roteador.post("/casos/{caso_id}/peticao-fluxo/gerar")
+@roteador.post("/casos/{caso_id}/peticao-fluxo/gerar", status_code=status.HTTP_202_ACCEPTED)
 def gerar_peticao_fluxo(
     caso_id: str, opcao: int = 0, usuario: auth.Usuario = Depends(auth.usuario_atual)
 ) -> dict[str, Any]:
-    try:
-        return _gerar_peticao_registrada(
-            caso_id,
-            usuario,
-            "peticao-fluxo-gerar",
-            lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao),
-        )
-    except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+    return _disparar_peticao_em_background(
+        caso_id,
+        usuario,
+        "peticao-fluxo-gerar",
+        lambda: peticao_fluxo.gerar_peticao(caso_id, opcao=opcao),
+    )
 
 
 class PedidoPecaAnexa(BaseModel):
@@ -549,14 +580,12 @@ def _peca_anexa(caso_id: str, peca_ref: str) -> bool:
 
 @roteador.get("/casos/{caso_id}/peticao/progresso")
 def progresso_peticao(caso_id: str, desde: str) -> dict[str, Any]:
-    """Quanto da minuta já foi escrito, para a tela mostrar andamento."""
-    if peticao_local.existe(caso_id):
-        return peticao_local.progresso(caso_id, desde)
-    try:
-        caso_ref = _caso_ref(caso_id)
-        return Cliente().progresso_peticao(caso_ref, desde)
-    except ErroDoAgente as erro:
-        raise _erro(erro) from erro
+    """Quanto da minuta já foi escrito, para a tela mostrar andamento.
+
+    Pipeline local sempre: mesmo sem peça ainda (primeira geração), não cai no
+    agente remoto — senão o polling da geração assíncrona quebrava.
+    """
+    return peticao_local.progresso(caso_id, desde)
 
 
 @roteador.get("/casos/{caso_id}/peticao/{peca_ref}")

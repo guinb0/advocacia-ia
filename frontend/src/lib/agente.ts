@@ -607,10 +607,11 @@ export function gerarAnaliseEPeticao(casoId: string): Promise<{
   run_id: string;
   status: string;
   requested_at: string;
-  generation_id: string;
+  generation_id?: string | null;
   pipeline?: string;
-  peticao: Peticao;
+  peticao?: Peticao;
   analise?: AnaliseFluxo;
+  solicitacao_id?: string;
 }> {
   return chamar(`/api/agente/casos/${casoId}/peticao-fluxo/completo`, { method: "POST" });
 }
@@ -631,18 +632,42 @@ export function gerarPeticaoFluxo(
 }
 
 export interface ProgressoPeticao {
-  status: "RUNNING" | "DONE";
+  status: "RUNNING" | "DONE" | "FAILED";
   /** Seções redigidas mais a revisão — execuções de IA já gravadas, não estimativa. */
   completed_steps: number;
   /** Só existe quando a peça terminou; é o sinal de que a tela pode mostrá-la. */
   generation_id: string | null;
   blocking_findings: number;
+  erro?: string;
 }
 
 /** Onde a redação está agora. `desde` é o `requested_at` devolvido pelo POST. */
 export function progressoPeticao(casoId: string, desde: string): Promise<ProgressoPeticao> {
   return chamar(
     `/api/agente/casos/${casoId}/peticao/progresso?desde=${encodeURIComponent(desde)}`,
+  );
+}
+
+/** Espera a geração local (POST 202) terminar. Com 58 docs o LLM passa dos 60s do proxy. */
+export async function aguardarPeticaoPronta(
+  casoId: string,
+  requestedAt: string,
+  opcoes?: { intervaloMs?: number; tetoMs?: number },
+): Promise<ProgressoPeticao> {
+  const intervalo = opcoes?.intervaloMs ?? 4000;
+  const teto = opcoes?.tetoMs ?? 10 * 60 * 1000;
+  const inicio = Date.now();
+  while (Date.now() - inicio < teto) {
+    const progresso = await progressoPeticao(casoId, requestedAt);
+    if (progresso.status === "DONE") return progresso;
+    if (progresso.status === "FAILED") {
+      throw new ApiError(progresso.erro || "A geração da petição falhou.", { status: 502 });
+    }
+    await new Promise((r) => setTimeout(r, intervalo));
+  }
+  throw new ApiError(
+    "A geração está demorando mais que o esperado. Atualize o dossiê em alguns minutos — a peça pode ter sido gravada mesmo assim.",
+    { status: 504 },
   );
 }
 

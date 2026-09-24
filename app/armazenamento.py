@@ -625,16 +625,23 @@ def listar_auditorias_desde(desde: str) -> list[dict[str, Any]]:
 
 def registrar_solicitacao_peticao(
     caso_id: str, solicitante_id: str, solicitante_nome: str, origem: str
-) -> str:
+) -> tuple[str, str]:
+    """Registra o pedido de geração. Devolve `(id, solicitada_em)`.
+
+    O `solicitada_em` tem de ser o mesmo que a tela usa no polling (`desde`):
+    se o HTTP inventasse outro instante um segundo depois, a solicitação
+    sumiria do filtro e o 502 voltava a mascarar falhas rápidas.
+    """
     identificador = str(uuid.uuid4())
+    momento = agora()
     with conectar() as con:
         con.execute(
             "INSERT INTO solicitacoes_peticao "
             "(id, caso_id, solicitante_id, solicitante_nome, origem, status, solicitada_em) "
             "VALUES (?, ?, ?, ?, ?, 'requested', ?)",
-            (identificador, caso_id, solicitante_id.strip(), solicitante_nome.strip(), origem, agora()),
+            (identificador, caso_id, solicitante_id.strip(), solicitante_nome.strip(), origem, momento),
         )
-    return identificador
+    return identificador, momento
 
 
 def concluir_solicitacao_peticao(identificador: str, erro: str = "") -> None:
@@ -644,6 +651,17 @@ def concluir_solicitacao_peticao(identificador: str, erro: str = "") -> None:
             "UPDATE solicitacoes_peticao SET status = ?, concluida_em = ?, erro = ? WHERE id = ?",
             (status, agora(), erro[:1000] or None, identificador),
         )
+
+
+def ultima_solicitacao_peticao(caso_id: str) -> dict[str, Any] | None:
+    """Última solicitação de geração deste caso (para polling assíncrono)."""
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT TOP 1 id, status, solicitada_em, concluida_em, erro, origem "
+            "FROM solicitacoes_peticao WHERE caso_id = ? ORDER BY solicitada_em DESC",
+            (caso_id,),
+        ).fetchone()
+    return dict(linha) if linha else None
 
 
 def listar_solicitacoes_peticao_desde(desde: str) -> list[dict[str, Any]]:

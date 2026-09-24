@@ -394,7 +394,7 @@ def seed() -> None:
             signed=True,
         ),
     }
-    request_id = armazenamento.registrar_solicitacao_peticao(
+    request_id, _solicitada_em = armazenamento.registrar_solicitacao_peticao(
         cases["complete-one"], seeded_users[ana_email], "Ana Demonstração", "seed_development"
     )
     armazenamento.concluir_solicitacao_peticao(request_id)
