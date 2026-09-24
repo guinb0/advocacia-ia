@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from .. import armazenamento, casos, jobs, pipeline
+from .. import armazenamento, casos, fila_sql, jobs, pipeline
 from ..celery_app import celery_app
 from pathlib import Path
 import logging
+import os
 import time
 import uuid
 
@@ -13,6 +14,10 @@ log = logging.getLogger("manutencao")
 #: Vem de `casos` para que o alerta e a recuperação nunca discordem — uma entrega
 #: nunca deve ser anunciada como travada sem que alguém esteja indo buscá-la.
 MINUTOS_TRAVADA = casos.MINUTOS_ESPERA_ANORMAL
+
+
+def _fila_sql_ocr_ativa() -> bool:
+    return os.getenv("FILA_SQL_OCR_ATIVA", "0").strip().lower() in {"1", "true", "sim"}
 
 
 @celery_app.task(name="app.tasks.manutencao.limpar_temporarios")
@@ -117,6 +122,10 @@ def recuperar_entregas_travadas() -> int:
         return 0
 
     ativo, em_leitura = _leitor_de_documentos_ativo()
+    if _fila_sql_ocr_ativa():
+        # A própria reserva SQL impede duplicidade; Celery inspect não participa
+        # da decisão quando o OCR já foi migrado.
+        ativo, em_leitura = True, set()
     if not ativo:
         # Reenfileirar aqui só empilharia cópias da mesma mensagem a cada 5 min.
         # A linha existe para que o motivo real apareça no log: o problema é o
@@ -127,8 +136,6 @@ def recuperar_entregas_travadas() -> int:
             len(travadas),
         )
         return 0
-
-    from .ocr import processar_entrega
 
     reenfileiradas = 0
     for entrega in travadas:
@@ -154,23 +161,20 @@ def recuperar_entregas_travadas() -> int:
             )
             continue
 
+        args = (
+            entrega["id"], entrega["caso_id"], str(caminho), entrega["arquivo"],
+            entrega["item_codigo"], entrega["categoria"], "pt",
+            len(entrega["itens_atendidos"]) > 1,
+        )
         task_id = str(uuid.uuid4())
         armazenamento.marcar_entrega_enfileirada(entrega["id"], task_id)
-        processar_entrega.apply_async(
-            args=(
-                entrega["id"],
-                entrega["caso_id"],
-                str(caminho),
-                entrega["arquivo"],
-                entrega["item_codigo"],
-                entrega["categoria"],
-                "pt",
-                len(entrega["itens_atendidos"]) > 1,
-            ),
-            queue="gpu_background",
-            priority=7,
-            task_id=task_id,
-        )
+        if _fila_sql_ocr_ativa():
+            task_id = fila_sql.enfileirar_ocr(args, job_id=task_id)
+        else:
+            from .ocr import processar_entrega
+            processar_entrega.apply_async(
+                args=args, queue="gpu_background", priority=7, task_id=task_id,
+            )
         reenfileiradas += 1
         log.warning(
             "entrega %s estava em '%s' desde %s; devolvida à fila de leitura",

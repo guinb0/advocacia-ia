@@ -101,6 +101,7 @@ from . import (
     valor_documento,
     whatsapp,
 )
+from . import fila_sql
 from . import jobs, observabilidade
 from .banco import limite_de_espera_por_lock
 from .banco import sessao as sessao_banco
@@ -128,7 +129,15 @@ BASE = Path(__file__).resolve().parent.parent
 STATIC = BASE / "static"
 
 MAX_BYTES = 20 * 1024 * 1024
+# O pacote agrega documentos; recebe teto próprio. O conteúdo expandido segue
+# limitado separadamente para bloquear ZIP bomb.
+MAX_BYTES_ZIP_UPLOAD = int(os.getenv("MAX_BYTES_ZIP_UPLOAD", str(500 * 1024 * 1024)))
 _ocr_aquecido = threading.Event()
+
+
+def _fila_sql_ocr_ativa() -> bool:
+    """Só publica no SQL quando o serviço SQL OCR foi ligado no deploy."""
+    return os.getenv("FILA_SQL_OCR_ATIVA", "0").strip().lower() in {"1", "true", "sim"}
 
 #: Quanto cada etapa da subida espera por um lock antes de desistir. Generoso para
 #: o banco remoto sob carga, curto perto do "para sempre" que travava a API.
@@ -2711,6 +2720,18 @@ async def _ler_upload(arquivo: UploadFile) -> bytes:
     return conteudo
 
 
+async def _ler_upload_zip(arquivo: UploadFile) -> bytes:
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > MAX_BYTES_ZIP_UPLOAD:
+        raise HTTPException(
+            413,
+            f"O ZIP passa de {MAX_BYTES_ZIP_UPLOAD // (1024 * 1024)}MB. Divida o pacote em partes menores.",
+        )
+    return conteudo
+
+
 async def _processar(
     conteudo: bytes, nome: str, idioma: str, tipo_forcado: str | None
 ) -> dict:
@@ -3613,23 +3634,18 @@ async def _registrar_documento(
     # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
     # único dono do modelo; a requisição continua voltando imediatamente.
     try:
+        args = (
+            entrega["id"], caso_id, str(caminho), nome, item_codigo,
+            categoria.codigo, idioma, usar_para_rg_e_cpf,
+        )
         task_id = str(uuid.uuid4())
         armazenamento.marcar_entrega_enfileirada(entrega["id"], task_id)
-        tarefa = processar_entrega.apply_async(
-            args=(
-                entrega["id"],
-                caso_id,
-                str(caminho),
-                nome,
-                item_codigo,
-                categoria.codigo,
-                idioma,
-                usar_para_rg_e_cpf,
-            ),
-            queue="gpu_background",
-            priority=7,
-            task_id=task_id,
-        )
+        if _fila_sql_ocr_ativa():
+            task_id = fila_sql.enfileirar_ocr(args, job_id=task_id)
+        else:
+            processar_entrega.apply_async(
+                args=args, queue="gpu_background", priority=7, task_id=task_id,
+            )
     except Exception as exc:
         armazenamento.falhar_entrega(entrega["id"], "Fila de OCR indisponível.")
         log.exception("Falha ao enfileirar a entrega %s", entrega["id"])
@@ -3637,7 +3653,7 @@ async def _registrar_documento(
             503, "Fila de leitura indisponível. Tente novamente."
         ) from exc
 
-    return {"entrega": entrega, "processando": True, "task_id": tarefa.id}
+    return {"entrega": entrega, "processando": True, "task_id": task_id}
 
 
 @app.post("/api/casos/{caso_id}/documentos", status_code=201)
@@ -3681,7 +3697,7 @@ MAX_ARQUIVOS_POR_LOTE = int(os.getenv("MAX_ARQUIVOS_POR_LOTE", "200"))
 #: Guardas contra ZIP malicioso (zip bomb): teto de itens e de bytes já
 #: descomprimidos. Um ZIP acima disto é recusado inteiro, com o motivo.
 MAX_ITENS_ZIP = int(os.getenv("MAX_ITENS_ZIP", "200"))
-MAX_BYTES_ZIP = int(os.getenv("MAX_BYTES_ZIP_DESCOMPRIMIDO", str(200 * 1024 * 1024)))
+MAX_BYTES_ZIP = int(os.getenv("MAX_BYTES_ZIP_DESCOMPRIMIDO", str(1024 * 1024 * 1024)))
 # Um ZIP de documentos nunca precisa carregar binários executáveis. A lista é
 # deliberadamente pequena: formatos fora dela recebem uma resposta explícita em
 # vez de chegarem ao OCR como bytes sem semântica.
@@ -3997,7 +4013,7 @@ async def criar_caso_por_zip(
     if skill_juridica_id and await run_in_threadpool(skills_juridicas.obter, skill_juridica_id) is None:
         raise HTTPException(400, "A skill jurídica escolhida não existe mais.")
 
-    conteudo = await _ler_upload(arquivo)
+    conteudo = await _ler_upload_zip(arquivo)
     # Confere apenas o índice do ZIP agora. A leitura e o cadastro de cada
     # documento ficam para depois da resposta, para a página não parecer travada.
     try:
@@ -5228,6 +5244,11 @@ def _reenfileirar_leitura(
         "pt",
         len(itens_atendidos) > 1,
     )
+    if _fila_sql_ocr_ativa():
+        task_id = str(uuid.uuid4())
+        armazenamento.marcar_entrega_enfileirada(entrega_id, task_id)
+        fila_sql.enfileirar_ocr(args, job_id=task_id)
+        return task_id
     if worker_ativo:
         return processar_entrega.apply_async(args=args, queue="gpu_background", priority=7)
 

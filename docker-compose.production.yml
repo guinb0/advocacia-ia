@@ -173,6 +173,13 @@ services:
       # travar, o timeout mata só aquele filho e a triagem continua.
       OCR_ISOLAR_PROCESSO: "1"
       OCR_EXECUCAO_TIMEOUT_S: "600"
+      MAX_BYTES_ZIP_UPLOAD: "524288000"
+      MAX_BYTES_ZIP_DESCOMPRIMIDO: "1073741824"
+      # OCR usa a fila transacional no SQL Server. Celery/Valkey continua
+      # temporariamente para os demais serviços, mas não transporta documentos.
+      FILA_SQL_OCR_ATIVA: "1"
+      FILA_SQL_LEASE_S: "720"
+      FILA_SQL_MAX_JOBS: "20"
 
       ZAPSIGN_API_TOKEN: ${ZAPSIGN_API_TOKEN?ZAPSIGN_API_TOKEN is required}
       ZAPSIGN_BASE_URL: https://api.zapsign.com.br/api/v1
@@ -319,7 +326,7 @@ services:
   # carregam o estado de um documento anterior para o próximo.
   worker-ocr:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
-    command: ["/bin/sh", "/app/scripts/supervisionar_worker_ocr.sh", "celery", "-A", "app.celery_app:celery_app", "worker", "--pool=prefork", "--concurrency=1", "--max-tasks-per-child=20", "--max-memory-per-child=1572864", "-Q", "gpu_background", "-n", "ocr@%h"]
+    command: ["python", "-m", "app.worker_sql_ocr"]
     environment: *ambiente_api
     volumes:
       - dados:/app/dados
@@ -342,7 +349,7 @@ services:
       psql_db: {}
       cache_shared_net: {}
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.celery_app:celery_app inspect ping -d ocr@$$HOSTNAME --timeout=5 2>/dev/null | grep -q pong"]
+      test: ["CMD-SHELL", "python -c \"from app.banco import dsn; import pyodbc; con=pyodbc.connect(dsn(), timeout=5); con.execute('SELECT 1').fetchone(); con.close()\""]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -445,7 +445,7 @@ export default function ListaCasos({
         <form onSubmit={importarPacote}>
           <h3 className="text-base font-semibold text-tinta">Criar pelo pacote do cliente</h3>
           <p className="mt-1 text-sm text-tinta-2">
-            Informe o nome, escolha a ação e envie uma pasta ZIP. Os documentos entram na triagem e uma entrevista em TXT, MD, DOCX ou PDF é vinculada automaticamente.
+            Informe o nome, escolha a ação e envie uma pasta ZIP de até 500 MB. Os documentos entram na triagem e uma entrevista em TXT, MD, DOCX ou PDF é vinculada automaticamente.
           </p>
           <div
             className={`mt-4 rounded-xl border-2 border-dashed p-5 text-center transition-colors ${arrastandoPacote ? "border-acao bg-acao-clara" : "border-borda bg-papel-2"}`}
