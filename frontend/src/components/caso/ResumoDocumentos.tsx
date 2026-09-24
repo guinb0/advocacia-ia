@@ -139,6 +139,8 @@ export default function ResumoDocumentos({ itens }: { itens: ItemSituacao[] }) {
   }, [aberto, chave]);
 
   const dados = useMemo(() => consolidar(detalhes), [detalhes]);
+  const emAnalise = entregas.filter((entrega) => entrega.status_proc === "processando");
+  const proximoDaFila = entregas.find((entrega) => entrega.status_proc === "na_fila");
   const nome = dados.get("nome");
   // As seções que têm ao menos um campo preenchido — as vazias não entram.
   const secoes = SECOES_FICHA.map((s) => ({
@@ -157,6 +159,33 @@ export default function ResumoDocumentos({ itens }: { itens: ItemSituacao[] }) {
       titulo="Dados do cliente nos documentos"
       subtitulo="Ficha reunida sob demanda: carregue quando precisar conferir os dados extraídos."
     >
+      {(emAnalise.length > 0 || proximoDaFila) && (
+        <section className="mb-5 rounded-campo border border-acao-borda bg-acao-clara px-4 py-3" aria-live="polite">
+          <h3 className="m-0 text-sm font-semibold text-tinta">Fila de análise dos documentos</h3>
+          {emAnalise.length > 0 ? (
+            <div className="mt-2">
+              <p className="m-0 text-xs font-medium uppercase tracking-wide text-acao">Analisando agora</p>
+              <ul className="mt-1 mb-0 list-none p-0">
+                {emAnalise.map((entrega) => (
+                  <li key={entrega.id} className="truncate font-codigo text-sm text-tinta" title={entrega.arquivo}>
+                    {entrega.arquivo}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="mt-2 mb-0 text-sm text-tinta-2">Aguardando um worker iniciar a próxima leitura.</p>
+          )}
+          {proximoDaFila && (
+            <div className="mt-3 border-t border-acao-borda pt-3">
+              <p className="m-0 text-xs font-medium uppercase tracking-wide text-tinta-2">Próximo da fila</p>
+              <p className="mt-1 mb-0 truncate font-codigo text-sm text-tinta" title={proximoDaFila.arquivo}>
+                {proximoDaFila.arquivo}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
       {!aberto ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="m-0 text-sm leading-[1.55] text-tinta-3">
