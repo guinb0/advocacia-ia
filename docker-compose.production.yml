@@ -367,6 +367,10 @@ services:
     volumes:
       - dados:/app/dados
     deploy:
+      # Três consumidores solo, em vez de um só: cada documento continua
+      # isolado no próprio processo filho, mas um PDF lento não paralisa o
+      # lote inteiro. O limite é por réplica.
+      replicas: 3
       restart_policy:
         condition: any
         delay: "5s"
