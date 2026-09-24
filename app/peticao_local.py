@@ -289,6 +289,10 @@ def configuracao_visual() -> dict[str, Any]:
     """
     padrao = peticao_skill_arquivos.configuracao_visual_padrao()
     configuracao = dict(padrao)
+    # `fonte` vazia = "use a fonte do modelo visual enviado" (`identidade_visual`);
+    # a fonte da skill só entra na ausência dele, via `_fonte_padrao()`. Preencher
+    # aqui faria o padrão passar por cima do modelo que o escritório subiu.
+    configuracao["fonte"] = ""
     try:
         registro = armazenamento.obter_modelo(MODELO_VISUAL_CONFIG)
         if registro:
