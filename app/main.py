@@ -2484,8 +2484,13 @@ def saude_da_fila():
     Exige sessão: o endereço do broker não é informação pública.
     """
     from .tasks.manutencao import MINUTOS_TRAVADA
+    from .ocr_saude import snapshot as snapshot_ocr
 
     resposta: dict[str, Any] = {"broker": _sem_segredo(celery_app.conf.broker_url)}
+    try:
+        resposta["snapshot"] = snapshot_ocr()
+    except Exception as exc:
+        resposta["snapshot"] = {"state": "UNKNOWN", "error": type(exc).__name__}
 
     try:
         inspecao = celery_app.control.inspect(timeout=5)
@@ -3582,6 +3587,8 @@ async def _registrar_documento(
     # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
     # único dono do modelo; a requisição continua voltando imediatamente.
     try:
+        task_id = str(uuid.uuid4())
+        armazenamento.marcar_entrega_enfileirada(entrega["id"], task_id)
         tarefa = processar_entrega.apply_async(
             args=(
                 entrega["id"],
@@ -3595,6 +3602,7 @@ async def _registrar_documento(
             ),
             queue="gpu_background",
             priority=7,
+            task_id=task_id,
         )
     except Exception as exc:
         armazenamento.falhar_entrega(entrega["id"], "Fila de OCR indisponível.")

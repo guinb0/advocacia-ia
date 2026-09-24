@@ -443,6 +443,12 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     status_proc        varchar(40)   NOT NULL CONSTRAINT df_ocr_entregas_status DEFAULT 'pronto',
     erro_proc          nvarchar(max) NULL,
     agente_envio_chave varchar(120)  NULL,
+    ocr_task_id        varchar(64)   NULL,
+    ocr_worker_id      varchar(160)  NULL,
+    ocr_enfileirado_em varchar(40)   NULL,
+    ocr_iniciado_em    varchar(40)   NULL,
+    ocr_finalizado_em  varchar(40)   NULL,
+    ocr_tentativas     int           NOT NULL CONSTRAINT df_acervo_entregas_ocr_tentativas DEFAULT 0,
     CONSTRAINT fk_ocr_entregas_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
@@ -952,6 +958,14 @@ COLUNAS_NOVAS = (
     (f"{PREFIXO}casos", "tipo_acao", "nvarchar(240) NOT NULL CONSTRAINT df_acervo_casos_tipo_acao DEFAULT N''"),
     # Chave idempotente do envio ao agente (entrega_id:hash da extração).
     (f"{PREFIXO}entregas", "agente_envio_chave", "varchar(120) NULL"),
+    # Rastreio de ciclo de vida do OCR. Todas as colunas são compatíveis com as
+    # entregas antigas e permitem distinguir trabalho ativo de job órfão.
+    (f"{PREFIXO}entregas", "ocr_task_id", "varchar(64) NULL"),
+    (f"{PREFIXO}entregas", "ocr_worker_id", "varchar(160) NULL"),
+    (f"{PREFIXO}entregas", "ocr_enfileirado_em", "varchar(40) NULL"),
+    (f"{PREFIXO}entregas", "ocr_iniciado_em", "varchar(40) NULL"),
+    (f"{PREFIXO}entregas", "ocr_finalizado_em", "varchar(40) NULL"),
+    (f"{PREFIXO}entregas", "ocr_tentativas", "int NOT NULL CONSTRAINT df_acervo_entregas_ocr_tentativas DEFAULT 0"),
     # O WhatsApp do cliente, colhido na entrevista e guardado NO CASO.
     #
     # Ele já era pedido no roteiro (`telefone`, obrigatória), mas as respostas

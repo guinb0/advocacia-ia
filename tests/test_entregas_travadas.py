@@ -79,6 +79,9 @@ def test_reenfileira_a_entrega_orfa_quando_o_leitor_esta_no_ar(monkeypatch, tmp_
     monkeypatch.setattr(
         manutencao.armazenamento, "caminho_duravel_da_entrega", lambda _id: arquivo
     )
+    monkeypatch.setattr(
+        manutencao.armazenamento, "marcar_entrega_enfileirada", lambda *_args: None
+    )
 
     envios = []
     monkeypatch.setattr(

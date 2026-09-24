@@ -216,6 +216,8 @@ def aquecer_worker_ocr(sender=None, **_kwargs):
     hostname = str(getattr(sender, "hostname", ""))
     if not hostname.lower().startswith("ocr@"):
         return
+    from ..ocr_heartbeat import iniciar
+    iniciar(hostname)
     try:
         from ..ocr_engine import aquecer
 
@@ -292,7 +294,9 @@ def processar_entrega(
 ):
     """Lê documento do checklist no worker dedicado ao OCR."""
     try:
-        armazenamento.marcar_entrega_processando(entrega_id)
+        armazenamento.marcar_entrega_processando(
+            entrega_id, str(self.request.id or ""), str(self.request.hostname or "")
+        )
         categoria = categorias.obter(categoria_codigo)
         if categoria is None:
             raise ValueError(f"Categoria {categoria_codigo!r} não existe mais.")

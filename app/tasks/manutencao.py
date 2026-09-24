@@ -5,6 +5,7 @@ from ..celery_app import celery_app
 from pathlib import Path
 import logging
 import time
+import uuid
 
 log = logging.getLogger("manutencao")
 
@@ -153,6 +154,8 @@ def recuperar_entregas_travadas() -> int:
             )
             continue
 
+        task_id = str(uuid.uuid4())
+        armazenamento.marcar_entrega_enfileirada(entrega["id"], task_id)
         processar_entrega.apply_async(
             args=(
                 entrega["id"],
@@ -166,6 +169,7 @@ def recuperar_entregas_travadas() -> int:
             ),
             queue="gpu_background",
             priority=7,
+            task_id=task_id,
         )
         reenfileiradas += 1
         log.warning(
