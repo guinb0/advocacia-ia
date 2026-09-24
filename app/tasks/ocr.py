@@ -64,7 +64,13 @@ def _executar_ocr_conteudo(
     # travar em codigo C, matar o filho libera o consumidor para a proxima
     # entrega, em vez de congelar toda a triagem atras de um documento.
     # `spawn` e intencional: `fork` herdaria o estado que causou o deadlock.
-    if os.getenv("OCR_ISOLAR_PROCESSO", "0").strip().lower() in {"0", "false", "nao"}:
+    isolar = os.getenv("OCR_ISOLAR_PROCESSO", "0").strip().lower() not in {
+        "0", "false", "nao",
+    }
+    # Processo daemon não pode criar filhos. Com `daemon=True` no isolador, a
+    # pipeline (e libs C) disparavam "daemonic processes are not allowed to
+    # have children" e a entrega ia para erro — inclusive em reprocessamentos.
+    if not isolar or multiprocessing.current_process().daemon:
         return pipeline.processar(
             conteudo, nome, idioma, tipo,
             gerar_arquivos_temporarios=gerar_arquivos_temporarios,
@@ -79,7 +85,9 @@ def _executar_ocr_conteudo(
     processo = contexto.Process(
         target=_processar_em_subprocesso,
         args=(filho, conteudo, nome, idioma, tipo, gerar_arquivos_temporarios),
-        daemon=True,
+        # Não-daemon: o filho pode criar netos (libs de OCR). O pai ainda
+        # faz terminate()/join() no timeout — isolamento continua valendo.
+        daemon=False,
     )
     processo.start()
     filho.close()
@@ -92,9 +100,12 @@ def _executar_ocr_conteudo(
     finally:
         pai.close()
         if processo.is_alive():
-            processo.join(timeout=1)
+            processo.terminate()
+            processo.join(timeout=5)
 
-    processo.join(timeout=1)
+    if processo.is_alive():
+        processo.kill()
+        processo.join(timeout=2)
     if estado == "erro":
         raise RuntimeError(valor)
     return valor

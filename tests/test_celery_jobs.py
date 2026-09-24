@@ -129,6 +129,9 @@ def test_ocr_isolado_interrompe_leitura_que_nao_responde(tmp_path, monkeypatch):
         def is_alive(self):
             return False
 
+        def kill(self):
+            self.terminado = True
+
     class Conexao:
         def poll(self, _limite):
             return False
@@ -136,11 +139,17 @@ def test_ocr_isolado_interrompe_leitura_que_nao_responde(tmp_path, monkeypatch):
         def close(self):
             pass
 
+        def recv(self):
+            raise AssertionError("não deveria receber: timeout")
+
     class Contexto:
         def Pipe(self, duplex=False):
             return Conexao(), Conexao()
 
-        def Process(self, **_kwargs):
+        def Process(self, **kwargs):
+            assert kwargs.get("daemon") is False, (
+                "isolador OCR não pode ser daemon — libs internas criam filhos"
+            )
             return ProcessoParado()
 
     monkeypatch.setenv("OCR_ISOLAR_PROCESSO", "1")
@@ -171,3 +180,27 @@ def test_ocr_atualiza_estado_e_remove_upload(tmp_path, monkeypatch):
     ]
     assert eventos[-1]["progresso"] == 100
     assert not entrada.exists()
+
+
+def test_ocr_isolado_pula_quando_processo_atual_e_daemon(tmp_path, monkeypatch):
+    """Regressão: daemon pai + isolar = 'daemonic processes are not allowed…'."""
+    from app.tasks import ocr
+
+    entrada = tmp_path / "doc.pdf"
+    entrada.write_bytes(b"%PDF")
+    chamado = []
+
+    monkeypatch.setenv("OCR_ISOLAR_PROCESSO", "1")
+    monkeypatch.setattr(
+        ocr.pipeline,
+        "processar",
+        lambda *a, **k: chamado.append(True) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        ocr.multiprocessing,
+        "current_process",
+        lambda: type("P", (), {"daemon": True})(),
+    )
+
+    assert ocr._executar_ocr(str(entrada), "doc.pdf", "pt", None) == {"ok": True}
+    assert chamado == [True]

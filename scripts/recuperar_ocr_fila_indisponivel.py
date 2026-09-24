@@ -35,6 +35,7 @@ def _candidatas(limite: int) -> list[dict]:
                     e.erro_proc LIKE ?
                  OR e.erro_proc LIKE ?
                  OR e.erro_proc LIKE ?
+                 OR e.erro_proc LIKE ?
                )
              ORDER BY e.criado_em DESC
             """,
@@ -43,6 +44,7 @@ def _candidatas(limite: int) -> list[dict]:
                 "%Fila de OCR%",
                 "%Fila de leitura%",
                 "%Não foi possível enfileirar%",
+                "%daemonic processes%",
             ),
         ).fetchall()
     return [dict(l) for l in linhas]
