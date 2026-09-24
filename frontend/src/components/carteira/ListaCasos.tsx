@@ -8,7 +8,7 @@ import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, listarReunioesTactiq, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq } from "@/lib/api";
+import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, listarReunioesTactiq, listarSkillsJuridicas, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq, type SkillJuridica } from "@/lib/api";
 import { baixarArquivo } from "@/lib/baixar";
 
 interface Props {
@@ -18,7 +18,7 @@ interface Props {
   erro: string | null;
   onAbrir: (casoId: string) => void;
   onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string, tipoAcao?: string) => Promise<CasoCriado>;
-  onImportarZip: (cliente: string, categoria: string, arquivo: File) => Promise<CasoCriado>;
+  onImportarZip: (cliente: string, categoria: string, arquivo: File, skillJuridicaId?: string) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
 }
 
@@ -128,6 +128,15 @@ export default function ListaCasos({
   const [pacoteArquivo, setPacoteArquivo] = useState<File | null>(null);
   const [importandoPacote, setImportandoPacote] = useState(false);
   const [arrastandoPacote, setArrastandoPacote] = useState(false);
+  const [skillsJuridicas, setSkillsJuridicas] = useState<SkillJuridica[]>([]);
+  const [skillJuridicaId, setSkillJuridicaId] = useState("");
+
+  useEffect(() => {
+    void listarSkillsJuridicas().then((skills) => {
+      setSkillsJuridicas(skills);
+      if (skills.length === 1) setSkillJuridicaId(skills[0].id);
+    }).catch(() => setSkillsJuridicas([]));
+  }, []);
 
   function selecionarPacote(arquivo: File | null) {
     if (!arquivo) return;
@@ -140,7 +149,7 @@ export default function ListaCasos({
     if (!cliente.trim() || !categoriaSelecionada || !pacoteArquivo) return;
     setImportandoPacote(true);
     try {
-      const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo);
+      const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo, skillJuridicaId);
       setNovoPortal(novo);
       setCliente("");
       setPacoteArquivo(null);
@@ -461,6 +470,14 @@ export default function ListaCasos({
               onChange={(e) => { selecionarPacote(e.target.files?.[0] ?? null); e.target.value = ""; }}
               className="hidden"
             />
+          </div>
+          <div className="mt-4">
+            <RotuloCampo htmlFor="skill-juridica">Skill jurídica</RotuloCampo>
+            <CampoSeletor id="skill-juridica" value={skillJuridicaId} onChange={(e) => setSkillJuridicaId(e.target.value)}>
+              <option value="">Sem skill específica</option>
+              {skillsJuridicas.map((skill) => <option key={skill.id} value={skill.id}>{skill.nome}</option>)}
+            </CampoSeletor>
+            <p className="mt-1 text-xs text-tinta-2">A skill será aplicada à análise e preservada para a revisão antes da petição.</p>
           </div>
           <BotaoProcesso
             type="submit"

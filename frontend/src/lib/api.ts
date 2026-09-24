@@ -719,12 +719,25 @@ export async function criarCasoPorZip(
   cliente: string,
   categoria: string,
   arquivo: File,
+  skillJuridicaId = "",
 ): Promise<CasoCriado> {
   const form = new FormData();
   form.append("cliente", cliente);
   form.append("categoria", categoria);
   form.append("arquivo", arquivo);
+  if (skillJuridicaId) form.append("skill_juridica_id", skillJuridicaId);
   return comoJson<CasoCriado>(await buscar("/api/casos/importar-zip", { method: "POST", body: form }));
+}
+
+export type SkillJuridica = {
+  id: string;
+  nome: string;
+  descricao: string;
+  referencias: number;
+};
+
+export async function listarSkillsJuridicas(): Promise<SkillJuridica[]> {
+  return comoJson(await buscar("/api/skills-juridicas"));
 }
 
 /** Grava a qualificação do cliente (o que o CPF puxou + o que foi digitado) no caso.

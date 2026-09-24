@@ -374,6 +374,7 @@ CREATE TABLE {SCHEMA}.{PREFIXO}casos (
     agente_ultimo_erro nvarchar(max) NULL,
     telefone          varchar(30)   NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''
     ,tipo_acao         nvarchar(240) NOT NULL CONSTRAINT df_ocr_casos_tipo_acao DEFAULT N''
+    ,skill_juridica_id varchar(80) NULL
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}qualificacao') IS NULL
@@ -956,6 +957,9 @@ COLUNAS_NOVAS = (
     (f"{PREFIXO}casos", "cliente_ref", "varchar(80) NULL"),
     (f"{PREFIXO}casos", "agente_ultimo_erro", "nvarchar(max) NULL"),
     (f"{PREFIXO}casos", "tipo_acao", "nvarchar(240) NOT NULL CONSTRAINT df_acervo_casos_tipo_acao DEFAULT N''"),
+    # Skill escolhida na criação pelo ZIP. É referência, não cópia da análise:
+    # o snapshot aprovado guardará a versão usada antes de redigir a peça.
+    (f"{PREFIXO}casos", "skill_juridica_id", "varchar(80) NULL"),
     # Chave idempotente do envio ao agente (entrega_id:hash da extração).
     (f"{PREFIXO}entregas", "agente_envio_chave", "varchar(120) NULL"),
     # Rastreio de ciclo de vida do OCR. Todas as colunas são compatíveis com as

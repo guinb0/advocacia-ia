@@ -85,6 +85,7 @@ from . import (
     panorama,
     peticao_local,
     peticao_skills,
+    skills_juridicas,
     pipeline,
     portal,
     rag,
@@ -449,6 +450,10 @@ app.add_middleware(
 
 
 armazenamento.inicializar()
+try:
+    skills_juridicas.importar_embutida(BASE / "escritorio-trabalhista.skill.zip")
+except Exception:  # noqa: BLE001 - skill extra não pode impedir a API de subir
+    log.warning("Skill jurídica embutida não pôde ser instalada", exc_info=True)
 try:
     google_drive.inicializar()
 except Exception:  # noqa: BLE001
@@ -851,6 +856,27 @@ async def salvar_skill_de_peticao(
         "atualizado_por": registro.get("atualizado_por", ""),
         "atualizado_em": registro.get("atualizado_em", ""),
     }
+
+
+@app.get("/api/skills-juridicas")
+async def listar_skills_juridicas(_autorizado=PodeManterModeloPeticao):
+    """Skills disponíveis para análise e redação de novos casos."""
+    return await run_in_threadpool(skills_juridicas.listar)
+
+
+@app.post("/api/skills-juridicas/importar", status_code=201)
+async def importar_skill_juridica(
+    arquivo: UploadFile = File(...),
+    _autorizado=PodeManterModeloPeticao,
+):
+    """Importa uma skill ZIP sem executar nenhum arquivo do pacote."""
+    if not (arquivo.filename or "").lower().endswith(".zip"):
+        raise HTTPException(400, "Envie uma skill no formato .skill.zip.")
+    try:
+        conteudo = await _ler_upload(arquivo)
+        return await run_in_threadpool(skills_juridicas.importar_zip, arquivo.filename or "skill", conteudo)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 #: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.
@@ -3656,6 +3682,14 @@ MAX_ARQUIVOS_POR_LOTE = int(os.getenv("MAX_ARQUIVOS_POR_LOTE", "200"))
 #: descomprimidos. Um ZIP acima disto é recusado inteiro, com o motivo.
 MAX_ITENS_ZIP = int(os.getenv("MAX_ITENS_ZIP", "200"))
 MAX_BYTES_ZIP = int(os.getenv("MAX_BYTES_ZIP_DESCOMPRIMIDO", str(200 * 1024 * 1024)))
+# Um ZIP de documentos nunca precisa carregar binários executáveis. A lista é
+# deliberadamente pequena: formatos fora dela recebem uma resposta explícita em
+# vez de chegarem ao OCR como bytes sem semântica.
+EXTENSOES_DOCUMENTO_ZIP = frozenset({
+    ".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".odt",
+    ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".heic",
+})
+MAX_RAZAO_COMPRESSAO_ZIP = float(os.getenv("MAX_RAZAO_COMPRESSAO_ZIP", "100"))
 
 
 class _ArquivoEmMemoria:
@@ -3683,6 +3717,48 @@ def _e_lixo_de_zip(nome: str) -> bool:
         or base in {".DS_Store", "Thumbs.db"}
         or base.startswith("._")
     )
+
+
+def _validar_indice_zip(z: zipfile.ZipFile, nome_zip: str) -> list[zipfile.ZipInfo]:
+    """Valida o índice antes de ler qualquer entrada de um ZIP enviado.
+
+    Não extraímos para disco, mas ainda rejeitamos caminhos maliciosos, arquivos
+    executáveis, entradas criptografadas e razões de compressão incompatíveis
+    com documentos. Assim a mesma regra protege a criação rápida e o lote.
+    """
+    itens: list[zipfile.ZipInfo] = []
+    total = 0
+    for info in z.infolist():
+        caminho = info.filename.replace("\\", "/")
+        partes = [parte for parte in caminho.split("/") if parte]
+        if info.is_dir() or _e_lixo_de_zip(caminho):
+            continue
+        if caminho.startswith("/") or any(parte in {".", ".."} for parte in partes):
+            raise HTTPException(400, f"O ZIP '{nome_zip}' contém um caminho inválido.")
+        if info.flag_bits & 0x1:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' contém arquivo protegido por senha.")
+        extensao = Path(caminho).suffix.lower()
+        if extensao == ".zip":
+            # Não é aberto nem aceito como documento: impede cascatas de ZIP.
+            continue
+        if extensao not in EXTENSOES_DOCUMENTO_ZIP:
+            raise HTTPException(
+                400,
+                f"O arquivo '{Path(caminho).name}' não é um formato de documento aceito.",
+            )
+        if info.file_size < 0 or info.compress_size < 0:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' possui tamanho inválido.")
+        if info.file_size and not info.compress_size:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' possui entrada com compressão inválida.")
+        if info.compress_size and info.file_size / info.compress_size > MAX_RAZAO_COMPRESSAO_ZIP:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' excede a razão máxima de compressão.")
+        itens.append(info)
+        total += info.file_size
+        if len(itens) > MAX_ITENS_ZIP:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' tem mais de {MAX_ITENS_ZIP} arquivos. Divida em partes menores.")
+        if total > MAX_BYTES_ZIP:
+            raise HTTPException(413, f"O conteúdo de '{nome_zip}' passa de {MAX_BYTES_ZIP // (1024 * 1024)}MB descomprimido.")
+    return itens
 
 
 _MARCADORES_DE_ENTREVISTA = (
@@ -3773,10 +3849,7 @@ async def _expandir_zips(arquivos: list[Any]) -> list[Any]:
         bruto = await arquivo.read()
         try:
             with zipfile.ZipFile(io.BytesIO(bruto)) as z:
-                itens = [
-                    i for i in z.infolist()
-                    if not i.is_dir() and not _e_lixo_de_zip(i.filename)
-                ]
+                itens = _validar_indice_zip(z, nome)
                 if len(itens) > MAX_ITENS_ZIP:
                     raise HTTPException(
                         400,
@@ -3906,6 +3979,7 @@ async def criar_caso_por_zip(
     categoria: str = Form("em_triagem"),
     arquivo: UploadFile = File(...),
     idioma: str = Form("pt"),
+    skill_juridica_id: str = Form(""),
 ):
     """Abre um caso e importa uma pasta ZIP de uma vez.
 
@@ -3920,17 +3994,21 @@ async def criar_caso_por_zip(
         raise HTTPException(400, "Envie uma pasta compactada no formato .zip.")
     if categorias.obter(categoria) is None:
         categoria = "em_triagem"
+    if skill_juridica_id and await run_in_threadpool(skills_juridicas.obter, skill_juridica_id) is None:
+        raise HTTPException(400, "A skill jurídica escolhida não existe mais.")
 
     conteudo = await _ler_upload(arquivo)
     # Confere apenas o índice do ZIP agora. A leitura e o cadastro de cada
     # documento ficam para depois da resposta, para a página não parecer travada.
     try:
         with zipfile.ZipFile(io.BytesIO(conteudo)) as z:
-            z.infolist()
+            _validar_indice_zip(z, nome)
     except zipfile.BadZipFile as exc:
         raise HTTPException(400, f"'{nome}' não é um ZIP válido ou está corrompido.") from exc
 
-    caso = armazenamento.criar_caso(cliente.strip(), categoria)
+    caso = armazenamento.criar_caso(
+        cliente.strip(), categoria, skill_juridica_id=skill_juridica_id
+    )
     pasta = armazenamento.DIR_ARQUIVOS / caso["id"] / "importacoes"
     pasta.mkdir(parents=True, exist_ok=True)
     caminho = pasta / f"{uuid.uuid4().hex}.zip"
