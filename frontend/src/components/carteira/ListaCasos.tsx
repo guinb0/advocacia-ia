@@ -127,6 +127,7 @@ export default function ListaCasos({
   const pacoteInputRef = useRef<HTMLInputElement>(null);
   const [pacoteArquivo, setPacoteArquivo] = useState<File | null>(null);
   const [importandoPacote, setImportandoPacote] = useState(false);
+  const [erroPacote, setErroPacote] = useState<string | null>(null);
   const [arrastandoPacote, setArrastandoPacote] = useState(false);
   const [skillsJuridicas, setSkillsJuridicas] = useState<SkillJuridica[]>([]);
   const [skillJuridicaId, setSkillJuridicaId] = useState("");
@@ -148,11 +149,14 @@ export default function ListaCasos({
     evento.preventDefault();
     if (!cliente.trim() || !categoriaSelecionada || !pacoteArquivo) return;
     setImportandoPacote(true);
+    setErroPacote(null);
     try {
       const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo, skillJuridicaId);
       setNovoPortal(novo);
       setCliente("");
       setPacoteArquivo(null);
+    } catch (falha) {
+      setErroPacote(falha instanceof Error ? falha.message : "Não foi possível criar o caso pelo ZIP.");
     } finally {
       setImportandoPacote(false);
     }
@@ -490,6 +494,7 @@ export default function ListaCasos({
           >
             Criar caso com ZIP
           </BotaoProcesso>
+          {erroPacote && <div className="mt-3"><Aviso tom="critico" titulo="Não foi possível importar o ZIP">{erroPacote}</Aviso></div>}
         </form>
 
         {categorias.length === 0 && (

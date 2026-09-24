@@ -726,7 +726,20 @@ export async function criarCasoPorZip(
   form.append("categoria", categoria);
   form.append("arquivo", arquivo);
   if (skillJuridicaId) form.append("skill_juridica_id", skillJuridicaId);
-  return comoJson<CasoCriado>(await buscar("/api/casos/importar-zip", { method: "POST", body: form }));
+  const controlador = new AbortController();
+  const prazo = window.setTimeout(() => controlador.abort(), 120_000);
+  try {
+    return comoJson<CasoCriado>(await buscar("/api/casos/importar-zip", {
+      method: "POST", body: form, signal: controlador.signal,
+    }));
+  } catch (erro) {
+    if (controlador.signal.aborted) {
+      throw new ApiError("O envio do ZIP demorou mais de 2 minutos. O caso não foi confirmado; tente novamente com o ZIP menor.");
+    }
+    throw erro;
+  } finally {
+    window.clearTimeout(prazo);
+  }
 }
 
 export type SkillJuridica = {
