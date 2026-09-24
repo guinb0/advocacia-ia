@@ -71,7 +71,7 @@ MAX_CARACTERES_TOTAL = 90000
 #: documento fique invisível só por estar no fim da lista.
 FATIA_MINIMA_POR_DOCUMENTO = 700
 
-TEMPO_MODELO_S = 60.0
+TEMPO_MODELO_S = 90.0
 
 INSTRUCAO = """Você lê documentos de um processo trabalhista e aponta o que eles
 dizem e o caso ainda NÃO registrou.
@@ -309,6 +309,77 @@ def _montar_mensagem(
     return "\n".join(partes), fora
 
 
+def _texto_da_escolha(escolha: dict[str, Any]) -> str:
+    """Extrai o texto útil da escolha OpenAI-compatível.
+
+    Modelos de raciocínio (Gemini 3.x) às vezes devolvem `content` vazio ou em
+    lista de partes, e o JSON da análise some — a tela só via "ilegível".
+    """
+    msg = escolha.get("message") if isinstance(escolha.get("message"), dict) else {}
+    conteudo = msg.get("content")
+    if isinstance(conteudo, list):
+        partes: list[str] = []
+        for parte in conteudo:
+            if isinstance(parte, dict):
+                partes.append(str(parte.get("text") or parte.get("content") or ""))
+            elif parte:
+                partes.append(str(parte))
+        conteudo = "\n".join(partes)
+    texto = str(conteudo or "").strip()
+    if texto:
+        return texto
+    for chave in ("reasoning", "reasoning_content"):
+        alt = msg.get(chave)
+        if isinstance(alt, str) and alt.strip():
+            return alt.strip()
+    return ""
+
+
+def _json_do_modelo(resposta: httpx.Response) -> dict[str, Any]:
+    """Aceita JSON puro e o JSON embrulhado em Markdown que o gateway devolve.
+
+    Cópia do contrato de `escuta._json_do_modelo`: `response_format` nem sempre
+    é cumprido; fence ```json ou texto antes do objeto derrubava a análise inteira.
+    """
+    escolha: dict[str, Any] = {}
+    try:
+        corpo = resposta.json()
+        escolha = (corpo.get("choices") or [{}])[0] or {}
+        texto = _texto_da_escolha(escolha)
+        if not texto:
+            raise ValueError("content vazio")
+        if texto.startswith("```"):
+            texto = re.sub(r"^```(?:json)?\s*", "", texto, flags=re.IGNORECASE)
+            texto = re.sub(r"\s*```$", "", texto).strip()
+        try:
+            dado = json.loads(texto)
+        except json.JSONDecodeError:
+            inicio, fim = texto.find("{"), texto.rfind("}")
+            if inicio < 0 or fim <= inicio:
+                raise
+            dado = json.loads(texto[inicio : fim + 1])
+        if not isinstance(dado, dict):
+            raise ValueError("raiz não é objeto")
+        return dado
+    except Exception as exc:
+        motivo = escolha.get("finish_reason") or "desconhecido"
+        preview = (_texto_da_escolha(escolha) or "")[:120]
+        log.warning(
+            "Análise dos documentos ilegível (finish_reason=%s, preview=%r): %s",
+            motivo,
+            preview,
+            exc,
+        )
+        if motivo == "length":
+            raise ErroAnaliseDocumentos(
+                "A resposta do modelo foi cortada por tamanho. Tente de novo; "
+                "se persistir, analise com menos documentos anexados."
+            ) from exc
+        raise ErroAnaliseDocumentos(
+            "Resposta ilegível do modelo. Tente de novo em instantes."
+        ) from exc
+
+
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
     """Executa a análise pelo provedor configurado, com resposta JSON auditável.
 
@@ -330,11 +401,33 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         if usando_openrouter
         else os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     )
-    modelo = (
-        os.getenv("OPENROUTER_MODELO_ANALISE", "").strip() or "google/gemini-3.7-flash"
-        if usando_openrouter
-        else os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-    )
+    if usando_openrouter:
+        modelo = (
+            os.getenv("OPENROUTER_MODELO_ANALISE", "").strip()
+            or "google/gemini-3.7-flash"
+        )
+    else:
+        modelo = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
+    payload: dict[str, Any] = {
+        "model": modelo,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        # 12 achados com citação LITERAL passam de 1900 tokens — 2000 de
+        # teto truncava a resposta no meio e o JSON inteiro virava
+        # "ilegível", perdendo TODOS os achados de uma vez (não só o
+        # último). Folga larga; DeepSeek cobra pelo que gera, não pelo teto.
+        "max_tokens": int(os.getenv("OPENROUTER_ANALISE_MAX_TOKENS", "16000")),
+        "messages": [
+            {"role": "system", "content": INSTRUCAO},
+            {"role": "user", "content": mensagem},
+        ],
+    }
+    # Gemini 3.x gasta a saída em "thinking" e deixa `content` vazio → ilegível.
+    # Sem reasoning, o JSON da análise vai direto para content.
+    if usando_openrouter:
+        payload["reasoning"] = {"effort": "none"}
+
     try:
         cabecalhos = {"Authorization": f"Bearer {chave}"}
         if usando_openrouter:
@@ -342,20 +435,7 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         resposta = httpx.post(
             base_url + "/chat/completions",
             headers=cabecalhos,
-            json={
-                "model": modelo,
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                # 12 achados com citação LITERAL passam de 1900 tokens — 2000 de
-                # teto truncava a resposta no meio e o JSON inteiro virava
-                # "ilegível", perdendo TODOS os achados de uma vez (não só o
-                # último). Folga larga; DeepSeek cobra pelo que gera, não pelo teto.
-                "max_tokens": 8000,
-                "messages": [
-                    {"role": "system", "content": INSTRUCAO},
-                    {"role": "user", "content": mensagem},
-                ],
-            },
+            json=payload,
             timeout=TEMPO_MODELO_S,
         )
         resposta.raise_for_status()
@@ -368,10 +448,7 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
 
     if usando_openrouter:
         custos_api.registrar("openrouter", modelo, "analise_documentos", resposta)
-    try:
-        return json.loads(resposta.json()["choices"][0]["message"]["content"])
-    except Exception as exc:
-        raise ErroAnaliseDocumentos("Resposta ilegível do modelo.") from exc
+    return _json_do_modelo(resposta)
 
 
 def analisar(caso_id: str) -> dict[str, Any]:

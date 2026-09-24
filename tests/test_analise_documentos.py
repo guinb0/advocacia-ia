@@ -349,6 +349,50 @@ def cenario_nome_do_arquivo_com_caminho() -> int:
     return falhas
 
 
+def cenario_json_em_markdown() -> int:
+    """Gateway que devolve ```json … ``` não pode derrubar a análise."""
+    falhas = 0
+
+    class _Resposta:
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '```json\n{"achados": [], "gastos": [], "cronologia": []}\n```'
+                        },
+                    }
+                ]
+            }
+
+    try:
+        dado = ad._json_do_modelo(_Resposta())  # type: ignore[arg-type]
+        falhas += not checar(dado == {"achados": [], "gastos": [], "cronologia": []},
+                             "JSON em fence Markdown é aceito")
+    except ad.ErroAnaliseDocumentos:
+        falhas += not checar(False, "JSON em fence Markdown é aceito")
+
+    class _Cortada:
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": '{"achados": [{"informacao":'},
+                    }
+                ]
+            }
+
+    try:
+        ad._json_do_modelo(_Cortada())  # type: ignore[arg-type]
+        falhas += not checar(False, "corte por tamanho vira erro específico")
+    except ad.ErroAnaliseDocumentos as erro:
+        falhas += not checar("cortada" in str(erro).lower() or "tamanho" in str(erro).lower(),
+                             f"corte por tamanho vira erro específico ({erro})")
+    return falhas
+
+
 def main_teste() -> int:
     falhas = 0
     for titulo, teste in (
@@ -359,6 +403,7 @@ def main_teste() -> int:
         ("gastos em ordem cronológica, com origem e citação", cenario_gastos),
         ("caso com muitos anexos: nenhum fica invisível", cenario_orcamento_dos_documentos),
         ("anexo em pasta: o modelo aponta pelo nome do arquivo", cenario_nome_do_arquivo_com_caminho),
+        ("JSON embrulhado em Markdown / cortado", cenario_json_em_markdown),
     ):
         print(f"\n{titulo}")
         falhas += teste()
