@@ -216,6 +216,8 @@ def aquecer_worker_ocr(sender=None, **_kwargs):
     hostname = str(getattr(sender, "hostname", ""))
     if not hostname.lower().startswith("ocr@"):
         return
+    from ..ocr_heartbeat import iniciar
+    iniciar(hostname)
     try:
         from ..ocr_engine import aquecer
 
@@ -230,6 +232,10 @@ def aquecer_worker_ocr(sender=None, **_kwargs):
 @celery_app.task(
     bind=True,
     name="app.tasks.ocr.processar_documento",
+    # Limite proprio do OCR: nao deixa uma leitura pendurada ocupar a replica
+    # indefinidamente. Com acks_late/reject_on_worker_lost a mensagem retorna.
+    soft_time_limit=780,
+    time_limit=840,
     autoretry_for=(OSError, TimeoutError),
     retry_backoff=True,
     retry_backoff_max=60,
@@ -261,6 +267,8 @@ def processar_documento(self, job_id: str, caminho: str, nome: str, idioma: str,
 @celery_app.task(
     bind=True,
     name="app.tasks.ocr.processar_entrega",
+    soft_time_limit=780,
+    time_limit=840,
     # `httpx.HTTPError` cobre 402/429/5xx e queda de conexão dos provedores de
     # OCR: sem isto, um provedor fora do ar marcava a entrega em 'erro' na
     # primeira falha, sem repetir sozinho — só o botão manual reenfileirava.
@@ -286,7 +294,9 @@ def processar_entrega(
 ):
     """Lê documento do checklist no worker dedicado ao OCR."""
     try:
-        armazenamento.marcar_entrega_processando(entrega_id)
+        armazenamento.marcar_entrega_processando(
+            entrega_id, str(self.request.id or ""), str(self.request.hostname or "")
+        )
         categoria = categorias.obter(categoria_codigo)
         if categoria is None:
             raise ValueError(f"Categoria {categoria_codigo!r} não existe mais.")

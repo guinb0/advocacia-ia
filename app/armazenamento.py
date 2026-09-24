@@ -295,7 +295,8 @@ def inicializar() -> None:
 
 
 def criar_caso(
-    cliente: str, categoria: str, observacao: str = "", telefone: str = "", tipo_acao: str = ""
+    cliente: str, categoria: str, observacao: str = "", telefone: str = "", tipo_acao: str = "",
+    skill_juridica_id: str = "",
 ) -> dict[str, Any]:
     """Abre o caso. O `telefone` é o WhatsApp que a entrevista colheu.
 
@@ -309,8 +310,8 @@ def criar_caso(
     with conectar() as con:
         con.execute(
             "INSERT INTO casos"
-            " (id, cliente, categoria, observacao, telefone, tipo_acao, criado_em, atualizado_em)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " (id, cliente, categoria, observacao, telefone, tipo_acao, skill_juridica_id, criado_em, atualizado_em)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 caso_id,
                 cliente.strip(),
@@ -318,6 +319,7 @@ def criar_caso(
                 observacao.strip(),
                 telefone.strip(),
                 tipo_acao.strip(),
+                skill_juridica_id.strip() or None,
                 instante,
                 instante,
             ),
@@ -328,6 +330,7 @@ def criar_caso(
         "cliente": cliente.strip(),
         "categoria": categoria,
         "observacao": observacao.strip(),
+        "skill_juridica_id": skill_juridica_id.strip() or None,
         "telefone": telefone.strip(),
         "tipo_acao": tipo_acao.strip(),
         "criado_em": instante,
@@ -1063,12 +1066,25 @@ def registrar_entrega_pendente(
     return obter_entrega(entrega_id) or {}
 
 
-def marcar_entrega_processando(entrega_id: str) -> None:
+def marcar_entrega_enfileirada(entrega_id: str, task_id: str) -> None:
+    """Vincula a mensagem Celery à entrega antes de publicá-la no broker."""
+    with conectar() as con:
+        con.execute(
+            "UPDATE entregas SET status_proc = 'na_fila', ocr_task_id = ?, "
+            "ocr_enfileirado_em = ?, ocr_worker_id = NULL WHERE id = ? AND status_proc <> 'pronto'",
+            (task_id, agora(), entrega_id),
+        )
+
+
+def marcar_entrega_processando(entrega_id: str, task_id: str = "", worker_id: str = "") -> None:
     """Diferencia espera no broker de uma leitura que realmente começou."""
     with conectar() as con:
         con.execute(
-            "UPDATE entregas SET status_proc = 'processando', erro_proc = NULL WHERE id = ?",
-            (entrega_id,),
+            "UPDATE entregas SET status_proc = 'processando', erro_proc = NULL, "
+            "ocr_task_id = COALESCE(NULLIF(?, ''), ocr_task_id), "
+            "ocr_worker_id = COALESCE(NULLIF(?, ''), ocr_worker_id), "
+            "ocr_iniciado_em = ?, ocr_tentativas = ocr_tentativas + 1 WHERE id = ?",
+            (task_id, worker_id, agora(), entrega_id),
         )
 
 
@@ -1099,7 +1115,7 @@ def concluir_entrega(
                    item_codigo = COALESCE(?, item_codigo),
                    roteamento_origem = ?, roteamento_confianca = ?, roteamento_motivo = ?,
                    extracao_json = ?,
-                   status_proc = 'pronto', erro_proc = NULL
+                   status_proc = 'pronto', erro_proc = NULL, ocr_finalizado_em = ?
              WHERE id = ?
             """,
             (
@@ -1116,6 +1132,7 @@ def concluir_entrega(
                 confianca,
                 (motivo or "")[:600] or None,
                 json.dumps(extracao, ensure_ascii=False),
+                agora(),
                 entrega_id,
             ),
         )
@@ -1285,8 +1302,8 @@ def falhar_entrega(entrega_id: str, mensagem: str) -> None:
     """Marca a entrega como não lida. O arquivo continua salvo para reprocessar."""
     with conectar() as con:
         con.execute(
-            "UPDATE entregas SET status_proc = 'erro', erro_proc = ? WHERE id = ?",
-            (mensagem[:500], entrega_id),
+            "UPDATE entregas SET status_proc = 'erro', erro_proc = ?, ocr_finalizado_em = ? WHERE id = ?",
+            (mensagem[:500], agora(), entrega_id),
         )
 
 

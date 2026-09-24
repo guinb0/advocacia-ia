@@ -374,6 +374,38 @@ CREATE TABLE {SCHEMA}.{PREFIXO}casos (
     agente_ultimo_erro nvarchar(max) NULL,
     telefone          varchar(30)   NOT NULL CONSTRAINT df_ocr_casos_tel DEFAULT ''
     ,tipo_acao         nvarchar(240) NOT NULL CONSTRAINT df_ocr_casos_tipo_acao DEFAULT N''
+    ,skill_juridica_id varchar(80) NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}fila_jobs') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}fila_jobs (
+    id varchar(64) NOT NULL PRIMARY KEY,
+    tipo varchar(120) NOT NULL,
+    argumentos_json nvarchar(max) NOT NULL,
+    chave varchar(200) NULL,
+    status varchar(20) NOT NULL CONSTRAINT df_acervo_fila_status DEFAULT 'PENDING',
+    prioridade int NOT NULL CONSTRAINT df_acervo_fila_prioridade DEFAULT 0,
+    tentativas int NOT NULL CONSTRAINT df_acervo_fila_tentativas DEFAULT 0,
+    tentativas_max int NOT NULL CONSTRAINT df_acervo_fila_tentativas_max DEFAULT 3,
+    worker_id varchar(180) NULL,
+    erro nvarchar(max) NULL,
+    disponivel_em varchar(40) NULL,
+    iniciado_em varchar(40) NULL,
+    heartbeat_em varchar(40) NULL,
+    lease_ate varchar(40) NULL,
+    criado_em varchar(40) NOT NULL,
+    atualizado_em varchar(40) NOT NULL,
+    finalizado_em varchar(40) NULL
+);
+
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}fila_workers') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}fila_workers (
+    worker_id varchar(180) NOT NULL PRIMARY KEY,
+    fila varchar(120) NOT NULL,
+    estado varchar(20) NOT NULL,
+    iniciado_em varchar(40) NOT NULL,
+    heartbeat_em varchar(40) NOT NULL,
+    atualizado_em varchar(40) NOT NULL
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}qualificacao') IS NULL
@@ -443,6 +475,12 @@ CREATE TABLE {SCHEMA}.{PREFIXO}entregas (
     status_proc        varchar(40)   NOT NULL CONSTRAINT df_ocr_entregas_status DEFAULT 'pronto',
     erro_proc          nvarchar(max) NULL,
     agente_envio_chave varchar(120)  NULL,
+    ocr_task_id        varchar(64)   NULL,
+    ocr_worker_id      varchar(160)  NULL,
+    ocr_enfileirado_em varchar(40)   NULL,
+    ocr_iniciado_em    varchar(40)   NULL,
+    ocr_finalizado_em  varchar(40)   NULL,
+    ocr_tentativas     int           NOT NULL CONSTRAINT df_acervo_entregas_ocr_tentativas DEFAULT 0,
     CONSTRAINT fk_ocr_entregas_caso FOREIGN KEY (caso_id)
         REFERENCES {SCHEMA}.{PREFIXO}casos (id) ON DELETE CASCADE
 );
@@ -615,6 +653,21 @@ CREATE TABLE {SCHEMA}.{PREFIXO}auditorias_entrevista (
     auditado_em   varchar(40)   NOT NULL,
     CONSTRAINT fk_acervo_auditorias_entrevista_entrevista FOREIGN KEY (entrevista_id)
         REFERENCES {SCHEMA}.{PREFIXO}entrevistas (id) ON DELETE CASCADE
+);
+
+-- Telemetria financeira sem prompt, resposta, documentos, CPF ou credenciais.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}custos_api') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}custos_api (
+    id              varchar(64)   NOT NULL CONSTRAINT pk_acervo_custos_api PRIMARY KEY,
+    criado_em       varchar(40)   NOT NULL,
+    fornecedor      varchar(64)   NOT NULL,
+    modelo          varchar(200)  NOT NULL,
+    operacao        varchar(100)  NOT NULL,
+    input_tokens    bigint        NOT NULL CONSTRAINT df_acervo_custos_api_input DEFAULT 0,
+    output_tokens   bigint        NOT NULL CONSTRAINT df_acervo_custos_api_output DEFAULT 0,
+    total_tokens    bigint        NOT NULL CONSTRAINT df_acervo_custos_api_total DEFAULT 0,
+    custo_usd       decimal(18,8) NULL,
+    custo_estimado  int           NOT NULL CONSTRAINT df_acervo_custos_api_estimado DEFAULT 0
 );
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}solicitacoes_peticao') IS NULL
@@ -817,6 +870,10 @@ ALTER TABLE {SCHEMA}.{PREFIXO}roteiros
 # constraint exige `sp_rename` em cada uma e não muda comportamento nenhum — o custo do
 # risco não compensa a estética. Tabela nova criada por este DDL nasce com o nome novo.
 INDICES = (
+    f"CREATE UNIQUE INDEX uq_acervo_fila_jobs_chave_ativa ON {SCHEMA}.{PREFIXO}fila_jobs (chave) WHERE chave IS NOT NULL AND status IN ('PENDING', 'RUNNING')",
+    f"CREATE INDEX idx_acervo_fila_jobs_proximo ON {SCHEMA}.{PREFIXO}fila_jobs (status, disponivel_em, prioridade, criado_em)",
+    f"CREATE INDEX idx_acervo_fila_jobs_lease ON {SCHEMA}.{PREFIXO}fila_jobs (status, lease_ate)",
+    f"CREATE INDEX idx_acervo_fila_workers_heartbeat ON {SCHEMA}.{PREFIXO}fila_workers (fila, heartbeat_em)",
     f"CREATE INDEX idx_acervo_entregas_caso ON {SCHEMA}.{PREFIXO}entregas (caso_id)",
     f"CREATE INDEX idx_acervo_entregas_item ON {SCHEMA}.{PREFIXO}entregas (caso_id, item_codigo)",
     f"CREATE INDEX idx_acervo_entrevistas_caso ON {SCHEMA}.{PREFIXO}entrevistas (caso_id)",
@@ -830,6 +887,8 @@ INDICES = (
     f"CREATE INDEX idx_acervo_entrevistas_criado ON {SCHEMA}.{PREFIXO}entrevistas (criado_em DESC)",
     f"CREATE INDEX idx_acervo_auditorias_entrevista_em ON {SCHEMA}.{PREFIXO}auditorias_entrevista"
     f" (auditado_em DESC)",
+    f"CREATE INDEX idx_acervo_custos_api_em_fornecedor ON {SCHEMA}.{PREFIXO}custos_api"
+    f" (criado_em DESC, fornecedor, modelo)",
     f"CREATE INDEX idx_acervo_solicitacoes_peticao_em ON {SCHEMA}.{PREFIXO}solicitacoes_peticao"
     f" (solicitada_em DESC)",
     f"CREATE INDEX idx_acervo_peticao_versoes_caso ON {SCHEMA}.{PREFIXO}peticao_versoes (caso_id, versao)",
@@ -933,8 +992,19 @@ COLUNAS_NOVAS = (
     (f"{PREFIXO}casos", "cliente_ref", "varchar(80) NULL"),
     (f"{PREFIXO}casos", "agente_ultimo_erro", "nvarchar(max) NULL"),
     (f"{PREFIXO}casos", "tipo_acao", "nvarchar(240) NOT NULL CONSTRAINT df_acervo_casos_tipo_acao DEFAULT N''"),
+    # Skill escolhida na criação pelo ZIP. É referência, não cópia da análise:
+    # o snapshot aprovado guardará a versão usada antes de redigir a peça.
+    (f"{PREFIXO}casos", "skill_juridica_id", "varchar(80) NULL"),
     # Chave idempotente do envio ao agente (entrega_id:hash da extração).
     (f"{PREFIXO}entregas", "agente_envio_chave", "varchar(120) NULL"),
+    # Rastreio de ciclo de vida do OCR. Todas as colunas são compatíveis com as
+    # entregas antigas e permitem distinguir trabalho ativo de job órfão.
+    (f"{PREFIXO}entregas", "ocr_task_id", "varchar(64) NULL"),
+    (f"{PREFIXO}entregas", "ocr_worker_id", "varchar(160) NULL"),
+    (f"{PREFIXO}entregas", "ocr_enfileirado_em", "varchar(40) NULL"),
+    (f"{PREFIXO}entregas", "ocr_iniciado_em", "varchar(40) NULL"),
+    (f"{PREFIXO}entregas", "ocr_finalizado_em", "varchar(40) NULL"),
+    (f"{PREFIXO}entregas", "ocr_tentativas", "int NOT NULL CONSTRAINT df_acervo_entregas_ocr_tentativas DEFAULT 0"),
     # O WhatsApp do cliente, colhido na entrevista e guardado NO CASO.
     #
     # Ele já era pedido no roteiro (`telefone`, obrigatória), mas as respostas
@@ -1013,7 +1083,8 @@ def inicializar_schema() -> None:
                 f"ALTER TABLE {SCHEMA}.{tabela} ADD {coluna} {tipo}"
             )
         for indice in INDICES:
-            nome = indice.split()[2]
+            partes_indice = indice.split()
+            nome = partes_indice[partes_indice.index("INDEX") + 1]
             cursor.execute(
                 f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '{nome}') {indice}"
             )

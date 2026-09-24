@@ -86,6 +86,7 @@ from . import (
     panorama,
     peticao_local,
     peticao_skills,
+    skills_juridicas,
     pipeline,
     portal,
     rag,
@@ -101,6 +102,7 @@ from . import (
     valor_documento,
     whatsapp,
 )
+from . import fila_sql
 from . import jobs, observabilidade
 from .banco import limite_de_espera_por_lock
 from .banco import sessao as sessao_banco
@@ -128,7 +130,15 @@ BASE = Path(__file__).resolve().parent.parent
 STATIC = BASE / "static"
 
 MAX_BYTES = 20 * 1024 * 1024
+# O pacote agrega documentos; recebe teto próprio. O conteúdo expandido segue
+# limitado separadamente para bloquear ZIP bomb.
+MAX_BYTES_ZIP_UPLOAD = int(os.getenv("MAX_BYTES_ZIP_UPLOAD", str(500 * 1024 * 1024)))
 _ocr_aquecido = threading.Event()
+
+
+def _fila_sql_ocr_ativa() -> bool:
+    """Só publica no SQL quando o serviço SQL OCR foi ligado no deploy."""
+    return os.getenv("FILA_SQL_OCR_ATIVA", "0").strip().lower() in {"1", "true", "sim"}
 
 #: Quanto cada etapa da subida espera por um lock antes de desistir. Generoso para
 #: o banco remoto sob carga, curto perto do "para sempre" que travava a API.
@@ -454,6 +464,10 @@ app.add_middleware(
 
 
 armazenamento.inicializar()
+try:
+    skills_juridicas.importar_embutida(BASE / "escritorio-trabalhista.skill.zip")
+except Exception:  # noqa: BLE001 - skill extra não pode impedir a API de subir
+    log.warning("Skill jurídica embutida não pôde ser instalada", exc_info=True)
 try:
     google_drive.inicializar()
 except Exception:  # noqa: BLE001
@@ -856,6 +870,27 @@ async def salvar_skill_de_peticao(
         "atualizado_por": registro.get("atualizado_por", ""),
         "atualizado_em": registro.get("atualizado_em", ""),
     }
+
+
+@app.get("/api/skills-juridicas")
+async def listar_skills_juridicas(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Skills disponíveis para análise e redação de novos casos."""
+    return await run_in_threadpool(skills_juridicas.listar)
+
+
+@app.post("/api/skills-juridicas/importar", status_code=201)
+async def importar_skill_juridica(
+    arquivo: UploadFile = File(...),
+    _autorizado=PodeManterModeloPeticao,
+):
+    """Importa uma skill ZIP sem executar nenhum arquivo do pacote."""
+    if not (arquivo.filename or "").lower().endswith(".zip"):
+        raise HTTPException(400, "Envie uma skill no formato .skill.zip.")
+    try:
+        conteudo = await _ler_upload(arquivo)
+        return await run_in_threadpool(skills_juridicas.importar_zip, arquivo.filename or "skill", conteudo)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 #: Onde a API alcança o serviço de transcrição por dentro da rede do cluster.
@@ -2489,8 +2524,13 @@ def saude_da_fila():
     Exige sessão: o endereço do broker não é informação pública.
     """
     from .tasks.manutencao import MINUTOS_TRAVADA
+    from .ocr_saude import snapshot as snapshot_ocr
 
     resposta: dict[str, Any] = {"broker": _sem_segredo(celery_app.conf.broker_url)}
+    try:
+        resposta["snapshot"] = snapshot_ocr()
+    except Exception as exc:
+        resposta["snapshot"] = {"state": "UNKNOWN", "error": type(exc).__name__}
 
     try:
         inspecao = celery_app.control.inspect(timeout=5)
@@ -2682,6 +2722,18 @@ async def _ler_upload(arquivo: UploadFile) -> bytes:
         raise HTTPException(400, "Arquivo vazio.")
     if len(conteudo) > MAX_BYTES:
         raise HTTPException(413, f"Arquivo maior que {MAX_BYTES // (1024 * 1024)}MB.")
+    return conteudo
+
+
+async def _ler_upload_zip(arquivo: UploadFile) -> bytes:
+    conteudo = await arquivo.read()
+    if not conteudo:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(conteudo) > MAX_BYTES_ZIP_UPLOAD:
+        raise HTTPException(
+            413,
+            f"O ZIP passa de {MAX_BYTES_ZIP_UPLOAD // (1024 * 1024)}MB. Divida o pacote em partes menores.",
+        )
     return conteudo
 
 
@@ -3639,20 +3691,18 @@ async def _registrar_documento(
     # Paddle no primeiro envio (97–200s). O worker OCR já nasce aquecido e é o
     # único dono do modelo; a requisição continua voltando imediatamente.
     try:
-        tarefa = processar_entrega.apply_async(
-            args=(
-                entrega["id"],
-                caso_id,
-                str(caminho),
-                nome,
-                item_codigo,
-                categoria.codigo,
-                idioma,
-                usar_para_rg_e_cpf,
-            ),
-            queue="gpu_background",
-            priority=7,
+        args = (
+            entrega["id"], caso_id, str(caminho), nome, item_codigo,
+            categoria.codigo, idioma, usar_para_rg_e_cpf,
         )
+        task_id = str(uuid.uuid4())
+        armazenamento.marcar_entrega_enfileirada(entrega["id"], task_id)
+        if _fila_sql_ocr_ativa():
+            task_id = fila_sql.enfileirar_ocr(args, job_id=task_id)
+        else:
+            processar_entrega.apply_async(
+                args=args, queue="gpu_background", priority=7, task_id=task_id,
+            )
     except Exception as exc:
         armazenamento.falhar_entrega(entrega["id"], "Fila de OCR indisponível.")
         log.exception("Falha ao enfileirar a entrega %s", entrega["id"])
@@ -3660,7 +3710,7 @@ async def _registrar_documento(
             503, "Fila de leitura indisponível. Tente novamente."
         ) from exc
 
-    return {"entrega": entrega, "processando": True, "task_id": tarefa.id}
+    return {"entrega": entrega, "processando": True, "task_id": task_id}
 
 
 @app.post("/api/casos/{caso_id}/documentos", status_code=201)
@@ -3704,7 +3754,15 @@ MAX_ARQUIVOS_POR_LOTE = int(os.getenv("MAX_ARQUIVOS_POR_LOTE", "200"))
 #: Guardas contra ZIP malicioso (zip bomb): teto de itens e de bytes já
 #: descomprimidos. Um ZIP acima disto é recusado inteiro, com o motivo.
 MAX_ITENS_ZIP = int(os.getenv("MAX_ITENS_ZIP", "200"))
-MAX_BYTES_ZIP = int(os.getenv("MAX_BYTES_ZIP_DESCOMPRIMIDO", str(200 * 1024 * 1024)))
+MAX_BYTES_ZIP = int(os.getenv("MAX_BYTES_ZIP_DESCOMPRIMIDO", str(1024 * 1024 * 1024)))
+# Um ZIP de documentos nunca precisa carregar binários executáveis. A lista é
+# deliberadamente pequena: formatos fora dela recebem uma resposta explícita em
+# vez de chegarem ao OCR como bytes sem semântica.
+EXTENSOES_DOCUMENTO_ZIP = frozenset({
+    ".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".odt",
+    ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".heic",
+})
+MAX_RAZAO_COMPRESSAO_ZIP = float(os.getenv("MAX_RAZAO_COMPRESSAO_ZIP", "100"))
 
 
 class _ArquivoEmMemoria:
@@ -3732,6 +3790,48 @@ def _e_lixo_de_zip(nome: str) -> bool:
         or base in {".DS_Store", "Thumbs.db"}
         or base.startswith("._")
     )
+
+
+def _validar_indice_zip(z: zipfile.ZipFile, nome_zip: str) -> list[zipfile.ZipInfo]:
+    """Valida o índice antes de ler qualquer entrada de um ZIP enviado.
+
+    Não extraímos para disco, mas ainda rejeitamos caminhos maliciosos, arquivos
+    executáveis, entradas criptografadas e razões de compressão incompatíveis
+    com documentos. Assim a mesma regra protege a criação rápida e o lote.
+    """
+    itens: list[zipfile.ZipInfo] = []
+    total = 0
+    for info in z.infolist():
+        caminho = info.filename.replace("\\", "/")
+        partes = [parte for parte in caminho.split("/") if parte]
+        if info.is_dir() or _e_lixo_de_zip(caminho):
+            continue
+        if caminho.startswith("/") or any(parte in {".", ".."} for parte in partes):
+            raise HTTPException(400, f"O ZIP '{nome_zip}' contém um caminho inválido.")
+        if info.flag_bits & 0x1:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' contém arquivo protegido por senha.")
+        extensao = Path(caminho).suffix.lower()
+        if extensao == ".zip":
+            # Não é aberto nem aceito como documento: impede cascatas de ZIP.
+            continue
+        if extensao not in EXTENSOES_DOCUMENTO_ZIP:
+            raise HTTPException(
+                400,
+                f"O arquivo '{Path(caminho).name}' não é um formato de documento aceito.",
+            )
+        if info.file_size < 0 or info.compress_size < 0:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' possui tamanho inválido.")
+        if info.file_size and not info.compress_size:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' possui entrada com compressão inválida.")
+        if info.compress_size and info.file_size / info.compress_size > MAX_RAZAO_COMPRESSAO_ZIP:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' excede a razão máxima de compressão.")
+        itens.append(info)
+        total += info.file_size
+        if len(itens) > MAX_ITENS_ZIP:
+            raise HTTPException(400, f"O ZIP '{nome_zip}' tem mais de {MAX_ITENS_ZIP} arquivos. Divida em partes menores.")
+        if total > MAX_BYTES_ZIP:
+            raise HTTPException(413, f"O conteúdo de '{nome_zip}' passa de {MAX_BYTES_ZIP // (1024 * 1024)}MB descomprimido.")
+    return itens
 
 
 _MARCADORES_DE_ENTREVISTA = (
@@ -3822,10 +3922,7 @@ async def _expandir_zips(arquivos: list[Any]) -> list[Any]:
         bruto = await arquivo.read()
         try:
             with zipfile.ZipFile(io.BytesIO(bruto)) as z:
-                itens = [
-                    i for i in z.infolist()
-                    if not i.is_dir() and not _e_lixo_de_zip(i.filename)
-                ]
+                itens = _validar_indice_zip(z, nome)
                 if len(itens) > MAX_ITENS_ZIP:
                     raise HTTPException(
                         400,
@@ -3959,16 +4056,16 @@ _trava_casos_zip_agendados = threading.Lock()
 
 @por_alguns_segundos(60, maximo=64)
 def _criar_caso_por_zip_idempotente(
-    cliente: str, categoria: str, nome: str, conteudo: bytes
+    cliente: str, categoria: str, nome: str, conteudo: bytes, skill_juridica_id: str
 ) -> dict[str, Any]:
     """Cria o caso e grava o ZIP em disco — parte síncrona de `criar_caso_por_zip`.
 
-    Memoizada por (cliente, categoria, nome, conteúdo): um duplo clique ou um
-    reload da tela enquanto o upload ainda está "Montando" reenvia a mesma
-    requisição, byte a byte, e cairia aqui de novo. Sem isso, cada retry criava
-    um caso novo com seu próprio ZIP em disco.
+    Memoizada por (cliente, categoria, nome, conteúdo, skill_juridica_id): um
+    duplo clique ou um reload da tela enquanto o upload ainda está "Montando"
+    reenvia a mesma requisição, byte a byte, e cairia aqui de novo. Sem isso,
+    cada retry criava um caso novo com seu próprio ZIP em disco.
     """
-    caso = armazenamento.criar_caso(cliente, categoria)
+    caso = armazenamento.criar_caso(cliente, categoria, skill_juridica_id=skill_juridica_id)
     pasta = armazenamento.DIR_ARQUIVOS / caso["id"] / "importacoes"
     pasta.mkdir(parents=True, exist_ok=True)
     caminho = pasta / f"{uuid.uuid4().hex}.zip"
@@ -3983,6 +4080,7 @@ async def criar_caso_por_zip(
     categoria: str = Form("em_triagem"),
     arquivo: UploadFile = File(...),
     idioma: str = Form("pt"),
+    skill_juridica_id: str = Form(""),
 ):
     """Abre um caso e importa uma pasta ZIP de uma vez.
 
@@ -3997,18 +4095,20 @@ async def criar_caso_por_zip(
         raise HTTPException(400, "Envie uma pasta compactada no formato .zip.")
     if categorias.obter(categoria) is None:
         categoria = "em_triagem"
+    if skill_juridica_id and await run_in_threadpool(skills_juridicas.obter, skill_juridica_id) is None:
+        raise HTTPException(400, "A skill jurídica escolhida não existe mais.")
 
-    conteudo = await _ler_upload(arquivo)
+    conteudo = await _ler_upload_zip(arquivo)
     # Confere apenas o índice do ZIP agora. A leitura e o cadastro de cada
     # documento ficam para depois da resposta, para a página não parecer travada.
     try:
         with zipfile.ZipFile(io.BytesIO(conteudo)) as z:
-            z.infolist()
+            _validar_indice_zip(z, nome)
     except zipfile.BadZipFile as exc:
         raise HTTPException(400, f"'{nome}' não é um ZIP válido ou está corrompido.") from exc
 
     resultado = await run_in_threadpool(
-        _criar_caso_por_zip_idempotente, cliente.strip(), categoria, nome, conteudo
+        _criar_caso_por_zip_idempotente, cliente.strip(), categoria, nome, conteudo, skill_juridica_id
     )
     caso = resultado["caso"]
     agora = time.monotonic()
@@ -4944,7 +5044,11 @@ def baixar_arquivo_entrega(entrega_id: str, download: bool = False):
 
 @app.get("/api/entregas/{entrega_id}/arquivo.pdf")
 def baixar_arquivo_entrega_pdf(entrega_id: str):
-    """Preserva PDF original ou converte uma imagem apenas para o download."""
+    """Preserva PDF original; converte imagem e .docx.
+
+    Não serve só ao download: o visor do checklist pede este PDF para mostrar um
+    .docx na tela — o navegador não desenha Word, e sem isto o documento só
+    podia ser baixado."""
     entrega = armazenamento.obter_entrega(entrega_id)
     if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
@@ -5181,27 +5285,27 @@ def _reenfileirar_leitura(
     usuario: str,
     em_leitura: set[str],
     *,
+    worker_ativo: bool,
     tarefas_locais: BackgroundTasks,
 ):
-    """O miolo de "tentar novamente": restaura o arquivo e lê de novo, na hora.
+    """O miolo de "tentar novamente": restaura o arquivo e manda de volta pro OCR.
 
     Usado tanto pelo botão de UM documento quanto pelo de TODOS os documentos
-    com erro de um caso. Levanta `RuntimeError` quando o arquivo já não existe
-    (nem disco, nem banco) e `_JaEmLeitura` quando um worker já está com esta
-    entrega em mãos — mandar de novo criaria DUAS tarefas correndo para o
+    com erro de um caso — a lógica de reenfileirar é a mesma, só muda quem
+    decide a lista de entregas. Levanta `RuntimeError` quando o arquivo já não
+    existe (nem disco, nem banco) e `_JaEmLeitura` quando um worker já está com
+    esta entrega em mãos — mandar de novo criaria DUAS tarefas correndo para o
     mesmo documento, e a que terminar por último vence calada, sem erro nenhum
     visível. `em_leitura` vem pronto do chamador para não repetir o `inspect`
     do broker a cada entrega, num lote com várias.
 
-    Roda SEMPRE local (`processar_entrega.apply`, execução síncrona, sem
-    broker) numa BackgroundTask do FastAPI, nunca via `apply_async`/Celery.
-    Um clique manual precisa de resultado confiável — checar "tem worker
-    ativo?" antes de decidir a fila (`_leitor_de_documentos_ativo`) já se
-    mostrou enganoso: o worker aparece consumindo no `inspect` mas nunca pega
-    a mensagem de verdade, e o documento fica preso em `na_fila` de novo,
-    calado, exatamente como antes do botão existir. Local é mais lento que um
-    worker dedicado, mas não depende de detectar corretamente um estado que já
-    provou ser difícil de detectar.
+    Três níveis, na ordem: a fila SQL durável (`_fila_sql_ocr_ativa`, a
+    migração para fora do Celery) quando estiver ligada; senão, com worker
+    Celery ativo (`worker_ativo`, de `_leitor_de_documentos_ativo`), manda pra
+    `gpu_background`; sem os dois, a PRÓPRIA API processa o documento
+    (`processar_entrega.apply`, execução local, sem broker) numa tarefa de
+    background do FastAPI — mais lento, mas não depende de ninguém reiniciar
+    container nenhum.
     """
     if entrega_id in em_leitura:
         raise _JaEmLeitura("Esta entrega já está sendo lida agora por um worker.")
@@ -5232,7 +5336,16 @@ def _reenfileirar_leitura(
         "pt",
         len(itens_atendidos) > 1,
     )
+    if _fila_sql_ocr_ativa():
+        task_id = str(uuid.uuid4())
+        armazenamento.marcar_entrega_enfileirada(entrega_id, task_id)
+        fila_sql.enfileirar_ocr(args, job_id=task_id)
+        return task_id
+    if worker_ativo:
+        return processar_entrega.apply_async(args=args, queue="gpu_background", priority=7)
+
     tarefas_locais.add_task(processar_entrega.apply, args=args)
+    return None
 
 
 @app.post("/api/entregas/{entrega_id}/tentar-novamente")
@@ -5263,9 +5376,9 @@ def tentar_novamente_entrega(
     if categoria is None:
         raise HTTPException(409, f"Categoria '{caso['categoria']}' não existe mais.")
 
-    _, em_leitura = _leitor_de_documentos_ativo()
+    worker_ativo, em_leitura = _leitor_de_documentos_ativo()
     try:
-        _reenfileirar_leitura(
+        tarefa = _reenfileirar_leitura(
             entrega_id,
             entrega["caso_id"],
             categoria,
@@ -5274,6 +5387,7 @@ def tentar_novamente_entrega(
             entrega.get("itens_atendidos") or [],
             _autor_da_acao(usuario),
             em_leitura,
+            worker_ativo=worker_ativo,
             tarefas_locais=tarefas,
         )
     except _JaEmLeitura as exc:
@@ -5289,6 +5403,7 @@ def tentar_novamente_entrega(
     return {
         "entrega": armazenamento.obter_entrega(entrega_id),
         "processando": True,
+        "task_id": tarefa.id if hasattr(tarefa, "id") else tarefa,
     }
 
 
@@ -5310,10 +5425,9 @@ def tentar_novamente_caso(
 
     Documento que já está no checklist (não em triagem, sem erro) não é
     tocado; um que falhar ao reenfileirar entra em `falharam` sem travar os
-    demais. Sem worker consumindo `gpu_background`, cada entrega processa
-    localmente, uma de cada vez, em segundo plano na própria API (ver
-    `_reenfileirar_leitura`) — mais lento, mas não fica parado esperando um
-    worker que não vai aparecer.
+    demais. Usa a fila SQL durável quando ligada, senão worker Celery ativo,
+    senão cada entrega processa localmente, uma de cada vez, em segundo plano
+    na própria API (ver `_reenfileirar_leitura`).
     """
     caso = armazenamento.obter_caso(caso_id)
     if caso is None:
@@ -5327,7 +5441,7 @@ def tentar_novamente_caso(
         if e.get("status_proc") == "erro" or e.get("item_codigo") == categorias.ITEM_TRIAGEM
     ]
     quem = _autor_da_acao(usuario)
-    _, em_leitura = _leitor_de_documentos_ativo()
+    worker_ativo, em_leitura = _leitor_de_documentos_ativo()
     falharam: list[dict[str, str]] = []
     reenfileiradas = 0
     for entrega in com_erro:
@@ -5341,6 +5455,7 @@ def tentar_novamente_caso(
                 entrega.get("itens_atendidos") or [],
                 quem,
                 em_leitura,
+                worker_ativo=worker_ativo,
                 tarefas_locais=tarefas,
             )
             reenfileiradas += 1

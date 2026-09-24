@@ -8,7 +8,7 @@ import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, listarReunioesTactiq, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq } from "@/lib/api";
+import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, listarReunioesTactiq, listarSkillsJuridicas, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq, type SkillJuridica } from "@/lib/api";
 import { baixarArquivo } from "@/lib/baixar";
 
 interface Props {
@@ -19,7 +19,7 @@ interface Props {
   onAbrir: (casoId: string) => void;
   onAbrirDossie: (casoId: string) => void;
   onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string, tipoAcao?: string) => Promise<CasoCriado>;
-  onImportarZip: (cliente: string, categoria: string, arquivo: File) => Promise<CasoCriado>;
+  onImportarZip: (cliente: string, categoria: string, arquivo: File, skillJuridicaId?: string) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
 }
 
@@ -129,13 +129,31 @@ export default function ListaCasos({
   const pacoteInputRef = useRef<HTMLInputElement>(null);
   const [pacoteArquivo, setPacoteArquivo] = useState<File | null>(null);
   const [importandoPacote, setImportandoPacote] = useState(false);
+  const [erroPacote, setErroPacote] = useState<string | null>(null);
+  const [arrastandoPacote, setArrastandoPacote] = useState(false);
+  const [skillsJuridicas, setSkillsJuridicas] = useState<SkillJuridica[]>([]);
+  const [skillJuridicaId, setSkillJuridicaId] = useState("");
+
+  useEffect(() => {
+    void listarSkillsJuridicas().then((skills) => {
+      setSkillsJuridicas(skills);
+      if (skills.length === 1) setSkillJuridicaId(skills[0].id);
+    }).catch(() => setSkillsJuridicas([]));
+  }, []);
+
+  function selecionarPacote(arquivo: File | null) {
+    if (!arquivo) return;
+    if (!arquivo.name.toLowerCase().endsWith(".zip")) return;
+    setPacoteArquivo(arquivo);
+  }
 
   async function importarPacote(evento: React.FormEvent) {
     evento.preventDefault();
     if (!cliente.trim() || !categoriaSelecionada || !pacoteArquivo) return;
     setImportandoPacote(true);
+    setErroPacote(null);
     try {
-      const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo);
+      const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo, skillJuridicaId);
       setCliente("");
       setPacoteArquivo(null);
       /* Criação rápida: o upload JÁ é a intenção de criar o caso — não existe
@@ -146,6 +164,8 @@ export default function ListaCasos({
        * nada, e travar a navegação nelas aqui reintroduziria o clique que esta
        * etapa existe para eliminar. */
       onAbrirDossie(novo.id);
+    } catch (falha) {
+      setErroPacote(falha instanceof Error ? falha.message : "Não foi possível criar o caso pelo ZIP.");
     } finally {
       setImportandoPacote(false);
     }
@@ -434,21 +454,43 @@ export default function ListaCasos({
         <form onSubmit={importarPacote}>
           <h3 className="text-base font-semibold text-tinta">Criar pelo pacote do cliente</h3>
           <p className="mt-1 text-sm text-tinta-2">
-            Informe o nome, escolha a ação e envie uma pasta ZIP. Os documentos entram na triagem e uma entrevista em TXT, MD, DOCX ou PDF é vinculada automaticamente.
+            Informe o nome, escolha a ação e envie uma pasta ZIP de até 500 MB. Os documentos entram na triagem e uma entrevista em TXT, MD, DOCX ou PDF é vinculada automaticamente.
           </p>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Botao type="button" variante="secundario" onClick={() => pacoteInputRef.current?.click()} disabled={importandoPacote}>
-              <Upload className="h-4 w-4" />
-              {pacoteArquivo ? "Trocar pasta ZIP" : "Escolher pasta ZIP"}
-            </Botao>
-            <span className="text-sm text-tinta-2">{pacoteArquivo ? pacoteArquivo.name : "Nenhum ZIP escolhido"}</span>
+          <div
+            className={`mt-4 rounded-xl border-2 border-dashed p-5 text-center transition-colors ${arrastandoPacote ? "border-acao bg-acao-clara" : "border-borda bg-papel-2"}`}
+            onDragEnter={(evento) => { evento.preventDefault(); setArrastandoPacote(true); }}
+            onDragOver={(evento) => { evento.preventDefault(); evento.dataTransfer.dropEffect = "copy"; }}
+            onDragLeave={(evento) => { evento.preventDefault(); setArrastandoPacote(false); }}
+            onDrop={(evento) => {
+              evento.preventDefault();
+              setArrastandoPacote(false);
+              selecionarPacote(evento.dataTransfer.files?.[0] ?? null);
+            }}
+          >
+            <Upload className="mx-auto h-6 w-6 text-acao" />
+            <p className="mt-2 text-sm font-medium text-tinta">Arraste o arquivo ZIP aqui</p>
+            <p className="mt-1 text-sm text-tinta-2">ou escolha o arquivo pelo botão</p>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+              <Botao type="button" variante="secundario" onClick={() => pacoteInputRef.current?.click()} disabled={importandoPacote}>
+                {pacoteArquivo ? "Trocar arquivo ZIP" : "Escolher arquivo ZIP"}
+              </Botao>
+              <span className="text-sm text-tinta-2">{pacoteArquivo ? pacoteArquivo.name : "Nenhum ZIP escolhido"}</span>
+            </div>
             <input
               ref={pacoteInputRef}
               type="file"
               accept=".zip,application/zip,application/x-zip-compressed"
-              onChange={(e) => { setPacoteArquivo(e.target.files?.[0] ?? null); e.target.value = ""; }}
+              onChange={(e) => { selecionarPacote(e.target.files?.[0] ?? null); e.target.value = ""; }}
               className="hidden"
             />
+          </div>
+          <div className="mt-4">
+            <RotuloCampo htmlFor="skill-juridica">Skill jurídica</RotuloCampo>
+            <CampoSeletor id="skill-juridica" value={skillJuridicaId} onChange={(e) => setSkillJuridicaId(e.target.value)}>
+              <option value="">Sem skill específica</option>
+              {skillsJuridicas.map((skill) => <option key={skill.id} value={skill.id}>{skill.nome}</option>)}
+            </CampoSeletor>
+            <p className="mt-1 text-xs text-tinta-2">A skill será aplicada à análise e preservada para a revisão antes da petição.</p>
           </div>
           <BotaoProcesso
             type="submit"
@@ -461,6 +503,7 @@ export default function ListaCasos({
           >
             Criar caso com ZIP
           </BotaoProcesso>
+          {erroPacote && <div className="mt-3"><Aviso tom="critico" titulo="Não foi possível importar o ZIP">{erroPacote}</Aviso></div>}
         </form>
 
         {categorias.length === 0 && (

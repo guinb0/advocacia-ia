@@ -35,6 +35,19 @@ def _nomes(arquivos: list) -> list[str]:
     return [a.filename for a in arquivos]
 
 
+def test_zip_recusa_path_traversal_e_executavel() -> None:
+    """A criação rápida não pode aceitar entrada que escape do pacote nem binário."""
+    import pytest
+
+    for entradas in (
+        {"../fora.pdf": b"%PDF-1.4"},
+        {"cliente/setup.exe": b"MZ"},
+    ):
+        with pytest.raises(HTTPException) as erro:
+            asyncio.run(main._expandir_zips([_zip(entradas)]))
+        assert erro.value.status_code == 400
+
+
 def main_teste() -> int:
     falhas = 0
 

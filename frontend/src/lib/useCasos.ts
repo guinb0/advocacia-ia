@@ -76,8 +76,8 @@ export function useCasos() {
   );
 
   const importarZip = useCallback(
-    async (cliente: string, categoria: string, arquivo: File): Promise<CasoCriado> => {
-      const caso = await api.criarCasoPorZip(cliente, categoria, arquivo);
+    async (cliente: string, categoria: string, arquivo: File, skillJuridicaId = ""): Promise<CasoCriado> => {
+      const caso = await api.criarCasoPorZip(cliente, categoria, arquivo, skillJuridicaId);
       await recarregar();
       return caso;
     },

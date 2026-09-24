@@ -99,6 +99,7 @@ COPY app ./app
 COPY scripts ./scripts
 COPY sql ./sql
 COPY static ./static
+COPY escritorio-trabalhista.skill.zip ./escritorio-trabalhista.skill.zip
 # docs/ nao e documentacao morta: os .docx oficiais (contrato, procuracao,
 # declaracao) sao lidos dali por app/contrato.py na geracao da papelada.
 COPY docs ./docs

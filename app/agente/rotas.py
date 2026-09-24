@@ -688,18 +688,26 @@ def salvar_rascunho_peticao(
     caso_id: str,
     peca_ref: str,
     secoes: list[dict[str, str]] = Body(..., embed=True),
+    # Cada seção pode trazer `label` — o título do tópico ("DOS FATOS") — e o
+    # corpo pode trazer `titulo`, o nome da peça. Os dois são opcionais: quem
+    # não manda o campo não perde o que está gravado.
+    titulo: str | None = Body(None, embed=True),
     usuario: auth.Usuario = Depends(auth.usuario_atual),
 ) -> dict[str, Any]:
     if _peca_local(peca_ref):
         try:
             return peticao_local.para_api(
-                peticao_local.salvar_secoes(caso_id, secoes, usuario=usuario.nome)
+                peticao_local.salvar_secoes(
+                    caso_id, secoes, usuario=usuario.nome, titulo=titulo
+                )
             )
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
     if _peca_anexa(caso_id, peca_ref):
         try:
-            return peticao_local.salvar_secoes_anexa(peca_ref, secoes, usuario=usuario.nome)
+            return peticao_local.salvar_secoes_anexa(
+                peca_ref, secoes, usuario=usuario.nome, titulo=titulo
+            )
         except peticao_local.ErroPeticao as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
     caso_ref = _caso_ref(caso_id)

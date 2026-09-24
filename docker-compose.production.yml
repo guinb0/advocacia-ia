@@ -42,8 +42,8 @@ services:
         window: "30s"
       resources:
         limits:
-          memory: 1G
-          cpus: "1.00"
+          memory: 512M
+          cpus: "0.50"
       labels:
         - "traefik.enable=true"
         - "traefik.docker.network=traefik-public"
@@ -173,6 +173,13 @@ services:
       # travar, o timeout mata só aquele filho e a triagem continua.
       OCR_ISOLAR_PROCESSO: "1"
       OCR_EXECUCAO_TIMEOUT_S: "600"
+      MAX_BYTES_ZIP_UPLOAD: "524288000"
+      MAX_BYTES_ZIP_DESCOMPRIMIDO: "1073741824"
+      # OCR usa a fila transacional no SQL Server. Celery/Valkey continua
+      # temporariamente para os demais serviços, mas não transporta documentos.
+      FILA_SQL_OCR_ATIVA: "1"
+      FILA_SQL_LEASE_S: "720"
+      FILA_SQL_MAX_JOBS: "20"
 
       ZAPSIGN_API_TOKEN: ${ZAPSIGN_API_TOKEN?ZAPSIGN_API_TOKEN is required}
       ZAPSIGN_BASE_URL: https://api.zapsign.com.br/api/v1
@@ -236,8 +243,8 @@ services:
         window: "30s"
       resources:
         limits:
-          memory: 4G
-          cpus: "2.00"
+          memory: 1536M
+          cpus: "1.00"
       labels:
         - "traefik.enable=true"
         - "traefik.docker.network=traefik-public"
@@ -288,8 +295,8 @@ services:
         window: "30s"
       resources:
         limits:
-          memory: 1G
-          cpus: "1.00"
+          memory: 768M
+          cpus: "0.75"
       labels:
         - "traefik.enable=true"
         - "traefik.docker.network=traefik-public"
@@ -314,21 +321,43 @@ services:
       retries: 5
       start_period: 30s
 
-  # OCR isolado: uma leitura longa nao bloqueia IA, documentos e manutencao.
-  #
-  # --pool=solo, nao prefork (o padrao do Celery): OpenCV (cv2) e pypdfium2 sao
-  # bibliotecas em C com estado interno global, e pypdfium2 o proprio codigo ja
-  # documenta como "nao e thread-safe" (ver PDFIUM_LOCK em app/pdf.py). Um
-  # worker prefork bifurca (fork) o processo para cada child -- se a lib ja
-  # tinha estado inicializado no pai, o filho herda mutex pela metade e pode
-  # travar (deadlock) para sempre no primeiro documento que tocar essa lib, sem
-  # crash, sem erro no log. Com --concurrency=1 isso trava a fila inteira atras
-  # de um documento so. scripts/diagnostico_fila_ocr.py ja recomendava solo;
-  # o compose nunca tinha sido atualizado para bater com essa recomendacao.
-  # Sem fork, --concurrency não se aplica ao pool solo.
+  # Cada réplica OCR processa uma tarefa por vez em um child reciclável. A
+  # leitura pesada mantém seu subprocesso `spawn`, portanto bibliotecas C não
+  # carregam o estado de um documento anterior para o próximo.
   worker-ocr:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
-    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "-Q", "gpu_background", "-n", "ocr@%h"]
+    command: ["python", "-m", "app.worker_sql_ocr"]
+    environment: *ambiente_api
+    volumes:
+      - dados:/app/dados
+    deploy:
+      # Três consumidores solo, em vez de um só: cada documento continua
+      # isolado no próprio processo filho, mas um PDF lento não paralisa o
+      # lote inteiro. O limite é por réplica.
+      replicas: 3
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.25"
+    networks:
+      interna: {}
+      psql_db: {}
+      cache_shared_net: {}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from app.banco import dsn; import pyodbc; con=pyodbc.connect(dsn(), timeout=5); con.execute('SELECT 1').fetchone(); con.close()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  worker-background:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--pool=prefork", "--concurrency=1", "--max-tasks-per-child=50", "--max-memory-per-child=524288", "-Q", "ai,documents,default", "-n", "background@%h"]
     environment: *ambiente_api
     volumes:
       - dados:/app/dados
@@ -340,33 +369,37 @@ services:
         window: "30s"
       resources:
         limits:
-          memory: 4G
-          cpus: "2.00"
+          memory: 768M
+          cpus: "0.75"
+    networks:
+      interna: {}
+      psql_db: {}
+      cache_shared_net: {}
+  # A recuperação de documentos não divide mais o worker de IA/default. Este
+  # consumidor existe só para a fila `low`, onde o beat agenda a cada cinco
+  # minutos a varredura das entregas abandonadas. Assim uma fila cheia ou uma
+  # chamada lenta de IA não deixa o watchdog sem executar.
+  worker-maintenance:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--pool=prefork", "--concurrency=1", "--max-tasks-per-child=100", "--max-memory-per-child=196608", "-Q", "low", "-n", "maintenance@%h"]
+    environment: *ambiente_api
+    volumes:
+      - dados:/app/dados
+    deploy:
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
     networks:
       interna: {}
       psql_db: {}
       cache_shared_net: {}
 
-  worker-background:
-    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
-    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--concurrency=1", "-Q", "ai,documents,default,low", "-n", "background@%h"]
-    environment: *ambiente_api
-    volumes:
-      - dados:/app/dados
-    deploy:
-      restart_policy:
-        condition: any
-        delay: "5s"
-        max_attempts: 0
-        window: "30s"
-      resources:
-        limits:
-          memory: 4G
-          cpus: "2.00"
-    networks:
-      interna: {}
-      psql_db: {}
-      cache_shared_net: {}
   beat:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
     command: ["celery", "-A", "app.celery_app:celery_app", "beat"]

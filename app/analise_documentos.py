@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from . import armazenamento, cache_leitura
+from . import armazenamento, cache_leitura, custos_api
 
 log = logging.getLogger("analise_documentos")
 
@@ -310,20 +310,40 @@ def _montar_mensagem(
 
 
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
-    chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if not chave:
+    """Executa a análise pelo provedor configurado, com resposta JSON auditável.
+
+    OpenRouter é o caminho padrão do ambiente de produção. DeepSeek direto fica
+    apenas como compatibilidade para instalações que já o configuravam.
+    """
+    chave_openrouter = os.getenv("OPENROUTER_API_KEY", "").strip()
+    chave_deepseek = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not chave_openrouter and not chave_deepseek:
         raise ErroAnaliseDocumentos(
-            "Análise dos documentos desligada: falta DEEPSEEK_API_KEY no .env. "
+            "Análise dos documentos desligada: falta OPENROUTER_API_KEY (ou DEEPSEEK_API_KEY) no .env. "
             "Os documentos seguem anexados e legíveis — só não há leitura automática."
         )
 
-    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    usando_openrouter = bool(chave_openrouter)
+    chave = chave_openrouter or chave_deepseek
+    base_url = (
+        "https://openrouter.ai/api/v1"
+        if usando_openrouter
+        else os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    )
+    modelo = (
+        os.getenv("OPENROUTER_MODELO_ANALISE", "").strip() or "google/gemini-3.7-flash"
+        if usando_openrouter
+        else os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    )
     try:
+        cabecalhos = {"Authorization": f"Bearer {chave}"}
+        if usando_openrouter:
+            cabecalhos["HTTP-Referer"] = os.getenv("OPENROUTER_REFERER", "http://localhost:3000")
         resposta = httpx.post(
             base_url + "/chat/completions",
-            headers={"Authorization": f"Bearer {chave}"},
+            headers=cabecalhos,
             json={
-                "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                "model": modelo,
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
                 # 12 achados com citação LITERAL passam de 1900 tokens — 2000 de
@@ -346,6 +366,8 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
             "tente a análise de novo."
         ) from exc
 
+    if usando_openrouter:
+        custos_api.registrar("openrouter", modelo, "analise_documentos", resposta)
     try:
         return json.loads(resposta.json()["choices"][0]["message"]["content"])
     except Exception as exc:

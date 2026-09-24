@@ -1907,16 +1907,25 @@ def obter_anexa(peca_id: str) -> dict[str, Any] | None:
 
 
 def salvar_secoes_anexa(
-    peca_id: str, secoes: list[dict[str, str]], usuario: str = ""
+    peca_id: str,
+    secoes: list[dict[str, str]],
+    usuario: str = "",
+    titulo: str | None = None,
 ) -> dict[str, Any]:
     """Grava o texto editado de uma peça anexa. Mesma lógica de `salvar_secoes`,
     para a peça irmã em vez da petição inicial — ver `armazenamento.salvar_peticao_anexa`.
+
+    Renomear a peça troca o título nos DOIS lugares: em `dados["title"]`, que é o
+    que a tela mostra, e na coluna do registro, que é o que a listagem e o nome
+    do arquivo baixado usam. `peca_id` não muda — é a chave da peça, não o nome.
     """
     registro = armazenamento.obter_peticao_anexa(peca_id)
     if not registro:
         raise ErroPeticao("Peça não encontrada.")
 
-    dados, anterior, _alterou = _aplicar_edicao_manual(dict(registro["dados"]), secoes, usuario)
+    dados, anterior, _alterou = _aplicar_edicao_manual(
+        dict(registro["dados"]), secoes, usuario, titulo
+    )
     if anterior is not None:
         armazenamento.registrar_versao_peticao(registro["caso_id"], anterior, chave=peca_id)
     dados["updated_at"] = _agora()
@@ -1924,7 +1933,7 @@ def salvar_secoes_anexa(
     armazenamento.salvar_peticao_anexa(
         registro["caso_id"],
         peca_id,
-        titulo=str(registro.get("titulo") or dados.get("title") or ""),
+        titulo=str(dados.get("title") or registro.get("titulo") or ""),
         motivo=str(registro.get("motivo") or ""),
         dados=dados,
         docx=montar_docx(dados.get("sections") or []),
@@ -2456,11 +2465,22 @@ def _mesclar_revisao(
     return resultado
 
 
+def _identidade_da_secao(secao: dict[str, Any]) -> tuple[str, str]:
+    """O que, numa seção, conta como "mudou": o corpo E o título do tópico.
+
+    O rótulo não é enfeite de tela — é ele que vira o parágrafo em negrito do
+    .docx (ver `montar_docx`). Trocar "DO CONTRATO DE TRABALHO" por outro título
+    é uma edição da peça como outra qualquer; comparando só `content`, a troca
+    não criava versão nem chegava a ser gravada.
+    """
+    return _texto_normalizado(secao.get("content")), _texto_normalizado(secao.get("label"))
+
+
 def _secoes_alteradas(
     antes: list[dict[str, Any]], depois: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    anteriores = {s.get("code"): _texto_normalizado(s.get("content")) for s in antes}
-    return [s for s in depois if _texto_normalizado(s.get("content")) != anteriores.get(s.get("code"))]
+    anteriores = {s.get("code"): _identidade_da_secao(s) for s in antes}
+    return [s for s in depois if _identidade_da_secao(s) != anteriores.get(s.get("code"))]
 
 
 def _conferir_revisao(
@@ -2877,31 +2897,60 @@ def _continua_sessao_manual(revisao: Any, usuario: str, agora: datetime) -> bool
     return timedelta(0) <= agora - ultima <= JANELA_EDICAO_MANUAL
 
 
+def _secao_editada(secao: dict[str, Any], enviada: dict[str, str]) -> dict[str, Any]:
+    """Aplica sobre a seção gravada o que a tela mandou.
+
+    `label` só é tocado quando o campo VEM no envio: `decidir_peticao` e os
+    clientes antigos mandam só `code`/`content`, e por omissão apagariam o
+    título do tópico. O rótulo vazio, por outro lado, é escolha legítima — é
+    assim que se tira o título de um tópico sem apagar o texto dele.
+    """
+    nova = {**secao, "content": enviada.get("content", "")}
+    if "label" in enviada:
+        nova["label"] = str(enviada.get("label") or "").strip()
+    return nova
+
+
 def _aplicar_edicao_manual(
-    dados: dict[str, Any], secoes: list[dict[str, str]], usuario: str
+    dados: dict[str, Any],
+    secoes: list[dict[str, str]],
+    usuario: str,
+    titulo: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
-    """Aplica o texto editado. Devolve `(dados, anterior, alterou)`.
+    """Aplica o texto editado. Devolve `(dados, anterior, alterou_secoes)`.
 
     `anterior` é a versão a arquivar — `None` quando nada mudou OU quando a edição
     continua a sessão manual em curso (ver `JANELA_EDICAO_MANUAL`), caso em que a
     versão já está aberta e o arquivo do "antes" já foi feito.
+
+    `alterou_secoes` é só sobre as seções, e não sobre o título da peça: quem lê
+    esse retorno usa-o para reconferir a minuta contra os autos, e renomear a
+    peça não muda um fato dentro dela.
     """
     anterior = json.loads(json.dumps(dados))
-    por_codigo = {s["code"]: s.get("content", "") for s in secoes if s.get("code")}
+    por_codigo = {s["code"]: s for s in secoes if s.get("code")}
     atuais = [secao for secao in dados.get("sections") or [] if secao.get("code") != "JURIMETRY"]
     novas = [
-        {**secao, "content": por_codigo[secao["code"]]} if secao.get("code") in por_codigo else secao
+        _secao_editada(secao, por_codigo[secao["code"]]) if secao.get("code") in por_codigo else secao
         for secao in atuais
     ]
     alteradas = _secoes_alteradas(atuais, novas)
     dados["sections"] = novas
-    if not alteradas:
+
+    titulo_novo = (titulo or "").strip()
+    titulo_mudou = bool(titulo_novo) and titulo_novo != str(dados.get("title") or "").strip()
+    if titulo_mudou:
+        dados["title"] = titulo_novo
+
+    if not alteradas and not titulo_mudou:
         return dados, None, False
     # Uma edição manual muda a versão-base; a candidata anterior não pode mais
     # ser aceita por cima dela.
     dados.pop("revisao_pendente", None)
     agora = datetime.now(timezone.utc)
     rotulos = [str(s.get("label") or s.get("code")) for s in alteradas]
+    if titulo_mudou:
+        rotulos.append("Título da peça")
     revisao_atual = anterior.get("revisao")
     if _continua_sessao_manual(revisao_atual, usuario, agora):
         ja_alteradas = list(revisao_atual.get("alteradas") or [])
@@ -2910,7 +2959,7 @@ def _aplicar_edicao_manual(
             "em": agora.isoformat(),
             "alteradas": ja_alteradas + [r for r in rotulos if r not in ja_alteradas],
         }
-        return dados, None, True
+        return dados, None, bool(alteradas)
     dados["version"] = int(anterior.get("version") or 1) + 1
     dados["revisao"] = {
         "tipo": "manual",
@@ -2918,16 +2967,19 @@ def _aplicar_edicao_manual(
         "em": agora.isoformat(),
         "alteradas": rotulos,
     }
-    return dados, anterior, True
+    return dados, anterior, bool(alteradas)
 
 
 def salvar_secoes(
-    caso_id: str, secoes: list[dict[str, str]], usuario: str = ""
+    caso_id: str,
+    secoes: list[dict[str, str]],
+    usuario: str = "",
+    titulo: str | None = None,
 ) -> dict[str, Any]:
     dados = carregar(caso_id)
     if not dados:
         raise ErroPeticao("Nenhuma petição gerada para este caso.")
-    dados, anterior, alterou = _aplicar_edicao_manual(dados, secoes, usuario)
+    dados, anterior, alterou = _aplicar_edicao_manual(dados, secoes, usuario, titulo)
     if anterior is not None:
         armazenamento.registrar_versao_peticao(caso_id, anterior)
     if alterou:
@@ -3065,24 +3117,47 @@ _RE_TRECHO = re.compile(r"^\s*>\s?(.*\S.*)$")
 
 # ------------------------------------------------------------- formatação no texto
 #
-# O editor da tela deixa a pessoa formatar trechos (itálico, sublinhado, tamanho,
-# cor) e parágrafos (alinhamento). A formatação vive NO TEXTO da seção, como
-# marcações, pelo mesmo motivo das fotos: assim ela atravessa versão, histórico,
-# revisão por IA e chat sem caminho paralelo. Só o .docx sabe o que elas significam.
+# O editor da tela deixa a pessoa formatar trechos (itálico, sublinhado, tachado,
+# tamanho, cor) e parágrafos (alinhamento, recuos, entrelinha, espaço antes e
+# depois). A formatação vive NO TEXTO da seção, como marcações, pelo mesmo motivo
+# das fotos: assim ela atravessa versão, histórico, revisão por IA e chat sem
+# caminho paralelo. Só o .docx sabe o que elas significam.
 #
 #   **negrito**                      (já existia)
 #   [[i]]…[[/i]]   [[u]]…[[/u]]      itálico, sublinhado
+#   [[s]]…[[/s]]                     tachado
 #   [[tam=14]]…[[/tam]]              tamanho em pontos
 #   [[cor=#c00000]]…[[/cor]]         cor do texto
+#   uma tabulação literal            vira <w:tab/> dentro da linha
 #   [[alin=centro]] no início da linha   esquerda | centro | direita | justificado
+#   [[par=esq:2;pri:-1.25;dir:0]] no início da linha
+#       os recuos em centímetros; `pri` aceita negativo, que é o deslocamento
+#       do Word — a primeira linha saindo à esquerda do resto do parágrafo.
+#   [[pagina]]  sozinho na linha    quebra de página
+#
+# `[[par]]` é um marcador NOVO em vez de mais campos dentro de `[[alin]]`: há
+# peças gravadas com `[[alin]]`, e dobrar o significado de um marcador em uso
+# obriga a tela e o gerador a mudarem no mesmo instante, sob pena de uma peça
+# antiga abrir errada. O espelho deste bloco está em
+# `frontend/src/lib/formatacaoPeticao.ts` — os dois leitores andam juntos.
 #
 # As marcações não atravessam linhas: cada linha é interpretada sozinha. Marcação
 # sem par é ignorada em vez de sair literal no documento entregue ao juízo.
-_RE_MARCACAO = re.compile(r"\*\*|\[\[(/?)(i|u|tam|cor)(?:=([^\]\s]*))?\]\]")
+_RE_MARCACAO = re.compile(r"\*\*|\[\[(/?)(i|u|s|tam|cor)(?:=([^\]\s]*))?\]\]")
 _RE_ALINHAMENTO_LINHA = re.compile(r"^\s*\[\[alin=(esquerda|centro|direita|justificado)\]\]")
+_RE_PARAGRAFO_LINHA = re.compile(r"^\s*\[\[par=([^\]]*)\]\]")
+#: Quebra de página: a linha inteira é o marcador, e nada mais cabe nela.
+_RE_QUEBRA_DE_PAGINA = re.compile(r"^\s*\[\[pagina\]\]\s*$")
 _ALINHAMENTOS_DOCX = {"esquerda": "left", "centro": "center", "direita": "right", "justificado": "both"}
 _RE_COR = re.compile(r"^#?[0-9a-fA-F]{6}$")
 _TAMANHO_MIN_PT, _TAMANHO_MAX_PT = 6.0, 72.0
+
+#: Os limites dos recuos e espaçamentos, iguais aos da tela.
+_RECUO_MAX_CM, _RECUO_PRIMEIRA_MIN_CM = 10.0, -5.0
+
+
+def _twips_de_cm(centimetros: float) -> int:
+    return round(centimetros / 2.54 * 1440)
 
 
 def _sem_alinhamento(linha: str) -> tuple[str | None, str]:
@@ -3093,6 +3168,76 @@ def _sem_alinhamento(linha: str) -> tuple[str | None, str]:
     return _ALINHAMENTOS_DOCX[achado.group(1)], linha[achado.end():]
 
 
+def _sem_paragrafo(linha: str) -> tuple[dict[str, float], str]:
+    """Separa o `[[par=…]]` do começo da linha: (medidas em cm/pt, resto)."""
+    achado = _RE_PARAGRAFO_LINHA.match(linha)
+    if not achado:
+        return {}, linha
+    limites = {
+        "esq": (0.0, _RECUO_MAX_CM),
+        "pri": (_RECUO_PRIMEIRA_MIN_CM, _RECUO_MAX_CM),
+        "dir": (0.0, _RECUO_MAX_CM),
+    }
+    medidas: dict[str, float] = {}
+    for par in achado.group(1).split(";"):
+        chave, _, valor = par.partition(":")
+        chave = chave.strip()
+        if chave not in limites:
+            continue
+        try:
+            numero = float(valor.strip())
+        except ValueError:
+            continue  # `[[par=esq:abc]]` não vale: a medida some, o texto fica.
+        minimo, maximo = limites[chave]
+        medidas[chave] = max(minimo, min(maximo, numero))
+    return medidas, linha[achado.end():]
+
+
+def _marcadores_de_linha(linha: str) -> tuple[str | None, dict[str, float], str]:
+    """Tira do começo da linha tudo o que vale para o parágrafo inteiro.
+
+    Em qualquer ordem e quantidade: o editor escreve `[[alin]]` e depois
+    `[[par]]`, mas um texto vindo do chat ou de uma revisão da IA pode chegar na
+    outra ordem, e o marcador não pode sair literal no documento.
+    """
+    alinhamento: str | None = None
+    medidas: dict[str, float] = {}
+    resto = linha
+    while True:
+        achado_alin, resto_alin = _sem_alinhamento(resto)
+        if achado_alin is not None:
+            alinhamento, resto = achado_alin, resto_alin
+            continue
+        achado_par, resto_par = _sem_paragrafo(resto)
+        if resto_par != resto:
+            medidas, resto = achado_par, resto_par
+            continue
+        return alinhamento, medidas, resto
+
+
+def _ind_xml(medidas: dict[str, float], *, primeira_linha_zero: bool = False) -> str:
+    """O `<w:ind>` de um parágrafo, a partir das medidas arrastadas na régua.
+
+    `primeira_linha_zero` é o que os títulos, o fechamento e as linhas
+    centralizadas já faziam: anular o recuo padrão da peça, que num texto
+    centralizado empurraria tudo para a direita. Uma medida vinda da régua vence
+    esse padrão — foi a pessoa que a arrastou, olhando a peça.
+    """
+    recuo = ""
+    if "esq" in medidas:
+        recuo += f'w:left="{_twips_de_cm(medidas["esq"])}" '
+    if "dir" in medidas:
+        recuo += f'w:right="{_twips_de_cm(medidas["dir"])}" '
+    if "pri" in medidas:
+        # Deslocamento (primeira linha à ESQUERDA do resto) é `w:hanging`, em
+        # valor positivo: `w:firstLine` negativo o Word simplesmente ignora.
+        twips = _twips_de_cm(medidas["pri"])
+        recuo += f'w:hanging="{-twips}" ' if twips < 0 else f'w:firstLine="{twips}" '
+    elif primeira_linha_zero:
+        recuo += 'w:firstLine="0" '
+    return f"<w:ind {recuo.strip()}/>" if recuo else ""
+
+
 def _trechos_formatados(linha: str) -> list[tuple[str, dict[str, Any]]]:
     """Quebra uma linha (sem o `[[alin]]`) em trechos de texto com a formatação de cada um."""
     pedacos = list(_RE_MARCACAO.finditer(linha))
@@ -3101,7 +3246,7 @@ def _trechos_formatados(linha: str) -> list[tuple[str, dict[str, Any]]]:
     negritos = [m for m in pedacos if m.group(0) == "**"]
     sem_par = negritos[-1] if len(negritos) % 2 else None
 
-    negrito = italico = sublinhado = False
+    negrito = italico = sublinhado = tachado = False
     tamanhos: list[float] = []
     cores: list[str] = []
     saida: list[tuple[str, dict[str, Any]]] = []
@@ -3113,6 +3258,7 @@ def _trechos_formatados(linha: str) -> list[tuple[str, dict[str, Any]]]:
             "b": negrito,
             "i": italico,
             "u": sublinhado,
+            "s": tachado,
             "tam": tamanhos[-1] if tamanhos else None,
             "cor": cores[-1] if cores else None,
         }
@@ -3136,6 +3282,8 @@ def _trechos_formatados(linha: str) -> list[tuple[str, dict[str, Any]]]:
             italico = not fechando
         elif nome == "u":
             sublinhado = not fechando
+        elif nome == "s":
+            tachado = not fechando
         elif nome == "tam":
             if fechando:
                 if tamanhos:
@@ -3156,8 +3304,8 @@ def _trechos_formatados(linha: str) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _sem_formatacao(texto: str) -> str:
-    """O texto da linha sem nenhuma marcação (nem o `[[alin]]`) — para detectar título."""
-    _, resto = _sem_alinhamento(texto)
+    """O texto da linha sem marcação nenhuma — para detectar título."""
+    _, _, resto = _marcadores_de_linha(texto)
     return "".join(pedaco for pedaco, _ in _trechos_formatados(resto))
 
 
@@ -3173,13 +3321,16 @@ def _runs_xml(
     for texto, formato in trechos:
         if maiusculas:
             texto = texto.upper()
-        # Ordem do esquema (CT_RPr): b, i, color, sz, szCs, u. O Word tolera
-        # trocas, mas o LibreOffice e o validador não são obrigados a tolerar.
+        # Ordem do esquema (CT_RPr): b, i, strike, color, sz, szCs, u. O Word
+        # tolera trocas, mas o LibreOffice e o validador não são obrigados a
+        # tolerar.
         props = ""
         if negrito or formato["b"]:
             props += "<w:b/>"
         if formato["i"]:
             props += "<w:i/>"
+        if formato.get("s"):
+            props += "<w:strike/>"
         if formato["cor"]:
             props += f'<w:color w:val="{formato["cor"]}"/>'
         tamanho = formato["tam"] or tamanho_pt
@@ -3188,10 +3339,16 @@ def _runs_xml(
             props += f'<w:sz w:val="{meio_pontos}"/><w:szCs w:val="{meio_pontos}"/>'
         if formato["u"]:
             props += '<w:u w:val="single"/>'
-        runs.append(
-            f'<w:r>{f"<w:rPr>{props}</w:rPr>" if props else ""}'
-            f'<w:t xml:space="preserve">{escape(texto)}</w:t></w:r>'
+        abertura = f'<w:r>{f"<w:rPr>{props}</w:rPr>" if props else ""}'
+        # A TABULAÇÃO é um elemento, não um caractere: dentro de um `<w:t>` o
+        # Word a trata como espaço comum e o alinhamento que a pessoa montou na
+        # tela se desfaz. Partir o texto nas tabulações e intercalar `<w:tab/>`
+        # é o que faz a parada existir de verdade no documento.
+        pedacos = escape(texto).split("\t")
+        conteudo = '<w:tab/>'.join(
+            f'<w:t xml:space="preserve">{pedaco}</w:t>' if pedaco else "" for pedaco in pedacos
         )
+        runs.append(f"{abertura}{conteudo}</w:r>")
     return "".join(runs)
 
 
@@ -3222,9 +3379,16 @@ def _paragrafo_xml(
         if not linha_bruta.strip():
             partes.append("<w:p/>")
             continue
-        # O alinhamento escolhido na tela vale sobre qualquer decisão automática
-        # (título, fechamento, corpo): foi a pessoa que pediu, olhando a peça.
-        alinhamento_pedido, linha = _sem_alinhamento(linha_bruta)
+        if _RE_QUEBRA_DE_PAGINA.match(linha_bruta):
+            # Quebra de página é um parágrafo vazio com a quebra dentro — não um
+            # `<w:br>` solto, que o esquema não aceita fora de um run. O jeito de
+            # pôr os pedidos numa folha nova sem encher a peça de linhas em branco
+            # que se desfazem quando o texto acima muda de tamanho.
+            partes.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
+            continue
+        # O que a pessoa escolheu na tela vale sobre qualquer decisão automática
+        # (título, fechamento, corpo): foi ela que pediu, olhando a peça.
+        alinhamento_pedido, medidas, linha = _marcadores_de_linha(linha_bruta)
         if not linha.strip():
             partes.append("<w:p/>")
             continue
@@ -3251,7 +3415,8 @@ def _paragrafo_xml(
                 ) else "left"
             )
             partes.append(
-                f'<w:p><w:pPr><w:ind w:firstLine="0"/><w:jc w:val="{alinhamento}"/></w:pPr>'
+                f"<w:p><w:pPr>{_ind_xml(medidas, primeira_linha_zero=True)}"
+                f'<w:jc w:val="{alinhamento}"/></w:pPr>'
                 f'{_runs_xml(trechos, negrito=True, maiusculas=titulo == "endereco")}</w:p>'
             )
             continue
@@ -3265,7 +3430,8 @@ def _paragrafo_xml(
                 ) else "left"
             )
             partes.append(
-                f'<w:p><w:pPr><w:ind w:firstLine="0"/><w:jc w:val="{alinhamento}"/></w:pPr>'
+                f"<w:p><w:pPr>{_ind_xml(medidas, primeira_linha_zero=True)}"
+                f'<w:jc w:val="{alinhamento}"/></w:pPr>'
                 f'{_runs_xml(trechos, negrito=negrito)}</w:p>'
             )
         else:
@@ -3275,17 +3441,18 @@ def _paragrafo_xml(
             # conversão eles sairiam literais no .docx — o documento entregue ao
             # juízo com `**FULANO**` escrito. `_trechos_formatados` cuida disso e
             # do `**` sem par, que some em vez de sair literal.
+            # Centralizar ou alinhar à direita com o recuo padrão de 1,25 cm
+            # empurra o texto para o lado; à esquerda e justificado o recuo
+            # continua sendo o do corpo da peça.
+            propriedades = _ind_xml(
+                medidas, primeira_linha_zero=alinhamento_pedido in ("center", "right")
+            )
             if alinhamento_pedido:
-                # Centralizar ou alinhar à direita com o recuo padrão de 1,25 cm
-                # empurra o texto para o lado; à esquerda e justificado o recuo
-                # continua sendo o do corpo da peça.
-                recuo = '<w:ind w:firstLine="0"/>' if alinhamento_pedido in ("center", "right") else ""
-                partes.append(
-                    f'<w:p><w:pPr>{recuo}<w:jc w:val="{alinhamento_pedido}"/></w:pPr>'
-                    f'{_runs_xml(trechos)}</w:p>'
-                )
-            else:
-                partes.append(f"<w:p>{_runs_xml(trechos)}</w:p>")
+                propriedades += f'<w:jc w:val="{alinhamento_pedido}"/>'
+            partes.append(
+                f"<w:p>{f'<w:pPr>{propriedades}</w:pPr>' if propriedades else ''}"
+                f"{_runs_xml(trechos)}</w:p>"
+            )
     return "".join(partes)
 
 
@@ -3700,15 +3867,15 @@ def _conteudo_com_tabelas_xml(
     fotos: list[tuple[str, bytes]] | None = None,
 ) -> str:
     """Converte blocos Markdown de tabela (e linhas de foto), mantendo a posição."""
-    # Linha de tabela ou de foto pode ter ganhado um `[[alin=…]]` na tela; o
-    # marcador não pode esconder a `|` nem o `[[FOTO:…]]` do reconhecimento. As
-    # linhas comuns seguem com o marcador, que `_paragrafo_xml` sabe ler.
-    linhas = [
-        linha if not _RE_ALINHAMENTO_LINHA.match(linha) or not (
-            "|" in linha or "[[FOTO:" in linha
-        ) else _sem_alinhamento(linha)[1].lstrip()
-        for linha in conteudo.split("\n")
-    ]
+    # Linha de tabela ou de foto pode ter ganhado um `[[alin=…]]` ou um
+    # `[[par=…]]` na tela; o marcador não pode esconder a `|` nem o `[[FOTO:…]]`
+    # do reconhecimento. As linhas comuns seguem com os marcadores, que
+    # `_paragrafo_xml` sabe ler.
+    def _sem_marcadores(linha: str) -> str:
+        sem = _marcadores_de_linha(linha)[2].lstrip()
+        return sem if ("|" in sem or "[[FOTO:" in sem) else linha
+
+    linhas = [_sem_marcadores(linha) for linha in conteudo.split("\n")]
     partes: list[str] = []
     comum: list[str] = []
 
