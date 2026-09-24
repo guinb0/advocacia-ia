@@ -371,6 +371,31 @@ services:
       interna: {}
       psql_db: {}
       cache_shared_net: {}
+  # A recuperação de documentos não divide mais o worker de IA/default. Este
+  # consumidor existe só para a fila `low`, onde o beat agenda a cada cinco
+  # minutos a varredura das entregas abandonadas. Assim uma fila cheia ou uma
+  # chamada lenta de IA não deixa o watchdog sem executar.
+  worker-maintenance:
+    image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "-Q", "low", "-n", "maintenance@%h"]
+    environment: *ambiente_api
+    volumes:
+      - dados:/app/dados
+    deploy:
+      restart_policy:
+        condition: any
+        delay: "5s"
+        max_attempts: 0
+        window: "30s"
+      resources:
+        limits:
+          memory: 1G
+          cpus: "0.50"
+    networks:
+      interna: {}
+      psql_db: {}
+      cache_shared_net: {}
+
   beat:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
     command: ["celery", "-A", "app.celery_app:celery_app", "beat"]
