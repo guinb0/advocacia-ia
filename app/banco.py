@@ -617,6 +617,21 @@ CREATE TABLE {SCHEMA}.{PREFIXO}auditorias_entrevista (
         REFERENCES {SCHEMA}.{PREFIXO}entrevistas (id) ON DELETE CASCADE
 );
 
+-- Telemetria financeira sem prompt, resposta, documentos, CPF ou credenciais.
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}custos_api') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}custos_api (
+    id              varchar(64)   NOT NULL CONSTRAINT pk_acervo_custos_api PRIMARY KEY,
+    criado_em       varchar(40)   NOT NULL,
+    fornecedor      varchar(64)   NOT NULL,
+    modelo          varchar(200)  NOT NULL,
+    operacao        varchar(100)  NOT NULL,
+    input_tokens    bigint        NOT NULL CONSTRAINT df_acervo_custos_api_input DEFAULT 0,
+    output_tokens   bigint        NOT NULL CONSTRAINT df_acervo_custos_api_output DEFAULT 0,
+    total_tokens    bigint        NOT NULL CONSTRAINT df_acervo_custos_api_total DEFAULT 0,
+    custo_usd       decimal(18,8) NULL,
+    custo_estimado  int           NOT NULL CONSTRAINT df_acervo_custos_api_estimado DEFAULT 0
+);
+
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}solicitacoes_peticao') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}solicitacoes_peticao (
     id               varchar(64)   NOT NULL CONSTRAINT pk_acervo_solicitacoes_peticao PRIMARY KEY,
@@ -830,6 +845,8 @@ INDICES = (
     f"CREATE INDEX idx_acervo_entrevistas_criado ON {SCHEMA}.{PREFIXO}entrevistas (criado_em DESC)",
     f"CREATE INDEX idx_acervo_auditorias_entrevista_em ON {SCHEMA}.{PREFIXO}auditorias_entrevista"
     f" (auditado_em DESC)",
+    f"CREATE INDEX idx_acervo_custos_api_em_fornecedor ON {SCHEMA}.{PREFIXO}custos_api"
+    f" (criado_em DESC, fornecedor, modelo)",
     f"CREATE INDEX idx_acervo_solicitacoes_peticao_em ON {SCHEMA}.{PREFIXO}solicitacoes_peticao"
     f" (solicitada_em DESC)",
     f"CREATE INDEX idx_acervo_peticao_versoes_caso ON {SCHEMA}.{PREFIXO}peticao_versoes (caso_id, versao)",
