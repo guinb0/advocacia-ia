@@ -21,10 +21,12 @@ import httpx
 from . import (
     analise_documentos,
     armazenamento,
+    case_brief,
     conferencia_peticao,
     jurimetria_caso,
     peticao_aprendizado,
     peticao_criticas,
+    peticao_skill_arquivos,
     peticao_skills,
     rag,
 )
@@ -48,30 +50,26 @@ ID_LOCAL = "local"
 #: alinhamento por parágrafo) interpretada no .docx.
 DOCX_STYLE_VERSION = 10
 LOGO_LARA_MELO = Path(__file__).with_name("assets") / "lara-melo-logo.png"
-#: Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
-#:
-#: Era "Arial". A petição de referência é composta em LiberationSerif — a métrica
-#: livre equivalente à Times New Roman —, e peça jurídica saindo em fonte sem
-#: serifa destoava do que o escritório protocola. Quem sobe um modelo continua
-#: mandando na fonte: este valor só vale na ausência dele.
-FONTE_PADRAO = "Times New Roman"
+
+
+def _fonte_padrao() -> str:
+    """Fonte usada quando o escritório ainda não subiu um modelo visual próprio.
+
+    Vem de `peticao_skill_arquivos` (extraída de `formatacao.md`), não mais
+    fixa em Python — conferido contra a fonte REAL embutida no PDF da petição
+    de referência do escritório (LiberationSans, a métrica livre do Arial):
+    bate com o que a skill lista primeiro ("Arial ou Times New Roman"). Um
+    valor fixo aqui ficava desatualizado quando o padrão do escritório mudava
+    e ninguém lembrava de atualizar esta linha — foi o que aconteceu antes,
+    quando esta constante dizia "Times New Roman" contra uma peça de
+    referência mais antiga.
+    """
+    return str(peticao_skill_arquivos.configuracao_visual_padrao().get("fonte") or "Arial")
+
+
 MODELO_VISUAL_GERAL = "peticao_visual_geral"
 MODELO_VISUAL_CONFIG = "peticao_visual_config"
 MODELO_VISUAL_LOGO = "peticao_visual_logo"
-CONFIGURACAO_VISUAL_PADRAO: dict[str, Any] = {
-    "fonte": "",
-    "tamanho_fonte_pt": 12,
-    "espacamento_linha": 1.5,
-    "recuo_primeira_linha_cm": 1.25,
-    "margem_superior_cm": 3.74,
-    "margem_direita_cm": 1.89,
-    "margem_inferior_cm": 1.25,
-    "margem_esquerda_cm": 3.0,
-    "alinhamento_corpo": "justificado",
-    "alinhamento_titulos": "esquerda",
-    "altura_logo_cm": 2.36,
-    "preferir_tabelas": False,
-}
 SECOES_PADRAO = (
     ("HEADING", "Endereçamento e qualificação"),
     # As preliminares saíram de dentro do DO DIREITO e viraram seção própria,
@@ -123,7 +121,7 @@ def extrair_identidade_visual(conteudo: bytes) -> tuple[bytes, str, str]:
 
             # Reserva de quando o .docx enviado não declara `rFonts`: cai no mesmo
             # padrão serifado do resto do sistema, e não mais em Arial.
-            fonte = FONTE_PADRAO
+            fonte = _fonte_padrao()
             if "word/styles.xml" in nomes:
                 raiz = ElementTree.fromstring(arquivo.read("word/styles.xml"))
                 ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -146,7 +144,7 @@ def extrair_fonte_visual(conteudo: bytes) -> str:
     try:
         with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
             if "word/styles.xml" not in arquivo.namelist():
-                return FONTE_PADRAO
+                return _fonte_padrao()
             raiz = ElementTree.fromstring(arquivo.read("word/styles.xml"))
             for fontes in raiz.iter(f"{_NS_W}rFonts"):
                 fonte = fontes.attrib.get(f"{_NS_W}ascii") or fontes.attrib.get(f"{_NS_W}hAnsi")
@@ -154,7 +152,7 @@ def extrair_fonte_visual(conteudo: bytes) -> str:
                     return fonte
     except (zipfile.BadZipFile, ElementTree.ParseError, KeyError):
         pass
-    return FONTE_PADRAO
+    return _fonte_padrao()
 
 
 _NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -239,7 +237,7 @@ def identidade_visual() -> tuple[bytes, str, str, str]:
     if logo_separada:
         extensao = Path(str(logo_separada["nome_arquivo"])).suffix.lower()
         extensao = ".jpg" if extensao in {".jpg", ".jpeg"} else ".png"
-        fonte = extrair_fonte_visual(registro["conteudo"]) if registro else FONTE_PADRAO
+        fonte = extrair_fonte_visual(registro["conteudo"]) if registro else _fonte_padrao()
         return bytes(logo_separada["conteudo"]), fonte, extensao, logo_separada["nome_arquivo"]
     if registro:
         try:
@@ -247,12 +245,21 @@ def identidade_visual() -> tuple[bytes, str, str, str]:
             return logo, fonte, extensao, registro["nome_arquivo"]
         except ErroPeticao:
             return LOGO_LARA_MELO.read_bytes(), extrair_fonte_visual(registro["conteudo"]), ".png", "Logo padrão"
-    return LOGO_LARA_MELO.read_bytes(), FONTE_PADRAO, ".png", "Padrão Lara & Melo"
+    return LOGO_LARA_MELO.read_bytes(), _fonte_padrao(), ".png", "Padrão Lara & Melo"
 
 
 def configuracao_visual() -> dict[str, Any]:
-    """Preferências visuais editáveis, com limites seguros para gerar DOCX válido."""
-    configuracao = dict(CONFIGURACAO_VISUAL_PADRAO)
+    """Preferências visuais editáveis, com limites seguros para gerar DOCX válido.
+
+    O piso não é mais um número fixo em Python — vem de
+    `peticao_skill_arquivos.configuracao_visual_padrao()`, extraído de
+    `references/formatacao.md` na skill. A skill evolui o padrão do escritório
+    (ABNT, margem, fonte) sem precisar de deploy de código; um modelo visual
+    enviado pelo escritório (`MODELO_VISUAL_CONFIG`) continua acima disso,
+    como sempre esteve — a hierarquia é modelo enviado > skill > emergência.
+    """
+    padrao = peticao_skill_arquivos.configuracao_visual_padrao()
+    configuracao = dict(padrao)
     try:
         registro = armazenamento.obter_modelo(MODELO_VISUAL_CONFIG)
         if registro:
@@ -260,12 +267,12 @@ def configuracao_visual() -> dict[str, Any]:
             if isinstance(recebida, dict):
                 configuracao.update({k: v for k, v in recebida.items() if k in configuracao})
     except Exception:
-        log.warning("configuração visual indisponível; usando padrão", exc_info=True)
+        log.warning("configuração visual indisponível; usando padrão da skill", exc_info=True)
     for campo in ("tamanho_fonte_pt", "espacamento_linha", "recuo_primeira_linha_cm", "margem_superior_cm", "margem_direita_cm", "margem_inferior_cm", "margem_esquerda_cm", "altura_logo_cm"):
         try:
             configuracao[campo] = float(configuracao[campo])
         except (TypeError, ValueError):
-            configuracao[campo] = CONFIGURACAO_VISUAL_PADRAO[campo]
+            configuracao[campo] = padrao[campo]
     return configuracao
 
 
@@ -390,6 +397,18 @@ def _categoria_do_caso(caso_id: str) -> str:
     return str(caso.get("categoria") or "")
 
 
+def _nome_e_codigo_da_categoria(caso_id: str) -> tuple[str, str]:
+    """(nome legível, código) da categoria do caso — usado para casar com o
+    assunto da skill de arquivo (`peticao_skill_arquivos`) e do acervo
+    classificado (`scripts/classificar_pecas.py`), que reconhecem por nome."""
+    codigo = _categoria_do_caso(caso_id)
+    try:
+        nome = ((casos_ocr.montar_situacao(caso_id) or {}).get("categoria") or {}).get("nome") or codigo
+    except Exception:
+        nome = codigo
+    return str(nome), codigo
+
+
 #: Quantas lições de uma categoria entram automaticamente no prompt das próximas
 #: gerações — a retroalimentação da issue "Permitir alteração da petição por
 #: prompt com rastreabilidade" ("a IA vai aprendendo até sair do jeitinho que
@@ -422,7 +441,7 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     cadastrado, `instrucao` volta intocada — mesmo comportamento de antes desta
     configuração existir.
     """
-    categoria = _categoria_do_caso(caso_id)
+    nome_categoria, categoria = _nome_e_codigo_da_categoria(caso_id)
     # A orientação GERAL vem primeiro; a da categoria, se existir, complementa.
     #
     # A configuração da tela passou a ser única (ver `peticao_skills.CATEGORIA_GERAL`):
@@ -442,6 +461,16 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
         )
         if parte
     )
+    # A skill de arquivo (`escritorio-trabalhista`, a mesma que produziu a peça
+    # de referência do escritório fora deste sistema) entra ANTES da orientação
+    # cadastrada em `peticao_skills` e do acervo — ver `peticao_skill_arquivos`
+    # para o porquê. Falha de leitura (deploy sem os arquivos) não derruba a
+    # geração: cai para o comportamento anterior, só com a tabela.
+    try:
+        skill_arquivo = peticao_skill_arquivos.carregar(nome_categoria, categoria)
+    except Exception:
+        log.warning("petição local: skill de arquivo indisponível", exc_info=True)
+        skill_arquivo = ""
     regras = peticao_aprendizado.regras_para_contexto(categoria=categoria)
     try:
         # Compatibilidade com as correções históricas anteriores ao aprendizado
@@ -459,6 +488,8 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
         criticas = []
 
     blocos = [instrucao]
+    if skill_arquivo:
+        blocos.append(skill_arquivo)
     if skill:
         cabecalho = (
             "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO (padrão de redação do trecho que for alterado) ===\n"
@@ -684,27 +715,28 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
         texto_entrevista[:55_000],
     ]
 
+    # O case brief é o MESMO objeto que alimenta a tela de revisão do caso —
+    # antes daqui só entravam os achados (sem cronologia nenhuma: um "afastamento
+    # previdenciário identificado" com data e prova aparecia na tela e nunca
+    # chegava à petição, porque só a lista de achados vinha para o contexto de
+    # redação). Trocar por `case_brief.para_prompt` fecha essa desconexão: é a
+    # mesma leitura, cronologia incluída, com id por fato/evento para rastrear
+    # depois quem citou o quê.
+    #
+    # Vem ANTES do dump de OCR de propósito: `_precedentes_para_redigir` e as
+    # outras buscas do acervo usam só `contexto[:12_000]` como consulta — com
+    # o case brief antes dos vinte documentos inteiros, a busca por embeddings
+    # parte dos fatos e provas do CASO, não do texto cru dos anexos.
+    try:
+        linhas.append("\n" + case_brief.para_prompt(case_brief.montar(caso_id)))
+    except Exception as erro:
+        log.warning("petição local: case brief indisponível no contexto: %s", erro)
+
     documentos = documentos_ocr(caso_id)
     if documentos:
         linhas.append("\n=== DOCUMENTOS (texto extraído por OCR) ===")
         for numero, doc in enumerate(documentos[:20], 1):
             linhas.append(f"\n--- DOCUMENTO {numero:02d}: {doc['arquivo']} ---\n{doc['texto']}")
-
-    try:
-        achados = analise_documentos.analisar(caso_id).get("achados") or []
-    except Exception as erro:
-        log.warning("petição local: análise de documentos: %s", erro)
-        achados = []
-
-    if achados:
-        linhas.append("\n=== ACHADOS (cruzamento entrevista × documentos) ===")
-        for achado in achados[:15]:
-            marca = "CONTRADIZ entrevista — " if achado.get("contradiz") else ""
-            linhas.append(
-                f"- {marca}{achado.get('informacao', '')} "
-                f"({achado.get('documento', '')}): "
-                f'"{str(achado.get("citacao", ""))[:200]}"'
-            )
 
     obrig = progresso.get("obrigatorios_total")
     entregues = progresso.get("obrigatorios_entregues")
@@ -971,9 +1003,13 @@ comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A
 JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
 **NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
 
-PADRÃO DO ESCRITÓRIO: quando houver orientação ou peça de referência acima,
-siga-a — ela manda sobre o critério geral. Onde ela não disser nada, escolha a
-forma que julgar melhor para a peça, sem inventar fato.
+PADRÃO DO ESCRITÓRIO: a ORIENTAÇÃO DO ESCRITÓRIO (skill) é a fonte de FORMATO
+e manda sobre tudo — inclusive sobre a estrutura de qualquer peça de referência
+do acervo que aparecer acima. Peça de referência mostra nível de profundidade
+e raciocínio a igualar, nunca título, ordem de seção ou formato: nisso, quando
+divergir da orientação do escritório, a orientação do escritório vence sempre.
+Onde a orientação não disser nada, escolha a forma que julgar melhor para a
+peça, sem inventar fato.
 
 TABELAS: você pode usar tabela quando ela tornar dados comprovados mais claros
 (cronologia, contrato, documentos, valores ou histórico médico), ou quando o
@@ -1106,31 +1142,158 @@ def _legislacao_para_redigir(contexto: str) -> str:
     return "\n".join(linhas)
 
 
-def _padroes_conteudisticos_para_redigir(contexto: str) -> str:
+def _padroes_conteudisticos_para_redigir(
+    contexto: str, *, categoria_nome: str = "", categoria_codigo: str = ""
+) -> tuple[str, list[dict[str, Any]]]:
     """Traz técnica de peças do escritório para influenciar diretamente a minuta.
 
     Não são fontes jurídicas nem fatos do novo caso. Entram como exemplos de
     densidade argumentativa, ordem de teses e completude de pedidos, com barreira
     explícita contra contaminação entre clientes.
+
+    O assunto do CASO (mesmo identificador de `peticao_skill_arquivos`, ex.
+    "doenca_ocupacional_acidente_trabalho") prefere peças classificadas no mesmo
+    assunto (`scripts/classificar_pecas.py`) — sem isso, um caso de acidente nos
+    Correios competia igual contra as 700+ peças misturadas, só pela similaridade
+    do texto inteiro.
+
+    Devolve também a lista de referências usadas (arquivo, categoria,
+    similaridade, mesmo_assunto) — sem isso, saber quais das 700+ peças
+    alimentaram uma geração específica exigia ler o log do servidor linha a linha.
     """
+    assunto = peticao_skill_arquivos._arquivo_do_assunto(  # noqa: SLF001 - mesmo pacote
+        categoria_nome, categoria_codigo
+    ).split("/")[0].removesuffix(".md")
     try:
-        trechos = rag.buscar_pecas_conteudisticas(contexto[:12_000], limite=8)
+        trechos = rag.buscar_pecas_conteudisticas(contexto[:12_000], limite=8, assunto=assunto)
     except Exception as erro:
         log.warning("petição local: acervo de peças indisponível na redação: %s", erro)
-        return ""
+        return "", []
     if not trechos:
-        return ""
+        return "", []
     linhas = ["\n\n=== PADRÕES CONTEUDÍSTICOS DO ACERVO DO ESCRITÓRIO ==="]
+    referencias: list[dict[str, Any]] = []
     for indice, trecho in enumerate(trechos, start=1):
         classe = "peça complexa" if trecho["categoria"] == "pecas_complexas" else "peça simples"
         linhas.append(f"\n[P{indice}] referência interna ({classe}; arquivo: {trecho['arquivo']})\n{trecho['texto'][:1_000]}")
+        referencias.append({
+            "arquivo": trecho["arquivo"], "categoria": trecho["categoria"],
+            "similaridade": round(float(trecho["similaridade"]), 4),
+            "mesmo_assunto": bool(trecho.get("mesmo_assunto")),
+        })
     linhas.append(
         "\nEstas referências internas servem APENAS para elevar a qualidade: aproveite a "
         "estrutura lógica, a profundidade, os contrapontos, a explicação de cada fundamento "
         "e a completude dos pedidos quando forem compatíveis com ESTE caso. NUNCA copie ou "
         "transporte nomes, CPF, endereço, empresa, datas, valores, documentos, fatos, pedido "
         "ou citação jurídica de outra referência. Toda afirmação da nova peça deve nascer do "
-        "material deste caso e toda norma ou precedente deve estar no bloco oficial próprio."
+        "material deste caso e toda norma ou precedente deve estar no bloco oficial próprio. "
+        # Peça antiga do acervo é AMOSTRA de profundidade, não gabarito de formato — o
+        # escritório muda como redige com o tempo, e a orientação atual (skill) é
+        # sempre mais nova que qualquer uma destas referências. Sem esta frase o
+        # modelo tratava as duas fontes como igual peso e às vezes seguia a
+        # ESTRUTURA de uma peça velha em vez da orientação vigente.
+        "Se a ORIENTAÇÃO DO ESCRITÓRIO (skill, abaixo) indicar título, ordem de seção, "
+        "formato de tabela ou qualquer critério estrutural diferente do que aparece "
+        "nestas referências, a orientação do escritório PREVALECE — estas referências "
+        "não definem formato, só mostram nível de profundidade e raciocínio a igualar."
+    )
+    return "\n".join(linhas), referencias
+
+
+def _outline_juridico(contexto: str) -> dict[str, Any] | None:
+    """Planeja a peça ANTES de redigir: cronologia, teses e o que cada seção deve trazer.
+
+    A redação em uma única chamada (`gerar`) pedia ao modelo para organizar o
+    material e escrever a petição inteira ao mesmo tempo — e em textos longos
+    isso produz seções mais curtas e genéricas, sobretudo FACTS e LEGAL_GROUNDS,
+    porque planejar e redigir competem pela mesma passada de atenção. Aqui o
+    plano sai de uma chamada própria, menor e mais barata, e vira mais um bloco
+    do material da chamada de redação — o modelo lê o próprio roteiro antes de
+    escrever, em vez de inventar a estrutura sobre a hora.
+
+    Mesma régua das outras funções de contexto (`_precedentes_para_redigir` e
+    companhia): falha aqui não pode derrubar a geração. Sem plano, a peça sai
+    como saía antes — só perde o roteiro, não a petição inteira.
+    """
+    instrucao = (
+        "Você é advogado trabalhista organizando o material de um caso ANTES de "
+        "redigir a petição inicial. Não redija a peça agora — planeje.\n\n"
+        "Leia a entrevista e os documentos a seguir e devolva APENAS o plano, em "
+        "JSON, com:\n"
+        "{\n"
+        '  "cronologia": [{"data":"data ou período, como consta no material",'
+        ' "fato":"o que aconteceu", "fonte":"documento ou entrevista de onde veio"}],\n'
+        '  "teses": [{"tese":"tese jurídica a sustentar",'
+        ' "fatos_que_sustentam":["fato da cronologia acima"],'
+        ' "provas":["documento/trecho que comprova"],'
+        ' "pedidos_relacionados":["pedido que decorre desta tese"]}],\n'
+        '  "pedidos": ["cada pedido a formular, na ordem"],\n'
+        '  "secoes": [{"code":"FACTS|LEGAL_GROUNDS|CLAIMS|EVIDENCE|...",'
+        ' "pontos":["o que esta seção precisa cobrir, em ordem"]}],\n'
+        '  "riscos_ou_lacunas": ["fato relevante sem prova, contradição, dado faltante"]\n'
+        "}\n"
+        "Baseie-se só no material recebido — não invente fato, data nem documento. "
+        "Fato sem fonte identificável não entra na cronologia. Uma tese sem fato "
+        "que a sustente não entra em `teses`."
+    )
+    try:
+        plano = _llm_json(instrucao, contexto[:60_000], timeout=90.0)
+    except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
+        log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
+        return None
+    if not isinstance(plano, dict) or not (plano.get("cronologia") or plano.get("teses")):
+        return None
+    return plano
+
+
+def _outline_para_redigir(plano: dict[str, Any] | None) -> str:
+    """O plano acima, em texto, para entrar no material da chamada de redação."""
+    if not plano:
+        return ""
+    linhas = ["\n\n=== PLANO DA PEÇA (elaborado antes da redação — siga este roteiro) ==="]
+    cronologia = plano.get("cronologia") or []
+    if cronologia:
+        linhas.append("\nCronologia:")
+        for item in cronologia:
+            if not isinstance(item, dict):
+                continue
+            linhas.append(
+                f"- {item.get('data', '?')}: {item.get('fato', '')} (fonte: {item.get('fonte', '?')})"
+            )
+    teses = plano.get("teses") or []
+    if teses:
+        linhas.append("\nTeses e o que as sustenta:")
+        for item in teses:
+            if not isinstance(item, dict):
+                continue
+            fatos = ", ".join(str(f) for f in item.get("fatos_que_sustentam") or [])
+            provas = ", ".join(str(p) for p in item.get("provas") or [])
+            pedidos = ", ".join(str(p) for p in item.get("pedidos_relacionados") or [])
+            linhas.append(
+                f"- {item.get('tese', '')} | fatos: {fatos} | provas: {provas} | pedidos: {pedidos}"
+            )
+    pedidos = plano.get("pedidos") or []
+    if pedidos:
+        linhas.append("\nPedidos, na ordem sugerida:")
+        linhas.extend(f"- {p}" for p in pedidos)
+    secoes = plano.get("secoes") or []
+    if secoes:
+        linhas.append("\nO que cada seção precisa cobrir:")
+        for item in secoes:
+            if not isinstance(item, dict):
+                continue
+            pontos = "; ".join(str(p) for p in item.get("pontos") or [])
+            linhas.append(f"- {item.get('code', '?')}: {pontos}")
+    riscos = plano.get("riscos_ou_lacunas") or []
+    if riscos:
+        linhas.append("\nRiscos e lacunas identificados no planejamento:")
+        linhas.extend(f"- {r}" for r in riscos)
+    linhas.append(
+        "\nEste roteiro foi montado a partir do MESMO material que você está lendo — "
+        "use-o como estrutura, desenvolvendo cada ponto com a profundidade que a "
+        "peça exige. Se, ao redigir, um item do roteiro não se sustentar no material, "
+        "prevalece o material: não invente fato para encaixar no plano."
     )
     return "\n".join(linhas)
 
@@ -1246,6 +1409,78 @@ def _conferir_contra_os_autos(
     return secoes, violacoes, registro
 
 
+def _validar_contra_skill_e_brief(
+    caso_id: str, secoes: list[dict[str, Any]], brief: dict[str, Any] | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Segunda leitura da peça PRONTA, contra o case brief e a skill — não contra o
+    material bruto (isso é `_conferir_contra_os_autos`, que já roda antes desta).
+
+    `_conferir_contra_os_autos` prova invenção — documento citado que não existe,
+    número sem origem. Esta função prova OMISSÃO E DESVIO — fato relevante que a
+    análise confirmou e a peça não usou, seção que ficou rasa apesar do material
+    disponível, regra da skill (estrutura, valor mínimo da causa, prescrição
+    sempre tratada) que não foi seguida. As duas juntas cobrem o que o item 18 do
+    pedido chama de "alucinações", "omissões" e "descumprimento da skill".
+
+    Uma chamada para DETECTAR, e só se houver problema real uma segunda para
+    CORRIGIR — reaproveitando `_revisar_secoes_via_llm`, o mesmo motor que já
+    aplica a crítica de um advogado humano. Sem case brief (leitura de documentos
+    fora do ar), não há contra o que validar: devolve a peça como está.
+    """
+    if not brief:
+        return secoes, []
+    minuta = "\n\n".join(f"### {s.get('code')}\n{s.get('content') or ''}" for s in secoes)
+    instrucao = (
+        "Você é um revisor jurídico sênior conferindo uma petição trabalhista já "
+        "pronta contra o CASE BRIEF do caso (fatos e provas já apurados dos "
+        "documentos) e as regras de redação do escritório, abaixo. Aponte SOMENTE "
+        "problemas reais — não reescreva nada agora, só liste.\n\n"
+        + peticao_skill_arquivos._ler("regras_redacao.md")  # noqa: SLF001 - mesmo pacote
+        + "\n\n"
+        + peticao_skill_arquivos._ler("regras_complementares.md")  # noqa: SLF001
+        + '\n\nDevolva JSON: {"problemas": [{"tipo": '
+        '"omissao|contradicao|alucinacao|data_divergente|nome_divergente|'
+        'valor_divergente|secao_rasa|descumprimento_da_skill|placeholder", '
+        '"descricao": "o problema, específico e acionável", "secao": "CODE ou '
+        'null"}], "correcao_necessaria": true|false}\n'
+        '"correcao_necessaria" só é true se houver problema que realmente '
+        "prejudique a peça — fato do brief irrelevante para a tese não é "
+        "omissão; parágrafo curto mas completo não é seção rasa."
+    )
+    entrada = (
+        f"CASE BRIEF:\n{case_brief.para_prompt(brief)[:20_000]}\n\n"
+        f"PETIÇÃO GERADA:\n{minuta[:70_000]}"
+    )
+    try:
+        saida = _llm_json(instrucao, entrada, timeout=90.0)
+    except Exception as erro:
+        log.warning("petição local: validação skill/brief indisponível: %s", erro)
+        return secoes, []
+    problemas = [
+        p for p in (saida.get("problemas") or [])
+        if isinstance(p, dict) and str(p.get("descricao") or "").strip()
+    ]
+    if not problemas or not saida.get("correcao_necessaria"):
+        return secoes, problemas
+
+    prompt_critica = (
+        "Revisão automática encontrou os problemas abaixo — corrija cada um "
+        "sem alterar o que já está certo:\n"
+        + "\n".join(f"- [{p.get('tipo', '?')}] {p.get('descricao', '')}" for p in problemas)
+    )
+    try:
+        corrigidas, info = _revisar_secoes_via_llm(caso_id, secoes, prompt_critica)
+        if info.get("alterou"):
+            por_codigo = {s["code"]: s["content"] for s in corrigidas}
+            secoes = [
+                {**s, "content": por_codigo[s["code"]]} if s["code"] in por_codigo else s
+                for s in secoes
+            ]
+    except ErroPeticao:
+        log.warning("petição local: correção pós-validação falhou (caso %s)", caso_id, exc_info=True)
+    return secoes, problemas
+
+
 def _aplicar_conferencia(dados: dict[str, Any], secoes: list[dict[str, Any]], violacoes: list[Any]) -> None:
     """Grava na peça os achados e quantos deles a retêm."""
     achados = _achados_da_peca(secoes, violacoes)
@@ -1284,10 +1519,20 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
     contexto = _montar_contexto(caso_id, texto_entrevista)
+    try:
+        brief = case_brief.montar(caso_id)
+    except Exception as erro:
+        log.warning("petição local: case brief indisponível para trace/cobertura: %s", erro)
+        brief = None
+    nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
     precedentes = _precedentes_para_redigir(contexto)
     legislacao = _legislacao_para_redigir(contexto)
-    padroes = _padroes_conteudisticos_para_redigir(contexto)
-    contexto += precedentes + legislacao + padroes
+    padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
+        contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria
+    )
+    plano = _outline_juridico(contexto)
+    outline = _outline_para_redigir(plano)
+    contexto += precedentes + legislacao + padroes + outline
     # O QUE FALTOU, DITO AO MODELO E GRAVADO NA PEÇA.
     #
     # As três buscas caem para "" em silêncio (banco fora, embeddings sem crédito — o
@@ -1297,6 +1542,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "precedentes": bool(precedentes),
         "legislacao": bool(legislacao),
         "pecas_modelo": bool(padroes),
+        "outline": bool(outline),
     }
     if not precedentes and not legislacao:
         contexto += (
@@ -1378,9 +1624,13 @@ comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A
 JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
 **NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
 
-PADRÃO DO ESCRITÓRIO: quando houver orientação ou peça de referência acima,
-siga-a — ela manda sobre o critério geral. Onde ela não disser nada, escolha a
-forma que julgar melhor para a peça, sem inventar fato.
+PADRÃO DO ESCRITÓRIO: a ORIENTAÇÃO DO ESCRITÓRIO (skill) é a fonte de FORMATO
+e manda sobre tudo — inclusive sobre a estrutura de qualquer peça de referência
+do acervo que aparecer acima. Peça de referência mostra nível de profundidade
+e raciocínio a igualar, nunca título, ordem de seção ou formato: nisso, quando
+divergir da orientação do escritório, a orientação do escritório vence sempre.
+Onde a orientação não disser nada, escolha a forma que julgar melhor para a
+peça, sem inventar fato.
 
 Devolva JSON exatamente com:
 {
@@ -1458,6 +1708,17 @@ Cada content deve conter parágrafos separados por linha em branco."""
     secoes, violacoes, conferencia = _conferir_contra_os_autos(
         caso_id, secoes, texto_entrevista=texto_entrevista, material=contexto
     )
+    # Segunda leitura, agora contra o CASE BRIEF e a SKILL (não contra o material
+    # bruto — isso a conferência acima já fez): omissão de fato relevante, seção
+    # rasa, regra da skill não seguida. Pode reescrever seções; por isso vem
+    # antes da cobertura, que precisa medir o texto FINAL.
+    secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
+    # Cobertura: quais fatos e eventos que a análise dos documentos já validou
+    # (o mesmo material que virou `case_brief`, acima) efetivamente aparecem no
+    # texto final. Não bloqueia nem corrige nada — só torna visível quando a
+    # peça deixou de fora algo que a leitura dos documentos tinha encontrado,
+    # em vez de a omissão passar batido sem ninguém notar.
+    cobertura = case_brief.cobertura(brief, secoes) if brief else None
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
@@ -1499,7 +1760,12 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "readiness": {
             "ready": True,
             "blocking_issues": [],
-            "warnings": [*_avisos_de_insumo(insumos), *(analise.get("lacunas") or [])],
+            "warnings": [
+                *_avisos_de_insumo(insumos),
+                *(analise.get("lacunas") or []),
+                *_avisos_de_cobertura(cobertura),
+                *_avisos_de_validacao(achados_validacao),
+            ],
             "pendencias": pendencias or analise.get("fatos_so_na_entrevista") or [],
             "completo": not pendencias and not analise.get("lacunas"),
         },
@@ -1514,11 +1780,17 @@ Cada content deve conter parágrafos separados por linha em branco."""
                  "observacoes": r.get("observacoes")}
                 for r in regras_aplicadas
             ],
-            "skills": ["learned_preferences_retrieval", "legal_critic", "style_critic",
-                       "consistency_check", "document_generation"],
+            "skills": ["learned_preferences_retrieval", "outline_planning", "legal_critic",
+                       "style_critic", "consistency_check", "skill_brief_validation",
+                       "document_generation"],
             "evaluations": achados_criticos,
             "insumos": insumos,
             "conferencia": conferencia,
+            "outline": plano,
+            "referencias_do_acervo": referencias_acervo,
+            "case_brief": brief,
+            "cobertura": cobertura,
+            "validacao_skill_brief": achados_validacao,
         },
     }
     _aplicar_conferencia(dados, secoes, violacoes)
@@ -1540,6 +1812,45 @@ def _avisos_de_insumo(insumos: dict[str, bool]) -> list[str]:
     return [
         "Gerada SEM " + ", ".join(faltou) + " — o acervo não respondeu. A peça saiu do modelo"
         " genérico; gere de novo quando o acervo voltar."
+    ]
+
+
+def _avisos_de_cobertura(cobertura: dict[str, Any] | None) -> list[str]:
+    """Fato ou evento que a leitura dos documentos confirmou e a peça não usou.
+
+    Não é erro — parte do que a análise encontra é mesmo irrelevante para a
+    petição — mas é o tipo de omissão que precisa ser DELIBERADA, não
+    acidental. Um limiar (3+) evita alarme em toda geração: um ou dois pontos
+    de fora é normal; muitos de fora é sinal de que a peça não aproveitou o
+    que já tinha sido apurado.
+    """
+    if not cobertura:
+        return []
+    fora = len(cobertura.get("fatos_nao_usados") or []) + len(cobertura.get("eventos_nao_usados") or [])
+    if fora < 3:
+        return []
+    return [
+        f"{fora} ponto(s) que a análise dos documentos confirmou não aparecem claramente no "
+        "texto da peça (ver `trace.cobertura`) — confira se foram considerados de propósito."
+    ]
+
+
+def _avisos_de_validacao(achados: list[dict[str, Any]]) -> list[str]:
+    """O que a segunda leitura (peça × case brief × skill) encontrou.
+
+    Uma correção automática já foi tentada (`_validar_contra_skill_e_brief`), mas
+    não há uma TERCEIRA chamada para confirmar que ela resolveu cada item —
+    custaria mais uma volta ao modelo por geração, para conferir algo que o
+    advogado vai ler de qualquer forma. O aviso existe para dizer "olhe aqui",
+    não para garantir que já está corrigido.
+    """
+    if not achados:
+        return []
+    tipos = ", ".join(sorted({str(a.get("tipo") or "problema") for a in achados}))
+    return [
+        f"A revisão automática contra o case brief e a skill encontrou {len(achados)} "
+        f"ponto(s) ({tipos}) e tentou corrigi-los — confira `trace.validacao_skill_brief` "
+        "e revise antes de protocolar."
     ]
 
 

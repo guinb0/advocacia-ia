@@ -17,6 +17,7 @@ interface Props {
   carregando: boolean;
   erro: string | null;
   onAbrir: (casoId: string) => void;
+  onAbrirDossie: (casoId: string) => void;
   onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string, tipoAcao?: string) => Promise<CasoCriado>;
   onImportarZip: (cliente: string, categoria: string, arquivo: File) => Promise<CasoCriado>;
   onExcluir: (casoId: string) => Promise<void>;
@@ -73,6 +74,7 @@ export default function ListaCasos({
   carregando,
   erro,
   onAbrir,
+  onAbrirDossie,
   onCriar,
   onExcluir,
 }: Props) {
@@ -134,9 +136,16 @@ export default function ListaCasos({
     setImportandoPacote(true);
     try {
       const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo);
-      setNovoPortal(novo);
       setCliente("");
       setPacoteArquivo(null);
+      /* Criação rápida: o upload JÁ é a intenção de criar o caso — não existe
+       * "Criar caso" separado depois dele. O caso cai direto no dossiê, onde a
+       * análise dos documentos e a geração da peça acontecem; as credenciais do
+       * portal do cliente (que ficariam aqui, em `novoPortal`) continuam
+       * disponíveis a qualquer momento dentro do caso — regenerá-las não perde
+       * nada, e travar a navegação nelas aqui reintroduziria o clique que esta
+       * etapa existe para eliminar. */
+      onAbrirDossie(novo.id);
     } finally {
       setImportandoPacote(false);
     }

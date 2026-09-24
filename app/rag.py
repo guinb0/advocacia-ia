@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import time
@@ -16,6 +17,8 @@ import httpx
 import psycopg
 from psycopg.rows import dict_row
 from . import custos_api
+
+log = logging.getLogger(__name__)
 
 # As funções, e não o módulo: `buscar_similares` tem um PARÂMETRO chamado
 # `tribunais` (a lista de regionais a filtrar), que sombrearia o módulo dentro dela.
@@ -285,7 +288,7 @@ def buscar_legislacao(
 
 
 def buscar_pecas_conteudisticas(
-    consulta: str, *, limite: int = 8, timeout: float = 120, connect_timeout: int = 10,
+    consulta: str, *, limite: int = 8, assunto: str = "", timeout: float = 120, connect_timeout: int = 10,
 ) -> list[dict[str, Any]]:
     """Recupera técnicas de redação de peças do escritório, sem transportar fatos.
 
@@ -293,20 +296,31 @@ def buscar_pecas_conteudisticas(
     para mostrar profundidade, encadeamento de teses e cobertura de pedidos. A
     chamada que o utiliza deve ordenar ao modelo que jamais copie nomes, valores,
     datas, documentos ou alegações de uma peça de referência.
+
+    `assunto` (quando informado, no mesmo vocabulário de
+    `peticao_skill_arquivos._MAPA_ASSUNTOS` — ex. "doenca_ocupacional_acidente_
+    trabalho") PREFERE peças classificadas com o mesmo assunto (ver
+    `scripts/classificar_pecas.py`), sem excluir as demais: até a classificação
+    cobrir o acervo inteiro, uma peça sem `metadados.assunto` ainda concorre pela
+    similaridade pura, só sem o desempate a favor dela. Antes disso o retrieval
+    dependia só do texto do caso inteiro contra as 700+ peças misturadas — um
+    caso de acidente nos Correios não distinguia peça de acidente de peça de
+    hora extra que por acaso usasse vocabulário parecido.
     """
     if not consulta.strip():
         return []
     embedding = vetor_literal(gerar_embeddings([consulta[:12000]], timeout=timeout)[0])
     linhas = _consultar_pgvector(
         """SELECT c.peca_id, c.texto, p.nome_arquivo, p.categoria,
-                  1 - (c.embedding <=> %s::vector) AS similaridade
+                  1 - (c.embedding <=> %s::vector) AS similaridade,
+                  (p.metadados->>'assunto' = %s) AS mesmo_assunto
              FROM pecas_conteudo_chunks c
              JOIN pecas_conteudo p ON p.id = c.peca_id
             WHERE c.embedding IS NOT NULL
               AND p.categoria IN ('pecas_simples', 'pecas_complexas')
-            ORDER BY c.embedding <=> %s::vector
+            ORDER BY mesmo_assunto DESC, c.embedding <=> %s::vector
             LIMIT %s""",
-        (embedding, embedding, max(limite * 4, limite)), connect_timeout=connect_timeout,
+        (embedding, assunto, embedding, max(limite * 4, limite)), connect_timeout=connect_timeout,
     )
     # Diversidade importa mais que dez trechos da mesma petição: no máximo dois
     # por arquivo e metade de cada coleção quando houver material aderente.
@@ -322,11 +336,24 @@ def buscar_pecas_conteudisticas(
         escolhidos.append({
             "texto": str(linha["texto"]), "arquivo": str(linha["nome_arquivo"]),
             "categoria": categoria, "similaridade": float(linha["similaridade"]),
+            "mesmo_assunto": bool(linha["mesmo_assunto"]),
         })
         por_peca[peca_id] += 1
         por_categoria[categoria] += 1
         if len(escolhidos) >= limite:
             break
+    # Observabilidade do retrieval: sem isto, "a peça saiu rasa" não tinha como
+    # ser diagnosticado sem entrar no banco na mão — quantas peças existem no
+    # acervo candidato, quantas o vetor trouxe, e quais das candidatas sobraram
+    # depois do corte de diversidade, com o score de cada uma.
+    log.info(
+        "rag: peças conteudísticas — assunto=%r candidatas=%d escolhidas=%d limite=%d "
+        "mesmo_assunto=%d scores=%s arquivos=%s",
+        assunto, len(linhas), len(escolhidos), limite,
+        sum(1 for item in escolhidos if item["mesmo_assunto"]),
+        [round(item["similaridade"], 4) for item in escolhidos],
+        [item["arquivo"] for item in escolhidos],
+    )
     return escolhidos
 
 

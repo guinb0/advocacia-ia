@@ -26,8 +26,11 @@ import {
   gerarContratoDoCaso as solicitarContratoDoCaso,
   requisitosDoContrato,
   analisarDocumentosDoCaso,
+  definirEstadoInsight,
   enviarTranscricaoEntrevista,
+  type AchadoDocumento,
   type AnaliseDocumentos,
+  type EstadoInsight,
 } from "@/lib/api";
 import type { TomSelo } from "@/lib/formato";
 import { ESTADO_DO_FATO, ORIGEM_DO_FATO, valorDoFato } from "@/lib/painel";
@@ -542,12 +545,117 @@ function ResumoDoConjunto({ precedentes }: { precedentes: Precedente[] }) {
  * A citação de cada achado é conferida NO SERVIDOR contra o texto do documento
  * apontado. O que não confere não chega aqui — e o número de recusas aparece,
  * porque silenciá-lo esconderia um modelo alucinando com frequência. */
+/** Item de achado, no formato compacto (título + selo + fonte + trecho) usado
+ *  nas três seções priorizadas (inconsistências, a confirmar, relevantes).
+ *
+ * `acionavel` só liga os botões de confirmar/corrigir/rejeitar onde a resposta
+ * do advogado muda algo concreto — a seção "a confirmar" (item 7 do pedido: um
+ * insight tem estado, e a próxima geração usa a resposta, não pergunta de novo). */
+function ItemAchado({
+  a, selo, casoId, acionavel, onMudou,
+}: {
+  a: AchadoDocumento;
+  selo?: { tom: TomSelo; texto: string };
+  casoId?: string;
+  acionavel?: boolean;
+  onMudou?: (fatoId: string, estado: EstadoInsight) => void;
+}) {
+  const [corrigindo, setCorrigindo] = useState(false);
+  const [valorCorrigido, setValorCorrigido] = useState("");
+  const [enviando, setEnviando] = useState<EstadoInsight | null>(null);
+  const [erroAcao, setErroAcao] = useState<string | null>(null);
+
+  async function reagir(estado: EstadoInsight, valor?: string) {
+    if (!casoId || !a.fato_id) return;
+    setEnviando(estado);
+    setErroAcao(null);
+    try {
+      await definirEstadoInsight(casoId, a.fato_id, estado, { valorCorrigido: valor });
+      onMudou?.(a.fato_id, estado);
+      setCorrigindo(false);
+    } catch (e) {
+      setErroAcao(e instanceof Error ? e.message : "Não foi possível registrar a resposta.");
+    } finally {
+      setEnviando(null);
+    }
+  }
+
+  const podeAgir = acionavel && casoId && a.fato_id && !a.estado;
+  const jaRespondido = a.estado && a.estado !== "DETECTED";
+
+  return (
+    <li className={ITEM}>
+      <div className={ITEM_TOPO}>
+        <strong className="min-w-0 truncate" title={a.informacao}>{a.informacao}</strong>
+        {selo && !jaRespondido && (
+          <Selo tom={selo.tom} simbolo="!">
+            {selo.texto}
+          </Selo>
+        )}
+        {jaRespondido && (
+          <Selo tom="ok" simbolo="✓">
+            {a.estado === "CONFIRMED" ? "confirmado" : a.estado === "CORRECTED" ? "corrigido" : a.estado === "REJECTED" ? "descartado" : "aguardando confirmação"}
+          </Selo>
+        )}
+      </div>
+      <div className={`${ORIGEM} truncate`} title={a.documento}>
+        {a.documento}
+        {a.parte && a.parte !== "indefinido" && (
+          <span className="text-tinta-3">
+            {" · "}
+            {rotuloParte(a.parte)}
+            {a.papel ? ` (${a.papel})` : ""}
+          </span>
+        )}
+      </div>
+      {a.relevancia && <p className={RAZAO}>{a.relevancia}</p>}
+      <blockquote className={TRECHO}>{a.citacao}</blockquote>
+
+      {podeAgir && !corrigindo && (
+        <div className="mt-1 flex flex-wrap gap-2">
+          <Botao variante="secundario" pequeno disabled={enviando !== null} onClick={() => void reagir("CONFIRMED")}>
+            {enviando === "CONFIRMED" ? "Confirmando…" : "Confirmar"}
+          </Botao>
+          <Botao variante="secundario" pequeno disabled={enviando !== null} onClick={() => setCorrigindo(true)}>
+            Corrigir
+          </Botao>
+          <Botao variante="discreto" pequeno disabled={enviando !== null} onClick={() => void reagir("REJECTED")}>
+            {enviando === "REJECTED" ? "Descartando…" : "Não usar"}
+          </Botao>
+        </div>
+      )}
+      {podeAgir && corrigindo && (
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <Campo
+            className="min-w-[220px] flex-1"
+            value={valorCorrigido}
+            onChange={(e) => setValorCorrigido(e.target.value)}
+            placeholder="A informação correta"
+          />
+          <Botao
+            variante="secundario" pequeno disabled={enviando !== null || !valorCorrigido.trim()}
+            onClick={() => void reagir("CORRECTED", valorCorrigido.trim())}
+          >
+            {enviando === "CORRECTED" ? "Salvando…" : "Salvar correção"}
+          </Botao>
+          <Botao variante="discreto" pequeno onClick={() => setCorrigindo(false)}>
+            Cancelar
+          </Botao>
+        </div>
+      )}
+      {erroAcao && <p className="m-0 text-xs text-critico">{erroAcao}</p>}
+    </li>
+  );
+}
+
 export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
   const [analise, setAnalise] = useState<AnaliseDocumentos | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [verTudo, setVerTudo] = useState(false);
+  const casoJaAnalisado = useRef<string | null>(null);
 
-  async function analisar() {
+  const analisar = useCallback(async () => {
     setCarregando(true);
     setErro(null);
     try {
@@ -567,33 +675,52 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
     } finally {
       setCarregando(false);
     }
-  }
+  }, [casoId]);
+
+  /* Revisão rápida (~30s): a leitura roda sozinha ao abrir o caso — quem chega
+   * aqui vindo da criação rápida por ZIP não deve precisar clicar em nada para
+   * ver o que a IA já encontrou. Uma vez por caso: reler documento por
+   * documento a cada nova visita pagaria a mesma chamada de modelo à toa (o
+   * resultado já fica em cache no servidor por `atualizado_em`, mas o clique
+   * "Analisar de novo" continua manual, de propósito, para quando o advogado
+   * junta documento novo e quer atualizar sem trocar de caso). */
+  useEffect(() => {
+    if (casoJaAnalisado.current === casoId) return;
+    casoJaAnalisado.current = casoId;
+    void analisar();
+  }, [casoId, analisar]);
+
+  /* Atualiza o estado localmente assim que o advogado confirma/corrige/rejeita
+   * — sem isso o item ficaria com os botões de ação até o próximo "Analisar
+   * de novo", como se a resposta não tivesse sido salva. */
+  const marcarEstadoLocal = useCallback((fatoId: string, estado: EstadoInsight) => {
+    setAnalise((atual) => {
+      if (!atual) return atual;
+      const marcar = <T extends { fato_id?: string }>(itens: T[]) =>
+        itens.map((item) => (item.fato_id === fatoId ? { ...item, estado } : item));
+      return { ...atual, achados: marcar(atual.achados), cronologia: atual.cronologia ? marcar(atual.cronologia) : atual.cronologia };
+    });
+  }, []);
+
+  const achados = analise?.achados ?? [];
+  const inconsistencias = achados.filter((a) => a.contradiz);
+  const aConfirmar = achados.filter((a) => !a.contradiz && (a.parte === "terceiro" || a.parte === "indefinido"));
+  const relevantes = achados.filter((a) => !a.contradiz && !aConfirmar.includes(a));
+  const cronologia = analise?.cronologia ?? [];
+  const gastos = analise?.gastos ?? [];
 
   return (
-    <Cartao titulo="Cronologia dos fatos e documentos">
+    <Cartao titulo="Revisão inteligente do caso">
       <p className={EXPLICACAO}>
-        Veja a sequência dos acontecimentos comprovados nos documentos: acidente,
-        atendimento, exames, afastamento e demais marcos. Cada ponto mostra o arquivo
-        e o trecho que comprova a data.
+        O que a IA cruzou entre a entrevista e os documentos: o que diverge, o que precisa
+        ser confirmado e o que é relevante para a peça — cada ponto com o arquivo e o
+        trecho que o comprova.
       </p>
 
-      <BotaoProcesso
-        variante="secundario"
-        onClick={analisar}
-        processando={carregando}
-        textoProcessando="Lendo os documentos…"
-        dica="Lendo o texto de todos os anexos do caso"
-      >
-        {analise ? "Analisar de novo" : "Analisar documentos"}
-      </BotaoProcesso>
-
-      {!analise && !carregando && !erro && (
-        <div className="mt-4 border-l-4 border-acao bg-acao-clara px-4 py-3">
-          <strong className="block text-sm text-tinta">Linha do tempo ainda não montada</strong>
-          <p className="mb-0 mt-1 text-sm leading-relaxed text-tinta-2">
-            Clique em “Analisar documentos” para organizar os fatos por data. A análise não
-            altera os anexos nem a minuta.
-          </p>
+      {carregando && !analise && (
+        <div className="mt-1 flex items-center gap-2 text-sm text-tinta-2">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-acao" aria-hidden />
+          Lendo os documentos do caso…
         </div>
       )}
 
@@ -607,91 +734,111 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
 
       {analise && !analise.aviso && (
         <>
-          <p className={ORIGEM}>
-            {analise.documentos_lidos} documento{analise.documentos_lidos === 1 ? "" : "s"} lido
-            {analise.documentos_lidos === 1 ? "" : "s"}
-            {analise.recusados ? ` · ${analise.recusados} achado(s) recusados na conferência da citação` : ""}
-          </p>
-
-          {(analise.cronologia?.length ?? 0) > 0 && (
-            <div className="mt-4 border-t border-borda pt-3">
-              <p className={ORIGEM}>Linha do tempo dos fatos comprovados</p>
-              <ol className="m-0 border-l border-acao pl-5">
-                {analise.cronologia!.map((evento, i) => (
-                  <li key={i} className="relative mb-4 last:mb-0">
-                    <span className="absolute -left-[25px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
-                    <strong className="block text-sm tabular-nums text-acao">{evento.data}</strong>
-                    <span className="block text-sm text-tinta">{evento.evento}</span>
-                    <span className={`${ORIGEM} block truncate`} title={evento.documento}>{evento.documento}</span>
-                    <blockquote className={TRECHO}>{evento.citacao}</blockquote>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-
-          {(analise.cronologia?.length ?? 0) === 0 && (
-            <div className="mt-4 border-l-4 border-atencao bg-atencao-claro px-4 py-3 text-sm leading-relaxed text-tinta-2">
-              Nenhum fato com data pôde ser confirmado nos documentos lidos. Revise os anexos
-              ou envie documento que informe a data do acontecimento.
-            </div>
-          )}
-
-          {analise.achados.length === 0 ? (
-            <p className={TEXTO_VAZIO}>
-              Nada nos documentos que a entrevista já não tenha registrado.
+          <div className={`${ITEM_TOPO} mb-1`}>
+            <p className={`${ORIGEM} mb-0`}>
+              {analise.documentos_lidos} documento{analise.documentos_lidos === 1 ? "" : "s"} lido
+              {analise.documentos_lidos === 1 ? "" : "s"}
+              {analise.recusados ? ` · ${analise.recusados} achado(s) recusados na conferência da citação` : ""}
             </p>
-          ) : (
-            <ul className={LISTA}>
-              {analise.achados.map((a, i) => (
-                <li key={i} className={ITEM}>
-                  <div className={ITEM_TOPO}>
-                    <strong className="min-w-0 truncate" title={a.informacao}>{a.informacao}</strong>
-                    {a.contradiz && (
-                      <Selo tom="critico" simbolo="!">
-                        contradiz a entrevista
-                      </Selo>
-                    )}
-                  </div>
-                  <div className={`${ORIGEM} truncate`} title={a.documento}>
-                    {a.documento}
-                    {a.parte && a.parte !== "indefinido" && (
-                      <span className="text-tinta-3">
-                        {" · "}
-                        {rotuloParte(a.parte)}
-                        {a.papel ? ` (${a.papel})` : ""}
-                      </span>
-                    )}
-                  </div>
-                  {a.relevancia && <p className={RAZAO}>{a.relevancia}</p>}
-                  <blockquote className={TRECHO}>{a.citacao}</blockquote>
-                </li>
-              ))}
-            </ul>
-          )}
+            <BotaoProcesso
+              variante="discreto"
+              pequeno
+              onClick={analisar}
+              processando={carregando}
+              textoProcessando="Lendo de novo…"
+              dica="Reler os documentos — use depois de anexar algo novo ao caso"
+            >
+              Analisar de novo
+            </BotaoProcesso>
+          </div>
 
-          {/* Gastos comprovados nos documentos, EM ORDEM CRONOLÓGICA, cada um
-            * ligado ao arquivo de origem. O servidor já ordena e confere a
-            * citação — aqui só se apresenta. */}
-          {(analise.gastos?.length ?? 0) > 0 && (
-            <div className="mt-4 border-t border-borda pt-3">
-              <p className={ORIGEM}>Gastos nos documentos, em ordem cronológica</p>
-              <ul className={LISTA}>
-                {analise.gastos!.map((g, i) => (
-                  <li key={i} className={ITEM}>
-                    <div className={ITEM_TOPO}>
-                      <strong className="tabular-nums">{g.valor}</strong>
-                      <span className="text-tinta-3 tabular-nums">{g.data || "sem data"}</span>
-                    </div>
-                    {g.descricao && <p className={RAZAO}>{g.descricao}</p>}
-                    <div className={`${ORIGEM} truncate`} title={g.documento}>
-                      {g.documento}
-                    </div>
-                    <blockquote className={TRECHO}>{g.citacao}</blockquote>
-                  </li>
+          {/* INCONSISTÊNCIAS primeiro, sem concorrer visualmente com o resto: é
+            * o que muda a leitura do caso se passar batido. */}
+          {inconsistencias.length > 0 && (
+            <div className="mt-4 border-l-4 border-critico-borda bg-critico-claro px-4 py-3">
+              <strong className="block text-sm text-tinta">
+                ⚠ {inconsistencias.length} {inconsistencias.length === 1 ? "inconsistência" : "inconsistências"} com a entrevista
+              </strong>
+              <ul className={`${LISTA} mt-2`}>
+                {inconsistencias.map((a, i) => (
+                  <ItemAchado key={i} a={a} selo={{ tom: "critico", texto: "contradiz a entrevista" }} />
                 ))}
               </ul>
             </div>
+          )}
+
+          {aConfirmar.length > 0 && (
+            <div className="mt-4 border-l-4 border-atencao bg-atencao-claro px-4 py-3">
+              <strong className="block text-sm text-tinta">
+                ⚠ {aConfirmar.length} {aConfirmar.length === 1 ? "informação precisa" : "informações precisam"} ser confirmadas
+              </strong>
+              <ul className={`${LISTA} mt-2`}>
+                {aConfirmar.map((a, i) => (
+                  <ItemAchado
+                    key={i} a={a} selo={{ tom: "atencao", texto: "confirmar" }}
+                    casoId={casoId} acionavel onMudou={marcarEstadoLocal}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(relevantes.length > 0 || cronologia.length > 0) && (
+            <div className="mt-4 border-t border-borda pt-3">
+              <p className={ORIGEM}>Pontos juridicamente relevantes</p>
+              {cronologia.length > 0 && (
+                <ol className="m-0 mb-3 border-l border-acao pl-5">
+                  {cronologia.map((evento, i) => (
+                    <li key={i} className="relative mb-4 last:mb-0">
+                      <span className="absolute -left-[25px] top-1 h-3 w-3 rounded-full border-2 border-acao bg-papel" />
+                      <strong className="block text-sm tabular-nums text-acao">{evento.data}</strong>
+                      <span className="block text-sm text-tinta">{evento.evento}</span>
+                      <span className={`${ORIGEM} block truncate`} title={evento.documento}>{evento.documento}</span>
+                      <blockquote className={TRECHO}>{evento.citacao}</blockquote>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {relevantes.length > 0 && (
+                <ul className={LISTA}>
+                  {relevantes.map((a, i) => (
+                    <ItemAchado key={i} a={a} />
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {inconsistencias.length === 0 && aConfirmar.length === 0 && relevantes.length === 0 && cronologia.length === 0 && (
+            <p className={TEXTO_VAZIO}>
+              Nada nos documentos que a entrevista já não tenha registrado.
+            </p>
+          )}
+
+          {/* Dados normais não competem visualmente com o que precisa de atenção —
+            * ficam aqui, sob demanda, e não repetidos na revisão de 30 segundos. */}
+          {gastos.length > 0 && (
+            <details className="mt-4 border-t border-borda pt-3" open={verTudo} onToggle={(e) => setVerTudo(e.currentTarget.open)}>
+              <summary className={`${ORIGEM} cursor-pointer select-none`}>Ver todos os dados extraídos</summary>
+              <div className="mt-3">
+                <p className={ORIGEM}>Gastos nos documentos, em ordem cronológica</p>
+                <ul className={LISTA}>
+                  {gastos.map((g, i) => (
+                    <li key={i} className={ITEM}>
+                      <div className={ITEM_TOPO}>
+                        <strong className="tabular-nums">{g.valor}</strong>
+                        <span className="text-tinta-3 tabular-nums">{g.data || "sem data"}</span>
+                      </div>
+                      {g.descricao && <p className={RAZAO}>{g.descricao}</p>}
+                      <div className={`${ORIGEM} truncate`} title={g.documento}>
+                        {g.documento}
+                      </div>
+                      <blockquote className={TRECHO}>{g.citacao}</blockquote>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
           )}
         </>
       )}
