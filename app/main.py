@@ -859,7 +859,7 @@ async def salvar_skill_de_peticao(
 
 
 @app.get("/api/skills-juridicas")
-async def listar_skills_juridicas(_autorizado=PodeManterModeloPeticao):
+async def listar_skills_juridicas(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
     """Skills disponíveis para análise e redação de novos casos."""
     return await run_in_threadpool(skills_juridicas.listar)
 
