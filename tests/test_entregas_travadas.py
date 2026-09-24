@@ -41,7 +41,7 @@ def test_alerta_de_fila_vira_aviso_quando_a_espera_passa_do_normal():
     item = SimpleNamespace(codigo="DOC.03", nome="RG", tipo_ocr="rg")
 
     recente = casos._alertas_da_entrega(_entrega(minutos_atras=0), item)
-    assert recente == ["Documento recebido e aguardando a vez na fila de leitura."]
+    assert recente == ["Aguardando processamento..."]
 
     parada = casos._alertas_da_entrega(
         _entrega(minutos_atras=casos.MINUTOS_ESPERA_ANORMAL + 5), item
@@ -54,7 +54,7 @@ def test_criado_em_ilegivel_nao_vira_alarme():
     item = SimpleNamespace(codigo="DOC.03", nome="RG", tipo_ocr="rg")
     entrega = _entrega(minutos_atras=0, criado_em="nao-e-uma-data")
     assert casos._alertas_da_entrega(entrega, item) == [
-        "Documento recebido e aguardando a vez na fila de leitura."
+        "Aguardando processamento..."
     ]
 
 

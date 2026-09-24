@@ -421,7 +421,16 @@ def processar_entrega(
         # `app/roteamento.py`). Quando o roteamento consulta o modelo, a leitura
         # que ele devolve é a MESMA classificação semântica que esta task
         # gravava por conta própria — reaproveitá-la evita a segunda chamada.
+        from .. import fila_sql as _fila_sql_log
+
+        _fila_sql_log._evento("CLASSIFICATION_STARTED", document_id=entrega_id)
         destino = roteamento.decidir(resultado, categoria, item)
+        _fila_sql_log._evento(
+            "CLASSIFICATION_COMPLETED",
+            document_id=entrega_id,
+            origem=destino.origem,
+            itens=",".join(destino.itens) if destino.itens else "",
+        )
         if not formato_lido:
             motivo_formato = (
                 f"Arquivo {extensao or 'sem extensão'} preservado sem leitura OCR automática."
@@ -596,5 +605,9 @@ def processar_entrega(
         return {"entrega_id": entrega_id, "concluida": True}
     except Exception as exc:
         log.exception("Falha ao ler o documento da entrega %s", entrega_id)
-        armazenamento.falhar_entrega(entrega_id, str(exc))
+        # Com a fila SQL, o worker decide retry (PENDING + backoff) vs falha
+        # definitiva. Marcar `erro` aqui matava o documento na 1ª tentativa
+        # temporária e contradizia `fila_sql.falhar`.
+        if os.getenv("OCR_FILA_SQL_HANDLER", "").strip() not in {"1", "true", "sim"}:
+            armazenamento.falhar_entrega(entrega_id, str(exc))
         raise

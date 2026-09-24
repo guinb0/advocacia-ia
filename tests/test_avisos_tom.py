@@ -64,12 +64,12 @@ def main_teste() -> int:
 
     # Falha de leitura é dura — tom crítico.
     erro = casos._avisos_da_entrega(_entrega(status_proc="erro", erro_proc="pdf corrompido"), ITEM)
-    falhas += checar(_tom("Não foi possível ler", erro) == "critico",
+    falhas += checar(_tom("Não foi possível processar", erro) == "critico",
                      "erro de leitura fica em 'critico'")
 
     # Fila é status, não problema.
     fila = casos._avisos_da_entrega(_entrega(status_proc="na_fila"), ITEM)
-    falhas += checar(_tom("aguardando", fila) == "info", "espera na fila é 'info'")
+    falhas += checar(_tom("Aguardando processamento", fila) == "info", "espera na fila é 'info'")
 
     # A lista de strings antiga continua existindo e batendo com os textos.
     entrada = _entrega(roteamento_origem="semantico", roteamento_motivo="parece um laudo")

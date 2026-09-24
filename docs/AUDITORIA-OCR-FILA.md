@@ -144,9 +144,30 @@ Não há timeline real: nenhum Redis de teste foi iniciado. Inventar timestamps
 ou declarar reconexão sem observar um consumer real esconderia justamente a
 causa que esta validação procura.
 
-## Conclusão
+# Fase 4 — Correção da causa raiz (2026-09-24)
 
-**APROVADO PARA DEPLOY: NÃO.** A implementação não deve ir para produção até a
-execução dos testes acima em host Docker isolado, com dependências instaladas a
-partir de `requirements.txt` e sem qualquer conexão com as redes/volumes de
-produção.
+## Causa raiz confirmada
+
+As tabelas `dbo.acervo_fila_jobs` e `dbo.acervo_fila_workers` existiam, mas
+`fila_jobs` / `fila_workers` **não estavam** em `banco.TABELAS`. O `_qualificar`
+não reescrevia o SQL; o enqueue falhava com "nome de objeto inválido"; a API
+mascarava qualquer exceção como **"Fila de OCR indisponível."** e marcava a
+entrega em `erro`. A fila SQL ficava vazia (0 jobs) enquanto centenas de
+entregas morriam no upload.
+
+## Correção
+
+1. Incluir `fila_jobs` e `fila_workers` em `banco.TABELAS`.
+2. Default `FILA_SQL_OCR_ATIVA=1` (SQL é o transporte de OCR).
+3. Mensagens de erro reais no enqueue (sem máscara genérica).
+4. UI distingue pending / processing / failed / classificado.
+5. Retry SQL sincroniza `entregas` (`na_fila` no backoff; `erro` só no FAILED).
+6. Logs estruturados: UPLOAD → OCR_QUEUED → OCR_CLAIMED → OCR_STARTED →
+   OCR_COMPLETED → CLASSIFICATION_* .
+
+## Evidência
+
+- Integração no SQL remoto: enqueue + dedup + claim (2º worker = None) +
+  COMPLETED → OK.
+- `pytest tests/test_fila_sql.py` + alertas: 15 passed.
+

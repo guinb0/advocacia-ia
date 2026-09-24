@@ -160,6 +160,12 @@ services:
 
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # OCR no pool SQL (mesmo contrato de produção). Sem isto a API tenta
+      # Celery/Redis e mascara falhas de schema como "Fila de OCR indisponível".
+      FILA_SQL_OCR_ATIVA: "1"
+      FILA_SQL_LEASE_S: "720"
+      FILA_SQL_MAX_JOBS: "20"
+      FILA_SQL_POLL_S: "3"
     volumes:
       - dados:/app/dados
     deploy:
@@ -255,14 +261,15 @@ services:
       retries: 5
       start_period: 30s
 
-  # OCR isolado: uma leitura longa nao bloqueia IA, documentos e manutencao.
+  # OCR isolado via pool SQL (não depende de Redis/Bull/Celery para documentos).
   worker-ocr:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
-    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h"]
+    command: ["python", "-m", "app.worker_sql_ocr"]
     environment: *ambiente_api
     volumes:
       - dados:/app/dados
     deploy:
+      replicas: 3
       restart_policy:
         condition: any
         delay: "5s"

@@ -39,6 +39,21 @@ function tituloDaLeitura(valor: string | null): string {
   }).join(" ");
 }
 
+function rotuloStatusProc(status: Entrega["status_proc"]): string {
+  switch (status) {
+    case "na_fila":
+      return "Aguardando processamento...";
+    case "processando":
+      return "Lendo documento...";
+    case "erro":
+      return "Não foi possível processar o documento.";
+    case "pronto":
+      return "Documento analisado";
+    default:
+      return "Identificado";
+  }
+}
+
 export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemover }: Props) {
   const [destinos, setDestinos] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState<string | null>(null);
@@ -115,12 +130,19 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
       </div>
       <ul className="m-0 p-0 list-none bg-papel">
         {entregas.map((entrega) => {
-          const lendo = entrega.status_proc === "na_fila" || entrega.status_proc === "processando";
+          const status = entrega.status_proc ?? "pronto";
+          const aguardando = status === "na_fila";
+          const processando = status === "processando";
+          const falhou = status === "erro";
+          const emLeitura = aguardando || processando;
+          const categoriaIa = tituloDaLeitura(entrega.identificacao_ia || entrega.tipo_detectado);
+          const semCategoria =
+            !String(entrega.identificacao_ia || entrega.tipo_detectado || "").trim();
           return (
             <li key={entrega.id} className="px-5 py-4 border-b border-borda last:border-b-0">
               <div className="flex items-center gap-3 flex-wrap">
-                <Selo tom={lendo ? "info" : entrega.status_proc === "erro" ? "critico" : "atencao"}>
-                  {lendo ? "Lendo…" : entrega.status_proc === "erro" ? "Falha na leitura" : "Identificado"}
+                <Selo tom={emLeitura ? "info" : falhou ? "critico" : "atencao"}>
+                  {rotuloStatusProc(status)}
                 </Selo>
                 <button
                   type="button"
@@ -134,17 +156,23 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                 </Botao>
               </div>
 
-              <p className="mt-2 mb-0 text-sm text-tinta-2">
-                Identificado pela IA: <strong className="text-tinta">{tituloDaLeitura(entrega.identificacao_ia || entrega.tipo_detectado)}</strong>
-              </p>
+              {/* "Sem categoria" só depois de OCR/classificação reais — nunca enquanto
+                  o documento ainda está na fila ou sendo lido. */}
+              {!emLeitura && !falhou && (
+                <p className="mt-2 mb-0 text-sm text-tinta-2">
+                  {semCategoria
+                    ? "Identificado pela IA: documento sem categoria definida"
+                    : <>Identificado pela IA: <strong className="text-tinta">{categoriaIa}</strong></>}
+                </p>
+              )}
 
               {entrega.alertas?.map((alerta, indice) => (
                 <div className="mt-3" key={indice}>
-                  <Aviso tom={entrega.status_proc === "erro" ? "critico" : "atencao"}>{alerta}</Aviso>
+                  <Aviso tom={falhou ? "critico" : emLeitura ? "info" : "atencao"}>{alerta}</Aviso>
                 </div>
               ))}
 
-              {entrega.status_proc === "erro" && (
+              {falhou && (
                 <div className="flex gap-2 items-center mt-3 flex-wrap">
                   <BotaoProcesso
                     variante="secundario"
@@ -176,7 +204,7 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
               )}
 
               <div className="flex gap-2 items-end mt-3 flex-wrap">
-                {!lendo && (
+                {!emLeitura && !falhou && (
                   <>
                     <label className="flex-1 min-w-[240px] text-xs text-tinta-3">
                       Item correto do checklist
@@ -203,7 +231,7 @@ export default function TriagemDocumentos({ entregas, itens, onAtribuir, onRemov
                     </BotaoProcesso>
                   </>
                 )}
-                {/* Disponível mesmo "Lendo…": documento preso (worker travado,
+                {/* Disponível mesmo em leitura: documento preso (worker travado,
                   * bug de classificação) precisa poder ser excluído e
                   * reenviado sem esperar a leitura nunca terminar. */}
                 <Botao variante="perigo" onClick={() => onRemover(entrega.id)}>Remover</Botao>

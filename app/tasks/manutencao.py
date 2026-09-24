@@ -17,7 +17,7 @@ MINUTOS_TRAVADA = casos.MINUTOS_ESPERA_ANORMAL
 
 
 def _fila_sql_ocr_ativa() -> bool:
-    return os.getenv("FILA_SQL_OCR_ATIVA", "0").strip().lower() in {"1", "true", "sim"}
+    return os.getenv("FILA_SQL_OCR_ATIVA", "1").strip().lower() in {"1", "true", "sim"}
 
 
 @celery_app.task(name="app.tasks.manutencao.limpar_temporarios")

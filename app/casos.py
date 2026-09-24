@@ -152,13 +152,17 @@ def _avisos_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[dic
                 )
             ]
         if estado == "na_fila":
-            return [info("Documento recebido e aguardando a vez na fila de leitura.")]
-        return [info("Documento recebido. A leitura está em andamento.")]
+            return [info("Aguardando processamento...")]
+        return [info("Lendo documento...")]
     if estado == "erro":
         return [
             critico(
-                "Não foi possível ler este arquivo: "
-                + (entrega.get("erro_proc") or "falha no processamento.")
+                "Não foi possível processar o documento."
+                + (
+                    f" {entrega.get('erro_proc')}"
+                    if entrega.get("erro_proc")
+                    else ""
+                )
             )
         ]
 
@@ -239,12 +243,18 @@ def _alertas_da_entrega(entrega: dict[str, Any], item: ItemChecklist) -> list[st
 def _alertas_da_triagem(entrega: dict[str, Any]) -> list[str]:
     """Documento adicional identificado, mas fora do checklist deste caso."""
     estado = entrega.get("status_proc", "pronto")
-    if estado in {"na_fila", "processando"}:
-        return ["Documento recebido. A leitura está em andamento."]
+    if estado == "na_fila":
+        return ["Aguardando processamento..."]
+    if estado == "processando":
+        return ["Lendo documento..."]
     if estado == "erro":
         return [
-            "Não foi possível ler este arquivo: "
-            + (entrega.get("erro_proc") or "falha no processamento.")
+            "Não foi possível processar o documento."
+            + (
+                f" ({entrega.get('erro_proc')})"
+                if entrega.get("erro_proc")
+                else ""
+            )
         ]
     motivo = (entrega.get("roteamento_motivo") or "").strip()
     if entrega.get("roteamento_origem") == "duplicidade":

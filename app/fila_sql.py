@@ -6,21 +6,33 @@ réplicas o executem; lease/heartbeat permite recuperar trabalho abandonado.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .banco import conectar
 
-LEASE_S = int(os.getenv("FILA_SQL_LEASE_S", "120"))
+log = logging.getLogger(__name__)
+
+# OCR pode levar vários minutos (subprocesso + provedor). Lease curto devolvia o
+# job a outro worker no meio da leitura — produção usa 720s.
+LEASE_S = int(os.getenv("FILA_SQL_LEASE_S", "720"))
 WORKER_TTL_S = int(os.getenv("FILA_SQL_WORKER_TTL_S", "30"))
 STALL_S = int(os.getenv("FILA_SQL_STALL_S", "600"))
 
 
 def _agora() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _evento(evento: str, **campos: Any) -> None:
+    """Log estruturado rastreável: UPLOAD → OCR_QUEUED → … → CLASSIFICATION_*."""
+    partes = " ".join(f"{chave}={valor!r}" for chave, valor in campos.items() if valor is not None)
+    log.info("event=%s %s", evento, partes)
 
 
 def heartbeat_worker(worker_id: str, fila: str = "ocr") -> None:
@@ -53,8 +65,8 @@ def snapshot(fila: str = "ocr", esperados: int = 3) -> dict[str, Any]:
             (fila, limite),
         ).fetchall()
         presos = con.execute(
-            "SELECT COUNT(*) AS quantidade FROM fila_jobs WHERE status='RUNNING' AND heartbeat_em < ?",
-            (limite,),
+            "SELECT COUNT(*) AS quantidade FROM fila_jobs WHERE status='RUNNING' AND lease_ate < ?",
+            (agora.isoformat(timespec="seconds"),),
         ).fetchone()
         pendentes_antigos = con.execute(
             "SELECT COUNT(*) AS quantidade FROM fila_jobs WHERE status='PENDING' AND criado_em < ?",
@@ -65,7 +77,7 @@ def snapshot(fila: str = "ocr", esperados: int = 3) -> dict[str, Any]:
     ativos = len(workers)
     possivel_preso = int(presos["quantidade"] or 0)
     esperando_demais = int(pendentes_antigos["quantidade"] or 0)
-    if ativos == 0:
+    if ativos == 0 and pendentes:
         classificacao = "NO_CONSUMERS"
     elif possivel_preso:
         classificacao = "POSSIBLE_HUNG_TASK"
@@ -107,11 +119,26 @@ def enfileirar(
                 "WHERE chave = ? AND status IN ('PENDING','RUNNING')", (chave,)
             ).fetchone()
             if existente:
+                _evento(
+                    "OCR_QUEUED_DEDUP",
+                    job_id=existente["id"],
+                    chave=chave,
+                    document_id=argumentos.get("entrega_id"),
+                )
                 return str(existente["id"])
         con.execute(
             "INSERT INTO fila_jobs (id, tipo, argumentos_json, chave, status, prioridade, tentativas_max, criado_em, atualizado_em) VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)",
             (job_id, tipo, json.dumps(argumentos, ensure_ascii=False), chave or None, prioridade, tentativas_max, agora, agora),
         )
+    _evento(
+        "OCR_QUEUED",
+        job_id=job_id,
+        document_id=argumentos.get("entrega_id"),
+        tipo=tipo,
+        chave=chave or None,
+        prioridade=prioridade,
+        status="PENDING",
+    )
     return job_id
 
 
@@ -131,7 +158,11 @@ def enfileirar_ocr(args: tuple[Any, ...], *, job_id: str | None = None) -> str:
 
 
 def reservar(worker_id: str | None = None) -> dict[str, Any] | None:
-    """Reserva exatamente um job com lock de atualização, sem corrida entre pods."""
+    """Reserva exatamente um job com lock de atualização, sem corrida entre pods.
+
+    Equivalente SQL Server a `FOR UPDATE SKIP LOCKED`: UPDLOCK + READPAST.
+    A transação fecha ao sair de `conectar()` — o OCR pesado roda fora dela.
+    """
     worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}"
     agora = _agora()
     lease = (agora + timedelta(seconds=LEASE_S)).isoformat(timespec="seconds")
@@ -149,13 +180,33 @@ def reservar(worker_id: str | None = None) -> dict[str, Any] | None:
         """, (agora.isoformat(timespec="seconds"), worker_id, agora.isoformat(timespec="seconds"), agora.isoformat(timespec="seconds"), lease, agora.isoformat(timespec="seconds"))).fetchone()
     if not linha:
         return None
-    return {**dict(linha), "argumentos": json.loads(linha["argumentos_json"] or "{}"), "worker_id": worker_id}
+    job = {**dict(linha), "argumentos": json.loads(linha["argumentos_json"] or "{}"), "worker_id": worker_id}
+    _evento(
+        "OCR_CLAIMED",
+        job_id=job["id"],
+        document_id=job["argumentos"].get("entrega_id"),
+        worker_id=worker_id,
+        attempt=job.get("tentativas"),
+        status="RUNNING",
+    )
+    return job
 
 
-def concluir(job_id: str) -> None:
+def concluir(job_id: str, *, document_id: str | None = None, processing_time: float | None = None) -> None:
     agora = _agora().isoformat(timespec="seconds")
     with conectar() as con:
-        con.execute("UPDATE fila_jobs SET status='COMPLETED', finalizado_em=?, lease_ate=NULL, atualizado_em=? WHERE id=? AND status='RUNNING'", (agora, agora, job_id))
+        con.execute(
+            "UPDATE fila_jobs SET status='COMPLETED', finalizado_em=?, lease_ate=NULL, atualizado_em=? "
+            "WHERE id=? AND status='RUNNING'",
+            (agora, agora, job_id),
+        )
+    _evento(
+        "OCR_COMPLETED",
+        job_id=job_id,
+        document_id=document_id,
+        status="COMPLETED",
+        processing_time=None if processing_time is None else round(processing_time, 3),
+    )
 
 
 def renovar_lease(job_id: str, worker_id: str) -> bool:
@@ -171,23 +222,72 @@ def renovar_lease(job_id: str, worker_id: str) -> bool:
     return bool(cursor.rowcount)
 
 
-def falhar(job: dict[str, Any], erro: Exception) -> None:
+def falhar(job: dict[str, Any], erro: Exception) -> str:
+    """Marca falha temporária (PENDING + backoff) ou definitiva (FAILED).
+
+    Devolve o novo status para o worker sincronizar a entrega.
+    """
     agora = _agora()
     tentativas = int(job.get("tentativas") or 1)
     maximo = int(job.get("tentativas_max") or 3)
     status = "FAILED" if tentativas >= maximo else "PENDING"
     disponivel = None if status == "FAILED" else (agora + timedelta(seconds=min(300, 2 ** tentativas))).isoformat(timespec="seconds")
+    mensagem = str(erro)[:2000]
     with conectar() as con:
-        con.execute("UPDATE fila_jobs SET status=?, erro=?, disponivel_em=?, lease_ate=NULL, atualizado_em=? WHERE id=?", (status, str(erro)[:2000], disponivel, agora.isoformat(timespec="seconds"), job["id"]))
+        con.execute(
+            "UPDATE fila_jobs SET status=?, erro=?, disponivel_em=?, lease_ate=NULL, atualizado_em=? WHERE id=?",
+            (status, mensagem, disponivel, agora.isoformat(timespec="seconds"), job["id"]),
+        )
+    document_id = (job.get("argumentos") or {}).get("entrega_id")
+    _evento(
+        "OCR_FAILED" if status == "FAILED" else "OCR_RETRY_SCHEDULED",
+        job_id=job["id"],
+        document_id=document_id,
+        worker_id=job.get("worker_id"),
+        attempt=tentativas,
+        status=status,
+        erro=mensagem[:300],
+        available_at=disponivel,
+    )
+    return status
 
 
 def recuperar_orfaos() -> int:
+    """Devolve a PENDING jobs cujo lease expirou (worker morto no meio do OCR)."""
     agora = _agora().isoformat(timespec="seconds")
     with conectar() as con:
+        orfaos = con.execute(
+            "SELECT id, argumentos_json, worker_id, tentativas FROM fila_jobs "
+            "WHERE status='RUNNING' AND lease_ate < ?",
+            (agora,),
+        ).fetchall()
+        if not orfaos:
+            return 0
         cursor = con.execute(
             "UPDATE fila_jobs SET status='PENDING', worker_id=NULL, heartbeat_em=NULL, "
             "lease_ate=NULL, disponivel_em=?, atualizado_em=? "
             "WHERE status='RUNNING' AND lease_ate < ?",
             (agora, agora, agora),
         )
+    for linha in orfaos:
+        args = json.loads(linha["argumentos_json"] or "{}")
+        _evento(
+            "OCR_ORPHAN_RECOVERED",
+            job_id=linha["id"],
+            document_id=args.get("entrega_id"),
+            worker_id=linha["worker_id"],
+            attempt=linha["tentativas"],
+            status="PENDING",
+        )
     return int(cursor.rowcount or 0)
+
+
+def job_ativo_para_entrega(entrega_id: str) -> str | None:
+    """Id do job PENDING/RUNNING da entrega, se houver (idempotência)."""
+    chave = f"ocr:{entrega_id}"
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT id FROM fila_jobs WHERE chave=? AND status IN ('PENDING','RUNNING')",
+            (chave,),
+        ).fetchone()
+    return str(linha["id"]) if linha else None

@@ -64,6 +64,12 @@ x-ambiente: &ambiente
   # Lido por `app/observabilidade.py` para medir o tamanho das filas.
   REDIS_URL: ${CELERY_BROKER_URL:-redis://valkey:6379/0}
 
+  # OCR no pool SQL (não depende do Redis para documentos).
+  FILA_SQL_OCR_ATIVA: "1"
+  FILA_SQL_LEASE_S: "720"
+  FILA_SQL_MAX_JOBS: "20"
+  FILA_SQL_POLL_S: "3"
+
   # Sem esta chave o motor de OCR não tem para onde ir: a leitura levanta
   # "MISTRAL_API_KEY não configurada" e a entrega termina em erro.
   MISTRAL_API_KEY: ${MISTRAL_API_KEY?MISTRAL_API_KEY is required}
@@ -127,17 +133,17 @@ services:
     deploy:
       restart_policy: {condition: any, delay: 5s}
 
-  # A LEITURA DE DOCUMENTOS. Foi este serviço que faltou.
+  # OCR via pool SQL (mesmo contrato de docker-compose.production.yml).
   worker-ocr:
     <<: *imagem
-    command: ["celery", "-A", "app.celery_app:celery_app", "worker",
-              "--concurrency=1", "-Q", "gpu_background", "-n", "ocr@%h"]
+    command: ["python", "-m", "app.worker_sql_ocr"]
     environment: *ambiente
     volumes:
       - anexos:/app/dados/casos
     networks:
       interna: {}
     deploy:
+      replicas: 3
       restart_policy: {condition: any, delay: 5s}
 
   # Tudo que não é OCR. `low` entra aqui: é para onde o beat manda as rondas,

@@ -210,6 +210,12 @@ TABELAS = (
     "ligacoes_followup",
     "classificacoes_documentos_corrigidas",
     "entregas",
+    # Fila OCR durável (SQL Server). Sem estes nomes em `_qualificar`, o enqueue
+    # escrevia em `fila_jobs` cru e o SQL Server respondia "nome de objeto inválido"
+    # — a API mascarava isso como "Fila de OCR indisponível" e o documento morria
+    # em `erro` sem nunca entrar no pool.
+    "fila_jobs",
+    "fila_workers",
     "entrevistas",
     "peticoes_locais",
     "peticoes_anexas",

@@ -137,8 +137,8 @@ _ocr_aquecido = threading.Event()
 
 
 def _fila_sql_ocr_ativa() -> bool:
-    """Só publica no SQL quando o serviço SQL OCR foi ligado no deploy."""
-    return os.getenv("FILA_SQL_OCR_ATIVA", "0").strip().lower() in {"1", "true", "sim"}
+    """OCR usa o pool SQL Server. Desligar só com FILA_SQL_OCR_ATIVA=0 (legado Celery)."""
+    return os.getenv("FILA_SQL_OCR_ATIVA", "1").strip().lower() in {"1", "true", "sim"}
 
 #: Quanto cada etapa da subida espera por um lock antes de desistir. Generoso para
 #: o banco remoto sob carga, curto perto do "para sempre" que travava a API.
@@ -3697,6 +3697,7 @@ async def _registrar_documento(
         )
         task_id = str(uuid.uuid4())
         armazenamento.marcar_entrega_enfileirada(entrega["id"], task_id)
+        log.info("event=UPLOAD document_id=%r caso_id=%r arquivo=%r", entrega["id"], caso_id, nome)
         if _fila_sql_ocr_ativa():
             task_id = fila_sql.enfileirar_ocr(args, job_id=task_id)
         else:
@@ -3704,11 +3705,12 @@ async def _registrar_documento(
                 args=args, queue="gpu_background", priority=7, task_id=task_id,
             )
     except Exception as exc:
-        armazenamento.falhar_entrega(entrega["id"], "Fila de OCR indisponível.")
+        # Mensagem real: mascarar tudo como "fila indisponível" escondia a causa
+        # (ex.: tabela sem qualificar em `_qualificar` → nome de objeto inválido).
+        motivo = f"Não foi possível enfileirar a leitura: {type(exc).__name__}: {exc}"
+        armazenamento.falhar_entrega(entrega["id"], motivo[:500])
         log.exception("Falha ao enfileirar a entrega %s", entrega["id"])
-        raise HTTPException(
-            503, "Fila de leitura indisponível. Tente novamente."
-        ) from exc
+        raise HTTPException(503, motivo) from exc
 
     return {"entrega": entrega, "processando": True, "task_id": task_id}
 
@@ -5395,10 +5397,9 @@ def tentar_novamente_entrega(
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
-        armazenamento.falhar_entrega(entrega_id, "Fila de OCR indisponível.")
-        raise HTTPException(
-            503, "Fila de leitura indisponível. Tente novamente."
-        ) from exc
+        motivo = f"Não foi possível reenfileirar a leitura: {type(exc).__name__}: {exc}"
+        armazenamento.falhar_entrega(entrega_id, motivo[:500])
+        raise HTTPException(503, motivo) from exc
 
     return {
         "entrega": armazenamento.obter_entrega(entrega_id),
