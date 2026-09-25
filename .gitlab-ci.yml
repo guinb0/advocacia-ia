@@ -142,7 +142,8 @@ no-op:
 # segredos) nem as credenciais: só campos escolhidos.
 # ============================================================
 portainer-diagnostico:
-  stage: notify
+  stage: .pre
+  needs: []
   image: pdrh/portainer-go-cli:0.0.12
   rules:
     - if: $CI_COMMIT_BRANCH == "production"
