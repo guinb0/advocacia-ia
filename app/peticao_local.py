@@ -1359,9 +1359,9 @@ Não invente fatos. Diferencie alegação de fato documentado.""",
     }
 
 
-def _normalizar_secoes(brutas: list[dict[str, Any]], contrato: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def _normalizar_secoes(brutas: list[dict[str, Any]] | None, contrato: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Seções na ordem e na quantidade que a SKILL fez o modelo devolver — nada é imposto."""
-    secoes = _normalizar_secoes_da_revisao(brutas)
+    secoes = _normalizar_secoes_da_revisao(brutas or [])
     return contrato_secoes.canonicalizar(secoes, contrato)[0] if contrato else secoes
 
 
@@ -2436,7 +2436,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     avancar_etapa("Lendo entrevista e documentos…", 1)
     regras_aplicadas = peticao_aprendizado.regras_para_contexto(
         categoria=_categoria_do_caso(caso_id)
-    )
+    ) or []
     peticao_aprendizado.registrar_execucao(
         generation_id=generation_id, caso_id=caso_id,
         skill_name="learned_preferences_retrieval", itens_recuperados=[
@@ -2469,7 +2469,9 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     )
     plano_est = plano_da_peticao.montar(plano, partes=case_facts.partes_resolvidas(cf), fatos_documentais=_fatos_documentais(caso_id))
     plano_est["case_facts"] = cf
-    plano_est["contrato_secoes"] = contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill())
+    plano_est["contrato_secoes"] = contrato_secoes.montar(
+        peticao_skill_arquivos.estrutura_da_skill() or []
+    )
     plano_est["_funcoes_de_conteudo"] = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("funcoes_de_conteudo") or {}
     outline += "\n\n" + plano_da_peticao.para_prompt(plano_est)
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)

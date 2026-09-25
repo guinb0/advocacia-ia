@@ -13,6 +13,12 @@ def test_estrutura_da_skill_vira_contrato_ordenado():
     ]
 
 
+def test_skill_ausente_nao_interrompe_geracao_por_iteravel_nulo():
+    contrato = contrato_secoes.montar(None)
+    assert contrato["blocos"] == []
+    assert contrato["permitidos"] == []
+
+
 def test_skill_exige_relatorio_interno_separado_da_peca():
     regras = peticao_skill_arquivos._ler("regras_de_geracao.md")  # noqa: SLF001
     assert "RELATÓRIO AO ADVOGADO são produtos separados" in regras
@@ -41,6 +47,7 @@ def test_checklist_interno_nao_recebe_numero_de_documento_protocolavel():
     assert [d["canonical_file"] for d in ledger] == ["Contracheque 08-2026.pdf"]
     assert document_ledger.uso_do_documento({"arquivo": "Entrevista interna.docx"}) == "interno"
     assert document_ledger.uso_do_documento({"arquivo": "CAT.pdf"}) == "probatorio"
+    assert document_ledger.montar(None) == []
 
 
 def test_capitulo_inventado_e_ordem_errada_retidos():

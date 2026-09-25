@@ -37,9 +37,14 @@ def papel(titulo: str) -> str | None:
     return None
 
 
-def montar(itens_da_skill: list[dict[str, str]]) -> dict[str, Any]:
+def montar(itens_da_skill: list[dict[str, str]] | None) -> dict[str, Any]:
+    """Monta o contrato, mesmo quando uma skill opcional não pôde ser lida.
+
+    A ausência da estrutura deve aparecer na validação/trace; jamais pode
+    interromper toda a geração com ``NoneType is not iterable``.
+    """
     blocos = []
-    for item in itens_da_skill:
+    for item in itens_da_skill or []:
         role = papel(str(item.get("titulo") or ""))
         if role:
             blocos.append({**item, "code": role})

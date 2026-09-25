@@ -69,7 +69,7 @@ def montar(documentos: list[dict[str, Any]], tipos: dict[str, str] | None = None
     # Checklists, triagens e relatórios do escritório orientam a equipe; não são
     # prova do cliente nem anexo protocolável. Excluí-los antes da numeração
     # impede que ganhem um "Documento NN" e contaminem fatos ou pedidos.
-    documentos = [d for d in documentos if uso_do_documento(d, tipos) == "probatorio"]
+    documentos = [d for d in (documentos or []) if uso_do_documento(d, tipos) == "probatorio"]
     grupos: list[list[dict[str, Any]]] = []
     for d in documentos:
         for g in grupos:
