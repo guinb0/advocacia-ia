@@ -72,3 +72,29 @@ def test_tabela_markdown_vira_tabela_word_nativa(monkeypatch):
     assert "| INFORMAÇÃO" not in documento
     assert documento.index("O vínculo está comprovado.") < documento.index("<w:tbl>")
     assert documento.index("<w:tbl>") < documento.index("O restante dos fatos")
+
+
+def test_docx_segue_o_layout_da_skill_formatacao():
+    """`formatacao.md`: A4, margens 3/2/2/3, 12 pt, 1,5, recuo 1,25 cm, justificado,
+    logo no cabeçalho e paginação "Página X de Y" em toda a peça."""
+    import re
+
+    conteudo = peticao_local.montar_docx(
+        [{"code": "FACTS", "label": "Dos fatos", "content": "Conteúdo."}]
+    )
+    with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
+        assert arquivo.testzip() is None
+        documento = arquivo.read("word/document.xml").decode("utf-8")
+        estilos = arquivo.read("word/styles.xml").decode("utf-8")
+        rodape = arquivo.read("word/footer1.xml").decode("utf-8")
+        cabecalho = arquivo.read("word/header1.xml").decode("utf-8")
+
+    assert 'w:w="11906" w:h="16838"' in documento  # A4
+    margens = re.search(r'<w:pgMar w:top="(\d+)" w:right="(\d+)" w:bottom="(\d+)" w:left="(\d+)"', documento)
+    assert tuple(int(v) for v in margens.groups()) == (1701, 1134, 1134, 1701)  # 3/2/2/3 cm
+    assert 'w:val="24"' in estilos  # 12 pt
+    assert 'w:line="360"' in estilos  # 1,5
+    assert 'w:firstLine="709"' in estilos  # 1,25 cm
+    assert '<w:jc w:val="both"/>' in estilos  # justificado
+    assert 'r:id="rIdFooter"' in documento and "PAGE" in rodape and "NUMPAGES" in rodape
+    assert "Página" in rodape and "<w:drawing>" in cabecalho

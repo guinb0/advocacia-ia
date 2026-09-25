@@ -4266,6 +4266,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     {"".join(corpo)}
     <w:sectPr>
       <w:headerReference w:type="default" r:id="rIdHeader"/>
+      <w:footerReference w:type="default" r:id="rIdFooter"/>
       <w:pgSz w:w="11906" w:h="16838"/>
       <!-- Medido na petição de referência do escritório, página a página (as
            quatro primeiras dão exatamente o mesmo recorte):
@@ -4284,13 +4285,34 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
            Mantendo a mesma folga de 0,13 cm da peça de referência, o texto passa
            a começar em 3,74 cm = 2120 twips. Sem descer `w:top` junto sobraria
            quase 1 cm de ar entre a logo e o primeiro parágrafo. -->
-      <w:pgMar w:top="{twips(margem_topo)}" w:right="{twips(margem_direita)}" w:bottom="{twips(margem_inferior)}" w:left="{twips(margem_esquerda)}" w:header="708"/>
+      <w:pgMar w:top="{twips(margem_topo)}" w:right="{twips(margem_direita)}" w:bottom="{twips(margem_inferior)}" w:left="{twips(margem_esquerda)}" w:header="708" w:footer="708"/>
     </w:sectPr>
   </w:body>
 </w:document>"""
 
     # f-string: sem o `f`, `{logo_cx}` ia literal para o XML e o Word recusava abrir
     # o arquivo inteiro (o LibreOffice, que gera o PDF, tolerava e escondia o defeito).
+    # Paginação contínua "Página X de Y", discreta e sem cobrir o texto — exigida por
+    # `formatacao.md` (item 4). Campos PAGE/NUMPAGES: o Word e o LibreOffice
+    # recalculam ao abrir. Tamanho de nota (10 pt), como a skill define para
+    # elementos secundários.
+    rodape_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p><w:pPr><w:jc w:val="right"/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">Página </w:t></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t>1</w:t></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve"> de </w:t></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t>1</w:t></w:r>
+    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>
+  </w:p>
+</w:ftr>"""
     cabecalho_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -4304,7 +4326,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
 
        `w:right="629"` (1,11 cm, a diferença entre as margens) devolve o
        parágrafo ao centro do papel, que é onde o olho espera o timbre. -->
-  <w:p><w:pPr><w:jc w:val="center"/><w:ind w:right="629"/></w:pPr><w:r><w:drawing>
+  <w:p><w:pPr><w:jc w:val="center"/><w:ind w:right="{twips(margem_esquerda - margem_direita)}"/></w:pPr><w:r><w:drawing>
     <wp:inline distT="0" distB="0" distL="0" distR="0">
       <!-- 4,19 × 2,36 cm em EMU (1 cm = 360000). O timbre da peça de referência
            tem 5,82 × 3,28 cm; este é ele a 72%, por pedido do escritório. Os dois
@@ -4351,6 +4373,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
   {'<Default Extension="jpeg" ContentType="image/jpeg"/>' if fotos else ""}
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>""",
         )
@@ -4363,6 +4386,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         )
         arquivo.writestr("word/document.xml", documento_xml)
         arquivo.writestr("word/header1.xml", cabecalho_xml)
+        arquivo.writestr("word/footer1.xml", rodape_xml)
         arquivo.writestr("word/styles.xml", estilos_xml)
         arquivo.writestr(f"word/media/{logo_arquivo}", logo)
         # `.jpeg`, e não `.jpg`: a logo pode ser `.jpg`, e dois <Default> para a
@@ -4379,6 +4403,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
             f"""<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+  <Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
   <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>{relacoes_fotos}
 </Relationships>""",
         )
