@@ -71,6 +71,9 @@ CLIENTES_DE_TESTE: tuple[tuple[str, str], ...] = (
     ("Joana do Roteamento", "test_roteamento_documentos.py"),
     ("Ana / Zíper", "test_zip_selecao.py"),
     ("Ana / Ziper", "test_zip_selecao.py"),
+    # Apareceu em peça real (v15) — identidade de fixture que vazou para a inicial.
+    ("BEZERRA TESTE", "auditoria v15 / cadastro poluído"),
+    ("Bezerra Teste", "auditoria v15 / cadastro poluído"),
 )
 
 #: Tipos de documento criados enquanto alguém experimentava a tela do glossário.
