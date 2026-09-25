@@ -195,7 +195,7 @@ def avaliar_documento(secoes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Críticos determinísticos, transparentes e sem expor raciocínio do modelo."""
     textos = {str(s.get("code") or ""): str(s.get("content") or "").strip() for s in secoes}
     achados: list[dict[str, Any]] = []
-    obrigatorias = ("HEADING", "FACTS", "LEGAL_GROUNDS", "CLAIMS", "CLOSING")
+    obrigatorias: tuple[str, ...] = ()  # quais seções existem é decisão da skill, não do código
     for codigo in obrigatorias:
         if not textos.get(codigo):
             achados.append({"critic": "consistency_check", "severity": "warning", "code": "MISSING_SECTION", "section": codigo})

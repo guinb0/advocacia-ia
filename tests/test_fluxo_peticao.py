@@ -285,8 +285,8 @@ def testar_geracao() -> int:
     falhas += not checar(resultado["status"] == "DONE", "a geração termina concluída")
     falhas += not checar(peticao["version"] == 1, f"a primeira petição é a versão 1 (veio {peticao['version']})")
     falhas += not checar(
-        [s["code"] for s in peticao["sections"]] == [c for c, _ in pl.SECOES_PADRAO],
-        "devolve todas as seções de SECOES_PADRAO, na ordem",
+        [s["code"] for s in peticao["sections"]] == [s["code"] for s in SECOES_FALSAS if s["content"].strip()],
+        "devolve as seções que o modelo (a skill) determinou, na ordem dele",
     )
     falhas += not checar(
         "contexto" not in (resultado["analise"] or {}),
@@ -732,7 +732,7 @@ def testar_pecas_anexas() -> int:
     # Ancorado em `SECOES_PADRAO` e não no número 7: a peça ganhou DAS PRELIMINARES
     # e a contagem fixa quebrou o teste sem que nada estivesse errado. A próxima
     # seção que entrar não vai quebrá-lo de novo pelo mesmo motivo.
-    esperadas = len(pl.SECOES_PADRAO)
+    esperadas = len([x for x in SECOES_FALSAS if x["content"].strip()])
     falhas += not checar(
         lista[0]["secoes"] == esperadas,
         f"com as {esperadas} seções normalizadas ({lista[0]['secoes']})",

@@ -116,3 +116,12 @@ Avaliação honesta: a profundidade factual e o encadeamento fato → prova → 
 6. **Tempo de geração ≈ 10 minutos** com as passadas extras (redação + aprofundamento + conferência + validação). Roda em background com progresso, mas vale acompanhar.
 7. `custos_api` não existe no banco local (aviso de telemetria); irrelevante para a geração.
 8. Testes que exigem banco de teste não foram executados; rodaram os que não dependem dele (formatação, visual, fila SQL, OCR saúde).
+
+## Skill como única autoridade (refatoração de pureza)
+
+- **Antes:** `SECOES_PADRAO` (8 seções), 4 esquemas JSON com os 8 títulos, bloco "ONDE CADA COISA ENTRA", `CONTRATO_DE_REDACAO` com doutrina trabalhista, "skill GERAL" do banco concatenada, heurística de título (`_tipo_de_titulo`, "Ao Juízo", "I –"), rótulo impresso por código, `<w:p/>` entre seções, rodapé "Página X de Y" e citação 10 pt/4 cm fixos.
+- **Agora:** o motor só tem primitivas (parágrafo, título `#`, blockquote `>`, bloco nomeado `::: nome`, tabela, imagem, cabeçalho, rodapé, campos de página). Aparência = bloco ```estilo``` de `references/formatacao.md`; estrutura = `estrutura_peca.md` + modelo do assunto; doutrina = `references/regras_de_geracao.md`. Nº/ordem/títulos das seções vêm do modelo, guiado pela skill.
+- **Skill legada** (`peticao_skills`): só entra se a skill de arquivo não carregar.
+- **Diagnóstico:** `GET /api/diagnostico/pureza-da-skill` e `trace.pipeline` (`active_skill`, `skill_files_loaded`, `formatacao_loaded`, `legacy_skill_loaded`, `hardcoded_structure_detected`, `renderer_defaults_used`, `generation_instruction_sources`).
+- **Teste de pureza:** `tests/test_modelo_visual_peticao.py::test_trocar_so_a_skill_muda_todo_o_documento`.
+- **Ainda no código (declarado):** validadores `conferencia_peticao.py` (art. 840 CLT, pedidos sem valor) são regra de domínio trabalhista fora da skill — candidatos a migrar.

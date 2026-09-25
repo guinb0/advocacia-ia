@@ -8,7 +8,9 @@ Cabeçalho: logotipo do escritório no topo. Endereçamento ao Juízo competente
 
 ## Caixa de objeto (logo abaixo do endereçamento, alinhada à direita)
 
-> Objeto: Assalto a [cargo]. Atividade de risco e responsabilidade objetiva. Dano Moral in re ipsa. Temas 932 STF e 84 TST.
+::: objeto
+Objeto: Assalto a [cargo]. Atividade de risco e responsabilidade objetiva. Dano Moral in re ipsa. Temas 932 STF e 84 TST.
+:::
 
 ## Qualificação e abertura
 
@@ -106,12 +108,14 @@ Valor da causa: somar os pedidos líquidos (indenização estimada + eventuais o
 
 ## Fechamento
 
-> Termos em que,
-> Pede deferimento.
-> [Cidade]-[UF], [data por extenso].
->
-> **GUSTAVO LARA DE MELO**
-> **OAB/MG 158.760**
+::: fechamento
+Termos em que,
+Pede deferimento.
+[Cidade]-[UF], [data por extenso].
+
+**GUSTAVO LARA DE MELO**
+**OAB/MG 158.760**
+:::
 
 (demais OABs do advogado, se cabível ao caso: OAB/DF 47.465, OAB/PI 23.571, OAB/PA 37.572, OAB/RJ 26.2017 — usar a inscrição pertinente ao foro do caso)
 

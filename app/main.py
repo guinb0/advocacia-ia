@@ -3056,6 +3056,15 @@ def definir_estado_insight(
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.get("/api/diagnostico/pureza-da-skill")
+def diagnostico_pureza_da_skill(
+    categoria_nome: str = "", categoria_codigo: str = "", texto_caso: str = "",
+    _usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    """De onde vêm as instruções de uma geração: só a skill ativa, ou algo mais?"""
+    return peticao_local.pureza_da_skill(categoria_nome, categoria_codigo, texto_caso)
+
+
 @app.get("/api/diagnostico/geracao")
 def diagnostico_da_geracao(
     caso_id: str = "", _usuario: auth.Usuario = Depends(auth.usuario_atual)

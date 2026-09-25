@@ -54,6 +54,59 @@ def _diag(canal: str, **dados: Any) -> None:
         corrente.setdefault("recuperacao", {}).setdefault(canal, {}).update(dados)
 
 
+#: Sinais de que o SISTEMA (e não a skill) voltou a ditar estrutura de peça no prompt final.
+_SINAIS_DE_ESTRUTURA_FIXA = (
+    "ONDE CADA COISA ENTRA",
+    '"label":"Dos fatos"',
+    '"label": "Dos fatos"',
+    '"code":"LEGAL_GROUNDS","label"',
+    "ENDEREÇAMENTO (seção HEADING)",
+)
+
+
+def _estrutura_fixa_no_prompt(instrucao: str) -> list[str]:
+    return [sinal for sinal in _SINAIS_DE_ESTRUTURA_FIXA if sinal in instrucao]
+
+
+def pureza_da_skill(nome_categoria: str = "", codigo_categoria: str = "", texto_caso: str = "") -> dict[str, Any]:
+    """Modo diagnóstico: de onde vêm as instruções de uma geração, sem gerar nada.
+
+    Monta a instrução exatamente como `gerar` (mesmas funções) e procura sinais de que o
+    SISTEMA voltou a ditar estrutura. Esperado numa geração pura: skill carregada,
+    `formatacao.md` carregada, skill legada fora, nenhuma estrutura fixa, nenhum template.
+    """
+    resumo = peticao_skill_arquivos.resumo(nome_categoria, codigo_categoria, texto_caso)
+    cfg = peticao_skill_arquivos.configuracao_visual_padrao()
+    try:
+        legada_cadastrada = bool(peticao_skills.instrucoes_gerais().strip())
+    except Exception:  # noqa: BLE001 — diagnóstico não pode falhar por causa do banco
+        legada_cadastrada = None
+    prompt_do_motor = CONTRATO_DE_REDACAO + _INSTRUCAO_REVISAO + _INSTRUCAO_CONFERENCIA
+    skill_carregada = peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, texto_caso)
+    sinais = _estrutura_fixa_no_prompt(prompt_do_motor)
+    return {
+        "active_skill": resumo["skill"],
+        "skill_loaded": resumo["carregada"],
+        "skill_files_loaded": resumo["arquivos"],
+        "skill_version": resumo["sha256"],
+        "formatacao_loaded": "formatacao.md" in resumo["arquivos"],
+        "estilos_definidos_pela_skill": sorted((cfg.get("estilos") or {}).keys()),
+        "layout_rules_source": cfg.get("fonte_das_regras"),
+        "renderer_defaults_used": cfg.get("campos_sem_definicao"),
+        "legacy_skill_configured_in_db": legada_cadastrada,
+        # Com skill de arquivo carregada a legada NÃO entra (ver `_com_skill_do_escritorio`).
+        "legacy_skill_loaded": bool(legada_cadastrada) and not skill_carregada,
+        "legacy_prompt_loaded": False,
+        "hardcoded_structure_detected": bool(sinais),
+        "hardcoded_structure_signals": sinais,
+        "external_template_loaded": False,
+        "generation_instruction_sources": [
+            "motor: CONTRATO_DE_REDACAO (integridade de dados + formato JSON)",
+            *[f"skill: references/{a}" for a in resumo["arquivos"]],
+        ],
+    }
+
+
 def _erro_curto(erro: BaseException) -> str:
     return f"{type(erro).__name__}: {str(erro)[:240]}"
 
@@ -121,20 +174,6 @@ def _fonte_padrao() -> str:
 MODELO_VISUAL_GERAL = "peticao_visual_geral"
 MODELO_VISUAL_CONFIG = "peticao_visual_config"
 MODELO_VISUAL_LOGO = "peticao_visual_logo"
-SECOES_PADRAO = (
-    ("HEADING", "Endereçamento e qualificação"),
-    # As preliminares saíram de dentro do DO DIREITO e viraram seção própria,
-    # ANTES dos fatos — que é onde o escritório as põe. `_normalizar_secoes`
-    # percorre esta tupla na ordem, então basta a posição aqui para a peça
-    # inteira (prompt, tela, .docx e revisão) passar a respeitá-la.
-    ("PRELIMINARY", "Das preliminares"),
-    ("FACTS", "Dos fatos"),
-    ("LEGAL_GROUNDS", "Do direito"),
-    ("CLAIMS", "Dos pedidos"),
-    ("EVIDENCE", "Das provas"),
-    ("VALUE", "Do valor da causa"),
-    ("CLOSING", "Fechamento"),
-)
 
 
 class ErroPeticao(RuntimeError):
@@ -559,6 +598,12 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     # "Das Provas", honorários como seção própria — que vencia a skill por vir
     # DEPOIS dela no prompt. Agora ela vai ANTES, rotulada como complementar, e a
     # skill de arquivo fecha o bloco com a regra de precedência explícita.
+    # AUTORIDADE ÚNICA: com a skill de arquivo carregada, a orientação cadastrada em
+    # `peticao_skills` (a "skill GERAL" legada, que fixava outra estrutura) NÃO entra.
+    # Só volta como fallback se a skill de arquivo não pôde ser lida.
+    legada_carregada = bool(skill) and not skill_arquivo
+    if not legada_carregada:
+        skill = ""
     if skill:
         cabecalho = (
             "=== ORIENTAÇÃO CADASTRADA NA TELA (complementar — em conflito de estrutura, "
@@ -570,6 +615,14 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
         blocos.append(cabecalho + skill)
     if skill_arquivo:
         blocos.append(skill_arquivo)
+    diag = _DIAG.get()
+    if diag is not None:
+        diag.setdefault("fontes_de_instrucao", {}).update({
+            "skill_de_arquivo": bool(skill_arquivo),
+            "legacy_skill_loaded": legada_carregada,
+            "regras_aprendidas": bool(regras),
+            "criticas_historicas": bool(criticas),
+        })
     if regras:
         listadas = "\n".join(
             f"- [{r.get('tipo', 'PREFERENCE')}; confiança {float(r.get('confidence') or 0):.2f}; "
@@ -865,28 +918,12 @@ Não invente fatos. Diferencie alegação de fato documentado.""",
 
 
 def _normalizar_secoes(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    por_codigo = {str(s.get("code") or ""): s for s in brutas}
-    secoes: list[dict[str, Any]] = []
-    for codigo, rotulo in SECOES_PADRAO:
-        item = por_codigo.get(codigo) or {}
-        conteudo = str(item.get("content") or "").strip()
-        if not conteudo and codigo in por_codigo:
-            conteudo = str(por_codigo[codigo].get("texto") or "").strip()
-        secoes.append(
-            {
-                "code": codigo,
-                "label": str(item.get("label") or rotulo),
-                "content": conteudo,
-                "written_by": "agent",
-                "supporting_fact_ids": [],
-                "cited_precedent_ids": [],
-            }
-        )
-    return secoes
+    """Seções na ordem e na quantidade que a SKILL fez o modelo devolver — nada é imposto."""
+    return _normalizar_secoes_da_revisao(brutas)
 
 
 def _normalizar_secoes_da_revisao(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Normaliza a peça candidata sem impor as oito seções da geração inicial."""
+    """Normaliza as seções devolvidas pelo modelo, sem impor quantidade, ordem nem títulos."""
     resultado: list[dict[str, Any]] = []
     usados: set[str] = set()
     for indice, item in enumerate(brutas):
@@ -1066,22 +1103,17 @@ def redigir(
         _com_skill_do_escritorio(
             caso_id,
             CONTRATO_DE_REDACAO
-            + """Redija uma PETIÇÃO INICIAL completa, adequada à natureza da ação indicada
-pelos fatos e pela análise, em português formal.
+            + """Redija a peça indicada pelos fatos e pela análise, executando a SKILL DO ESCRITÓRIO
+(estrutura, argumentação e formatação), em português formal.
 Use SOMENTE fatos da entrevista e documentos — não invente.
 Marque com [PENDENTE: motivo] o que depender só de alegação sem prova.
-
-ENDEREÇAMENTO (seção HEADING): abra por "Ao Juízo ..." indicando a vara e a
-comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A)
-JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
-**NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
 
 PADRÃO DO ESCRITÓRIO: a ORIENTAÇÃO DO ESCRITÓRIO (skill) é a fonte de FORMATO
 e manda sobre tudo — inclusive sobre a estrutura de qualquer peça de referência
 do acervo que aparecer acima. Peça de referência mostra nível de profundidade
 e raciocínio a igualar, nunca título, ordem de seção ou formato: nisso, quando
 divergir da orientação do escritório, a orientação do escritório vence sempre.
-Onde a orientação não disser nada, escolha a forma que julgar melhor para a
+Onde a orientação não disser nada sobre estrutura ou formato, NÃO crie seção, título nem elemento novo; escolha só a forma mais simples para a
 peça, sem inventar fato.
 
 TABELAS: você pode usar tabela quando ela tornar dados comprovados mais claros
@@ -1093,14 +1125,11 @@ invente dados para preencher célula e omita linhas sem informação comprovada.
 JSON:
 {
   "secoes": [
-    {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
-    {"code": "PRELIMINARY", "label": "Das preliminares", "content": "..."},
-    {"code": "FACTS", "label": "Dos fatos", "content": "..."},
-    {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
-    {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
-    {"code": "EVIDENCE", "label": "Das provas", "content": "..."},
-    {"code": "VALUE", "label": "Do valor da causa", "content": "..."},
-    {"code": "CLOSING", "label": "Fechamento", "content": "..."}
+    {"code":"<PAPEL_DA_SECAO>","label":"<título da seção como a SKILL manda; \"\" se a skill não dá título>","content":"<texto, com a marcação definida em formatacao.md>"}
+    /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
+       PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
+       use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
+       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
   ],
   "pendencias": ["fatos sem comprovação documental"]
 }
@@ -1735,7 +1764,13 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "skill": resumo_skill,
         "layout_rules_source": (peticao_skill_arquivos.configuracao_visual_padrao() or {}).get("fonte_das_regras"),
         "layout_campos_sem_definicao": (peticao_skill_arquivos.configuracao_visual_padrao() or {}).get("campos_sem_definicao"),
-        "hardcoded_override_detected": False,
+        "external_template_loaded": False,
+        "active_skill": resumo_skill["skill"],
+        "skill_loaded": resumo_skill["carregada"],
+        "skill_files_loaded": resumo_skill["arquivos"],
+        "skill_version": resumo_skill["sha256"],
+        "formatacao_loaded": "formatacao.md" in resumo_skill["arquivos"],
+        "renderer_defaults_used": peticao_skill_arquivos.configuracao_visual_padrao().get("campos_sem_definicao"),
         "documentos_do_caso": len((brief or {}).get("evidence") or []),
         "fatos_no_brief": len((brief or {}).get("facts") or []),
         "eventos_no_brief": len((brief or {}).get("timeline") or []),
@@ -1786,77 +1821,23 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
             "nascer com todas aplicadas, sem precisar que sejam pedidas de novo."
         )
     contexto += (
-        # Este bloco é FORMATO — onde cada coisa entra na peça. O mérito (estrutura
-        # da tese, anti-alucinação, auditoria) mora em `CONTRATO_DE_REDACAO`, que vai
-        # na instrução. Antes daqui saíam três regras que o escritório revogou: cota
-        # de quatro parágrafos por tese, dois julgados obrigatórios e a fórmula
-        # fiscal do valor da causa. Ficaram no histórico do git, não no prompt.
-        "\n\n=== ONDE CADA COISA ENTRA NAS SEÇÕES DO JSON ===\n"
-        # Este bloco só diz em que SEÇÃO técnica do JSON cada parte cai. ESTRUTURA,
-        # ordem dos capítulos, quais preliminares existem e o que trazem é da SKILL
-        # (estrutura_peca.md) e do padrão das peças do acervo — não daqui. Antes este
-        # texto fixava "Juízo 100% Digital" e "Gratuidade" como preliminares
-        # obrigatórias (a gratuidade saía duas vezes) e o capítulo "Das Provas",
-        # nenhum dos três presente na skill nem na peça de referência.
-        "Em qualquer divergência de estrutura, conteúdo ou formato entre este bloco "
-        "e a SKILL DO ESCRITÓRIO, a skill vence. "
-        "A seção PRELIMINARY reúne a matéria preliminar, numerada, ANTES dos fatos, "
-        "na ordem e com o conteúdo que a skill e as peças do acervo indicam para "
-        "este tipo de ação (em regra a justiça gratuita e, quando cabíveis, tutela de "
-        "urgência e questões de rito e comunicações processuais); não a repita em "
-        "LEGAL_GROUNDS. Não crie preliminar de 'Juízo 100% Digital' a menos que a "
-        "entrevista ou o cliente tenham optado por isso. "
-        "A prescrição (bienal e quinquenal) é SEMPRE tratada, em subcapítulo próprio "
-        "de LEGAL_GROUNDS, ainda que só para afastá-la. "
-        "Use capítulos e subcapítulos numerados, como nas peças do acervo "
-        "(I., I.1., III.4.), cada tese em seu subcapítulo. A seção EVIDENCE traz só o "
-        "requerimento de produção de provas e o rol de documentos que instruem a "
-        "inicial — sem repetir a narrativa dos fatos. "
-        # A gratuidade é obrigatória no padrão e pede prova — foi para "cumprir" isso
-        # que o modelo inventou "declaração de hipossuficiência anexa (Documento 09)".
-        "Na gratuidade, só diga que a declaração de hipossuficiência está anexa se "
-        "ela estiver entre os DOCUMENTOS; senão, escreva [PENDENTE: juntar declaração "
-        "de hipossuficiência assinada]. "
-        f"DATA DE HOJE: {datetime.now().strftime('%d/%m/%Y')} — use-a para prazos, "
-        "prescrição e para saber se a estabilidade ainda está em curso. "
-        "Os julgados e os dispositivos do material abaixo são REAIS e vieram do "
-        "acervo: prefira-os a qualquer citação de memória, e cite apenas os que "
-        "alcançarem estes fatos, dizendo por quê. Artigo ou processo citado de "
-        "memória, fora do que está no material, é erro grave — a peça vai a "
-        "protocolo. Sem precedente verificável para um ponto, escreva "
-        "[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. "
-        "A seção CLAIMS traz cada pedido de PAGAMENTO com seu valor e o critério (a partir "
-        "dos documentos), e cada pedido decorre de tese já fundamentada. Pedidos declaratórios, "
-        "procedimentais ou probatórios (juízo digital, reconhecimento de acidente ou de "
-        "responsabilidade, oitiva de testemunhas, provas, exibição de documentos, honorários, "
-        "juros) NÃO levam valor: nunca invente 'valor estimado', 'custo' de deslocamento ou de "
-        "prova para eles. Se o valor de um pedido depende de documento ausente, escreva "
-        "[PENDENTE: valor a apurar com <documento>] e NÃO estime. "
-        "NÃO escreva capítulo nem parágrafo que destaque fragilidade ou fato desfavorável do "
-        "próprio caso (divergência de horário entre documentos, 'nada foi roubado', prova que "
-        "falta): isso vai para as observações da análise, jamais para o texto a protocolar. "
-        "Pendência no corpo: [PENDENTE: <dado>] curto, completo e UMA vez por dado — sem repetir "
-        "na cadeia fato → prova, sem aninhar marcadores e sem frase quebrada; o resto das "
-        "pendências vai no campo `pendencias`. "
-        "A seção VALUE traz o valor da causa COERENTE com a soma dos pedidos, sem "
-        "fórmula fiscal automática e SEM título de seção. "
-        # "Nestes termos," vem do acervo do escritório (85 iniciais medidas);
-        # "Termos em que", que estava aqui antes, não aparece em nenhuma delas.
-        "A seção CLOSING deve conter apenas 'Nestes termos,', 'Pede deferimento.', "
-        "local/data e advogado/OAB, sem escrever o título FECHAMENTO dentro do "
-        "conteúdo e sem usar a fórmula 'Termos em que'."
+        # Só INTEGRIDADE DE DADOS aqui (data, fonte, marcador de pendência). Estrutura,
+        # capítulos, valores, prescrição, fechamento e demais regras do ofício moram na
+        # SKILL (`references/regras_de_geracao.md`, `estrutura_peca.md`, `formatacao.md`).
+        "\n\n=== INTEGRIDADE DOS DADOS ===\n"
+        f"DATA DE HOJE: {datetime.now().strftime('%d/%m/%Y')} — use-a para prazos e prescrição. "
+        "Os julgados e os dispositivos do material abaixo são REAIS e vieram do acervo: "
+        "prefira-os à memória e cite só os que alcançarem estes fatos. Artigo ou processo "
+        "citado de memória, fora do material, é erro grave; sem precedente verificável, "
+        "escreva [PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. "
+        "Dado que falta: [PENDENTE: <dado>]."
     )
     instrucao_base = (
             CONTRATO_DE_REDACAO
-            + """Você é advogado e redator de petições iniciais.
+            + """Você executa a SKILL DO ESCRITÓRIO para redigir a peça do caso.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
 Onde faltar dado indispensável, escreva [PENDENTE: explicação].
-
-ENDEREÇAMENTO (seção HEADING): abra por "Ao Juízo ..." indicando a vara e a
-comarca cabíveis — não use a fórmula "EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A)
-JUIZ(A)". O nome do autor vem em NEGRITO, escrito entre asteriscos duplos, assim:
-**NOME COMPLETO DO CLIENTE**, seguido da qualificação corrida.
 
 PADRÃO DO ESCRITÓRIO: a ORIENTAÇÃO DO ESCRITÓRIO (skill) é a fonte de FORMATO
 e manda sobre tudo — inclusive sobre a estrutura de qualquer peça de referência
@@ -1879,14 +1860,11 @@ Devolva JSON exatamente com:
     ]
   },
   "secoes": [
-    {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
-    {"code":"PRELIMINARY","label":"Das preliminares","content":"..."},
-    {"code":"FACTS","label":"Dos fatos","content":"..."},
-    {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
-    {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
-    {"code":"EVIDENCE","label":"Das provas","content":"..."},
-    {"code":"VALUE","label":"Do valor da causa","content":"..."},
-    {"code":"CLOSING","label":"Fechamento","content":"..."}
+    {"code":"<PAPEL_DA_SECAO>","label":"<título da seção como a SKILL manda; \"\" se a skill não dá título>","content":"<texto, com a marcação definida em formatacao.md>"}
+    /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
+       PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
+       use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
+       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
   ],
   "pendencias": ["..."]
 }
@@ -1896,6 +1874,14 @@ ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
 Cada content deve conter parágrafos separados por linha em branco."""
     )
     instrucao = _com_skill_do_escritorio(caso_id, instrucao_base)
+    _estrutura_fixa = _estrutura_fixa_no_prompt(instrucao)
+    pipeline.update({
+        "hardcoded_override_detected": bool(_estrutura_fixa),
+        "hardcoded_structure_detected": bool(_estrutura_fixa),
+        "hardcoded_structure_signals": _estrutura_fixa,
+        "legacy_skill_loaded": bool((diag.get("fontes_de_instrucao") or {}).get("legacy_skill_loaded")),
+        "generation_instruction_sources": diag.get("fontes_de_instrucao"),
+    })
     # Sem orientação do escritório a instrução volta intocada — e a peça sai do
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
@@ -2279,14 +2265,11 @@ em `pendencias`.
 JSON:
 {
   "secoes": [
-    {"code":"HEADING","label":"Endereçamento e qualificação","content":"..."},
-    {"code":"PRELIMINARY","label":"Das preliminares","content":"..."},
-    {"code":"FACTS","label":"Dos fatos","content":"..."},
-    {"code":"LEGAL_GROUNDS","label":"Do direito","content":"..."},
-    {"code":"CLAIMS","label":"Dos pedidos","content":"..."},
-    {"code":"EVIDENCE","label":"Das provas","content":"..."},
-    {"code":"VALUE","label":"Do valor da causa","content":"..."},
-    {"code":"CLOSING","label":"Fechamento","content":"..."}
+    {"code":"<PAPEL_DA_SECAO>","label":"<título da seção como a SKILL manda; \"\" se a skill não dá título>","content":"<texto, com a marcação definida em formatacao.md>"}
+    /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
+       PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
+       use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
+       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
   ],
   "pendencias": ["o que falta para esta peça em particular"]
 }
@@ -2375,202 +2358,19 @@ def ler_pdf_anexa(peca_id: str) -> tuple[str, bytes]:
 #: anexa. Constante única de propósito: quando isto morava copiado em cada
 #: instrução, uma mudança pegava num lugar e nos outros não, e a diferença só
 #: aparecia semanas depois numa peça que saiu fora do padrão.
-CONTRATO_DE_REDACAO = """Você elabora peças jurídicas profissionais destinadas à revisão e ao protocolo por advogado.
+#: Contrato do MOTOR (integridade de dados e formato de resposta) — nada de doutrina,
+#: estrutura ou estilo de peça. Esses vivem na skill: `references/regras_de_geracao.md`.
+CONTRATO_DE_REDACAO = """Você redige peças jurídicas para revisão e protocolo por advogado, EXECUTANDO a SKILL DO ESCRITÓRIO
+que acompanha esta instrução: estrutura, argumentação, regras de conteúdo e formatação vêm dela.
 
-POSTURA PROFISSIONAL: atue como advogado brasileiro sênior, com mais de quarenta
-anos de prática forense multidisciplinar. Quando o material da tarefa trouxer os
-blocos do ACERVO JURÍDICO do escritório (legislação, julgados, peças), consuma os
-dispositivos recuperados sempre que forem pertinentes e prefira-os à memória.
-Quando o material NÃO trouxer esses blocos, você não tem fonte nesta tarefa: não
-simule que tem. Nunca invente lei, artigo, vigência, precedente ou fato.
-O acervo é fonte para pesquisa e fundamentação, não autorização para citar norma
-irrelevante ou despejar artigos sem subsunção.
-
-IDENTIFICAÇÃO E EXPLICAÇÃO DA LEI: toda vez que citar uma norma, descreva-a de
-forma profissional no próprio raciocínio: espécie e número da norma (e sua
-denominação, quando houver), artigo/parágrafo/inciso invocado, o conteúdo jurídico
-relevante e o efeito que ele produz no caso. Não escreva apenas “nos termos do art.
-X” nem use citação ornamental. Exemplo de padrão: “O art. X da Lei nº Y/AAAA,
-que assegura/proíbe/condiciona Z, incide porque o documento/fato A demonstra B;
-daí decorre o pedido C.” Não transcreva a lei por volume: use a passagem necessária
-e, em seguida, faça a subsunção concreta.
-
-USO INTENSIVO E CRÍTICO DO ACERVO: em cada tópico jurídico material (competência,
-preliminar, responsabilidade, cada espécie de dano, estabilidade, prescrição,
-prova, consectários e pedido), procure no material recuperado a norma e o julgado
-pertinentes. Desenvolva o tópico em camadas — regra legal explicada, fato e prova
-específicos, aplicação, objeção previsível e consequência processual — em vez de
-um único parágrafo conclusivo. Não use o acervo como enfeite, mas também não deixe
-de usá-lo quando houver fonte aderente. Se a fonte não cobrir o ponto, declare a
-pendência de pesquisa em vez de simular erudição.
-
-EXIGÊNCIA DE EXCELÊNCIA E COMPLETUDE: entregue peça pronta para revisão final de
-advogado experiente, nunca um rascunho genérico. Antes de responder, faça uma
-varredura silenciosa de: competência e partes; fatos e cronologia; prova disponível
-e a produzir; prescrição/prazos, preliminares e tutela urgente quando cabíveis;
-teses principais, subsidiárias e defesas previsíveis; legislação aplicável;
-jurisprudência verificável; pedidos, consectários, provas, valor da causa, ônus,
-gratuidade, honorários e fechamento. Inclua tudo que os fatos sustentarem e diga
-expressamente em [PENDENTE: ...] o que depender de dado ainda não fornecido. Não
-omita questão relevante por economia de texto, mas não invente para preencher.
-
-PROIBIDO texto vazio de conteúdo, como "resta evidente", "é pacífico" ou
-"conforme entendimento consolidado", sem indicar fato, prova, norma e raciocínio
-que tornem a conclusão defensável neste caso concreto.
-
-NATUREZA DA AÇÃO, PARTES E COMPETÊNCIA: antes de redigir, identifique pelo pedido e
-pelos fatos se a medida é trabalhista, cível, previdenciária ou de outra jurisdição.
-Não chame automaticamente as partes de reclamante/reclamada nem trate toda pessoa
-jurídica como empregadora: esses termos só cabem em reclamação trabalhista. Em
-ação cível use autor/réu; em demanda previdenciária, autor e INSS, quando for o
-caso. Escolha vara e competência compatíveis com a ação. O endereçamento sempre
-começa por "Ao Juízo da ...", nunca por "Excelentíssimo(a) Senhor(a) Doutor(a)
-Juiz(a)". Não invente comarca, vara, relação de trabalho ou qualidade das partes:
-sinalize o dado ausente como [PENDENTE: ...].
-
-Profundidade vem de melhor aproveitamento do que existe nos autos, não de volume
-vazio nem de invenção — e a peça NUNCA é entregue resumida ou enxuta para poupar
-espaço: cada fato relevante do caso, cada prova disponível e cada tese cabível são
-desenvolvidos até o ponto em que a fundamentação está completa, conectada aos
-fatos e às provas e verificável. Extensão e estrutura seguem a SKILL DO ESCRITÓRIO
-e o padrão das peças do acervo, não uma cota deste contrato.
-
-ESTRUTURA DE CADA TESE, obrigatória:
-FATO RELEVANTE -> PROVA DISPONÍVEL -> QUESTÃO JURÍDICA -> NORMA APLICÁVEL ->
-JURISPRUDÊNCIA (quando necessária) -> SUBSUNÇÃO -> CONSEQUÊNCIA/PEDIDO.
-Nada de enumerar artigos nem de explicar a lei em abstrato sem mostrar por que ela
-alcança ESTES fatos.
-
-NÃO TRATE FATO CONTROVERTIDO COMO PROVADO. Nunca afirme "há nexo causal evidente",
-"a doença decorreu do trabalho" ou "a incapacidade está comprovada" quando isso
-depender de perícia ou de prova ainda não produzida. Escreva, por exemplo: "os
-elementos documentais e fáticos constituem indícios de nexo causal ou concausal,
-cuja confirmação deverá ocorrer mediante prova pericial". Separe sempre fato
-documentalmente comprovado, alegação da parte, indício, conclusão médica,
-conclusão jurídica e questão dependente de perícia. Nunca atribua a um documento
-conclusão que ele não contém: receituário com CID mostra diagnóstico, não nexo.
-
-TESES PRINCIPAL E SUBSIDIÁRIA. Quando couber, não dependa de uma só: nexo causal
-direto como principal e concausalidade como subsidiária (art. 21, I, da Lei
-8.213/91), sem confundir causalidade, concausalidade, doença preexistente,
-degenerativa e agravamento pelo trabalho.
-
-UMA FUNDAMENTAÇÃO POR PATOLOGIA. Para cada doença ou grupo, analise atividade
-exercida, exposição, fator de risco, evolução temporal, documentação médica,
-mecanismo causal, norma aplicável, necessidade de perícia, dano e incapacidade.
-Em doenças osteomusculares verifique art. 7º, XXII e XXVIII, da Constituição,
-arts. 157 e ss. da CLT, arts. 19, 20 e 21 da Lei 8.213/91, a NR efetivamente
-aplicável e arts. 186, 927, 949 e 950 do Código Civil. Não cite NR nem dispositivo
-sem relação concreta com os fatos.
-
-RESPONSABILIDADE CIVIL, elemento a elemento: CONDUTA/OMISSÃO + CULPA (quando
-exigida) + DANO + NEXO. Não presuma culpa porque houve doença; aponte a conduta
-patronal concreta. Havendo atividade de risco, enfrente o art. 927, parágrafo
-único, do Código Civil e mantenha a responsabilidade subjetiva como alternativa.
-
-DANO MATERIAL E PENSIONAMENTO nunca genéricos. No art. 950, analise redução da
-capacidade, percentual, parcial ou total, temporária ou permanente, atividade
-afetada, readaptação, base remuneratória e concausa. Quando depender de perícia,
-diga isso e formule o pedido de forma compatível.
-
-DANO MORAL não se presume da doença. Demonstre LESÃO + REPERCUSSÃO CONCRETA NA
-VIDA DA PARTE + RESPONSABILIDADE + NEXO, com arts. 223-A a 223-G da CLT quando
-aplicáveis. Ao sugerir valor, explique o critério e não invente precedente.
-
-PROVA PERICIAL: quando a causa depender de conhecimento técnico, crie seção
-própria e formule quesitos (diagnóstico, data de início, compatibilidade entre
-atividade e patologia, nexo, concausa, agravamento, fatores extralaborais,
-incapacidade e percentual, caráter temporário ou permanente, limitações,
-readaptação, tratamento, prognóstico). Avalie se cabe também análise ergonômica.
-
-DOCUMENTOS: antes de fundamentar, monte mentalmente a matriz FATO | PROVA | O QUE
-A PROVA REALMENTE DEMONSTRA | TESE. Informação sem documento vira pedido de
-produção de prova, não afirmação. Aponte o que deve ser requerido à parte
-contrária ou a órgão público.
-Quando um fato for extraído de anexo, indique no texto a prova correspondente
-como "Documento NN — nome do arquivo", usando exatamente a numeração do bloco
-DOCUMENTOS recebido. Não cite documento que não esteja no contexto.
-A referência "(Documento NN)" só acompanha frase cujo conteúdo ESTEJA naquele
-documento. Fato que só aparece na entrevista leva "conforme relato do autor" — nunca
-o número de um documento que não o contém (a CAT não prova que a trava estava
-quebrada só porque descreve a queda).
-NUNCA diga que um documento está "anexo", "juntado", "acostado" ou "incluso" se ele
-não estiver no bloco DOCUMENTOS — inclusive declaração de hipossuficiência,
-procuração, laudo, exame e cartão de ponto. Se a peça precisar dele, escreva
-[PENDENTE: juntar <documento>].
-Todo número de documento do cliente (CPF, RG, CTPS, PIS, NB, CAT, CNPJ, data) sai
-copiado dos DOCUMENTOS, da qualificação ou da entrevista. Número que não está lá não
-entra: vira [PENDENTE: <dado>].
-
-JURISPRUDÊNCIA — REGRA ANTI-ALUCINAÇÃO. É PROIBIDO inventar número de processo,
-súmula, tema, ementa, acórdão, relator, tribunal ou data. Só cite súmula, OJ, tema
-ou julgado que esteja NO MATERIAL RECEBIDO — a sua memória não é verificação: é
-dela que saiu "Súmula 6 do TST" para acúmulo de função, quando a Súmula 6 trata de
-equiparação salarial. Toda citação é conferida depois contra o material; a que não
-estiver lá sai carimbada na peça como não verificada. Prioridade: precedente
-vinculante do STF; tema repetitivo e precedente qualificado do TST; súmula e OJ
-do TST; SDI; Turmas do TST; TRT competente. Não use precedente só porque tem
-palavras parecidas: compare fatos, atividade, questão decidida e fundamento
-determinante, e explique em uma frase por que ele se aplica; reconheça a distinção
-quando existir. Se não houver precedente verificável para o ponto, escreva
-[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO] em vez de inventar.
-
-PEDIDOS: cada um decorre de tese já fundamentada, com valor individual quando
-exigido (art. 840 da CLT). Não há pedido sem fundamentação nem fundamentação sem
-pedido. O valor da causa deve ser coerente com a soma dos pedidos — não atribua
-valor arbitrário nem recorra automaticamente a fórmula fiscal.
-Na reclamação trabalhista, TODO pedido de PAGAMENTO traz o valor NA PRÓPRIA LINHA do
-pedido — "a apurar em liquidação" não basta (art. 840, § 1º, da CLT). Pedido
-declaratório, procedimental ou probatório (juízo digital, reconhecimento, oitiva de
-testemunhas, exibição, provas, honorários, juros) NÃO leva valor e é PROIBIDO inventar
-"valor estimado" ou "custo" para ele. Se o valor de um pedido de pagamento depende de
-documento que não está nos autos, escreva [PENDENTE: valor a apurar com <documento>]
-em vez de estimar. Quando os documentos trazem os dados, o valor é
-ESTIMADO com o critério escrito ao lado, a partir dos dados dos documentos (ex.:
-"2 h/dia × 22 dias × 22 meses × valor-hora de R$ 10,82 × 1,5"). É PROIBIDO criar
-pedido ou parcela sem fato que o sustente, e PROIBIDO ajustar parcela para o total
-dar número redondo: o valor da causa é a soma, seja ela qual for.
-
-O QUE NÃO SERVE AO CLIENTE NÃO ENTRA NA PEÇA. Verba que você concluiu ser indevida
-(multa sem atraso, direito que os fatos não dão) não vira tópico "não se aplica" na
-petição: a peça é do cliente. Essa conclusão vai em `analise.observacoes`.
-E o contrário também vale: tirar o tópico NÃO é motivo para PEDIR a verba. Se os
-documentos mostram que a rescisão foi paga e homologada no prazo, a multa do art. 477
-simplesmente não aparece — nem como tópico, nem como pedido.
-Gratuidade, citação, provas, custas e honorários não levam valor próprio: não
-escreva "R$ 0,00" para eles nem coloque custas como pedido com valor.
-
-GRATUIDADE, HONORÁRIOS E PROCESSO: priorize a CLT vigente; antes de aplicar o CPC
-subsidiariamente, verifique se a CLT já disciplina a matéria e se há decisão
-vinculante sobre o dispositivo.
-
-ESTABILIDADE ACIDENTÁRIA não se pede automaticamente. Verifique vínculo ativo,
-afastamento, espécie e cessação de benefício, dispensa, momento da constatação,
-art. 118 da Lei 8.213/91 e Súmula 378 do TST. Não peça reintegração de quem
-continua trabalhando sem fundamento específico. Compare o fim da estabilidade com a
-DATA DE HOJE (vem no material): se o período já terminou, não peça reintegração — só
-a indenização dos salários e consectários DA DISPENSA ATÉ O FIM do período, não de
-doze meses cheios.
-
-CAT: a ausência não prova nexo. Analise primeiro se havia elementos que impunham a
-comunicação e depois a eventual omissão; não use a falta de CAT de forma circular.
-
-ESTILO: técnico, objetivo, persuasivo, organizado, sem repetição e sem juridiquês
-desnecessário. Prefira TRÊS parágrafos fortes e específicos a dez genéricos. Nenhum
-parágrafo existe para aumentar o tamanho do texto. Não repita o mesmo artigo nem
-copie ementa longa: use só a tese relevante, identificada.
-
-AUDITORIA ANTES DE ENTREGAR: artigo citado corretamente? jurisprudência
-verificada? algum fato apresentado como provado sem prova? conclusão que depende
-de perícia? contradição entre fatos e pedidos? pedido sem fundamento ou
-fundamento sem pedido? valores onde exigidos? valor da causa coerente? súmula ou
-precedente vinculante mais apropriado? norma revogada ou superada? tese
-subsidiária relevante faltando? os documentos sustentam o alegado? Corrija antes
-de responder.
-
-OBJETIVO: uma peça que um advogado possa revisar juridicamente, não um texto que
-apenas pareça jurídico. Precisão acima de quantidade; subsunção acima de
-transcrição; precedente verificável acima de precedente convincente.
+INTEGRIDADE (vale para qualquer skill):
+- Nunca invente fato, lei, artigo, súmula, tema, ementa, acórdão, relator, tribunal, data, número de
+  documento do cliente ou de processo. Só cite o que está no material recebido; sem fonte, [PENDENTE: <dado>].
+- Fato extraído de anexo leva "Documento NN — nome do arquivo", com a numeração do bloco DOCUMENTOS.
+  Fato só da entrevista leva "conforme relato do autor". Nunca diga que um documento está anexo se
+  ele não estiver no bloco DOCUMENTOS.
+- Use a entrevista como ALEGAÇÃO e os documentos como PROVA; não trate fato controvertido como provado.
+- Toda citação será conferida depois contra o material; a que não constar dele é marcada como não verificada.
 
 """
 
@@ -2604,8 +2404,7 @@ ANTES DE ESCREVER, CLASSIFIQUE O PEDIDO:
     desenvolvida na estrutura fato -> prova -> norma -> subsunção -> consequência.
     Desenvolva os julgados e súmulas JÁ citados na minuta, explicando por que
     alcançam estes fatos. Se a crítica disser "em todos os pontos" ou não nomear
-    seção, aprofunde TODAS as seções argumentativas (Dos fatos, Do direito, Dos
-    pedidos).
+    seção, aprofunde TODAS as seções argumentativas da peça.
 
     Aprofundar é ganhar PRECISÃO, não linhas: o que falta é subsunção, prova
     apontada e consequência jurídica, não volume. Devolver o mesmo raciocínio com
@@ -2641,14 +2440,11 @@ ordem ou código fixos: inclua todas as seções necessárias, inclusive as mant
 Cada `code` deve ser estável, curto e único. JSON:
 {
   "secoes": [
-    {"code": "HEADING", "label": "Endereçamento e qualificação", "content": "..."},
-    {"code": "PRELIMINARY", "label": "Das preliminares", "content": "..."},
-    {"code": "FACTS", "label": "Dos fatos", "content": "..."},
-    {"code": "LEGAL_GROUNDS", "label": "Do direito", "content": "..."},
-    {"code": "CLAIMS", "label": "Dos pedidos", "content": "..."},
-    {"code": "EVIDENCE", "label": "Das provas", "content": "..."},
-    {"code": "VALUE", "label": "Do valor da causa", "content": "..."},
-    {"code": "CLOSING", "label": "Fechamento", "content": "..."}
+    {"code":"<PAPEL_DA_SECAO>","label":"<título da seção como a SKILL manda; \"\" se a skill não dá título>","content":"<texto, com a marcação definida em formatacao.md>"}
+    /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
+       PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
+       use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
+       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
   ],
   "perguntas": ["o que você precisaria confirmar com o advogado; [] se nada"]
 }
@@ -3352,67 +3148,6 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
     }
 
 
-#: Título de capítulo DENTRO do conteúdo: "I – PRELIMINARES", "II – DOS FATOS".
-#: Romano solto, sem subdivisão. Centralizado, como na peça do escritório.
-_RE_TITULO_CENTRAL = re.compile(r"^[IVXLC]+\s*[–—-]\s*\S")
-#: Subtítulo numerado: "I.1 – Da Gratuidade de Justiça". Fica À ESQUERDA.
-_RE_SUBTITULO = re.compile(r"^[IVXLC]+\.\d+\s*[–—-]\s*\S")
-#: O endereçamento, em qualquer caixa: "Ao Juízo da Vara do Trabalho de …".
-#: Centralizado e convertido para CAIXA ALTA na hora de escrever o parágrafo.
-_RE_ENDERECAMENTO = re.compile(r"^(ao|à|a)\s+(ju[íi]zo|exmo|excelent[íi]ssim)", re.I)
-
-
-def _tipo_de_titulo(linha: str) -> str | None:
-    """`"central"`, `"esquerda"` ou `None` para linha de texto comum.
-
-    POR QUE ISTO EXISTE
-
-    O gerador só sabia formatar o RÓTULO da seção ("DOS FATOS"). Tudo que a IA
-    escreve dentro do `content` saía como parágrafo justificado — inclusive os
-    títulos que a própria peça tem por dentro. Era a diferença de layout que
-    sobrava depois de acertar margens, fonte, entrelinha e recuo: comparada com
-    a petição de referência, "AO JUÍZO…", "AÇÃO DE CONCESSÃO DE…" e
-    "I – PRELIMINARES" apareciam como texto corrido em vez de título.
-
-    As três formas foram medidas na referência, pelo x0 de cada linha (margem
-    esquerda em 3,0 cm):
-
-        AÇÃO DE CONCESSÃO DE AUXÍLIO-ACIDENTE   x0 = 5,74 cm  -> centralizado
-        I – PRELIMINARES                        x0 = 9,06 cm  -> centralizado
-        I.1 – Da Gratuidade de Justiça          x0 = 3,00 cm  -> à esquerda
-
-    Só linha curta e sem ponto final entra. Um parágrafo inteiro em maiúsculas
-    — uma citação transcrita, por exemplo — não é título e não pode virar um.
-    """
-    texto = linha.strip()
-    if not texto or len(texto) > 90 or texto.endswith("."):
-        return None
-    # Título numerado vai à ESQUERDA, subtítulo também.
-    #
-    # "I – PRELIMINARMENTE", "V – DOS DANOS MATERIAIS" estavam saindo no meio da
-    # página porque eu os medi na petição de referência antiga e concluí que eram
-    # centralizados. O escritório não quer isso: título numerado acompanha os
-    # demais, no canto esquerdo. Sobra UM centralizado na peça inteira — o
-    # endereçamento, logo abaixo, que foi pedido expressamente.
-    if _RE_SUBTITULO.match(texto) or _RE_TITULO_CENTRAL.match(texto):
-        return "esquerda"
-    # Endereçamento: centralizado e em CAIXA ALTA, decidido pelo escritório.
-    #
-    # A IA escreve "Ao Juízo da Vara do Trabalho de Tucuruí/PA" em caixa mista,
-    # então nenhuma das regras acima o alcançava e ele saía como parágrafo
-    # justificado com recuo, no meio do texto corrido.
-    if _RE_ENDERECAMENTO.match(texto):
-        return "endereco"
-    if not any(c.islower() for c in texto) and any(c.isalpha() for c in texto):
-        # TODO o título de seção vai à ESQUERDA — inclusive DOS FATOS, DO DIREITO
-        # e DAS PROVAS, que antes iam ao centro. Era essa mistura que deixava a
-        # peça "torta": uns títulos centralizados, outros à esquerda, sem critério
-        # visível para quem lê. Só o endereçamento e o nome da ação ficam no
-        # centro, e os dois têm regra própria.
-        return "esquerda"
-    return None
-
-
 #: Linha de citação: `> texto`. É como um trecho de documento entra na peça.
 _RE_TRECHO = re.compile(r"^\s*>\s?(.*\S.*)$")
 
@@ -3617,8 +3352,11 @@ def _runs_xml(
     negrito: bool = False,
     tamanho_pt: float | None = None,
     maiusculas: bool = False,
+    italico: bool = False,
+    cor: str | None = None,
+    fonte: str | None = None,
 ) -> str:
-    """Os `<w:r>` de uma linha. `negrito` força negrito; `tamanho_pt` é o padrão do trecho."""
+    """Os `<w:r>` de uma linha. `negrito`/`italico`/`cor`/`fonte`/`tamanho_pt` vêm do ESTILO."""
     runs: list[str] = []
     for texto, formato in trechos:
         if maiusculas:
@@ -3627,14 +3365,17 @@ def _runs_xml(
         # tolera trocas, mas o LibreOffice e o validador não são obrigados a
         # tolerar.
         props = ""
+        if fonte:
+            nome_fonte = escape(fonte, {'"': "&quot;"})
+            props += f'<w:rFonts w:ascii="{nome_fonte}" w:hAnsi="{nome_fonte}" w:cs="{nome_fonte}"/>'
         if negrito or formato["b"]:
             props += "<w:b/>"
-        if formato["i"]:
+        if italico or formato["i"]:
             props += "<w:i/>"
         if formato.get("s"):
             props += "<w:strike/>"
-        if formato["cor"]:
-            props += f'<w:color w:val="{formato["cor"]}"/>'
+        if formato["cor"] or cor:
+            props += f'<w:color w:val="{formato["cor"] or cor}"/>'
         tamanho = formato["tam"] or tamanho_pt
         if tamanho:
             meio_pontos = round(tamanho * 2)
@@ -3654,107 +3395,157 @@ def _runs_xml(
     return "".join(runs)
 
 
-def _trecho_xml(texto: str, *, alinhamento: str | None = None) -> str:
-    """Citação transcrita: recuo de 4 cm à esquerda, corpo menor e entrelinha simples.
+#: Marcação estrutural que o REDATOR usa e o motor apenas traduz em estilo. Quais
+#: elementos existem (`titulo1`, `objeto`, `fechamento`...) e como cada um parece é
+#: da SKILL (bloco ```estilo``` de `formatacao.md`); o motor não conhece nenhum nome.
+_RE_TITULO_MD = re.compile(r"^\s*(#{1,6})\s+(.*\S)\s*$")
+_RE_ABRE_BLOCO = re.compile(r"^\s*:::\s*([\w-]+)\s*$")
+_RE_FECHA_BLOCO = re.compile(r"^\s*:::\s*$")
+_ALINHAMENTOS = {"esquerda": "left", "centro": "center", "centralizado": "center",
+                 "direita": "right", "justificado": "both", "left": "left",
+                 "center": "center", "right": "right", "both": "both"}
 
-    É a forma da citação direta longa (ABNT) e é o que separa, na leitura do juiz, o
-    que o documento diz do que a peça argumenta. Sem o recuo, um trecho copiado de laudo
-    ou de conversa parecia texto do próprio advogado.
+
+def _estilo_resolvido(visual: dict[str, Any], nome: str) -> dict[str, Any]:
+    """`corpo` da skill + as propriedades do elemento `nome` (herança do corpo).
+
+    Só junta o que a skill escreveu. Elemento que a skill não definiu (o redator usou um
+    nome inexistente) cai no corpo, e o desvio vai para o log — nunca se inventa aparência.
     """
-    # Sem negrito: a citação é o que o documento diz, e sempre saiu assim (o `**`
-    # que a IA põe em volta de um trecho não deve virar destaque na transcrição).
-    trechos = [(t, {**f, "b": False}) for t, f in _trechos_formatados(texto.strip())]
-    # Citação é sempre em corpo menor; o tamanho só muda se a pessoa pediu um.
-    return (
-        '<w:p><w:pPr><w:spacing w:line="240" w:lineRule="auto" w:after="120"/>'
-        f'<w:ind w:left="2268" w:firstLine="0"/><w:jc w:val="{alinhamento or "both"}"/></w:pPr>'
-        f'{_runs_xml(trechos, tamanho_pt=10)}</w:p>'
-    )
+    estilos = visual.get("estilos") or {}
+    resolvido: dict[str, Any] = {
+        "tamanho_pt": visual.get("tamanho_fonte_pt"),
+        "alinhamento": visual.get("alinhamento_corpo"),
+        "espacamento_linha": visual.get("espacamento_linha"),
+        "depois_pt": visual.get("espacamento_paragrafo_pt"),
+        "recuo_primeira_linha_cm": visual.get("recuo_primeira_linha_cm"),
+    }
+    resolvido.update(estilos.get("corpo", {}))
+    if nome != "corpo":
+        if nome in estilos:
+            resolvido.update(estilos[nome])
+        else:
+            log.warning("peticao: elemento '%s' não existe nos estilos da skill; usando corpo", nome)
+    return resolvido
 
 
-def _paragrafo_xml(
-    texto: str, *, negrito: bool = False, centralizado: bool = False, visual: dict[str, Any] | None = None
+def _paragrafo_estilizado_xml(
+    trechos: list[tuple[str, dict[str, Any]]],
+    estilo: dict[str, Any],
+    *,
+    base: dict[str, Any],
+    alinhamento_pedido: str | None = None,
+    medidas: dict[str, float] | None = None,
 ) -> str:
-    linhas = texto.split("\n")
+    """Um `<w:p>` a partir de um estilo. Primitiva genérica: não sabe o que é petição.
+
+    O `corpo` da skill mora em `docDefaults` (styles.xml); aqui só sai o que o estilo do
+    elemento muda em relação a ele — o parágrafo comum sai sem `<w:pPr>`.
+    """
+    medidas = medidas or {}
+
+    def muda(chave: str) -> bool:
+        return chave in estilo and estilo.get(chave) != base.get(chave)
+
+    propriedades = ""
+    if estilo.get("manter_com_proxima"):
+        propriedades += "<w:keepNext/>"
+    cor_borda = str(estilo.get("borda_cor") or "").lstrip("#")
+    if cor_borda:
+        lado = f'w:val="single" w:sz="4" w:space="4" w:color="{cor_borda}"'
+        propriedades += f"<w:pBdr><w:top {lado}/><w:left {lado}/><w:bottom {lado}/><w:right {lado}/></w:pBdr>"
+    preenchimento = str(estilo.get("preenchimento") or "").lstrip("#")
+    if preenchimento:
+        propriedades += f'<w:shd w:val="clear" w:color="auto" w:fill="{preenchimento}"/>'
+    if muda("espacamento_linha") or muda("antes_pt") or muda("depois_pt"):
+        antes = round(float(estilo.get("antes_pt") or 0) * 20)
+        depois = round(float(estilo.get("depois_pt") or 0) * 20)
+        linha = float(estilo.get("espacamento_linha") or 1.0)
+        propriedades += f'<w:spacing w:before="{antes}" w:after="{depois}" w:line="{round(linha * 240)}" w:lineRule="auto"/>'
+    recuo = ""
+    esquerdo = medidas.get("esq", estilo.get("recuo_esquerdo_cm"))
+    direito = medidas.get("dir", estilo.get("recuo_direito_cm"))
+    if esquerdo:
+        recuo += f'w:left="{_twips_de_cm(float(esquerdo))}" '
+    if direito:
+        recuo += f'w:right="{_twips_de_cm(float(direito))}" '
+    if "pri" in medidas or muda("recuo_primeira_linha_cm") or (
+        alinhamento_pedido in ("center", "right") and base.get("recuo_primeira_linha_cm")
+    ):
+        primeira = medidas.get("pri", estilo.get("recuo_primeira_linha_cm") if muda("recuo_primeira_linha_cm") else 0)
+        twips = _twips_de_cm(float(primeira or 0))
+        recuo += f'w:hanging="{-twips}" ' if twips < 0 else f'w:firstLine="{twips}" '
+    if recuo:
+        propriedades += f"<w:ind {recuo.strip()}/>"
+    alinhamento = alinhamento_pedido or (
+        _ALINHAMENTOS.get(_normalizar_chave(str(estilo.get("alinhamento") or ""))) if muda("alinhamento") else None
+    )
+    if alinhamento:
+        propriedades += f'<w:jc w:val="{alinhamento}"/>'
+    runs = _runs_xml(
+        trechos,
+        negrito=bool(estilo.get("negrito")),
+        italico=bool(estilo.get("italico")),
+        tamanho_pt=estilo.get("tamanho_pt") if muda("tamanho_pt") else None,
+        maiusculas=bool(estilo.get("caixa_alta")),
+        cor=str(estilo.get("cor") or "").lstrip("#") or None,
+        fonte=str(estilo.get("fonte") or "") or None,
+    )
+    return f"<w:p>{f'<w:pPr>{propriedades}</w:pPr>' if propriedades else ''}{runs}</w:p>"
+
+
+def _normalizar_chave(valor: str) -> str:
+    return valor.strip().lower()
+
+
+def _paragrafo_xml(texto: str, *, visual: dict[str, Any] | None = None) -> str:
+    """Traduz a marcação do redator em parágrafos, segundo os estilos da SKILL.
+
+    `# ` a `###` → `titulo1..3`; `> ` → `blockquote`; `::: nome` … `:::` → bloco `nome`;
+    o resto → `corpo`. Linha em branco separa parágrafos e NÃO gera parágrafo vazio
+    (o respiro vem de `depois_pt`), a menos que a skill peça `linhas_em_branco_entre_paragrafos`.
+    """
+    visual = visual or {}
+    base = _estilo_resolvido(visual, "corpo")
     partes: list[str] = []
-    for linha_bruta in linhas:
+    bloco: str | None = None
+    for linha_bruta in texto.split("\n"):
+        if bloco is None:
+            abre = _RE_ABRE_BLOCO.match(linha_bruta)
+            if abre:
+                bloco = abre.group(1)
+                continue
+        elif _RE_FECHA_BLOCO.match(linha_bruta):
+            bloco = None
+            continue
         if not linha_bruta.strip():
-            partes.append("<w:p/>")
+            if visual.get("linhas_em_branco_entre_paragrafos"):
+                partes.append("<w:p/>")
             continue
         if _RE_QUEBRA_DE_PAGINA.match(linha_bruta):
-            # Quebra de página é um parágrafo vazio com a quebra dentro — não um
-            # `<w:br>` solto, que o esquema não aceita fora de um run. O jeito de
-            # pôr os pedidos numa folha nova sem encher a peça de linhas em branco
-            # que se desfazem quando o texto acima muda de tamanho.
             partes.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
             continue
-        # O que a pessoa escolheu na tela vale sobre qualquer decisão automática
-        # (título, fechamento, corpo): foi ela que pediu, olhando a peça.
         alinhamento_pedido, medidas, linha = _marcadores_de_linha(linha_bruta)
         if not linha.strip():
-            partes.append("<w:p/>")
             continue
-        citacao = _RE_TRECHO.match(linha)
-        if citacao:
-            partes.append(_trecho_xml(citacao.group(1), alinhamento=alinhamento_pedido))
-            continue
-        # Uma linha de TÍTULO já é negrito inteiro, então `**` ali não tem o que
-        # converter — e sairia literal no documento entregue ao juízo, que foi o
-        # que aconteceu em "RECLAMAÇÃO TRABALHISTA**". Tira o marcador ANTES de
-        # detectar (senão o asterisco atrapalha o reconhecimento) e de escrever.
-        linha_limpa = _sem_formatacao(linha)
+        nome = bloco or "corpo"
+        if bloco is None:
+            titulo = _RE_TITULO_MD.match(linha)
+            citacao = _RE_TRECHO.match(linha)
+            if titulo:
+                nome, linha = f"titulo{min(len(titulo.group(1)), 3)}", titulo.group(2)
+            elif citacao:
+                nome, linha = "blockquote", citacao.group(1)
         trechos = _trechos_formatados(linha)
-        # Só vale para o CONTEÚDO: quando quem chama já mandou formatar (o
-        # rótulo da seção), a decisão é dele e não se sobrepõe.
-        titulo = None if (negrito or centralizado) else _tipo_de_titulo(linha_limpa)
-        if titulo:
-            # O endereçamento é o único que muda o TEXTO, e não só o alinhamento:
-            # a IA o escreve em caixa mista ("Ao Juízo da Vara do Trabalho de
-            # Tucuruí/PA") e o escritório o quer em caixa alta, centralizado.
-            alinhamento = alinhamento_pedido or (
-                "center" if titulo == "endereco" or (
-                    titulo == "central" or str((visual or {}).get("alinhamento_titulos")) == "centralizado"
-                ) else "left"
+        if nome == "blockquote":
+            # A citação é o que o documento diz: `**` da IA não vira destaque na transcrição.
+            trechos = [(t, {**f, "b": False}) for t, f in trechos]
+        partes.append(
+            _paragrafo_estilizado_xml(
+                trechos, _estilo_resolvido(visual, nome), base=base,
+                alinhamento_pedido=alinhamento_pedido, medidas=medidas,
             )
-            partes.append(
-                f"<w:p><w:pPr>{_ind_xml(medidas, primeira_linha_zero=True)}"
-                f'<w:jc w:val="{alinhamento}"/></w:pPr>'
-                f'{_runs_xml(trechos, negrito=True, maiusculas=titulo == "endereco")}</w:p>'
-            )
-            continue
-        if negrito or centralizado:
-            # `firstLine="0"` ANULA o recuo padrão aqui, e não é detalhe: num
-            # parágrafo centralizado o recuo de primeira linha empurra o texto
-            # para a direita, e o título deixaria de ficar no centro.
-            alinhamento = alinhamento_pedido or (
-                "center" if centralizado or (
-                    negrito and str((visual or {}).get("alinhamento_titulos")) == "centralizado"
-                ) else "left"
-            )
-            partes.append(
-                f"<w:p><w:pPr>{_ind_xml(medidas, primeira_linha_zero=True)}"
-                f'<w:jc w:val="{alinhamento}"/></w:pPr>'
-                f'{_runs_xml(trechos, negrito=negrito)}</w:p>'
-            )
-        else:
-            # `**assim**` vira negrito DE VERDADE, em run próprio.
-            #
-            # O prompt manda o nome do autor entre asteriscos duplos, e sem esta
-            # conversão eles sairiam literais no .docx — o documento entregue ao
-            # juízo com `**FULANO**` escrito. `_trechos_formatados` cuida disso e
-            # do `**` sem par, que some em vez de sair literal.
-            # Centralizar ou alinhar à direita com o recuo padrão de 1,25 cm
-            # empurra o texto para o lado; à esquerda e justificado o recuo
-            # continua sendo o do corpo da peça.
-            propriedades = _ind_xml(
-                medidas, primeira_linha_zero=alinhamento_pedido in ("center", "right")
-            )
-            if alinhamento_pedido:
-                propriedades += f'<w:jc w:val="{alinhamento_pedido}"/>'
-            partes.append(
-                f"<w:p>{f'<w:pPr>{propriedades}</w:pPr>' if propriedades else ''}"
-                f"{_runs_xml(trechos)}</w:p>"
-            )
+        )
     return "".join(partes)
 
 
@@ -4164,7 +3955,6 @@ def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
 def _conteudo_com_tabelas_xml(
     conteudo: str,
     *,
-    centralizado: bool,
     visual: dict[str, Any],
     fotos: list[tuple[str, bytes]] | None = None,
 ) -> str:
@@ -4184,7 +3974,7 @@ def _conteudo_com_tabelas_xml(
     def descarregar_comum() -> None:
         nonlocal comum
         if comum:
-            partes.append(_paragrafo_xml("\n".join(comum), centralizado=centralizado, visual=visual))
+            partes.append(_paragrafo_xml("\n".join(comum), visual=visual))
             comum = []
 
     indice = 0
@@ -4216,6 +4006,47 @@ def _conteudo_com_tabelas_xml(
     return "".join(partes)
 
 
+def _rodape_xml(visual: dict[str, Any]) -> str:
+    """Rodapé a partir do estilo `rodape` da skill: `formato` com {pagina} e {total}.
+
+    Sem `rodape.formato` na skill o rodapé sai vazio — o motor não inventa paginação.
+    """
+    estilo = (visual.get("estilos") or {}).get("rodape", {})
+    formato = str(estilo.get("formato") or "")
+    alinhamento = _ALINHAMENTOS.get(_normalizar_chave(str(estilo.get("alinhamento") or "")), "left")
+    tamanho = float(estilo.get("tamanho_pt") or visual.get("tamanho_fonte_pt") or 10)
+    tamanho_numero = float(estilo.get("tamanho_numero_pt") or tamanho)
+
+    def run(conteudo: str, pt: float) -> str:
+        meio = round(pt * 2)
+        return f'<w:r><w:rPr><w:sz w:val="{meio}"/><w:szCs w:val="{meio}"/></w:rPr>{conteudo}</w:r>'
+
+    def campo(instrucao: str) -> str:
+        return (
+            run('<w:fldChar w:fldCharType="begin"/>', tamanho_numero)
+            + run(f'<w:instrText xml:space="preserve"> {instrucao} </w:instrText>', tamanho_numero)
+            + run('<w:fldChar w:fldCharType="separate"/>', tamanho_numero)
+            + run("<w:t>1</w:t>", tamanho_numero)
+            + run('<w:fldChar w:fldCharType="end"/>', tamanho_numero)
+        )
+
+    corpo = ""
+    if formato:
+        for pedaco in re.split(r"(\{pagina\}|\{total\})", formato):
+            if pedaco == "{pagina}":
+                corpo += campo("PAGE")
+            elif pedaco == "{total}":
+                corpo += campo("NUMPAGES")
+            elif pedaco:
+                corpo += run(f'<w:t xml:space="preserve">{escape(pedaco)}</w:t>', tamanho)
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'<w:p><w:pPr><w:jc w:val="{alinhamento}"/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>'
+        f'<w:ind w:firstLine="0"/></w:pPr>{corpo}</w:p></w:ftr>'
+    )
+
+
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
     visual = configuracao_visual()
@@ -4233,6 +4064,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     altura_logo = max(0.5, min(5, float(visual.get("altura_logo_cm") or 2.36)))
     logo_cy = round(altura_logo * 360000)
     logo_cx = round(logo_cy * 1.774)
+    corpo_estilo = _estilo_resolvido(visual, "corpo")
     alinhamento_corpo = {"justificado": "both", "esquerda": "left", "direita": "right"}.get(str(visual.get("alinhamento_corpo")), "both")
     logo_arquivo = f"logo-escritorio{logo_extensao}"
     logo_content_type = "image/jpeg" if logo_extensao == ".jpg" else "image/png"
@@ -4241,47 +4073,19 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     for secao in secoes:
         if secao.get("code") == "JURIMETRY":
             continue
-        rotulo = str(secao.get("label") or secao.get("code") or "").strip()
+        rotulo = str(secao.get("label") or "").strip()
         conteudo = str(secao.get("content") or "").strip()
         # VALUE entra junto de HEADING e CLOSING: o valor da causa NÃO tem título
         # na peça do escritório — é uma frase solta ("Dá-se à causa o valor de
         # ..."). O rótulo continua existindo em `SECOES` porque a tela e o prompt
         # se orientam por ele; só não vira parágrafo no .docx.
-        primeira_linha = (conteudo.lstrip("# *").split(chr(10), 1) or [""])[0].strip().upper()
-        if (
-            rotulo
-            and conteudo
-            and secao.get("code") not in ("HEADING", "CLOSING", "VALUE")
-            and rotulo.upper() not in primeira_linha
-            and not re.match(r"^(?:[IVXLC]+|\d+)\s*[–—.)-]", primeira_linha)
-        ):
-            # `centralizado=False`: o rótulo da seção fica À ESQUERDA.
-            #
-            # Estava centralizado, e era metade do problema — "DOS FATOS",
-            # "DO DIREITO" e "DAS PROVAS" apareciam no meio da página enquanto
-            # os subtítulos de dentro do conteúdo iam à esquerda. O escritório
-            # quer todos à esquerda; só o endereçamento e o nome da ação ficam
-            # no centro.
-            corpo.append(_paragrafo_xml(rotulo.upper(), negrito=True, visual=visual))
+        primeira_linha = conteudo.lstrip().split(chr(10), 1)[0].strip()
+        # O título da seção é o `label` que o redator devolveu (o que a skill manda; vazio
+        # quando a skill não dá título). Não se imprime de novo se o conteúdo já abre com um.
+        if rotulo and conteudo and not primeira_linha.startswith(("#", ":::")) and rotulo.casefold() not in primeira_linha.casefold():
+            corpo.append(_paragrafo_xml(f"# {rotulo}", visual=visual))
         if conteudo:
-            # O HEADING NÃO é centralizado por inteiro.
-            #
-            # Centralizar a seção toda punha a qualificação do autor no meio da
-            # página, e na peça de referência ela é justificada com recuo, como
-            # qualquer parágrafo — só o endereçamento ("Ao Juízo…") e o nome da
-            # ação ficam centralizados. Como efeito colateral, o bloco inteiro
-            # caía no ramo de título e a conversão de `**negrito**` nunca rodava:
-            # o nome do autor saía com os asteriscos literais no documento.
-            #
-            # Quem decide agora é `_tipo_de_titulo`, linha a linha.
-            corpo.append(
-                _conteudo_com_tabelas_xml(
-                    conteudo,
-                    centralizado=secao.get("code") == "CLOSING",
-                    visual=visual,
-                    fotos=fotos,
-                )
-            )
+            corpo.append(_conteudo_com_tabelas_xml(conteudo, visual=visual, fotos=fotos))
         if visual.get("linhas_em_branco_entre_paragrafos"):
             corpo.append("<w:p/>")
 
@@ -4325,23 +4129,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     # `formatacao.md` (item 4). Campos PAGE/NUMPAGES: o Word e o LibreOffice
     # recalculam ao abrir. Tamanho de nota (10 pt), como a skill define para
     # elementos secundários.
-    rodape_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:p><w:pPr><w:jc w:val="right"/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">Página </w:t></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t>1</w:t></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve"> de </w:t></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t>1</w:t></w:r>
-    <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>
-  </w:p>
-</w:ftr>"""
+    rodape_xml = _rodape_xml(visual)
     cabecalho_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -4385,7 +4173,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
          linha de cada parágrafo em 4,25 cm — 20 linhas do documento confirmam
          essa segunda coluna. Sem isso o texto sai em bloco corrido, que foi a
          diferença apontada ao comparar a peça gerada com a do escritório. -->
-    <w:pPrDefault><w:pPr><w:jc w:val="{alinhamento_corpo}"/><w:spacing w:line="{round(entrelinha * 240)}" w:lineRule="auto"/><w:ind w:firstLine="{twips(recuo)}"/></w:pPr></w:pPrDefault>
+    <w:pPrDefault><w:pPr><w:jc w:val="{alinhamento_corpo}"/><w:spacing w:before="{round(float(corpo_estilo.get("antes_pt") or 0) * 20)}" w:after="{round(float(corpo_estilo.get("depois_pt") or 0) * 20)}" w:line="{round(entrelinha * 240)}" w:lineRule="auto"/><w:ind w:firstLine="{twips(recuo)}"/></w:pPr></w:pPrDefault>
   </w:docDefaults>
   <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
 </w:styles>"""

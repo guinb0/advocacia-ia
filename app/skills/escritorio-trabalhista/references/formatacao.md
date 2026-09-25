@@ -16,12 +16,83 @@ Regras obrigatórias de formatação, aplicadas **depois** que o conteúdo da pe
 - Fonte única em toda a peça: Arial ou Times New Roman.
 - Corpo do texto: tamanho 12. Citações longas e notas de rodapé: tamanho 10.
 - Alinhamento justificado.
-- Espaçamento entre linhas: 1,5 no corpo do texto.
+- Espaçamento entre linhas: 1,3 no corpo do texto (ver bloco `estilo` abaixo).
 - Recuo de primeira linha: 1,25 cm (salvo se a estrutura jurídica exigir padrão diferente).
 - Margens: superior 3 cm, esquerda 3 cm, inferior 2 cm, direita 2 cm.
 - Hierarquia visual uniforme entre títulos e subtítulos.
 - Evitar excesso de negrito, sublinhado, cores ou elementos decorativos — negrito reservado a prazos, riscos e alertas de pendência, como já definido no `SKILL.md`.
 - Padrão uniforme de fonte, tamanho, espaçamento e alinhamento do início ao fim.
+
+## 2.1 Estilos (lidos pelo gerador de documento — é AQUI que a aparência se define)
+
+O gerador não conhece aparência de peça alguma: ele só sabe desenhar parágrafo, título,
+citação em bloco, bloco nomeado, tabela, imagem, cabeçalho, rodapé e paginação. Cada
+valor abaixo é lido deste bloco; o que não estiver aqui NÃO é inventado (sai como piso
+técnico genérico e fica registrado no diagnóstico da geração). Formato: `elemento.propriedade: valor`.
+Propriedades: `fonte`, `tamanho_pt`, `cor` (hex), `negrito`, `italico`, `caixa_alta` (sim/não),
+`alinhamento` (esquerda/centro/direita/justificado), `espacamento_linha`, `antes_pt`, `depois_pt`,
+`recuo_esquerdo_cm`, `recuo_direito_cm`, `recuo_primeira_linha_cm`, `borda_cor`, `preenchimento`,
+`manter_com_proxima` (sim/não). Elemento que não define uma propriedade herda do `corpo`.
+
+```estilo
+pagina.fonte: Arial
+pagina.margem_superior_cm: 3
+pagina.margem_esquerda_cm: 3
+pagina.margem_inferior_cm: 2
+pagina.margem_direita_cm: 2
+corpo.tamanho_pt: 12
+corpo.alinhamento: justificado
+corpo.espacamento_linha: 1.3
+corpo.antes_pt: 0
+corpo.depois_pt: 6
+corpo.recuo_primeira_linha_cm: 1.25
+titulo1.negrito: sim
+titulo1.alinhamento: esquerda
+titulo1.recuo_primeira_linha_cm: 0
+titulo1.manter_com_proxima: sim
+titulo2.negrito: sim
+titulo2.alinhamento: esquerda
+titulo2.recuo_primeira_linha_cm: 0
+titulo2.manter_com_proxima: sim
+titulo3.negrito: sim
+titulo3.italico: sim
+titulo3.alinhamento: esquerda
+titulo3.recuo_primeira_linha_cm: 0
+titulo3.manter_com_proxima: sim
+blockquote.tamanho_pt: 10
+blockquote.italico: sim
+blockquote.alinhamento: justificado
+blockquote.espacamento_linha: 1
+blockquote.recuo_esquerdo_cm: 4
+blockquote.recuo_primeira_linha_cm: 0
+enderecamento.negrito: sim
+enderecamento.caixa_alta: sim
+enderecamento.alinhamento: centro
+enderecamento.recuo_primeira_linha_cm: 0
+titulo_acao.negrito: sim
+titulo_acao.caixa_alta: sim
+titulo_acao.alinhamento: centro
+titulo_acao.recuo_primeira_linha_cm: 0
+objeto.tamanho_pt: 10
+objeto.alinhamento: justificado
+objeto.espacamento_linha: 1
+objeto.recuo_esquerdo_cm: 8
+objeto.recuo_primeira_linha_cm: 0
+fechamento.alinhamento: centro
+fechamento.recuo_primeira_linha_cm: 0
+cabecalho.logo_altura_cm: 2.25
+rodape.formato: Página {pagina} de {total}
+rodape.alinhamento: direita
+rodape.tamanho_pt: 9
+rodape.tamanho_numero_pt: 12
+```
+
+### Marcação que o redator usa no texto (o gerador converte cada uma no estilo acima)
+
+- `# texto`, `## texto`, `### texto` → `titulo1`, `titulo2`, `titulo3` (capítulo, subcapítulo, item). Título SEM `#` sai como parágrafo de corpo.
+- `> texto` → `blockquote` (transcrição de dispositivo legal, ementa ou trecho de documento). Nunca use `>` para outra coisa.
+- `::: nome` … `:::` → bloco no estilo `nome`, para qualquer nome definido acima. Usos: `::: enderecamento` (Ao Juízo…), `::: titulo_acao` (nome da ação), `::: objeto` (caixa de objeto logo abaixo do endereçamento, quando o modelo do assunto pedir), `::: fechamento` (Nestes termos…, local/data, advogado e OAB). Só use nomes que existam no bloco `estilo`.
+- `**texto**` negrito; tabela em Markdown quando o modelo pedir.
 
 ## 3. Formatação jurídica própria da peça
 
@@ -81,7 +152,7 @@ Ao final, apresente uma seção **"ALTERAÇÕES REALIZADAS"**, separando: Format
 - [ ] Margens padronizadas (3/3/2/2 cm)
 - [ ] Fonte uniforme (Arial ou Times New Roman)
 - [ ] Tamanho da fonte adequado (12 corpo, 10 citação/nota)
-- [ ] Espaçamento 1,5 padronizado
+- [ ] Espaçamento padronizado (bloco `estilo`)
 - [ ] Texto justificado
 - [ ] Parágrafos uniformes (recuo 1,25 cm)
 - [ ] Títulos e subtítulos padronizados

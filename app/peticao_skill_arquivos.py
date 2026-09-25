@@ -41,6 +41,8 @@ _REFERENCIAS = _DIR / "references"
 #: Lidos em toda geração, independente do assunto — regras de conteúdo,
 #: citação e estrutura que valem para qualquer petição trabalhista.
 _SEMPRE = (
+    "formatacao.md",
+    "regras_de_geracao.md",
     "estrutura_peca.md",
     "regras_redacao.md",
     "regras_complementares.md",
@@ -226,11 +228,53 @@ _EMERGENCIA_SEM_SKILL: dict[str, Any] = {
     "margem_inferior_cm": 2.54,
     "margem_esquerda_cm": 2.54,
     "alinhamento_corpo": "esquerda",
-    "alinhamento_titulos": "esquerda",
-    "citacao_tamanho_pt": 10.0,
-    "rodape_tamanho_pt": 10.0,
     "preferir_tabelas": False,
 }
+
+
+_BLOCO_ESTILO = re.compile(r"```estilo\s*\n(.*?)```", re.DOTALL)
+_PROPRIEDADES_NUMERICAS = frozenset({
+    "tamanho_pt", "tamanho_numero_pt", "espacamento_linha", "antes_pt", "depois_pt",
+    "recuo_esquerdo_cm", "recuo_direito_cm", "recuo_primeira_linha_cm",
+    "margem_superior_cm", "margem_inferior_cm", "margem_esquerda_cm", "margem_direita_cm",
+    "logo_altura_cm",
+})
+_PROPRIEDADES_BOOLEANAS = frozenset({"negrito", "italico", "caixa_alta", "manter_com_proxima"})
+
+
+def _valor_do_estilo(propriedade: str, bruto: str) -> Any:
+    bruto = bruto.strip()
+    if propriedade in _PROPRIEDADES_NUMERICAS:
+        try:
+            return float(bruto.replace(",", "."))
+        except ValueError:
+            return None
+    if propriedade in _PROPRIEDADES_BOOLEANAS:
+        return _normalizar(bruto) in ("sim", "true", "1", "verdadeiro")
+    return bruto
+
+
+def estilos_da_skill() -> dict[str, dict[str, Any]]:
+    """O bloco ```estilo``` de `formatacao.md`: `{elemento: {propriedade: valor}}`.
+
+    O motor não conhece nomes de elemento — quem os cria é a skill (`corpo`, `titulo1`,
+    `objeto`, `fechamento`, ...). Linha com valor inválido é ignorada, não corrigida.
+    """
+    casado = _BLOCO_ESTILO.search(_ler("formatacao.md"))
+    estilos: dict[str, dict[str, Any]] = {}
+    if not casado:
+        return estilos
+    for linha in casado.group(1).splitlines():
+        if ":" not in linha or linha.strip().startswith("#"):
+            continue
+        chave, _, bruto = linha.partition(":")
+        elemento, _, propriedade = chave.strip().partition(".")
+        if not elemento or not propriedade:
+            continue
+        valor = _valor_do_estilo(propriedade.strip(), bruto)
+        if valor is not None:
+            estilos.setdefault(elemento.strip(), {})[propriedade.strip()] = valor
+    return estilos
 
 
 def _numero(padrao_regex: str, texto: str) -> float | None:
@@ -272,7 +316,6 @@ def configuracao_visual_padrao() -> dict[str, Any]:
                 definidos.add("fonte")
         for chave, regex in (
             ("tamanho_fonte_pt", r"Corpo do texto:\s*tamanho\s*(\d+)"),
-            ("citacao_tamanho_pt", r"Cita[çc][õo]es longas e notas de rodap[ée]:\s*tamanho\s*(\d+)"),
             ("espacamento_linha", r"Espaçamento entre linhas:\s*([\d,.]+)"),
             ("recuo_primeira_linha_cm", r"Recuo de primeira linha:\s*([\d,.]+)\s*cm"),
         ):
@@ -283,6 +326,25 @@ def configuracao_visual_padrao() -> dict[str, Any]:
         if re.search(r"Alinhamento\s+justificado", texto, re.IGNORECASE):
             cfg["alinhamento_corpo"] = "justificado"
             definidos.add("alinhamento_corpo")
+    estilos = estilos_da_skill()
+    pagina, corpo = estilos.get("pagina", {}), estilos.get("corpo", {})
+    for destino, origem in (
+        ("fonte", pagina.get("fonte")),
+        ("margem_superior_cm", pagina.get("margem_superior_cm")),
+        ("margem_direita_cm", pagina.get("margem_direita_cm")),
+        ("margem_inferior_cm", pagina.get("margem_inferior_cm")),
+        ("margem_esquerda_cm", pagina.get("margem_esquerda_cm")),
+        ("tamanho_fonte_pt", corpo.get("tamanho_pt")),
+        ("espacamento_linha", corpo.get("espacamento_linha")),
+        ("espacamento_paragrafo_pt", corpo.get("depois_pt")),
+        ("recuo_primeira_linha_cm", corpo.get("recuo_primeira_linha_cm")),
+        ("alinhamento_corpo", corpo.get("alinhamento")),
+        ("altura_logo_cm", estilos.get("cabecalho", {}).get("logo_altura_cm")),
+    ):
+        if origem is not None:
+            cfg[destino] = origem
+            definidos.add(destino)
+    cfg["estilos"] = estilos
     cfg["fonte_das_regras"] = "references/formatacao.md" if definidos else "fallback_tecnico_generico"
     cfg["campos_sem_definicao"] = sorted(set(_EMERGENCIA_SEM_SKILL) - definidos)
     return cfg

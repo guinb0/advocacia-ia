@@ -73,13 +73,13 @@ def test_linha_só_com_alinhamento_é_linha_em_branco():
 
 
 def test_título_reconhecido_mesmo_com_formatação_em_volta():
-    (paragrafo,) = _paragrafos(_documento("[[tam=14]]DOS FATOS[[/tam]]"))
+    (paragrafo,) = _paragrafos(_documento("# [[tam=14]]DOS FATOS[[/tam]]"))
     assert paragrafo.find("w:r/w:rPr/w:b", NS) is not None
     assert paragrafo.find("w:pPr/w:jc", NS).get("{%s}val" % NS["w"]) == "left"
 
 
 def test_alinhamento_escolhido_vale_sobre_o_do_título():
-    (paragrafo,) = _paragrafos(_documento("[[alin=centro]]DOS FATOS"))
+    (paragrafo,) = _paragrafos(_documento("[[alin=centro]]# DOS FATOS"))
     assert paragrafo.find("w:pPr/w:jc", NS).get("{%s}val" % NS["w"]) == "center"
 
 
