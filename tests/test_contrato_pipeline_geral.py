@@ -29,6 +29,8 @@ def test_modelo_assalto_nao_reproduz_regras_e_precedentes_errados():
     assert "salário **líquido**" not in modelo
     assert "piso mínimo de R$ 30.000,00" not in modelo.lower()
     assert "Não há lista de precedentes pronta para copiar" in modelo
+    assert "escolta" not in modelo.lower()
+    assert "mudança de rotas" not in modelo.lower()
 
 
 def test_checklist_interno_nao_recebe_numero_de_documento_protocolavel():

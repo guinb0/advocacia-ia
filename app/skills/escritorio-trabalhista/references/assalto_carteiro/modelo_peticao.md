@@ -49,7 +49,7 @@ Indicar a data do fato gerador (assalto), com base no BO e na CAT anexos. Prazo 
 - Trecho sobre a dimensão simbólica e continuada da violência sofrida pelo trabalhador (dignidade, autonomia, integridade psíquica) — adaptar ao caso, sem copiar mecanicamente se o caso pedir tom diferente.
 - Menção ao diagnóstico psicológico/físico decorrente, se houver CAT/atestado que o demonstre.
 - Se houver manual da empresa reconhecendo o risco da atividade (como o Manual de Pessoal dos Correios, MÓD. 31), citar como prova da ciência do empregador quanto ao risco.
-- Omissão da empresa quanto a medidas de segurança (escolta, entregas em dupla/comboio, mudança de rotas, vigilância) — apontar apenas se for coerente com o caso concreto.
+- Não presuma medida de segurança ausente nem a atribua ao BO/CAT se o documento não a registra. Quando a medida for relevante e não estiver provada, peça que a reclamada exiba ou demonstre os protocolos efetivamente existentes; não importe argumentos de outro tipo de atividade.
 
 ## VII. Do Direito
 
