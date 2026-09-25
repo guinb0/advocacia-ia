@@ -149,7 +149,7 @@ def gerar_embeddings(textos: list[str], *, timeout: float = 120) -> list[list[fl
         raise
     custos_api.registrar("openrouter", modelo, "embeddings", resposta,
                          latencia_ms=round((time.monotonic() - inicio) * 1000))
-    dados = sorted(resposta.json()["data"], key=lambda item: item["index"])
+    dados = sorted(resposta.json().get("data") or [], key=lambda item: item["index"])
     vetores = [item["embedding"] for item in dados]
     if len(vetores) != len(textos) or any(len(v) != dimensoes for v in vetores):
         raise ErroRAG("serviço de embeddings devolveu quantidade ou dimensão inesperada")

@@ -224,7 +224,9 @@ def diversificar(ordenados: list[dict[str, Any]], limite: int = EXEMPLOS_POR_TOP
 
 def consultas_do_topico(titulo: str, corpo: str, secao_label: str, plano: dict[str, Any] | None, categoria: str) -> list[str]:
     """Consultas curtas, ancoradas no caso: título+categoria; o argumento atual; a tese do plano."""
-    ancora = re.sub(r"\s+", " ", f"{categoria}. {(plano or {}).get('cronologia', [{}])[0].get('fato', '') if (plano or {}).get('cronologia') else ''}")[:180]
+    cronologia = (plano or {}).get("cronologia") or []
+    primeiro = cronologia[0] if cronologia and isinstance(cronologia[0], dict) else {}
+    ancora = re.sub(r"\s+", " ", f"{categoria}. {primeiro.get('fato', '')}")[:180]
     nome = re.sub(r"^[a-z]\)\s*|^[IVXLC]+(?:\.\d+)*\.?\s*[–—-]?\s*", "", titulo or secao_label or "", flags=re.IGNORECASE)
     consultas = [f"{ancora}. {nome}".strip()[:450]]
     resumo = re.sub(r"\s+", " ", corpo)[:420]

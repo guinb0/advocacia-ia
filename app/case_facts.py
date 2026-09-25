@@ -97,7 +97,7 @@ def _candidatos(fontes: list[dict[str, Any]], proposta: dict[str, Any] | None, c
             add("autor", "cpf", m.group(0), nome, classe_de(f))
         for m in _CNPJ.finditer(texto):
             add("reu", "cnpj", m.group(0), nome, classe_de(f))
-        for papel, campo, valor in f.get("dados", []):  # dado estruturado extraído DAQUELE documento
+        for papel, campo, valor in f.get("dados") or []:  # dado estruturado extraído DAQUELE documento
             add(papel, campo, valor, nome, classe_de(f))
     for e in extraidos:  # dado informado/confirmado manualmente
         add(e["papel"], e["campo"], e["valor"], e.get("fonte", "manual"), e.get("classe", "confirmado_por_humano"))
@@ -178,11 +178,15 @@ def montar(
 def partes_resolvidas(cf: dict[str, Any]) -> dict[str, Any]:
     """Formato do plano (`plano_da_peticao`): só campos com valor resolvido; conflito fica de fora."""
     saida: dict[str, Any] = {"autor": {}, "reu": {}, "descartados": [], "origem": {}, "pendentes_por_conflito": []}
-    for papel, campos in cf["PARTIES"].items():
+    for papel, campos in (cf.get("PARTIES") or {}).items():
+        if not isinstance(campos, dict):
+            continue
         for campo, e in campos.items():
-            if e["valor"]:
+            if not isinstance(e, dict):
+                continue
+            if e.get("valor"):
                 saida[papel][campo] = e["valor"]
-                saida["origem"][f"{papel}.{campo}"] = ",".join(e["fontes"])
+                saida["origem"][f"{papel}.{campo}"] = ",".join(e.get("fontes") or [])
             elif e["conflito"]:
                 saida["pendentes_por_conflito"].append(f"{papel}.{campo}")
     return saida

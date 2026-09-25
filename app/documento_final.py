@@ -115,8 +115,8 @@ def headings_reais(secoes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _cortar_metadata(secoes: list[dict[str, Any]], params: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Metadado interno de geração (registro de alterações, relatório) NÃO é conteúdo da peça: sai e vai para o relatório."""
     meta = params.get("metadata_interna") or {}
-    titulos = [re.compile(r, re.IGNORECASE) for r in meta.get("titulos", [])]
-    rotulos = [re.compile(r, re.IGNORECASE | re.MULTILINE) for r in meta.get("rotulos", [])]
+    titulos = [re.compile(r, re.IGNORECASE) for r in (meta.get("titulos") or [])]
+    rotulos = [re.compile(r, re.IGNORECASE | re.MULTILINE) for r in (meta.get("rotulos") or [])]
     removidos: list[dict[str, str]] = []
     saida = []
     for s in secoes:

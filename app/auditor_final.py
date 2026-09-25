@@ -46,17 +46,22 @@ INSTRUCAO = (
 
 def auditar_com_modelo(chamar: Callable[[str, str], dict[str, Any]], case_facts: dict[str, Any], plano: dict[str, Any], secoes: list[dict[str, Any]],
                        candidatos: list[Violacao] | None = None) -> list[Violacao]:
-    payload = {
-        "CASE_FACTS": {"PARTIES": {p: {c: e.get("valor") for c, e in campos.items()} for p, campos in case_facts.get("PARTIES", {}).items()},
-                       "UNCERTAINTIES": case_facts.get("UNCERTAINTIES", [])},
-        "mapa_de_teses": [{k: t.get(k) for k in ("id", "titulo", "fatos_ids", "provas", "fundamentos_legais", "jurisprudencias", "consequencia", "funcao_argumentativa", "pedidos_ids")} for t in plano.get("teses", [])],
-        "fatos": [{"id": f["id"], "fato": f["fato"], "documentos": f["documentos"]} for f in plano.get("fatos", [])],
-        "ledger_de_pedidos": plano.get("pedidos", []),
-        # o pré-detector barato (embeddings/n-gramas) aponta ONDE olhar; o modelo só julga o que é relevante
-        "candidatos_de_sobreposicao": [{"onde": c.trecho, "motivo": c.motivo} for c in (candidatos or [])],
-        "rascunho": [{"secao": s.get("code"), "titulo": s.get("label"), "texto": str(s.get("content") or "")[:14000]} for s in secoes],
-    }
     try:
+        # `.get(chave, [])` devolve None quando a chave existe e o valor é null.
+        # Montar o payload fora do try fazia isso abortar a petição já redigida.
+        parties = case_facts.get("PARTIES") or {}
+        payload = {
+            "CASE_FACTS": {"PARTIES": {p: {c: e.get("valor") for c, e in (campos or {}).items() if isinstance(e, dict)}
+                                       for p, campos in parties.items() if isinstance(campos, dict)},
+                           "UNCERTAINTIES": case_facts.get("UNCERTAINTIES") or []},
+            "mapa_de_teses": [{k: t.get(k) for k in ("id", "titulo", "fatos_ids", "provas", "fundamentos_legais", "jurisprudencias", "consequencia", "funcao_argumentativa", "pedidos_ids")}
+                              for t in (plano.get("teses") or []) if isinstance(t, dict)],
+            "fatos": [{"id": f.get("id"), "fato": f.get("fato"), "documentos": f.get("documentos") or []}
+                      for f in (plano.get("fatos") or []) if isinstance(f, dict)],
+            "ledger_de_pedidos": plano.get("pedidos") or [],
+            "candidatos_de_sobreposicao": [{"onde": c.trecho, "motivo": c.motivo} for c in (candidatos or [])],
+            "rascunho": [{"secao": s.get("code"), "titulo": s.get("label"), "texto": str(s.get("content") or "")[:14000]} for s in secoes],
+        }
         saida = chamar(INSTRUCAO, json.dumps(payload, ensure_ascii=False))
     except Exception as erro:  # noqa: BLE001 - sem o auditor semântico, as verificações determinísticas continuam valendo
         log.warning("auditor semântico indisponível: %s", str(erro)[:160])
