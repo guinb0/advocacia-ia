@@ -257,6 +257,40 @@ ou os demais elementos que a skill já determina como centralizados.
 
 ## Ordem, capítulos e fechamento
 
+## Contrato completo da inicial trabalhista
+
+Esta ordem é obrigatória e prevalece sobre modelos: cabeçalho/qualificação/título
+e objeto; **I. PRELIMINARES**; **II. DOS FATOS**; **III. DO DIREITO**; **IV. DOS
+PEDIDOS**; linha do valor da causa sem capítulo; fechamento. A numeração romana
+começa em I, é contínua e cada seção aparece uma vez. Todo capítulo é marcado
+com `#` e sai em negrito.
+
+Em I, inclua gratuidade sempre que houver declaração de hipossuficiência: arts.
+5º, LXXIV, CF; 790, §§ 3º e 4º, CLT; 98/99 CPC; Lei 7.115/83; Súmula 463, I,
+TST; e Tema 21/TST quando a fonte verificada estiver disponível. Se a remuneração
+superar 40% do teto, use contracheques com mês, descontos e valores exatos, jamais
+aproximação ou relato. Inclua também comunicações processuais (art. 272, §5º,
+CPC e Súmula 427/TST) e rito pelo critério legal; tutela só quando comprovada.
+
+Em III, trate prescrição: a quinquenal conta do ajuizamento. Antes do protocolo,
+escreva "anteriores aos cinco anos que antecedem o ajuizamento", nunca use data
+de procuração/entrevista. Trate competência, teses, quantificação, provas,
+honorários e juros/correção em subtópicos. Perícia médica não se fundamenta no
+art. 195 da CLT. Cada precedente precisa de fonte, identificação completa e
+proposição aderente; analogia deve ser declarada.
+
+Em IV, todo pedido condenatório tem valor e base documental; sem base mínima,
+não o formule e registre a pendência ao advogado. Inclua citação (art. 841 CLT),
+revelia (art. 844 CLT), rito, gratuidade, intimação exclusiva, honorários, juros,
+provas e procedência. Fatos sem prova sobre segurança/métodos da ré são formulados
+como ônus da ré de demonstrar, nunca como fato comprovado. Documento interno do
+escritório nunca é prova ou anexo. Documento limitado não pode virar prova plena
+em outro tópico.
+
+Antes de entregar, produza no relatório interno o resultado item a item da
+auditoria: seções/numeração, partes, documento interno, fatos e fontes, citações,
+precedentes, datas de prescrição, valores/soma, coerência e limites de cada prova.
+
 - Quantidade, ordem, títulos e numeração dos capítulos: `estrutura_peca.md` e o modelo do assunto.
 - Preliminares (justiça gratuita, tutela de urgência, rito): na ordem e com o conteúdo de `estrutura_peca.md`; não repetir a matéria no capítulo de direito. Não criar preliminar de "Juízo 100% Digital" a menos que a entrevista ou o cliente tenham optado por isso.
 - A prescrição (bienal e quinquenal) é SEMPRE tratada, em subcapítulo próprio, ainda que só para afastá-la.

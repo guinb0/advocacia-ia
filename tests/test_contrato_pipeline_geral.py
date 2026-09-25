@@ -17,6 +17,8 @@ def test_skill_exige_relatorio_interno_separado_da_peca():
     regras = peticao_skill_arquivos._ler("regras_de_geracao.md")  # noqa: SLF001
     assert "RELATÓRIO AO ADVOGADO são produtos separados" in regras
     assert "DIVERGÊNCIAS documentais" in regras
+    assert "Contrato completo da inicial trabalhista" in regras
+    assert "anteriores aos cinco anos que antecedem o ajuizamento" in regras
 
 
 def test_modelo_assalto_nao_reproduz_regras_e_precedentes_errados():
