@@ -663,7 +663,9 @@ export async function aguardarPeticaoPronta(
   },
 ): Promise<ProgressoPeticao> {
   const intervalo = opcoes?.intervaloMs ?? 2500;
-  const teto = opcoes?.tetoMs ?? 10 * 60 * 1000;
+  // Casos extensos fazem leitura, recuperação regional e auditoria final em
+  // sequência; 10 min encerrava apenas a espera da tela, não o trabalho real.
+  const teto = opcoes?.tetoMs ?? 20 * 60 * 1000;
   const inicio = Date.now();
   while (Date.now() - inicio < teto) {
     const progresso = await progressoPeticao(casoId, requestedAt);
