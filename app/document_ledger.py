@@ -28,6 +28,14 @@ _REF = re.compile(
     r"\bDocumentos?\s+(\d{1,3}(?:\s*(?:[/,–—-]|\se\s|\sa\s)\s*\d{1,3})*)(?:\s*(?:—|–|-)\s*([^.;:\n]{3,80}))?",
     re.IGNORECASE,
 )
+_INTERNO = re.compile(r"checklist|check list|triagem|relat[óo]rio\s+interno|anota[cç][ãa]o\s+interna|entrevista|contrato\s+de\s+honor", re.IGNORECASE)
+
+
+def uso_do_documento(documento: dict[str, Any], tipos: dict[str, str] | None = None) -> str:
+    """`interno` ou `probatorio`: classificação antes de qualquer numeração."""
+    tipos = tipos or {}
+    texto = f"{documento.get('arquivo', '')} {tipos.get(documento.get('arquivo', ''), '')}"
+    return "interno" if _INTERNO.search(texto) else "probatorio"
 
 
 def _hash(texto: str) -> str:
@@ -60,10 +68,7 @@ def montar(documentos: list[dict[str, Any]], tipos: dict[str, str] | None = None
     # Checklists, triagens e relatórios do escritório orientam a equipe; não são
     # prova do cliente nem anexo protocolável. Excluí-los antes da numeração
     # impede que ganhem um "Documento NN" e contaminem fatos ou pedidos.
-    internos = re.compile(r"checklist|check list|triagem|relatório\s+interno|anota[cç][ãa]o\s+interna", re.IGNORECASE)
-    documentos = [d for d in documentos if not internos.search(
-        f"{d.get('arquivo', '')} {tipos.get(d.get('arquivo', ''), '')}"
-    )]
+    documentos = [d for d in documentos if uso_do_documento(d, tipos) == "probatorio"]
     grupos: list[list[dict[str, Any]]] = []
     for d in documentos:
         for g in grupos:

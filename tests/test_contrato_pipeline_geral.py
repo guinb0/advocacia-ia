@@ -39,6 +39,8 @@ def test_checklist_interno_nao_recebe_numero_de_documento_protocolavel():
         {"arquivo": "Contracheque 08-2026.pdf", "texto": "remuneração do empregado"},
     ])
     assert [d["canonical_file"] for d in ledger] == ["Contracheque 08-2026.pdf"]
+    assert document_ledger.uso_do_documento({"arquivo": "Entrevista interna.docx"}) == "interno"
+    assert document_ledger.uso_do_documento({"arquivo": "CAT.pdf"}) == "probatorio"
 
 
 def test_capitulo_inventado_e_ordem_errada_retidos():
