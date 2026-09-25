@@ -76,7 +76,8 @@ def test_3_uploads_da_mesma_lisa_viram_um_documento_logico():
             {"arquivo": "Doc 9. LISA 2024-12-05 (Duplicado).pdf", "texto": lisa + " "}]
     ledger = dl.montar(docs)
     assert len(ledger) == 2 and ledger[0]["source_files"] == ["Doc 9. LISA 2024-12-05.pdf", "Doc 9. LISA 2024-12-05 (Duplicado).pdf"]
-    assert ledger[0]["canonical_label"] == "Documento 01" and ledger[1]["canonical_label"] == "Documento 02"
+    # o número canônico é o "Doc N." do arquivo (a numeração da pasta de protocolo que o advogado vê)
+    assert ledger[0]["canonical_label"] == "Documento 09" and ledger[1]["canonical_label"] == "Documento 10"
     assert "mesmo documento enviado também como" in dl.aviso_de_copias(ledger)
 
 
@@ -212,3 +213,32 @@ def test_ordem_vem_da_skill_modelo_do_assunto_sem_capitulo_de_provas():
     assert titulos[-1][1].startswith("Dos Pedidos") and not any("Provas" in t for _, t in titulos)
     assert "Produção de todas as provas" in modelo  # provas é pedido de praxe DENTRO dos pedidos
     assert "EVIDENCE" not in pl.peticao_skill_arquivos.carregar("x", "x", "")  # o motor não impõe seção de provas
+
+
+def test_orcamento_de_tempo_pula_etapas_opcionais(monkeypatch):
+    """Passado o orçamento, as etapas opcionais (aprofundamento, auditor por modelo) são puladas — a geração cabe na espera da tela."""
+    import time as _t
+
+    tok = pl._INICIO_DA_GERACAO.set(_t.monotonic() - pl.ORCAMENTO_SUAVE_S - 1)
+    try:
+        assert pl._sem_tempo()
+        chamadas = []
+        monkeypatch.setattr(pl, "_reescrever_secao", lambda *a, **k: chamadas.append(1) or "x")
+        corpo = "palavra " * 120
+        secoes = [{"code": "LEGAL_GROUNDS", "label": "", "content": f"## a) Um\n\n{corpo}"}]
+        novas, info = pl._aprofundar_pela_referencia("c", secoes, None, [], contexto="ctx", plano=None, assuntos=[])
+        assert not chamadas and novas[0]["content"].split() == secoes[0]["content"].split() and info["por_topico"][0].get("pulado")
+    finally:
+        pl._INICIO_DA_GERACAO.reset(tok)
+    assert not pl._sem_tempo()  # fora de uma geração, nada é pulado
+
+
+def test_contracheques_de_meses_diferentes_nao_sao_fundidos_e_numero_vem_do_arquivo():
+    base = "CORREIOS DEMONSTRATIVO DE PAGAMENTO salario base adicional desconto postalis consignado liquido " * 12
+    docs = [{"arquivo": "Doc 13. Contracheque 2026-06.pdf", "texto": base + " junho 2291,41"},
+            {"arquivo": "Doc 14. Contracheque 2026-07.pdf", "texto": base + " julho 2289,59"},
+            {"arquivo": "Doc 15. Contracheque 2026-08.pdf", "texto": base + " agosto 2472,22"},
+            {"arquivo": "Doc 8. BO 2024-12-05.pdf", "texto": "boletim de ocorrencia " * 20}]
+    ledger = dl.montar(docs)
+    assert [d["canonical_label"] for d in ledger] == ["Documento 08", "Documento 13", "Documento 14", "Documento 15"]
+    assert not dl.validar_bijecao(ledger)

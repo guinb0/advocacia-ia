@@ -560,6 +560,9 @@ def contradicao_de_data(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> 
     return saida
 
 
+_CACHE_EMBED: dict[tuple[str, ...], list[list[float]]] = {}
+
+
 def candidatos_semanticos(secoes: list[dict[str, Any]], plano: dict[str, Any], embed: Any, limiar: float = 0.9) -> list[Violacao]:
     """PRÉ-detector barato (embeddings, sem LLM): tópicos de teses diferentes semanticamente quase iguais.
 
@@ -575,8 +578,10 @@ def candidatos_semanticos(secoes: list[dict[str, Any]], plano: dict[str, Any], e
                 topicos.append((str(s.get("code")), t["titulo"], corpo[:1500]))
     if len(topicos) < 2:
         return []
+    chave = tuple(t[2] for t in topicos)
     try:
-        vs = embed([t[2] for t in topicos])
+        vs = _CACHE_EMBED.get(chave) or embed(list(chave))
+        _CACHE_EMBED[chave] = vs
     except Exception:  # noqa: BLE001 - sem embeddings, só o n-grama e o auditor global
         return []
     teses = {t["id"]: t for t in plano.get("teses") or []}

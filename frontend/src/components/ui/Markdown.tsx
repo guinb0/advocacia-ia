@@ -328,7 +328,11 @@ export interface DocumentoCitavelMd {
   id: string;
   arquivo: string;
   tipo: string;
+  rotulos?: string[];
 }
+
+/** Tipo genérico demais para virar link ("documento", "anexo"): casaria com qualquer menção e abriria o arquivo errado. */
+const TIPOS_GENERICOS = new Set(["documento", "documentos", "anexo", "arquivo", "outro", "outros", "nao identificado", "não identificado"]);
 
 interface Citaveis {
   padrao: RegExp;
@@ -355,11 +359,12 @@ function montarCitaveis(
   };
   for (const documento of documentos) {
     registrar(documento.arquivo, documento);
+    for (const rotulo of documento.rotulos ?? []) registrar(rotulo, documento);
     // O modelo às vezes escreve o nome sem a extensão ("IMG_4411"). Curto demais
     // ("doc") casaria com palavra comum.
     const semExtensao = documento.arquivo.replace(/\.[a-z0-9]{2,5}$/i, "");
     if (semExtensao !== documento.arquivo && semExtensao.length >= 6) registrar(semExtensao, documento);
-    if (documento.tipo) {
+    if (documento.tipo && !TIPOS_GENERICOS.has(documento.tipo.trim().toLowerCase())) {
       registrar(documento.tipo, documento);
       // «Carteira de Trabalho (CTPS)»: o modelo escreve só uma das duas formas.
       const sigla = documento.tipo.match(/\(([^)]{2,20})\)/)?.[1];

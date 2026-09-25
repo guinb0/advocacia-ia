@@ -140,6 +140,8 @@ export interface DocumentoCitavel {
   arquivo: string;
   tipo: string;
   situacao: string;
+  /** "Documento 03", "Doc 3": como a peça cita este arquivo (rótulo canônico do ledger). */
+  rotulos?: string[];
 }
 
 function traduzirDocumentos(brutos: unknown): DocumentoCitavel[] {
@@ -150,6 +152,7 @@ function traduzirDocumentos(brutos: unknown): DocumentoCitavel[] {
       arquivo: String(d.arquivo ?? ""),
       tipo: String(d.tipo ?? ""),
       situacao: String(d.situacao ?? ""),
+      rotulos: Array.isArray(d.rotulos) ? (d.rotulos as unknown[]).map(String) : [],
     }))
     .filter((d) => d.id && d.arquivo);
 }

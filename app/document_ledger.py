@@ -58,8 +58,9 @@ def _mesmo_documento(a: dict[str, Any], b: dict[str, Any]) -> bool:
     marca_copia = re.search(r"duplicad|copia", pp.norm(a["arquivo"] + " " + b["arquivo"]))
     if marca_copia and _base_do_nome(a["arquivo"]) == _base_do_nome(b["arquivo"]):
         return True
-    ta, tb = _tokens(a["texto"]), _tokens(b["texto"])
-    return len(ta) >= 40 and len(tb) >= 40 and len(ta & tb) / len(ta | tb) >= 0.92
+    # Similaridade de texto NÃO basta: contracheques de meses diferentes compartilham quase todo o vocabulário
+    # e são documentos distintos. Só conteúdo idêntico ou cópia declarada no nome colapsa.
+    return False
 
 
 def montar(documentos: list[dict[str, Any]], tipos: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -77,8 +78,27 @@ def montar(documentos: list[dict[str, Any]], tipos: dict[str, str] | None = None
                 break
         else:
             grupos.append([d])
+    # Numeração: a do próprio arquivo ("Doc 3. Procuração.pdf" → 3), que é a da pasta de protocolo e a que o
+    # advogado vê no checklist; sem número no nome (ou com número repetido), o próximo livre.
+    numeros: list[int | None] = []
+    usados: set[int] = set()
+    for g in grupos:
+        m = re.match(r"^\s*doc(?:umento)?\s*0*(\d{1,3})\b", g[0]["arquivo"].replace("\\", "/").split("/")[-1], re.IGNORECASE)
+        n = int(m.group(1)) if m else None
+        if n is not None and n in usados:
+            n = None
+        numeros.append(n)
+        if n is not None:
+            usados.add(n)
+    proximo = 1
+    for i, n in enumerate(numeros):
+        if n is None:
+            while proximo in usados:
+                proximo += 1
+            numeros[i] = proximo
+            usados.add(proximo)
     saida = []
-    for n, g in enumerate(grupos, 1):
+    for n, g in sorted(zip(numeros, grupos), key=lambda x: x[0]):
         principal = g[0]
         saida.append({
             "document_id": f"DOC_{n:03d}", "numero": n, "canonical_label": f"Documento {n:02d}",
