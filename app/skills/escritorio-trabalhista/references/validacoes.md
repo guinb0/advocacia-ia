@@ -300,8 +300,9 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    "id": "secoes_obrigatorias",
    "tipo": "secao_obrigatoria",
    "secoes": [
-    "HEADING",
-    "FACTS",
+   "HEADING",
+    "PRELIMINARY",
+   "FACTS",
     "LEGAL_GROUNDS",
     "CLAIMS",
     "CLOSING"

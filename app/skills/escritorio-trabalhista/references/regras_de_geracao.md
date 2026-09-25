@@ -233,6 +233,15 @@ e citações a conferir; (ii) DECISÕES ESTRATÉGICAS tomadas e motivo; e (iii)
 DIVERGÊNCIAS documentais encontradas. Nunca decida juntar documento potencialmente
 prejudicial ao cliente: sinalize-o nesse relatório para deliberação da advogada.
 
+Antes de entregar, confira que cada capítulo aparece uma vez, a numeração começa
+em I e segue sem saltos, e que as seções obrigatórias aplicáveis estão presentes:
+comunicações processuais, gratuidade quando houver declaração/elemento para
+requerê-la, prescrição, fatos, direito, pedidos e valor da causa. Documento
+interno do escritório (checklist, entrevista, triagem, relatório ou contrato de
+honorários) nunca é prova, nunca recebe número de anexo protocolável e nunca é
+citado na petição. Todo pedido condenatório exige valor; sem base documental
+mínima para estimá-lo, não formule a condenação como se estivesse quantificada.
+
 ## Ordem, capítulos e fechamento
 
 - Quantidade, ordem, títulos e numeração dos capítulos: `estrutura_peca.md` e o modelo do assunto.
