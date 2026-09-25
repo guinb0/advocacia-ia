@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import statistics
+import time
 from contextvars import ContextVar
 import logging
 import os
@@ -352,16 +353,21 @@ def _lintar_e_corrigir(
             *conferencia_peticao.conferir(sec, fontes),
         ]
 
+    def chamar(instrucao: str, entrada: str) -> dict[str, Any]:
+        if _sem_tempo(folga_s=180):
+            return {}  # sem tempo: o auditor por modelo cede lugar às verificações determinísticas
+        return _llm_json(instrucao, entrada, timeout=240.0)
+
     return auditor_final.executar(
-        secoes, plano_est, cf, params=params, verificacoes=verificacoes,
-        chamar=lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=300.0),
-        reescrever=lambda secao, orientacao: _reescrever_secao(caso_id, secao, orientacao, texto_do_caso),
+        secoes, plano_est, cf, params=params, verificacoes=verificacoes, max_iteracoes=2,
+        chamar=chamar,
+        reescrever=lambda secao, orientacao: None if _sem_tempo(folga_s=150) else _reescrever_secao(caso_id, secao, orientacao, texto_do_caso),
         rerenderizar_pedidos=lambda sec, plano: _pedidos_do_plano_na_secao(caso_id, sec, plano)[0],
     )
 
 
 def _validar_documento_final(
-    caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], texto_do_caso: str, *, max_rodadas: int = 2,
+    caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], texto_do_caso: str, *, max_rodadas: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[Any]]:
     """higieniza (determinístico) → valida o artefato final → corrige o que for corrigível → higieniza e valida de NOVO.
 
@@ -385,7 +391,7 @@ def _validar_documento_final(
                                "criticos": [f"{a.codigo}:{a.secao}" for a in criticos]})
         if higiene.get("metadata_interna_removida"):
             rel.setdefault("metadata_interna", []).extend(higiene["metadata_interna_removida"])
-        if not criticos or rodada == max_rodadas:
+        if not criticos or rodada == max_rodadas or _sem_tempo(folga_s=120):
             break
         por_secao: dict[str, list[Any]] = {}
         for a in criticos:
@@ -423,6 +429,43 @@ def _registrar_proveniencia(provs: list[Any], textos: list[str]) -> None:
     if corrente is None:
         return
     corrente.setdefault("proveniencia", []).extend(zip(provs, textos))
+
+
+#: Orçamento de tempo de UMA geração. A tela espera 20 min; passado o limite "suave", as etapas
+#: opcionais (aprofundamento por tópico, revisor de profundidade, auditor por modelo, correções) são
+#: puladas e a peça segue direto para as validações DETERMINÍSTICAS e a gravação — melhor uma peça
+#: validada e marcada para revisão do que uma geração que a tela abandona (o 504 da produção).
+ORCAMENTO_SUAVE_S = float(os.getenv("PETICAO_ORCAMENTO_SUAVE_S", "780"))
+_INICIO_DA_GERACAO: ContextVar[float | None] = ContextVar("inicio_da_geracao", default=None)
+
+
+def _tempo_decorrido() -> float:
+    inicio = _INICIO_DA_GERACAO.get()
+    return time.monotonic() - inicio if inicio else 0.0
+
+
+def _sem_tempo(folga_s: float = 0.0) -> bool:
+    """True quando as etapas opcionais devem ser puladas para a geração caber no tempo da tela."""
+    estourou = bool(_INICIO_DA_GERACAO.get()) and _tempo_decorrido() + folga_s > ORCAMENTO_SUAVE_S
+    if estourou:
+        corrente = _DIAG.get()
+        if corrente is not None:
+            corrente.setdefault("etapas_puladas_por_tempo", 0)
+            corrente["etapas_puladas_por_tempo"] += 1
+    return estourou
+
+
+def _em_paralelo_com_contexto(funcao: Any, itens: list[Any], max_workers: int = 6) -> list[Any]:
+    """`map` em threads PRESERVANDO os contextvars (diagnóstico, orçamento de tempo, texto do caso) em cada tarefa.
+
+    Thread do pool não herda contextvars: sem copiar o contexto, o orçamento de tempo e o trace ficavam cegos
+    justamente nas etapas paralelas.
+    """
+    if not itens:
+        return []
+    contextos = [contextvars.copy_context() for _ in itens]
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        return list(pool.map(lambda par: par[0].run(funcao, par[1]), zip(contextos, itens)))
 
 
 def _erro_curto(erro: BaseException) -> str:
@@ -1832,7 +1875,8 @@ def _fontes_da_conferencia(
         pass
     return conferencia_peticao.Fontes(
         anexos=anexos_do_caso(caso_id),
-        numerados=[d["arquivo"] for d in documentos_logicos(caso_id)[1][:20]],
+        numerados=[d["arquivo"] for d in documentos_logicos(caso_id)[1]],
+        numeros=[d["numero"] for d in documentos_logicos(caso_id)[0]],
         entrevista=texto_entrevista,
         cadastro=" ".join(str(v) for v in [caso.get("cliente"), *qualificacao.values()] if v),
         material=material,
@@ -1893,27 +1937,22 @@ def _conferir_contra_os_autos(
     iniciais = [v.codigo for v in violacoes if v.bloqueia]
     corrigiu = False
     rodadas = 0
-    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 2:
+    # UMA rodada, seções EM PARALELO: era aqui que a geração passava mais tempo ("Conferindo a peça contra os
+    # autos…") — duas rodadas, uma seção por vez, cada chamada com o material inteiro. O que sobrar é revisto
+    # pelo auditor final, que roda de novo a mesma conferência logo adiante.
+    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=300):
         rodadas += 1
-        # UMA seção por chamada: só as que têm violação são reescritas, e a falha de uma não
-        # desfaz a correção das outras (a reescrita da peça inteira em um JSON quebrava).
         extra = _material_para_resolver_pesquisas(violacoes, secoes)
-        novas: list[dict[str, Any]] = []
-        mudou = False
-        for secao in secoes:
+
+        def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
             da_secao = [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
             if not da_secao:
-                novas.append(secao)
-                continue
-            novo = _reescrever_secao(
-                caso_id, secao, conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra, material
-            )
-            if novo and novo != secao.get("content"):
-                novas.append({**secao, "content": novo})
-                mudou = True
-            else:
-                novas.append(secao)
-        if not mudou:
+                return secao
+            novo = _reescrever_secao(caso_id, secao, conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra, material)
+            return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
+
+        novas = _em_paralelo_com_contexto(corrigir_secao, secoes)
+        if novas == secoes:
             break
         secoes, corrigiu = novas, True
         violacoes = conferencia_peticao.conferir(secoes, fontes)
@@ -2117,7 +2156,7 @@ def _aprofundar_topico(
     tel["etapas"].append({"etapa": "redacao_do_topico", "aceito": atual is not corpo})
     depois = recuperacao_por_secao.metricas(atual)
     motivos = recuperacao_por_secao.precisa_de_revisao(depois, sinal)
-    if motivos:  # revisor de profundidade: só onde a medida aponta problema
+    if motivos and not _sem_tempo(folga_s=300):  # revisor de profundidade: só onde a medida aponta problema
         revisado = _reescrever_secao(
             caso_id, {**base, "content": atual},
             _ORIENTACAO_DO_REVISOR + "\nMotivos medidos: " + "; ".join(motivos) + "\n" + _sinal_em_texto(sinal, depois), contexto,
@@ -2189,8 +2228,13 @@ def _aprofundar_pela_referencia(
             if len(t["corpo"].split()) >= 60:
                 jobs.append((i, k, secao, t))
 
+    # Só os tópicos mais longos (os que carregam a argumentação) e no máximo 8 — cada um custa 1–2 chamadas.
+    jobs = sorted(jobs, key=lambda j: len(j[3]["corpo"].split()), reverse=True)[:8]
+
     def trabalhar(job):
         i, k, secao, t = job
+        if _sem_tempo(folga_s=240):
+            return i, k, t, {"topico": t["titulo"], "pulado": "orçamento de tempo"}
         try:
             return i, k, *_aprofundar_topico(
                 caso_id, secao, t, contexto_caso=contexto_caso, plano=plano, categoria=categoria, assuntos=assuntos,
@@ -2200,8 +2244,8 @@ def _aprofundar_pela_referencia(
             log.warning("aprofundamento do tópico %s falhou: %s", t["titulo"][:40], erro, exc_info=True)
             return i, k, t, {"topico": t["titulo"], "erro": f"{type(erro).__name__}: {str(erro)[:120]}"}
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        for i, k, novo, tel in pool.map(trabalhar, jobs):
+    for i, k, novo, tel in _em_paralelo_com_contexto(trabalhar, jobs, max_workers=6):
+        if True:  # noqa: SIM108 - bloco mantido para preservar o corpo do laço original
             topicos_por_secao[i][k] = novo
             info.setdefault("textos_acervo", []).extend(tel.pop("textos_acervo", []) if isinstance(tel, dict) else [])
             info["por_topico"].append(tel)
@@ -2327,6 +2371,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     generation_id = str(uuid.uuid4())
     diag: dict[str, Any] = {"recuperacao": {}, "fallbacks": []}
     _DIAG.set(diag)
+    _INICIO_DA_GERACAO.set(time.monotonic())
     avancar_etapa("Lendo entrevista e documentos…", 1)
     regras_aplicadas = peticao_aprendizado.regras_para_contexto(
         categoria=_categoria_do_caso(caso_id)

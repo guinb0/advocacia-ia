@@ -112,7 +112,9 @@ def executar(
     for it in range(1, max_iteracoes + 1):
         determinicos = verificacoes(secoes, plano)
         candidatos = [a for a in determinicos if a.codigo == "SOBREPOSICAO_SEMANTICA_CANDIDATA"]
-        achados = determinicos + auditar_com_modelo(chamar, case_facts, plano, secoes, candidatos)
+        # auditor por modelo: UMA vez (custo/latência); as iterações seguintes conferem as correções deterministicamente
+        semanticos = auditar_com_modelo(chamar, case_facts, plano, secoes, candidatos) if it == 1 else []
+        achados = determinicos + semanticos
         criticos = [a for a in achados if a.bloqueia]
         passo: dict[str, Any] = {"n": it, "criticos": [f"{a.codigo}:{a.secao}" for a in criticos], "avisos": len(achados) - len(criticos), "correcoes": []}
         relatorio["iteracoes"].append(passo)

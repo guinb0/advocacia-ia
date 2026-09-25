@@ -92,6 +92,8 @@ class Fontes:
     entrevista: str = ""
     cadastro: str = ""                      # cliente + qualificação, achatados
     material: str = ""                      # o que mais foi ao prompt (acervo, julgados)
+    #: Número canônico de cada item de `numerados` (DOCUMENT_LEDGER: o "Doc N." do arquivo). Vazio = 1..n.
+    numeros: list[int] = field(default_factory=list)
     #: Grupos de nomes equivalentes de documento — vocabulário do DOMÍNIO, vem da skill.
     sinonimos: tuple[tuple[str, ...], ...] = field(default_factory=lambda: _sinonimos_da_skill())
 
@@ -227,10 +229,11 @@ def _trecho(texto: str, inicio: int, fim: int, folga: int = 70) -> str:
 def _documentos_citados(secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
     violacoes = []
     total = len(fontes.numerados)
+    validos = set(fontes.numeros) if fontes.numeros else set(range(1, total + 1))
     for codigo, texto in secoes.items():
         for m in re.finditer(r"\bDocumento\s+(?:n[ºo°.]*\s*)?(\d{1,3})\b", texto, re.IGNORECASE):
             numero = int(m.group(1))
-            if 1 <= numero <= total:
+            if numero in validos:
                 continue
             violacoes.append(
                 Violacao(
@@ -603,7 +606,7 @@ def instrucao_de_correcao(violacoes: list[Violacao], fontes: Fontes) -> str:
     for i, v in enumerate([v for v in violacoes if v.bloqueia], 1):
         linhas.append(f"\n{i}. [{v.secao}] {v.motivo}\n   Trecho: {v.trecho}\n   Correção: {v.correcao}")
     linhas.append("\nOS ÚNICOS DOCUMENTOS DO CASO (numeração que a peça deve usar):")
-    for i, arquivo in enumerate(fontes.numerados, 1):
+    for i, arquivo in zip(fontes.numeros or range(1, len(fontes.numerados) + 1), fontes.numerados):
         tipo = next((a.get("tipo") for a in fontes.anexos if a.get("arquivo") == arquivo), "") or "não classificado"
         linhas.append(f"- Documento {i:02d} — {arquivo} ({tipo})")
     linhas.append(
