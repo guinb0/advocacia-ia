@@ -62,6 +62,7 @@ def canonicalizar(secoes: list[dict[str, Any]], contrato: dict[str, Any]) -> tup
     permitidos = set(contrato.get("permitidos") or [])
     saida, achados = [], []
     vistos: set[str] = set()
+    assinaturas: set[tuple[str, str]] = set()
     for secao in secoes:
         bruto = str(secao.get("code") or "")
         code = bruto.upper().strip()
@@ -69,6 +70,15 @@ def canonicalizar(secoes: list[dict[str, Any]], contrato: dict[str, Any]) -> tup
         if role:
             secao = {**secao, "code": role}
         code = str(secao.get("code") or "")
+        # Repetição literal de uma seção inteira é sempre erro de geração, até
+        # para direito/preliminares que podem conter subtópicos distintos.
+        assinatura = (code, re.sub(r"\s+", " ", _norm(str(secao.get("content") or "")).strip()))
+        if assinatura in assinaturas:
+            achados.append(Violacao("SECAO_DUPLICADA", code, str(secao.get("label") or code),
+                "A mesma seção foi devolvida mais de uma vez pelo redator.",
+                "Mantenha uma única ocorrência do bloco canônico.", True))
+            continue
+        assinaturas.add(assinatura)
         if code not in permitidos:
             achados.append(Violacao("SECAO_NAO_AUTORIZADA_PELA_SKILL", code, str(secao.get("label") or code),
                 "A minuta criou uma seção que não consta do contrato extraído da skill.",

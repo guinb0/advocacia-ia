@@ -47,6 +47,16 @@ def test_capitulo_inventado_e_ordem_errada_retidos():
     }
 
 
+def test_secao_literal_repetida_e_removida_antes_do_docx():
+    contrato = contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill())
+    secoes, achados = contrato_secoes.canonicalizar([
+        _sec("LEGAL_GROUNDS", "II. DO DIREITO\nTexto idêntico"),
+        _sec("LEGAL_GROUNDS", "II. DO DIREITO\nTexto idêntico"),
+    ], contrato)
+    assert len(secoes) == 1
+    assert any(a.codigo == "SECAO_DUPLICADA" for a in achados)
+
+
 def test_cnpj_canonico_ausente_na_abertura_bloqueia():
     params = {"qualificacao": {"exigida": True, "campos": {
         "autor": ["nome"], "reu": ["nome", "cnpj"]
