@@ -225,7 +225,7 @@ async def ciclo_de_vida(_: FastAPI):
 
 
 app = FastAPI(
-    title="Extrator de Documentos — Mistral OCR",
+    title="Cláudia",
     version="1.0.0",
     lifespan=ciclo_de_vida,
 )

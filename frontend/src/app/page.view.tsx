@@ -74,7 +74,7 @@ export function LoginPage(props: LoginPageProps) {
                 </span>
                 <div className="min-w-0">
                   <span className="block truncate font-titulo text-xl leading-none text-[#102033] dark:text-white">
-                    Acervo
+                    Cláudia
                   </span>
                   <span className="mt-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#65758a] dark:text-[#9fb3ca]">
                     Escritório jurídico
