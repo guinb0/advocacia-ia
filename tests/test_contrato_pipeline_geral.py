@@ -19,6 +19,16 @@ def test_skill_exige_relatorio_interno_separado_da_peca():
     assert "DIVERGÊNCIAS documentais" in regras
 
 
+def test_modelo_assalto_nao_reproduz_regras_e_precedentes_errados():
+    modelo = peticao_skill_arquivos._ler("assalto_carteiro/modelo_peticao.md")  # noqa: SLF001
+    assert "RE 220.907" not in modelo
+    assert "arts. 76 e 77 da CLT" not in modelo
+    assert "art. 272, §1º" not in modelo
+    assert "salário **líquido**" not in modelo
+    assert "piso mínimo de R$ 30.000,00" not in modelo.lower()
+    assert "Não há lista de precedentes pronta para copiar" in modelo
+
+
 def test_capitulo_inventado_e_ordem_errada_retidos():
     contrato = contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill())
     _, achados = contrato_secoes.canonicalizar([
