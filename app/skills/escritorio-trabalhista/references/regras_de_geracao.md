@@ -285,9 +285,14 @@ verificável suficiente amplie para os demais TRTs da região, TST/STF e acervo
 nacional. Registre no relatório ao advogado a jurisdição efetivamente usada.
 
 Em IV, todo pedido condenatório tem valor e base documental; sem base mínima,
-não o formule e registre a pendência ao advogado. Inclua citação (art. 841 CLT),
-revelia (art. 844 CLT), rito, gratuidade, intimação exclusiva, honorários, juros,
-provas e procedência. Fatos sem prova sobre segurança/métodos da ré são formulados
+não o formule e registre a pendência só no relatório interno — nunca [PENDENTE]
+no corpo e nunca art. 322 do CPC como desculpa de pedido genérico (art. 840, §1º, CLT).
+O valor de uma mesma indenização é um só número na quantificação, no pedido e no
+valor da causa. Inclua citação (art. 841 CLT), revelia (art. 844 CLT), rito,
+gratuidade, intimação exclusiva em nome do advogado, honorários, juros, provas e
+procedência. A seção de comunicações processuais (art. 272, §5º, CPC e Súmula 427/TST)
+é obrigatória e não pode sumir. Um só fechamento («Termos em que, pede deferimento»),
+depois do valor da causa — não escreva outro «Nestes termos, pede deferimento» antes. Fatos sem prova sobre segurança/métodos da ré são formulados
 como ônus da ré de demonstrar, nunca como fato comprovado. Documento interno do
 escritório nunca é prova ou anexo. Documento limitado não pode virar prova plena
 em outro tópico.
@@ -305,6 +310,6 @@ precedentes, datas de prescrição, valores/soma, coerência e limites de cada p
 - Valor da causa coerente com a soma dos pedidos, sem fórmula fiscal automática.
 - Fechamento: a fórmula, a ordem e a identificação do advogado seguem o modelo do assunto; não escreva o título "Fechamento" dentro do conteúdo.
 - Endereçamento: começa por "Ao Juízo da ...", nunca por "Excelentíssimo(a) Senhor(a) Doutor(a) Juiz(a)"; o nome do autor em negrito (`**NOME**`) seguido da qualificação corrida.
-- Pedido de PAGAMENTO leva valor e critério; pedido declaratório, procedimental ou probatório NÃO leva valor. Valor que depende de documento ausente: `[PENDENTE: valor a apurar com <documento>]`.
+- Pedido de PAGAMENTO leva valor e critério tirados dos documentos, com o mês do contracheque quando o número vier de lá. Pedido declaratório, procedimental ou probatório NÃO leva valor. Sem documento, o pedido condenatório não entra; não use `[PENDENTE]` nem o art. 322 do CPC.
 - Não escrever capítulo nem parágrafo que destaque fragilidade ou fato desfavorável do próprio caso: isso vai para `analise.observacoes`.
-- Pendência no corpo: `[PENDENTE: <dado>]` curto, completo, UMA vez por dado; o restante em `pendencias`.
+- Pendência não vai para o corpo da peça. Registre em `pendencias` / relatório interno. `[PENDENTE]` no documento impede o protocolo.

@@ -281,7 +281,11 @@ def _redigir_pedidos_do_plano(caso_id: str, plano_est: dict[str, Any]):
         instrucao = _com_skill_do_escritorio(caso_id, (
             "Você redige a seção de PEDIDOS de uma peça, seguindo a skill (forma, valores, pedidos de praxe). "
             "Recebe a lista ÚNICA de pedidos do plano; redija UM texto para cada id, sem criar, juntar, dividir "
-            "nem omitir pedidos. Preserve valores e critérios (`valor_ou_base`). Cada pedido é a CONSEQUÊNCIA, em uma frase, com o "
+            "nem omitir pedidos. Preserve valores e critérios (`valor_ou_base`). O valor do dano moral é UM SÓ, "
+            "igual ao da quantificação; TEPT agrava esse pedido pelo art. 944 do CC e não vira segunda indenização. "
+            "Pedido de pagamento sem valor nos documentos NÃO entra: não use [PENDENTE] nem o art. 322 do CPC para "
+            "deixá-lo genérico (art. 840, §1º, da CLT). Inclua no fecho, uma vez: citação da reclamada, rito, "
+            "intimação exclusiva em nome do advogado e procedência. Cada pedido é a CONSEQUÊNCIA, em uma frase, com o "
             "fundamento entre parênteses: NÃO reproduza a argumentação nem requerimentos já desenvolvidos noutras seções (provas, comunicações, "
             "gratuidade, competência): para esses, só a referência. Devolva APENAS JSON: "
             '{"abertura":"frase de abertura da seção conforme a skill","itens":{"P01":"texto do pedido sem a letra da alínea"},'
@@ -369,18 +373,32 @@ def _revisao_semantica_de_teses(caso_id: str, secoes: list[dict[str, Any]], plan
     ]
 
 
+def _ocr_do_caso(caso_id: str) -> str:
+    """Só o texto dos documentos deste caso. Outline, acervo e cadastro não entram."""
+    try:
+        _, docs = documentos_logicos(caso_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    return "\n".join(str(d.get("texto") or "") for d in docs)
+
+
 def _lintar_e_corrigir(
     caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], *, texto_do_caso: str, textos_do_acervo: list[str],
-    material: str = "",
+    material: str = "", texto_dos_autos: str = "",
 ) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
     """AUDITOR FINAL: verificações determinísticas + auditoria semântica independente, com correção e limite de iterações."""
     params = peticao_skill_arquivos.validacoes_da_skill()["parametros"]
     cf = plano_est.get("case_facts") or {"PARTIES": {}, "UNCERTAINTIES": []}
     fontes = _fontes_da_conferencia(caso_id, material=material)
 
+    autos = texto_dos_autos or _ocr_do_caso(caso_id) or texto_do_caso
+
     def verificacoes(sec: list[dict[str, Any]], plano: dict[str, Any]) -> list[Any]:
         return [
-            *petition_linter.lintar(sec, plano, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params),
+            *petition_linter.lintar(
+                sec, plano, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params,
+                texto_dos_autos=autos,
+            ),
             *auditoria_estrutural.auditar(sec, plano, params, petition_linter.titulos_impressos(sec), embed=lambda textos: rag.gerar_embeddings(textos, timeout=60)),
             *conferencia_peticao.conferir(sec, fontes),
         ]
@@ -412,7 +430,7 @@ def _validar_documento_final(
         ledger = []
     rel: dict[str, Any] = {"rodadas": []}
     for rodada in range(max_rodadas + 1):
-        secoes, higiene = documento_final.higienizar(secoes, plano_est, params)
+        secoes, higiene = documento_final.higienizar(secoes, plano_est, params, texto_dos_autos=_ocr_do_caso(caso_id))
         achados = documento_final.validar_documento_final(secoes, plano_est, params, ledger)
         _, achados_contrato = contrato_secoes.canonicalizar(
             secoes, plano_est.get("contrato_secoes") or {}
@@ -1273,6 +1291,26 @@ def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
         linha for linha in conhecidos
         if not re.search(r"\bTESTE\b", linha, re.IGNORECASE)
     ]
+    # Endereço e CEP do cadastro só instruem a peça se um documento DESTE caso
+    # os trouxer. Sem isso o modelo qualificava o autor (e, por arrasto, a ré)
+    # com a cidade de outro processo — Tucuruí voltou três vezes.
+    try:
+        _, docs = documentos_logicos(caso_id)
+        ocr = "\n".join(str(d.get("texto") or "") for d in docs)
+    except Exception:  # noqa: BLE001
+        ocr = ""
+    if ocr.strip():
+        norm_ocr, dig_ocr = plano_da_peticao.norm(ocr), plano_da_peticao._so_digitos(ocr)  # noqa: SLF001
+        filtrados = []
+        for linha in conhecidos:
+            if linha.startswith("- Endereço:") or linha.startswith("- CEP:"):
+                valor = linha.split(":", 1)[1].strip()
+                campo = "cep" if linha.startswith("- CEP:") else "endereco"
+                if not plano_da_peticao._valor_consta(campo, valor, norm_ocr, dig_ocr):  # noqa: SLF001
+                    log.error("petição local: %s do cadastro não está nos documentos do caso %s — ignorado", campo, caso_id)
+                    continue
+            filtrados.append(linha)
+        conhecidos = filtrados
     if not conhecidos:
         return []
 
@@ -1280,10 +1318,11 @@ def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
         "=== IDENTIDADE DO RECLAMANTE (vem do CADASTRO do caso) ===",
         *conhecidos,
         "",
-        "Esta lista é a ÚNICA fonte válida para qualificar o autor da ação. Nome que "
-        "apareça na transcrição ou nos documentos e seja diferente do nome acima é de "
-        "TERCEIRO (colega, condutor, médico, testemunha, vítima) — nunca do autor. "
-        "E não escreva [PENDENTE] para dado que esteja nesta lista: use o valor.",
+        "O NOME e o CPF desta lista qualificam o autor. Nome que apareça na transcrição "
+        "ou nos documentos e seja diferente do nome acima é de TERCEIRO (colega, condutor, "
+        "médico, testemunha, vítima) — nunca do autor. Endereço, CEP e CNPJ só podem ser "
+        "os que estão nos DOCUMENTOS deste caso: não use cidade, filial ou número de outra "
+        "peça, nem do cadastro se o documento não confirmar. Não escreva [PENDENTE] no corpo.",
         "",
     ]
 
@@ -2671,14 +2710,19 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "prefira-os à memória e cite só os que alcançarem estes fatos. Artigo ou processo "
         "citado de memória, fora do material, é erro grave; sem precedente verificável, "
         "escreva [PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. "
-        "Dado que falta: [PENDENTE: <dado>]."
+        "Qualificação (cidade, endereço, CNPJ, CPF) só com dado que esteja nos DOCUMENTOS deste caso; "
+        "não copie de outra peça nem do cadastro se o documento não confirmar. "
+        "Pedido de pagamento sem valor nos documentos não entra no corpo — nem com [PENDENTE], nem como pedido "
+        "genérico pelo art. 322 do CPC. A lacuna vai só em `pendencias`. Um só valor de dano moral, o mesmo na "
+        "fundamentação, no pedido e no valor da causa. A narrativa do assalto segue a CAT e o BO: não inverta "
+        "quem abordou o autor e quem entrou na área interna."
     )
     instrucao_base = (
             CONTRATO_DE_REDACAO
             + """Você executa a SKILL DO ESCRITÓRIO para redigir a peça do caso.
 Em UMA resposta, organize o material do caso e redija uma minuta completa.
 Use a entrevista como ALEGAÇÃO e os documentos como prova. Não invente fatos.
-Onde faltar dado indispensável, escreva [PENDENTE: explicação].
+Onde faltar dado de qualificação indispensável que a skill exija, omita o campo. Não escreva [PENDENTE] no corpo da peça.
 
 PADRÃO DO ESCRITÓRIO: a ORIENTAÇÃO DO ESCRITÓRIO (skill) é a fonte de FORMATO
 e manda sobre tudo — inclusive sobre a estrutura de qualquer peça de referência

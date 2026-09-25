@@ -40,7 +40,9 @@ ABERTURA_OK = ("Ao Juizo da Vara do Trabalho de Belem/PA. Paulo Sergio Leandro B
                "CPF 152.815.582-34, residente na Passagem Santa Fe 70, Belem/PA, em face de Empresa Brasileira de Correios e Telegrafos, CNPJ 34.028.316/0001-03, "
                "Rua Santo Antonio 438.")
 PEDIDOS_OK = ("a) indenizacao por danos morais decorrentes do assalto, R$ 50.000,00;\n\nb) pagamento das horas extras excedentes da oitava diaria;\n\n"
-              "c) concessao da justica gratuita.")
+              "c) concessao da justica gratuita.\n\n"
+              "Requer a citação da reclamada, o rito ordinário, a intimação exclusiva em nome do advogado, "
+              "a procedência dos pedidos e as comunicações processuais.")
 
 
 def achados(s, acervo=None, pl=None):
@@ -110,7 +112,8 @@ def test_pedidos_sao_renderizados_do_plano_e_cada_um_aparece_uma_vez():
     pl = plano()
 
     def redigir(pedidos):
-        return {"abertura": "Ante o exposto, requer:", "itens": {p["id"]: f"{p['objeto']}" for p in pedidos}, "fecho": "Nestes termos."}
+        return {"abertura": "Ante o exposto, requer:", "itens": {p["id"]: f"{p['objeto']}" for p in pedidos},
+                "fecho": "Requer a citação da reclamada, o rito ordinário, a intimação exclusiva em nome do advogado, a procedência dos pedidos e as comunicações processuais."}
 
     texto, rel = pp.renderizar_pedidos(pl, redigir)
     assert texto.count("\n\n") >= 4 and rel["sem_redacao_do_modelo"] == []

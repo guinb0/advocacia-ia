@@ -4,7 +4,7 @@ Transcritos do padrão de qualidade aprovado pelo escritório. Cite com a identi
 
 ## Gratuidade de justiça — TST, Tema nº 21 da Tabela de IRR
 
-IncJulgRREmbRep-277-83.2020.5.09.0084, Tribunal Pleno, julgado em 14/10/2024, teses definidas em 16/12/2024. Tese vinculante:
+IncJulgRREmbRep-277-83.2020.5.09.0084, Tribunal Pleno, julgado em 14/10/2024, teses definidas em 16/12/2024. Relator: Min. Breno Medeiros. Redator designado: Min. Alberto Bastos Balazeiro. Não atribua este tema ao Min. Aloysio Corrêa da Veiga — ele é o relator do Tema 84, outro incidente. Não chame este tema de IRDR: é Incidente de Recursos de Revista Repetitivos (IRR). Tese vinculante:
 
 “(I) independentemente de pedido da parte, o magistrado trabalhista tem o poder-dever de conceder o benefício da justiça gratuita aos litigantes que perceberem salário igual ou inferior a 40% (quarenta por cento) do limite máximo dos benefícios do Regime Geral de Previdência Social, conforme evidenciado nos autos; (II) o pedido de gratuidade de justiça, formulado por aquele que perceber salário superior a 40% (quarenta por cento) do limite máximo dos benefícios do Regime Geral de Previdência Social, pode ser instruído por documento particular firmado pelo interessado, nos termos da Lei 7.115/83, sob as penas do art. 299 do Código Penal; (III) havendo impugnação à pretensão pela parte contrária, acompanhada de prova, o juiz abrirá vista ao requerente do pedido de gratuidade de justiça, decidindo, após, o incidente (CPC, art. 99, § 2º).”
 

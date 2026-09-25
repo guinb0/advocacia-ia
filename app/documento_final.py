@@ -27,7 +27,15 @@ from .recuperacao_por_secao import paragrafos
 _TITULO_ROMANO = re.compile(r"^\s*(?:#{1,3}\s*)?(?:\*\*)?([IVXLC]+)\s*[.\-–—)]\s+(\S.{2,90}?)(?:\*\*)?\s*$")
 _SUBTITULO_ROMANO = re.compile(r"^(\s*(?:#{2,6}\s*)?(?:\*\*)?)([IVXLC]+)\.(\d+)(\.?\s+\S.*)$")
 _MARCADOR_ESTRUTURAL = re.compile(r"^\s*:::\s*(?:[\w-]+)?\s*$", re.MULTILINE)
-_FECHAMENTO = re.compile(r"(?im)^\s*termos\s+em\s+que\s*,?\s*\n\s*pede\s+deferimento\s*\.?\s*$")
+# «Termos em que,\nPede deferimento» e «Nestes termos, pede deferimento» na mesma
+# linha. As duas fórmulas são fechamento; a v16 deixava a primeira antes do
+# valor da causa porque o padrão antigo só via a quebra de linha.
+_FECHAMENTO = re.compile(
+    r"(?im)^[ \t]*(?:nestes\s+termos|termos\s+em\s+que)\s*,?\s*(?:\n[ \t]*)?pede\s+deferimento\s*\.?\s*$"
+)
+_CNPJ = re.compile(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b")
+_CIDADE_UF = re.compile(r"\b([A-Za-zÀ-ÿ][\wÀ-ÿ'-]{3,})\s*([-/–—])\s*([A-Z]{2})\b")
+_IRDR_DO_TST = re.compile(r"incidente de resolu[cç][aã]o de demandas repetitivas(?:\s*\(\s*IRDR\s*\))?", re.IGNORECASE)
 _DA_SE_CAUSA = re.compile(
     r"(?im)^\s*D[aá]-se\s+[àa]\s+causa[^\n]*\n?",
 )
@@ -340,7 +348,77 @@ def aplicar_qualificacao_canonica(
     return novas, rel
 
 
-def higienizar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _corrigir_instituto_irr(texto: str) -> str:
+    """Tema do TST é IRR, não IRDR. IRDR de tribunal regional, sem «Tema» do TST, fica."""
+    def trocar(m: re.Match[str]) -> str:
+        janela = texto[max(0, m.start() - 220): m.end() + 220]
+        if re.search(r"\bTST\b|Tema\s*n", janela, re.IGNORECASE):
+            return "Incidente de Recursos de Revista Repetitivos (IRR)"
+        return m.group(0)
+
+    return _IRDR_DO_TST.sub(trocar, texto)
+
+
+def _corrigir_institutos(secoes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    novas, n = [], 0
+    for s in secoes:
+        texto = _corrigir_instituto_irr(str(s.get("content") or ""))
+        if texto != s.get("content"):
+            n += 1
+        novas.append({**s, "content": texto})
+    return novas, n
+
+
+def _dado_alheio_na_abertura(
+    secoes: list[dict[str, Any]], partes: dict[str, Any], texto_dos_autos: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """CNPJ e cidade da abertura que não estão no OCR deste caso não podem ficar.
+
+    O modelo copia qualificação de outra petição (filial de Tucuruí, outro CNPJ).
+    Se o CASE_FACTS tem o dado dos documentos, ele entra no lugar. Sem dado
+    canônico, o trecho alheio permanece para o linter barrar — não se inventa cidade.
+    """
+    if not secoes or not str(texto_dos_autos or "").strip():
+        return secoes, 0
+    novas = [dict(s) for s in secoes]
+    texto = str(novas[0].get("content") or "")
+    original = texto
+    autos_norm = pp.norm(texto_dos_autos)
+    autos_dig = pp._so_digitos(texto_dos_autos)  # noqa: SLF001
+    reu = partes.get("reu") or {}
+    autor = partes.get("autor") or {}
+    cnpj = str(reu.get("cnpj") or "").strip()
+    endereco_reu = str(reu.get("endereco") or "").strip()
+    endereco_autor = str(autor.get("endereco") or "").strip()
+
+    def cnpj_sub(m: re.Match[str]) -> str:
+        if pp._so_digitos(m.group(0)) in autos_dig:  # noqa: SLF001
+            return m.group(0)
+        return cnpj or m.group(0)
+
+    if cnpj:
+        texto = _CNPJ.sub(cnpj_sub, texto)
+
+    def cidade_sub(m: re.Match[str]) -> str:
+        if pp.norm(m.group(1)) in autos_norm:
+            return m.group(0)
+        janela = texto[max(0, m.start() - 90): m.end() + 40]
+        if endereco_reu and re.search(r"sede|reclamad|cnpj", janela, re.IGNORECASE):
+            return endereco_reu
+        if endereco_autor and re.search(r"resident|domicil", janela, re.IGNORECASE):
+            return endereco_autor
+        return m.group(0)
+
+    texto = _CIDADE_UF.sub(cidade_sub, texto)
+    if texto != original:
+        novas[0]["content"] = texto
+        return novas, 1
+    return novas, 0
+
+
+def higienizar(
+    secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], *, texto_dos_autos: str = "",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rel: dict[str, Any] = {}
     secoes = peticao_migracao_legado.migrar_secoes(secoes)
     secoes, metadata = _cortar_metadata(secoes, params)
@@ -358,6 +436,10 @@ def higienizar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict
         rel["aberturas_duplicadas_removidas"] = n_ab
         secoes, rel_quali = aplicar_qualificacao_canonica(secoes, plano["partes"])
         rel["qualificacao_canonica"] = rel_quali
+        secoes, n_alheio = _dado_alheio_na_abertura(secoes, plano["partes"], texto_dos_autos)
+        rel["dados_de_outro_caso_substituidos"] = n_alheio
+    secoes, n_irr = _corrigir_institutos(secoes)
+    rel["irdr_corrigido_para_irr"] = n_irr
     secoes = [s for s in secoes if str(s.get("content") or "").strip() or str(s.get("label") or "").strip() == ""] or secoes
     secoes = _renumerar_capitulos(secoes)
     return secoes, rel

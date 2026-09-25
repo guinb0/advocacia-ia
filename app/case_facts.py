@@ -89,7 +89,15 @@ def _candidatos(fontes: list[dict[str, Any]], proposta: dict[str, Any] | None, c
     def classe_de(f: dict[str, Any]) -> str:
         return f.get("classe") or ("entrevista" if f["tipo"] == "entrevista" else _classe_do_documento(f.get("nome", ""), f.get("tipo_documento", ""), oficiais))
 
+    textos_docs = "\n".join(f.get("texto") or "" for f in fontes if f.get("tipo") == "documento")
+    blob_norm = pp.norm(textos_docs)
+    blob_dig = pp._so_digitos(textos_docs)  # noqa: SLF001
     for campo, valor in cadastro.items():
+        # Endereço, CEP e CNPJ do cadastro só entram se um documento DESTE caso
+        # os trouxer. Cadastro copiado de outro processo (Tucuruí, outra filial)
+        # não é fonte.
+        if campo in ("endereco", "cep", "cnpj") and blob_norm and not pp._valor_consta(campo, str(valor), blob_norm, blob_dig):  # noqa: SLF001
+            continue
         add("autor", campo, valor, "cadastro", "cadastro")
     for f in fontes:
         texto, nome = f.get("texto", ""), f.get("nome", f["tipo"])

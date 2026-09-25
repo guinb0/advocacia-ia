@@ -10,6 +10,8 @@ Tribunal Pleno, Rel. Min. Alexandre de Moraes, julgado em 12/03/2020. Tese:
 
 ## TST — Tema nº 84 da Tabela de IRR (RR-1000403-39.2023.5.02.0462)
 
+Instituto: Incidente de Recursos de Revista Repetitivos (IRR). Nunca «incidente de resolução de demandas repetitivas» nem IRDR — esse é outro instituto. O relator abaixo é do Tema 84, não do Tema 21.
+
 Tribunal Pleno, Rel. Min. Aloysio Silva Corrêa da Veiga, julgado em 24/03/2025. Tese:
 
 “Em caso de roubo sofrido por carteiro (agente postal) durante o trabalho, é objetiva a responsabilidade civil do empregador pela reparação do dano moral, uma vez que a atividade de entrega de correspondências e mercadorias envolve risco diferenciado em relação aos trabalhadores em geral.”
