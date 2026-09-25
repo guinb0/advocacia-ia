@@ -639,7 +639,7 @@ def registrar_solicitacao_peticao(
             "INSERT INTO solicitacoes_peticao "
             "(id, caso_id, solicitante_id, solicitante_nome, origem, status, solicitada_em, "
             "etapa, passo, passos_totais) "
-            "VALUES (?, ?, ?, ?, ?, 'requested', ?, ?, 0, 8)",
+            "VALUES (?, ?, ?, ?, ?, 'requested', ?, ?, 0, 100)",
             (
                 identificador,
                 caso_id,
@@ -654,7 +654,7 @@ def registrar_solicitacao_peticao(
 
 
 def atualizar_progresso_solicitacao(
-    identificador: str, etapa: str, passo: int, passos_totais: int = 8
+    identificador: str, etapa: str, passo: int, passos_totais: int = 100
 ) -> None:
     """Atualiza o rótulo que a tela mostra enquanto a peça ainda não terminou."""
     with conectar() as con:
@@ -667,11 +667,11 @@ def atualizar_progresso_solicitacao(
 def concluir_solicitacao_peticao(identificador: str, erro: str = "") -> None:
     status = "failed" if erro else "completed"
     etapa = "Não foi possível concluir." if erro else "Petição pronta."
-    passo = 0 if erro else 8
+    passo = 0 if erro else 100
     with conectar() as con:
         con.execute(
             "UPDATE solicitacoes_peticao SET status = ?, concluida_em = ?, erro = ?, "
-            "etapa = ?, passo = ?, passos_totais = 8 WHERE id = ?",
+            "etapa = ?, passo = ?, passos_totais = 100 WHERE id = ?",
             (status, agora(), erro[:1000] or None, etapa, passo, identificador),
         )
 

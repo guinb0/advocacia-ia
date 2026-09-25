@@ -196,7 +196,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     setErro(null);
     setConcluido(null);
     setOcupado(true);
-    setAndamento({ etapa: "Preparando a geração…", passo: 0, total: 8 });
+    setAndamento({ etapa: "Preparando a geração…", passo: 0, total: 100 });
     try {
       // 202 imediato: a redação (até ~6 min com dezenas de anexos) não cabe no
       // timeout do Traefik. Sem o polling a tela via "Erro 502" com a peça ainda
@@ -208,7 +208,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             setAndamento({
               etapa: p.etapa || "Redigindo a petição…",
               passo: p.passo ?? p.completed_steps ?? 0,
-              total: p.passos_totais ?? 8,
+              total: p.passos_totais ?? 100,
             });
           },
         });
@@ -258,7 +258,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       concluido: concluidoGerar,
       etapa: andamento?.etapa ?? null,
       passo: andamento?.passo ?? 0,
-      passosTotais: andamento?.total ?? 8,
+      passosTotais: andamento?.total ?? 100,
     });
   }, [
     onControlesGeracao,
@@ -601,7 +601,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               textoProcessando={andamento?.etapa || "Redigindo a petição…"}
               dica={
                 ocupado && andamento
-                  ? `Etapa ${Math.min(andamento.passo, andamento.total)} de ${andamento.total}`
+                  ? `${Math.min(100, Math.round((Math.max(andamento.passo, 0) / andamento.total) * 100))}% concluído`
                   : "Cruzando entrevista e documentos e redigindo a petição"
               }
               aguardando={salvando || revisando}
@@ -621,7 +621,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               <div className="flex items-baseline justify-between gap-3 text-sm">
                 <p className="m-0 font-medium text-tinta">{andamento.etapa}</p>
                 <p className="m-0 shrink-0 tabular-nums text-tinta-3">
-                  {Math.min(andamento.passo, andamento.total)}/{andamento.total}
+                  {Math.min(100, Math.round((Math.max(andamento.passo, 0) / andamento.total) * 100))}%
                 </p>
               </div>
               <div
@@ -643,8 +643,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                 />
               </div>
               <p className="m-0 text-xs text-tinta-3">
-                A peça está sendo escrita no servidor — pode levar alguns minutos com muitos
-                documentos. Não feche esta página.
+                A redação e a conferência são as fases mais demoradas. O percentual só avança
+                quando uma fase realmente termina; pode manter esta página aberta.
               </p>
             </div>
           ) : null}

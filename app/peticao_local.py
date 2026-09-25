@@ -515,7 +515,10 @@ _SOLICITACAO_EM_CURSO: contextvars.ContextVar[str | None] = contextvars.ContextV
     "solicitacao_peticao", default=None
 )
 
-PASSOS_GERACAO = 8
+# Progresso ponderado, e não contagem de funções. A chamada ao redator e a
+# conferência posterior são as fases que de fato consomem tempo; mostrar 7/8
+# enquanto elas ainda trabalham fazia a barra prometer uma conclusão iminente.
+PASSOS_GERACAO = 100
 
 
 def marcar_solicitacao_em_curso(solicitacao_id: str | None) -> contextvars.Token[str | None]:
@@ -2433,7 +2436,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     diag: dict[str, Any] = {"recuperacao": {}, "fallbacks": []}
     _DIAG.set(diag)
     _INICIO_DA_GERACAO.set(time.monotonic())
-    avancar_etapa("Lendo entrevista e documentos…", 1)
+    avancar_etapa("Lendo entrevista e documentos…", 5)
     regras_aplicadas = peticao_aprendizado.regras_para_contexto(
         categoria=_categoria_do_caso(caso_id)
     ) or []
@@ -2445,7 +2448,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
     contexto = _montar_contexto(caso_id, texto_entrevista)
-    avancar_etapa("Montando o resumo jurídico do caso…", 2)
+    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     try:
         brief = case_brief.montar(caso_id)
     except Exception as erro:
@@ -2453,7 +2456,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         brief = None
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
     # O plano (teses + fatos + provas) vem ANTES da recuperação: é dele que saem as consultas.
-    avancar_etapa("Planejando teses, fatos e provas…", 3)
+    avancar_etapa("Planejando teses, fatos e provas…", 18)
     plano = _outline_juridico(contexto, caso_id)
     outline = _outline_para_redigir(plano)
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
@@ -2477,7 +2480,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
-    avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 4)
+    avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 30)
     uf_jurisprudencia = _uf_jurisprudencia_do_caso(caso_id, contexto)
     precedentes = _precedentes_para_redigir(contexto, consultas, uf=uf_jurisprudencia)
     legislacao = _legislacao_para_redigir(contexto, consultas)
@@ -2655,7 +2658,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # Sem orientação do escritório a instrução volta intocada — e a peça sai do
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
-    avancar_etapa("Redigindo a petição (pode levar alguns minutos)…", 5)
+    avancar_etapa("Redigindo a petição — esta é a etapa mais demorada…", 35)
     saida = _llm_json(
         instrucao,
         contexto,
@@ -2664,7 +2667,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
         # respondeu" — que é pior, porque perde o trabalho inteiro.
         timeout=360.0,
     )
-    avancar_etapa("Organizando as seções da minuta…", 6)
+    avancar_etapa("Organizando as seções da minuta…", 68)
     _secoes_previas = _normalizar_secoes(saida.get("secoes") or [], plano_est["contrato_secoes"])
     _itens = diag.get("proveniencia") or []
     recuperacao_por_tese.medir_influencia(_itens, _secoes_previas)
@@ -2720,7 +2723,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
     # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
     # cliente, súmula de memória). Ver `conferencia_peticao`.
-    avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 7)
+    avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 74)
     secoes, aprofundamento = _aprofundar_pela_referencia(
         caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
         assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
@@ -2728,12 +2731,12 @@ Cada content deve conter parágrafos separados por linha em branco."""
     )
     textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []))]
     # A seção "Dos pedidos" é RENDERIZADA do plano (fonte única), não pedida de novo ao modelo.
-    avancar_etapa("Consolidando os pedidos a partir do plano…", 7)
+    avancar_etapa("Consolidando os pedidos a partir do plano…", 80)
     secoes, rel_pedidos = _pedidos_do_plano_na_secao(caso_id, secoes, plano_est)
     aprofundamento["pedidos_do_plano"] = rel_pedidos
     pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
     pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
-    avancar_etapa("Conferindo a peça contra os autos…", 7)
+    avancar_etapa("Conferindo a peça contra os autos…", 85)
     # O material citável NÃO inclui o acervo: peça de outro cliente não é fonte de fato do caso.
     material_sem_acervo = texto_do_caso + precedentes + legislacao + outline
     secoes, violacoes, conferencia = _conferir_contra_os_autos(
@@ -2746,7 +2749,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
     # PETITION LINTER: qualificação, pedidos únicos, isolamento entre teses e nada do acervo como fato,
     # com correção automática controlada e nova validação — ANTES de a peça ir para o DOCX.
-    avancar_etapa("Validando a peça (linter)…", 7)
+    avancar_etapa("Validando a peça (linter)…", 91)
     secoes, achados_linter, rel_linter = _lintar_e_corrigir(
         caso_id, secoes, plano_est,
         # fonte PERMITIDA: caso + julgados/lei recuperados + skill (precedentes vinculantes); o acervo fica de fora
@@ -2765,7 +2768,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # peça deixou de fora algo que a leitura dos documentos tinha encontrado,
     # em vez de a omissão passar batido sem ninguém notar.
     # ===== FINAL_DOCUMENT_VALIDATOR — ÚLTIMA etapa que pode mudar o texto. Roda sobre a representação que o DOCX imprime.
-    avancar_etapa("Validação final do documento…", 8)
+    avancar_etapa("Validação final do documento…", 96)
     secoes, rel_final, achados_finais = _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso)
     violacoes = [*[v for v in violacoes if not v.bloqueia], *achados_finais]
     pipeline["documento_final"] = rel_final
@@ -2797,7 +2800,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # a petição anterior continua inteira no lugar e é só tentar de novo.
     if anterior:
         armazenamento.registrar_versao_peticao(caso_id, anterior)
-    avancar_etapa("Gravando a minuta no dossiê…", 8)
+    avancar_etapa("Gravando a minuta no dossiê…", 99)
     dados = {
         "id": ID_LOCAL,
         "generation_id": generation_id,
