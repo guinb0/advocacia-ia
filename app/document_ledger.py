@@ -57,6 +57,13 @@ def _mesmo_documento(a: dict[str, Any], b: dict[str, Any]) -> bool:
 def montar(documentos: list[dict[str, Any]], tipos: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """Ledger canônico: um item por documento LÓGICO, na ordem do primeiro upload de cada grupo."""
     tipos = tipos or {}
+    # Checklists, triagens e relatórios do escritório orientam a equipe; não são
+    # prova do cliente nem anexo protocolável. Excluí-los antes da numeração
+    # impede que ganhem um "Documento NN" e contaminem fatos ou pedidos.
+    internos = re.compile(r"checklist|check list|triagem|relatório\s+interno|anota[cç][ãa]o\s+interna", re.IGNORECASE)
+    documentos = [d for d in documentos if not internos.search(
+        f"{d.get('arquivo', '')} {tipos.get(d.get('arquivo', ''), '')}"
+    )]
     grupos: list[list[dict[str, Any]]] = []
     for d in documentos:
         for g in grupos:

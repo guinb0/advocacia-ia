@@ -1,4 +1,4 @@
-from app import contrato_secoes, peticao_skill_arquivos, petition_linter
+from app import contrato_secoes, document_ledger, peticao_skill_arquivos, petition_linter
 
 
 def _sec(code, text="texto", label=""):
@@ -27,6 +27,14 @@ def test_modelo_assalto_nao_reproduz_regras_e_precedentes_errados():
     assert "salário **líquido**" not in modelo
     assert "piso mínimo de R$ 30.000,00" not in modelo.lower()
     assert "Não há lista de precedentes pronta para copiar" in modelo
+
+
+def test_checklist_interno_nao_recebe_numero_de_documento_protocolavel():
+    ledger = document_ledger.montar([
+        {"arquivo": "Checklist de documentação.pdf", "texto": "lista interna"},
+        {"arquivo": "Contracheque 08-2026.pdf", "texto": "remuneração do empregado"},
+    ])
+    assert [d["canonical_file"] for d in ledger] == ["Contracheque 08-2026.pdf"]
 
 
 def test_capitulo_inventado_e_ordem_errada_retidos():
