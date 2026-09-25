@@ -484,7 +484,30 @@ def _regra_secao_obrigatoria(regra: dict[str, Any], secoes: dict[str, str]) -> l
     ]
 
 
+def _regra_citacao_literal_sem_fonte(regra: dict[str, Any], secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
+    """Trecho ENTRE ASPAS que não existe, literalmente, no material recebido.
+
+    Ementa, tese e depoimento transcritos são o ponto onde o modelo mais inventa. Cada trecho
+    (separado nos cortes "[...]") de pelo menos `minimo_chars` caracteres tem de aparecer,
+    normalizado, no material (documentos, entrevista, julgados, legislação, skill).
+    """
+    padrao = _re(regra["regex"])
+    minimo = int(regra.get("minimo_chars", 40))
+    saida: list[Violacao] = []
+    for codigo in _secoes_da_regra(regra, secoes):
+        texto = secoes[codigo]
+        for m in padrao.finditer(texto):
+            citado = m.group(1)
+            for pedaco in re.split(r"\[\s*(?:\.\.\.|…)\s*\]|\.\.\.|…", citado):
+                alvo = normalizar(re.sub(r"\*+", "", pedaco)).strip(" .,;:")
+                if len(alvo) >= minimo and alvo not in fontes._tudo:  # noqa: SLF001 - mesmo módulo
+                    saida.append(_violacao(regra, codigo, _trecho(texto, m.start(), m.end(), 20)))
+                    break
+    return saida
+
+
 _EXECUTORES = {
+    "citacao_literal_sem_fonte": _regra_citacao_literal_sem_fonte,
     "tamanho_minimo": lambda r, s, f: _regra_tamanho_minimo(r, s),
     "secao_obrigatoria": lambda r, s, f: _regra_secao_obrigatoria(r, s),
     "item": lambda r, s, f: _regra_item(r, s),

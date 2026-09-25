@@ -223,8 +223,8 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    },
    "codigo": "CITACAO_NAO_VERIFICADA",
    "mensagem": "«{citacao}» foi citada de memória: não está no material do acervo recebido nesta geração, e o acervo ainda não tem catálogo de súmulas para conferir.",
-   "correcao": "Mantenha só se o advogado conferir o número e o texto na fonte oficial.",
-   "bloqueia": false
+   "correcao": "Substitua por precedente que esteja NO MATERIAL recebido (blocos JULGADOS, LEGISLAÇÃO ou a skill) e explique por que se aplica; se não houver, REMOVA a citação e mantenha só a norma. Nunca deixe marcador no texto.",
+   "bloqueia": true
   },
   {
    "id": "secoes_obrigatorias",
@@ -264,6 +264,27 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    "mensagem": "A fundamentação jurídica está curta demais.",
    "correcao": "Desenvolva cada tese: norma, fato, prova, subsunção e consequência.",
    "bloqueia": false
+  },
+  {
+   "id": "placeholders_proibidos",
+   "tipo": "padrao_proibido",
+   "secoes": "*",
+   "regex": "\\[(?:PESQUISAR|CONFERIR|INFORMA[ÇC][ÃA]O A CONFIRMAR)[^\\]]*\\]",
+   "codigo": "PLACEHOLDER_NO_TEXTO",
+   "mensagem": "Marcador de pesquisa/confirmação no corpo da peça: o texto final não pode conter marcadores.",
+   "correcao": "Resolva com o material recebido (julgados, legislação, skill, documentos). Se não houver fonte, remova a afirmação ou reescreva sem citar precedente. Dado do caso ausente vira [PENDENTE: <dado>] curto, uma vez, apenas se a skill o permitir.",
+   "bloqueia": true
+  },
+  {
+   "id": "citacao_literal_sem_fonte",
+   "tipo": "citacao_literal_sem_fonte",
+   "secoes": "*",
+   "regex": "[“\"]([^”\"\n]{50,900})[”\"]",
+   "minimo_chars": 40,
+   "codigo": "CITACAO_LITERAL_SEM_FONTE",
+   "mensagem": "Trecho entre aspas que não consta literalmente do material recebido (documentos, entrevista, julgados, legislação ou skill).",
+   "correcao": "Se o trecho é de julgado, lei ou documento, copie-o EXATAMENTE do material; se não estiver lá, tire as aspas e parafraseie o que o material realmente diz, ou remova a citação. Nunca aspas em texto que você não leu no material.",
+   "bloqueia": true
   }
  ]
 }

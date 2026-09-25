@@ -236,7 +236,7 @@ texto = "nos termos da Súmula 378, II, do TST. A Súmula 6, VI, do TST autoriza
 vs = conferir([{"code": "LEGAL_GROUNDS", "content": texto}], fontes())
 nao_verificadas = [v for v in vs if v.codigo == "CITACAO_NAO_VERIFICADA"]
 checar(len(nao_verificadas) == 2, "as duas súmulas sem fonte no material são apontadas")
-checar(all(not v.bloqueia for v in nao_verificadas), "como aviso — sem catálogo, ninguém pode dizer que estão erradas")
+checar(all(v.bloqueia for v in nao_verificadas), "citação sem fonte no material BLOQUEIA (portão de qualidade): resolver ou remover, nunca carimbar")
 marcadas = C.marcar_citacoes_nao_verificadas([{"code": "LEGAL_GROUNDS", "content": texto}], vs)[0]["content"]
 checar(marcadas.count(C.MARCA_NAO_VERIFICADA) == 2, "e cada uma sai carimbada NA PEÇA (o .docx leva o aviso)")
 checar("Súmula 378, II, do TST " + C.MARCA_NAO_VERIFICADA in marcadas, "o carimbo vem logo depois da citação completa")
@@ -273,13 +273,15 @@ corrigida = [{"code": "PRELIMINARY", "content": "[PENDENTE: juntar declaração 
 pedidos: list[str] = []
 
 
-def revisor_que_corrige(caso_id, secoes, critica):
+def revisor_que_corrige(caso_id, secao, critica, contexto=""):
+    """Reescrita POR SEÇÃO: devolve o texto corrigido da seção, se houver."""
     pedidos.append(critica)
-    return corrigida, {"alterou": True}
+    achada = next((c for c in corrigida if c["code"] == secao["code"]), None)
+    return achada["content"] if achada else None
 
 
 peticao_local._fontes_da_conferencia = lambda caso_id, **k: fontes()  # type: ignore[assignment]
-peticao_local._revisar_secoes_via_llm = revisor_que_corrige  # type: ignore[assignment]
+peticao_local._reescrever_secao = revisor_que_corrige  # type: ignore[assignment]
 secoes, restantes, registro = peticao_local._conferir_contra_os_autos("caso-1", original)
 checar(secoes == corrigida and not [v for v in restantes if v.bloqueia], "violação corrigida pelo revisor não retém a peça")
 checar(registro["violacoes_iniciais"] and registro["rodada_de_correcao"] and not registro["violacoes_restantes"],
@@ -288,22 +290,22 @@ checar("Documento 08 — atestado.jpg" in pedidos[0] and "Documento 09" in pedid
        "a crítica ao revisor diz o defeito E lista os únicos documentos que existem")
 
 
-def revisor_fora_do_ar(caso_id, secoes, critica):
-    raise peticao_local.ErroPeticao("O modelo não respondeu — tente de novo.")
+def revisor_fora_do_ar(caso_id, secao, critica, contexto=""):
+    return None  # `_reescrever_secao` absorve a falha do modelo e devolve None
 
 
-peticao_local._revisar_secoes_via_llm = revisor_fora_do_ar  # type: ignore[assignment]
+peticao_local._reescrever_secao = revisor_fora_do_ar  # type: ignore[assignment]
 secoes, restantes, registro = peticao_local._conferir_contra_os_autos("caso-1", original)
 checar(secoes == original and registro["violacoes_restantes"], "revisor fora do ar: a peça sai como veio, COM as violações — nunca em silêncio")
 
 duas = [original[0], {"code": "FACTS", "content": "O autor foi admitido em 03 de fevereiro de 2019."}]
-peticao_local._revisar_secoes_via_llm = revisor_que_corrige  # devolve SÓ a PRELIMINARY  # type: ignore[assignment]
+peticao_local._reescrever_secao = revisor_que_corrige  # devolve SÓ a PRELIMINARY  # type: ignore[assignment]
 secoes, _, _ = peticao_local._conferir_contra_os_autos("caso-1", duas)
 checar([s["code"] for s in secoes] == ["PRELIMINARY", "FACTS"] and secoes[1] == duas[1],
        "seção que o revisor não devolveu continua na peça (a correção não derruba seção)")
 
 pedidos.clear()
-peticao_local._revisar_secoes_via_llm = revisor_que_corrige  # type: ignore[assignment]
+peticao_local._reescrever_secao = revisor_que_corrige  # type: ignore[assignment]
 peticao_local._conferir_contra_os_autos("caso-1", original, corrigir=False)
 checar(not pedidos, "edição do advogado (corrigir=False) não é reescrita por cima")
 

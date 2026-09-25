@@ -30,6 +30,7 @@ from . import (
     peticao_aprendizado,
     peticao_criticas,
     peticao_migracao_legado,
+    recuperacao_por_tese,
     peticao_skill_arquivos,
     peticao_skills,
     rag,
@@ -106,6 +107,14 @@ def pureza_da_skill(nome_categoria: str = "", codigo_categoria: str = "", texto_
             *[f"skill: references/{a}" for a in resumo["arquivos"]],
         ],
     }
+
+
+def _registrar_proveniencia(provs: list[Any], textos: list[str]) -> None:
+    """Guarda, por item recuperado, o registro e o texto enviado (para medir influência depois)."""
+    corrente = _DIAG.get()
+    if corrente is None:
+        return
+    corrente.setdefault("proveniencia", []).extend(zip(provs, textos))
 
 
 def _erro_curto(erro: BaseException) -> str:
@@ -940,7 +949,8 @@ def _normalizar_secoes_da_revisao(brutas: list[dict[str, Any]]) -> list[dict[str
         usados.add(codigo)
         resultado.append({
             "code": codigo,
-            "label": str(item.get("label") or codigo.replace("_", " ").title()).strip(),
+            # Sem título dado pelo redator = sem título (a skill decide se a seção tem um).
+            "label": str(item.get("label") or "").strip(),
             "content": conteudo,
             "written_by": "agent",
             "supporting_fact_ids": [],
@@ -1155,7 +1165,7 @@ Cada content em parágrafos separados por linha em branco.""",
     return secoes, [str(p) for p in (saida.get("pendencias") or []) if str(p).strip()]
 
 
-def _precedentes_para_redigir(contexto: str) -> str:
+def _precedentes_para_redigir(contexto: str, consultas: list[dict[str, str]] | None = None) -> str:
     """Julgados semelhantes ANTES de redigir, para a IA poder citá-los.
 
     A jurimetria já existia, mas rodava depois (`_analisar_jurimetria_da_minuta`,
@@ -1168,10 +1178,17 @@ def _precedentes_para_redigir(contexto: str) -> str:
 
     Falha não interrompe a geração: sem base, a peça sai como saía antes.
     """
+    erros_tese: list[str] = []
     try:
-        similares, _jurisdicao, _uf = jurimetria_caso.buscar_focada(
-            contexto[:12_000], texto_para_uf=contexto
-        )
+        if consultas:
+            similares, provs, erros_tese = recuperacao_por_tese.precedentes(consultas, contexto)
+            if not similares and erros_tese:
+                raise RuntimeError("; ".join(erros_tese[:3]))
+            _registrar_proveniencia(provs, [t.texto[:1800] for t in similares])
+        else:
+            similares, _jurisdicao, _uf = jurimetria_caso.buscar_focada(
+                contexto[:12_000], texto_para_uf=contexto
+            )
     except Exception as erro:
         log.warning("petição local: precedentes indisponíveis na redação: %s", erro)
         _diag("precedentes", ok=False, n=0, erro=_erro_curto(erro))
@@ -1186,11 +1203,15 @@ def _precedentes_para_redigir(contexto: str) -> str:
     # justamente o que o modelo menos aproveita.
     linhas = ["\n\n=== JULGADOS SEMELHANTES (use no DO DIREITO) ==="]
     usados = list(similares[:18])
-    _diag("precedentes", ok=True, n=len(usados))
+    _diag("precedentes", ok=True, n=len(usados), por_tese=bool(consultas),
+          consultas=len(consultas or []), erros_por_tese=erros_tese,
+          scores=[round(float(t.similaridade), 4) for t in usados])
     for indice, trecho in enumerate(usados, start=1):
         ref = trecho.referencia()
+        natureza = recuperacao_por_tese._natureza(trecho.metadados)  # noqa: SLF001 - mesmo pacote
         linhas.append(
             f"\n[J{indice}] processo={ref.get('processo') or ref.get('identificador')} "
+            f"natureza={natureza} "
             f"resultado={ref.get('resultado') or 'não informado'} "
             f"órgão={ref.get('vara') or 'não informado'}\n{trecho.texto[:1800]}"
         )
@@ -1207,7 +1228,7 @@ def _precedentes_para_redigir(contexto: str) -> str:
     return "\n".join(linhas)
 
 
-def _legislacao_para_redigir(contexto: str) -> str:
+def _legislacao_para_redigir(contexto: str, consultas: list[dict[str, str]] | None = None) -> str:
     """O texto legal oficial do acervo, ANTES de redigir.
 
     Mesmo buraco que `_precedentes_para_redigir` fechou para os julgados, e pelo
@@ -1225,7 +1246,13 @@ def _legislacao_para_redigir(contexto: str) -> str:
         # Mais de um núcleo jurídico costuma coexistir na mesma inicial
         # (competência, mérito, prova, consectários). Dez trechos favoreciam a
         # primeira tese e deixavam as demais com fundamentação de memória.
-        trechos = rag.buscar_legislacao(contexto[:12_000], limite=14)
+        if consultas:
+            trechos, provs, erros_tese = recuperacao_por_tese.legislacao(consultas)
+            if not trechos and erros_tese:
+                raise RuntimeError("; ".join(erros_tese[:3]))
+            _registrar_proveniencia(provs, [t.texto[:1500] for t in trechos])
+        else:
+            trechos = rag.buscar_legislacao(contexto[:12_000], limite=14)
     except Exception as erro:
         log.warning("petição local: legislação indisponível na redação: %s", erro)
         _diag("legislacao", ok=False, n=0, erro=_erro_curto(erro))
@@ -1233,7 +1260,8 @@ def _legislacao_para_redigir(contexto: str) -> str:
     if not trechos:
         _diag("legislacao", ok=True, n=0)
         return ""
-    _diag("legislacao", ok=True, n=len(trechos))
+    _diag("legislacao", ok=True, n=len(trechos), por_tese=bool(consultas),
+          scores=[round(float(t.similaridade), 4) for t in trechos])
     linhas = ["\n\n=== LEGISLAÇÃO DO ACERVO (use no DO DIREITO) ==="]
     for indice, trecho in enumerate(trechos, start=1):
         titulo = trecho.titulo or trecho.identificador or "lei"
@@ -1253,7 +1281,8 @@ def _legislacao_para_redigir(contexto: str) -> str:
 
 
 def _padroes_conteudisticos_para_redigir(
-    contexto: str, *, categoria_nome: str = "", categoria_codigo: str = ""
+    contexto: str, *, categoria_nome: str = "", categoria_codigo: str = "",
+    consultas: list[dict[str, str]] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Traz técnica de peças do escritório para influenciar diretamente a minuta.
 
@@ -1271,9 +1300,15 @@ def _padroes_conteudisticos_para_redigir(
     similaridade, mesmo_assunto) — sem isso, saber quais das 700+ peças
     alimentaram uma geração específica exigia ler o log do servidor linha a linha.
     """
-    assunto = peticao_skill_arquivos.assunto_slug(categoria_nome, categoria_codigo, contexto[:20_000])
+    assunto = peticao_skill_arquivos.assuntos_relacionados(categoria_nome, categoria_codigo, contexto[:20_000])
     try:
-        trechos = rag.buscar_pecas_conteudisticas(contexto[:12_000], limite=8, assunto=assunto)
+        if consultas:
+            trechos, provs, erros_tese = recuperacao_por_tese.pecas(consultas, assunto)
+            if not trechos and erros_tese:
+                raise RuntimeError("; ".join(erros_tese[:3]))
+            _registrar_proveniencia(provs, [t["texto"][:1800] for t in trechos])
+        else:
+            trechos = rag.buscar_pecas_conteudisticas(contexto[:12_000], limite=8, assunto=assunto)
     except Exception as erro:
         log.warning("petição local: acervo de peças indisponível na redação: %s", erro)
         _diag("pecas", ok=False, n=0, assunto=assunto, erro=_erro_curto(erro))
@@ -1436,6 +1471,12 @@ def _fontes_da_conferencia(
         qualificacao = armazenamento.obter_qualificacao(caso_id) or {}
     except Exception:  # noqa: BLE001 — cadastro ausente só estreita as fontes
         qualificacao = {}
+    try:
+        nome_cat, cod_cat = _nome_e_codigo_da_categoria(caso_id)
+        # O que a SKILL traz (precedentes vinculantes, modelos) é fonte citável, como o acervo.
+        material = material + "\n" + peticao_skill_arquivos.carregar(nome_cat, cod_cat, _TEXTO_DO_CASO.get())
+    except Exception:  # noqa: BLE001 - sem a skill, só o material recebido conta
+        pass
     return conferencia_peticao.Fontes(
         anexos=anexos_do_caso(caso_id),
         numerados=[d["arquivo"] for d in documentos_ocr(caso_id)[:20]],
@@ -1498,28 +1539,37 @@ def _conferir_contra_os_autos(
     violacoes = conferencia_peticao.conferir(secoes, fontes)
     iniciais = [v.codigo for v in violacoes if v.bloqueia]
     corrigiu = False
-    if corrigir and iniciais:
-        try:
-            corrigidas, info = _revisar_secoes_via_llm(
-                caso_id, secoes, conferencia_peticao.instrucao_de_correcao(violacoes, fontes)
+    rodadas = 0
+    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 2:
+        rodadas += 1
+        # UMA seção por chamada: só as que têm violação são reescritas, e a falha de uma não
+        # desfaz a correção das outras (a reescrita da peça inteira em um JSON quebrava).
+        extra = _material_para_resolver_pesquisas(violacoes, secoes)
+        novas: list[dict[str, Any]] = []
+        mudou = False
+        for secao in secoes:
+            da_secao = [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
+            if not da_secao:
+                novas.append(secao)
+                continue
+            novo = _reescrever_secao(
+                caso_id, secao, conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra, material
             )
-            if info.get("alterou"):
-                # Só o CONTEÚDO das seções devolvidas muda. A revisão descarta seção
-                # vazia e pode renomear código; aqui a estrutura é a das oito seções
-                # da geração, e perder uma na correção seria trocar defeito por defeito.
-                por_codigo = {s["code"]: s["content"] for s in corrigidas}
-                secoes = [
-                    {**s, "content": por_codigo[s["code"]]} if s["code"] in por_codigo else s
-                    for s in secoes
-                ]
-                corrigiu = True
-                violacoes = conferencia_peticao.conferir(secoes, fontes)
-        except ErroPeticao:
-            log.warning("petição local: correção da conferência falhou (caso %s)", caso_id, exc_info=True)
-    secoes = conferencia_peticao.marcar_citacoes_nao_verificadas(secoes, violacoes)
+            if novo and novo != secao.get("content"):
+                novas.append({**secao, "content": novo})
+                mudou = True
+            else:
+                novas.append(secao)
+        if not mudou:
+            break
+        secoes, corrigiu = novas, True
+        violacoes = conferencia_peticao.conferir(secoes, fontes)
+    # NÃO se carimba mais "[CONFERIR: …]" no corpo: marcador no texto final é exatamente o que o
+    # portão de qualidade proíbe. O que sobrou de citação sem fonte fica nos achados bloqueantes.
     registro = {
         "violacoes_iniciais": iniciais,
         "rodada_de_correcao": corrigiu,
+        "rodadas_de_correcao": rodadas,
         "violacoes_restantes": [v.codigo for v in violacoes if v.bloqueia],
         "citacoes_nao_verificadas": sum(1 for v in violacoes if v.codigo == "CITACAO_NAO_VERIFICADA"),
     }
@@ -1528,9 +1578,93 @@ def _conferir_contra_os_autos(
     return secoes, violacoes, registro
 
 
+#: Marcador de "ponto sem fonte" que o modelo deixa no corpo.
+_RE_PONTO_SEM_FONTE = re.compile(r"\[(?:PESQUISAR|CONFERIR)[^\]]*\]", re.IGNORECASE)
+
+
+def _material_para_resolver_pesquisas(violacoes: list[Any], secoes: list[dict[str, Any]]) -> str:
+    """Julgados do acervo para cada `[PESQUISAR …]` que o modelo deixou — a pesquisa que faltou.
+
+    A consulta é o parágrafo que antecede o marcador (é ele que diz QUAL ponto precisa de
+    precedente). Vazio se não há marcador ou o acervo não responde; nesse caso a correção
+    manda remover a afirmação, nunca inventar.
+    """
+    consultas: list[dict[str, str]] = []
+    for secao in secoes:
+        texto = str(secao.get("content") or "")
+        for m in _RE_PONTO_SEM_FONTE.finditer(texto):
+            trecho = " ".join(texto[max(0, m.start() - 700) : m.start()].split())
+            if len(trecho) > 80:
+                consultas.append({"tese": trecho[-90:], "consulta": trecho[-600:]})
+    if not consultas:
+        return ""
+    try:
+        trechos, provs, _erros = recuperacao_por_tese.precedentes(consultas[:6], "", por_tese=3, total=8)
+    except Exception:  # noqa: BLE001 - sem acervo, a correção remove o ponto
+        return ""
+    if not trechos:
+        return "\n\nNenhum julgado do acervo respondeu a estes pontos: REMOVA a afirmação que dependia de precedente ou reescreva-a sem citar precedente. Não deixe marcador."
+    _registrar_proveniencia(provs, [t.texto[:1800] for t in trechos])
+    linhas = ["\n\nMATERIAL ADICIONAL — julgados REAIS do acervo para resolver os pontos marcados (cite só se alcançarem os fatos; explique por que; não invente número):"]
+    for i, t in enumerate(trechos, 1):
+        ref = t.referencia()
+        linhas.append(f"[R{i}] processo={ref.get('processo') or ref.get('identificador')} natureza={recuperacao_por_tese._natureza(t.metadados)}\n{t.texto[:1500]}")  # noqa: SLF001
+    linhas.append("Se nenhum servir, REMOVA a afirmação sem precedente. A peça final não pode conter marcador [PESQUISAR]/[CONFERIR].")
+    return "\n".join(linhas)
+
+
 #: Caracteres médios por palavra em português, contando o espaço — converte o
 #: tamanho em texto das peças do acervo em palavras.
 _CHARS_POR_PALAVRA = 6.2
+
+
+_INSTRUCAO_SECAO = """Você reescreve UMA seção de uma peça jurídica, EXECUTANDO a SKILL DO ESCRITÓRIO que
+acompanha esta instrução (estrutura, método de argumentação, formatação e regras de conteúdo).
+Devolva APENAS JSON: {"content": "<a seção inteira reescrita, com a mesma marcação de formatação>"}.
+Preserve o que já está correto; não mude pedidos, valores, datas, nomes nem números de documento.
+Não crie fato, valor, documento, norma ou julgado que o MATERIAL não traga. Sem marcadores
+[PESQUISAR]/[CONFERIR]: sem fonte para um ponto, reescreva sem citar precedente."""
+
+
+def _reescrever_secao(
+    caso_id: str, secao: dict[str, Any], orientacao: str, contexto: str = ""
+) -> str | None:
+    """Reescreve UMA seção (JSON pequeno) — falha de uma seção não perde as outras.
+
+    A passada anterior reescrevia a peça inteira num único JSON de dezenas de milhares de
+    caracteres; quando ele vinha malformado ou cortado, a passada inteira era descartada em
+    silêncio ("aprofundamento falhou") e a peça ficava rasa. Aqui cada seção tem a própria
+    chamada, com o material do caso e da pesquisa junto.
+    """
+    instrucao = _com_skill_do_escritorio(caso_id, _INSTRUCAO_SECAO, revisao=True)
+    entrada = (
+        f"MATERIAL DO CASO E DA PESQUISA:\n{contexto[:80_000]}\n\n"
+        f"SEÇÃO ATUAL ({secao.get('code')} — {secao.get('label') or 'sem título'}):\n"
+        f"{secao.get('content', '')}\n\nORIENTAÇÃO:\n{orientacao}"
+    )
+    try:
+        saida = _llm_json(instrucao, entrada, timeout=300.0)
+    except ErroPeticao:
+        log.warning("petição local: reescrita da seção %s falhou (caso %s)", secao.get("code"), caso_id, exc_info=True)
+        return None
+    novo = str(saida.get("content") or "").strip()
+    return novo or None
+
+
+#: Seções que não são argumentação: não se "aprofunda" endereçamento, fecho nem valor da causa.
+_SECOES_SEM_ARGUMENTO = {"HEADING", "CLOSING", "VALUE", "JURIMETRY"}
+
+_ORIENTACAO_DE_PROFUNDIDADE = (
+    "APROFUNDE esta seção — densidade argumentativa, não volume. Para CADA ponto ou tese, "
+    "escreva a cadeia completa: FATO CONCRETO do caso → PROVA (\"Documento NN\", com o trecho que "
+    "importa) → NORMA (identificada e explicada) → PRECEDENTE (só os dos blocos JULGADOS/LEGISLAÇÃO "
+    "e da skill; diga o órgão, o número, a razão de decidir e POR QUE alcança estes fatos; distinga "
+    "vinculante de persuasivo — sentença de 1º grau só indica como a região decide) → APLICAÇÃO AO CASO "
+    "→ CONCLUSÃO/PEDIDO. Aproveite TODOS os fatos e provas pertinentes listados abaixo que a seção ainda "
+    "não usa (valores de contracheque, funções, datas, o que a própria reclamada registrou). "
+    "Elimine parágrafo que poderia estar em qualquer processo: cada parágrafo tem de conter fato, prova, "
+    "norma ou precedente ESPECÍFICOS deste caso."
+)
 
 
 def _aprofundar_pela_referencia(
@@ -1538,57 +1672,54 @@ def _aprofundar_pela_referencia(
     secoes: list[dict[str, Any]],
     brief: dict[str, Any] | None,
     referencias: list[dict[str, Any]],
+    *,
+    contexto: str = "",
+    plano: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Se a peça saiu muito menor que as iniciais do acervo do mesmo assunto, aprofunda.
+    """Aprofunda a argumentação SEÇÃO A SEÇÃO, com o material recuperado por tese.
 
-    A meta NÃO é um número fixo no código: vem da mediana do tamanho das petições
-    iniciais que o retrieval trouxe para ESTE caso (mesmo assunto, tipo inicial).
-    Sem referências suficientes não há meta e nada roda. A passada usa o motor de
-    revisão que já existe (`_revisar_secoes_via_llm`, modo "aprofundamento") e a
-    crítica cita os fatos do brief, para a profundidade vir de melhor uso do que
-    já foi apurado — nunca de invenção.
+    Antes: uma única chamada reescrevia a peça inteira para atingir um alvo de palavras tirado
+    da mediana do acervo; o JSON grande quebrava, a passada era descartada e a peça ficava rasa
+    (medido: 2 797 palavras, "aplicado: false"). Agora: uma chamada por seção argumentativa; o
+    resultado só entra se não encolher a seção nem trouxer marcador; falha de uma seção deixa
+    as outras seguirem.
     """
-    iniciais = [r["chars_peca"] for r in referencias if r.get("eh_inicial") and r.get("chars_peca")]
-    palavras = sum(len(str(s.get("content") or "").split()) for s in secoes)
-    info: dict[str, Any] = {"palavras_antes": palavras, "aplicado": False}
-    if len(iniciais) < 3:
-        info["motivo"] = "sem referências iniciais suficientes para definir meta"
-        return secoes, info
-    alvo = int(statistics.median(iniciais) / _CHARS_POR_PALAVRA)
-    info["alvo_palavras"] = alvo
-    if palavras >= alvo * 0.8:
-        return secoes, info
+    palavras = sum(len(str(x.get("content") or "").split()) for x in secoes)
+    info: dict[str, Any] = {"palavras_antes": palavras, "aplicado": False, "secoes": {}}
     fatos = [
         f"{f['id']}: {f['descricao']}" for f in (brief or {}).get("facts") or []
         if not f.get("contradiz_entrevista")
     ]
     eventos = [f"{e['id']} ({e['data']}): {e['evento']}" for e in (brief or {}).get("timeline") or []]
-    critica = (
-        f"A minuta tem {palavras} palavras; as petições iniciais do acervo do escritório para "
-        f"este assunto têm cerca de {alvo}. Está rasa. APROFUNDE FACTS e LEGAL_GROUNDS (e "
-        "PRELIMINARY/CLAIMS onde estiverem sucintos): narre a cronologia completa em "
-        "subcapítulos numerados, cada fato com a prova que o sustenta (documento e trecho) "
-        "e cada tese na cadeia fato → prova → norma → subsunção → consequência. Use todos "
-        "os fatos e provas já apurados abaixo. NÃO invente fato, data, valor, documento ou "
-        "precedente; o que o material não sustenta continua como [PENDENTE].\n"
-        + ("Fatos apurados: " + " | ".join(fatos) + "\n" if fatos else "")
-        + ("Cronologia: " + " | ".join(eventos) if eventos else "")
+    cronologia = [
+        f"{c.get('data', '')}: {c.get('fato', '')} [{c.get('fonte', '')}]"
+        for c in (plano or {}).get("cronologia") or [] if isinstance(c, dict)
+    ]
+    teses = [
+        f"{t.get('tese')} — fatos: {'; '.join(map(str, t.get('fatos_que_sustentam') or []))} — provas: {'; '.join(map(str, t.get('provas') or []))}"
+        for t in (plano or {}).get("teses") or [] if isinstance(t, dict)
+    ]
+    apoio = (
+        ("Fatos apurados: " + " | ".join(fatos) + "\n" if fatos else "")
+        + ("Cronologia do brief: " + " | ".join(eventos) + "\n" if eventos else "")
+        + ("Cronologia do plano: " + " | ".join(cronologia) + "\n" if cronologia else "")
+        + ("Teses e provas do plano: " + " || ".join(teses) if teses else "")
     )
-    try:
-        corrigidas, revisao = _revisar_secoes_via_llm(caso_id, secoes, critica)
-    except ErroPeticao:
-        log.warning("petição local: aprofundamento falhou (caso %s)", caso_id, exc_info=True)
-        info["motivo"] = "a passada de aprofundamento falhou"
-        return secoes, info
-    if revisao.get("alterou"):
-        por_codigo = {s["code"]: s["content"] for s in corrigidas}
-        secoes = [
-            {**s, "content": por_codigo[s["code"]]} if s["code"] in por_codigo else s
-            for s in secoes
-        ]
-        info["aplicado"] = True
-    info["palavras_depois"] = sum(len(str(s.get("content") or "").split()) for s in secoes)
-    return secoes, info
+    novas: list[dict[str, Any]] = []
+    for secao in secoes:
+        conteudo = str(secao.get("content") or "")
+        antes = len(conteudo.split())
+        if secao.get("code") in _SECOES_SEM_ARGUMENTO or antes < 80:
+            novas.append(secao)
+            continue
+        novo = _reescrever_secao(caso_id, secao, _ORIENTACAO_DE_PROFUNDIDADE + "\n" + apoio, contexto)
+        depois = len(novo.split()) if novo else 0
+        aceito = bool(novo) and depois >= antes * 0.95 and not _RE_PONTO_SEM_FONTE.search(novo or "")
+        info["secoes"][str(secao.get("code"))] = {"antes": antes, "depois": depois, "aceito": aceito}
+        novas.append({**secao, "content": novo} if aceito else secao)
+    info["aplicado"] = any(v["aceito"] for v in info["secoes"].values())
+    info["palavras_depois"] = sum(len(str(x.get("content") or "").split()) for x in novas)
+    return novas, info
 
 
 def _validar_contra_skill_e_brief(
@@ -1719,17 +1850,21 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         log.warning("petição local: case brief indisponível para trace/cobertura: %s", erro)
         brief = None
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
-    avancar_etapa("Buscando precedentes, legislação e modelos…", 3)
-    precedentes = _precedentes_para_redigir(contexto)
-    legislacao = _legislacao_para_redigir(contexto)
-    _TEXTO_DO_CASO.set(contexto[:20_000])
-    padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
-        contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria
-    )
-    tamanho_caso = len(contexto)
-    avancar_etapa("Planejando a estrutura da peça…", 4)
+    # O plano (teses + fatos + provas) vem ANTES da recuperação: é dele que saem as consultas.
+    avancar_etapa("Planejando teses, fatos e provas…", 3)
     plano = _outline_juridico(contexto)
     outline = _outline_para_redigir(plano)
+    consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
+    _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
+          teses=[c["tese"] for c in consultas[1:]])
+    avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 4)
+    precedentes = _precedentes_para_redigir(contexto, consultas)
+    legislacao = _legislacao_para_redigir(contexto, consultas)
+    _TEXTO_DO_CASO.set(contexto[:20_000])
+    padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
+        contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria, consultas=consultas
+    )
+    tamanho_caso = len(contexto)
     contexto += precedentes + legislacao + padroes + outline
     # O QUE FALTOU, DITO AO MODELO E GRAVADO NA PEÇA.
     #
@@ -1897,6 +2032,18 @@ Cada content deve conter parágrafos separados por linha em branco."""
         timeout=360.0,
     )
     avancar_etapa("Organizando as seções da minuta…", 6)
+    _secoes_previas = _normalizar_secoes(saida.get("secoes") or [])
+    _itens = diag.get("proveniencia") or []
+    recuperacao_por_tese.medir_influencia(_itens, _secoes_previas)
+    pipeline["proveniencia"] = [p.como_dict() for p, _ in _itens]
+    pipeline["retrieval_contribuiu"] = {
+        canal: sum(1 for p, _ in _itens if p.canal == canal and p.contribuiu)
+        for canal in ("precedente", "legislacao", "peca")
+    }
+    pipeline["retrieval_executou"] = {
+        canal: sum(1 for p, _ in _itens if p.canal == canal)
+        for canal in ("precedente", "legislacao", "peca")
+    }
     bruto_analise = saida.get("analise") or {}
     analise = {
         "resumo": str(bruto_analise.get("resumo") or "").strip(),
@@ -1930,7 +2077,9 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
     # cliente, súmula de memória). Ver `conferencia_peticao`.
     avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 7)
-    secoes, aprofundamento = _aprofundar_pela_referencia(caso_id, secoes, brief, referencias_acervo)
+    secoes, aprofundamento = _aprofundar_pela_referencia(
+        caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano
+    )
     pipeline["aprofundamento"] = aprofundamento
     avancar_etapa("Conferindo a peça contra os autos…", 7)
     secoes, violacoes, conferencia = _conferir_contra_os_autos(

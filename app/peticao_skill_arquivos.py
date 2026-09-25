@@ -47,6 +47,7 @@ _SEMPRE = (
     "regras_redacao.md",
     "regras_complementares.md",
     "citacoes_juridicas.md",
+    "precedentes_vinculantes.md",
 )
 
 #: O SKILL.md é explícito: "nunca recusar o caso por falta de modelo pronto".
@@ -103,7 +104,9 @@ def _tabela_de_assuntos() -> tuple[tuple[str, frozenset[str], frozenset[str]], .
         ref = re.search(r"references/([\w/\-.]+\.md)", colunas[2])
         if ref:
             descricao = " ".join(colunas[:2])
-            linhas.append((ref.group(1), _palavras(descricao), descricao))
+            # "que não seja assalto" NEGA a palavra: ela não identifica esta linha.
+            afirmativa = re.sub(r"n[ãa]o seja [^,;.)]+", " ", descricao, flags=re.IGNORECASE)
+            linhas.append((ref.group(1), _palavras(afirmativa), descricao))
     contagem: dict[str, int] = {}
     for _, palavras, _ in linhas:
         for p in palavras:
@@ -124,20 +127,49 @@ def _arquivo_do_assunto(categoria_nome: str, categoria_codigo: str, texto_caso: 
     conjunto de referência usar": o texto do caso conta, e o nome da categoria conta
     mais (foi escolhido por uma pessoa). Nada casando cai em `outros_assuntos`.
     """
+    ranking = _ranking_de_assuntos(categoria_nome, categoria_codigo, texto_caso)
+    return ranking[0][0] if ranking else _PADRAO
+
+
+def _ranking_de_assuntos(categoria_nome: str, categoria_codigo: str, texto_caso: str) -> list[tuple[str, int]]:
+    """(arquivo, pontos) das linhas da tabela que o caso alcança, da melhor para a pior."""
     nome = _normalizar(f"{categoria_nome} {categoria_codigo}")
     corpo = _normalizar(texto_caso)
-    melhor, pontos_melhor = _PADRAO, 0
+    pontuados: list[tuple[str, int]] = []
     for arquivo, palavras, exclusoes in _tabela_de_assuntos():
         if any(corpo.count(e) >= 2 for e in exclusoes):
             continue
         pontos = sum(3 for p in palavras if p in nome) + sum(min(corpo.count(p), 3) for p in palavras)
         # Uma palavra solta ("relação") não identifica assunto: exige ao menos duas
         # palavras distintivas da linha da tabela presentes no nome ou no caso.
-        if sum(1 for p in palavras if p in nome or p in corpo) < 2:
+        # A escolha da categoria por uma pessoa (o nome) basta com UMA palavra distintiva.
+        if sum(1 for p in palavras if p in nome or p in corpo) < 2 and not any(p in nome for p in palavras):
             continue
-        if pontos > pontos_melhor:
-            melhor, pontos_melhor = arquivo, pontos
-    return melhor
+        pontuados.append((arquivo, pontos))
+    return sorted(pontuados, key=lambda x: x[1], reverse=True)
+
+
+def assuntos_relacionados(
+    categoria_nome: str, categoria_codigo: str, texto_caso: str = "", *, maximo: int = 2
+) -> list[str]:
+    """Os assuntos da tabela que o caso alcança (o principal primeiro), como slugs do acervo.
+
+    O acervo de petições é classificado por assunto GERAL ("doenca_ocupacional_acidente_
+    trabalho"); o modelo específico do caso ("assalto_carteiro") é um subtipo dele. Buscar
+    só pelo slug do modelo nunca casava com nenhuma peça classificada e o desempate por
+    assunto ficava inerte. Vale o principal e os vizinhos com pelo menos metade dos pontos.
+    """
+    ranking = _ranking_de_assuntos(categoria_nome, categoria_codigo, texto_caso)
+    if not ranking:
+        return [_PADRAO.removesuffix(".md")]
+    topo = ranking[0][1]
+    slugs: list[str] = []
+    for arquivo, pontos in ranking[:maximo]:
+        if pontos * 3 >= topo:
+            slug = arquivo.split("/")[0].removesuffix(".md")
+            if slug not in slugs:
+                slugs.append(slug)
+    return slugs
 
 
 def assunto_slug(categoria_nome: str, categoria_codigo: str, texto_caso: str = "") -> str:
@@ -150,7 +182,7 @@ def _arquivos_do_assunto(arquivo: str) -> list[str]:
     arquivos = [arquivo]
     if "/" in arquivo:
         pasta = arquivo.rsplit("/", 1)[0]
-        for extra in ("regras_redacao_especifica.md", "checklist_especifico.md"):
+        for extra in ("regras_redacao_especifica.md", "checklist_especifico.md", "precedentes.md"):
             if _ler(f"{pasta}/{extra}"):
                 arquivos.append(f"{pasta}/{extra}")
     return arquivos

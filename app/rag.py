@@ -202,7 +202,15 @@ def buscar_similares(
     filtro_tribunal = ""
     params: list[Any] = [embedding]
     if tribunais:
-        filtro_tribunal = " AND upper(k.metadados->>'tribunal') = ANY(%s)"
+        # `trt8_juris` (43 mil dos 61 mil trechos de jurisprudência) não traz a etiqueta
+        # `tribunal`: só a origem diz que é do TRT8. Filtrar só pela etiqueta deixava a camada
+        # "TRT8" com os ~1,5 mil trechos de expediente do DataJud (notificações), suficientes
+        # para a camada passar do mínimo de amostra e NUNCA cair para o resto — e o julgado
+        # de mérito do próprio TRT do caso não era achado.
+        filtro_tribunal = (
+            " AND upper(COALESCE(k.metadados->>'tribunal',"
+            " CASE k.metadados->>'origem' WHEN 'trt8_juris' THEN 'TRT8' END)) = ANY(%s)"
+        )
         params.append([t.upper() for t in tribunais])
     params += [embedding, limite * 24]
     sql = f"""
@@ -301,7 +309,8 @@ _PECA_QUE_NAO_E_INICIAL = (
 
 
 def buscar_pecas_conteudisticas(
-    consulta: str, *, limite: int = 8, assunto: str = "", timeout: float = 120, connect_timeout: int = 10,
+    consulta: str, *, limite: int = 8, assunto: str | list[str] = "", timeout: float = 120,
+    connect_timeout: int = 10,
 ) -> list[dict[str, Any]]:
     """Recupera técnicas de redação de peças do escritório, sem transportar fatos.
 
@@ -322,11 +331,12 @@ def buscar_pecas_conteudisticas(
     """
     if not consulta.strip():
         return []
+    assuntos = [assunto] if isinstance(assunto, str) else list(assunto)
     embedding = vetor_literal(gerar_embeddings([consulta[:12000]], timeout=timeout)[0])
     linhas = _consultar_pgvector(
         """SELECT c.peca_id, c.texto, p.nome_arquivo, p.categoria,
                   1 - (c.embedding <=> %s::vector) AS similaridade,
-                  (p.metadados->>'assunto' = %s) AS mesmo_assunto,
+                  (p.metadados->>'assunto' = ANY(%s)) AS mesmo_assunto,
                   COALESCE(
                       p.metadados->>'tipo_peca' = 'peticao_inicial',
                       NOT (p.nome_arquivo ~* %s OR left(p.texto_integral, 1500) ~* %s)
@@ -338,7 +348,7 @@ def buscar_pecas_conteudisticas(
               AND p.categoria IN ('pecas_simples', 'pecas_complexas')
             ORDER BY mesmo_assunto DESC, eh_inicial DESC, c.embedding <=> %s::vector
             LIMIT %s""",
-        (embedding, assunto, _PECA_QUE_NAO_E_INICIAL, _PECA_QUE_NAO_E_INICIAL, embedding,
+        (embedding, assuntos, _PECA_QUE_NAO_E_INICIAL, _PECA_QUE_NAO_E_INICIAL, embedding,
          max(limite * 4, limite)), connect_timeout=connect_timeout,
     )
     # Diversidade importa mais que dez trechos da mesma petição: no máximo dois
@@ -358,6 +368,7 @@ def buscar_pecas_conteudisticas(
             "mesmo_assunto": bool(linha["mesmo_assunto"]),
             "eh_inicial": bool(linha["eh_inicial"]),
             "chars_peca": int(linha["chars_peca"] or 0),
+            "peca_id": peca_id,
         })
         por_peca[peca_id] += 1
         por_categoria[categoria] += 1
@@ -370,7 +381,7 @@ def buscar_pecas_conteudisticas(
     log.info(
         "rag: peças conteudísticas — assunto=%r candidatas=%d escolhidas=%d limite=%d "
         "mesmo_assunto=%d scores=%s arquivos=%s",
-        assunto, len(linhas), len(escolhidos), limite,
+        assuntos, len(linhas), len(escolhidos), limite,
         sum(1 for item in escolhidos if item["mesmo_assunto"]),
         [round(item["similaridade"], 4) for item in escolhidos],
         [item["arquivo"] for item in escolhidos],
