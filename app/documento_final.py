@@ -28,6 +28,9 @@ _TITULO_ROMANO = re.compile(r"^\s*(?:#{1,3}\s*)?(?:\*\*)?([IVXLC]+)\s*[.\-–—
 _SUBTITULO_ROMANO = re.compile(r"^(\s*(?:#{2,6}\s*)?(?:\*\*)?)([IVXLC]+)\.(\d+)(\.?\s+\S.*)$")
 _MARCADOR_ESTRUTURAL = re.compile(r"^\s*:::\s*(?:[\w-]+)?\s*$", re.MULTILINE)
 _FECHAMENTO = re.compile(r"(?im)^\s*termos\s+em\s+que\s*,?\s*\n\s*pede\s+deferimento\s*\.?\s*$")
+_DA_SE_CAUSA = re.compile(
+    r"(?im)^\s*D[aá]-se\s+[àa]\s+causa[^\n]*\n?",
+)
 _ROMANOS = [(100, "C"), (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")]
 
 
@@ -240,6 +243,95 @@ def _deduplicar_fechamento(secoes: list[dict[str, Any]]) -> tuple[list[dict[str,
     return novas, removidos
 
 
+def _deduplicar_valor_causa(secoes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Uma só linha «Dá-se à causa» — a v15 duplicava valor + assinatura no final."""
+    ocorrencias = [
+        (i, m.start(), m.end())
+        for i, s in enumerate(secoes)
+        for m in _DA_SE_CAUSA.finditer(str(s.get("content") or ""))
+    ]
+    if len(ocorrencias) <= 1:
+        return secoes, 0
+    manter = ocorrencias[-1]
+    removidos = 0
+    novas = []
+    for i, s in enumerate(secoes):
+        texto = str(s.get("content") or "")
+        partes = []
+        ultimo = 0
+        for m in _DA_SE_CAUSA.finditer(texto):
+            partes.append(texto[ultimo:m.start()])
+            if (i, m.start(), m.end()) == manter:
+                partes.append(m.group(0))
+            else:
+                removidos += 1
+            ultimo = m.end()
+        partes.append(texto[ultimo:])
+        novas.append({**s, "content": re.sub(r"\n{3,}", "\n\n", "".join(partes)).strip()})
+    return novas, removidos
+
+
+def aplicar_qualificacao_canonica(
+    secoes: list[dict[str, Any]], partes: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Qualificação do autor/réu vem do CASE_FACTS (código), não do livre-arbítrio do modelo.
+
+    O modelo ainda redige o endereçamento e a narrativa; nomes e CPF resolvidos são
+    SUBSTITUÍDOS aqui para a peça não oscillar (v14 certo → v15 «BEZERRA TESTE»).
+    """
+    autor = partes.get("autor") or {}
+    reu = partes.get("reu") or {}
+    rel: dict[str, Any] = {"aplicado": False, "substituicoes": []}
+    nome = str(autor.get("nome") or "").strip()
+    if not nome or not secoes:
+        return secoes, rel
+
+    novas = [dict(s) for s in secoes]
+    texto = str(novas[0].get("content") or "")
+    original = texto
+
+    for m in list(ae._DADO_DE_TESTE.finditer(texto)):  # noqa: SLF001
+        texto = texto[: m.start()] + nome + texto[m.end() :]
+        rel["substituicoes"].append({"de": m.group(0), "para": nome})
+
+    for campo in ("cpf", "endereco", "rg", "cnpj"):
+        papel = "reu" if campo == "cnpj" else "autor"
+        valor = str((reu if papel == "reu" else autor).get(campo) or "").strip()
+        if not valor:
+            continue
+        texto2, n = re.subn(
+            rf"\[PENDENTE:[^\]]*{campo}[^\]]*\]",
+            valor,
+            texto,
+            flags=re.IGNORECASE,
+        )
+        if n:
+            texto = texto2
+            rel["substituicoes"].append({"de": f"[PENDENTE:{campo}]", "para": valor})
+
+    cpf = str(autor.get("cpf") or "").strip()
+    if (
+        cpf
+        and pp.norm(nome) in pp.norm(texto)
+        and pp._so_digitos(cpf) not in pp._so_digitos(texto)  # noqa: SLF001
+    ):
+        texto2, n = re.subn(
+            r"(inscrit[oa]\s+no\s+CPF[^\d\[]{0,40})(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\[\s*PENDENTE[^\]]*\])",
+            rf"\g<1>{cpf}",
+            texto,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        if n:
+            texto = texto2
+            rel["substituicoes"].append({"de": "cpf_divergente", "para": cpf})
+
+    if texto != original:
+        novas[0]["content"] = texto
+        rel["aplicado"] = True
+    return novas, rel
+
+
 def higienizar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rel: dict[str, Any] = {}
     secoes = peticao_migracao_legado.migrar_secoes(secoes)
@@ -249,11 +341,15 @@ def higienizar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict
     rel["marcadores_estruturais_removidos"] = n_marcadores
     secoes, n_fechamentos = _deduplicar_fechamento(secoes)
     rel["fechamentos_duplicados_removidos"] = n_fechamentos
+    secoes, n_valores = _deduplicar_valor_causa(secoes)
+    rel["valores_causa_duplicados_removidos"] = n_valores
     secoes, n_repetidos = _remover_titulos_repetidos(secoes, params)
     rel["titulos_repetidos_removidos"] = n_repetidos
     if plano.get("partes"):
         secoes, n_ab = ae.remover_aberturas_duplicadas(secoes, plano["partes"], params)
         rel["aberturas_duplicadas_removidas"] = n_ab
+        secoes, rel_quali = aplicar_qualificacao_canonica(secoes, plano["partes"])
+        rel["qualificacao_canonica"] = rel_quali
     secoes = [s for s in secoes if str(s.get("content") or "").strip() or str(s.get("label") or "").strip() == ""] or secoes
     secoes = _renumerar_capitulos(secoes)
     return secoes, rel
@@ -411,11 +507,17 @@ def validar_documento_final(
         saida.append(_v("PEDIDOS_EM_MAIS_DE_UMA_SECAO", "CLAIMS", "", "A seção de pedidos aparece mais de uma vez.", "Só uma seção estrutural de pedidos."))
     saida += ae.abertura_unica(final, plano.get("partes") or {}, params)
     saida += metadata_no_documento(secoes, params)
-    saida += [_v("PLACEHOLDER_NO_DOCUMENTO_FINAL", c, m, f"Marcador {m[:60]} no documento final.", "Resolva o dado ou registre a pendência para revisão humana antes de considerar a peça pronta.", False) for c, m in ae.pendencias(final)]
+    # Placeholders e dados de teste BLOQUEIAM a entrega — a peça não pode
+    # oscillar entre versões com «BEZERRA TESTE» ou «[PENDENTE]» no corpo.
+    saida += ae.dado_de_teste_no_texto(final)
+    saida += ae.placeholders_proibidos(final)
+    saida += ae.cidade_endereco_vs_vara(final, plano.get("partes") or {})
+    saida += [_v("PLACEHOLDER_NO_DOCUMENTO_FINAL", c, m, f"Marcador {m[:60]} no documento final.", "Resolva o dado ou registre a pendência para revisão humana antes de considerar a peça pronta.", False) for c, m in ae.pendencias(final) if not ae._PLACEHOLDER_PROIBIDO.search(m)]  # noqa: SLF001
     saida += ae.pendencia_com_dado_canonico(final, plano.get("partes") or {})
     saida += ae.dado_rejeitado_no_texto(final, plano.get("case_facts") or {})
     if ledger:
         saida += document_ledger.validar_bijecao(ledger) + document_ledger.validar_referencias(final, ledger)
+        saida += ae.ausencia_falsa_de_documento_listado(final, ledger)
     saida += pedidos_no_texto(final) + ae.ledger(plano) + ae.valor_da_causa(final, plano) + ae.criterio_de_calculo(final, params)
     saida += epistemica(final, params, plano)
     saida += invariantes_estruturais(final)

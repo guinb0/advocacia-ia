@@ -130,7 +130,88 @@ def _cadastro_estruturado(caso_id: str) -> dict[str, Any]:
     dados = {k: v for k, v in q.items() if v}
     if caso.get("cliente"):
         dados.setdefault("nome", caso["cliente"])
+    # Fixture / dado de teste NÃO pode virar identidade do autor (v15: «BEZERRA TESTE»).
+    # Sem isso o CASE_FACTS trata o cadastro como fonte e a peça oscila entre versões.
+    nome = str(dados.get("nome") or "")
+    if re.search(r"\bTESTE\b", nome, re.IGNORECASE) or "(TESTE)" in nome.upper():
+        log.error(
+            "petição local: cadastro do caso %s tem nome de teste «%s» — ignorado; use documentos/entrevista",
+            caso_id,
+            nome,
+        )
+        dados = {k: v for k, v in dados.items() if k != "nome"}
     return dados
+
+
+_DOC_PRIORITARIO = re.compile(
+    r"contracheque|holerite|folha\s+de\s+pagamento|cat\b|comunicado\s+de\s+acidente|"
+    r"boletim|bo\b|ctps|carteira\s+de\s+trabalho|\brg\b|cnh|identidade|atestado|"
+    r"laudo|cnis|ppp\b|procura[cç][aã]o|contrato\s+de\s+trabalho",
+    re.IGNORECASE,
+)
+
+
+def _indice_e_textos_documentais(
+    ledger: list[dict[str, Any]], documentos: list[dict[str, str]], *, max_docs_texto: int = 40, max_chars: int = 75_000,
+) -> list[str]:
+    """Índice COMPLETO (todos os números) + texto OCR priorizado.
+
+    A v15 afirmava que contracheques «não integram os documentos» porque o
+    dump cortava em 20 e o modelo não via a lista canônica. O índice sempre
+    lista Documento NN → arquivo/tipo; o texto completo prioriza
+    contracheque/CAT/BO/CTPS etc. dentro do orçamento de caracteres.
+    """
+    por_arquivo = {d["arquivo"]: d for d in documentos}
+    linhas = [
+        "=== ÍNDICE CANÔNICO DE DOCUMENTOS (use EXATAMENTE estes números; "
+        "documento listado AQUI existe — não diga que «não integra» os autos) ===",
+    ]
+    for item in ledger:
+        tipo = (item.get("document_type") or "").strip()
+        rotulo = item["canonical_label"]
+        arquivo = item["canonical_file"]
+        extra = f" — {tipo}" if tipo else ""
+        linhas.append(f"{rotulo}{extra}: {arquivo}")
+    if not ledger:
+        return linhas
+
+    linhas.append(
+        "\n=== TEXTOS EXTRAÍDOS (OCR) — prioridade a prova de remuneração, "
+        "acidente, identidade e afastamento ==="
+    )
+    linhas.append(document_ledger.aviso_de_copias(ledger))
+
+    def peso(item: dict[str, Any]) -> tuple[int, int]:
+        chave = f"{item.get('document_type', '')} {item.get('canonical_file', '')}"
+        return (0 if _DOC_PRIORITARIO.search(chave) else 1, item.get("numero", 999))
+
+    ordenados = sorted(ledger, key=peso)
+    usados = 0
+    chars = 0
+    for item in ordenados:
+        if usados >= max_docs_texto:
+            break
+        doc = por_arquivo.get(item["canonical_file"])
+        if not doc or not doc.get("texto"):
+            continue
+        bloco = f"\n--- {item['canonical_label'].upper()}: {doc['arquivo']} ---\n{doc['texto']}"
+        if chars + len(bloco) > max_chars and usados > 0:
+            # Ainda assim garante contracheques/CAT se ainda não entraram
+            if _DOC_PRIORITARIO.search(f"{item.get('document_type', '')} {item['canonical_file']}"):
+                if chars + len(bloco) > max_chars + 20_000:
+                    continue
+            else:
+                continue
+        linhas.append(bloco)
+        chars += len(bloco)
+        usados += 1
+    omitidos = len(ledger) - usados
+    if omitidos > 0:
+        linhas.append(
+            f"\n({omitidos} documento(s) lógico(s) constam só no ÍNDICE acima — "
+            "existem nos autos; cite-os pelo número do índice quando relevantes.)"
+        )
+    return linhas
 
 
 def _fatos_documentais(caso_id: str) -> list[dict[str, Any]]:
@@ -1057,6 +1138,11 @@ def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
         ("E-mail", qualificacao.get("email")),
     )
     conhecidos = [f"- {rotulo}: {valor}" for rotulo, valor in campos if str(valor or "").strip()]
+    # Nome de fixture no cadastro: não instrua o modelo a usá-lo.
+    conhecidos = [
+        linha for linha in conhecidos
+        if not re.search(r"\bTESTE\b", linha, re.IGNORECASE)
+    ]
     if not conhecidos:
         return []
 
@@ -1114,13 +1200,11 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     except Exception as erro:  # noqa: BLE001
         log.warning("petição local: análise documental indisponível no contexto: %s", erro)
 
-    # DOCUMENT_LEDGER: um identificador canônico por documento LÓGICO (cópias consolidadas). É o ÚNICO rótulo que a peça usa.
+    # DOCUMENT_LEDGER: índice canônico de TODOS + OCR priorizado (contracheques
+    # não podem sumir do contexto só porque o caso tem 58 anexos).
     ledger, documentos = documentos_logicos(caso_id)
-    if documentos:
-        linhas.append("\n=== DOCUMENTOS (texto extraído por OCR) ===")
-        linhas.append(document_ledger.aviso_de_copias(ledger[:20]))
-        for doc in documentos[:20]:
-            linhas.append(f"\n--- {doc['rotulo'].upper()}: {doc['arquivo']} ---\n{doc['texto']}")
+    if documentos or ledger:
+        linhas.append("\n" + "\n".join(_indice_e_textos_documentais(ledger, documentos)))
 
     obrig = progresso.get("obrigatorios_total")
     entregues = progresso.get("obrigatorios_entregues")
@@ -1129,7 +1213,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
             f"\n=== CHECKLIST ===\n{entregues}/{obrig} obrigatórios entregues"
         )
 
-    return "\n".join(linhas)[:110_000]
+    return "\n".join(linhas)[:120_000]
 
 
 def analisar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:

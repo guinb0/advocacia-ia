@@ -313,11 +313,106 @@ def soma_cumulativos(plano: dict[str, Any]) -> float:
 
 def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
     texto = "\n".join(str(s.get("content") or "") for s in secoes)
-    m = re.search(r"(?:d[aá]-se\s+[àa]\s+causa|valor\s+da\s+causa)[^$\n]{0,60}R\$\s*([\d.]+,\d{2})", texto, re.IGNORECASE)
+    ocorrencias = list(
+        re.finditer(
+            r"(?:d[aá]-se\s+[àa]\s+causa|valor\s+da\s+causa)[^$\n]{0,60}R\$\s*([\d.]+,\d{2})",
+            texto,
+            re.IGNORECASE,
+        )
+    )
+    saida: list[Violacao] = []
+    if len(ocorrencias) > 1:
+        saida.append(_v(
+            "VALOR_DA_CAUSA_DUPLICADO",
+            "VALUE",
+            ocorrencias[1].group(0)[:120],
+            f"«Dá-se à causa» / valor da causa aparece {len(ocorrencias)} vezes na peça.",
+            "Mantenha UMA linha de valor da causa, no fechamento; remova as demais.",
+        ))
     soma = soma_cumulativos(plano)
-    if m and soma and abs(_reais(m.group(1)) - soma) > 0.01:
-        return [_v("VALOR_DA_CAUSA_NAO_FECHA", "CLAIMS", f"R$ {m.group(1)} × Σ pedidos cumulativos R$ {soma:,.2f}",
-                   "O valor da causa não é a soma dos pedidos cumulativos do ledger (subsidiários/alternativos não somam).", "Ajuste o valor da causa à soma correta ou classifique o pedido.")]
+    if ocorrencias and soma and abs(_reais(ocorrencias[0].group(1)) - soma) > 0.01:
+        saida.append(_v(
+            "VALOR_DA_CAUSA_NAO_FECHA",
+            "CLAIMS",
+            f"R$ {ocorrencias[0].group(1)} × Σ pedidos cumulativos R$ {soma:,.2f}",
+            "O valor da causa não é a soma dos pedidos cumulativos do ledger (subsidiários/alternativos não somam).",
+            "Ajuste o valor da causa à soma correta ou classifique o pedido.",
+        ))
+    return saida
+
+
+#: Marcadores e nomes de fixture que NÃO podem chegar à peça protocolável.
+#: Cada geração do zero oscilava (v13/v14/v15): o que já estava certo quebrava de novo.
+#: Estes gates são DETERMINÍSTICOS — o modelo não decide se passa.
+_DADO_DE_TESTE = re.compile(
+    r"(?i)(?:BEZERRA\s+TESTE|\(TESTE\)|\bNOME\s+TESTE\b|"
+    r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇÀ-ÿ]{1,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇÀ-ÿ]{1,})*\s+TESTE\b)"
+)
+_PLACEHOLDER_PROIBIDO = re.compile(
+    r"\[(?:PENDENTE|data(?:\s+por\s+extenso)?|INFORMA[CÇ][AÃ]O)[^\]]*\]",
+    re.IGNORECASE,
+)
+
+
+def dado_de_teste_no_texto(secoes: list[dict[str, Any]]) -> list[Violacao]:
+    """Nome/fixture de teste no texto da peça — o erro mais grave possível numa inicial."""
+    saida = []
+    for s in secoes:
+        for m in _DADO_DE_TESTE.finditer(str(s.get("content") or "")):
+            saida.append(_v(
+                "DADO_DE_TESTE_NO_TEXTO",
+                str(s.get("code") or ""),
+                m.group(0),
+                f"A peça contém dado de teste («{m.group(0)}»). Isso polui cadastro, modelo ou cache — não é falha de redação.",
+                "Remova a fonte do dado de teste (cadastro/fixture) e regenere com a identidade canônica do CASE_FACTS.",
+            ))
+    return saida
+
+
+def placeholders_proibidos(secoes: list[dict[str, Any]]) -> list[Violacao]:
+    """`[PENDENTE]`, `[data por extenso]` e afins no documento final barram a entrega."""
+    saida = []
+    for s in secoes:
+        for m in _PLACEHOLDER_PROIBIDO.finditer(str(s.get("content") or "")):
+            saida.append(_v(
+                "PLACEHOLDER_PROIBIDO_NO_DOCUMENTO",
+                str(s.get("code") or ""),
+                m.group(0),
+                f"Marcador «{m.group(0)}» no documento final — peça incompleta para protocolo.",
+                "Preencha com dado canônico do CASE_FACTS/ledger ou retire o trecho; não entregue placeholder.",
+            ))
+    return saida
+
+
+def cidade_endereco_vs_vara(secoes: list[dict[str, Any]], partes: dict[str, Any]) -> list[Violacao]:
+    """Endereço da reclamada em cidade diferente da Vara do endereçamento — sinal clássico de dado de outro caso."""
+    texto = "\n".join(str(s.get("content") or "") for s in secoes)
+    m_vara = re.search(
+        r"Vara\s+do\s+Trabalho\s+de\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ\s'-]+?)(?:/|\s*[-–—]|\s*$)",
+        texto,
+        re.IGNORECASE,
+    )
+    endereco_reu = str((partes.get("reu") or {}).get("endereco") or "")
+    if not m_vara or not endereco_reu:
+        return []
+    cidade_vara = pp.norm(m_vara.group(1).split("/")[0].strip())
+    # Cidade no endereço: última palavra significativa antes do UF (…, Cidade/UF ou … - Cidade)
+    m_cid = re.search(
+        r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'-]+)\s*[-–—/]\s*[A-Z]{2}\b",
+        endereco_reu,
+        re.IGNORECASE,
+    )
+    if not m_cid:
+        return []
+    cidade_end = pp.norm(m_cid.group(1))
+    if cidade_vara and cidade_end and cidade_vara != cidade_end and cidade_end not in cidade_vara and cidade_vara not in cidade_end:
+        return [_v(
+            "CIDADE_ENDERECO_DIVERGENTE_DA_VARA",
+            "HEADING",
+            f"Vara: {m_vara.group(1)} × endereço: {m_cid.group(1)}",
+            "A cidade do endereço da reclamada diverge da cidade da Vara do endereçamento — típico de dado de outro caso/fixture.",
+            "Use o endereço canônico do CASE_FACTS e o Juízo da comarca correspondente.",
+        )]
     return []
 
 
@@ -354,6 +449,9 @@ def auditar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[st
         *repeticao_entre_topicos(secoes, plano=plano),
         *repeticao_de_conteudo(secoes, params), *contradicao_de_data(secoes, plano),
         *dado_rejeitado_no_texto(secoes, plano.get("case_facts") or {}),
+        *dado_de_teste_no_texto(secoes),
+        *placeholders_proibidos(secoes),
+        *cidade_endereco_vs_vara(secoes, partes),
         *(candidatos_semanticos(secoes, plano, embed) if embed else []),
         *ledger(plano), *valor_da_causa(secoes, plano), *criterio_de_calculo(secoes, params),
     ]
@@ -497,7 +595,36 @@ def candidatos_semanticos(secoes: list[dict[str, Any]], plano: dict[str, Any], e
     return saida
 
 
-# ------------------------------------------------------------------ dado rejeitado pelo CASE_FACTS não pode aparecer na peça
+def ausencia_falsa_de_documento_listado(
+    secoes: list[dict[str, Any]], ledger: list[dict[str, Any]],
+) -> list[Violacao]:
+    """Afirmar que um tipo de prova «não integra» os autos quando o ledger o lista — regressão v15."""
+    if not ledger:
+        return []
+    texto = "\n".join(str(s.get("content") or "") for s in secoes)
+    n = pp.norm(texto)
+    saida = []
+    # tipo canônico → padrões de negação no texto
+    checagens = (
+        ("contracheque", r"contracheque|holerite|folha de pagamento", r"(contracheque|holerite).{0,40}(nao integra|nao constam|inexist|nao foram juntad|nao ha)"),
+        ("cat", r"\bcat\b|comunicado de acidente", r"\bcat\b.{0,40}(nao integra|nao consta|inexist)"),
+        ("boletim", r"boletim| b\.?o\.?\b", r"(boletim|\bbo\b).{0,40}(nao integra|nao consta|inexist)"),
+    )
+    for tipo, rx_tipo, rx_neg in checagens:
+        no_ledger = any(
+            re.search(rx_tipo, f"{d.get('document_type', '')} {d.get('canonical_file', '')}", re.I)
+            for d in ledger
+        )
+        if no_ledger and re.search(rx_neg, n):
+            saida.append(_v(
+                "AUSENCIA_FALSA_DE_DOCUMENTO_LISTADO",
+                "",
+                tipo,
+                f"A peça diz que «{tipo}» não integra/não consta dos autos, mas o DOCUMENT_LEDGER lista esse tipo.",
+                "Cite o(s) Documento NN do índice canônico; não marque como inexistente o que o ledger numera.",
+            ))
+            return saida
+
 
 def dado_rejeitado_no_texto(secoes: list[dict[str, Any]], case_facts: dict[str, Any]) -> list[Violacao]:
     """A versão PERDEDORA (ou em conflito) de um dado canônico não pode aparecer no texto: uma só verdade por peça."""

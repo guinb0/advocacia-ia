@@ -71,7 +71,7 @@ def test_case_facts_resolve_conflito_por_regra_segura_e_recusa_o_que_nao_e_fonte
     fontes = [{"tipo": "documento", "nome": "CAT.pdf", "texto": "CNPJ 34.028.316/4948-66 CPF 152.815.582-34"},
               {"tipo": "documento", "nome": "LISA.pdf", "texto": "CNPJ 34.028.316/4948-66"},
               {"tipo": "documento", "nome": "Contrato.pdf", "texto": "CNPJ 34.028.316/0001-03"}]
-    f = cf.montar(fontes=fontes, cadastro={"nome": "Bezerra Teste"}, proposta_partes={})
+    f = cf.montar(fontes=fontes, cadastro={"nome": "Autor Fixture Unitario"}, proposta_partes={})
     cnpj = f["PARTIES"]["reu"]["cnpj"]
     assert cnpj["valor"] == "34.028.316/4948-66" and cnpj["alternativas"] and not cnpj["conflito"]  # mesma raiz: compatível, vale o de mais fontes
     assert any(r["campo"] == "reu.cnpj" for r in f["RESOLUTIONS"])
