@@ -42,6 +42,9 @@ log = logging.getLogger("peticao_local")
 #: aconteceu, inclusive o motivo da falha. Antes só sobrava um booleano "veio ou não
 #: veio": uma peça saída SEM o acervo dizia "o acervo não respondeu", sem dizer por
 #: quê, e ninguém conseguia distinguir chave sem crédito de banco fora do ar.
+#: Texto do caso corrente: a skill escolhe o arquivo de assunto pelo que o caso DIZ.
+_TEXTO_DO_CASO: contextvars.ContextVar[str] = contextvars.ContextVar("texto_do_caso", default="")
+
 _DIAG: ContextVar[dict[str, Any] | None] = ContextVar("peticao_diag", default=None)
 
 
@@ -321,7 +324,7 @@ def configuracao_visual() -> dict[str, Any]:
                 })
     except Exception:
         log.warning("configuração visual indisponível; usando padrão da skill", exc_info=True)
-    for campo in ("tamanho_fonte_pt", "espacamento_linha", "recuo_primeira_linha_cm", "margem_superior_cm", "margem_direita_cm", "margem_inferior_cm", "margem_esquerda_cm", "altura_logo_cm"):
+    for campo in ("tamanho_fonte_pt", "espacamento_linha", "recuo_primeira_linha_cm", "margem_superior_cm", "margem_direita_cm", "margem_inferior_cm", "margem_esquerda_cm"):
         try:
             configuracao[campo] = float(configuracao[campo])
         except (TypeError, ValueError):
@@ -529,7 +532,7 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     # para o porquê. Falha de leitura (deploy sem os arquivos) não derruba a
     # geração: cai para o comportamento anterior, só com a tabela.
     try:
-        skill_arquivo = peticao_skill_arquivos.carregar(nome_categoria, categoria)
+        skill_arquivo = peticao_skill_arquivos.carregar(nome_categoria, categoria, _TEXTO_DO_CASO.get())
     except Exception:
         log.warning("petição local: skill de arquivo indisponível", exc_info=True)
         skill_arquivo = ""
@@ -1237,9 +1240,7 @@ def _padroes_conteudisticos_para_redigir(
     similaridade, mesmo_assunto) — sem isso, saber quais das 700+ peças
     alimentaram uma geração específica exigia ler o log do servidor linha a linha.
     """
-    assunto = peticao_skill_arquivos._arquivo_do_assunto(  # noqa: SLF001 - mesmo pacote
-        categoria_nome, categoria_codigo
-    ).split("/")[0].removesuffix(".md")
+    assunto = peticao_skill_arquivos.assunto_slug(categoria_nome, categoria_codigo, contexto[:20_000])
     try:
         trechos = rag.buscar_pecas_conteudisticas(contexto[:12_000], limite=8, assunto=assunto)
     except Exception as erro:
@@ -1690,6 +1691,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     avancar_etapa("Buscando precedentes, legislação e modelos…", 3)
     precedentes = _precedentes_para_redigir(contexto)
     legislacao = _legislacao_para_redigir(contexto)
+    _TEXTO_DO_CASO.set(contexto[:20_000])
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria
     )
@@ -1709,7 +1711,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "pecas_modelo": bool(padroes),
         "outline": bool(outline),
     }
-    resumo_skill = peticao_skill_arquivos.resumo(nome_categoria, codigo_categoria)
+    resumo_skill = peticao_skill_arquivos.resumo(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get())
     for canal, info in (diag.get("recuperacao") or {}).items():
         if canal == "validacao":
             continue
@@ -1731,6 +1733,9 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "tipo_detectado": "INITIAL_PETITION",
         "categoria": {"nome": nome_categoria, "codigo": codigo_categoria},
         "skill": resumo_skill,
+        "layout_rules_source": (peticao_skill_arquivos.configuracao_visual_padrao() or {}).get("fonte_das_regras"),
+        "layout_campos_sem_definicao": (peticao_skill_arquivos.configuracao_visual_padrao() or {}).get("campos_sem_definicao"),
+        "hardcoded_override_detected": False,
         "documentos_do_caso": len((brief or {}).get("evidence") or []),
         "fatos_no_brief": len((brief or {}).get("facts") or []),
         "eventos_no_brief": len((brief or {}).get("timeline") or []),
@@ -4225,7 +4230,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     margem_direita = max(1, min(6, float(visual["margem_direita_cm"])))
     margem_inferior = max(1, min(6, float(visual["margem_inferior_cm"])))
     margem_esquerda = max(1, min(6, float(visual["margem_esquerda_cm"])))
-    altura_logo = max(0.5, min(5, float(visual["altura_logo_cm"])))
+    altura_logo = max(0.5, min(5, float(visual.get("altura_logo_cm") or 2.36)))
     logo_cy = round(altura_logo * 360000)
     logo_cx = round(logo_cy * 1.774)
     alinhamento_corpo = {"justificado": "both", "esquerda": "left", "direita": "right"}.get(str(visual.get("alinhamento_corpo")), "both")
@@ -4242,7 +4247,14 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         # na peça do escritório — é uma frase solta ("Dá-se à causa o valor de
         # ..."). O rótulo continua existindo em `SECOES` porque a tela e o prompt
         # se orientam por ele; só não vira parágrafo no .docx.
-        if rotulo and secao.get("code") not in ("HEADING", "CLOSING", "VALUE"):
+        primeira_linha = (conteudo.lstrip("# *").split(chr(10), 1) or [""])[0].strip().upper()
+        if (
+            rotulo
+            and conteudo
+            and secao.get("code") not in ("HEADING", "CLOSING", "VALUE")
+            and rotulo.upper() not in primeira_linha
+            and not re.match(r"^(?:[IVXLC]+|\d+)\s*[–—.)-]", primeira_linha)
+        ):
             # `centralizado=False`: o rótulo da seção fica À ESQUERDA.
             #
             # Estava centralizado, e era metade do problema — "DOS FATOS",
@@ -4270,7 +4282,8 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
                     fotos=fotos,
                 )
             )
-        corpo.append("<w:p/>")
+        if visual.get("linhas_em_branco_entre_paragrafos"):
+            corpo.append("<w:p/>")
 
     documento_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
