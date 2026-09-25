@@ -119,6 +119,30 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    "requerimentos_processuais": "cita[cç][ãa]o|rito (?:ordin[áa]rio|sumar[ií]ssimo)|julgamento antecipado|audi[êe]ncia|revelia",
    "honorarios": "honor[áa]rios",
    "juros_correcao": "juros de mora|corre[cç][ãa]o monet[áa]ria|IPCA|taxa selic"
+  },
+  "metadata_interna": {
+   "titulos": [
+    "^altera[cç][õo]es realizadas$",
+    "^relat[óo]rio de altera[cç][õo]es",
+    "^altera[cç][õo]es e acr[ée]scimos",
+    "^registro de altera[cç][õo]es",
+    "^relat[óo]rio (?:de|da) (?:gera[cç][ãa]o|auditoria)",
+    "^observa[cç][õo]es internas"
+   ],
+   "rotulos": [
+    "^\\s*\\**formata[cç][ãa]o\\**\\s*:",
+    "^\\s*\\**organiza[cç][ãa]o\\**\\s*:",
+    "^\\s*\\**corre[cç][õo]es gramaticais\\**\\s*:",
+    "^\\s*\\**ajustes jur[íi]dicos\\**\\s*:",
+    "^\\s*\\**inclus[õo]es\\**\\s*:",
+    "^\\s*\\**exclus[õo]es\\**\\s*:"
+   ]
+  },
+  "epistemica": {
+   "negacao": "\\b(?:aus[êe]ncia|inexist[êe]ncia|falta)\\s+de\\b|\\bn[ãa]o\\s+(?:havia|houve|existia|existe|possu[ií]a|adotou|dispunha|mantinha|fornecia|forneceu)\\b|\\bsem\\s+(?:qualquer|nenhum[ao]?)\\b",
+   "certeza": "documentalmente\\s+(?:demonstr|comprov|provad)|est[áa]\\s+(?:comprovad|demonstrad|provad)|[ée]\\s+(?:incontroverso|inequ[íi]voc)|n[ãa]o\\s+(?:[ée]|constitui)\\s+mera\\s+alega|restou\\s+(?:comprovad|demonstrad)|comprova(?:m|-se)?\\s+que\\s+n[ãa]o",
+   "qualificador": "n[ãa]o\\s+(?:consta|registra|registram|h[áa]\\s+registro)|documentos?\\s+(?:dispon[íi]veis|juntados|atualmente)|nos autos|at[ée] o momento|cabe(?:ndo)?\\s+[àa]\\s+reclamada|[ôo]nus|art\\.\\s*818|segundo o relato|alega",
+   "requerimento_probatorio": "\\bexib[ai]|\\bexibi[çc][ãa]o\\b|junt(?:e|ar|ada)\\s+(?:pela reclamada|aos autos)|requisi[çc][ãa]o|of[íi]cio|per[íi]cia|produ[çc][ãa]o\\s+de\\s+prova|esclarec"
   }
  },
  "regras": [

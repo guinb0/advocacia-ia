@@ -179,12 +179,26 @@ def montar(outline: dict[str, Any] | None, *, partes: dict[str, Any], fatos_docu
             "causa_de_pedir": str(p.get("causa_de_pedir") or "").strip(), "natureza": natureza if natureza in ("cumulativo", "subsidiario", "alternativo") else "cumulativo",
             "subsidiario_de": str(p.get("subsidiario_de") or "").strip(), "dependencias": [str(x) for x in p.get("dependencias") or []],
             "valor": valor, "metodo_calculo": metodo,
+            # o que este item É no ledger: pedido autônomo, ou agravante/critério/consequência de OUTRO (nunca 2ª indenização)
+            "tipo_de_item": str(p.get("tipo_de_item") or "autonomo").strip().lower(), "agrava": str(p.get("agrava") or "").strip(),
+            "bem_juridico": str(p.get("bem_juridico") or "").strip(), "evento_causador": str(p.get("evento_causador") or "").strip(),
+            "dano": str(p.get("dano") or "").strip(), "objeto_economico": str(p.get("objeto_economico") or "").strip(),
         })
     for p in pedidos:
         for t in teses:
             if p["tese_origem"] == t["id"]:
                 t["pedidos_ids"].append(p["id"])
-    return {"partes": partes, "fatos": fatos, "teses": teses, "pedidos": pedidos}
+    # o item que declara `agrava` aponta para o pedido que ele majora
+    for p in pedidos:
+        if p["tipo_de_item"] in ("agravante", "criterio_de_quantificacao", "consequencia") or p["agrava"]:
+            alvo = _tokens(p["agrava"] or f"{p['tipo']} {p['objeto']}")
+            melhor = max((q for q in pedidos if q is not p and q["tipo_de_item"] == "autonomo"), key=lambda q: _jaccard(alvo, _chave(q)), default=None)
+            p["agrava_id"] = melhor["id"] if melhor and _jaccard(alvo, _chave(melhor)) > 0 else ""
+    for f in fatos:
+        f["estado_probatorio"] = "CONFIRMED" if f["documentos"] else "ALLEGED"
+    ausencias = [{"afirmacao": str(a.get("afirmacao") or ""), "estado": str(a.get("estado") or "NOT_FOUND_IN_AVAILABLE_DOCUMENTS").upper()}
+                 for a in outline.get("ausencias") or [] if isinstance(a, dict) and str(a.get("afirmacao") or "").strip()]
+    return {"partes": partes, "fatos": fatos, "teses": teses, "pedidos": pedidos, "ausencias": ausencias}
 
 
 def tese_do_topico(plano: dict[str, Any], titulo: str, texto: str = "") -> dict[str, Any] | None:
@@ -245,6 +259,10 @@ def para_prompt(plano: dict[str, Any]) -> str:
         linhas.append("RESPONSABILIDADE POR CONTEÚDO — desenvolva UMA vez, na seção competente, e nas demais só referencie em uma frase: "
                       + ", ".join(c.replace("_", " ") for c in categorias)
                       + ". O pedido final (dos pedidos/fecho) traz só a consequência, com o fundamento entre parênteses — nunca reproduz o desenvolvimento nem repete o mesmo requerimento.")
+    if plano.get("ausencias"):
+        linhas.append("ESTADO DA EVIDÊNCIA — o que os documentos disponíveis NÃO registram (não é prova de que não aconteceu): "
+                      + "; ".join(a["afirmacao"] for a in plano["ausencias"])
+                      + ". Redija como «os documentos disponíveis não registram …»; NUNCA como ausência demonstrada/comprovada; se o fato importa, requeira a prova (sem afirmá-lo como provado).")
     for u in (plano.get("case_facts") or {}).get("UNCERTAINTIES", []):
         linhas.append(f"INCERTEZA ({u['tipo']}) {u['campo']}: {u['detalhe']} — NÃO use nenhuma das versões; escreva uma única pendência.")
     linhas.append("\nFatos (id | data | fato | documentos):")
@@ -325,8 +343,13 @@ def renderizar_pedidos(plano: dict[str, Any], redigir: Callable[[list[dict[str, 
     Devolve (texto, relatório). A ordem, a numeração (a), b), c)…) e a presença de cada pedido são do
     código: o modelo não decide quais pedidos existem, e não há como um pedido aparecer duas vezes.
     """
-    pedidos = plano["pedidos"]
-    saida = redigir(pedidos) or {}
+    todos = plano["pedidos"]
+    pedidos = [p for p in todos if p.get("tipo_de_item", "autonomo") in ("autonomo", "acessorio", "")]
+    fatores: dict[str, list[str]] = {}
+    for p in todos:
+        if p.get("tipo_de_item") in ("agravante", "criterio_de_quantificacao", "consequencia") and p.get("agrava_id"):
+            fatores.setdefault(p["agrava_id"], []).append(p["objeto"] or p["tipo"])
+    saida = redigir([{**p, "fatores_de_quantificacao": fatores.get(p["id"], [])} for p in pedidos]) or {}
     itens = saida.get("itens") if isinstance(saida.get("itens"), dict) else {}
     linhas = []
     faltou = []

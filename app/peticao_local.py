@@ -35,6 +35,8 @@ from . import (
     peticao_migracao_legado,
     auditor_final,
     auditoria_estrutural,
+    document_ledger,
+    documento_final,
     case_facts,
     petition_linter,
     plano_da_peticao,
@@ -215,7 +217,7 @@ def _pedidos_do_plano_na_secao(caso_id: str, secoes: list[dict[str, Any]], plano
         else:
             novas.append(x)
     if not achou:
-        pos = next((i for i, x in enumerate(novas) if x.get("code") in ("EVIDENCE", "VALUE", "CLOSING")), len(novas))
+        pos = next((i for i, x in enumerate(novas) if x.get("code") in ("VALUE", "CLOSING")), len(novas))
         novas.insert(pos, {"code": "CLAIMS", "label": "", "content": texto, "formato": 2})
     return novas, {"aplicado": True, "fundidos": fundidos, **rel}
 
@@ -274,6 +276,49 @@ def _lintar_e_corrigir(
         reescrever=lambda secao, orientacao: _reescrever_secao(caso_id, secao, orientacao, texto_do_caso),
         rerenderizar_pedidos=lambda sec, plano: _pedidos_do_plano_na_secao(caso_id, sec, plano)[0],
     )
+
+
+def _validar_documento_final(
+    caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], texto_do_caso: str, *, max_rodadas: int = 2,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[Any]]:
+    """higieniza (determinístico) → valida o artefato final → corrige o que for corrigível → higieniza e valida de NOVO.
+
+    A última coisa que acontece é SEMPRE higienizar+validar; o que sobrar de crítico vai para revisão humana (peça retida).
+    """
+    params = peticao_skill_arquivos.validacoes_da_skill()["parametros"]
+    try:
+        ledger, _ = documentos_logicos(caso_id)
+    except Exception:  # noqa: BLE001
+        ledger = []
+    rel: dict[str, Any] = {"rodadas": []}
+    for rodada in range(max_rodadas + 1):
+        secoes, higiene = documento_final.higienizar(secoes, plano_est, params)
+        achados = documento_final.validar_documento_final(secoes, plano_est, params, ledger)
+        criticos = [a for a in achados if a.bloqueia]
+        rel["rodadas"].append({"higiene": {k: (len(v) if isinstance(v, list) else v) for k, v in higiene.items()},
+                               "criticos": [f"{a.codigo}:{a.secao}" for a in criticos]})
+        if higiene.get("metadata_interna_removida"):
+            rel.setdefault("metadata_interna", []).extend(higiene["metadata_interna_removida"])
+        if not criticos or rodada == max_rodadas:
+            break
+        por_secao: dict[str, list[Any]] = {}
+        for a in criticos:
+            por_secao.setdefault(a.secao or "CLAIMS", []).append(a)
+        if any(a.codigo in ("MAJORACAO_COMO_SEGUNDA_INDENIZACAO", "AGRAVANTE_COM_VALOR_PROPRIO", "MESMA_REPARACAO_DUAS_VEZES", "PEDIDOS_SOBREPOSTOS") for a in criticos):
+            novos = auditor_final.revisar_ledger(lambda i, e: _llm_json(i, e, timeout=240.0), plano_est, criticos)
+            if novos:
+                plano_est["pedidos"] = novos
+                secoes = _pedidos_do_plano_na_secao(caso_id, secoes, plano_est)[0]
+        novas = []
+        for x in secoes:
+            do_x = por_secao.get(str(x.get("code")))
+            texto = _reescrever_secao(caso_id, x, "CORRIJA EXATAMENTE (sem inventar; ausência de documento não é prova de ausência):\n" + "\n".join(
+                f"- [{a.codigo}] {a.motivo} Trecho: {a.trecho}. Correção: {a.correcao}" for a in do_x), texto_do_caso) if do_x and x.get("code") != "CLAIMS" else None
+            novas.append({**x, "content": texto} if texto else x)
+        secoes = novas
+    rel["pendencias_humanas"] = [f"{a.codigo}:{a.secao} — {a.motivo}"[:260] for a in achados if a.bloqueia]
+    rel["liberada"] = not rel["pendencias_humanas"]
+    return secoes, rel, achados
 
 
 def _nome_da_secao(secao: dict[str, Any]) -> str:
@@ -858,6 +903,14 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     return "\n\n".join(blocos)
 
 
+def documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """(DOCUMENT_LEDGER, texto de cada documento LÓGICO na ordem do ledger). Cópias viram um documento só."""
+    brutos = documentos_ocr(caso_id)
+    ledger = document_ledger.montar(brutos, {a: d.get("tipo", "") for a, d in _dados_por_documento(caso_id).items()})
+    por_arquivo = {d["arquivo"]: d for d in brutos}
+    return ledger, [{"arquivo": d["canonical_file"], "texto": por_arquivo[d["canonical_file"]]["texto"], "rotulo": d["canonical_label"]} for d in ledger]
+
+
 def documentos_ocr(caso_id: str) -> list[dict[str, str]]:
     """O texto de OCR de cada anexo, em UMA consulta (ver `_documentos_do_caso`).
 
@@ -1049,11 +1102,13 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     except Exception as erro:  # noqa: BLE001
         log.warning("petição local: análise documental indisponível no contexto: %s", erro)
 
-    documentos = documentos_ocr(caso_id)
+    # DOCUMENT_LEDGER: um identificador canônico por documento LÓGICO (cópias consolidadas). É o ÚNICO rótulo que a peça usa.
+    ledger, documentos = documentos_logicos(caso_id)
     if documentos:
         linhas.append("\n=== DOCUMENTOS (texto extraído por OCR) ===")
-        for numero, doc in enumerate(documentos[:20], 1):
-            linhas.append(f"\n--- DOCUMENTO {numero:02d}: {doc['arquivo']} ---\n{doc['texto']}")
+        linhas.append(document_ledger.aviso_de_copias(ledger[:20]))
+        for doc in documentos[:20]:
+            linhas.append(f"\n--- {doc['rotulo'].upper()}: {doc['arquivo']} ---\n{doc['texto']}")
 
     obrig = progresso.get("obrigatorios_total")
     entregues = progresso.get("obrigatorios_entregues")
@@ -1322,7 +1377,7 @@ JSON:
     /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
        PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
        use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
-       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
+       FACTS, LEGAL_GROUNDS, CLAIMS, VALUE, CLOSING. Qualquer outra seção: código livre. Crie SÓ as seções que a skill manda. */
   ],
   "pendencias": ["fatos sem comprovação documental"]
 }
@@ -1566,7 +1621,7 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
         ' "provas":["documento/trecho que comprova"],'
         ' "pedidos_relacionados":["pedido que decorre desta tese"]}],\n'
         '  "pedidos": ["cada pedido a formular, na ordem"],\n'
-        '  "secoes": [{"code":"FACTS|LEGAL_GROUNDS|CLAIMS|EVIDENCE|...",'
+        '  "secoes": [{"code":"papel da seção (FACTS, LEGAL_GROUNDS, CLAIMS…) — só as que a skill manda",'
         ' "pontos":["o que esta seção precisa cobrir, em ordem"]}],\n'
         '  "riscos_ou_lacunas": ["fato relevante sem prova, contradição, dado faltante"],\n'
         '  "partes": {"autor": {"nome":"","nacionalidade":"","estado_civil":"","profissao":"","cpf":"","rg":"","pis":"","ctps":"",'
@@ -1575,8 +1630,15 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
         ' "objeto":"o que exatamente se pede", "causa_de_pedir":"a lesão/fato jurídico que fundamenta (mesma lesão = mesma causa)",'
         ' "natureza":"cumulativo|subsidiario|alternativo", "fundamento":"norma/tese", "valor_ou_base":"valor em R$ com o critério, ou vazio",'
         ' "valor_numerico":número ou null, "metodo_calculo":{"base":número,"multiplicador":número,"resultado":número,"criterio":"ex.: salário líquido do contracheque"},'
+        ' "tipo_de_item":"autonomo|agravante|criterio_de_quantificacao|consequencia|acessorio", "agrava":"tipo do pedido que este agrava (se agravante)",'
+        ' "bem_juridico":"", "evento_causador":"", "dano":"o dano concreto reparado", "objeto_economico":"o que se paga",'
         ' "de_praxe":true se for pedido de praxe exigido pela skill (gratuidade, honorários, juros, provas...)}]\n'
         "}\n"
+        "Um AGRAVANTE (ex.: sequela, adoecimento, duração que aumenta a extensão do MESMO dano) NÃO é pedido econômico próprio: "
+        "registre-o com tipo_de_item=agravante, agrava=<pedido principal>, sem valor, e considere-o no metodo_calculo do principal; "
+        "só é pedido autônomo se o DANO for outro e isso estiver fundamentado. "
+        "`ausencias`: [{\"afirmacao\":\"o que os documentos disponíveis NÃO registram\",\"estado\":\"NOT_FOUND_IN_AVAILABLE_DOCUMENTS|UNKNOWN|DISPUTED\"}] — "
+        "nunca como ausência comprovada. "
         "`partes`: SOMENTE dados que constam dos documentos, da entrevista ou do cadastro — campo desconhecido fica vazio, "
         "NUNCA inventado. `pedidos_estruturados` é a ÚNICA lista de pedidos da peça: cada pedido decorre de uma tese com fatos "
         "do caso (ou é de praxe pela skill); não repita o mesmo pedido em dois itens.\n"
@@ -1674,7 +1736,7 @@ def _fontes_da_conferencia(
         pass
     return conferencia_peticao.Fontes(
         anexos=anexos_do_caso(caso_id),
-        numerados=[d["arquivo"] for d in documentos_ocr(caso_id)[:20]],
+        numerados=[d["arquivo"] for d in documentos_logicos(caso_id)[1][:20]],
         entrevista=texto_entrevista,
         cadastro=" ".join(str(v) for v in [caso.get("cliente"), *qualificacao.values()] if v),
         material=material,
@@ -2197,7 +2259,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     # CASE_FACTS: UMA fonte canônica (valor, fonte, confiança, conflito) — a peça inteira consulta os mesmos dados.
     dados_docs = _dados_por_documento(caso_id)
     fontes_do_caso = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"], "tipo_documento": dados_docs.get(d["arquivo"], {}).get("tipo", ""),
-                       "dados": dados_docs.get(d["arquivo"], {}).get("dados", [])} for d in documentos_ocr(caso_id)]
+                       "dados": dados_docs.get(d["arquivo"], {}).get("dados", [])} for d in documentos_logicos(caso_id)[1]]
     fontes_do_caso.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
     cf = case_facts.montar(
         fontes=fontes_do_caso, cadastro=_cadastro_estruturado(caso_id), proposta_partes=(plano or {}).get("partes"),
@@ -2354,7 +2416,7 @@ Devolva JSON exatamente com:
     /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
        PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
        use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
-       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
+       FACTS, LEGAL_GROUNDS, CLAIMS, VALUE, CLOSING. Qualquer outra seção: código livre. Crie SÓ as seções que a skill manda. */
   ],
   "pendencias": ["..."]
 }
@@ -2473,6 +2535,12 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # texto final. Não bloqueia nem corrige nada — só torna visível quando a
     # peça deixou de fora algo que a leitura dos documentos tinha encontrado,
     # em vez de a omissão passar batido sem ninguém notar.
+    # ===== FINAL_DOCUMENT_VALIDATOR — ÚLTIMA etapa que pode mudar o texto. Roda sobre a representação que o DOCX imprime.
+    avancar_etapa("Validação final do documento…", 8)
+    secoes, rel_final, achados_finais = _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso)
+    violacoes = [*[v for v in violacoes if not v.bloqueia], *achados_finais]
+    pipeline["documento_final"] = rel_final
+    hash_validado = documento_final.impressao_hash(secoes)
     cobertura = case_brief.cobertura(brief, secoes) if brief else None
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
@@ -2514,10 +2582,10 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "jurimetria": jurimetria,
         "sections": secoes,
         "readiness": {
-            "ready": not (auditoria_estrutural.pendencias(secoes) or pipeline.get("auditor_final", {}).get("pendencias_humanas")),
+            "ready": not (auditoria_estrutural.pendencias(secoes) or pipeline.get("documento_final", {}).get("pendencias_humanas")),
             "blocking_issues": [
                 *(f"[PENDENTE] no texto ({c}): {m}"[:200] for c, m in auditoria_estrutural.pendencias(secoes)),
-                *pipeline.get("auditor_final", {}).get("pendencias_humanas", []),
+                *pipeline.get("documento_final", {}).get("pendencias_humanas", []),
             ],
             "warnings": [
                 *_avisos_de_pipeline(pipeline),
@@ -2555,6 +2623,9 @@ Cada content deve conter parágrafos separados por linha em branco."""
         },
     }
     _aplicar_conferencia(dados, secoes, violacoes)
+    # Nada pode ter mudado o conteúdo depois do validador final (o que foi validado é o que será impresso).
+    if documento_final.impressao_hash(dados["sections"]) != hash_validado:
+        raise ErroPeticao("O documento mudou depois da validação final — geração interrompida para não entregar peça não validada.")
     _salvar(caso_id, dados)
     return dados
 
@@ -2801,7 +2872,7 @@ JSON:
     /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
        PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
        use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
-       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
+       FACTS, LEGAL_GROUNDS, CLAIMS, VALUE, CLOSING. Qualquer outra seção: código livre. Crie SÓ as seções que a skill manda. */
   ],
   "pendencias": ["o que falta para esta peça em particular"]
 }
@@ -2976,7 +3047,7 @@ Cada `code` deve ser estável, curto e único. JSON:
     /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
        PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
        use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
-       FACTS, LEGAL_GROUNDS, CLAIMS, EVIDENCE, VALUE, CLOSING. Qualquer outra seção: código livre. */
+       FACTS, LEGAL_GROUNDS, CLAIMS, VALUE, CLOSING. Qualquer outra seção: código livre. Crie SÓ as seções que a skill manda. */
   ],
   "perguntas": ["o que você precisaria confirmar com o advogado; [] se nada"]
 }
@@ -4613,6 +4684,8 @@ def _rodape_xml(visual: dict[str, Any]) -> str:
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     # Peça gravada antes do formato estruturado é MIGRADA aqui, fora do renderer.
     secoes = peticao_migracao_legado.migrar_secoes(secoes)
+    # O documento processual NUNCA contém metadado interno de geração (mesmo em peça antiga ou editada à mão).
+    secoes, _ = documento_final._cortar_metadata(secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"])  # noqa: SLF001
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
     visual = configuracao_visual()
     fonte = str(visual.get("fonte") or fonte).strip() or fonte

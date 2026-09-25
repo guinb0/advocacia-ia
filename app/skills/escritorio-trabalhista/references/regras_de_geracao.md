@@ -207,7 +207,7 @@ transcrição; precedente verificável acima de precedente convincente.
 - Preliminares (justiça gratuita, tutela de urgência, rito): na ordem e com o conteúdo de `estrutura_peca.md`; não repetir a matéria no capítulo de direito. Não criar preliminar de "Juízo 100% Digital" a menos que a entrevista ou o cliente tenham optado por isso.
 - A prescrição (bienal e quinquenal) é SEMPRE tratada, em subcapítulo próprio, ainda que só para afastá-la.
 - Capítulos e subcapítulos numerados, cada tese em seu subcapítulo.
-- Provas: só o requerimento de produção de provas e o rol de documentos que instruem a inicial, sem repetir a narrativa dos fatos.
+- Provas: a produção de provas é pedido de praxe DENTRO da seção de pedidos (`estrutura_peca.md`, item 6); a necessidade de uma prova específica (exibição, perícia, testemunha) é desenvolvida UMA vez, no tópico do direito a que serve, e nos pedidos só é requerida em uma frase. Não crie capítulo próprio de provas se o modelo do assunto não o tiver.
 - Gratuidade: só diga que a declaração de hipossuficiência está anexa se ela estiver entre os DOCUMENTOS; senão, `[PENDENTE: juntar declaração de hipossuficiência assinada]`.
 - Valor da causa coerente com a soma dos pedidos, sem fórmula fiscal automática.
 - Fechamento: a fórmula, a ordem e a identificação do advogado seguem o modelo do assunto; não escreva o título "Fechamento" dentro do conteúdo.

@@ -40,7 +40,7 @@ INSTRUCAO = (
     "\"secao\":\"code da seção ou LEDGER\",\"trecho\":\"trecho curto\",\"problema\":\"o que está errado\",\"correcao\":\"como corrigir sem inventar\"}]} — "
     "liste APENAS os itens com problema. Regras: repetição necessária para conexão argumentativa é aceitável, duplicação substancial não; "
     "pedidos com linguagem parecida mas objeto/período/beneficiário diferentes NÃO são duplicados; uma tese subsidiária não pode aparecer como cumulativa; "
-    "'majoração' lançada como segunda indenização da MESMA lesão é sobreposição. Não invente problema: cite trecho real.\nCHECKLIST:\n- " + "\n- ".join(CHECKLIST)
+    "'majoração' lançada como segunda indenização da MESMA lesão é sobreposição — compare bem jurídico + evento causador + dano + consequência jurídica + objeto econômico, não só o texto: agravante (sequela/adoecimento/duração que aumenta a extensão do MESMO dano) é FATOR de quantificação do principal, não segundo pedido. Fato «não encontrado nos documentos disponíveis» NUNCA pode ser redigido como ausência comprovada, sobretudo se a peça requer prova para apurá-lo. Cada tese responde à SUA pergunta (responsabilidade: por que responde sem culpa; dano in re ipsa: por que há dano sem prova do sofrimento; agravamento: como a extensão aumenta; subsidiária: fundamento se afastada a principal; quantificação: fatores do quantum) — precedente desenvolvido numa tese é só REFERENCIADO nas outras. Não invente problema: cite trecho real.\nCHECKLIST:\n- " + "\n- ".join(CHECKLIST)
 )
 
 
@@ -72,8 +72,8 @@ def revisar_ledger(chamar: Callable[[str, str], dict[str, Any]], plano: dict[str
     """Peça ao modelo o ledger CORRIGIDO e só o aceite se a validação determinística não achar mais erro crítico."""
     try:
         saida = chamar(
-            "Corrija o LEDGER de pedidos de uma petição apontado pelos problemas. Funda pedidos que indenizam a MESMA lesão (majoração vira critério "
-            "do pedido principal, não segundo pedido); classifique `natureza` como cumulativo|subsidiario|alternativo; preencha `metodo_calculo` "
+            "Corrija o LEDGER de pedidos de uma petição apontado pelos problemas. Funda pedidos que reparam o MESMO dano: majoração/agravamento NÃO é segundo pedido — "
+            "marque-o com tipo_de_item=\"agravante\", agrava=<tipo do pedido principal>, SEM valor, e incorpore o fator ao metodo_calculo (base, multiplicador, resultado) do principal; classifique `natureza` como cumulativo|subsidiario|alternativo; preencha `metodo_calculo` "
             "{base, multiplicador, resultado} e `valor` coerentes; mantenha os pedidos de praxe e NÃO crie pedido sem fato do caso. "
             "Devolva APENAS JSON: {\"pedidos\":[mesmo esquema do ledger recebido]}.",
             json.dumps({"ledger": plano["pedidos"], "teses": [{"id": t["id"], "titulo": t["titulo"]} for t in plano["teses"]],
@@ -85,7 +85,17 @@ def revisar_ledger(chamar: Callable[[str, str], dict[str, Any]], plano: dict[str
         return None
     base = {"de_praxe": False, "tese_origem": "", "fundamento": "", "valor_ou_base": "", "natureza": "cumulativo"}
     candidato = {**plano, "pedidos": [{**base, **n, "id": f"P{i + 1:02d}"} for i, n in enumerate(novos) if isinstance(n, dict)]}
-    return candidato["pedidos"] if not [v for v in ae.ledger(candidato) if v.bloqueia] else None
+    if [v for v in ae.ledger(candidato) if v.bloqueia]:
+        return None
+    # A correção só vale se CONSOLIDOU: menos pedidos econômicos autônomos, ou o agravante ficou sem valor próprio.
+    # (Aceitar só porque a checagem de texto parou de reclamar deixava o modelo renomear o pedido sobreposto.)
+    antes = sum(1 for p in plano["pedidos"] if ae._autonomo_monetario(p))  # noqa: SLF001
+    depois = sum(1 for p in candidato["pedidos"] if ae._autonomo_monetario(p))  # noqa: SLF001
+    ha_agravante_sem_valor = any(p.get("tipo_de_item") in ("agravante", "criterio_de_quantificacao") and not p.get("valor") for p in candidato["pedidos"])
+    consolidou = depois < antes or ha_agravante_sem_valor
+    if any(p.codigo in ("MAJORACAO_COMO_SEGUNDA_INDENIZACAO", "PEDIDOS_SOBREPOSTOS", "MESMA_REPARACAO_DUAS_VEZES", "AGRAVANTE_COM_VALOR_PROPRIO") for p in problemas) and not consolidou:
+        return None
+    return candidato["pedidos"]
 
 
 def executar(
