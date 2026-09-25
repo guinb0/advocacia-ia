@@ -34,7 +34,10 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import date
+from dataclasses import field
 from typing import Any
+
+from . import peticao_skill_arquivos
 
 __all__ = [
     "Fontes",
@@ -45,7 +48,6 @@ __all__ = [
     "marcar_citacoes_nao_verificadas",
     "normalizar",
     "numeros_colados",
-    "SINONIMOS",
 ]
 
 
@@ -65,22 +67,6 @@ def numeros_colados(texto: str) -> str:
     linha de baixo e acharia número que não existe.
     """
     return re.sub(r"(?<=\d)[\s./-](?=\d)", "", str(texto or ""))
-
-
-#: O nome que se usa e o que está escrito no documento raramente coincidem.
-SINONIMOS: tuple[tuple[str, ...], ...] = (
-    ("ctps", "carteira de trabalho"),
-    ("rg", "identidade", "registro geral"),
-    ("pis", "nis", "pasep"),
-    ("cnh", "habilitacao"),
-    ("trct", "termo de rescisao", "rescisao"),
-    ("cat", "comunicacao de acidente"),
-    ("aso", "atestado de saude ocupacional"),
-    ("holerite", "contracheque", "recibo de pagamento", "demonstrativo de pagamento"),
-    ("comprovante de residencia", "comprovante de endereco", "conta de luz", "conta de energia", "conta de agua"),
-    ("carta de concessao", "comunicacao de decisao", "concessao do beneficio"),
-    ("cnis", "cadastro nacional de informacoes sociais", "extrato previdenciario"),
-)
 
 
 def _padrao(termo: str) -> re.Pattern[str]:
@@ -106,6 +92,8 @@ class Fontes:
     entrevista: str = ""
     cadastro: str = ""                      # cliente + qualificação, achatados
     material: str = ""                      # o que mais foi ao prompt (acervo, julgados)
+    #: Grupos de nomes equivalentes de documento — vocabulário do DOMÍNIO, vem da skill.
+    sinonimos: tuple[tuple[str, ...], ...] = field(default_factory=lambda: _sinonimos_da_skill())
 
     def __post_init__(self) -> None:
         blocos = [
@@ -129,7 +117,7 @@ class Fontes:
 
     # O documento de que a peça fala existe entre os anexos?
     def tem_anexo(self, descricao: str) -> bool:
-        termos = _termos_do_documento(descricao)
+        termos = _termos_do_documento(descricao, self.sinonimos)
         if not termos:
             return True  # só palavras genéricas ("documentos anexos"): nada a conferir
         sinonimos, palavras = termos
@@ -194,10 +182,17 @@ _GENERICAS = {
 }
 
 
-def _termos_do_documento(descricao: str) -> tuple[list[str], list[str]] | None:
+def _sinonimos_da_skill() -> tuple[tuple[str, ...], ...]:
+    grupos = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("sinonimos_de_documento") or []
+    return tuple(tuple(g) for g in grupos)
+
+
+def _termos_do_documento(
+    descricao: str, sinonimos_conhecidos: tuple[tuple[str, ...], ...] = ()
+) -> tuple[list[str], list[str]] | None:
     """Os sinônimos conhecidos e as palavras que identificam o documento citado."""
     texto = normalizar(descricao)
-    sinonimos = [s for grupo in SINONIMOS if any(_padrao(t).search(texto) for t in grupo) for s in grupo]
+    sinonimos = [s for grupo in sinonimos_conhecidos if any(_padrao(t).search(texto) for t in grupo) for s in grupo]
     palavras = [p for p in re.findall(r"[a-z0-9]+", texto) if p not in _GENERICAS and len(p) >= 3]
     palavras = palavras[-3:]  # o núcleo da expressão fica no fim ("... declaração de hipossuficiência")
     if not sinonimos and not palavras:
@@ -227,15 +222,6 @@ class Violacao:
 def _trecho(texto: str, inicio: int, fim: int, folga: int = 70) -> str:
     de, ate = max(0, inicio - folga), min(len(texto), fim + folga)
     return ("…" if de else "") + " ".join(texto[de:ate].split()) + ("…" if ate < len(texto) else "")
-
-
-#: Onde a norma tem número e o número não é de documento do cliente.
-_CONTEXTO_NORMATIVO = re.compile(
-    r"(lei|decreto|resolu|ato|portaria|instru|emenda|provis|\bnr\b|s[uú]mula|\boj\b|tema|"
-    r"art\.?|artigo|par[aá]grafo|inciso|precedente|processo|recurso|cnj|csjt|tst|trt|stf|stj)"
-    r"[^\n]{0,25}$",
-    re.IGNORECASE,
-)
 
 
 def _documentos_citados(secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
@@ -307,7 +293,9 @@ def _anexos_alegados(secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
     return violacoes
 
 
-def _numeros_sem_origem(secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
+def _numeros_sem_origem(
+    secoes: dict[str, str], fontes: Fontes, contexto_normativo: re.Pattern[str] | None = None
+) -> list[Violacao]:
     violacoes: list[Violacao] = []
     vistos: set[str] = set()
     for codigo, texto in secoes.items():
@@ -333,7 +321,7 @@ def _numeros_sem_origem(secoes: dict[str, str], fontes: Fontes) -> list[Violacao
             depois = texto[m.end() : m.end() + 3]
             if re.search(r"R\$\s*$", antes) or depois.startswith(","):
                 continue  # valor em dinheiro: conferido em `_valores`
-            if _CONTEXTO_NORMATIVO.search(antes):
+            if contexto_normativo and contexto_normativo.search(antes):
                 continue  # número de norma ou de processo citado como fundamento
             if numero in vistos or fontes.tem_numero(numero):
                 continue
@@ -351,265 +339,174 @@ def _numeros_sem_origem(secoes: dict[str, str], fontes: Fontes) -> list[Violacao
     return violacoes
 
 
-def _valor(texto: str) -> float:
-    return float(texto.replace(".", "").replace(",", "."))
-
-
-#: Pedido que, por natureza, não leva valor próprio.
-_PEDIDO_SEM_VALOR_PROPRIO = re.compile(
-    r"honor[aá]rio|juros|corre[çc][ãa]o monet|gratuidade|justi[çc]a gratuita|exib|notifica|cita[çc][ãa]o"
-    r"|proced[eê]ncia|produ[çc][ãa]o de prova|intima|expedi[çc][ãa]o de of[ií]cio|anota[çc][ãa]o"
-    r"|reintegra"  # obrigação de fazer; a indenização substitutiva é que leva valor
-    # Declaratório, procedimental e probatório: não têm conteúdo econômico próprio.
-    # Sem estas entradas a conferência cobrava "valor" desses pedidos e a correção
-    # automática o INVENTAVA ("valor estimado de R$ 1.000,00 correspondente ao custo
-    # de deslocamento… conforme relato") — número sem documento, na peça a protocolar.
-    r"|100%\s*digital|telepresencial|reconhe[çc]|declar[ao]|oitiva|testemunha|per[ií]cia"
-    r"|responsabilidade objetiva|responsabilidade subjetiva",
-    re.IGNORECASE,
-)
-#: Pedido sem conteúdo econômico do autor: não entra na soma nem precisa de conta,
-#: MESMO que venha com valor. Na segunda rodada o modelo passou a escrever "estimado
-#: em R$ 0,00" em gratuidade, citação e provas — e "custas R$ 2.018,80" como pedido.
-_SEM_CONTEUDO_ECONOMICO = re.compile(
-    r"100%\s*digital|telepresencial|reconhe[çc]|declar[ao]|oitiva|testemunha|per[ií]cia"
-    r"|responsabilidade objetiva|responsabilidade subjetiva|"
-    r"gratuidade|justi[çc]a gratuita|cita[çc][ãa]o|produ[çc][ãa]o de|provas? admitid|intima|notifica"
-    r"|exib|custas|honor[aá]rio|juros|corre[çc][ãa]o monet|proced[eê]ncia"
-    # recolhimento previdenciário/fiscal é obrigação da ré perante a União, não
-    # crédito do autor — entrou na soma do valor da causa na terceira rodada
-    r"|recolhimento|contribui[çc][õo]es previdenci",
-    re.IGNORECASE,
-)
-
-
-_ANUNCIA_VALOR = (
-    r"(?:totaliz\w*|valor estimado(?:\s+de)?|estimad[oa] em|no valor de|valor de|total de|montante de)"
-    r"\s*:?\s*R\$\s*([\d.]+,\d{2})"
-)
-#: O que vai entre [PENDENTE: …] é aviso, não texto da peça: "[PENDENTE: nº de dias ×
-#: 2h × valor-hora]" não é a conta feita — é a conta que NÃO foi feita.
-_PENDENTE = re.compile(r"\[PENDENTE[^\]]*\]", re.IGNORECASE)
-#: Pedido cujo valor é arbitrado pelo juízo — não há conta a mostrar.
-_ARBITRADO = re.compile(r"dano[s]? mora|danos? est[ée]tic|arbitr", re.IGNORECASE)
-#: Sinal de que o valor tem CONTA ao lado, e não só vocabulário de conta.
-#:
-#: Mencionar "horas" ou "50%" não é critério: "horas extras com adicional de 50%.
-#: Valor estimado: R$ 15.000,00" não diz de onde saíram os quinze mil. Conta é uma
-#: operação explícita (× ou =), ou um número de meses com o valor mensal ("9 meses e
-#: 5 dias, R$ 2.380,00 mensais, totalizando…"). "[PENDENTE: confirmar critério]" NÃO
-#: conta: foi a brecha que o modelo usou para manter R$ 15.000,00 inventados.
-_CRITERIO = re.compile(
-    r"\d\s*[×x*]\s*[\dR]|[×x*]\s*\d|=\s*R\$"
-    r"|\b\d+\s*meses\b.{0,160}(?:mensa|por m[êe]s|ao m[êe]s|/m[êe]s)"
-    r"|(?:mensa|por m[êe]s|ao m[êe]s|/m[êe]s).{0,160}\b\d+\s*meses\b",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-#: Como se corrige um valor sem conta. Sem saída de emergência: "[PENDENTE: confirmar
-#: critério]" foi usado para manter número inventado com cara de pendência.
-_PREMISSAS = (
-    " Faça a conta com premissas EXPLÍCITAS — salário e período tirados dos documentos,"
-    " jornada tirada do relato (dita «conforme relato») — e escreva cada premissa. Nunca"
-    " um número redondo sem conta, nem [PENDENTE] no lugar da conta."
-)
-
-
-def _itens(claims: str) -> list[str]:
-    partes = re.split(r"\n\s*(?:\*\*)?\s*(?=[a-z]\)|\d{1,2}[.)]\s)", "\n" + claims)
-    return [p.strip() for p in partes if re.match(r"(?:[a-z]\)|\d{1,2}[.)])", p.strip())]
-
-
-def _valores(secoes: dict[str, str]) -> list[Violacao]:
-    violacoes: list[Violacao] = []
-    claims = secoes.get("CLAIMS", "")
-    soma = 0.0
-    for item in _itens(claims):
-        if re.search(r"valor da causa|d[aá]-se [àa] causa", item, re.IGNORECASE):
-            continue
-        if _SEM_CONTEUDO_ECONOMICO.search(item.split(",")[0][:120]):
-            # Pedido sem conteúdo econômico NÃO leva valor. O modelo o fabricava para
-            # "cumprir" o art. 840 ("valor estimado de R$ 1.000,00, correspondente ao
-            # custo estimado de deslocamento… conforme relato") — número sem documento.
-            if re.search(r"(?:valor|custo)s?\s+estimad|estimad[oa]\s+(?:em|de)\s+R\$|atribui-se valor", item, re.IGNORECASE):
-                violacoes.append(
-                    Violacao(
-                        "VALOR_INVENTADO_EM_PEDIDO_SEM_CONTEUDO_ECONOMICO",
-                        "CLAIMS",
-                        " ".join(item.split())[:220],
-                        "Pedido declaratório, procedimental ou probatório com valor estimado sem "
-                        "base em documento — valor inventado.",
-                        "Retire o valor e o critério deste pedido: pedido sem conteúdo econômico "
-                        "não leva valor, e o valor da causa considera só os pedidos de pagamento.",
-                    )
-                )
-            continue
-        valores = [_valor(v) for v in re.findall(r"R\$\s*([\d.]+,\d{2})", item)]
-        if valores:
-            # O valor PEDIDO é o que vem anunciado ("totalizando", "valor estimado",
-            # "no valor de"); o maior valor do item pode ser a base de cálculo — no
-            # FGTS, o salário de R$ 2.380,00 era maior que os R$ 1.500,00 pedidos.
-            # Com a conta escrita, o pedido é o RESULTADO dela: em "valor estimado de
-            # R$ 2.380,00 × 9 meses = R$ 21.420,00" o anunciado é a base, não o total.
-            resultado = re.findall(r"=\s*R\$\s*([\d.]+,\d{2})", item)
-            anunciado = resultado or re.findall(_ANUNCIA_VALOR, item, re.IGNORECASE)
-            soma += _valor(anunciado[-1]) if anunciado else max(valores)
-            if not _ARBITRADO.search(item) and not _CRITERIO.search(_PENDENTE.sub(" ", item)):
-                violacoes.append(
-                    Violacao(
-                        "VALOR_SEM_CRITERIO",
-                        "CLAIMS",
-                        " ".join(item.split())[:220],
-                        "Valor estimado sem critério: a peça não mostra de onde saiu o número.",
-                        "Escreva ao lado do valor a conta que o gera a partir dos dados dos"
-                        " documentos (ex.: horas/dia × dias × meses × valor-hora × adicional)."
-                        + _PREMISSAS,
-                    )
-                )
-            continue
-        if _PEDIDO_SEM_VALOR_PROPRIO.search(item.split(",")[0][:120]):
-            continue
-        # Valor que depende de documento ausente já foi declarado como pendência: a
-        # alternativa a isso é inventar, e a skill proíbe inventar valor.
-        if re.search(r"\[PENDENTE:[^\]]*valor", item, re.IGNORECASE):
-            continue
-        violacoes.append(
-            Violacao(
-                "PEDIDO_SEM_VALOR",
-                "CLAIMS",
-                " ".join(item.split())[:220],
-                "Pedido sem valor: o art. 840, § 1º, da CLT exige pedido certo, determinado e com"
-                " indicação do valor — sem isso o pedido pode ser extinto sem resolução do mérito.",
-                "Se o pedido é de PAGAMENTO e os documentos trazem os dados, dê um valor ESTIMADO com o"
-                " critério escrito ao lado (ex.: nº de horas × valor-hora × meses). Se o valor"
-                " depende de documento que NÃO está nos autos, NÃO estime nem invente custo, base ou"
-                " critério: escreva [PENDENTE: valor a apurar com <documento>] e mantenha o pedido."
-                " Pedido declaratório, procedimental ou probatório não leva valor." + _PREMISSAS,
-            )
-        )
-
-    total = [_valor(v) for v in re.findall(r"R\$\s*([\d.]+,\d{2})", secoes.get("VALUE", ""))[:1]]
-    if total and soma and abs(total[0] - soma) > 0.01 * max(total[0], 1):
-        violacoes.append(
-            Violacao(
-                "VALOR_DA_CAUSA_INCOERENTE",
-                "VALUE",
-                " ".join(secoes.get("VALUE", "").split())[:220],
-                f"O valor da causa (R$ {total[0]:,.2f}) não bate com a soma dos valores dos pedidos"
-                f" (R$ {soma:,.2f}).".replace(",", "X").replace(".", ",").replace("X", "."),
-                "O valor da causa é a soma dos valores dados na seção de pedidos. Não crie parcela"
-                " nova só para arredondar o total — ajuste o total à soma.",
-            )
-        )
-    return violacoes
-
-
-#: Um tópico que conclui CONTRA o cliente e não pede nada.
-_CONCLUI_CONTRA = re.compile(
-    r"n[ãa]o se aplica|n[ãa]o h[áa] (?:atraso|parcela|direito|diferen|elementos? que indique)"
-    r"|n[ãa]o (?:faz|fazem) jus|[ée] indevid[oa]|n[ãa]o se (?:formula|deduz|pleiteia) (?:o )?pedido",
-    re.IGNORECASE,
-)
-#: Só VERBO de quem pede. "pagamento" ficou de fora de propósito: a explicação da lei
-#: ("multa quando o empregador não efetuar o pagamento") o contém, e foi assim que
-#: "VII – DA MULTA DO ART. 477 … não se formula pedido" escapou na segunda rodada.
-_PEDE = re.compile(r"\brequer|\bpleite|faz jus|s[ãa]o devid|[ée] devid|condena[çr]|deferi", re.IGNORECASE)
-
-
-def _topicos_contra_o_cliente(secoes: dict[str, str]) -> list[Violacao]:
-    violacoes: list[Violacao] = []
-    for codigo in ("PRELIMINARY", "LEGAL_GROUNDS", "CLAIMS"):
-        texto = secoes.get(codigo, "")
-        # tópicos = blocos que começam por um título em negrito ou numeração romana
-        blocos = re.split(r"\n(?=\s*\*\*[IVXLC]+\s*[–—-]|\s*[IVXLC]+\s*[–—-]\s)", "\n" + texto)
-        for bloco in blocos:
-            corpo = bloco.strip()
-            if not corpo or not _CONCLUI_CONTRA.search(corpo):
-                continue
-            titulo = corpo.split("\n", 1)[0]
-            resto = corpo[len(titulo):]
-            if _PEDE.search(_CONCLUI_CONTRA.sub("", resto)):
-                continue
-            violacoes.append(
-                Violacao(
-                    "TOPICO_CONTRA_O_CLIENTE",
-                    codigo,
-                    " ".join(corpo.split())[:220],
-                    "Este tópico conclui que o cliente NÃO tem direito a algo — isso não pertence à"
-                    " petição inicial dele.",
-                    "Retire o tópico inteiro da peça. Se a observação importa, ela vai para a análise"
-                    " (observações ao advogado), nunca para o texto que será protocolado.",
-                )
-            )
-    return violacoes
-
-
-_CITA_JURISPRUDENCIA = re.compile(
-    r"\b(s[úu]mula(?:\s+vinculante)?|orienta[çc][ãa]o\s+jurisprudencial|\bOJ|tema)\s*(?:n[ºo°.]*\s*)?(\d{1,4})",
-    re.IGNORECASE,
-)
 MARCA_NAO_VERIFICADA = "[CONFERIR: citação não verificada no acervo]"
 
 
-def _citacoes(secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
-    violacoes: list[Violacao] = []
+def _re(padrao: str, multilinha: bool = False) -> re.Pattern[str]:
+    return re.compile(padrao, re.IGNORECASE | (re.MULTILINE if multilinha else 0))
+
+
+def _secoes_da_regra(regra: dict[str, Any], secoes: dict[str, str]) -> list[str]:
+    alvo = regra.get("secoes") or ([regra["secao"]] if regra.get("secao") else "*")
+    return list(secoes) if alvo == "*" else [c for c in alvo if c in secoes]
+
+
+def _valor_brl(texto: str) -> float:
+    return float(texto.replace(".", "").replace(",", "."))
+
+
+def _itens_da_secao(regra: dict[str, Any], texto: str) -> list[str]:
+    partes = re.split(regra["separador_de_itens"], "\n" + texto)
+    inicio = _re(regra["inicio_de_item"])
+    return [p.strip() for p in partes if inicio.match(p.strip())]
+
+
+def _violacao(regra: dict[str, Any], secao: str, trecho: str, **campos: str) -> Violacao:
+    return Violacao(
+        regra["codigo"], secao, trecho,
+        regra["mensagem"].format(**campos) if campos else regra["mensagem"],
+        regra["correcao"], bool(regra.get("bloqueia", True)),
+        campos.get("citacao", ""),
+    )
+
+
+def _regra_item(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]:
+    """Item de lista da seção que satisfaz TODAS as condições de `quando`."""
+    saida: list[Violacao] = []
+    ignorar = _re(regra["ignorar_item"]) if regra.get("ignorar_item") else None
+    pendente = _re(regra["pendente"]) if regra.get("pendente") else None
+    for codigo in _secoes_da_regra(regra, secoes):
+        for item in _itens_da_secao(regra, secoes[codigo]):
+            if ignorar and ignorar.search(item):
+                continue
+            visoes = {
+                "item": item,
+                "cabeca": item.split(",")[0][:120],
+                "item_sem_pendente": pendente.sub(" ", item) if pendente else item,
+            }
+            if all(
+                (not c.get("casa") or _re(c["casa"]).search(visoes[c["em"]]))
+                and (not c.get("nao_casa") or not _re(c["nao_casa"]).search(visoes[c["em"]]))
+                for c in regra["quando"]
+            ):
+                saida.append(_violacao(regra, codigo, " ".join(item.split())[:220]))
+    return saida
+
+
+def _regra_soma(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]:
+    """A soma dos valores dos itens tem de bater com o valor declarado em `total_em`."""
+    ignorar = _re(regra["ignorar_item"])
+    excluir = _re(regra["excluir_cabeca"])
+    valor, resultado, anunciado = regra["valor"], regra["resultado"], regra["anunciado"]
+    soma = 0.0
+    for item in _itens_da_secao(regra, secoes.get(regra["secao"], "")):
+        if ignorar.search(item) or excluir.search(item.split(",")[0][:120]):
+            continue
+        valores = [_valor_brl(v) for v in re.findall(valor, item)]
+        if not valores:
+            continue
+        # O valor PEDIDO é o resultado da conta escrita, ou o anunciado; o maior valor do
+        # item pode ser só a base de cálculo.
+        achado = re.findall(resultado, item) or re.findall(anunciado, item, re.IGNORECASE)
+        soma += _valor_brl(achado[-1]) if achado else max(valores)
+    texto_total = secoes.get(regra["total_em"], "")
+    total = [_valor_brl(v) for v in re.findall(valor, texto_total)[:1]]
+    if total and soma and abs(total[0] - soma) > 0.01 * max(total[0], 1):
+        def brl(x: float) -> str:
+            return "R$ " + f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return [_violacao(regra, regra["total_em"], " ".join(texto_total.split())[:220],
+                          total=brl(total[0]), soma=brl(soma))]
+    return []
+
+
+def _regra_topico_sem_pedido(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]:
+    """Tópico que casa `conclui` e não casa `pede` (fora do trecho que concluiu)."""
+    conclui, pede = _re(regra["conclui"]), _re(regra["pede"])
+    saida: list[Violacao] = []
+    for codigo in _secoes_da_regra(regra, secoes):
+        for bloco in re.split(regra["divisor"], "\n" + secoes[codigo]):
+            corpo = bloco.strip()
+            if not corpo or not conclui.search(corpo):
+                continue
+            resto = corpo[len(corpo.split("\n", 1)[0]):]
+            if pede.search(conclui.sub("", resto)):
+                continue
+            saida.append(_violacao(regra, codigo, " ".join(corpo.split())[:220]))
+    return saida
+
+
+def _regra_padrao_proibido(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]:
+    padrao = _re(regra["regex"], bool(regra.get("multilinha")))
+    return [
+        _violacao(regra, codigo, " ".join(m.group(0).split())[:220])
+        for codigo in _secoes_da_regra(regra, secoes)
+        for m in padrao.finditer(secoes[codigo])
+    ]
+
+
+def _regra_citacao_sem_fonte(regra: dict[str, Any], secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
+    """Citação (grupo 1 = espécie, grupo 2 = número) que não consta do material recebido."""
+    padrao = _re(regra["regex"])
+    equivalentes = regra.get("equivalentes") or {}
+    saida: list[Violacao] = []
     vistos: set[tuple[str, str]] = set()
-    for codigo, texto in secoes.items():
-        for m in _CITA_JURISPRUDENCIA.finditer(texto):
-            tipo = normalizar(m.group(1)).split()[0][:5]  # sumul | orien | oj | tema
-            chave = (tipo, m.group(2))
-            if chave in vistos or fontes.tem_citacao(tipo if tipo != "orien" else "orientacao", m.group(2)):
+    for codigo in _secoes_da_regra(regra, secoes):
+        texto = secoes[codigo]
+        for m in padrao.finditer(texto):
+            especie = normalizar(m.group(1)).split()[0][:5]
+            chave = (especie, m.group(2))
+            nomes = equivalentes.get(especie, [especie])
+            if chave in vistos or any(fontes.tem_citacao(n, m.group(2)) for n in nomes):
                 continue
             vistos.add(chave)
-            violacoes.append(
-                Violacao(
-                    "CITACAO_NAO_VERIFICADA",
-                    codigo,
-                    _trecho(texto, m.start(), m.end()),
-                    f"«{m.group(0)}» foi citada de memória: não está no material do acervo recebido"
-                    " nesta geração, e o acervo ainda não tem catálogo de súmulas para conferir.",
-                    "Mantenha só se o advogado conferir o número e o texto na fonte oficial.",
-                    bloqueia=False,
-                    citacao=re.sub(r"\s+", " ", m.group(0)),
-                )
-            )
-    return violacoes
+            saida.append(_violacao(
+                regra, codigo, _trecho(texto, m.start(), m.end()),
+                citacao=re.sub(r"\s+", " ", m.group(0)),
+            ))
+    return saida
+
+
+def _regra_tamanho_minimo(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]:
+    """Seção que existe mas tem menos de `minimo_chars` caracteres."""
+    return [
+        _violacao(regra, codigo, f"{len(secoes[codigo].strip())} caracteres")
+        for codigo in _secoes_da_regra(regra, secoes)
+        if secoes[codigo].strip() and len(secoes[codigo].strip()) < int(regra["minimo_chars"])
+    ]
+
+
+def _regra_secao_obrigatoria(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]:
+    """Papéis de seção que a skill exige e que faltam (ou vieram vazios)."""
+    return [
+        _violacao(regra, codigo, "seção ausente ou vazia")
+        for codigo in regra["secoes"]
+        if not secoes.get(codigo, "").strip()
+    ]
+
+
+_EXECUTORES = {
+    "tamanho_minimo": lambda r, s, f: _regra_tamanho_minimo(r, s),
+    "secao_obrigatoria": lambda r, s, f: _regra_secao_obrigatoria(r, s),
+    "item": lambda r, s, f: _regra_item(r, s),
+    "soma_coerente": lambda r, s, f: _regra_soma(r, s),
+    "topico_sem_pedido": lambda r, s, f: _regra_topico_sem_pedido(r, s),
+    "padrao_proibido": lambda r, s, f: _regra_padrao_proibido(r, s),
+    "citacao_sem_fonte": _regra_citacao_sem_fonte,
+}
+
+
+def executar_regras(regras: list[dict[str, Any]], secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
+    """Executa as regras DECLARADAS pela skill. Tipo desconhecido é erro alto, não silêncio."""
+    saida: list[Violacao] = []
+    for regra in regras:
+        executor = _EXECUTORES.get(regra.get("tipo"))
+        if executor is None:
+            raise ValueError(f"validação '{regra.get('id')}': tipo desconhecido '{regra.get('tipo')}'")
+        saida.extend(executor(regra, secoes, fontes))
+    return saida
 
 
 # ------------------------------------------------------------------ interface
-
-
-#: Título de capítulo que expõe fragilidade do PRÓPRIO caso.
-_TITULO_DE_FRAGILIDADE = re.compile(
-    r"^\s*(?:\*\*)?[IVXLC]+(?:\.\d+)*\s*[–—-]\s*(?:DA|DAS|DO|DOS)\s+"
-    r"(?:DIVERG[ÊE]NCIA|INCONSIST[ÊE]NCIA|CONTRADI[ÇC]|FRAGILIDADE|LACUNA)",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def _topicos_de_fragilidade(secoes: dict[str, str]) -> list[Violacao]:
-    """Capítulo que destaca divergência/fragilidade do próprio caso.
-
-    "VIII – DA DIVERGÊNCIA DOCUMENTAL IRRELEVANTE" apontava, dentro dos Fatos, o erro
-    de horário entre CAT e LISA — entregando à parte contrária o argumento contra o
-    cliente. Isso é observação para o advogado, não texto a protocolar.
-    """
-    violacoes: list[Violacao] = []
-    for codigo in ("PRELIMINARY", "FACTS", "LEGAL_GROUNDS"):
-        for m in _TITULO_DE_FRAGILIDADE.finditer(secoes.get(codigo, "")):
-            violacoes.append(
-                Violacao(
-                    "TOPICO_DE_FRAGILIDADE",
-                    codigo,
-                    " ".join(m.group(0).split())[:220],
-                    "Este capítulo aponta divergência ou fragilidade do próprio caso — o que "
-                    "enfraquece o cliente e não pertence à petição inicial.",
-                    "Retire o capítulo inteiro. Se a observação importa ao advogado, ela vai para "
-                    "as observações da análise, nunca para o texto que será protocolado.",
-                )
-            )
-    return violacoes
 
 
 #: Marcador de pendência quebrado: termina em palavra solta ("serão", "a serem", "de")
@@ -639,18 +536,19 @@ def _marcadores_mal_formados(secoes: dict[str, str]) -> list[Violacao]:
     return violacoes
 
 
-def conferir(secoes: list[dict[str, Any]], fontes: Fontes) -> list[Violacao]:
-    """Tudo o que a peça afirma e os autos não sustentam."""
+def conferir(
+    secoes: list[dict[str, Any]], fontes: Fontes, validacoes: dict[str, Any] | None = None
+) -> list[Violacao]:
+    """Checagens genéricas do motor + as regras que a SKILL declara em `validacoes.md`."""
     por_codigo = {str(s.get("code") or ""): str(s.get("content") or "") for s in secoes}
+    declaradas = validacoes if validacoes is not None else peticao_skill_arquivos.validacoes_da_skill()
+    contexto = (declaradas.get("parametros") or {}).get("contexto_normativo")
     return [
         *_documentos_citados(por_codigo, fontes),
         *_anexos_alegados(por_codigo, fontes),
-        *_numeros_sem_origem(por_codigo, fontes),
-        *_valores(por_codigo),
-        *_topicos_contra_o_cliente(por_codigo),
-        *_topicos_de_fragilidade(por_codigo),
+        *_numeros_sem_origem(por_codigo, fontes, _re(contexto) if contexto else None),
         *_marcadores_mal_formados(por_codigo),
-        *_citacoes(por_codigo, fontes),
+        *executar_regras(declaradas.get("regras") or [], por_codigo, fontes),
     ]
 
 

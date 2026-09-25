@@ -29,6 +29,7 @@ from . import (
     jurimetria_caso,
     peticao_aprendizado,
     peticao_criticas,
+    peticao_migracao_legado,
     peticao_skill_arquivos,
     peticao_skills,
     rag,
@@ -944,6 +945,7 @@ def _normalizar_secoes_da_revisao(brutas: list[dict[str, Any]]) -> list[dict[str
             "written_by": "agent",
             "supporting_fact_ids": [],
             "cited_precedent_ids": [],
+            "formato": peticao_migracao_legado.FORMATO_ATUAL,
         })
     return resultado
 
@@ -960,7 +962,7 @@ def _analisar_jurimetria_da_minuta(
     consulta = "\n\n".join(
         str(secao.get("content") or "")
         for secao in secoes
-        if secao.get("code") in {"FACTS", "LEGAL_GROUNDS", "CLAIMS", "EVIDENCE"}
+        if secao.get("code") not in ("HEADING", "CLOSING", "VALUE", "JURIMETRY")
     ).strip()
     jurisdicao = ""
     try:
@@ -4048,6 +4050,8 @@ def _rodape_xml(visual: dict[str, Any]) -> str:
 
 
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
+    # Peça gravada antes do formato estruturado é MIGRADA aqui, fora do renderer.
+    secoes = peticao_migracao_legado.migrar_secoes(secoes)
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
     visual = configuracao_visual()
     fonte = str(visual.get("fonte") or fonte).strip() or fonte

@@ -321,7 +321,7 @@ def testar_docx() -> int:
     falhas += not checar(
         any(nome.startswith("word/media/") for nome in nomes), "a logo do escritório entra no pacote"
     )
-    falhas += not checar("DOS FATOS" in documento, "cada seção entra com o rótulo em maiúsculas")
+    falhas += not checar("Dos fatos" in documento, "cada seção entra com o rótulo que o redator devolveu (o estilo é da skill)")
     falhas += not checar(
         "2019 &amp; dispensada" in documento and "&lt; prazo" in documento,
         "texto com & e < é escapado — senão o Word recusa o arquivo inteiro",
@@ -554,8 +554,19 @@ def testar_skill_por_categoria() -> int:
     peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: (
         ["separe dano moral de material"] if categoria == "doenca_ocupacional" else []
     )
+    _carregar = pl.peticao_skill_arquivos.carregar
     try:
         contrato = "Devolva JSON: {\"secoes\": []}"
+        # Com a skill de ARQUIVO carregada, a skill legada do banco NÃO entra (autoridade única).
+        com_arquivo = pl._com_skill_do_escritorio(CASO, contrato)
+        falhas += not checar(
+            "Cite sempre o nexo causal e o CID." not in com_arquivo,
+            "skill de arquivo carregada: a skill legada do banco fica fora do prompt",
+        )
+        falhas += not checar("ESTILOS" in com_arquivo.upper() or "formatacao" in com_arquivo.lower(),
+                             "a skill de arquivo (formatacao.md) entra no prompt")
+        # Fallback: só se a skill de arquivo não puder ser lida, a legada volta.
+        pl.peticao_skill_arquivos.carregar = lambda *a, **k: ""
         montado = pl._com_skill_do_escritorio(CASO, contrato)
 
         falhas += not checar(
@@ -598,6 +609,7 @@ def testar_skill_por_categoria() -> int:
         else:
             falhas += not checar(igual, "banco de skills fora do ar não derruba a geração")
     finally:
+        pl.peticao_skill_arquivos.carregar = _carregar
         peticao_skills.instrucoes_da_categoria = lambda categoria: ""
         peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: []
     return falhas

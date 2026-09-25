@@ -207,6 +207,7 @@ def resumo(categoria_nome: str, categoria_codigo: str, texto_caso: str = "") -> 
         "sha256": hashlib.sha256(texto.encode("utf-8")).hexdigest()[:16] if texto else "",
         "chars": len(texto),
         "carregada": bool(texto),
+        "validacoes": [r.get("id") for r in validacoes_da_skill()["regras"]],
     }
 
 
@@ -275,6 +276,28 @@ def estilos_da_skill() -> dict[str, dict[str, Any]]:
         if valor is not None:
             estilos.setdefault(elemento.strip(), {})[propriedade.strip()] = valor
     return estilos
+
+
+_BLOCO_VALIDACAO = re.compile(r"```validacao\s*\n(.*?)```", re.DOTALL)
+
+
+def validacoes_da_skill() -> dict[str, Any]:
+    """`references/validacoes.md`: as regras de conferência que a SKILL declara.
+
+    `{"parametros": {...}, "regras": [...]}`. O motor de conferência só executa; sem este
+    arquivo (ou com JSON inválido) não há validação de domínio — e isso é registrado, não
+    substituído por regra embutida.
+    """
+    vazio: dict[str, Any] = {"parametros": {}, "regras": []}
+    casado = _BLOCO_VALIDACAO.search(_ler("validacoes.md"))
+    if not casado:
+        return vazio
+    try:
+        dados = json.loads(casado.group(1))
+    except json.JSONDecodeError as erro:
+        log.error("peticao_skill_arquivos: validacoes.md com JSON inválido: %s", erro)
+        return vazio
+    return {"parametros": dados.get("parametros") or {}, "regras": dados.get("regras") or []}
 
 
 def _numero(padrao_regex: str, texto: str) -> float | None:

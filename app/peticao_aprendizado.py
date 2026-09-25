@@ -195,14 +195,7 @@ def avaliar_documento(secoes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Críticos determinísticos, transparentes e sem expor raciocínio do modelo."""
     textos = {str(s.get("code") or ""): str(s.get("content") or "").strip() for s in secoes}
     achados: list[dict[str, Any]] = []
-    obrigatorias: tuple[str, ...] = ()  # quais seções existem é decisão da skill, não do código
-    for codigo in obrigatorias:
-        if not textos.get(codigo):
-            achados.append({"critic": "consistency_check", "severity": "warning", "code": "MISSING_SECTION", "section": codigo})
-    if textos.get("FACTS") and len(textos["FACTS"]) < 280:
-        achados.append({"critic": "legal_critic", "severity": "warning", "code": "FACTS_TOO_SHORT", "section": "FACTS"})
-    if textos.get("LEGAL_GROUNDS") and len(textos["LEGAL_GROUNDS"]) < 350:
-        achados.append({"critic": "legal_critic", "severity": "warning", "code": "GROUNDS_TOO_SHORT", "section": "LEGAL_GROUNDS"})
+    # Seções obrigatórias e tamanhos mínimos são regras da SKILL (`validacoes.md`), não do código.
     if "[PENDENTE:" in "\n".join(textos.values()):
         achados.append({"critic": "consistency_check", "severity": "info", "code": "PENDING_INFORMATION"})
     return achados

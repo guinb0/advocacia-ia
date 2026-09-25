@@ -49,6 +49,14 @@ ANEXOS = [
 ]
 
 
+#: Completude (seção ausente/curta) é aviso da skill, não é o assunto destes testes.
+_COMPLETUDE = {"MISSING_SECTION", "FACTS_TOO_SHORT", "GROUNDS_TOO_SHORT"}
+
+
+def conferir(secoes, fontes_):
+    return [v for v in C.conferir(secoes, fontes_) if v.codigo not in _COMPLETUDE]
+
+
 def fontes(material: str = "") -> C.Fontes:
     return C.Fontes(
         anexos=ANEXOS,
@@ -60,7 +68,7 @@ def fontes(material: str = "") -> C.Fontes:
 
 
 def codigos(secoes: dict[str, str], material: str = "") -> list[str]:
-    return [v.codigo for v in C.conferir([{"code": k, "content": t} for k, t in secoes.items()], fontes(material))]
+    return [v.codigo for v in conferir([{"code": k, "content": t} for k, t in secoes.items()], fontes(material))]
 
 
 # ------------------------------------------------------ 1. documento e anexo
@@ -154,7 +162,7 @@ SEGUNDA = """1. **Indenização por estabilidade acidentária**: salários do pe
 5. **Dano moral**: indenização no valor de R$ 30.000,00.
 
 9. **FGTS**: Valor estimado: R$ 1.500,00, com base no salário de R$ 2.380,00 e no percentual de 8% ao mês, projetado sobre os 9 meses do período."""
-segunda = C.conferir([{"code": "CLAIMS", "content": SEGUNDA},
+segunda = conferir([{"code": "CLAIMS", "content": SEGUNDA},
                       {"code": "VALUE", "content": "Dá-se à causa o valor de R$ 73.396,67."}], fontes())
 sem_criterio = [v.trecho[:25] for v in segunda if v.codigo == "VALOR_SEM_CRITERIO"]
 checar(len(sem_criterio) == 2 and all("Horas" in t or "Intervalo" in t for t in sem_criterio),
@@ -162,7 +170,7 @@ checar(len(sem_criterio) == 2 and all("Horas" in t or "Intervalo" in t for t in 
 checar("VALOR_DA_CAUSA_INCOERENTE" not in [v.codigo for v in segunda],
        "a soma usa o valor ANUNCIADO do item (FGTS R$ 1.500), não a base de cálculo (salário R$ 2.380)")
 checar(
-    not [v for v in C.conferir([{"code": "CLAIMS", "content": "a) Horas extras: 2 h/dia × 22 dias × 22 meses × R$ 16,23. Valor estimado: R$ 15.711,00."}], fontes())
+    not [v for v in conferir([{"code": "CLAIMS", "content": "a) Horas extras: 2 h/dia × 22 dias × 22 meses × R$ 16,23. Valor estimado: R$ 15.711,00."}], fontes())
          if v.codigo == "VALOR_SEM_CRITERIO"],
     "valor com a conta escrita passa",
 )
@@ -178,7 +186,7 @@ f) Pensão mensal no percentual de 50%, valor estimado de R$ 1.190,00 mensais, a
 g) Horas extras, 2 horas por dia útil, no valor estimado de R$ 15.000,00, assim calculado: [PENDENTE: confirmar critério — nº de dias úteis × 2h × valor-hora × 1,5];
 
 k) A condenação da Reclamada ao pagamento das custas processuais, no valor estimado de R$ 2.018,80, assim calculado: 2% sobre o valor da causa."""
-terceira = C.conferir([{"code": "CLAIMS", "content": TERCEIRA},
+terceira = conferir([{"code": "CLAIMS", "content": TERCEIRA},
                        {"code": "VALUE", "content": "Dá-se à causa o valor de R$ 16.190,00."}], fontes())
 sem_criterio = [v.trecho[:2] for v in terceira if v.codigo == "VALOR_SEM_CRITERIO"]
 checar(sem_criterio == ["g)"], "conta escrita DENTRO do [PENDENTE] não é conta (só as horas extras são barradas)")
@@ -189,7 +197,7 @@ checar("VALOR_DA_CAUSA_INCOERENTE" not in [v.codigo for v in terceira],
 QUARTA = """a) Indenização do período de estabilidade, no valor estimado de R$ 2.380,00 × 9 meses = R$ 21.420,00;
 
 h) Recolhimento das contribuições previdenciárias, no valor estimado de R$ 2.380,00 × 20% × 13 meses = R$ 6.188,00."""
-quarta = [v.codigo for v in C.conferir([{"code": "CLAIMS", "content": QUARTA},
+quarta = [v.codigo for v in conferir([{"code": "CLAIMS", "content": QUARTA},
                                          {"code": "VALUE", "content": "Dá-se à causa o valor de R$ 21.420,00."}], fontes())]
 checar(not quarta, "soma o resultado da conta (R$ 21.420), não a base (R$ 2.380); recolhimento previdenciário não é crédito do autor")
 
@@ -225,7 +233,7 @@ checar(
 print("\n5. Súmula de memória")
 
 texto = "nos termos da Súmula 378, II, do TST. A Súmula 6, VI, do TST autoriza o acúmulo."
-vs = C.conferir([{"code": "LEGAL_GROUNDS", "content": texto}], fontes())
+vs = conferir([{"code": "LEGAL_GROUNDS", "content": texto}], fontes())
 nao_verificadas = [v for v in vs if v.codigo == "CITACAO_NAO_VERIFICADA"]
 checar(len(nao_verificadas) == 2, "as duas súmulas sem fonte no material são apontadas")
 checar(all(not v.bloqueia for v in nao_verificadas), "como aviso — sem catálogo, ninguém pode dizer que estão erradas")
@@ -235,7 +243,7 @@ checar("Súmula 378, II, do TST " + C.MARCA_NAO_VERIFICADA in marcadas, "o carim
 de_novo = C.marcar_citacoes_nao_verificadas([{"code": "LEGAL_GROUNDS", "content": marcadas}], vs)[0]["content"]
 checar(de_novo == marcadas, "carimbar de novo não duplica o carimbo")
 checar(
-    not [v for v in C.conferir([{"code": "LEGAL_GROUNDS", "content": texto}],
+    not [v for v in conferir([{"code": "LEGAL_GROUNDS", "content": texto}],
                                fontes("=== LEGISLAÇÃO === Súmula nº 378 do TST: ... Súmula 6 ..."))
          if v.codigo == "CITACAO_NAO_VERIFICADA"],
     "súmula que está no material do acervo passa",
@@ -245,14 +253,14 @@ checar(
 
 print("\n6. O que a tela recebe")
 
-achado = C.como_achados(C.conferir([{"code": "PRELIMINARY", "content": "(Documento 09 – declaração)"}], fontes()))[0]
+achado = C.como_achados(conferir([{"code": "PRELIMINARY", "content": "(Documento 09 – declaração)"}], fontes()))[0]
 checar({"severity", "category", "section", "message", "detail"} <= set(achado), "achado tem os campos de `AchadoRevisao`")
 checar(achado["severity"] == "BLOCKING", "documento inexistente retém a peça")
 legado = peticao_local._achado_legivel({"critic": "consistency_check", "severity": "info", "code": "PENDING_INFORMATION"})
 checar(legado["category"] == "PENDING_INFORMATION" and legado["message"], "achado antigo, sem `category`, ganha category e mensagem (a tela não quebra)")
 
 dados: dict = {}
-peticao_local._aplicar_conferencia(dados, [{"code": "FACTS", "content": "x" * 400}], C.conferir(
+peticao_local._aplicar_conferencia(dados, [{"code": "FACTS", "content": "x" * 400}], conferir(
     [{"code": "PRELIMINARY", "content": "(Documento 09 – declaração)"}], fontes()))
 checar(dados["blocking_findings"] == 1 and dados["review"]["blocking"] == 1, "a peça com violação sai RETIDA (blocking_findings)")
 
@@ -304,9 +312,9 @@ checar(not pedidos, "edição do advogado (corrigir=False) não é reescrita por
 print("\n8. O contrato de redação")
 
 checar("ou que você possa verificar" not in peticao_local.CONTRATO_DE_REDACAO, "a brecha «ou que você possa verificar» saiu")
-checar("NO MATERIAL RECEBIDO" in peticao_local.CONTRATO_DE_REDACAO, "súmula só com fonte no material")
-checar("[PENDENTE: juntar <documento>]" in peticao_local.CONTRATO_DE_REDACAO, "documento ausente vira [PENDENTE: juntar ...]")
-checar("PROIBIDO ajustar parcela" in peticao_local.CONTRATO_DE_REDACAO, "parcela para fechar a soma é proibida")
+checar("Só cite o que está no material recebido" in peticao_local.CONTRATO_DE_REDACAO, "súmula só com fonte no material")
+checar("[PENDENTE: <dado>]" in peticao_local.CONTRATO_DE_REDACAO, "documento ausente vira [PENDENTE: juntar ...]")
+checar("PROIBIDO ajustar parcela" in peticao_local.peticao_skill_arquivos.carregar("", "", ""), "parcela para fechar a soma é proibida")
 checar(peticao_local._avisos_de_insumo({"precedentes": False, "legislacao": True, "pecas_modelo": False, "orientacao_do_escritorio": True})[0].startswith("Gerada SEM os julgados"),
        "geração sem acervo vira aviso legível na peça")
 checar(not peticao_local._avisos_de_insumo({"precedentes": True, "legislacao": True, "pecas_modelo": True, "orientacao_do_escritorio": True}),
