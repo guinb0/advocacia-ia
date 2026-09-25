@@ -132,3 +132,29 @@ no-op:
     - echo "   - 'production' → Pipeline de Produção (Build + Deploy)"
   rules:
     - if: $CI_COMMIT_BRANCH != "production"
+
+# ============================================================
+# OPERAÇÃO: diagnóstico da stack no Portainer (manual, somente leitura).
+#
+# Existe porque o redeploy falha com "stat /data/compose/133: no such file or
+# directory" e as credenciais do Portainer (PORTAINER_USER/PORTAINER_PASS) só
+# existem dentro de jobs da branch protegida. Não imprime `Env` da stack (tem
+# segredos) nem as credenciais: só campos escolhidos.
+# ============================================================
+portainer-diagnostico:
+  stage: notify
+  image: pdrh/portainer-go-cli:0.0.12
+  rules:
+    - if: $CI_COMMIT_BRANCH == "production"
+      when: manual
+      allow_failure: true
+  script:
+    - |
+      portainer-go auth --server-url "https://portainer.level33lab.cloud" --username "$PORTAINER_USER" --password "$PORTAINER_PASS" >/dev/null
+      echo "== stacks (campos seguros)"
+      portainer-go stacks list --output json --endpoint-id 1 | jq '[.[] | {Id, Name, Type, EndpointId, SwarmId, Status, ProjectPath, GitConfig: (.GitConfig | if . then {URL, ReferenceName, ConfigFilePath} else null end)}]'
+      echo "== comandos disponiveis"
+      portainer-go --help 2>&1 | head -40
+      portainer-go stacks --help 2>&1 | head -40
+      echo "== ferramentas"
+      which curl wget jq || true
