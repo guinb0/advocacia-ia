@@ -8,7 +8,7 @@ import type { Caso, CasoCriado, Categoria } from "@/lib/types";
 import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, listarReunioesTactiq, listarSkillsJuridicas, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq, type SkillJuridica } from "@/lib/api";
+import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, importarSkillJuridica, listarReunioesTactiq, listarSkillsJuridicas, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq, type SkillJuridica } from "@/lib/api";
 import { baixarArquivo } from "@/lib/baixar";
 
 interface Props {
@@ -127,12 +127,15 @@ export default function ListaCasos({
 
   const entrevistaInputRef = useRef<HTMLInputElement>(null);
   const pacoteInputRef = useRef<HTMLInputElement>(null);
+  const skillInputRef = useRef<HTMLInputElement>(null);
   const [pacoteArquivo, setPacoteArquivo] = useState<File | null>(null);
   const [importandoPacote, setImportandoPacote] = useState(false);
   const [erroPacote, setErroPacote] = useState<string | null>(null);
   const [arrastandoPacote, setArrastandoPacote] = useState(false);
   const [skillsJuridicas, setSkillsJuridicas] = useState<SkillJuridica[]>([]);
   const [skillJuridicaId, setSkillJuridicaId] = useState("");
+  const [importandoSkill, setImportandoSkill] = useState(false);
+  const [erroSkill, setErroSkill] = useState<string | null>(null);
 
   useEffect(() => {
     void listarSkillsJuridicas().then((skills) => {
@@ -145,6 +148,26 @@ export default function ListaCasos({
     if (!arquivo) return;
     if (!arquivo.name.toLowerCase().endsWith(".zip")) return;
     setPacoteArquivo(arquivo);
+  }
+
+  async function importarSkill(arquivo: File | null) {
+    if (!arquivo || importandoSkill) return;
+    if (!arquivo.name.toLowerCase().endsWith(".skill.zip")) {
+      setErroSkill("Escolha um pacote no formato .skill.zip.");
+      return;
+    }
+    setImportandoSkill(true);
+    setErroSkill(null);
+    try {
+      const importada = await importarSkillJuridica(arquivo);
+      const skills = await listarSkillsJuridicas();
+      setSkillsJuridicas(skills);
+      setSkillJuridicaId(importada.id);
+    } catch (falha) {
+      setErroSkill(falha instanceof Error ? falha.message : "Não foi possível importar a skill.");
+    } finally {
+      setImportandoSkill(false);
+    }
   }
 
   async function importarPacote(evento: React.FormEvent) {
@@ -491,6 +514,19 @@ export default function ListaCasos({
               {skillsJuridicas.map((skill) => <option key={skill.id} value={skill.id}>{skill.nome}</option>)}
             </CampoSeletor>
             <p className="mt-1 text-xs text-tinta-2">A skill será aplicada à análise e preservada para a revisão antes da petição.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Botao type="button" variante="texto" pequeno onClick={() => skillInputRef.current?.click()} disabled={importandoSkill}>
+                {importandoSkill ? "Importando skill…" : "Importar nova skill (.skill.zip)"}
+              </Botao>
+              <input
+                ref={skillInputRef}
+                type="file"
+                accept=".skill.zip,application/zip,application/x-zip-compressed"
+                className="hidden"
+                onChange={(e) => { void importarSkill(e.target.files?.[0] ?? null); e.target.value = ""; }}
+              />
+            </div>
+            {erroSkill && <p className="mt-1 mb-0 text-xs text-atencao">{erroSkill}</p>}
           </div>
           <BotaoProcesso
             type="submit"

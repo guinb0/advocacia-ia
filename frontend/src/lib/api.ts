@@ -753,6 +753,13 @@ export async function listarSkillsJuridicas(): Promise<SkillJuridica[]> {
   return comoJson(await buscar("/api/skills-juridicas"));
 }
 
+/** Importa uma skill de redação para que ela possa ser escolhida no próximo caso. */
+export async function importarSkillJuridica(arquivo: File): Promise<{ id: string }> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  return comoJson(await buscar("/api/skills-juridicas/importar", { method: "POST", body: form }));
+}
+
 /** Grava a qualificação do cliente (o que o CPF puxou + o que foi digitado) no caso.
  *
  * Vai só o cadastro — nome e telefone já vivem no próprio caso. Campo vazio segue
