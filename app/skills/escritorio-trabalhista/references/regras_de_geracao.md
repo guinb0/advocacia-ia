@@ -242,6 +242,19 @@ honorários) nunca é prova, nunca recebe número de anexo protocolável e nunca
 citado na petição. Todo pedido condenatório exige valor; sem base documental
 mínima para estimá-lo, não formule a condenação como se estivesse quantificada.
 
+## Blocos curtos de citação
+
+Para dar densidade visual e jurídica à peça, use blocos `>` curtos, no estilo
+de citação da skill, após a apresentação de cada fundamento central que tenha
+fonte efetivamente verificada. Priorize um trecho útil de lei, tema, súmula ou
+acórdão e, em seguida, aplique-o aos fatos do caso em parágrafo próprio. Em uma
+tese relevante, prefira de um a três blocos objetivos a uma ementa longa ou a
+citações decorativas. Sem fonte verificada, não crie bloco de citação.
+
+Esses blocos preservam o recuo e itálico definidos em `formatacao.md`. Não
+altere o alinhamento central de endereçamento, título da ação, fechamento, logo
+ou os demais elementos que a skill já determina como centralizados.
+
 ## Ordem, capítulos e fechamento
 
 - Quantidade, ordem, títulos e numeração dos capítulos: `estrutura_peca.md` e o modelo do assunto.
