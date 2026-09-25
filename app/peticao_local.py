@@ -109,6 +109,11 @@ def pureza_da_skill(nome_categoria: str = "", codigo_categoria: str = "", texto_
     }
 
 
+def _nome_da_secao(secao: dict[str, Any]) -> str:
+    """Nome para MOSTRAR: o título do redator; sem título (a skill não deu), o papel da seção."""
+    return str(secao.get("label") or str(secao.get("code") or "").replace("_", " ").title())
+
+
 def _registrar_proveniencia(provs: list[Any], textos: list[str]) -> None:
     """Guarda, por item recuperado, o registro e o texto enviado (para medir influência depois)."""
     corrente = _DIAG.get()
@@ -2795,7 +2800,7 @@ def _revisar_secoes_via_llm(
     secoes = _preservar_fotos(secoes_atuais, secoes, prompt_critica)
     secoes = _preservar_citacoes(secoes_atuais, secoes, prompt_critica)
     return secoes, {
-        "alteradas": [str(s.get("label") or s.get("code")) for s in alteradas],
+        "alteradas": [_nome_da_secao(s) for s in alteradas],
         "alterou": True,
         "atendeu": conferencia["atendeu"],
         "faltou": "" if conferencia["atendeu"] is not False else conferencia["faltou"],
@@ -3152,7 +3157,7 @@ def _aplicar_edicao_manual(
     # ser aceita por cima dela.
     dados.pop("revisao_pendente", None)
     agora = datetime.now(timezone.utc)
-    rotulos = [str(s.get("label") or s.get("code")) for s in alteradas]
+    rotulos = [_nome_da_secao(s) for s in alteradas]
     if titulo_mudou:
         rotulos.append("Título da peça")
     revisao_atual = anterior.get("revisao")
@@ -3888,7 +3893,7 @@ def _achar_secao(secoes: list[dict[str, Any]], secao: str) -> dict[str, Any]:
                 return candidata
         raise ErroPeticao(
             f"Não achei a seção «{secao}» na petição. Seções: "
-            + "; ".join(str(s.get("label") or s.get("code")) for s in secoes)
+            + "; ".join(_nome_da_secao(s) for s in secoes)
         )
     return secoes[-1]
 
@@ -3943,7 +3948,7 @@ def inserir_foto(
     peticao = salvar_secoes(caso_id, [{"code": str(alvo.get("code")), "content": conteudo}], usuario)
     return {
         "peticao": peticao,
-        "secao": str(alvo.get("label") or alvo.get("code")),
+        "secao": _nome_da_secao(alvo),
         "posicao": posicao,
         "arquivo": arquivo,
     }
@@ -4022,7 +4027,7 @@ def inserir_trecho(
     peticao = salvar_secoes(caso_id, [{"code": str(alvo.get("code")), "content": "\n".join(linhas)}], usuario)
     return {
         "peticao": peticao,
-        "secao": str(alvo.get("label") or alvo.get("code")),
+        "secao": _nome_da_secao(alvo),
         "posicao": posicao,
         "arquivo": anexo["arquivo"],
     }

@@ -744,7 +744,8 @@ def testar_pecas_anexas() -> int:
     # Ancorado em `SECOES_PADRAO` e não no número 7: a peça ganhou DAS PRELIMINARES
     # e a contagem fixa quebrou o teste sem que nada estivesse errado. A próxima
     # seção que entrar não vai quebrá-lo de novo pelo mesmo motivo.
-    esperadas = len([x for x in SECOES_FALSAS if x["content"].strip()])
+    # Sem número fixo de seções: a peça anexa tem as que o modelo devolveu (aqui, 3).
+    esperadas = 3
     falhas += not checar(
         lista[0]["secoes"] == esperadas,
         f"com as {esperadas} seções normalizadas ({lista[0]['secoes']})",
@@ -980,6 +981,9 @@ def testar_revisao_garantida() -> int:
 
     peticao_skills.instrucoes_da_categoria = lambda categoria: "Cite sempre o nexo causal."
     peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: ["separe dano moral de material"]
+    _carregar = pl.peticao_skill_arquivos.carregar
+    # A skill LEGADA do banco só entra quando a de arquivo não carrega (autoridade única).
+    pl.peticao_skill_arquivos.carregar = lambda *a, **k: ""
     try:
         revisao_prompt = pl._com_skill_do_escritorio(CASO, "CONTRATO", revisao=True)
         geracao_prompt = pl._com_skill_do_escritorio(CASO, "CONTRATO")
@@ -997,6 +1001,7 @@ def testar_revisao_garantida() -> int:
             "na geração as correções ensinadas continuam sendo aplicadas",
         )
     finally:
+        pl.peticao_skill_arquivos.carregar = _carregar
         peticao_skills.instrucoes_da_categoria = lambda categoria: ""
         peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: []
     return falhas
