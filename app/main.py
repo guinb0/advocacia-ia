@@ -86,6 +86,8 @@ from . import (
     panorama,
     peticao_local,
     peticao_skill_arquivos,
+    analise_documental,
+    organizacao_documental,
     peticao_skills,
     skills_juridicas,
     pipeline,
@@ -3026,6 +3028,84 @@ class _EstadoInsightPayload(BaseModel):
     estado: str
     valor_corrigido: str = ""
     observacao: str = ""
+
+
+# ------------------------------------------------------------ análise documental (skill documental)
+
+
+def _caso_ou_404(caso_id: str) -> None:
+    if armazenamento.obter_caso(caso_id) is None:
+        raise HTTPException(404, "Caso não encontrado.")
+
+
+@app.post("/api/casos/{caso_id}/analise-documental", status_code=202)
+def iniciar_analise_documental(caso_id: str):
+    """Dispara a análise pela skill documental (assíncrona: queued → processing → analyzing → ready|error)."""
+    _caso_ou_404(caso_id)
+    return analise_documental.iniciar(caso_id)
+
+
+@app.get("/api/casos/{caso_id}/analise-documental")
+def obter_analise_documental(caso_id: str):
+    _caso_ou_404(caso_id)
+    registro = analise_documental.obter(caso_id)
+    if registro is None:
+        return {"status": "none"}
+    return registro
+
+
+class _RespostaPerguntaPayload(BaseModel):
+    resposta: str
+
+
+@app.post("/api/casos/{caso_id}/analise-documental/perguntas/{pergunta_id}/resposta")
+def responder_pergunta_documental(
+    caso_id: str, pergunta_id: str, payload: _RespostaPerguntaPayload,
+    usuario: auth.Usuario = Depends(auth.usuario_atual),
+):
+    _caso_ou_404(caso_id)
+    try:
+        analise_documental.responder(caso_id, pergunta_id, payload.resposta, _autor_da_acao(usuario))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/casos/{caso_id}/organizacao/plano")
+def plano_de_organizacao(caso_id: str):
+    """Monta o plano e PARA (gate da Etapa 4 da skill): nada é gerado até a confirmação."""
+    _caso_ou_404(caso_id)
+    try:
+        return organizacao_documental.preparar(caso_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/casos/{caso_id}/organizacao")
+def organizacao_do_caso(caso_id: str):
+    _caso_ou_404(caso_id)
+    return analise_documental.armazenamento_padrao().organizacao(caso_id) or {"status": "none"}
+
+
+@app.post("/api/casos/{caso_id}/organizacao/confirmar")
+def confirmar_organizacao(caso_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    _caso_ou_404(caso_id)
+    try:
+        return organizacao_documental.confirmar(caso_id, _autor_da_acao(usuario))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/casos/{caso_id}/analise-documental/continuar")
+def continuar_para_a_peca(caso_id: str):
+    """O advogado revisou a análise: segue para a elaboração da peça (o contexto já está persistido)."""
+    _caso_ou_404(caso_id)
+    registro = analise_documental.obter(caso_id)
+    if not registro or registro.get("status") != "ready":
+        raise HTTPException(409, "A análise documental ainda não está pronta.")
+    abertas = [p for p in (registro["resultado"].get("perguntas") or []) if not p.get("resposta")]
+    return {"proximo": "peticao", "perguntas_sem_resposta": len(abertas),
+            "contexto_da_peca": bool(analise_documental.contexto_para_peticao(caso_id))}
 
 
 @app.post("/api/casos/{caso_id}/insights/{fato_id}/estado")

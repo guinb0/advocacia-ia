@@ -25,6 +25,7 @@ from . import (
     analise_documentos,
     armazenamento,
     case_brief,
+    analise_documental,
     conferencia_peticao,
     jurimetria_caso,
     peticao_aprendizado,
@@ -872,6 +873,15 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
         linhas.append("\n" + case_brief.para_prompt(case_brief.montar(caso_id)))
     except Exception as erro:
         log.warning("petição local: case brief indisponível no contexto: %s", erro)
+    # A ANÁLISE DOCUMENTAL (skill documental) chega à geração como MATERIAL do caso — fatos com
+    # documento de origem, inconsistências, provas, faltantes e as respostas do escritório. Ela não
+    # define estrutura nem estilo da peça: isso continua sendo da skill da peça.
+    try:
+        documental = analise_documental.contexto_para_peticao(caso_id)
+        if documental:
+            linhas.append("\n" + documental)
+    except Exception as erro:  # noqa: BLE001
+        log.warning("petição local: análise documental indisponível no contexto: %s", erro)
 
     documentos = documentos_ocr(caso_id)
     if documentos:

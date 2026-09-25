@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import PainelAnaliseDocumental from "@/components/caso/PainelAnaliseDocumental";
 import FluxoPeticao, { type ControlesGeracaoPeticao } from "@/components/admin/FluxoPeticao";
 import { avisarChatDaPeticao } from "@/lib/chatPeticao";
 import { Aviso, Botao, Campo, Cartao, LinkBotao, RotuloCampo, Selo } from "@/components/ui/Basicos";
@@ -448,6 +449,10 @@ export default function Dossie({
         * datados com seu respectivo arquivo e trecho de comprovação. */}
       <PainelAnaliseDocumentos casoId={casoId} />
 
+      {/* Skill documental: análise estruturada com proveniência, perguntas e organização. */}
+      <PainelAnaliseDocumental casoId={casoId} />
+
+      <div id="fluxo-peticao" />
       <FluxoPeticao
         casoId={casoId}
         temEntrevista={(dados.entrevistas ?? []).some((e) => (e.caracteres ?? 0) > 0)}

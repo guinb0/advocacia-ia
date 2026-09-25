@@ -2908,3 +2908,73 @@ export async function callHistory(caseId: string): Promise<{ calls: Call[] }> {
 export async function registerCall(caseId: string): Promise<Call> {
   return comoJson(await buscar(`/api/casos/${encodeURIComponent(caseId)}/ligacoes`, { method: "POST" }));
 }
+
+
+/* ------------------------------------------------------------ análise documental (skill documental) */
+
+export interface ProvenienciaDocumental {
+  documento_id: string; arquivo: string; pagina: number | null; tipo_documento: string; citacao: string;
+}
+export type EstadoDocumental = "DETECTED" | "CONFIRMED" | "CORRECTED" | "REJECTED" | "NEEDS_CONFIRMATION";
+export interface FonteDeInconsistencia {
+  documento_id: string; arquivo?: string; origem?: string; citacao: string; valor: string; pagina?: number | null;
+}
+export interface AnaliseDocumental {
+  id?: string;
+  status: "none" | "queued" | "processing" | "analyzing" | "ready" | "error";
+  erro?: string;
+  skill_name?: string;
+  skill_sha256?: string;
+  modelo?: string;
+  versao?: number;
+  resultado?: {
+    resumo_do_caso: { questao_central: string; objetivo_do_cliente: string; fatos_cronologicos: Array<{ data: string; fato: string; documento_id: string }> };
+    documentos: Array<{
+      documento_id: string; arquivo: string; tipo: string; nome_sugerido: string; data: string; paginas: number | null;
+      pontos_fortes: string[]; vulnerabilidades: string[]; atualizacao: string; pode_melhorar: boolean | null;
+      motivo_atualizacao: string; legivel: boolean; problema: string; duplicado_de: string;
+      relacao_com_teses: Array<{ hipotese?: string; papel?: string }>;
+    }>;
+    fatos_extraidos: Array<{ id: string; fato: string; confianca: string; estado?: EstadoDocumental; proveniencia: ProvenienciaDocumental }>;
+    inconsistencias: Array<{ id: string; titulo: string; tipo: string; impacto: string; acao_sugerida: string; estado?: EstadoDocumental; fontes: FonteDeInconsistencia[] }>;
+    provas: Array<{ id: string; fato: string; status: string; documento_ids: string[]; observacao: string }>;
+    documentos_faltantes: Array<{ id: string; documento: string; hipotese: string; classificacao: "COMPROMETE" | "ERA_MELHOR_TER" | "NAO_INTERFERE"; como_obter: string; responsavel: string; prazo_ou_dificuldade: string; estado?: EstadoDocumental }>;
+    hipoteses_juridicas: Array<{ id: string; hipotese: string; objeto?: string; fundamento_legal?: string; fundamento_verificado: boolean; probabilidade_pratica?: string }>;
+    perguntas: Array<{ id: string; pergunta: string; motivo: string; resposta?: string }>;
+    proximos_passos: string[];
+    descartados: Record<string, number>;
+  };
+}
+
+export interface PlanoDeOrganizacao {
+  status: "none" | "aguardando_confirmacao" | "confirmada" | "concluida" | "erro";
+  plano?: { resumo: {
+    documentos: Array<{ documento_id: string; arquivo_original: string; nome_final: string; duplicado: boolean }>;
+    duplicados: Array<{ nome_final: string }>; problemas: Array<{ arquivo: string; problema: string }>;
+    nao_identificados: string[]; arquivos_extras: string[]; exclusoes: string;
+  } };
+  resultado?: { pasta?: string; originais_preservados?: boolean } | null;
+}
+
+const caminhoCaso = (casoId: string) => `/api/casos/${encodeURIComponent(casoId)}`;
+
+export async function iniciarAnaliseDocumental(casoId: string): Promise<AnaliseDocumental> {
+  return comoJson(await buscar(`${caminhoCaso(casoId)}/analise-documental`, { method: "POST" }));
+}
+export async function obterAnaliseDocumental(casoId: string): Promise<AnaliseDocumental> {
+  return comoJson(await buscar(`${caminhoCaso(casoId)}/analise-documental`));
+}
+export async function responderPerguntaDocumental(casoId: string, perguntaId: string, resposta: string): Promise<void> {
+  await comoJson(await buscar(`${caminhoCaso(casoId)}/analise-documental/perguntas/${encodeURIComponent(perguntaId)}/resposta`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resposta }),
+  }));
+}
+export async function continuarParaAPeca(casoId: string): Promise<{ proximo: string; perguntas_sem_resposta: number; contexto_da_peca: boolean }> {
+  return comoJson(await buscar(`${caminhoCaso(casoId)}/analise-documental/continuar`, { method: "POST" }));
+}
+export async function planoDeOrganizacao(casoId: string): Promise<PlanoDeOrganizacao> {
+  return comoJson(await buscar(`${caminhoCaso(casoId)}/organizacao/plano`, { method: "POST" }));
+}
+export async function confirmarOrganizacao(casoId: string): Promise<PlanoDeOrganizacao> {
+  return comoJson(await buscar(`${caminhoCaso(casoId)}/organizacao/confirmar`, { method: "POST" }));
+}

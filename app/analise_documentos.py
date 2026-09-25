@@ -382,7 +382,9 @@ def _json_do_modelo(resposta: httpx.Response) -> dict[str, Any]:
         ) from exc
 
 
-def _chamar_modelo(mensagem: str) -> dict[str, Any]:
+def _chamar_modelo(
+    mensagem: str, *, instrucao: str | None = None, max_tokens: int | None = None
+) -> dict[str, Any]:
     """Executa a análise pelo provedor configurado, com resposta JSON auditável.
 
     OpenRouter é o caminho padrão do ambiente de produção. DeepSeek direto fica
@@ -419,9 +421,11 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         # teto truncava a resposta no meio e o JSON inteiro virava
         # "ilegível", perdendo TODOS os achados de uma vez (não só o
         # último). Folga larga; DeepSeek cobra pelo que gera, não pelo teto.
-        "max_tokens": int(os.getenv("OPENROUTER_ANALISE_MAX_TOKENS", "16000")),
+        "max_tokens": max_tokens or int(os.getenv("OPENROUTER_ANALISE_MAX_TOKENS", "16000")),
         "messages": [
-            {"role": "system", "content": INSTRUCAO},
+            # `instrucao` permite a OUTRA análise (skill documental) reusar este cliente
+            # (retentativa, reasoning, custos) sem duplicar a chamada.
+            {"role": "system", "content": instrucao or INSTRUCAO},
             {"role": "user", "content": mensagem},
         ],
     }
