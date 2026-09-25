@@ -243,6 +243,20 @@ def resumo(categoria_nome: str, categoria_codigo: str, texto_caso: str = "") -> 
     }
 
 
+def estrutura_da_skill() -> list[dict[str, str]]:
+    """Contrato de blocos extraído de ``estrutura_peca.md``.
+
+    O arquivo da skill continua sendo a autoridade: este leitor só transforma a
+    lista numerada em dados auditáveis para o gerador e os validadores.  Não
+    contém títulos de clientes, teses ou documentos de nenhum caso.
+    """
+    itens: list[dict[str, str]] = []
+    for ordem, bruto in re.findall(r"(?m)^\s*(\d+)\.\s+\*\*(.+?)\*\*", _ler("estrutura_peca.md")):
+        titulo = re.sub(r"\s+", " ", bruto).strip()
+        itens.append({"ordem": ordem, "titulo": titulo, "normalizado": _normalizar(titulo)})
+    return itens
+
+
 #: Só usado se NEM `layout.json` NEM `formatacao.md` puderem ser lidos (deploy sem a
 #: skill copiada) — nunca como padrão concorrente. Gerar DOCX exige algum número em
 #: cada campo; sem isto, ausência do arquivo derrubaria a geração por causa de margem.
