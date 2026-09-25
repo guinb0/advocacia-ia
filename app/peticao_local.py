@@ -2420,6 +2420,8 @@ Devolva JSON exatamente com:
     "pontos_fortes": ["..."], "lacunas": ["..."],
     "fatos_confirmados": ["..."], "fatos_so_na_entrevista": ["..."],
     "observacoes": "alertas para revisão",
+    "decisoes_estrategicas": [{"decisao":"o que foi decidido", "motivo":"base documental/jurídica"}],
+    "divergencias": [{"campo":"dado divergente", "fontes":"Documento NN × Documento MM", "detalhe":"valores registrados"}],
     "acoes_sugeridas": [
       {"titulo":"nome da ação adicional ou conexa", "motivo":"por que os fatos podem justificar esta peça", "pedidos":["pedido possível"], "prioridade":"principal|alternativa|avaliar"}
     ]
@@ -2495,6 +2497,17 @@ Cada content deve conter parágrafos separados por linha em branco."""
             str(x) for x in bruto_analise.get("fatos_so_na_entrevista") or []
         ],
         "observacoes": str(bruto_analise.get("observacoes") or "").strip(),
+        "decisoes_estrategicas": [
+            {"decisao": str(item.get("decisao") or "").strip(), "motivo": str(item.get("motivo") or "").strip()}
+            for item in bruto_analise.get("decisoes_estrategicas") or []
+            if isinstance(item, dict) and str(item.get("decisao") or "").strip()
+        ],
+        "divergencias": [
+            {"campo": str(item.get("campo") or "").strip(), "fontes": str(item.get("fontes") or "").strip(),
+             "detalhe": str(item.get("detalhe") or "").strip()}
+            for item in bruto_analise.get("divergencias") or []
+            if isinstance(item, dict) and str(item.get("campo") or "").strip()
+        ],
         "acoes_sugeridas": [
             {
                 "titulo": str(item.get("titulo") or "").strip(),
@@ -2600,6 +2613,13 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "created_at": anterior.get("created_at") or agora,
         "updated_at": agora,
         "analise": analise,
+        # Produto interno, deliberadamente separado de `sections`: a peça que
+        # vai ao juízo nunca recebe lacunas, estratégia ou divergências brutas.
+        "relatorio_advogado": {
+            "pendencias": pendencias or analise.get("lacunas") or [],
+            "decisoes_estrategicas": analise.get("decisoes_estrategicas") or [],
+            "divergencias": analise.get("divergencias") or [],
+        },
         "jurimetria": jurimetria,
         "sections": secoes,
         "readiness": {
