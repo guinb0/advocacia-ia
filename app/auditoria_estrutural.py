@@ -196,7 +196,7 @@ def _shingles(texto: str, n: int = 5) -> set[tuple[str, ...]]:
     return {tuple(w[i:i + n]) for i in range(max(0, len(w) - n + 1))}
 
 
-def repeticao_entre_topicos(secoes: list[dict[str, Any]], limiar: float = 0.30) -> list[Violacao]:
+def repeticao_entre_topicos(secoes: list[dict[str, Any]], limiar: float = 0.30, plano: dict[str, Any] | None = None) -> list[Violacao]:
     unidades: list[tuple[str, str, set[tuple[str, ...]], int]] = []
     for s in secoes:
         if s.get("code") in ("HEADING", "CLOSING", "VALUE", "CLAIMS"):
@@ -211,6 +211,10 @@ def repeticao_entre_topicos(secoes: list[dict[str, Any]], limiar: float = 0.30) 
         for b in unidades[i + 1:]:
             if a[1] == b[1]:
                 continue
+            if plano:  # tese principal × subsidiária pode tratar do mesmo evento: não é duplicação
+                ta, tb = pp.tese_do_topico(plano, a[1]), pp.tese_do_topico(plano, b[1])
+                if ta and tb and ta["id"] != tb["id"] and any(str(t.get("relacao", "principal")).startswith(("subsidiaria", "alternativa")) for t in (ta, tb)):
+                    continue
             menor = min(len(a[2]), len(b[2]))
             if menor and len(a[2] & b[2]) / menor >= limiar:
                 saida.append(_v("REPETICAO_ENTRE_TOPICOS", a[0], f"«{a[1][:45]}» × «{b[1][:45]}»",
@@ -244,6 +248,9 @@ def ledger(plano: dict[str, Any]) -> list[Violacao]:
         for b in peds[i + 1:]:
             if a.get("de_praxe") or b.get("de_praxe"):
                 continue
+            # principal × subsidiário/alternativo do mesmo objeto é RELAÇÃO declarada, não duplicidade
+            if a.get("natureza", "cumulativo") != b.get("natureza", "cumulativo") and "cumulativo" in (a.get("natureza", "cumulativo"), b.get("natureza", "cumulativo")):
+                continue
             sim = pp._jaccard(_nucleo(a), _nucleo(b))  # noqa: SLF001
             mesma_lesao = a.get("causa_de_pedir") and pp.norm(a["causa_de_pedir"]) == pp.norm(b.get("causa_de_pedir", ""))
             if _MAJORACAO.search(f"{b['tipo']} {b['objeto']}") and (sim >= 0.15 or mesma_lesao or a["tese_origem"] == b["tese_origem"]) and \
@@ -251,7 +258,7 @@ def ledger(plano: dict[str, Any]) -> list[Violacao]:
                 saida.append(_v("MAJORACAO_COMO_SEGUNDA_INDENIZACAO", "CLAIMS", f"{a['id']} × {b['id']}",
                                 f"O pedido {b['id']} («{b['tipo']}») parece uma majoração/agravamento do {a['id']}, mas foi lançado como pedido e valor SEPARADOS: a mesma lesão indenizada duas vezes.",
                                 "Funda em um só pedido, com o critério de cálculo que já considera o agravamento; ou justifique a lesão autônoma."))
-            elif sim >= 0.5 and (a["tese_origem"] == b["tese_origem"] or mesma_lesao):
+            elif sim >= 0.5 and not pp.periodos_distintos(a, b) and (a["tese_origem"] == b["tese_origem"] or mesma_lesao):
                 saida.append(_v("PEDIDOS_SOBREPOSTOS", "CLAIMS", f"{a['id']} × {b['id']}", f"Os pedidos {a['id']} e {b['id']} têm o mesmo objeto/causa de pedir.", "Funda ou diferencie objeto/período/base."))
     for p in peds:
         if p.get("natureza") in ("subsidiario", "alternativo") and p.get("incluido_no_valor_da_causa"):
@@ -308,12 +315,173 @@ def criterio_de_calculo(secoes: list[dict[str, Any]], params: dict[str, Any]) ->
     return []
 
 
-def auditar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], titulos: list[tuple[str, str]]) -> list[Violacao]:
+def auditar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], titulos: list[tuple[str, str]], embed: Any = None) -> list[Violacao]:
     partes = plano.get("partes") or {}
     return [
         *abertura_unica(secoes, partes, params),
         *numeracao(titulos), *subitens(secoes),
         *pendencia_com_dado_canonico(secoes, partes),
-        *repeticao_entre_topicos(secoes),
+        *repeticao_entre_topicos(secoes, plano=plano),
+        *repeticao_de_conteudo(secoes, params), *contradicao_de_data(secoes, plano),
+        *dado_rejeitado_no_texto(secoes, plano.get("case_facts") or {}),
+        *(candidatos_semanticos(secoes, plano, embed) if embed else []),
         *ledger(plano), *valor_da_causa(secoes, plano), *criterio_de_calculo(secoes, params),
     ]
+
+
+# ------------------------------------------------------------------ dono do conteúdo + repetição de QUALQUER tamanho
+
+_SECOES_DE_REFERENCIA = {"CLAIMS", "CLOSING"}
+
+
+def _classificar(paragrafo: str, funcoes: dict[str, str]) -> str | None:
+    """Função estrutural do parágrafo (comunicações, provas, gratuidade…): a categoria com mais acertos do vocabulário da SKILL."""
+    melhor, pontos = None, 0
+    for categoria, rx in funcoes.items():
+        n = len(re.findall(rx, paragrafo, re.IGNORECASE))
+        if n > pontos:
+            melhor, pontos = categoria, n
+    return melhor
+
+
+def _unidades(secoes: list[dict[str, Any]], funcoes: dict[str, str]) -> list[dict[str, Any]]:
+    unidades = []
+    for i, s in enumerate(secoes):
+        if s.get("code") == "HEADING":
+            continue
+        for p in paragrafos(str(s.get("content") or "")):
+            palavras = len(p.split())
+            if palavras >= 6:
+                unidades.append({"i": i, "code": str(s.get("code")), "texto": p, "palavras": palavras, "tokens": pp._tokens(p),  # noqa: SLF001
+                                 "categoria": _classificar(p, funcoes)})
+    return unidades
+
+
+def _contem(a: set[str], b: set[str]) -> float:
+    menor = min(len(a), len(b))
+    return len(a & b) / menor if menor >= 5 else 0.0
+
+
+def repeticao_de_conteudo(secoes: list[dict[str, Any]], params: dict[str, Any]) -> list[Violacao]:
+    """Duplicação relevante NÃO depende do tamanho: compara parágrafos de qualquer porte e considera a FUNÇÃO da seção.
+
+    Regra: cada função estrutural (comunicações, provas, justiça gratuita…) é DESENVOLVIDA numa seção — a que mais
+    a desenvolve — e as demais só a referenciam. Referência curta nos pedidos/fecho é legítima; reproduzir o
+    desenvolvimento (ou a mesma frase) noutra seção não é.
+    """
+    funcoes = params.get("funcoes_de_conteudo") or {}
+    un = _unidades(secoes, funcoes)
+    saida: list[Violacao] = []
+    # 1) mesmo conteúdo em duas seções, com ou sem função declarada
+    for a_i, a in enumerate(un):
+        for b in un[a_i + 1:]:
+            if a["i"] == b["i"]:
+                continue
+            c = _contem(a["tokens"], b["tokens"])
+            if c < 0.75:
+                continue
+            referencia_legitima = b["code"] in _SECOES_DE_REFERENCIA and b["palavras"] <= 0.6 * a["palavras"]
+            if not referencia_legitima:
+                saida.append(_v("REPETICAO_DESNECESSARIA", b["code"], b["texto"][:100],
+                                f"Este trecho repete ({c:.0%}) conteúdo já desenvolvido na seção {a['code']} sem acrescentar função jurídica nova.",
+                                "Desenvolva o conteúdo numa só seção (a competente) e, nas demais, deixe no máximo uma referência de uma frase."))
+    # 2) dono do conteúdo: quem desenvolve cada função
+    palavras: dict[str, dict[int, int]] = {}
+    for u in un:
+        if u["categoria"] and u["code"] not in _SECOES_DE_REFERENCIA:
+            palavras.setdefault(u["categoria"], {}).setdefault(u["i"], 0)
+            palavras[u["categoria"]][u["i"]] += u["palavras"]
+    dono = {c: max(m, key=m.get) for c, m in palavras.items()}
+    for c, m in palavras.items():
+        for i, n in m.items():
+            if i != dono[c] and n >= 40 and n >= 0.4 * m[dono[c]]:
+                saida.append(_v("CONTEUDO_DESENVOLVIDO_FORA_DA_SECAO_COMPETENTE", str(secoes[i].get("code")), f"{c}: {n} palavras",
+                                f"A função «{c}» é desenvolvida em duas seções; a competente é {secoes[dono[c]].get('code')}.",
+                                "Desenvolva uma vez, na seção competente; aqui deixe só a referência.", n >= 0.7 * m[dono[c]]))
+    # 3) pedido final que reproduz o desenvolvimento de outra seção (provas, comunicações, gratuidade…)
+    for u in un:
+        if u["code"] == "CLAIMS" and u["categoria"] in dono and u["palavras"] > 35:
+            donos = [o for o in un if o["i"] == dono[u["categoria"]] and o["categoria"] == u["categoria"]]
+            cont = max((_contem(u["tokens"], o["tokens"]) for o in donos), default=0.0)
+            if cont >= 0.5 or u["palavras"] > 90:
+                saida.append(_v("PEDIDO_REPRODUZ_DESENVOLVIMENTO", "CLAIMS", u["texto"][:100],
+                                f"O pedido final reproduz o desenvolvimento de «{u['categoria']}» já feito na seção {secoes[dono[u['categoria']]].get('code')}.",
+                                "No pedido, só a consequência/referência (uma frase, com o fundamento entre parênteses).", cont >= 0.5))
+    return saida
+
+
+# ------------------------------------------------------------------ contradição de data (determinística) e candidatos semânticos
+
+_DATA_BR = re.compile(r"\b\d{2}/\d{2}/\d{4}\b")
+
+
+def contradicao_de_data(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
+    """Fato do plano com data X e trecho que descreve o MESMO fato com outra data."""
+    saida = []
+    for f in plano.get("fatos") or []:
+        datas = set(_DATA_BR.findall(f"{f.get('data', '')} {f.get('fato', '')}"))
+        alvo = pp._tokens(re.sub(_DATA_BR, " ", f["fato"]))  # noqa: SLF001
+        if len(datas) != 1 or len(alvo) < 3:
+            continue
+        for s in secoes:
+            for frase in re.split(r"(?<=[.;])\s+", str(s.get("content") or "")):
+                em_frase = set(_DATA_BR.findall(frase))
+                if em_frase and not (em_frase & datas) and len(alvo & pp._tokens(frase)) / len(alvo) >= 0.6:  # noqa: SLF001
+                    saida.append(_v("CONTRADICAO_DE_DATA", str(s.get("code")), frase[:120],
+                                    f"O fato {f['id']} tem data {sorted(datas)[0]} no caso, mas este trecho o descreve com {sorted(em_frase)[0]}.", "Use a data do CASE_FACTS."))
+    return saida
+
+
+def candidatos_semanticos(secoes: list[dict[str, Any]], plano: dict[str, Any], embed: Any, limiar: float = 0.9) -> list[Violacao]:
+    """PRÉ-detector barato (embeddings, sem LLM): tópicos de teses diferentes semanticamente quase iguais.
+
+    Pega paráfrase que o n-grama não pega. Não é veredito — vira candidato para o auditor por modelo julgar.
+    """
+    topicos = []
+    for s in secoes:
+        if s.get("code") in ("HEADING", "CLOSING", "VALUE", "CLAIMS"):
+            continue
+        for t in dividir_em_topicos(str(s.get("content") or "")):
+            corpo = "\n\n".join(paragrafos(t["corpo"]))
+            if t["titulo"] and len(corpo.split()) >= 40:
+                topicos.append((str(s.get("code")), t["titulo"], corpo[:1500]))
+    if len(topicos) < 2:
+        return []
+    try:
+        vs = embed([t[2] for t in topicos])
+    except Exception:  # noqa: BLE001 - sem embeddings, só o n-grama e o auditor global
+        return []
+    teses = {t["id"]: t for t in plano.get("teses") or []}
+    saida = []
+    for i, a in enumerate(topicos):
+        for j in range(i + 1, len(topicos)):
+            b = topicos[j]
+            num = sum(x * y for x, y in zip(vs[i], vs[j]))
+            den = (sum(x * x for x in vs[i]) ** 0.5) * (sum(y * y for y in vs[j]) ** 0.5)
+            cos = num / den if den else 0.0
+            ta, tb = pp.tese_do_topico(plano, a[1], a[2]), pp.tese_do_topico(plano, b[1], b[2])
+            relacionadas = any(t and str(t.get("relacao", "principal")).startswith(("subsidiaria", "alternativa")) for t in (ta, tb)) and ta and tb and ta["id"] != tb["id"]
+            if cos >= limiar and not relacionadas:
+                saida.append(_v("SOBREPOSICAO_SEMANTICA_CANDIDATA", a[0], f"«{a[1][:40]}» × «{b[1][:40]}» (cos {cos:.2f})",
+                                "Tópicos com sentido quase idêntico (possível mesmo argumento em capítulos diferentes).", "O auditor decide se há duplicação substancial.", False))
+    return saida
+
+
+# ------------------------------------------------------------------ dado rejeitado pelo CASE_FACTS não pode aparecer na peça
+
+def dado_rejeitado_no_texto(secoes: list[dict[str, Any]], case_facts: dict[str, Any]) -> list[Violacao]:
+    """A versão PERDEDORA (ou em conflito) de um dado canônico não pode aparecer no texto: uma só verdade por peça."""
+    texto = "\n".join(str(s.get("content") or "") for s in secoes)
+    norm_t, dig_t = pp.norm(texto), pp._so_digitos(texto)  # noqa: SLF001
+    saida = []
+    for papel, campos in (case_facts.get("PARTIES") or {}).items():
+        for campo, e in campos.items():
+            for alt in e.get("alternativas") or []:
+                mesma_raiz = campo == "cnpj" and e.get("valor") and pp._so_digitos(alt["valor"])[:8] == pp._so_digitos(e["valor"])[:8]  # noqa: SLF001
+                if mesma_raiz:
+                    continue  # matriz/filial: as duas são da mesma empresa, o que vale é não misturar na qualificação
+                if pp._valor_consta(campo, alt["valor"], norm_t, dig_t):  # noqa: SLF001
+                    saida.append(_v("DADO_REJEITADO_NO_TEXTO", "", f"{papel}.{campo}: {alt['valor']}",
+                                    f"«{alt['valor']}» foi REJEITADO pelo CASE_FACTS para {papel}.{campo} (vale «{e.get('valor')}») mas aparece na peça.",
+                                    "Use só o valor canônico; se o campo está em conflito, escreva uma única pendência."))
+    return saida

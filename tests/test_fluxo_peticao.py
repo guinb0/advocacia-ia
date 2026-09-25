@@ -196,6 +196,8 @@ def instalar_dublês() -> None:
     jurimetria_caso.buscar_focada = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("pgvector fora"))
     peticao_skills.instrucoes_da_categoria = lambda categoria: ""
     peticao_criticas.inicializar = lambda: None
+    # Hermético: sem isto o teste depende do Postgres real (regras aprendidas ativas mudam o prompt).
+    pl.peticao_aprendizado.regras_para_contexto = lambda categoria="", **k: []
     peticao_criticas.ultimas_da_categoria = lambda categoria, limite=20: []
     peticao_criticas.registrar = lambda **kwargs: BANCO["criticas"].append(kwargs)  # type: ignore[union-attr]
     peticao_criticas.listar_por_caso = lambda caso_id: list(BANCO["criticas"])  # type: ignore[arg-type]

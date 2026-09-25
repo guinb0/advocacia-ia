@@ -44,13 +44,16 @@ INSTRUCAO = (
 )
 
 
-def auditar_com_modelo(chamar: Callable[[str, str], dict[str, Any]], case_facts: dict[str, Any], plano: dict[str, Any], secoes: list[dict[str, Any]]) -> list[Violacao]:
+def auditar_com_modelo(chamar: Callable[[str, str], dict[str, Any]], case_facts: dict[str, Any], plano: dict[str, Any], secoes: list[dict[str, Any]],
+                       candidatos: list[Violacao] | None = None) -> list[Violacao]:
     payload = {
         "CASE_FACTS": {"PARTIES": {p: {c: e.get("valor") for c, e in campos.items()} for p, campos in case_facts.get("PARTIES", {}).items()},
                        "UNCERTAINTIES": case_facts.get("UNCERTAINTIES", [])},
         "mapa_de_teses": [{k: t.get(k) for k in ("id", "titulo", "fatos_ids", "provas", "fundamentos_legais", "jurisprudencias", "consequencia", "funcao_argumentativa", "pedidos_ids")} for t in plano.get("teses", [])],
         "fatos": [{"id": f["id"], "fato": f["fato"], "documentos": f["documentos"]} for f in plano.get("fatos", [])],
         "ledger_de_pedidos": plano.get("pedidos", []),
+        # o pré-detector barato (embeddings/n-gramas) aponta ONDE olhar; o modelo só julga o que é relevante
+        "candidatos_de_sobreposicao": [{"onde": c.trecho, "motivo": c.motivo} for c in (candidatos or [])],
         "rascunho": [{"secao": s.get("code"), "titulo": s.get("label"), "texto": str(s.get("content") or "")[:14000]} for s in secoes],
     }
     try:
@@ -97,7 +100,9 @@ def executar(
     relatorio: dict[str, Any] = {"iteracoes": [], "pendencias_humanas": []}
     achados: list[Violacao] = []
     for it in range(1, max_iteracoes + 1):
-        achados = verificacoes(secoes, plano) + auditar_com_modelo(chamar, case_facts, plano, secoes)
+        determinicos = verificacoes(secoes, plano)
+        candidatos = [a for a in determinicos if a.codigo == "SOBREPOSICAO_SEMANTICA_CANDIDATA"]
+        achados = determinicos + auditar_com_modelo(chamar, case_facts, plano, secoes, candidatos)
         criticos = [a for a in achados if a.bloqueia]
         passo: dict[str, Any] = {"n": it, "criticos": [f"{a.codigo}:{a.secao}" for a in criticos], "avisos": len(achados) - len(criticos), "correcoes": []}
         relatorio["iteracoes"].append(passo)

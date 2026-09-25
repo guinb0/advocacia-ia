@@ -49,43 +49,93 @@ def _mesmo_dado(campo: str, a: str, b: str) -> bool:
     return bool(ta and tb) and (ta <= tb or tb <= ta or len(ta & tb) / len(ta | tb) >= 0.7)
 
 
-def _candidatos(fontes: list[dict[str, Any]], proposta: dict[str, Any] | None, cadastro: dict[str, Any]) -> dict[tuple[str, str], list[dict[str, str]]]:
-    """(papel, campo) → lista de {valor, fonte, tipo}. Só o que consta de fonte do caso."""
+#: Peso da CLASSE da fonte. Fonte primária/oficial (documento de identificação) pesa mais que documento
+#: comprobatório, que pesa mais que entrevista; o dado confirmado por um humano pesa mais que tudo.
+PESO_DA_CLASSE = {"confirmado_por_humano": 1.2, "documento_oficial": 1.0, "documento_comprobatorio": 0.6, "cadastro": 0.5, "entrevista": 0.4}
+#: Um vencedor precisa superar o segundo colocado por esta margem; senão é conflito (ninguém escolhe no chute).
+MARGEM_PARA_VENCER = 1.25
+PESO_MINIMO_PARA_VENCER = 0.6
+EXTRA_POR_FONTE_INDEPENDENTE_DA_MESMA_CLASSE = 0.15
+
+CAMPOS_NUMERICOS |= {"data_admissao", "data_demissao", "data_acidente", "data_nascimento"}
+
+
+def _classe_do_documento(nome: str, tipo_do_documento: str, oficiais: list[str]) -> str:
+    alvo = pp.norm(f"{nome} {tipo_do_documento}")
+    return "documento_oficial" if any(pp.norm(o) in alvo for o in oficiais) else "documento_comprobatorio"
+
+
+def _fontes_independentes(fontes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cópia do mesmo documento NÃO é fonte nova: fontes com o mesmo texto (ou marcadas "duplicado") colapsam em uma."""
+    vistas: dict[str, dict[str, Any]] = {}
+    for f in fontes:
+        chave = pp.norm(f.get("texto", ""))[:4000] or pp.norm(f.get("nome", ""))
+        if chave in vistas:
+            vistas[chave]["_copias"] = vistas[chave].get("_copias", 0) + 1
+            continue
+        vistas[chave] = dict(f)
+    return list(vistas.values())
+
+
+def _candidatos(fontes: list[dict[str, Any]], proposta: dict[str, Any] | None, cadastro: dict[str, Any],
+                extraidos: list[dict[str, Any]], oficiais: list[str]) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """(papel, campo) → lista de {valor, fonte, classe}. Só o que consta de fonte do caso."""
     saida: dict[tuple[str, str], list[dict[str, str]]] = {}
 
-    def add(papel: str, campo: str, valor: str, fonte: str, tipo: str) -> None:
+    def add(papel: str, campo: str, valor: str, fonte: str, classe: str) -> None:
         if str(valor or "").strip():
-            saida.setdefault((papel, campo), []).append({"valor": str(valor).strip(), "fonte": fonte, "tipo": tipo})
+            saida.setdefault((papel, campo), []).append({"valor": str(valor).strip(), "fonte": fonte, "classe": classe})
+
+    def classe_de(f: dict[str, Any]) -> str:
+        return f.get("classe") or ("entrevista" if f["tipo"] == "entrevista" else _classe_do_documento(f.get("nome", ""), f.get("tipo_documento", ""), oficiais))
 
     for campo, valor in cadastro.items():
-        if campo in pp.CAMPOS_DE_PARTE["autor"]:
-            add("autor", campo, valor, "cadastro", "cadastro")
+        add("autor", campo, valor, "cadastro", "cadastro")
     for f in fontes:
         texto, nome = f.get("texto", ""), f.get("nome", f["tipo"])
         for m in _CPF.finditer(texto):
-            add("autor", "cpf", m.group(0), nome, f["tipo"])
+            add("autor", "cpf", m.group(0), nome, classe_de(f))
         for m in _CNPJ.finditer(texto):
-            add("reu", "cnpj", m.group(0), nome, f["tipo"])
+            add("reu", "cnpj", m.group(0), nome, classe_de(f))
+        for papel, campo, valor in f.get("dados", []):  # dado estruturado extraído DAQUELE documento
+            add(papel, campo, valor, nome, classe_de(f))
+    for e in extraidos:  # dado informado/confirmado manualmente
+        add(e["papel"], e["campo"], e["valor"], e.get("fonte", "manual"), e.get("classe", "confirmado_por_humano"))
     for papel, campos in (proposta or {}).items():
         if isinstance(campos, dict):
             for campo, valor in campos.items():
-                # proposta do modelo só vale se o TEXTO do caso a confirma (senão é dado inventado)
-                textos = [f for f in fontes if pp._valor_consta(campo, str(valor), pp.norm(f.get("texto", "")), pp._so_digitos(f.get("texto", "")))]  # noqa: SLF001
-                for f in textos[:3]:
-                    add(papel, campo, str(valor), f.get("nome", f["tipo"]), f["tipo"])
+                # a proposta do modelo só vale onde o TEXTO de uma fonte a confirma (senão é dado inventado)
+                for f in fontes[:30]:
+                    if pp._valor_consta(campo, str(valor), pp.norm(f.get("texto", "")), pp._so_digitos(f.get("texto", ""))):  # noqa: SLF001
+                        add(papel, campo, str(valor), f.get("nome", f["tipo"]), classe_de(f))
     return saida
+
+
+def _pontuar(grupo: list[dict[str, str]]) -> float:
+    """Peso do grupo = melhor fonte de cada CLASSE (+ pouco por fontes independentes extras da mesma classe)."""
+    por_classe: dict[str, list[str]] = {}
+    for c in grupo:
+        por_classe.setdefault(c["classe"], []).append(c["fonte"])
+    total = 0.0
+    for classe, fontes in por_classe.items():
+        extras = min(2, len(set(fontes)) - 1)
+        total += PESO_DA_CLASSE.get(classe, 0.4) + EXTRA_POR_FONTE_INDEPENDENTE_DA_MESMA_CLASSE * extras
+    return round(total, 3)
 
 
 def montar(
     *, fontes: list[dict[str, Any]], cadastro: dict[str, Any] | None = None, proposta_partes: dict[str, Any] | None = None,
     eventos: list[dict[str, Any]] | None = None, evidencias: list[dict[str, Any]] | None = None,
+    extraidos: list[dict[str, Any]] | None = None, documentos_oficiais: list[str] | None = None,
 ) -> dict[str, Any]:
-    """CASE_FACTS a partir de fontes do caso. `fontes` = [{tipo, nome, texto}]."""
+    """CASE_FACTS a partir de fontes do caso. `fontes` = [{tipo, nome, texto, classe?, dados?}]."""
     for f in fontes:
         if f.get("tipo") not in TIPOS_DE_FONTE_ACEITOS:
             raise FonteRecusada(f"«{f.get('tipo')}» não é fonte de fato do caso (só {sorted(TIPOS_DE_FONTE_ACEITOS)}).")
+    oficiais = documentos_oficiais or ["rg", "cnh", "cpf", "ctps", "certidao", "identidade"]
     cadastro = {k: v for k, v in (cadastro or {}).items() if v}
-    cand = _candidatos(fontes, proposta_partes, cadastro)
+    independentes = _fontes_independentes(fontes)
+    cand = _candidatos(independentes, proposta_partes, cadastro, extraidos or [], oficiais)
     partes: dict[str, dict[str, Any]] = {"autor": {}, "reu": {}}
     incertezas: list[dict[str, Any]] = []
     resolucoes: list[dict[str, Any]] = []
@@ -98,34 +148,30 @@ def montar(
                     break
             else:
                 grupos.append([c])
-        grupos.sort(key=lambda g: (len({x["fonte"] for x in g}), len(g[0]["valor"])), reverse=True)
-        principal = grupos[0]
+        pesos = sorted(((_pontuar(g), g) for g in grupos), key=lambda x: (x[0], len(x[1][0]["valor"])), reverse=True)
+        peso0, principal = pesos[0]
         melhor = max(principal, key=lambda x: len(x["valor"]))
-        entrada = {"valor": melhor["valor"], "fontes": sorted({x["fonte"] for x in principal}),
-                   "confianca": "alta" if len({x["fonte"] for x in principal}) >= 2 or principal[0]["tipo"] == "cadastro" else "media",
-                   "alternativas": [], "conflito": False}
-        if len(grupos) > 1:
-            outros = grupos[1:]
-            entrada["alternativas"] = [{"valor": g[0]["valor"], "fontes": sorted({x["fonte"] for x in g})} for g in outros]
-            mesma_raiz = campo == "cnpj" and all(pp._so_digitos(g[0]["valor"])[:8] == pp._so_digitos(entrada["valor"])[:8] for g in outros)  # noqa: SLF001
-            n0, n1 = len({x["fonte"] for x in principal}), len({x["fonte"] for x in outros[0]})
+        entrada = {"valor": melhor["valor"], "fontes": sorted({x["fonte"] for x in principal}), "peso": peso0,
+                   "confianca": "alta" if peso0 >= 1.0 else "media", "alternativas": [], "conflito": False}
+        if len(pesos) > 1:
+            entrada["alternativas"] = [{"valor": g[0]["valor"], "fontes": sorted({x["fonte"] for x in g}), "peso": p} for p, g in pesos[1:]]
+            peso1 = pesos[1][0]
+            mesma_raiz = campo == "cnpj" and all(pp._so_digitos(g[0]["valor"])[:8] == pp._so_digitos(entrada["valor"])[:8] for _, g in pesos[1:])  # noqa: SLF001
             if mesma_raiz:
-                resolucoes.append({"campo": f"{papel}.{campo}", "regra": "mesma raiz de CNPJ (matriz/filial): vale o de mais fontes", "escolhido": entrada["valor"]})
-            elif n0 > n1:
-                resolucoes.append({"campo": f"{papel}.{campo}", "regra": "valor confirmado por mais fontes independentes", "escolhido": entrada["valor"]})
-                incertezas.append({"tipo": "divergencia_resolvida", "campo": f"{papel}.{campo}", "detalhe": f"adotado «{entrada['valor']}» ({n0} fontes) em vez de «{outros[0][0]['valor']}» ({n1}); confirmar"})
+                resolucoes.append({"campo": f"{papel}.{campo}", "regra": "mesma raiz de CNPJ (matriz/filial): vale o de maior peso", "escolhido": entrada["valor"]})
+            elif any(c["classe"] == "confirmado_por_humano" for c in principal) or (peso0 >= PESO_MINIMO_PARA_VENCER and peso0 >= peso1 * MARGEM_PARA_VENCER):
+                resolucoes.append({"campo": f"{papel}.{campo}", "regra": f"maior peso de fonte independente ({peso0} × {peso1})", "escolhido": entrada["valor"]})
+                incertezas.append({"tipo": "divergencia_resolvida", "campo": f"{papel}.{campo}",
+                                   "detalhe": f"adotado «{entrada['valor']}» (peso {peso0}) em vez de «{pesos[1][1][0]['valor']}» (peso {peso1}); confirmar"})
             else:
                 entrada["valor"], entrada["conflito"], entrada["confianca"] = None, True, "nenhuma"
                 incertezas.append({"tipo": "conflito", "campo": f"{papel}.{campo}",
-                                   "detalhe": " × ".join(f"«{g[0]['valor']}» ({', '.join(sorted({x['fonte'] for x in g}))})" for g in grupos)})
+                                   "detalhe": " × ".join(f"«{g[0]['valor']}» (peso {p}; {', '.join(sorted({x['fonte'] for x in g}))})" for p, g in pesos)})
         partes[papel][campo] = entrada
     return {
-        "PARTIES": partes,
-        "EVENTS": eventos or [],
-        "DOCUMENTS": [{"nome": f.get("nome"), "tipo": f["tipo"]} for f in fontes if f["tipo"] == "documento"],
-        "EVIDENCE": evidencias or [],
-        "UNCERTAINTIES": incertezas,
-        "RESOLUTIONS": resolucoes,
+        "PARTIES": partes, "EVENTS": eventos or [],
+        "DOCUMENTS": [{"nome": f.get("nome"), "tipo": f["tipo"], "copias": f.get("_copias", 0)} for f in independentes if f["tipo"] == "documento"],
+        "EVIDENCE": evidencias or [], "UNCERTAINTIES": incertezas, "RESOLUTIONS": resolucoes,
     }
 
 

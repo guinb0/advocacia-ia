@@ -110,6 +110,15 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    "bruto": "sal[áa]rio bruto|remunera[çc][ãa]o bruta",
    "minimo": "sal[áa]rios?[- ]m[íi]nimos?",
    "ultima_remuneracao": "[úu]ltim[oa] (?:sal[áa]rio|remunera[çc][ãa]o)"
+  },
+  "funcoes_de_conteudo": {
+   "comunicacoes_processuais": "intima[cç][õo]es|publica[cç][õo]es|notifica[cç][õo]es|exclusivamente (?:ao|em nome d[oa]s?) advogad|sob pena de nulidade",
+   "justica_gratuita": "justi[cç]a gratuita|hipossufici|art\\. 790",
+   "competencia": "compet[êe]ncia|art\\. 651|foro",
+   "provas": "prova (?:testemunhal|documental|pericial)|oitiva|depoimento pessoal|rol de testemunhas|exibi[cç][ãa]o de documentos",
+   "requerimentos_processuais": "cita[cç][ãa]o|rito (?:ordin[áa]rio|sumar[ií]ssimo)|julgamento antecipado|audi[êe]ncia|revelia",
+   "honorarios": "honor[áa]rios",
+   "juros_correcao": "juros de mora|corre[cç][ãa]o monet[áa]ria|IPCA|taxa selic"
   }
  },
  "regras": [

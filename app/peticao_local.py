@@ -140,13 +140,33 @@ def _fatos_documentais(caso_id: str) -> list[dict[str, Any]]:
     return [f for f in (registro["resultado"].get("fatos_extraidos") or []) if f.get("estado") != "REJECTED"]
 
 
+def _dados_por_documento(caso_id: str) -> dict[str, dict[str, Any]]:
+    """arquivo → {tipo, dados:[(papel, campo, valor)]} extraídos pela análise documental (dado estruturado de UM documento)."""
+    try:
+        registro = analise_documental.obter(caso_id)
+    except Exception:  # noqa: BLE001
+        return {}
+    if not registro or registro.get("status") != "ready":
+        return {}
+    campos = {"nome": ("autor", "nome"), "cpf": ("autor", "cpf"), "rg": ("autor", "rg"), "endereco": ("autor", "endereco"), "endereço": ("autor", "endereco"),
+              "cnpj": ("reu", "cnpj"), "cargo": ("autor", "cargo"), "funcao": ("autor", "cargo"), "função": ("autor", "cargo"),
+              "data de admissao": ("autor", "data_admissao"), "data de admissão": ("autor", "data_admissao")}
+    saida: dict[str, dict[str, Any]] = {}
+    for d in registro["resultado"].get("documentos") or []:
+        dados = [(*campos[c["campo"].strip().lower()], c["valor"]) for c in d.get("dados_principais") or [] if c.get("campo", "").strip().lower() in campos and c.get("valor")]
+        saida[d["arquivo"]] = {"tipo": d.get("tipo", ""), "dados": dados}
+    return saida
+
+
 def _redigir_pedidos_do_plano(caso_id: str, plano_est: dict[str, Any]):
     """Callable que dá ao renderizador a REDAÇÃO de cada pedido do plano (o modelo não escolhe os pedidos)."""
     def redigir(pedidos: list[dict[str, Any]]) -> dict[str, Any]:
         instrucao = _com_skill_do_escritorio(caso_id, (
             "Você redige a seção de PEDIDOS de uma peça, seguindo a skill (forma, valores, pedidos de praxe). "
             "Recebe a lista ÚNICA de pedidos do plano; redija UM texto para cada id, sem criar, juntar, dividir "
-            "nem omitir pedidos. Preserve valores e critérios (`valor_ou_base`). Devolva APENAS JSON: "
+            "nem omitir pedidos. Preserve valores e critérios (`valor_ou_base`). Cada pedido é a CONSEQUÊNCIA, em uma frase, com o "
+            "fundamento entre parênteses: NÃO reproduza a argumentação nem requerimentos já desenvolvidos noutras seções (provas, comunicações, "
+            "gratuidade, competência): para esses, só a referência. Devolva APENAS JSON: "
             '{"abertura":"frase de abertura da seção conforme a skill","itens":{"P01":"texto do pedido sem a letra da alínea"},'
             '"fecho":"frase final da seção conforme a skill, ou vazio"}.'
         ))
@@ -244,7 +264,7 @@ def _lintar_e_corrigir(
     def verificacoes(sec: list[dict[str, Any]], plano: dict[str, Any]) -> list[Any]:
         return [
             *petition_linter.lintar(sec, plano, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params),
-            *auditoria_estrutural.auditar(sec, plano, params, petition_linter.titulos_impressos(sec)),
+            *auditoria_estrutural.auditar(sec, plano, params, petition_linter.titulos_impressos(sec), embed=lambda textos: rag.gerar_embeddings(textos, timeout=60)),
             *conferencia_peticao.conferir(sec, fontes),
         ]
 
@@ -2175,7 +2195,9 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
     texto_do_caso = contexto
     # CASE_FACTS: UMA fonte canônica (valor, fonte, confiança, conflito) — a peça inteira consulta os mesmos dados.
-    fontes_do_caso = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"]} for d in documentos_ocr(caso_id)]
+    dados_docs = _dados_por_documento(caso_id)
+    fontes_do_caso = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"], "tipo_documento": dados_docs.get(d["arquivo"], {}).get("tipo", ""),
+                       "dados": dados_docs.get(d["arquivo"], {}).get("dados", [])} for d in documentos_ocr(caso_id)]
     fontes_do_caso.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
     cf = case_facts.montar(
         fontes=fontes_do_caso, cadastro=_cadastro_estruturado(caso_id), proposta_partes=(plano or {}).get("partes"),
@@ -2183,6 +2205,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     )
     plano_est = plano_da_peticao.montar(plano, partes=case_facts.partes_resolvidas(cf), fatos_documentais=_fatos_documentais(caso_id))
     plano_est["case_facts"] = cf
+    plano_est["_funcoes_de_conteudo"] = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("funcoes_de_conteudo") or {}
     outline += "\n\n" + plano_da_peticao.para_prompt(plano_est)
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),

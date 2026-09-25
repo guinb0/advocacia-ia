@@ -150,6 +150,7 @@ def montar(outline: dict[str, Any] | None, *, partes: dict[str, Any], fatos_docu
                       "jurisprudencias": [str(x) for x in t.get("jurisprudencias") or []],
                       "consequencia": str(t.get("consequencia") or "").strip(),
                       "funcao_argumentativa": str(t.get("funcao_argumentativa") or "").strip(),
+                      "relacao": str(t.get("relacao") or "principal").strip().lower(),
                       "gera_pedido": t.get("gera_pedido", True) is not False, "pedidos_ids": []})
 
     pedidos: list[dict[str, Any]] = []
@@ -239,6 +240,11 @@ def para_prompt(plano: dict[str, Any]) -> str:
             linhas.append(f"Parte {papel.upper()}: " + "; ".join(f"{k}: {v}" for k, v in campos.items()))
     linhas.append("A abertura da peça (endereçamento, título da ação, objeto e qualificação das partes) aparece UMA ÚNICA VEZ, no início, com EXATAMENTE estes dados; "
                   "não repita qualificação nem título em nenhuma outra seção. Dado que não consta acima vira UMA pendência [PENDENTE: <campo>], nunca inventado.")
+    categorias = list((plano.get("_funcoes_de_conteudo") or {}).keys())
+    if categorias:
+        linhas.append("RESPONSABILIDADE POR CONTEÚDO — desenvolva UMA vez, na seção competente, e nas demais só referencie em uma frase: "
+                      + ", ".join(c.replace("_", " ") for c in categorias)
+                      + ". O pedido final (dos pedidos/fecho) traz só a consequência, com o fundamento entre parênteses — nunca reproduz o desenvolvimento nem repete o mesmo requerimento.")
     for u in (plano.get("case_facts") or {}).get("UNCERTAINTIES", []):
         linhas.append(f"INCERTEZA ({u['tipo']}) {u['campo']}: {u['detalhe']} — NÃO use nenhuma das versões; escreva uma única pendência.")
     linhas.append("\nFatos (id | data | fato | documentos):")
@@ -252,6 +258,14 @@ def para_prompt(plano: dict[str, Any]) -> str:
 
 # ------------------------------------------------------------------ deduplicação dos pedidos
 
+def periodos_distintos(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Período/base/valor diferentes (anos, datas, números) fazem de dois pedidos parecidos pedidos DISTINTOS."""
+    def marcas(p: dict[str, Any]) -> set[str]:
+        return set(re.findall(r"\b\d{2,4}\b|\d{2}/\d{2}/\d{4}", f"{p.get('objeto', '')} {p.get('valor_ou_base', '')} {p.get('causa_de_pedir', '')}"))
+    ma, mb = marcas(a), marcas(b)
+    return bool(ma and mb and ma != mb)
+
+
 def _chave(p: dict[str, Any]) -> set[str]:
     return _tokens(f"{p['tipo']} {p['objeto']}")
 
@@ -263,7 +277,7 @@ def duplicados_deterministicos(pedidos: list[dict[str, Any]], limiar: float = 0.
         for b in pedidos[i + 1:]:
             mesma_origem = a["tese_origem"] == b["tese_origem"] or not (a["tese_origem"] and b["tese_origem"])
             mesma_base = norm(a["valor_ou_base"]) == norm(b["valor_ou_base"]) or not (a["valor_ou_base"] and b["valor_ou_base"])
-            if mesma_origem and mesma_base and _jaccard(_chave(a), _chave(b)) >= limiar:
+            if mesma_origem and mesma_base and not periodos_distintos(a, b) and _jaccard(_chave(a), _chave(b)) >= limiar:
                 pares.append((a["id"], b["id"]))
     return pares
 
@@ -287,11 +301,11 @@ def deduplicar(
         for u in unicos:
             igual = (u["tese_origem"] == p["tese_origem"] or not (u["tese_origem"] and p["tese_origem"])) \
                 and (norm(u["valor_ou_base"]) == norm(p["valor_ou_base"]) or not (u["valor_ou_base"] and p["valor_ou_base"])) \
-                and _jaccard(_chave(u), _chave(p)) >= 0.6
+                and not periodos_distintos(u, p) and _jaccard(_chave(u), _chave(p)) >= 0.6
             if igual:
                 alvo, motivo = u, "mesmo tipo/objeto/tese/base"
                 break
-            if similaridade and adjudicar and similaridade(f"{u['tipo']} {u['objeto']}", f"{p['tipo']} {p['objeto']}") >= limiar_semantico:
+            if similaridade and adjudicar and not periodos_distintos(u, p) and similaridade(f"{u['tipo']} {u['objeto']}", f"{p['tipo']} {p['objeto']}") >= limiar_semantico:
                 if adjudicar(u, p):
                     alvo, motivo = u, "semanticamente igual (adjudicado)"
                     break
