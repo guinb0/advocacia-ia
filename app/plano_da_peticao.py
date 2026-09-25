@@ -144,7 +144,13 @@ def montar(outline: dict[str, Any] | None, *, partes: dict[str, Any], fatos_docu
             ids = [i for i in (_melhor_fato(str(x), fatos) for x in t.get("fatos_que_sustentam") or []) if i]
         teses.append({"id": f"T{len(teses) + 1:02d}", "id_do_modelo": str(t.get("id") or "").strip().upper(),
                       "titulo": str(t["tese"]).strip(), "fatos_ids": sorted(set(ids)),
-                      "provas": [str(x) for x in t.get("provas") or []], "fundamentos_legais": [], "pedidos_ids": []})
+                      "provas": [str(x) for x in t.get("provas") or []],
+                      # LEGAL_ARGUMENT_MAP: tese → fatos → provas → fundamento → jurisprudência → consequência → pedido
+                      "fundamentos_legais": [str(x) for x in t.get("fundamentos_legais") or []],
+                      "jurisprudencias": [str(x) for x in t.get("jurisprudencias") or []],
+                      "consequencia": str(t.get("consequencia") or "").strip(),
+                      "funcao_argumentativa": str(t.get("funcao_argumentativa") or "").strip(),
+                      "gera_pedido": t.get("gera_pedido", True) is not False, "pedidos_ids": []})
 
     pedidos: list[dict[str, Any]] = []
     for p in outline.get("pedidos_estruturados") or []:
@@ -158,10 +164,20 @@ def montar(outline: dict[str, Any] | None, *, partes: dict[str, Any], fatos_docu
             if s > pontos:
                 tese, pontos = t, s
         de_praxe = bool(p.get("de_praxe"))
+        metodo = p.get("metodo_calculo") if isinstance(p.get("metodo_calculo"), dict) else {}
+        try:
+            valor = float(p["valor_numerico"]) if p.get("valor_numerico") not in (None, "") else None
+        except (TypeError, ValueError):
+            valor = None
+        natureza = str(p.get("natureza") or "cumulativo").strip().lower()
         pedidos.append({
             "id": f"P{len(pedidos) + 1:02d}", "tipo": str(p.get("tipo") or "").strip(), "objeto": str(p.get("objeto") or "").strip(),
             "fundamento": str(p.get("fundamento") or "").strip(), "valor_ou_base": str(p.get("valor_ou_base") or "").strip(),
             "de_praxe": de_praxe, "tese_origem": tese["id"] if tese and pontos >= 0.1 else ("" if not de_praxe else "praxe"),
+            # CLAIM LEDGER
+            "causa_de_pedir": str(p.get("causa_de_pedir") or "").strip(), "natureza": natureza if natureza in ("cumulativo", "subsidiario", "alternativo") else "cumulativo",
+            "subsidiario_de": str(p.get("subsidiario_de") or "").strip(), "dependencias": [str(x) for x in p.get("dependencias") or []],
+            "valor": valor, "metodo_calculo": metodo,
         })
     for p in pedidos:
         for t in teses:
@@ -221,7 +237,10 @@ def para_prompt(plano: dict[str, Any]) -> str:
         campos = partes.get(papel) or {}
         if campos:
             linhas.append(f"Parte {papel.upper()}: " + "; ".join(f"{k}: {v}" for k, v in campos.items()))
-    linhas.append("A abertura da peça DEVE trazer a qualificação das partes com EXATAMENTE estes dados; dado que não consta acima vira [PENDENTE: <campo>], nunca inventado.")
+    linhas.append("A abertura da peça (endereçamento, título da ação, objeto e qualificação das partes) aparece UMA ÚNICA VEZ, no início, com EXATAMENTE estes dados; "
+                  "não repita qualificação nem título em nenhuma outra seção. Dado que não consta acima vira UMA pendência [PENDENTE: <campo>], nunca inventado.")
+    for u in (plano.get("case_facts") or {}).get("UNCERTAINTIES", []):
+        linhas.append(f"INCERTEZA ({u['tipo']}) {u['campo']}: {u['detalhe']} — NÃO use nenhuma das versões; escreva uma única pendência.")
     linhas.append("\nFatos (id | data | fato | documentos):")
     linhas += [f"- {f['id']} | {f['data']} | {f['fato']} | {', '.join(f['documentos']) or f['fonte']}" for f in plano["fatos"]]
     linhas.append("\nTeses (id | título | fatos | pedidos):")

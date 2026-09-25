@@ -33,6 +33,9 @@ from . import (
     peticao_aprendizado,
     peticao_criticas,
     peticao_migracao_legado,
+    auditor_final,
+    auditoria_estrutural,
+    case_facts,
     petition_linter,
     plano_da_peticao,
     recuperacao_por_secao,
@@ -192,7 +195,8 @@ def _pedidos_do_plano_na_secao(caso_id: str, secoes: list[dict[str, Any]], plano
         else:
             novas.append(x)
     if not achou:
-        novas.append({"code": "CLAIMS", "label": "", "content": texto, "formato": 2})
+        pos = next((i for i, x in enumerate(novas) if x.get("code") in ("EVIDENCE", "VALUE", "CLOSING")), len(novas))
+        novas.insert(pos, {"code": "CLAIMS", "label": "", "content": texto, "formato": 2})
     return novas, {"aplicado": True, "fundidos": fundidos, **rel}
 
 
@@ -230,53 +234,26 @@ def _revisao_semantica_de_teses(caso_id: str, secoes: list[dict[str, Any]], plan
 
 def _lintar_e_corrigir(
     caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], *, texto_do_caso: str, textos_do_acervo: list[str],
+    material: str = "",
 ) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
-    """PETITION LINTER com correção automática controlada (até 2 rodadas) e nova validação."""
+    """AUDITOR FINAL: verificações determinísticas + auditoria semântica independente, com correção e limite de iterações."""
     params = peticao_skill_arquivos.validacoes_da_skill()["parametros"]
-    relatorio: dict[str, Any] = {"rodadas": 0, "correcoes": [], "antes": None}
-    achados = petition_linter.lintar(secoes, plano_est, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params)
-    achados += _revisao_semantica_de_teses(caso_id, secoes, plano_est)
-    relatorio["antes"] = [f"{a.codigo}:{a.secao}" for a in achados]
-    for rodada in range(2):
-        bloqueantes = [a for a in achados if a.bloqueia or a.codigo.startswith("REVISAO_SEMANTICA")]
-        if not bloqueantes:
-            break
-        relatorio["rodadas"] = rodada + 1
-        codigos = {a.codigo for a in bloqueantes}
-        if codigos & {"PEDIDO_DUPLICADO", "PEDIDO_FORA_DO_PLANO"}:
-            secoes, rel = _pedidos_do_plano_na_secao(caso_id, secoes, plano_est)
-            relatorio["correcoes"].append({"pedidos_renderizados_do_plano": rel.get("pedidos_renderizados")})
-        por_secao: dict[str, list[Any]] = {}
-        for a in bloqueantes:
-            if a.codigo in ("PEDIDO_DUPLICADO", "PEDIDO_FORA_DO_PLANO"):
-                continue
-            por_secao.setdefault(a.secao, []).append(a)
-        novas = []
-        for x in secoes:
-            do_x = por_secao.get(str(x.get("code")))
-            if not do_x:
-                novas.append(x)
-                continue
-            orient = "CORRIJA EXATAMENTE ESTES PONTOS APONTADOS PELO LINTER (sem inventar dado):\n" + "\n".join(
-                f"- [{a.codigo}] {a.motivo} Trecho: {a.trecho}. Correção: {a.correcao}" for a in do_x)
-            novo = _reescrever_secao(caso_id, x, orient, texto_do_caso)
-            if novo:
-                novas.append({**x, "content": novo})
-                relatorio["correcoes"].append({"secao": x.get("code"), "codigos": sorted({a.codigo for a in do_x})})
-            else:
-                novas.append(x)
-        # qualificação: se nem existe seção de abertura, cria-a a partir dos dados verificados
-        if "QUALIFICACAO_AUSENTE" in codigos and not any(x.get("code") == "HEADING" for x in novas):
-            texto = _reescrever_secao(caso_id, {"code": "HEADING", "label": "", "content": ""},
-                                      "Redija a abertura (endereçamento + qualificação das partes) conforme a skill, com estes dados: "
-                                      + json.dumps(plano_est.get("partes"), ensure_ascii=False), texto_do_caso)
-            if texto:
-                novas.insert(0, {"code": "HEADING", "label": "", "content": texto, "formato": 2})
-        secoes = novas
-        achados = petition_linter.lintar(secoes, plano_est, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params)
-    relatorio["depois"] = [f"{a.codigo}:{a.secao}" for a in achados]
-    relatorio["bloqueantes_restantes"] = [f"{a.codigo}:{a.secao}" for a in achados if a.bloqueia]
-    return secoes, achados, relatorio
+    cf = plano_est.get("case_facts") or {"PARTIES": {}, "UNCERTAINTIES": []}
+    fontes = _fontes_da_conferencia(caso_id, material=material)
+
+    def verificacoes(sec: list[dict[str, Any]], plano: dict[str, Any]) -> list[Any]:
+        return [
+            *petition_linter.lintar(sec, plano, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params),
+            *auditoria_estrutural.auditar(sec, plano, params, petition_linter.titulos_impressos(sec)),
+            *conferencia_peticao.conferir(sec, fontes),
+        ]
+
+    return auditor_final.executar(
+        secoes, plano_est, cf, params=params, verificacoes=verificacoes,
+        chamar=lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=300.0),
+        reescrever=lambda secao, orientacao: _reescrever_secao(caso_id, secao, orientacao, texto_do_caso),
+        rerenderizar_pedidos=lambda sec, plano: _pedidos_do_plano_na_secao(caso_id, sec, plano)[0],
+    )
 
 
 def _nome_da_secao(secao: dict[str, Any]) -> str:
@@ -1564,6 +1541,8 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
         ' "fato":"o que aconteceu", "fonte":"documento ou entrevista de onde veio"}],\n'
         '  "teses": [{"id":"T1","tese":"tese jurídica a sustentar",'
         ' "fatos_ids":["C1","C3"], "fatos_que_sustentam":["fato da cronologia acima"],'
+        ' "fundamentos_legais":["dispositivo"], "jurisprudencias":["precedente do material"], "consequencia":"consequência jurídica desta tese",'
+        ' "funcao_argumentativa":"o papel desta tese na peça (diferente das outras)", "gera_pedido":true|false,'
         ' "provas":["documento/trecho que comprova"],'
         ' "pedidos_relacionados":["pedido que decorre desta tese"]}],\n'
         '  "pedidos": ["cada pedido a formular, na ordem"],\n'
@@ -1573,7 +1552,9 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
         '  "partes": {"autor": {"nome":"","nacionalidade":"","estado_civil":"","profissao":"","cpf":"","rg":"","pis":"","ctps":"",'
         '"endereco":"","cep":"","telefone":"","email":""}, "reu": {"nome":"","cnpj":"","endereco":"","cep":""}},\n'
         '  "pedidos_estruturados": [{"tipo":"categoria jurídica curta (ex.: dano moral)", "tese_id":"T1", "tese":"a tese do plano de que este pedido nasce",'
-        ' "objeto":"o que exatamente se pede", "fundamento":"norma/tese", "valor_ou_base":"valor em R$ com o critério, ou vazio",'
+        ' "objeto":"o que exatamente se pede", "causa_de_pedir":"a lesão/fato jurídico que fundamenta (mesma lesão = mesma causa)",'
+        ' "natureza":"cumulativo|subsidiario|alternativo", "fundamento":"norma/tese", "valor_ou_base":"valor em R$ com o critério, ou vazio",'
+        ' "valor_numerico":número ou null, "metodo_calculo":{"base":número,"multiplicador":número,"resultado":número,"criterio":"ex.: salário líquido do contracheque"},'
         ' "de_praxe":true se for pedido de praxe exigido pela skill (gratuidade, honorários, juros, provas...)}]\n'
         "}\n"
         "`partes`: SOMENTE dados que constam dos documentos, da entrevista ou do cadastro — campo desconhecido fica vazio, "
@@ -2193,11 +2174,15 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     outline = _outline_para_redigir(plano)
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
     texto_do_caso = contexto
-    plano_est = plano_da_peticao.montar(
-        plano,
-        partes=plano_da_peticao.verificar_partes((plano or {}).get("partes"), _cadastro_estruturado(caso_id), texto_do_caso),
-        fatos_documentais=_fatos_documentais(caso_id),
+    # CASE_FACTS: UMA fonte canônica (valor, fonte, confiança, conflito) — a peça inteira consulta os mesmos dados.
+    fontes_do_caso = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"]} for d in documentos_ocr(caso_id)]
+    fontes_do_caso.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
+    cf = case_facts.montar(
+        fontes=fontes_do_caso, cadastro=_cadastro_estruturado(caso_id), proposta_partes=(plano or {}).get("partes"),
+        eventos=(plano or {}).get("cronologia") or [],
     )
+    plano_est = plano_da_peticao.montar(plano, partes=case_facts.partes_resolvidas(cf), fatos_documentais=_fatos_documentais(caso_id))
+    plano_est["case_facts"] = cf
     outline += "\n\n" + plano_da_peticao.para_prompt(plano_est)
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
@@ -2452,11 +2437,14 @@ Cada content deve conter parágrafos separados por linha em branco."""
         caso_id, secoes, plano_est,
         # fonte PERMITIDA: caso + julgados/lei recuperados + skill (precedentes vinculantes); o acervo fica de fora
         texto_do_caso=material_sem_acervo + peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
-        textos_do_acervo=textos_acervo,
+        textos_do_acervo=textos_acervo, material=material_sem_acervo,
     )
-    violacoes = [*violacoes, *achados_linter]
+    # o auditor já inclui a conferência contra os autos: os achados finais SUBSTITUEM os da 1ª conferência
+    violacoes = list(achados_linter)
     pipeline["linter"] = rel_linter
+    pipeline["auditor_final"] = rel_linter
     pipeline["plano_estruturado"] = plano_est
+    pipeline["case_facts"] = plano_est.get("case_facts")
     # Cobertura: quais fatos e eventos que a análise dos documentos já validou
     # (o mesmo material que virou `case_brief`, acima) efetivamente aparecem no
     # texto final. Não bloqueia nem corrige nada — só torna visível quando a
@@ -2503,8 +2491,11 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "jurimetria": jurimetria,
         "sections": secoes,
         "readiness": {
-            "ready": True,
-            "blocking_issues": [],
+            "ready": not (auditoria_estrutural.pendencias(secoes) or pipeline.get("auditor_final", {}).get("pendencias_humanas")),
+            "blocking_issues": [
+                *(f"[PENDENTE] no texto ({c}): {m}"[:200] for c, m in auditoria_estrutural.pendencias(secoes)),
+                *pipeline.get("auditor_final", {}).get("pendencias_humanas", []),
+            ],
             "warnings": [
                 *_avisos_de_pipeline(pipeline),
                 *_avisos_de_insumo(insumos),
@@ -4630,10 +4621,10 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
         # na peça do escritório — é uma frase solta ("Dá-se à causa o valor de
         # ..."). O rótulo continua existindo em `SECOES` porque a tela e o prompt
         # se orientam por ele; só não vira parágrafo no .docx.
-        primeira_linha = conteudo.lstrip().split(chr(10), 1)[0].strip()
-        # O título da seção é o `label` que o redator devolveu (o que a skill manda; vazio
-        # quando a skill não dá título). Não se imprime de novo se o conteúdo já abre com um.
-        if rotulo and conteudo and not primeira_linha.startswith(("#", ":::")) and rotulo.casefold() not in primeira_linha.casefold():
+        # O título da seção é o `label` do redator (vazio se a skill não dá título). Só se omite quando o
+        # conteúdo já abre com um título de NÍVEL 1 (ou bloco nomeado) — um `##`/`###` é SUBcapítulo, e tratá-lo
+        # como "o título da seção" fazia o capítulo (ex.: "V. Do Direito") sumir e a numeração pular.
+        if petition_linter.deve_imprimir_rotulo(rotulo, conteudo):
             corpo.append(_paragrafo_xml(f"# {rotulo}", visual=visual))
         if conteudo:
             corpo.append(_conteudo_com_tabelas_xml(conteudo, visual=visual, fotos=fotos))

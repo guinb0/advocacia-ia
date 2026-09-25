@@ -97,7 +97,19 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    }
   },
   "estrutura": {
-   "enderecamento_regex": "ju[íi]zo|vara do trabalho"
+   "enderecamento_regex": "ju[íi]zo|vara do trabalho",
+   "blocos_unicos": [
+    "enderecamento",
+    "titulo_acao",
+    "objeto"
+   ],
+   "titulo_da_acao_regex": "^reclama[cç][aã]o trabalhista"
+  },
+  "bases_de_calculo": {
+   "liquido": "sal[áa]rio l[íi]quido|remunera[çc][ãa]o l[íi]quida|valor l[íi]quido",
+   "bruto": "sal[áa]rio bruto|remunera[çc][ãa]o bruta",
+   "minimo": "sal[áa]rios?[- ]m[íi]nimos?",
+   "ultima_remuneracao": "[úu]ltim[oa] (?:sal[áa]rio|remunera[çc][ãa]o)"
   }
  },
  "regras": [
@@ -321,6 +333,18 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    "mensagem": "Transcrição longa (ementa, tese, trecho de julgado ou de lei) entre aspas no meio do parágrafo: pela skill (formatacao.md) ela vai em bloco `>` próprio.",
    "correcao": "Mova a transcrição para um bloco `>` separado, com a identificação (tribunal, órgão, número, relator, data) entre parênteses ao final do bloco; deixe no parágrafo só a apresentação e, depois do bloco, a aplicação ao caso.",
    "bloqueia": false
+  },
+  {
+   "id": "ausencia_documental_nao_e_prova_de_ausencia",
+   "tipo": "afirmacao_categorica_sem_qualificador",
+   "secoes": "*",
+   "regex": "(?:aus[êe]ncia|inexist[êe]ncia|falta)\\s+de\\s+(?:qualquer\\s+|nenhum[ao]?\\s+)?[^.\\n]{0,70}?(?:confirma|comprova|demonstra|evidencia|revela)|(?:reclamada|empregador[a]?)\\s+n[ãa]o\\s+(?:adotou|possu[ií]a|manteve|providenciou|dispunha|ofereceu|forneceu)",
+   "qualificadores": "n[ãa]o consta|n[ãa]o h[áa]\\s+(?:nos autos|prova|registro|documento)|nos autos|alega|cabe(?:ndo)?\\s+[àa]\\s+reclamada|[ôo]nus|art\\.\\s*818|at[ée] o momento|segundo o relato",
+   "janela": 220,
+   "codigo": "AUSENCIA_DOCUMENTAL_COMO_PROVA",
+   "mensagem": "A peça usa a falta de documento como prova de que algo não existe/não foi feito (ausência de prova ≠ prova de ausência).",
+   "correcao": "Reescreva como ALEGAÇÃO ancorada: «não consta dos documentos juntados… cabendo à reclamada, que detém a prova, demonstrar (art. 818, § 1º, CLT)» — nunca como fato comprovado.",
+   "bloqueia": true
   }
  ]
 }

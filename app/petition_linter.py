@@ -51,8 +51,10 @@ def _achado(codigo: str, secao: str, trecho: str, motivo: str, correcao: str, bl
 def _estrutura_e_qualificacao(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any]) -> list[Violacao]:
     saida: list[Violacao] = []
     q = params.get("qualificacao") or {}
-    codigo_abertura = q.get("secao", "HEADING")
-    abertura = _secao(secoes, codigo_abertura) or (secoes[0] if secoes else None)
+    # A abertura é a PRIMEIRA seção da peça (posição estrutural), qualquer que seja o `code` que o redator lhe deu:
+    # procurar por "HEADING" fazia o corretor criar uma 2ª abertura quando o code era outro.
+    abertura = secoes[0] if secoes else None
+    codigo_abertura = str((abertura or {}).get("code") or q.get("secao", "HEADING"))
     texto = str((abertura or {}).get("content") or "")
     regex_ender = (params.get("estrutura") or {}).get("enderecamento_regex")
     if regex_ender and not re.search(regex_ender, texto, re.IGNORECASE):
@@ -204,3 +206,26 @@ def lintar(
         *_isolamento(secoes, plano),
         *_coerencia(secoes, texto_do_caso),
     ]
+
+
+def deve_imprimir_rotulo(rotulo: str, conteudo: str) -> bool:
+    """Decisão ÚNICA (renderer e auditoria) de imprimir o título da seção."""
+    if not rotulo or not conteudo.strip():
+        return False
+    primeira = conteudo.lstrip().split("\n", 1)[0].strip()
+    if primeira.startswith(":::") or re.match(r"^#\s", primeira):
+        return False
+    return rotulo.casefold() not in primeira.casefold()
+
+
+def titulos_impressos(secoes: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Os títulos de capítulo NA ORDEM em que saem no documento (rótulo impresso ou `# ` do conteúdo)."""
+    saida = []
+    for s in secoes:
+        rotulo, conteudo = str(s.get("label") or "").strip(), str(s.get("content") or "")
+        if deve_imprimir_rotulo(rotulo, conteudo):
+            saida.append((str(s.get("code")), rotulo))
+        primeira = conteudo.lstrip().split("\n", 1)[0].strip()
+        if re.match(r"^#\s", primeira):
+            saida.append((str(s.get("code")), primeira))
+    return saida

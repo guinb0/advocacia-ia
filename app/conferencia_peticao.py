@@ -506,7 +506,26 @@ def _regra_citacao_literal_sem_fonte(regra: dict[str, Any], secoes: dict[str, st
     return saida
 
 
+def _regra_afirmacao_categorica(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]:
+    """Trecho que casa `regex` SEM nenhum `qualificadores` numa janela de `janela` caracteres em volta.
+
+    Serve à regra "ausência de prova não é prova de ausência": afirmar categoricamente que algo não existe
+    (ou usar a falta de documento como prova) sem se ancorar em "não consta dos autos", em alegação ou no ônus.
+    """
+    padrao, qual = _re(regra["regex"]), _re(regra["qualificadores"])
+    janela = int(regra.get("janela", 200))
+    saida: list[Violacao] = []
+    for codigo in _secoes_da_regra(regra, secoes):
+        texto = secoes[codigo]
+        for m in padrao.finditer(texto):
+            contexto = texto[max(0, m.start() - janela): m.end() + janela]
+            if not qual.search(contexto):
+                saida.append(_violacao(regra, codigo, _trecho(texto, m.start(), m.end(), 40)))
+    return saida
+
+
 _EXECUTORES = {
+    "afirmacao_categorica_sem_qualificador": lambda r, s, f: _regra_afirmacao_categorica(r, s),
     "citacao_literal_sem_fonte": _regra_citacao_literal_sem_fonte,
     "tamanho_minimo": lambda r, s, f: _regra_tamanho_minimo(r, s),
     "secao_obrigatoria": lambda r, s, f: _regra_secao_obrigatoria(r, s),
