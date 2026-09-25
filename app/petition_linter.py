@@ -330,6 +330,16 @@ def revisao_de_protocolo(secoes: list[dict[str, Any]], texto_dos_autos: str) -> 
         faltam.append("procedência dos pedidos")
     if "intimacao exclusiva" not in norm_todo and "exclusivamente em nome" not in norm_todo:
         faltam.append("intimação exclusiva em nome do advogado")
+    if (
+        re.search(r"entrou na area interna.{0,120}abord", pp.norm(texto_todo))
+        and re.search(r"outro abord", autos_norm)
+    ):
+        saida.append(_achado(
+            "DINAMICA_INVERTIDA", "FACTS", "entrou na área interna × abordou o autor",
+            "A peça troca os agentes da CAT: atribui ao que entrou na área interna a abordagem do autor.",
+            "Siga a CAT na ordem dos agentes. Não funda os dois assaltantes num só papel.",
+        ))
+
     if faltam:
         saida.append(_achado(
             "PEDIDOS_DE_PRAXE_AUSENTES", "CLAIMS", "; ".join(faltam)[:200],

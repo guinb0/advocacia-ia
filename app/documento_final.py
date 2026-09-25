@@ -396,8 +396,14 @@ def _dado_alheio_na_abertura(
             return m.group(0)
         return cnpj or m.group(0)
 
+    if not cnpj:
+        achados_cnpj = _CNPJ.findall(texto_dos_autos)
+        cnpj = max(set(achados_cnpj), key=achados_cnpj.count) if achados_cnpj else ""
     if cnpj:
         texto = _CNPJ.sub(cnpj_sub, texto)
+
+    cidades_autos = [f"{c}/{uf}" for c, _sep, uf in _CIDADE_UF.findall(texto_dos_autos)]
+    cidade_dos_autos = max(set(cidades_autos), key=cidades_autos.count) if cidades_autos else ""
 
     def cidade_sub(m: re.Match[str]) -> str:
         if pp.norm(m.group(1)) in autos_norm:
@@ -407,6 +413,8 @@ def _dado_alheio_na_abertura(
             return endereco_reu
         if endereco_autor and re.search(r"resident|domicil", janela, re.IGNORECASE):
             return endereco_autor
+        if cidade_dos_autos and re.search(r"sede|reclamad|cnpj|resident|domicil", janela, re.IGNORECASE):
+            return cidade_dos_autos
         return m.group(0)
 
     texto = _CIDADE_UF.sub(cidade_sub, texto)
@@ -414,6 +422,166 @@ def _dado_alheio_na_abertura(
         novas[0]["content"] = texto
         return novas, 1
     return novas, 0
+
+
+_PLACEHOLDER_NO_CORPO = re.compile(
+    r"\[(?:PENDENTE|data(?:\s+por\s+extenso)?|INFORMA[CÇ][AÃ]O)[^\]]*\]",
+    re.IGNORECASE,
+)
+_ITEM_PEDIDO = re.compile(r"(?=^\s*(?:\*\*)?[a-z]\)\s)", re.MULTILINE)
+_REAIS_VALOR = re.compile(r"R\$\s*([\d.]+,\d{2})")
+
+
+def _reais_float(valor: str) -> float:
+    return float(valor.replace(".", "").replace(",", "."))
+
+
+def _reais_br(valor: float) -> str:
+    return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _estabilizar_o_que_ja_esteve_certo(secoes: list[dict[str, Any]]) -> dict[str, int]:
+    """O que alguma versão já acertou não pode sumir na seguinte.
+
+    A v14 tinha pedidos processuais e nenhum [PENDENTE]. A v15 tinha comunicações.
+    A v16 devolveu os três erros. Aqui o texto é corrigido, não só marcado.
+    """
+    rel = {"placeholders_removidos": 0, "comunicacoes_inseridas": 0, "pedidos_inseridos": 0,
+           "valores_alinhados": 0, "segundo_dano_moral_removido": 0}
+    novas: list[dict[str, Any]] = []
+    for s in secoes:
+        texto = str(s.get("content") or "")
+        if s.get("code") == "CLAIMS":
+            partes_item = _ITEM_PEDIDO.split(texto)
+            kept = []
+            viu_moral = False
+            for item in partes_item:
+                moral = bool(re.search(r"dano moral|indeniza[cç][aã]o por dano", item, re.IGNORECASE))
+                if moral and viu_moral and re.search(r"agravad|tept|transtorno", item, re.IGNORECASE):
+                    rel["segundo_dano_moral_removido"] += 1
+                    continue
+                if moral:
+                    viu_moral = True
+                if _PLACEHOLDER_NO_CORPO.search(item) and not _REAIS_VALOR.search(item):
+                    rel["placeholders_removidos"] += 1
+                    continue
+                limpo, n = _PLACEHOLDER_NO_CORPO.subn("", item)
+                rel["placeholders_removidos"] += n
+                kept.append(limpo)
+            texto = "".join(kept)
+        else:
+            texto, n = _PLACEHOLDER_NO_CORPO.subn("", texto)
+            rel["placeholders_removidos"] += n
+        novas.append({**s, "content": re.sub(r"[ \t]+\n", "\n", re.sub(r"\n{3,}", "\n\n", texto)).strip()})
+    secoes = novas
+
+    peca = any(s.get("code") in ("HEADING", "FACTS", "LEGAL_GROUNDS", "CLAIMS", "PRELIMINARY") for s in secoes)
+    blob = pp.norm("\n".join(str(s.get("content") or "") for s in secoes))
+    if peca and "comunicac" not in blob:
+        frase = (
+            "Das comunicações processuais. Requer que todas as intimações e publicações "
+            "sejam feitas exclusivamente em nome do advogado constituído, nos termos do "
+            "art. 272, § 5º, do CPC e da Súmula 427 do TST."
+        )
+        secoes = _anexar_frase(secoes, frase, "PRELIMINARY")
+        rel["comunicacoes_inseridas"] = 1
+        blob = pp.norm("\n".join(str(s.get("content") or "") for s in secoes))
+
+    faltas = []
+    if not re.search(r"\bcita", blob):
+        faltas.append("a citação da reclamada, na forma do art. 841 da CLT")
+    if not re.search(r"\brito\b", blob):
+        faltas.append("o processamento pelo rito ordinário")
+    if "intimacao exclusiva" not in blob and "exclusivamente em nome" not in blob:
+        faltas.append("a intimação exclusiva em nome do advogado constituído")
+    if "procedencia" not in blob:
+        faltas.append("a procedência dos pedidos")
+    if peca and faltas:
+        secoes = _anexar_frase(secoes, "Requer, ainda, " + "; ".join(faltas) + ".", "CLAIMS")
+        rel["pedidos_inseridos"] = len(faltas)
+
+    return _alinhar_valor_do_dano_moral(secoes, rel), rel
+
+
+def _anexar_frase(secoes: list[dict[str, Any]], frase: str, codigo: str) -> list[dict[str, Any]]:
+    """Acrescenta a frase na seção do papel, sem criar seção nova nem mudar a ordem."""
+    novas = [dict(s) for s in secoes]
+    for s in novas:
+        if s.get("code") == codigo:
+            s["content"] = (str(s.get("content") or "").rstrip() + "\n\n" + frase).strip()
+            return novas
+    alvo = next((s for s in novas if s.get("code") not in ("CLOSING", "VALUE")), novas[0] if novas else None)
+    if alvo is not None:
+        alvo["content"] = (str(alvo.get("content") or "").rstrip() + "\n\n" + frase).strip()
+    return novas
+
+
+def _alinhar_valor_do_dano_moral(secoes: list[dict[str, Any]], rel: dict[str, int]) -> list[dict[str, Any]]:
+    """O R$ do pedido de dano moral e o da quantificação passam a ser o mesmo número."""
+    quant, capturando = "", False
+    for s in secoes:
+        if s.get("code") == "CLAIMS":
+            continue
+        for linha in str(s.get("content") or "").split("\n"):
+            if re.search(r"quantifica", linha, re.IGNORECASE):
+                capturando = True
+                continue
+            if capturando and re.match(r"^\s*#{1,3}\s+\S", linha) and not re.search(r"quantifica", linha, re.IGNORECASE):
+                capturando = False
+            if capturando:
+                quant += "\n" + linha
+    valores = [_reais_float(v) for v in _REAIS_VALOR.findall(quant)]
+    if not valores:
+        return secoes
+    alvo = max(valores)
+    alvo_txt = _reais_br(alvo)
+    novas = []
+    for s in secoes:
+        texto = str(s.get("content") or "")
+        if s.get("code") != "CLAIMS":
+            novas.append(s)
+            continue
+        def trocar_item(item: str) -> str:
+            if not re.search(r"dano moral", item, re.IGNORECASE):
+                return item
+            achados = _REAIS_VALOR.findall(item)
+            if not achados or abs(_reais_float(achados[0]) - alvo) <= 0.05:
+                return item
+            rel["valores_alinhados"] += 1
+            return _REAIS_VALOR.sub(lambda _m: f"R$ {alvo_txt}", item, count=1)
+
+        partes = _ITEM_PEDIDO.split(texto)
+        texto = "".join(trocar_item(p) for p in partes)
+        novas.append({**s, "content": texto})
+    return _alinhar_valor_da_causa(novas, rel)
+
+
+def _alinhar_valor_da_causa(secoes: list[dict[str, Any]], rel: dict[str, int]) -> list[dict[str, Any]]:
+    pedidos = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
+    soma = round(sum(_reais_float(v) for v in _REAIS_VALOR.findall(pedidos)), 2)
+    if not soma:
+        return secoes
+    soma_txt = _reais_br(soma)
+    novas = []
+    for s in secoes:
+        texto = str(s.get("content") or "")
+
+        def trocar(m: re.Match[str]) -> str:
+            atual = _reais_float(m.group(2))
+            if abs(atual - soma) <= 0.05:
+                return m.group(0)
+            rel["valores_alinhados"] += 1
+            return m.group(1) + soma_txt
+
+        texto = re.sub(
+            r"((?:d[aá]-se\s+[àa]\s+causa|valor\s+da\s+causa)[^$\n]{0,60}R\$\s*)([\d.]+,\d{2})",
+            trocar,
+            texto,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        novas.append({**s, "content": texto})
+    return novas
 
 
 def higienizar(
@@ -436,10 +604,12 @@ def higienizar(
         rel["aberturas_duplicadas_removidas"] = n_ab
         secoes, rel_quali = aplicar_qualificacao_canonica(secoes, plano["partes"])
         rel["qualificacao_canonica"] = rel_quali
-        secoes, n_alheio = _dado_alheio_na_abertura(secoes, plano["partes"], texto_dos_autos)
-        rel["dados_de_outro_caso_substituidos"] = n_alheio
+    secoes, n_alheio = _dado_alheio_na_abertura(secoes, plano.get("partes") or {}, texto_dos_autos)
+    rel["dados_de_outro_caso_substituidos"] = n_alheio
     secoes, n_irr = _corrigir_institutos(secoes)
     rel["irdr_corrigido_para_irr"] = n_irr
+    secoes, rel_estavel = _estabilizar_o_que_ja_esteve_certo(secoes)
+    rel["estabilidade"] = rel_estavel
     secoes = [s for s in secoes if str(s.get("content") or "").strip() or str(s.get("label") or "").strip() == ""] or secoes
     secoes = _renumerar_capitulos(secoes)
     return secoes, rel
