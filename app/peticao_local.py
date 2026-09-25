@@ -4684,10 +4684,11 @@ def _rodape_xml(visual: dict[str, Any]) -> str:
 
 
 def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
-    # Peça gravada antes do formato estruturado é MIGRADA aqui, fora do renderer.
-    secoes = peticao_migracao_legado.migrar_secoes(secoes)
-    # O documento processual NUNCA contém metadado interno de geração (mesmo em peça antiga ou editada à mão).
-    secoes, _ = documento_final._cortar_metadata(secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"])  # noqa: SLF001
+    # Usa a mesma representação já conferida pelo FINAL_DOCUMENT_VALIDATOR. Assim
+    # o DOCX não introduz limpeza estrutural que o editor/validador não enxergaram.
+    secoes = documento_final.preparar_para_renderizacao(
+        secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"]
+    )
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
     visual = configuracao_visual()
     fonte = str(visual.get("fonte") or fonte).strip() or fonte

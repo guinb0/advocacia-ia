@@ -25,6 +25,9 @@ from .conferencia_peticao import Violacao
 from .recuperacao_por_secao import paragrafos
 
 _TITULO_ROMANO = re.compile(r"^\s*(?:#{1,3}\s*)?(?:\*\*)?([IVXLC]+)\s*[.\-–—)]\s+(\S.{2,90}?)(?:\*\*)?\s*$")
+_SUBTITULO_ROMANO = re.compile(r"^(\s*(?:#{2,6}\s*)?(?:\*\*)?)([IVXLC]+)\.(\d+)(\.?\s+\S.*)$")
+_MARCADOR_ESTRUTURAL = re.compile(r"^\s*:::\s*(?:[\w-]+)?\s*$", re.MULTILINE)
+_FECHAMENTO = re.compile(r"(?im)^\s*termos\s+em\s+que\s*,?\s*\n\s*pede\s+deferimento\s*\.?\s*$")
 _ROMANOS = [(100, "C"), (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")]
 
 
@@ -48,9 +51,29 @@ def _titulo_sem_numero(texto: str) -> str:
 
 # ------------------------------------------------------------------ representação FINAL (o que sai no DOCX)
 
-def representacao_final(secoes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """As seções exatamente como `montar_docx` as imprime: migração de legado aplicada e rótulo impresso como `# `."""
+def _sem_marcadores_estruturais(secoes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Marcadores do parser são metadados, nunca texto de editor/exportação."""
+    removidos = 0
+    saida = []
+    for s in secoes:
+        conteudo = str(s.get("content") or "")
+        limpo, n = _MARCADOR_ESTRUTURAL.subn("", conteudo)
+        removidos += n
+        saida.append({**s, "content": re.sub(r"\n{3,}", "\n\n", limpo).strip()})
+    return saida, removidos
+
+
+def preparar_para_renderizacao(secoes: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Representação persistível/renderizável, sem transformações ocultas no DOCX."""
     migradas = peticao_migracao_legado.migrar_secoes(secoes)
+    sem_metadata, _ = _cortar_metadata(migradas, params)
+    limpas, _ = _sem_marcadores_estruturais(sem_metadata)
+    return limpas
+
+
+def representacao_final(secoes: list[dict[str, Any]], params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """As seções exatamente como `montar_docx` as imprime: migração de legado aplicada e rótulo impresso como `# `."""
+    migradas = preparar_para_renderizacao(secoes, params or {})
     saida = []
     for s in migradas:
         conteudo = str(s.get("content") or "")
@@ -163,7 +186,7 @@ def _remover_titulos_repetidos(secoes: list[dict[str, Any]], params: dict[str, A
 
 
 def _renumerar_capitulos(secoes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Numeração ESTRUTURAL: os números romanos dos capítulos são recalculados na ordem em que saem — o modelo não escolhe número."""
+    """Deriva número e pai dos títulos da ordem estrutural; conteúdo não escolhe capítulo."""
     n = 0
     novas = []
     for s in secoes:
@@ -173,12 +196,48 @@ def _renumerar_capitulos(secoes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             n += 1
             rotulo = f"{para_romano(n)}. {m.group(2)}"
         primeira = conteudo.lstrip().split("\n", 1)[0]
-        mc = re.match(r"^#\s+([IVXLC]+)\s*[.\-–—)]\s+(.*)$", primeira)
+        mc = _TITULO_ROMANO.match(primeira)
         if mc:
             n += 1
-            conteudo = conteudo.replace(primeira, f"# {para_romano(n)}. {mc.group(2)}", 1)
+            conteudo = conteudo.replace(primeira, f"{para_romano(n)}. {mc.group(2)}", 1)
+        # Um subtítulo `VII.1` é filho do capítulo atual, não um novo capítulo
+        # livre que o redator possa numerar por conta própria.
+        pai = para_romano(n) if n else ""
+        if pai:
+            conteudo = "\n".join(
+                _SUBTITULO_ROMANO.sub(lambda x: f"{x.group(1)}{pai}.{x.group(3)}{x.group(4)}", linha)
+                for linha in conteudo.split("\n")
+            )
         novas.append({**s, "label": rotulo, "content": conteudo})
     return novas
+
+
+def _deduplicar_fechamento(secoes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Um único owner: conserva o último fechamento estrutural no fluxo da peça."""
+    ocorrencias = [
+        (i, m.start(), m.end())
+        for i, s in enumerate(secoes)
+        for m in _FECHAMENTO.finditer(str(s.get("content") or ""))
+    ]
+    if len(ocorrencias) <= 1:
+        return secoes, 0
+    manter = ocorrencias[-1]
+    removidos = 0
+    novas = []
+    for i, s in enumerate(secoes):
+        texto = str(s.get("content") or "")
+        partes = []
+        ultimo = 0
+        for m in _FECHAMENTO.finditer(texto):
+            partes.append(texto[ultimo:m.start()])
+            if (i, m.start(), m.end()) == manter:
+                partes.append(m.group(0))
+            else:
+                removidos += 1
+            ultimo = m.end()
+        partes.append(texto[ultimo:])
+        novas.append({**s, "content": re.sub(r"\n{3,}", "\n\n", "".join(partes)).strip()})
+    return novas, removidos
 
 
 def higienizar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -186,6 +245,10 @@ def higienizar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict
     secoes = peticao_migracao_legado.migrar_secoes(secoes)
     secoes, metadata = _cortar_metadata(secoes, params)
     rel["metadata_interna_removida"] = metadata
+    secoes, n_marcadores = _sem_marcadores_estruturais(secoes)
+    rel["marcadores_estruturais_removidos"] = n_marcadores
+    secoes, n_fechamentos = _deduplicar_fechamento(secoes)
+    rel["fechamentos_duplicados_removidos"] = n_fechamentos
     secoes, n_repetidos = _remover_titulos_repetidos(secoes, params)
     rel["titulos_repetidos_removidos"] = n_repetidos
     if plano.get("partes"):
@@ -261,11 +324,79 @@ def pedidos_no_texto(secoes: list[dict[str, Any]]) -> list[Violacao]:
     return saida
 
 
+def _de_romano(valor: str) -> int:
+    mapa = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+    total, anterior = 0, 0
+    for simbolo in reversed(valor):
+        atual = mapa[simbolo]
+        total += -atual if atual < anterior else atual
+        anterior = max(anterior, atual)
+    return total
+
+
+def invariantes_estruturais(secoes: list[dict[str, Any]]) -> list[Violacao]:
+    """Invariantes do artefato visível: estrutura e numeração têm uma só fonte."""
+    saida: list[Violacao] = []
+    principal_atual = ""
+    esperado = 1
+    principais: list[tuple[str, str]] = []
+    for s in secoes:
+        for linha in str(s.get("content") or "").splitlines():
+            limpa = linha.strip().lstrip("# ").strip("* ")
+            sub = re.match(r"^([IVXLC]+)\.(\d+)\.?\s+", limpa)
+            if sub:
+                if principal_atual and sub.group(1) != principal_atual:
+                    saida.append(_v("SUBSECAO_COM_PAI_INCONSISTENTE", str(s.get("code")), limpa,
+                                    f"A subseção {sub.group(1)}.{sub.group(2)} não pertence ao capítulo atual {principal_atual}.",
+                                    "Derive a subseção do capítulo-pai canônico."))
+                continue
+            main = _TITULO_ROMANO.match(limpa)
+            if not main:
+                continue
+            numero = _de_romano(main.group(1))
+            if numero != esperado:
+                saida.append(_v("SEQUENCIA_DE_HEADINGS_INVALIDA", str(s.get("code")), limpa,
+                                f"O capítulo {main.group(1)} aparece onde se esperava {para_romano(esperado)}.",
+                                "A numeração é derivada da ordem canônica das seções."))
+            principal_atual = main.group(1)
+            esperado = numero + 1
+            principais.append((str(s.get("code")), _titulo_sem_numero(limpa)))
+    codigos_logicos = {"OPENING", "FACTS", "LEGAL_GROUNDS", "CLAIMS", "CLOSING"}
+    for codigo in codigos_logicos:
+        n = sum(1 for s in secoes if str(s.get("code") or "") == codigo)
+        if n > 1:
+            saida.append(_v("SECAO_ESTRUTURAL_DUPLICADA", codigo, codigo,
+                            f"A seção estrutural {codigo} aparece {n} vezes.", "Mantenha uma única seção canônica."))
+    fechamentos = sum(len(_FECHAMENTO.findall(str(s.get("content") or ""))) for s in secoes)
+    if fechamentos != 1:
+        codigo = "CLOSING" if fechamentos else ""
+        saida.append(_v("EXACTLY_ONE_CLOSING_BLOCK", codigo, str(fechamentos),
+                        f"O documento visível possui {fechamentos} fechamento(s).", "Mantenha exatamente um bloco de fechamento."))
+    if any(_MARCADOR_ESTRUTURAL.search(str(s.get("content") or "")) for s in secoes):
+        saida.append(_v("MARCADOR_ESTRUTURAL_VISIVEL", "", ":::",
+                        "Marcador interno chegou à representação visível.", "Remova marcadores estruturais antes de persistir/renderizar."))
+    return saida
+
+
+def consistencia_procedimental(secoes: list[dict[str, Any]]) -> list[Violacao]:
+    """Julgamento sem instrução não coexiste com prova instrutória declarada necessária."""
+    texto = "\n".join(str(s.get("content") or "") for s in secoes)
+    normalizado = pp.norm(texto)
+    cedo = bool(re.search(r"julgamento antecipado|desnecessidade de (realizacao de )?audiencia|dispensa.{0,30}(audiencia|instrucao)|sem necessidade de instrucao", normalizado))
+    prova = bool(re.search(r"prova testemunhal|oitiva de testemun|depoimento pessoal|prova pericial|pericia|inspecao judicial", normalizado))
+    necessidade = bool(re.search(r"(necessari|precis|depend).{0,45}(prova|pericia|instrucao|confirm)", normalizado))
+    if cedo and prova and necessidade:
+        return [_v("ESTRATEGIA_PROCESSUAL_INCONSISTENTE", "", "julgamento antecipado × prova instrutória necessária",
+                   "A peça dispensa instrução, mas declara necessária prova que a exige.",
+                   "Retire a dispensa, torne-a subsidiária se a estratégia assim permitir, ou sinalize a pendência para revisão." )]
+    return []
+
+
 def validar_documento_final(
     secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], ledger: list[dict[str, Any]] | None = None,
 ) -> list[Violacao]:
     """Tudo o que precisa ser verdade no artefato final — rodado sobre `representacao_final` (o que sai no DOCX)."""
-    final = representacao_final(secoes)
+    final = representacao_final(secoes, params)
     hs = headings_reais(secoes)
     saida: list[Violacao] = []
     # headings: título estrutural repetido / numeração real
@@ -287,4 +418,7 @@ def validar_documento_final(
         saida += document_ledger.validar_bijecao(ledger) + document_ledger.validar_referencias(final, ledger)
     saida += pedidos_no_texto(final) + ae.ledger(plano) + ae.valor_da_causa(final, plano) + ae.criterio_de_calculo(final, params)
     saida += epistemica(final, params, plano)
+    saida += invariantes_estruturais(final)
+    saida += consistencia_procedimental(final)
+    saida += ae.repeticao_de_conteudo(final, params)
     return saida
