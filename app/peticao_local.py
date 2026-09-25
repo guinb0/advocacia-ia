@@ -2001,21 +2001,52 @@ def _conferir_contra_os_autos(
     iniciais = [v.codigo for v in violacoes if v.bloqueia]
     corrigiu = False
     rodadas = 0
+    secoes_puladas: list[str] = []
     # UMA rodada, seções EM PARALELO: era aqui que a geração passava mais tempo ("Conferindo a peça contra os
     # autos…") — duas rodadas, uma seção por vez, cada chamada com o material inteiro. O que sobrar é revisto
     # pelo auditor final, que roda de novo a mesma conferência logo adiante.
-    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=300):
+    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=180):
         rodadas += 1
-        extra = _material_para_resolver_pesquisas(violacoes, secoes)
+        # A primeira conferência é determinística e sempre roda. A reescrita por
+        # modelo é uma tentativa de conveniência, não pode transformar uma peça
+        # já gerada em uma espera de vários minutos (nem em falha por sobrecarga
+        # do provedor). Dois blocos cobrem os erros de maior impacto sem mandar a
+        # mesma base de 80 mil caracteres para seis chamadas simultâneas.
+        por_secao = {
+            str(secao.get("code") or ""): [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
+            for secao in secoes
+        }
+        alvos = [s for s in secoes if por_secao.get(str(s.get("code") or ""))]
+        alvos.sort(
+            key=lambda s: (
+                str(s.get("code") or "") not in {"LEGAL_GROUNDS", "FACTS", "CLAIMS"},
+                -len(por_secao[str(s.get("code") or "")]),
+            )
+        )
+        alvos = alvos[:2]
+        secoes_puladas = [
+            str(s.get("code") or "") for s in secoes
+            if por_secao.get(str(s.get("code") or "")) and s not in alvos
+        ]
+        extra = _material_para_resolver_pesquisas(violacoes, alvos)
 
         def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
-            da_secao = [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
+            da_secao = por_secao.get(str(secao.get("code") or ""), [])
             if not da_secao:
                 return secao
-            novo = _reescrever_secao(caso_id, secao, conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra, material)
+            novo = _reescrever_secao(
+                caso_id,
+                secao,
+                conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
+                material[:35_000],
+            )
             return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
 
-        novas = _em_paralelo_com_contexto(corrigir_secao, secoes)
+        novas_por_codigo = {
+            str(secao.get("code") or ""): corrigida
+            for secao, corrigida in zip(alvos, _em_paralelo_com_contexto(corrigir_secao, alvos, max_workers=2))
+        }
+        novas = [novas_por_codigo.get(str(secao.get("code") or ""), secao) for secao in secoes]
         if novas == secoes:
             break
         secoes, corrigiu = novas, True
@@ -2026,6 +2057,7 @@ def _conferir_contra_os_autos(
         "violacoes_iniciais": iniciais,
         "rodada_de_correcao": corrigiu,
         "rodadas_de_correcao": rodadas,
+        "secoes_sem_correcao_por_limite": secoes_puladas,
         "violacoes_restantes": [v.codigo for v in violacoes if v.bloqueia],
         "citacoes_nao_verificadas": sum(1 for v in violacoes if v.codigo == "CITACAO_NAO_VERIFICADA"),
     }
@@ -2099,7 +2131,10 @@ def _reescrever_secao(
         f"{secao.get('content', '')}\n\nORIENTAÇÃO:\n{orientacao}"
     )
     try:
-        saida = _llm_json(instrucao, entrada, timeout=300.0)
+        # Correção pontual não deve competir com a redação principal por cinco
+        # minutos. Se o provedor não responder neste teto, a seção original fica
+        # preservada e o achado continua visível para revisão humana.
+        saida = _llm_json(instrucao, entrada, timeout=150.0)
     except ErroPeticao:
         log.warning("petição local: reescrita da seção %s falhou (caso %s)", secao.get("code"), caso_id, exc_info=True)
         return None
