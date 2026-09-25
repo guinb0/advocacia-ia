@@ -155,7 +155,7 @@ portainer-operacao:
       when: manual
       allow_failure: true
   variables:
-    OPERACAO: "inspecionar"
+    OPERACAO: "criar_pasta"
   script:
     - |
       set -e
