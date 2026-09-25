@@ -68,6 +68,7 @@ from . import (
     consultas,
     conversao_pdf,
     investigacao,
+    jurisprudencia_api,
     localidades,
     usuarios,
     supervisao,
@@ -357,6 +358,7 @@ LIVRES_SEM_ADVOGADO = {
 app.include_router(agente.roteador)
 app.include_router(advbox.roteador)
 app.include_router(investigacao.roteador)
+app.include_router(jurisprudencia_api.roteador)
 app.include_router(localidades.roteador)
 app.include_router(usuarios.roteador)
 app.include_router(usuarios.roteador_sessao)

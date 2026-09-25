@@ -77,6 +77,28 @@ def test_indice_lista_todos_mesmo_com_corte_de_texto():
     assert "DOCUMENTO 13" in texto.upper() or "Documento 13" in texto
 
 
+def test_anexo_sem_ocr_permanece_no_ledger_e_no_indice(monkeypatch):
+    """O inventário do caso, e não só o OCR pronto, decide quais anexos existem."""
+    monkeypatch.setattr(pl.armazenamento, "listar_entregas", lambda _caso: [
+        {"id": "e13", "arquivo": "Doc 13. Contracheque maio.pdf"},
+        {"id": "e14", "arquivo": "Doc 14. Contracheque junho.pdf"},
+    ])
+    monkeypatch.setattr(pl.armazenamento, "listar_extracoes_do_caso", lambda _caso: [
+        {"id": "e13", "extracao": {"texto_completo": "contracheque maio salário R$ 2.000"}},
+    ])
+    monkeypatch.setattr(pl, "_dados_por_documento", lambda _caso: {
+        "Doc 13. Contracheque maio.pdf": {"tipo": "contracheque"},
+        "Doc 14. Contracheque junho.pdf": {"tipo": "contracheque"},
+    })
+
+    ledger, documentos = pl.documentos_logicos("caso")
+
+    assert [d["canonical_label"] for d in ledger] == ["Documento 13", "Documento 14"]
+    assert documentos[1]["texto"] == ""
+    indice = "\n".join(pl._indice_e_textos_documentais(ledger, documentos))
+    assert "Documento 14" in indice
+
+
 # ------------------------------------------------------------------ 3. Placeholders e final duplicado
 
 def test_placeholder_pendente_bloqueia():
@@ -128,3 +150,28 @@ def test_ausencia_falsa_de_contracheque_listado():
     assert "AUSENCIA_FALSA_DE_DOCUMENTO_LISTADO" in codigos(
         ae.ausencia_falsa_de_documento_listado(secoes, ledger)
     )
+
+
+def test_erros_juridicos_ect_bloqueiam_a_entrega():
+    secoes = [{"code": "LEGAL_GROUNDS", "content": """
+O nexo presumido do TEPT decorre do evento. O serviço médico da própria
+reclamada emitiu o atestado. O Tema 84 alcança a movimentação de valores em
+agência. Requer perícia médica, nos termos do art. 195 da CLT, e revelia pelo
+art. 847 da CLT. Os juros observarão o regime vigente na prolação da sentença.
+"""}]
+    plano = {"partes": {"reu": {"nome": "ECT"}}, "pedidos": [
+        {"id": "P01", "tipo": "danos materiais", "objeto": "dano material", "tipo_de_item": "autonomo", "valor": None},
+    ]}
+    achados = codigos(ae.coerencia_juridica_minima(secoes, plano))
+    assert {
+        "DANO_MATERIAL_SEM_VALOR", "NEXO_PRESUMIDO_SEM_BASE", "VINCULO_MEDICO_INFERIDO",
+        "TEMA_84_SEM_ANALOGIA", "ARTIGO_195_FORA_DO_TEMA", "ARTIGO_847_FORA_DO_TEMA",
+        "JUROS_ECT_GENERICOS", "CNPJ_RECLAMADA_AUSENTE",
+    } <= achados
+
+
+def test_dano_material_com_valor_nao_e_barrado_pela_regra_de_valor():
+    plano = {"partes": {}, "pedidos": [
+        {"id": "P01", "tipo": "danos materiais", "objeto": "dano material", "tipo_de_item": "autonomo", "valor": 500.0},
+    ]}
+    assert "DANO_MATERIAL_SEM_VALOR" not in codigos(ae.coerencia_juridica_minima([], plano))

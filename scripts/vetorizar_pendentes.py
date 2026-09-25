@@ -18,14 +18,13 @@ a exceção que o dispararia jamais é levantada.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from datetime import datetime
 
 import psycopg
 
-from app.rag import carregar_env, gerar_embeddings, vetor_literal
+from app.rag import carregar_env, gerar_embeddings, vetor_literal, url_pgvector
 
 #: Prazos DEPOIS da conexão aberta. `keepalives_count` é ignorado no Windows;
 #: idle e interval não são, e são eles que detectam a conexão morta.
@@ -63,7 +62,7 @@ def vetorizar(
     # deixa uma transação ociosa aberta enquanto aguardamos a API, evitando o
     # idle_in_transaction_session_timeout do PostgreSQL remoto — que neste
     # servidor está em 30s (medido em 13/08).
-    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True, **CONEXAO) as conexao:
+    with psycopg.connect(url_pgvector(), autocommit=True, **CONEXAO) as conexao:
         while limite is None or feitos < limite:
             tamanho = min(lote, limite - feitos) if limite is not None else lote
             linhas = conexao.execute(

@@ -22,6 +22,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from app import rag
 from app.rag import BASE, carregar_env, gerar_embeddings, vetor_literal
 
 RE_CPF = re.compile(r"(?<!\d)\d{3}\.?\d{3}\.?\d{3}-?\d{2}(?!\d)")
@@ -207,7 +208,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_chunks_fonte_ordem
 def ingerir(*, limite: int | None = None, sem_embeddings: bool = False) -> dict[str, int]:
     carregar_env()
     origem_url = os.getenv("JURIMETRIA_DATABASE_URL", "postgresql://juri:juri@localhost:5433/juri")
-    destino_url = os.environ["DATABASE_URL"]
+    destino_url = rag.url_pgvector()
     stats = {"documentos": 0, "ignorados": 0, "chunks": 0}
     with psycopg.connect(origem_url, connect_timeout=10) as origem, psycopg.connect(
         destino_url, connect_timeout=10
@@ -230,8 +231,8 @@ def ingerir(*, limite: int | None = None, sem_embeddings: bool = False) -> dict[
                 continue
             vetores = [None] * len(chunks) if sem_embeddings else gerar_embeddings(chunks)
             fonte_id = destino.execute(
-                """INSERT INTO fontes(tipo,titulo,identificador,publicado_em)
-                   VALUES ('jurisprudencia',%s,%s,%s::date) RETURNING id""",
+                """INSERT INTO fontes(tipo,titulo,identificador,publicado_em,status_verificacao,consultado_em)
+                   VALUES ('jurisprudencia',%s,%s,%s::date,'UNVERIFIED',now()) RETURNING id""",
                 (f"{doc.origem.upper()} — processo {doc.numero}", doc.identificador, doc.data[:10] if doc.data else None),
             ).fetchone()[0]
             metadados = {
@@ -245,6 +246,7 @@ def ingerir(*, limite: int | None = None, sem_embeddings: bool = False) -> dict[
                 "magistrados": doc.magistrados,
                 "classe": doc.classe,
                 "assuntos": doc.assuntos,
+                "status_verificacao": "UNVERIFIED",
             }
             parametros = [
                 (
