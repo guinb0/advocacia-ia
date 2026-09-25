@@ -721,6 +721,7 @@ class ArmazenamentoDeAnexos:
             {"id": 1, "arquivo": "IMG_4411.jpg", "tipo_detectado": "CTPS", "status_proc": "pronto"},
             {"id": 2, "arquivo": "WhatsApp Image 2026.jpeg", "tipo_detectado": "desconhecido", "status_proc": "na_fila"},
             {"id": 3, "arquivo": "scan_003.pdf", "tipo_detectado": "HOLERITE", "status_proc": "pronto"},
+            {"id": 4, "arquivo": "checklist-do-escritorio.pdf", "tipo_detectado": "certidao", "status_proc": "pronto"},
         ]
 
     def listar_extracoes_do_caso(self, caso_id):
@@ -745,19 +746,35 @@ class ArmazenamentoDeAnexos:
                     "texto_completo": "RECIBO DE PAGAMENTO cargo AUXILIAR salário 2.100,00",
                 },
             },
+            {
+                "id": "4",
+                "arquivo": "checklist-do-escritorio.pdf",
+                "extracao": {
+                    # O checklist cita certidões, mas a leitura do documento
+                    # inteiro já o classificou corretamente como material interno.
+                    "tipo": {"codigo": "certidao", "descricao": "Certidão (Nascimento/Casamento/Óbito)"},
+                    "classificacao_semantica": {"documento": "Checklist de Documentação — Documento Interno do Escritório"},
+                    "campos": [],
+                    "texto_completo": "CHECKLIST DE DOCUMENTAÇÃO\nCertidão de nascimento\nCertidão de casamento",
+                },
+            },
         ]
 
 
 peticao_local.armazenamento = ArmazenamentoDeAnexos()  # type: ignore[assignment]
 anexos = peticao_local.anexos_do_caso("caso-1")
-checar(len(anexos) == 3, "o anexo ainda sem OCR continua na lista (antes sumia)")
+checar(len(anexos) == 4, "o anexo ainda sem OCR continua na lista (antes sumia)")
 checar(anexos[1]["situacao"] == "na_fila", "e sai marcado como aguardando leitura")
 checar(anexos[0]["tipo"].startswith("Carteira de Trabalho"), "o tipo classificado acompanha o arquivo")
 checar(len(anexos[0]["texto"]) > 1000, "o texto vem inteiro, sem o corte de quem lê")
 checar(anexos[0]["id"] == "1", "o anexo leva o id da entrega — é ele que abre o arquivo")
+checar(
+    anexos[3]["tipo"] == "Checklist de Documentação — Documento Interno do Escritório",
+    "a classificação semântica de checklist prevalece sobre a palavra ‘certidão’ citada no conteúdo",
+)
 
 citaveis = chat_peticao.documentos_citaveis("caso-1")
-checar(len(citaveis) == 3, "a tela recebe TODOS os anexos como citáveis, lidos ou não")
+checar(len(citaveis) == 4, "a tela recebe TODOS os anexos como citáveis, lidos ou não")
 checar(
     citaveis[0] == {"id": "1", "arquivo": "IMG_4411.jpg", "tipo": anexos[0]["tipo"], "situacao": "lido"},
     "com id, arquivo, tipo e situação — e sem o texto do OCR",
