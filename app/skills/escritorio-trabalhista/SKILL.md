@@ -78,7 +78,7 @@ Antes de redigir qualquer linha, siga `references/pesquisa_jurisdicional_e_jurim
 
 Use o modelo do assunto identificado (Etapa 1.1) como estrutura e tom fixos, seguindo sempre `references/estrutura_peca.md` para a ordem dos capítulos e `references/citacoes_juridicas.md` para a forma de citar. Leia e siga à risca `references/regras_redacao.md` (e, no caso de assalto a carteiro, também `references/assalto_carteiro/regras_redacao_especifica.md`) e `references/regras_complementares.md` — preservação de conteúdo, anti-invenção, cálculo, valor da causa e limpeza da versão final.
 
-Ao final do rascunho, apresente o **relatório de alterações e acréscimos** exigido em `regras_redacao.md`.
+Ao final do rascunho, apresente o **relatório de alterações e acréscimos** exigido em `regras_redacao.md` — como relatório interno para a advogada (fora da peça; no sistema, em `analise.observacoes`), nunca como seção do documento.
 
 ---
 

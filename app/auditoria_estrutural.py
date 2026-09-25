@@ -65,7 +65,11 @@ def abertura_unica(secoes: list[dict[str, Any]], partes: dict[str, Any], params:
                             f"O bloco «{bloco}» (definido pela skill como único) aparece {n} vezes.", "Mantenha só o primeiro."))
     titulo = est.get("titulo_da_acao_regex")
     if titulo:
-        n = sum(1 for _, p in _paragrafos_com_posicao(secoes) if re.match(titulo, p.strip("*: \n"), re.IGNORECASE))
+        n = sum(
+            1
+            for linha in texto_todo.splitlines()
+            if pp.norm(linha.strip("*: #\n")).startswith("reclamacao trabalhista")
+        )
         if n > 1:
             saida.append(_v("TITULO_DA_ACAO_DUPLICADO", "", f"{n} títulos de ação", "A identificação da ação aparece mais de uma vez.", "Mantenha um só."))
     return saida
@@ -241,20 +245,45 @@ def _nucleo(p: dict[str, Any]) -> set[str]:
     return pp._tokens(f"{p.get('causa_de_pedir', '')} {p.get('tipo', '')} {p.get('objeto', '')}")  # noqa: SLF001
 
 
+def _autonomo_monetario(p: dict[str, Any]) -> bool:
+    return p.get("tipo_de_item", "autonomo") == "autonomo" and not p.get("de_praxe") and bool(p.get("valor") or re.search(r"R\$\s*\d", p.get("valor_ou_base", "")))
+
+
 def ledger(plano: dict[str, Any]) -> list[Violacao]:
     saida: list[Violacao] = []
     peds = plano.get("pedidos") or []
+    # AGRAVANTE / critério / consequência NÃO é segundo pedido econômico: entra na quantificação do principal
+    for p in peds:
+        if p.get("tipo_de_item") in ("agravante", "criterio_de_quantificacao", "consequencia") and (p.get("valor") or p.get("natureza", "cumulativo") == "cumulativo" and re.search(r"R\$\s*\d", p.get("valor_ou_base", ""))):
+            saida.append(_v("AGRAVANTE_COM_VALOR_PROPRIO", "CLAIMS", f"{p['id']} {p['tipo']}", f"{p['id']} é {p['tipo_de_item']} de outro pedido mas tem valor próprio: virou segunda indenização.",
+                            "Integre o fator ao método de cálculo do pedido principal e retire o valor separado."))
+    # mesmo bem jurídico + mesmo evento + mesmo objeto econômico = a MESMA reparação, ainda que o texto seja outro
+    monetarios = [p for p in peds if _autonomo_monetario(p) and p.get("natureza", "cumulativo") == "cumulativo"]
+    for i, a in enumerate(monetarios):
+        for b in monetarios[i + 1:]:
+            campos = ("bem_juridico", "evento_causador", "objeto_economico")
+            if all(a.get(c) and b.get(c) and pp._jaccard(pp._tokens(a[c]), pp._tokens(b[c])) >= 0.5 for c in campos):  # noqa: SLF001
+                autonomos = pp._jaccard(pp._tokens(a.get("dano", "")), pp._tokens(b.get("dano", ""))) < 0.25 and a.get("dano") and b.get("dano")  # noqa: SLF001
+                if not autonomos:
+                    saida.append(_v("MESMA_REPARACAO_DUAS_VEZES", "CLAIMS", f"{a['id']} × {b['id']}", f"{a['id']} e {b['id']} reparam o mesmo dano (mesmo bem jurídico, evento causador e objeto econômico).",
+                                    "Funda em um só pedido; se são danos autônomos, o dano de cada um deve estar distinto e fundamentado."))
     for i, a in enumerate(peds):
         for b in peds[i + 1:]:
             if a.get("de_praxe") or b.get("de_praxe"):
+                continue
+            if (
+                a.get("bem_juridico") and b.get("bem_juridico")
+                and pp._jaccard(pp._tokens(a["bem_juridico"]), pp._tokens(b["bem_juridico"])) < 0.5  # noqa: SLF001
+                and a.get("dano") and b.get("dano")
+                and pp._jaccard(pp._tokens(a["dano"]), pp._tokens(b["dano"])) < 0.5  # noqa: SLF001
+            ):
                 continue
             # principal × subsidiário/alternativo do mesmo objeto é RELAÇÃO declarada, não duplicidade
             if a.get("natureza", "cumulativo") != b.get("natureza", "cumulativo") and "cumulativo" in (a.get("natureza", "cumulativo"), b.get("natureza", "cumulativo")):
                 continue
             sim = pp._jaccard(_nucleo(a), _nucleo(b))  # noqa: SLF001
             mesma_lesao = a.get("causa_de_pedir") and pp.norm(a["causa_de_pedir"]) == pp.norm(b.get("causa_de_pedir", ""))
-            if _MAJORACAO.search(f"{b['tipo']} {b['objeto']}") and (sim >= 0.15 or mesma_lesao or a["tese_origem"] == b["tese_origem"]) and \
-                    pp._jaccard(pp._tokens(a["tipo"]), pp._tokens("dano moral")) > 0 and pp._jaccard(pp._tokens(b["tipo"] + b["objeto"]), pp._tokens("dano moral")) > 0:  # noqa: SLF001
+            if _MAJORACAO.search(f"{b['tipo']} {b['objeto']}") and _autonomo_monetario(a) and _autonomo_monetario(b) and (sim >= 0.12 or mesma_lesao or a["tese_origem"] == b["tese_origem"]):
                 saida.append(_v("MAJORACAO_COMO_SEGUNDA_INDENIZACAO", "CLAIMS", f"{a['id']} × {b['id']}",
                                 f"O pedido {b['id']} («{b['tipo']}») parece uma majoração/agravamento do {a['id']}, mas foi lançado como pedido e valor SEPARADOS: a mesma lesão indenizada duas vezes.",
                                 "Funda em um só pedido, com o critério de cálculo que já considera o agravamento; ou justifique a lesão autônoma."))
@@ -278,7 +307,8 @@ def ledger(plano: dict[str, Any]) -> list[Violacao]:
 
 
 def soma_cumulativos(plano: dict[str, Any]) -> float:
-    return round(sum(float(p["valor"]) for p in plano.get("pedidos") or [] if p.get("valor") and p.get("natureza", "cumulativo") == "cumulativo"), 2)
+    return round(sum(float(p["valor"]) for p in plano.get("pedidos") or []
+                     if p.get("valor") and p.get("natureza", "cumulativo") == "cumulativo" and p.get("tipo_de_item", "autonomo") == "autonomo"), 2)
 
 
 def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:

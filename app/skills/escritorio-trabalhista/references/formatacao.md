@@ -100,7 +100,7 @@ rodape.tamanho_numero_pt: 12
 - `# texto`, `## texto`, `### texto` → `titulo1`, `titulo2`, `titulo3` (capítulo, subcapítulo, item). Título SEM `#` sai como parágrafo de corpo.
 - `> texto` → `blockquote` (transcrição de dispositivo legal, ementa ou trecho de documento). Nunca use `>` para outra coisa. Linhas `>` consecutivas, sem linha em branco entre elas, formam UM só bloco; para transcrever dois julgados, separe-os por uma linha em branco. **Todo julgado, súmula ou dispositivo transcrito vai em bloco `>` próprio, com a identificação (tribunal, órgão, número, relator, data) ao final do próprio bloco, entre parênteses** — nunca entre aspas no meio do parágrafo. O parágrafo argumentativo apresenta o julgado (“Nesse sentido:”), o bloco o transcreve e o parágrafo seguinte aplica ao caso.
 - **Ritmo vertical** (definido pelo bloco `estilo`, não por linhas em branco): parágrafo argumentativo → bloco de jurisprudência → bloco de jurisprudência → parágrafo; o bloco `>` termina com espaço maior (`blockquote.depois_pt`) que o do corpo, o que separa a transcrição da argumentação seguinte e uma transcrição da outra; títulos têm espaço antes e depois (`tituloN.antes_pt`/`depois_pt`).
-- `::: nome` … `:::` → bloco no estilo `nome`, para qualquer nome definido acima. Usos: `::: enderecamento` (Ao Juízo…), `::: titulo_acao` (nome da ação), `::: objeto` (caixa de objeto logo abaixo do endereçamento, quando o modelo do assunto pedir), `::: fechamento` (Nestes termos…, local/data, advogado e OAB). Só use nomes que existam no bloco `estilo`.
+- `::: nome` … `:::` → bloco no estilo `nome`, para qualquer nome definido acima. Usos: `::: enderecamento` (Ao Juízo…), `::: titulo_acao` (nome da ação — UMA única vez, logo após «propor a presente»; não repita o nome da ação como título no topo nem em outro ponto), `::: objeto` (caixa de objeto logo abaixo do endereçamento, quando o modelo do assunto pedir), `::: fechamento` (Nestes termos…, local/data, advogado e OAB). Só use nomes que existam no bloco `estilo`.
 - `**texto**` negrito; tabela em Markdown quando o modelo pedir.
 
 ## 3. Formatação jurídica própria da peça
@@ -152,7 +152,7 @@ Se, ao formatar, for necessário fazer qualquer alteração além de ajuste pura
 3. o motivo;
 4. se é alteração de **formatação** ou de **conteúdo jurídico** (são coisas diferentes e não podem se confundir).
 
-Ao final, apresente uma seção **"ALTERAÇÕES REALIZADAS"**, separando: Formatação | Organização | Correções gramaticais | Ajustes jurídicos | Inclusões | Exclusões. Isso complementa (não substitui) o relatório de "Alterações e Acréscimos" da Etapa 2, que trata do conteúdo jurídico em si.
+Esse registro ("ALTERAÇÕES REALIZADAS", separando Formatação | Organização | Correções gramaticais | Ajustes jurídicos | Inclusões | Exclusões) é **relatório interno para a advogada** e vai no campo de observações da análise (`analise.observacoes`) — **NUNCA dentro da peça** (`secoes`). A peça entregue contém SOMENTE conteúdo processual. Isso complementa (não substitui) o relatório de "Alterações e Acréscimos" da Etapa 2, que segue a mesma regra.
 
 ## 9. Conferência final antes de entregar
 
