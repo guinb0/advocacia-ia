@@ -694,7 +694,7 @@ def contexto_para_peticao(caso_id: str, *, store: Armazenamento | None = None) -
     if fatos:
         linhas.append("\nFatos extraídos (id | fato | documento | trecho):")
         for f in fatos:
-            p = f["proveniencia"]
+            p = f.get("proveniencia") or {}
             pg = f", p. {p['pagina']}" if p.get("pagina") else ""
             marca = " [CONFIRMADO PELO ADVOGADO]" if f.get("estado") == "CONFIRMED" else ""
             linhas.append(f"- {f['id']} | {f['fato']}{marca} | {p['tipo_documento']} — {p['arquivo']}{pg} | \"{p['citacao'][:200]}\"")
@@ -702,14 +702,17 @@ def contexto_para_peticao(caso_id: str, *, store: Armazenamento | None = None) -
     if inc:
         linhas.append("\nInconsistências entre documentos (NÃO afirme como fato o dado divergente; trate conforme a skill da peça):")
         for i in inc:
-            fontes = " × ".join(f"{s.get('arquivo') or s['documento_id']}: \"{(s.get('valor') or s['citacao'])[:100]}\"" for s in i["fontes"])
+            fontes = " × ".join(
+                f"{s.get('arquivo') or s.get('documento_id')}: \"{(s.get('valor') or s.get('citacao') or '')[:100]}\""
+                for s in (i.get("fontes") or []) if isinstance(s, dict)
+            )
             linhas.append(f"- {i['id']} | {i['titulo']} | {fontes} | impacto: {i['impacto']}")
     provas = r.get("provas") or []
     if provas:
         linhas.append("\nProvas por fato (fato | status | documentos):")
         nomes = {d["documento_id"]: d["arquivo"] for d in r.get("documentos") or []}
         for p in provas:
-            linhas.append(f"- {p['fato']} | {p['status']} | {', '.join(nomes.get(x, x) for x in p['documento_ids'])}")
+            linhas.append(f"- {p['fato']} | {p['status']} | {', '.join(nomes.get(x, x) for x in (p.get('documento_ids') or []))}")
     faltantes = [f for f in r.get("documentos_faltantes") or [] if f.get("estado") != "REJECTED"]
     if faltantes:
         linhas.append("\nDocumentos faltantes (documento | hipótese | classificação):")

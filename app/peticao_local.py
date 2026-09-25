@@ -242,9 +242,10 @@ def _fatos_documentais(caso_id: str) -> list[dict[str, Any]]:
         registro = analise_documental.obter(caso_id)
     except Exception:  # noqa: BLE001
         return []
-    if not registro or registro.get("status") != "ready":
+    resultado = registro.get("resultado") if registro and registro.get("status") == "ready" else None
+    if not isinstance(resultado, dict):
         return []
-    return [f for f in (registro["resultado"].get("fatos_extraidos") or []) if f.get("estado") != "REJECTED"]
+    return [f for f in (resultado.get("fatos_extraidos") or []) if isinstance(f, dict) and f.get("estado") != "REJECTED"]
 
 
 def _dados_por_documento(caso_id: str) -> dict[str, dict[str, Any]]:
@@ -253,14 +254,23 @@ def _dados_por_documento(caso_id: str) -> dict[str, dict[str, Any]]:
         registro = analise_documental.obter(caso_id)
     except Exception:  # noqa: BLE001
         return {}
-    if not registro or registro.get("status") != "ready":
+    resultado = registro.get("resultado") if registro and registro.get("status") == "ready" else None
+    if not isinstance(resultado, dict):
         return {}
     campos = {"nome": ("autor", "nome"), "cpf": ("autor", "cpf"), "rg": ("autor", "rg"), "endereco": ("autor", "endereco"), "endereço": ("autor", "endereco"),
               "cnpj": ("reu", "cnpj"), "cargo": ("autor", "cargo"), "funcao": ("autor", "cargo"), "função": ("autor", "cargo"),
               "data de admissao": ("autor", "data_admissao"), "data de admissão": ("autor", "data_admissao")}
     saida: dict[str, dict[str, Any]] = {}
-    for d in registro["resultado"].get("documentos") or []:
-        dados = [(*campos[c["campo"].strip().lower()], c["valor"]) for c in d.get("dados_principais") or [] if c.get("campo", "").strip().lower() in campos and c.get("valor")]
+    for d in resultado.get("documentos") or []:
+        if not isinstance(d, dict) or not d.get("arquivo"):
+            continue
+        dados = []
+        for c in d.get("dados_principais") or []:
+            if not isinstance(c, dict):
+                continue
+            chave = str(c.get("campo") or "").strip().lower()
+            if chave in campos and c.get("valor"):
+                dados.append((*campos[chave], c["valor"]))
         saida[d["arquivo"]] = {"tipo": d.get("tipo", ""), "dados": dados}
     return saida
 
@@ -492,6 +502,22 @@ def _em_paralelo_com_contexto(funcao: Any, itens: list[Any], max_workers: int = 
 
 def _erro_curto(erro: BaseException) -> str:
     return f"{type(erro).__name__}: {str(erro)[:240]}"
+
+
+def _tentar_etapa(nome: str, funcao: Any, fallback: Any, diag: dict[str, Any] | None = None) -> Any:
+    """Uma etapa que falha não pode apagar a minuta já redigida.
+
+    JSON do modelo e da análise documental às vezes traz `null` onde o código
+    espera lista. Isso virava ``'NoneType' object is not iterable`` e a tela
+    dizia que a petição não foi gerada, mesmo com o texto pronto.
+    """
+    try:
+        return funcao()
+    except Exception as erro:  # noqa: BLE001 - a peça segue; o motivo fica no trace
+        log.exception("petição local: etapa '%s' falhou; a geração segue", nome)
+        if diag is not None:
+            diag.setdefault("fallbacks", []).append(f"{nome}: {_erro_curto(erro)}")
+        return fallback
 
 ID_LOCAL = "local"
 #: Sobe a cada mudança no LAYOUT do .docx. `ler_docx` regrava o binário quando a
@@ -2215,9 +2241,11 @@ def _contexto_isolado(contexto_caso: str, plano_est: dict[str, Any], tese: dict[
     blocos = re.split(r"(?=\n--- DOCUMENTO \d+:)", contexto_caso)
     if len(blocos) < 2:
         return contexto_caso
-    por_id = {f["id"]: f for f in plano_est["fatos"]}
-    alvos = " ".join(tese["provas"]) + " " + " ".join(d for i in [*tese["fatos_ids"], *plano_da_peticao.fatos_comuns(plano_est)]
-                                                   for d in (por_id.get(i) or {}).get("documentos", []))
+    por_id = {f["id"]: f for f in plano_est.get("fatos") or [] if isinstance(f, dict) and f.get("id")}
+    ids = [*(tese.get("fatos_ids") or []), *plano_da_peticao.fatos_comuns(plano_est)]
+    alvos = " ".join(str(p) for p in (tese.get("provas") or [])) + " " + " ".join(
+        d for i in ids for d in ((por_id.get(i) or {}).get("documentos") or [])
+    )
     alvo_norm = plano_da_peticao.norm(alvos)
     manter = [b for b in blocos[1:] if (m := re.match(r"\n--- DOCUMENTO (\d+): (.*?) ---", b))
               and (plano_da_peticao.norm(m.group(2))[:40] in alvo_norm or f"documento {int(m.group(1))}" in alvo_norm)]
@@ -2347,7 +2375,8 @@ def _aprofundar_pela_referencia(
     for i, k, novo, tel in _em_paralelo_com_contexto(trabalhar, jobs, max_workers=6):
         if True:  # noqa: SIM108 - bloco mantido para preservar o corpo do laço original
             topicos_por_secao[i][k] = novo
-            info.setdefault("textos_acervo", []).extend(tel.pop("textos_acervo", []) if isinstance(tel, dict) else [])
+            extra = tel.pop("textos_acervo", []) if isinstance(tel, dict) else []
+            info.setdefault("textos_acervo", []).extend(extra or [])
             info["por_topico"].append(tel)
     novas = []
     for i, secao in enumerate(secoes):
@@ -2498,21 +2527,34 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
     texto_do_caso = contexto
     # CASE_FACTS: UMA fonte canônica (valor, fonte, confiança, conflito) — a peça inteira consulta os mesmos dados.
-    dados_docs = _dados_por_documento(caso_id)
-    fontes_do_caso = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"], "tipo_documento": dados_docs.get(d["arquivo"], {}).get("tipo", ""),
-                       "dados": dados_docs.get(d["arquivo"], {}).get("dados", [])} for d in documentos_logicos(caso_id)[1]]
-    fontes_do_caso.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
-    cf = case_facts.montar(
-        fontes=fontes_do_caso, cadastro=_cadastro_estruturado(caso_id), proposta_partes=(plano or {}).get("partes"),
-        eventos=(plano or {}).get("cronologia") or [],
-    )
-    plano_est = plano_da_peticao.montar(plano, partes=case_facts.partes_resolvidas(cf), fatos_documentais=_fatos_documentais(caso_id))
-    plano_est["case_facts"] = cf
-    plano_est["contrato_secoes"] = contrato_secoes.montar(
-        peticao_skill_arquivos.estrutura_da_skill() or []
-    )
-    plano_est["_funcoes_de_conteudo"] = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("funcoes_de_conteudo") or {}
-    outline += "\n\n" + plano_da_peticao.para_prompt(plano_est)
+    def _montar_plano() -> tuple[dict[str, Any], str]:
+        dados_docs = _dados_por_documento(caso_id)
+        fontes_do_caso = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"],
+                           "tipo_documento": (dados_docs.get(d["arquivo"]) or {}).get("tipo", ""),
+                           "dados": (dados_docs.get(d["arquivo"]) or {}).get("dados") or []}
+                          for d in documentos_logicos(caso_id)[1]]
+        fontes_do_caso.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
+        fatos_canonicos = case_facts.montar(
+            fontes=fontes_do_caso, cadastro=_cadastro_estruturado(caso_id), proposta_partes=(plano or {}).get("partes"),
+            eventos=(plano or {}).get("cronologia") or [],
+        )
+        estruturado = plano_da_peticao.montar(
+            plano, partes=case_facts.partes_resolvidas(fatos_canonicos), fatos_documentais=_fatos_documentais(caso_id),
+        )
+        estruturado["case_facts"] = fatos_canonicos
+        estruturado["contrato_secoes"] = contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill() or [])
+        estruturado["_funcoes_de_conteudo"] = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("funcoes_de_conteudo") or {}
+        return estruturado, plano_da_peticao.para_prompt(estruturado)
+
+    plano_vazio = {
+        "partes": {"autor": {}, "reu": {}}, "fatos": [], "teses": [], "pedidos": [], "ausencias": [],
+        "case_facts": {"PARTIES": {"autor": {}, "reu": {}}, "UNCERTAINTIES": []},
+        "contrato_secoes": contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill() or []),
+        "_funcoes_de_conteudo": {},
+    }
+    plano_est, texto_plano = _tentar_etapa("plano estruturado", _montar_plano, (plano_vazio, ""), diag)
+    if texto_plano:
+        outline += "\n\n" + texto_plano
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
@@ -2760,23 +2802,38 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
     # cliente, súmula de memória). Ver `conferencia_peticao`.
     avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 74)
-    secoes, aprofundamento = _aprofundar_pela_referencia(
-        caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
-        assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
-        plano_est=plano_est,
+    secoes, aprofundamento = _tentar_etapa(
+        "aprofundamento",
+        lambda: _aprofundar_pela_referencia(
+            caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
+            assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
+            plano_est=plano_est,
+        ),
+        (secoes, {"por_topico": [], "textos_acervo": []}),
+        diag,
     )
-    textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []))]
+    textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []) or [])]
     # A seção "Dos pedidos" é RENDERIZADA do plano (fonte única), não pedida de novo ao modelo.
     avancar_etapa("Consolidando os pedidos a partir do plano…", 80)
-    secoes, rel_pedidos = _pedidos_do_plano_na_secao(caso_id, secoes, plano_est)
+    secoes, rel_pedidos = _tentar_etapa(
+        "pedidos do plano",
+        lambda: _pedidos_do_plano_na_secao(caso_id, secoes, plano_est),
+        (secoes, {"aplicado": False, "motivo": "etapa falhou"}),
+        diag,
+    )
     aprofundamento["pedidos_do_plano"] = rel_pedidos
     pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
     pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
     avancar_etapa("Conferindo a peça contra os autos…", 85)
     # O material citável NÃO inclui o acervo: peça de outro cliente não é fonte de fato do caso.
     material_sem_acervo = texto_do_caso + precedentes + legislacao + outline
-    secoes, violacoes, conferencia = _conferir_contra_os_autos(
-        caso_id, secoes, texto_entrevista=texto_entrevista, material=material_sem_acervo
+    secoes, violacoes, conferencia = _tentar_etapa(
+        "conferência contra os autos",
+        lambda: _conferir_contra_os_autos(
+            caso_id, secoes, texto_entrevista=texto_entrevista, material=material_sem_acervo
+        ),
+        (secoes, [], {"erro": "etapa falhou"}),
+        diag,
     )
     # Segunda leitura, agora contra o CASE BRIEF e a SKILL (não contra o material
     # bruto — isso a conferência acima já fez): omissão de fato relevante, seção
@@ -2786,11 +2843,16 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # PETITION LINTER: qualificação, pedidos únicos, isolamento entre teses e nada do acervo como fato,
     # com correção automática controlada e nova validação — ANTES de a peça ir para o DOCX.
     avancar_etapa("Validando a peça (linter)…", 91)
-    secoes, achados_linter, rel_linter = _lintar_e_corrigir(
-        caso_id, secoes, plano_est,
-        # fonte PERMITIDA: caso + julgados/lei recuperados + skill (precedentes vinculantes); o acervo fica de fora
-        texto_do_caso=material_sem_acervo + peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
-        textos_do_acervo=textos_acervo, material=material_sem_acervo,
+    secoes, achados_linter, rel_linter = _tentar_etapa(
+        "linter",
+        lambda: _lintar_e_corrigir(
+            caso_id, secoes, plano_est,
+            # fonte PERMITIDA: caso + julgados/lei recuperados + skill (precedentes vinculantes); o acervo fica de fora
+            texto_do_caso=material_sem_acervo + peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
+            textos_do_acervo=textos_acervo, material=material_sem_acervo,
+        ),
+        (secoes, [], {"erro": "etapa falhou"}),
+        diag,
     )
     # o auditor já inclui a conferência contra os autos: os achados finais SUBSTITUEM os da 1ª conferência
     violacoes = list(achados_linter)
@@ -2805,11 +2867,18 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # em vez de a omissão passar batido sem ninguém notar.
     # ===== FINAL_DOCUMENT_VALIDATOR — ÚLTIMA etapa que pode mudar o texto. Roda sobre a representação que o DOCX imprime.
     avancar_etapa("Validação final do documento…", 96)
-    secoes, rel_final, achados_finais = _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso)
+    secoes, rel_final, achados_finais = _tentar_etapa(
+        "validação final",
+        lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso),
+        (secoes, {"pendencias_humanas": [], "rodadas": []}, []),
+        diag,
+    )
     violacoes = [*[v for v in violacoes if not v.bloqueia], *achados_finais]
     pipeline["documento_final"] = rel_final
     hash_validado = documento_final.impressao_hash(secoes)
-    cobertura = case_brief.cobertura(brief, secoes) if brief else None
+    cobertura = _tentar_etapa(
+        "cobertura", lambda: case_brief.cobertura(brief, secoes) if brief else None, None, diag,
+    )
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
@@ -2860,7 +2929,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
             "ready": not (auditoria_estrutural.pendencias(secoes) or pipeline.get("documento_final", {}).get("pendencias_humanas")),
             "blocking_issues": [
                 *(f"[PENDENTE] no texto ({c}): {m}"[:200] for c, m in auditoria_estrutural.pendencias(secoes)),
-                *pipeline.get("documento_final", {}).get("pendencias_humanas", []),
+                *((pipeline.get("documento_final") or {}).get("pendencias_humanas") or []),
             ],
             "warnings": [
                 *_avisos_de_pipeline(pipeline),
@@ -4306,9 +4375,9 @@ def _estilo_resolvido(visual: dict[str, Any], nome: str) -> dict[str, Any]:
         "depois_pt": visual.get("espacamento_paragrafo_pt"),
         "recuo_primeira_linha_cm": visual.get("recuo_primeira_linha_cm"),
     }
-    resolvido.update(estilos.get("corpo", {}))
+    resolvido.update(estilos.get("corpo") or {})
     if nome != "corpo":
-        if nome in estilos:
+        if isinstance(estilos.get(nome), dict):
             resolvido.update(estilos[nome])
         else:
             log.warning("peticao: elemento '%s' não existe nos estilos da skill; usando corpo", nome)
@@ -4930,7 +4999,7 @@ def _rodape_xml(visual: dict[str, Any]) -> str:
 
     Sem `rodape.formato` na skill o rodapé sai vazio — o motor não inventa paginação.
     """
-    estilo = (visual.get("estilos") or {}).get("rodape", {})
+    estilo = (visual.get("estilos") or {}).get("rodape") or {}
     formato = str(estilo.get("formato") or "")
     alinhamento = _ALINHAMENTOS.get(_normalizar_chave(str(estilo.get("alinhamento") or "")), "left")
     tamanho = float(estilo.get("tamanho_pt") or visual.get("tamanho_fonte_pt") or 10)

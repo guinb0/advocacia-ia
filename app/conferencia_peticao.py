@@ -186,7 +186,7 @@ _GENERICAS = {
 
 def _sinonimos_da_skill() -> tuple[tuple[str, ...], ...]:
     grupos = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("sinonimos_de_documento") or []
-    return tuple(tuple(g) for g in grupos)
+    return tuple(tuple(g) for g in grupos if g)
 
 
 def _termos_do_documento(
@@ -390,7 +390,7 @@ def _regra_item(regra: dict[str, Any], secoes: dict[str, str]) -> list[Violacao]
             if all(
                 (not c.get("casa") or _re(c["casa"]).search(visoes[c["em"]]))
                 and (not c.get("nao_casa") or not _re(c["nao_casa"]).search(visoes[c["em"]]))
-                for c in regra["quando"]
+                for c in (regra.get("quando") or []) if isinstance(c, dict)
             ):
                 saida.append(_violacao(regra, codigo, " ".join(item.split())[:220]))
     return saida

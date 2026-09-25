@@ -68,7 +68,7 @@ def _estrutura_e_qualificacao(secoes: list[dict[str, Any]], plano: dict[str, Any
     norm_texto, dig_texto = pp.norm(texto), pp._so_digitos(texto)  # noqa: SLF001
     ausentes: list[str] = []
     for papel, dados in (("autor", autor), ("reu", reu)):
-        for campo in q.get("campos", {}).get(papel, []):
+        for campo in ((q.get("campos") or {}).get(papel) or []):
             valor = dados.get(campo)
             if valor and not pp._valor_consta(campo, valor, norm_texto, dig_texto):  # noqa: SLF001
                 ausentes.append(f"{papel}.{campo}")
@@ -173,11 +173,11 @@ def _isolamento(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Vio
             continue
         for t in dividir_em_topicos(str(s.get("content") or "")):
             tese = pp.tese_do_topico(plano, t["titulo"], t["corpo"]) if t["titulo"] else None
-            if not tese or not tese["fatos_ids"]:
+            if not tese or not tese.get("fatos_ids"):
                 continue  # sem fatos declarados a tese não tem contra o que ser julgada (o plano é que está incompleto)
-            proprios = set(tese["fatos_ids"]) | comuns
+            proprios = set(tese.get("fatos_ids") or []) | comuns
             permitidos = especificos(proprios)
-            de_outras = especificos({i for o in teses if o["id"] != tese["id"] for i in o["fatos_ids"]} - proprios)
+            de_outras = especificos({i for o in teses if o["id"] != tese["id"] for i in (o.get("fatos_ids") or [])} - proprios)
             for m in sorted(_especificos(t["corpo"]) & de_outras - permitidos):
                 saida.append(_achado("MISTURA_DE_TESES", str(s.get("code")), f"{t['titulo'][:50]}: {m}",
                                      f"«{m}» é dado de OUTRA tese e aparece no tópico «{t['titulo'][:60]}» ({tese['id']}), cujos fatos não o incluem.",

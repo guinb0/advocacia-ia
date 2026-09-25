@@ -58,7 +58,7 @@ def abertura_unica(secoes: list[dict[str, Any]], partes: dict[str, Any], params:
                         "Mantenha UMA qualificação, na abertura; remova as demais."))
     est = params.get("estrutura") or {}
     texto_todo = "\n".join(str(s.get("content") or "") for s in secoes)
-    for bloco in est.get("blocos_unicos", []):
+    for bloco in est.get("blocos_unicos") or []:
         n = len(re.findall(rf"^\s*:::\s*{re.escape(bloco)}\s*$", texto_todo, re.MULTILINE))
         if n > 1:
             saida.append(_v("BLOCO_ESTRUTURAL_DUPLICADO", "", f"::: {bloco} × {n}",
@@ -92,7 +92,7 @@ def remover_aberturas_duplicadas(secoes: list[dict[str, Any]], partes: dict[str,
             nonlocal removidos
             nome = m.group(1)
             vistos[nome] = vistos.get(nome, 0) + 1
-            if nome in est.get("blocos_unicos", []) and vistos[nome] > 1:
+            if nome in (est.get("blocos_unicos") or []) and vistos[nome] > 1:
                 removidos += 1
                 return ""
             return m.group(0)
@@ -585,10 +585,13 @@ def candidatos_semanticos(secoes: list[dict[str, Any]], plano: dict[str, Any], e
         _CACHE_EMBED[chave] = vs
     except Exception:  # noqa: BLE001 - sem embeddings, só o n-grama e o auditor global
         return []
-    teses = {t["id"]: t for t in plano.get("teses") or []}
     saida = []
+    if not isinstance(vs, list) or any(not isinstance(v, (list, tuple)) for v in vs):
+        return []
     for i, a in enumerate(topicos):
         for j in range(i + 1, len(topicos)):
+            if i >= len(vs) or j >= len(vs):
+                continue
             b = topicos[j]
             num = sum(x * y for x, y in zip(vs[i], vs[j]))
             den = (sum(x * x for x in vs[i]) ** 0.5) * (sum(y * y for y in vs[j]) ** 0.5)

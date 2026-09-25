@@ -215,7 +215,7 @@ def fatos_comuns(plano: dict[str, Any]) -> set[str]:
     """Fato declarado por 2+ teses é COMUM: uso legítimo em qualquer uma delas."""
     contagem: dict[str, int] = {}
     for t in plano.get("teses") or []:
-        for i in t["fatos_ids"]:
+        for i in t.get("fatos_ids") or []:
             contagem[i] = contagem.get(i, 0) + 1
     return {i for i, n in contagem.items() if n >= 2}
 
@@ -226,14 +226,14 @@ def contexto_da_tese(plano: dict[str, Any], tese: dict[str, Any] | None) -> str:
         return ""
     por_id = {f["id"]: f for f in plano["fatos"]}
     comuns = fatos_comuns(plano)
-    permitidos = list(dict.fromkeys([*tese["fatos_ids"], *sorted(comuns)]))
+    permitidos = list(dict.fromkeys([*(tese.get("fatos_ids") or []), *sorted(comuns)]))
     linhas = [f"ISOLAMENTO DESTA TESE ({tese['id']} — {tese['titulo']}):", "FATOS PERMITIDOS (id | fato | documento):"]
     for i in permitidos:
         f = por_id.get(i)
         if f:
             linhas.append(f"- {i} | {f['fato']} | {', '.join(f['documentos']) or f['fonte']}")
     outros = [t for t in plano["teses"] if t["id"] != tese["id"]]
-    exclusivos = sorted({i for t in outros for i in t["fatos_ids"]} - set(permitidos))
+    exclusivos = sorted({i for t in outros for i in (t.get("fatos_ids") or [])} - set(permitidos))
     if exclusivos:
         linhas.append("FATOS DE OUTRAS TESES (NÃO os traga para cá): " + "; ".join(f"{i} {por_id[i]['fato'][:70]}" for i in exclusivos if i in por_id))
     if outros:
@@ -263,14 +263,19 @@ def para_prompt(plano: dict[str, Any]) -> str:
         linhas.append("ESTADO DA EVIDÊNCIA — o que os documentos disponíveis NÃO registram (não é prova de que não aconteceu): "
                       + "; ".join(a["afirmacao"] for a in plano["ausencias"])
                       + ". Redija como «os documentos disponíveis não registram …»; NUNCA como ausência demonstrada/comprovada; se o fato importa, requeira a prova (sem afirmá-lo como provado).")
-    for u in (plano.get("case_facts") or {}).get("UNCERTAINTIES", []):
+    for u in ((plano.get("case_facts") or {}).get("UNCERTAINTIES") or []):
+        if not isinstance(u, dict):
+            continue
         linhas.append(f"INCERTEZA ({u['tipo']}) {u['campo']}: {u['detalhe']} — NÃO use nenhuma das versões; escreva uma única pendência.")
     linhas.append("\nFatos (id | data | fato | documentos):")
-    linhas += [f"- {f['id']} | {f['data']} | {f['fato']} | {', '.join(f['documentos']) or f['fonte']}" for f in plano["fatos"]]
+    linhas += [f"- {f['id']} | {f['data']} | {f['fato']} | {', '.join(f.get('documentos') or []) or f.get('fonte', '')}"
+               for f in plano.get("fatos") or [] if isinstance(f, dict)]
     linhas.append("\nTeses (id | título | fatos | pedidos):")
-    linhas += [f"- {t['id']} | {t['titulo']} | {','.join(t['fatos_ids'])} | {','.join(t['pedidos_ids'])}" for t in plano["teses"]]
+    linhas += [f"- {t['id']} | {t['titulo']} | {','.join(t.get('fatos_ids') or [])} | {','.join(t.get('pedidos_ids') or [])}"
+               for t in plano.get("teses") or [] if isinstance(t, dict)]
     linhas.append("\nPedidos (id | tipo | objeto | tese | valor/base) — FONTE ÚNICA; não escreva pedidos fora desta lista:")
-    linhas += [f"- {p['id']} | {p['tipo']} | {p['objeto']} | {p['tese_origem'] or '?'} | {p['valor_ou_base']}" for p in plano["pedidos"]]
+    linhas += [f"- {p['id']} | {p['tipo']} | {p['objeto']} | {p.get('tese_origem') or '?'} | {p.get('valor_ou_base', '')}"
+               for p in plano.get("pedidos") or [] if isinstance(p, dict)]
     return "\n".join(linhas)
 
 
