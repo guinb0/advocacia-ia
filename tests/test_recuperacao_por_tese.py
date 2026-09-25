@@ -125,18 +125,3 @@ def test_aspas_so_valem_para_texto_que_esta_no_material():
 def test_secao_sem_titulo_do_redator_fica_sem_titulo():
     (secao,) = pl._normalizar_secoes([{"code": "HEADING", "content": "texto"}])
     assert secao["label"] == ""
-
-
-def test_reescrita_por_secao_falha_isolada_nao_derruba_as_outras(monkeypatch):
-    chamadas = []
-
-    def fake(caso_id, secao, orientacao, contexto=""):
-        chamadas.append(secao["code"])
-        return None if secao["code"] == "FACTS" else secao["content"] + " " + "palavra " * 40
-
-    monkeypatch.setattr(pl, "_reescrever_secao", fake)
-    secoes = [{"code": c_, "label": "", "content": "palavra " * 100} for c_ in ("HEADING", "FACTS", "LEGAL_GROUNDS")]
-    novas, info = pl._aprofundar_pela_referencia("c", secoes, None, [], contexto="ctx", plano=None)
-    assert chamadas == ["FACTS", "LEGAL_GROUNDS"]  # HEADING não é argumento
-    assert info["secoes"]["FACTS"]["aceito"] is False and info["secoes"]["LEGAL_GROUNDS"]["aceito"] is True
-    assert len(novas[2]["content"].split()) > 100 and novas[1] == secoes[1]

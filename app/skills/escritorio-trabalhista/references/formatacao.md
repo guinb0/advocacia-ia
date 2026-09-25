@@ -50,21 +50,29 @@ titulo1.negrito: sim
 titulo1.alinhamento: esquerda
 titulo1.recuo_primeira_linha_cm: 0
 titulo1.manter_com_proxima: sim
+titulo1.antes_pt: 6
+titulo1.depois_pt: 12
 titulo2.negrito: sim
 titulo2.alinhamento: esquerda
 titulo2.recuo_primeira_linha_cm: 0
 titulo2.manter_com_proxima: sim
+titulo2.antes_pt: 6
+titulo2.depois_pt: 12
 titulo3.negrito: sim
 titulo3.italico: sim
 titulo3.alinhamento: esquerda
 titulo3.recuo_primeira_linha_cm: 0
 titulo3.manter_com_proxima: sim
+titulo3.antes_pt: 6
+titulo3.depois_pt: 12
 blockquote.tamanho_pt: 10
 blockquote.italico: sim
 blockquote.alinhamento: justificado
 blockquote.espacamento_linha: 1
 blockquote.recuo_esquerdo_cm: 4
 blockquote.recuo_primeira_linha_cm: 0
+blockquote.antes_pt: 0
+blockquote.depois_pt: 12
 enderecamento.negrito: sim
 enderecamento.caixa_alta: sim
 enderecamento.alinhamento: centro
@@ -90,7 +98,8 @@ rodape.tamanho_numero_pt: 12
 ### Marcação que o redator usa no texto (o gerador converte cada uma no estilo acima)
 
 - `# texto`, `## texto`, `### texto` → `titulo1`, `titulo2`, `titulo3` (capítulo, subcapítulo, item). Título SEM `#` sai como parágrafo de corpo.
-- `> texto` → `blockquote` (transcrição de dispositivo legal, ementa ou trecho de documento). Nunca use `>` para outra coisa.
+- `> texto` → `blockquote` (transcrição de dispositivo legal, ementa ou trecho de documento). Nunca use `>` para outra coisa. Linhas `>` consecutivas, sem linha em branco entre elas, formam UM só bloco; para transcrever dois julgados, separe-os por uma linha em branco. **Todo julgado, súmula ou dispositivo transcrito vai em bloco `>` próprio, com a identificação (tribunal, órgão, número, relator, data) ao final do próprio bloco, entre parênteses** — nunca entre aspas no meio do parágrafo. O parágrafo argumentativo apresenta o julgado (“Nesse sentido:”), o bloco o transcreve e o parágrafo seguinte aplica ao caso.
+- **Ritmo vertical** (definido pelo bloco `estilo`, não por linhas em branco): parágrafo argumentativo → bloco de jurisprudência → bloco de jurisprudência → parágrafo; o bloco `>` termina com espaço maior (`blockquote.depois_pt`) que o do corpo, o que separa a transcrição da argumentação seguinte e uma transcrição da outra; títulos têm espaço antes e depois (`tituloN.antes_pt`/`depois_pt`).
 - `::: nome` … `:::` → bloco no estilo `nome`, para qualquer nome definido acima. Usos: `::: enderecamento` (Ao Juízo…), `::: titulo_acao` (nome da ação), `::: objeto` (caixa de objeto logo abaixo do endereçamento, quando o modelo do assunto pedir), `::: fechamento` (Nestes termos…, local/data, advogado e OAB). Só use nomes que existam no bloco `estilo`.
 - `**texto**` negrito; tabela em Markdown quando o modelo pedir.
 

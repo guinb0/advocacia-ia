@@ -9,6 +9,8 @@ anexo alegado que não existe, número/data sem origem nos autos, marcador de pe
 
 `secao` / `secoes` usam o PAPEL da seção (`code` devolvido pelo redator), como metadado.
 
+Parâmetros `qualificacao` (campos que a abertura da peça exige, conforme `estrutura_peca.md` item 2) e `estrutura` (endereçamento) são lidos pelo `petition_linter`.
+
 Em síntese, o que estas regras exigem do redator: pedido de PAGAMENTO com valor e critério
 (art. 840, § 1º, da CLT); pedido declaratório/procedimental/probatório SEM valor; valor da
 causa igual à soma dos pedidos; nenhum tópico que conclua contra o cliente; nenhum capítulo
@@ -73,7 +75,30 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
     "cadastro nacional de informacoes sociais",
     "extrato previdenciario"
    ]
-  ]
+  ],
+  "qualificacao": {
+   "exigida": true,
+   "secao": "HEADING",
+   "campos": {
+    "autor": [
+     "nome",
+     "nacionalidade",
+     "estado_civil",
+     "profissao",
+     "rg",
+     "cpf",
+     "endereco"
+    ],
+    "reu": [
+     "nome",
+     "cnpj",
+     "endereco"
+    ]
+   }
+  },
+  "estrutura": {
+   "enderecamento_regex": "ju[íi]zo|vara do trabalho"
+  }
  },
  "regras": [
   {
@@ -143,7 +168,7 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
     },
     {
      "em": "cabeca",
-     "nao_casa": "honor[aá]rio|juros|corre[çc][ãa]o monet|gratuidade|justi[çc]a gratuita|exib|notifica|cita[çc][ãa]o|proced[eê]ncia|produ[çc][ãa]o de prova|intima|expedi[çc][ãa]o de of[ií]cio|anota[çc][ãa]o|reintegra|100%\\s*digital|telepresencial|reconhe[çc]|declar[ao]|oitiva|testemunha|per[ií]cia|responsabilidade objetiva|responsabilidade subjetiva"
+     "nao_casa": "honor[aá]rio|juros|corre[çc][ãa]o monet|gratuidade|justi[çc]a gratuita|exib|notifica|cita[çc][ãa]o|proced[eê]ncia|produ[çc][ãa]o de prova|intima|expedi[çc][ãa]o de of[ií]cio|anota[çc][ãa]o|reintegra|100%\\s*digital|telepresencial|reconhe[çc]|declar[ao]|oitiva|testemunha|per[ií]cia|responsabilidade objetiva|responsabilidade subjetiva|recebimento|processamento|rito\\b"
     },
     {
      "em": "item",
@@ -285,6 +310,17 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    "mensagem": "Trecho entre aspas que não consta literalmente do material recebido (documentos, entrevista, julgados, legislação ou skill).",
    "correcao": "Se o trecho é de julgado, lei ou documento, copie-o EXATAMENTE do material; se não estiver lá, tire as aspas e parafraseie o que o material realmente diz, ou remova a citação. Nunca aspas em texto que você não leu no material.",
    "bloqueia": true
+  },
+  {
+   "id": "transcricao_deve_ir_em_bloco",
+   "tipo": "padrao_proibido",
+   "secoes": "*",
+   "multilinha": true,
+   "regex": "^(?!\\s*>)[^\n]*[“\"][^”\"\n]{220,}[”\"]",
+   "codigo": "TRANSCRICAO_FORA_DE_BLOCO",
+   "mensagem": "Transcrição longa (ementa, tese, trecho de julgado ou de lei) entre aspas no meio do parágrafo: pela skill (formatacao.md) ela vai em bloco `>` próprio.",
+   "correcao": "Mova a transcrição para um bloco `>` separado, com a identificação (tribunal, órgão, número, relator, data) entre parênteses ao final do bloco; deixe no parágrafo só a apresentação e, depois do bloco, a aplicação ao caso.",
+   "bloqueia": false
   }
  ]
 }

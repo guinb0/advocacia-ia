@@ -592,3 +592,41 @@ def sugerir_acoes(
         "inexistentes são descartadas antes da resposta."
     )
     return resultado
+
+
+#: Tipos de peça que NÃO servem de memória argumentativa de mérito (quesitos e cálculos não
+#: argumentam; manifestação sobre laudo é fase pericial).
+TIPOS_SEM_ARGUMENTO = ("quesitos_pericia", "calculos", "manifestacao_laudo")
+
+
+def candidatos_de_pecas(
+    consulta: str, *, limite: int = 40, excluir_tipos: tuple[str, ...] = TIPOS_SEM_ARGUMENTO,
+    timeout: float = 120, connect_timeout: int = 15,
+) -> list[dict[str, Any]]:
+    """Candidatos do acervo por SIMILARIDADE PURA, com os metadados para o reranking.
+
+    Diferente de `buscar_pecas_conteudisticas` (que ordena por assunto/tipo ANTES da distância e
+    só olha petições iniciais), aqui a busca vetorial traz os `limite` trechos mais próximos da
+    consulta de UM tópico, entre todas as peças de mérito (inicial, recurso, impugnação…): uma
+    tese como "dano moral in re ipsa" é desenvolvida também em recursos e impugnações do
+    escritório. Quem decide o que vale é o reranking (`recuperacao_por_secao.rerank`).
+    """
+    if not consulta.strip():
+        return []
+    embedding = vetor_literal(gerar_embeddings([consulta[:12000]], timeout=timeout)[0])
+    linhas = _consultar_pgvector(
+        """SELECT c.peca_id, c.id AS chunk_id, c.texto, p.nome_arquivo, p.categoria,
+                  p.metadados->>'tipo_peca' AS tipo_peca, p.metadados->>'assunto' AS assunto,
+                  p.metadados->'subteses' AS subteses, length(p.texto_integral) AS chars_peca,
+                  1 - (c.embedding <=> %s::vector) AS similaridade
+             FROM pecas_conteudo_chunks c
+             JOIN pecas_conteudo p ON p.id = c.peca_id
+            WHERE c.embedding IS NOT NULL
+              AND p.categoria IN ('pecas_simples', 'pecas_complexas')
+              AND COALESCE(p.metadados->>'tipo_peca', '') <> ALL(%s)
+            ORDER BY c.embedding <=> %s::vector
+            LIMIT %s""",
+        (embedding, list(excluir_tipos), embedding, limite), connect_timeout=connect_timeout,
+    )
+    return [{**l, "similaridade": float(l["similaridade"]), "peca_id": str(l["peca_id"]), "chunk_id": str(l["chunk_id"]),
+             "subteses": l.get("subteses") or []} for l in linhas]

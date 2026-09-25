@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextvars
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import statistics
@@ -31,6 +33,9 @@ from . import (
     peticao_aprendizado,
     peticao_criticas,
     peticao_migracao_legado,
+    petition_linter,
+    plano_da_peticao,
+    recuperacao_por_secao,
     recuperacao_por_tese,
     peticao_skill_arquivos,
     peticao_skills,
@@ -108,6 +113,170 @@ def pureza_da_skill(nome_categoria: str = "", codigo_categoria: str = "", texto_
             *[f"skill: references/{a}" for a in resumo["arquivos"]],
         ],
     }
+
+
+def _cadastro_estruturado(caso_id: str) -> dict[str, Any]:
+    try:
+        q = armazenamento.obter_qualificacao(caso_id) or {}
+    except Exception:  # noqa: BLE001
+        q = {}
+    caso = armazenamento.obter_caso(caso_id) or {}
+    dados = {k: v for k, v in q.items() if v}
+    if caso.get("cliente"):
+        dados.setdefault("nome", caso["cliente"])
+    return dados
+
+
+def _fatos_documentais(caso_id: str) -> list[dict[str, Any]]:
+    try:
+        registro = analise_documental.obter(caso_id)
+    except Exception:  # noqa: BLE001
+        return []
+    if not registro or registro.get("status") != "ready":
+        return []
+    return [f for f in (registro["resultado"].get("fatos_extraidos") or []) if f.get("estado") != "REJECTED"]
+
+
+def _redigir_pedidos_do_plano(caso_id: str, plano_est: dict[str, Any]):
+    """Callable que dá ao renderizador a REDAÇÃO de cada pedido do plano (o modelo não escolhe os pedidos)."""
+    def redigir(pedidos: list[dict[str, Any]]) -> dict[str, Any]:
+        instrucao = _com_skill_do_escritorio(caso_id, (
+            "Você redige a seção de PEDIDOS de uma peça, seguindo a skill (forma, valores, pedidos de praxe). "
+            "Recebe a lista ÚNICA de pedidos do plano; redija UM texto para cada id, sem criar, juntar, dividir "
+            "nem omitir pedidos. Preserve valores e critérios (`valor_ou_base`). Devolva APENAS JSON: "
+            '{"abertura":"frase de abertura da seção conforme a skill","itens":{"P01":"texto do pedido sem a letra da alínea"},'
+            '"fecho":"frase final da seção conforme a skill, ou vazio"}.'
+        ))
+        try:
+            return _llm_json(instrucao, json.dumps({"pedidos": pedidos, "partes": plano_est.get("partes")}, ensure_ascii=False), timeout=240.0)
+        except ErroPeticao:
+            log.warning("petição local: redação dos pedidos falhou; usando o texto do plano", exc_info=True)
+            return {}
+    return redigir
+
+
+def _similaridade_de_pedidos(a: str, b: str) -> float:
+    try:
+        va, vb = rag.gerar_embeddings([a, b])
+        num = sum(x * y for x, y in zip(va, vb))
+        den = (sum(x * x for x in va) ** 0.5) * (sum(y * y for y in vb) ** 0.5)
+        return num / den if den else 0.0
+    except Exception:  # noqa: BLE001 - sem embeddings, só a deduplicação determinística
+        return 0.0
+
+
+def _pedidos_do_plano_na_secao(caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """A seção de pedidos é RENDERIZADA do plano (fonte única), depois de deduplicar por tipo/tese/objeto/base."""
+    if not plano_est.get("pedidos"):
+        return secoes, {"aplicado": False, "motivo": "o plano não trouxe pedidos"}
+
+    def juiz(u: dict[str, Any], p: dict[str, Any]) -> bool:
+        try:
+            saida = _llm_json(
+                "Dois pedidos de uma petição parecem iguais. Diga se são o MESMO pedido (sem diferença juridicamente relevante de "
+                'objeto, período, base de cálculo, beneficiário ou natureza). JSON: {"mesmo_pedido": true|false, "motivo": ""}',
+                json.dumps({"a": u, "b": p}, ensure_ascii=False), timeout=90.0)
+            return bool(saida.get("mesmo_pedido"))
+        except ErroPeticao:
+            return False  # na dúvida NÃO elimina pedido legítimo
+
+    unicos, fundidos = plano_da_peticao.deduplicar(plano_est["pedidos"], similaridade=_similaridade_de_pedidos, adjudicar=juiz)
+    plano_est["pedidos"] = unicos
+    plano_est["pedidos_fundidos"] = fundidos
+    texto, rel = plano_da_peticao.renderizar_pedidos(plano_est, _redigir_pedidos_do_plano(caso_id, plano_est))
+    novas, achou = [], False
+    for x in secoes:
+        if x.get("code") == "CLAIMS":
+            novas.append({**x, "content": texto})
+            achou = True
+        else:
+            novas.append(x)
+    if not achou:
+        novas.append({"code": "CLAIMS", "label": "", "content": texto, "formato": 2})
+    return novas, {"aplicado": True, "fundidos": fundidos, **rel}
+
+
+def _revisao_semantica_de_teses(caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any]) -> list[Any]:
+    """Revisão por LLM da mistura entre teses (a parte que o código não decide): devolve Violacoes de aviso."""
+    from .conferencia_peticao import Violacao
+
+    topicos = []
+    for x in secoes:
+        if x.get("code") in ("HEADING", "CLOSING", "VALUE", "CLAIMS"):
+            continue
+        for t in recuperacao_por_secao.dividir_em_topicos(str(x.get("content") or "")):
+            if t["titulo"]:
+                topicos.append({"secao": x.get("code"), "topico": t["titulo"], "texto": t["corpo"][:1800]})
+    if len(plano_est.get("teses") or []) < 2 or not topicos:
+        return []
+    try:
+        saida = _llm_json(
+            "Você revisa uma petição tópico a tópico contra o PLANO (teses, fatos permitidos e pedidos). Para cada tópico responda: "
+            "todos os fatos citados pertencem ou são relevantes para ESTA tese? algum fundamento jurídico pertence a outra tese? alguma "
+            "jurisprudência é de outra matéria? algum pedido de outra tese apareceu aqui? há informação contraditória com outro tópico? "
+            "Referências legítimas entre teses relacionadas e fato comum a várias teses NÃO são problema. "
+            'Devolva APENAS JSON: {"problemas":[{"secao":"","topico":"","categoria":"fato_de_outra_tese|fundamento_de_outra_tese|'
+            'jurisprudencia_de_outra_materia|pedido_indevido|contradicao","trecho":"","por_que":""}]} (lista vazia se não há).',
+            json.dumps({"plano": {k: plano_est[k] for k in ("fatos", "teses", "pedidos")}, "topicos": topicos}, ensure_ascii=False)[:90_000],
+            timeout=240.0)
+    except ErroPeticao:
+        return []
+    return [
+        Violacao("REVISAO_SEMANTICA_" + str(p.get("categoria", "")).upper(), str(p.get("secao") or ""), str(p.get("trecho") or "")[:220],
+                 f"Revisão de isolamento entre teses: {p.get('por_que', '')}", "Retire ou reescreva o trecho para que fique só com o que pertence a esta tese.", False)
+        for p in saida.get("problemas") or [] if isinstance(p, dict)
+    ]
+
+
+def _lintar_e_corrigir(
+    caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], *, texto_do_caso: str, textos_do_acervo: list[str],
+) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
+    """PETITION LINTER com correção automática controlada (até 2 rodadas) e nova validação."""
+    params = peticao_skill_arquivos.validacoes_da_skill()["parametros"]
+    relatorio: dict[str, Any] = {"rodadas": 0, "correcoes": [], "antes": None}
+    achados = petition_linter.lintar(secoes, plano_est, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params)
+    achados += _revisao_semantica_de_teses(caso_id, secoes, plano_est)
+    relatorio["antes"] = [f"{a.codigo}:{a.secao}" for a in achados]
+    for rodada in range(2):
+        bloqueantes = [a for a in achados if a.bloqueia or a.codigo.startswith("REVISAO_SEMANTICA")]
+        if not bloqueantes:
+            break
+        relatorio["rodadas"] = rodada + 1
+        codigos = {a.codigo for a in bloqueantes}
+        if codigos & {"PEDIDO_DUPLICADO", "PEDIDO_FORA_DO_PLANO"}:
+            secoes, rel = _pedidos_do_plano_na_secao(caso_id, secoes, plano_est)
+            relatorio["correcoes"].append({"pedidos_renderizados_do_plano": rel.get("pedidos_renderizados")})
+        por_secao: dict[str, list[Any]] = {}
+        for a in bloqueantes:
+            if a.codigo in ("PEDIDO_DUPLICADO", "PEDIDO_FORA_DO_PLANO"):
+                continue
+            por_secao.setdefault(a.secao, []).append(a)
+        novas = []
+        for x in secoes:
+            do_x = por_secao.get(str(x.get("code")))
+            if not do_x:
+                novas.append(x)
+                continue
+            orient = "CORRIJA EXATAMENTE ESTES PONTOS APONTADOS PELO LINTER (sem inventar dado):\n" + "\n".join(
+                f"- [{a.codigo}] {a.motivo} Trecho: {a.trecho}. Correção: {a.correcao}" for a in do_x)
+            novo = _reescrever_secao(caso_id, x, orient, texto_do_caso)
+            if novo:
+                novas.append({**x, "content": novo})
+                relatorio["correcoes"].append({"secao": x.get("code"), "codigos": sorted({a.codigo for a in do_x})})
+            else:
+                novas.append(x)
+        # qualificação: se nem existe seção de abertura, cria-a a partir dos dados verificados
+        if "QUALIFICACAO_AUSENTE" in codigos and not any(x.get("code") == "HEADING" for x in novas):
+            texto = _reescrever_secao(caso_id, {"code": "HEADING", "label": "", "content": ""},
+                                      "Redija a abertura (endereçamento + qualificação das partes) conforme a skill, com estes dados: "
+                                      + json.dumps(plano_est.get("partes"), ensure_ascii=False), texto_do_caso)
+            if texto:
+                novas.insert(0, {"code": "HEADING", "label": "", "content": texto, "formato": 2})
+        secoes = novas
+        achados = petition_linter.lintar(secoes, plano_est, texto_do_caso=texto_do_caso, textos_do_acervo=textos_do_acervo, params=params)
+    relatorio["depois"] = [f"{a.codigo}:{a.secao}" for a in achados]
+    relatorio["bloqueantes_restantes"] = [f"{a.codigo}:{a.secao}" for a in achados if a.bloqueia]
+    return secoes, achados, relatorio
 
 
 def _nome_da_secao(secao: dict[str, Any]) -> str:
@@ -1370,7 +1539,7 @@ def _padroes_conteudisticos_para_redigir(
     return "\n".join(linhas), referencias
 
 
-def _outline_juridico(contexto: str) -> dict[str, Any] | None:
+def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None:
     """Planeja a peça ANTES de redigir: cronologia, teses e o que cada seção deve trazer.
 
     A redação em uma única chamada (`gerar`) pedia ao modelo para organizar o
@@ -1391,22 +1560,32 @@ def _outline_juridico(contexto: str) -> dict[str, Any] | None:
         "Leia a entrevista e os documentos a seguir e devolva APENAS o plano, em "
         "JSON, com:\n"
         "{\n"
-        '  "cronologia": [{"data":"data ou período, como consta no material",'
+        '  "cronologia": [{"id":"C1","data":"data ou período, como consta no material",'
         ' "fato":"o que aconteceu", "fonte":"documento ou entrevista de onde veio"}],\n'
-        '  "teses": [{"tese":"tese jurídica a sustentar",'
-        ' "fatos_que_sustentam":["fato da cronologia acima"],'
+        '  "teses": [{"id":"T1","tese":"tese jurídica a sustentar",'
+        ' "fatos_ids":["C1","C3"], "fatos_que_sustentam":["fato da cronologia acima"],'
         ' "provas":["documento/trecho que comprova"],'
         ' "pedidos_relacionados":["pedido que decorre desta tese"]}],\n'
         '  "pedidos": ["cada pedido a formular, na ordem"],\n'
         '  "secoes": [{"code":"FACTS|LEGAL_GROUNDS|CLAIMS|EVIDENCE|...",'
         ' "pontos":["o que esta seção precisa cobrir, em ordem"]}],\n'
-        '  "riscos_ou_lacunas": ["fato relevante sem prova, contradição, dado faltante"]\n'
+        '  "riscos_ou_lacunas": ["fato relevante sem prova, contradição, dado faltante"],\n'
+        '  "partes": {"autor": {"nome":"","nacionalidade":"","estado_civil":"","profissao":"","cpf":"","rg":"","pis":"","ctps":"",'
+        '"endereco":"","cep":"","telefone":"","email":""}, "reu": {"nome":"","cnpj":"","endereco":"","cep":""}},\n'
+        '  "pedidos_estruturados": [{"tipo":"categoria jurídica curta (ex.: dano moral)", "tese_id":"T1", "tese":"a tese do plano de que este pedido nasce",'
+        ' "objeto":"o que exatamente se pede", "fundamento":"norma/tese", "valor_ou_base":"valor em R$ com o critério, ou vazio",'
+        ' "de_praxe":true se for pedido de praxe exigido pela skill (gratuidade, honorários, juros, provas...)}]\n'
         "}\n"
+        "`partes`: SOMENTE dados que constam dos documentos, da entrevista ou do cadastro — campo desconhecido fica vazio, "
+        "NUNCA inventado. `pedidos_estruturados` é a ÚNICA lista de pedidos da peça: cada pedido decorre de uma tese com fatos "
+        "do caso (ou é de praxe pela skill); não repita o mesmo pedido em dois itens.\n"
         "Baseie-se só no material recebido — não invente fato, data nem documento. "
         "Fato sem fonte identificável não entra na cronologia. Uma tese sem fato "
         "que a sustente não entra em `teses`."
     )
     try:
+        if caso_id:
+            instrucao = _com_skill_do_escritorio(caso_id, instrucao)
         plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0)
     except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
         log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
@@ -1667,19 +1846,142 @@ def _reescrever_secao(
 
 
 #: Seções que não são argumentação: não se "aprofunda" endereçamento, fecho nem valor da causa.
-_SECOES_SEM_ARGUMENTO = {"HEADING", "CLOSING", "VALUE", "JURIMETRY"}
+_SECOES_SEM_ARGUMENTO = {"HEADING", "CLOSING", "VALUE", "JURIMETRY", "CLAIMS"}
 
 _ORIENTACAO_DE_PROFUNDIDADE = (
-    "APROFUNDE esta seção — densidade argumentativa, não volume. Para CADA ponto ou tese, "
-    "escreva a cadeia completa: FATO CONCRETO do caso → PROVA (\"Documento NN\", com o trecho que "
-    "importa) → NORMA (identificada e explicada) → PRECEDENTE (só os dos blocos JULGADOS/LEGISLAÇÃO "
-    "e da skill; diga o órgão, o número, a razão de decidir e POR QUE alcança estes fatos; distinga "
-    "vinculante de persuasivo — sentença de 1º grau só indica como a região decide) → APLICAÇÃO AO CASO "
-    "→ CONCLUSÃO/PEDIDO. Aproveite TODOS os fatos e provas pertinentes listados abaixo que a seção ainda "
-    "não usa (valores de contracheque, funções, datas, o que a própria reclamada registrou). "
-    "Elimine parágrafo que poderia estar em qualquer processo: cada parágrafo tem de conter fato, prova, "
-    "norma ou precedente ESPECÍFICOS deste caso."
+    "REDIJA ESTE TÓPICO COM ARGUMENTAÇÃO DESENVOLVIDA, como nas petições reais do escritório. Cada "
+    "argumento é um bloco COESO onde, quando fizer sentido, fato concreto → enquadramento jurídico → "
+    "fundamento legal → aplicação da norma ao caso → prova (\"Documento NN\") → jurisprudência (só a do "
+    "material) → conclusão daquele argumento vivem no MESMO parágrafo; NÃO quebre uma linha de raciocínio em "
+    "frases soltas (\"O autor sofreu assalto. A empresa responde. Aplica-se o art. X.\"). Junte o que é uma "
+    "só ideia; separe parágrafos quando muda o raciocínio. O tamanho vem do padrão medido nas peças reais "
+    "(abaixo), não de cota.\n"
+    "TODA expansão tem de acrescentar ao menos UMA destas coisas: relação mais precisa entre fato e norma; "
+    "dispositivo pertinente; explicação da aplicação do dispositivo; julgado do material com a razão de decidir "
+    "aplicada ao caso; documento/prova concreta do caso; consequência jurídica; enfrentamento de argumento "
+    "contrário previsível; ligação com o pedido. PROIBIDO aumentar por paráfrase, repetição ou linguagem "
+    "jurídica vazia.\n"
+    "Aproveite dos EXEMPLOS DO ESCRITÓRIO o modo de desenvolver a tese, a ordem das ideias, os fundamentos que "
+    "aparecem com frequência e o vocabulário — sintetizando vários, sem copiar. Os exemplos NÃO são fonte de fato "
+    "nem de citação. Transcrição de julgado, súmula ou lei vai em bloco `>` próprio com a identificação ao final "
+    "do bloco, conforme a skill (formatacao.md), nunca entre aspas no meio do parágrafo."
 )
+
+_ORIENTACAO_DO_REVISOR = (
+    "REVISÃO DE PROFUNDIDADE. Antes de reescrever, responda a si mesmo: a tese foi desenvolvida ou só afirmada? há fatos "
+    "concretos do caso? há prova relacionada? a norma foi APLICADA ao caso ou só citada? há argumento do acervo "
+    "(exemplos) ou julgado do material que ficou de fora? o raciocínio está fragmentado em parágrafos pequenos demais? "
+    "há parágrafo genérico que possa virar fundamentação concreta? há repetição? Reescreva SOMENTE onde houver ganho "
+    "jurídico real: una parágrafos que são uma só linha de raciocínio, troque o genérico por fato/prova/norma/precedente "
+    "específicos e elimine a repetição. Se o tópico já está bem desenvolvido, devolva-o igual."
+)
+
+
+def _plano_do_topico(titulo: str, plano: dict[str, Any] | None, material: Any) -> str:
+    alvo = set(recuperacao_por_secao._termos(titulo))  # noqa: SLF001
+    melhor = None
+    for t in (plano or {}).get("teses") or []:
+        if isinstance(t, dict) and t.get("tese"):
+            af = len(alvo & set(recuperacao_por_secao._termos(str(t["tese"]))))  # noqa: SLF001
+            if af and (melhor is None or af > melhor[0]):
+                melhor = (af, t)
+    linhas = ["PLANO DO TÓPICO:"]
+    if melhor:
+        t = melhor[1]
+        linhas.append(f"- Tese a defender: {t['tese']}")
+        linhas.append(f"- Fatos que a sustentam: {'; '.join(map(str, t.get('fatos_que_sustentam') or []))}")
+        linhas.append(f"- Provas: {'; '.join(map(str, t.get('provas') or []))}")
+    else:
+        linhas.append(f"- Tópico: {titulo or '(seção inteira)'} — defina a tese a partir do texto atual e dos fatos do caso.")
+    tel = material.telemetria
+    linhas.append(f"- Exemplos do escritório recuperados: {len(tel.get('acervo', {}).get('escolhidos', []))} trechos de "
+                  f"{tel.get('acervo', {}).get('pecas_distintas_escolhidas', 0)} peças; julgados: {len(tel.get('julgados', []))}; "
+                  f"leis: {len(tel.get('legislacao', []))}")
+    linhas.append("- Conclusão jurídica a construir: a que decorre da tese e conecta ao pedido correspondente.")
+    return "\n".join(linhas)
+
+
+def _sinal_em_texto(sinal: dict[str, Any], atual: dict[str, Any]) -> str:
+    if not sinal.get("disponivel"):
+        return "Densidade do acervo indisponível: siga o critério qualitativo."
+    return (
+        f"PADRÃO MEDIDO nas {sinal['pecas']} petições iniciais reais do escritório deste assunto (SINAL de estilo, não limite): "
+        f"parágrafo argumentativo com mediana de {sinal['mediana']:.0f} palavras (faixa usual {sinal['p25']:.0f}–{sinal['p75']:.0f}); "
+        f"cerca de {sinal['artigos_por_mil']} citações de artigo por mil palavras. Este tópico hoje: mediana {atual['mediana']:.0f}, "
+        f"{atual['paragrafos']} parágrafos, {atual['fragmentacao']:.0%} de parágrafos curtos."
+    )
+
+
+def _contexto_isolado(contexto_caso: str, plano_est: dict[str, Any], tese: dict[str, Any]) -> str:
+    """Cabeçalho do caso + só os documentos que esta tese usa (se nenhum casar, mantém tudo)."""
+    blocos = re.split(r"(?=\n--- DOCUMENTO \d+:)", contexto_caso)
+    if len(blocos) < 2:
+        return contexto_caso
+    por_id = {f["id"]: f for f in plano_est["fatos"]}
+    alvos = " ".join(tese["provas"]) + " " + " ".join(d for i in [*tese["fatos_ids"], *plano_da_peticao.fatos_comuns(plano_est)]
+                                                   for d in (por_id.get(i) or {}).get("documentos", []))
+    alvo_norm = plano_da_peticao.norm(alvos)
+    manter = [b for b in blocos[1:] if (m := re.match(r"\n--- DOCUMENTO (\d+): (.*?) ---", b))
+              and (plano_da_peticao.norm(m.group(2))[:40] in alvo_norm or f"documento {int(m.group(1))}" in alvo_norm)]
+    return blocos[0] + "".join(manter) if manter else contexto_caso
+
+
+def _aprofundar_topico(
+    caso_id: str, secao: dict[str, Any], topico: dict[str, str], *, contexto_caso: str, plano: dict[str, Any] | None,
+    categoria: str, assuntos: list[str], sinal: dict[str, Any], apoio: str, contexto_uf: str,
+    plano_est: dict[str, Any] | None = None,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    titulo, corpo = topico["titulo"], topico["corpo"]
+    tese = plano_da_peticao.tese_do_topico(plano_est, titulo, corpo) if plano_est and titulo else None
+    if tese:  # cada tese só vê os fatos dela (+ os comuns) e os documentos que a provam
+        contexto_caso = _contexto_isolado(contexto_caso, plano_est, tese)  # type: ignore[arg-type]
+        apoio = plano_da_peticao.contexto_da_tese(plano_est, tese)  # type: ignore[arg-type]
+    material = recuperacao_por_secao.material_do_topico(
+        titulo, corpo, str(secao.get("label") or ""), plano=plano, categoria=categoria, assuntos=assuntos, contexto_uf=contexto_uf,
+    )
+    antes = recuperacao_por_secao.metricas(corpo)
+    orientacao = "\n\n".join([
+        _ORIENTACAO_DE_PROFUNDIDADE, _plano_do_topico(titulo, plano, material), _sinal_em_texto(sinal, antes), apoio,
+    ])
+    base = {"code": secao.get("code"), "label": titulo or secao.get("label"), "content": corpo}
+    contexto = contexto_caso + "\n\n" + material.texto
+    tel = {**material.telemetria, "secao": secao.get("code"), "antes": antes, "etapas": [],
+           "tese": tese["id"] if tese else None, "textos_acervo": [t for p, t in material.itens if p.canal == "peca"]}
+
+    def aceitar(novo: str | None) -> bool:
+        return bool(novo) and len(novo.split()) >= len(corpo.split()) * 0.9 and not _RE_PONTO_SEM_FONTE.search(novo or "")
+
+    atual = corpo
+    novo = _reescrever_secao(caso_id, base, orientacao, contexto)
+    if aceitar(novo):
+        atual = novo  # type: ignore[assignment]
+    tel["etapas"].append({"etapa": "redacao_do_topico", "aceito": atual is not corpo})
+    depois = recuperacao_por_secao.metricas(atual)
+    motivos = recuperacao_por_secao.precisa_de_revisao(depois, sinal)
+    if motivos:  # revisor de profundidade: só onde a medida aponta problema
+        revisado = _reescrever_secao(
+            caso_id, {**base, "content": atual},
+            _ORIENTACAO_DO_REVISOR + "\nMotivos medidos: " + "; ".join(motivos) + "\n" + _sinal_em_texto(sinal, depois), contexto,
+        )
+        ganho = False
+        if aceitar(revisado):
+            m2 = recuperacao_por_secao.metricas(revisado)  # type: ignore[arg-type]
+            ganho = m2["fragmentacao"] <= depois["fragmentacao"] and (m2["mediana"] >= depois["mediana"] or m2["artigos_por_mil"] > depois["artigos_por_mil"])
+            if ganho:
+                atual = revisado  # type: ignore[assignment]
+        tel["etapas"].append({"etapa": "revisor_de_profundidade", "motivos": motivos, "aceito": ganho})
+    final = recuperacao_por_secao.metricas(atual)
+    # influência: o que do material deixou marca no tópico final (e quais dispositivos entraram vindos do acervo)
+    recuperacao_por_tese.medir_influencia(material.itens, [{"code": secao.get("code"), "content": atual}])
+    contribuiu = Counter(p.canal for p, _ in material.itens if p.contribuiu)
+    executou = Counter(p.canal for p, _ in material.itens)
+    novos_artigos = sorted(set(re.findall(r"art\.?\s*\d+", atual, re.IGNORECASE)) - set(re.findall(r"art\.?\s*\d+", corpo, re.IGNORECASE)))
+    tel.update({"depois": final, "contribuiu": dict(contribuiu), "executou": dict(executou), "artigos_novos": novos_artigos,
+                "influencia": [{"id": p.id[:50], "canal": p.canal, "score": round(p.score, 3)} for p, _ in material.itens if p.contribuiu]})
+    log.info("aprofundamento [%s / %s]: exemplos=%s julgados=%s leis=%s | palavras %s→%s mediana %s→%s | usados=%s",
+             secao.get("code"), (titulo or "")[:40], executou.get("peca", 0), executou.get("precedente", 0), executou.get("legislacao", 0),
+             antes["palavras"], final["palavras"], antes["mediana"], final["mediana"], dict(contribuiu))
+    return {**topico, "corpo": atual}, tel
 
 
 def _aprofundar_pela_referencia(
@@ -1690,50 +1992,70 @@ def _aprofundar_pela_referencia(
     *,
     contexto: str = "",
     plano: dict[str, Any] | None = None,
+    categoria: str = "",
+    assuntos: list[str] | None = None,
+    plano_est: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Aprofunda a argumentação SEÇÃO A SEÇÃO, com o material recuperado por tese.
+    """Redige/aprofunda TÓPICO A TÓPICO, com recuperação própria no acervo para cada um.
 
-    Antes: uma única chamada reescrevia a peça inteira para atingir um alvo de palavras tirado
-    da mediana do acervo; o JSON grande quebrava, a passada era descartada e a peça ficava rasa
-    (medido: 2 797 palavras, "aplicado: false"). Agora: uma chamada por seção argumentativa; o
-    resultado só entra se não encolher a seção nem trouxer marcador; falha de uma seção deixa
-    as outras seguirem.
+    Para cada subcapítulo argumentativo: consultas do tópico → busca vetorial no acervo (todas as peças de
+    mérito) → reranking híbrido → exemplos diversificados + julgados e legislação do mesmo tópico → redação com
+    plano do tópico e o padrão de densidade MEDIDO nas iniciais reais → revisor de profundidade (só onde a medida
+    aponta fragmentação/rasura) → medição de influência. Falha de um tópico não derruba os outros.
     """
+    assuntos = assuntos or []
     palavras = sum(len(str(x.get("content") or "").split()) for x in secoes)
-    info: dict[str, Any] = {"palavras_antes": palavras, "aplicado": False, "secoes": {}}
-    fatos = [
-        f"{f['id']}: {f['descricao']}" for f in (brief or {}).get("facts") or []
-        if not f.get("contradiz_entrevista")
-    ]
+    info: dict[str, Any] = {"palavras_antes": palavras, "aplicado": False, "por_topico": []}
+    sinal = recuperacao_por_secao.sinal_de_estilo(assuntos) if assuntos else {"disponivel": False}
+    info["sinal_de_estilo"] = sinal
+    fatos = [f"{f['id']}: {f['descricao']}" for f in (brief or {}).get("facts") or [] if not f.get("contradiz_entrevista")]
     eventos = [f"{e['id']} ({e['data']}): {e['evento']}" for e in (brief or {}).get("timeline") or []]
-    cronologia = [
-        f"{c.get('data', '')}: {c.get('fato', '')} [{c.get('fonte', '')}]"
-        for c in (plano or {}).get("cronologia") or [] if isinstance(c, dict)
-    ]
-    teses = [
-        f"{t.get('tese')} — fatos: {'; '.join(map(str, t.get('fatos_que_sustentam') or []))} — provas: {'; '.join(map(str, t.get('provas') or []))}"
-        for t in (plano or {}).get("teses") or [] if isinstance(t, dict)
-    ]
-    apoio = (
-        ("Fatos apurados: " + " | ".join(fatos) + "\n" if fatos else "")
-        + ("Cronologia do brief: " + " | ".join(eventos) + "\n" if eventos else "")
-        + ("Cronologia do plano: " + " | ".join(cronologia) + "\n" if cronologia else "")
-        + ("Teses e provas do plano: " + " || ".join(teses) if teses else "")
-    )
-    novas: list[dict[str, Any]] = []
-    for secao in secoes:
+    cronologia = [f"{c.get('data', '')}: {c.get('fato', '')} [{c.get('fonte', '')}]"
+                  for c in (plano or {}).get("cronologia") or [] if isinstance(c, dict)]
+    apoio = ("Fatos apurados: " + " | ".join(fatos) + "\n" if fatos else "") \
+        + ("Cronologia do brief: " + " | ".join(eventos) + "\n" if eventos else "") \
+        + ("Cronologia do plano: " + " | ".join(cronologia) if cronologia else "")
+    # Só a parte do CASO (fatos, documentos, análise documental): o material recuperado é montado por tópico.
+    contexto_caso = contexto.split("\n\n=== JULGADOS SEMELHANTES")[0][:70_000]
+
+    jobs: list[tuple[int, int, dict[str, Any], dict[str, str]]] = []
+    topicos_por_secao: dict[int, list[dict[str, str]]] = {}
+    for i, secao in enumerate(secoes):
         conteudo = str(secao.get("content") or "")
-        antes = len(conteudo.split())
-        if secao.get("code") in _SECOES_SEM_ARGUMENTO or antes < 80:
-            novas.append(secao)
+        if secao.get("code") in _SECOES_SEM_ARGUMENTO or len(conteudo.split()) < 80:
             continue
-        novo = _reescrever_secao(caso_id, secao, _ORIENTACAO_DE_PROFUNDIDADE + "\n" + apoio, contexto)
-        depois = len(novo.split()) if novo else 0
-        aceito = bool(novo) and depois >= antes * 0.95 and not _RE_PONTO_SEM_FONTE.search(novo or "")
-        info["secoes"][str(secao.get("code"))] = {"antes": antes, "depois": depois, "aceito": aceito}
-        novas.append({**secao, "content": novo} if aceito else secao)
-    info["aplicado"] = any(v["aceito"] for v in info["secoes"].values())
+        topicos = recuperacao_por_secao.dividir_em_topicos(conteudo)
+        topicos_por_secao[i] = topicos
+        for k, t in enumerate(topicos):
+            if len(t["corpo"].split()) >= 60:
+                jobs.append((i, k, secao, t))
+
+    def trabalhar(job):
+        i, k, secao, t = job
+        try:
+            return i, k, *_aprofundar_topico(
+                caso_id, secao, t, contexto_caso=contexto_caso, plano=plano, categoria=categoria, assuntos=assuntos,
+                sinal=sinal, apoio=apoio, contexto_uf=contexto, plano_est=plano_est,
+            )
+        except Exception as erro:  # noqa: BLE001 - um tópico que falha fica como estava
+            log.warning("aprofundamento do tópico %s falhou: %s", t["titulo"][:40], erro, exc_info=True)
+            return i, k, t, {"topico": t["titulo"], "erro": f"{type(erro).__name__}: {str(erro)[:120]}"}
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for i, k, novo, tel in pool.map(trabalhar, jobs):
+            topicos_por_secao[i][k] = novo
+            info.setdefault("textos_acervo", []).extend(tel.pop("textos_acervo", []) if isinstance(tel, dict) else [])
+            info["por_topico"].append(tel)
+    novas = []
+    for i, secao in enumerate(secoes):
+        if i in topicos_por_secao:
+            novas.append({**secao, "content": recuperacao_por_secao.remontar(topicos_por_secao[i])})
+        else:
+            novas.append(secao)
+    info["aplicado"] = any(t.get("depois") and t["depois"]["palavras"] != t["antes"]["palavras"] for t in info["por_topico"])
     info["palavras_depois"] = sum(len(str(x.get("content") or "").split()) for x in novas)
+    info["metricas_finais"] = recuperacao_por_secao.metricas("\n\n".join(str(x.get("content") or "") for x in novas
+                                                                        if x.get("code") not in _SECOES_SEM_ARGUMENTO))
     return novas, info
 
 
@@ -1867,8 +2189,16 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
     # O plano (teses + fatos + provas) vem ANTES da recuperação: é dele que saem as consultas.
     avancar_etapa("Planejando teses, fatos e provas…", 3)
-    plano = _outline_juridico(contexto)
+    plano = _outline_juridico(contexto, caso_id)
     outline = _outline_para_redigir(plano)
+    # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
+    texto_do_caso = contexto
+    plano_est = plano_da_peticao.montar(
+        plano,
+        partes=plano_da_peticao.verificar_partes((plano or {}).get("partes"), _cadastro_estruturado(caso_id), texto_do_caso),
+        fatos_documentais=_fatos_documentais(caso_id),
+    )
+    outline += "\n\n" + plano_da_peticao.para_prompt(plano_est)
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
@@ -2093,18 +2423,40 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # cliente, súmula de memória). Ver `conferencia_peticao`.
     avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 7)
     secoes, aprofundamento = _aprofundar_pela_referencia(
-        caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano
+        caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
+        assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
+        plano_est=plano_est,
     )
-    pipeline["aprofundamento"] = aprofundamento
+    textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []))]
+    # A seção "Dos pedidos" é RENDERIZADA do plano (fonte única), não pedida de novo ao modelo.
+    avancar_etapa("Consolidando os pedidos a partir do plano…", 7)
+    secoes, rel_pedidos = _pedidos_do_plano_na_secao(caso_id, secoes, plano_est)
+    aprofundamento["pedidos_do_plano"] = rel_pedidos
+    pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
+    pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
     avancar_etapa("Conferindo a peça contra os autos…", 7)
+    # O material citável NÃO inclui o acervo: peça de outro cliente não é fonte de fato do caso.
+    material_sem_acervo = texto_do_caso + precedentes + legislacao + outline
     secoes, violacoes, conferencia = _conferir_contra_os_autos(
-        caso_id, secoes, texto_entrevista=texto_entrevista, material=contexto
+        caso_id, secoes, texto_entrevista=texto_entrevista, material=material_sem_acervo
     )
     # Segunda leitura, agora contra o CASE BRIEF e a SKILL (não contra o material
     # bruto — isso a conferência acima já fez): omissão de fato relevante, seção
     # rasa, regra da skill não seguida. Pode reescrever seções; por isso vem
     # antes da cobertura, que precisa medir o texto FINAL.
     secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
+    # PETITION LINTER: qualificação, pedidos únicos, isolamento entre teses e nada do acervo como fato,
+    # com correção automática controlada e nova validação — ANTES de a peça ir para o DOCX.
+    avancar_etapa("Validando a peça (linter)…", 7)
+    secoes, achados_linter, rel_linter = _lintar_e_corrigir(
+        caso_id, secoes, plano_est,
+        # fonte PERMITIDA: caso + julgados/lei recuperados + skill (precedentes vinculantes); o acervo fica de fora
+        texto_do_caso=material_sem_acervo + peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
+        textos_do_acervo=textos_acervo,
+    )
+    violacoes = [*violacoes, *achados_linter]
+    pipeline["linter"] = rel_linter
+    pipeline["plano_estruturado"] = plano_est
     # Cobertura: quais fatos e eventos que a análise dos documentos já validou
     # (o mesmo material que virou `case_brief`, acima) efetivamente aparecem no
     # texto final. Não bloqueia nem corrige nada — só torna visível quando a
@@ -3669,39 +4021,22 @@ def _paragrafo_xml(texto: str, *, visual: dict[str, Any] | None = None) -> str:
 
     `# ` a `###` → `titulo1..3`; `> ` → `blockquote`; `::: nome` … `:::` → bloco `nome`;
     o resto → `corpo`. Linha em branco separa parágrafos e NÃO gera parágrafo vazio
-    (o respiro vem de `depois_pt`), a menos que a skill peça `linhas_em_branco_entre_paragrafos`.
+    (o respiro vem de `antes_pt`/`depois_pt` do estilo de cada bloco, não de linhas em branco),
+    a menos que a skill peça `linhas_em_branco_entre_paragrafos`.
+
+    O ritmo vertical nasce da TRANSIÇÃO entre blocos semânticos: cada tipo (corpo, título,
+    citação) traz o próprio espaço da skill, e o Word soma o depois de um com o antes do
+    seguinte. Linhas `>` consecutivas formam UM bloco de citação; uma linha em branco separa
+    uma citação da outra.
     """
     visual = visual or {}
     base = _estilo_resolvido(visual, "corpo")
     partes: list[str] = []
     bloco: str | None = None
-    for linha_bruta in texto.split("\n"):
-        if bloco is None:
-            abre = _RE_ABRE_BLOCO.match(linha_bruta)
-            if abre:
-                bloco = abre.group(1)
-                continue
-        elif _RE_FECHA_BLOCO.match(linha_bruta):
-            bloco = None
-            continue
-        if not linha_bruta.strip():
-            if visual.get("linhas_em_branco_entre_paragrafos"):
-                partes.append("<w:p/>")
-            continue
-        if _RE_QUEBRA_DE_PAGINA.match(linha_bruta):
-            partes.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
-            continue
-        alinhamento_pedido, medidas, linha = _marcadores_de_linha(linha_bruta)
-        if not linha.strip():
-            continue
-        nome = bloco or "corpo"
-        if bloco is None:
-            titulo = _RE_TITULO_MD.match(linha)
-            citacao = _RE_TRECHO.match(linha)
-            if titulo:
-                nome, linha = f"titulo{min(len(titulo.group(1)), 3)}", titulo.group(2)
-            elif citacao:
-                nome, linha = "blockquote", citacao.group(1)
+    citacao_acumulada: list[str] = []
+    marcas_da_citacao: tuple[str | None, dict[str, float]] = (None, {})
+
+    def emitir(nome: str, linha: str, alinhamento: str | None, medidas: dict[str, float]) -> None:
         trechos = _trechos_formatados(linha)
         if nome == "blockquote":
             # A citação é o que o documento diz: `**` da IA não vira destaque na transcrição.
@@ -3709,9 +4044,57 @@ def _paragrafo_xml(texto: str, *, visual: dict[str, Any] | None = None) -> str:
         partes.append(
             _paragrafo_estilizado_xml(
                 trechos, _estilo_resolvido(visual, nome), base=base,
-                alinhamento_pedido=alinhamento_pedido, medidas=medidas,
+                alinhamento_pedido=alinhamento, medidas=medidas,
             )
         )
+
+    def descarregar_citacao() -> None:
+        nonlocal citacao_acumulada
+        if citacao_acumulada:
+            emitir("blockquote", " ".join(citacao_acumulada), *marcas_da_citacao)
+            citacao_acumulada = []
+
+    for linha_bruta in texto.split("\n"):
+        if bloco is None:
+            abre = _RE_ABRE_BLOCO.match(linha_bruta)
+            if abre:
+                descarregar_citacao()
+                bloco = abre.group(1)
+                continue
+        elif _RE_FECHA_BLOCO.match(linha_bruta):
+            bloco = None
+            continue
+        if not linha_bruta.strip():
+            descarregar_citacao()
+            if visual.get("linhas_em_branco_entre_paragrafos"):
+                partes.append("<w:p/>")
+            continue
+        if _RE_QUEBRA_DE_PAGINA.match(linha_bruta):
+            descarregar_citacao()
+            partes.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
+            continue
+        alinhamento_pedido, medidas, linha = _marcadores_de_linha(linha_bruta)
+        if not linha.strip():
+            continue
+        if bloco is not None:
+            emitir(bloco, linha, alinhamento_pedido, medidas)
+            continue
+        if linha.strip() == ">":  # `>` sozinho separa duas citações
+            descarregar_citacao()
+            continue
+        citacao = _RE_TRECHO.match(linha)
+        if citacao:
+            if not citacao_acumulada:
+                marcas_da_citacao = (alinhamento_pedido, medidas)
+            citacao_acumulada.append(citacao.group(1).strip())
+            continue
+        descarregar_citacao()
+        titulo = _RE_TITULO_MD.match(linha)
+        if titulo:
+            emitir(f"titulo{min(len(titulo.group(1)), 3)}", titulo.group(2), alinhamento_pedido, medidas)
+        else:
+            emitir("corpo", linha, alinhamento_pedido, medidas)
+    descarregar_citacao()
     return "".join(partes)
 
 

@@ -177,7 +177,7 @@ _GENERICAS = {
     "comprobatorias", "pertinente", "pertinentes", "relativos", "relativas", "referente",
     "referentes", "numero", "n", "no", "sob", "ja", "tambem", "bem", "como", "com", "pelo", "pela",
     # verbos de quem junta: "Requer a juntada dos documentos anexos" não nomeia documento
-    "requer", "requerem", "requerendo", "junta", "juntar", "juntam", "apresenta", "apresentar",
+    "cuja", "cujo", "cujas", "cujos", "vez", "para", "oficio", "expedicao", "requisicao", "inss", "requer", "requerem", "requerendo", "junta", "juntar", "juntam", "apresenta", "apresentar",
     "apresentados", "apresentadas", "colaciona", "colacionar", "traz", "trazer",
 }
 
