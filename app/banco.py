@@ -237,6 +237,7 @@ TABELAS = (
     "cobrancas_documentos",
     "ligacoes",
     "auditorias_entrevista",
+    "custos_api",
     "solicitacoes_peticao",
     "modelos_documento",
     "gravacoes_temporarias",
@@ -675,6 +676,13 @@ CREATE TABLE {SCHEMA}.{PREFIXO}custos_api (
     custo_usd       decimal(18,8) NULL,
     custo_estimado  int           NOT NULL CONSTRAINT df_acervo_custos_api_estimado DEFAULT 0
 );
+
+IF COL_LENGTH('{SCHEMA}.{PREFIXO}custos_api', 'status') IS NULL
+    ALTER TABLE {SCHEMA}.{PREFIXO}custos_api ADD status varchar(20) NOT NULL CONSTRAINT df_acervo_custos_api_status DEFAULT 'SUCCESS';
+IF COL_LENGTH('{SCHEMA}.{PREFIXO}custos_api', 'erro') IS NULL
+    ALTER TABLE {SCHEMA}.{PREFIXO}custos_api ADD erro nvarchar(800) NULL;
+IF COL_LENGTH('{SCHEMA}.{PREFIXO}custos_api', 'latencia_ms') IS NULL
+    ALTER TABLE {SCHEMA}.{PREFIXO}custos_api ADD latencia_ms bigint NULL;
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}solicitacoes_peticao') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}solicitacoes_peticao (

@@ -20,8 +20,10 @@
   height: 100%;
   border: 1px solid var(--borda-forte);
   border-radius: var(--raio);
-  background: var(--papel-chat);
-  box-shadow: var(--sombra-1);
+  background:
+    radial-gradient(circle at 92% 0%, var(--acao-clara) 0, transparent 28%),
+    var(--papel-chat);
+  box-shadow: var(--sombra-1), 0 16px 42px rgba(20, 42, 70, .07);
   overflow: hidden;
 }
 
@@ -48,7 +50,7 @@
   gap: 10px;
   padding: 8px 10px 8px 14px;
   border-bottom: 1px solid var(--borda);
-  background: var(--papel);
+  background: linear-gradient(108deg, var(--papel) 0%, var(--papel) 70%, var(--acao-clara) 155%);
 }
 
 .identidade {
@@ -61,7 +63,14 @@
 /* Sem quadro colorido em volta: o ícone acompanha o título na mesma linha. */
 .marca {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 31px;
   flex-shrink: 0;
+  border: 1px solid var(--acao-borda);
+  border-radius: 10px;
+  background: var(--acao-clara);
   color: var(--acao);
 }
 
@@ -98,7 +107,7 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--raio-sm);
   background: none;
   color: var(--tinta-3);
@@ -106,6 +115,7 @@
 }
 
 .iconeBotao:hover:not(:disabled) {
+  border-color: var(--borda);
   background: var(--papel-3);
   color: var(--tinta-2);
 }
@@ -136,11 +146,11 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
   min-height: 0;
   /* Menos recuo embaixo: quem lê está sempre no fim da conversa, e cada pixel de
    * respiro ali é uma linha de texto a menos na tela. */
-  padding: 16px 14px 10px;
+  padding: 20px 16px 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
@@ -163,12 +173,12 @@
   flex-direction: column;
   gap: 10px;
   margin: auto 0;
-  padding: 4px 0;
+  padding: 16px 4px;
 }
 
 .convite {
   margin: 0;
-  font-size: var(--t-md);
+  font-size: 1.13rem;
   font-weight: 600;
   color: var(--tinta);
 }
@@ -187,6 +197,12 @@
   gap: 8px;
 }
 
+@media (min-width: 620px) {
+  .cartoes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .cartao {
   display: flex;
   flex-direction: column;
@@ -194,17 +210,20 @@
   padding: 12px 14px;
   border: 1px solid var(--borda);
   border-left: 3px solid var(--acao);
-  border-radius: var(--raio-sm);
+  border-radius: 12px;
   background: var(--papel);
   text-align: left;
   cursor: pointer;
-  transition: background var(--transicao), border-color var(--transicao);
+  box-shadow: 0 1px 0 rgba(20, 42, 70, .03);
+  transition: background var(--transicao), border-color var(--transicao), transform var(--transicao), box-shadow var(--transicao);
 }
 
 .cartao:hover:not(:disabled) {
   background: var(--acao-clara);
   border-color: var(--acao-borda);
   border-left-color: var(--acao);
+  box-shadow: 0 7px 16px rgba(20, 73, 129, .10);
+  transform: translateY(-1px);
 }
 
 .cartao:disabled {
@@ -234,9 +253,10 @@
 .pergunta {
   align-self: flex-end;
   max-width: 85%;
-  padding: 9px 13px;
+  padding: 10px 14px;
   border-radius: var(--raio) var(--raio) 2px var(--raio);
-  background: var(--acao);
+  background: linear-gradient(135deg, var(--acao), #2569a8);
+  box-shadow: 0 5px 14px rgba(20, 73, 129, .18);
   color: #ffffff;
   font-size: var(--t-base);
   line-height: 1.55;
@@ -251,11 +271,23 @@
  * leitura. Quem falou já está dito pelo lado: a pergunta é bolha à direita, a resposta
  * corre da margem esquerda. */
 .resposta {
-  padding: 0 2px;
+  position: relative;
+  padding: 1px 4px 1px 15px;
   font-size: var(--t-base);
   line-height: 1.65;
   color: var(--tinta-2);
   word-break: break-word;
+}
+
+.resposta::before {
+  position: absolute;
+  top: 7px;
+  left: 0;
+  width: 4px;
+  height: 22px;
+  border-radius: var(--raio-pill);
+  background: var(--acao-borda);
+  content: "";
 }
 
 /* A IA falando sem ter sido perguntada: terminou uma ação e conta o que mudou. A faixa
@@ -265,6 +297,10 @@
   border-left: 3px solid var(--acao);
   border-radius: 0 var(--raio-sm) var(--raio-sm) 0;
   background: var(--acao-clara);
+}
+
+.evento::before {
+  background: var(--acao);
 }
 
 .selo {
@@ -285,7 +321,9 @@
   margin: 0;
   padding: 6px 12px;
   border-radius: var(--raio-pill);
+  border: 1px solid var(--borda);
   background: var(--papel);
+  box-shadow: 0 2px 8px rgba(20, 42, 70, .05);
   font-size: var(--t-sm);
   color: var(--tinta-3);
 }
@@ -347,7 +385,7 @@
   padding: 10px 12px;
   border: 1px dashed var(--borda-forte);
   border-radius: var(--raio-sm);
-  background: var(--papel);
+  background: linear-gradient(135deg, var(--papel) 0%, var(--papel-2) 100%);
 }
 
 .tituloDasFontes {
@@ -381,7 +419,7 @@
   gap: 8px;
   padding: 10px 14px 12px;
   border-top: 1px solid var(--borda);
-  background: var(--papel);
+  background: linear-gradient(180deg, var(--papel-2) 0%, var(--papel) 58%);
 }
 
 .sugestoes {
@@ -441,6 +479,12 @@
   /* A altura é calculada no componente; a alça de redimensionar brigaria com ela. */
   resize: none;
   overflow-y: auto;
+  border-color: var(--borda-forte);
+  box-shadow: inset 0 1px 2px rgba(20, 42, 70, .04);
+}
+
+.campoDaPergunta:focus {
+  box-shadow: 0 0 0 3px var(--acao-clara), inset 0 1px 2px rgba(20, 42, 70, .04);
 }
 
 .enviar {
@@ -452,7 +496,8 @@
   height: 42px;
   border: none;
   border-radius: var(--raio-pill);
-  background: var(--acao);
+  background: linear-gradient(135deg, var(--acao), #2569a8);
+  box-shadow: 0 4px 10px rgba(20, 73, 129, .20);
   color: #ffffff;
   cursor: pointer;
   transition: opacity var(--transicao);
@@ -480,7 +525,7 @@
   gap: 6px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--borda);
-  background: var(--papel);
+  background: var(--papel-2);
   font-size: var(--t-xs);
   color: var(--tinta-3);
 }
@@ -497,6 +542,7 @@
   border: 1px solid var(--borda);
   border-radius: var(--raio-pill);
   background: var(--papel);
+  box-shadow: 0 1px 1px rgba(20, 42, 70, .04);
   color: var(--tinta-2);
   white-space: nowrap;
 }

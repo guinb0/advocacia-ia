@@ -515,7 +515,10 @@ _SOLICITACAO_EM_CURSO: contextvars.ContextVar[str | None] = contextvars.ContextV
     "solicitacao_peticao", default=None
 )
 
-PASSOS_GERACAO = 8
+# Progresso ponderado, e não contagem de funções. A chamada ao redator e a
+# conferência posterior são as fases que de fato consomem tempo; mostrar 7/8
+# enquanto elas ainda trabalham fazia a barra prometer uma conclusão iminente.
+PASSOS_GERACAO = 100
 
 
 def marcar_solicitacao_em_curso(solicitacao_id: str | None) -> contextvars.Token[str | None]:
@@ -828,6 +831,7 @@ def _llm_json(
     # com a mensagem própria, sem consumir a segunda tentativa.
     ultimo_erro: Exception | None = None
     for tentativa in (1, 2):
+        inicio_chamada = time.monotonic()
         try:
             resposta = httpx.post(
                 f"{base}/chat/completions",
@@ -845,6 +849,8 @@ def _llm_json(
                 timeout=timeout,
             )
             resposta.raise_for_status()
+            custos_api.registrar("deepseek", modelo, "geracao_peticao", resposta,
+                                 latencia_ms=round((time.monotonic() - inicio_chamada) * 1000))
             escolha = resposta.json()["choices"][0]
             conteudo = escolha["message"]["content"]
             if escolha.get("finish_reason") == "length":
@@ -865,6 +871,8 @@ def _llm_json(
         # erro subia cru e a tela mostrava 500 sem dizer nada ao advogado, que ficava
         # sem saber se devia tentar de novo — e devia.
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as erro:
+            custos_api.registrar_falha("deepseek", modelo, "geracao_peticao", erro,
+                                      latencia_ms=round((time.monotonic() - inicio_chamada) * 1000))
             ultimo_erro = erro
             log.warning(
                 "petição local: LLM falhou (tentativa %s/2): %s", tentativa, erro
@@ -1354,9 +1362,9 @@ Não invente fatos. Diferencie alegação de fato documentado.""",
     }
 
 
-def _normalizar_secoes(brutas: list[dict[str, Any]], contrato: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def _normalizar_secoes(brutas: list[dict[str, Any]] | None, contrato: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Seções na ordem e na quantidade que a SKILL fez o modelo devolver — nada é imposto."""
-    secoes = _normalizar_secoes_da_revisao(brutas)
+    secoes = _normalizar_secoes_da_revisao(brutas or [])
     return contrato_secoes.canonicalizar(secoes, contrato)[0] if contrato else secoes
 
 
@@ -1993,21 +2001,52 @@ def _conferir_contra_os_autos(
     iniciais = [v.codigo for v in violacoes if v.bloqueia]
     corrigiu = False
     rodadas = 0
+    secoes_puladas: list[str] = []
     # UMA rodada, seções EM PARALELO: era aqui que a geração passava mais tempo ("Conferindo a peça contra os
     # autos…") — duas rodadas, uma seção por vez, cada chamada com o material inteiro. O que sobrar é revisto
     # pelo auditor final, que roda de novo a mesma conferência logo adiante.
-    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=300):
+    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=180):
         rodadas += 1
-        extra = _material_para_resolver_pesquisas(violacoes, secoes)
+        # A primeira conferência é determinística e sempre roda. A reescrita por
+        # modelo é uma tentativa de conveniência, não pode transformar uma peça
+        # já gerada em uma espera de vários minutos (nem em falha por sobrecarga
+        # do provedor). Dois blocos cobrem os erros de maior impacto sem mandar a
+        # mesma base de 80 mil caracteres para seis chamadas simultâneas.
+        por_secao = {
+            str(secao.get("code") or ""): [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
+            for secao in secoes
+        }
+        alvos = [s for s in secoes if por_secao.get(str(s.get("code") or ""))]
+        alvos.sort(
+            key=lambda s: (
+                str(s.get("code") or "") not in {"LEGAL_GROUNDS", "FACTS", "CLAIMS"},
+                -len(por_secao[str(s.get("code") or "")]),
+            )
+        )
+        alvos = alvos[:2]
+        secoes_puladas = [
+            str(s.get("code") or "") for s in secoes
+            if por_secao.get(str(s.get("code") or "")) and s not in alvos
+        ]
+        extra = _material_para_resolver_pesquisas(violacoes, alvos)
 
         def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
-            da_secao = [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
+            da_secao = por_secao.get(str(secao.get("code") or ""), [])
             if not da_secao:
                 return secao
-            novo = _reescrever_secao(caso_id, secao, conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra, material)
+            novo = _reescrever_secao(
+                caso_id,
+                secao,
+                conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
+                material[:35_000],
+            )
             return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
 
-        novas = _em_paralelo_com_contexto(corrigir_secao, secoes)
+        novas_por_codigo = {
+            str(secao.get("code") or ""): corrigida
+            for secao, corrigida in zip(alvos, _em_paralelo_com_contexto(corrigir_secao, alvos, max_workers=2))
+        }
+        novas = [novas_por_codigo.get(str(secao.get("code") or ""), secao) for secao in secoes]
         if novas == secoes:
             break
         secoes, corrigiu = novas, True
@@ -2018,6 +2057,7 @@ def _conferir_contra_os_autos(
         "violacoes_iniciais": iniciais,
         "rodada_de_correcao": corrigiu,
         "rodadas_de_correcao": rodadas,
+        "secoes_sem_correcao_por_limite": secoes_puladas,
         "violacoes_restantes": [v.codigo for v in violacoes if v.bloqueia],
         "citacoes_nao_verificadas": sum(1 for v in violacoes if v.codigo == "CITACAO_NAO_VERIFICADA"),
     }
@@ -2091,7 +2131,10 @@ def _reescrever_secao(
         f"{secao.get('content', '')}\n\nORIENTAÇÃO:\n{orientacao}"
     )
     try:
-        saida = _llm_json(instrucao, entrada, timeout=300.0)
+        # Correção pontual não deve competir com a redação principal por cinco
+        # minutos. Se o provedor não responder neste teto, a seção original fica
+        # preservada e o achado continua visível para revisão humana.
+        saida = _llm_json(instrucao, entrada, timeout=150.0)
     except ErroPeticao:
         log.warning("petição local: reescrita da seção %s falhou (caso %s)", secao.get("code"), caso_id, exc_info=True)
         return None
@@ -2428,10 +2471,10 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     diag: dict[str, Any] = {"recuperacao": {}, "fallbacks": []}
     _DIAG.set(diag)
     _INICIO_DA_GERACAO.set(time.monotonic())
-    avancar_etapa("Lendo entrevista e documentos…", 1)
+    avancar_etapa("Lendo entrevista e documentos…", 5)
     regras_aplicadas = peticao_aprendizado.regras_para_contexto(
         categoria=_categoria_do_caso(caso_id)
-    )
+    ) or []
     peticao_aprendizado.registrar_execucao(
         generation_id=generation_id, caso_id=caso_id,
         skill_name="learned_preferences_retrieval", itens_recuperados=[
@@ -2440,7 +2483,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
     contexto = _montar_contexto(caso_id, texto_entrevista)
-    avancar_etapa("Montando o resumo jurídico do caso…", 2)
+    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     try:
         brief = case_brief.montar(caso_id)
     except Exception as erro:
@@ -2448,7 +2491,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         brief = None
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
     # O plano (teses + fatos + provas) vem ANTES da recuperação: é dele que saem as consultas.
-    avancar_etapa("Planejando teses, fatos e provas…", 3)
+    avancar_etapa("Planejando teses, fatos e provas…", 18)
     plano = _outline_juridico(contexto, caso_id)
     outline = _outline_para_redigir(plano)
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
@@ -2464,13 +2507,15 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     )
     plano_est = plano_da_peticao.montar(plano, partes=case_facts.partes_resolvidas(cf), fatos_documentais=_fatos_documentais(caso_id))
     plano_est["case_facts"] = cf
-    plano_est["contrato_secoes"] = contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill())
+    plano_est["contrato_secoes"] = contrato_secoes.montar(
+        peticao_skill_arquivos.estrutura_da_skill() or []
+    )
     plano_est["_funcoes_de_conteudo"] = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("funcoes_de_conteudo") or {}
     outline += "\n\n" + plano_da_peticao.para_prompt(plano_est)
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
-    avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 4)
+    avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 30)
     uf_jurisprudencia = _uf_jurisprudencia_do_caso(caso_id, contexto)
     precedentes = _precedentes_para_redigir(contexto, consultas, uf=uf_jurisprudencia)
     legislacao = _legislacao_para_redigir(contexto, consultas)
@@ -2648,7 +2693,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # Sem orientação do escritório a instrução volta intocada — e a peça sai do
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
-    avancar_etapa("Redigindo a petição (pode levar alguns minutos)…", 5)
+    avancar_etapa("Redigindo a petição — esta é a etapa mais demorada…", 35)
     saida = _llm_json(
         instrucao,
         contexto,
@@ -2657,7 +2702,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
         # respondeu" — que é pior, porque perde o trabalho inteiro.
         timeout=360.0,
     )
-    avancar_etapa("Organizando as seções da minuta…", 6)
+    avancar_etapa("Organizando as seções da minuta…", 68)
     _secoes_previas = _normalizar_secoes(saida.get("secoes") or [], plano_est["contrato_secoes"])
     _itens = diag.get("proveniencia") or []
     recuperacao_por_tese.medir_influencia(_itens, _secoes_previas)
@@ -2713,7 +2758,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
     # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
     # cliente, súmula de memória). Ver `conferencia_peticao`.
-    avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 7)
+    avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 74)
     secoes, aprofundamento = _aprofundar_pela_referencia(
         caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
         assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
@@ -2721,12 +2766,12 @@ Cada content deve conter parágrafos separados por linha em branco."""
     )
     textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []))]
     # A seção "Dos pedidos" é RENDERIZADA do plano (fonte única), não pedida de novo ao modelo.
-    avancar_etapa("Consolidando os pedidos a partir do plano…", 7)
+    avancar_etapa("Consolidando os pedidos a partir do plano…", 80)
     secoes, rel_pedidos = _pedidos_do_plano_na_secao(caso_id, secoes, plano_est)
     aprofundamento["pedidos_do_plano"] = rel_pedidos
     pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
     pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
-    avancar_etapa("Conferindo a peça contra os autos…", 7)
+    avancar_etapa("Conferindo a peça contra os autos…", 85)
     # O material citável NÃO inclui o acervo: peça de outro cliente não é fonte de fato do caso.
     material_sem_acervo = texto_do_caso + precedentes + legislacao + outline
     secoes, violacoes, conferencia = _conferir_contra_os_autos(
@@ -2739,7 +2784,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
     # PETITION LINTER: qualificação, pedidos únicos, isolamento entre teses e nada do acervo como fato,
     # com correção automática controlada e nova validação — ANTES de a peça ir para o DOCX.
-    avancar_etapa("Validando a peça (linter)…", 7)
+    avancar_etapa("Validando a peça (linter)…", 91)
     secoes, achados_linter, rel_linter = _lintar_e_corrigir(
         caso_id, secoes, plano_est,
         # fonte PERMITIDA: caso + julgados/lei recuperados + skill (precedentes vinculantes); o acervo fica de fora
@@ -2758,7 +2803,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # peça deixou de fora algo que a leitura dos documentos tinha encontrado,
     # em vez de a omissão passar batido sem ninguém notar.
     # ===== FINAL_DOCUMENT_VALIDATOR — ÚLTIMA etapa que pode mudar o texto. Roda sobre a representação que o DOCX imprime.
-    avancar_etapa("Validação final do documento…", 8)
+    avancar_etapa("Validação final do documento…", 96)
     secoes, rel_final, achados_finais = _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso)
     violacoes = [*[v for v in violacoes if not v.bloqueia], *achados_finais]
     pipeline["documento_final"] = rel_final
@@ -2790,7 +2835,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # a petição anterior continua inteira no lugar e é só tentar de novo.
     if anterior:
         armazenamento.registrar_versao_peticao(caso_id, anterior)
-    avancar_etapa("Gravando a minuta no dossiê…", 8)
+    avancar_etapa("Gravando a minuta no dossiê…", 99)
     dados = {
         "id": ID_LOCAL,
         "generation_id": generation_id,

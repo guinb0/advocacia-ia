@@ -134,18 +134,21 @@ def gerar_embeddings(textos: list[str], *, timeout: float = 120) -> list[list[fl
     if not textos:
         return []
     dimensoes = int(os.getenv("EMBEDDINGS_DIMENSIONS", "1536"))
-    resposta = httpx.post(
-        _obrigatoria("EMBEDDINGS_BASE_URL").rstrip("/") + "/embeddings",
-        headers={"Authorization": f"Bearer {_obrigatoria('EMBEDDINGS_API_KEY')}"},
-        json={
-            "model": _obrigatoria("EMBEDDINGS_MODEL_NAME"),
-            "input": textos,
-            "dimensions": dimensoes,
-        },
-        timeout=timeout,
-    )
-    resposta.raise_for_status()
-    custos_api.registrar("openrouter", _obrigatoria("EMBEDDINGS_MODEL_NAME"), "embeddings", resposta)
+    modelo = _obrigatoria("EMBEDDINGS_MODEL_NAME")
+    inicio = time.monotonic()
+    try:
+        resposta = httpx.post(
+            _obrigatoria("EMBEDDINGS_BASE_URL").rstrip("/") + "/embeddings",
+            headers={"Authorization": f"Bearer {_obrigatoria('EMBEDDINGS_API_KEY')}"},
+            json={"model": modelo, "input": textos, "dimensions": dimensoes}, timeout=timeout,
+        )
+        resposta.raise_for_status()
+    except httpx.HTTPError as erro:
+        custos_api.registrar_falha("openrouter", modelo, "embeddings", erro,
+                                  latencia_ms=round((time.monotonic() - inicio) * 1000))
+        raise
+    custos_api.registrar("openrouter", modelo, "embeddings", resposta,
+                         latencia_ms=round((time.monotonic() - inicio) * 1000))
     dados = sorted(resposta.json()["data"], key=lambda item: item["index"])
     vetores = [item["embedding"] for item in dados]
     if len(vetores) != len(textos) or any(len(v) != dimensoes for v in vetores):
