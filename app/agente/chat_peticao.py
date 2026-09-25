@@ -2028,19 +2028,12 @@ def documentos_citaveis(caso_id: str) -> list[dict[str, str]]:
     advogado tinha de sair da conversa e caçar o arquivo no checklist. O texto do
     OCR fica de fora: a tela só precisa saber o que é clicável.
     """
-    citaveis = _citaveis_de(peticao_local.anexos_do_caso(caso_id))
-    # O texto da peça cita "Documento NN" (rótulo canônico do DOCUMENT_LEDGER). Sem este mapeamento a tela
-    # casava a palavra "documento" com o tipo de algum anexo e abria o arquivo errado.
-    try:
-        ledger, _ = peticao_local.documentos_logicos(caso_id)
-        por_arquivo = {c["arquivo"]: c for c in citaveis}
-        for d in ledger:
-            alvo = por_arquivo.get(d["canonical_file"])
-            if alvo:
-                alvo["rotulos"] = [d["canonical_label"], f"Documento {d['numero']}", f"Doc {d['numero']}"]
-    except Exception:  # noqa: BLE001 - sem ledger, os links continuam por nome de arquivo
-        pass
-    return citaveis
+    # O chat cita o nome exato do arquivo (regra 12 de INSTRUCAO), que é a única
+    # chave textual ligada de forma estável ao ID da entrega. Não exponha aqui
+    # "Documento NN": esse rótulo é próprio da peça e, em importações legadas,
+    # pode ter sido reutilizado ou divergir da numeração do arquivo. Um clique
+    # nunca pode abrir um anexo apenas porque compartilha um ordinal textual.
+    return _citaveis_de(peticao_local.anexos_do_caso(caso_id))
 
 
 def resumo_do_contexto(caso_id: str) -> dict[str, Any]:

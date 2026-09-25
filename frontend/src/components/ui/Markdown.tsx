@@ -334,6 +334,17 @@ export interface DocumentoCitavelMd {
 /** Tipo genérico demais para virar link ("documento", "anexo"): casaria com qualquer menção e abriria o arquivo errado. */
 const TIPOS_GENERICOS = new Set(["documento", "documentos", "anexo", "arquivo", "outro", "outros", "nao identificado", "não identificado"]);
 
+/**
+ * Algumas classificações antigas vinham como "Documento (Procuração...)".
+ * Ao retirar o parêntese, o código anterior registrava a chave "Documento" e
+ * fazia a frase "Documento 03" abrir arbitrariamente a procuração. Número de
+ * documento, sem o ID do anexo, não é uma referência segura para o visor.
+ */
+function tipoGenerico(tipo: string): boolean {
+  const limpo = tipo.trim().toLocaleLowerCase("pt-BR");
+  return TIPOS_GENERICOS.has(limpo) || /^(documento|anexo|arquivo)\b/.test(limpo);
+}
+
 interface Citaveis {
   padrao: RegExp;
   /** Mais de um documento por chave = ambíguo: o clique pede a escolha. */
@@ -359,18 +370,21 @@ function montarCitaveis(
   };
   for (const documento of documentos) {
     registrar(documento.arquivo, documento);
-    for (const rotulo of documento.rotulos ?? []) registrar(rotulo, documento);
+    // Rótulos como "Documento 03" pertencem à minuta, mas não carregam o ID
+    // da entrega na mensagem do chat. Não os transforme em link: em inventários
+    // legados a numeração pode divergir do arquivo físico. O nome do arquivo é
+    // a chave estável que a instrução do chat exige ao citar um anexo.
     // O modelo às vezes escreve o nome sem a extensão ("IMG_4411"). Curto demais
     // ("doc") casaria com palavra comum.
     const semExtensao = documento.arquivo.replace(/\.[a-z0-9]{2,5}$/i, "");
     if (semExtensao !== documento.arquivo && semExtensao.length >= 6) registrar(semExtensao, documento);
-    if (documento.tipo && !TIPOS_GENERICOS.has(documento.tipo.trim().toLowerCase())) {
+    if (documento.tipo && !tipoGenerico(documento.tipo)) {
       registrar(documento.tipo, documento);
       // «Carteira de Trabalho (CTPS)»: o modelo escreve só uma das duas formas.
       const sigla = documento.tipo.match(/\(([^)]{2,20})\)/)?.[1];
       const semSigla = documento.tipo.replace(/\s*\([^)]*\)\s*/g, " ").trim();
       if (sigla) registrar(sigla, documento);
-      if (semSigla && semSigla !== documento.tipo && semSigla.length >= 3) registrar(semSigla, documento);
+      if (semSigla && semSigla !== documento.tipo && semSigla.length >= 3 && !tipoGenerico(semSigla)) registrar(semSigla, documento);
     }
   }
   if (!porChave.size) return null;

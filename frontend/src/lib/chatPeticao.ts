@@ -140,7 +140,7 @@ export interface DocumentoCitavel {
   arquivo: string;
   tipo: string;
   situacao: string;
-  /** "Documento 03", "Doc 3": como a peça cita este arquivo (rótulo canônico do ledger). */
+  /** Legado de respostas antigas; a tela não usa rótulo ordinal para abrir arquivo. */
   rotulos?: string[];
 }
 
