@@ -74,7 +74,9 @@ def _estrutura_e_qualificacao(secoes: list[dict[str, Any]], plano: dict[str, Any
                 ausentes.append(f"{papel}.{campo}")
     nome = autor.get("nome", "")
     sem_bloco = not texto.strip() or (nome and pp.norm(nome) not in norm_texto)
-    if sem_bloco or len(ausentes) > max(1, len(q.get("campos", {}).get("autor", [])) // 2):
+    # Qualquer dado canônico disponível (em especial CNPJ/endereço da ré) é
+    # obrigatório na abertura. Tolerar uma "maioria" deixava regressões passar.
+    if sem_bloco or ausentes:
         dados = "; ".join(f"{p}.{k}: {v}" for p in ("autor", "reu") for k, v in (partes.get(p) or {}).items())
         saida.append(_achado(
             "QUALIFICACAO_AUSENTE", codigo_abertura, texto[:120],

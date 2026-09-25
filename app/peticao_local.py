@@ -38,6 +38,7 @@ from . import (
     document_ledger,
     documento_final,
     case_facts,
+    contrato_secoes,
     petition_linter,
     plano_da_peticao,
     recuperacao_por_secao,
@@ -294,6 +295,10 @@ def _validar_documento_final(
     for rodada in range(max_rodadas + 1):
         secoes, higiene = documento_final.higienizar(secoes, plano_est, params)
         achados = documento_final.validar_documento_final(secoes, plano_est, params, ledger)
+        _, achados_contrato = contrato_secoes.canonicalizar(
+            secoes, plano_est.get("contrato_secoes") or {}
+        )
+        achados += achados_contrato
         criticos = [a for a in achados if a.bloqueia]
         rel["rodadas"].append({"higiene": {k: (len(v) if isinstance(v, list) else v) for k, v in higiene.items()},
                                "criticos": [f"{a.codigo}:{a.secao}" for a in criticos]})
@@ -317,6 +322,11 @@ def _validar_documento_final(
             novas.append({**x, "content": texto} if texto else x)
         secoes = novas
     rel["pendencias_humanas"] = [f"{a.codigo}:{a.secao} — {a.motivo}"[:260] for a in achados if a.bloqueia]
+    rel["checklist"] = [
+        {"codigo": a.codigo, "secao": a.secao, "bloqueia": a.bloqueia,
+         "resultado": "FALHOU", "motivo": a.motivo}
+        for a in achados
+    ]
     rel["liberada"] = not rel["pendencias_humanas"]
     return secoes, rel, achados
 
@@ -1165,9 +1175,10 @@ Não invente fatos. Diferencie alegação de fato documentado.""",
     }
 
 
-def _normalizar_secoes(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _normalizar_secoes(brutas: list[dict[str, Any]], contrato: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Seções na ordem e na quantidade que a SKILL fez o modelo devolver — nada é imposto."""
-    return _normalizar_secoes_da_revisao(brutas)
+    secoes = _normalizar_secoes_da_revisao(brutas)
+    return contrato_secoes.canonicalizar(secoes, contrato)[0] if contrato else secoes
 
 
 def _normalizar_secoes_da_revisao(brutas: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1377,9 +1388,8 @@ JSON:
   "secoes": [
     {"code":"<PAPEL_DA_SECAO>","label":"<título da seção como a SKILL manda; \"\" se a skill não dá título>","content":"<texto, com a marcação definida em formatacao.md>"}
     /* UMA entrada por seção que a SKILL determinar, na ordem e na quantidade que ela determinar.
-       PAPEL_DA_SECAO: identificador curto em MAIÚSCULAS. Quando a seção cumprir um destes papéis,
-       use exatamente o nome — os validadores automáticos as localizam por ele: HEADING, PRELIMINARY,
-       FACTS, LEGAL_GROUNDS, CLAIMS, VALUE, CLOSING. Qualquer outra seção: código livre. Crie SÓ as seções que a skill manda. */
+       PAPEL_DA_SECAO deve ser um papel do CONTRATO DE BLOCOS abaixo. Nunca crie código livre,
+       capítulo autônomo, análise interna, lista de lacunas ou estratégia processual não prevista pela skill. */
   ],
   "pendencias": ["fatos sem comprovação documental"]
 }
@@ -2269,6 +2279,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     )
     plano_est = plano_da_peticao.montar(plano, partes=case_facts.partes_resolvidas(cf), fatos_documentais=_fatos_documentais(caso_id))
     plano_est["case_facts"] = cf
+    plano_est["contrato_secoes"] = contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill())
     plano_est["_funcoes_de_conteudo"] = peticao_skill_arquivos.validacoes_da_skill()["parametros"].get("funcoes_de_conteudo") or {}
     outline += "\n\n" + plano_da_peticao.para_prompt(plano_est)
     consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
@@ -2427,6 +2438,14 @@ somente se os fatos realmente apontarem para elas. Não sugira duplicata, recurs
 ou peça sem base mínima; quando não houver outra ação cabível, devolva [].
 Cada content deve conter parágrafos separados por linha em branco."""
     )
+    instrucao_base += (
+        "\n\n=== CONTRATO DE BLOCOS (extraído de references/estrutura_peca.md) ===\n"
+        + "\n".join(
+            f"- {b['ordem']}. {b['titulo']} => {b['code']}"
+            for b in plano_est["contrato_secoes"]["blocos"]
+        )
+        + "\nUse somente esses papéis, nessa ordem. Análise, lacunas, alertas e pendências são metadados internos e nunca podem aparecer no content das seções."
+    )
     instrucao = _com_skill_do_escritorio(caso_id, instrucao_base)
     _estrutura_fixa = _estrutura_fixa_no_prompt(instrucao)
     pipeline.update({
@@ -2449,7 +2468,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
         timeout=360.0,
     )
     avancar_etapa("Organizando as seções da minuta…", 6)
-    _secoes_previas = _normalizar_secoes(saida.get("secoes") or [])
+    _secoes_previas = _normalizar_secoes(saida.get("secoes") or [], plano_est["contrato_secoes"])
     _itens = diag.get("proveniencia") or []
     recuperacao_por_tese.medir_influencia(_itens, _secoes_previas)
     pipeline["proveniencia"] = [p.como_dict() for p, _ in _itens]
@@ -2487,7 +2506,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
             if isinstance(item, dict) and str(item.get("titulo") or "").strip()
         ][:3],
     }
-    secoes = _normalizar_secoes(saida.get("secoes") or [])
+    secoes = _normalizar_secoes(saida.get("secoes") or [], plano_est["contrato_secoes"])
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
     # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
