@@ -30,6 +30,7 @@ from typing import Any
 
 import psycopg
 
+from app import rag
 from app.rag import carregar_env, gerar_embeddings, vetor_literal
 
 #: Mesmos parâmetros de scripts.ingerir_jurimetria, para manter os chunks
@@ -114,7 +115,7 @@ def ingerir(
     com_embeddings: bool = False,
 ) -> dict[str, int]:
     carregar_env()
-    destino_url = os.environ["DATABASE_URL"]
+    destino_url = rag.url_pgvector()
     stats = {"decisoes": 0, "ignoradas": 0, "chunks": 0}
 
     decisoes = carregar_decisoes(arquivo)
@@ -145,8 +146,8 @@ def ingerir(
             vetores = gerar_embeddings(chunks) if com_embeddings else [None] * len(chunks)
 
             fonte_id = destino.execute(
-                """INSERT INTO fontes(tipo,titulo,identificador,publicado_em)
-                   VALUES ('jurisprudencia',%s,%s,%s::date) RETURNING id""",
+                """INSERT INTO fontes(tipo,titulo,identificador,publicado_em,status_verificacao,consultado_em)
+                   VALUES ('jurisprudencia',%s,%s,%s::date,'UNVERIFIED',now()) RETURNING id""",
                 (
                     f"{decisao.tribunal} — processo {decisao.numero_processo}",
                     decisao.identificador,
@@ -162,6 +163,7 @@ def ingerir(
                 "tipo_comunicacao": decisao.tipo_comunicacao,
                 "rotulo": None,  # não temos classificação de desfecho para esta fonte
                 "data": decisao.data,
+                "status_verificacao": "UNVERIFIED",
             }
 
             parametros = [

@@ -47,6 +47,7 @@ from . import (
     peticao_skill_arquivos,
     peticao_skills,
     rag,
+    tribunais,
 )
 from . import casos as casos_ocr
 
@@ -142,6 +143,26 @@ def _cadastro_estruturado(caso_id: str) -> dict[str, Any]:
         )
         dados = {k: v for k, v in dados.items() if k != "nome"}
     return dados
+
+
+def _uf_jurisprudencia_do_caso(caso_id: str, contexto: str = "") -> str:
+    """UF do foro a partir do cadastro do caso, com OCR/entrevista só como reserva.
+
+    A jurisdição não é uma preferência do escritório: é atributo do processo.
+    Priorizar o dado estruturado evita que a cidade de um médico, de uma empresa
+    ou de um documento de terceiro desvie a pesquisa para outro TRT.
+    """
+    try:
+        qualificacao = armazenamento.obter_qualificacao(caso_id) or {}
+        caso = armazenamento.obter_caso(caso_id) or {}
+    except Exception:  # noqa: BLE001 - busca ainda pode inferir o local do material do caso
+        qualificacao, caso = {}, {}
+    for dados in (caso, qualificacao):
+        for campo in ("uf", "estado", "foro_uf", "vara_uf"):
+            uf = tribunais.normalizar_uf(dados.get(campo))
+            if uf:
+                return uf
+    return jurimetria_caso._detectar_uf(contexto)  # noqa: SLF001 - fallback do próprio motor territorial
 
 
 _DOC_PRIORITARIO = re.compile(
@@ -684,7 +705,12 @@ def identidade_visual() -> tuple[bytes, str, str, str]:
     except Exception:
         log.warning("modelo visual indisponível no banco; usando Lara & Melo", exc_info=True)
         registro = None
-    logo_separada = armazenamento.obter_modelo(MODELO_VISUAL_LOGO)
+    try:
+        logo_separada = armazenamento.obter_modelo(MODELO_VISUAL_LOGO)
+    except Exception:
+        # O modelo geral acima já confirmou que o banco pode estar inacessível.
+        # A logo opcional não pode quebrar o mesmo fallback offline.
+        logo_separada = None
     if logo_separada:
         extensao = Path(str(logo_separada["nome_arquivo"])).suffix.lower()
         extensao = ".jpg" if extensao in {".jpg", ".jpeg"} else ".png"
@@ -1038,8 +1064,34 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
 
 
 def documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    """(DOCUMENT_LEDGER, texto de cada documento LÓGICO na ordem do ledger). Cópias viram um documento só."""
-    brutos = documentos_ocr(caso_id)
+    """(DOCUMENT_LEDGER, texto de cada documento LÓGICO na ordem do ledger).
+
+    O ledger é o inventário dos anexos, não o inventário do OCR.  Antes, um
+    arquivo que ainda aguardava leitura simplesmente não existia para a
+    geração; isso permitia afirmar que um contracheque anexado "não integrava"
+    os autos.  O texto vazio apenas deixa de ser enviado como OCR, mas o anexo
+    conserva o seu número canônico e continua visível no índice.
+    """
+    try:
+        extracoes = {
+            str(e.get("id") or ""): e.get("extracao") or {}
+            for e in armazenamento.listar_extracoes_do_caso(caso_id)
+        }
+        entregas = armazenamento.listar_entregas(caso_id)
+    except Exception:  # noqa: BLE001 - o caminho legado abaixo ainda preserva OCR disponível
+        log.warning("petição local: não leu o inventário completo de anexos do caso %s", caso_id, exc_info=True)
+        extracoes, entregas = {}, []
+    brutos = []
+    for entrega in entregas:
+        extracao = extracoes.get(str(entrega.get("id") or "")) or {}
+        brutos.append({
+            "arquivo": str(entrega.get("arquivo") or ""),
+            "texto": str(extracao.get("texto_completo") or "").strip()[:8000],
+        })
+    # Há instalações legadas em que a extração foi persistida antes da entrega.
+    # Preserve esse material no ledger em vez de perdê-lo durante a migração.
+    arquivos = {d["arquivo"] for d in brutos}
+    brutos.extend(d for d in documentos_ocr(caso_id) if d["arquivo"] not in arquivos)
     ledger = document_ledger.montar(brutos, {a: d.get("tipo", "") for a, d in _dados_por_documento(caso_id).items()})
     por_arquivo = {d["arquivo"]: d for d in brutos}
     return ledger, [{"arquivo": d["canonical_file"], "texto": por_arquivo[d["canonical_file"]]["texto"], "rotulo": d["canonical_label"]} for d in ledger]
@@ -1540,7 +1592,9 @@ Cada content em parágrafos separados por linha em branco.""",
     return secoes, [str(p) for p in (saida.get("pendencias") or []) if str(p).strip()]
 
 
-def _precedentes_para_redigir(contexto: str, consultas: list[dict[str, str]] | None = None) -> str:
+def _precedentes_para_redigir(
+    contexto: str, consultas: list[dict[str, str]] | None = None, *, uf: str = ""
+) -> str:
     """Julgados semelhantes ANTES de redigir, para a IA poder citá-los.
 
     A jurimetria já existia, mas rodava depois (`_analisar_jurimetria_da_minuta`,
@@ -1556,14 +1610,16 @@ def _precedentes_para_redigir(contexto: str, consultas: list[dict[str, str]] | N
     erros_tese: list[str] = []
     try:
         if consultas:
-            similares, provs, erros_tese = recuperacao_por_tese.precedentes(consultas, contexto)
+            similares, provs, erros_tese = recuperacao_por_tese.precedentes(consultas, contexto, uf=uf)
             if not similares and erros_tese:
                 raise RuntimeError("; ".join(erros_tese[:3]))
             _registrar_proveniencia(provs, [t.texto[:1800] for t in similares])
         else:
             similares, _jurisdicao, _uf = jurimetria_caso.buscar_focada(
-                contexto[:12_000], texto_para_uf=contexto
+                contexto[:12_000], uf=uf,
+                texto_para_uf=contexto
             )
+            similares = recuperacao_por_tese.apenas_verificados(similares)
     except Exception as erro:
         log.warning("petição local: precedentes indisponíveis na redação: %s", erro)
         _diag("precedentes", ok=False, n=0, erro=_erro_curto(erro))
@@ -2415,7 +2471,8 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
     avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 4)
-    precedentes = _precedentes_para_redigir(contexto, consultas)
+    uf_jurisprudencia = _uf_jurisprudencia_do_caso(caso_id, contexto)
+    precedentes = _precedentes_para_redigir(contexto, consultas, uf=uf_jurisprudencia)
     legislacao = _legislacao_para_redigir(contexto, consultas)
     _TEXTO_DO_CASO.set(contexto[:20_000])
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
@@ -2455,6 +2512,8 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "caso_id": caso_id,
         "tipo_detectado": "INITIAL_PETITION",
         "categoria": {"nome": nome_categoria, "codigo": codigo_categoria},
+        "jurisdicao_preferida": tribunais.UF_PARA_TRT.get(uf_jurisprudencia, []),
+        "uf_jurisprudencia": uf_jurisprudencia,
         "skill": resumo_skill,
         "layout_rules_source": (peticao_skill_arquivos.configuracao_visual_padrao() or {}).get("fonte_das_regras"),
         "layout_campos_sem_definicao": (peticao_skill_arquivos.configuracao_visual_padrao() or {}).get("campos_sem_definicao"),
@@ -3144,6 +3203,10 @@ INTEGRIDADE (vale para qualquer skill):
   ele não estiver no bloco DOCUMENTOS.
 - Use a entrevista como ALEGAÇÃO e os documentos como PROVA; não trate fato controvertido como provado.
 - Toda citação será conferida depois contra o material; a que não constar dele é marcada como não verificada.
+- Não crie pedido de dano material sem valor e método de cálculo documentalmente sustentado. Sem ambos, registre a lacuna fora da peça e não formule o pedido.
+- CAT, atestado e receita só provam o que efetivamente registram: não presuma nexo, data, tratamento ou vínculo entre médico/clínica e reclamada. Receita sem data não serve para cronologia ou agravamento.
+- Tema, precedente e artigo devem ser usados apenas para a hipótese que efetivamente disciplinam. Ao usar precedente por analogia, declare a analogia; art. 195 da CLT não fundamenta perícia médica e revelia é matéria do art. 844 da CLT.
+- Antes de entregar, confira que todo pedido tem correspondente no ledger, que documento interno não é citado, que não há duplicação de capítulos/fecho e que a numeração romana é contínua.
 
 """
 
@@ -4861,7 +4924,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     # Usa a mesma representação já conferida pelo FINAL_DOCUMENT_VALIDATOR. Assim
     # o DOCX não introduz limpeza estrutural que o editor/validador não enxergaram.
     secoes = documento_final.preparar_para_renderizacao(
-        secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"]
+        secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"], preservar_marcadores=True,
     )
     logo, fonte, logo_extensao, _origem_visual = identidade_visual()
     visual = configuracao_visual()

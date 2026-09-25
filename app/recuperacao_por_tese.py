@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from . import jurimetria_caso, rag
+from .pesquisa_jurisprudencial import StatusVerificacao
 
 log = logging.getLogger("recuperacao_por_tese")
 
@@ -39,6 +40,7 @@ log = logging.getLogger("recuperacao_por_tese")
 _PARALELISMO = 4
 #: Teses a consultar (a consulta global entra além delas).
 MAXIMO_DE_TESES = 10
+
 
 
 @dataclass
@@ -105,6 +107,13 @@ def _em_paralelo(funcao, consultas: list[dict[str, str]]) -> list[tuple[dict[str
 _EXPEDIENTE = re.compile(r"notifica|distribui|pauta|edital|despacho|intima|certid", re.IGNORECASE)
 
 
+def apenas_verificados(achados: list[Any] | None) -> list[Any]:
+    """Filtro único para qualquer caminho que possa alimentar a redação."""
+    return [x for x in (achados or [])
+            if str(x.metadados.get("status_verificacao") or "UNVERIFIED").upper()
+            == StatusVerificacao.VERIFIED.value]
+
+
 def _natureza(metadados: dict[str, Any]) -> str:
     """Grau e força do julgado, para o modelo (e o advogado) não tratarem tudo como igual."""
     tipo = str(metadados.get("tipo_documento") or "").casefold()
@@ -120,11 +129,13 @@ def _natureza(metadados: dict[str, Any]) -> str:
 
 
 def precedentes(
-    consultas: list[dict[str, str]], contexto: str, *, por_tese: int = 4, total: int = 18
+    consultas: list[dict[str, str]], contexto: str, *, uf: str = "", por_tese: int = 4, total: int = 18
 ) -> tuple[list[Any], list[Proveniencia], list[str]]:
     """Julgados por tese. Devolve (trechos, proveniência, erros)."""
     def buscar(consulta: str):
-        similares, _jur, _uf = jurimetria_caso.buscar_focada(consulta, texto_para_uf=contexto)
+        similares, _jur, _uf = jurimetria_caso.buscar_focada(
+            consulta, uf=uf, texto_para_uf=contexto
+        )
         return similares
 
     melhores: dict[str, tuple[Any, Proveniencia]] = {}
@@ -133,8 +144,11 @@ def precedentes(
         if erro is not None:
             erros.append(f"{c['tese']}: {type(erro).__name__}: {str(erro)[:120]}")
             continue
-        uteis = [x for x in (achados or []) if not _EXPEDIENTE.search(str(x.metadados.get("tipo_documento") or ""))]
-        for trecho in (uteis or achados or [])[:por_tese]:
+        # Legado sem selo não é precedente confirmado. Só o fluxo de validação
+        # externa pode promover o registro a VERIFIED; snippet ou embedding nunca.
+        verificados = apenas_verificados(achados)
+        uteis = [x for x in verificados if not _EXPEDIENTE.search(str(x.metadados.get("tipo_documento") or ""))]
+        for trecho in uteis[:por_tese]:
             ref = trecho.referencia()
             chave = str(ref.get("processo") or ref.get("identificador") or trecho.identificador)
             atual = melhores.get(chave)

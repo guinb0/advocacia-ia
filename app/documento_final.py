@@ -66,10 +66,18 @@ def _sem_marcadores_estruturais(secoes: list[dict[str, Any]]) -> tuple[list[dict
     return saida, removidos
 
 
-def preparar_para_renderizacao(secoes: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Representação persistível/renderizável, sem transformações ocultas no DOCX."""
+def preparar_para_renderizacao(
+    secoes: list[dict[str, Any]], params: dict[str, Any], *, preservar_marcadores: bool = False,
+) -> list[dict[str, Any]]:
+    """Representação persistível, ou de renderização com marcação semântica.
+
+    `::: destaque` é instrução de estilo, não texto visível. A representação
+    validada o remove; o renderer a preserva apenas até convertê-la em XML.
+    """
     migradas = peticao_migracao_legado.migrar_secoes(secoes)
     sem_metadata, _ = _cortar_metadata(migradas, params)
+    if preservar_marcadores:
+        return sem_metadata
     limpas, _ = _sem_marcadores_estruturais(sem_metadata)
     return limpas
 
@@ -515,6 +523,7 @@ def validar_documento_final(
     saida += [_v("PLACEHOLDER_NO_DOCUMENTO_FINAL", c, m, f"Marcador {m[:60]} no documento final.", "Resolva o dado ou registre a pendência para revisão humana antes de considerar a peça pronta.", False) for c, m in ae.pendencias(final) if not ae._PLACEHOLDER_PROIBIDO.search(m)]  # noqa: SLF001
     saida += ae.pendencia_com_dado_canonico(final, plano.get("partes") or {})
     saida += ae.dado_rejeitado_no_texto(final, plano.get("case_facts") or {})
+    saida += ae.coerencia_juridica_minima(final, plano)
     if ledger:
         saida += document_ledger.validar_bijecao(ledger) + document_ledger.validar_referencias(final, ledger)
         saida += ae.ausencia_falsa_de_documento_listado(final, ledger)

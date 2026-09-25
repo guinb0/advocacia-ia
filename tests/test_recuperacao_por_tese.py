@@ -17,7 +17,8 @@ PLANO = {
 def _trecho(processo, score, tipo="ACORDAO", texto="texto do julgado"):
     t = SimpleNamespace(
         texto=texto, similaridade=score, titulo=f"TRT8 {processo}", identificador=processo,
-        metadados={"tipo_documento": tipo, "tribunal": "TRT8", "numero_processo": processo}, url="",
+        metadados={"tipo_documento": tipo, "tribunal": "TRT8", "numero_processo": processo,
+                   "status_verificacao": "VERIFIED"}, url="",
     )
     t.referencia = lambda: {"processo": processo, "identificador": processo}
     return t
@@ -48,6 +49,37 @@ def test_precedentes_unem_deduplicam_e_registram_as_teses(monkeypatch):
     assert len(p1.teses) == 2 and p1.score == .85  # serve a duas teses: sobe na ordem
     assert ids[0] == "0001"
     assert "persuasivo" in next(p for p in provs if p.id == "0003").natureza
+
+
+def test_precedentes_respeitam_uf_estruturada_do_caso(monkeypatch):
+    chamadas = []
+
+    def buscar(consulta, **kwargs):
+        chamadas.append(kwargs)
+        return [_trecho("0001", .9)], "TRT8", "PA"
+
+    monkeypatch.setattr(jurimetria_caso, "buscar_focada", buscar)
+    trechos, _provs, erros = r.precedentes(
+        r.consultas_do_plano(PLANO, "", "x")[:1], "relato sem endereço", uf="PA"
+    )
+
+    assert trechos and not erros
+    assert chamadas and chamadas[0]["uf"] == "PA"
+
+
+def test_precedente_nao_verificado_nunca_entra_no_contexto(monkeypatch):
+    item = _trecho("0001", .9)
+    item.metadados["status_verificacao"] = "UNVERIFIED"
+    monkeypatch.setattr(jurimetria_caso, "buscar_focada", lambda *a, **k: ([item], "TRT8", "PA"))
+    trechos, provs, erros = r.precedentes(r.consultas_do_plano(PLANO, "", "x")[:1], "")
+    assert not trechos and not provs and not erros
+
+
+def test_uf_da_jurisprudencia_vem_do_cadastro_antes_do_ocr(monkeypatch):
+    monkeypatch.setattr(pl.armazenamento, "obter_caso", lambda _caso: {"uf": "PA"})
+    monkeypatch.setattr(pl.armazenamento, "obter_qualificacao", lambda _caso: {"uf": "SP"})
+
+    assert pl._uf_jurisprudencia_do_caso("caso", "endereço menciona RJ") == "PA"
 
 
 def test_falha_do_vector_db_e_observavel_no_diagnostico(monkeypatch):

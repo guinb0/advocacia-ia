@@ -4,17 +4,16 @@ Uso: python -m scripts.vetorizar_legislacao_pendente
 """
 from __future__ import annotations
 
-import os
 
 import psycopg
 
-from app.rag import carregar_env, gerar_embeddings, vetor_literal
+from app.rag import carregar_env, gerar_embeddings, vetor_literal, url_pgvector
 
 
 def main() -> None:
     carregar_env()
     total = 0
-    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conexao:
+    with psycopg.connect(url_pgvector(), autocommit=True) as conexao:
         while True:
             linhas = conexao.execute(
                 """SELECT k.id,k.texto FROM knowledge_chunks k JOIN fontes f ON f.id=k.fonte_id

@@ -452,6 +452,7 @@ def auditar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[st
         *dado_de_teste_no_texto(secoes),
         *placeholders_proibidos(secoes),
         *cidade_endereco_vs_vara(secoes, partes),
+        *coerencia_juridica_minima(secoes, plano),
         *(candidatos_semanticos(secoes, plano, embed) if embed else []),
         *ledger(plano), *valor_da_causa(secoes, plano), *criterio_de_calculo(secoes, params),
     ]
@@ -629,6 +630,56 @@ def ausencia_falsa_de_documento_listado(
                 "Cite o(s) Documento NN do índice canônico; não marque como inexistente o que o ledger numera.",
             ))
             return saida
+
+
+def coerencia_juridica_minima(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
+    """Portões para erros jurídicos concretos já encontrados em iniciais da ECT.
+
+    São regras negativas e verificáveis: não decidem a tese, mas impedem que a
+    redação transforme hipótese sem fonte em fato ou cite dispositivo para uma
+    matéria que ele não disciplina.
+    """
+    texto = "\n".join(str(s.get("content") or "") for s in secoes)
+    n = pp.norm(texto)
+    saida: list[Violacao] = []
+
+    for p in plano.get("pedidos") or []:
+        alvo = pp.norm(f"{p.get('tipo', '')} {p.get('objeto', '')}")
+        if "dano material" in alvo and p.get("tipo_de_item", "autonomo") == "autonomo" and not p.get("valor"):
+            saida.append(_v("DANO_MATERIAL_SEM_VALOR", "CLAIMS", str(p.get("id") or ""),
+                            "Pedido de dano material não tem valor indicado no ledger.",
+                            "Retire-o se não houver base mínima, ou informe valor e método de cálculo verificável."))
+    if re.search(r"nexo.{0,25}presum", n):
+        saida.append(_v("NEXO_PRESUMIDO_SEM_BASE", "", "nexo presumido",
+                        "A peça chama o nexo médico de presumido sem base documental ou legal identificada.",
+                        "Descreva somente o que consta da CAT/laudo e trate o nexo como matéria de prova quando necessário."))
+    if re.search(r"servico medico.{0,35}(propri[oa]|da).{0,20}reclamad", n):
+        saida.append(_v("VINCULO_MEDICO_INFERIDO", "", "serviço médico da reclamada",
+                        "A peça atribui o médico/clinica à reclamada sem documento que prove esse vínculo.",
+                        "Identifique-o apenas como médico do trabalho/documento que integra a CAT, salvo prova do vínculo."))
+    if "tema 84" in n and re.search(r"(agencia|movimentacao de valores).{0,100}tema 84|tema 84.{0,100}(agencia|movimentacao de valores)", n) and "analogia" not in n:
+        saida.append(_v("TEMA_84_SEM_ANALOGIA", "", "Tema 84",
+                        "O Tema 84 é aplicado diretamente a atividade diversa da entrega postal.",
+                        "Explique expressamente a analogia e não atribua ao Tema 84 tese sobre movimentação de valores em agência."))
+    if "art 195" in n and re.search(r"pericia (medica|psiquiatr|clinica)", n):
+        saida.append(_v("ARTIGO_195_FORA_DO_TEMA", "", "art. 195 da CLT",
+                        "O art. 195 da CLT foi usado para perícia médica, embora trate de insalubridade/periculosidade.",
+                        "Fundamente a prova pericial médica no dispositivo processual pertinente ou retire a referência."))
+    if re.search(r"art\.?\s*847.{0,100}revelia|revelia.{0,100}art\.?\s*847", n):
+        saida.append(_v("ARTIGO_847_FORA_DO_TEMA", "", "art. 847 da CLT",
+                        "O art. 847 da CLT foi associado à revelia; ele disciplina a defesa.",
+                        "Use o art. 844 da CLT para revelia ou retire a referência."))
+    if "ect" in n or "correios" in n or "ect" in pp.norm(str(((plano.get("partes") or {}).get("reu") or {}).get("nome") or "")):
+        cnpj = str(((plano.get("partes") or {}).get("reu") or {}).get("cnpj") or "")
+        if not pp._so_digitos(cnpj):  # noqa: SLF001
+            saida.append(_v("CNPJ_RECLAMADA_AUSENTE", "HEADING", "ECT/Correios",
+                            "A reclamada ECT foi qualificada sem CNPJ canônico no CASE_FACTS.",
+                            "Preencha o CNPJ estruturado da reclamada antes de liberar a inicial."))
+        if "juros" in n and re.search(r"forma da lei|regime vigente", n):
+            saida.append(_v("JUROS_ECT_GENERICOS", "", "juros da ECT",
+                            "Juros/correção da ECT foram formulados de modo genérico, sem enfrentar seu regime jurídico.",
+                            "Indique o regime aplicável à ECT com fonte verificável, ou deixe o ponto para revisão humana."))
+    return saida
 
 
 def dado_rejeitado_no_texto(secoes: list[dict[str, Any]], case_facts: dict[str, Any]) -> list[Violacao]:

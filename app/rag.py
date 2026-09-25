@@ -79,7 +79,7 @@ def _consultar_pgvector(
     for tentativa in range(1, tentativas + 1):
         try:
             with psycopg.connect(
-                _obrigatoria("DATABASE_URL"),
+                url_pgvector(),
                 connect_timeout=connect_timeout,
                 row_factory=dict_row,
                 keepalives=1,
@@ -104,6 +104,20 @@ def _obrigatoria(nome: str) -> str:
     if not valor:
         raise ErroRAG(f"variável {nome} não configurada")
     return valor
+
+
+def url_pgvector() -> str:
+    """Conexão do acervo, separada do banco operacional quando necessário."""
+    dedicada = os.getenv("JURISPRUDENCE_DATABASE_URL", "").strip()
+    if dedicada:
+        return dedicada
+    campos = ("PGVECTOR_HOST", "PGVECTOR_PORT", "PGVECTOR_DB", "PGVECTOR_USER", "PGVECTOR_PASSWORD")
+    if all(os.getenv(c, "").strip() for c in campos):
+        from urllib.parse import quote
+        return (f"postgresql://{quote(os.environ['PGVECTOR_USER'], safe='')}:{quote(os.environ['PGVECTOR_PASSWORD'], safe='')}@"
+                f"{os.environ['PGVECTOR_HOST']}:{os.environ['PGVECTOR_PORT']}/{os.environ['PGVECTOR_DB']}"
+                f"?sslmode={os.getenv('PGVECTOR_SSLMODE', 'prefer')}")
+    return _obrigatoria("DATABASE_URL")
 
 
 def vetor_literal(vetor: list[float]) -> str:
@@ -176,6 +190,7 @@ class TrechoSimilar:
             "identificador": self.identificador,
             "url": self.url or link_do_processo(processo),
             "similaridade": round(self.similaridade, 4),
+            "status_verificacao": self.metadados.get("status_verificacao") or "UNVERIFIED",
         }
 
 
