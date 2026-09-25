@@ -427,7 +427,7 @@ def _enviar(*, email: str, nome: str, codigo: str) -> None:
 
     texto = (
         f"{primeiro_nome},\n\n"
-        f"Seu código de acesso ao Acervo é: {codigo}\n\n"
+        f"Seu código de acesso à Cláudia é: {codigo}\n\n"
         f"Ele vale por {minutos} minutos e serve uma única vez.\n\n"
         "Se não foi você que tentou entrar, alguém pode ter a sua senha. "
         "Troque-a assim que puder e avise quem administra o sistema.\n\n"
@@ -438,7 +438,7 @@ def _enviar(*, email: str, nome: str, codigo: str) -> None:
     <div style="font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;
                 color:#20334a;line-height:1.6;max-width:520px">
       <p>{primeiro_nome},</p>
-      <p>Seu código de acesso ao <strong>Acervo</strong> é:</p>
+      <p>Seu código de acesso à <strong>Cláudia</strong> é:</p>
       <p style="font-size:32px;font-weight:700;letter-spacing:6px;
                 color:#102033;margin:24px 0">{codigo}</p>
       <p>Ele vale por <strong>{minutos} minutos</strong> e serve uma única vez.</p>
@@ -452,7 +452,7 @@ def _enviar(*, email: str, nome: str, codigo: str) -> None:
 
     correio.enviar(
         para=email,
-        assunto=f"{codigo} é o seu código de acesso ao Acervo",
+        assunto=f"{codigo} é o seu código de acesso à Cláudia",
         texto=texto,
         html=html,
     )

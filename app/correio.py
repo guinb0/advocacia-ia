@@ -68,7 +68,7 @@ SMTP_SEGURANCA = (_env("SMTP_SEGURANCA", "starttls") or "starttls").lower()
 #: funciona, mas mostra ao destinatário o endereço técnico em vez do do
 #: escritório.
 SMTP_REMETENTE = _env("SMTP_REMETENTE") or SMTP_USUARIO
-SMTP_REMETENTE_NOME = _env("SMTP_REMETENTE_NOME", "Acervo — Escritório jurídico")
+SMTP_REMETENTE_NOME = _env("SMTP_REMETENTE_NOME", "Cláudia — Escritório jurídico")
 
 #: Curto de propósito. O envio roda dentro do login: um SMTP que demora trinta
 #: segundos precisa virar erro, e não fazer a pessoa olhar para um botão girando.

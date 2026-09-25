@@ -201,7 +201,7 @@ export default function CartaoGoogleDrive() {
                   <li>Clique no botão abaixo e entre com a conta Google do escritório.</li>
                   <li>
                     No topo da página, em “Selecione um projeto”, clique em <strong>Novo projeto</strong>, dê o nome{" "}
-                    <strong>Acervo</strong> e clique em <strong>Criar</strong>. Se já tiver um projeto, só selecione.
+                    <strong>Cláudia</strong> e clique em <strong>Criar</strong>. Se já tiver um projeto, só selecione.
                   </li>
                   <li>Com o projeto selecionado, clique no botão azul <strong>Ativar</strong>.</li>
                 </ol>
@@ -216,7 +216,7 @@ export default function CartaoGoogleDrive() {
                     Abra a página abaixo e clique em <strong>Começar</strong> (ou “Configurar tela de consentimento”).
                   </li>
                   <li>
-                    Nome do app: <strong>Acervo</strong>. E-mail de suporte: o seu e-mail. Clique em{" "}
+                    Nome do app: <strong>Cláudia</strong>. E-mail de suporte: o seu e-mail. Clique em{" "}
                     <strong>Próxima</strong>.
                   </li>
                   <li>
@@ -243,7 +243,7 @@ export default function CartaoGoogleDrive() {
                 <ol className="m-0 pl-5">
                   <li>
                     Abra a página abaixo. Em “Tipo de aplicativo”, escolha <strong>Aplicativo da Web</strong>. Nome:{" "}
-                    <strong>Acervo</strong>.
+                    <strong>Cláudia</strong>.
                   </li>
                   <li>
                     Em <strong>Origens JavaScript autorizadas</strong>, clique em “Adicionar URI” e cole:
@@ -338,7 +338,7 @@ export default function CartaoGoogleDrive() {
                   <li>Escolha a conta onde os vídeos vão ficar (a mesma colocada em “Usuários de teste”).</li>
                   <li>
                     Se aparecer “<strong>O Google não verificou este app</strong>”, clique em <strong>Avançado</strong> e
-                    depois em <strong>Acessar Acervo</strong>. É normal: o app é do próprio escritório.
+                    depois em <strong>Acessar Cláudia</strong>. É normal: o app é do próprio escritório.
                   </li>
                   <li>
                     Marque a permissão do Google Drive e clique em <strong>Continuar</strong>. A aba fecha sozinha e esta
@@ -382,7 +382,7 @@ export default function CartaoGoogleDrive() {
                 “Usuários de teste” (passo 2).
               </li>
               <li>
-                <strong>“O Google não verificou este app”</strong>: clique em “Avançado” e depois em “Acessar Acervo”.
+                <strong>“O Google não verificou este app”</strong>: clique em “Avançado” e depois em “Acessar Cláudia”.
               </li>
               <li>
                 <strong>“invalid_client”</strong>: o ID ou a chave foram copiados errado. Use “Trocar credenciais” e cole
