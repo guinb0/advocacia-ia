@@ -19,7 +19,9 @@ def test_docx_da_peticao_usa_identidade_visual_trocavel(monkeypatch):
     with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
         assert arquivo.testzip() is None
         assert arquivo.read("word/media/logo-escritorio.png") == logo
-        assert b'Times New Roman' in arquivo.read("word/styles.xml")
+        # A fonte vem da skill (formatacao.md), não do modelo visual enviado: o padrão
+        # do escritório manda sobre a última medição guardada.
+        assert b'Arial' in arquivo.read("word/styles.xml")
 
 
 def test_extrai_logo_do_cabecalho_e_fonte_do_modelo(monkeypatch):

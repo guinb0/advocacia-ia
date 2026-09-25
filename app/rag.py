@@ -287,6 +287,19 @@ def buscar_legislacao(
     ) for linha in linhas]
 
 
+#: O acervo mistura petições iniciais com impugnações, contestações, recursos e
+#: contrarrazões — e a similaridade vetorial não distingue: um caso de acidente de
+#: trabalho recuperava "IMPUGNAÇÃO À CONTESTAÇÃO (acidente de trabalho)" tão bem
+#: quanto a inicial de acidente de trabalho, e a peça-modelo que chegava ao modelo
+#: era de outra fase processual. O tipo é inferido do nome do arquivo e do início do
+#: texto (o título da peça); peça assim NÃO é excluída, só passa depois das iniciais.
+_PECA_QUE_NAO_E_INICIAL = (
+    r"(impugna[cç][aã]o|contesta[cç][aã]o|contrarraz|recurso ordin|recurso de revista|"
+    r"agravo|embargos|r[eé]plica|raz[oõ]es finais|memoriais|quesitos|concord[aâ]ncia|"
+    r"laudo|manifesta[cç][aã]o|c[aá]lculo|planilha|cumprimento de senten)"
+)
+
+
 def buscar_pecas_conteudisticas(
     consulta: str, *, limite: int = 8, assunto: str = "", timeout: float = 120, connect_timeout: int = 10,
 ) -> list[dict[str, Any]]:
@@ -313,14 +326,20 @@ def buscar_pecas_conteudisticas(
     linhas = _consultar_pgvector(
         """SELECT c.peca_id, c.texto, p.nome_arquivo, p.categoria,
                   1 - (c.embedding <=> %s::vector) AS similaridade,
-                  (p.metadados->>'assunto' = %s) AS mesmo_assunto
+                  (p.metadados->>'assunto' = %s) AS mesmo_assunto,
+                  COALESCE(
+                      p.metadados->>'tipo_peca' = 'peticao_inicial',
+                      NOT (p.nome_arquivo ~* %s OR left(p.texto_integral, 1500) ~* %s)
+                  ) AS eh_inicial,
+                  length(p.texto_integral) AS chars_peca
              FROM pecas_conteudo_chunks c
              JOIN pecas_conteudo p ON p.id = c.peca_id
             WHERE c.embedding IS NOT NULL
               AND p.categoria IN ('pecas_simples', 'pecas_complexas')
-            ORDER BY mesmo_assunto DESC, c.embedding <=> %s::vector
+            ORDER BY mesmo_assunto DESC, eh_inicial DESC, c.embedding <=> %s::vector
             LIMIT %s""",
-        (embedding, assunto, embedding, max(limite * 4, limite)), connect_timeout=connect_timeout,
+        (embedding, assunto, _PECA_QUE_NAO_E_INICIAL, _PECA_QUE_NAO_E_INICIAL, embedding,
+         max(limite * 4, limite)), connect_timeout=connect_timeout,
     )
     # Diversidade importa mais que dez trechos da mesma petição: no máximo dois
     # por arquivo e metade de cada coleção quando houver material aderente.
@@ -337,6 +356,8 @@ def buscar_pecas_conteudisticas(
             "texto": str(linha["texto"]), "arquivo": str(linha["nome_arquivo"]),
             "categoria": categoria, "similaridade": float(linha["similaridade"]),
             "mesmo_assunto": bool(linha["mesmo_assunto"]),
+            "eh_inicial": bool(linha["eh_inicial"]),
+            "chars_peca": int(linha["chars_peca"] or 0),
         })
         por_peca[peca_id] += 1
         por_categoria[categoria] += 1

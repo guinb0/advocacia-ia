@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextvars
 import io
 import json
+import statistics
+from contextvars import ContextVar
 import logging
 import os
 import re
@@ -34,6 +36,23 @@ from . import (
 from . import casos as casos_ocr
 
 log = logging.getLogger("peticao_local")
+
+#: Diagnóstico da geração em curso (por thread/tarefa). Cada etapa de contexto que
+#: pode falhar em silêncio — precedentes, legislação, acervo — registra AQUI o que
+#: aconteceu, inclusive o motivo da falha. Antes só sobrava um booleano "veio ou não
+#: veio": uma peça saída SEM o acervo dizia "o acervo não respondeu", sem dizer por
+#: quê, e ninguém conseguia distinguir chave sem crédito de banco fora do ar.
+_DIAG: ContextVar[dict[str, Any] | None] = ContextVar("peticao_diag", default=None)
+
+
+def _diag(canal: str, **dados: Any) -> None:
+    corrente = _DIAG.get()
+    if corrente is not None:
+        corrente.setdefault("recuperacao", {}).setdefault(canal, {}).update(dados)
+
+
+def _erro_curto(erro: BaseException) -> str:
+    return f"{type(erro).__name__}: {str(erro)[:240]}"
 
 ID_LOCAL = "local"
 #: Sobe a cada mudança no LAYOUT do .docx. `ler_docx` regrava o binário quando a
@@ -278,27 +297,28 @@ def identidade_visual() -> tuple[bytes, str, str, str]:
 
 
 def configuracao_visual() -> dict[str, Any]:
-    """Preferências visuais editáveis, com limites seguros para gerar DOCX válido.
+    """Formatação da peça: a SKILL manda, o resto é preferência do escritório.
 
-    O piso não é mais um número fixo em Python — vem de
-    `peticao_skill_arquivos.configuracao_visual_padrao()`, extraído de
-    `references/formatacao.md` na skill. A skill evolui o padrão do escritório
-    (ABNT, margem, fonte) sem precisar de deploy de código; um modelo visual
-    enviado pelo escritório (`MODELO_VISUAL_CONFIG`) continua acima disso,
-    como sempre esteve — a hierarquia é modelo enviado > skill > emergência.
+    Fonte, tamanho, espaçamento, recuo, margens e alinhamento do corpo vêm de
+    `peticao_skill_arquivos.configuracao_visual_padrao()` (extraído de
+    `references/formatacao.md`) e NÃO são sobrescritos por um modelo visual ou
+    configuração enviados antes: o escritório mudou o padrão (a peça de
+    referência atual é Arial/LiberationSans, e a que serviu de medida antes era
+    serifada) e a geração tem de seguir a skill vigente, não a última medição
+    guardada. O que a skill não define — altura do logo, alinhamento dos títulos,
+    preferência por tabelas — continua vindo da configuração salva.
     """
     padrao = peticao_skill_arquivos.configuracao_visual_padrao()
     configuracao = dict(padrao)
-    # `fonte` vazia = "use a fonte do modelo visual enviado" (`identidade_visual`);
-    # a fonte da skill só entra na ausência dele, via `_fonte_padrao()`. Preencher
-    # aqui faria o padrão passar por cima do modelo que o escritório subiu.
-    configuracao["fonte"] = ""
     try:
         registro = armazenamento.obter_modelo(MODELO_VISUAL_CONFIG)
         if registro:
             recebida = json.loads(bytes(registro["conteudo"]).decode("utf-8"))
             if isinstance(recebida, dict):
-                configuracao.update({k: v for k, v in recebida.items() if k in configuracao})
+                configuracao.update({
+                    k: v for k, v in recebida.items()
+                    if k in configuracao and k not in _CAMPOS_DA_SKILL
+                })
     except Exception:
         log.warning("configuração visual indisponível; usando padrão da skill", exc_info=True)
     for campo in ("tamanho_fonte_pt", "espacamento_linha", "recuo_primeira_linha_cm", "margem_superior_cm", "margem_direita_cm", "margem_inferior_cm", "margem_esquerda_cm", "altura_logo_cm"):
@@ -307,6 +327,15 @@ def configuracao_visual() -> dict[str, Any]:
         except (TypeError, ValueError):
             configuracao[campo] = padrao[campo]
     return configuracao
+
+
+#: Campos que a skill (`formatacao.md`) define e que, portanto, nenhum modelo
+#: visual ou configuração salva pode sobrescrever.
+_CAMPOS_DA_SKILL = frozenset({
+    "fonte", "tamanho_fonte_pt", "espacamento_linha", "recuo_primeira_linha_cm",
+    "margem_superior_cm", "margem_direita_cm", "margem_inferior_cm",
+    "margem_esquerda_cm", "alinhamento_corpo",
+})
 
 
 def _agora() -> str:
@@ -521,15 +550,23 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
         criticas = []
 
     blocos = [instrucao]
-    if skill_arquivo:
-        blocos.append(skill_arquivo)
+    # ORDEM = PRIORIDADE: o que vem por último pesa mais para o modelo. A orientação
+    # cadastrada na tela (`peticao_skills`, no banco) é anterior à skill de arquivo e
+    # fixava outra estrutura — "Juízo 100% Digital" e "Gratuidade" obrigatórias,
+    # "Das Provas", honorários como seção própria — que vencia a skill por vir
+    # DEPOIS dela no prompt. Agora ela vai ANTES, rotulada como complementar, e a
+    # skill de arquivo fecha o bloco com a regra de precedência explícita.
     if skill:
         cabecalho = (
-            "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO (padrão de redação do trecho que for alterado) ===\n"
-            if revisao
-            else "=== ORIENTAÇÃO DO ESCRITÓRIO PARA ESTA CATEGORIA DE CASO ===\n"
+            "=== ORIENTAÇÃO CADASTRADA NA TELA (complementar — em conflito de estrutura, "
+            "ordem de capítulos, preliminares ou formato com a SKILL DO ESCRITÓRIO abaixo, "
+            "a skill vence) ===\n"
+            if not revisao
+            else "=== ORIENTAÇÃO CADASTRADA NA TELA (padrão de redação do trecho que for alterado; a SKILL DO ESCRITÓRIO prevalece em conflito) ===\n"
         )
         blocos.append(cabecalho + skill)
+    if skill_arquivo:
+        blocos.append(skill_arquivo)
     if regras:
         listadas = "\n".join(
             f"- [{r.get('tipo', 'PREFERENCE')}; confiança {float(r.get('confidence') or 0):.2f}; "
@@ -1103,8 +1140,10 @@ def _precedentes_para_redigir(contexto: str) -> str:
         )
     except Exception as erro:
         log.warning("petição local: precedentes indisponíveis na redação: %s", erro)
+        _diag("precedentes", ok=False, n=0, erro=_erro_curto(erro))
         return ""
     if not similares:
+        _diag("precedentes", ok=True, n=0)
         return ""
     # DOZE julgados, e não seis: com seis o modelo citava um ou dois e dava a
     # fundamentação por cumprida. O trecho de cada um caiu de 2200 para 1800
@@ -1113,6 +1152,7 @@ def _precedentes_para_redigir(contexto: str) -> str:
     # justamente o que o modelo menos aproveita.
     linhas = ["\n\n=== JULGADOS SEMELHANTES (use no DO DIREITO) ==="]
     usados = list(similares[:18])
+    _diag("precedentes", ok=True, n=len(usados))
     for indice, trecho in enumerate(usados, start=1):
         ref = trecho.referencia()
         linhas.append(
@@ -1154,9 +1194,12 @@ def _legislacao_para_redigir(contexto: str) -> str:
         trechos = rag.buscar_legislacao(contexto[:12_000], limite=14)
     except Exception as erro:
         log.warning("petição local: legislação indisponível na redação: %s", erro)
+        _diag("legislacao", ok=False, n=0, erro=_erro_curto(erro))
         return ""
     if not trechos:
+        _diag("legislacao", ok=True, n=0)
         return ""
+    _diag("legislacao", ok=True, n=len(trechos))
     linhas = ["\n\n=== LEGISLAÇÃO DO ACERVO (use no DO DIREITO) ==="]
     for indice, trecho in enumerate(trechos, start=1):
         titulo = trecho.titulo or trecho.identificador or "lei"
@@ -1201,18 +1244,22 @@ def _padroes_conteudisticos_para_redigir(
         trechos = rag.buscar_pecas_conteudisticas(contexto[:12_000], limite=8, assunto=assunto)
     except Exception as erro:
         log.warning("petição local: acervo de peças indisponível na redação: %s", erro)
+        _diag("pecas", ok=False, n=0, assunto=assunto, erro=_erro_curto(erro))
         return "", []
     if not trechos:
+        _diag("pecas", ok=True, n=0, assunto=assunto)
         return "", []
     linhas = ["\n\n=== PADRÕES CONTEUDÍSTICOS DO ACERVO DO ESCRITÓRIO ==="]
     referencias: list[dict[str, Any]] = []
     for indice, trecho in enumerate(trechos, start=1):
         classe = "peça complexa" if trecho["categoria"] == "pecas_complexas" else "peça simples"
-        linhas.append(f"\n[P{indice}] referência interna ({classe}; arquivo: {trecho['arquivo']})\n{trecho['texto'][:1_000]}")
+        linhas.append(f"\n[P{indice}] referência interna ({classe}; arquivo: {trecho['arquivo']})\n{trecho['texto'][:1_800]}")
         referencias.append({
             "arquivo": trecho["arquivo"], "categoria": trecho["categoria"],
             "similaridade": round(float(trecho["similaridade"]), 4),
             "mesmo_assunto": bool(trecho.get("mesmo_assunto")),
+            "eh_inicial": bool(trecho.get("eh_inicial")),
+            "chars_peca": int(trecho.get("chars_peca") or 0),
         })
     linhas.append(
         "\nEstas referências internas servem APENAS para elevar a qualidade: aproveite a "
@@ -1230,6 +1277,13 @@ def _padroes_conteudisticos_para_redigir(
         "formato de tabela ou qualquer critério estrutural diferente do que aparece "
         "nestas referências, a orientação do escritório PREVALECE — estas referências "
         "não definem formato, só mostram nível de profundidade e raciocínio a igualar."
+    )
+    _diag(
+        "pecas", ok=True, n=len(referencias), assunto=assunto,
+        mesmo_assunto=sum(1 for r in referencias if r["mesmo_assunto"]),
+        arquivos=[r["arquivo"] for r in referencias],
+        scores=[r["similaridade"] for r in referencias],
+        chars_injetados=sum(min(len(t["texto"]), 1_800) for t in trechos),
     )
     return "\n".join(linhas), referencias
 
@@ -1442,6 +1496,69 @@ def _conferir_contra_os_autos(
     return secoes, violacoes, registro
 
 
+#: Caracteres médios por palavra em português, contando o espaço — converte o
+#: tamanho em texto das peças do acervo em palavras.
+_CHARS_POR_PALAVRA = 6.2
+
+
+def _aprofundar_pela_referencia(
+    caso_id: str,
+    secoes: list[dict[str, Any]],
+    brief: dict[str, Any] | None,
+    referencias: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Se a peça saiu muito menor que as iniciais do acervo do mesmo assunto, aprofunda.
+
+    A meta NÃO é um número fixo no código: vem da mediana do tamanho das petições
+    iniciais que o retrieval trouxe para ESTE caso (mesmo assunto, tipo inicial).
+    Sem referências suficientes não há meta e nada roda. A passada usa o motor de
+    revisão que já existe (`_revisar_secoes_via_llm`, modo "aprofundamento") e a
+    crítica cita os fatos do brief, para a profundidade vir de melhor uso do que
+    já foi apurado — nunca de invenção.
+    """
+    iniciais = [r["chars_peca"] for r in referencias if r.get("eh_inicial") and r.get("chars_peca")]
+    palavras = sum(len(str(s.get("content") or "").split()) for s in secoes)
+    info: dict[str, Any] = {"palavras_antes": palavras, "aplicado": False}
+    if len(iniciais) < 3:
+        info["motivo"] = "sem referências iniciais suficientes para definir meta"
+        return secoes, info
+    alvo = int(statistics.median(iniciais) / _CHARS_POR_PALAVRA)
+    info["alvo_palavras"] = alvo
+    if palavras >= alvo * 0.8:
+        return secoes, info
+    fatos = [
+        f"{f['id']}: {f['descricao']}" for f in (brief or {}).get("facts") or []
+        if not f.get("contradiz_entrevista")
+    ]
+    eventos = [f"{e['id']} ({e['data']}): {e['evento']}" for e in (brief or {}).get("timeline") or []]
+    critica = (
+        f"A minuta tem {palavras} palavras; as petições iniciais do acervo do escritório para "
+        f"este assunto têm cerca de {alvo}. Está rasa. APROFUNDE FACTS e LEGAL_GROUNDS (e "
+        "PRELIMINARY/CLAIMS onde estiverem sucintos): narre a cronologia completa em "
+        "subcapítulos numerados, cada fato com a prova que o sustenta (documento e trecho) "
+        "e cada tese na cadeia fato → prova → norma → subsunção → consequência. Use todos "
+        "os fatos e provas já apurados abaixo. NÃO invente fato, data, valor, documento ou "
+        "precedente; o que o material não sustenta continua como [PENDENTE].\n"
+        + ("Fatos apurados: " + " | ".join(fatos) + "\n" if fatos else "")
+        + ("Cronologia: " + " | ".join(eventos) if eventos else "")
+    )
+    try:
+        corrigidas, revisao = _revisar_secoes_via_llm(caso_id, secoes, critica)
+    except ErroPeticao:
+        log.warning("petição local: aprofundamento falhou (caso %s)", caso_id, exc_info=True)
+        info["motivo"] = "a passada de aprofundamento falhou"
+        return secoes, info
+    if revisao.get("alterou"):
+        por_codigo = {s["code"]: s["content"] for s in corrigidas}
+        secoes = [
+            {**s, "content": por_codigo[s["code"]]} if s["code"] in por_codigo else s
+            for s in secoes
+        ]
+        info["aplicado"] = True
+    info["palavras_depois"] = sum(len(str(s.get("content") or "").split()) for s in secoes)
+    return secoes, info
+
+
 def _validar_contra_skill_e_brief(
     caso_id: str, secoes: list[dict[str, Any]], brief: dict[str, Any] | None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1461,6 +1578,14 @@ def _validar_contra_skill_e_brief(
     fora do ar), não há contra o que validar: devolve a peça como está.
     """
     if not brief:
+        return secoes, []
+    if not (brief.get("facts") or brief.get("timeline")):
+        # Sem fatos apurados não há contra o que validar — e validar assim fabrica
+        # problemas: com o brief vazio o revisor acusava "nome divergente" e
+        # "alucinação" em tudo o que a peça tirou legitimamente da entrevista e do
+        # OCR, e a correção automática reescrevia a peça por cima dessas acusações
+        # falsas. Melhor não rodar e dizer por quê (ver `pipeline.fallbacks`).
+        _diag("validacao", ok=False, motivo="brief sem fatos — validação pulada")
         return secoes, []
     minuta = "\n\n".join(f"### {s.get('code')}\n{s.get('content') or ''}" for s in secoes)
     instrucao = (
@@ -1541,6 +1666,8 @@ def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
+    diag: dict[str, Any] = {"recuperacao": {}, "fallbacks": []}
+    _DIAG.set(diag)
     avancar_etapa("Lendo entrevista e documentos…", 1)
     regras_aplicadas = peticao_aprendizado.regras_para_contexto(
         categoria=_categoria_do_caso(caso_id)
@@ -1566,6 +1693,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria
     )
+    tamanho_caso = len(contexto)
     avancar_etapa("Planejando a estrutura da peça…", 4)
     plano = _outline_juridico(contexto)
     outline = _outline_para_redigir(plano)
@@ -1580,6 +1708,44 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "legislacao": bool(legislacao),
         "pecas_modelo": bool(padroes),
         "outline": bool(outline),
+    }
+    resumo_skill = peticao_skill_arquivos.resumo(nome_categoria, codigo_categoria)
+    for canal, info in (diag.get("recuperacao") or {}).items():
+        if canal == "validacao":
+            continue
+        if not info.get("ok"):
+            diag["fallbacks"].append(f"{canal}: FALHOU — {info.get('erro', 'sem detalhe')}")
+        elif not info.get("n"):
+            diag["fallbacks"].append(f"{canal}: consulta funcionou mas não devolveu nada")
+    if not resumo_skill["carregada"]:
+        diag["fallbacks"].append("skill de arquivo NÃO carregada (arquivos ausentes no deploy?)")
+    if not brief or not (brief.get("facts") or brief.get("timeline")):
+        diag["fallbacks"].append(
+            "case brief vazio — " + ((brief or {}).get("analise_erro") or "a análise não achou fatos")
+        )
+    for aviso in diag["fallbacks"]:
+        log.error("petição local: FALLBACK na geração do caso %s — %s", caso_id, aviso)
+    pipeline = {
+        "generation_id": generation_id,
+        "caso_id": caso_id,
+        "tipo_detectado": "INITIAL_PETITION",
+        "categoria": {"nome": nome_categoria, "codigo": codigo_categoria},
+        "skill": resumo_skill,
+        "documentos_do_caso": len((brief or {}).get("evidence") or []),
+        "fatos_no_brief": len((brief or {}).get("facts") or []),
+        "eventos_no_brief": len((brief or {}).get("timeline") or []),
+        "recuperacao": diag.get("recuperacao"),
+        "tokens_aprox": {
+            "caso": tamanho_caso // 4,
+            "skill": resumo_skill["chars"] // 4,
+            "acervo_pecas": len(padroes) // 4,
+            "precedentes": len(precedentes) // 4,
+            "legislacao": len(legislacao) // 4,
+            "outline": len(outline) // 4,
+        },
+        "modelo": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "fallback_acionado": bool(diag["fallbacks"]),
+        "fallbacks": diag["fallbacks"],
     }
     if not precedentes and not legislacao:
         contexto += (
@@ -1620,11 +1786,27 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         # na instrução. Antes daqui saíam três regras que o escritório revogou: cota
         # de quatro parágrafos por tese, dois julgados obrigatórios e a fórmula
         # fiscal do valor da causa. Ficaram no histórico do git, não no prompt.
-        "\n\n=== PADRÃO OBRIGATÓRIO DA PEÇA ===\n"
-        "A seção PRELIMINARY reúne a matéria preliminar, numerada, ANTES dos fatos: "
-        "'I – DO JUÍZO 100% DIGITAL' e 'II – DA GRATUIDADE DA JUSTIÇA' pertencem a "
-        "ela, cada uma com subtítulo próprio e texto desenvolvido; a seção "
-        "LEGAL_GROUNDS não repete nenhuma das duas. "
+        "\n\n=== ONDE CADA COISA ENTRA NAS SEÇÕES DO JSON ===\n"
+        # Este bloco só diz em que SEÇÃO técnica do JSON cada parte cai. ESTRUTURA,
+        # ordem dos capítulos, quais preliminares existem e o que trazem é da SKILL
+        # (estrutura_peca.md) e do padrão das peças do acervo — não daqui. Antes este
+        # texto fixava "Juízo 100% Digital" e "Gratuidade" como preliminares
+        # obrigatórias (a gratuidade saía duas vezes) e o capítulo "Das Provas",
+        # nenhum dos três presente na skill nem na peça de referência.
+        "Em qualquer divergência de estrutura, conteúdo ou formato entre este bloco "
+        "e a SKILL DO ESCRITÓRIO, a skill vence. "
+        "A seção PRELIMINARY reúne a matéria preliminar, numerada, ANTES dos fatos, "
+        "na ordem e com o conteúdo que a skill e as peças do acervo indicam para "
+        "este tipo de ação (em regra a justiça gratuita e, quando cabíveis, tutela de "
+        "urgência e questões de rito e comunicações processuais); não a repita em "
+        "LEGAL_GROUNDS. Não crie preliminar de 'Juízo 100% Digital' a menos que a "
+        "entrevista ou o cliente tenham optado por isso. "
+        "A prescrição (bienal e quinquenal) é SEMPRE tratada, em subcapítulo próprio "
+        "de LEGAL_GROUNDS, ainda que só para afastá-la. "
+        "Use capítulos e subcapítulos numerados, como nas peças do acervo "
+        "(I., I.1., III.4.), cada tese em seu subcapítulo. A seção EVIDENCE traz só o "
+        "requerimento de produção de provas e o rol de documentos que instruem a "
+        "inicial — sem repetir a narrativa dos fatos. "
         # A gratuidade é obrigatória no padrão e pede prova — foi para "cumprir" isso
         # que o modelo inventou "declaração de hipossuficiência anexa (Documento 09)".
         "Na gratuidade, só diga que a declaração de hipossuficiência está anexa se "
@@ -1638,7 +1820,6 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "memória, fora do que está no material, é erro grave — a peça vai a "
         "protocolo. Sem precedente verificável para um ponto, escreva "
         "[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. "
-        "Use subtítulos em CAIXA ALTA iniciados por DO/DA/DOS/DAS. "
         "A seção CLAIMS traz cada pedido com seu valor individual quando exigido "
         "(art. 840 da CLT), e cada pedido decorre de tese já fundamentada. "
         "A seção VALUE traz o valor da causa COERENTE com a soma dos pedidos, sem "
@@ -1744,6 +1925,9 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
     # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
     # cliente, súmula de memória). Ver `conferencia_peticao`.
+    avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 7)
+    secoes, aprofundamento = _aprofundar_pela_referencia(caso_id, secoes, brief, referencias_acervo)
+    pipeline["aprofundamento"] = aprofundamento
     avancar_etapa("Conferindo a peça contra os autos…", 7)
     secoes, violacoes, conferencia = _conferir_contra_os_autos(
         caso_id, secoes, texto_entrevista=texto_entrevista, material=contexto
@@ -1802,6 +1986,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
             "ready": True,
             "blocking_issues": [],
             "warnings": [
+                *_avisos_de_pipeline(pipeline),
                 *_avisos_de_insumo(insumos),
                 *(analise.get("lacunas") or []),
                 *_avisos_de_cobertura(cobertura),
@@ -1829,6 +2014,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
             "conferencia": conferencia,
             "outline": plano,
             "referencias_do_acervo": referencias_acervo,
+            "pipeline": pipeline,
             "case_brief": brief,
             "cobertura": cobertura,
             "validacao_skill_brief": achados_validacao,
@@ -1837,6 +2023,11 @@ Cada content deve conter parágrafos separados por linha em branco."""
     _aplicar_conferencia(dados, secoes, violacoes)
     _salvar(caso_id, dados)
     return dados
+
+
+def _avisos_de_pipeline(pipeline: dict[str, Any]) -> list[str]:
+    """Cada fallback da geração, com o MOTIVO — nunca um aviso genérico."""
+    return [f"Geração com fallback: {f}" for f in pipeline.get("fallbacks") or []]
 
 
 def _avisos_de_insumo(insumos: dict[str, bool]) -> list[str]:
@@ -2221,8 +2412,12 @@ começa por "Ao Juízo da ...", nunca por "Excelentíssimo(a) Senhor(a) Doutor(a
 Juiz(a)". Não invente comarca, vara, relação de trabalho ou qualidade das partes:
 sinalize o dado ausente como [PENDENTE: ...].
 
-Sua prioridade NÃO é produzir texto longo. É produzir fundamentação juridicamente
-precisa, estrategicamente estruturada, verificável e conectada aos fatos e às provas.
+Profundidade vem de melhor aproveitamento do que existe nos autos, não de volume
+vazio nem de invenção — e a peça NUNCA é entregue resumida ou enxuta para poupar
+espaço: cada fato relevante do caso, cada prova disponível e cada tese cabível são
+desenvolvidos até o ponto em que a fundamentação está completa, conectada aos
+fatos e às provas e verificável. Extensão e estrutura seguem a SKILL DO ESCRITÓRIO
+e o padrão das peças do acervo, não uma cota deste contrato.
 
 ESTRUTURA DE CADA TESE, obrigatória:
 FATO RELEVANTE -> PROVA DISPONÍVEL -> QUESTÃO JURÍDICA -> NORMA APLICÁVEL ->

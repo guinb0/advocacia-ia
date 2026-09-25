@@ -424,21 +424,40 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         ],
     }
     # Gemini 3.x gasta a saída em "thinking" e deixa `content` vazio → ilegível.
-    # Sem reasoning, o JSON da análise vai direto para content.
+    # `effort: none` NÃO serve: nesses modelos o reasoning é obrigatório e o
+    # OpenRouter responde 400 ("Reasoning is mandatory for this endpoint") — e
+    # toda análise falhava em silêncio, com o brief vazio chegando à geração da
+    # peça. `low` + `exclude` mantém o raciocínio curto e o tira da resposta,
+    # deixando o JSON em `content`. Medido no caso de 58 documentos: 12 s.
     if usando_openrouter:
-        payload["reasoning"] = {"effort": "none"}
+        payload["reasoning"] = {"effort": "low", "exclude": True}
+
+    cabecalhos = {"Authorization": f"Bearer {chave}"}
+    if usando_openrouter:
+        cabecalhos["HTTP-Referer"] = os.getenv("OPENROUTER_REFERER", "http://localhost:3000")
+
+    def _enviar(corpo: dict[str, Any]) -> httpx.Response:
+        return httpx.post(
+            base_url + "/chat/completions", headers=cabecalhos, json=corpo, timeout=TEMPO_MODELO_S
+        )
 
     try:
-        cabecalhos = {"Authorization": f"Bearer {chave}"}
-        if usando_openrouter:
-            cabecalhos["HTTP-Referer"] = os.getenv("OPENROUTER_REFERER", "http://localhost:3000")
-        resposta = httpx.post(
-            base_url + "/chat/completions",
-            headers=cabecalhos,
-            json=payload,
-            timeout=TEMPO_MODELO_S,
-        )
+        resposta = _enviar(payload)
+        # Modelo que recusa o parâmetro de reasoning: repete sem ele em vez de
+        # perder a análise inteira por causa de um detalhe de provedor.
+        if resposta.status_code == 400 and "reasoning" in payload and "easoning" in resposta.text:
+            log.warning("Análise dos documentos: provedor recusou reasoning (%s); repetindo sem ele",
+                        resposta.text[:160])
+            sem_reasoning = {k: v for k, v in payload.items() if k != "reasoning"}
+            resposta = _enviar(sem_reasoning)
         resposta.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detalhe = f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
+        log.warning("Análise dos documentos falhou: %s", detalhe)
+        raise ErroAnaliseDocumentos(
+            f"O provedor do modelo recusou a análise ({detalhe}). Os documentos continuam "
+            "no caso; avise quem administra o sistema."
+        ) from exc
     except httpx.HTTPError as exc:
         log.warning("Análise dos documentos falhou: %s", str(exc)[:160])
         raise ErroAnaliseDocumentos(

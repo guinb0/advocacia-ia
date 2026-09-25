@@ -67,6 +67,11 @@ ASSUNTOS = (
     "outros_assuntos",
 )
 
+TIPOS_PECA = (
+    "peticao_inicial", "quesitos_pericia", "impugnacao_contestacao", "recurso",
+    "manifestacao_laudo", "calculos", "contestacao", "outro",
+)
+
 #: Caracteres do início da peça que bastam para identificar assunto/teses/
 #: pedidos — endereçamento, qualificação, boa parte dos fatos e o começo do
 #: direito. Testado: petições de 8-15 páginas têm o essencial nos primeiros
@@ -83,6 +88,8 @@ APENAS JSON:
                 'responsabilidade objetiva', 'estabilidade acidentária'"],
   "pedidos": ["até 8 tipos de pedido formulados, ex.: 'indenização por dano moral',
                'horas extras e reflexos', 'reintegração'"],
+  "tipo_peca": "a FASE/ESPÉCIE da peça, um de: peticao_inicial|quesitos_pericia|impugnacao_contestacao|
+                 recurso|manifestacao_laudo|calculos|contestacao|outro",
   "tipo_vinculo": "um de: clt|terceirizado|pejotizado|domestico|indefinido",
   "empregador_setor": "o ramo/setor do empregador em poucas palavras, se identificável
                         pela peça (ex.: 'correios', 'construção civil', 'varejo'), ou
@@ -137,15 +144,21 @@ def _normalizar_saida(bruto: dict[str, Any]) -> dict[str, Any]:
         "assunto": assunto,
         "subteses": [str(s).strip() for s in (bruto.get("subteses") or []) if str(s).strip()][:5],
         "pedidos": [str(p).strip() for p in (bruto.get("pedidos") or []) if str(p).strip()][:8],
+        "tipo_peca": (
+            str(bruto.get("tipo_peca") or "outro").strip().lower()
+            if str(bruto.get("tipo_peca") or "").strip().lower() in TIPOS_PECA else "outro"
+        ),
         "tipo_vinculo": str(bruto.get("tipo_vinculo") or "indefinido").strip().lower(),
         "empregador_setor": str(bruto.get("empregador_setor") or "").strip(),
         "classificado_em": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
 
-def classificar(*, limite: int | None, forcar: bool) -> None:
+def classificar(*, limite: int | None, forcar: bool, chave: str = "assunto") -> None:
     ambiente.carregar()
-    condicao = "" if forcar else "WHERE NOT (metadados ? 'assunto')"
+    # `--chave tipo_peca`: completa só o campo novo nas peças já classificadas por
+    # assunto, sem refazer (e pagar de novo) o que já existe.
+    condicao = "" if forcar else f"WHERE NOT (metadados ? '{chave}')"
     limite_sql = f"LIMIT {int(limite)}" if limite else ""
     with psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row) as con:
         linhas = con.execute(
@@ -183,8 +196,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limite", type=int, default=None, help="Classifica só as N primeiras (teste).")
     parser.add_argument("--forcar", action="store_true", help="Reclassifica mesmo quem já tem assunto.")
+    parser.add_argument("--chave", default="assunto", choices=["assunto", "tipo_peca"],
+                        help="Qual campo falta: classifica só as peças sem ele.")
     args = parser.parse_args()
-    classificar(limite=args.limite, forcar=args.forcar)
+    classificar(limite=args.limite, forcar=args.forcar, chave=args.chave)
 
 
 if __name__ == "__main__":

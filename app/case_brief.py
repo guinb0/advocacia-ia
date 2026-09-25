@@ -42,11 +42,13 @@ def montar(caso_id: str) -> dict[str, Any]:
     caso = armazenamento.obter_caso(caso_id) or {}
     source_map: dict[str, dict[str, str]] = {}
 
+    analise_erro = ""
     try:
         leitura = analise_documentos.analisar(caso_id)
     except analise_documentos.ErroAnaliseDocumentos as erro:
         log.warning("case_brief: leitura dos documentos indisponível: %s", erro)
         leitura = {}
+        analise_erro = str(erro)
 
     fatos: list[dict[str, Any]] = []
     inconsistencias: list[dict[str, Any]] = []
@@ -158,6 +160,10 @@ def montar(caso_id: str) -> dict[str, Any]:
         "confirmed_information": confirmados,
         "unconfirmed_information": nao_confirmados,
         "missing_information": faltando,
+        # Vazio = a análise rodou. Preenchido = ela FALHOU e o brief está vazio por
+        # isso, não porque os documentos não tenham fatos — sem este campo as duas
+        # situações eram idênticas na peça gerada.
+        "analise_erro": analise_erro,
         "source_map": source_map,
     }
 

@@ -85,6 +85,7 @@ from . import (
     operacao,
     panorama,
     peticao_local,
+    peticao_skill_arquivos,
     peticao_skills,
     skills_juridicas,
     pipeline,
@@ -3053,6 +3054,60 @@ def definir_estado_insight(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/diagnostico/geracao")
+def diagnostico_da_geracao(
+    caso_id: str = "", _usuario: auth.Usuario = Depends(auth.usuario_atual)
+):
+    """Prova, dentro do container que está no ar, o que a geração da petição enxerga.
+
+    Roda as MESMAS dependências que `peticao_local.gerar` usa — skill de arquivo,
+    embeddings, banco vetorial (peças, legislação, julgados) e o modelo da análise
+    de documentos — e devolve o resultado de cada uma, com o erro quando falha.
+    Sem isto, "o acervo não respondeu" era um aviso sem causa: chave sem crédito,
+    banco vetorial fora de alcance e modelo recusando parâmetro pareciam iguais.
+    Nunca devolve valor de variável de ambiente, só se está preenchida.
+    """
+    resultado: dict[str, Any] = {"versao": os.getenv("VERSION", "dev")}
+    resultado["ambiente"] = {
+        nome: bool(os.getenv(nome, "").strip())
+        for nome in (
+            "DATABASE_URL", "EMBEDDINGS_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY",
+        )
+    }
+    resultado["modelos"] = {
+        "redacao": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "analise": os.getenv("OPENROUTER_MODELO_ANALISE", "").strip() or "google/gemini-3.7-flash",
+        "embeddings": os.getenv("EMBEDDINGS_MODEL_NAME", "google/gemini-embedding-001"),
+    }
+
+    def _tentar(fn):
+        inicio = time.monotonic()
+        try:
+            dados = fn()
+            return {"ok": True, "segundos": round(time.monotonic() - inicio, 1), **dados}
+        except Exception as erro:  # noqa: BLE001 - o objetivo é justamente ver o erro
+            return {"ok": False, "segundos": round(time.monotonic() - inicio, 1),
+                    "erro": f"{type(erro).__name__}: {str(erro)[:300]}"}
+
+    nome, codigo = ("", "")
+    if caso_id:
+        nome, codigo = peticao_local._nome_e_codigo_da_categoria(caso_id)  # noqa: SLF001
+    resultado["skill"] = _tentar(lambda: peticao_skill_arquivos.resumo(nome, codigo))
+    consulta = "acidente de trabalho empregado dos Correios dano moral responsabilidade do empregador"
+    resultado["acervo_pecas"] = _tentar(lambda: {
+        "n": len(pecas := rag.buscar_pecas_conteudisticas(consulta, limite=8, assunto=peticao_skill_arquivos.resumo(nome, codigo)["assunto"])),
+        "arquivos": [p["arquivo"] for p in pecas][:8],
+        "mesmo_assunto": sum(1 for p in pecas if p.get("mesmo_assunto")),
+    })
+    resultado["legislacao"] = _tentar(lambda: {"n": len(rag.buscar_legislacao(consulta, limite=5))})
+    if caso_id:
+        resultado["analise_documentos"] = _tentar(lambda: {
+            "achados": len((leitura := analise_documentos.analisar(caso_id)).get("achados") or []),
+            "cronologia": len(leitura.get("cronologia") or []),
+        })
+    return resultado
 
 
 @app.get("/api/casos/{caso_id}/jurimetria")

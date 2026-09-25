@@ -22,6 +22,7 @@ teria o efeito contrário ao pretendido.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import unicodedata
@@ -215,3 +216,22 @@ def configuracao_visual_padrao() -> dict[str, Any]:
         cfg["alinhamento_corpo"] = "justificado"
 
     return cfg
+
+
+def resumo(categoria_nome: str, categoria_codigo: str) -> dict[str, Any]:
+    """O que `carregar` injeta, em forma auditável: quais arquivos, hash e tamanho.
+
+    O hash muda quando qualquer arquivo da skill muda — é o que permite dizer,
+    olhando uma peça já gerada, QUAL versão da skill a orientou.
+    """
+    assunto = _arquivo_do_assunto(categoria_nome, categoria_codigo)
+    arquivos = [n for n in (*_SEMPRE, assunto) if _ler(n)]
+    texto = carregar(categoria_nome, categoria_codigo)
+    return {
+        "skill": "escritorio-trabalhista",
+        "arquivos": arquivos,
+        "assunto": assunto.split("/")[0].removesuffix(".md"),
+        "sha256": hashlib.sha256(texto.encode("utf-8")).hexdigest()[:16] if texto else "",
+        "chars": len(texto),
+        "carregada": bool(texto),
+    }
