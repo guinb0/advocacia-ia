@@ -359,13 +359,21 @@ def _valor(texto: str) -> float:
 _PEDIDO_SEM_VALOR_PROPRIO = re.compile(
     r"honor[aá]rio|juros|corre[çc][ãa]o monet|gratuidade|justi[çc]a gratuita|exib|notifica|cita[çc][ãa]o"
     r"|proced[eê]ncia|produ[çc][ãa]o de prova|intima|expedi[çc][ãa]o de of[ií]cio|anota[çc][ãa]o"
-    r"|reintegra",  # obrigação de fazer; a indenização substitutiva é que leva valor
+    r"|reintegra"  # obrigação de fazer; a indenização substitutiva é que leva valor
+    # Declaratório, procedimental e probatório: não têm conteúdo econômico próprio.
+    # Sem estas entradas a conferência cobrava "valor" desses pedidos e a correção
+    # automática o INVENTAVA ("valor estimado de R$ 1.000,00 correspondente ao custo
+    # de deslocamento… conforme relato") — número sem documento, na peça a protocolar.
+    r"|100%\s*digital|telepresencial|reconhe[çc]|declar[ao]|oitiva|testemunha|per[ií]cia"
+    r"|responsabilidade objetiva|responsabilidade subjetiva",
     re.IGNORECASE,
 )
 #: Pedido sem conteúdo econômico do autor: não entra na soma nem precisa de conta,
 #: MESMO que venha com valor. Na segunda rodada o modelo passou a escrever "estimado
 #: em R$ 0,00" em gratuidade, citação e provas — e "custas R$ 2.018,80" como pedido.
 _SEM_CONTEUDO_ECONOMICO = re.compile(
+    r"100%\s*digital|telepresencial|reconhe[çc]|declar[ao]|oitiva|testemunha|per[ií]cia"
+    r"|responsabilidade objetiva|responsabilidade subjetiva|"
     r"gratuidade|justi[çc]a gratuita|cita[çc][ãa]o|produ[çc][ãa]o de|provas? admitid|intima|notifica"
     r"|exib|custas|honor[aá]rio|juros|corre[çc][ãa]o monet|proced[eê]ncia"
     # recolhimento previdenciário/fiscal é obrigação da ré perante a União, não
@@ -421,6 +429,21 @@ def _valores(secoes: dict[str, str]) -> list[Violacao]:
         if re.search(r"valor da causa|d[aá]-se [àa] causa", item, re.IGNORECASE):
             continue
         if _SEM_CONTEUDO_ECONOMICO.search(item.split(",")[0][:120]):
+            # Pedido sem conteúdo econômico NÃO leva valor. O modelo o fabricava para
+            # "cumprir" o art. 840 ("valor estimado de R$ 1.000,00, correspondente ao
+            # custo estimado de deslocamento… conforme relato") — número sem documento.
+            if re.search(r"(?:valor|custo)s?\s+estimad|estimad[oa]\s+(?:em|de)\s+R\$|atribui-se valor", item, re.IGNORECASE):
+                violacoes.append(
+                    Violacao(
+                        "VALOR_INVENTADO_EM_PEDIDO_SEM_CONTEUDO_ECONOMICO",
+                        "CLAIMS",
+                        " ".join(item.split())[:220],
+                        "Pedido declaratório, procedimental ou probatório com valor estimado sem "
+                        "base em documento — valor inventado.",
+                        "Retire o valor e o critério deste pedido: pedido sem conteúdo econômico "
+                        "não leva valor, e o valor da causa considera só os pedidos de pagamento.",
+                    )
+                )
             continue
         valores = [_valor(v) for v in re.findall(r"R\$\s*([\d.]+,\d{2})", item)]
         if valores:
@@ -447,6 +470,10 @@ def _valores(secoes: dict[str, str]) -> list[Violacao]:
             continue
         if _PEDIDO_SEM_VALOR_PROPRIO.search(item.split(",")[0][:120]):
             continue
+        # Valor que depende de documento ausente já foi declarado como pendência: a
+        # alternativa a isso é inventar, e a skill proíbe inventar valor.
+        if re.search(r"\[PENDENTE:[^\]]*valor", item, re.IGNORECASE):
+            continue
         violacoes.append(
             Violacao(
                 "PEDIDO_SEM_VALOR",
@@ -454,8 +481,11 @@ def _valores(secoes: dict[str, str]) -> list[Violacao]:
                 " ".join(item.split())[:220],
                 "Pedido sem valor: o art. 840, § 1º, da CLT exige pedido certo, determinado e com"
                 " indicação do valor — sem isso o pedido pode ser extinto sem resolução do mérito.",
-                "Dê a este pedido um valor ESTIMADO, com o critério escrito ao lado (ex.: nº de horas"
-                " × valor-hora × meses, a partir do salário dos documentos)." + _PREMISSAS,
+                "Se o pedido é de PAGAMENTO e os documentos trazem os dados, dê um valor ESTIMADO com o"
+                " critério escrito ao lado (ex.: nº de horas × valor-hora × meses). Se o valor"
+                " depende de documento que NÃO está nos autos, NÃO estime nem invente custo, base ou"
+                " critério: escreva [PENDENTE: valor a apurar com <documento>] e mantenha o pedido."
+                " Pedido declaratório, procedimental ou probatório não leva valor." + _PREMISSAS,
             )
         )
 
@@ -550,6 +580,65 @@ def _citacoes(secoes: dict[str, str], fontes: Fontes) -> list[Violacao]:
 # ------------------------------------------------------------------ interface
 
 
+#: Título de capítulo que expõe fragilidade do PRÓPRIO caso.
+_TITULO_DE_FRAGILIDADE = re.compile(
+    r"^\s*(?:\*\*)?[IVXLC]+(?:\.\d+)*\s*[–—-]\s*(?:DA|DAS|DO|DOS)\s+"
+    r"(?:DIVERG[ÊE]NCIA|INCONSIST[ÊE]NCIA|CONTRADI[ÇC]|FRAGILIDADE|LACUNA)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _topicos_de_fragilidade(secoes: dict[str, str]) -> list[Violacao]:
+    """Capítulo que destaca divergência/fragilidade do próprio caso.
+
+    "VIII – DA DIVERGÊNCIA DOCUMENTAL IRRELEVANTE" apontava, dentro dos Fatos, o erro
+    de horário entre CAT e LISA — entregando à parte contrária o argumento contra o
+    cliente. Isso é observação para o advogado, não texto a protocolar.
+    """
+    violacoes: list[Violacao] = []
+    for codigo in ("PRELIMINARY", "FACTS", "LEGAL_GROUNDS"):
+        for m in _TITULO_DE_FRAGILIDADE.finditer(secoes.get(codigo, "")):
+            violacoes.append(
+                Violacao(
+                    "TOPICO_DE_FRAGILIDADE",
+                    codigo,
+                    " ".join(m.group(0).split())[:220],
+                    "Este capítulo aponta divergência ou fragilidade do próprio caso — o que "
+                    "enfraquece o cliente e não pertence à petição inicial.",
+                    "Retire o capítulo inteiro. Se a observação importa ao advogado, ela vai para "
+                    "as observações da análise, nunca para o texto que será protocolado.",
+                )
+            )
+    return violacoes
+
+
+#: Marcador de pendência quebrado: termina em palavra solta ("serão", "a serem", "de")
+#: ou tem outro marcador dentro.
+_MARCADOR_QUEBRADO = re.compile(
+    r"\[PENDENTE:(?:[^\]]*\[PENDENTE|[^\]]*\b(?:ser[ãa]o|a serem|a ser|base|de|do|da|dos|das|que|e|com|para|nos|nas)\s*\])",
+    re.IGNORECASE,
+)
+
+
+def _marcadores_mal_formados(secoes: dict[str, str]) -> list[Violacao]:
+    """`[PENDENTE: juntar comprovantes de despesas serão]` é ruído no corpo da peça."""
+    violacoes: list[Violacao] = []
+    for codigo, texto in secoes.items():
+        for m in _MARCADOR_QUEBRADO.finditer(texto):
+            violacoes.append(
+                Violacao(
+                    "MARCADOR_MAL_FORMADO",
+                    codigo,
+                    _trecho(texto, m.start(), m.end()),
+                    "Marcador de pendência quebrado ou aninhado.",
+                    "Escreva UMA pendência curta e completa, uma única vez por dado faltante "
+                    "(ex.: [PENDENTE: comprovantes das despesas médicas]); não repita o marcador "
+                    "na cadeia fato → prova e não o aninhe dentro de outro.",
+                )
+            )
+    return violacoes
+
+
 def conferir(secoes: list[dict[str, Any]], fontes: Fontes) -> list[Violacao]:
     """Tudo o que a peça afirma e os autos não sustentam."""
     por_codigo = {str(s.get("code") or ""): str(s.get("content") or "") for s in secoes}
@@ -559,6 +648,8 @@ def conferir(secoes: list[dict[str, Any]], fontes: Fontes) -> list[Violacao]:
         *_numeros_sem_origem(por_codigo, fontes),
         *_valores(por_codigo),
         *_topicos_contra_o_cliente(por_codigo),
+        *_topicos_de_fragilidade(por_codigo),
+        *_marcadores_mal_formados(por_codigo),
         *_citacoes(por_codigo, fontes),
     ]
 

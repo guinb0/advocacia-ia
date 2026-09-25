@@ -71,7 +71,9 @@ MAX_CARACTERES_TOTAL = 90000
 #: documento fique invisível só por estar no fim da lista.
 FATIA_MINIMA_POR_DOCUMENTO = 700
 
-TEMPO_MODELO_S = 90.0
+#: Modelo com raciocínio + 58 documentos passou de 90 s em produção e a análise inteira
+#: virava "o modelo não respondeu a tempo". 240 s cobre o pior caso medido com folga.
+TEMPO_MODELO_S = float(os.getenv("ANALISE_TIMEOUT_S", "240"))
 
 INSTRUCAO = """Você lê documentos de um processo trabalhista e aponta o que eles
 dizem e o caso ainda NÃO registrou.
@@ -442,7 +444,13 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
         )
 
     try:
-        resposta = _enviar(payload)
+        try:
+            resposta = _enviar(payload)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            # Uma segunda tentativa: queda de conexão ou timeout isolado não deve
+            # derrubar a leitura de todos os documentos do caso.
+            log.warning("Análise dos documentos: %s; tentando de novo", type(exc).__name__)
+            resposta = _enviar(payload)
         # Modelo que recusa o parâmetro de reasoning: repete sem ele em vez de
         # perder a análise inteira por causa de um detalhe de provedor.
         if resposta.status_code == 400 and "reasoning" in payload and "easoning" in resposta.text:

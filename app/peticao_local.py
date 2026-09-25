@@ -1325,7 +1325,7 @@ def _outline_juridico(contexto: str) -> dict[str, Any] | None:
         "que a sustente não entra em `teses`."
     )
     try:
-        plano = _llm_json(instrucao, contexto[:60_000], timeout=90.0)
+        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0)
     except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
         log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
         return None
@@ -1610,7 +1610,7 @@ def _validar_contra_skill_e_brief(
         f"PETIÇÃO GERADA:\n{minuta[:70_000]}"
     )
     try:
-        saida = _llm_json(instrucao, entrada, timeout=90.0)
+        saida = _llm_json(instrucao, entrada, timeout=180.0)
     except Exception as erro:
         log.warning("petição local: validação skill/brief indisponível: %s", erro)
         return secoes, []
@@ -1820,8 +1820,19 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "memória, fora do que está no material, é erro grave — a peça vai a "
         "protocolo. Sem precedente verificável para um ponto, escreva "
         "[PESQUISAR PRECEDENTE ATUAL E APLICÁVEL SOBRE ESTE PONTO]. "
-        "A seção CLAIMS traz cada pedido com seu valor individual quando exigido "
-        "(art. 840 da CLT), e cada pedido decorre de tese já fundamentada. "
+        "A seção CLAIMS traz cada pedido de PAGAMENTO com seu valor e o critério (a partir "
+        "dos documentos), e cada pedido decorre de tese já fundamentada. Pedidos declaratórios, "
+        "procedimentais ou probatórios (juízo digital, reconhecimento de acidente ou de "
+        "responsabilidade, oitiva de testemunhas, provas, exibição de documentos, honorários, "
+        "juros) NÃO levam valor: nunca invente 'valor estimado', 'custo' de deslocamento ou de "
+        "prova para eles. Se o valor de um pedido depende de documento ausente, escreva "
+        "[PENDENTE: valor a apurar com <documento>] e NÃO estime. "
+        "NÃO escreva capítulo nem parágrafo que destaque fragilidade ou fato desfavorável do "
+        "próprio caso (divergência de horário entre documentos, 'nada foi roubado', prova que "
+        "falta): isso vai para as observações da análise, jamais para o texto a protocolar. "
+        "Pendência no corpo: [PENDENTE: <dado>] curto, completo e UMA vez por dado — sem repetir "
+        "na cadeia fato → prova, sem aninhar marcadores e sem frase quebrada; o resto das "
+        "pendências vai no campo `pendencias`. "
         "A seção VALUE traz o valor da causa COERENTE com a soma dos pedidos, sem "
         "fórmula fiscal automática e SEM título de seção. "
         # "Nestes termos," vem do acervo do escritório (85 iniciais medidas);
@@ -2503,8 +2514,13 @@ PEDIDOS: cada um decorre de tese já fundamentada, com valor individual quando
 exigido (art. 840 da CLT). Não há pedido sem fundamentação nem fundamentação sem
 pedido. O valor da causa deve ser coerente com a soma dos pedidos — não atribua
 valor arbitrário nem recorra automaticamente a fórmula fiscal.
-Na reclamação trabalhista, TODO pedido de pagamento traz o valor NA PRÓPRIA LINHA do
-pedido — "a apurar em liquidação" não basta (art. 840, § 1º, da CLT). O valor é
+Na reclamação trabalhista, TODO pedido de PAGAMENTO traz o valor NA PRÓPRIA LINHA do
+pedido — "a apurar em liquidação" não basta (art. 840, § 1º, da CLT). Pedido
+declaratório, procedimental ou probatório (juízo digital, reconhecimento, oitiva de
+testemunhas, exibição, provas, honorários, juros) NÃO leva valor e é PROIBIDO inventar
+"valor estimado" ou "custo" para ele. Se o valor de um pedido de pagamento depende de
+documento que não está nos autos, escreva [PENDENTE: valor a apurar com <documento>]
+em vez de estimar. Quando os documentos trazem os dados, o valor é
 ESTIMADO com o critério escrito ao lado, a partir dos dados dos documentos (ex.:
 "2 h/dia × 22 dias × 22 meses × valor-hora de R$ 10,82 × 1,5"). É PROIBIDO criar
 pedido ou parcela sem fato que o sustente, e PROIBIDO ajustar parcela para o total
