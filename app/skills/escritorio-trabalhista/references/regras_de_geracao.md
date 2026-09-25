@@ -279,6 +279,11 @@ honorários e juros/correção em subtópicos. Perícia médica não se fundamen
 art. 195 da CLT. Cada precedente precisa de fonte, identificação completa e
 proposição aderente; analogia deve ser declarada.
 
+Pesquisa jurisprudencial é automática e territorialmente priorizada: identifique
+a UF do caso e consulte primeiro o acervo do TRT competente; só sem resultado
+verificável suficiente amplie para os demais TRTs da região, TST/STF e acervo
+nacional. Registre no relatório ao advogado a jurisdição efetivamente usada.
+
 Em IV, todo pedido condenatório tem valor e base documental; sem base mínima,
 não o formule e registre a pendência ao advogado. Inclua citação (art. 841 CLT),
 revelia (art. 844 CLT), rito, gratuidade, intimação exclusiva, honorários, juros,
