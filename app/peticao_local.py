@@ -960,14 +960,16 @@ def anexos_do_caso(caso_id: str) -> list[dict[str, Any]]:
         tipo = extracao.get("tipo") if isinstance(extracao.get("tipo"), dict) else {}
         semantica = extracao.get("classificacao_semantica")
         semantica = semantica if isinstance(semantica, dict) else {}
-        # O tipo determinístico só reconhece documento de identidade e comprovante;
-        # para o resto ele devolve "Documento não identificado" e quem sabe o que o
-        # anexo é, é a leitura semântica. Medido no caso-gabarito: 6 de 8 anexos
-        # chegavam ao chat como "não identificado" com a semântica certa ao lado.
+        # A leitura semântica descreve o DOCUMENTO inteiro; o classificador por
+        # palavras serve de apoio. Um checklist interno pode mencionar “certidão”
+        # dezenas de vezes e, ainda assim, não ser uma certidão. Dar prioridade ao
+        # segundo fazia o chat contrariar a classificação já registrada na tela.
+        # Se não houver leitura semântica, o tipo determinístico segue sendo o
+        # melhor rótulo disponível para documento de identidade/comprovante.
         candidatos = (
-            tipo.get("descricao") if str(tipo.get("codigo") or "") not in ("", "desconhecido") else "",
             semantica.get("documento"),
             entrega.get("identificacao_ia"),
+            tipo.get("descricao") if str(tipo.get("codigo") or "") not in ("", "desconhecido") else "",
             tipo.get("descricao"),
             entrega.get("tipo_detectado"),
         )
