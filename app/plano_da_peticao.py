@@ -58,6 +58,12 @@ def _valor_consta(campo: str, valor: str, texto_norm: str, texto_digitos: str) -
     if campo in ("cpf", "cnpj", "rg", "pis", "ctps", "cep", "telefone"):
         d = _so_digitos(valor)
         return len(d) >= 5 and d in texto_digitos
+    # Cidade/UF do endereço tem de estar no texto. Cobertura de 80% dos tokens
+    # deixava passar «Rua X, Tucuruí/PA» quando o documento só diz Belém: a rua
+    # batia e a cidade de outro caso entrava na qualificação.
+    for cidade in re.findall(r"\b([A-Za-zÀ-ÿ][\wÀ-ÿ'-]{3,})\s*[-–—/]\s*[A-Z]{2}\b", str(valor or "")):
+        if norm(cidade) not in texto_norm:
+            return False
     n = norm(valor)
     if len(n) < 3:
         return False

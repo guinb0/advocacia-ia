@@ -89,6 +89,12 @@ def consultas_do_plano(plano: dict[str, Any] | None, contexto: str, categoria: s
         sustentam = "; ".join(_resumo(f, 120) for f in (t.get("fatos_que_sustentam") or [])[:2])
         consulta = f"{ancora}. {_resumo(t['tese'], 200)}. {sustentam}".strip()
         consultas.append({"tese": _resumo(t["tese"], 90), "consulta": consulta[:700]})
+    blob = f"{categoria}\n{contexto[:4000]}"
+    if re.search(r"assalto|roubo|correios|\bect\b", blob, re.IGNORECASE):
+        consultas.append({
+            "tese": "assalto em agência dos Correios",
+            "consulta": "TST roubo ou assalto em agência dos Correios ECT atendente ou caixa dano moral responsabilidade",
+        })
     return consultas
 
 

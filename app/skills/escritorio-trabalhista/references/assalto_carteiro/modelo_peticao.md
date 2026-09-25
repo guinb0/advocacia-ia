@@ -45,7 +45,7 @@ Indicar a data do fato gerador (assalto), com base no BO e na CAT anexos. Prazo 
 
 - Data de admissão e cargo/função exercida.
 - Descrição das atividades e por que expõem o trabalhador a risco (contato com valores, mercadorias, rua, horário).
-- Narrativa do assalto: data, hora, local, modo de abordagem, arma/ameaça usada, o que foi subtraído, lesões físicas e psicológicas sofridas — sempre baseado no BO e na CAT anexos, nunca presumido.
+- Narrativa do assalto: data, hora, local, modo de abordagem, arma/ameaça usada, o que foi subtraído, lesões físicas e psicológicas sofridas — sempre baseado no BO e na CAT anexos, nunca presumido. Não inverta os agentes descritos na CAT (quem entrou na área interna e quem abordou o autor).
 - Trecho sobre a dimensão simbólica e continuada da violência sofrida pelo trabalhador (dignidade, autonomia, integridade psíquica) — adaptar ao caso, sem copiar mecanicamente se o caso pedir tom diferente.
 - Menção ao diagnóstico psicológico/físico decorrente, se houver CAT/atestado que o demonstre.
 - Se houver manual da empresa reconhecendo o risco da atividade (como o Manual de Pessoal dos Correios, MÓD. 31), citar como prova da ciência do empregador quanto ao risco.
@@ -81,7 +81,7 @@ Indicar a data do fato gerador (assalto), com base no BO e na CAT anexos. Prazo 
 - Critérios do art. 223-G, §1º, CLT: natureza do ato, bem jurídico ofendido, gravidade, reincidência, condição econômica das partes.
 - Caráter tríplice: punitivo, inibitório, reparador.
 - Citar precedentes do TRT da região competente com valores arbitrados em casos semelhantes, se disponíveis/pesquisáveis.
-- Valor sugerido: calcular a partir do salário informado pelo cliente (o modelo já usado pelo escritório sugere multiplicador entre 11 e 12 salários como patamar mínimo razoável — ajustar conforme gravidade do caso e informar que não é teto).
+- Um só quantum. O mesmo número na quantificação, no pedido e na parcela do valor da causa. TEPT agrava esse pedido pelo art. 944 do CC; não é segunda indenização. Sem precedente verificado de valor alto, não aumente o multiplicador. Descontos citados na gratuidade são os do contracheque, com o mês.
 - Observação sobre o entendimento do STF quanto ao tabelamento dos arts. 223-A/223-G CLT como apenas orientativo, não limitador da reparação integral.
 
 ## VIII. Dos Honorários Advocatícios de Sucumbência

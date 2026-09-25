@@ -218,15 +218,11 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
     {
      "em": "item",
      "nao_casa": "R\\$\\s*[\\d.]+,\\d{2}"
-    },
-    {
-     "em": "item",
-     "nao_casa": "\\[PENDENTE:[^\\]]*valor"
     }
    ],
    "codigo": "PEDIDO_SEM_VALOR",
    "mensagem": "Pedido sem valor: o art. 840, § 1º, da CLT exige pedido certo, determinado e com indicação do valor — sem isso o pedido pode ser extinto sem resolução do mérito.",
-   "correcao": "Se o pedido é de PAGAMENTO e os documentos trazem os dados, dê um valor ESTIMADO com o critério escrito ao lado (ex.: nº de horas × valor-hora × meses). Se o valor depende de documento que NÃO está nos autos, NÃO estime nem invente custo, base ou critério: escreva [PENDENTE: valor a apurar com <documento>] e mantenha o pedido. Pedido declaratório, procedimental ou probatório não leva valor. Faça a conta com premissas EXPLÍCITAS — salário e período tirados dos documentos, jornada tirada do relato (dita «conforme relato») — e escreva cada premissa. Nunca um número redondo sem conta, nem [PENDENTE] no lugar da conta.",
+   "correcao": "Se o pedido é de PAGAMENTO e os documentos trazem os dados, dê um valor com a conta ao lado (salário e período tirados do contracheque do mês citado; jornada só «conforme relato»). Se o valor não está nos autos, RETIRE o pedido condenatório. Não escreva [PENDENTE] no corpo e não invoque o art. 322 do CPC: ele trata de interpretação do pedido, não autoriza pedido genérico. O art. 840, §1º, da CLT exige valor. A lacuna fica só no relatório interno. Pedido declaratório, procedimental ou probatório não leva valor.",
    "bloqueia": true
   },
   {
