@@ -2446,7 +2446,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
             f"- {b['ordem']}. {b['titulo']} => {b['code']}"
             for b in plano_est["contrato_secoes"]["blocos"]
         )
-        + "\nUse somente esses papéis, nessa ordem. Análise, lacunas, alertas e pendências são metadados internos e nunca podem aparecer no content das seções."
+        + "\nUse somente esses papéis, nessa ordem, cada um UMA vez e com conteúdo próprio. PRELIMINARY é obrigatória e deve trazer a gratuidade quando houver declaração/elemento de hipossuficiência. Preserve a marcação visual exigida pela skill (# para capítulo, > para citação curta verificável, ::: para blocos centralizados). Análise, lacunas, alertas e pendências são metadados internos e nunca podem aparecer no content das seções."
     )
     instrucao = _com_skill_do_escritorio(caso_id, instrucao_base)
     _estrutura_fixa = _estrutura_fixa_no_prompt(instrucao)
