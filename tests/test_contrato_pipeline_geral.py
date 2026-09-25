@@ -13,6 +13,12 @@ def test_estrutura_da_skill_vira_contrato_ordenado():
     ]
 
 
+def test_skill_exige_relatorio_interno_separado_da_peca():
+    regras = peticao_skill_arquivos._ler("regras_de_geracao.md")  # noqa: SLF001
+    assert "RELATÓRIO AO ADVOGADO são produtos separados" in regras
+    assert "DIVERGÊNCIAS documentais" in regras
+
+
 def test_capitulo_inventado_e_ordem_errada_retidos():
     contrato = contrato_secoes.montar(peticao_skill_arquivos.estrutura_da_skill())
     _, achados = contrato_secoes.canonicalizar([

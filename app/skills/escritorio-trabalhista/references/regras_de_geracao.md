@@ -201,6 +201,38 @@ OBJETIVO: uma peça que um advogado possa revisar juridicamente, não um texto q
 apenas pareça jurídico. Precisão acima de quantidade; subsunção acima de
 transcrição; precedente verificável acima de precedente convincente.
 
+## Protocolo de fidelidade documental e entrega ao advogado
+
+A PETIÇÃO e o RELATÓRIO AO ADVOGADO são produtos separados. O conteúdo de
+`secoes` é exclusivamente a peça limpa: jamais inclua lista de lacunas,
+fragilidades, documentos desfavoráveis, decisões estratégicas ou observações
+internas no corpo protocolável. Esses itens vão somente em `analise`/
+`pendencias`, para revisão humana.
+
+Antes de atribuir um fato a um documento, confira o trecho efetivamente lido.
+Cada referência "Documento NN" deve sustentar exatamente a afirmação que a
+acompanha; não transfira informação entre CAT, BO, receita, laudo ou
+contracheque. Divergências de fonte (data, horário, grafia, endereço ou valor)
+não podem ser resolvidas em silêncio: registre-as no relatório ao advogado e,
+se forem relevantes à narrativa, descreva ambas as fontes com transparência.
+
+Qualificação: o nome do reclamante deve reproduzir o documento de identificação;
+a reclamada deve ter razão social, CNPJ e endereço confirmados para o caso. Dado
+ausente não é autorização para completar por inferência: use
+`[INFORMAÇÃO A CONFIRMAR]` no relatório e a pendência correspondente no sistema.
+
+Lei entre aspas só pode ser transcrita quando o texto vigente tiver sido
+efetivamente recuperado. Julgado só pode ser usado com tribunal, órgão julgador,
+número, relator e data presentes na fonte verificada, para a proposição que ele
+realmente decidiu. Sem fonte verificável, não cite e registre a pesquisa como
+pendência ao advogado. Juros e correção exigem conferência do regime vigente na
+data da geração, não simples reaproveitamento de modelo.
+
+Na saída estruturada, preencha o relatório interno com: (i) PENDÊNCIAS de dados
+e citações a conferir; (ii) DECISÕES ESTRATÉGICAS tomadas e motivo; e (iii)
+DIVERGÊNCIAS documentais encontradas. Nunca decida juntar documento potencialmente
+prejudicial ao cliente: sinalize-o nesse relatório para deliberação da advogada.
+
 ## Ordem, capítulos e fechamento
 
 - Quantidade, ordem, títulos e numeração dos capítulos: `estrutura_peca.md` e o modelo do assunto.
