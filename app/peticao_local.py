@@ -4043,6 +4043,10 @@ def _runs_xml(
 #: elementos existem (`titulo1`, `objeto`, `fechamento`...) e como cada um parece é
 #: da SKILL (bloco ```estilo``` de `formatacao.md`); o motor não conhece nenhum nome.
 _RE_TITULO_MD = re.compile(r"^\s*(#{1,6})\s+(.*\S)\s*$")
+# O redator às vezes devolve "II. DO DIREITO" sem `#`. É título estrutural,
+# não parágrafo de corpo; reconhecer isso no renderer garante o negrito que a
+# skill definiu para `titulo1` mesmo quando a marcação Markdown foi omitida.
+_RE_TITULO_ROMANO_RENDER = re.compile(r"^\s*[IVXLC]+[.\-–—)]\s+\S.{2,90}?\s*$", re.IGNORECASE)
 _RE_ABRE_BLOCO = re.compile(r"^\s*:::\s*([\w-]+)\s*$")
 _RE_FECHA_BLOCO = re.compile(r"^\s*:::\s*$")
 _ALINHAMENTOS = {"esquerda": "left", "centro": "center", "centralizado": "center",
@@ -4218,6 +4222,8 @@ def _paragrafo_xml(texto: str, *, visual: dict[str, Any] | None = None) -> str:
         titulo = _RE_TITULO_MD.match(linha)
         if titulo:
             emitir(f"titulo{min(len(titulo.group(1)), 3)}", titulo.group(2), alinhamento_pedido, medidas)
+        elif _RE_TITULO_ROMANO_RENDER.match(linha):
+            emitir("titulo1", linha.strip(), alinhamento_pedido, medidas)
         else:
             emitir("corpo", linha, alinhamento_pedido, medidas)
     descarregar_citacao()

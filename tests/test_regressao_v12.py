@@ -48,6 +48,14 @@ def test_5_sequencia_principal_incoerente_falha():
     assert "SEQUENCIA_DE_HEADINGS_INVALIDA" in codigos(df.invariantes_estruturais(secoes))
 
 
+def test_titulo_romano_sem_markdown_vira_titulo_negrito_no_docx():
+    secoes = [{"code": "LEGAL_GROUNDS", "content": "II. DA COMPETÊNCIA DA JUSTIÇA DO TRABALHO"}]
+    with zipfile.ZipFile(io.BytesIO(pl.montar_docx(secoes))) as arquivo:
+        xml = arquivo.read("word/document.xml").decode("utf-8")
+    assert "II. DA COMPETÊNCIA DA JUSTIÇA DO TRABALHO" in xml
+    assert "<w:b" in xml
+
+
 def test_5b_higiene_deriva_capitulo_e_subsecao_da_mesma_ordem():
     secoes = [{"code": "FACTS", "content": "VI. Dos Fatos"}, {"code": "LEGAL_GROUNDS", "content": "II. Do Direito\n\n### VII.1. Tema"}, {"code": "CLAIMS", "content": "III. Dos Pedidos"}]
     limpas, _ = df.higienizar(secoes, PLANO, PARAMS)
