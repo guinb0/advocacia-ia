@@ -62,6 +62,7 @@ from . import (
     carteira,
     case_brief_estado,
     casos,
+    custos_api,
     categorias,
     chat,
     chamada,
@@ -372,6 +373,12 @@ app.include_router(whatsapp.roteador)
 app.include_router(tipos_documento.roteador)
 app.include_router(tipos_caso.roteador)
 app.include_router(google_drive.roteador)
+
+
+@app.get("/api/observabilidade/custos-api")
+async def custos_api_tempo_real(horas: int = Query(default=24, ge=1, le=720)) -> dict[str, Any]:
+    """Consumo e falhas de APIs no período, sem dados de cliente ou prompts."""
+    return await run_in_threadpool(lambda: custos_api.resumo(horas=horas))
 
 
 @app.exception_handler(duplicidade.DocumentoDuplicado)

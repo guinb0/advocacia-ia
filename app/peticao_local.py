@@ -828,6 +828,7 @@ def _llm_json(
     # com a mensagem própria, sem consumir a segunda tentativa.
     ultimo_erro: Exception | None = None
     for tentativa in (1, 2):
+        inicio_chamada = time.monotonic()
         try:
             resposta = httpx.post(
                 f"{base}/chat/completions",
@@ -845,6 +846,8 @@ def _llm_json(
                 timeout=timeout,
             )
             resposta.raise_for_status()
+            custos_api.registrar("deepseek", modelo, "geracao_peticao", resposta,
+                                 latencia_ms=round((time.monotonic() - inicio_chamada) * 1000))
             escolha = resposta.json()["choices"][0]
             conteudo = escolha["message"]["content"]
             if escolha.get("finish_reason") == "length":
@@ -865,6 +868,8 @@ def _llm_json(
         # erro subia cru e a tela mostrava 500 sem dizer nada ao advogado, que ficava
         # sem saber se devia tentar de novo — e devia.
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as erro:
+            custos_api.registrar_falha("deepseek", modelo, "geracao_peticao", erro,
+                                      latencia_ms=round((time.monotonic() - inicio_chamada) * 1000))
             ultimo_erro = erro
             log.warning(
                 "petição local: LLM falhou (tentativa %s/2): %s", tentativa, erro
