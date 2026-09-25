@@ -30,6 +30,7 @@ from . import (
     case_brief,
     analise_documental,
     conferencia_peticao,
+    custos_api,
     jurimetria_caso,
     peticao_aprendizado,
     peticao_criticas,
