@@ -14,6 +14,17 @@ Tabela de referência (auditoria humana):
   Seções sem duplicação              ✅    ❌    ❌ (final)
   Prescrição correta                 ✅    ❌    ✅
   Sem documento interno citado       ✅    ❌    ✅
+
+  Item                                      v14  v15  v16
+  Nome do reclamante                         ✅    ❌    ✅
+  Endereço e CNPJ da reclamada               ✅    ❌    ❌
+  Justiça gratuita                           ❌    ✅    ✅
+  Comunicações processuais                   ❌    ✅    ❌
+  Numeração de documentos consistente        ❌    ❌    ✅
+  Pedidos processuais completos              ✅    ✅    ❌
+  Valor coerente entre fundamentação e pedido ⚠️   ⚠️    ❌
+  Sem "[PENDENTE]" no texto                  ✅    ❌    ❌
+  Fatos fiéis à CAT                          ⚠️    ✅    ❌
 """
 
 from __future__ import annotations

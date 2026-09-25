@@ -92,3 +92,26 @@ def test_valores_medico_juros_e_pedidos_de_praxe():
     assert "RELATOR_DO_TEMA_21" in c
     assert "PEDIDO_GENERICO_ART_322" in c
     assert "PEDIDOS_DE_PRAXE_AUSENTES" in c
+
+
+def test_v16_nao_perde_o_que_v14_e_v15_acertaram():
+    """Endereço/CNPJ, comunicações, pedidos, valor único e [PENDENTE] são corrigidos no texto."""
+    autos = "CAT: um entrou na área interna e o outro abordou o autor. CNPJ 34.028.316/4948-66 Belém/PA."
+    secoes = [
+        {"code": "HEADING", "content": "ECT, CNPJ 34.028.316/8384-68, com sede em Tucuruí/PA."},
+        {"code": "LEGAL_GROUNDS", "content": "## Da quantificação\n\n12 vezes, R$ 97.752,24, e 8 vezes, R$ 65.168,16, total R$ 162.920,40."},
+        {"code": "FACTS", "content": "O assaltante que entrou na área interna foi o que abordou o autor, enquanto o outro rendia colegas."},
+        {"code": "CLAIMS", "content": "a) indenização por dano moral de R$ 146.628,36;\n\nb) danos materiais [PENDENTE: valor]."},
+        {"code": "VALUE", "content": "Dá-se à causa o valor de R$ 146.628,36."},
+    ]
+    limpas, rel = df.higienizar(secoes, PLANO, {"estrutura": {}, "metadata_interna": {}}, texto_dos_autos=autos)
+    texto = "\n".join(s["content"] for s in limpas)
+    assert "8384-68" not in texto and "4948-66" in texto
+    assert "Tucuruí" not in texto
+    assert "[PENDENTE" not in texto
+    assert "comunicações processuais" in texto.lower()
+    assert "citação" in texto.lower() and "procedência" in texto.lower()
+    assert "162.920,40" in texto
+    assert "146.628,36" not in texto
+    assert "DINAMICA_INVERTIDA" in codigos(lint.revisao_de_protocolo(secoes, autos))
+    assert rel["estabilidade"]["comunicacoes_inseridas"] == 1
