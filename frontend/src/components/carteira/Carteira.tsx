@@ -6,8 +6,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { Tela } from "@/app/home/home.model";
-import { gruposPermitidos, ICONE_POR_TELA } from "@/components/layout/BarraLateral";
+import { gruposPermitidos } from "@/components/layout/BarraLateral";
+import { DEFINICAO_TELA, iconeDaTela, type Tela } from "@/lib/telas";
 import type { TomSelo } from "@/lib/formato";
 import { useSessao } from "@/lib/auth";
 import type { LinhaCarteira, Severidade } from "@/lib/useCarteira";
@@ -190,8 +190,8 @@ export default function Carteira({
     .flatMap((grupo) => grupo.itens)
     .map((item) => ({
       rotulo: item.rotulo,
-      apoio: APOIO_POR_TELA[item.tela] ?? "módulo do sistema",
-      Icone: ICONE_POR_TELA[item.tela] ?? Plus,
+      apoio: DEFINICAO_TELA[item.tela].apoio ?? "módulo do sistema",
+      Icone: iconeDaTela(item.tela) ?? Plus,
       onClick: () => onNavegar(item.tela),
     }));
 
@@ -560,25 +560,6 @@ function Tecla({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
-
-const APOIO_POR_TELA: Partial<Record<Tela, string>> = {
-  entrevista: "iniciar atendimento",
-  carteira: "mesa do dia",
-  agente: "assistente geral",
-  casos: "cadastro e lista",
-  documentacao: "apoio documental",
-  avulso: "análise avulsa",
-  investigacao: "fontes e indícios",
-  dados: "acervo indexado",
-  panorama: "visão analítica",
-  supervisao: "entrevistas",
-  catalogoRoteiros: "roteiros guiados",
-  glossarioDocumentos: "tipos de documento",
-  tiposDeCaso: "tipos de caso",
-  usuarios: "acessos",
-  saudeAgente: "integrações",
-  modelosDePeticao: "petições",
-};
 
 function AtalhoOperacional({ rotulo, apoio, Icone, onClick }: AtalhoCarteira) {
   return (

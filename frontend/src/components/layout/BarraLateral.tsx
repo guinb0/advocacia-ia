@@ -30,43 +30,11 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  Activity,
-  BarChart3,
-  BookOpen,
-  Bot,
-  BriefcaseBusiness,
-  ChevronDown,
-  ChevronRight,
-  ClipboardCheck,
-  Database,
-  FileCheck2,
-  FileSearch,
-  FileSignature,
-  FileText,
-  FolderKanban,
-  HeartPulse,
-  LayoutDashboard,
-  Layers,
-  LibraryBig,
-  LogOut,
-  Menu,
-  MessageSquareText,
-  PenLine,
-  PhoneCall,
-  Search,
-  Sparkles,
-  Tags,
-  Users,
-  Wallet,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, LogOut, Menu, Sparkles, X } from "lucide-react";
 
-import { podeAbrirTela } from "@/app/home/home.model";
-import type { Tela } from "@/app/home/home.model";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 import { listarModulosDeSkill, type SkillModulo } from "@/lib/api";
+import { iconeDaTela, podeAbrirTela, rotuloNoMenu, type Tela } from "@/lib/telas";
 
 export interface ModuloNavegacao {
   tela: Tela;
@@ -86,6 +54,11 @@ export interface GrupoNavegacao {
   itens: ModuloNavegacao[];
 }
 
+/** Item de menu com rótulo do registro de telas; `extras` só para o que é do menu. */
+function itemDoMenu(tela: Tela, extras: Partial<Omit<ModuloNavegacao, "tela">> = {}): ModuloNavegacao {
+  return { tela, rotulo: rotuloNoMenu(tela), ...extras };
+}
+
 /* Os três grupos são os três trabalhos do escritório, e a ordem dentro deles é a
  * do dia: conduzir a entrevista é o que se faz toda manhã; abrir caso antigo é a
  * exceção. Era a mesma ordem da faixa horizontal — o que ela não tinha era o
@@ -97,63 +70,53 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
     itens: [
       // Primeiro da lista de propósito: é a tela de onde se pergunta qualquer coisa,
       // inclusive "por onde eu começo".
-      { tela: "chat", rotulo: "Chat" },
-      { tela: "entrevista", rotulo: "Entrevista guiada" },
+      itemDoMenu("chat"),
+      itemDoMenu("entrevista"),
       // O dossiê, o painel, a jurimetria e o checklist são leituras de UM caso.
       // Acendem a carteira para a barra não ficar sem resposta quando o advogado
       // está dentro de um caso.
-      { tela: "carteira", rotulo: "Carteira", relacionadas: ["caso", "dossie", "painel", "jurimetria"] },
+      itemDoMenu("carteira", { relacionadas: ["caso", "dossie", "painel", "jurimetria"] }),
       // O "Agente" (conversa geral) saiu do menu enquanto ainda não funciona — depende
       // do serviço ia-juridica. A tela e a rota continuam existindo; só não aparece na
-      // navegação. Basta devolver a linha abaixo quando o serviço estiver de pé.
-      { tela: "casos", rotulo: "Casos" },
-      { tela: "followup", rotulo: "Follow-up" },
-      { tela: "documentacao", rotulo: "Documentação" },
+      // navegação. Basta devolver `itemDoMenu("agente")` quando o serviço estiver de pé.
+      itemDoMenu("casos"),
+      itemDoMenu("followup"),
+      itemDoMenu("documentacao"),
     ],
   },
   {
     titulo: "Análise",
-    itens: [
-      { tela: "avulso", rotulo: "Ler um documento" },
-      { tela: "revisao", rotulo: "Revisão do roteiro" },
-      { tela: "investigacao", rotulo: "Investigar" },
-      { tela: "dados", rotulo: "Dados" },
-      { tela: "panorama", rotulo: "Panorama" },
-    ],
+    itens: [itemDoMenu("avulso"), itemDoMenu("revisao"), itemDoMenu("investigacao"), itemDoMenu("dados"), itemDoMenu("panorama")],
   },
   {
     titulo: "Escritório",
     itens: [
-      { tela: "configuracaoAssinatura", rotulo: "Tactiq" },
-      { tela: "operacao", rotulo: "Operação" },
-      { tela: "supervisao", rotulo: "Supervisão" },
+      itemDoMenu("configuracaoAssinatura"),
+      itemDoMenu("operacao"),
+      itemDoMenu("supervisao"),
       // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
       // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
       // dentro do roteiro; esta entrada é para quem vem consertar depois.
-      { tela: "catalogoRoteiros", rotulo: "Roteiros" },
-      { tela: "glossarioDocumentos", rotulo: "Glossário de documentos" },
-      { tela: "tiposDeCaso", rotulo: "Tipos de caso" },
+      itemDoMenu("catalogoRoteiros"),
+      itemDoMenu("glossarioDocumentos"),
+      itemDoMenu("tiposDeCaso"),
       /* A Administração é o único item com filhos, e por um motivo prático: o que
        * mora dentro dela é ajuste de escritório, feito uma vez e revisto raramente
        * (quem entra, o que cada perfil acessa, por onde os documentos saem para
        * assinatura). Como item plano, cada uma dessas telas gastava uma linha da
        * coluna todo dia para um clique por mês; expansível, elas só aparecem para
        * quem foi procurá-las. */
-      {
-        tela: "usuarios",
-        rotulo: "Administração",
-        subitens: [
-          { tela: "configuracaoAssinatura", rotulo: "Assinatura" },
-        ],
-      },
-      { tela: "saudeAgente", rotulo: "Saúde do agente" },
-      { tela: "gastosApi", rotulo: "Gastos das APIs" },
-      { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
+      itemDoMenu("usuarios", {
+        subitens: [itemDoMenu("configuracaoAssinatura", { rotulo: "Assinatura" })],
+      }),
+      itemDoMenu("saudeAgente"),
+      itemDoMenu("gastosApi"),
+      itemDoMenu("modelosDePeticao"),
     ],
   },
   {
     titulo: "Skills",
-    itens: [{ tela: "skills", rotulo: "Skills" }],
+    itens: [itemDoMenu("skills")],
   },
 ];
 
@@ -175,35 +138,6 @@ const SUBITEM_ATIVO =
   "text-left text-[13px] font-semibold text-nav-texto cursor-pointer";
 const GRUPO_TITULO =
   "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-nav-texto-3 first:mt-0";
-
-export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
-  entrevista: MessageSquareText,
-  carteira: LayoutDashboard,
-  agente: Bot,
-  casos: BriefcaseBusiness,
-  documentacao: LibraryBig,
-  avulso: FileSearch,
-  investigacao: Search,
-  dados: Database,
-  panorama: BarChart3,
-  operacao: Activity,
-  supervisao: Activity,
-  revisao: FileCheck2,
-  followup: PhoneCall,
-  catalogoRoteiros: BookOpen,
-  glossarioDocumentos: Tags,
-  tiposDeCaso: Layers,
-  skills: Sparkles,
-  gastosApi: Wallet,
-  usuarios: Users,
-  saudeAgente: HeartPulse,
-  modelosDePeticao: PenLine,
-  configuracaoAssinatura: FileSignature,
-  caso: ClipboardCheck,
-  dossie: FolderKanban,
-  painel: BarChart3,
-  jurimetria: FileText,
-};
 
 function ativa(modulo: ModuloNavegacao, tela: Tela, skillAberta: string | null): boolean {
   if (modulo.skillId) return tela === "skills" && skillAberta === modulo.skillId;
@@ -361,7 +295,7 @@ export default function BarraLateral({ tela, skillAberta = null, onNavegar, onAb
                * está, mas só dentro de uma lista que ela consegue ver. */
               const acesa = ativa(item, tela, skillAberta) || (temFilhos && !expandido && filhoAtivo(item, tela, skillAberta));
               const podeAbrirPai = podeAbrirTela(item.tela, modulos);
-              const Icone = ICONE_POR_TELA[item.tela] ?? FileText;
+              const Icone = iconeDaTela(item.tela) ?? FileText;
               const Seta = expandido ? ChevronDown : ChevronRight;
               return (
                 <div key={item.tela}>
@@ -395,7 +329,7 @@ export default function BarraLateral({ tela, skillAberta = null, onNavegar, onAb
                   {expandido &&
                     subitens.map((sub) => {
                       const subAcesa = ativa(sub, tela, skillAberta);
-                      const IconeSub = sub.skillId ? Sparkles : (ICONE_POR_TELA[sub.tela] ?? FileText);
+                      const IconeSub = sub.skillId ? Sparkles : (iconeDaTela(sub.tela) ?? FileText);
                       return (
                         <button
                           key={sub.skillId ?? sub.tela}

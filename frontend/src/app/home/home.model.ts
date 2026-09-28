@@ -5,104 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCasos, useCategorias, useSituacao } from "@/lib/useCasos";
 import { useSessao } from "@/lib/auth";
 import { useChamada } from "@/lib/ChamadaContexto";
-
-/** A carteira é a porta de entrada; as outras telas são destinos dela. */
-export type Tela =
-  | "carteira"
-  | "chat"
-  | "agente"
-  | "caso"
-  | "dossie"
-  | "painel"
-  | "jurimetria"
-  | "casos"
-  | "avulso"
-  | "investigacao"
-  | "usuarios"
-  | "panorama"
-  | "operacao"
-  | "entrevista"
-  | "supervisao"
-  | "dados"
-  | "saudeAgente"
-  | "modelosDePeticao"
-  | "configuracaoAssinatura"
-  | "catalogoRoteiros"
-  | "glossarioDocumentos"
-  | "tiposDeCaso"
-  | "revisao"
-  | "followup"
-  | "documentacao"
-  | "skills"
-  | "gastosApi";
-
-export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
-  carteira: "casos",
-  caso: "casos",
-  dossie: "casos",
-  /* São leituras do caso aberto. O backend pode depender de cálculos do agente,
-   * mas a navegação aqui não pode exigir o módulo "agente", senão a aba aparece
-   * no bloco do caso e o clique é ignorado para quem tem acesso à carteira. */
-  painel: "casos",
-  jurimetria: "casos",
-  casos: "casos",
-  avulso: "documentos",
-  investigacao: "investigacao",
-  usuarios: "usuarios",
-  panorama: "metricas",
-  operacao: "operacao",
-  entrevista: "entrevista",
-  supervisao: "supervisao",
-  dados: "metricas",
-  saudeAgente: "agente",
-  revisao: "revisao",
-  followup: "casos",
-  documentacao: "documentacao",
-  /* Sem esta linha a tela seria LIVRE, não restrita: `podeAbrirTela` libera o
-   * que não está mapeado. O catálogo de roteiros pertence ao módulo `roteiros`,
-   * que o advogado e o secretário têm — ver `app/perfis.py`. */
-  catalogoRoteiros: "roteiros",
-  /* Guarda o token de Clicksign/Autentique do escritório — mesmo módulo que já
-   * controla os modelos de contrato (`app/main.py`, `PodeManterModelos`). */
-  configuracaoAssinatura: "contratos",
-  /* A TELA de manutenção pede o módulo; consultar o glossário não pede — a
-   * reclassificação, dentro do caso, lê a lista sem passar por aqui. */
-  glossarioDocumentos: "glossario_documentos",
-  /* Mesma regra do glossário: manter o catálogo pede o módulo, consultá-lo não —
-   * a criação do caso lê a lista de ações sem passar por aqui. */
-  tiposDeCaso: "tipos_caso",
-  skills: "skills",
-  gastosApi: "gastos_api",
-  /* O `chat` de propósito NÃO está aqui — como `modelosDePeticao`.
-   *
-   * Ele é a porta única de perguntas, e quem limita o que cada pessoa vê são os
-   * destinos, no servidor: o caso só responde sobre caso do acervo, os documentos
-   * passam pela mesma rota autenticada do dossiê. Exigir um módulo aqui esconderia a
-   * tela inteira de quem pode perguntar sobre metade do que ela alcança.
-   */
-  /* `modelosDePeticao` de propósito NÃO está aqui.
-   *
-   * Na barra horizontal antiga o item aparecia para todo mundo (filtro de
-   * perfil retirado enquanto o produto está em construção). Ao migrar para a
-   * barra lateral, o mapeamento para o módulo `agente` escondeu a entrada de
-   * quem não tinha esse módulo na sessão — e a modelagem de petições "sumiu"
-   * do menu. Sem mapeamento, `podeAbrirTela` libera a tela; o backend segue
-   * autenticando as APIs do agente. */
-};
-
-/** Toda tela que a URL aceita. Existe em runtime porque `Tela` é só um tipo:
- * sem esta lista não há como conferir o que veio do endereço, e um `?tela=`
- * inventado viraria um estado que nenhuma tela sabe renderizar. */
-export const TELAS: readonly Tela[] = [
-  "carteira", "chat", "agente", "caso", "dossie", "painel", "jurimetria", "casos", "avulso",
-  "investigacao", "usuarios", "panorama", "operacao", "entrevista", "supervisao", "dados",
-  "saudeAgente", "modelosDePeticao", "configuracaoAssinatura", "catalogoRoteiros",
-  "glossarioDocumentos", "tiposDeCaso", "revisao", "followup", "documentacao", "skills", "gastosApi",
-];
-
-function ehTela(valor: string | null): valor is Tela {
-  return valor !== null && (TELAS as readonly string[]).includes(valor);
-}
+import { ehTela, MODULO_DA_TELA, podeAbrirTela, type Tela } from "@/lib/telas";
 
 /** O que o endereço atual diz: qual tela, e qual caso em foco. */
 function lerEndereco(): { tela: Tela | null; caso: string | null; skill: string | null } {
@@ -133,38 +36,6 @@ function escreverEndereco(tela: Tela, caso: string | null, skill: string | null,
   if (modo === "push") window.history.pushState(null, "", endereco);
   else window.history.replaceState(null, "", endereco);
 }
-
-export function podeAbrirTela(tela: Tela, modulos: string[]): boolean {
-  const modulo = MODULO_DA_TELA[tela];
-  return !modulo || modulos.includes(modulo);
-}
-
-/* Título e explicação de cada tela secundária. Ter isso escrito na tela é o
- * que responde "onde eu estou" sem depender de memória. */
-export const CABECALHO: Record<
-  "casos" | "avulso" | "entrevista",
-  { titulo: string; subtitulo: string }
-> = {
-  casos: {
-    titulo: "Casos",
-    subtitulo:
-      "Cadastre um caso para montar o checklist de documentos do cliente, ou abra um caso existente.",
-  },
-  /* A entrevista saiu de dentro de "Casos" e virou aba própria: são dois
-   * trabalhos diferentes. Um é conduzir a conversa com o cliente na linha; o
-   * outro é abrir ou reabrir caso — e cada clique na lista, durante um
-   * atendimento, era uma chance de sair dele sem querer. */
-  entrevista: {
-    titulo: "Entrevista guiada",
-    subtitulo:
-      "Conduza o atendimento pelo roteiro, com a conversa sendo transcrita. O caso nasce daqui, já com o tipo de ação escolhido.",
-  },
-  avulso: {
-    titulo: "Ler um documento",
-    subtitulo:
-      "Leitura solta, para conferir os dados de um documento na hora. Nada aqui é guardado em nenhum caso.",
-  },
-};
 
 /**
  * O ViewModel da tela principal: qual tela está aberta, qual caso está em foco e

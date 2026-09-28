@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-type ModuleFrameVariant = "workspace" | "compact" | "wide";
+export type ModuleFrameVariant = "workspace" | "compact" | "wide";
 
 const WIDTH: Record<ModuleFrameVariant, string> = {
   workspace: "max-w-full",
