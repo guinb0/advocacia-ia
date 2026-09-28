@@ -71,6 +71,7 @@ obrigatória da Etapa 4 (confirmação humana) é feita pelo sistema depois.
 
 Devolva APENAS JSON com estas chaves (todas obrigatórias; lista vazia é resposta válida):
 {
+ "diagnostico": {"sentido":"POSITIVO|NEGATIVO","motivo":"uma frase: os documentos sustentam o caso, ou há contradição/lacuna que o compromete"},
  "resumo_do_caso": {"fatos_cronologicos":[{"data":"","fato":"","documento_id":""}],
                     "partes":[{"nome":"","papel":""}], "questao_central":"", "objetivo_do_cliente":""},
  "documentos": [{"documento_id":"id exato da lista","tipo":"o que o documento É","nome_sugerido":"nome pela nomenclatura da skill, sem prefixo Doc N",
@@ -100,6 +101,9 @@ INTEGRIDADE (vale para qualquer skill):
 - Inconsistência exige PELO MENOS DUAS fontes que realmente divergem (dois documentos, ou documento e o
   cadastro/entrevista informados abaixo — nesse caso use documento_id "cadastro" ou "entrevista" e cite o que consta lá).
   Não invente divergência; nome grafado diferente por erro de OCR não é inconsistência sem conferir.
+- `diagnostico.sentido` é POSITIVO só quando não há inconsistência conferida e nenhum faltante COMPROMETE.
+  Havendo contradição ou faltante que compromete a hipótese, o sentido é NEGATIVO. O motivo cita o que
+  os documentos mostram, sem percentual.
 - Não invente fato, dado do cliente, dispositivo legal, jurisprudência nem probabilidade numérica. Lacuna
   vira `perguntas` (acionáveis), não suposição.
 - Cubra TODOS os documentos da lista em `documentos`, inclusive os ilegíveis ou sem texto (legivel=false).
@@ -388,6 +392,35 @@ def _pagina_da_citacao(texto: str, citacao: str) -> int | None:
     return None
 
 
+def _diagnostico_documental(
+    bruto: dict[str, Any], inconsistencias: list[dict[str, Any]], faltantes: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Positivo ou negativo. Contradição conferida ou faltante que compromete nunca é positivo."""
+    compromete = [f for f in faltantes if f.get("classificacao") == "COMPROMETE"]
+    sentido = "NEGATIVO" if inconsistencias or compromete else "POSITIVO"
+    if inconsistencias and compromete:
+        motivo = (
+            f"Diagnóstico negativo: {len(inconsistencias)} contradição(ões) entre os documentos "
+            f"e {len(compromete)} documento(s) faltante(s) que comprometem a hipótese."
+        )
+    elif inconsistencias:
+        motivo = f"Diagnóstico negativo: {len(inconsistencias)} contradição(ões) entre os documentos."
+    elif compromete:
+        motivo = (
+            "Diagnóstico negativo: falta documento sem o qual a hipótese não se sustenta ("
+            + "; ".join(str(f.get("documento") or "") for f in compromete[:3])
+            + ")."
+        )
+    else:
+        motivo = "Diagnóstico positivo: os documentos não se contradizem e não falta peça que comprometa a hipótese."
+    informado = bruto.get("diagnostico") if isinstance(bruto.get("diagnostico"), dict) else {}
+    if str(informado.get("sentido") or "").strip().upper() == sentido:
+        texto = str(informado.get("motivo") or "").strip()
+        if texto:
+            motivo = texto[:400]
+    return {"sentido": sentido, "motivo": motivo}
+
+
 def validar_contrato(
     bruto: dict[str, Any], documentos: list[dict[str, Any]], *, entrevista: str = "", cadastro: str = ""
 ) -> dict[str, Any]:
@@ -539,6 +572,7 @@ def validar_contrato(
 
     resumo = bruto.get("resumo_do_caso") if isinstance(bruto.get("resumo_do_caso"), dict) else {}
     return {
+        "diagnostico": _diagnostico_documental(bruto, inconsistencias, faltantes),
         "resumo_do_caso": {
             "fatos_cronologicos": [c for c in resumo.get("fatos_cronologicos") or [] if isinstance(c, dict)],
             "partes": [p for p in resumo.get("partes") or [] if isinstance(p, dict)],
@@ -685,6 +719,9 @@ def contexto_para_peticao(caso_id: str, *, store: Armazenamento | None = None) -
         return ""
     r = registro["resultado"]
     linhas = ["=== ANÁLISE DOCUMENTAL (skill documental — cada item aponta o documento de origem) ==="]
+    diag = r.get("diagnostico") if isinstance(r.get("diagnostico"), dict) else {}
+    if diag.get("sentido"):
+        linhas.append(f"Diagnóstico do caso: {diag['sentido']} — {diag.get('motivo') or ''}")
     resumo = r.get("resumo_do_caso") or {}
     if resumo.get("questao_central"):
         linhas.append(f"Questão central: {resumo['questao_central']}")

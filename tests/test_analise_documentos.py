@@ -393,6 +393,44 @@ def cenario_json_em_markdown() -> int:
     return falhas
 
 
+def cenario_diagnostico() -> int:
+    """Contradição conferida vira diagnóstico negativo; citação inventada não conta."""
+    falhas = 0
+    instalar(
+        {
+            "achados": [
+                {"informacao": "Afastamento registrado no CNIS",
+                 "documento": "cnis.png", "citacao": "Afastamento de 12/03/2026",
+                 "relevancia": "contradiz a entrevista", "contradiz": True},
+            ],
+            "contradicoes": [
+                {"titulo": "Data do afastamento", "o_que_diverge": "o CNIS e o laudo não batem",
+                 "fontes": [
+                     {"documento": "cnis.png", "citacao": "Afastamento de 12/03/2026", "valor": "12/03/2026"},
+                     {"documento": "laudo.pdf", "citacao": "CID F43.1", "valor": "sem data de afastamento"},
+                 ]},
+                {"titulo": "Inventada", "o_que_diverge": "não está nos documentos",
+                 "fontes": [
+                     {"documento": "laudo.pdf", "citacao": "incapacidade total", "valor": "x"},
+                     {"documento": "cnis.png", "citacao": "nunca escrito", "valor": "y"},
+                 ]},
+            ],
+            "diagnostico": {"sentido": "POSITIVO", "motivo": "o modelo quis dizer que está tudo bem"},
+        }
+    )
+    r = ad.analisar("caso-1")
+    falhas += not checar(r["diagnostico"]["sentido"] == "NEGATIVO", "contradição conferida não vira positivo")
+    falhas += not checar(
+        "tudo bem" not in r["diagnostico"]["motivo"],
+        "o motivo positivo do modelo é descartado",
+    )
+    falhas += not checar(
+        len(r["contradicoes"]) == 1,
+        f"só a contradição com as duas citações entra ({len(r['contradicoes'])})",
+    )
+    return falhas
+
+
 def main_teste() -> int:
     falhas = 0
     for titulo, teste in (
@@ -404,6 +442,7 @@ def main_teste() -> int:
         ("caso com muitos anexos: nenhum fica invisível", cenario_orcamento_dos_documentos),
         ("anexo em pasta: o modelo aponta pelo nome do arquivo", cenario_nome_do_arquivo_com_caminho),
         ("JSON embrulhado em Markdown / cortado", cenario_json_em_markdown),
+        ("diagnóstico e contradição entre documentos", cenario_diagnostico),
     ):
         print(f"\n{titulo}")
         falhas += teste()

@@ -11,7 +11,8 @@ import Chat from "@/components/chat/Chat";
 import Checklist from "@/components/caso/Checklist";
 import CasoWorkspaceTabs from "@/components/caso/CasoWorkspaceTabs";
 import Dados from "@/components/caso/Dados";
-import Dossie, { PainelAnaliseDocumentos } from "@/components/admin/Dossie";
+import Dossie from "@/components/admin/Dossie";
+import PainelAnaliseDocumental from "@/components/caso/PainelAnaliseDocumental";
 import Investigacao from "@/components/carteira/Investigacao";
 import Jurimetria from "@/components/admin/Jurimetria";
 import ListaCasos from "@/components/carteira/ListaCasos";
@@ -25,6 +26,7 @@ import ChamadaDoAtendimento from "@/components/chamada/ChamadaDoAtendimento";
 import TriagemEntrevista from "@/components/entrevista/TriagemEntrevista";
 import Supervisao from "@/components/admin/Supervisao";
 import SaudeAgente from "@/components/SaudeAgente";
+import PainelGastosApi from "@/components/admin/PainelGastosApi";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
 import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
 import FollowUp from "@/components/admin/FollowUp";
@@ -34,6 +36,7 @@ import CentralDocumentacao from "@/components/documentacao/CentralDocumentacao";
 import CatalogoRoteiros from "@/components/admin/CatalogoRoteiros";
 import GlossarioDocumentos from "@/components/admin/GlossarioDocumentos";
 import TiposDeCaso from "@/components/admin/TiposDeCaso";
+import PainelSkills from "@/components/skills/PainelSkills";
 import { useCasos, useCategorias } from "@/lib/useCasos";
 import { useExtracao, useModelo, useTipos } from "@/lib/useExtracao";
 import { useSessao } from "@/lib/auth";
@@ -54,12 +57,12 @@ type HomeViewProps = ReturnType<typeof useHomeModel>;
  * transcrição, grade de cartões) força o item de grid a crescer e a página inteira
  * ganha rolagem horizontal — com a barra lateral empurrada para fora da tela. */
 const HomeView = (props: HomeViewProps) => (
-  <AppShell tela={props.tela} onNavegar={props.setTela}>
+  <AppShell tela={props.tela} skillAberta={props.skillAberta} onNavegar={props.setTela} onAbrirSkill={props.abrirSkill}>
     {/* O limite fica AQUI, e não dentro de cada tela: um erro de desenho não pode levar a
      * casca e o menu embora. Antes disso, uma exceção em qualquer tela deixava a janela em
      * branco — sem mensagem, sem menu e sem nada para rolar —, e a única saída era o F5.
      * `chave={props.tela}` faz a navegação valer como nova tentativa. */}
-    <LimiteDeErro chave={props.tela}>
+    <LimiteDeErro chave={`${props.tela}:${props.skillAberta ?? ""}`}>
       <Telas {...props} />
     </LimiteDeErro>
   </AppShell>
@@ -77,6 +80,8 @@ const Telas = (props: HomeViewProps) => {
     abrirCaso,
     abrirDossie,
     abrirAnalises,
+    abrirSkill,
+    skillAberta,
     voltarParaCarteira,
   } = props;
   const dadosDoCasoAberto = situacaoCaso.situacao;
@@ -253,6 +258,14 @@ const Telas = (props: HomeViewProps) => {
     );
   }
 
+  if (tela === "gastosApi") {
+    return (
+      <ModuleFrame variant="wide">
+        <PainelGastosApi onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
   if (tela === "revisao") {
     return (
       <ModuleFrame variant="wide">
@@ -309,6 +322,14 @@ const Telas = (props: HomeViewProps) => {
     );
   }
 
+  if (tela === "skills") {
+    return (
+      <ModuleFrame variant="wide">
+        <PainelSkills skillId={skillAberta} onAbrir={abrirSkill} onVoltar={voltarParaCarteira} />
+      </ModuleFrame>
+    );
+  }
+
   if (tela === "dados") {
     return (
       <ModuleFrame variant="wide">
@@ -341,7 +362,7 @@ const Telas = (props: HomeViewProps) => {
               categorias={categorias}
               onTrocarCategoria={situacaoCaso.trocarCategoria}
             />
-            {casoAberto && <PainelAnaliseDocumentos casoId={casoAberto} />}
+            {casoAberto && <PainelAnaliseDocumental casoId={casoAberto} iniciarSozinho />}
           </>
         ) : situacaoCaso.erro ? (
           <>

@@ -760,6 +760,54 @@ export async function importarSkillJuridica(arquivo: File): Promise<{ id: string
   return comoJson(await buscar("/api/skills-juridicas/importar", { method: "POST", body: form }));
 }
 
+export type SkillModulo = {
+  id: string;
+  nome: string;
+  descricao: string;
+  origem: "arquivo" | "importada";
+};
+
+export type SkillModuloDetalhe = SkillModulo & { texto: string; cortado: boolean };
+
+export async function listarModulosDeSkill(): Promise<SkillModulo[]> {
+  return comoJson(await buscar("/api/skills-modulos"));
+}
+
+export async function obterModuloDeSkill(skillId: string): Promise<SkillModuloDetalhe> {
+  return comoJson(await buscar(`/api/skills-modulos/${encodeURIComponent(skillId)}`));
+}
+
+export async function criarSkill(pedido: { nome: string; descricao: string; texto: string }): Promise<{ id: string }> {
+  return comoJson(await buscar("/api/skills-juridicas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pedido),
+  }));
+}
+
+export type SinalGastoApi = "ok" | "atencao" | "critico" | "desconhecido" | "ausente";
+
+export type GastoApi = {
+  id: string;
+  nome: string;
+  configurada: boolean;
+  moeda: string;
+  saldo: number | null;
+  teto: number | null;
+  sinal: SinalGastoApi;
+  mensagem: string;
+  gasto_24h: number;
+  gasto_7d: number;
+  gasto_30d: number;
+  chamadas_30d: number;
+  erros_30d: number;
+  tokens_30d: number;
+};
+
+export async function obterGastosApi(): Promise<{ apis: GastoApi[]; atualizado_em: string }> {
+  return comoJson(await buscar("/api/gastos-api"));
+}
+
 /** Grava a qualificação do cliente (o que o CPF puxou + o que foi digitado) no caso.
  *
  * Vai só o cadastro — nome e telefone já vivem no próprio caso. Campo vazio segue
@@ -1191,6 +1239,14 @@ export interface AnaliseDocumentos {
   /** Gastos dos documentos, em ordem cronológica, ligados ao arquivo de origem. */
   gastos?: GastoDocumento[];
   documentos_lidos: number;
+  /** Contradição entre dois documentos, com as duas citações conferidas. */
+  contradicoes?: Array<{
+    titulo: string;
+    o_que_diverge: string;
+    fontes: Array<{ documento: string; citacao: string; valor: string }>;
+  }>;
+  /** Leitura do caso a partir do que a conferência deixou passar. */
+  diagnostico?: { sentido: "POSITIVO" | "NEGATIVO"; motivo: string };
   /** Quantos achados o servidor recusou por citação não conferida. Aparece na
    *  tela de propósito: silenciar esconderia um modelo alucinando com
    *  frequência, que é o que precisa aparecer. */
@@ -2935,6 +2991,7 @@ export interface AnaliseDocumental {
   modelo?: string;
   versao?: number;
   resultado?: {
+    diagnostico?: { sentido: "POSITIVO" | "NEGATIVO"; motivo: string };
     resumo_do_caso: { questao_central: string; objetivo_do_cliente: string; fatos_cronologicos: Array<{ data: string; fato: string; documento_id: string }> };
     documentos: Array<{
       documento_id: string; arquivo: string; tipo: string; nome_sugerido: string; data: string; paginas: number | null;

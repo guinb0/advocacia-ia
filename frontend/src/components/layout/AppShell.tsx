@@ -34,15 +34,19 @@ const ROTULO_TELA: Record<Tela, string> = {
   revisao: "Revisão do roteiro",
   followup: "Follow-up",
   documentacao: "Documentação",
+  skills: "Skills",
+  gastosApi: "Gastos das APIs",
 };
 
 interface AppShellProps {
   tela: Tela;
+  skillAberta?: string | null;
   onNavegar: (tela: Tela) => void;
+  onAbrirSkill?: (skillId: string) => void;
   children: ReactNode;
 }
 
-export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
+export default function AppShell({ tela, skillAberta = null, onNavegar, onAbrirSkill, children }: AppShellProps) {
   const sessao = useSessao();
   /* A área rolável do layout de painel. Precisa de referência porque o scroll
    * dela não é o do documento: em `lg+` quem rola é esta `<div>`, e abaixo de
@@ -70,7 +74,7 @@ export default function AppShell({ tela, onNavegar, children }: AppShellProps) {
      * (que já tem `overflow-x:hidden` e `max-width:100%` em globals.css, o que
      * mata a rolagem horizontal), e a topbar `sticky top-0` gruda de verdade. */
     <div className="app-shell min-h-dvh bg-fundo lg:grid lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:grid-cols-[236px_minmax(0,1fr)]">
-      <BarraLateral tela={tela} onNavegar={onNavegar} />
+      <BarraLateral tela={tela} skillAberta={skillAberta} onNavegar={onNavegar} onAbrirSkill={onAbrirSkill} />
       <main className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-hidden">
         <div className="hidden shrink-0 border-b border-borda bg-papel/[0.88] px-6 py-3 shadow-[0_1px_0_rgba(16,32,51,0.03)] backdrop-blur lg:block">
           <div className="mx-auto flex max-w-[1440px] min-w-0 items-center justify-between gap-6">

@@ -381,6 +381,12 @@ async def custos_api_tempo_real(horas: int = Query(default=24, ge=1, le=720)) ->
     return await run_in_threadpool(lambda: custos_api.resumo(horas=horas))
 
 
+@app.get("/api/gastos-api")
+async def painel_gastos_api(_usuario: auth.Usuario = Depends(auth.exigir_modulo("gastos_api"))):
+    """Gasto e saldo restante de cada API, para saber quando recarregar."""
+    return await run_in_threadpool(custos_api.painel)
+
+
 @app.exception_handler(duplicidade.DocumentoDuplicado)
 async def responder_documento_duplicado(_: Request, exc: duplicidade.DocumentoDuplicado):
     """O 409 de duplicidade leva a lista do que parece repetido, e não só a frase.
@@ -888,6 +894,35 @@ async def salvar_skill_de_peticao(
 async def listar_skills_juridicas(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
     """Skills disponíveis para análise e redação de novos casos."""
     return await run_in_threadpool(skills_juridicas.listar)
+
+
+@app.get("/api/skills-modulos")
+async def listar_modulos_de_skill(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Skills instaladas e as adicionadas, para o módulo Skills."""
+    return await run_in_threadpool(skills_juridicas.catalogo)
+
+
+@app.get("/api/skills-modulos/{skill_id}")
+async def obter_modulo_de_skill(skill_id: str, _usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    registro = await run_in_threadpool(skills_juridicas.detalhe, skill_id)
+    if registro is None:
+        raise HTTPException(404, "Skill não encontrada.")
+    return registro
+
+
+class _SkillNova(BaseModel):
+    nome: str
+    descricao: str = ""
+    texto: str
+
+
+@app.post("/api/skills-juridicas", status_code=201)
+async def criar_skill_juridica(corpo: _SkillNova, _autorizado=PodeManterModeloPeticao):
+    """Adiciona uma skill. Ela passa a aparecer como módulo próprio."""
+    try:
+        return await run_in_threadpool(skills_juridicas.criar, corpo.nome, corpo.descricao, corpo.texto)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/skills-juridicas/importar", status_code=201)
