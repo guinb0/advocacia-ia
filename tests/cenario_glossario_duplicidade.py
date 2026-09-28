@@ -41,6 +41,7 @@ from app import (  # noqa: E402
     valor_documento,
 )
 from app.celery_app import celery_app  # noqa: E402
+from app.rotas import documentos as rotas_documentos  # noqa: E402
 from app.tasks import ocr as tarefa_ocr  # noqa: E402
 
 MARCA = uuid.uuid4().hex[:8]
@@ -422,7 +423,7 @@ def main_cenario() -> int:
             patch.object(valor_documento, "ler", sem_modelo),
             patch.object(indexacao_documento, "classificar", sem_modelo),
             patch.object(tarefa_ocr, "_entregar_ao_agente", lambda *a, **k: None),
-            patch.object(main, "_entregar_ao_agente", lambda *a, **k: None),
+            patch.object(rotas_documentos, "_entregar_ao_agente", lambda *a, **k: None),
             TestClient(main.app) as cliente,
         ):
             roteiro(cliente, estado)

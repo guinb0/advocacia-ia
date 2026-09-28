@@ -4,7 +4,7 @@ Cobre a rota de análise avulsa e as duas ações do checklist (Enviar e Enviar
 outro), usando um processador falso para testar só o transporte multipart e o
 registro da entrega, sem carregar o modelo OCR.
 
-O falso entra em `pipeline.processar`, e não em `main._processar`, porque os dois
+O falso entra em `pipeline.processar`, e não em `rotas.comum._processar`, porque os dois
 caminhos deixaram de ser o mesmo: `/api/extrair` ainda passa pelo `_processar`,
 mas o envio pelo checklist grava a entrega como pendente e delega o OCR à task
 `tasks.ocr.processar_entrega`, que chama o pipeline direto. Trocar só o

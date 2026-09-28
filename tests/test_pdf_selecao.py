@@ -22,6 +22,7 @@ from PIL import Image
 
 from app import armazenamento, main, pipeline
 from app.celery_app import celery_app
+from app.rotas import documentos as rotas_documentos
 
 from tests.banco_de_teste import exigir_banco_de_teste
 
@@ -178,7 +179,7 @@ def main_teste() -> int:
             )
 
             # --- teto de páginas -----------------------------------------
-            with patch.object(main, "MAX_PAGINAS_PDF_SELECAO", 2):
+            with patch.object(rotas_documentos, "MAX_PAGINAS_PDF_SELECAO", 2):
                 estourou = cliente.request(
                     "POST",
                     f"/api/casos/{caso_id}/documentos.pdf",

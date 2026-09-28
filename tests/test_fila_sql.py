@@ -218,5 +218,5 @@ def test_default_fila_sql_ocr_ativa() -> None:
     env = {k: v for k, v in os.environ.items() if k != "FILA_SQL_OCR_ATIVA"}
     with patch.dict(os.environ, env, clear=True):
         assert manutencao._fila_sql_ocr_ativa() is True
-        # Espelha o default de main._fila_sql_ocr_ativa sem importar a API inteira.
+        # Espelha o default de rotas.comum._fila_sql_ocr_ativa sem importar a API inteira.
         assert os.getenv("FILA_SQL_OCR_ATIVA", "1").strip().lower() in {"1", "true", "sim"}
