@@ -32,6 +32,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, FileText, LogOut, Menu, Sparkles, X } from "lucide-react";
 
+import AlternadorTema from "@/components/ui/AlternadorTema";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 import { listarModulosDeSkill, type SkillModulo } from "@/lib/api";
 import { iconeDaTela, podeAbrirTela, rotuloNoMenu, type Tela } from "@/lib/telas";
@@ -388,6 +389,7 @@ export default function BarraLateral({ tela, skillAberta = null, onNavegar, onAb
           <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.10] text-xs font-bold uppercase text-nav-texto ring-1 ring-white/[0.16]">
             {nome.slice(0, 2)}
           </span>
+          <AlternadorTema variante="celular" />
           {AUTH_ATIVA && (
             <button
               type="button"

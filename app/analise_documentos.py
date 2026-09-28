@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from . import armazenamento, cache_leitura, custos_api
+from . import armazenamento, cache_leitura, custos_api, skill_de_arquivo
 
 log = logging.getLogger("analise_documentos")
 
@@ -49,10 +49,12 @@ class ErroAnaliseDocumentos(RuntimeError):
     """Falha que o usuário precisa ver, com o que dá para fazer a respeito."""
 
 
-#: Teto por documento. Uma página de OCR raramente passa disso, e o corte evita
-#: que um PDF de 40 páginas consuma a janela inteira e empurre os outros anexos
-#: para fora — perder documento em silêncio é pior que analisar menos texto.
-MAX_CARACTERES_POR_DOCUMENTO = 6000
+#: Teto por documento. O corte evita que um PDF de 40 páginas consuma a janela
+#: inteira e empurre os outros anexos para fora — perder documento em silêncio é
+#: pior que analisar menos texto. Era 6 mil, e 6 mil é uma página e meia: o
+#: resto do laudo, da CTPS e do processo do INSS nunca era lido, e a análise
+#: "deixava passar" exatamente o que estava depois da primeira página.
+MAX_CARACTERES_POR_DOCUMENTO = int(os.getenv("ANALISE_MAX_CARACTERES_DOCUMENTO", "25000"))
 
 #: Teto do conjunto. Acima disto o modelo passa a ignorar o meio do prompt, e o
 #: que ele ignora ninguém fica sabendo.
@@ -63,8 +65,14 @@ MAX_CARACTERES_POR_DOCUMENTO = 6000
 #: comprovantes de transporte, os exames e o plano de saúde: exatamente os papéis
 #: que carregam DATA e VALOR. A cronologia e os gastos eram montados sem ver os
 #: documentos que os produzem, e a tela dizia "cronologia dos fatos" para uma
-#: leitura feita sobre a outra metade do caso.
-MAX_CARACTERES_TOTAL = 90000
+#: leitura feita sobre a outra metade do caso. Depois virou 90 mil; com o teto
+#: por documento maior, 250 mil (~75 mil tokens) ainda cabe no contexto dos dois
+#: provedores (Gemini e DeepSeek).
+MAX_CARACTERES_TOTAL = int(os.getenv("ANALISE_MAX_CARACTERES_TOTAL", "250000"))
+
+#: Quantos achados a leitura devolve. Era 12 — num caso com 40 anexos, doze
+#: achados é garantir que a maior parte do que os documentos dizem se perca.
+MAX_ACHADOS = 60
 
 #: Cada documento entra com PELO MENOS isto, mesmo num caso com muitos anexos.
 #: Uma nota fiscal cabe inteira aqui — é o que garante que nenhum TIPO de
@@ -75,8 +83,10 @@ FATIA_MINIMA_POR_DOCUMENTO = 700
 #: virava "o modelo não respondeu a tempo". 240 s cobre o pior caso medido com folga.
 TEMPO_MODELO_S = float(os.getenv("ANALISE_TIMEOUT_S", "240"))
 
-INSTRUCAO = """Você lê documentos de um processo trabalhista e aponta o que eles
-dizem e o caso ainda NÃO registrou.
+ESFORCO_RACIOCINIO = os.getenv("ANALISE_ESFORCO_RACIOCINIO", "medium").strip() or "medium"
+
+INSTRUCAO = """Você lê os documentos de um caso jurídico (trabalhista, previdenciário ou de
+qualquer outra área) e aponta o que eles dizem e o caso ainda NÃO registrou.
 
 Devolva APENAS JSON: {"achados": [...], "gastos": [...], "cronologia": [...], "contradicoes": [...], "diagnostico": {...}}
 
@@ -129,8 +139,10 @@ REGRAS QUE NÃO SE NEGOCIAM:
 1. A citação é copiada do texto do documento, sem reescrever, sem corrigir erro
    de OCR, sem juntar pedaços de lugares diferentes. Se você não consegue copiar
    um trecho contínuo, não faça o achado.
-2. Só entra o que a entrevista NÃO registrou, ou o que a contradiz. O que já está
-   nos fatos conhecidos não é achado.
+2. Só entra o que a entrevista NÃO registrou, o que a contradiz, ou o que dá
+   PRECISÃO a um fato que ela só mencionou por alto (a data exata, o valor, o
+   CID, o número do benefício, o nome do médico, o horário). O que já está nos
+   fatos conhecidos com a mesma precisão não é achado.
 3. Nome, CPF e RG já são extraídos como campo. Não os repita como achado.
 4. Não deduza. "O laudo é de psiquiatra, então há transtorno mental" não é
    achado; "CID F43.1" escrito no laudo é.
@@ -139,7 +151,39 @@ REGRAS QUE NÃO SE NEGOCIAM:
    todo valor pago que o documento comprovar — cada nota/recibo pode ter vários.
    O que não tiver valor em reais não é gasto. Não invente data.
 
-Máximo 12 achados, os mais relevantes primeiro. Gastos: todos os que houver."""
+EXTRAIA O MÁXIMO. Leia CADA documento inteiro, do começo ao fim, antes de
+responder — conclusão, diagnóstico, valores e assinaturas costumam estar nas
+últimas linhas. Passe por todos os documentos da lista, não só pelos primeiros.
+Cada dado útil vira um achado próprio (três CIDs são três achados; dois
+salários em datas diferentes, dois achados). Um achado a mais nunca atrapalha
+o advogado; um dado que você deixa passar pode custar um pedido na petição.
+
+Até 60 achados, os mais relevantes primeiro. Cronologia: todos os
+acontecimentos datados. Gastos: todos os que houver."""
+
+#: Onde cada critério da skill documental entra no JSON acima. A skill diz O QUE olhar em
+#: cada documento; este texto só diz em que chave a conclusão vai.
+_COMO_APLICAR_A_SKILL = """COMO APLICAR OS CRITÉRIOS DA SKILL NESTA RESPOSTA:
+- Analise documento a documento como a skill manda (pontos fortes, vulnerabilidades, inconsistências,
+  atualizado ou desatualizado, pode melhorar ou não). Cada conclusão com trecho literal vira um achado:
+  a informação em "informacao", o porquê (fortalece, enfraquece, está velho demais para a ação, dá para
+  obter versão melhor) em "relevancia".
+- Documento desatualizado para a ação (laudo, PPP, comprovante, certidão, extrato antigos) é achado: cite a
+  data que o torna velho e diga em "relevancia" por que enfraquece e o que pedir no lugar.
+- Inconsistência entre dois documentos (nome, data, valor, assinatura) vai em "contradicoes", com as duas
+  citações. Inconsistência entre documento e entrevista vai no achado com "contradiz": true.
+- Prova fraca ou faltando que a skill manda apontar entra no "diagnostico" (NEGATIVO se falta prova do
+  fato central)."""
+
+
+def instrucao_padrao() -> str:
+    """A instrução da leitura do caso: formato e regras deste módulo + critérios da skill documental."""
+    criterios = skill_de_arquivo.criterios_documentais(
+        r"^3\.5\b", r"^3\.6\b", r"^Arquivos duplicados",
+    )
+    if not criterios:
+        return INSTRUCAO
+    return f"{INSTRUCAO}\n\n{_COMO_APLICAR_A_SKILL}\n\n{criterios}"
 
 
 #: Vocabulário fechado de "de quem é a informação". Fechá-lo é o que permite ao
@@ -271,6 +315,28 @@ def _fatia(texto: str, limite: int) -> str:
     return texto[:cabeca] + "\n[…]\n" + (texto[-cauda:] if cauda else "")
 
 
+def _limite_por_documento(tamanhos: list[int], disponivel: int) -> int:
+    """O maior corte por documento em que o conjunto ainda cabe no orçamento.
+
+    Dividir o orçamento em partes iguais desperdiçava o espaço dos documentos
+    curtos: uma nota fiscal de 800 caracteres "reservava" 3 mil, e o laudo de
+    20 mil ficava cortado nos mesmos 3 mil. Aqui o que o curto não usa vai para
+    o longo — o corte só alcança quem é maior que ele.
+    """
+    if not tamanhos:
+        return MAX_CARACTERES_POR_DOCUMENTO
+    if sum(min(t, MAX_CARACTERES_POR_DOCUMENTO) for t in tamanhos) <= disponivel:
+        return MAX_CARACTERES_POR_DOCUMENTO
+    restante, faltam = disponivel, len(tamanhos)
+    for tamanho in sorted(tamanhos):
+        corte = restante // faltam
+        if tamanho > corte:
+            return max(FATIA_MINIMA_POR_DOCUMENTO, min(MAX_CARACTERES_POR_DOCUMENTO, corte))
+        restante -= tamanho
+        faltam -= 1
+    return MAX_CARACTERES_POR_DOCUMENTO
+
+
 def _montar_mensagem(
     documentos: list[dict[str, str]], conhecidos: list[str]
 ) -> tuple[str, list[str]]:
@@ -291,13 +357,9 @@ def _montar_mensagem(
     # ("HILDEBRANDO_.../04_Notas_Fiscais_Farmacia/Scanner_20250623 (12).pdf").
     # Dividir o teto cru pelo número de documentos deixava o último de fora por
     # causa dos cabeçalhos; o desconto é medido, não estimado.
-    quantos = max(1, len(documentos))
     cabecalhos = sum(len(_cabecalho(doc["arquivo"])) for doc in documentos)
     disponivel = max(0, MAX_CARACTERES_TOTAL - cabecalhos)
-    limite = min(
-        MAX_CARACTERES_POR_DOCUMENTO,
-        max(FATIA_MINIMA_POR_DOCUMENTO, disponivel // quantos),
-    )
+    limite = _limite_por_documento([len(doc["texto"]) for doc in documentos], disponivel)
 
     total = 0
     fora: list[str] = []
@@ -433,7 +495,7 @@ def _chamar_modelo(
         "messages": [
             # `instrucao` permite a OUTRA análise (skill documental) reusar este cliente
             # (retentativa, reasoning, custos) sem duplicar a chamada.
-            {"role": "system", "content": instrucao or INSTRUCAO},
+            {"role": "system", "content": instrucao or instrucao_padrao()},
             {"role": "user", "content": mensagem},
         ],
     }
@@ -443,8 +505,11 @@ def _chamar_modelo(
     # toda análise falhava em silêncio, com o brief vazio chegando à geração da
     # peça. `low` + `exclude` mantém o raciocínio curto e o tira da resposta,
     # deixando o JSON em `content`. Medido no caso de 58 documentos: 12 s.
+    # `low` deixava passar dado de documento longo; `medium` pensa o bastante
+    # para ler o conjunto inteiro, e o `TEMPO_MODELO_S` de 240 s absorve a
+    # diferença.
     if usando_openrouter:
-        payload["reasoning"] = {"effort": "low", "exclude": True}
+        payload["reasoning"] = {"effort": ESFORCO_RACIOCINIO, "exclude": True}
 
     cabecalhos = {"Authorization": f"Bearer {chave}"}
     if usando_openrouter:
@@ -538,8 +603,8 @@ def relatorio_global(caso_id: str) -> dict[str, Any]:
             "id": doc["id"], "arquivo": doc["arquivo"],
             "tipo_identificado": "Não identificado" if not achados else "Identificado a partir do conteúdo",
             "confianca": 85 if achados else 0,
-            "resumo": "; ".join(str(a.get("informacao") or "") for a in achados)[:600] or "Sem conclusão automática segura.",
-            "relacao_com_fatos": "; ".join(str(a.get("relevancia") or "") for a in achados)[:600] or "Ainda precisa ser confrontado com a narrativa do caso.",
+            "resumo": "; ".join(str(a.get("informacao") or "") for a in achados)[:2000] or "Sem conclusão automática segura.",
+            "relacao_com_fatos": "; ".join(str(a.get("relevancia") or "") for a in achados)[:2000] or "Ainda precisa ser confrontado com a narrativa do caso.",
             "fatos_comprovados": [str(a.get("informacao") or "") for a in achados],
             "relevancia": relevancia,
             "justificativa": "Há informação documental relacionada ao caso." if achados else "Não foi descartado: falta contexto suficiente para concluir sua utilidade.",
@@ -640,7 +705,7 @@ def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
     contradicoes = _contradicoes_entre_documentos(bruto, texto_por_arquivo)
 
     return {
-        "achados": achados[:12],
+        "achados": achados[:MAX_ACHADOS],
         # Gastos comprovados nos documentos, EM ORDEM CRONOLÓGICA, cada um ligado
         # ao arquivo de origem (issue "Organizar gastos em ordem cronológica").
         "gastos": gastos,
@@ -660,7 +725,7 @@ def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
         # modelo alucinando com frequência, que é o que precisa aparecer.
         "recusados": recusados,
         "contradicoes": contradicoes,
-        "diagnostico": _diagnostico_do_caso(achados[:12], contradicoes, bruto.get("diagnostico")),
+        "diagnostico": _diagnostico_do_caso(achados[:MAX_ACHADOS], contradicoes, bruto.get("diagnostico")),
     }
 
 

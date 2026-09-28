@@ -54,6 +54,8 @@ from typing import Any
 
 import httpx
 
+from . import skill_de_arquivo
+
 log = logging.getLogger("visao-documento")
 
 TEMPO_MODELO_S = 40.0
@@ -168,10 +170,28 @@ Responda SOMENTE JSON:
 `documento`: use termos como "Foto de veículo danificado", "Foto de lesão
 corporal", "Foto de local de trabalho", "Foto de equipamento", "Print de
 conversa (WhatsApp)", "Foto sem conteúdo identificável".
-`achados`: no máximo 6, cada um sobre algo efetivamente visível.
+`achados`: EXTRAIA O MÁXIMO do que é efetivamente visível — um achado por
+detalhe: cada lesão ou marca (local do corpo, tamanho aparente, cor), cada
+dano, cada objeto, placa, logotipo, uniforme, EPI (ou a falta dele), sinal de
+data/hora na imagem, texto legível em placa, tela ou papel, e, num print de
+conversa, TODAS as mensagens legíveis. Um detalhe a mais nunca atrapalha;
+um detalhe que você deixa passar pode ser a prova que faltava.
 `atencao`: inclua SEMPRE o que a foto não prova sozinha.
 `sugere_pedir`: o documento que transformaria isto em prova (CAT, laudo, boletim
-de ocorrência, atestado). No máximo 4."""
+de ocorrência, atestado)."""
+
+_COMO_APLICAR_A_SKILL = """COMO APLICAR OS CRITÉRIOS DA SKILL NESTA RESPOSTA (uma foto só):
+pontos fortes (o que a imagem mostra de fato) vão nos `achados`; vulnerabilidades, problema de
+qualidade que só o reenvio resolve (desfocada, cortada, escura) e o que a foto não prova vão em
+`atencao`; a versão melhor ou o documento que a confirmaria vai em `sugere_pedir`."""
+
+
+def instrucao() -> str:
+    """Formato e regras deste módulo + a análise documento a documento da skill documental."""
+    criterios = skill_de_arquivo.criterios_documentais(r"^3\.5\b")
+    if not criterios:
+        return INSTRUCAO
+    return f"{INSTRUCAO}\n\n{_COMO_APLICAR_A_SKILL}\n\n{criterios}"
 
 
 def _codificar(conteudo: bytes, extensao: str) -> tuple[str, bytes]:
@@ -220,10 +240,10 @@ def _texto(valor: Any, limite: int = 200) -> str:
     return re.sub(r"\s+", " ", str(valor or "")).strip()[:limite]
 
 
-def _lista(bruto: Any, limite: int = 4) -> list[str]:
+def _lista(bruto: Any, limite: int = 12) -> list[str]:
     saida = []
     for item in bruto if isinstance(bruto, list) else []:
-        t = _texto(item)
+        t = _texto(item, 400)
         if t:
             saida.append(t)
     return saida[:limite]
@@ -271,8 +291,11 @@ def ler_imagem(
                 "model": MODELO,
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
+                # Sem teto explícito o provedor corta em ~2000 tokens, e um print
+                # de conversa longo ou um álbum de fotos passa disso.
+                "max_tokens": 8000,
                 "messages": [
-                    {"role": "system", "content": INSTRUCAO},
+                    {"role": "system", "content": instrucao()},
                     {
                         "role": "user",
                         "content": [
@@ -309,13 +332,13 @@ def ler_imagem(
     for item in bruto.get("achados") or []:
         if not isinstance(item, dict):
             continue
-        campo, valor = _texto(item.get("campo"), 60), _texto(item.get("valor"), 120)
+        campo, valor = _texto(item.get("campo"), 80), _texto(item.get("valor"), 500)
         if campo and valor:
             achados.append(
                 {
                     "campo": campo,
                     "valor": valor,
-                    "importancia": _texto(item.get("importancia"), 240),
+                    "importancia": _texto(item.get("importancia"), 300),
                     "relevante_para": "",
                 }
             )
@@ -327,7 +350,7 @@ def ler_imagem(
         # Foto não responde item de checklist sozinha. Quem decide é o advogado,
         # e deixar isto vazio é o que impede o roteamento de marcar item cumprido.
         "serve_para": [],
-        "achados": achados[:6],
+        "achados": achados[:60],
         "atencao": _lista(bruto.get("atencao")),
         "sugere_pedir": _lista(bruto.get("sugere_pedir")),
         "aviso": (

@@ -1099,13 +1099,58 @@ export async function baixarArquivoDaPeticao(
   return resposta.blob();
 }
 
-/** A pasta pronta para o PJe: petição, "Doc N." na numeração que a peça cita, lista e checklist. */
+export type DocumentoDoProtocolo = {
+  entrega_id: string;
+  arquivo: string;
+  /** Número do ledger ("Documento NN" da petição); `null` para o que não tem número. */
+  numero: number | null;
+  /** Como o arquivo entra na pasta: "Doc 3. Procuração", "Planilha De Cálculo". */
+  rotulo: string;
+  tipo: string;
+  categoria: "documento" | "planilha" | "copia" | "interno";
+  citado_na_peticao: boolean;
+  copia_de: number | null;
+  /** O que a IA (ou a regra, sem IA) sugere: vai para o protocolo? */
+  sugerido: boolean;
+  motivo: string;
+  /** O que a leitura da IA achou no documento, resumido. */
+  leitura: string;
+  converte_para_pdf: boolean;
+};
+
+export type DocumentoFaltando = {
+  documento: string;
+  motivo: string;
+  /** Classificação da skill documental: trava o protocolo, era melhor ter, ou não interfere. */
+  classificacao?: "COMPROMETE" | "ERA_MELHOR_TER" | "NAO_INTERFERE" | "";
+  como_obter?: string;
+};
+
+export type ConferenciaDoProtocolo = {
+  documentos: DocumentoDoProtocolo[];
+  faltando: DocumentoFaltando[];
+  pendencias: string[];
+  analisado_por: "ia" | "regras";
+  aviso: string;
+};
+
+/** O que vai para o protocolo, segundo a IA, para o advogado conferir antes do .zip. */
+export function conferirPacoteDeProtocolo(casoId: string): Promise<ConferenciaDoProtocolo> {
+  return chamar<ConferenciaDoProtocolo>(`/api/agente/casos/${casoId}/pacote-protocolo/conferencia`);
+}
+
+/** A pasta pronta para o PJe: petição, "Doc N." na numeração que a peça cita, lista e checklist.
+ *
+ * Com `selecao`, vão só os documentos conferidos na tela (e o que faltou vira pendência no
+ * checklist); sem ela, o padrão do escritório. */
 export async function baixarPacoteDeProtocolo(
   casoId: string,
+  selecao?: { selecionados: string[]; faltando: string[] },
 ): Promise<{ arquivo: Blob; nome: string; arquivos: number; faltando: number }> {
   const resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/pacote-protocolo`), {
-    headers: cabecalhos(),
+    headers: cabecalhos(selecao ? { "Content-Type": "application/json" } : undefined),
     credentials: CREDENCIAIS,
+    ...(selecao ? { method: "POST", body: JSON.stringify(selecao) } : {}),
   });
   if (!resposta.ok) {
     const dados = await resposta.json().catch(() => null);

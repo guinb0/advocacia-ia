@@ -13,6 +13,7 @@ import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/
 import { SkillDoCaso } from "@/components/skills/SeletorSkillPeticao";
 import ChatPeticao from "@/components/admin/ChatPeticao";
 import ProtocoloDaPeticaoCartao from "@/components/admin/ProtocoloDaPeticao";
+import ConferenciaProtocolo, { type SelecaoDoProtocolo } from "@/components/admin/ConferenciaProtocolo";
 import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
 import { alinharSecoes, indicesAlterados, type LinhaComparacao } from "@/lib/diffPeticao";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
@@ -96,6 +97,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const salvando = salvandoComo !== null;
   const [perguntandoPdf, setPerguntandoPdf] = useState(false);
   const [montandoPacote, setMontandoPacote] = useState(false);
+  const [conferindoProtocolo, setConferindoProtocolo] = useState(false);
   const [erro, setErro] = useState<Retorno>(null);
   const [concluido, setConcluido] = useState<Retorno>(null);
 
@@ -276,8 +278,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     andamento,
   ]);
 
-  async function salvar(baixarPdf = false, comPacote = false) {
-    if (!peticao) return;
+  /** Devolve a mensagem de erro, ou `null` quando tudo foi baixado. */
+  async function salvar(baixarPdf = false, selecao?: SelecaoDoProtocolo): Promise<string | null> {
+    if (!peticao) return "A petição ainda não carregou.";
     const formato = baixarPdf ? "pdf" : "docx";
     setPerguntandoPdf(false);
     setSalvandoComo(formato);
@@ -298,9 +301,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       setConcluido({ acao: "salvar", texto: `Versão ${atualizada.version} salva e .${formato} baixado.` });
       avisarChatDaPeticao(casoId, "versao_salva", { formato, versao: atualizada.version });
       pdfBaixado = true;
-      if (comPacote) {
+      if (selecao) {
         setMontandoPacote(true);
-        const pacote = await baixarPacoteDeProtocolo(casoId);
+        const pacote = await baixarPacoteDeProtocolo(casoId, selecao);
         baixarArquivo(pacote.arquivo, pacote.nome);
         setConcluido({
           acao: "salvar",
@@ -312,17 +315,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               : ""),
         });
       }
+      return null;
     } catch (e) {
       if (pdfBaixado) {
-        setErro({
-          acao: "pacote",
-          texto: e instanceof Error ? e.message : "Não foi possível montar os documentos para protocolo.",
-        });
-      } else {
-        const texto = e instanceof Error ? e.message : "Não foi possível salvar.";
-        setErro({ acao: "salvar", texto });
-        avisarChatDaPeticao(casoId, "falha", { acao: "Salvar a petição", erro: texto });
+        const texto = e instanceof Error ? e.message : "Não foi possível montar os documentos para protocolo.";
+        setErro({ acao: "pacote", texto });
+        return `O PDF da petição foi baixado, mas os documentos para protocolo não: ${texto}`;
       }
+      const texto = e instanceof Error ? e.message : "Não foi possível salvar.";
+      setErro({ acao: "salvar", texto });
+      avisarChatDaPeticao(casoId, "falha", { acao: "Salvar a petição", erro: texto });
+      return texto;
     } finally {
       setSalvandoComo(null);
       setMontandoPacote(false);
@@ -777,13 +780,21 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                     Quer baixar também os documentos prontos para protocolo?
                   </p>
                   <p className="m-0 text-xs leading-relaxed text-tinta-3">
-                    Vem um .zip com a petição, os documentos numerados do jeito que a peça cita
-                    (Doc 1., Doc 2.…), já em PDF, a planilha de cálculo, a lista de documentação e o
+                    Antes de baixar, a IA mostra a lista dos documentos que vão junto para você
+                    conferir. Depois vem um .zip com a petição, os documentos numerados do jeito que
+                    a peça cita (Doc 1., Doc 2.…), todos em PDF, a lista de documentação e o
                     checklist para protocolo.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Botao variante="primario" pequeno onClick={() => void salvar(true, true)}>
+                  <Botao
+                    variante="primario"
+                    pequeno
+                    onClick={() => {
+                      setPerguntandoPdf(false);
+                      setConferindoProtocolo(true);
+                    }}
+                  >
                     PDF e documentos para protocolo (.zip)
                   </Botao>
                   <Botao variante="secundario" pequeno onClick={() => void salvar(true)}>
@@ -794,6 +805,18 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                   </Botao>
                 </div>
               </div>
+            )}
+
+            {conferindoProtocolo && (
+              <ConferenciaProtocolo
+                casoId={casoId}
+                onFechar={() => setConferindoProtocolo(false)}
+                onConcluir={async (selecao) => {
+                  const falha = await salvar(true, selecao);
+                  if (!falha) setConferindoProtocolo(false);
+                  return falha;
+                }}
+              />
             )}
 
             {erro?.acao === "salvar" && (

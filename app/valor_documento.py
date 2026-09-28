@@ -51,22 +51,29 @@ import re
 from typing import Any
 
 import httpx
-from . import custos_api
+from . import custos_api, skill_de_arquivo
 
 log = logging.getLogger("valor-documento")
 
-TEMPO_MODELO_S = 30.0
+#: Resposta completa (dezenas de achados) leva mais que a curta de antes.
+TEMPO_MODELO_S = float(os.getenv("VALOR_DOCUMENTO_TIMEOUT_S", "120"))
 
 #: Abaixo disto o OCR não leu o suficiente para haver o que interpretar — foto
 #: ilegível, página em branco, verso de documento.
 MINIMO_CARACTERES = 60
 
-#: Teto do texto que vai para o modelo de leitura. Um laudo ou uma CAT cabem
-#: folgados aqui; o que estoura este limite é prontuário de internação de dezenas
-#: de páginas, que não precisa ir inteiro para o classificador — a transcrição
-#: integral continua guardada em `texto_linhas` na entrega. Corta em fronteira de
-#: linha para não partir um CID ou uma data no meio.
-MAXIMO_CARACTERES = 12000
+#: Teto do texto que vai para o modelo de leitura. Era 12 mil, e o que passava
+#: disso (as páginas finais de um prontuário, a conclusão de um laudo, os
+#: últimos contratos de uma CTPS) nunca era lido — a queixa de "a IA deixa
+#: informação passar" começava aqui. 60 mil caracteres (~20 mil tokens) cabem
+#: com folga no contexto do modelo. Corta em fronteira de linha para não partir
+#: um CID ou uma data no meio.
+MAXIMO_CARACTERES = int(os.getenv("VALOR_DOCUMENTO_MAX_CARACTERES", "60000"))
+
+#: Tetos do que a leitura devolve. Altos de propósito: um dado a mais nunca
+#: atrapalha a petição; um dado cortado pode custar um pedido.
+MAXIMO_ACHADOS = 80
+MAXIMO_ITENS_LISTA = 15
 
 CODIGOS_DOCUMENTO = {
     "cpf",
@@ -106,7 +113,8 @@ def texto_do_ocr(extracao: dict[str, Any]) -> str:
     return texto[: corte if corte > 0 else MAXIMO_CARACTERES]
 
 
-INSTRUCAO = """Você assessora um advogado trabalhista brasileiro. Recebe o TEXTO BRUTO
+INSTRUCAO = """Você assessora um advogado brasileiro (trabalhista, previdenciário ou de outra
+área, conforme o caso). Recebe o TEXTO BRUTO
 que um OCR extraiu de um documento entregue pelo cliente, e a lista de documentos
 que o caso ainda espera.
 
@@ -130,31 +138,72 @@ REGRAS
     nenhum dos dois acima.
 - `serve_para`: a que itens da lista de pendências ele responde. Use o CÓDIGO do
   item como veio na lista. Só inclua item de que você tem evidência no texto.
-- `achados`: os dados que um advogado procuraria neste tipo de documento — CID,
-  datas, número de benefício, espécie (B31/B91), nome do médico, CRM, empresa,
-  período de afastamento. Só o que ESTÁ no texto, com o valor como aparece.
-  NÃO inclua CPF, RG nem número de CNH como achado: esses números só valem
-  quando saem do OCR da foto do próprio documento de identidade.
+- `achados`: EXTRAIA O MÁXIMO. Leia o texto INTEIRO, do começo ao fim — as
+  páginas finais costumam ter a conclusão, o diagnóstico, a assinatura e os
+  valores — e registre CADA dado que possa servir a um advogado, um achado por
+  dado. Um dado a mais nunca atrapalha; um dado que você deixa passar pode
+  custar um pedido na petição. Procure, conforme o documento:
+  • pessoas e empresas: empregador, razão social, CNPJ, endereço do
+    estabelecimento, tomador de serviço, médico, CRM, testemunha, autoridade;
+  • contrato de trabalho: admissão, demissão, função/cargo, CBO, salário
+    (cada valor e cada alteração, com data), jornada, local, forma de
+    dispensa, aviso prévio, anotações e contratos anteriores;
+  • verbas e valores: cada verba, desconto, base de cálculo, total, FGTS,
+    multa, horas extras, adicionais — com o valor e a competência;
+  • saúde e acidente: CID (todos), data e hora do acidente, parte do corpo,
+    agente causador, afastamento (início, fim, dias), sequela, restrição,
+    conclusão do laudo, nexo apontado;
+  • INSS: número e espécie do benefício (B31/B91/B94...), DIB, DCB, DER,
+    decisão (deferido/indeferido) e o motivo;
+  • processo e ocorrência: número, vara, data, protocolo, fatos narrados.
+  Registre o valor exatamente como aparece. Dados repetidos com valores
+  diferentes (dois salários, três CIDs, vários períodos) viram achados
+  separados — nunca escolha só um. Só o que ESTÁ no texto: não invente.
+  NÃO inclua CPF, RG nem número de CNH da pessoa como achado: esses números só
+  valem quando saem do OCR da foto do próprio documento de identidade (CNPJ,
+  matrícula, PIS e número de CTPS podem entrar).
 - `atencao`: problemas NO documento — falta assinatura, data ilegível, período
-  incompleto, CID sem relação com o relato, documento vencido, página faltando.
+  incompleto, CID sem relação com o relato, documento vencido, página faltando,
+  contradição com outro dado do mesmo documento.
 - `sugere_pedir`: o documento complementar que este torna necessário. Ex.: um
   laudo que menciona afastamento pelo INSS torna necessário o processo do INSS.
 - Não avalie chance de êxito, não estime valores, não afirme que um direito
   existe. Você descreve o documento; quem conclui é o advogado.
-- Seja breve: no máximo 4 itens em cada lista.
 
 Em cada `achado`, explique em `importancia` por que o dado importa e em
 `relevante_para` qual pedido, prova ou providência jurídica ele ajuda.
+
+`resumo`: o que o documento diz, de ponta a ponta, em texto corrido (até 8
+frases) — quem emitiu, quando, sobre quem, o que registra e o que conclui.
 
 Responda APENAS JSON. Em `codigo_documento`, use cpf, rg, cin, cnh, ctps,
 titulo_eleitor, cartao_sus, comprovante_residencia ou certidao quando houver
 evidência. Para laudo, atestado, contrato, petição, boletim de ocorrência, CNIS
 e qualquer tipo livre, use nao_estruturado:
-{"documento":"...", "codigo_documento":"nao_estruturado",
+{"documento":"...", "codigo_documento":"nao_estruturado", "resumo":"...",
  "serve_para":[{"item":"DOC.10","porque":"..."}],
  "achados":[{"campo":"CID","valor":"M54.5","importancia":"identifica o diagnóstico registrado","relevante_para":"provar doença e relacionar afastamentos"}],
  "atencao":["..."],
  "sugere_pedir":["..."]}"""
+
+#: Onde a análise documento a documento da skill documental entra no JSON acima.
+_COMO_APLICAR_A_SKILL = """COMO APLICAR OS CRITÉRIOS DA SKILL NESTA RESPOSTA (um documento só):
+- Vulnerabilidades e inconsistências internas do documento vão em `atencao`.
+- Atualizado ou desatualizado: se o documento tem validade prática (laudo, PPP, comprovante de
+  residência, certidão, extrato), diga em `atencao` se a data dele ainda serve ou se está velho demais,
+  citando a data.
+- Pode melhorar: se dá para obter versão melhor ou mais recente, diga qual em `sugere_pedir`. Documento
+  definitivo (RG, certidão de óbito, contrato assinado) não "melhora": só se refaz se estiver ilegível
+  ou incompleto — nesse caso, diga em `atencao` o que reenviar.
+- Pontos fortes (o que ele comprova) vão nos `achados`, em `importancia` e `relevante_para`."""
+
+
+def instrucao() -> str:
+    """Formato e regras deste módulo + a análise documento a documento da skill documental."""
+    criterios = skill_de_arquivo.criterios_documentais(r"^3\.5\b")
+    if not criterios:
+        return INSTRUCAO
+    return f"{INSTRUCAO}\n\n{_COMO_APLICAR_A_SKILL}\n\n{criterios}"
 
 
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
@@ -179,10 +228,12 @@ def _chamar_modelo(mensagem: str) -> dict[str, Any]:
                 # teto nas duas tentativas (`finish_reason=length`), carta do INSS e
                 # CAT em uma de duas (713 e 781 tokens). O documento ia para a
                 # triagem como "não identificado", sem campo nenhum — e o chat não
-                # achava o número da CTPS que estava no caso.
-                "max_tokens": 2000,
+                # achava o número da CTPS que estava no caso. Depois virou 2000,
+                # e 2000 ainda obrigava a resposta a ser curta; agora a leitura
+                # pede todos os dados do documento, e 8000 é o teto do modelo.
+                "max_tokens": int(os.getenv("VALOR_DOCUMENTO_MAX_TOKENS", "8000")),
                 "messages": [
-                    {"role": "system", "content": INSTRUCAO},
+                    {"role": "system", "content": instrucao()},
                     {"role": "user", "content": mensagem},
                 ],
             },
@@ -213,10 +264,10 @@ def _texto(valor: Any, limite: int = 200) -> str:
     return re.sub(r"\s+", " ", str(valor or "")).strip()[:limite]
 
 
-def _lista(bruto: Any, limite: int = 4) -> list[str]:
+def _lista(bruto: Any, limite: int = MAXIMO_ITENS_LISTA) -> list[str]:
     saida = []
     for item in bruto if isinstance(bruto, list) else []:
-        t = _texto(item)
+        t = _texto(item, 400)
         if t:
             saida.append(t)
     return saida[:limite]
@@ -280,31 +331,35 @@ def ler(
         # entregue. Nos dois casos não pode aparecer como novidade na tela.
         if codigo not in codigos:
             continue
-        serve_para.append({"item": codigo, "porque": _texto(item.get("porque"), 240)})
+        serve_para.append({"item": codigo, "porque": _texto(item.get("porque"), 300)})
 
     achados = []
+    vistos: set[tuple[str, str]] = set()
     for item in bruto.get("achados") or []:
         if not isinstance(item, dict):
             continue
-        campo, valor = _texto(item.get("campo"), 60), _texto(item.get("valor"), 120)
-        if campo and valor:
+        campo, valor = _texto(item.get("campo"), 80), _texto(item.get("valor"), 500)
+        chave = (campo.casefold(), valor.casefold())
+        if campo and valor and chave not in vistos:
+            vistos.add(chave)
             achados.append(
                 {
                     "campo": campo,
                     "valor": valor,
-                    "importancia": _texto(item.get("importancia"), 240),
-                    "relevante_para": _texto(item.get("relevante_para"), 240),
+                    "importancia": _texto(item.get("importancia"), 300),
+                    "relevante_para": _texto(item.get("relevante_para"), 300),
                 }
             )
 
     codigo = _texto(bruto.get("codigo_documento"), 40).lower()
     return {
-        "documento": _texto(bruto.get("documento"), 80) or "indefinido",
+        "documento": _texto(bruto.get("documento"), 120) or "indefinido",
         "codigo_documento": codigo
         if codigo in CODIGOS_DOCUMENTO
         else "nao_estruturado",
-        "serve_para": serve_para[:4],
-        "achados": achados[:8],
+        "resumo": _texto(bruto.get("resumo"), 1500),
+        "serve_para": serve_para[:10],
+        "achados": achados[:MAXIMO_ACHADOS],
         "atencao": _lista(bruto.get("atencao")),
         "sugere_pedir": _lista(bruto.get("sugere_pedir")),
         "aviso": (

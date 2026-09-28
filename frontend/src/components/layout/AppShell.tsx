@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { LogOut } from "lucide-react";
 
+import AlternadorTema from "@/components/ui/AlternadorTema";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 import { rotuloDaTela, type Tela } from "@/lib/telas";
 
@@ -63,6 +64,7 @@ export default function AppShell({ tela, skillAberta = null, onNavegar, onAbrirS
                 <strong className="block max-w-[220px] truncate text-sm text-tinta">{nome}</strong>
                 <span className="block max-w-[220px] truncate text-xs text-tinta-3">{perfil}</span>
               </span>
+              <AlternadorTema variante="topo" />
               {AUTH_ATIVA && (
                 <button
                   type="button"

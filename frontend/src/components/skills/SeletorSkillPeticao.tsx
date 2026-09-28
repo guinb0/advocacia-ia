@@ -62,7 +62,7 @@ export default function SeletorSkillPeticao({
   valor,
   onMudar,
   desabilitado,
-  ajuda = "Muda o texto, a ordem dos blocos, as conferências e o layout da petição deste caso.",
+  ajuda = "Muda o texto, a ordem das partes e o visual da petição deste caso. Na dúvida, deixe no padrão.",
 }: {
   id: string;
   valor: string;
@@ -85,21 +85,23 @@ export default function SeletorSkillPeticao({
   }, []);
 
   if (!estado) return null;
-  const padrao = `Padrão do escritório — ${estado.ativa.nome}`;
+  const padrao = `Padrão do escritório (${estado.ativa.nome})`;
 
   if (estado.disponiveis.length === 0) {
     return (
       <div>
-        <p className="m-0 mb-[6px] text-sm font-semibold text-tinta">Skill que vai gerar a petição</p>
+        <p className="m-0 mb-[6px] text-sm font-semibold text-tinta">Skill que vai escrever a petição</p>
         <p className="m-0 text-sm text-tinta">{padrao}</p>
-        <AjudaCampo>Para ter outras opções aqui, envie skills de petição no módulo Skills.</AjudaCampo>
+        <AjudaCampo>
+          Por enquanto só existe esta. Para ter outras opções, vá em Skills e clique em &quot;Adicionar uma skill&quot;.
+        </AjudaCampo>
       </div>
     );
   }
 
   return (
     <div>
-      <RotuloCampo htmlFor={id}>Skill que vai gerar a petição</RotuloCampo>
+      <RotuloCampo htmlFor={id}>Skill que vai escrever a petição</RotuloCampo>
       <CampoSeletor id={id} value={valor} disabled={desabilitado} onChange={(e) => onMudar(e.target.value)}>
         <option value="">{padrao}</option>
         {estado.disponiveis.map((skill) => (

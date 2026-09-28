@@ -22,6 +22,10 @@ log = logging.getLogger("skill_de_arquivo")
 
 RAIZ_DAS_SKILLS = Path(__file__).with_name("skills")
 
+#: A skill que ensina a ler e organizar documentos. Toda leitura de documento do sistema
+#: (por arquivo, do caso inteiro, triagem do protocolo) usa os critérios dela.
+SKILL_DOCUMENTAL = "analise-e-organizacao-documental"
+
 
 class SkillAusente(RuntimeError):
     """A pasta da skill não existe neste deploy."""
@@ -134,3 +138,22 @@ def carregar(nome: str) -> SkillDeArquivo:
     skill = SkillDeArquivo(nome)
     log.info("skill carregada: %s sha256=%s arquivos=%d", nome, skill.sha256()[:16], len(skill.arquivos()))
     return skill
+
+
+def criterios_documentais(*titulos: str) -> str:
+    """Seções da skill documental (regex sobre o título), prontas para entrar numa instrução.
+
+    Sem a skill no deploy devolve "": a leitura segue com a instrução própria, e o log avisa.
+    """
+    try:
+        skill = carregar(SKILL_DOCUMENTAL)
+    except SkillAusente:
+        log.warning("skill documental ausente: leitura de documentos sem os critérios dela")
+        return ""
+    corpo = "\n\n".join(p for p in (skill.secao(t) for t in titulos) if p)
+    if not corpo:
+        return ""
+    return (
+        f"=== CRITÉRIOS DA SKILL DOCUMENTAL ({SKILL_DOCUMENTAL}) — siga-os ao ler os documentos; "
+        f"o formato da resposta continua sendo o pedido acima ===\n{corpo}"
+    )

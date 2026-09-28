@@ -541,7 +541,7 @@ export default function NovoCaso({ categorias, onCriar, onImportarZip, onAbrir, 
               valor={skillId}
               onMudar={setSkillId}
               desabilitado={criando}
-              ajuda="Muda o texto, a ordem dos blocos, as conferências e o layout da petição deste caso. Na dúvida, deixe o padrão; dá para trocar depois, dentro do caso."
+              ajuda="Muda o texto, a ordem das partes e o visual da petição deste caso. Na dúvida, deixe no padrão: dá para trocar depois, dentro do caso."
             />
 
             <div className="text-sm text-tinta-2">
