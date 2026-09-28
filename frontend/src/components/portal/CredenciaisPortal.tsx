@@ -18,6 +18,8 @@ export default function CredenciaisPortal({
   portal,
   casoId,
   telefone = "",
+  titulo = "Caso criado — copie a senha agora",
+  explicacao,
   onAbrirCaso,
   onFechar,
 }: {
@@ -25,8 +27,11 @@ export default function CredenciaisPortal({
   portal: PortalGerado;
   casoId?: string;
   telefone?: string;
-  onAbrirCaso: () => void;
-  onFechar: () => void;
+  titulo?: string;
+  /** Substitui o lembrete de que o atendente já está na sala da chamada. */
+  explicacao?: string;
+  onAbrirCaso?: () => void;
+  onFechar?: () => void;
 }) {
   const [copiado, setCopiado] = useState<string | null>(null);
   const [numero, setNumero] = useState(formatarTelefone(telefone));
@@ -74,7 +79,7 @@ export default function CredenciaisPortal({
         <span className="text-atencao" aria-hidden>
           !
         </span>
-        Caso criado — copie a senha agora
+        {titulo}
       </span>
       <p className="mb-[14px] max-w-[56ch] text-tinta-2 text-xs leading-[1.55]">{portal.aviso}</p>
 
@@ -85,8 +90,9 @@ export default function CredenciaisPortal({
         * esta linha, o atendente tentava usar o link e a senha para "entrar no
         * caso", que é o caminho errado e pede senha à toa. */}
       <p className="mb-[14px] max-w-[56ch] text-tinta-2 text-xs leading-[1.55]">
-        <strong>Link e senha são do cliente.</strong> Você não precisa deles: o caso já
-        está aberto aí embaixo e você já está na sala da chamada.
+        <strong>Link e senha são do cliente.</strong>{" "}
+        {explicacao ??
+          "Você não precisa deles: o caso já está aberto aí embaixo e você já está na sala da chamada."}
       </p>
 
       <div className="flex items-center gap-[10px] px-3 py-[10px] mb-2 border border-borda-forte rounded-campo bg-papel flex-wrap">
@@ -152,12 +158,16 @@ export default function CredenciaisPortal({
         <Botao variante="secundario" onClick={() => copiar(mensagem, "msg")}>
           {copiado === "msg" ? "✓ Mensagem copiada" : "Copiar a mensagem para o cliente"}
         </Botao>
-        <Botao variante="secundario" onClick={onAbrirCaso}>
-          Abrir o caso
-        </Botao>
-        <Botao variante="discreto" onClick={onFechar}>
-          Fechar
-        </Botao>
+        {onAbrirCaso && (
+          <Botao variante="secundario" onClick={onAbrirCaso}>
+            Abrir o caso
+          </Botao>
+        )}
+        {onFechar && (
+          <Botao variante="discreto" onClick={onFechar}>
+            Fechar
+          </Botao>
+        )}
       </div>
     </div>
   );

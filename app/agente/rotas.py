@@ -33,10 +33,11 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
-from .. import armazenamento, auth, contrato, entrevista as entrevista_lib, peticao_aprendizado, peticao_local
+from .. import armazenamento, auth, contrato, entrevista as entrevista_lib, pacote_protocolo, peticao_aprendizado, peticao_local
 from .. import pesquisa_web as pesquisa_web_modulo
 from . import chat_peticao, conversas, dossie, espelho, peticao_fluxo
 from .cliente import AgenteIndisponivel, AgenteNaoConfigurado, Cliente, ErroDoAgente
@@ -678,6 +679,45 @@ def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Respon
             )
         },
     )
+
+
+@roteador.get("/casos/{caso_id}/pacote-protocolo")
+def baixar_pacote_de_protocolo(caso_id: str) -> FileResponse:
+    """A pasta para protocolo em ZIP: petição em PDF, "Doc N." de cada documento, lista e checklist."""
+    try:
+        pacote = pacote_protocolo.montar(caso_id)
+    except pacote_protocolo.ErroPacote as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+    return FileResponse(
+        pacote.caminho,
+        media_type="application/zip",
+        filename=pacote.nome,
+        background=BackgroundTask(pacote.caminho.unlink, missing_ok=True),
+        headers={"X-Arquivos": str(pacote.arquivos), "X-Faltando": str(len(pacote.faltando))},
+    )
+
+
+class _Protocolo(BaseModel):
+    protocolada: bool
+    numero: str = ""
+    #: AAAA-MM-DD; vazio = hoje.
+    data: str = ""
+
+
+@roteador.put("/casos/{caso_id}/peticao-protocolo")
+def marcar_protocolo(
+    caso_id: str, corpo: _Protocolo, usuario: auth.Usuario = Depends(auth.usuario_atual)
+) -> dict[str, Any]:
+    """Marca a petição inicial como protocolada (com o número do processo) ou desfaz a marcação."""
+    try:
+        dados = peticao_local.marcar_protocolo(
+            caso_id, protocolada=corpo.protocolada, numero=corpo.numero, data=corpo.data, por=usuario.nome
+        )
+    except peticao_local.ErroPeticao as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+    return peticao_local.para_api(dados)
 
 
 @roteador.patch("/casos/{caso_id}/peticao/{peca_ref}")

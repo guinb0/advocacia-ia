@@ -8,7 +8,7 @@ import type { NextConfig } from "next";
  * inteiro na memória do Node — inclusive truncando o corpo em silêncio acima de
  * `proxyClientMaxBodySize`. Foto de celular tem vários MB e o OCR leva de 3 a 30s,
  * então os uploads morriam com "socket hang up". O navegador fala direto com o
- * Python (ver lib/api.ts e NEXT_PUBLIC_OCR_API); o backend já habilita CORS.
+ * Python (ver lib/api/base.ts e NEXT_PUBLIC_OCR_API); o backend já habilita CORS.
  */
 /* `standalone` so no build de imagem, e nao sempre.
  *

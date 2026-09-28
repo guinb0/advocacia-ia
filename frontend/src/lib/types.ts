@@ -291,6 +291,8 @@ export interface Caso {
   total_entregas?: number;
   /** Verdadeiro quando o caso já tem link de portal. */
   portal_ativo?: boolean;
+  /** Skill que gera a petição deste caso; vazio/null = a skill em uso no escritório. */
+  skill_juridica_id?: string | null;
 }
 
 /** `POST /api/casos` devolve o caso já com o portal recém-criado. */

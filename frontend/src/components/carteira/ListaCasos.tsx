@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Download, FolderOpen, Loader2, Trash2, Upload } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Download, FolderOpen, Loader2, Plus, Trash2 } from "lucide-react";
 
-
-import type { Caso, CasoCriado, Categoria } from "@/lib/types";
-import { Aviso, Botao, Campo, CampoSeletor, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
-import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
-import CredenciaisPortal from "@/components/portal/CredenciaisPortal";
-import { baixarDocumentosDoCaso, enviarTranscricaoEntrevista, importarSkillJuridica, listarReunioesTactiq, listarSkillsJuridicas, obterTranscricaoTactiq, triarEntrevista, type ReuniaoTactiq, type SkillJuridica } from "@/lib/api";
+import type { Caso, Categoria } from "@/lib/types";
+import { Aviso, Botao, Campo, Cartao, RotuloCampo, Selo, Vazio } from "@/components/ui/Basicos";
+import { baixarDocumentosDoCaso } from "@/lib/api";
 import { baixarArquivo } from "@/lib/baixar";
 
 interface Props {
@@ -17,10 +14,14 @@ interface Props {
   carregando: boolean;
   erro: string | null;
   onAbrir: (casoId: string) => void;
-  onAbrirDossie: (casoId: string) => void;
-  onCriar: (cliente: string, categoria: string, observacao?: string, telefone?: string, tipoAcao?: string) => Promise<CasoCriado>;
-  onImportarZip: (cliente: string, categoria: string, arquivo: File, skillJuridicaId?: string) => Promise<CasoCriado>;
+  onNovoCaso: () => void;
   onExcluir: (casoId: string) => Promise<void>;
+}
+
+function dataCurta(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const data = new Date(iso);
+  return Number.isNaN(data.getTime()) ? "" : data.toLocaleDateString("pt-BR");
 }
 
 function normalizarFiltro(valor: string): string {
@@ -70,36 +71,18 @@ const ACAO_ICONE =
 export default function ListaCasos({
   casos,
   categorias,
-  onImportarZip,
   carregando,
   erro,
   onAbrir,
-  onAbrirDossie,
-  onCriar,
+  onNovoCaso,
   onExcluir,
 }: Props) {
-  const [cliente, setCliente] = useState("");
-  const [categoria, setCategoria] = useState("");
-  const [entrevistaArquivo, setEntrevistaArquivo] = useState<File | null>(null);
-  const [analisandoEntrevista, setAnalisandoEntrevista] = useState(false);
-  const [resultadoTriagem, setResultadoTriagem] = useState<string | null>(null);
-  const [reunioesTactiq, setReunioesTactiq] = useState<ReuniaoTactiq[] | null>(null);
-  const [carregandoTactiq, setCarregandoTactiq] = useState(false);
-  const [importandoTactiq, setImportandoTactiq] = useState<string | null>(null);
-  const [erroTactiq, setErroTactiq] = useState<string | null>(null);
   const [filtroCliente, setFiltroCliente] = useState("");
-  const [criando, setCriando] = useState(false);
   /* A lista chega inteira do servidor (podem ser centenas). Aqui ela é paginada
    * de 5 em 5 só para exibição — nada é buscado por página. `pagina` pode ficar
    * maior que o total depois de uma exclusão; `paginaAtual` reancora. */
   const POR_PAGINA = 5;
   const [pagina, setPagina] = useState(1);
-  /* Credenciais do caso recém-criado. Ficam só em memória: a senha existe em
-   * texto claro apenas nesta resposta, e some ao sair da tela. */
-  const [novoPortal, setNovoPortal] = useState<CasoCriado | null>(null);
-  const [modo, setModo] = useState<"inicio" | "criar" | "ver">("inicio");
-  const categoriaSelecionada = categoria || categorias[0]?.codigo || "";
-  const categoriaEscolhida = categorias.find((item) => item.codigo === categoriaSelecionada);
   const filtroNormalizado = normalizarFiltro(filtroCliente);
   const casosOrdenados = useMemo(
     () =>
@@ -124,148 +107,6 @@ export default function ListaCasos({
   useEffect(() => {
     setPagina(1);
   }, [filtroNormalizado]);
-
-  const entrevistaInputRef = useRef<HTMLInputElement>(null);
-  const pacoteInputRef = useRef<HTMLInputElement>(null);
-  const skillInputRef = useRef<HTMLInputElement>(null);
-  const [pacoteArquivo, setPacoteArquivo] = useState<File | null>(null);
-  const [importandoPacote, setImportandoPacote] = useState(false);
-  const [erroPacote, setErroPacote] = useState<string | null>(null);
-  const [arrastandoPacote, setArrastandoPacote] = useState(false);
-  const [skillsJuridicas, setSkillsJuridicas] = useState<SkillJuridica[]>([]);
-  const [skillJuridicaId, setSkillJuridicaId] = useState("");
-  const [importandoSkill, setImportandoSkill] = useState(false);
-  const [erroSkill, setErroSkill] = useState<string | null>(null);
-
-  useEffect(() => {
-    void listarSkillsJuridicas().then((skills) => {
-      setSkillsJuridicas(skills);
-      if (skills.length === 1) setSkillJuridicaId(skills[0].id);
-    }).catch(() => setSkillsJuridicas([]));
-  }, []);
-
-  function selecionarPacote(arquivo: File | null) {
-    if (!arquivo) return;
-    if (!arquivo.name.toLowerCase().endsWith(".zip")) return;
-    setPacoteArquivo(arquivo);
-  }
-
-  async function importarSkill(arquivo: File | null) {
-    if (!arquivo || importandoSkill) return;
-    if (!arquivo.name.toLowerCase().endsWith(".skill.zip")) {
-      setErroSkill("Escolha um pacote no formato .skill.zip.");
-      return;
-    }
-    setImportandoSkill(true);
-    setErroSkill(null);
-    try {
-      const importada = await importarSkillJuridica(arquivo);
-      const skills = await listarSkillsJuridicas();
-      setSkillsJuridicas(skills);
-      setSkillJuridicaId(importada.id);
-    } catch (falha) {
-      setErroSkill(falha instanceof Error ? falha.message : "Não foi possível importar a skill.");
-    } finally {
-      setImportandoSkill(false);
-    }
-  }
-
-  async function importarPacote(evento: React.FormEvent) {
-    evento.preventDefault();
-    if (!cliente.trim() || !categoriaSelecionada || !pacoteArquivo) return;
-    setImportandoPacote(true);
-    setErroPacote(null);
-    try {
-      const novo = await onImportarZip(cliente.trim(), categoriaSelecionada, pacoteArquivo, skillJuridicaId);
-      setCliente("");
-      setPacoteArquivo(null);
-      /* Criação rápida: o upload JÁ é a intenção de criar o caso — não existe
-       * "Criar caso" separado depois dele. O caso cai direto no dossiê, onde a
-       * análise dos documentos e a geração da peça acontecem; as credenciais do
-       * portal do cliente (que ficariam aqui, em `novoPortal`) continuam
-       * disponíveis a qualquer momento dentro do caso — regenerá-las não perde
-       * nada, e travar a navegação nelas aqui reintroduziria o clique que esta
-       * etapa existe para eliminar. */
-      onAbrirDossie(novo.id);
-    } catch (falha) {
-      setErroPacote(falha instanceof Error ? falha.message : "Não foi possível criar o caso pelo ZIP.");
-    } finally {
-      setImportandoPacote(false);
-    }
-  }
-
-  async function criar(evento: React.FormEvent) {
-    evento.preventDefault();
-    if (!cliente.trim() || !categoriaSelecionada || !entrevistaArquivo) return;
-    setCriando(true);
-    try {
-      /* `tipo_acao` guarda o NOME da ação escolhida. Antes vinha de um campo de
-       * texto livre logo acima do seletor, com o MESMO rótulo "Tipo de ação" — e a
-       * IA o preenchia com o nome da categoria de baixo. Dois campos iguais na tela
-       * para um dado que ninguém lê de volta (nem o servidor nem outra tela);
-       * o catálogo de tipos de caso é a resposta para "qual é a ação". */
-      const novo = await onCriar(
-        cliente.trim(), categoriaSelecionada, "", "", categoriaEscolhida?.nome ?? "",
-      );
-      await enviarTranscricaoEntrevista(novo.id, entrevistaArquivo);
-      setNovoPortal(novo);
-      setCliente("");
-      setEntrevistaArquivo(null);
-      setResultadoTriagem(null);
-    } finally {
-      setCriando(false);
-    }
-  }
-
-  async function selecionarEntrevista(arquivo: File | null) {
-    setEntrevistaArquivo(arquivo);
-    setResultadoTriagem(null);
-    if (!arquivo) return;
-    setAnalisandoEntrevista(true);
-    try {
-      const triagem = await triarEntrevista("", arquivo);
-      const sugestao = triagem.sugestoes[0];
-      if (sugestao) setCategoria(sugestao.codigo);
-      if (!cliente.trim() && triagem.dados.cliente) setCliente(triagem.dados.cliente);
-      setResultadoTriagem(
-        sugestao
-          ? `A IA sugere: ${sugestao.nome}. Você pode alterar a escolha abaixo.`
-          : "A entrevista foi salva para o caso; escolha o tipo de ação abaixo.",
-      );
-    } catch (erro) {
-      setResultadoTriagem(erro instanceof Error ? erro.message : "Não foi possível analisar a entrevista.");
-    } finally {
-      setAnalisandoEntrevista(false);
-    }
-  }
-
-  async function carregarReunioesTactiq() {
-    setCarregandoTactiq(true);
-    setErroTactiq(null);
-    try {
-      setReunioesTactiq(await listarReunioesTactiq());
-    } catch (erro) {
-      setErroTactiq(erro instanceof Error ? erro.message : "Não foi possível carregar as transcrições do Tactiq.");
-    } finally {
-      setCarregandoTactiq(false);
-    }
-  }
-
-  async function importarTranscricaoTactiq(reuniao: ReuniaoTactiq) {
-    setImportandoTactiq(reuniao.id);
-    setErroTactiq(null);
-    try {
-      const transcricao = await obterTranscricaoTactiq(reuniao.id);
-      const nome = `${transcricao.titulo || reuniao.titulo || "entrevista-tactiq"}.txt`.replace(/[\\/:*?"<>|]/g, "-");
-      await selecionarEntrevista(new File([transcricao.texto], nome, { type: "text/plain;charset=utf-8" }));
-      setReunioesTactiq(null);
-      setResultadoTriagem("Transcrição do Tactiq importada e analisada. Confira a sugestão de ação abaixo.");
-    } catch (erro) {
-      setErroTactiq(erro instanceof Error ? erro.message : "Não foi possível importar esta transcrição.");
-    } finally {
-      setImportandoTactiq(null);
-    }
-  }
 
   const nomeCategoria = (codigo: string) =>
     categorias.find((c) => c.codigo === codigo)?.nome ?? codigo;
@@ -344,235 +185,23 @@ export default function ListaCasos({
   const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
   const gruposVisiveis = grupos.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
-  if (modo === "inicio") return (
-    <Cartao titulo="Carteira de casos" subtitulo="Escolha o que deseja fazer.">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Botao variante="primario" bloco onClick={() => setModo("criar")}>Criar novo caso</Botao>
-        <Botao variante="secundario" bloco onClick={() => setModo("ver")}>Ver casos</Botao>
-      </div>
-    </Cartao>
-  );
-
   return (
     <div className="grid min-w-0 gap-5">
-      <Cartao
-        titulo="Novo caso"
-        subtitulo="Escolher o tipo de ação é o que monta o checklist de documentos do cliente."
-        className={modo === "criar" ? "min-w-0" : "hidden"}
-      >
-        <div className="mb-4"><Botao variante="secundario" onClick={() => setModo("inicio")}>Voltar</Botao></div>
-        <form onSubmit={criar}>
-          <div className="mb-4">
-            <RotuloCampo htmlFor="entrevista-inicial">Entrevista do cliente</RotuloCampo>
-            <div className="flex flex-wrap items-center gap-3">
-              <Botao type="button" variante="primario" onClick={() => entrevistaInputRef.current?.click()} disabled={analisandoEntrevista}>
-                <Upload className="h-4 w-4" />
-                {entrevistaArquivo ? "Trocar entrevista" : "Escolher entrevista"}
-              </Botao>
-              <span className="text-sm text-tinta-2">{entrevistaArquivo ? entrevistaArquivo.name : "Nenhum arquivo escolhido"}</span>
-            </div>
-            <input
-              ref={entrevistaInputRef}
-              id="entrevista-inicial"
-              type="file"
-              onChange={(e) => { void selecionarEntrevista(e.target.files?.[0] ?? null); e.target.value = ""; }}
-              className="hidden"
-            />
-            <p className="mt-1 text-xs leading-[1.5] text-tinta-3">
-              A IA lê a entrevista, sugere o tipo de ação e gera o resumo do atendimento. A sugestão pode ser alterada.
+      <Cartao className="min-w-0 overflow-hidden">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="mb-1 font-titulo text-lg font-semibold leading-[1.25] text-tinta">Casos cadastrados</h2>
+            <p className="m-0 text-sm leading-[1.5] text-tinta-3">
+              {casos.length === 0
+                ? "Nenhum caso ainda."
+                : `${casosFiltrados.length} de ${casos.length} ${casos.length === 1 ? "caso" : "casos"} — mais recentes primeiro.`}
             </p>
-            {analisandoEntrevista && <p className="mt-1 text-xs text-tinta-3">Analisando entrevista…</p>}
-            <div className="mt-3 rounded-campo border border-acao-borda bg-acao-clara p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <strong className="block text-sm text-tinta">Já transcreveu no Tactiq?</strong>
-                  <p className="mt-0.5 text-xs text-tinta-2">Escolha uma reunião para usar a transcrição como entrevista deste caso.</p>
-                </div>
-                <Botao type="button" variante="secundario" onClick={() => void carregarReunioesTactiq()} disabled={carregandoTactiq}>
-                  {carregandoTactiq ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />}
-                  Ver transcrições do Tactiq
-                </Botao>
-              </div>
-              {erroTactiq && <p className="mt-2 text-xs text-critico">{erroTactiq}</p>}
-              {reunioesTactiq && (
-                <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
-                  {reunioesTactiq.length === 0 ? <p className="text-xs text-tinta-2">Nenhuma reunião disponível nesta conta Tactiq.</p> : reunioesTactiq.map((reuniao) => (
-                    <div key={reuniao.id} className="flex items-center justify-between gap-3 rounded-campo border border-acao-borda bg-fundo px-3 py-2">
-                      <div className="min-w-0"><strong className="block truncate text-sm text-tinta">{reuniao.titulo}</strong>{reuniao.data && <span className="text-xs text-tinta-3">{reuniao.data}</span>}</div>
-                      <Botao type="button" variante="secundario" onClick={() => void importarTranscricaoTactiq(reuniao)} disabled={importandoTactiq === reuniao.id}>
-                        {importandoTactiq === reuniao.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Usar
-                      </Botao>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            {resultadoTriagem && <p className="mt-1 text-xs text-tinta-2">{resultadoTriagem}</p>}
           </div>
-          <div className="mb-4">
-            <RotuloCampo htmlFor="cliente">Nome do cliente</RotuloCampo>
-            <Campo
-              id="cliente"
-              value={cliente}
-              onChange={(e) => setCliente(e.target.value)}
-              placeholder="Ex.: Maria Aparecida da Silva"
-              autoComplete="off"
-            />
-          </div>
-
-          <div className="mb-4">
-            <RotuloCampo htmlFor="categoria">Tipo de ação</RotuloCampo>
-            <CampoSeletor
-              id="categoria"
-              value={categoriaSelecionada}
-              onChange={(e) => setCategoria(e.target.value)}
-              aria-describedby={categoriaEscolhida ? "resumo-categoria" : undefined}
-            >
-              {categorias.map((c) => (
-                <option key={c.codigo} value={c.codigo}>
-                  {c.nome}
-                </option>
-              ))}
-            </CampoSeletor>
-
-            {categoriaEscolhida && (
-              <div
-                id="resumo-categoria"
-                className="mt-[10px] px-[14px] py-[13px] border border-acao-borda rounded-campo bg-acao-clara"
-              >
-                <strong className="block text-tinta text-sm">{categoriaEscolhida.nome}</strong>
-                <p className="mt-1 text-tinta-2 text-xs leading-[1.5]">
-                  {categoriaEscolhida.descricao}
-                </p>
-                <div className="flex gap-2 mt-[10px] flex-wrap">
-                  <Selo tom="info">{categoriaEscolhida.total_obrigatorios} obrigatórios</Selo>
-                  <Selo tom="neutro">{categoriaEscolhida.total_documentos} no total</Selo>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <BotaoProcesso
-            type="submit"
-            variante="primario"
-            bloco
-            processando={criando}
-            textoProcessando="Criando o caso…"
-            pendencia={
-              !cliente.trim()
-                ? "Digite o nome do cliente para criar o caso."
-                : !entrevistaArquivo
-                  ? "Adicione a entrevista para a IA analisar o caso."
-                : !categoriaSelecionada
-                  ? "Escolha o tipo de ação."
-                  : null
-            }
-            onPendencia={() => document.getElementById(!entrevistaArquivo ? "entrevista-inicial" : cliente.trim() ? "categoria" : "cliente")?.focus()}
-          >
-            Criar o caso
-          </BotaoProcesso>
-        </form>
-
-        <div className="my-6 border-t border-borda" />
-        <form onSubmit={importarPacote}>
-          <h3 className="text-base font-semibold text-tinta">Criar pelo pacote do cliente</h3>
-          <p className="mt-1 text-sm text-tinta-2">
-            Informe o nome, escolha a ação e envie uma pasta ZIP de até 500 MB. Os documentos entram na triagem e uma entrevista em TXT, MD, DOCX ou PDF é vinculada automaticamente.
-          </p>
-          <div
-            className={`mt-4 rounded-xl border-2 border-dashed p-5 text-center transition-colors ${arrastandoPacote ? "border-acao bg-acao-clara" : "border-borda bg-papel-2"}`}
-            onDragEnter={(evento) => { evento.preventDefault(); setArrastandoPacote(true); }}
-            onDragOver={(evento) => { evento.preventDefault(); evento.dataTransfer.dropEffect = "copy"; }}
-            onDragLeave={(evento) => { evento.preventDefault(); setArrastandoPacote(false); }}
-            onDrop={(evento) => {
-              evento.preventDefault();
-              setArrastandoPacote(false);
-              selecionarPacote(evento.dataTransfer.files?.[0] ?? null);
-            }}
-          >
-            <Upload className="mx-auto h-6 w-6 text-acao" />
-            <p className="mt-2 text-sm font-medium text-tinta">Arraste o arquivo ZIP aqui</p>
-            <p className="mt-1 text-sm text-tinta-2">ou escolha o arquivo pelo botão</p>
-            <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-              <Botao type="button" variante="secundario" onClick={() => pacoteInputRef.current?.click()} disabled={importandoPacote}>
-                {pacoteArquivo ? "Trocar arquivo ZIP" : "Escolher arquivo ZIP"}
-              </Botao>
-              <span className="text-sm text-tinta-2">{pacoteArquivo ? pacoteArquivo.name : "Nenhum ZIP escolhido"}</span>
-            </div>
-            <input
-              ref={pacoteInputRef}
-              type="file"
-              accept=".zip,application/zip,application/x-zip-compressed"
-              onChange={(e) => { selecionarPacote(e.target.files?.[0] ?? null); e.target.value = ""; }}
-              className="hidden"
-            />
-          </div>
-          <div className="mt-4">
-            <RotuloCampo htmlFor="skill-juridica">Skill jurídica</RotuloCampo>
-            <CampoSeletor id="skill-juridica" value={skillJuridicaId} onChange={(e) => setSkillJuridicaId(e.target.value)}>
-              <option value="">Sem skill específica</option>
-              {skillsJuridicas.map((skill) => <option key={skill.id} value={skill.id}>{skill.nome}</option>)}
-            </CampoSeletor>
-            <p className="mt-1 text-xs text-tinta-2">A skill será aplicada à análise e preservada para a revisão antes da petição.</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Botao type="button" variante="texto" pequeno onClick={() => skillInputRef.current?.click()} disabled={importandoSkill}>
-                {importandoSkill ? "Importando skill…" : "Importar nova skill (.skill.zip)"}
-              </Botao>
-              <input
-                ref={skillInputRef}
-                type="file"
-                accept=".skill.zip,application/zip,application/x-zip-compressed"
-                className="hidden"
-                onChange={(e) => { void importarSkill(e.target.files?.[0] ?? null); e.target.value = ""; }}
-              />
-            </div>
-            {erroSkill && <p className="mt-1 mb-0 text-xs text-atencao">{erroSkill}</p>}
-          </div>
-          <BotaoProcesso
-            type="submit"
-            variante="secundario"
-            bloco
-            className="mt-4"
-            processando={importandoPacote}
-            textoProcessando="Montando o caso e importando a pasta…"
-            pendencia={!cliente.trim() ? "Digite o nome do cliente acima." : !pacoteArquivo ? "Escolha a pasta ZIP." : null}
-          >
-            Criar caso com ZIP
-          </BotaoProcesso>
-          {erroPacote && <div className="mt-3"><Aviso tom="critico" titulo="Não foi possível importar o ZIP">{erroPacote}</Aviso></div>}
-        </form>
-
-        {categorias.length === 0 && (
-          <div className="mt-[14px]">
-            <Aviso tom="critico" titulo="Nenhum tipo de ação disponível">
-              Verifique se o servidor do sistema está no ar — sem os tipos de ação não é possível
-              criar um caso.
-            </Aviso>
-          </div>
-        )}
-
-        {novoPortal && (
-          <CredenciaisPortal
-            cliente={novoPortal.cliente}
-            portal={novoPortal.portal}
-            casoId={novoPortal.id}
-            telefone={novoPortal.telefone}
-            onAbrirCaso={() => onAbrir(novoPortal.id)}
-            onFechar={() => setNovoPortal(null)}
-          />
-        )}
-      </Cartao>
-
-      <Cartao
-        titulo="Casos cadastrados"
-        className={modo === "ver" ? "min-w-0 overflow-hidden" : "hidden"}
-        subtitulo={
-          casos.length === 0
-            ? "Nenhum caso ainda."
-            : `${casosFiltrados.length} de ${casos.length} ${casos.length === 1 ? "caso" : "casos"} — mais recentes primeiro.`
-        }
-      >
-        <div className="mb-4"><Botao variante="secundario" onClick={() => setModo("inicio")}>Voltar</Botao></div>
+          <Botao variante="primario" onClick={onNovoCaso}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Novo caso
+          </Botao>
+        </div>
         {erro && (
           <div className="mb-[14px]">
             <Aviso tom="critico" titulo="Não foi possível carregar os casos">
@@ -603,7 +232,9 @@ export default function ListaCasos({
         {carregando && casos.length === 0 ? (
           <Vazio>Carregando…</Vazio>
         ) : casos.length === 0 ? (
-          <Vazio>Crie o primeiro caso ao lado para começar a cobrar os documentos do cliente.</Vazio>
+          <Vazio>
+            Ainda não há casos. Clique em <strong>Novo caso</strong> para cadastrar o primeiro cliente.
+          </Vazio>
         ) : casosFiltrados.length === 0 ? (
           <Vazio>Nenhum caso encontrado com esse nome.</Vazio>
         ) : (
@@ -635,8 +266,10 @@ export default function ListaCasos({
                         <span className="block truncate text-base font-semibold text-tinta">
                           {grupo.cliente}
                         </span>
-                        <span className="mt-1 block truncate font-codigo text-xs text-tinta-3">
-                          {unico ? unico.id : `${grupo.casos.length} casos — clique para escolher a ação`}
+                        <span className="mt-1 block truncate text-xs text-tinta-3">
+                          {unico
+                            ? dataCurta(unico.criado_em) && `criado em ${dataCurta(unico.criado_em)}`
+                            : `${grupo.casos.length} casos — clique para escolher a ação`}
                         </span>
                       </button>
 
@@ -710,7 +343,7 @@ export default function ListaCasos({
                                   </span>
                                   <span className="block truncate text-xs text-tinta-3">
                                     {arquivos} {arquivos === 1 ? "arquivo" : "arquivos"}
-                                    {caso.criado_em ? ` · criado em ${new Date(caso.criado_em).toLocaleDateString("pt-BR")}` : ""}
+                                    {dataCurta(caso.criado_em) ? ` · criado em ${dataCurta(caso.criado_em)}` : ""}
                                   </span>
                                 </button>
                                 <div className="flex items-center gap-2">

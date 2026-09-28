@@ -3,40 +3,10 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { LogOut } from "lucide-react";
 
-import type { Tela } from "@/app/home/home.model";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
+import { rotuloDaTela, type Tela } from "@/lib/telas";
 
 import BarraLateral from "./BarraLateral";
-
-const ROTULO_TELA: Record<Tela, string> = {
-  carteira: "Carteira",
-  chat: "Chat",
-  agente: "Agente",
-  caso: "Checklist do caso",
-  dossie: "Dossiê do caso",
-  painel: "Painel analítico",
-  jurimetria: "Jurimetria",
-  casos: "Casos",
-  avulso: "Ler documento",
-  investigacao: "Investigação",
-  usuarios: "Administração",
-  panorama: "Panorama",
-  operacao: "Operação",
-  entrevista: "Entrevista guiada",
-  supervisao: "Supervisão",
-  dados: "Dados",
-  saudeAgente: "Saúde do agente",
-  modelosDePeticao: "Modelos de petição",
-  configuracaoAssinatura: "Tactiq e assinatura eletrônica",
-  catalogoRoteiros: "Roteiros",
-  glossarioDocumentos: "Glossário de documentos",
-  tiposDeCaso: "Tipos de caso",
-  revisao: "Revisão do roteiro",
-  followup: "Follow-up",
-  documentacao: "Documentação",
-  skills: "Skills",
-  gastosApi: "Gastos das APIs",
-};
 
 interface AppShellProps {
   tela: Tela;
@@ -82,7 +52,7 @@ export default function AppShell({ tela, skillAberta = null, onNavegar, onAbrirS
               <span className="block text-[11px] font-bold uppercase tracking-[0.12em] text-tinta-3">
                 Área atual
               </span>
-              <strong className="mt-0.5 block truncate text-sm text-tinta">{ROTULO_TELA[tela]}</strong>
+              <strong className="mt-0.5 block truncate text-sm text-tinta">{rotuloDaTela(tela)}</strong>
             </div>
             <div className="flex min-w-0 shrink-0 items-center gap-3">
               <span className="hidden h-8 w-px bg-borda sm:block" aria-hidden />

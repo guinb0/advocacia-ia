@@ -126,7 +126,7 @@ advogado mais precisa saber o que ficou frágil.
 O evento de janela existe porque quem dispara a análise dos documentos é um painel em outro
 galho da árvore (o dossiê), e levar um callback até lá obrigaria a subir estado por três
 componentes que nada têm a ver com a conversa. Mesmo padrão da sessão expirada
-(`lib/api.ts`).
+(`lib/api/base.ts`).
 
 ## Três erros que só apareceram com pedido de verdade
 

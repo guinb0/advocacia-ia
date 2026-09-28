@@ -483,7 +483,7 @@ export interface AvisoParaOChat {
  * Por evento de janela, e não por `props`: quem dispara a análise dos documentos é um
  * painel que fica em OUTRO galho da árvore (o dossiê), e levar um callback até lá
  * obrigaria a subir estado por três componentes que não têm nada a ver com a conversa.
- * O mesmo padrão que o app já usa para a sessão expirada (`lib/api.ts`).
+ * O mesmo padrão que o app já usa para a sessão expirada (`lib/api/base.ts`).
  */
 export function avisarChatDaPeticao(
   casoId: string,

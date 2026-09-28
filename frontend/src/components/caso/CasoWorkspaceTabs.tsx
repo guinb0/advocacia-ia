@@ -1,40 +1,6 @@
 "use client";
 
-import { BarChart3, ClipboardCheck, FileText, Scale } from "lucide-react";
-
-import type { Tela } from "@/app/home/home.model";
-
-const ABAS: Array<{
-  tela: Extract<Tela, "caso" | "dossie" | "painel" | "jurimetria">;
-  titulo: string;
-  apoio: string;
-  Icone: typeof ClipboardCheck;
-}> = [
-  {
-    tela: "caso",
-    titulo: "Checklist",
-    apoio: "Documentos",
-    Icone: ClipboardCheck,
-  },
-  {
-    tela: "dossie",
-    titulo: "Dossiê",
-    apoio: "Fatos e peças",
-    Icone: FileText,
-  },
-  {
-    tela: "painel",
-    titulo: "Painel",
-    apoio: "Andamento",
-    Icone: BarChart3,
-  },
-  {
-    tela: "jurimetria",
-    titulo: "Jurimetria",
-    apoio: "Acervo",
-    Icone: Scale,
-  },
-];
+import { ABAS_DO_CASO, type Tela } from "@/lib/telas";
 
 interface CasoWorkspaceTabsProps {
   tela: Tela;
@@ -82,7 +48,7 @@ export default function CasoWorkspaceTabs({
         role="tablist"
         aria-label="Áreas do caso"
       >
-        {ABAS.map(({ tela: destino, titulo, apoio, Icone }) => {
+        {ABAS_DO_CASO.map(({ tela: destino, titulo, apoio, icone: Icone }) => {
           const ativa = tela === destino;
           return (
             <button

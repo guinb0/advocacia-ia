@@ -64,7 +64,8 @@ ignorado em silêncio.
 |---|---|
 | `src/app/home/home.view.tsx` | a aplicação: qual tela desenhar |
 | `src/app/home/home.model.ts` | o estado dela (tela aberta, caso em foco) |
-| `src/lib/api.ts` | cliente HTTP das telas antigas; base em `NEXT_PUBLIC_OCR_API` |
+| `src/lib/api/` | cliente HTTP das telas antigas, um arquivo por domínio; base em `NEXT_PUBLIC_OCR_API` (`base.ts`) |
+| `src/lib/telas.ts` | registro único das telas: rótulo, ícone, módulo de permissão e moldura |
 | `src/global/services/api.ts` | cliente HTTP do padrão novo (`apiFetch`) |
 | `src/lib/types.ts` | espelho tipado do JSON de `/api/extrair` |
 | `src/components/` | as telas |
