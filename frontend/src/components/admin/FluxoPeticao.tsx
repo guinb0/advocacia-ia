@@ -12,11 +12,13 @@ import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Maximize2, Mic, Mi
 import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
 import { SkillDoCaso } from "@/components/skills/SeletorSkillPeticao";
 import ChatPeticao from "@/components/admin/ChatPeticao";
+import ProtocoloDaPeticaoCartao from "@/components/admin/ProtocoloDaPeticao";
 import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
 import { alinharSecoes, indicesAlterados, type LinhaComparacao } from "@/lib/diffPeticao";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
 import {
   baixarArquivoDaPeticao,
+  baixarPacoteDeProtocolo,
   aceitarRevisaoPendente,
   aguardarPeticaoPronta,
   buscarPeticao,
@@ -70,7 +72,7 @@ export type ControlesGeracaoPeticao = {
   passosTotais: number;
 };
 
-type AcaoPeticao = "gerar" | "salvar" | "revisar";
+type AcaoPeticao = "gerar" | "salvar" | "pacote" | "revisar";
 /** Resultado da última ação, com a ação que o produziu — cada um aparece junto do próprio botão. */
 type Retorno = { acao: AcaoPeticao; texto: string } | null;
 
@@ -92,6 +94,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   /** Qual formato está sendo salvo: cada botão de download mostra só o próprio andamento. */
   const [salvandoComo, setSalvandoComo] = useState<"docx" | "pdf" | null>(null);
   const salvando = salvandoComo !== null;
+  const [perguntandoPdf, setPerguntandoPdf] = useState(false);
+  const [montandoPacote, setMontandoPacote] = useState(false);
   const [erro, setErro] = useState<Retorno>(null);
   const [concluido, setConcluido] = useState<Retorno>(null);
 
@@ -272,12 +276,14 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     andamento,
   ]);
 
-  async function salvar(baixarPdf = false) {
+  async function salvar(baixarPdf = false, comPacote = false) {
     if (!peticao) return;
     const formato = baixarPdf ? "pdf" : "docx";
+    setPerguntandoPdf(false);
     setSalvandoComo(formato);
     setErro(null);
     setConcluido(null);
+    let pdfBaixado = false;
     try {
       await autoSalvo.descarregar();
       const atualizada = await salvarRascunhoPeticao(
@@ -291,12 +297,35 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       baixarArquivo(arquivo, `Peticao inicial - v${atualizada.version}.${formato}`);
       setConcluido({ acao: "salvar", texto: `Versão ${atualizada.version} salva e .${formato} baixado.` });
       avisarChatDaPeticao(casoId, "versao_salva", { formato, versao: atualizada.version });
+      pdfBaixado = true;
+      if (comPacote) {
+        setMontandoPacote(true);
+        const pacote = await baixarPacoteDeProtocolo(casoId);
+        baixarArquivo(pacote.arquivo, pacote.nome);
+        setConcluido({
+          acao: "salvar",
+          texto:
+            `Versão ${atualizada.version} salva: .pdf e documentos para protocolo baixados ` +
+            `(${pacote.arquivos} arquivos no .zip).` +
+            (pacote.faltando
+              ? ` ${pacote.faltando} documento(s) não puderam entrar — veja as pendências no Checklist.pdf.`
+              : ""),
+        });
+      }
     } catch (e) {
-      const texto = e instanceof Error ? e.message : "Não foi possível salvar.";
-      setErro({ acao: "salvar", texto });
-      avisarChatDaPeticao(casoId, "falha", { acao: "Salvar a petição", erro: texto });
+      if (pdfBaixado) {
+        setErro({
+          acao: "pacote",
+          texto: e instanceof Error ? e.message : "Não foi possível montar os documentos para protocolo.",
+        });
+      } else {
+        const texto = e instanceof Error ? e.message : "Não foi possível salvar.";
+        setErro({ acao: "salvar", texto });
+        avisarChatDaPeticao(casoId, "falha", { acao: "Salvar a petição", erro: texto });
+      }
     } finally {
       setSalvandoComo(null);
+      setMontandoPacote(false);
     }
   }
 
@@ -728,14 +757,44 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                   variante="texto"
                   pequeno
                   processando={salvandoComo === "pdf"}
-                  textoProcessando="Gerando o PDF…"
+                  textoProcessando={montandoPacote ? "Montando os documentos…" : "Gerando o PDF…"}
                   aguardando={ocupado || salvandoComo === "docx"}
-                  onClick={() => salvar(true)}
+                  onClick={() => setPerguntandoPdf((atual) => !atual)}
                 >
                   Baixar PDF
                 </BotaoProcesso>
               </div>
             </div>
+
+            {perguntandoPdf && !salvando && (
+              <div
+                role="dialog"
+                aria-labelledby="pergunta-protocolo"
+                className="grid gap-3 rounded-campo border border-borda bg-papel p-3"
+              >
+                <div className="grid gap-1">
+                  <p id="pergunta-protocolo" className="m-0 text-sm font-semibold text-tinta">
+                    Quer baixar também os documentos prontos para protocolo?
+                  </p>
+                  <p className="m-0 text-xs leading-relaxed text-tinta-3">
+                    Vem um .zip com a petição, os documentos numerados do jeito que a peça cita
+                    (Doc 1., Doc 2.…), já em PDF, a planilha de cálculo, a lista de documentação e o
+                    checklist para protocolo.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Botao variante="primario" pequeno onClick={() => void salvar(true, true)}>
+                    PDF e documentos para protocolo (.zip)
+                  </Botao>
+                  <Botao variante="secundario" pequeno onClick={() => void salvar(true)}>
+                    Só o PDF
+                  </Botao>
+                  <Botao variante="texto" pequeno onClick={() => setPerguntandoPdf(false)}>
+                    Cancelar
+                  </Botao>
+                </div>
+              </div>
+            )}
 
             {erro?.acao === "salvar" && (
               <Aviso tom="critico" titulo="Não foi possível salvar">
@@ -743,6 +802,20 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               </Aviso>
             )}
             {concluido?.acao === "salvar" && <Aviso tom="ok">{concluido.texto}</Aviso>}
+            {erro?.acao === "pacote" && (
+              <Aviso tom="critico" titulo="O PDF foi baixado, mas os documentos para protocolo não">
+                {erro.texto}
+              </Aviso>
+            )}
+
+            <ProtocoloDaPeticaoCartao
+              casoId={casoId}
+              protocolo={peticao.protocolo}
+              desabilitado={ocupado}
+              onAtualizada={(salva) =>
+                setPeticao((atual) => (atual ? { ...atual, protocolo: salva.protocolo ?? null } : salva))
+              }
+            />
 
             {(peticao.readiness?.pendencias ?? []).length > 0 && (
               <Aviso tom="atencao" titulo="Pontos sem comprovação documental">

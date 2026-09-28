@@ -11,6 +11,7 @@
  */
 
 import { ApiError, CREDENCIAIS, cabecalhos, urlApi } from "./api";
+import { nomeDoAnexo } from "./api/base";
 
 export type EstadoEtapa = "pendente" | "andamento" | "pronto" | "atencao" | "indisponivel";
 
@@ -169,6 +170,14 @@ export interface RevisaoPendente {
   revisao?: RevisaoRegistrada;
 }
 
+export interface ProtocoloDaPeticao {
+  numero: string;
+  /** AAAA-MM-DD. */
+  data: string;
+  marcado_por: string;
+  marcado_em: string;
+}
+
 export interface Peticao {
   id: string;
   document_type: string;
@@ -196,6 +205,8 @@ export interface Peticao {
   sections?: SecaoPeticao[];
   revisao?: RevisaoRegistrada | null;
   revisao_pendente?: RevisaoPendente | null;
+  /** Independe do `status`: a revisão é interna, o protocolo aconteceu no tribunal. */
+  protocolo?: ProtocoloDaPeticao | null;
   jurimetria?: {
     disponivel: boolean;
     origem?: string;
@@ -1086,6 +1097,45 @@ export async function baixarArquivoDaPeticao(
     throw new ApiError(`Não foi possível abrir o arquivo da peça (erro ${resposta.status}).`);
   }
   return resposta.blob();
+}
+
+/** A pasta pronta para o PJe: petição, "Doc N." na numeração que a peça cita, lista e checklist. */
+export async function baixarPacoteDeProtocolo(
+  casoId: string,
+): Promise<{ arquivo: Blob; nome: string; arquivos: number; faltando: number }> {
+  const resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/pacote-protocolo`), {
+    headers: cabecalhos(),
+    credentials: CREDENCIAIS,
+  });
+  if (!resposta.ok) {
+    const dados = await resposta.json().catch(() => null);
+    throw new ApiError(
+      dados && typeof dados === "object" && "detail" in dados
+        ? String((dados as { detail: unknown }).detail)
+        : `Não foi possível montar os documentos para protocolo (erro ${resposta.status}).`,
+      { status: resposta.status },
+    );
+  }
+  return {
+    arquivo: await resposta.blob(),
+    nome: nomeDoAnexo(resposta, "Protocolo.zip"),
+    arquivos: Number(resposta.headers.get("X-Arquivos") ?? 0),
+    faltando: Number(resposta.headers.get("X-Faltando") ?? 0),
+  };
+}
+
+export function marcarProtocoloDaPeticao(
+  casoId: string,
+  protocolo: { protocolada: boolean; numero?: string; data?: string },
+): Promise<Peticao> {
+  return chamar(`/api/agente/casos/${casoId}/peticao-protocolo`, {
+    method: "PUT",
+    body: JSON.stringify({
+      protocolada: protocolo.protocolada,
+      numero: protocolo.numero ?? "",
+      data: protocolo.data ?? "",
+    }),
+  });
 }
 
 /* --------------------------------------------------------------- entrevista */

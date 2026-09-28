@@ -16,7 +16,7 @@ import re
 import unicodedata
 import uuid
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
@@ -2968,6 +2968,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "title": "Petição inicial",
         "created_at": anterior.get("created_at") or agora,
         "updated_at": agora,
+        # Gerar de novo não desfaz o protocolo já feito no tribunal.
+        "protocolo": anterior.get("protocolo") or None,
         "analise": analise,
         # Produto interno, deliberadamente separado de `sections`: a peça que
         # vai ao juízo nunca recebe lacunas, estratégia ou divergências brutas.
@@ -4063,6 +4065,44 @@ def atualizar_status(caso_id: str, *, status: str) -> dict[str, Any]:
     return _salvar(caso_id, dados)
 
 
+_DATA_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@skill_peticao.com_skill_do_caso
+def marcar_protocolo(
+    caso_id: str, *, protocolada: bool, numero: str = "", data: str = "", por: str = ""
+) -> dict[str, Any]:
+    """Marca (ou desmarca) a petição como protocolada, com o número do processo.
+
+    Fica à parte de `status`: aprovação é a revisão do advogado; protocolo é o
+    envio ao tribunal, e a peça pode ser protocolada sem passar pela aprovação.
+    """
+    dados = carregar(caso_id)
+    if not dados:
+        raise ErroPeticao("Nenhuma petição gerada para este caso.")
+    if not protocolada:
+        dados["protocolo"] = None
+        return _salvar(caso_id, dados)
+    numero = " ".join(str(numero or "").split())
+    if len(numero) > 60:
+        raise ValueError("O número do protocolo passou de 60 caracteres.")
+    data = str(data or "").strip()
+    if data:
+        try:
+            if not _DATA_ISO.match(data):
+                raise ValueError(data)
+            date.fromisoformat(data)
+        except ValueError as erro:
+            raise ValueError("Data do protocolo inválida: use AAAA-MM-DD.") from erro
+    dados["protocolo"] = {
+        "numero": numero,
+        "data": data or datetime.now(timezone(timedelta(hours=-3))).date().isoformat(),
+        "marcado_por": str(por or "")[:200],
+        "marcado_em": _agora(),
+    }
+    return _salvar(caso_id, dados)
+
+
 def para_api(dados: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": dados.get("id", ID_LOCAL),
@@ -4084,6 +4124,7 @@ def para_api(dados: dict[str, Any]) -> dict[str, Any]:
         "created_at": dados.get("created_at", _agora()),
         "revisao": dados.get("revisao") or None,
         "revisao_pendente": dados.get("revisao_pendente") or None,
+        "protocolo": dados.get("protocolo") or None,
         "trace": dados.get("trace") or {},
         "sections": [
             secao
