@@ -26,7 +26,7 @@ ARG environment
 ARG VERSION
 # NEXT_PUBLIC_* e embutido no bundle NO BUILD — runtime nao muda mais.
 # Vazios de proposito: o front usa o host de onde a pagina foi aberta (ver
-# frontend/src/lib/api.ts). So preencha via build_args_additional quando api e
+# frontend/src/lib/api/base.ts). So preencha via build_args_additional quando api e
 # pagina morarem em DOMINIOS diferentes atras do nginx.
 ARG NEXT_PUBLIC_OCR_API=""
 ARG NEXT_PUBLIC_TRANSCRICAO_API=""

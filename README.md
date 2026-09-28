@@ -389,7 +389,7 @@ O caminho óbvio seria proxiar `/api` do Next para o Python com `rewrites`. Não
   `proxyClientMaxBodySize` (10MB por padrão) **trunca o corpo em silêncio** em vez de
   rejeitar: o backend receberia uma imagem corrompida sem ninguém perceber.
 
-Então o frontend fala direto com o FastAPI (`lib/api.ts`), que habilita CORS. Para
+Então o frontend fala direto com o FastAPI (`lib/api/base.ts`), que habilita CORS. Para
 apontar para outro host, defina `NEXT_PUBLIC_OCR_API`.
 
 ### Resposta (resumida)
@@ -479,7 +479,8 @@ da mãe vindo contaminado com a categoria da coluna vizinha, e o nº de registro
 
 ```
 app/                     backend (FastAPI)
-  main.py                rotas; middleware de auth por allowlist
+  main.py                monta o app: ciclo de vida, middleware de auth por allowlist, routers
+  rotas/                 as rotas HTTP, um router por área (casos, documentos, entrevista...)
   auth.py                assina e valida o JWT da sessão. Sem JWT_SECRET = auth desligada
   usuarios.py            contas (tabela `acervo_usuarios`), login, logout e troca de senha
   ── entrevista
@@ -522,7 +523,8 @@ frontend/                Next.js 16 (App Router) + React 19
     Panorama.tsx         o escritório inteiro — módulo próprio, aberto pela navegação
     Carteira · Checklist · ItemChecklistLinha · PedidoCliente · Resultado
     Retratos.tsx         os participantes da chamada
-  lib/api.ts             cliente HTTP do backend
+  lib/api/               cliente HTTP do backend, um arquivo por domínio
+  lib/telas.ts           registro das telas (rótulo, ícone, módulo, moldura)
   lib/transcricao.ts     captura de áudio e streaming para o Whisper
   lib/chamadaJitsi.ts    a chamada sobre lib-jitsi-meet
   lib/types.ts           espelho tipado do JSON da API

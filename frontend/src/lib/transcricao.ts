@@ -11,7 +11,7 @@
  * PRÓPRIA localhost: a chamada e a transcrição só funcionavam no computador que
  * roda os servidores.
  *
- * O padrão agora acompanha de onde a página foi aberta, igual à `lib/api.ts`.
+ * O padrão agora acompanha de onde a página foi aberta, igual à `lib/api/base.ts`.
  * Preencher a variável continua valendo, e é o que serve quando o serviço mora
  * atrás de um domínio ou de outra porta — mas aí o valor tem de ser alcançável
  * por quem ABRE o sistema, não por quem o hospeda. */

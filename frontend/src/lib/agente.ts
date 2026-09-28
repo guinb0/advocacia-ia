@@ -415,7 +415,7 @@ export interface SaudeAgente {
 export async function chamarAgente<T>(caminho: string, init: RequestInit = {}): Promise<T> {
   const resposta = await fetch(urlApi(caminho), {
     ...init,
-    // O cookie de sessão só acompanha a chamada com isto — ver `lib/api.ts`.
+    // O cookie de sessão só acompanha a chamada com isto — ver `lib/api/base.ts`.
     credentials: CREDENCIAIS,
     //
     // `FormData` fica **sem** `Content-Type` de propósito: o navegador precisa escrever o
