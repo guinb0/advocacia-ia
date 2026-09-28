@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import re
 import uuid
 import zipfile
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from . import peticao_skills
+
+log = logging.getLogger("skills_juridicas")
 
 _MAX_ARQUIVOS = 80
 _MAX_BYTES = 2 * 1024 * 1024
@@ -83,7 +86,7 @@ def obter(skill_id: str) -> dict[str, Any] | None:
     return linha
 
 
-def importar_zip(nome: str, conteudo: bytes) -> dict[str, Any]:
+def importar_zip(nome: str, conteudo: bytes, descricao: str | None = None) -> dict[str, Any]:
     """Importa Markdown de uma `.skill.zip`; nunca extrai nem executa conteúdo."""
     if not conteudo:
         raise ValueError("A skill enviada está vazia.")
@@ -123,7 +126,7 @@ def importar_zip(nome: str, conteudo: bytes) -> dict[str, Any]:
                ON CONFLICT (id) DO UPDATE SET nome=EXCLUDED.nome, descricao=EXCLUDED.descricao,
                    skill_md=EXCLUDED.skill_md, referencias_json=EXCLUDED.referencias_json,
                    atualizado_em=now()""",
-            (skill_id, nome[:200], "Skill jurídica importada do pacote enviado.", principal, json.dumps(referencias, ensure_ascii=False)),
+            (skill_id, nome[:200], (descricao or "Skill jurídica importada do pacote enviado.")[:500], principal, json.dumps(referencias, ensure_ascii=False)),
         )
         # Reimportar substitui os assets da mesma skill, evitando logo antigo
         # sobreviver silenciosamente a uma atualização do pacote.
@@ -136,6 +139,21 @@ def importar_zip(nome: str, conteudo: bytes) -> dict[str, Any]:
     return obter(skill_id) or {"id": skill_id}
 
 
+def criar(nome: str, descricao: str, texto: str) -> dict[str, Any]:
+    """Grava uma skill nova a partir do texto. Ela passa a ser um módulo próprio."""
+    nome = nome.strip()
+    texto = texto.strip()
+    if not nome or not texto:
+        raise ValueError("A skill precisa de nome e de texto.")
+    if not texto.startswith("---"):
+        texto = f"---\nname: {_slug(nome)}\ndescription: {descricao.strip()}\n---\n\n# {nome}\n\n{texto}\n"
+    pacote = io.BytesIO()
+    with zipfile.ZipFile(pacote, "w") as arquivo:
+        arquivo.writestr("SKILL.md", texto)
+        arquivo.writestr("references/notas.md", "Notas da skill adicionada pelo escritório.\n")
+    return importar_zip(nome, pacote.getvalue(), descricao.strip() or None)
+
+
 def importar_embutida(caminho: Path) -> dict[str, Any] | None:
     """Instala a skill distribuída com a imagem somente quando ela não existe.
 
@@ -146,3 +164,61 @@ def importar_embutida(caminho: Path) -> dict[str, Any] | None:
     if obter(skill_id) is not None:
         return None
     return importar_zip(caminho.name, caminho.read_bytes())
+
+
+def catalogo() -> list[dict[str, Any]]:
+    """Skills de arquivo e as adicionadas pelo escritório, sem repetir o mesmo id."""
+    from . import skill_de_arquivo
+
+    arquivos = skill_de_arquivo.listar()
+    ids = {item["id"] for item in arquivos}
+    importadas: list[dict[str, Any]] = []
+    try:
+        importadas = [
+            {
+                "id": item["id"],
+                "origem": "importada",
+                "nome": skill_de_arquivo.rotulo(item["id"], item.get("nome") or ""),
+                "descricao": str(item.get("descricao") or "")[:400],
+            }
+            for item in listar()
+            if item["id"] not in ids
+        ]
+    except Exception:
+        log.warning("skills importadas indisponíveis", exc_info=True)
+    return arquivos + importadas
+
+
+def detalhe(skill_id: str) -> dict[str, Any] | None:
+    """O texto da skill, para o módulo próprio dela."""
+    from . import skill_de_arquivo
+
+    try:
+        skill = skill_de_arquivo.carregar(skill_id)
+    except skill_de_arquivo.SkillAusente:
+        skill = None
+    if skill is not None:
+        texto = skill.ler("SKILL.md")
+        return {
+            "id": skill_id,
+            "origem": "arquivo",
+            "nome": skill_de_arquivo.rotulo(skill_id),
+            "descricao": skill.frontmatter().get("description", "")[:400],
+            "texto": texto[:20000],
+            "cortado": len(texto) > 20000,
+        }
+    try:
+        registro = obter(skill_id)
+    except Exception:
+        return None
+    if not registro:
+        return None
+    texto = str(registro.get("skill_md") or "")
+    return {
+        "id": skill_id,
+        "origem": "importada",
+        "nome": skill_de_arquivo.rotulo(skill_id, str(registro.get("nome") or "")),
+        "descricao": str(registro.get("descricao") or "")[:400],
+        "texto": texto[:20000],
+        "cortado": len(texto) > 20000,
+    }

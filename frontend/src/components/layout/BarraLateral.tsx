@@ -55,8 +55,10 @@ import {
   PenLine,
   PhoneCall,
   Search,
+  Sparkles,
   Tags,
   Users,
+  Wallet,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -64,12 +66,15 @@ import {
 import { podeAbrirTela } from "@/app/home/home.model";
 import type { Tela } from "@/app/home/home.model";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
+import { listarModulosDeSkill, type SkillModulo } from "@/lib/api";
 
 export interface ModuloNavegacao {
   tela: Tela;
   rotulo: string;
   /** Telas internas que devem acender o mesmo item de navegação. */
   relacionadas?: Tela[];
+  /** Quando a tela é a mesma para várias skills, este id distingue o módulo. */
+  skillId?: string;
   /* Telas que só existem DENTRO deste item — ver o comentário do grupo
    * "Escritório" sobre a Administração. Quando há subitens, o item vira
    * expansível: a lista só ocupa espaço na coluna de quem a abriu. */
@@ -142,8 +147,13 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
         ],
       },
       { tela: "saudeAgente", rotulo: "Saúde do agente" },
+      { tela: "gastosApi", rotulo: "Gastos das APIs" },
       { tela: "modelosDePeticao", rotulo: "Modelos de petição" },
     ],
+  },
+  {
+    titulo: "Skills",
+    itens: [{ tela: "skills", rotulo: "Skills" }],
   },
 ];
 
@@ -183,6 +193,8 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   catalogoRoteiros: BookOpen,
   glossarioDocumentos: Tags,
   tiposDeCaso: Layers,
+  skills: Sparkles,
+  gastosApi: Wallet,
   usuarios: Users,
   saudeAgente: HeartPulse,
   modelosDePeticao: PenLine,
@@ -193,13 +205,15 @@ export const ICONE_POR_TELA: Partial<Record<Tela, LucideIcon>> = {
   jurimetria: FileText,
 };
 
-function ativa(modulo: ModuloNavegacao, tela: Tela): boolean {
+function ativa(modulo: ModuloNavegacao, tela: Tela, skillAberta: string | null): boolean {
+  if (modulo.skillId) return tela === "skills" && skillAberta === modulo.skillId;
+  if (modulo.tela === "skills") return tela === "skills" && !skillAberta;
   return modulo.tela === tela || (modulo.relacionadas?.includes(tela) ?? false);
 }
 
 /** O item está aceso porque um FILHO dele é a tela atual? Se sim, já abre expandido. */
-export function filhoAtivo(item: ModuloNavegacao, tela: Tela): boolean {
-  return (item.subitens ?? []).some((sub) => ativa(sub, tela));
+export function filhoAtivo(item: ModuloNavegacao, tela: Tela, skillAberta: string | null = null): boolean {
+  return (item.subitens ?? []).some((sub) => ativa(sub, tela, skillAberta));
 }
 
 function indiceDoModulo(item: ModuloNavegacao, modulos: string[]): number {
@@ -237,14 +251,17 @@ export function gruposPermitidos(modulos: string[]): GrupoNavegacao[] {
 
 interface Props {
   tela: Tela;
+  skillAberta?: string | null;
   onNavegar: (tela: Tela) => void;
+  onAbrirSkill?: (skillId: string) => void;
 }
 
-export default function BarraLateral({ tela, onNavegar }: Props) {
+export default function BarraLateral({ tela, skillAberta = null, onNavegar, onAbrirSkill }: Props) {
   const [aberta, setAberta] = useState(false);
   /* Quais itens com filhos estão expandidos. Vive aqui, e não no item, porque é
    * estado de quem está olhando a coluna — não da definição do menu. */
   const [expandidos, setExpandidos] = useState<Tela[]>([]);
+  const [skills, setSkills] = useState<SkillModulo[]>([]);
   const sessao = useSessao();
   const modulos = sessao.carregando ? [] : sessao.modulos;
   const nome = sessao.nome || sessao.usuario || "Usuário";
@@ -272,7 +289,35 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
     };
   }, [aberta]);
 
-  const grupos = useMemo(() => gruposPermitidos(modulos), [modulos]);
+  const grupos = useMemo(() => {
+    const base = gruposPermitidos(modulos);
+    if (skills.length === 0) return base;
+    return base.map((grupo) => ({
+      ...grupo,
+      itens: grupo.itens.map((item) =>
+        item.tela === "skills"
+          ? {
+              ...item,
+              subitens: skills.map((skill) => ({
+                tela: "skills" as const,
+                rotulo: skill.nome,
+                skillId: skill.id,
+              })),
+            }
+          : item,
+      ),
+    }));
+  }, [modulos, skills]);
+
+  useEffect(() => {
+    if (!modulos.includes("skills")) return;
+    const ler = () => {
+      void listarModulosDeSkill().then(setSkills).catch(() => setSkills([]));
+    };
+    ler();
+    window.addEventListener("skills-atualizadas", ler);
+    return () => window.removeEventListener("skills-atualizadas", ler);
+  }, [modulos.includes("skills")]);
 
   /* Estar numa tela-filha e ver o pai fechado seria a barra dizendo que o item
    * aberto não está em lugar nenhum. Abre o pai da tela atual — e deixa aberto,
@@ -280,14 +325,14 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
   useEffect(() => {
     const pais = grupos
       .flatMap((grupo) => grupo.itens)
-      .filter((item) => filhoAtivo(item, tela))
+      .filter((item) => filhoAtivo(item, tela, skillAberta))
       .map((item) => item.tela);
     if (pais.length === 0) return;
     setExpandidos((atuais) => {
       const faltando = pais.filter((pai) => !atuais.includes(pai));
       return faltando.length === 0 ? atuais : [...atuais, ...faltando];
     });
-  }, [grupos, tela]);
+  }, [grupos, tela, skillAberta]);
 
   function navegar(destino: Tela) {
     onNavegar(destino);
@@ -314,7 +359,7 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
               const expandido = temFilhos && expandidos.includes(item.tela);
               /* Pai com filho aberto também fica aceso: o recuo diz onde a pessoa
                * está, mas só dentro de uma lista que ela consegue ver. */
-              const acesa = ativa(item, tela) || (temFilhos && !expandido && filhoAtivo(item, tela));
+              const acesa = ativa(item, tela, skillAberta) || (temFilhos && !expandido && filhoAtivo(item, tela, skillAberta));
               const podeAbrirPai = podeAbrirTela(item.tela, modulos);
               const Icone = ICONE_POR_TELA[item.tela] ?? FileText;
               const Seta = expandido ? ChevronDown : ChevronRight;
@@ -349,15 +394,19 @@ export default function BarraLateral({ tela, onNavegar }: Props) {
                   </button>
                   {expandido &&
                     subitens.map((sub) => {
-                      const subAcesa = ativa(sub, tela);
-                      const IconeSub = ICONE_POR_TELA[sub.tela] ?? FileText;
+                      const subAcesa = ativa(sub, tela, skillAberta);
+                      const IconeSub = sub.skillId ? Sparkles : (ICONE_POR_TELA[sub.tela] ?? FileText);
                       return (
                         <button
-                          key={sub.tela}
+                          key={sub.skillId ?? sub.tela}
                           type="button"
                           className={subAcesa ? SUBITEM_ATIVO : SUBITEM}
                           aria-current={subAcesa ? "page" : undefined}
-                          onClick={() => navegar(sub.tela)}
+                          onClick={() => {
+                            if (sub.skillId && onAbrirSkill) onAbrirSkill(sub.skillId);
+                            else navegar(sub.tela);
+                            setAberta(false);
+                          }}
                         >
                           <IconeSub
                             size={15}

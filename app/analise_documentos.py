@@ -78,7 +78,15 @@ TEMPO_MODELO_S = float(os.getenv("ANALISE_TIMEOUT_S", "240"))
 INSTRUCAO = """Você lê documentos de um processo trabalhista e aponta o que eles
 dizem e o caso ainda NÃO registrou.
 
-Devolva APENAS JSON: {"achados": [...], "gastos": [...], "cronologia": [...]}
+Devolva APENAS JSON: {"achados": [...], "gastos": [...], "cronologia": [...], "contradicoes": [...], "diagnostico": {...}}
+
+diagnostico: {"sentido":"POSITIVO ou NEGATIVO","motivo":"uma frase"}.
+POSITIVO se os documentos sustentam o relato e não divergem. NEGATIVO se um documento contradiz a
+entrevista, se dois documentos se contradizem, ou se falta prova do fato central. Sem percentual.
+
+Cada contradição entre documentos (não entre documento e entrevista — essa vai em "contradiz" do achado):
+{"titulo":"o que diverge","o_que_diverge":"uma frase","fontes":[{"documento":"nome exato","citacao":"trecho LITERAL","valor":"o que este trecho diz"}]}.
+Exige duas fontes, de documentos diferentes, com citação literal de cada um. Sem as duas, não registre.
 
 Cada item de cronologia é um acontecimento do caso registrado em documento (acidente,
 atendimento, internação, cirurgia, exame, afastamento, decisão do INSS etc.):
@@ -629,6 +637,7 @@ def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
         cronologia.append({"data": data[:20], "evento": evento[:220], "documento": arquivo,
                            "entrega_id": id_por_arquivo[arquivo], "citacao": citacao[:400]})
     cronologia.sort(key=lambda evento: _chave_data(evento["data"]))
+    contradicoes = _contradicoes_entre_documentos(bruto, texto_por_arquivo)
 
     return {
         "achados": achados[:12],
@@ -650,7 +659,72 @@ def _analisar_cacheado(caso_id: str, _assinatura: str) -> dict[str, Any]:
         # Contado e mostrado de propósito: silenciar a recusa esconderia um
         # modelo alucinando com frequência, que é o que precisa aparecer.
         "recusados": recusados,
+        "contradicoes": contradicoes,
+        "diagnostico": _diagnostico_do_caso(achados[:12], contradicoes, bruto.get("diagnostico")),
     }
+
+
+def _contradicoes_entre_documentos(bruto: dict[str, Any], texto_por_arquivo: dict[str, str]) -> list[dict[str, Any]]:
+    """Divergência entre dois documentos, só quando as duas citações conferem."""
+    saida: list[dict[str, Any]] = []
+    for item in bruto.get("contradicoes") or []:
+        if not isinstance(item, dict):
+            continue
+        fontes: list[dict[str, str]] = []
+        arquivos: set[str] = set()
+        for fonte in item.get("fontes") or []:
+            if not isinstance(fonte, dict):
+                continue
+            arquivo = _resolver_arquivo(str(fonte.get("documento") or "").strip(), texto_por_arquivo)
+            citacao = str(fonte.get("citacao") or "").strip()
+            corpo = texto_por_arquivo.get(arquivo) if arquivo else None
+            if not corpo or not citacao or _normalizar(citacao) not in corpo or arquivo in arquivos:
+                continue
+            arquivos.add(arquivo)
+            fontes.append({
+                "documento": arquivo,
+                "citacao": citacao[:400],
+                "valor": str(fonte.get("valor") or "").strip()[:200],
+            })
+        if len(fontes) < 2:
+            continue
+        saida.append({
+            "titulo": str(item.get("titulo") or "Contradição entre documentos").strip()[:180],
+            "o_que_diverge": str(item.get("o_que_diverge") or "").strip()[:300],
+            "fontes": fontes,
+        })
+    return saida
+
+
+def _diagnostico_do_caso(achados: list[dict[str, Any]], contradicoes: list[dict[str, Any]], informado: Any) -> dict[str, str]:
+    """Positivo ou negativo a partir do que a conferência deixou passar.
+
+    O motivo do modelo só entra se o sentido que ele deu for o mesmo da conferência.
+    Contradição conferida nunca vira diagnóstico positivo.
+    """
+    contra_entrevista = [a for a in achados if a.get("contradiz")]
+    sentido = "NEGATIVO" if contra_entrevista or contradicoes else "POSITIVO"
+    if sentido == "NEGATIVO":
+        partes = []
+        if contradicoes:
+            partes.append(
+                f"{len(contradicoes)} contradição(ões) entre documentos"
+            )
+        if contra_entrevista:
+            partes.append(
+                f"{len(contra_entrevista)} ponto(s) em que o documento contradiz a entrevista"
+            )
+        motivo = "Diagnóstico negativo: " + "; ".join(partes) + "."
+    else:
+        motivo = (
+            "Diagnóstico positivo: os documentos lidos não contradizem a entrevista "
+            "nem divergem entre si."
+        )
+    if isinstance(informado, dict) and str(informado.get("sentido") or "").strip().upper() == sentido:
+        texto = str(informado.get("motivo") or "").strip()
+        if texto:
+            motivo = texto[:400]
+    return {"sentido": sentido, "motivo": motivo}
 
 
 #: A data do gasto para ordenar: "DD/MM/AAAA" vira "AAAAMMDD"; sem data, vai para

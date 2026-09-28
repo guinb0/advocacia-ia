@@ -32,7 +32,9 @@ export type Tela =
   | "tiposDeCaso"
   | "revisao"
   | "followup"
-  | "documentacao";
+  | "documentacao"
+  | "skills"
+  | "gastosApi";
 
 export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   carteira: "casos",
@@ -69,6 +71,8 @@ export const MODULO_DA_TELA: Partial<Record<Tela, string>> = {
   /* Mesma regra do glossário: manter o catálogo pede o módulo, consultá-lo não —
    * a criação do caso lê a lista de ações sem passar por aqui. */
   tiposDeCaso: "tipos_caso",
+  skills: "skills",
+  gastosApi: "gastos_api",
   /* O `chat` de propósito NÃO está aqui — como `modelosDePeticao`.
    *
    * Ele é a porta única de perguntas, e quem limita o que cada pessoa vê são os
@@ -93,7 +97,7 @@ export const TELAS: readonly Tela[] = [
   "carteira", "chat", "agente", "caso", "dossie", "painel", "jurimetria", "casos", "avulso",
   "investigacao", "usuarios", "panorama", "operacao", "entrevista", "supervisao", "dados",
   "saudeAgente", "modelosDePeticao", "configuracaoAssinatura", "catalogoRoteiros",
-  "glossarioDocumentos", "tiposDeCaso", "revisao", "followup", "documentacao",
+  "glossarioDocumentos", "tiposDeCaso", "revisao", "followup", "documentacao", "skills", "gastosApi",
 ];
 
 function ehTela(valor: string | null): valor is Tela {
@@ -101,11 +105,11 @@ function ehTela(valor: string | null): valor is Tela {
 }
 
 /** O que o endereço atual diz: qual tela, e qual caso em foco. */
-function lerEndereco(): { tela: Tela | null; caso: string | null } {
-  if (typeof window === "undefined") return { tela: null, caso: null };
+function lerEndereco(): { tela: Tela | null; caso: string | null; skill: string | null } {
+  if (typeof window === "undefined") return { tela: null, caso: null, skill: null };
   const busca = new URLSearchParams(window.location.search);
   const tela = busca.get("tela");
-  return { tela: ehTela(tela) ? tela : null, caso: busca.get("caso") };
+  return { tela: ehTela(tela) ? tela : null, caso: busca.get("caso"), skill: busca.get("skill") };
 }
 
 /** Espelha o estado no endereço.
@@ -115,12 +119,14 @@ function lerEndereco(): { tela: Tela | null; caso: string | null } {
  * a razão de a navegação ser por estado (ver `useHomeModel`). Mexer só na query
  * dá endereço próprio, F5, voltar/avançar e link para mandar a alguém, sem
  * remontar nada. */
-function escreverEndereco(tela: Tela, caso: string | null, modo: "push" | "replace"): void {
+function escreverEndereco(tela: Tela, caso: string | null, skill: string | null, modo: "push" | "replace"): void {
   if (typeof window === "undefined") return;
   const busca = new URLSearchParams(window.location.search);
   busca.set("tela", tela);
   if (caso) busca.set("caso", caso);
   else busca.delete("caso");
+  if (tela === "skills" && skill) busca.set("skill", skill);
+  else busca.delete("skill");
   const query = busca.toString();
   if (window.location.search === `?${query}`) return;
   const endereco = `${window.location.pathname}?${query}`;
@@ -175,6 +181,7 @@ export const useHomeModel = () => {
   const sessao = useSessao();
   const chamada = useChamada();
   const [casoAberto, setCasoAberto] = useState<string | null>(null);
+  const [skillAberta, setSkillAberta] = useState<string | null>(null);
 
   const categorias = useCategorias();
   const listaCasos = useCasos();
@@ -210,6 +217,7 @@ export const useHomeModel = () => {
   useEffect(() => {
     const endereco = lerEndereco();
     if (endereco.caso) setCasoAberto(endereco.caso);
+    if (endereco.skill) setSkillAberta(endereco.skill);
     if (endereco.tela) {
       jaDirecionado.current = true;
       setTela(endereco.tela);
@@ -223,6 +231,7 @@ export const useHomeModel = () => {
     function aoVoltar() {
       const endereco = lerEndereco();
       setCasoAberto(endereco.caso);
+      setSkillAberta(endereco.tela === "skills" ? endereco.skill : null);
       if (endereco.tela) setTela(endereco.tela);
     }
     window.addEventListener("popstate", aoVoltar);
@@ -238,9 +247,9 @@ export const useHomeModel = () => {
     /* Enquanto a restauração acima não rodou, `tela` ainda é o padrão do
      * `useState` — gravá-lo apagaria da URL a tela que a pessoa pediu. */
     if (sessao.carregando || !enderecoRestaurado.current) return;
-    escreverEndereco(tela, casoAberto, navegacaoDoUsuario.current ? "push" : "replace");
+    escreverEndereco(tela, casoAberto, skillAberta, navegacaoDoUsuario.current ? "push" : "replace");
     navegacaoDoUsuario.current = false;
-  }, [tela, casoAberto, sessao.carregando]);
+  }, [tela, casoAberto, skillAberta, sessao.carregando]);
 
   useEffect(() => {
     if (sessao.carregando) return;
@@ -283,7 +292,15 @@ export const useHomeModel = () => {
   function navegar(telaNova: Tela) {
     if (!podeAbrirTela(telaNova, modulos)) return;
     navegacaoDoUsuario.current = true;
+    setSkillAberta(null);
     setTela(telaNova);
+  }
+
+  function abrirSkill(skillId: string) {
+    if (!podeAbrirTela("skills", modulos)) return;
+    navegacaoDoUsuario.current = true;
+    setSkillAberta(skillId);
+    setTela("skills");
   }
 
   function abrirCaso(casoId: string) {
@@ -317,6 +334,8 @@ export const useHomeModel = () => {
     abrirCaso,
     abrirDossie,
     abrirAnalises,
+    abrirSkill,
+    skillAberta,
     voltarParaCarteira,
   };
 };

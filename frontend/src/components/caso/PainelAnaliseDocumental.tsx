@@ -28,6 +28,34 @@ const ROTULO_STATUS: Record<AnaliseDocumental["status"], string> = {
   error: "A análise falhou",
 };
 
+function DiagnosticoDoCaso({ resultado }: { resultado: NonNullable<AnaliseDocumental["resultado"]> }) {
+  const contradicoes = resultado.inconsistencias.filter((i) => i.estado !== "REJECTED");
+  const compromete = resultado.documentos_faltantes.filter(
+    (f) => f.classificacao === "COMPROMETE" && f.estado !== "REJECTED",
+  );
+  const sentido: "POSITIVO" | "NEGATIVO" =
+    contradicoes.length || compromete.length
+      ? "NEGATIVO"
+      : resultado.diagnostico?.sentido === "NEGATIVO"
+        ? "NEGATIVO"
+        : "POSITIVO";
+  const motivo =
+    resultado.diagnostico?.sentido === sentido && resultado.diagnostico.motivo
+      ? resultado.diagnostico.motivo
+      : sentido === "NEGATIVO"
+        ? contradicoes.length
+          ? `Diagnóstico negativo: ${contradicoes.length} contradição(ões) entre os documentos.`
+          : "Diagnóstico negativo: falta documento sem o qual a hipótese não se sustenta."
+        : "Diagnóstico positivo: os documentos não se contradizem e não falta peça que comprometa a hipótese.";
+  const positivo = sentido === "POSITIVO";
+  return (
+    <div className={positivo ? "rounded-campo border border-ok-borda bg-ok-claro p-3" : "rounded-campo border border-critico-borda bg-critico-claro p-3"}>
+      <strong className="block text-sm">Diagnóstico {positivo ? "positivo" : "negativo"} do caso</strong>
+      <p className="m-0 mt-1 text-sm">{motivo}</p>
+    </div>
+  );
+}
+
 const CLASSE_FALTANTE = {
   COMPROMETE: { tom: "critico", simbolo: "🔴", texto: "COMPROMETE" },
   ERA_MELHOR_TER: { tom: "atencao", simbolo: "🟡", texto: "ERA MELHOR TER, MAS PODE PASSAR" },
@@ -46,13 +74,21 @@ function Origem({ arquivo, pagina, trecho }: { arquivo: string; pagina?: number 
   );
 }
 
-export default function PainelAnaliseDocumental({ casoId }: { casoId: string }) {
+export default function PainelAnaliseDocumental({
+  casoId,
+  iniciarSozinho = false,
+}: {
+  casoId: string;
+  /** Na documentação a análise da skill começa sozinha, uma vez por caso, se ainda não houver resultado. */
+  iniciarSozinho?: boolean;
+}) {
   const [analise, setAnalise] = useState<AnaliseDocumental | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [respostas, setRespostas] = useState<Record<string, string>>({});
   const [plano, setPlano] = useState<PlanoDeOrganizacao | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const temporizador = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disparouSozinho = useRef<string | null>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -65,12 +101,24 @@ export default function PainelAnaliseDocumental({ casoId }: { casoId: string }) 
     }
   }, [casoId]);
 
-  /* Polling enquanto a fila trabalha: queued → processing → analyzing → ready|error. */
+  /* Polling enquanto a fila trabalha: queued → processing → analyzing → ready|error.
+   * Na documentação, se ainda não há análise, dispara a skill uma vez. */
   useEffect(() => {
     let vivo = true;
     const ciclo = async () => {
       const atual = await carregar();
-      if (vivo && atual && ["queued", "processing", "analyzing"].includes(atual.status)) {
+      if (!vivo) return;
+      if (iniciarSozinho && disparouSozinho.current !== casoId && (!atual || atual.status === "none")) {
+        disparouSozinho.current = casoId;
+        try {
+          setAnalise(await iniciarAnaliseDocumental(casoId));
+        } catch (e) {
+          setErro(e instanceof Error ? e.message : "Não foi possível iniciar a análise.");
+        }
+        if (vivo) temporizador.current = setTimeout(ciclo, 2500);
+        return;
+      }
+      if (atual && ["queued", "processing", "analyzing"].includes(atual.status)) {
         temporizador.current = setTimeout(ciclo, 4000);
       }
     };
@@ -79,7 +127,7 @@ export default function PainelAnaliseDocumental({ casoId }: { casoId: string }) 
       vivo = false;
       if (temporizador.current) clearTimeout(temporizador.current);
     };
-  }, [carregar]);
+  }, [carregar, casoId, iniciarSozinho]);
 
   const iniciar = async () => {
     setErro(null);
@@ -183,6 +231,43 @@ export default function PainelAnaliseDocumental({ casoId }: { casoId: string }) 
 
       {r && (
         <>
+          <DiagnosticoDoCaso resultado={r} />
+
+          <div>
+            <h3 className="text-sm font-semibold">O que está contraditório</h3>
+            {r.inconsistencias.filter((i) => i.estado !== "REJECTED").length === 0 ? (
+              <p className="text-sm text-tinta">Nenhuma contradição entre os documentos.</p>
+            ) : (
+              r.inconsistencias
+                .filter((i) => i.estado !== "REJECTED")
+                .map((i) => (
+                  <div key={i.id} className="mt-2 rounded-campo border border-critico-borda bg-critico-claro p-3 text-sm">
+                    <strong>⚠ {i.titulo}</strong>
+                    {i.fontes.map((f, n) => (
+                      <div key={n} className="mt-1">
+                        <span className="text-tinta-3">{f.arquivo ?? f.origem}:</span> <code>{f.valor || f.citacao}</code>
+                        <Origem arquivo={f.arquivo ?? String(f.origem)} pagina={f.pagina} trecho={f.citacao} />
+                      </div>
+                    ))}
+                    <p className="mt-1">
+                      <strong>Impacto:</strong> {i.impacto}
+                    </p>
+                    <p>
+                      <strong>Ação sugerida:</strong> {i.acao_sugerida}
+                    </p>
+                    <div className="mt-1 flex gap-2">
+                      <Botao pequeno onClick={() => estado(i.id, "CONFIRMED")}>
+                        É isso mesmo
+                      </Botao>
+                      <Botao pequeno variante="discreto" onClick={() => estado(i.id, "REJECTED")}>
+                        Não é problema
+                      </Botao>
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
+
           <div>
             <h3 className="text-sm font-semibold">Resumo do caso</h3>
             <p className="text-sm">{r.resumo_do_caso.questao_central}</p>
@@ -212,39 +297,6 @@ export default function PainelAnaliseDocumental({ casoId }: { casoId: string }) 
                 ))}
             </ul>
           </div>
-
-          {r.inconsistencias.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold">Inconsistências</h3>
-              {r.inconsistencias
-                .filter((i) => i.estado !== "REJECTED")
-                .map((i) => (
-                  <div key={i.id} className="mt-2 rounded-campo border border-atencao-borda bg-atencao-claro p-3 text-sm">
-                    <strong>⚠ {i.titulo}</strong>
-                    {i.fontes.map((f, n) => (
-                      <div key={n} className="mt-1">
-                        <span className="text-tinta-3">{f.arquivo ?? f.origem}:</span> <code>{f.valor || f.citacao}</code>
-                        <Origem arquivo={f.arquivo ?? String(f.origem)} pagina={f.pagina} trecho={f.citacao} />
-                      </div>
-                    ))}
-                    <p className="mt-1">
-                      <strong>Impacto:</strong> {i.impacto}
-                    </p>
-                    <p>
-                      <strong>Ação sugerida:</strong> {i.acao_sugerida}
-                    </p>
-                    <div className="mt-1 flex gap-2">
-                      <Botao pequeno onClick={() => estado(i.id, "CONFIRMED")}>
-                        É isso mesmo
-                      </Botao>
-                      <Botao pequeno variante="discreto" onClick={() => estado(i.id, "REJECTED")}>
-                        Não é problema
-                      </Botao>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          )}
 
           {r.provas.length > 0 && (
             <div>

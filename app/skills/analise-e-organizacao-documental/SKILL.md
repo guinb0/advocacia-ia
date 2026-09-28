@@ -64,6 +64,13 @@ Com os documentos identificados e **lidos de fato** (conteúdo, não só o tipo)
 
 #### 3.1 — Resumo executivo
 
+Abra a análise por dois pontos, antes do restante:
+
+- **O que está contraditório** — divergência entre documentos, ou entre documento e o que a entrevista/cadastro registraram. Cada contradição cita os dois trechos. Se não houver, diga isso com todas as letras.
+- **Diagnóstico do caso** — `POSITIVO` ou `NEGATIVO`, com o motivo em uma frase. Positivo: os documentos sustentam a hipótese e não divergem. Negativo: há contradição conferida, ou falta documento sem o qual a hipótese não se sustenta. Sem percentual.
+
+Em seguida:
+
 - Fatos, em ordem cronológica.
 - Partes envolvidas (cliente, contraparte, terceiros).
 - Questão jurídica central.

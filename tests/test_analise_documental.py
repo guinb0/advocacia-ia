@@ -142,6 +142,17 @@ def test_divergencia_de_nome_com_duas_fontes_passa_e_uma_fonte_so_e_descartada(c
     assert {f.get("arquivo") or f["origem"] for f in inc[0]["fontes"]} == {"comprovante.pdf", "cadastro"}
 
 
+def test_diagnostico_segue_a_contradicao_conferida_e_nao_o_modelo(caso):
+    assert _rodar(caso)[0]["resultado"]["diagnostico"]["sentido"] == "NEGATIVO"
+    limpo = dict(MODELO, inconsistencias=[], documentos_faltantes=[],
+                 diagnostico={"sentido": "POSITIVO", "motivo": "Os documentos sustentam o assalto em serviço."})
+    positivo = _rodar(caso, limpo)[0]["resultado"]["diagnostico"]
+    assert positivo["sentido"] == "POSITIVO" and "assalto" in positivo["motivo"]
+    mente = dict(MODELO, diagnostico={"sentido": "POSITIVO", "motivo": "está tudo bem"})
+    negativo = _rodar(caso, mente)[0]["resultado"]["diagnostico"]
+    assert negativo["sentido"] == "NEGATIVO" and "tudo bem" not in negativo["motivo"]
+
+
 def test_divergencia_de_cpf_com_citacao_inventada_nao_passa(caso):
     modelo = dict(MODELO, inconsistencias=[{"titulo": "CPF divergente", "tipo": "CPF", "impacto": "", "acao_sugerida": "",
         "fontes": [{"documento_id": "d1", "citacao": "CPF 111.111.111-11"}, {"documento_id": "d2", "citacao": "152.815.582-34"}]}])

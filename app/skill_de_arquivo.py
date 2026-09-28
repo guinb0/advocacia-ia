@@ -99,6 +99,36 @@ class SkillDeArquivo:
         }
 
 
+def listar() -> list[dict[str, Any]]:
+    """Skills instaladas em `app/skills/`, uma pasta com `SKILL.md` cada."""
+    if not RAIZ_DAS_SKILLS.is_dir():
+        return []
+    saida = []
+    for pasta in sorted(p for p in RAIZ_DAS_SKILLS.iterdir() if p.is_dir()):
+        if not (pasta / "SKILL.md").is_file():
+            continue
+        skill = SkillDeArquivo(pasta.name)
+        saida.append({
+            "id": pasta.name,
+            "origem": "arquivo",
+            "nome": rotulo(pasta.name),
+            "descricao": skill.frontmatter().get("description", "")[:400],
+        })
+    return saida
+
+
+def rotulo(skill_id: str, nome: str = "") -> str:
+    """Nome curto para o módulo. As skills do sistema têm rótulo fixo; as demais usam o nome enviado."""
+    conhecidos = {
+        "analise-e-organizacao-documental": "Análise e organização documental",
+        "escritorio-trabalhista": "Escritório trabalhista",
+    }
+    if skill_id in conhecidos:
+        return conhecidos[skill_id]
+    base = nome.removesuffix(".skill.zip").removesuffix(".zip").replace("-", " ").replace("_", " ").strip()
+    return (base or skill_id)[:80]
+
+
 @lru_cache(maxsize=8)
 def carregar(nome: str) -> SkillDeArquivo:
     skill = SkillDeArquivo(nome)
