@@ -241,6 +241,20 @@ def cenario_orcamento_dos_documentos() -> int:
         "o ÚLTIMO da fila entra com cabeçalho E com o valor do pé",
     )
 
+    # O espaço que o documento curto não usa vai para o longo: o laudo de 20
+    # mil caracteres entra inteiro ao lado de 60 notas curtas.
+    misto = muitos + [{"id": "laudo", "arquivo": "laudo.pdf",
+                       "texto": "LAUDO INICIO " + "l" * 20_000 + " CONCLUSAO CID M54.5"}]
+    msg_misto, _ = ad._montar_mensagem(misto, [])
+    falhas += not checar(
+        "LAUDO INICIO" in msg_misto and "CONCLUSAO CID M54.5" in msg_misto and "[…]" not in msg_misto,
+        "o documento longo aproveita a sobra dos curtos e entra inteiro",
+    )
+    falhas += not checar(
+        ad._limite_por_documento([100, 100, 10_000], 5_200) == 5_000,
+        "o corte só alcança quem é maior que ele",
+    )
+
     # Documento único e gigante: aí o teto por documento é que manda, e ele não
     # pode engolir a janela inteira.
     unico = [{"id": "x", "arquivo": "processo.pdf", "texto": "a" * 500_000}]
@@ -253,11 +267,11 @@ def cenario_orcamento_dos_documentos() -> int:
     # E o que realmente não couber precisa sair com NOME.
     #
     # Chegar a esse ponto exige passar do limite em que nem a fatia mínima cabe
-    # para todos — acima de ~128 anexos, com o teto de hoje. Abaixo disso a
+    # para todos — acima de ~340 anexos, com o teto de hoje. Abaixo disso a
     # divisão dá conta e ninguém fica de fora, que é o comportamento desejado.
     demais = [
         {"id": f"g{n}", "arquivo": f"gordo_{n}.pdf", "texto": "z" * 5_000}
-        for n in range(200)
+        for n in range(500)
     ]
     _, fora_demais = ad._montar_mensagem(demais, [])
     falhas += not checar(

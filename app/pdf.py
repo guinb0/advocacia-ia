@@ -63,6 +63,17 @@ def _escala_efetiva(tamanhos: list[tuple[float, float]]) -> float:
 
 def pdf_para_imagem(conteudo: bytes) -> np.ndarray:
     """Rasteriza um PDF inteiro em uma imagem BGR, preservando a ordem das páginas."""
+    return empilhar_paginas(pdf_para_paginas(conteudo))
+
+
+def pdf_para_paginas(conteudo: bytes) -> list[np.ndarray]:
+    """Cada página do PDF como uma imagem BGR própria, na ordem do documento.
+
+    O OCR precisa delas SEPARADAS: `quality.preparar_para_ocr` reduz a imagem
+    para caber em 2000 px no lado maior, e na pilha única de um PDF de dez
+    páginas isso deixava cada página com ~200 px de altura — ilegível, e o texto
+    simplesmente não saía.
+    """
     try:
         import pypdfium2 as pdfium
     except ImportError as exc:  # pragma: no cover - protegido por requirements.txt
@@ -106,7 +117,11 @@ def pdf_para_imagem(conteudo: bytes) -> np.ndarray:
         raise
     except Exception as exc:
         raise ValueError("PDF inválido, protegido por senha ou corrompido.") from exc
+    return paginas
 
+
+def empilhar_paginas(paginas: list[np.ndarray]) -> np.ndarray:
+    """Junta as páginas numa imagem só, uma embaixo da outra, centralizadas."""
     largura = max(imagem.shape[1] for imagem in paginas)
     altura = sum(imagem.shape[0] for imagem in paginas) + ESPACO_ENTRE_PAGINAS * (len(paginas) - 1)
     imagem_final = np.full((altura, largura, 3), 255, dtype=np.uint8)

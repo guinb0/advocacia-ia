@@ -163,9 +163,17 @@ _PASSO_COLUNA = 1_000.0
 _URL_OPENROUTER = "https://openrouter.ai/api/v1/chat/completions"
 
 _INSTRUCAO_OCR_OPENROUTER = (
-    "Transcreva TODO o texto visível nesta imagem, na ordem de leitura. Se "
-    "houver tabela ou campos alinhados em colunas, represente em markdown de "
-    "tabela.\n\n"
+    "Transcreva TODO o texto visível nesta imagem, na ordem de leitura, sem "
+    "resumir, sem pular e sem corrigir nada. Isso inclui cabeçalho, rodapé, "
+    "número de página, carimbo, protocolo, código de barras legível, texto "
+    "manuscrito, anotação à margem, texto pequeno ou apagado, marca d'água "
+    "legível e o conteúdo de cada campo de formulário (inclusive os marcados "
+    "com X). Onde houver assinatura, escreva '[assinatura]' e o nome impresso "
+    "embaixo dela, se houver; onde houver algo ilegível, escreva '[ilegível]' "
+    "em vez de omitir. Números (datas, valores, CID, CPF, CNPJ, matrícula, "
+    "processo) exatamente como aparecem, dígito a dígito. Se houver tabela ou "
+    "campos alinhados em colunas, represente em markdown de tabela com TODAS "
+    "as linhas e colunas.\n\n"
     "Se a imagem for um PRINT DE CONVERSA (WhatsApp ou similar), transcreva "
     "cada mensagem como 'remetente (horário): texto', na ordem em que aparecem. "
     "Para um balão de ÁUDIO, FOTO ou VÍDEO embutido na conversa — que não tem "
@@ -212,7 +220,7 @@ def _ocr_via_openrouter(mime: str, dados_img: bytes) -> dict:
         # Documento de página cheia em fonte pequena passa fácil das 2000
         # tokens padrão do provedor e corta o texto no meio — o mesmo
         # defeito já visto em `analise_documentos._chamar_modelo`.
-        "max_tokens": int(os.getenv("OPENROUTER_OCR_MAX_TOKENS", "8000")),
+        "max_tokens": int(os.getenv("OPENROUTER_OCR_MAX_TOKENS", "16000")),
         "messages": [
             {"role": "system", "content": _INSTRUCAO_OCR_OPENROUTER},
             {
@@ -223,7 +231,7 @@ def _ocr_via_openrouter(mime: str, dados_img: bytes) -> dict:
             },
         ],
     }
-    with httpx.Client(timeout=float(os.getenv("OPENROUTER_OCR_TIMEOUT", "60"))) as cliente:
+    with httpx.Client(timeout=float(os.getenv("OPENROUTER_OCR_TIMEOUT", "120"))) as cliente:
         resposta = _post_com_repeticao(
             cliente,
             _URL_OPENROUTER,
@@ -232,7 +240,19 @@ def _ocr_via_openrouter(mime: str, dados_img: bytes) -> dict:
         )
     resposta.raise_for_status()
     custos_api.registrar("openrouter", modelo, "ocr", resposta)
-    texto = str(resposta.json()["choices"][0]["message"]["content"] or "").strip()
+    escolha = resposta.json()["choices"][0]
+    texto = str(escolha["message"]["content"] or "").strip()
+    if escolha.get("finish_reason") == "length":
+        # Transcrição cortada no teto: aceitar calado é perder o fim da
+        # página. A Mistral não tem teto de saída e lê a mesma imagem inteira.
+        chave_mistral = os.getenv("MISTRAL_API_KEY", "").strip()
+        log.warning("OCR via OpenRouter cortado no teto de tokens (%d caracteres)%s.",
+                    len(texto), "; relendo pela Mistral" if chave_mistral else "")
+        if chave_mistral:
+            try:
+                return _ocr_via_mistral(chave_mistral, mime, dados_img)
+            except httpx.HTTPError as exc:
+                log.warning("Mistral não releu a página cortada (%s); fica a transcrição parcial.", exc)
     return {"pages": [{"markdown": texto,
                         "confidence_scores": {"average_page_confidence_score": _CONFIANCA_OPENROUTER}}]}
 

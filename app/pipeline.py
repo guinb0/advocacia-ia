@@ -70,6 +70,59 @@ def decodificar(conteudo: bytes) -> np.ndarray:
     return img
 
 
+def _paginas_do_pdf(conteudo: bytes) -> list[np.ndarray] | None:
+    if not conteudo.lstrip().startswith(b"%PDF-"):
+        return None
+    from .pdf import pdf_para_paginas
+
+    return pdf_para_paginas(conteudo)
+
+
+#: Páginas lidas ao mesmo tempo. Cada uma é uma chamada à API de OCR; seis em
+#: paralelo leem um prontuário de 60 páginas no tempo de dez, dentro do
+#: `OCR_EXECUCAO_TIMEOUT_S` do worker.
+OCR_PAGINAS_PARALELAS = max(1, int(os.getenv("OCR_PAGINAS_PARALELAS", "6")))
+
+#: Distância vertical entre a última linha de uma página e a primeira da
+#: seguinte. Grande o bastante para nenhum extrator juntar linhas de páginas
+#: diferentes como se fossem vizinhas.
+_SALTO_ENTRE_PAGINAS = 1_000.0
+
+
+def ocr_por_pagina(
+    paginas: list[np.ndarray], lang: str
+) -> tuple[list[Linha], int, list[dict[str, float | int]], int]:
+    """Lê cada página separada, na resolução dela, e junta as linhas na ordem.
+
+    Uma página que falha derruba o documento inteiro (a exceção sobe): devolver
+    o PDF sem uma página, calado, é exatamente a perda de informação que este
+    caminho existe para acabar — a fila tenta de novo.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    def ler(pagina: np.ndarray):
+        return ocr_com_rotacao_medido(quality.preparar_para_ocr(pagina), lang)
+
+    with ThreadPoolExecutor(max_workers=min(OCR_PAGINAS_PARALELAS, len(paginas))) as executor:
+        resultados = list(executor.map(ler, paginas))
+
+    linhas: list[Linha] = []
+    tentativas: list[dict[str, float | int]] = []
+    passadas = 0
+    deslocamento = 0.0
+    for numero, (linhas_pagina, _, tentativas_pagina, passadas_pagina) in enumerate(resultados, 1):
+        for linha in linhas_pagina:
+            linhas.append(
+                Linha(linha.texto, linha.confianca, linha.y + deslocamento,
+                      linha.x, linha.largura, linha.altura)
+            )
+        if linhas_pagina:
+            deslocamento = max(ln.y for ln in linhas) + _SALTO_ENTRE_PAGINAS
+        tentativas.extend({**t, "pagina": numero} for t in tentativas_pagina)
+        passadas += passadas_pagina
+    return linhas, resultados[0][1], tentativas, passadas
+
+
 def _pontuar_linhas(linhas: list[Linha]) -> float:
     """Heurística para escolher a melhor rotação: caracteres ponderados pela confiança."""
     return sum(len(ln.texto) * ln.confianca for ln in linhas)
@@ -446,8 +499,18 @@ def processar(
     crono = Cronometro()
 
     with crono.medir("decodificar"):
-        original = decodificar(conteudo)
+        paginas = _paginas_do_pdf(conteudo)
+        if paginas:
+            from .pdf import empilhar_paginas
+
+            original = empilhar_paginas(paginas)
+        else:
+            original = decodificar(conteudo)
     h, w = original.shape[:2]
+    # O recorte do comprovante de residência (abaixo) só olha o topo da
+    # primeira página de propósito; os demais PDFs de várias páginas são lidos
+    # página a página.
+    por_pagina = bool(paginas and len(paginas) > 1 and tipo_forcado != "comprovante_residencia")
 
     with crono.medir("preparar"):
         para_ocr = original
@@ -461,10 +524,13 @@ def processar(
                 proporcao = 1.0
             if 0.4 <= proporcao < 1.0:
                 para_ocr = original[: max(1, int(original.shape[0] * proporcao)), :]
-        preparada = quality.preparar_para_ocr(para_ocr)
+        preparada = None if por_pagina else quality.preparar_para_ocr(para_ocr)
 
     with crono.medir("ocr"):
-        linhas, rotacao, tentativas_ocr, passadas = ocr_com_rotacao_medido(preparada, lang)
+        if por_pagina:
+            linhas, rotacao, tentativas_ocr, passadas = ocr_por_pagina(paginas, lang)
+        else:
+            linhas, rotacao, tentativas_ocr, passadas = ocr_com_rotacao_medido(preparada, lang)
 
     textos = [ln.texto for ln in linhas]
     confiancas = [ln.confianca for ln in linhas if ln.confianca > 0]
@@ -582,6 +648,8 @@ def processar(
             "blocos_detectados": len(linhas),
             "caracteres_detectados": qtd_caracteres,
             "passadas": passadas,
+            "paginas": len(paginas) if paginas else 1,
+            "lido_por_pagina": por_pagina,
             # Diz se a foto precisou de segunda chance e o que ela rendeu. Sem
             # isto, "por que este documento demorou 40s" não tem resposta no log.
             "resgate": resgate,

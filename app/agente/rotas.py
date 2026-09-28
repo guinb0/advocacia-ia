@@ -697,6 +697,40 @@ def baixar_pacote_de_protocolo(caso_id: str) -> FileResponse:
     )
 
 
+@roteador.get("/casos/{caso_id}/pacote-protocolo/conferencia")
+def conferir_pacote_de_protocolo(caso_id: str) -> dict[str, Any]:
+    """O que a IA sugere juntar ao protocolo, o que fica de fora (com motivo) e o que falta."""
+    try:
+        return pacote_protocolo.sugerir(caso_id)
+    except pacote_protocolo.ErroPacote as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+
+
+class _SelecaoProtocolo(BaseModel):
+    #: Entregas conferidas na tela; a petição entra sempre.
+    selecionados: list[str]
+    #: O que a conferência apontou como faltando — vai para o checklist.
+    faltando: list[str] = []
+
+
+@roteador.post("/casos/{caso_id}/pacote-protocolo")
+def montar_pacote_de_protocolo(caso_id: str, corpo: _SelecaoProtocolo) -> FileResponse:
+    """A pasta para protocolo só com os documentos conferidos, todos em PDF."""
+    try:
+        pacote = pacote_protocolo.montar(caso_id, corpo.selecionados, corpo.faltando)
+    except pacote_protocolo.ErroSelecao as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+    except pacote_protocolo.ErroPacote as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+    return FileResponse(
+        pacote.caminho,
+        media_type="application/zip",
+        filename=pacote.nome,
+        background=BackgroundTask(pacote.caminho.unlink, missing_ok=True),
+        headers={"X-Arquivos": str(pacote.arquivos), "X-Faltando": str(len(pacote.faltando))},
+    )
+
+
 class _Protocolo(BaseModel):
     protocolada: bool
     numero: str = ""

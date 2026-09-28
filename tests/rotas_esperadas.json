@@ -699,6 +699,46 @@
   "status_code": null
  },
  {
+  "caminho": "/api/agente/casos/{caso_id}/pacote-protocolo/conferencia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "conferir_pacote_de_protocolo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/pacote-protocolo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "montar_pacote_de_protocolo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
   "caminho": "/api/agente/casos/{caso_id}/peticao-protocolo",
   "tipo": "APIRoute",
   "metodos": [

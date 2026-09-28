@@ -185,10 +185,23 @@ def testar_texto_do_ocr() -> int:
         t.index("CLINICA") < t.index("Dr. Joao"),
         "na ordem em que saíram — a ordem carrega sentido no laudo",
     )
-    grande = {"texto_linhas": [{"texto": "x" * 200} for _ in range(100)]}
+    grande = {"texto_linhas": [{"texto": "x" * 200} for _ in range(1000)]}
     falhas += not checar(
         len(valor_documento.texto_do_ocr(grande)) <= valor_documento.MAXIMO_CARACTERES,
         "e corta o prontuário de internação no teto",
+    )
+    # A conclusão de um laudo de 30 mil caracteres está no fim e não pode
+    # ficar de fora — era o que acontecia com o teto de 12 mil.
+    longo = {"texto_linhas": [{"texto": "linha do prontuário " * 10} for _ in range(150)]
+             + [{"texto": "CONCLUSÃO: incapacidade parcial permanente, CID S62.3"}]}
+    falhas += not checar(
+        "CONCLUSÃO: incapacidade parcial permanente" in valor_documento.texto_do_ocr(longo),
+        "um documento de 30 mil caracteres vai inteiro, com a conclusão do fim",
+    )
+    falhas += not checar(
+        "EXTRAIA O MÁXIMO" in valor_documento.INSTRUCAO
+        and "no máximo 4" not in valor_documento.INSTRUCAO,
+        "a instrução manda extrair tudo, sem teto de 4 itens",
     )
     return falhas
 

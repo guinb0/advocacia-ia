@@ -27,6 +27,13 @@ from ..celery_app import celery_app
 
 log = logging.getLogger("ocr-worker")
 
+#: Desligável por ambiente para cortar custo: com "0", documento reconhecido
+#: pelo classificador (RG, CTPS, contracheque...) volta a ter só os campos do
+#: extrator, sem a leitura completa do modelo.
+_LER_TAMBEM_DETERMINISTICO = os.getenv("LEITURA_IA_DETERMINISTICO", "1").strip().lower() not in {
+    "0", "false", "nao",
+}
+
 
 def _processar_em_subprocesso(
     conexao,
@@ -474,11 +481,12 @@ def processar_entrega(
             and not visao_documento.so_referencias_de_imagem(
                 str(resultado.get("texto_completo") or "")
             )
-            and destino.origem != roteamento.DETERMINISTICO
+            and (destino.origem != roteamento.DETERMINISTICO or _LER_TAMBEM_DETERMINISTICO)
         ):
-            # O roteamento determinístico já decidiu o item, mas a interpretação
-            # da main ainda agrega achados semânticos úteis ao documento. Ela não
-            # muda o destino escolhido acima.
+            # O roteamento determinístico já decidiu o item, mas a leitura do
+            # modelo ainda tira do documento o que o extrator de campos não
+            # conhece: numa CTPS, os contratos, salários e funções; num TRCT,
+            # as verbas e os descontos. Ela não muda o destino escolhido acima.
             try:
                 documentos_esperados = [
                     {"codigo": esperado.codigo, "nome": esperado.nome}

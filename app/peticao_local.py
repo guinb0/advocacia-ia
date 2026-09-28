@@ -176,7 +176,8 @@ _DOC_PRIORITARIO = re.compile(
 
 
 def _indice_e_textos_documentais(
-    ledger: list[dict[str, Any]], documentos: list[dict[str, str]], *, max_docs_texto: int = 40, max_chars: int = 75_000,
+    ledger: list[dict[str, Any]], documentos: list[dict[str, str]], *, max_docs_texto: int = 60, max_chars: int = 100_000,
+    max_chars_leituras: int = 40_000,
 ) -> list[str]:
     """Índice COMPLETO (todos os números) + texto OCR priorizado.
 
@@ -198,6 +199,24 @@ def _indice_e_textos_documentais(
         linhas.append(f"{rotulo}{extra}: {arquivo}")
     if not ledger:
         return linhas
+
+    leituras = []
+    usado_leituras = 0
+    for item in ledger:
+        leitura = str((por_arquivo.get(item["canonical_file"]) or {}).get("leitura") or "").strip()
+        if not leitura:
+            continue
+        bloco = f"\n--- {item['canonical_label'].upper()} ---\n{leitura}"
+        if usado_leituras + len(bloco) > max_chars_leituras:
+            break
+        leituras.append(bloco)
+        usado_leituras += len(bloco)
+    if leituras:
+        linhas.append(
+            "\n=== O QUE A LEITURA DE CADA DOCUMENTO ENCONTROU (dados já extraídos; "
+            "use TODOS os que servirem aos fatos e pedidos, citando o número do documento) ==="
+        )
+        linhas.extend(leituras)
 
     linhas.append(
         "\n=== TEXTOS EXTRAÍDOS (OCR) — prioridade a prova de remuneração, "
@@ -1145,7 +1164,8 @@ def documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[st
         extracao = extracoes.get(str(entrega.get("id") or "")) or {}
         brutos.append({
             "arquivo": str(entrega.get("arquivo") or ""),
-            "texto": str(extracao.get("texto_completo") or "").strip()[:8000],
+            "texto": str(extracao.get("texto_completo") or "").strip()[:MAX_CARACTERES_TEXTO_DOCUMENTO],
+            "leitura": leitura_da_ia(extracao),
         })
     # Há instalações legadas em que a extração foi persistida antes da entrega.
     # Preserve esse material no ledger em vez de perdê-lo durante a migração.
@@ -1153,7 +1173,51 @@ def documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[st
     brutos.extend(d for d in documentos_ocr(caso_id) if d["arquivo"] not in arquivos)
     ledger = document_ledger.montar(brutos, {a: d.get("tipo", "") for a, d in _dados_por_documento(caso_id).items()})
     por_arquivo = {d["arquivo"]: d for d in brutos}
-    return ledger, [{"arquivo": d["canonical_file"], "texto": por_arquivo[d["canonical_file"]]["texto"], "rotulo": d["canonical_label"]} for d in ledger]
+    return ledger, [
+        {
+            "arquivo": d["canonical_file"],
+            "texto": por_arquivo[d["canonical_file"]]["texto"],
+            "rotulo": d["canonical_label"],
+            "leitura": por_arquivo[d["canonical_file"]].get("leitura", ""),
+        }
+        for d in ledger
+    ]
+
+
+#: Teto do texto de UM documento no contexto da petição. Era 8 mil — duas
+#: páginas —, e o resto do laudo, do TRCT ou do processo do INSS não chegava à
+#: redação. O orçamento do conjunto continua em `_indice_e_textos_documentais`.
+MAX_CARACTERES_TEXTO_DOCUMENTO = 20_000
+
+
+def leitura_da_ia(extracao: dict[str, Any]) -> str:
+    """O que a leitura do modelo tirou de UM documento, em texto compacto.
+
+    Resumo e cada achado (campo: valor). Vai para a petição ANTES do texto cru
+    do OCR: é o dado já nomeado e conferível, e sobrevive mesmo quando o texto
+    integral do documento não cabe no orçamento.
+    """
+    semantica = extracao.get("classificacao_semantica") or {}
+    if not isinstance(semantica, dict):
+        return ""
+    partes: list[str] = []
+    tipo = str(semantica.get("tipo_semantico") or semantica.get("documento") or "").strip()
+    if tipo and tipo.lower() != "indefinido":
+        partes.append(f"Tipo: {tipo}")
+    resumo = str(semantica.get("resumo") or "").strip()
+    if resumo:
+        partes.append(f"Resumo: {resumo}")
+    for achado in semantica.get("achados") or []:
+        if not isinstance(achado, dict):
+            continue
+        campo = str(achado.get("campo") or "").strip()
+        valor = str(achado.get("valor") or "").strip()
+        if campo and valor:
+            partes.append(f"- {campo}: {valor}")
+    for alerta in semantica.get("atencao") or []:
+        if str(alerta or "").strip():
+            partes.append(f"- Atenção: {str(alerta).strip()}")
+    return "\n".join(partes)
 
 
 def documentos_ocr(caso_id: str) -> list[dict[str, str]]:
@@ -1175,7 +1239,8 @@ def documentos_ocr(caso_id: str) -> list[dict[str, str]]:
         documentos.append(
             {
                 "arquivo": str(entrega.get("arquivo") or ""),
-                "texto": texto[:8000],
+                "texto": texto[:MAX_CARACTERES_TEXTO_DOCUMENTO],
+                "leitura": leitura_da_ia(entrega.get("extracao") or {}),
             }
         )
     return documentos
@@ -1388,7 +1453,15 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
             f"\n=== CHECKLIST ===\n{entregues}/{obrig} obrigatórios entregues"
         )
 
-    return "\n".join(linhas)[:120_000]
+    return "\n".join(linhas)[:MAX_CARACTERES_CONTEXTO]
+
+
+#: Teto do contexto inteiro da redação. Era 120 mil, e com a entrevista, o
+#: brief e a análise documental na frente, os textos dos documentos eram os
+#: primeiros a serem cortados no fim. 170 mil (~50 mil tokens) ainda deixa
+#: espaço, na janela de 128 mil tokens da DeepSeek, para a skill da peça, os
+#: precedentes e a resposta.
+MAX_CARACTERES_CONTEXTO = 170_000
 
 
 @skill_peticao.com_skill_do_caso

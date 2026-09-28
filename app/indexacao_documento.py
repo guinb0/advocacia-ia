@@ -45,18 +45,30 @@ def aplicar_interpretacao(extracao: dict[str, Any], semantica: dict[str, Any]) -
         re.sub(r"[^a-z0-9]+", "_", str(c.get("nome") or "").lower()).strip("_")
         for c in campos if isinstance(c, dict)
     }
+    # Nomes que vieram do próprio modelo. Um segundo achado com o mesmo nome
+    # ("CID", "Salário" em outra data) entra com sufixo em vez de sumir; já um
+    # campo do extrator nunca é duplicado nem substituído pela interpretação.
+    do_modelo: set[str] = set()
     for achado in semantica.get("achados") or []:
         if not isinstance(achado, dict):
             continue
-        rotulo = re.sub(r"\s+", " ", str(achado.get("campo") or "")).strip()[:60]
-        valor = re.sub(r"\s+", " ", str(achado.get("valor") or "")).strip()[:300]
+        rotulo = re.sub(r"\s+", " ", str(achado.get("campo") or "")).strip()[:80]
+        valor = re.sub(r"\s+", " ", str(achado.get("valor") or "")).strip()[:500]
         nome = re.sub(r"[^a-z0-9]+", "_", rotulo.lower()).strip("_")
-        if not nome or not valor or nome in existentes:
+        if not nome or not valor:
             continue
         # CPF e nº da CNH só vêm do OCR da foto do documento correspondente —
         # achado semântico em laudo/comprovante não pode inventar esses campos.
         if nome in {"cpf", "cnh", "numero_cnh", "n_registro", "registro_cnh"}:
             continue
+        if nome in existentes:
+            if nome not in do_modelo:
+                continue
+            base, n = nome, 2
+            while f"{base}_{n}" in existentes:
+                n += 1
+            nome = f"{base}_{n}"
+        do_modelo.add(nome)
         campos.append({
             "nome": nome, "rotulo": rotulo, "valor": valor, "valor_bruto": valor,
             "confianca": 0.0, "valido": None,

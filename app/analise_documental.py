@@ -41,7 +41,7 @@ from . import analise_documentos, armazenamento, skill_de_arquivo
 
 log = logging.getLogger("analise_documental")
 
-NOME_DA_SKILL = "analise-e-organizacao-documental"
+NOME_DA_SKILL = skill_de_arquivo.SKILL_DOCUMENTAL
 
 #: Estados do ciclo (compatíveis com a fila de OCR existente: o OCR roda ANTES, nas entregas).
 STATUS = ("queued", "processing", "analyzing", "ready", "error")
@@ -50,8 +50,8 @@ CLASSIFICACOES_DE_FALTANTE = ("COMPROMETE", "ERA_MELHOR_TER", "NAO_INTERFERE")
 
 #: Teto do texto enviado ao modelo (todas as entregas, fatiadas). Mesmo motivo de
 #: `analise_documentos.MAX_CARACTERES_TOTAL`.
-MAX_CARACTERES_TOTAL = int(os.getenv("ANALISE_DOCUMENTAL_MAX_CARACTERES", "150000"))
-MAX_CARACTERES_POR_DOCUMENTO = 9000
+MAX_CARACTERES_TOTAL = int(os.getenv("ANALISE_DOCUMENTAL_MAX_CARACTERES", "250000"))
+MAX_CARACTERES_POR_DOCUMENTO = int(os.getenv("ANALISE_DOCUMENTAL_MAX_CARACTERES_DOCUMENTO", "25000"))
 TEMPO_MINIMO_POR_DOCUMENTO = 700
 
 
@@ -107,6 +107,11 @@ INTEGRIDADE (vale para qualquer skill):
 - Não invente fato, dado do cliente, dispositivo legal, jurisprudência nem probabilidade numérica. Lacuna
   vira `perguntas` (acionáveis), não suposição.
 - Cubra TODOS os documentos da lista em `documentos`, inclusive os ilegíveis ou sem texto (legivel=false).
+- EXTRAIA O MÁXIMO de cada documento: leia o texto inteiro, do começo ao fim, e registre em
+  `dados_principais` CADA dado útil (datas, valores, CIDs, números de benefício/processo, funções, salários,
+  períodos, nomes e papéis, conclusões) — um item por dado, sem escolher só o "principal". O mesmo vale para
+  `fatos_extraidos` e `resumo_do_caso.fatos_cronologicos`: todo fato datado que os documentos registram. Um
+  dado a mais nunca atrapalha; um dado que passa despercebido pode custar um pedido.
 - Em conflito entre `SKILL.md` e `references/nomenclatura.md` sobre o FORMATO do nome do arquivo, vale o `SKILL.md`
   (é o que o script `montar.py` implementa)."""
 
@@ -357,7 +362,15 @@ def montar_mensagem(documentos: list[dict[str, Any]], entrevista: str, cadastro:
     com_texto = [d for d in documentos if d["texto"]]
     cabecalhos = sum(len(f"\n=== documento_id={d['id']} | arquivo={d['arquivo']} ===\n") for d in documentos)
     disponivel = max(0, MAX_CARACTERES_TOTAL - cabecalhos - 14000)
-    limite = min(MAX_CARACTERES_POR_DOCUMENTO, max(TEMPO_MINIMO_POR_DOCUMENTO, disponivel // max(1, len(com_texto))))
+    limite = min(
+        MAX_CARACTERES_POR_DOCUMENTO,
+        max(
+            TEMPO_MINIMO_POR_DOCUMENTO,
+            analise_documentos._limite_por_documento(  # noqa: SLF001 - mesma divisão do orçamento
+                [len(d["texto"]) for d in com_texto], disponivel
+            ),
+        ),
+    )
     for d in documentos:
         cab = f"\n=== documento_id={d['id']} | arquivo={d['arquivo']} ==="
         if not d["texto"]:
