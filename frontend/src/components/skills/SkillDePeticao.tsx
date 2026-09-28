@@ -1,53 +1,88 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, FileText, Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeftRight, Download, FileText, History, NotebookPen, Plus } from "lucide-react";
 
-import { Aviso, Botao, Cartao, CampoSeletor, RotuloCampo, Selo, Stat } from "@/components/ui/Basicos";
+import { Aviso, Botao, Cartao, Selo } from "@/components/ui/Basicos";
 import {
   ativarSkillPeticao,
   baixarSkillPeticao,
-  enviarSkillPeticao,
   obterSkillPeticao,
   type EstadoSkillPeticao,
 } from "@/lib/api";
 import { baixarArquivo } from "@/lib/baixar";
+import { cn } from "@/lib/utils";
 
-import EditarSkillDePeticao from "./EditarSkillDePeticao";
+import { EditarArquivosDaSkill, HistoricoDaSkill, InstrucoesParaIA, dataEHora } from "./EditarSkillDePeticao";
 
 const O_QUE_O_PACOTE_TRAZ: { arquivo: string; papel: string; obrigatorio: boolean }[] = [
   { arquivo: "SKILL.md", papel: "instruções gerais e a tabela de assuntos", obrigatorio: true },
   { arquivo: "references/formatacao.md", papel: "o layout: fonte, margens, espaçamento, títulos (bloco estilo)", obrigatorio: true },
-  { arquivo: "references/estrutura_peca.md", papel: "a ordem dos blocos da petição", obrigatorio: true },
+  { arquivo: "references/estrutura_peca.md", papel: "a ordem das partes da petição", obrigatorio: true },
   { arquivo: "references/validacoes.md", papel: "as conferências feitas antes de entregar a peça", obrigatorio: false },
   { arquivo: "references/<assunto>.md", papel: "as regras de cada tipo de ação", obrigatorio: false },
-  { arquivo: "references/observacoes.md", papel: "as observações do escritório, que prevalecem sobre o resto", obrigatorio: false },
+  { arquivo: "references/observacoes.md", papel: "as instruções do escritório, que prevalecem sobre o resto", obrigatorio: false },
   { arquivo: "assets/logo.png", papel: "a logo do cabeçalho", obrigatorio: false },
 ];
 
+export type PainelDaSkill = "instrucoes" | "trocar" | "desfazer";
+
 function numero(valor: number): string {
   return valor.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
-}
-
-function dataEHora(valor: string): string {
-  const data = new Date(valor.replace(" ", "T"));
-  return Number.isNaN(data.getTime())
-    ? ""
-    : data.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
 function mensagem(e: unknown, padrao: string): string {
   return e instanceof Error && e.message ? e.message : padrao;
 }
 
-export default function SkillDePeticao({ onMudou }: { onMudou: () => void }) {
+function BotaoDePainel({
+  ativo,
+  icone,
+  titulo,
+  descricao,
+  onClick,
+}: {
+  ativo: boolean;
+  icone: ReactNode;
+  titulo: string;
+  descricao: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={ativo}
+      onClick={onClick}
+      className={cn(
+        "flex h-full cursor-pointer items-start gap-3 rounded-campo border p-4 text-left [font:inherit] transition-colors",
+        ativo ? "border-acao bg-acao-clara" : "border-borda bg-papel hover:border-acao",
+      )}
+    >
+      <span className="mt-0.5 shrink-0 text-acao" aria-hidden>
+        {icone}
+      </span>
+      <span className="grid gap-1">
+        <strong className="text-sm text-tinta">{titulo}</strong>
+        <span className="text-xs leading-relaxed text-tinta-3">{descricao}</span>
+      </span>
+    </button>
+  );
+}
+
+export default function SkillDePeticao({
+  onMudou,
+  painelInicial = null,
+  onEnviarNova,
+}: {
+  onMudou: () => void;
+  painelInicial?: PainelDaSkill | null;
+  /** Abre o passo a passo de adicionar skill já na opção "para escrever petições". */
+  onEnviarNova: () => void;
+}) {
   const [estado, setEstado] = useState<EstadoSkillPeticao | null>(null);
   const [erroCarga, setErroCarga] = useState<string | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const [pronto, setPronto] = useState<string | null>(null);
-  const [ocupado, setOcupado] = useState<"enviar" | "baixar" | "trocar" | null>(null);
-  const [escolhida, setEscolhida] = useState("");
-  const seletorDeArquivo = useRef<HTMLInputElement>(null);
+  const [painel, setPainel] = useState<PainelDaSkill | null>(painelInicial);
+  const topo = useRef<HTMLDivElement>(null);
 
   const carregar = useCallback(async () => {
     setErroCarga(null);
@@ -62,117 +97,55 @@ export default function SkillDePeticao({ onMudou }: { onMudou: () => void }) {
     void carregar();
   }, [carregar]);
 
+  useEffect(() => {
+    if (painelInicial) topo.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [painelInicial]);
+
   function atualizar(novo: EstadoSkillPeticao) {
     setEstado(novo);
     window.dispatchEvent(new Event("skills-atualizadas"));
     onMudou();
   }
 
-  function aplicar(novo: EstadoSkillPeticao) {
-    atualizar(novo);
-    setEscolhida("");
-    setPronto(`Pronto! A partir da próxima petição gerada, vale a skill "${novo.ativa.nome}".`);
-  }
-
-  async function enviar(arquivo: File | null) {
-    if (!arquivo) return;
-    setOcupado("enviar");
-    setErro(null);
-    setPronto(null);
-    try {
-      aplicar(await enviarSkillPeticao(arquivo));
-    } catch (e) {
-      setErro(mensagem(e, "Não foi possível enviar a skill."));
-    } finally {
-      setOcupado(null);
-    }
-  }
-
-  async function trocar(skillId: string) {
-    setOcupado("trocar");
-    setErro(null);
-    setPronto(null);
-    try {
-      aplicar(await ativarSkillPeticao(skillId));
-    } catch (e) {
-      setErro(mensagem(e, "Não foi possível trocar a skill."));
-    } finally {
-      setOcupado(null);
-    }
-  }
-
-  async function baixar() {
-    if (!estado) return;
-    setOcupado("baixar");
-    setErro(null);
-    try {
-      const { arquivo, nome } = await baixarSkillPeticao(estado.ativa.do_sistema ? "" : estado.ativa.id);
-      baixarArquivo(arquivo, nome);
-    } catch (e) {
-      setErro(mensagem(e, "Não foi possível baixar a skill."));
-    } finally {
-      setOcupado(null);
-    }
-  }
-
   const ativa = estado?.ativa;
   const verificacao = ativa?.verificacao;
-  const outras = (estado?.disponiveis ?? []).filter((s) => s.id !== ativa?.id);
+  const alternar = (qual: PainelDaSkill) => setPainel((atual) => (atual === qual ? null : qual));
 
   return (
-    <Cartao
-      titulo={
-        <span className="flex flex-wrap items-center gap-2">
-          <FileText aria-hidden className="size-5 text-acao" />
-          Skill de geração de petição
-        </span>
-      }
-      subtitulo="É esta skill que escreve e diagrama toda petição gerada pelo sistema: o texto, a ordem dos blocos, as conferências e o layout (fonte, margens, espaçamento e logo). Para mudar qualquer uma dessas coisas, troque a skill aqui."
-    >
-      {erroCarga && <Aviso tom="critico" titulo="Não foi possível ler a skill em uso">{erroCarga}</Aviso>}
-      {!estado && !erroCarga && <p className="text-sm text-tinta-2">Carregando a skill em uso…</p>}
+    <div ref={topo} className="scroll-mt-4">
+      <Cartao
+        titulo={
+          <span className="flex flex-wrap items-center gap-2">
+            <FileText aria-hidden className="size-5 text-acao" />
+            Como as petições são escritas
+          </span>
+        }
+        subtitulo="Toda petição que o sistema gera segue uma skill: ela define o texto, a ordem das partes e o visual da peça."
+      >
+        {erroCarga && <Aviso tom="critico" titulo="Não foi possível ler a skill em uso">{erroCarga}</Aviso>}
+        {!estado && !erroCarga && <p className="text-sm text-tinta-2">Carregando…</p>}
 
-      {ativa && verificacao && (
-        <div className="grid gap-5">
-          <section className="grid gap-3" aria-label="Skill em uso">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-tinta-2">Em uso agora:</span>
-              <strong className="text-base text-tinta">{ativa.nome}</strong>
-              <Selo tom="ok" simbolo="✓">{ativa.do_sistema ? "padrão do sistema" : "enviada pelo escritório"}</Selo>
-            </div>
-            {!ativa.do_sistema && ativa.ativada_em && (
-              <p className="m-0 text-xs text-tinta-3">
-                Ativada {ativa.ativada_por ? `por ${ativa.ativada_por} ` : ""}em {dataEHora(ativa.ativada_em)}.
+        {ativa && verificacao && (
+          <div className="grid gap-4">
+            <div className="grid gap-1 rounded-campo border border-ok-borda bg-ok-claro px-4 py-3">
+              <p className="m-0 flex flex-wrap items-center gap-2 text-sm text-tinta-2">
+                Skill em uso agora:
+                <strong className="text-base text-tinta">{ativa.nome}</strong>
+                <Selo tom={ativa.do_sistema ? "neutro" : "ok"} simbolo="✓">
+                  {ativa.do_sistema ? "padrão do sistema" : "do escritório"}
+                </Selo>
               </p>
-            )}
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-              <Stat
-                chave="Letra"
-                valor={`${verificacao.layout.fonte} ${numero(verificacao.layout.tamanho_pt)} pt`}
-                titulo={`Espaçamento entre linhas: ${numero(verificacao.layout.espacamento_linha)}`}
-              />
-              <Stat
-                chave="Margens (cm)"
-                valor={verificacao.layout.margens_cm.map(numero).join(" · ")}
-                titulo="Superior · direita · inferior · esquerda"
-              />
-              <Stat chave="Blocos da petição" valor={String(verificacao.blocos.length)} />
-              <Stat chave="Tipos de ação" valor={String(verificacao.assuntos)} titulo="Linhas da tabela de assuntos do SKILL.md" />
-              <Stat chave="Conferências" valor={String(verificacao.validacoes)} />
-              <Stat chave="Logo" valor={ativa.logo ? "Da skill" : "Modelo visual"} titulo={ativa.logo || "A skill não traz logo; vale a do modelo visual da petição."} />
+              <p className="m-0 text-xs text-tinta-3">
+                Letra {verificacao.layout.fonte} {numero(verificacao.layout.tamanho_pt)} · petição em{" "}
+                {verificacao.blocos.length} partes · {ativa.logo ? "logo da própria skill" : "logo do escritório"}
+                {!ativa.do_sistema && ativa.ativada_em
+                  ? ` · em uso desde ${dataEHora(ativa.ativada_em)}${ativa.ativada_por ? ` (${ativa.ativada_por})` : ""}`
+                  : ""}
+              </p>
             </div>
-            {verificacao.blocos.length > 0 && (
-              <details className="text-sm text-tinta-2">
-                <summary className="cursor-pointer font-semibold text-acao">Ver a ordem dos blocos da petição</summary>
-                <ol className="mt-2 mb-0 grid gap-1 pl-5">
-                  {verificacao.blocos.map((bloco) => (
-                    <li key={bloco}>{bloco}</li>
-                  ))}
-                </ol>
-              </details>
-            )}
+
             {verificacao.avisos.length > 0 && (
-              <Aviso tom="atencao" titulo="Pontos de atenção da skill em uso">
+              <Aviso tom="atencao" titulo="Esta skill tem pontos que merecem atenção">
                 <ul className="m-0 grid gap-1 pl-4">
                   {verificacao.avisos.map((aviso) => (
                     <li key={aviso}>{aviso}</li>
@@ -180,121 +153,212 @@ export default function SkillDePeticao({ onMudou }: { onMudou: () => void }) {
                 </ul>
               </Aviso>
             )}
-          </section>
 
-          <EditarSkillDePeticao skillId={ativa.id} onSalvou={atualizar} />
+            <div>
+              <p className="m-0 mb-2 text-sm font-semibold text-tinta">O que você quer fazer?</p>
+              <div className="grid gap-2 md:grid-cols-3">
+                <BotaoDePainel
+                  ativo={painel === "instrucoes"}
+                  icone={<NotebookPen className="size-5" />}
+                  titulo="Dar instruções para a IA"
+                  descricao="Ex.: “sempre pedir justiça gratuita”. É o jeito mais fácil de mudar as petições."
+                  onClick={() => alternar("instrucoes")}
+                />
+                <BotaoDePainel
+                  ativo={painel === "trocar"}
+                  icone={<ArrowLeftRight className="size-5" />}
+                  titulo="Trocar por outra skill"
+                  descricao="Usar outra skill que o escritório já enviou, ou voltar para a padrão."
+                  onClick={() => alternar("trocar")}
+                />
+                <BotaoDePainel
+                  ativo={painel === "desfazer"}
+                  icone={<History className="size-5" />}
+                  titulo="Desfazer uma mudança"
+                  descricao="As petições pioraram depois de uma mudança? Volte para como estava."
+                  onClick={() => alternar("desfazer")}
+                />
+              </div>
+            </div>
 
-          <section className="grid gap-3 rounded-campo border border-borda bg-papel-2 p-4" aria-label="Trocar a skill">
-            <h3 className="m-0 text-base font-semibold text-tinta">Como trocar a skill de petição inteira (por arquivo)</h3>
-            <ol className="m-0 grid list-none gap-4 p-0">
-              <li className="grid gap-2">
-                <p className="m-0 text-sm text-tinta">
-                  <strong>1. Baixe a skill em uso.</strong> Ela serve de modelo: já vem com todos os arquivos no lugar certo.
-                </p>
-                <div>
-                  <Botao
-                    variante="secundario"
-                    onClick={() => void baixar()}
-                    carregando={ocupado === "baixar"}
-                    textoCarregando="Preparando o arquivo…"
-                  >
-                    <Download aria-hidden className="size-4" />
-                    Baixar a skill em uso (.skill.zip)
-                  </Botao>
-                </div>
-              </li>
-              <li className="grid gap-2">
-                <p className="m-0 text-sm text-tinta">
-                  <strong>2. Abra o ZIP e edite o que quiser mudar.</strong> O que cada arquivo controla:
-                </p>
-                <ul className="m-0 grid gap-1 pl-5 text-sm text-tinta-2">
-                  {O_QUE_O_PACOTE_TRAZ.map((item) => (
-                    <li key={item.arquivo}>
-                      <code className="text-tinta">{item.arquivo}</code> — {item.papel}
-                      {item.obrigatorio ? <strong> (obrigatório)</strong> : " (opcional)"}
-                    </li>
-                  ))}
-                </ul>
-              </li>
-              <li className="grid gap-2">
-                <p className="m-0 text-sm text-tinta">
-                  <strong>3. Compacte de novo e envie.</strong> O sistema confere o pacote antes de usar: se faltar
-                  alguma coisa, nada muda e aparece exatamente o que falta.
-                </p>
-                <div>
-                  <Botao
-                    variante="primario"
-                    onClick={() => seletorDeArquivo.current?.click()}
-                    carregando={ocupado === "enviar"}
-                    textoCarregando="Conferindo a skill…"
-                  >
-                    <Upload aria-hidden className="size-4" />
-                    Enviar skill de petição (.skill.zip)
-                  </Botao>
-                  <input
-                    ref={seletorDeArquivo}
-                    type="file"
-                    accept=".zip,application/zip"
-                    className="hidden"
-                    onChange={(e) => {
-                      void enviar(e.target.files?.[0] ?? null);
-                      e.target.value = "";
-                    }}
-                  />
-                </div>
-              </li>
-            </ol>
-          </section>
+            {painel && (
+              <section className="rounded-campo border border-acao-borda bg-papel-2 p-4">
+                {painel === "instrucoes" && <InstrucoesParaIA skillId={ativa.id} onSalvou={atualizar} />}
+                {painel === "trocar" && <TrocarSkill estado={estado} onTrocou={atualizar} onEnviarNova={onEnviarNova} />}
+                {painel === "desfazer" && <HistoricoDaSkill skillId={ativa.id} onSalvou={atualizar} />}
+              </section>
+            )}
 
-          {erro && <Aviso tom="critico" titulo="A skill não foi trocada">{erro}</Aviso>}
-          {pronto && <Aviso tom="ok">{pronto}</Aviso>}
+            <OpcoesAvancadas estado={estado} onSalvou={atualizar} />
+          </div>
+        )}
+      </Cartao>
+    </div>
+  );
+}
 
-          {(outras.length > 0 || !ativa.do_sistema) && (
-            <section className="grid gap-3" aria-label="Outras skills de petição">
-              {outras.length > 0 && (
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="min-w-[240px] flex-1">
-                    <RotuloCampo htmlFor="skill-peticao-outra">Usar outra skill de petição já enviada</RotuloCampo>
-                    <CampoSeletor
-                      id="skill-peticao-outra"
-                      value={escolhida}
-                      onChange={(e) => setEscolhida(e.target.value)}
-                    >
-                      <option value="">Escolha uma skill…</option>
-                      {outras.map((skill) => (
-                        <option key={skill.id} value={skill.id}>
-                          {skill.nome}
-                          {skill.atualizado_em ? ` (enviada em ${dataEHora(skill.atualizado_em)})` : ""}
-                        </option>
-                      ))}
-                    </CampoSeletor>
-                  </div>
-                  <Botao
-                    variante="secundario"
-                    disabled={!escolhida}
-                    onClick={() => void trocar(escolhida)}
-                    carregando={ocupado === "trocar" && Boolean(escolhida)}
-                  >
-                    Usar esta
-                  </Botao>
-                </div>
-              )}
-              {!ativa.do_sistema && (
-                <div>
-                  <Botao
-                    variante="discreto"
-                    pequeno
-                    onClick={() => void trocar("")}
-                    carregando={ocupado === "trocar" && !escolhida}
-                  >
-                    Voltar para a skill padrão do sistema
-                  </Botao>
-                </div>
-              )}
-            </section>
-          )}
-        </div>
+function TrocarSkill({
+  estado,
+  onTrocou,
+  onEnviarNova,
+}: {
+  estado: EstadoSkillPeticao;
+  onTrocou: (novo: EstadoSkillPeticao) => void;
+  onEnviarNova: () => void;
+}) {
+  const emUso = estado.ativa.do_sistema ? "" : estado.ativa.id;
+  const [marcada, setMarcada] = useState(emUso);
+  const [trocando, setTrocando] = useState(false);
+  const [retorno, setRetorno] = useState<{ tom: "ok" | "critico"; texto: string } | null>(null);
+
+  useEffect(() => setMarcada(emUso), [emUso]);
+
+  const opcoes = [
+    { id: "", nome: "Padrão do sistema", detalhe: "A skill que já vem com o sistema." },
+    ...estado.disponiveis.map((s) => ({
+      id: s.id,
+      nome: s.nome,
+      detalhe: s.atualizado_em ? `Enviada ou alterada em ${dataEHora(s.atualizado_em)}` : "",
+    })),
+  ];
+
+  async function trocar() {
+    setTrocando(true);
+    setRetorno(null);
+    try {
+      const novo = await ativarSkillPeticao(marcada);
+      onTrocou(novo);
+      setRetorno({ tom: "ok", texto: `Pronto! As próximas petições vão usar "${novo.ativa.nome}".` });
+    } catch (e) {
+      setRetorno({ tom: "critico", texto: mensagem(e, "Não foi possível trocar a skill.") });
+    } finally {
+      setTrocando(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-3">
+      <p className="m-0 text-sm font-semibold text-tinta">Marque a skill que deve escrever as petições:</p>
+      <div className="grid gap-2" role="radiogroup" aria-label="Skill de petição">
+        {opcoes.map((opcao) => (
+          <label
+            key={opcao.id || "sistema"}
+            className={cn(
+              "flex cursor-pointer items-start gap-3 rounded-campo border px-3 py-2",
+              marcada === opcao.id ? "border-acao bg-acao-clara" : "border-borda bg-papel hover:border-acao",
+            )}
+          >
+            <input
+              type="radio"
+              name="skill-de-peticao"
+              className="mt-1"
+              checked={marcada === opcao.id}
+              onChange={() => setMarcada(opcao.id)}
+            />
+            <span className="grid gap-0.5">
+              <span className="text-sm text-tinta">
+                <strong>{opcao.nome}</strong>
+                {opcao.id === emUso && <span className="ml-2 text-xs font-semibold text-ok">✓ em uso agora</span>}
+              </span>
+              {opcao.detalhe && <span className="text-xs text-tinta-3">{opcao.detalhe}</span>}
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Botao variante="primario" disabled={marcada === emUso} carregando={trocando} textoCarregando="Trocando…" onClick={() => void trocar()}>
+          Usar a skill marcada
+        </Botao>
+        <Botao variante="texto" onClick={onEnviarNova}>
+          <Plus aria-hidden className="size-4" />
+          A skill que eu quero não está na lista
+        </Botao>
+      </div>
+      {retorno && (
+        <Aviso tom={retorno.tom} titulo={retorno.tom === "critico" ? "A skill não foi trocada" : undefined}>
+          {retorno.texto}
+        </Aviso>
       )}
-    </Cartao>
+    </div>
+  );
+}
+
+function OpcoesAvancadas({ estado, onSalvou }: { estado: EstadoSkillPeticao; onSalvou: (novo: EstadoSkillPeticao) => void }) {
+  const [baixando, setBaixando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const { ativa } = estado;
+  const { layout, blocos } = ativa.verificacao;
+
+  async function baixar() {
+    setBaixando(true);
+    setErro(null);
+    try {
+      const { arquivo, nome } = await baixarSkillPeticao(ativa.do_sistema ? "" : ativa.id);
+      baixarArquivo(arquivo, nome);
+    } catch (e) {
+      setErro(mensagem(e, "Não foi possível baixar a skill."));
+    } finally {
+      setBaixando(false);
+    }
+  }
+
+  return (
+    <details className="rounded-campo border border-borda p-4">
+      <summary className="cursor-pointer text-sm font-semibold text-tinta-2">
+        Opções avançadas <span className="font-normal text-tinta-3">(só para quem sabe montar arquivos de skill)</span>
+      </summary>
+      <div className="mt-4 grid gap-5">
+        <section className="grid gap-2">
+          <h3 className="m-0 text-sm font-semibold text-tinta">Detalhes da skill em uso</h3>
+          <ul className="m-0 grid gap-1 pl-5 text-sm text-tinta-2">
+            <li>
+              Letra {layout.fonte} {numero(layout.tamanho_pt)} pt, espaçamento {numero(layout.espacamento_linha)}
+            </li>
+            <li>Margens (superior · direita · inferior · esquerda): {layout.margens_cm.map(numero).join(" · ")} cm</li>
+            <li>
+              {ativa.verificacao.assuntos} tipos de ação e {ativa.verificacao.validacoes} conferências antes de entregar
+            </li>
+          </ul>
+          {blocos.length > 0 && (
+            <details className="text-sm text-tinta-2">
+              <summary className="cursor-pointer font-semibold text-acao">Ver a ordem das partes da petição</summary>
+              <ol className="mt-2 mb-0 grid gap-1 pl-5">
+                {blocos.map((bloco) => (
+                  <li key={bloco}>{bloco}</li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </section>
+
+        <section className="grid gap-2">
+          <h3 className="m-0 text-sm font-semibold text-tinta">Baixar a skill em uso</h3>
+          <p className="m-0 text-sm text-tinta-2">
+            Serve de modelo para montar uma skill nova: já vem com todos os arquivos no lugar certo. Depois de editar,
+            compacte de novo e envie pelo botão <strong>Adicionar uma skill</strong>, no topo da página.
+          </p>
+          <ul className="m-0 grid gap-1 pl-5 text-sm text-tinta-2">
+            {O_QUE_O_PACOTE_TRAZ.map((item) => (
+              <li key={item.arquivo}>
+                <code className="text-tinta">{item.arquivo}</code> — {item.papel}
+                {item.obrigatorio ? <strong> (obrigatório)</strong> : " (opcional)"}
+              </li>
+            ))}
+          </ul>
+          <div>
+            <Botao variante="secundario" onClick={() => void baixar()} carregando={baixando} textoCarregando="Preparando o arquivo…">
+              <Download aria-hidden className="size-4" />
+              Baixar a skill em uso (.zip)
+            </Botao>
+          </div>
+          {erro && <Aviso tom="critico">{erro}</Aviso>}
+        </section>
+
+        <section className="grid gap-2">
+          <h3 className="m-0 text-sm font-semibold text-tinta">Editar os arquivos da skill aqui mesmo</h3>
+          <EditarArquivosDaSkill skillId={ativa.id} onSalvou={onSalvou} />
+        </section>
+      </div>
+    </details>
   );
 }
