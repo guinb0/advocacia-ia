@@ -17,6 +17,7 @@ from .. import (
     casos,
     categorias,
     panorama,
+    skill_peticao,
 )
 from .. import (
     painel as painel_do_caso,
@@ -25,6 +26,13 @@ from ..cache_leitura import por_alguns_segundos
 from .comum import URL_PORTAL, _criar_portal
 
 roteador = APIRouter()
+
+
+def _validar_skill(skill_juridica_id: str) -> None:
+    try:
+        skill_peticao.validar_para_caso(skill_juridica_id.strip())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @roteador.post("/api/casos", status_code=201)
@@ -36,6 +44,8 @@ def criar_caso(
     #: pela carteira, digitado à mão, onde ninguém perguntou telefone ainda.
     telefone: str = Form(""),
     tipo_acao: str = Form(""),
+    #: Skill que vai gerar a petição deste caso. Vazio: a skill em uso no escritório.
+    skill_juridica_id: str = Form(""),
 ):
     """Cria o caso já com o portal do cliente pronto.
 
@@ -49,8 +59,11 @@ def criar_caso(
     # checklist. O fallback evita que uma tese nova impeça a abertura do caso.
     if categorias.obter(categoria) is None:
         categoria = "em_triagem"
+    _validar_skill(skill_juridica_id)
 
-    caso = armazenamento.criar_caso(cliente, categoria, observacao, telefone, tipo_acao)
+    caso = armazenamento.criar_caso(
+        cliente, categoria, observacao, telefone, tipo_acao, skill_juridica_id=skill_juridica_id.strip()
+    )
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return {**caso, "portal": _criar_portal(caso["id"])}
 
@@ -221,10 +234,16 @@ def atualizar_caso(
     observacao: str | None = Form(None),
     telefone: str | None = Form(None),
     categoria: str | None = Form(None),
+    #: `""` volta o caso para a skill em uso no escritório.
+    skill_juridica_id: str | None = Form(None),
 ):
     if categoria is not None and categorias.obter(categoria) is None:
         raise HTTPException(400, f"Categoria '{categoria}' não existe.")
-    if not armazenamento.atualizar_caso(caso_id, cliente, observacao, telefone, categoria):
+    if skill_juridica_id is not None:
+        _validar_skill(skill_juridica_id)
+    if not armazenamento.atualizar_caso(
+        caso_id, cliente, observacao, telefone, categoria, skill_juridica_id=skill_juridica_id
+    ):
         raise HTTPException(404, "Caso não encontrado ou nada para atualizar.")
     listar_casos.limpar_cache()  # type: ignore[attr-defined]
     return armazenamento.obter_caso(caso_id)

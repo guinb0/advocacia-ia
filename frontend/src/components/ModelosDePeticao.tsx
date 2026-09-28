@@ -565,6 +565,13 @@ export default function ModelosDePeticao({ onVoltar }: { onVoltar: () => void })
           modelo — logo, fonte, tamanho, espaçamento, alinhamento e margens. O conteúdo
           jurídico do arquivo de referência não é copiado.
         </p>
+        <div className="mb-4">
+          <Aviso tom="info" titulo="Quem manda no layout é a skill de geração de petição">
+            Fonte, tamanho, espaçamento, margens e alinhamento vêm da skill em uso, e a logo
+            dela (se trouxer uma) vence a daqui. Para trocar, abra o módulo <strong>Skills</strong>,
+            cartão “Skill de geração de petição”.
+          </Aviso>
+        </div>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-campo border border-borda bg-papel-2 p-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-campo border border-borda bg-papel text-acao">

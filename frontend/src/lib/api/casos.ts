@@ -85,6 +85,8 @@ export async function criarCaso(
   observacao = "",
   telefone = "",
   tipoAcao = "",
+  /** Skill que gera a petição do caso. Vazio: a skill em uso no escritório. */
+  skillJuridicaId = "",
 ): Promise<CasoCriado> {
   const form = new FormData();
   form.append("cliente", cliente);
@@ -92,7 +94,15 @@ export async function criarCaso(
   form.append("observacao", observacao);
   form.append("telefone", telefone);
   form.append("tipo_acao", tipoAcao);
+  if (skillJuridicaId) form.append("skill_juridica_id", skillJuridicaId);
   return comoJson<CasoCriado>(await buscar("/api/casos", { method: "POST", body: form }));
+}
+
+/** Troca a skill que gera a petição do caso. `""` volta para a skill em uso no escritório. */
+export async function definirSkillDoCaso(casoId: string, skillJuridicaId: string): Promise<Caso> {
+  const form = new FormData();
+  form.append("skill_juridica_id", skillJuridicaId);
+  return comoJson<Caso>(await buscar(`/api/casos/${encodeURIComponent(casoId)}`, { method: "PATCH", body: form }));
 }
 
 /** Cria o caso pelo nome e importa todos os documentos de uma pasta ZIP. */
@@ -101,12 +111,14 @@ export async function criarCasoPorZip(
   categoria: string,
   arquivo: File,
   skillJuridicaId = "",
+  telefone = "",
 ): Promise<CasoCriado> {
   const form = new FormData();
   form.append("cliente", cliente);
   form.append("categoria", categoria);
   form.append("arquivo", arquivo);
   if (skillJuridicaId) form.append("skill_juridica_id", skillJuridicaId);
+  if (telefone) form.append("telefone", telefone);
   const controlador = new AbortController();
   const prazo = window.setTimeout(() => controlador.abort(), 120_000);
   try {

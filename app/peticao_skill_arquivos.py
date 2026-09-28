@@ -20,6 +20,12 @@ Nem o layout nem a escolha do assunto moram no código:
 - o ASSUNTO vem da tabela "Etapa 1.1" do próprio `SKILL.md` (assunto → arquivo de
   referência): as palavras que distinguem cada linha são lidas dela, e o caso é
   comparado a elas. Trocar a tabela troca a decisão, sem deploy de código.
+
+QUAL SKILL
+
+A pasta abaixo é só a skill que vem com o sistema. O escritório pode enviar outra
+pela tela Skills (`skill_peticao`); a partir daí `_ler` devolve os arquivos dela, e
+tudo deste módulo — conteúdo, assunto, estrutura, validações e layout — segue junto.
 """
 
 from __future__ import annotations
@@ -29,9 +35,13 @@ import json
 import logging
 import re
 import unicodedata
+from collections.abc import Mapping
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from . import skill_peticao
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +63,10 @@ _SEMPRE = (
 #: O SKILL.md é explícito: "nunca recusar o caso por falta de modelo pronto".
 _PADRAO = "outros_assuntos.md"
 
+#: Escritas pelo escritório na tela Skills. Entram por último no prompt e
+#: prevalecem sobre o resto da skill.
+OBSERVACOES = "observacoes.md"
+
 #: Palavras gramaticais que não distinguem um assunto do outro.
 _SEM_VALOR = frozenset(
     "sobre entre quando sendo mesmo mesma desde ainda depois antes durante contra "
@@ -70,8 +84,12 @@ def _normalizar(texto: str) -> str:
     return sem_acento.lower()
 
 
+#: Pacote em exame por `verificar` (ainda não ativo): `_ler` responde com ele.
+_TEXTOS_EM_EXAME: ContextVar[Mapping[str, str] | None] = ContextVar("textos_em_exame", default=None)
+
+
 @lru_cache(maxsize=64)
-def _ler(caminho_relativo: str) -> str:
+def _ler_do_disco(caminho_relativo: str) -> str:
     """Cacheado: são arquivos estáticos do repositório, lidos a toda geração."""
     caminho = _DIR / caminho_relativo if caminho_relativo == "SKILL.md" else _REFERENCIAS / caminho_relativo
     try:
@@ -81,12 +99,35 @@ def _ler(caminho_relativo: str) -> str:
         return ""
 
 
+def _ler(caminho_relativo: str) -> str:
+    """Um arquivo da skill de petição ativa: `SKILL.md` ou o caminho dentro de `references/`."""
+    textos = _TEXTOS_EM_EXAME.get()
+    if textos is None:
+        textos = skill_peticao.ativa().textos
+    if textos is None:
+        return _ler_do_disco(caminho_relativo)
+    return textos.get(caminho_relativo, "")
+
+
+def textos_do_disco() -> dict[str, str]:
+    """A skill que vem com o sistema, no mesmo formato de uma skill enviada."""
+    textos = {"SKILL.md": _ler_do_disco("SKILL.md")}
+    for caminho in sorted(_REFERENCIAS.rglob("*.md")):
+        relativo = caminho.relative_to(_REFERENCIAS).as_posix()
+        textos[relativo] = _ler_do_disco(relativo)
+    return textos
+
+
 def _palavras(texto: str) -> set[str]:
     return {p for p in re.findall(r"[a-z]{5,}", _normalizar(texto)) if p not in _SEM_VALOR}
 
 
-@lru_cache(maxsize=1)
 def _tabela_de_assuntos() -> tuple[tuple[str, frozenset[str], frozenset[str]], ...]:
+    return _tabela_do_skill_md(_ler("SKILL.md"))
+
+
+@lru_cache(maxsize=8)
+def _tabela_do_skill_md(skill_md: str) -> tuple[tuple[str, frozenset[str], frozenset[str]], ...]:
     """(arquivo de referência, palavras que distinguem a linha, exclusões) da tabela do SKILL.md.
 
     Só entram as palavras que aparecem em UMA linha da tabela — "empregado" ou
@@ -95,7 +136,7 @@ def _tabela_de_assuntos() -> tuple[tuple[str, frozenset[str], frozenset[str]], .
     seja assalto"): se o caso trata de X, essa linha não vale.
     """
     linhas = []
-    for linha in _ler("SKILL.md").splitlines():
+    for linha in skill_md.splitlines():
         if not (linha.startswith("|") and "references/" in linha):
             continue
         colunas = [c.strip() for c in linha.strip().strip("|").split("|")]
@@ -220,6 +261,13 @@ def carregar(categoria_nome: str, categoria_codigo: str, texto_caso: str = "") -
                 f"\n--- {nome} (assunto identificado: {categoria_nome or categoria_codigo}) ---\n{texto}"
             )
             corpo = True
+    observacoes = _ler(OBSERVACOES).strip()
+    if observacoes:
+        partes.append(
+            f"\n--- {OBSERVACOES} (OBSERVAÇÕES DO ESCRITÓRIO — em conflito, prevalecem sobre "
+            f"qualquer outra regra desta skill) ---\n{observacoes}"
+        )
+        corpo = True
     return "\n".join(partes) if corpo else ""
 
 
@@ -230,10 +278,10 @@ def resumo(categoria_nome: str, categoria_codigo: str, texto_caso: str = "") -> 
     olhando uma peça já gerada, QUAL versão da skill a orientou.
     """
     assunto = _arquivo_do_assunto(categoria_nome, categoria_codigo, texto_caso)
-    arquivos = [n for n in (*_SEMPRE, *_arquivos_do_assunto(assunto)) if _ler(n)]
+    arquivos = [n for n in (*_SEMPRE, *_arquivos_do_assunto(assunto), OBSERVACOES) if _ler(n).strip()]
     texto = carregar(categoria_nome, categoria_codigo, texto_caso)
     return {
-        "skill": "escritorio-trabalhista",
+        "skill": skill_peticao.ativa().id,
         "arquivos": arquivos,
         "assunto": assunto.split("/")[0].removesuffix(".md"),
         "sha256": hashlib.sha256(texto.encode("utf-8")).hexdigest()[:16] if texto else "",
@@ -417,3 +465,71 @@ def configuracao_visual_padrao() -> dict[str, Any]:
     cfg["fonte_das_regras"] = "references/formatacao.md" if definidos else "fallback_tecnico_generico"
     cfg["campos_sem_definicao"] = sorted(set(_EMERGENCIA_SEM_SKILL) - definidos)
     return cfg
+
+
+#: Sem estes a skill não comanda a peça: a geração cairia no piso técnico genérico
+#: e numa ordem de blocos inventada, sem ninguém perceber.
+EXIGIDOS = {
+    "SKILL.md": "o SKILL.md (instruções gerais e tabela de assuntos)",
+    "formatacao.md": "references/formatacao.md (layout da peça)",
+    "estrutura_peca.md": "references/estrutura_peca.md (ordem dos blocos da petição)",
+}
+
+
+def verificar(textos: Mapping[str, str]) -> dict[str, Any]:
+    """O que um pacote de skill de petição cobre, lido pelos mesmos leitores da geração.
+
+    `textos` no formato de `_ler`: `SKILL.md` e caminhos relativos a `references/`.
+    """
+    token = _TEXTOS_EM_EXAME.set(dict(textos))
+    try:
+        estilos = estilos_da_skill()
+        estrutura = estrutura_da_skill()
+        assuntos = _tabela_de_assuntos()
+        regras = validacoes_da_skill()["regras"]
+        visual = configuracao_visual_padrao()
+    finally:
+        _TEXTOS_EM_EXAME.reset(token)
+    problemas = [
+        f"Falta {descricao}." for nome, descricao in EXIGIDOS.items() if not str(textos.get(nome) or "").strip()
+    ]
+    if str(textos.get("formatacao.md") or "").strip() and not estilos:
+        problemas.append(
+            "references/formatacao.md não tem o bloco ```estilo``` com o layout (ex.: corpo.tamanho_pt: 12)."
+        )
+    if str(textos.get("estrutura_peca.md") or "").strip() and not estrutura:
+        problemas.append(
+            "references/estrutura_peca.md não tem a lista numerada dos blocos (ex.: 1. **Endereçamento**)."
+        )
+    avisos = []
+    if not assuntos:
+        avisos.append(
+            "O SKILL.md não tem a tabela de assuntos (linhas com references/arquivo.md): "
+            "todo caso usará só as regras gerais."
+        )
+    if not regras:
+        avisos.append(
+            "Sem references/validacoes.md com bloco ```validacao```: a petição não passa pelas conferências da skill."
+        )
+    opcionais_ausentes = [n for n in _SEMPRE if n not in EXIGIDOS and not str(textos.get(n) or "").strip()]
+    if opcionais_ausentes:
+        avisos.append("Arquivos gerais que a skill não traz: " + ", ".join(opcionais_ausentes) + ".")
+    return {
+        "ok": not problemas,
+        "problemas": problemas,
+        "avisos": avisos,
+        "layout": {
+            "fonte": visual["fonte"],
+            "tamanho_pt": visual["tamanho_fonte_pt"],
+            "espacamento_linha": visual["espacamento_linha"],
+            "margens_cm": [
+                visual["margem_superior_cm"], visual["margem_direita_cm"],
+                visual["margem_inferior_cm"], visual["margem_esquerda_cm"],
+            ],
+            "elementos": sorted(estilos),
+        },
+        "blocos": [item["titulo"] for item in estrutura],
+        "assuntos": len(assuntos),
+        "validacoes": len(regras),
+        "arquivos": len(textos),
+    }

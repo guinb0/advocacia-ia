@@ -23,6 +23,7 @@ from .. import (
     peticao_local,
     peticao_skills,
     rag,
+    skill_peticao,
     skills_juridicas,
 )
 from .comum import MAX_BYTES, _ler_upload, log
@@ -320,10 +321,12 @@ class _SkillNova(BaseModel):
 
 
 @roteador.post("/api/skills-juridicas", status_code=201)
-async def criar_skill_juridica(corpo: _SkillNova, _autorizado=PodeManterModeloPeticao):
+async def criar_skill_juridica(corpo: _SkillNova, usuario: auth.Usuario = PodeManterModeloPeticao):
     """Adiciona uma skill. Ela passa a aparecer como módulo próprio."""
     try:
-        return await run_in_threadpool(skills_juridicas.criar, corpo.nome, corpo.descricao, corpo.texto)
+        return await run_in_threadpool(
+            lambda: skills_juridicas.criar(corpo.nome, corpo.descricao, corpo.texto, por=usuario.nome)
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -331,13 +334,120 @@ async def criar_skill_juridica(corpo: _SkillNova, _autorizado=PodeManterModeloPe
 @roteador.post("/api/skills-juridicas/importar", status_code=201)
 async def importar_skill_juridica(
     arquivo: UploadFile = File(...),
-    _autorizado=PodeManterModeloPeticao,
+    usuario: auth.Usuario = PodeManterModeloPeticao,
 ):
     """Importa uma skill ZIP sem executar nenhum arquivo do pacote."""
     if not (arquivo.filename or "").lower().endswith(".zip"):
         raise HTTPException(400, "Envie uma skill no formato .skill.zip.")
     try:
         conteudo = await _ler_upload(arquivo)
-        return await run_in_threadpool(skills_juridicas.importar_zip, arquivo.filename or "skill", conteudo)
+        return await run_in_threadpool(
+            lambda: skills_juridicas.importar_zip(arquivo.filename or "skill", conteudo, por=usuario.nome)
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@roteador.get("/api/skill-peticao")
+async def obter_skill_de_geracao(_usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """A skill que comanda a geração da petição e o que ela cobre."""
+    return await run_in_threadpool(skill_peticao.estado)
+
+
+@roteador.post("/api/skill-peticao", status_code=201)
+async def enviar_skill_de_geracao(
+    arquivo: UploadFile = File(...),
+    usuario: auth.Usuario = PodeManterModeloPeticao,
+):
+    """Recebe uma `.skill.zip` de petição; se ela cobrir a peça inteira, passa a valer."""
+    if not (arquivo.filename or "").lower().endswith(".zip"):
+        raise HTTPException(400, "Envie a skill no formato .skill.zip.")
+    try:
+        conteudo = await _ler_upload(arquivo)
+        return await run_in_threadpool(
+            lambda: skill_peticao.importar(arquivo.filename or "", conteudo, por=usuario.nome)
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+class _SkillDeGeracaoAtiva(BaseModel):
+    skill_id: str = ""
+
+
+@roteador.put("/api/skill-peticao/ativa")
+async def trocar_skill_de_geracao(corpo: _SkillDeGeracaoAtiva, usuario: auth.Usuario = PodeManterModeloPeticao):
+    """Troca a skill ativa; vazio volta para a do sistema."""
+    try:
+        return await run_in_threadpool(lambda: skill_peticao.ativar(corpo.skill_id, por=usuario.nome))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@roteador.get("/api/skill-peticao/arquivos")
+async def arquivos_da_skill_de_geracao(skill_id: str = "", _usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """O texto de cada arquivo da skill (vazio = a do escritório), para editar na tela."""
+    try:
+        return await run_in_threadpool(skill_peticao.arquivos, skill_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+class _ArquivoDaSkill(BaseModel):
+    skill_id: str = ""
+    caminho: str
+    texto: str = Field(default="", max_length=300_000)
+    #: O arquivo como estava quando foi aberto; se mudou desde então, nada é gravado.
+    texto_lido: str | None = Field(default=None, max_length=300_000)
+
+
+@roteador.put("/api/skill-peticao/arquivo")
+async def salvar_arquivo_da_skill_de_geracao(corpo: _ArquivoDaSkill, usuario: auth.Usuario = PodeManterModeloPeticao):
+    """Grava observações ou a edição de um arquivo da skill; confere a skill antes."""
+    try:
+        return await run_in_threadpool(
+            lambda: skill_peticao.salvar_arquivo(
+                corpo.skill_id, corpo.caminho, corpo.texto, texto_lido=corpo.texto_lido, por=usuario.nome
+            )
+        )
+    except skills_juridicas.AlteradaNoMeioTempo as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@roteador.get("/api/skill-peticao/versoes")
+async def historico_da_skill_de_geracao(skill_id: str = "", _usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """Cada gravação da skill (vazio = a do escritório), para desfazer uma alteração."""
+    return await run_in_threadpool(skill_peticao.historico, skill_id)
+
+
+class _VersaoDaSkill(BaseModel):
+    skill_id: str = ""
+
+
+@roteador.post("/api/skill-peticao/versoes/{versao_id}/restaurar")
+async def restaurar_versao_da_skill_de_geracao(
+    versao_id: int, corpo: _VersaoDaSkill, usuario: auth.Usuario = PodeManterModeloPeticao
+):
+    """Volta a skill para uma versão anterior; a restauração também entra no histórico."""
+    try:
+        return await run_in_threadpool(
+            lambda: skill_peticao.restaurar(corpo.skill_id, versao_id, por=usuario.nome)
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@roteador.get("/api/skill-peticao/pacote")
+async def baixar_skill_de_geracao(skill_id: str = "", _usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    """A skill como `.skill.zip`, para servir de modelo da próxima."""
+    try:
+        conteudo, nome = await run_in_threadpool(skill_peticao.pacote, skill_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return Response(
+        content=conteudo,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+    )

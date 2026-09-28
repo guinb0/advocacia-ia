@@ -53,6 +53,10 @@ export const useHomeModel = () => {
   const chamada = useChamada();
   const [casoAberto, setCasoAberto] = useState<string | null>(null);
   const [skillAberta, setSkillAberta] = useState<string | null>(null);
+  /* A tela Casos mostra o assistente de criação em vez da lista. Não vai para o
+   * endereço: um F5 no meio do assistente perderia o que foi digitado de qualquer
+   * jeito, e cair na lista é o recomeço menos confuso. */
+  const [criandoCaso, setCriandoCaso] = useState(false);
 
   const categorias = useCategorias();
   const listaCasos = useCasos();
@@ -164,7 +168,14 @@ export const useHomeModel = () => {
     if (!podeAbrirTela(telaNova, modulos)) return;
     navegacaoDoUsuario.current = true;
     setSkillAberta(null);
+    setCriandoCaso(false);
     setTela(telaNova);
+  }
+
+  function novoCaso() {
+    if (!podeAbrirTela("casos", modulos)) return;
+    navegar("casos");
+    setCriandoCaso(true);
   }
 
   function abrirSkill(skillId: string) {
@@ -208,5 +219,8 @@ export const useHomeModel = () => {
     abrirSkill,
     skillAberta,
     voltarParaCarteira,
+    criandoCaso,
+    novoCaso,
+    fecharNovoCaso: () => setCriandoCaso(false),
   };
 };

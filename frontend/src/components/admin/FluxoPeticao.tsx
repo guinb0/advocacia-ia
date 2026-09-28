@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Maximize2, Mic, MicOff, Minimize2, Search } from "lucide-react";
 
 import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
+import { SkillDoCaso } from "@/components/skills/SeletorSkillPeticao";
 import ChatPeticao from "@/components/admin/ChatPeticao";
 import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
 import { alinharSecoes, indicesAlterados, type LinhaComparacao } from "@/lib/diffPeticao";
@@ -652,6 +653,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
             Cruza a entrevista com os documentos lidos por OCR e redige a petição inicial com
             DeepSeek.
           </p>
+          <SkillDoCaso casoId={casoId} desabilitado={ocupado} />
         </header>
 
         {semEntrevista && (

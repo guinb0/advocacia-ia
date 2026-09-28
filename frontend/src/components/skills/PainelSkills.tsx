@@ -12,6 +12,8 @@ import {
   type SkillModuloDetalhe,
 } from "@/lib/api";
 
+import SkillDePeticao from "./SkillDePeticao";
+
 export default function PainelSkills({
   skillId,
   onAbrir,
@@ -51,7 +53,7 @@ export default function PainelSkills({
           {skillId ? "Skill" : "Skills"}
         </h1>
         <p className="mt-[5px] mb-0 max-w-[66ch] text-tinta-2 text-base">
-          As skills já adicionadas ficam aqui, cada uma no próprio módulo. Uma skill nova entra na lista e na barra ao lado.
+          A skill que gera as petições fica no primeiro cartão. As demais skills adicionadas ficam logo abaixo, cada uma no próprio módulo.
         </p>
       </div>
 
@@ -61,6 +63,8 @@ export default function PainelSkills({
         <ModuloDaSkill skillId={skillId} onVoltarLista={() => onAbrir("")} />
       ) : (
         <>
+          <SkillDePeticao onMudou={() => void carregar()} />
+          <h2 className="mt-2 mb-0 text-lg font-semibold text-tinta">Todas as skills</h2>
           {carregando && <p className="text-sm text-tinta-2">Carregando as skills…</p>}
           {!carregando && skills.length === 0 && (
             <Vazio>Nenhuma skill adicionada ainda.</Vazio>
@@ -177,7 +181,10 @@ function AdicionarSkill({ onCriada }: { onCriada: (id: string) => Promise<void> 
   }
 
   return (
-    <Cartao titulo="Adicionar skill" subtitulo="Ela abre como módulo próprio na barra, ao lado das que já existem.">
+    <Cartao
+      titulo="Adicionar outra skill"
+      subtitulo="Ela abre como módulo próprio na barra, ao lado das que já existem. Para trocar a skill que gera as petições, use o cartão “Skill de geração de petição” lá em cima."
+    >
       <div className="grid gap-3">
         <div>
           <RotuloCampo htmlFor="skill-nome">Nome</RotuloCampo>

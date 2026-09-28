@@ -48,6 +48,7 @@ from . import (
     peticao_skill_arquivos,
     peticao_skills,
     rag,
+    skill_peticao,
     tribunais,
 )
 from . import casos as casos_ocr
@@ -747,7 +748,11 @@ def analisar_estilo(conteudo: bytes) -> dict[str, Any]:
 
 
 def identidade_visual() -> tuple[bytes, str, str, str]:
-    """Identidade vigente: banco em produção; Lara & Melo como reserva segura."""
+    """Identidade vigente: logo da skill de petição, depois banco; Lara & Melo como reserva segura."""
+    skill = skill_peticao.ativa()
+    if skill.logo:
+        dados, extensao, caminho = skill.logo
+        return dados, _fonte_padrao(), extensao, f"{Path(caminho).name} (skill {skill.nome})"
     try:
         registro = armazenamento.obter_modelo(MODELO_VISUAL_GERAL)
     except Exception:
@@ -831,6 +836,7 @@ def carregar(caso_id: str) -> dict[str, Any] | None:
     return dados
 
 
+@skill_peticao.com_skill_do_caso
 def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
     dados["updated_at"] = _agora()
     dados["docx_style_version"] = DOCX_STYLE_VERSION
@@ -1385,6 +1391,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     return "\n".join(linhas)[:120_000]
 
 
+@skill_peticao.com_skill_do_caso
 def analisar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     contexto = _montar_contexto(caso_id, texto_entrevista)
     saida = _llm_json(
@@ -2518,6 +2525,7 @@ def _aplicar_conferencia(dados: dict[str, Any], secoes: list[dict[str, Any]], vi
     dados["blocking_findings"] = bloqueantes
 
 
+@skill_peticao.com_skill_do_caso
 def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
     """Depois de edição humana: confere de novo, sem correção automática.
 
@@ -2534,6 +2542,7 @@ def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
     _aplicar_conferencia(dados, secoes, violacoes)
 
 
+@skill_peticao.com_skill_do_caso
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
@@ -3155,18 +3164,21 @@ def salvar_secoes_anexa(
         armazenamento.registrar_versao_peticao(registro["caso_id"], anterior, chave=peca_id)
     dados["updated_at"] = _agora()
 
+    with skill_peticao.do_caso(registro["caso_id"]):
+        docx = montar_docx(dados.get("sections") or [])
     armazenamento.salvar_peticao_anexa(
         registro["caso_id"],
         peca_id,
         titulo=str(dados.get("title") or registro.get("titulo") or ""),
         motivo=str(registro.get("motivo") or ""),
         dados=dados,
-        docx=montar_docx(dados.get("sections") or []),
+        docx=docx,
         gerada_por=str(registro.get("gerada_por") or ""),
     )
     return para_api(dados)
 
 
+@skill_peticao.com_skill_do_caso
 def gerar_anexa(
     caso_id: str,
     *,
@@ -3325,11 +3337,12 @@ def ler_docx_anexa(peca_id: str) -> tuple[str, bytes]:
         raise ErroPeticao("Peça não encontrada.")
     conteudo = bytes(registro.get("_docx") or b"")
     dados = registro.get("dados") or {}
-    if int(dados.get("docx_style_version") or 0) < DOCX_STYLE_VERSION:
-        conteudo = montar_docx(dados.get("sections") or [])
-    if not conteudo:
-        # Regrava a partir do JSON: o texto é a verdade, o binário é derivado.
-        conteudo = montar_docx(dados.get("sections") or [])
+    with skill_peticao.do_caso(registro["caso_id"]):
+        if int(dados.get("docx_style_version") or 0) < DOCX_STYLE_VERSION:
+            conteudo = montar_docx(dados.get("sections") or [])
+        if not conteudo:
+            # Regrava a partir do JSON: o texto é a verdade, o binário é derivado.
+            conteudo = montar_docx(dados.get("sections") or [])
     return str(registro.get("titulo") or "Peça"), conteudo
 
 
@@ -3562,6 +3575,7 @@ def _conferir_revisao(
     }
 
 
+@skill_peticao.com_skill_do_caso
 def _revisar_secoes_via_llm(
     caso_id: str, secoes_atuais: list[dict[str, Any]], prompt_critica: str
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -3691,18 +3705,21 @@ def revisar_anexa_com_prompt(
         **conferencia,
     }
 
+    with skill_peticao.do_caso(registro["caso_id"]):
+        docx = montar_docx(secoes)
     armazenamento.salvar_peticao_anexa(
         registro["caso_id"],
         peca_id,
         titulo=str(registro.get("titulo") or dados.get("title") or ""),
         motivo=str(registro.get("motivo") or ""),
         dados=dados,
-        docx=montar_docx(secoes),
+        docx=docx,
         gerada_por=str(registro.get("gerada_por") or ""),
     )
     return para_api(dados)
 
 
+@skill_peticao.com_skill_do_caso
 def revisar_com_prompt(
     caso_id: str,
     *,
@@ -3831,6 +3848,7 @@ def revisar_com_prompt(
     return novos_dados
 
 
+@skill_peticao.com_skill_do_caso
 def aceitar_revisao_pendente(caso_id: str, revisao_id: str) -> dict[str, Any]:
     atual = carregar(caso_id)
     candidata = (atual or {}).get("revisao_pendente") or {}
@@ -4018,6 +4036,7 @@ def _aplicar_edicao_manual(
     return dados, anterior, bool(alteradas)
 
 
+@skill_peticao.com_skill_do_caso
 def salvar_secoes(
     caso_id: str,
     secoes: list[dict[str, str]],
@@ -4035,6 +4054,7 @@ def salvar_secoes(
     return _salvar(caso_id, dados)
 
 
+@skill_peticao.com_skill_do_caso
 def atualizar_status(caso_id: str, *, status: str) -> dict[str, Any]:
     dados = carregar(caso_id)
     if not dados:
@@ -5271,6 +5291,7 @@ def montar_docx(secoes: list[dict[str, Any]]) -> bytes:
     return buffer.getvalue()
 
 
+@skill_peticao.com_skill_do_caso
 def ler_docx(caso_id: str) -> bytes:
     dados = armazenamento.obter_peticao_local(caso_id)
     if not dados:
@@ -5281,6 +5302,7 @@ def ler_docx(caso_id: str) -> bytes:
     return conteudo or montar_docx(dados.get("sections") or [])
 
 
+@skill_peticao.com_skill_do_caso
 def ler_pdf(caso_id: str) -> bytes:
     from . import docx_pdf
 

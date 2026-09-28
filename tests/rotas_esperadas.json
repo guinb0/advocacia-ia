@@ -4399,6 +4399,238 @@
   "status_code": 201
  },
  {
+  "caminho": "/api/skill-peticao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/skill-peticao/ativa",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "trocar_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/arquivos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "arquivos_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "skill_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/arquivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "salvar_arquivo_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/versoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "skill_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/versoes/{versao_id}/restaurar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "restaurar_versao_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [
+    "versao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/pacote",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "skill_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
   "caminho": "/api/saude/transcricao",
   "tipo": "APIRoute",
   "metodos": [
@@ -5981,6 +6213,7 @@
     "categoria",
     "cliente",
     "observacao",
+    "skill_juridica_id",
     "telefone",
     "tipo_acao"
    ]
@@ -6352,6 +6585,7 @@
     "categoria",
     "cliente",
     "observacao",
+    "skill_juridica_id",
     "telefone"
    ]
   },
@@ -6548,7 +6782,8 @@
     "categoria",
     "cliente",
     "idioma",
-    "skill_juridica_id"
+    "skill_juridica_id",
+    "telefone"
    ]
   },
   "dependencias": [],

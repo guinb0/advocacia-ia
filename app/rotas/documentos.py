@@ -38,7 +38,7 @@ from .. import (
     historico_alteracoes,
     pipeline,
     roteamento,
-    skills_juridicas,
+    skill_peticao,
     tipos_documento,
     valor_documento,
 )
@@ -163,16 +163,19 @@ _trava_casos_zip_agendados = threading.Lock()
 
 @por_alguns_segundos(60, maximo=64)
 def _criar_caso_por_zip_idempotente(
-    cliente: str, categoria: str, nome: str, conteudo: bytes, skill_juridica_id: str
+    cliente: str, categoria: str, nome: str, conteudo: bytes, skill_juridica_id: str,
+    telefone: str = "",
 ) -> dict[str, Any]:
     """Cria o caso e grava o ZIP em disco — parte síncrona de `criar_caso_por_zip`.
 
-    Memoizada por (cliente, categoria, nome, conteúdo, skill_juridica_id): um
-    duplo clique ou um reload da tela enquanto o upload ainda está "Montando"
+    Memoizada por (cliente, categoria, nome, conteúdo, skill_juridica_id, telefone):
+    um duplo clique ou um reload da tela enquanto o upload ainda está "Montando"
     reenvia a mesma requisição, byte a byte, e cairia aqui de novo. Sem isso,
     cada retry criava um caso novo com seu próprio ZIP em disco.
     """
-    caso = armazenamento.criar_caso(cliente, categoria, skill_juridica_id=skill_juridica_id)
+    caso = armazenamento.criar_caso(
+        cliente, categoria, telefone=telefone, skill_juridica_id=skill_juridica_id
+    )
     pasta = armazenamento.DIR_ARQUIVOS / caso["id"] / "importacoes"
     pasta.mkdir(parents=True, exist_ok=True)
     caminho = pasta / f"{uuid.uuid4().hex}.zip"
@@ -188,6 +191,9 @@ async def criar_caso_por_zip(
     arquivo: UploadFile = File(...),
     idioma: str = Form("pt"),
     skill_juridica_id: str = Form(""),
+    #: O mesmo WhatsApp opcional de `POST /api/casos`: sem ele a cobrança
+    #: automática de documentos não tem para quem escrever.
+    telefone: str = Form(""),
 ):
     """Abre um caso e importa uma pasta ZIP de uma vez.
 
@@ -202,8 +208,10 @@ async def criar_caso_por_zip(
         raise HTTPException(400, "Envie uma pasta compactada no formato .zip.")
     if categorias.obter(categoria) is None:
         categoria = "em_triagem"
-    if skill_juridica_id and await run_in_threadpool(skills_juridicas.obter, skill_juridica_id) is None:
-        raise HTTPException(400, "A skill jurídica escolhida não existe mais.")
+    try:
+        await run_in_threadpool(skill_peticao.validar_para_caso, skill_juridica_id.strip())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     conteudo = await _ler_upload_zip(arquivo)
     # Confere apenas o índice do ZIP agora. A leitura e o cadastro de cada
@@ -215,7 +223,8 @@ async def criar_caso_por_zip(
         raise HTTPException(400, f"'{nome}' não é um ZIP válido ou está corrompido.") from exc
 
     resultado = await run_in_threadpool(
-        _criar_caso_por_zip_idempotente, cliente.strip(), categoria, nome, conteudo, skill_juridica_id
+        _criar_caso_por_zip_idempotente,
+        cliente.strip(), categoria, nome, conteudo, skill_juridica_id, telefone.strip(),
     )
     caso = resultado["caso"]
     agora = time.monotonic()

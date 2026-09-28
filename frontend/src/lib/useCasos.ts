@@ -59,8 +59,9 @@ export function useCasos() {
       observacao = "",
       telefone = "",
       tipoAcao = "",
+      skillJuridicaId = "",
     ): Promise<CasoCriado> => {
-      const caso = await api.criarCaso(cliente, categoria, observacao, telefone, tipoAcao);
+      const caso = await api.criarCaso(cliente, categoria, observacao, telefone, tipoAcao, skillJuridicaId);
       await recarregar();
       return caso;
     },
@@ -76,8 +77,14 @@ export function useCasos() {
   );
 
   const importarZip = useCallback(
-    async (cliente: string, categoria: string, arquivo: File, skillJuridicaId = ""): Promise<CasoCriado> => {
-      const caso = await api.criarCasoPorZip(cliente, categoria, arquivo, skillJuridicaId);
+    async (
+      cliente: string,
+      categoria: string,
+      arquivo: File,
+      skillJuridicaId = "",
+      telefone = "",
+    ): Promise<CasoCriado> => {
+      const caso = await api.criarCasoPorZip(cliente, categoria, arquivo, skillJuridicaId, telefone);
       await recarregar();
       return caso;
     },

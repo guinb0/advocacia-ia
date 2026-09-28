@@ -21,6 +21,7 @@ import PainelAnaliseDocumental from "@/components/caso/PainelAnaliseDocumental";
 import Investigacao from "@/components/carteira/Investigacao";
 import Jurimetria from "@/components/admin/Jurimetria";
 import ListaCasos from "@/components/carteira/ListaCasos";
+import NovoCaso from "@/components/carteira/NovoCaso";
 import PainelCaso from "@/components/caso/PainelCaso";
 import Panorama from "@/components/Panorama";
 import Operacao from "@/components/operacao/Operacao";
@@ -58,7 +59,7 @@ type DesenhoTela = (contexto: ContextoTela) => ReactNode;
 
 export const DESENHO_DA_TELA: Record<Tela, DesenhoTela> = {
   carteira: (c) => (
-    <Carteira onAbrir={c.abrirCaso} onNovoCaso={() => c.setTela("casos")} onNavegar={c.setTela} />
+    <Carteira onAbrir={c.abrirCaso} onNovoCaso={c.novoCaso} onNavegar={c.setTela} />
   ),
 
   /* O chat não pede caso aberto — e é a única tela que não pede NADA: ele existe para
@@ -117,19 +118,27 @@ export const DESENHO_DA_TELA: Record<Tela, DesenhoTela> = {
   ),
   dados: (c) => <Dados onVoltar={c.voltarParaCarteira} />,
 
-  casos: (c) => (
-    <ListaCasos
-      casos={c.listaCasos.casos}
-      categorias={c.categorias}
-      carregando={c.listaCasos.carregando}
-      erro={c.listaCasos.erro}
-      onAbrir={c.abrirCaso}
-      onAbrirDossie={c.abrirDossie}
-      onCriar={c.listaCasos.criar}
-      onImportarZip={c.listaCasos.importarZip}
-      onExcluir={c.listaCasos.excluir}
-    />
-  ),
+  casos: (c) =>
+    c.criandoCaso ? (
+      <NovoCaso
+        categorias={c.categorias}
+        onCriar={c.listaCasos.criar}
+        onImportarZip={c.listaCasos.importarZip}
+        onAbrir={c.abrirCaso}
+        onAbrirDossie={c.abrirDossie}
+        onCancelar={c.fecharNovoCaso}
+      />
+    ) : (
+      <ListaCasos
+        casos={c.listaCasos.casos}
+        categorias={c.categorias}
+        carregando={c.listaCasos.carregando}
+        erro={c.listaCasos.erro}
+        onAbrir={c.abrirCaso}
+        onNovoCaso={c.novoCaso}
+        onExcluir={c.listaCasos.excluir}
+      />
+    ),
   entrevista: (c) => (
     <EntrevistaGuiada
       categorias={c.categorias}
