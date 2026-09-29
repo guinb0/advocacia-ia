@@ -681,6 +681,21 @@ def baixar_peticao(caso_id: str, peca_ref: str, formato: str = "docx") -> Respon
     )
 
 
+def _resposta_do_pacote(pacote: pacote_protocolo.Pacote) -> FileResponse:
+    return FileResponse(
+        pacote.caminho,
+        media_type="application/zip",
+        filename=pacote.nome,
+        background=BackgroundTask(pacote.caminho.unlink, missing_ok=True),
+        headers={
+            "X-Arquivos": str(pacote.arquivos),
+            "X-Faltando": str(len(pacote.faltando)),
+            # Cabeçalho HTTP só leva ASCII: a lista vai em JSON codificado para URL.
+            "X-Problemas": quote(json.dumps(pacote.problemas[:30], ensure_ascii=False)),
+        },
+    )
+
+
 @roteador.get("/casos/{caso_id}/pacote-protocolo")
 def baixar_pacote_de_protocolo(caso_id: str) -> FileResponse:
     """A pasta para protocolo em ZIP: petição em PDF, "Doc N." de cada documento, lista e checklist."""
@@ -688,13 +703,7 @@ def baixar_pacote_de_protocolo(caso_id: str) -> FileResponse:
         pacote = pacote_protocolo.montar(caso_id)
     except pacote_protocolo.ErroPacote as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro
-    return FileResponse(
-        pacote.caminho,
-        media_type="application/zip",
-        filename=pacote.nome,
-        background=BackgroundTask(pacote.caminho.unlink, missing_ok=True),
-        headers={"X-Arquivos": str(pacote.arquivos), "X-Faltando": str(len(pacote.faltando))},
-    )
+    return _resposta_do_pacote(pacote)
 
 
 @roteador.get("/casos/{caso_id}/pacote-protocolo/conferencia")
@@ -722,13 +731,46 @@ def montar_pacote_de_protocolo(caso_id: str, corpo: _SelecaoProtocolo) -> FileRe
         raise HTTPException(status_code=400, detail=str(erro)) from erro
     except pacote_protocolo.ErroPacote as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro
-    return FileResponse(
-        pacote.caminho,
-        media_type="application/zip",
-        filename=pacote.nome,
-        background=BackgroundTask(pacote.caminho.unlink, missing_ok=True),
-        headers={"X-Arquivos": str(pacote.arquivos), "X-Faltando": str(len(pacote.faltando))},
-    )
+    return _resposta_do_pacote(pacote)
+
+
+@roteador.post("/casos/{caso_id}/pacote-protocolo/com-avulsos")
+def montar_pacote_com_avulsos(
+    caso_id: str,
+    selecao: str = Form(...),
+    avulsos: list[UploadFile] = File(default=[]),
+    nomes_avulsos: list[str] = Form(default=[]),
+) -> FileResponse:
+    """Como a rota acima, com arquivos colocados na conferência só para este pacote.
+
+    Os avulsos não viram entrega do caso nem ficam gravados: são lidos aqui e
+    descartados junto com a pasta temporária da montagem.
+    """
+    try:
+        corpo = _SelecaoProtocolo.model_validate_json(selecao)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail="Seleção de documentos inválida. Recarregue a conferência.") from erro
+    if len(avulsos) > pacote_protocolo.MAXIMO_AVULSOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Coloque no máximo {pacote_protocolo.MAXIMO_AVULSOS} documentos novos por vez.",
+        )
+    limite_mb = pacote_protocolo.MAXIMO_BYTES_AVULSO // (1024 * 1024)
+    lidos: list[pacote_protocolo.ArquivoAvulso] = []
+    for posicao, arquivo in enumerate(avulsos):
+        conteudo = arquivo.file.read(pacote_protocolo.MAXIMO_BYTES_AVULSO + 1)
+        nome_arquivo = Path(arquivo.filename or f"documento-{posicao + 1}").name
+        if len(conteudo) > pacote_protocolo.MAXIMO_BYTES_AVULSO:
+            raise HTTPException(status_code=413, detail=f"«{nome_arquivo}» passa de {limite_mb} MB.")
+        nome = nomes_avulsos[posicao] if posicao < len(nomes_avulsos) else ""
+        lidos.append(pacote_protocolo.ArquivoAvulso(nome=nome, arquivo=nome_arquivo, conteudo=conteudo))
+    try:
+        pacote = pacote_protocolo.montar(caso_id, corpo.selecionados, corpo.faltando, lidos)
+    except pacote_protocolo.ErroSelecao as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+    except pacote_protocolo.ErroPacote as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+    return _resposta_do_pacote(pacote)
 
 
 class _Protocolo(BaseModel):

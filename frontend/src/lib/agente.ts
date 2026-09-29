@@ -1139,19 +1139,59 @@ export function conferirPacoteDeProtocolo(casoId: string): Promise<ConferenciaDo
   return chamar<ConferenciaDoProtocolo>(`/api/agente/casos/${casoId}/pacote-protocolo/conferencia`);
 }
 
+/** Arquivo colocado na conferência só para este pacote: não vira documento do caso. */
+export type AvulsoDoProtocolo = { arquivo: File; nome: string };
+
+export type PacoteDeProtocolo = {
+  arquivo: Blob;
+  nome: string;
+  arquivos: number;
+  faltando: number;
+  /** Um aviso por documento que falhou ou entrou fora do padrão, dizendo qual e por quê. */
+  problemas: string[];
+};
+
+function problemasDoPacote(resposta: Response): string[] {
+  const bruto = resposta.headers.get("X-Problemas");
+  if (!bruto) return [];
+  try {
+    const lista: unknown = JSON.parse(decodeURIComponent(bruto));
+    return Array.isArray(lista) ? lista.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** A pasta pronta para o PJe: petição, "Doc N." na numeração que a peça cita, lista e checklist.
  *
  * Com `selecao`, vão só os documentos conferidos na tela (e o que faltou vira pendência no
- * checklist); sem ela, o padrão do escritório. */
+ * checklist); sem ela, o padrão do escritório. `avulsos` entram só nesta pasta. */
 export async function baixarPacoteDeProtocolo(
   casoId: string,
   selecao?: { selecionados: string[]; faltando: string[] },
-): Promise<{ arquivo: Blob; nome: string; arquivos: number; faltando: number }> {
-  const resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/pacote-protocolo`), {
-    headers: cabecalhos(selecao ? { "Content-Type": "application/json" } : undefined),
-    credentials: CREDENCIAIS,
-    ...(selecao ? { method: "POST", body: JSON.stringify(selecao) } : {}),
-  });
+  avulsos: AvulsoDoProtocolo[] = [],
+): Promise<PacoteDeProtocolo> {
+  let resposta: Response;
+  if (selecao && avulsos.length) {
+    const corpo = new FormData();
+    corpo.append("selecao", JSON.stringify(selecao));
+    for (const avulso of avulsos) {
+      corpo.append("avulsos", avulso.arquivo, avulso.arquivo.name);
+      corpo.append("nomes_avulsos", avulso.nome);
+    }
+    resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/pacote-protocolo/com-avulsos`), {
+      method: "POST",
+      headers: cabecalhos(),
+      credentials: CREDENCIAIS,
+      body: corpo,
+    });
+  } else {
+    resposta = await fetch(urlApi(`/api/agente/casos/${casoId}/pacote-protocolo`), {
+      headers: cabecalhos(selecao ? { "Content-Type": "application/json" } : undefined),
+      credentials: CREDENCIAIS,
+      ...(selecao ? { method: "POST", body: JSON.stringify(selecao) } : {}),
+    });
+  }
   if (!resposta.ok) {
     const dados = await resposta.json().catch(() => null);
     throw new ApiError(
@@ -1166,6 +1206,7 @@ export async function baixarPacoteDeProtocolo(
     nome: nomeDoAnexo(resposta, "Protocolo.zip"),
     arquivos: Number(resposta.headers.get("X-Arquivos") ?? 0),
     faltando: Number(resposta.headers.get("X-Faltando") ?? 0),
+    problemas: problemasDoPacote(resposta),
   };
 }
 
