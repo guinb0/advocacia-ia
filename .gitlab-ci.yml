@@ -108,7 +108,7 @@ testes-python:
     # a cada push.
     - pip install --no-cache-dir fastapi httpx "pyjwt[crypto]" python-multipart
   script:
-    - python -m tests.test_whatsapp
+    - cd back && python -m tests.test_whatsapp
 
 typecheck-frontend:
   stage: .pre
@@ -116,7 +116,7 @@ typecheck-frontend:
   rules:
     - if: $CI_COMMIT_BRANCH != "production"
   before_script:
-    - cd frontend && npm ci
+    - cd front && npm ci
   script:
     - npx tsc --noEmit
 

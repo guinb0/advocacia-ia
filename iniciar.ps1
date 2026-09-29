@@ -328,7 +328,7 @@ $env:NEXT_PUBLIC_JITSI_URL          = $UrlJitsi
 if (-not $SemJitsi) {
     if (-not (Testar-Http "$UrlJitsi/libs/lib-jitsi-meet.min.js")) {
         Write-Host "Preparando o servidor de chamadas Jitsi..." -ForegroundColor Yellow
-        & ".\scripts\preparar_jitsi.ps1" `
+        & ".\back\scripts\preparar_jitsi.ps1" `
             -Versao $(if ($env:JITSI_IMAGE_VERSION) { $env:JITSI_IMAGE_VERSION } else { "stable" }) `
             -UrlPublica $UrlJitsi `
             -IpsAnunciados $(if ($env:JITSI_ADVERTISE_IPS) { $env:JITSI_ADVERTISE_IPS } else { "127.0.0.1" })
@@ -352,12 +352,29 @@ if (-not $SemJitsi) {
     Write-Host "Jitsi nao iniciado (-SemJitsi); chamadas remotas ficarao indisponiveis." -ForegroundColor Yellow
 }
 
+# O backend mora em back\ e procura dados\ ao lado dele. Um clone de antes da
+# divisao em front/back/ia guarda os casos em .\dados, e o Git nao move o que nao
+# e versionado: sem isto o sistema subiria vazio, sem erro nenhum. /XC /XN /XO:
+# nada que ja exista em back\dados e sobrescrito; o que sobrar fica em .\dados.
+if (Test-Path ".\dados") {
+    Write-Host "Movendo .\dados para .\back\dados (nova organizacao do repositorio)..." -ForegroundColor Yellow
+    robocopy ".\dados" ".\back\dados" /E /MOVE /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Falha ao mover .\dados para .\back\dados (robocopy $LASTEXITCODE)." }
+    if (Test-Path ".\dados") {
+        if (Get-ChildItem ".\dados" -Recurse -File -Force) {
+            Write-Host "Ficou algo em .\dados que ja existia em .\back\dados; confira antes de apagar." -ForegroundColor Yellow
+        } else {
+            Remove-Item ".\dados" -Recurse -Force
+        }
+    }
+}
+
 # Segredo que assina as sessoes do portal do cliente. Sorteado uma vez e guardado
-# em dados/ (que o .gitignore ja cobre), para as sessoes sobreviverem a um
+# em back\dados\ (que o .gitignore ja cobre), para as sessoes sobreviverem a um
 # restart sem que nenhum segredo entre no repositorio.
-$arquivoSegredo = ".\dados\.portal-segredo"
+$arquivoSegredo = ".\back\dados\.portal-segredo"
 if (-not (Test-Path $arquivoSegredo)) {
-    New-Item -ItemType Directory -Force ".\dados" | Out-Null
+    New-Item -ItemType Directory -Force ".\back\dados" | Out-Null
     # RNGCryptoServiceProvider em vez de RandomNumberGenerator::Fill: o segundo
     # so existe no .NET Core, e o Windows PowerShell 5.1 roda em .NET Framework.
     $bytes = New-Object byte[] 32
@@ -375,12 +392,16 @@ if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     uv venv --python 3.11
 }
 # Sincroniza também ambientes já existentes; pulls podem adicionar dependências.
-uv pip install --python .\.venv\Scripts\python.exe -r requirements.txt | Out-Null
+uv pip install --python .\.venv\Scripts\python.exe -r back\requirements.txt | Out-Null
+# Poe back\ no sys.path do .venv: `.venv\Scripts\python.exe -m tests.x` (ou
+# scripts.x, app.x) continua funcionando da raiz, como antes da divisao.
+$sitePackages = (& .\.venv\Scripts\python.exe -c "import sysconfig; print(sysconfig.get_paths()['purelib'])").Trim()
+[IO.File]::WriteAllText((Join-Path $sitePackages "advocacia-back.pth"), (Join-Path $PSScriptRoot "back"))
 
 # ---------------------------------------------------------------- frontend
-if (-not (Test-Path ".\frontend\node_modules")) {
+if (-not (Test-Path ".\front\node_modules")) {
     Write-Host "Instalando as dependencias do frontend..." -ForegroundColor Yellow
-    Push-Location .\frontend; npm install; Pop-Location
+    Push-Location .\front; npm install; Pop-Location
 }
 # Recompila quando o build esta VELHO, e nao so quando falta.
 #
@@ -390,11 +411,11 @@ if (-not (Test-Path ".\frontend\node_modules")) {
 # no codigo que acabou de escrever. Ja custou uma caca a um erro de login que
 # estava consertado havia commits.
 if ($Prod) {
-    $buildId = ".\frontend\.next\BUILD_ID"
+    $buildId = ".\front\.next\BUILD_ID"
     $precisa = -not (Test-Path $buildId)
     if (-not $precisa) {
         $carimbo = (Get-Item $buildId).LastWriteTime
-        # Varre as pastas de FONTE, uma a uma, em vez de `.\frontend` inteiro.
+        # Varre as pastas de FONTE, uma a uma, em vez de `.\front` inteiro.
         # Dois motivos: `-Include` com `-Recurse` nao filtra como parece (devolve
         # vazio, e a checagem passaria batido sem erro nenhum), e varrer a raiz
         # entraria em node_modules, que sozinho tem dezenas de milhares de
@@ -406,13 +427,13 @@ if ($Prod) {
         # sem dizer nada e sobrou so `public`. Resultado: o `-Prod` parou de
         # recompilar por mudanca de codigo e passou a servir o build velho para
         # sempre -- exatamente o defeito que o comentario acima da como resolvido.
-        $candidatas = @(".\frontend\src", ".\frontend\app", ".\frontend\components",
-                        ".\frontend\lib", ".\frontend\public")
+        $candidatas = @(".\front\src", ".\front\app", ".\front\components",
+                        ".\front\lib", ".\front\public")
         $fontes = @($candidatas | Where-Object { Test-Path $_ })
         # Sobrar so `public` significa que o layout mudou de novo e esta checagem
         # voltou a ser decorativa. Recompilar e o lado seguro de errar: custa um
         # build, contra servir codigo velho sem ninguem perceber.
-        $comCodigo = @($fontes | Where-Object { $_ -ne ".\frontend\public" })
+        $comCodigo = @($fontes | Where-Object { $_ -ne ".\front\public" })
         if ($comCodigo.Count -eq 0) {
             Write-Host "Nao achei as pastas de fonte do frontend; recompilando por seguranca." -ForegroundColor Yellow
             $precisa = $true
@@ -435,7 +456,7 @@ if ($Prod) {
         NEXT_PUBLIC_JITSI_URL = $env:NEXT_PUBLIC_JITSI_URL
     }
     $assinaturaPublica = $publicEnv | ConvertTo-Json -Compress
-    $arquivoPublico = ".\frontend\.next\.public-env.json"
+    $arquivoPublico = ".\front\.next\.public-env.json"
     if (-not $precisa) {
         $anterior = if (Test-Path $arquivoPublico) { (Get-Content -Raw $arquivoPublico).Trim() } else { "" }
         if ($anterior -ne $assinaturaPublica) {
@@ -445,7 +466,7 @@ if ($Prod) {
     }
     if ($precisa) {
         Write-Host "Compilando o frontend..." -ForegroundColor Yellow
-        Push-Location .\frontend; npm run build; Pop-Location
+        Push-Location .\front; npm run build; Pop-Location
         $assinaturaPublica | Set-Content -NoNewline -Encoding UTF8 $arquivoPublico
     }
 }
@@ -560,6 +581,10 @@ Write-Host "Ctrl+C encerra o backend e o frontend.`n" -ForegroundColor DarkGray
 # pesado do pipeline na thread das requisições.
 $transcricao = $null
 
+# O pacote `app` fica em back\. Os processos continuam rodando da raiz (onde
+# estao .venv e .env); e o PYTHONPATH que os faz achar `app.main`, `app.celery_app`.
+$env:PYTHONPATH = Join-Path $PSScriptRoot "back"
+
 $backend = Start-Process -PassThru -NoNewWindow `
     -FilePath ".\.venv\Scripts\python.exe" `
     -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "$HostEscuta",
@@ -624,7 +649,7 @@ try {
     }
     Write-Host "Whisper pronto." -ForegroundColor Green
 
-    Push-Location .\frontend
+    Push-Location .\front
     # PORT em vez de "npm run dev -- -p $Porta": o npm.ps1 do Windows PowerShell
     # descarta o nome da flag (-p ou --port) ao repassar argumentos depois do
     # "--", entregando ao next so o numero solto, que ele le como diretorio do

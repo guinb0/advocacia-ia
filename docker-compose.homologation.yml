@@ -11,7 +11,7 @@ services:
   # de existir como problema e as NEXT_PUBLIC_* ficam vazias.
   #
   # Isso NAO reintroduz o proxy do Next, que foi removido de proposito (ver
-  # frontend/next.config.ts): quem roteia e o Traefik, na borda, sem o teto de
+  # front/next.config.ts): quem roteia e o Traefik, na borda, sem o teto de
   # 30s nem o buffer em memoria que matavam o upload de foto de celular.
   #
   # A prioridade importa: rotas mais especificas primeiro, senao o router do

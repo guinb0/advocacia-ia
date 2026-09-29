@@ -4,24 +4,32 @@
 .git
 .venv
 .pytest_cache
+.ruff_cache
+**/.pytest_cache
+**/.ruff_cache
 __pycache__
 **/__pycache__
 *.pyc
 
-frontend/node_modules
-frontend/.next
+front/node_modules
+front/.next
 
 # Estado local e segredo: nunca em imagem.
 .env
 .env.*
+back/dados/
+back/logs/
+back/tmp/
 dados/
 logs/
 tmp/
+back/decisoes_limpas.json
+back/decisoes_djen/
 
 # Só desenvolvimento.
-tests/
+back/tests/
 observability/
 ocr-extrator/
 iniciar.ps1
 *.md
-!docs/**
+!back/docs/**
