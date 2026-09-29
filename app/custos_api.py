@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -219,6 +219,143 @@ def _gastos_por_fornecedor() -> dict[str, dict[str, float]]:
                 base[chave] = _numero_linha(item[chave])
         saida[fornecedor] = base
     return saida
+
+
+#: Brasília, sem horário de verão desde 2019. O dia do gráfico é o dia do escritório, não o de UTC.
+FUSO_DO_ESCRITORIO = timezone(timedelta(hours=-3))
+
+#: Hoje acima destas vezes a média dos 7 dias anteriores vira alerta.
+PICO_ATENCAO = 1.8
+PICO_CRITICO = 3.0
+
+
+def _linhas_por_hora(desde: datetime) -> list[dict[str, Any]]:
+    """Consumo agrupado por hora UTC. `criado_em` é texto ISO em UTC: comparar e cortar o texto
+    é exato e não depende de conversão de data pelo banco."""
+    with conectar(timeout=5) as con:
+        linhas = con.execute(
+            """
+            SELECT LEFT(criado_em, 13) AS hora, fornecedor, operacao, status,
+                   COUNT(*) AS chamadas, SUM(total_tokens) AS tokens, SUM(COALESCE(custo_usd, 0)) AS custo_usd
+            FROM custos_api
+            WHERE criado_em >= ?
+            GROUP BY LEFT(criado_em, 13), fornecedor, operacao, status
+            """,
+            (desde.isoformat(timespec="seconds"),),
+        ).fetchall()
+    return [dict(linha) for linha in linhas]
+
+
+def _alerta(hoje: dict[str, float], anteriores: list[dict[str, float]]) -> dict[str, Any]:
+    """Hoje contra a média dos dias anteriores, em custo quando há custo, senão em tokens."""
+    media_custo = sum(d["custo_usd"] for d in anteriores) / len(anteriores) if anteriores else 0.0
+    media_tokens = sum(d["tokens"] for d in anteriores) / len(anteriores) if anteriores else 0.0
+    if media_custo > 0:
+        medida, atual, media = "custo", hoje["custo_usd"], media_custo
+    else:
+        medida, atual, media = "tokens", hoje["tokens"], media_tokens
+    base = {"medida": medida, "hoje": atual, "media": media, "vezes": (atual / media) if media > 0 else None}
+    if media <= 0:
+        return {**base, "nivel": "ok", "mensagem": "Ainda não há histórico suficiente para comparar o gasto de hoje."}
+    vezes = atual / media
+    texto_vezes = f"{vezes:.1f}".replace(".", ",")
+    if vezes >= PICO_CRITICO:
+        return {**base, "nivel": "critico",
+                "mensagem": f"Hoje já se gastou {texto_vezes} vezes a média dos últimos 7 dias. Veja abaixo qual parte do sistema puxou o gasto."}
+    if vezes >= PICO_ATENCAO:
+        return {**base, "nivel": "atencao",
+                "mensagem": f"Hoje já se gastou {texto_vezes} vezes a média dos últimos 7 dias."}
+    return {**base, "nivel": "ok", "mensagem": "O gasto de hoje está dentro do normal."}
+
+
+def agregar_uso(linhas: list[dict[str, Any]], *, dias: int, agora: datetime) -> dict[str, Any]:
+    """Séries para os gráficos: por dia (com os dias sem uso zerados), últimas 24 horas e por operação."""
+    local_agora = agora.astimezone(FUSO_DO_ESCRITORIO)
+    hoje = local_agora.date()
+    dias_do_periodo = [hoje - timedelta(days=n) for n in range(dias - 1, -1, -1)]
+
+    def vazio() -> dict[str, Any]:
+        return {"custo_usd": 0.0, "tokens": 0.0, "chamadas": 0.0, "erros": 0.0}
+
+    por_dia: dict[str, dict[str, Any]] = {d.isoformat(): {**vazio(), "por_fornecedor": {}} for d in dias_do_periodo}
+    horas_do_periodo = [(local_agora - timedelta(hours=n)).strftime("%Y-%m-%dT%H") for n in range(23, -1, -1)]
+    por_hora: dict[str, dict[str, Any]] = {h: vazio() for h in horas_do_periodo}
+    por_operacao: dict[tuple[str, str], dict[str, Any]] = {}
+    inicio_do_periodo = dias_do_periodo[0].isoformat()
+
+    for linha in linhas:
+        try:
+            hora_utc = datetime.strptime(str(linha.get("hora") or ""), "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        local = hora_utc.astimezone(FUSO_DO_ESCRITORIO)
+        dia, hora = local.date().isoformat(), local.strftime("%Y-%m-%dT%H")
+        custo = _numero_linha(linha.get("custo_usd"))
+        tokens = _numero_linha(linha.get("tokens"))
+        chamadas = _numero_linha(linha.get("chamadas"))
+        erros = chamadas if str(linha.get("status") or "").upper() == "ERROR" else 0.0
+        fornecedor = str(linha.get("fornecedor") or "").strip().lower() or "outro"
+        operacao = str(linha.get("operacao") or "").strip() or "outra"
+        if dia in por_dia:
+            item = por_dia[dia]
+            item["custo_usd"] += custo
+            item["tokens"] += tokens
+            item["chamadas"] += chamadas
+            item["erros"] += erros
+            f = item["por_fornecedor"].setdefault(fornecedor, {"custo_usd": 0.0, "tokens": 0.0})
+            f["custo_usd"] += custo
+            f["tokens"] += tokens
+        if hora in por_hora:
+            h = por_hora[hora]
+            h["custo_usd"] += custo
+            h["tokens"] += tokens
+            h["chamadas"] += chamadas
+            h["erros"] += erros
+        if dia >= inicio_do_periodo:
+            o = por_operacao.setdefault((operacao, fornecedor), {**vazio(), "hoje_custo_usd": 0.0, "hoje_tokens": 0.0})
+            o["custo_usd"] += custo
+            o["tokens"] += tokens
+            o["chamadas"] += chamadas
+            o["erros"] += erros
+            if dia == hoje.isoformat():
+                o["hoje_custo_usd"] += custo
+                o["hoje_tokens"] += tokens
+
+    serie_dias = [{"dia": d, **v} for d, v in por_dia.items()]
+    anteriores = serie_dias[-8:-1]
+    fornecedores_sem_custo = sorted({
+        f for d in serie_dias for f, v in d["por_fornecedor"].items() if v["tokens"] > 0 and v["custo_usd"] == 0
+    } - {f for d in serie_dias for f, v in d["por_fornecedor"].items() if v["custo_usd"] > 0})
+    operacoes = sorted(
+        ({"operacao": op, "fornecedor": forn, **v} for (op, forn), v in por_operacao.items()),
+        key=lambda o: (o["custo_usd"], o["tokens"]), reverse=True,
+    )
+    alerta = _alerta(serie_dias[-1], anteriores)
+    chave_hoje = "hoje_custo_usd" if alerta["medida"] == "custo" else "hoje_tokens"
+    de_hoje = max(operacoes, key=lambda o: o[chave_hoje], default=None)
+    alerta["principal_hoje"] = (
+        {"operacao": de_hoje["operacao"], "fornecedor": de_hoje["fornecedor"], "valor": de_hoje[chave_hoje]}
+        if de_hoje and de_hoje[chave_hoje] > 0 else None
+    )
+    return {
+        "dias": dias,
+        "fuso": "UTC-3",
+        "por_dia": serie_dias,
+        "por_hora": [{"hora": h, **v} for h, v in por_hora.items()],
+        "por_operacao": operacoes,
+        "totais": {k: sum(d[k] for d in serie_dias) for k in ("custo_usd", "tokens", "chamadas", "erros")},
+        "fornecedores_sem_custo": fornecedores_sem_custo,
+        "alerta": alerta,
+        "atualizado_em": agora.astimezone(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def uso(*, dias: int = 30) -> dict[str, Any]:
+    """Uso das APIs ao longo do tempo, para ver quando e onde o gasto sobe."""
+    dias = max(7, min(int(dias), 90))
+    agora = datetime.now(timezone.utc)
+    # Um dia a mais cobre a diferença entre o dia de UTC e o dia do escritório.
+    return agregar_uso(_linhas_por_hora(agora - timedelta(days=dias + 1)), dias=dias, agora=agora)
 
 
 def painel() -> dict[str, Any]:

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import GraficosDeUso from "@/components/admin/GraficosDeUso";
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 import { obterGastosApi, type GastoApi, type SinalGastoApi } from "@/lib/api";
 
@@ -126,6 +127,8 @@ export default function PainelGastosApi({ onVoltar }: { onVoltar: () => void }) 
         ))}
       </div>
       {quando && <p className="m-0 text-xs text-tinta-3">Atualizado em {new Date(quando).toLocaleString("pt-BR")}.</p>}
+
+      <GraficosDeUso key={quando} />
     </div>
   );
 }

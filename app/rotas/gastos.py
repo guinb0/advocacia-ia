@@ -22,3 +22,12 @@ async def custos_api_tempo_real(horas: int = Query(default=24, ge=1, le=720)) ->
 async def painel_gastos_api(_usuario: auth.Usuario = Depends(auth.exigir_modulo("gastos_api"))):
     """Gasto e saldo restante de cada API, para saber quando recarregar."""
     return await run_in_threadpool(custos_api.painel)
+
+
+@roteador.get("/api/gastos-api/uso")
+async def uso_das_apis(
+    dias: int = Query(default=30, ge=7, le=90),
+    _usuario: auth.Usuario = Depends(auth.exigir_modulo("gastos_api")),
+):
+    """Uso por dia, por hora e por parte do sistema, com alerta quando hoje foge da média."""
+    return await run_in_threadpool(lambda: custos_api.uso(dias=dias))
