@@ -28,6 +28,7 @@ e `case_brief_estado` (estado humano CONFIRMED/CORRECTED/REJECTED) — não cria
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -53,6 +54,21 @@ CLASSIFICACOES_DE_FALTANTE = ("COMPROMETE", "ERA_MELHOR_TER", "NAO_INTERFERE")
 MAX_CARACTERES_TOTAL = int(os.getenv("ANALISE_DOCUMENTAL_MAX_CARACTERES", "250000"))
 MAX_CARACTERES_POR_DOCUMENTO = int(os.getenv("ANALISE_DOCUMENTAL_MAX_CARACTERES_DOCUMENTO", "25000"))
 TEMPO_MINIMO_POR_DOCUMENTO = 700
+
+#: Roda em segundo plano, então pode esperar mais que a leitura síncrona (`ANALISE_TIMEOUT_S`).
+TEMPO_ANALISE_S = float(os.getenv("ANALISE_DOCUMENTAL_TIMEOUT_S", "420"))
+MAX_TOKENS_ANALISE = int(os.getenv("ANALISE_DOCUMENTAL_MAX_TOKENS", "48000"))
+#: Acima disto, análise ainda "em andamento" que nenhum processo está rodando foi interrompida
+#: (reinício da API no meio). Cobre o pior caso: duas tentativas por timeout + a compacta.
+TEMPO_MAXIMO_EM_ANDAMENTO_S = 4 * TEMPO_ANALISE_S + 120
+
+_MODO_COMPACTO = """
+
+MODO COMPACTO (a resposta anterior passou do teto de tamanho e foi perdida):
+- `dados_principais` VAZIO em todos os documentos; `pontos_fortes`, `vulnerabilidades` e `inconsistencias` do
+  documento com no máximo 2 itens cada; `relacao_com_teses` vazio.
+- `fatos_extraidos` com no máximo 25 itens, os mais importantes; `fatos_cronologicos` com no máximo 15.
+- Todo texto livre em uma frase curta. As demais regras continuam valendo."""
 
 
 def _agora() -> str:
@@ -107,11 +123,12 @@ INTEGRIDADE (vale para qualquer skill):
 - Não invente fato, dado do cliente, dispositivo legal, jurisprudência nem probabilidade numérica. Lacuna
   vira `perguntas` (acionáveis), não suposição.
 - Cubra TODOS os documentos da lista em `documentos`, inclusive os ilegíveis ou sem texto (legivel=false).
-- EXTRAIA O MÁXIMO de cada documento: leia o texto inteiro, do começo ao fim, e registre em
-  `dados_principais` CADA dado útil (datas, valores, CIDs, números de benefício/processo, funções, salários,
-  períodos, nomes e papéis, conclusões) — um item por dado, sem escolher só o "principal". O mesmo vale para
-  `fatos_extraidos` e `resumo_do_caso.fatos_cronologicos`: todo fato datado que os documentos registram. Um
-  dado a mais nunca atrapalha; um dado que passa despercebido pode custar um pedido.
+- Leia cada documento inteiro, do começo ao fim. Em `dados_principais`, até 10 itens por documento: os dados
+  que pesam no caso (datas, valores, CIDs, números de benefício/processo, funções, salários, períodos). Em
+  `fatos_extraidos` e `resumo_do_caso.fatos_cronologicos`, todo fato relevante datado, sem repetir o mesmo fato
+  vindo de documentos diferentes.
+- SEJA CONCISO: `citacao` com no máximo ~160 caracteres; textos livres (motivo, impacto, observação, pontos)
+  em uma frase. A resposta tem teto de tamanho; se passar dele, o JSON chega cortado e a análise inteira se perde.
 - Em conflito entre `SKILL.md` e `references/nomenclatura.md` sobre o FORMATO do nome do arquivo, vale o `SKILL.md`
   (é o que o script `montar.py` implementa)."""
 
@@ -619,10 +636,22 @@ def _contexto_humano(caso_id: str) -> tuple[str, str]:
     return cadastro, str(entrevistas[0]["texto"]) if entrevistas else ""
 
 
+def _mensagem_de_erro(erro: Exception) -> str:
+    """O que a tela mostra: frase para quem usa o sistema; o tipo técnico só vai no fim, para o suporte."""
+    if isinstance(erro, analise_documentos.ErroAnaliseDocumentos):
+        return str(erro)[:600]
+    return (
+        "A análise parou por uma falha inesperada. Clique em “Tentar de novo”; se repetir, avise o suporte."
+        f"\n\nDetalhe técnico: {type(erro).__name__}: {str(erro)[:400]}"
+    )
+
+
 def executar(caso_id: str, analise_id: str, *, chamar_modelo=None, store: Armazenamento | None = None) -> dict[str, Any]:
     """Roda a análise (síncrono; use `iniciar` para o caminho assíncrono da API)."""
     store = store or armazenamento_padrao()
-    chamar = chamar_modelo or analise_documentos._chamar_modelo  # noqa: SLF001
+    chamar = chamar_modelo or functools.partial(
+        analise_documentos._chamar_modelo, tempo_s=TEMPO_ANALISE_S  # noqa: SLF001
+    )
     try:
         store.atualizar(analise_id, status="processing")
         instrucao, skill = instrucao_da_skill()
@@ -631,15 +660,23 @@ def executar(caso_id: str, analise_id: str, *, chamar_modelo=None, store: Armaze
         documentos = _documentos(caso_id)
         cadastro, entrevista = _contexto_humano(caso_id)
         store.atualizar(analise_id, status="analyzing", skill_name=skill["skill_name"], skill_sha256=skill["skill_sha256"])
-        bruto = chamar(montar_mensagem(documentos, entrevista, cadastro), instrucao=instrucao, max_tokens=32000)
+        mensagem = montar_mensagem(documentos, entrevista, cadastro)
+        compacta = False
+        try:
+            bruto = chamar(mensagem, instrucao=instrucao, max_tokens=MAX_TOKENS_ANALISE)
+        except analise_documentos.RespostaCortada:
+            log.warning("análise documental %s: resposta cortada por tamanho; refazendo no modo compacto", caso_id)
+            compacta = True
+            bruto = chamar(mensagem, instrucao=instrucao + _MODO_COMPACTO, max_tokens=MAX_TOKENS_ANALISE)
         resultado = validar_contrato(bruto, documentos, entrevista=entrevista, cadastro=cadastro)
         resultado["skill"] = skill
         resultado["gerado_em"] = _agora()
+        resultado["compacta"] = compacta
         store.atualizar(analise_id, status="ready", resultado=resultado, concluida_em=_agora())
         return resultado
     except Exception as erro:  # noqa: BLE001 - o estado "error" é observável; a falha de UM caso não derruba o worker
         log.exception("análise documental %s falhou", caso_id)
-        store.atualizar(analise_id, status="error", erro=f"{type(erro).__name__}: {str(erro)[:400]}")
+        store.atualizar(analise_id, status="error", erro=_mensagem_de_erro(erro))
         raise
     finally:
         with _TRAVA:
@@ -679,12 +716,41 @@ def _seguro(caso_id, analise_id, chamar_modelo, store) -> None:
 
 # ------------------------------------------------------------------ leitura (com a resposta humana)
 
+MENSAGEM_INTERROMPIDA = (
+    "A análise foi interrompida no meio (o sistema reiniciou enquanto ela rodava). "
+    "Clique em “Tentar de novo” para refazer."
+)
+
+
+def _encerrar_se_interrompida(registro: dict[str, Any], store: Armazenamento) -> dict[str, Any]:
+    """Análise "em andamento" que nenhum processo roda e já passou do tempo máximo vira erro.
+
+    `_EM_ANDAMENTO` vive na memória: se a API reinicia no meio, o registro ficava em `analyzing`
+    para sempre e a tela girava sem fim, sem botão para refazer.
+    """
+    if registro.get("status") not in ("queued", "processing", "analyzing"):
+        return registro
+    with _TRAVA:
+        if registro.get("caso_id") in _EM_ANDAMENTO:
+            return registro
+    try:
+        inicio = datetime.fromisoformat(str(registro.get("iniciada_em") or ""))
+    except ValueError:
+        return registro
+    if inicio.tzinfo is None:
+        inicio = inicio.replace(tzinfo=timezone.utc)
+    if (datetime.now(timezone.utc) - inicio).total_seconds() < TEMPO_MAXIMO_EM_ANDAMENTO_S:
+        return registro
+    store.atualizar(registro["id"], status="error", erro=MENSAGEM_INTERROMPIDA)
+    return {**registro, "status": "error", "erro": MENSAGEM_INTERROMPIDA}
+
 def obter(caso_id: str, *, store: Armazenamento | None = None) -> dict[str, Any] | None:
     """A última análise, com o estado humano dos itens e as respostas às perguntas aplicados."""
     store = store or armazenamento_padrao()
     registro = store.ultima(caso_id)
     if not registro:
         return None
+    registro = _encerrar_se_interrompida(registro, store)
     resultado = registro.get("resultado")
     if isinstance(resultado, str):
         resultado = json.loads(resultado)

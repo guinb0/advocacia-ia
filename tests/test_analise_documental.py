@@ -235,6 +235,46 @@ def test_falha_do_modelo_vira_status_error_observavel(caso):
 
     r = ad.iniciar("c1", chamar_modelo=quebra, store=caso, sincrono=True)
     assert r["status"] == "error" and "modelo fora" in r["erro"]
+    assert r["erro"].startswith("A análise parou") and "Detalhe técnico: RuntimeError" in r["erro"]
+
+
+def test_erro_conhecido_da_analise_chega_a_tela_sem_nome_de_classe(caso):
+    from app import analise_documentos
+
+    def sem_tempo(m, **k):
+        raise analise_documentos.ErroAnaliseDocumentos("O modelo não respondeu a tempo.")
+
+    r = ad.iniciar("c1", chamar_modelo=sem_tempo, store=caso, sincrono=True)
+    assert r["erro"] == "O modelo não respondeu a tempo."
+
+
+def test_resposta_cortada_refaz_no_modo_compacto(caso):
+    from app import analise_documentos
+
+    instrucoes = []
+
+    def corta_na_primeira(mensagem, *, instrucao=None, max_tokens=None):
+        instrucoes.append(instrucao)
+        if len(instrucoes) == 1:
+            raise analise_documentos.RespostaCortada("cortada")
+        return MODELO
+
+    r = ad.iniciar("c1", chamar_modelo=corta_na_primeira, store=caso, sincrono=True)
+    assert r["status"] == "ready" and r["resultado"]["compacta"] is True
+    assert "MODO COMPACTO" not in instrucoes[0] and "MODO COMPACTO" in instrucoes[1]
+
+
+def test_analise_presa_depois_de_reinicio_vira_erro_com_saida(caso):
+    caso.criar({"id": "a1", "caso_id": "c1", "versao": 1, "status": "analyzing",
+                "iniciada_em": "2020-01-01T00:00:00+00:00"})
+    r = ad.obter("c1", store=caso)
+    assert r["status"] == "error" and "interrompida" in r["erro"]
+    assert caso.ultima("c1")["status"] == "error"
+
+
+def test_analise_recente_em_andamento_continua_em_andamento(caso):
+    caso.criar({"id": "a1", "caso_id": "c1", "versao": 1, "status": "analyzing", "iniciada_em": ad._agora()})
+    assert ad.obter("c1", store=caso)["status"] == "analyzing"
 
 
 # ------------------------------------------------------------------ organização com parada obrigatória

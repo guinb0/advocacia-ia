@@ -450,7 +450,10 @@ export default function Dossie({
       <PainelAnaliseDocumentos casoId={casoId} />
 
       {/* Skill documental: análise estruturada com proveniência, perguntas e organização. */}
-      <PainelAnaliseDocumental casoId={casoId} />
+      <div className="rounded-campo border border-borda bg-papel p-4">
+        <h2 className="m-0 mb-3 text-base font-semibold">Análise dos documentos</h2>
+        <PainelAnaliseDocumental casoId={casoId} />
+      </div>
 
       <div id="fluxo-peticao" />
       <FluxoPeticao

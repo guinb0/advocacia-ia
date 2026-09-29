@@ -49,6 +49,10 @@ class ErroAnaliseDocumentos(RuntimeError):
     """Falha que o usuário precisa ver, com o que dá para fazer a respeito."""
 
 
+class RespostaCortada(ErroAnaliseDocumentos):
+    """O modelo bateu no teto de tokens: o JSON veio pela metade e nada dele é aproveitável."""
+
+
 #: Teto por documento. O corte evita que um PDF de 40 páginas consuma a janela
 #: inteira e empurre os outros anexos para fora — perder documento em silêncio é
 #: pior que analisar menos texto. Era 6 mil, e 6 mil é uma página e meia: o
@@ -443,7 +447,7 @@ def _json_do_modelo(resposta: httpx.Response) -> dict[str, Any]:
             exc,
         )
         if motivo == "length":
-            raise ErroAnaliseDocumentos(
+            raise RespostaCortada(
                 "A resposta do modelo foi cortada por tamanho. Tente de novo; "
                 "se persistir, analise com menos documentos anexados."
             ) from exc
@@ -453,7 +457,11 @@ def _json_do_modelo(resposta: httpx.Response) -> dict[str, Any]:
 
 
 def _chamar_modelo(
-    mensagem: str, *, instrucao: str | None = None, max_tokens: int | None = None
+    mensagem: str,
+    *,
+    instrucao: str | None = None,
+    max_tokens: int | None = None,
+    tempo_s: float | None = None,
 ) -> dict[str, Any]:
     """Executa a análise pelo provedor configurado, com resposta JSON auditável.
 
@@ -517,7 +525,7 @@ def _chamar_modelo(
 
     def _enviar(corpo: dict[str, Any]) -> httpx.Response:
         return httpx.post(
-            base_url + "/chat/completions", headers=cabecalhos, json=corpo, timeout=TEMPO_MODELO_S
+            base_url + "/chat/completions", headers=cabecalhos, json=corpo, timeout=tempo_s or TEMPO_MODELO_S
         )
 
     try:

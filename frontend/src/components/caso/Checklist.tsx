@@ -608,7 +608,7 @@ export default function Checklist({
  * ou seja, os mais longos. Por isso o número vai com a AMOSTRA ao lado e
  * rotulado como observado, nunca como previsão — prazo dito ao cliente não pode
  * ser "mais ou menos". Ver `docs/PRAZOS.md` para o que falta ingerir. */
-function Prazos() {
+export function Prazos() {
   const [d, setD] = useState<PrazosAcervo | null>(null);
   const [falhou, setFalhou] = useState(false);
   useEffect(() => {
