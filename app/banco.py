@@ -238,6 +238,7 @@ TABELAS = (
     "ligacoes",
     "auditorias_entrevista",
     "custos_api",
+    "saldos_api",
     "solicitacoes_peticao",
     "modelos_documento",
     "gravacoes_temporarias",
@@ -683,6 +684,16 @@ IF COL_LENGTH('{SCHEMA}.{PREFIXO}custos_api', 'erro') IS NULL
     ALTER TABLE {SCHEMA}.{PREFIXO}custos_api ADD erro nvarchar(800) NULL;
 IF COL_LENGTH('{SCHEMA}.{PREFIXO}custos_api', 'latencia_ms') IS NULL
     ALTER TABLE {SCHEMA}.{PREFIXO}custos_api ADD latencia_ms bigint NULL;
+
+-- Crédito que o escritório informa para APIs que não publicam o saldo (OpenAI).
+IF OBJECT_ID('{SCHEMA}.{PREFIXO}saldos_api') IS NULL
+CREATE TABLE {SCHEMA}.{PREFIXO}saldos_api (
+    id              varchar(64)   NOT NULL CONSTRAINT pk_acervo_saldos_api PRIMARY KEY,
+    fornecedor      varchar(64)   NOT NULL,
+    valor_usd       decimal(18,2) NOT NULL,
+    informado_em    varchar(40)   NOT NULL,
+    informado_por   nvarchar(400) NOT NULL CONSTRAINT df_acervo_saldos_api_por DEFAULT N''
+);
 
 IF OBJECT_ID('{SCHEMA}.{PREFIXO}solicitacoes_peticao') IS NULL
 CREATE TABLE {SCHEMA}.{PREFIXO}solicitacoes_peticao (

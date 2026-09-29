@@ -46,7 +46,7 @@ from typing import Any
 
 import httpx
 
-from .. import analise_documentos, armazenamento, peticao_local
+from .. import analise_documentos, armazenamento, custos_api, peticao_local
 from .. import pesquisa_web as pesquisa_web_modulo
 from . import contexto_caso, peticao_fluxo
 from .cliente import ErroDoAgente
@@ -1361,6 +1361,38 @@ def _configurado() -> tuple[str, str, str]:
     )
 
 
+def _medir(fornecedor: str, modelo: str, uso: dict[str, Any], inicio: float) -> None:
+    """Grava o consumo fora do fluxo: a gravação vai a um banco remoto e não pode
+    atrasar a resposta que o advogado está esperando na tela."""
+    latencia = int((time.monotonic() - inicio) * 1000)
+    threading.Thread(
+        target=custos_api.registrar_uso,
+        args=(fornecedor, modelo, "chat_peticao", uso),
+        kwargs={"latencia_ms": latencia},
+        daemon=True,
+    ).start()
+
+
+def _medir_falha(fornecedor: str, modelo: str, erro: str, inicio: float) -> None:
+    latencia = int((time.monotonic() - inicio) * 1000)
+    threading.Thread(
+        target=custos_api.registrar_falha,
+        args=(fornecedor, modelo, "chat_peticao", erro),
+        kwargs={"latencia_ms": latencia},
+        daemon=True,
+    ).start()
+
+
+def _fornecedor(base: str) -> str:
+    """Quem cobra a chamada, para o painel de gastos saber de que saldo descontar."""
+    endereco = base.lower()
+    if "deepseek" in endereco:
+        return "deepseek"
+    if "openrouter" in endereco:
+        return "openrouter"
+    return "openai"
+
+
 def _juntar_chamadas(acumulado: dict[int, dict[str, Any]], pedacos: list[Any]) -> None:
     """Remonta as chamadas de ferramenta que chegam picadas no fluxo.
 
@@ -1402,6 +1434,7 @@ def _transmitir(
     nada tenha chegado à tela: repetir depois de meia resposta duplicaria o texto.
     """
     chave, base, modelo = _configurado()
+    fornecedor = _fornecedor(base)
     corpo: dict[str, Any] = {
         "model": modelo,
         # Baixa, não zero: aqui se conversa. Zero deixava a resposta com a mesma
@@ -1410,6 +1443,12 @@ def _transmitir(
         "messages": mensagens,
         "stream": True,
     }
+    if fornecedor in ("openai", "deepseek"):
+        # Em fluxo, o consumo só vem se pedido: num último pedaço, sem `choices`. Sem
+        # ele o chat não entra no painel de gastos e o saldo da OpenAI nunca desce.
+        corpo["stream_options"] = {"include_usage": True}
+    uso: dict[str, Any] = {}
+    inicio = time.monotonic()
     if ferramentas:
         corpo["tools"] = esquemas()
         # `forcar` obriga a chamar UMA ferramenta (a via rápida da alteração). Se o provedor
@@ -1437,12 +1476,21 @@ def _transmitir(
                         resposta.status_code,
                         detalhe,
                     )
-                    if tentativa == 1 and forcar and resposta.status_code in (400, 422):
-                        corpo["tool_choice"] = "auto"
+                    recusou_consumo = "stream_options" in corpo and any(
+                        termo in detalhe.lower() for termo in ("stream_options", "include_usage")
+                    )
+                    if tentativa == 1 and resposta.status_code in (400, 422) and (forcar or recusou_consumo):
+                        # A segunda tentativa vai no modo mais aceito: sem ferramenta
+                        # forçada e sem pedir o consumo, que um provedor compatível pode
+                        # não conhecer. Perder a medição de uma chamada é melhor que a resposta.
+                        if forcar:
+                            corpo["tool_choice"] = "auto"
+                        corpo.pop("stream_options", None)
                         continue
                     if tentativa == 1 and resposta.status_code in STATUS_TRANSITORIOS:
                         time.sleep(PAUSA_ANTES_DE_REPETIR_S)
                         continue
+                    _medir_falha(fornecedor, modelo, f"HTTP {resposta.status_code}: {detalhe}", inicio)
                     # O detalhe vai junto de propósito: "tente de novo" sozinho manda
                     # repetir um pedido que vai falhar igual, e esconde de quem lê o log
                     # a diferença entre um erro nosso (corpo malformado) e um do serviço.
@@ -1460,6 +1508,8 @@ def _transmitir(
                         pedaco = json.loads(carga)
                     except json.JSONDecodeError:
                         continue
+                    if isinstance(pedaco.get("usage"), dict):
+                        uso = pedaco["usage"]
                     escolha = (pedaco.get("choices") or [{}])[0]
                     delta = escolha.get("delta") or {}
                     if delta.get("tool_calls"):
@@ -1481,9 +1531,12 @@ def _transmitir(
                 time.sleep(PAUSA_ANTES_DE_REPETIR_S)
                 continue
             log.warning("chat da petição: modelo não respondeu: %s", str(erro)[:200])
+            _medir_falha(fornecedor, modelo, type(erro).__name__, inicio)
             raise ErroDoChat(
                 "O modelo não respondeu a tempo. A conversa está salva — tente de novo."
             ) from erro
+
+    _medir(fornecedor, modelo, uso, inicio)
 
     # `tool_calls` SÓ existe quando houve chamada.
     #

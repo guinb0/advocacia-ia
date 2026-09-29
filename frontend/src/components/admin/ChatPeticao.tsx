@@ -36,6 +36,7 @@ import {
   type DocumentoCitavelMd,
 } from "@/components/ui/Markdown";
 import estilos from "@/components/admin/ChatPeticao.module.css";
+import DocumentosDaConversa, { type FiltroDosDocumentos } from "@/components/admin/DocumentosDaConversa";
 import {
   EVENTO_DO_CHAT,
   abrirChatDaPeticao,
@@ -156,6 +157,10 @@ export default function ChatPeticao({
    * lia "a CTPS (IMG_4411.jpg)" e tinha de ir ao checklist procurar o arquivo. */
   const [documentos, setDocumentos] = useState<DocumentoCitavel[]>([]);
   const [documentoAberto, setDocumentoAberto] = useState<DocumentoCitavelMd | null>(null);
+  /* A lista de onde o documento foi aberto, para o visor passar ao próximo com ← →.
+   * Vazia quando ele veio de um link da resposta: aí não há "próximo" que faça sentido. */
+  const [listaDoVisor, setListaDoVisor] = useState<DocumentoCitavel[]>([]);
+  const [listaDeDocumentos, setListaDeDocumentos] = useState<FiltroDosDocumentos | null>(null);
   /* Quem rolou para cima está LENDO. Empurrar a conversa para o fim a cada pedaço de
    * texto que chega arranca do meio da leitura a resposta anterior, e não há como voltar
    * a ela sem procurar. Enquanto isso, o botão de descer diz que chegou coisa nova. */
@@ -235,6 +240,8 @@ export default function ChatPeticao({
     setMensagens([]);
     setDocumentos([]);
     setDocumentoAberto(null);
+    setListaDoVisor([]);
+    setListaDeDocumentos(null);
     setDecididas({});
     setExecutando(null);
     setTexto("");
@@ -466,6 +473,27 @@ export default function ChatPeticao({
     else comecarFrase(atalho.texto);
   }
 
+  /** Estável: o contexto dos links da resposta é memorizado com esta função. */
+  const abrirCitado = useCallback((documento: DocumentoCitavelMd) => {
+    setListaDoVisor([]);
+    setDocumentoAberto(documento);
+  }, []);
+
+  function abrirListaDeDocumentos(filtro: FiltroDosDocumentos) {
+    setHistoricoAberto(false);
+    setListaDeDocumentos(filtro);
+    atualizarDocumentos();
+  }
+
+  function perguntarSobre(documento: DocumentoCitavel) {
+    setListaDeDocumentos(null);
+    comecarFrase(`Sobre o documento «${documento.arquivo}»: `);
+  }
+
+  const posicaoNoVisor = documentoAberto
+    ? listaDoVisor.findIndex((d) => d.id === documentoAberto.id)
+    : -1;
+
   async function decidir(chave: string, acao: AcaoProposta, aceitar: boolean, generaliza = false) {
     if (!aceitar) {
       setDecididas((atuais) => ({ ...atuais, [chave]: "descartada" }));
@@ -665,8 +693,21 @@ export default function ChatPeticao({
           </button>
           <button
             type="button"
+            className={`${estilos.iconeBotao} ${listaDeDocumentos ? estilos.iconeAtivo : ""}`}
+            onClick={() => (listaDeDocumentos ? setListaDeDocumentos(null) : abrirListaDeDocumentos("todos"))}
+            aria-label="Documentos do caso"
+            aria-expanded={Boolean(listaDeDocumentos)}
+            title={`Documentos do caso${documentos.length ? ` (${documentos.length})` : ""}`}
+          >
+            <IconeDocumentos />
+          </button>
+          <button
+            type="button"
             className={`${estilos.iconeBotao} ${historicoAberto ? estilos.iconeAtivo : ""}`}
-            onClick={() => setHistoricoAberto((aberto) => !aberto)}
+            onClick={() => {
+              setListaDeDocumentos(null);
+              setHistoricoAberto((aberto) => !aberto);
+            }}
             aria-label="Histórico de conversas"
             aria-expanded={historicoAberto}
             title={`Histórico de conversas${conversas.length ? ` (${conversas.length})` : ""}`}
@@ -706,13 +747,23 @@ export default function ChatPeticao({
           title="O que o chat já levantou fica guardado com a petição: ele não relê os documentos nem refaz a pesquisa a cada pergunta."
         >
           <span className={estilos.contextoRotulo}>Base do caso</span>
-          <span className={estilos.chip}>
+          <button
+            type="button"
+            className={`${estilos.chip} ${estilos.chipBotao}`}
+            onClick={() => abrirListaDeDocumentos("lidos")}
+            title="Ver quais documentos foram lidos e abrir qualquer um deles"
+          >
             {contexto.documentosLidos} {contexto.documentosLidos === 1 ? "documento lido" : "documentos lidos"}
-          </span>
+          </button>
           {contexto.documentosSemLeitura > 0 && (
-            <span className={`${estilos.chip} ${estilos.chipAtencao}`}>
+            <button
+              type="button"
+              className={`${estilos.chip} ${estilos.chipAtencao} ${estilos.chipBotao}`}
+              onClick={() => abrirListaDeDocumentos("sem_leitura")}
+              title="Ver quais documentos ainda não foram lidos e por quê"
+            >
               {contexto.documentosSemLeitura} sem leitura
-            </span>
+            </button>
           )}
           {contexto.pesquisas > 0 && (
             <span className={estilos.chip}>
@@ -789,7 +840,20 @@ export default function ChatPeticao({
         </>
       )}
 
-      <DocumentosCitaveis documentos={documentos} aoAbrir={setDocumentoAberto}>
+      {listaDeDocumentos && (
+        <DocumentosDaConversa
+          documentos={documentos}
+          filtroInicial={listaDeDocumentos}
+          aoAbrir={(documento, lista) => {
+            setListaDoVisor(lista);
+            setDocumentoAberto(documento);
+          }}
+          aoPerguntar={perguntarSobre}
+          aoFechar={() => setListaDeDocumentos(null)}
+        />
+      )}
+
+      <DocumentosCitaveis documentos={documentos} aoAbrir={abrirCitado}>
       <div
         className={estilos.conversa}
         ref={conversa}
@@ -899,9 +963,21 @@ export default function ChatPeticao({
         createPortal(
           <div className="relative z-[70]">
             <VisorEntrega
+              key={documentoAberto.id}
               entregaId={documentoAberto.id}
               arquivo={documentoAberto.arquivo}
               onFechar={() => setDocumentoAberto(null)}
+              navegacao={
+                posicaoNoVisor >= 0 && listaDoVisor.length > 1
+                  ? {
+                      posicao: posicaoNoVisor + 1,
+                      total: listaDoVisor.length,
+                      rotulo: listaDoVisor[posicaoNoVisor].tipo || "Documento enviado",
+                      onAnterior: () => setDocumentoAberto(listaDoVisor[posicaoNoVisor - 1] ?? documentoAberto),
+                      onProximo: () => setDocumentoAberto(listaDoVisor[posicaoNoVisor + 1] ?? documentoAberto),
+                    }
+                  : undefined
+              }
             />
           </div>,
           document.body,
@@ -1382,6 +1458,15 @@ function IconeHistorico() {
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
       <path d="M3 3v5h5M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function IconeDocumentos() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
     </svg>
   );
 }

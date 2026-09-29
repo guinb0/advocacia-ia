@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -32,16 +33,77 @@ def _custo_usd(uso: dict[str, Any]) -> Decimal | None:
     return custo if custo >= 0 else None
 
 
+#: US$ por milhão de tokens (entrada, entrada em cache, saída), tabela pública da OpenAI
+#: em 09/2026. A OpenAI não devolve o custo na resposta: sem esta conta o gasto do chat
+#: ficaria em zero e o saldo nunca desceria. Modelo fora da tabela usa
+#: OPENAI_PRECO_ENTRADA_1M / OPENAI_PRECO_SAIDA_1M; sem eles, fica sem custo.
+PRECOS_OPENAI: dict[str, tuple[str, str, str]] = {
+    "gpt-5-mini": ("0.25", "0.025", "2.00"),
+    "gpt-5-nano": ("0.05", "0.005", "0.40"),
+    "gpt-5": ("1.25", "0.125", "10.00"),
+    "gpt-5.1": ("1.25", "0.125", "10.00"),
+    "gpt-5.2": ("1.75", "0.175", "14.00"),
+    "gpt-5.4-mini": ("0.75", "0.075", "4.50"),
+    "gpt-5.4-nano": ("0.20", "0.02", "1.25"),
+    "gpt-5.6-luna": ("0.20", "0.02", "1.20"),
+    "gpt-5.6-terra": ("2.00", "0.20", "12.00"),
+    "gpt-4.1": ("2.00", "0.50", "8.00"),
+    "gpt-4.1-mini": ("0.40", "0.10", "1.60"),
+    "gpt-4.1-nano": ("0.10", "0.025", "0.40"),
+    "gpt-4o": ("2.50", "1.25", "10.00"),
+    "gpt-4o-mini": ("0.15", "0.075", "0.60"),
+}
+
+_DATA_DO_MODELO = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+
+def _preco_openai(modelo: str) -> tuple[Decimal, Decimal, Decimal] | None:
+    entrada_env = _decimal(os.getenv("OPENAI_PRECO_ENTRADA_1M", "").strip())
+    saida_env = _decimal(os.getenv("OPENAI_PRECO_SAIDA_1M", "").strip())
+    if entrada_env is not None and saida_env is not None:
+        return entrada_env, entrada_env, saida_env
+    # Comparação exata depois de tirar a data: por prefixo, «gpt-5.3-instant» cairia no
+    # preço de «gpt-5» e o saldo desceria mais devagar do que desce de verdade.
+    nome = _DATA_DO_MODELO.sub("", str(modelo or "").strip().lower())
+    preco = PRECOS_OPENAI.get(nome)
+    return None if preco is None else (Decimal(preco[0]), Decimal(preco[1]), Decimal(preco[2]))
+
+
+def estimar_custo_openai(modelo: str, uso: dict[str, Any]) -> Decimal | None:
+    """Custo de uma chamada pela tabela de preços, contando a entrada em cache à parte."""
+    preco = _preco_openai(modelo)
+    if preco is None:
+        return None
+    entrada = _numero(uso.get("prompt_tokens", uso.get("input_tokens", 0)))
+    saida = _numero(uso.get("completion_tokens", uso.get("output_tokens", 0)))
+    detalhes = uso.get("prompt_tokens_details") or uso.get("input_tokens_details") or {}
+    em_cache = min(entrada, _numero(detalhes.get("cached_tokens") if isinstance(detalhes, dict) else 0))
+    preco_entrada, preco_cache, preco_saida = preco
+    milhao = Decimal(1_000_000)
+    return ((entrada - em_cache) * preco_entrada + em_cache * preco_cache + saida * preco_saida) / milhao
+
+
 def registrar(fornecedor: str, modelo: str, operacao: str, resposta: Any, *, latencia_ms: int | None = None) -> None:
     """Persiste consumo sem deixar uma falha de telemetria afetar a chamada paga."""
     try:
         uso = resposta.json().get("usage") or {}
     except Exception:
         uso = {}
+    registrar_uso(fornecedor, modelo, operacao, uso, latencia_ms=latencia_ms)
+
+
+def registrar_uso(
+    fornecedor: str, modelo: str, operacao: str, uso: dict[str, Any], *, latencia_ms: int | None = None
+) -> None:
+    """O mesmo que `registrar`, para quem já tem o `usage` em mãos (resposta em fluxo)."""
     entrada = _numero(uso.get("prompt_tokens", uso.get("input_tokens", 0)))
     saida = _numero(uso.get("completion_tokens", uso.get("output_tokens", 0)))
     total = _numero(uso.get("total_tokens")) or entrada + saida
     custo = _custo_usd(uso)
+    estimado = False
+    if custo is None and fornecedor == "openai":
+        custo = estimar_custo_openai(modelo, uso)
+        estimado = custo is not None
     log.info(
         "api_usage fornecedor=%s modelo=%s operacao=%s input_tokens=%s output_tokens=%s total_tokens=%s custo_usd=%s",
         fornecedor, modelo, operacao, entrada, saida, total, custo,
@@ -56,7 +118,7 @@ def registrar(fornecedor: str, modelo: str, operacao: str, resposta: Any, *, lat
                     str(uuid.uuid4()),
                     datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     str(fornecedor)[:64], str(modelo)[:200], str(operacao)[:100],
-                    entrada, saida, total, custo, 0, "SUCCESS", None, latencia_ms,
+                    entrada, saida, total, custo, int(estimado), "SUCCESS", None, latencia_ms,
                 ),
             )
     except Exception:
@@ -90,8 +152,18 @@ def resumo(*, horas: int = 24) -> dict[str, Any]:
 PROVEDORES = (
     {"id": "openrouter", "nome": "OpenRouter", "env": "OPENROUTER_API_KEY"},
     {"id": "deepseek", "nome": "DeepSeek", "env": "DEEPSEEK_API_KEY"},
+    {"id": "openai", "nome": "OpenAI (ChatGPT)", "env": "OPENAI_API_KEY"},
     {"id": "mistral", "nome": "Mistral", "env": "MISTRAL_API_KEY"},
 )
+
+#: Provedores sem consulta de saldo por API: o escritório informa o crédito que tem na
+#: conta e o sistema desconta o gasto dali em diante. A OpenAI só publica o gasto
+#: (Admin API, `/organization/costs`), nunca o saldo.
+SALDO_INFORMADO = frozenset({"openai"})
+
+#: Teto de sanidade para o valor digitado: evita que um "5000" no lugar de "50,00"
+#: esconda o alerta por meses.
+MAXIMO_SALDO_INFORMADO = Decimal(100000)
 
 
 def classificar_saldo(restante: Decimal | None, teto: Decimal | None, *, moeda: str = "USD") -> tuple[str, str]:
@@ -164,8 +236,125 @@ def _consultar_deepseek(chave: str) -> dict[str, Any]:
     return {"moeda": str(info.get("currency") or "USD"), "saldo": restante, "teto": None, "consultado": True}
 
 
+def ler_valor(texto: Any) -> Decimal | None:
+    """«25,50», «US$ 1.234,56» ou «1,234.56»: o último separador é o dos centavos."""
+    limpo = str(texto or "").replace("US$", "").replace("$", "").replace(" ", "").strip()
+    if "," in limpo and "." in limpo:
+        centavos = "," if limpo.rfind(",") > limpo.rfind(".") else "."
+        milhar = "." if centavos == "," else ","
+        limpo = limpo.replace(milhar, "").replace(centavos, ".")
+    else:
+        limpo = limpo.replace(",", ".")
+    return _decimal(limpo)
+
+
+def informar_saldo(fornecedor: str, valor: Any, *, por: str = "") -> dict[str, Any]:
+    """Guarda o crédito que o escritório vê hoje na conta do provedor.
+
+    Cada informe é uma linha nova: o saldo vale a partir do último, e o histórico mostra
+    quem informou o quê — útil quando o alerta "sumiu" depois de alguém digitar errado.
+    """
+    fornecedor = str(fornecedor or "").strip().lower()
+    if fornecedor not in SALDO_INFORMADO:
+        raise ValueError("Esta API informa o saldo sozinha; não é preciso digitar.")
+    quantia = ler_valor(valor)
+    if quantia is None or not quantia.is_finite() or quantia < 0:
+        raise ValueError("Informe o crédito em dólares, por exemplo 25,50.")
+    if quantia > MAXIMO_SALDO_INFORMADO:
+        raise ValueError("Valor alto demais. Confira se digitou em dólares e com vírgula nos centavos.")
+    quantia = quantia.quantize(Decimal("0.01"))
+    agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conectar(timeout=5) as con:
+        con.execute(
+            "INSERT INTO saldos_api (id, fornecedor, valor_usd, informado_em, informado_por) VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), fornecedor, quantia, agora, str(por or "")[:400]),
+        )
+    return {"fornecedor": fornecedor, "valor": float(quantia), "informado_em": agora}
+
+
+def _ultimo_saldo_informado(fornecedor: str) -> dict[str, Any] | None:
+    with conectar(timeout=5) as con:
+        linha = con.execute(
+            "SELECT TOP 1 valor_usd, informado_em, informado_por FROM saldos_api "
+            "WHERE fornecedor = ? ORDER BY informado_em DESC",
+            (fornecedor,),
+        ).fetchone()
+    return dict(linha) if linha else None
+
+
+def _gasto_local_desde(fornecedor: str, desde_iso: str) -> Decimal:
+    """`criado_em` é ISO em UTC no mesmo formato de `informado_em`: comparar texto é exato."""
+    with conectar(timeout=5) as con:
+        linha = con.execute(
+            "SELECT SUM(COALESCE(custo_usd, 0)) AS gasto FROM custos_api WHERE fornecedor = ? AND criado_em >= ?",
+            (fornecedor, desde_iso),
+        ).fetchone()
+    return (_decimal(dict(linha).get("gasto")) if linha else None) or Decimal(0)
+
+
+def _gasto_openai_oficial(chave_admin: str, desde: datetime) -> Decimal:
+    """Gasto da organização inteira desde `desde`, pelo relatório da OpenAI.
+
+    Os baldes são diários: o dia do informe pode entrar inteiro, o que só adianta o
+    alerta — nunca o atrasa. Pega também o uso da mesma conta fora deste sistema.
+    """
+    import httpx
+
+    total = Decimal(0)
+    pagina: str | None = None
+    for _ in range(12):
+        parametros: dict[str, Any] = {"start_time": int(desde.timestamp()), "bucket_width": "1d", "limit": 180}
+        if pagina:
+            parametros["page"] = pagina
+        resposta = httpx.get(
+            "https://api.openai.com/v1/organization/costs",
+            headers={"Authorization": f"Bearer {chave_admin}"},
+            params=parametros,
+            timeout=8,
+        )
+        resposta.raise_for_status()
+        corpo = resposta.json() or {}
+        for balde in corpo.get("data") or []:
+            for resultado in balde.get("results") or []:
+                total += _decimal((resultado.get("amount") or {}).get("value")) or Decimal(0)
+        pagina = corpo.get("next_page")
+        if not corpo.get("has_more") or not pagina:
+            break
+    return total
+
+
+def _saldo_pelo_informado(fornecedor: str) -> dict[str, Any]:
+    informado = _ultimo_saldo_informado(fornecedor)
+    if not informado:
+        return {"moeda": "USD", "saldo": None, "teto": None, "consultado": False, "pedir_saldo": True}
+    valor = _decimal(informado.get("valor_usd")) or Decimal(0)
+    desde_iso = str(informado.get("informado_em") or "")
+    gasto: Decimal | None = None
+    fonte = "estimado"
+    chave_admin = os.getenv("OPENAI_ADMIN_KEY", "").strip()
+    if fornecedor == "openai" and chave_admin:
+        try:
+            gasto = _gasto_openai_oficial(chave_admin, datetime.fromisoformat(desde_iso))
+            fonte = "oficial"
+        except Exception as erro:
+            log.warning("gasto oficial da OpenAI indisponível: %s", type(erro).__name__)
+    if gasto is None:
+        gasto = _gasto_local_desde(fornecedor, desde_iso)
+    return {
+        "moeda": "USD",
+        "saldo": valor - gasto,
+        "teto": valor,
+        "consultado": True,
+        "informado": {"valor": float(valor), "informado_em": desde_iso},
+        "gasto_desde_informado": float(gasto),
+        "fonte_gasto": fonte,
+    }
+
+
 def _saldo_do_provedor(provedor_id: str, chave: str) -> dict[str, Any]:
     try:
+        if provedor_id in SALDO_INFORMADO:
+            return _saldo_pelo_informado(provedor_id)
         if provedor_id == "openrouter":
             return _consultar_openrouter(chave)
         if provedor_id == "deepseek":
@@ -370,6 +559,8 @@ def painel() -> dict[str, Any]:
             sinal, mensagem = "ausente", "Esta API não está configurada."
         elif saldo.get("falha"):
             sinal, mensagem = "desconhecido", str(saldo["falha"])
+        elif saldo.get("pedir_saldo"):
+            sinal, mensagem = "desconhecido", "Informe o crédito que está na conta para o sistema avisar quando estiver acabando."
         else:
             sinal, mensagem = classificar_saldo(saldo.get("saldo"), saldo.get("teto"), moeda=str(saldo.get("moeda") or "USD"))
         apis.append({
@@ -381,6 +572,10 @@ def painel() -> dict[str, Any]:
             "teto": None if saldo.get("teto") is None else float(saldo["teto"]),
             "sinal": sinal,
             "mensagem": mensagem,
+            "saldo_informado": provedor["id"] in SALDO_INFORMADO,
+            "informado": saldo.get("informado"),
+            "gasto_desde_informado": saldo.get("gasto_desde_informado"),
+            "fonte_gasto": saldo.get("fonte_gasto"),
             **gastos.get(provedor["id"], {"gasto_24h": 0.0, "gasto_7d": 0.0, "gasto_30d": 0.0, "chamadas_30d": 0.0, "erros_30d": 0.0, "tokens_30d": 0.0}),
         })
         vistos.add(provedor["id"])
@@ -396,6 +591,10 @@ def painel() -> dict[str, Any]:
             "teto": None,
             "sinal": "desconhecido",
             "mensagem": "Há gasto registrado, mas este provedor não informa o saldo restante.",
+            "saldo_informado": False,
+            "informado": None,
+            "gasto_desde_informado": None,
+            "fonte_gasto": None,
             **gasto,
         })
     return {"apis": apis, "atualizado_em": datetime.now(timezone.utc).isoformat(timespec="seconds")}
