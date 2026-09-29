@@ -24,13 +24,16 @@ rag-sincronizacao.log
 # nele, e as exceções dos manifestos deixariam de valer. O padrão que funciona é
 # ignorar o CONTEÚDO (`dados/*`) e reabrir caminho por caminho, um nível de cada
 # vez — por isso cada pasta preservada aparece duas vezes.
-dados/*
-!dados/corpus_juridico/
-dados/corpus_juridico/*
-!dados/corpus_juridico/manifesto.json
-!dados/legislacao_federal/
-dados/legislacao_federal/*
-!dados/legislacao_federal/manifesto.json
+back/dados/*
+!back/dados/corpus_juridico/
+back/dados/corpus_juridico/*
+!back/dados/corpus_juridico/manifesto.json
+!back/dados/legislacao_federal/
+back/dados/legislacao_federal/*
+!back/dados/legislacao_federal/manifesto.json
+# `dados/` na raiz é de antes da divisão em front/back/ia: o iniciar.ps1 o move
+# para back/dados, mas o que sobrar (conflito) continua sendo dado de cliente.
+/dados/
 
 # Chaves de API. `dados/` ja e ignorado, mas .env na raiz e o lugar obvio onde
 # alguem colocaria a proxima — e sem esta linha ela iria para o repositorio.
@@ -40,8 +43,8 @@ dados/legislacao_federal/*
 
 # Modelo de contrato do escritorio: fica fora do repositorio publico porque traz
 # tabela de honorarios, CNPJ e as inscricoes na OAB. Para gerar contrato, ponha
-# o .docx oficial em docs/ — o codigo pega qualquer CONTRATO*.docx, o mais
-# recente primeiro (ver app/contrato.py).
+# o .docx oficial em back/docs/ — o codigo pega qualquer CONTRATO*.docx, o mais
+# recente primeiro (ver back/app/contrato.py).
 **/docs/CONTRATO*.docx
 
 # Saida do script de vetorizacao: barulho de execucao, nao codigo.
@@ -61,7 +64,7 @@ iniciar*.stderr.log
 
 # Build do Next: gerado, nao versionado.
 .next/
-frontend/.next/
+front/.next/
 
 # Estado local do agendador Celery Beat. Estes arquivos mudam enquanto o
 # processo roda e nunca devem fazer parte de commit ou merge.

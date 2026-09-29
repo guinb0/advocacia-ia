@@ -20,7 +20,7 @@ services:
       - "${SQLSERVER_LOCAL_PORT:-14333}:1433"
     volumes:
       - sqlserver_data:/var/opt/mssql
-      - ./sql/create_local_database.sql:/docker-entrypoint-initdb.d/create_local_database.sql:ro
+      - ./back/sql/create_local_database.sql:/docker-entrypoint-initdb.d/create_local_database.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\""]
       interval: 5s
