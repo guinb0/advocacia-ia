@@ -553,6 +553,25 @@
   color: var(--atencao);
 }
 
+/* Os números da base viram porta para a lista: quem lê «5 sem leitura» quer saber quais. */
+.chipBotao {
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--transicao), color var(--transicao);
+}
+
+.chipBotao:hover {
+  border-color: var(--acao-borda);
+  color: var(--acao);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chipBotao.chipAtencao:hover {
+  border-color: var(--atencao);
+  color: var(--atencao);
+}
+
 .atualizarBase {
   display: inline-flex;
   align-items: center;
@@ -731,6 +750,98 @@
   .itemExcluir {
     opacity: 0.7;
   }
+}
+
+/* ------------------------------------------------------ documentos do caso */
+
+.painelDocumentos {
+  max-height: min(84%, 600px);
+}
+
+.filtrosDocs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px 0;
+}
+
+.filtroDoc {
+  padding: 3px 10px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-pill);
+  background: var(--papel);
+  color: var(--tinta-2);
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.filtroDoc:hover {
+  border-color: var(--acao-borda);
+}
+
+.filtroAtivo {
+  border-color: var(--acao-borda);
+  background: var(--acao-clara);
+  color: var(--acao);
+  font-weight: 600;
+}
+
+.buscaDocs {
+  margin: 8px 10px 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--papel);
+  color: var(--tinta);
+  font-size: var(--t-sm);
+}
+
+.buscaDocs:focus {
+  outline: 2px solid var(--acao-borda);
+  outline-offset: 0;
+}
+
+.nomeDoArquivo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seloLeitura {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: var(--raio-pill);
+  background: var(--atencao-claro);
+  color: var(--atencao);
+  font-size: var(--t-xs);
+  font-weight: 600;
+}
+
+.perguntarDoc {
+  align-self: center;
+  margin-right: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--acao-borda);
+  border-radius: var(--raio-pill);
+  background: none;
+  color: var(--acao);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.perguntarDoc:hover {
+  background: var(--acao-clara);
+}
+
+.dicaDocs {
+  margin: 0;
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--borda);
+  font-size: var(--t-xs);
+  color: var(--tinta-3);
 }
 
 /* ------------------------------------------------------------------ entrada */
