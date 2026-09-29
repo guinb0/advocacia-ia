@@ -45,7 +45,7 @@ from .. import (
 from ..banco import sessao as sessao_banco
 from ..cache_leitura import por_alguns_segundos
 from ..tasks.manutencao import _leitor_de_documentos_ativo
-from ..tasks.ocr import processar_entrega
+from ..tasks.ocr import EXTENSOES_MIDIA, processar_entrega
 from .casos import listar_casos
 from .comum import (
     _autor_da_acao,
@@ -936,6 +936,20 @@ def _reenfileirar_leitura(
     return None
 
 
+def midia_sem_transcricao(entrega: dict[str, Any]) -> bool:
+    """Áudio ou vídeo parado, sem texto: a transcrição falhou ou o envio é de antes
+    de o formato ser aceito. Não é "erro", mas pedir de novo é o único jeito de ter o relato."""
+    if Path(entrega.get("arquivo") or "").suffix.lower() not in EXTENSOES_MIDIA:
+        return False
+    if entrega.get("status_proc") in {"na_fila", "processando"}:
+        return False
+    extracao = entrega.get("extracao") or {}
+    texto = extracao.get("texto_completo") or "".join(
+        str(linha.get("texto") or "") for linha in extracao.get("texto_linhas") or [] if isinstance(linha, dict)
+    )
+    return not texto.strip()
+
+
 @roteador.post("/api/entregas/{entrega_id}/tentar-novamente")
 def tentar_novamente_entrega(
     entrega_id: str,
@@ -954,7 +968,7 @@ def tentar_novamente_entrega(
     entrega = armazenamento.obter_entrega(entrega_id)
     if entrega is None:
         raise HTTPException(404, "Entrega não encontrada.")
-    if entrega.get("status_proc") != "erro":
+    if entrega.get("status_proc") != "erro" and not midia_sem_transcricao(entrega):
         raise HTTPException(409, "Esta entrega não está com falha de leitura.")
 
     caso = armazenamento.obter_caso(entrega["caso_id"])
