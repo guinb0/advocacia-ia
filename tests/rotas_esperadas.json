@@ -3926,6 +3926,39 @@
   "status_code": null
  },
  {
+  "caminho": "/api/gastos-api/uso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "uso_das_apis",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "dias"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "gastos_api"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
   "caminho": "/",
   "tipo": "APIRoute",
   "metodos": [

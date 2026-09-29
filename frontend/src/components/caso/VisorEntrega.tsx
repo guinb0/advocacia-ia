@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { baixarArquivoEntregaPdf, obterEntrega } from "@/lib/api";
+import { baixarArquivoEntregaPdf, obterEntrega, tentarNovamenteEntrega } from "@/lib/api";
 import { ESTILO_VEREDITO } from "@/lib/formato";
 import type { EntregaDetalhe } from "@/lib/types";
 import { useArquivoEntrega } from "@/lib/useArquivo";
 import { Aviso, Botao, LinkBotao, Selo } from "@/components/ui/Basicos";
+import { RespostaFormatada } from "@/components/ui/Markdown";
 import { baixarArquivo } from "@/lib/baixar";
 
 function ehPdf(nome: string): boolean {
@@ -15,6 +16,10 @@ function ehPdf(nome: string): boolean {
 
 function ehTexto(nome: string): boolean {
   return nome.toLowerCase().endsWith(".txt");
+}
+
+function ehMarkdown(nome: string): boolean {
+  return /\.(md|markdown)$/i.test(nome);
 }
 
 function ehDocx(nome: string): boolean {
@@ -30,6 +35,20 @@ const EXTENSOES_IMAGEM = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ti
 function ehImagem(nome: string): boolean {
   const minusculo = nome.toLowerCase();
   return EXTENSOES_IMAGEM.some((ext) => minusculo.endsWith(ext));
+}
+
+const EXTENSOES_AUDIO = [".mp3", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".flac", ".weba"];
+// .webm fica no vídeo: o <video> também toca webm só de áudio.
+const EXTENSOES_VIDEO = [".mp4", ".webm", ".mov", ".m4v", ".ogv"];
+
+function ehAudio(nome: string): boolean {
+  const minusculo = nome.toLowerCase();
+  return EXTENSOES_AUDIO.some((ext) => minusculo.endsWith(ext));
+}
+
+function ehVideo(nome: string): boolean {
+  const minusculo = nome.toLowerCase();
+  return EXTENSOES_VIDEO.some((ext) => minusculo.endsWith(ext));
 }
 
 const ROTULOS_TIPO_DOCUMENTO: Record<string, string> = {
@@ -76,10 +95,24 @@ function formatarTipoDocumento(tipo: string): string {
     .trim();
   if (!limpo || limpo === "—") return "—";
   if (limpo.toLowerCase() === "desconhecido") return "Desconhecido";
-  return limpo
-    .toLowerCase()
-    .replace(/\b\p{L}/gu, (letra) => letra.toLocaleUpperCase("pt-BR"));
+  // Texto que já vem com minúsculas foi escrito por alguém (ou pelo modelo) e fica como está.
+  const emCaixaAlta = limpo === limpo.toLocaleUpperCase("pt-BR");
+  const frase = emCaixaAlta
+    ? limpo
+        .toLocaleLowerCase("pt-BR")
+        .replace(/\p{L}[\p{L}\p{N}]*/gu, (palavra) => {
+          const sigla = palavra.toLocaleUpperCase("pt-BR");
+          return SIGLAS_DE_DOCUMENTO.has(sigla) ? sigla : palavra;
+        })
+    : limpo;
+  return frase.charAt(0).toLocaleUpperCase("pt-BR") + frase.slice(1);
 }
+
+// Palavras por `\p{L}`, não por `\b`: o `\b` do JavaScript trata letra acentuada como fim de palavra.
+const SIGLAS_DE_DOCUMENTO = new Set([
+  "RG", "CPF", "CIN", "CNH", "CTPS", "CNIS", "PIS", "PASEP", "NIT", "CAT", "PPP", "LTCAT", "PCMSO",
+  "ASO", "INSS", "TRCT", "FGTS", "CID", "CRM", "CNPJ", "SUS", "BO", "OAB", "DER", "DIB", "DCB", "NB",
+]);
 
 /** Passar de um documento a outro sem fechar o visor. */
 export interface NavegacaoVisor {
@@ -140,10 +173,33 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
   const [textoArquivo, setTextoArquivo] = useState<string | null>(null);
   const [urlDocxPdf, setUrlDocxPdf] = useState<string | null>(null);
   const [erroDocx, setErroDocx] = useState<string | null>(null);
+  const [erroMidia, setErroMidia] = useState(false);
+  const [recarga, setRecarga] = useState(0);
+  const [pedindoTranscricao, setPedindoTranscricao] = useState(false);
+  const [erroTranscricao, setErroTranscricao] = useState<string | null>(null);
+  const [transcricaoCopiada, setTranscricaoCopiada] = useState(false);
 
   useEffect(() => {
     setTelaCheia(lerTelaCheia());
   }, []);
+
+  useEffect(() => {
+    setErroMidia(false);
+    setErroTranscricao(null);
+  }, [arquivo]);
+
+  async function pedirTranscricao() {
+    setPedindoTranscricao(true);
+    setErroTranscricao(null);
+    try {
+      await tentarNovamenteEntrega(entregaId);
+      setRecarga((n) => n + 1);
+    } catch (e) {
+      setErroTranscricao(e instanceof Error ? e.message : "Não foi possível pedir a transcrição.");
+    } finally {
+      setPedindoTranscricao(false);
+    }
+  }
 
   // .txt não é imagem nem PDF: sem isto, o visor tentava mostrar o blob num
   // <img>, que só sabe desenhar imagem — o arquivo "não abria" porque nunca
@@ -151,7 +207,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
   // funcionasse. O conteúdo já está no navegador (blob local); só falta ler.
   useEffect(() => {
     setTextoArquivo(null);
-    if (!urlArquivo || !ehTexto(arquivo)) return;
+    if (!urlArquivo || !(ehTexto(arquivo) || ehMarkdown(arquivo))) return;
     let cancelado = false;
     fetch(urlArquivo)
       .then((r) => r.text())
@@ -228,7 +284,7 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
       cancelado = true;
       if (temporizador) clearTimeout(temporizador);
     };
-  }, [entregaId]);
+  }, [entregaId, recarga]);
 
   // O foco vai para o botão de fechar ao abrir, para quem navega por teclado.
   // Só ao abrir: passar de documento não pode arrancar o foco de onde está.
@@ -305,6 +361,62 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
   const textoCompleto =
     extracao?.texto_completo ||
     (extracao?.texto_linhas ?? []).map((linha) => linha.texto).join("\n");
+  const ehMidia = ehAudio(arquivo) || ehVideo(arquivo);
+  const transcrevendo = statusLeitura === "na_fila" || statusLeitura === "processando";
+
+  async function copiarTranscricao() {
+    try {
+      await navigator.clipboard.writeText(textoCompleto);
+      setTranscricaoCopiada(true);
+      setTimeout(() => setTranscricaoCopiada(false), 2000);
+    } catch {
+      /* Área de transferência negada: o texto continua na tela para selecionar à mão. */
+    }
+  }
+
+  const blocoTranscricao = (
+    <section
+      aria-label="Transcrição"
+      className="flex min-h-0 flex-1 flex-col gap-2 rounded-campo border border-borda bg-papel p-4"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="m-0 font-ui text-sm font-bold text-tinta">Transcrição</h3>
+        {textoCompleto && !transcrevendo && (
+          <button
+            type="button"
+            className="cursor-pointer border-0 bg-transparent p-0 text-xs text-tinta-3 underline hover:text-tinta"
+            onClick={() => void copiarTranscricao()}
+          >
+            {transcricaoCopiada ? "Copiada" : "Copiar"}
+          </button>
+        )}
+      </div>
+      {!detalhe ? (
+        <p className="m-0 text-sm text-tinta-3">Carregando…</p>
+      ) : transcrevendo ? (
+        <p className="m-0 text-sm text-tinta-3">Transcrevendo… a tela atualiza sozinha quando terminar.</p>
+      ) : textoCompleto ? (
+        <p className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-sm leading-relaxed text-tinta select-text">
+          {textoCompleto}
+        </p>
+      ) : (
+        <div className="grid justify-items-start gap-2">
+          <p className="m-0 text-sm leading-relaxed text-tinta-3">
+            Este arquivo ainda não tem transcrição. Pode ter falhado na hora do envio, ou ter sido enviado antes de o
+            sistema aceitar este formato.
+          </p>
+          <Botao variante="secundario" pequeno carregando={pedindoTranscricao} textoCarregando="Pedindo…" onClick={() => void pedirTranscricao()}>
+            Transcrever agora
+          </Botao>
+          {erroTranscricao && (
+            <Aviso tom="critico" titulo="Não deu para pedir a transcrição">
+              {erroTranscricao}
+            </Aviso>
+          )}
+        </div>
+      )}
+    </section>
+  );
 
   async function baixarPdf() {
     setBaixandoPdf(true);
@@ -447,6 +559,60 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
               >
                 {textoArquivo ?? "Carregando o texto…"}
               </pre>
+            ) : ehMarkdown(arquivo) ? (
+              <div
+                className={`w-full self-stretch rounded-campo bg-papel px-8 py-6 overflow-auto ${telaCheia ? "h-full min-h-[60vh]" : "h-[68vh]"}`}
+              >
+                {textoArquivo == null ? (
+                  <p className="m-0 text-tinta-3 text-sm">Carregando o texto…</p>
+                ) : (
+                  <div className="mx-auto max-w-[72ch]">
+                    <RespostaFormatada texto={textoArquivo} />
+                  </div>
+                )}
+              </div>
+            ) : ehMidia && erroMidia ? (
+              <div className={`flex w-full max-w-2xl flex-col gap-3 self-stretch ${telaCheia ? "h-full min-h-[60vh]" : "h-[68vh]"}`}>
+                <p className="m-0 rounded-campo bg-papel px-6 py-5 text-center text-sm leading-[1.6] text-tinta-3">
+                  Este navegador não consegue tocar este formato. O arquivo está preservado: use
+                  “Baixar o arquivo” para ouvi-lo no computador.
+                </p>
+                {blocoTranscricao}
+              </div>
+            ) : ehAudio(arquivo) ? (
+              <div className={`flex w-full max-w-2xl flex-col gap-3 self-stretch ${telaCheia ? "h-full min-h-[60vh]" : "h-[68vh]"}`}>
+                <div className="flex flex-col items-center gap-3 rounded-campo bg-papel px-6 py-5">
+                  <p className="m-0 text-center text-sm text-tinta-2 [overflow-wrap:anywhere]">
+                    <span aria-hidden>♪ </span>
+                    {arquivo.split("/").pop()}
+                  </p>
+                  <audio
+                    key={urlArquivo}
+                    className="w-full"
+                    src={urlArquivo}
+                    controls
+                    preload="metadata"
+                    onError={() => setErroMidia(true)}
+                  >
+                    Este navegador não toca áudio.
+                  </audio>
+                </div>
+                {blocoTranscricao}
+              </div>
+            ) : ehVideo(arquivo) ? (
+              <div className={`flex w-full flex-col items-center gap-3 self-stretch ${telaCheia ? "h-full min-h-[60vh]" : "h-[68vh]"}`}>
+                <video
+                  key={urlArquivo}
+                  className="block max-h-[45%] max-w-full rounded-campo bg-black"
+                  src={urlArquivo}
+                  controls
+                  preload="metadata"
+                  onError={() => setErroMidia(true)}
+                >
+                  Este navegador não toca vídeo.
+                </video>
+                <div className="flex min-h-0 w-full max-w-2xl flex-1 flex-col">{blocoTranscricao}</div>
+              </div>
             ) : ehImagem(arquivo) ? (
               /* eslint-disable-next-line @next/next/no-img-element -- é um
                  object URL de blob, que o otimizador do Next não processa. */
@@ -532,7 +698,12 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
 
                 {campos.length === 0 ? (
                   <div className="py-2">
-                    {textoCompleto ? (
+                    {textoCompleto && ehMidia ? (
+                      <Aviso tom="info" titulo="Relato preservado">
+                        A transcrição deste arquivo foi guardada e será usada pela IA jurídica com referência a
+                        ele.
+                      </Aviso>
+                    ) : textoCompleto ? (
                       <>
                         <Aviso tom="info" titulo="Conteúdo jurídico preservado">
                           Este documento não possui campos cadastrais conhecidos. O texto integral abaixo foi
@@ -665,15 +836,17 @@ export default function VisorEntrega({ entregaId, arquivo, onFechar, navegacao }
           >
             Baixar o arquivo
           </LinkBotao>
-          <Botao
-            variante="secundario"
-            pequeno
-            carregando={baixandoPdf}
-            textoCarregando="Gerando PDF…"
-            onClick={() => void baixarPdf()}
-          >
-            Baixar em PDF
-          </Botao>
+          {!ehMidia && (
+            <Botao
+              variante="secundario"
+              pequeno
+              carregando={baixandoPdf}
+              textoCarregando="Gerando PDF…"
+              onClick={() => void baixarPdf()}
+            >
+              Baixar em PDF
+            </Botao>
+          )}
         </div>
       </div>
     </div>

@@ -27,6 +27,11 @@ from ..celery_app import celery_app
 
 log = logging.getLogger("ocr-worker")
 
+#: `.opus`/`.ogg` são o formato de áudio de voz do WhatsApp — sem eles aqui, o
+#: áudio exportado do WhatsApp caía direto em "formato preservado sem OCR" e
+#: nunca era transcrito.
+EXTENSOES_MIDIA = frozenset({".mp4", ".m4a", ".mp3", ".wav", ".webm", ".opus", ".ogg", ".oga", ".3gp"})
+
 #: Desligável por ambiente para cortar custo: com "0", documento reconhecido
 #: pelo classificador (RG, CTPS, contracheque...) volta a ter só os campos do
 #: extrator, sem a leitura completa do modelo.
@@ -363,10 +368,7 @@ def processar_entrega(
                 tipo_extracao,
                 gerar_arquivos_temporarios=False,
             )
-        elif extensao in {".mp4", ".m4a", ".mp3", ".wav", ".webm", ".opus", ".ogg", ".oga", ".3gp"}:
-            # `.opus`/`.ogg` são o formato de áudio de voz do WhatsApp — sem eles
-            # aqui, o áudio exportado do WhatsApp caía direto em "formato
-            # preservado sem OCR" e nunca era transcrito.
+        elif extensao in EXTENSOES_MIDIA:
             # Áudio/vídeo também é prova: transcreve antes de classificar para a
             # IA poder usar o relato como contexto, em vez de jogá-lo na triagem.
             try:
