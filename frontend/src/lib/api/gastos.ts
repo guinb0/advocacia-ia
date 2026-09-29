@@ -19,10 +19,30 @@ export type GastoApi = {
   chamadas_30d: number;
   erros_30d: number;
   tokens_30d: number;
+  /** A API não informa o saldo (OpenAI): o escritório digita o crédito e o sistema desconta o gasto. */
+  saldo_informado?: boolean;
+  informado?: { valor: number; informado_em: string } | null;
+  gasto_desde_informado?: number | null;
+  /** `oficial`: gasto lido da OpenAI (Admin API). `estimado`: calculado aqui pelos tokens. */
+  fonte_gasto?: "oficial" | "estimado" | null;
 };
 
 export async function obterGastosApi(): Promise<{ apis: GastoApi[]; atualizado_em: string }> {
   return comoJson(await buscar("/api/gastos-api"));
+}
+
+/** `valor` vai como texto: «25,50» digitado aqui é lido do mesmo jeito no servidor. */
+export async function informarSaldoApi(
+  fornecedor: string,
+  valor: string,
+): Promise<{ fornecedor: string; valor: number; informado_em: string }> {
+  return comoJson(
+    await buscar(`/api/gastos-api/${encodeURIComponent(fornecedor)}/saldo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ valor }),
+    }),
+  );
 }
 
 type Consumo = { custo_usd: number; tokens: number; chamadas: number; erros: number };

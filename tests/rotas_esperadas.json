@@ -3982,6 +3982,41 @@
   "status_code": null
  },
  {
+  "caminho": "/api/gastos-api/{fornecedor}/saldo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "informar_saldo_da_api",
+  "parametros": {
+   "caminho": [
+    "fornecedor"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "gastos_api"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
   "caminho": "/",
   "tipo": "APIRoute",
   "metodos": [
