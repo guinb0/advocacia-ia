@@ -7,13 +7,18 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { BookOpenCheck, FilePenLine, GitCompareArrows, Globe, Maximize2, Mic, MicOff, Minimize2, Search } from "lucide-react";
+import { BookOpenCheck, FilePenLine, FileText, GitCompareArrows, Globe, Maximize2, Mic, MicOff, Minimize2, Search } from "lucide-react";
 
 import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/Basicos";
 import { SkillDoCaso } from "@/components/skills/SeletorSkillPeticao";
 import ChatPeticao from "@/components/admin/ChatPeticao";
 import ProtocoloDaPeticaoCartao from "@/components/admin/ProtocoloDaPeticao";
-import ConferenciaProtocolo, { type SelecaoDoProtocolo } from "@/components/admin/ConferenciaProtocolo";
+import ConferenciaProtocolo, {
+  type ResultadoDaPreparacao,
+  type SelecaoDoProtocolo,
+} from "@/components/admin/ConferenciaProtocolo";
+import GavetaDocumentos from "@/components/admin/GavetaDocumentos";
+import PerguntaGeracao from "@/components/admin/PerguntaGeracao";
 import { RespostaFormatada, dominioDe } from "@/components/ui/Markdown";
 import { alinharSecoes, indicesAlterados, type LinhaComparacao } from "@/lib/diffPeticao";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
@@ -98,6 +103,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   const [perguntandoPdf, setPerguntandoPdf] = useState(false);
   const [montandoPacote, setMontandoPacote] = useState(false);
   const [conferindoProtocolo, setConferindoProtocolo] = useState(false);
+  const [perguntandoGeracao, setPerguntandoGeracao] = useState(false);
+  const [documentosAbertos, setDocumentosAbertos] = useState(false);
   const [erro, setErro] = useState<Retorno>(null);
   const [concluido, setConcluido] = useState<Retorno>(null);
 
@@ -188,18 +195,15 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
   });
   const edicao = autoSalvo.edicao;
 
-  const gerar = useCallback(async () => {
-    // A minuta já salva é carregada ao voltar ao dossiê. Nunca mande outra
-    // chamada ao modelo por engano: gerar de novo custa token e sobrescreve a
-    // versão em trabalho; a decisão precisa ser explícita.
-    if (
-      peticao &&
-      !window.confirm(
-        "Já existe uma minuta salva para este caso. Gerar novamente usa tokens e cria uma nova versão. Continuar?",
-      )
-    ) {
-      return;
-    }
+  /* A pergunta vem antes de qualquer chamada ao modelo: ela também é a confirmação
+   * de quem já tem minuta — gerar de novo custa token e cria outra versão, então a
+   * decisão precisa ser explícita. */
+  const gerar = useCallback(() => {
+    if (!ocupado) setPerguntandoGeracao(true);
+  }, [ocupado]);
+
+  const executarGeracao = useCallback(async (comProtocolo: boolean) => {
+    setPerguntandoGeracao(false);
     setErro(null);
     setConcluido(null);
     setOcupado(true);
@@ -230,9 +234,12 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       baixarArquivo(arquivo, `Peticao inicial - v${pronta.version}.docx`);
       setConcluido({
         acao: "gerar",
-        texto: `Petição gerada (versão ${pronta.version}) e .docx baixado.`,
+        texto: comProtocolo
+          ? `Petição gerada (versão ${pronta.version}) e .docx baixado. Agora confira os documentos para protocolo.`
+          : `Petição gerada (versão ${pronta.version}) e .docx baixado.`,
       });
       avisarChatDaPeticao(casoId, "peticao_gerada", { versao: pronta.version });
+      if (comProtocolo) setConferindoProtocolo(true);
     } catch (e) {
       const texto = e instanceof Error ? e.message : "Falha ao gerar a petição.";
       setErro({ acao: "gerar", texto });
@@ -241,7 +248,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       setOcupado(false);
       setAndamento(null);
     }
-  }, [casoId, peticao, recarregar]);
+  }, [casoId, recarregar]);
 
   const semEntrevista = !temEntrevista && !estado?.entrevista?.texto;
   const rotuloGerar = ocupado
@@ -255,7 +262,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
 
   useEffect(() => {
     onControlesGeracao?.({
-      gerar: () => void gerar(),
+      gerar,
       ocupado,
       // A API valida a transcrição real. Não bloqueie o botão por metadados
       // incompletos do dossiê (casos antigos podem ter texto e `caracteres` zerado).
@@ -278,9 +285,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
     andamento,
   ]);
 
-  /** Devolve a mensagem de erro, ou `null` quando tudo foi baixado. */
-  async function salvar(baixarPdf = false, selecao?: SelecaoDoProtocolo): Promise<string | null> {
-    if (!peticao) return "A petição ainda não carregou.";
+  /** `null` quando tudo foi baixado sem pacote; com `selecao`, o resumo do .zip ou o erro. */
+  async function salvar(baixarPdf = false, selecao?: SelecaoDoProtocolo): Promise<ResultadoDaPreparacao | null> {
+    if (!peticao) return { erro: "A petição ainda não carregou." };
     const formato = baixarPdf ? "pdf" : "docx";
     setPerguntandoPdf(false);
     setSalvandoComo(formato);
@@ -303,29 +310,34 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
       pdfBaixado = true;
       if (selecao) {
         setMontandoPacote(true);
-        const pacote = await baixarPacoteDeProtocolo(casoId, selecao);
+        const pacote = await baixarPacoteDeProtocolo(
+          casoId,
+          { selecionados: selecao.selecionados, faltando: selecao.faltando },
+          selecao.avulsos,
+        );
         baixarArquivo(pacote.arquivo, pacote.nome);
         setConcluido({
           acao: "salvar",
           texto:
             `Versão ${atualizada.version} salva: .pdf e documentos para protocolo baixados ` +
             `(${pacote.arquivos} arquivos no .zip).` +
-            (pacote.faltando
-              ? ` ${pacote.faltando} documento(s) não puderam entrar — veja as pendências no Checklist.pdf.`
+            (pacote.problemas.length
+              ? ` ${pacote.problemas.length} documento(s) precisam de atenção — veja no Checklist.pdf.`
               : ""),
         });
+        return { pacote: { nome: pacote.nome, arquivos: pacote.arquivos, problemas: pacote.problemas } };
       }
       return null;
     } catch (e) {
       if (pdfBaixado) {
         const texto = e instanceof Error ? e.message : "Não foi possível montar os documentos para protocolo.";
         setErro({ acao: "pacote", texto });
-        return `O PDF da petição foi baixado, mas os documentos para protocolo não: ${texto}`;
+        return { erro: `O PDF da petição foi baixado, mas os documentos para protocolo não: ${texto}` };
       }
       const texto = e instanceof Error ? e.message : "Não foi possível salvar.";
       setErro({ acao: "salvar", texto });
       avisarChatDaPeticao(casoId, "falha", { acao: "Salvar a petição", erro: texto });
-      return texto;
+      return { erro: texto };
     } finally {
       setSalvandoComo(null);
       setMontandoPacote(false);
@@ -639,7 +651,7 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               }
               aguardando={salvando || revisando}
               concluido={concluidoGerar}
-              onClick={() => void gerar()}
+              onClick={gerar}
             >
               {rotuloGerar}
             </BotaoProcesso>
@@ -811,11 +823,9 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               <ConferenciaProtocolo
                 casoId={casoId}
                 onFechar={() => setConferindoProtocolo(false)}
-                onConcluir={async (selecao) => {
-                  const falha = await salvar(true, selecao);
-                  if (!falha) setConferindoProtocolo(false);
-                  return falha;
-                }}
+                onConcluir={async (selecao) =>
+                  (await salvar(true, selecao)) ?? { erro: "O pacote não foi montado. Tente de novo." }
+                }
               />
             )}
 
@@ -867,6 +877,17 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
               onEditar={autoSalvo.editar}
               onEditarRotulo={autoSalvo.editarRotulo}
               onEditarTitulo={autoSalvo.editarTitulo}
+              acoesDaBarra={
+                <Botao
+                  variante={documentosAbertos ? "primario" : "secundario"}
+                  pequeno
+                  aria-pressed={documentosAbertos}
+                  title="Ver os documentos do caso ao lado da petição"
+                  onClick={() => setDocumentosAbertos((atual) => !atual)}
+                >
+                  <FileText size={15} aria-hidden /> Documentos
+                </Botao>
+              }
             />
 
             {peticao.revisao_pendente && (
@@ -1234,6 +1255,16 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
           Falar com a IA
         </button>
       )}
+
+      {perguntandoGeracao && (
+        <PerguntaGeracao
+          versaoExistente={peticao?.version ?? null}
+          onEscolher={(comProtocolo) => void executarGeracao(comProtocolo)}
+          onCancelar={() => setPerguntandoGeracao(false)}
+        />
+      )}
+
+      {documentosAbertos && <GavetaDocumentos casoId={casoId} onFechar={() => setDocumentosAbertos(false)} />}
     </div>
   );
 }
@@ -1359,6 +1390,7 @@ function PreviaPeticao({
   onEditar,
   onEditarRotulo,
   onEditarTitulo,
+  acoesDaBarra,
 }: {
   titulo: string;
   secoes: SecaoPeticao[];
@@ -1368,6 +1400,8 @@ function PreviaPeticao({
   onEditar: (codigo: string, valor: string) => void;
   onEditarRotulo: (codigo: string, valor: string) => void;
   onEditarTitulo: (valor: string) => void;
+  /** Botões que acompanham a barra fixa — à vista em qualquer ponto da peça. */
+  acoesDaBarra?: ReactNode;
 }) {
   /* Uma barra só, no topo do documento, agindo sobre a seção em foco — como em
      qualquer editor de texto. Barra por seção repetiria os mesmos oito botões
@@ -1413,7 +1447,16 @@ function PreviaPeticao({
           O fundo é opaco de propósito: sem ele o texto rolaria por baixo e
           apareceria entre os botões. */}
       <div className="sticky top-0 z-10 grid gap-2 bg-papel pb-1">
-        <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
+        {acoesDaBarra ? (
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
+            </div>
+            <div className="flex flex-none items-center gap-2 pt-1">{acoesDaBarra}</div>
+          </div>
+        ) : (
+          <BarraDeFormatacao ativo={selecao} aoAplicar={aplicar} />
+        )}
 
         {/* A régua é alinhada com a mancha de texto: esta caixa tem a largura e a
             margem da folha JÁ ESCALADAS, de modo que o zero da régua cai

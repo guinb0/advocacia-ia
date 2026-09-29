@@ -153,7 +153,9 @@ export interface AnaliseDocumental {
   skill_sha256?: string;
   modelo?: string;
   versao?: number;
+  iniciada_em?: string;
   resultado?: {
+    compacta?: boolean;
     diagnostico?: { sentido: "POSITIVO" | "NEGATIVO"; motivo: string };
     resumo_do_caso: { questao_central: string; objetivo_do_cliente: string; fatos_cronologicos: Array<{ data: string; fato: string; documento_id: string }> };
     documentos: Array<{

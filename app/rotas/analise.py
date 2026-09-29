@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any
@@ -25,6 +26,7 @@ from .. import (
 from .comum import _autor_da_acao
 
 roteador = APIRouter()
+log = logging.getLogger("rotas.analise")
 
 
 @roteador.post("/api/casos/{caso_id}/analise-documentos")
@@ -85,13 +87,28 @@ def _caso_ou_404(caso_id: str) -> None:
 def iniciar_analise_documental(caso_id: str):
     """Dispara a análise pela skill documental (assíncrona: queued → processing → analyzing → ready|error)."""
     _caso_ou_404(caso_id)
-    return analise_documental.iniciar(caso_id)
+    try:
+        return analise_documental.iniciar(caso_id)
+    except Exception as exc:
+        raise _banco_da_analise_indisponivel(exc) from exc
+
+
+def _banco_da_analise_indisponivel(exc: Exception) -> HTTPException:
+    log.exception("análise documental: armazenamento indisponível")
+    return HTTPException(
+        503,
+        "Não foi possível acessar onde a análise fica guardada. Tente de novo em alguns minutos; "
+        f"se continuar, avise o suporte. (Detalhe técnico: {type(exc).__name__}: {str(exc)[:160]})",
+    )
 
 
 @roteador.get("/api/casos/{caso_id}/analise-documental")
 def obter_analise_documental(caso_id: str):
     _caso_ou_404(caso_id)
-    registro = analise_documental.obter(caso_id)
+    try:
+        registro = analise_documental.obter(caso_id)
+    except Exception as exc:
+        raise _banco_da_analise_indisponivel(exc) from exc
     if registro is None:
         return {"status": "none"}
     return registro

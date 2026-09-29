@@ -79,6 +79,8 @@ interface Props {
   /** Abre a entrega no visor do checklist, que navega entre todos os
    *  documentos. Sem ele, a linha abre um visor só deste arquivo. */
   onAbrirEntrega?: (entregaId: string) => void;
+  /** Só o essencial: sem código do item, nitidez nem seleção para pacote. */
+  simples?: boolean;
 }
 
 export default function ItemChecklistLinha({
@@ -92,6 +94,7 @@ export default function ItemChecklistLinha({
   dentroDoAtendimento = false,
   achadoNoConteudo,
   onAbrirEntrega,
+  simples = false,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   /** Entrega aberta no visor (arquivo + campos extraídos). */
@@ -183,10 +186,12 @@ export default function ItemChecklistLinha({
         <span className="flex-1 min-w-[180px] flex items-center gap-[9px] flex-wrap text-tinta text-base font-medium leading-[1.35]">
           {item.nome}
           {item.obrigatorio && <Selo tom="neutro">Obrigatório</Selo>}
-          <span className="flex-none text-tinta-3 font-codigo text-xs tabular-nums">{item.codigo}</span>
+          {!simples && (
+            <span className="flex-none text-tinta-3 font-codigo text-xs tabular-nums">{item.codigo}</span>
+          )}
         </span>
 
-        {melhorScore !== null && (
+        {!simples && melhorScore !== null && (
           <span
             className="flex-none text-tinta-3 text-xs tabular-nums"
             title="Nitidez medida na leitura do arquivo"
@@ -256,6 +261,7 @@ export default function ItemChecklistLinha({
           {/* Selecionar arquivos desta classificação e baixar só eles — em ZIP
             * ou combinados num único PDF. A classificação é o próprio item —
             * o pacote nunca mistura entregas de outro. */}
+          {!simples && (
           <div className="flex items-center gap-3 flex-wrap mt-[10px] ml-9">
             <Marcacao>
               <input
@@ -305,6 +311,7 @@ export default function ItemChecklistLinha({
               </Botao>
             )}
           </div>
+          )}
 
           {faltandoZip > 0 && (
             <div className="mt-2 ml-9 max-w-[74ch]">
@@ -328,14 +335,16 @@ export default function ItemChecklistLinha({
               key={entrega.id}
               className="flex items-center gap-[10px] flex-wrap px-3 py-[10px] border-b border-borda last:border-b-0"
             >
-              <input
-                type="checkbox"
-                className="flex-none"
-                checked={marcados.has(entrega.id)}
-                onChange={() => alternarMarcado(entrega.id)}
-                disabled={!!baixando}
-                aria-label={`Selecionar ${entrega.arquivo}`}
-              />
+              {!simples && (
+                <input
+                  type="checkbox"
+                  className="flex-none"
+                  checked={marcados.has(entrega.id)}
+                  onChange={() => alternarMarcado(entrega.id)}
+                  disabled={!!baixando}
+                  aria-label={`Selecionar ${entrega.arquivo}`}
+                />
+              )}
               <Selo tom="ok" simbolo="✓">
                 Recebido
               </Selo>

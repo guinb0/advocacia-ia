@@ -402,6 +402,7 @@ app.add_middleware(
         "X-Impedimentos",
         "X-Arquivos",
         "X-Faltando",
+        "X-Problemas",
     ],
 )
 

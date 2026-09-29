@@ -739,6 +739,29 @@
   "status_code": null
  },
  {
+  "caminho": "/api/agente/casos/{caso_id}/pacote-protocolo/com-avulsos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "montar_pacote_com_avulsos",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "avulsos",
+    "nomes_avulsos",
+    "selecao"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
   "caminho": "/api/agente/casos/{caso_id}/peticao-protocolo",
   "tipo": "APIRoute",
   "metodos": [

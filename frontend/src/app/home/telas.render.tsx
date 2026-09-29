@@ -14,10 +14,9 @@ import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 import AgenteGeral from "@/components/AgenteGeral";
 import Carteira from "@/components/carteira/Carteira";
 import Chat from "@/components/chat/Chat";
-import Checklist from "@/components/caso/Checklist";
 import Dados from "@/components/caso/Dados";
+import DocumentacaoGuiada from "@/components/caso/DocumentacaoGuiada";
 import Dossie from "@/components/admin/Dossie";
-import PainelAnaliseDocumental from "@/components/caso/PainelAnaliseDocumental";
 import Investigacao from "@/components/carteira/Investigacao";
 import Jurimetria from "@/components/admin/Jurimetria";
 import ListaCasos from "@/components/carteira/ListaCasos";
@@ -152,7 +151,6 @@ export const DESENHO_DA_TELA: Record<Tela, DesenhoTela> = {
 
 function ChecklistDoCaso({
   sessao,
-  casoAberto,
   situacaoCaso,
   categorias,
   voltarParaCarteira,
@@ -163,9 +161,7 @@ function ChecklistDoCaso({
       {sessao.modulos.includes("documentacao") && <ChamadaDoAtendimento modo="documentacao" />}
       {situacao ? (
         <>
-          <Checklist
-            mostrarPrazos
-            buscarNoConteudo
+          <DocumentacaoGuiada
             situacao={situacao}
             enviando={situacaoCaso.enviando}
             erro={situacaoCaso.erro}
@@ -178,7 +174,6 @@ function ChecklistDoCaso({
             categorias={categorias}
             onTrocarCategoria={situacaoCaso.trocarCategoria}
           />
-          {casoAberto && <PainelAnaliseDocumental casoId={casoAberto} iniciarSozinho />}
         </>
       ) : situacaoCaso.erro ? (
         <>

@@ -227,6 +227,178 @@ def test_pasta_para_protocolo_segue_o_modelo_do_escritorio(caso):
     assert pacote.faltando == []
 
 
+def _png() -> bytes:
+    imagem = io.BytesIO()
+    Image.new("RGB", (30, 30), "white").save(imagem, format="PNG")
+    return imagem.getvalue()
+
+
+def _instantaneo(pasta) -> dict:
+    return {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in sorted(pasta.iterdir())}
+
+
+def test_avulsos_entram_na_pasta_sem_tocar_nos_originais(caso, tmp_path):
+    antes = _instantaneo(tmp_path)
+    entregas_antes = [dict(e) for e in armazenamento.listar_entregas("c1")]
+    avulsos = [
+        pacote_protocolo.ArquivoAvulso(nome="Laudo complementar", arquivo="laudo.png", conteudo=_png()),
+        pacote_protocolo.ArquivoAvulso(nome="", arquivo="declaracao testemunha.pdf", conteudo=_pdf()),
+    ]
+    pacote = pacote_protocolo.montar("c1", ["e1", "e2"], [], avulsos)
+    try:
+        with zipfile.ZipFile(pacote.caminho) as zipado:
+            nomes = [n.split("/", 1)[1] for n in zipado.namelist()]
+            laudo = zipado.read(next(n for n in zipado.namelist() if "Laudo" in n))
+    finally:
+        pacote.caminho.unlink()
+
+    assert nomes == [
+        "Petição Inicial.pdf", "Doc 1. CNH.pdf", "Doc 2. Procuração.pdf",
+        "Doc 4. Laudo Complementar.pdf", "Doc 5. Declaracao Testemunha.pdf",
+        "Lista De Documentação Para Protocolo.pdf", "Checklist.pdf",
+    ]
+    assert laudo[:4] == b"%PDF"  # a foto avulsa também vira PDF
+    # Nada gravado, renomeado ou alterado nos arquivos do caso, e nenhuma entrega nova.
+    assert _instantaneo(tmp_path) == antes
+    assert armazenamento.listar_entregas("c1") == entregas_antes
+
+
+def test_documento_com_falha_nao_derruba_a_pasta_e_diz_qual_foi(caso, monkeypatch, tmp_path):
+    originais = armazenamento.caminho_duravel_da_entrega
+    monkeypatch.setattr(
+        armazenamento, "caminho_duravel_da_entrega",
+        lambda entrega_id: tmp_path / "sumiu.pdf" if entrega_id == "e1" else originais(entrega_id),
+    )
+    monkeypatch.setattr(armazenamento, "obter_entrega", lambda _id: {})
+    monkeypatch.setattr(armazenamento, "conteudo_arquivo_entrega", lambda _e: None)
+    converter = pacote_protocolo.conversao_pdf.converter_para_pdf
+
+    def conversao_quebrada(origem, nome, destino):
+        if nome == "IMG_2031.png":
+            raise RuntimeError("imagem corrompida")
+        return converter(origem, nome, destino)
+
+    monkeypatch.setattr(pacote_protocolo.conversao_pdf, "converter_para_pdf", conversao_quebrada)
+    vazio = pacote_protocolo.ArquivoAvulso(nome="Vazio", arquivo="vazio.pdf", conteudo=b"")
+    pacote = pacote_protocolo.montar("c1", ["e1", "e2", "e4"], [], [vazio])
+    try:
+        with zipfile.ZipFile(pacote.caminho) as zipado:
+            nomes = [n.split("/", 1)[1] for n in zipado.namelist()]
+            checklist = _texto(zipado.read(next(n for n in zipado.namelist() if n.endswith("/Checklist.pdf"))))
+    finally:
+        pacote.caminho.unlink()
+
+    assert "Doc 4. Checklist.pdf" in nomes and not any("CNH" in n or "Procuração" in n for n in nomes)
+    problemas = " | ".join(pacote.problemas)
+    assert "«Doc 1. CNH.pdf»: o arquivo não foi encontrado" in problemas
+    assert "«IMG_2031.png»: não foi possível preparar o arquivo (imagem corrompida)" in problemas
+    assert "«vazio.pdf»: o arquivo chegou vazio" in problemas
+    assert set(pacote.faltando) == {"Doc 1. CNH.pdf", "IMG_2031.png", "vazio.pdf"}
+    assert "Doc 1. CNH.pdf» não pôde ser incluído" in checklist
+
+
+def test_nomes_seguros_e_sem_sobrescrever_no_zip():
+    assert pacote_protocolo._nome_seguro('Doc 4. Laudo: 1/2 "final"?\x07') == "Doc 4. Laudo- 1-2 -final--"
+    assert pacote_protocolo._nome_seguro(" ... ") == "Documento"
+    usados: set[str] = set()
+    assert [pacote_protocolo._nome_unico(n, usados) for n in ["Doc 1. RG.pdf", "doc 1. rg.pdf", "Doc 1. RG.pdf"]] == [
+        "Doc 1. RG.pdf", "doc 1. rg (2).pdf", "Doc 1. RG (3).pdf",
+    ]
+
+
+def test_rota_com_avulsos_monta_e_informa_os_problemas(caso):
+    import json
+    from urllib.parse import unquote
+
+    from starlette.datastructures import UploadFile
+
+    from app.agente import rotas
+
+    resposta = rotas.montar_pacote_com_avulsos(
+        "c1",
+        selecao=json.dumps({"selecionados": ["e1"], "faltando": []}),
+        avulsos=[
+            UploadFile(io.BytesIO(_pdf()), filename="rg novo.pdf"),
+            UploadFile(io.BytesIO(b""), filename="vazio.pdf"),
+        ],
+        nomes_avulsos=["RG atualizado", ""],
+    )
+    try:
+        with zipfile.ZipFile(resposta.path) as zipado:
+            nomes = [n.split("/", 1)[1] for n in zipado.namelist()]
+    finally:
+        pacote_protocolo.Path(resposta.path).unlink()
+
+    assert "Doc 4. RG Atualizado.pdf" in nomes
+    problemas = json.loads(unquote(resposta.headers["X-Problemas"]))
+    assert problemas == ["«vazio.pdf»: o arquivo chegou vazio e ficou fora da pasta."]
+
+
+def test_rota_com_avulsos_por_http_como_o_frontend_envia(caso):
+    import json
+    from urllib.parse import unquote
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.agente import rotas
+
+    app = FastAPI()
+    app.include_router(rotas.roteador)
+    cliente = TestClient(app)
+    resposta = cliente.post(
+        "/api/agente/casos/c1/pacote-protocolo/com-avulsos",
+        data={"selecao": json.dumps({"selecionados": ["e1", "e2"], "faltando": ["PPP"]}),
+              "nomes_avulsos": ["Laudo", "Declaração"]},
+        files=[("avulsos", ("laudo.png", _png(), "image/png")), ("avulsos", ("decl.pdf", _pdf(), "application/pdf"))],
+    )
+    assert resposta.status_code == 200, resposta.text
+    with zipfile.ZipFile(io.BytesIO(resposta.content)) as zipado:
+        nomes = [n.split("/", 1)[1] for n in zipado.namelist()]
+    assert nomes[:5] == [
+        "Petição Inicial.pdf", "Doc 1. CNH.pdf", "Doc 2. Procuração.pdf", "Doc 4. Laudo.pdf", "Doc 5. Declaração.pdf",
+    ]
+    assert json.loads(unquote(resposta.headers["X-Problemas"])) == []
+
+    sem_nomes = cliente.post(
+        "/api/agente/casos/c1/pacote-protocolo/com-avulsos",
+        data={"selecao": json.dumps({"selecionados": [], "faltando": []})},
+        files=[("avulsos", ("recibo.pdf", _pdf(), "application/pdf"))],
+    )
+    assert sem_nomes.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(sem_nomes.content)) as zipado:
+        assert any(n.endswith("/Doc 4. Recibo.pdf") for n in zipado.namelist())  # sem nome, vale o do arquivo
+
+
+def test_rota_com_avulsos_recusa_arquivo_grande(caso, monkeypatch):
+    import json
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.agente import rotas
+
+    monkeypatch.setattr(pacote_protocolo, "MAXIMO_BYTES_AVULSO", 10)
+    app = FastAPI()
+    app.include_router(rotas.roteador)
+    resposta = TestClient(app).post(
+        "/api/agente/casos/c1/pacote-protocolo/com-avulsos",
+        data={"selecao": json.dumps({"selecionados": ["e1"], "faltando": []})},
+        files=[("avulsos", ("enorme.pdf", _pdf(), "application/pdf"))],
+    )
+    assert resposta.status_code == 413 and "enorme.pdf" in resposta.json()["detail"]
+
+
+def test_rota_com_avulsos_recusa_selecao_invalida(caso):
+    from fastapi import HTTPException
+
+    from app.agente import rotas
+
+    with pytest.raises(HTTPException) as erro:
+        rotas.montar_pacote_com_avulsos("c1", selecao="{quebrado", avulsos=[], nomes_avulsos=[])
+    assert erro.value.status_code == 400
+
+
 def test_sem_peticao_nao_monta_a_pasta(caso, monkeypatch):
     monkeypatch.setattr(peticao_local, "carregar", lambda _id: None)
     with pytest.raises(pacote_protocolo.ErroPacote, match="Gere a petição"):

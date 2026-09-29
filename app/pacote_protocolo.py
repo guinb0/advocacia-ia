@@ -22,13 +22,14 @@ import copy
 import hashlib
 import io
 import logging
+import os
 import re
 import tempfile
 import time
 import uuid
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,26 @@ class ErroSelecao(ErroPacote):
     """A seleção enviada pela tela de conferência não confere com os arquivos do caso."""
 
 
+#: Arquivos colocados na conferência só para este pacote.
+MAXIMO_AVULSOS = 20
+MAXIMO_BYTES_AVULSO = int(os.getenv("PROTOCOLO_AVULSO_MAX_BYTES", str(30 * 1024 * 1024)))
+
+
+@dataclass
+class ArquivoAvulso:
+    """Arquivo colocado na conferência só para este pacote.
+
+    Não vira entrega do caso, não passa por OCR e não fica gravado: vive o tempo
+    de montar o ZIP.
+    """
+
+    #: Como o advogado quer que o documento se chame na pasta.
+    nome: str
+    #: Nome original do arquivo — dá a extensão.
+    arquivo: str
+    conteudo: bytes
+
+
 @dataclass
 class Pacote:
     #: ZIP temporário; quem serve o arquivo apaga depois.
@@ -75,6 +96,8 @@ class Pacote:
     arquivos: int
     #: Documentos citáveis que não puderam entrar no pacote.
     faltando: list[str]
+    #: Um aviso por documento que falhou ou entrou fora do padrão, dizendo qual e por quê.
+    problemas: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -159,6 +182,43 @@ def _arquivo_da_entrega(entrega: dict[str, Any], trabalho: Path) -> tuple[bytes,
         return convertido.caminho.read_bytes(), ".pdf"
     except conversao_pdf.ErroConversaoPdf:
         return caminho.read_bytes(), (caminho.suffix or Path(nome).suffix).lower()
+
+
+def _arquivo_avulso(avulso: ArquivoAvulso, trabalho: Path) -> tuple[bytes, str]:
+    """Como `_arquivo_da_entrega`, para o arquivo que só existe nesta montagem."""
+    ext = Path(avulso.arquivo).suffix.lower()
+    caminho = trabalho / f"{uuid.uuid4().hex}{ext}"
+    caminho.write_bytes(avulso.conteudo)
+    try:
+        convertido = conversao_pdf.converter_para_pdf(caminho, avulso.arquivo, trabalho / f"{uuid.uuid4().hex}.pdf")
+        return convertido.caminho.read_bytes(), ".pdf"
+    except conversao_pdf.ErroConversaoPdf:
+        return avulso.conteudo, ext
+
+
+_CONTROLE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _nome_seguro(nome: str, limite: int = 120) -> str:
+    """Nome que qualquer sistema de arquivos aceita (Windows inclusive)."""
+    limpo = " ".join(_CONTROLE.sub(" ", nome.translate(_PROIBIDOS)).split())
+    return limpo[:limite].strip(" .") or "Documento"
+
+
+def _nome_unico(nome: str, usados: set[str]) -> str:
+    """'Doc 3. RG.pdf' repetido vira 'Doc 3. RG (2).pdf': dentro do ZIP um não pode sobrescrever o outro.
+
+    A comparação ignora maiúsculas porque o Windows trata 'RG.pdf' e 'rg.pdf'
+    como o mesmo arquivo ao extrair.
+    """
+    caminho = Path(nome)
+    base, ext = caminho.stem, caminho.suffix
+    candidato, n = nome, 2
+    while candidato.casefold() in usados:
+        candidato = f"{base} ({n}){ext}"
+        n += 1
+    usados.add(candidato.casefold())
+    return candidato
 
 
 def _descricao_de(item: Any) -> str:
@@ -569,13 +629,19 @@ def montar(
     caso_id: str,
     selecionados: list[str] | None = None,
     faltando_informado: list[str] | None = None,
+    avulsos: list[ArquivoAvulso] | None = None,
 ) -> Pacote:
     """Monta o ZIP. `selecionados` são as entregas conferidas na tela; sem ele,
-    vai o padrão (documentos do ledger e planilhas).
+    vai o padrão (documentos do ledger e planilhas). `avulsos` são arquivos
+    colocados na conferência só para este pacote.
 
     Documento do ledger conserva o número que a petição cita, mesmo que outro
     tenha sido retirado — renumerar faria a peça apontar para o arquivo errado.
-    Documento acrescentado na conferência recebe o próximo número livre.
+    Documento acrescentado na conferência (do caso ou avulso) recebe o próximo
+    número livre.
+
+    Os arquivos do caso só são LIDOS: a conversão para PDF e tudo o mais
+    acontece numa pasta temporária apagada ao fim da montagem.
     """
     caso = armazenamento.obter_caso(caso_id)
     if not caso:
@@ -623,8 +689,24 @@ def montar(
     planilhas: list[_Item] = []
     documentos: list[_Item] = []
     faltando: list[str] = []
+    problemas: list[str] = []
     avisos_de_formato: list[str] = []
     incluidos: set[str] = set()
+
+    def ler(entrega: dict[str, Any], trabalho: Path) -> tuple[bytes, str] | None:
+        """O arquivo pronto para a pasta, ou `None` com o motivo registrado — um documento com
+        problema não derruba o pacote inteiro."""
+        arquivo = str(entrega.get("arquivo") or "")
+        try:
+            return _arquivo_da_entrega(entrega, trabalho)
+        except FileNotFoundError:
+            problemas.append(f"«{arquivo}»: o arquivo não foi encontrado no armazenamento do caso.")
+        except Exception as erro:  # o motivo vai para a tela e para o checklist
+            log.warning("pacote do caso %s: falha ao preparar %s", caso_id, arquivo, exc_info=True)
+            problemas.append(f"«{arquivo}»: não foi possível preparar o arquivo ({erro}).")
+        faltando.append(arquivo)
+        return None
+
     with tempfile.TemporaryDirectory(prefix="protocolo_") as pasta:
         trabalho = Path(pasta)
         for entrega in entregas:
@@ -632,11 +714,10 @@ def montar(
             if not _PLANILHA.search(arquivo) or not vai(entrega, arquivo not in copias):
                 continue
             incluidos.add(str(entrega.get("id")))
-            try:
-                conteudo, ext = _arquivo_da_entrega(entrega, trabalho)
-            except FileNotFoundError:
-                faltando.append(arquivo)
+            lido = ler(entrega, trabalho)
+            if lido is None:
                 continue
+            conteudo, ext = lido
             ext = ".PJC" if ext == ".pjc" else ext
             base = "Planilha De Cálculo"
             nome = f"{base}{ext}" if not any(p.nome == f"{base}{ext}" for p in planilhas) else f"{base} {len(planilhas) + 1}{ext}"
@@ -652,10 +733,12 @@ def montar(
                 continue
             if entrega is None:
                 faltando.append(arquivo)
+                problemas.append(f"«{arquivo}» (Documento {int(doc['numero']):02d}): não está mais entre os arquivos do caso.")
                 continue
             a_juntar.append((int(doc["numero"]), doc, entrega))
+        a_juntar.sort(key=lambda item: item[0])
+        proximo = max((int(d["numero"]) for d in ledger), default=0) + 1
         if escolhidos is not None:
-            proximo = max((int(d["numero"]) for d in ledger), default=0) + 1
             for entrega in entregas:
                 arquivo = str(entrega.get("arquivo") or "")
                 if str(entrega.get("id")) not in escolhidos or arquivo in canonicos or _PLANILHA.search(arquivo):
@@ -663,18 +746,34 @@ def montar(
                 a_juntar.append((proximo, {"canonical_file": arquivo, "document_type": ""}, entrega))
                 proximo += 1
         for numero, doc, entrega in a_juntar:
-            arquivo = str(entrega.get("arquivo") or "")
             incluidos.add(str(entrega.get("id")))
-            try:
-                conteudo, ext = _arquivo_da_entrega(entrega, trabalho)
-            except FileNotFoundError:
-                faltando.append(arquivo)
+            lido = ler(entrega, trabalho)
+            if lido is None:
                 continue
-            nome = f"Doc {numero}. {_nome_do_documento(doc, entrega, normalizar)}".translate(_PROIBIDOS)
+            conteudo, ext = lido
+            nome = _nome_seguro(f"Doc {numero}. {_nome_do_documento(doc, entrega, normalizar)}")
             if ext != ".pdf":
                 avisos_de_formato.append(f"{nome}{ext} não pôde ser convertido para PDF: converta ou retire antes do envio")
             descricao = str(entrega.get("identificacao_ia") or doc.get("document_type") or "").strip()
             documentos.append(_Item(f"{nome}{ext}", conteudo, descricao, _paginas(conteudo)))
+        for avulso in avulsos or []:
+            if not avulso.conteudo:
+                problemas.append(f"«{avulso.arquivo}»: o arquivo chegou vazio e ficou fora da pasta.")
+                faltando.append(avulso.arquivo)
+                continue
+            try:
+                conteudo, ext = _arquivo_avulso(avulso, trabalho)
+            except Exception as erro:  # o motivo vai para a tela e para o checklist
+                log.warning("pacote do caso %s: falha ao preparar o avulso %s", caso_id, avulso.arquivo, exc_info=True)
+                problemas.append(f"«{avulso.arquivo}»: não foi possível preparar o arquivo ({erro}).")
+                faltando.append(avulso.arquivo)
+                continue
+            rotulo = normalizar(avulso.nome.strip() or Path(avulso.arquivo).stem or "Documento")
+            nome = _nome_seguro(f"Doc {proximo}. {rotulo}")
+            proximo += 1
+            if ext != ".pdf":
+                avisos_de_formato.append(f"{nome}{ext} não pôde ser convertido para PDF: converta ou retire antes do envio")
+            documentos.append(_Item(f"{nome}{ext}", conteudo, "Colocado na conferência do protocolo", _paginas(conteudo)))
 
     nao_juntados = []
     for entrega in entregas:
@@ -720,6 +819,9 @@ def montar(
         ]),
         *_pendencias_da_peticao(dados),
     ]
+    usados = {"lista de documentação para protocolo.pdf", "checklist.pdf"}
+    for item in [*itens, *planilhas, *documentos]:
+        item.nome = _nome_unico(item.nome, usados)
     anexos = [*planilhas, *documentos]
     lista = _lista_de_documentacao(cabecalho, [itens[0], *anexos], nao_juntados)
     checklist = _checklist(cabecalho, [
@@ -740,4 +842,10 @@ def montar(
         zipado.writestr(f"{pasta_zip}/Lista De Documentação Para Protocolo.pdf", lista)
         zipado.writestr(f"{pasta_zip}/Checklist.pdf", checklist)
     log.info("pasta para protocolo do caso %s: %d arquivo(s), %d faltando", caso_id, len(itens) + len(anexos) + 2, len(faltando))
-    return Pacote(destino, f"{pasta_zip}.zip", len(itens) + len(anexos) + 2, faltando)
+    return Pacote(
+        destino,
+        f"{pasta_zip}.zip",
+        len(itens) + len(anexos) + 2,
+        faltando,
+        [*problemas, *avisos_de_formato],
+    )
