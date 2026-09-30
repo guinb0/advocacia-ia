@@ -419,6 +419,64 @@ def test_marcar_e_desmarcar_protocolo(monkeypatch):
     assert peticao_local.para_api(dados)["protocolo"]["numero"] == "0000123-45.2026.5.08.0001"
 
     with pytest.raises(ValueError, match="Data"):
-        peticao_local.marcar_protocolo("c1", protocolada=True, data="28/09/2026")
+        peticao_local.marcar_protocolo("c1", protocolada=True, numero="123", data="28/09/2026")
 
     assert peticao_local.marcar_protocolo("c1", protocolada=False)["protocolo"] is None
+
+
+def test_marcar_protocolo_exige_o_numero(monkeypatch):
+    guardado = {"sections": [], "status": "IN_REVIEW", "protocolo": None}
+    monkeypatch.setattr(peticao_local, "carregar", lambda _id: dict(guardado))
+    monkeypatch.setattr(peticao_local, "_salvar", lambda _id, dados: guardado.update(dados) or dados)
+
+    for vazio in ("", "   "):
+        with pytest.raises(ValueError, match="número do protocolo"):
+            peticao_local.marcar_protocolo("c1", protocolada=True, numero=vazio, data="2026-09-28")
+    assert guardado["protocolo"] is None
+
+
+def test_lista_so_as_peticoes_protocoladas(monkeypatch):
+    import json
+
+    from app import armazenamento
+
+    def linha(caso_id, cliente, protocolo, titulo="Petição inicial"):
+        return {
+            "caso_id": caso_id,
+            "cliente": cliente,
+            "categoria": "assalto",
+            "dados_json": json.dumps({"title": titulo, "status": "APPROVED", "protocolo": protocolo}, ensure_ascii=False),
+        }
+
+    linhas = [
+        linha("c1", "Ana", {"numero": "111", "data": "2026-09-20", "marcado_por": "Bia", "marcado_em": "x"}),
+        linha("c2", "João", None),
+        linha("c3", "Rui", {"numero": "333", "data": "2026-09-28", "marcado_por": "Bia", "marcado_em": "y"}),
+        {"caso_id": "c4", "cliente": "Quebrado", "categoria": "", "dados_json": "{nao é json"},
+    ]
+    consultas = []
+
+    class _Con:
+        def execute(self, sql, parametros):
+            consultas.append((sql, parametros))
+            return self
+
+        def fetchall(self):
+            return linhas
+
+    class _Conectar:
+        def __enter__(self):
+            return _Con()
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(armazenamento, "conectar", lambda: _Conectar())
+    lista = armazenamento.listar_peticoes_protocoladas()
+
+    assert [p["caso_id"] for p in lista] == ["c3", "c1"]  # mais recente primeiro
+    assert lista[0]["numero"] == "333" and lista[0]["cliente"] == "Rui"
+    assert lista[1]["marcado_por"] == "Bia" and lista[1]["titulo"] == "Petição inicial"
+    assert consultas[0][1] == ('%"protocolo": {%',)
+    # O filtro do LIKE precisa casar com o que o `json.dumps` grava.
+    assert '"protocolo": {' in linhas[0]["dados_json"]

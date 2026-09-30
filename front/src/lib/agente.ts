@@ -1224,6 +1224,24 @@ export function marcarProtocoloDaPeticao(
   });
 }
 
+export interface PeticaoProtocolada {
+  caso_id: string;
+  cliente: string;
+  categoria: string;
+  titulo: string;
+  status: Peticao["status"];
+  numero: string;
+  /** AAAA-MM-DD. */
+  data: string;
+  marcado_por: string;
+  marcado_em: string;
+}
+
+export async function listarPeticoesProtocoladas(): Promise<PeticaoProtocolada[]> {
+  const resposta = await chamar<{ peticoes: PeticaoProtocolada[] }>("/api/agente/peticoes-protocoladas");
+  return resposta.peticoes;
+}
+
 /* --------------------------------------------------------------- entrevista */
 
 /** Anexa o arquivo do atendimento ao caso. O texto é lido no servidor. */

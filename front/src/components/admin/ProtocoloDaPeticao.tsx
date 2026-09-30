@@ -6,6 +6,9 @@
  * Fica fora do `status` de revisão: aprovar é decisão interna do escritório, protocolar
  * é o que aconteceu no tribunal. Uma petição pode ser protocolada sem ter passado pela
  * revisão formal, e gerar a peça de novo não desfaz o protocolo.
+ *
+ * Digitar o número é a confirmação: sem ele o botão não libera, e o servidor recusa.
+ * As peças marcadas aparecem na tela "Peças protocoladas".
  */
 
 import { useState } from "react";
@@ -44,13 +47,19 @@ export default function ProtocoloDaPeticaoCartao({ casoId, protocolo, desabilita
     setEditando(true);
   }
 
+  const numeroDigitado = numero.trim();
+
   async function enviar(protocolada: boolean) {
+    if (protocolada && !numeroDigitado) {
+      setErro("Digite o número do protocolo para confirmar.");
+      return;
+    }
     setSalvando(true);
     setErro(null);
     try {
       const atualizada = await marcarProtocoloDaPeticao(casoId, {
         protocolada,
-        numero: numero.trim(),
+        numero: numeroDigitado,
         data,
       });
       onAtualizada(atualizada);
@@ -122,11 +131,12 @@ export default function ProtocoloDaPeticaoCartao({ casoId, protocolo, desabilita
                 value={numero}
                 maxLength={60}
                 autoFocus
+                required
                 placeholder="Ex.: 0000123-45.2026.5.08.0001"
                 onChange={(evento) => setNumero(evento.target.value)}
               />
               <p className="mt-1 mb-0 text-xs text-tinta-3">
-                Se ainda não tiver o número, deixe em branco e informe depois.
+                Digite o número que o tribunal deu ao protocolo para confirmar.
               </p>
             </div>
             <div>
@@ -142,7 +152,14 @@ export default function ProtocoloDaPeticaoCartao({ casoId, protocolo, desabilita
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Botao type="submit" variante="primario" pequeno carregando={salvando} textoCarregando="Salvando…">
+            <Botao
+              type="submit"
+              variante="primario"
+              pequeno
+              disabled={!numeroDigitado}
+              carregando={salvando}
+              textoCarregando="Salvando…"
+            >
               {protocolo ? "Salvar protocolo" : "Confirmar protocolo"}
             </Botao>
             <Botao type="button" variante="texto" pequeno disabled={salvando} onClick={() => setEditando(false)}>

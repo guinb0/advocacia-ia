@@ -81,6 +81,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // do serviço ia-juridica. A tela e a rota continuam existindo; só não aparece na
       // navegação. Basta devolver `itemDoMenu("agente")` quando o serviço estiver de pé.
       itemDoMenu("casos"),
+      itemDoMenu("pecasProtocoladas"),
       itemDoMenu("followup"),
       itemDoMenu("documentacao"),
     ],

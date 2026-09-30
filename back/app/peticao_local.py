@@ -4149,6 +4149,9 @@ def marcar_protocolo(
 
     Fica à parte de `status`: aprovação é a revisão do advogado; protocolo é o
     envio ao tribunal, e a peça pode ser protocolada sem passar pela aprovação.
+
+    O número é obrigatório: digitá-lo é a confirmação de que a peça foi mesmo
+    protocolada, e é por ele que a lista de peças protocoladas é consultada.
     """
     dados = carregar(caso_id)
     if not dados:
@@ -4157,6 +4160,8 @@ def marcar_protocolo(
         dados["protocolo"] = None
         return _salvar(caso_id, dados)
     numero = " ".join(str(numero or "").split())
+    if not numero:
+        raise ValueError("Digite o número do protocolo para confirmar.")
     if len(numero) > 60:
         raise ValueError("O número do protocolo passou de 60 caracteres.")
     data = str(data or "").strip()
