@@ -892,11 +892,14 @@ REGRAS
   a pergunta ou aprofundou tema que não ajuda a definir o caso. Cite exemplos
   concretos do mapa; não use observações genéricas como "aprofundar os fatos".
 - `perguntas_especificas` deve nascer de uma ambiguidade, contradição ou detalhe
-  realmente mencionado. Escreva no máximo 5 perguntas prontas para o cliente,
-  cada uma citando o fato concreto que precisa ser esclarecido. Não sugira EPI,
-  insalubridade, recurso, laudo ou pedido se esses assuntos não apareceram nos
-  fatos. Perguntas obrigatórias simplesmente ausentes já aparecem em `faltando`
-  e NÃO devem ser repetidas aqui.
+  realmente mencionado e que MUDE o caso. Escreva no máximo 3 perguntas curtas,
+  em português simples, prontas para ler ao cliente, cada uma citando o fato
+  concreto que precisa ser esclarecido; nenhuma é uma boa resposta. Não sugira
+  EPI, insalubridade, recurso, laudo ou pedido se esses assuntos não apareceram
+  nos fatos. Nunca peça dado de cadastro (nome, CPF, RG, PIS, endereço,
+  telefone, estado civil, nascimento, profissão): ele é colhido depois.
+  Perguntas obrigatórias simplesmente ausentes já aparecem em `faltando` e NÃO
+  devem ser repetidas aqui.
 
 Responda APENAS JSON:
 {"respostas":[{"pergunta_id":"...","valor":"...","trecho":"..."}],
@@ -1625,7 +1628,7 @@ def processar_entrevista(
             _texto(item, 400)
             for item in (perguntas_brutas if isinstance(perguntas_brutas, list) else [])
             if _texto(item, 400)
-        ][:5]
+        ][:3]
         if diagnostico or desvios or perguntas_especificas:
             insights = {
                 "foco": foco,

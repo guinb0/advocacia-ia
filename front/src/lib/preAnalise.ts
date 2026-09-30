@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { processarEntrevista, recomendarEntrevista, triarEntrevista } from "@/lib/api";
+import { idsDeQualificacao } from "@/lib/qualificacao";
 import { chaveDasRespostas } from "@/lib/roteiroContexto";
 import type {
   ContextoRevisaoRoteiro,
@@ -103,7 +104,10 @@ export async function lerEntrevista(
   );
   aoConsolidar?.(processamento);
 
-  const lacunas = processamento.faltando.filter((p) => p.obrigatoria).map((p) => p.pergunta);
+  const cadastro = idsDeQualificacao(contextoRoteiro.roteiro);
+  const lacunas = processamento.faltando
+    .filter((p) => p.obrigatoria && !cadastro.has(p.pergunta_id))
+    .map((p) => p.pergunta);
   const avisos: string[] = [];
   const promessaTriagem = triarEntrevista(transcricao).catch(() => {
     avisos.push("O tipo do caso não pôde ser classificado automaticamente.");

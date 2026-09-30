@@ -16,6 +16,7 @@ import { analisarResposta, baterAtendimentoDocumentacao, consultarCep, consultar
 import type { MunicipioLocalidade } from "@/lib/api";
 import { conferirCpf, formatarCep, formatarCpf } from "@/lib/documentos";
 import { formatarTelefone } from "@/lib/formato";
+import { idsDeQualificacao } from "@/lib/qualificacao";
 import {
   CAMPOS_TECNICOS_DIGITADOS,
   criarContextoRevisao,
@@ -481,27 +482,44 @@ export default function Roteiro({
     obterRoteiro(codigo).then(setRoteiro).catch((e) => setErro(String(e)));
   }, [codigo]);
 
-  /* O que já se sabe do caso, resumido para a conferência.
+  /* O que a conferência precisa saber para NÃO cobrar à toa.
    *
-   * Só respostas curtas — rastreio, escolhas, dados. Os relatos ficam de fora de
-   * propósito: eles são o volume da entrevista, e mandá-los inteiros a cada
-   * pergunta encareceria a conferência sem dizer mais nada do que o formato do
-   * caso, que é o que evita a análise pedir o que outra pergunta já respondeu. */
+   * Só respostas curtas — rastreio, escolhas. Os relatos ficam de fora: são o
+   * volume da entrevista e não dizem mais do que o formato do caso. Dado de
+   * cadastro também fica de fora: não ajuda a conferir nada e é dado pessoal.
+   *
+   * As OUTRAS perguntas do roteiro vão só pelo texto: sem elas o modelo cobra
+   * agora o que a pergunta seguinte vai fazer, e a pessoa pergunta duas vezes. */
   const contextoDoCaso = useCallback((exceto: string): string => {
     const atual = roteiroRef.current;
     if (!atual) return "";
-    const partes: string[] = [
-      `ROTEIRO ATIVO: ${atual.nome}${atual.descricao ? ` — ${atual.descricao}` : ""}`,
-    ];
+    const cadastro = idsDeQualificacao(atual);
+    const positivos = new Set(
+      Object.entries(atual.mapa_rastreio)
+        .filter(([perguntaId]) => respostasRef.current[perguntaId] === "sim")
+        .map(([, modulo]) => modulo),
+    );
+    const respondidas: string[] = [];
+    const outras: string[] = [];
     for (const bloco of atual.blocos) {
+      if (bloco.modulo && !positivos.has(bloco.modulo)) continue;
       for (const p of bloco.perguntas) {
-        if (p.id === exceto || p.transcrever) continue;
+        if (p.id === exceto || cadastro.has(p.id)) continue;
         const v = respostasRef.current[p.id];
         const texto = Array.isArray(v) ? v.join(", ") : (v ?? "");
-        if (texto && texto.length <= 120) partes.push(`${p.texto}: ${texto}`);
+        if (!p.transcrever && texto && texto.length <= 120) respondidas.push(`${p.texto}: ${texto}`);
+        else if (!texto) outras.push(`- ${p.texto.length > 110 ? `${p.texto.slice(0, 110)}…` : p.texto}`);
       }
     }
-    return partes.join("\n").slice(0, 1500);
+    const partes = [`ROTEIRO ATIVO: ${atual.nome}${atual.descricao ? ` — ${atual.descricao}` : ""}`];
+    if (respondidas.length) partes.push("JÁ RESPONDIDO:", ...respondidas);
+    if (outras.length) {
+      partes.push(
+        "OUTRAS PERGUNTAS DO ROTEIRO (serão feitas na hora delas; não cobre o que elas tratam):",
+        ...outras,
+      );
+    }
+    return partes.join("\n").slice(0, 3500);
   }, []);
 
   const conferir = useCallback(

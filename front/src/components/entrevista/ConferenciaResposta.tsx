@@ -6,11 +6,12 @@ import type { AnaliseResposta } from "@/lib/types";
  *
  * Aparece embaixo da própria pergunta, enquanto o cliente ainda está na frente —
  * que é a única hora em que serve para alguma coisa. Descoberto depois, "faltou
- * perguntar se houve CAT" vira ligação de volta, e o cliente que já contou a
- * história uma vez não a conta igual na segunda.
+ * perguntar quando saiu da empresa" vira ligação de volta.
  *
- * O painel é pequeno de propósito. Três lacunas e três perguntas: mais que isso
- * ninguém lê no meio de uma entrevista, e o que não é lido não é conferido. */
+ * Quem conduz pode não ser advogado, e está com o cliente esperando: o painel
+ * mostra só o que dá para LER EM VOZ ALTA, no máximo duas perguntas. A lista de
+ * lacunas (`faltam`) é o mesmo conteúdo em outra forma, e só aparece quando o
+ * modelo não trouxe pergunta pronta. */
 
 interface Props {
   analise: AnaliseResposta | null;
@@ -45,53 +46,46 @@ export default function ConferenciaResposta({ analise, carregando, erro, onRefaz
 
   if (!analise) return null;
 
-  if (analise.suficiente) {
+  const perguntas = analise.perguntar;
+  const lacunas = perguntas.length > 0 ? [] : analise.faltam.map((f) => f.item);
+
+  if (perguntas.length === 0 && lacunas.length === 0 && !analise.observacao) {
     return (
       <div className={BLOCO} aria-live="polite">
         <span className="font-normal text-[12px] leading-[1.5] font-ui text-ok">
-          ✓ Nada a acrescentar neste ponto.
+          ✓ Resposta completa. Pode seguir.
         </span>
-        {!analise.com_precedentes && <SemPrecedentes />}
       </div>
     );
   }
 
   return (
     <div className={BLOCO} aria-live="polite">
-      <div className="flex items-baseline gap-2 flex-wrap mb-[6px]">
-        <span className={ROTULO}>o que falta neste ponto</span>
-        {!analise.com_precedentes && <SemPrecedentes />}
-      </div>
+      {(perguntas.length > 0 || lacunas.length > 0) && (
+        <div className="flex items-baseline gap-2 flex-wrap mb-[6px]">
+          <span className={ROTULO}>{perguntas.length > 0 ? "pergunte ao cliente" : "falta neste ponto"}</span>
+          {!analise.com_precedentes && <SemPrecedentes />}
+        </div>
+      )}
 
-      {analise.faltam.length > 0 && (
-        <ul className="m-0 pl-4 font-normal text-[12px] leading-[1.6] font-ui">
-          {analise.faltam.map((f) => (
-            <li key={f.item} className="mb-[2px]">
-              {f.item}
-              {f.precedentes.map((p) => (
-                <ReferenciaPrecedente key={p} indice={p} analise={analise} />
-              ))}
+      {perguntas.length > 0 && (
+        <ul className="m-0 pl-4 font-normal text-[13px] leading-[1.55] font-titulo">
+          {perguntas.map((p) => (
+            <li key={p} className="mb-[3px]">
+              {p}
             </li>
           ))}
         </ul>
       )}
 
-      {/* Prontas para ler em voz alta: é o formato que economiza o tempo do
-        * entrevistador, que senão precisa traduzir "verificar se houve CAT"
-        * numa pergunta enquanto o cliente espera. */}
-      {analise.perguntar.length > 0 && (
-        <>
-          <span className="block mt-[9px] mb-1 text-[9.5px] font-semibold leading-[1.4] font-ui tracking-[0.13em] uppercase text-tinta-3">
-            pergunte ao cliente
-          </span>
-          <ul className="m-0 pl-4 font-normal text-[13px] leading-[1.55] font-titulo">
-            {analise.perguntar.map((p) => (
-              <li key={p} className="mb-[3px]">
-                {p}
-              </li>
-            ))}
-          </ul>
-        </>
+      {lacunas.length > 0 && (
+        <ul className="m-0 pl-4 font-normal text-[12px] leading-[1.6] font-ui">
+          {lacunas.map((item) => (
+            <li key={item} className="mb-[2px]">
+              {item}
+            </li>
+          ))}
+        </ul>
       )}
 
       {analise.observacao && (
@@ -110,39 +104,6 @@ export default function ConferenciaResposta({ analise, carregando, erro, onRefaz
         </button>
       )}
     </div>
-  );
-}
-
-const PRECEDENTE =
-  "inline-block ml-[5px] px-1 py-[1px] border border-borda-forte text-[9.5px] font-normal leading-[1.4] font-codigo text-tinta-3 no-underline align-[1px]";
-
-/** O processo que sustenta a lacuna. Vira link quando há URL pública. */
-function ReferenciaPrecedente({
-  indice,
-  analise,
-}: {
-  indice: string;
-  analise: AnaliseResposta;
-}) {
-  const p = analise.precedentes.find((x) => x.indice === indice);
-  if (!p) return null;
-
-  const titulo = [p.processo, p.resultado, p.vara].filter(Boolean).join(" · ");
-
-  return p.url ? (
-    <a
-      className={`${PRECEDENTE} hover:text-tinta hover:border-tinta`}
-      href={p.url}
-      target="_blank"
-      rel="noreferrer"
-      title={titulo}
-    >
-      {indice}
-    </a>
-  ) : (
-    <span className={PRECEDENTE} title={titulo}>
-      {indice}
-    </span>
   );
 }
 

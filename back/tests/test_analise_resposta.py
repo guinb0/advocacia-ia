@@ -35,19 +35,20 @@ RESPOSTA = (
 
 #: O que o modelo devolve. Mistura as duas formas de `faltam` de propósito — ele
 #: alterna entre string e objeto mesmo com `response_format` de JSON, e uma
-#: string chegando onde a tela espera objeto derrubaria o painel inteiro.
+#: string chegando onde a tela espera objeto derrubaria o painel inteiro. O CPF
+#: está ali porque o modelo às vezes cobra cadastro mesmo proibido no prompt.
 RETORNO_MODELO = {
     "suficiente": False,
     "faltam": [
-        {"item": "CAT não mencionada", "precedentes": ["P1"]},
-        "Não diz se houve testemunha",
+        {"item": "CPF do cliente", "precedentes": ["P1"]},
         {"item": "Tempo de afastamento indefinido", "precedentes": ["P9", "P2"]},
-        {"item": "quarto item que deve ser cortado", "precedentes": []},
+        "Não diz se houve testemunha",
+        {"item": "terceiro item que deve ser cortado", "precedentes": []},
     ],
     "perguntar": [
-        "A empresa chegou a emitir a CAT?",
-        "Alguém viu o cabo arrebentar?",
+        "Qual é o seu CPF?",
         "Quantos dias o senhor ficou afastado?",
+        "Alguém viu o cabo arrebentar?",
         "pergunta a mais que deve ser cortada",
     ],
     "observacao": "  Afastamento   sem data\n  dificulta o cálculo. ",
@@ -118,9 +119,20 @@ def testar_formato() -> int:
 
     r = analise_resposta.analisar("en_acidente", "O que exatamente aconteceu?", RESPOSTA)
 
-    falhas += not checar(len(r["faltam"]) == 3, f"no máximo 3 lacunas ({len(r['faltam'])})")
+    teto = analise_resposta.MAXIMO_SUGESTOES
+    falhas += not checar(teto <= 2, f"no máximo 2 sugestões por resposta ({teto})")
+    falhas += not checar(len(r["faltam"]) == teto, f"lacunas cortadas no teto ({len(r['faltam'])})")
     falhas += not checar(
-        len(r["perguntar"]) == 3, f"no máximo 3 perguntas ({len(r['perguntar'])})"
+        len(r["perguntar"]) == teto, f"perguntas cortadas no teto ({len(r['perguntar'])})"
+    )
+    falhas += not checar(
+        not any("CPF" in f["item"] for f in r["faltam"])
+        and not any("CPF" in p for p in r["perguntar"]),
+        "dado de cadastro some mesmo quando o modelo insiste",
+    )
+    falhas += not checar(
+        r["perguntar"][0] == "Quantos dias o senhor ficou afastado?",
+        f"e a vaga vai para a pergunta do caso ({r['perguntar'][0]!r})",
     )
     falhas += not checar(
         all(isinstance(f, dict) and "item" in f for f in r["faltam"]),
@@ -133,10 +145,10 @@ def testar_formato() -> int:
 
     # P9 não existe entre os dois precedentes enviados: é referência alucinada.
     # O item fica (a lacuna pode ser real); a referência falsa sai.
-    terceiro = r["faltam"][2]
+    primeiro = r["faltam"][0]
     falhas += not checar(
-        terceiro["precedentes"] == ["P2"],
-        f"índice de precedente inexistente é descartado ({terceiro['precedentes']})",
+        primeiro["precedentes"] == ["P2"],
+        f"índice de precedente inexistente é descartado ({primeiro['precedentes']})",
     )
     falhas += not checar(
         r["observacao"] == "Afastamento sem data dificulta o cálculo.",

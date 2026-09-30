@@ -11,6 +11,7 @@ import Roteiro from "@/components/entrevista/Roteiro";
 import type { EstadoEscuta, ManipuladorRoteiro } from "@/components/entrevista/Roteiro";
 import { lerEntrevista, usarPreAnalise } from "@/lib/preAnalise";
 import type { LeituraDaEntrevista } from "@/lib/preAnalise";
+import { eQualificacao, idsDeQualificacao } from "@/lib/qualificacao";
 import { chaveDasRespostas } from "@/lib/roteiroContexto";
 import type {
   ContextoRevisaoRoteiro,
@@ -150,6 +151,7 @@ function TipoProvavel({ triagem }: { triagem: ResultadoFinal["triagem"] }) {
  * pergunta pronta ao lado vale mais que qualquer leitura de mérito depois. */
 function LeituraDaConducao({ insights }: { insights: ProcessamentoEntrevista["insights_entrevista"] }) {
   if (!insights) return null;
+  const perguntas = insights.perguntas_especificas.filter((p) => !eQualificacao(p)).slice(0, 3);
   const tom =
     insights.foco === "adequado" ? "text-ok" : insights.foco === "parcial" ? "text-atencao" : "text-critico";
   const rotulo =
@@ -171,11 +173,11 @@ function LeituraDaConducao({ insights }: { insights: ProcessamentoEntrevista["in
           {insights.desvios.map((d) => <li key={d}>{d}</li>)}
         </ul>
       )}
-      {insights.perguntas_especificas.length > 0 && (
+      {perguntas.length > 0 && (
         <>
           <strong className="mt-3 block text-xs">Ainda dá para perguntar</strong>
           <ul className="mt-1 pl-5 text-xs leading-[1.6]">
-            {insights.perguntas_especificas.map((p) => (
+            {perguntas.map((p) => (
               <li key={p}><strong>Pergunte:</strong> “{p}”</li>
             ))}
           </ul>
@@ -197,6 +199,8 @@ function LeituraDaConducao({ insights }: { insights: ProcessamentoEntrevista["in
 function LeituraPorPrecedentes({ analise }: { analise: Estrategia | null }) {
   if (!analise) return null;
   const merito = analise.estatisticas?.desfechos_merito;
+  const perguntasCriticas = (analise.perguntas_criticas ?? []).filter((p) => !eQualificacao(p)).slice(0, 3);
+  const lacunas = analise.lacunas.filter((l) => !eQualificacao(l)).slice(0, 3);
   return (
     <details className="mt-3">
       <summary className="cursor-pointer text-xs font-bold">
@@ -249,20 +253,20 @@ function LeituraPorPrecedentes({ analise }: { analise: Estrategia | null }) {
         </>
       )}
 
-      {analise.perguntas_criticas && analise.perguntas_criticas.length > 0 && (
+      {perguntasCriticas.length > 0 && (
         <>
           <strong className="mt-3 block text-xs">Perguntas que os precedentes sugerem</strong>
           <ul className="mt-1 pl-5 text-xs leading-[1.6]">
-            {analise.perguntas_criticas.map((p) => <li key={p}><strong>Pergunte:</strong> “{p}”</li>)}
+            {perguntasCriticas.map((p) => <li key={p}><strong>Pergunte:</strong> “{p}”</li>)}
           </ul>
         </>
       )}
 
-      {analise.lacunas.length > 0 && (
+      {lacunas.length > 0 && (
         <>
           <strong className="mt-3 block text-xs">Provas que costumam faltar</strong>
           <ul className="mt-1 pl-5 text-xs leading-[1.6]">
-            {analise.lacunas.map((l) => <li key={l}>{l}</li>)}
+            {lacunas.map((l) => <li key={l}>{l}</li>)}
           </ul>
         </>
       )}
@@ -279,10 +283,12 @@ function LeituraPorPrecedentes({ analise }: { analise: Estrategia | null }) {
 /* A recomendação de triagem: vale abrir o caso?
  *
  * Decisão reversível, e o texto diz isso — a rota que a produz é explícita ao
- * separar triagem de previsão de êxito (`/api/entrevista/recomendacao`). O que
- * mais importa aqui não é o veredito e sim `lacunas_obrigatorias`: o que falta
- * conseguir ANTES de aceitar, que ainda dá para pedir com o cliente na sala. */
-function RecomendacaoDeTriagem({ recomendacao }: { recomendacao: ResultadoFinal["recomendacao"] }) {
+ * separar triagem de previsão de êxito (`/api/entrevista/recomendacao`).
+ *
+ * `lacunas_obrigatorias` são as mesmas perguntas "necessário antes de encerrar"
+ * que o painel já lista logo acima. Repeti-las aqui dobrava a lista e fazia
+ * parecer que havia o dobro de coisa a perguntar — fica só a contagem. */
+function RecomendacaoDeTriagem({ recomendacao, obrigatorias }: { recomendacao: ResultadoFinal["recomendacao"]; obrigatorias: number }) {
   if (!recomendacao) return null;
   const tom: Record<string, string> = {
     sim: "text-ok",
@@ -297,7 +303,7 @@ function RecomendacaoDeTriagem({ recomendacao }: { recomendacao: ResultadoFinal[
     indefinido: "sem sinal suficiente",
   };
   return (
-    <details open={recomendacao.lacunas_obrigatorias.length > 0} className="mt-3">
+    <details open={obrigatorias > 0} className="mt-3">
       <summary className="cursor-pointer text-xs font-bold">
         Triagem do caso{" "}
         <span className={`font-semibold ${tom[recomendacao.recomendado]}`}>
@@ -307,13 +313,10 @@ function RecomendacaoDeTriagem({ recomendacao }: { recomendacao: ResultadoFinal[
       {recomendacao.motivo && (
         <p className="mt-2 mb-0 text-xs leading-[1.6] text-tinta-2">{recomendacao.motivo}</p>
       )}
-      {recomendacao.lacunas_obrigatorias.length > 0 && (
-        <>
-          <strong className="mt-3 block text-xs">Conseguir antes de aceitar</strong>
-          <ul className="mt-1 pl-5 text-xs leading-[1.6]">
-            {recomendacao.lacunas_obrigatorias.map((l) => <li key={l}>{l}</li>)}
-          </ul>
-        </>
+      {obrigatorias > 0 && (
+        <p className="mt-2 mb-0 text-xs font-semibold leading-[1.6]">
+          Antes de aceitar: {obrigatorias === 1 ? "falta 1 resposta necessária" : `faltam ${obrigatorias} respostas necessárias`} (listadas acima).
+        </p>
       )}
       {!recomendacao.com_precedentes && (
         <p className="mt-2 mb-0 text-[11.5px] leading-[1.5] text-atencao">
@@ -329,42 +332,35 @@ function RecomendacaoDeTriagem({ recomendacao }: { recomendacao: ResultadoFinal[
   );
 }
 
-/* A QUALIFICAÇÃO NÃO ENTRA NA CONFERÊNCIA — ela é etapa DEPOIS da entrevista.
- *
- * Nome, CPF, estado civil, UF e município são digitados fora da conversa (é o
- * que `escuta.DADOS_DIGITADOS` fixa do lado do servidor), e o bloco de
- * qualificação inteiro sai da entrevista por `delegado_a` — hoje ele é de outra
- * equipe, e o próprio backend tem um `IDS_QUALIFICACAO_POS_ENTREVISTA` com esse
- * nome. Listar esses campos aqui como "ainda não perguntado" enchia a
- * conferência de pendência que ninguém ia resolver com o cliente na linha, e
- * empurrava para baixo o que de fato importa: o que a pessoa contou e o que
- * ficou faltando DO CASO.
- *
- * O filtro sai do roteiro em uso, e não de uma lista de nomes de campo escrita
- * aqui: roteiro importado de outro escritório nomeia "cpf" como quiser, e a
- * regra que vale é a mesma do servidor — bloco delegado, campo com dígito
- * verificador, ou dado digitado por regra. */
-const DADOS_DIGITADOS = new Set(["nome", "cpf", "estado_civil", "uf", "municipio"]);
+/* Quanto de cada lista aparece de cara. Quem conduz lê isto com o cliente na
+ * linha: cinco pendências dá para resolver, quinze ninguém lê. O resto fica
+ * a um clique, e as necessárias vêm primeiro. */
+const VISIVEIS = 5;
 
-function idsDeQualificacao(roteiro: RoteiroCompleto | null): Set<string> {
-  const ids = new Set(DADOS_DIGITADOS);
-  for (const bloco of roteiro?.blocos ?? []) {
-    for (const pergunta of bloco.perguntas) {
-      if (bloco.delegado_a || pergunta.validacao) ids.add(pergunta.id);
-    }
-  }
-  return ids;
+function semQualificacao<T extends { pergunta_id: string }>(itens: T[], ids: Set<string>): T[] {
+  return itens.filter((p) => !ids.has(p.pergunta_id));
 }
 
-function semQualificacao(itens: PerguntaPendente[], ids: Set<string>): PerguntaPendente[] {
-  return itens.filter((p) => !ids.has(p.pergunta_id));
+function MostrarMais({ escondidos, abertos, alternar }: { escondidos: number; abertos: boolean; alternar: () => void }) {
+  if (escondidos <= 0) return null;
+  return (
+    <button type="button" className="mt-1 border-none bg-transparent p-0 text-[11.5px] text-acao underline cursor-pointer" onClick={alternar}>
+      {abertos ? "mostrar menos" : `mostrar mais ${escondidos}`}
+    </button>
+  );
 }
 
 export function PainelFinal({ resultado, roteiro, onVoltar, onIrPara, podeIrPara, podeComplementar = true }: { resultado: ResultadoFinal; roteiro: RoteiroCompleto | null; onVoltar: () => void; onIrPara: (id: string) => void; podeIrPara: (id: string) => boolean; podeComplementar?: boolean }) {
   const { processamento, avisos, provisorio } = resultado;
+  const [todasFaltando, setTodasFaltando] = useState(false);
+  const [todasIncertas, setTodasIncertas] = useState(false);
   const qualificacao = idsDeQualificacao(roteiro);
-  const faltando = semQualificacao(processamento.faltando, qualificacao);
-  const incertas = processamento.incertas.filter((p) => !qualificacao.has(p.pergunta_id));
+  const faltando = semQualificacao(processamento.faltando, qualificacao)
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => Number(b.p.obrigatoria) - Number(a.p.obrigatoria) || a.i - b.i)
+    .map(({ p }) => p);
+  const incertas = semQualificacao(processamento.incertas, qualificacao);
+  const obrigatorias = faltando.filter((p) => p.obrigatoria).length;
   return (
     <section className="w-full border-l-4 border-tinta bg-papel-2 px-4 py-[14px]" aria-live="polite">
       <strong className="block text-[14px] text-tinta">Leitura da entrevista</strong>
@@ -399,12 +395,14 @@ export function PainelFinal({ resultado, roteiro, onVoltar, onIrPara, podeIrPara
       )}
       {faltando.length > 0 && (
         <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">Sobre o caso, ainda sem resposta ({faltando.length})</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{faltando.map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{(todasFaltando ? faltando : faltando.slice(0, VISIVEIS)).map((p) => <li key={p.pergunta_id}><strong>Pergunte:</strong> “{p.pergunta}”{p.obrigatoria ? " — necessário antes de encerrar" : ""} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+          <MostrarMais escondidos={faltando.length - VISIVEIS} abertos={todasFaltando} alternar={() => setTodasFaltando((v) => !v)} />
         </details>
       )}
       {incertas.length > 0 && (
         <details open className="mt-3"><summary className="cursor-pointer text-xs font-bold">O que precisa ser confirmado ({incertas.length})</summary>
-          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{incertas.slice(0, 10).map((p) => <li key={p.pergunta_id}><strong>Confirme com o cliente:</strong> {p.motivo} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+          <ul className="mt-2 pl-5 text-xs leading-[1.6]">{(todasIncertas ? incertas : incertas.slice(0, VISIVEIS)).map((p) => <li key={p.pergunta_id}><strong>Confirme com o cliente:</strong> {p.motivo} {podeComplementar && podeIrPara(p.pergunta_id) && <button type="button" className="ml-2 underline text-acao" onClick={() => onIrPara(p.pergunta_id)}>ir ao campo</button>}</li>)}</ul>
+          <MostrarMais escondidos={incertas.length - VISIVEIS} abertos={todasIncertas} alternar={() => setTodasIncertas((v) => !v)} />
         </details>
       )}
 
@@ -413,7 +411,7 @@ export function PainelFinal({ resultado, roteiro, onVoltar, onIrPara, podeIrPara
         * chegava à tela. */}
       <TipoProvavel triagem={resultado.triagem} />
       <LeituraPorPrecedentes analise={processamento.analise} />
-      <RecomendacaoDeTriagem recomendacao={resultado.recomendacao} />
+      <RecomendacaoDeTriagem recomendacao={resultado.recomendacao} obrigatorias={obrigatorias} />
 
       {avisos.map((aviso) => <p key={aviso} className="mt-3 text-xs text-atencao">{aviso}</p>)}
     </section>
