@@ -506,7 +506,10 @@ A decisão final é sempre do advogado.
 As `perguntas_criticas` aparecem para uma pessoa que pode não ser do Direito.
 Escreva perguntas curtas, diretas e prontas para ela ler ao cliente, em português
 simples. Evite jargão e nunca diga apenas para "apurar", "investigar" ou
-"confirmar o nexo": diga exatamente o que deve ser perguntado.
+"confirmar o nexo": diga exatamente o que deve ser perguntado. No máximo 3
+perguntas e 3 lacunas, só o que muda o caso (fato ou prova). Nunca peça dado de
+cadastro (nome, CPF, RG, endereço, telefone, estado civil, nascimento): ele é
+colhido em outra etapa.
 
 Responda apenas JSON no formato:
 {"resumo":"...","acoes":[{"acao":"...","porque":"...","aplicabilidade":"...","contrapontos":"...","forca":"alta|media|baixa","precedentes":["P1"]}],

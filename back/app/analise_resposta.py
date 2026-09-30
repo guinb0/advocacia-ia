@@ -12,9 +12,11 @@ TEM DE SER CURTO, E É POR ISSO QUE NÃO É O `/api/estrategia`
 O `rag.sugerir_acoes` existe e é bom, mas produz um parecer: resumo, ações,
 riscos, lacunas, estatística da amostra. Isso se lê uma vez por caso, com calma.
 Aqui roda uma vez por PERGUNTA — várias por entrevista, várias entrevistas por
-dia. O que cabe na tela entre uma pergunta e a seguinte são três itens e três
-perguntas de acompanhamento, prontas para ler em voz alta. Mais que isso não é
-lido, e o que não é lido não é conferido.
+dia. O que cabe na tela entre uma pergunta e a seguinte são no máximo duas
+perguntas de acompanhamento, prontas para ler em voz alta — e, na maioria das
+respostas, nenhuma. Quem conduz pode não ser advogado: sugestão que não muda o
+caso (cadastro, detalhe por detalhe, o que outra pergunta do roteiro já cobre)
+só ensina a pessoa a ignorar o painel.
 
 QUANDO O BANCO DE PRECEDENTES NÃO RESPONDE
 
@@ -61,12 +63,39 @@ TEMPO_CONEXAO_S = 6
 TEMPO_MODELO_S = 25.0
 
 #: Quantos precedentes entram no contexto. Poucos de propósito: o que sai é uma
-#: lista de três itens, e oito processos só encareceriam a mesma resposta.
+#: lista de até duas perguntas, e oito processos só encareceriam a mesma resposta.
 PRECEDENTES = 4
 
 #: Resposta curta demais não rende análise — e a pergunta ainda está sendo
 #: respondida. Abaixo disto o pedido é recusado sem gastar chamada nenhuma.
 MINIMO_CARACTERES = 40
+
+#: Teto de lacunas e de perguntas por resposta. A instrução pede o mesmo, mas o
+#: modelo nem sempre obedece, e o corte aqui é o que a tela garante.
+MAXIMO_SUGESTOES = 2
+
+#: Até onde o contexto do caso entra no prompt. Cabe o roteiro ativo, as
+#: respostas curtas já dadas e a lista das outras perguntas do roteiro — é essa
+#: lista que impede a conferência de cobrar o que vem na pergunta seguinte.
+MAXIMO_CONTEXTO = 3_500
+
+#: Dados de cadastro. São colhidos em outra etapa, e a conferência não pode
+#: pedi-los mesmo quando o modelo insiste. Ficam de fora de propósito carteira
+#: (carteira assinada é fato do caso), e-mail, WhatsApp e telefone soltos
+#: (mensagem da empresa é prova): só o uso cadastral deles é filtrado.
+_QUALIFICACAO = re.compile(
+    r"\bcpf\b|\brg\b|carteira de identidade|\bcep\b|estado civil|nacionalidade|"
+    r"naturalidade|data de nascimento|\bnasceu\b|nome completo|nome d[ao] (m[aã]e|pai)|"
+    r"nome dos pais|filia[cç][aã]o|\bpis\b|\bnit\b|pasep|t[ií]tulo de eleitor|"
+    r"profiss[aã]o|escolaridade|renda familiar|"
+    r"(seu|sua|n[uú]mero de) (telefone|celular|e-?mail)|(telefone|e-?mail) (de|para) contato|"
+    r"(seu|sua) endere[cç]o|endere[cç]o (residencial|completo|atual)|onde (o senhor|a senhora|voc[eê]) mora",
+    re.IGNORECASE,
+)
+
+
+def _e_qualificacao(texto: str) -> bool:
+    return bool(_QUALIFICACAO.search(texto))
 
 #: Quantas falhas abrem o disjuntor.
 #:
@@ -205,49 +234,51 @@ def _buscar_precedentes(consulta: str) -> list[rag.TrechoSimilar]:
 
 # ------------------------------------------------------------------ o modelo
 
-INSTRUCAO = """Você assessora um advogado brasileiro DURANTE a entrevista inicial com o
-cliente. Acabou de ser dada UMA resposta. Sua tarefa é dizer o que ainda falta
-perguntar sobre ESSE ponto — nada além disso.
+INSTRUCAO = """Você ajuda quem conduz a entrevista inicial de um escritório trabalhista.
+Essa pessoa pode não ser advogada e está com o cliente na frente: ela precisa bater
+o olho e saber o que perguntar, sem pensar. Acabou de ser dada UMA resposta. Diga
+se falta algo IMPORTANTE sobre ESSE ponto — e só isso.
 
-REGRAS
-- O CONTEXTO traz o ROTEIRO ATIVO. O assunto é o desse roteiro e o desta
-  pergunta: nunca cobre acidente, CAT, INSS, assalto, doença, afastamento ou
-  qualquer tema que nem a pergunta nem o roteiro tratam. Os exemplos abaixo são
-  só ilustração do formato.
-- Seja MUITO breve. Isto é lido em segundos, com o cliente na frente.
-- No máximo 3 lacunas e no máximo 3 perguntas. Menos é melhor.
-- Cada pergunta deve estar pronta para ser LIDA EM VOZ ALTA ao cliente, na
-  segunda pessoa ("O senhor chegou a...?"). Nada de "verificar se o cliente...".
-- Só aponte o que a resposta NÃO trouxe. Se ela já respondeu, não repita.
+O QUE É IMPORTANTE
+- Só o que muda o caso: o que o advogado precisa para decidir se entra com a ação
+  ou para escrever a petição sobre ESTE ponto. Se a falta não muda isso, não cobre.
+- Resposta que já conta o essencial do ponto É SUFICIENTE, mesmo curta. Não cobre
+  detalhe por cobrar (horário exato, nome de cada colega, dia da semana).
+- Pergunta composta respondida pela metade: cobre só a parte sem resposta.
+
+NUNCA COBRE
+- Dado de cadastro: nome, CPF, RG, PIS, endereço, CEP, telefone ou e-mail para
+  contato, estado civil, nacionalidade, profissão, data de nascimento, nome dos
+  pais, escolaridade. Isso é colhido em outra etapa.
+- O que outra pergunta do roteiro trata (veja OUTRAS PERGUNTAS DO ROTEIRO e JÁ
+  RESPONDIDO no contexto): ela será feita na hora dela.
+- Tema que nem esta pergunta nem o roteiro ativo tratam.
+- O que a resposta já trouxe.
+- Pedido genérico sem ligação com o que foi contado ("mais detalhes", "tem algum
+  documento?", "tem testemunha?").
+
+FORMATO
+- No máximo 2 perguntas, e só se forem mesmo necessárias. Nenhuma é uma ótima
+  resposta: devolva `suficiente=true` e as listas vazias.
+- Cada pergunta curta, em português simples, pronta para ler em voz alta ao
+  cliente ("O senhor lembra em que mês isso aconteceu?"). Sem jargão, sem
+  "verificar se...".
+- `faltam` traz o nome curto (até 6 palavras) de cada coisa perguntada, na mesma
+  ordem de `perguntar`.
+- Havendo PRECEDENTES, use-os só para saber o que costuma decidir casos assim e
+  cite o índice em `precedentes`. Sem precedentes, deixe a lista vazia.
 - Não invente fato, não sugira o que responder, não prometa resultado.
-- Havendo PRECEDENTES, use-os para saber o que costuma ser exigido em casos assim
-  e cite o índice em `precedentes` do item. Sem precedentes, deixe a lista vazia.
-- Ignore o que pertence a outra pergunta do roteiro (CPF, endereço, RG): aqui só
-  interessa o assunto desta resposta.
-
-SEJA EXIGENTE. `suficiente=true` é EXCEÇÃO, não o padrão.
-- Pergunta composta respondida pela metade é INCOMPLETA. "Ainda trabalha na
-  empresa? Se não, quando saiu e como foi o desligamento?" respondida com
-  "ainda trabalho lá" ainda deixa em aberto desde quando, em que função e se o
-  problema relatado continua acontecendo.
-- Resposta de uma frase quase nunca basta. Pergunte-se o que um advogado
-  trabalhista precisaria saber a mais sobre ESTE ponto para peticionar: datas,
-  nomes, valores, documentos, testemunhas, periodicidade.
-- Se a resposta contiver trecho ININTELIGÍVEL, repetição sem sentido, teste de
-  microfone ou conversa paralela ("alô alô", "testando", "não sei o que dizer"),
-  diga isso em `observacao`, trate a resposta como incompleta e pergunte de novo
-  o que ficou perdido. O texto vem de transcrição de voz: o que estiver
-  truncado ou embolado precisa ser confirmado, não presumido.
-- Só devolva `suficiente=true` quando a resposta cobrir o ponto com datas e
-  detalhes suficientes para constar de uma petição sem nova ligação ao cliente.
+- O texto vem de transcrição de voz. Se vier embolado, sem sentido, ou for teste
+  de microfone ou conversa paralela, diga isso em `observacao` e peça para repetir
+  só o que se perdeu.
+- `observacao` também serve, em uma frase, para contradição na própria resposta.
+  Fora isso, deixe vazia.
 
 Responda APENAS JSON:
 {"suficiente":true|false,
- "faltam":[{"item":"CAT não mencionada","precedentes":["P1"]}],
- "perguntar":["A empresa chegou a emitir a CAT?"],
- "observacao":""}
-`observacao` é opcional, no máximo uma frase, só quando houver algo que não caiba
-como lacuna (contradição na própria resposta, prazo prestes a prescrever)."""
+ "faltam":[{"item":"mês em que aconteceu","precedentes":[]}],
+ "perguntar":["O senhor lembra em que mês isso aconteceu?"],
+ "observacao":""}"""
 
 
 def _chamar_modelo(mensagem: str) -> dict[str, Any]:
@@ -309,7 +340,7 @@ def _normalizar_faltam(bruto: Any, validos: set[str]) -> list[dict[str, Any]]:
             refs = entrada.get("precedentes")
         else:
             texto, refs = _texto_curto(entrada), []
-        if not texto:
+        if not texto or _e_qualificacao(texto):
             continue
         # A chave pode vir ausente (None) ou como string solta em vez de lista —
         # normalizar ANTES de percorrer, senão o item derruba a análise inteira.
@@ -320,7 +351,7 @@ def _normalizar_faltam(bruto: Any, validos: set[str]) -> list[dict[str, Any]]:
         # Índice citado que não existe entre os precedentes enviados é alucinação
         # de referência: o item fica, a referência falsa sai.
         itens.append({"item": texto, "precedentes": [str(r) for r in refs if str(r) in validos]})
-    return itens[:3]
+    return itens[:MAXIMO_SUGESTOES]
 
 
 def _referencias(precedentes: list[rag.TrechoSimilar]) -> list[dict[str, Any]]:
@@ -374,7 +405,7 @@ def analisar(
 
     partes = [f"PERGUNTA DO ROTEIRO:\n{pergunta}", f"RESPOSTA DO CLIENTE:\n{resposta[:6000]}"]
     if contexto.strip():
-        partes.append(f"JÁ SE SABE DO CASO:\n{contexto.strip()[:1500]}")
+        partes.append(f"CONTEXTO:\n{contexto.strip()[:MAXIMO_CONTEXTO]}")
     if precedentes:
         blocos = [
             f"[P{i}] processo={t.referencia()['processo']} "
@@ -393,8 +424,10 @@ def analisar(
 
     faltam = _normalizar_faltam(bruto.get("faltam"), validos)
     perguntar = [
-        _texto_curto(p) for p in (bruto.get("perguntar") or []) if _texto_curto(p)
-    ][:3]
+        _texto_curto(p)
+        for p in (bruto.get("perguntar") or [])
+        if _texto_curto(p) and not _e_qualificacao(_texto_curto(p))
+    ][:MAXIMO_SUGESTOES]
 
     resultado = {
         # O modelo às vezes diz `suficiente: true` e lista lacunas na mesma

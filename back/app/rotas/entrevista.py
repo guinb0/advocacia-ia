@@ -255,8 +255,8 @@ class PedidoAnaliseResposta(BaseModel):
     pergunta_id: str = Field(max_length=120)
     pergunta: str = Field(max_length=1_000)
     resposta: str = Field(max_length=20_000)
-    #: O pouco que já se sabe do caso — a categoria triada, tipicamente. Evita
-    #: que a análise peça o que outra pergunta do roteiro já respondeu.
+    #: O roteiro ativo, as respostas curtas já dadas e as outras perguntas do
+    #: roteiro. Evita que a análise peça o que outra pergunta já cobre.
     contexto: str = Field(default="", max_length=4_000)
 
 
@@ -271,7 +271,7 @@ class PedidoRecomendacao(BaseModel):
 
 @roteador.post("/api/entrevista/analise")
 async def analisar_resposta(pedido: PedidoAnaliseResposta):
-    """O que esta resposta ainda não trouxe — em três itens, durante a entrevista.
+    """O que esta resposta ainda não trouxe — até duas perguntas, durante a entrevista.
 
     Roda uma vez por pergunta narrativa, então é deliberadamente mais curta que
     o `/api/estrategia`: o que não cabe entre uma pergunta e a seguinte não é
