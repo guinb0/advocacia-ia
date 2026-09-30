@@ -34,6 +34,7 @@ import PainelGastosApi from "@/components/admin/PainelGastosApi";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
 import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
 import FollowUp from "@/components/admin/FollowUp";
+import PecasProtocoladas from "@/components/admin/PecasProtocoladas";
 import Usuarios from "@/components/admin/Usuarios";
 import Resultado from "@/components/caso/Resultado";
 import CentralDocumentacao from "@/components/documentacao/CentralDocumentacao";
@@ -107,6 +108,7 @@ export const DESENHO_DA_TELA: Record<Tela, DesenhoTela> = {
   gastosApi: (c) => <PainelGastosApi onVoltar={c.voltarParaCarteira} />,
   revisao: (c) => <Supervisao onVoltar={c.voltarParaCarteira} />,
   followup: () => <FollowUp />,
+  pecasProtocoladas: (c) => <PecasProtocoladas onAbrirDossie={c.abrirDossie} />,
   modelosDePeticao: (c) => <ModelosDePeticao onVoltar={c.voltarParaCarteira} />,
   configuracaoAssinatura: () => <ConfiguracaoAssinatura />,
   catalogoRoteiros: (c) => <CatalogoRoteiros onVoltar={c.voltarParaCarteira} />,

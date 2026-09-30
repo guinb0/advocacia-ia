@@ -98,6 +98,50 @@ def salvar_peticao_local(caso_id: str, dados: dict[str, Any], docx: bytes) -> No
         )
 
 
+def listar_peticoes_protocoladas() -> list[dict[str, Any]]:
+    """Petições marcadas como protocoladas, da mais recente para a mais antiga.
+
+    O protocolo mora dentro do `dados_json` (ver `peticao_local.marcar_protocolo`).
+    O `LIKE` só descarta no banco as que certamente não têm protocolo — o JSON é
+    gravado por `json.dumps`, que escreve `"protocolo": null` ou `"protocolo": {` — e a
+    decisão final é do parse aqui.
+    """
+    with conectar() as con:
+        linhas = con.execute(
+            """
+            SELECT p.caso_id, p.dados_json, c.cliente, c.categoria
+              FROM peticoes_locais p
+              JOIN casos c ON c.id = p.caso_id
+             WHERE p.dados_json LIKE ?
+            """,
+            ('%"protocolo": {%',),
+        ).fetchall()
+    protocoladas = []
+    for linha in linhas:
+        try:
+            dados = json.loads(linha["dados_json"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        protocolo = dados.get("protocolo")
+        if not isinstance(protocolo, dict):
+            continue
+        protocoladas.append(
+            {
+                "caso_id": linha["caso_id"],
+                "cliente": linha["cliente"],
+                "categoria": linha["categoria"],
+                "titulo": dados.get("title") or "Petição inicial",
+                "status": dados.get("status") or "IN_REVIEW",
+                "numero": protocolo.get("numero") or "",
+                "data": protocolo.get("data") or "",
+                "marcado_por": protocolo.get("marcado_por") or "",
+                "marcado_em": protocolo.get("marcado_em") or "",
+            }
+        )
+    protocoladas.sort(key=lambda p: (p["data"], p["marcado_em"]), reverse=True)
+    return protocoladas
+
+
 def salvar_peticao_anexa(
     caso_id: str,
     peca_id: str,

@@ -796,6 +796,12 @@ def marcar_protocolo(
     return peticao_local.para_api(dados)
 
 
+@roteador.get("/peticoes-protocoladas")
+def listar_peticoes_protocoladas() -> dict[str, Any]:
+    """As petições já protocoladas, de todos os casos, com o número e a data do protocolo."""
+    return {"peticoes": armazenamento.listar_peticoes_protocoladas()}
+
+
 @roteador.patch("/casos/{caso_id}/peticao/{peca_ref}")
 def decidir_peticao(
     caso_id: str,

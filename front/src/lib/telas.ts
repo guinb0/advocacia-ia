@@ -34,6 +34,7 @@ import {
   Scale,
   Search,
   Sparkles,
+  Stamp,
   Tags,
   Users,
   Wallet,
@@ -204,6 +205,13 @@ const DEFINICOES = {
   followup: {
     rotulo: "Follow-up",
     icone: PhoneCall,
+    modulo: "casos",
+    variante: "wide",
+  },
+  pecasProtocoladas: {
+    rotulo: "Peças protocoladas",
+    apoio: "enviadas ao tribunal",
+    icone: Stamp,
     modulo: "casos",
     variante: "wide",
   },

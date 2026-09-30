@@ -789,6 +789,23 @@
   "status_code": null
  },
  {
+  "caminho": "/api/agente/peticoes-protocoladas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_peticoes_protocoladas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
   "caminho": "/api/agente/casos/{caso_id}/peticao/{peca_ref}",
   "tipo": "APIRoute",
   "metodos": [
