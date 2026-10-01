@@ -13,6 +13,7 @@ import { Aviso, Botao, Cartao, RotuloCampo, Campo, Selo } from "@/components/ui/
 import { SkillDoCaso } from "@/components/skills/SeletorSkillPeticao";
 import ChatPeticao from "@/components/admin/ChatPeticao";
 import ProtocoloDaPeticaoCartao from "@/components/admin/ProtocoloDaPeticao";
+import { CamadaJuridica } from "@/components/admin/CamadaJuridica";
 import ConferenciaProtocolo, {
   type ResultadoDaPreparacao,
   type SelecaoDoProtocolo,
@@ -855,6 +856,8 @@ export default function FluxoPeticao({ casoId, temEntrevista, onControlesGeracao
                 Revise a minuta antes de protocolar.
               </Aviso>
             )}
+
+            {peticao.trace?.pipeline?.juridico && <CamadaJuridica dados={peticao.trace.pipeline.juridico} />}
 
             {historico && (historico.criticas.length > 0 || historico.versoes.length > 0) && (
               <HistoricoDeCriticas

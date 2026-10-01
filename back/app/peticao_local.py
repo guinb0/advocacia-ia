@@ -52,6 +52,10 @@ from . import (
     tribunais,
 )
 from . import casos as casos_ocr
+from . import juridico
+from .juridico import orquestrador as juridico_orq
+from .juridico import repositorio as juridico_repo
+from .juridico import teses as juridico_teses
 
 log = logging.getLogger("peticao_local")
 
@@ -491,6 +495,13 @@ def _validar_documento_final(
 def _nome_da_secao(secao: dict[str, Any]) -> str:
     """Nome para MOSTRAR: o título do redator; sem título (a skill não deu), o papel da seção."""
     return str(secao.get("label") or str(secao.get("code") or "").replace("_", " ").title())
+
+
+def _guardar_trechos(canal: str, trechos: list[Any]) -> None:
+    """Os trechos recuperados, com metadados, para a camada jurídica converter em autoridades."""
+    corrente = _DIAG.get()
+    if corrente is not None:
+        corrente.setdefault("_trechos", {})[canal] = list(trechos or [])
 
 
 def _registrar_proveniencia(provs: list[Any], textos: list[str]) -> None:
@@ -1768,6 +1779,7 @@ def _precedentes_para_redigir(
             if not similares and erros_tese:
                 raise RuntimeError("; ".join(erros_tese[:3]))
             _registrar_proveniencia(provs, [t.texto[:1800] for t in similares])
+            _guardar_trechos("precedentes", similares)
         else:
             similares, _jurisdicao, _uf = jurimetria_caso.buscar_focada(
                 contexto[:12_000], uf=uf,
@@ -1836,6 +1848,7 @@ def _legislacao_para_redigir(contexto: str, consultas: list[dict[str, str]] | No
             if not trechos and erros_tese:
                 raise RuntimeError("; ".join(erros_tese[:3]))
             _registrar_proveniencia(provs, [t.texto[:1500] for t in trechos])
+            _guardar_trechos("legislacao", trechos)
         else:
             trechos = rag.buscar_legislacao(contexto[:12_000], limite=14)
     except Exception as erro:
@@ -2676,7 +2689,27 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     plano_est, texto_plano = _tentar_etapa("plano estruturado", _montar_plano, (plano_vazio, ""), diag)
     if texto_plano:
         outline += "\n\n" + texto_plano
-    consultas = recuperacao_por_tese.consultas_do_plano(plano, contexto, nome_categoria)
+    # CAMADA JURÍDICA (PETICAO_PIPELINE_JURIDICO_MODE): issue spotting sobre o catálogo inteiro da skill.
+    # strict: ANTES da recuperação (as teses viram consultas) e a peça nasce do PETITION_PLAN; falha não cai
+    #         em silêncio para o legado — vai a `falhas_juridicas` e a peça não é marcada como pronta.
+    # shadow: em paralelo à geração legada, sem tocar texto, prontidão nem avisos da peça entregue.
+    modo_juridico = juridico.modo()
+    estrito, sombra = modo_juridico == juridico.STRICT, modo_juridico == juridico.SHADOW
+    falhas_juridicas: list[str] = []
+    prep_juridico: dict[str, Any] | None = None
+    analise_em_sombra = None
+    if estrito:
+        avancar_etapa("Identificando todas as teses possíveis do caso…", 22)
+        prep_juridico = _etapa_juridica(
+            "análise (fatos, teses, cálculos)", lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista),
+            falhas_juridicas, diag)
+    elif sombra:
+        analise_em_sombra = _em_sombra(lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista))
+    plano_para_consultas = plano
+    if estrito and prep_juridico:
+        plano_para_consultas = {**(plano or {}), "teses": [*juridico_orq.consultas_das_teses(prep_juridico), *((plano or {}).get("teses") or [])]}
+    consultas = recuperacao_por_tese.consultas_do_plano(
+        plano_para_consultas, contexto, nome_categoria, consulta_fixa_legada=not estrito)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
     avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 30)
@@ -2687,6 +2720,13 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria, consultas=consultas
     )
+    if estrito and prep_juridico:
+        prep_juridico = _etapa_juridica(
+            "autoridades e PETITION_PLAN", lambda: _fundamentacao_juridica(prep_juridico, diag, uf_jurisprudencia, falhas_juridicas),
+            falhas_juridicas, diag)
+    if estrito and prep_juridico:
+        plano_est = prep_juridico["plano_est"]
+        outline = _outline_para_redigir(plano) + "\n\n" + plano_da_peticao.para_prompt(plano_est)
     tamanho_caso = len(contexto)
     contexto += precedentes + legislacao + padroes + outline
     # O QUE FALTOU, DITO AO MODELO E GRAVADO NA PEÇA.
@@ -2782,7 +2822,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
             + "\nEstas correções já foram cobradas nesta peça. A minuta nova deve "
             "nascer com todas aplicadas, sem precisar que sejam pedidas de novo."
         )
-    contexto += (
+    contexto += _INTEGRIDADE_JURIDICA.format(hoje=datetime.now().strftime('%d/%m/%Y')) if estrito else (
         # Só INTEGRIDADE DE DADOS aqui (data, fonte, marcador de pendência). Estrutura,
         # capítulos, valores, prescrição, fechamento e demais regras do ofício moram na
         # SKILL (`references/regras_de_geracao.md`, `estrutura_peca.md`, `formatacao.md`).
@@ -2850,6 +2890,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
         )
         + "\nUse somente esses papéis, nessa ordem, cada um UMA vez e com conteúdo próprio. PRELIMINARY é obrigatória e deve trazer a gratuidade quando houver declaração/elemento de hipossuficiência. Preserve a marcação visual exigida pela skill (# para capítulo, > para citação curta verificável, ::: para blocos centralizados). Análise, lacunas, alertas e pendências são metadados internos e nunca podem aparecer no content das seções."
     )
+    if estrito and prep_juridico:
+        instrucao_base += _CONTRATO_JURIDICO
     instrucao = _com_skill_do_escritorio(caso_id, instrucao_base)
     _estrutura_fixa = _estrutura_fixa_no_prompt(instrucao)
     pipeline.update({
@@ -2863,9 +2905,16 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
     avancar_etapa("Redigindo a petição — esta é a etapa mais demorada…", 35)
+    entrada_redacao = contexto
+    if estrito and prep_juridico:
+        # Plano, base jurídica e regras PRIMEIRO; o corte de tamanho cai no fim do material do caso, nunca no plano.
+        extras = contexto[tamanho_caso + len(precedentes) + len(legislacao) + len(padroes) + len(outline):]
+        entrada_redacao, corte = juridico_orq.montar_entrada(
+            "\n\n".join([prep_juridico["texto_plano"], outline, legislacao, precedentes, extras]), contexto[:tamanho_caso] + padroes)
+        prep_juridico["rastro"].etapas.append({"etapa": "entrada_da_redacao", "ok": True, **corte})
     saida = _llm_json(
         instrucao,
-        contexto,
+        entrada_redacao,
         # 360s e não 240s: com o teto de saída dobrado a resposta é fisicamente
         # maior, e manter o prazo antigo trocaria "peça curta" por "o modelo não
         # respondeu" — que é pior, porque perde o trabalho inteiro.
@@ -2974,7 +3023,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
         lambda: _lintar_e_corrigir(
             caso_id, secoes, plano_est,
             # fonte PERMITIDA: caso + julgados/lei recuperados + skill (precedentes vinculantes); o acervo fica de fora
-            texto_do_caso=material_sem_acervo + peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
+            # com a camada jurídica ativa a skill deixa de ser fonte citável: norma vem da base verificada
+            texto_do_caso=material_sem_acervo + ("" if estrito else peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get())),
             textos_do_acervo=textos_acervo, material=material_sem_acervo,
         ),
         (secoes, [], {"erro": "etapa falhou"}),
@@ -2993,6 +3043,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # em vez de a omissão passar batido sem ninguém notar.
     # ===== FINAL_DOCUMENT_VALIDATOR — ÚLTIMA etapa que pode mudar o texto. Roda sobre a representação que o DOCX imprime.
     avancar_etapa("Validação final do documento…", 96)
+    if estrito:
+        plano_est["_juridico_estrito"] = True
     secoes, rel_final, achados_finais = _tentar_etapa(
         "validação final",
         lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso),
@@ -3007,6 +3059,26 @@ Cada content deve conter parágrafos separados por linha em branco."""
     )
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
+    auditoria_juridica: dict[str, Any] | None = None
+    if sombra:
+        pipeline["juridico"] = _juridico_em_sombra(
+            analise_em_sombra, secoes, plano_est, pendencias, texto_do_caso, diag, uf_jurisprudencia)
+    if estrito:
+        if prep_juridico:
+            avancar_etapa("Auditoria jurídica (citações, fatos, cálculos, consistência)…", 97)
+            pendencias += [p for p in prep_juridico["pendencias"] if p not in pendencias]
+            ausentes = documento_final.pedidos_obrigatorios_ausentes(
+                secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"])
+            auditoria_juridica = _etapa_juridica(
+                "auditoria",
+                lambda: juridico_orq.auditar(secoes, prep_juridico, pendencias=pendencias, texto_das_fontes=texto_do_caso,
+                                             carregar_dispositivos=juridico_repo.carregar_dispositivos,
+                                             pedidos_obrigatorios_ausentes=ausentes),
+                falhas_juridicas, diag)
+            pipeline["juridico"] = _etapa_juridica(
+                "rastro", lambda: juridico_orq.trace(prep_juridico, auditoria_juridica, modo=juridico.STRICT, falhas=falhas_juridicas),
+                falhas_juridicas, diag)
+        pipeline["juridico"] = pipeline.get("juridico") or juridico_orq.trace_de_falha(juridico.STRICT, falhas_juridicas)
     achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
     peticao_aprendizado.registrar_avaliacao(
         generation_id=generation_id, caso_id=caso_id, tipo="post_generation", achados=achados_criticos
@@ -3095,11 +3167,144 @@ Cada content deve conter parágrafos separados por linha em branco."""
         },
     }
     _aplicar_conferencia(dados, secoes, violacoes)
+    if estrito:
+        dados["trace"]["skills"] += ["fact_matrix", "issue_spotting", "legal_research", "deterministic_calculation",
+                                     "citation_gate", "legal_audit", "fact_audit", "calculation_audit", "consistency_audit"]
+        _aplicar_veredito_juridico(dados, auditoria_juridica, falhas_juridicas)
+    elif sombra:
+        dados["trace"]["skills"].append("legal_pipeline_shadow")
     # Nada pode ter mudado o conteúdo depois do validador final (o que foi validado é o que será impresso).
     if documento_final.impressao_hash(dados["sections"]) != hash_validado:
         raise ErroPeticao("O documento mudou depois da validação final — geração interrompida para não entregar peça não validada.")
     _salvar(caso_id, dados)
     return dados
+
+
+#: Integridade quando a camada jurídica está ativa: genérica, sem caso nem tese embutidos.
+_INTEGRIDADE_JURIDICA = (
+    "\n\n=== INTEGRIDADE DOS DADOS ===\n"
+    "DATA DE HOJE: {hoje} — é a data de referência da vigência das normas e precedentes. "
+    "Teses, pedidos e valores são os do PETITION_PLAN; tese marcada para o relatório do advogado não vai ao corpo. "
+    "Cite SOMENTE autoridades da BASE JURÍDICA VERIFICADA, pelo que ela diz; sem autoridade, escreva "
+    "[REQUIRES_LEGAL_RESEARCH: <o que pesquisar>] — nunca número de artigo, súmula, OJ, tema ou processo de memória, "
+    "nem fundamento copiado da skill ou de peça antiga. Fato «alegado» se narra como alegação; «inferido» não se afirma; "
+    "fato em contradição não se usa. Qualificação só com dado da matriz de fatos. A narrativa segue a ordem e os "
+    "agentes registrados nos documentos oficiais do caso."
+)
+
+_CONTRATO_JURIDICO = (
+    "\n\n=== CAMADA JURÍDICA ===\n"
+    "A escolha das teses JÁ FOI FEITA (PETITION_PLAN): desenvolva todas as teses do plano, cada uma com fatos da matriz, "
+    "prova e autoridade; não acrescente nem retire tese. A única marcação permitida no corpo é "
+    "[REQUIRES_LEGAL_RESEARCH: …], onde o plano não trouxer autoridade. Use exatamente os valores e o valor da causa do plano. "
+    "Requeira perícia onde o plano mandar. Onde o plano mandar USE_TABLE, apresente em tabela markdown."
+)
+
+
+def _analise_juridica(caso_id: str, plano_est: dict[str, Any], contexto: str, texto_entrevista: str) -> dict[str, Any]:
+    fontes = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"]} for d in documentos_logicos(caso_id)[1]]
+    fontes.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
+    return juridico_orq.analisar(
+        plano_est=plano_est, contexto_caso=contexto, fontes=fontes,
+        llm=lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=300.0),
+        textos_skill=juridico_teses.textos_da_skill_ativa(), modelo=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+    )
+
+
+def _fundamentacao_juridica(prep: dict[str, Any], diag: dict[str, Any], uf: str, falhas: list[str]) -> dict[str, Any]:
+    base, erro = juridico_repo.carregar_autoridades()
+    if erro:
+        falhas.append(f"autoridades: {erro}")
+    elif not base:
+        falhas.append("autoridades: base verificada vazia (autoridades_juridicas sem registros)")
+    trechos = diag.get("_trechos") or {}
+    return juridico_orq.fundamentar(
+        prep, autoridades_base=base, alertas_base=[erro] if erro else [],
+        trechos_legislacao=trechos.get("legislacao") or [], trechos_precedentes=trechos.get("precedentes") or [],
+        trt_competente=str((tribunais.UF_PARA_TRT.get(uf) or [""])[0]),
+    )
+
+
+def _etapa_juridica(nome: str, funcao: Any, falhas: list[str], diag: dict[str, Any]) -> Any:
+    """Etapa da camada jurídica em strict: a falha é registrada e impede a peça de ser pronta (sem queda silenciosa)."""
+    try:
+        return funcao()
+    except Exception as erro:  # noqa: BLE001 - registrada em `falhas` e no veredito
+        log.exception("petição local: camada jurídica — etapa '%s' falhou", nome)
+        falhas.append(f"{nome}: {_erro_curto(erro)}")
+        diag.setdefault("fallbacks", []).append(f"camada jurídica — {nome}: {_erro_curto(erro)}")
+        return None
+
+
+_EXECUTOR_SOMBRA = ThreadPoolExecutor(max_workers=2, thread_name_prefix="juridico-sombra")
+#: Quanto a peça legada, já pronta, pode esperar o modo shadow terminar.
+ESPERA_MAXIMA_SOMBRA_S = float(os.getenv("PETICAO_JURIDICO_SOMBRA_ESPERA_S", "45"))
+
+
+def _em_sombra(funcao: Any) -> Any:
+    """Roda a análise da camada em paralelo à geração legada, sem escrever no diagnóstico da peça entregue."""
+    contexto = contextvars.copy_context()
+
+    def rodar() -> Any:
+        _DIAG.set(None)
+        return funcao()
+
+    try:
+        return _EXECUTOR_SOMBRA.submit(contexto.run, rodar)
+    except Exception:  # noqa: BLE001 - shadow nunca afeta a geração
+        log.exception("petição local: modo shadow não iniciou")
+        return None
+
+
+def _juridico_em_sombra(
+    futuro: Any, secoes: list[dict[str, Any]], plano_legado: dict[str, Any], pendencias_legado: list[str],
+    texto_do_caso: str, diag: dict[str, Any], uf: str,
+) -> dict[str, Any]:
+    """Modo shadow: audita a peça legada com a camada e grava as diferenças. Nunca levanta exceção."""
+    falhas: list[str] = []
+    prep = None
+    if futuro is None:
+        falhas.append("análise: não iniciou")
+    else:
+        try:
+            prep = futuro.result(timeout=max(1.0, min(ESPERA_MAXIMA_SOMBRA_S, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
+        except TimeoutError:
+            falhas.append("análise: não terminou a tempo; a peça legada não esperou")
+        except Exception as erro:  # noqa: BLE001
+            falhas.append(f"análise: {_erro_curto(erro)}")
+    if prep is None:
+        return juridico_orq.trace_de_falha(juridico.SHADOW, falhas)
+    try:
+        prep = _fundamentacao_juridica(prep, diag, uf, falhas)
+        ausentes = documento_final.pedidos_obrigatorios_ausentes(secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"])
+        auditoria = juridico_orq.auditar(secoes, prep, pendencias=list(pendencias_legado), texto_das_fontes=texto_do_caso,
+                                         carregar_dispositivos=juridico_repo.carregar_dispositivos, pedidos_obrigatorios_ausentes=ausentes)
+        comparacao = juridico_orq.comparar_com_legado(secoes, prep, auditoria, plano_legado=plano_legado, pendencias_legado=pendencias_legado)
+        return juridico_orq.trace(prep, auditoria, modo=juridico.SHADOW, falhas=falhas, comparacao=comparacao)
+    except Exception as erro:  # noqa: BLE001 - shadow nunca afeta a geração
+        log.exception("petição local: modo shadow falhou")
+        falhas.append(f"auditoria/comparação: {_erro_curto(erro)}")
+        return juridico_orq.trace_de_falha(juridico.SHADOW, falhas)
+
+
+def _aplicar_veredito_juridico(dados: dict[str, Any], auditoria: dict[str, Any] | None, falhas: list[str] | None = None) -> None:
+    """Strict: a peça só é PRONTA se nenhuma etapa da camada falhou e os quatro auditores passaram."""
+    prontidao = dados.setdefault("readiness", {})
+    if falhas:
+        prontidao["ready"] = False
+        prontidao.setdefault("blocking_issues", []).extend(
+            f"Camada jurídica falhou — {f}. A peça não passou pela verificação jurídica completa."[:260] for f in falhas)
+    if not auditoria:
+        prontidao["ready"] = False
+        prontidao.setdefault("blocking_issues", []).append("Auditoria jurídica não executou — revisão humana obrigatória.")
+        return
+    bloqueios = [a for a in auditoria["achados"] if a["severidade"] == "bloqueia"]
+    prontidao["ready"] = bool(prontidao.get("ready")) and auditoria["veredito"]["pronta"]
+    prontidao.setdefault("blocking_issues", []).extend(
+        f"[{a['auditor']}] {a['codigo']}: {a['trecho'] or a['detalhe']}"[:220] for a in bloqueios[:40])
+    prontidao.setdefault("warnings", []).extend(
+        f"[{a['auditor']}] {a['codigo']}: {a['trecho'] or a['detalhe']}"[:220] for a in auditoria["achados"] if a["severidade"] != "bloqueia")
+    prontidao["auditoria_juridica"] = auditoria["veredito"]
 
 
 def _avisos_de_pipeline(pipeline: dict[str, Any]) -> list[str]:
