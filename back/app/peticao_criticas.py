@@ -45,7 +45,19 @@ def _conectar(**kwargs: Any):
     return psycopg.connect(_url(), connect_timeout=10, **kwargs)
 
 
+#: Esquema garantido uma vez por processo (ver `peticao_aprendizado._ESQUEMA_PRONTO`).
+_ESQUEMA_PRONTO = False
+
+
 def inicializar() -> None:
+    global _ESQUEMA_PRONTO
+    if _ESQUEMA_PRONTO:
+        return
+    _criar_esquema()
+    _ESQUEMA_PRONTO = True
+
+
+def _criar_esquema() -> None:
     with _conectar() as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS peticao_criticas (
