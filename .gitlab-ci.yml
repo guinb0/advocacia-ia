@@ -110,6 +110,21 @@ testes-python:
   script:
     - cd back && python -m tests.test_whatsapp
 
+# Motor jurídico: testes sem banco e sem rede + benchmark sintético contra a linha de base
+# (`back/tests/benchmark/linha_de_base.json`). A camada jurídica só usa biblioteca padrão, então basta o pytest;
+# os testes que precisam do back inteiro (`app.peticao_local`) são pulados aqui e rodam na suíte local.
+motor-juridico:
+  stage: .pre
+  image: python:3.11-slim
+  rules:
+    - if: $CI_COMMIT_BRANCH != "production"
+  before_script:
+    - pip install --no-cache-dir pytest
+  script:
+    - cd back
+    - python -m pytest tests/benchmark tests/test_motor_juridico.py -q -p no:cacheprovider
+    - python -m tests.benchmark.sintetico > /dev/null
+
 typecheck-frontend:
   stage: .pre
   image: node:22-slim

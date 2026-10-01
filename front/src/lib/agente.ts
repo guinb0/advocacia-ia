@@ -257,9 +257,101 @@ export interface ComparacaoComLegado {
   bloqueios_que_o_strict_apontaria: string[];
 }
 
+export type CertezaJuridica = "BINDING" | "STRONG" | "PERSUASIVE" | "CONTESTED" | "UNSETTLED" | "RESEARCH_REQUIRED";
+
+export type NomeDoScore =
+  | "factual_support"
+  | "evidentiary_strength"
+  | "legal_support"
+  | "precedent_strength"
+  | "contradiction_risk"
+  | "strategic_value";
+
+export interface ProvaDoRequisito {
+  fato_id: string;
+  classe: string;
+  peso: number;
+  documento: string;
+  fonte: string;
+  estado: string;
+  contraditoria: boolean;
+}
+
+export interface TeseDoMotor {
+  tese_id: string;
+  tese: string;
+  decisao: DecisaoDeTese;
+  institutos: string[];
+  requisitos: Array<{
+    id: string;
+    requisito: string;
+    instituto: string;
+    origem: string;
+    estado: "atendido" | "so_alegado" | "contraditorio" | "ausente";
+    fatos: Array<{ id: string; origem: string; estado: string }>;
+    provas?: ProvaDoRequisito[];
+    forca_da_prova?: string;
+  }>;
+  proposicoes: Array<{
+    id: string;
+    texto: string;
+    origem: string;
+    certeza?: CertezaJuridica;
+    tom?: string;
+    classificacao?: "avaliada" | "presumida";
+    conflito?: { position_a: string[]; position_b: string[]; controlling_authority: string | null; unresolved_conflict: boolean } | null;
+    autoridades?: Array<{ id: string; titulo: string; tipo: string; tribunal: string; prioridade: number; posicao: string; trecho: string; vigente: boolean | null; verificada: boolean }>;
+  }>;
+  contrateses: Array<{
+    defesa: string;
+    requisito_id: string;
+    requisito: string;
+    forca: "alta" | "media" | "baixa";
+    fatos_que_a_enfrentam: string[];
+    origem: string;
+    respondida: boolean | null;
+    trecho_resposta: string;
+    tem_prova: boolean;
+    vulneravel: boolean;
+    orientacao: string;
+  }>;
+  pedido: { texto: string; valor: number | null; calculation_id: string };
+  reflexos: string[];
+  scores: Partial<Record<NomeDoScore, { valor: number; motivos: string[] }>> & { prioridade?: number };
+  grafo: { nos: Array<{ id: string; tipo: string; rotulo: string; [chave: string]: unknown }>; arestas: Array<{ de: string; para: string; relacao: string; origem: string }> };
+  explicacao: string[];
+}
+
+export interface RaciocinioJuridico {
+  versao_catalogo: string;
+  teses: TeseDoMotor[];
+  matriz_de_prova: Array<{
+    tese_id: string;
+    tese: string;
+    requisito_id: string;
+    requisito: string;
+    provas_disponiveis: ProvaDoRequisito[];
+    qualidade: number;
+    forca: string;
+    ausente: boolean;
+    contraditoria: boolean;
+    prova_futura_necessaria: string[];
+    prova_tipica: string;
+    alternativa: string;
+  }>;
+  lacunas: Array<{ tese_id: string; tese: string; requisito: string; forca: string; ausente: string; alternativa: string; classe_futura: string; motivo: string }>;
+  capitulos_vulneraveis: Array<{ tese_id: string; tese: string; defesa: string; requisito: string; orientacao: string }>;
+  alertas: string[];
+  ordem_por_prioridade: string[];
+  auditoria: Record<string, number | string> | null;
+  falhas: string[];
+}
+
 export interface CamadaJuridica {
   ativo: boolean;
-  modo?: "strict" | "shadow";
+  modo?: "strict" | "shadow" | "assistido";
+  raciocinio?: RaciocinioJuridico | null;
+  pendencias_do_motor?: string[];
   falhas?: string[];
   comparacao_com_legado?: ComparacaoComLegado | null;
   data_referencia: string;
@@ -338,9 +430,18 @@ export interface CamadaJuridica {
     veredito: {
       pronta: boolean;
       status?: "READY" | "BLOCKED";
-      auditores: Record<string, { status: "PASS" | "FAIL"; bloqueios: number; alertas: number }>;
+      auditores: Record<string, { status: "PASS" | "FAIL"; bloqueios: number; alertas: number; criticos?: number }>;
+      critico?: boolean;
     };
-    achados: Array<{ auditor: string; codigo: string; severidade: "bloqueia" | "alerta"; secao: string; trecho: string; detalhe: string }>;
+    achados: Array<{
+      auditor: string;
+      codigo: string;
+      severidade: "bloqueia" | "alerta" | "info";
+      nivel?: "INFO" | "WARNING" | "BLOCKING" | "CRITICAL";
+      secao: string;
+      trecho: string;
+      detalhe: string;
+    }>;
     authority_ids: string[];
     impressoes_digitais?: Array<{
       chave: string;

@@ -56,7 +56,20 @@ def _chave(texto: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", texto.lower()).split())[:900]
 
 
+#: O esquema é garantido uma vez por processo: chamado a cada etapa da geração, o DDL somava idas ao
+#: banco e o `CREATE INDEX` espera lock de quem estiver gravando na tabela.
+_ESQUEMA_PRONTO = False
+
+
 def inicializar() -> None:
+    global _ESQUEMA_PRONTO
+    if _ESQUEMA_PRONTO:
+        return
+    _criar_esquema()
+    _ESQUEMA_PRONTO = True
+
+
+def _criar_esquema() -> None:
     with _conectar() as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS peticao_feedback_eventos (
@@ -163,8 +176,9 @@ def regras_para_contexto(*, categoria: str, advogado: str = "", document_type: s
               ORDER BY (CASE WHEN advogado=%s THEN 4 WHEN categoria=%s THEN 2 ELSE 1 END) DESC,
                 confidence DESC, (aceites-rejeicoes) DESC, atualizada_em DESC LIMIT %s""",
               (categoria, document_type, advogado, advogado, categoria, limite)).fetchall()
-            for linha in linhas:
-                con.execute("UPDATE peticao_regras_aprendidas SET aplicacoes=aplicacoes+1, ultimo_uso=now() WHERE id=%s", (linha["id"],))
+            if linhas:
+                con.execute("UPDATE peticao_regras_aprendidas SET aplicacoes=aplicacoes+1, ultimo_uso=now() WHERE id = ANY(%s)",
+                            ([linha["id"] for linha in linhas],))
         return [{**dict(l), "id": str(l["id"])} for l in linhas]
     except Exception:
         _marcar_indisponivel()

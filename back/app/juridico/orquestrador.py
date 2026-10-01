@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Callable, Iterable, Iterator
 
 from . import (auditor_certeza, auditor_secoes, auditor_semantico, auditor_temporal, auditores, autoridades as aut, calculos,
-               canonico, citacao, fatos, plano, tabelas, teses)
+               canonico, citacao, contrateses, fatos, plano, proposicoes, prova, raciocinio, scores, tabelas, teses)
 from .busca import Filtros, ProvedorDeAutoridades
 
 
@@ -91,8 +91,11 @@ def consultas_das_teses(prep: dict[str, Any]) -> list[dict[str, Any]]:
 def analisar(
     *, plano_est: dict[str, Any], contexto_caso: str, fontes: list[dict[str, Any]], llm: Callable[[str, str], dict[str, Any]],
     textos_skill: dict[str, str], data_referencia: date | None = None, modelo: str = "",
+    llm_contrateses: Callable[[str, str], dict[str, Any]] | None = None, modelo_contrateses: str = "",
 ) -> dict[str, Any]:
-    """Fase 1 (antes da recuperação): fatos, catálogo, issue spotting e cálculos."""
+    """Fase 1 (antes da recuperação): fatos, catálogo, issue spotting, cálculos e o grafo de raciocínio.
+
+    `llm_contrateses`: o modelo que levanta as defesas prováveis; sem ele, só as do catálogo."""
     referencia = data_referencia or date.today()
     rastro = Rastro()
     with rastro.etapa("matriz_de_fatos") as r:
@@ -149,18 +152,50 @@ def analisar(
             c["fontes"] = {k: f for k, f in spec["fontes"].items() if k in c["parametros"]}
         r["executados"] = [{"calculation_id": c["calculation_id"], "rubrica": c["rubrica"], "valor": c["valor"], "erro": c["erro"]} for c in calcs]
         r["parametros_da_fonte_unica"] = preenchidos
+    rac = _montar_raciocinio(rastro, issues, matriz, calcs, llm=llm_contrateses, modelo=modelo_contrateses)
     return {"data_referencia": referencia, "plano_est_base": plano_est, "matriz": matriz, "catalogo": catalogo, "issues": issues,
-            "canonico": canon, "calculos": calcs, "textos_skill": textos_skill, "rastro": rastro}
+            "canonico": canon, "calculos": calcs, "textos_skill": textos_skill, "rastro": rastro, "raciocinio": rac}
+
+
+def _falha(rac: dict[str, Any], etapa: str, erro: Exception) -> None:
+    rac.setdefault("falhas", []).append(f"{etapa}: {type(erro).__name__}: {str(erro)[:200]}")
+
+
+def _montar_raciocinio(rastro: Rastro, issues: dict[str, Any], matriz: dict[str, Any], calcs: list[dict[str, Any]], *,
+                       llm: Callable[[str, str], dict[str, Any]] | None, modelo: str) -> dict[str, Any]:
+    """Grafo, matriz de prova, lacunas e contrateses. Aditivo: uma falha aqui fica no rastro e em `falhas`,
+    sem derrubar a análise que já existia antes do motor."""
+    rac: dict[str, Any] = {"versao_catalogo": "", "teses": [], "lacunas": [], "capitulos_vulneraveis": [], "falhas": []}
+    try:
+        with rastro.etapa("grafo_e_prova") as r:
+            rac = {**raciocinio.montar(issues, matriz, calculos=calcs), "falhas": []}
+            prova.montar(rac, matriz)
+            prova.lacunas(rac)
+            r["teses"] = len(rac["teses"])
+            r["requisitos"] = sum(len(t["requisitos"]) for t in rac["teses"])
+            r["lacunas"] = len(rac["lacunas"])
+    except Exception as erro:  # noqa: BLE001
+        _falha(rac, "grafo_e_prova", erro)
+        return rac
+    try:
+        with rastro.etapa("contrateses", modelo=modelo if llm else "") as r:
+            r.update(contrateses.gerar(rac, matriz, llm=_rastreado(llm, r) if llm else None, texto_matriz=fatos.para_prompt(matriz)))
+            r["capitulos_vulneraveis"] = len(rac["capitulos_vulneraveis"])
+    except Exception as erro:  # noqa: BLE001
+        _falha(rac, "contrateses", erro)
+    return rac
 
 
 def fundamentar(
     prep: dict[str, Any], *, autoridades_base: Iterable[aut.Autoridade] = (), alertas_base: Iterable[str] = (),
     trechos_legislacao: Iterable[Any] = (), trechos_precedentes: Iterable[Any] = (), trt_competente: str = "",
     preferencia_tabelas: dict[str, bool] | None = None, provedor: ProvedorDeAutoridades | None = None,
+    llm_proposicoes: Callable[[str, str], dict[str, Any]] | None = None, modelo_proposicoes: str = "",
 ) -> dict[str, Any]:
     """Fase 2 (depois da recuperação): base jurídica por tese, atualidade, tabelas e PETITION_PLAN.
 
     `provedor`: a busca de autoridades a usar; sem ele, o registro em memória com `autoridades_base`.
+    `llm_proposicoes`: classifica sustenta/contraria por proposição; sem ele, a relação fica presumida.
     """
     rastro: Rastro = prep["rastro"]
     referencia: date = prep["data_referencia"]
@@ -194,6 +229,16 @@ def fundamentar(
                                    "superadas": [a.id for a in superadas]})
         alertas_juridicos += _auditar_skill(textos_skill, registro, referencia)
         r["alertas"] = alertas_juridicos
+    rac = prep.get("raciocinio")
+    if rac and rac.get("teses"):
+        try:
+            with rastro.etapa("proposicoes", modelo=modelo_proposicoes if llm_proposicoes else "") as r:
+                r.update(proposicoes.pesquisar(rac, registro, data_referencia=referencia, trt_competente=trt_competente,
+                                               llm=_rastreado(llm_proposicoes, r) if llm_proposicoes else None))
+                r["certeza"] = proposicoes.resumo(rac)
+        except Exception as erro:  # noqa: BLE001
+            _falha(rac, "proposicoes", erro)
+        _calcular_scores(rastro, rac, matriz)
     with rastro.etapa("tabelas") as r:
         tabs = tabelas.decidir(matriz, calcs, preferencia_tabelas)
         r["usar"] = [c for c, d in tabs.items() if d["decisao"] == "USE_TABLE"]
@@ -207,15 +252,35 @@ def fundamentar(
         pendencias += [f"Pedido de pagamento sem valor calculado: {p.get('title') or p['id']} — fica fora do corpo até ser calculado"
                        for p in plano_novo.get("pedidos") or [] if p.get("status") == "PENDING_CALCULATION"]
         unicas = list({a.id: a for lista in por_tese.values() for a in lista}.values())
+        bloco_motor = raciocinio.para_prompt(rac)
         texto_plano = "\n\n".join([
             plano.para_prompt(issues=issues, plano=plano_novo, autoridades_por_tese=por_tese, tabelas=tabs, calculos=calcs, alertas_juridicos=alertas_juridicos),
-            canonico.para_prompt(prep.get("canonico")), aut.bloco_para_prompt(unicas), fatos.para_prompt(matriz)])
+            canonico.para_prompt(prep.get("canonico")), aut.bloco_para_prompt(unicas), *([bloco_motor] if bloco_motor else []),
+            fatos.para_prompt(matriz)])
         r["pedidos"] = len(plano_novo.get("pedidos") or [])
         r["pendencias"] = len(pendencias)
         r["chars"] = len(texto_plano)
     prep.update({"registro": registro, "autoridades_por_tese": por_tese, "alertas_juridicos": alertas_juridicos, "tabelas": tabs,
                  "plano_est": plano_novo, "pendencias": pendencias, "texto_plano": texto_plano})
     return prep
+
+
+def _calcular_scores(rastro: Rastro, rac: dict[str, Any], matriz: dict[str, Any]) -> None:
+    try:
+        with rastro.etapa("scores") as r:
+            r["teses"] = [{"tese_id": s["tese_id"], "prioridade": s["prioridade"]} for s in scores.calcular(rac, matriz)]
+            rac["alertas"] = scores.alertas(rac)
+            r["alertas"] = len(rac["alertas"])
+    except Exception as erro:  # noqa: BLE001
+        _falha(rac, "scores", erro)
+
+
+def pendencias_do_motor(prep: dict[str, Any]) -> list[str]:
+    """O que o advogado deve revisar segundo o motor: lacunas de prova, defesas sem resposta/prova e alertas de score."""
+    rac = prep.get("raciocinio") or {}
+    if not rac.get("teses"):
+        return []
+    return list(dict.fromkeys([*prova.pendencias(rac), *contrateses.pendencias(rac), *(rac.get("alertas") or [])]))
 
 
 def auditar(
@@ -257,13 +322,35 @@ def auditar(
                                          texto_das_fontes=texto_das_fontes)
         r["citacoes"] = gate2["resumo"]
         r["semantica_llm"] = semantica["relatorio"]["camada_llm"]
-        v = auditores.veredito(legal, fato, conta, consist, temporal, certeza, semantica, gate2, cruzado)
+        motor = _auditar_motor(secoes, prep, llm=llm)
+        r["motor"] = (prep.get("raciocinio") or {}).get("auditoria")
+        v = auditores.veredito(legal, fato, conta, consist, temporal, certeza, semantica, gate2, cruzado, *motor)
         r.update(v)
-    relatorios = (legal, fato, conta, consist, temporal, certeza, semantica, gate2, cruzado)
+    relatorios = (legal, fato, conta, consist, temporal, certeza, semantica, gate2, cruzado, *motor)
     return {"veredito": v, "achados": [a for rel in relatorios for a in rel["achados"]],
             "citacoes": legal["citacoes"], "citacoes_verificadas": gate2["citacoes"], "authority_ids": legal["authority_ids"],
             "valor_da_causa": conta["valor_da_causa"], "valor_da_causa_declarado": conta["declarados"],
             "impressoes_digitais": cruzado["impressoes"], "semantica": semantica["relatorio"]}
+
+
+def _auditar_motor(secoes: list[dict[str, Any]], prep: dict[str, Any], *,
+                   llm: Callable[[str, str], dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """COUNTERARGUMENT, LEGAL_CERTAINTY e PRECEDENT_QUALITY. Achados são WARNING/INFO (nunca retêm a peça);
+    uma falha deixa só o registro em `raciocinio.falhas`."""
+    rac = prep.get("raciocinio")
+    if not rac or not rac.get("teses"):
+        return []
+    saida = []
+    try:
+        contra = contrateses.auditar(secoes, rac, llm=llm)
+        saida.append(contra)
+        saida.append(proposicoes.auditar_certeza(secoes, rac))
+        saida.append(proposicoes.auditar_precedentes(secoes, rac, prep["registro"], prep["data_referencia"]))
+        rac["auditoria"] = {r["auditor"]: len(r["achados"]) for r in saida} | {"avaliacao_contrateses": contra["avaliacao"]}
+    except Exception as erro:  # noqa: BLE001
+        _falha(rac, "auditoria_do_motor", erro)
+    _calcular_scores(prep["rastro"], rac, prep["matriz"])
+    return saida
 
 
 def comparar_com_legado(secoes_legado: list[dict[str, Any]], prep: dict[str, Any], auditoria: dict[str, Any] | None,
@@ -306,7 +393,7 @@ def trace_de_falha(modo: str, falhas: list[str]) -> dict[str, Any]:
             "comparacao_com_legado": None, "data_referencia": date.today().isoformat(), "etapas": [], "canonico": None, "fatos": [],
             "contradicoes": [], "catalogo": [], "teses": [], "nao_avaliadas": [], "matriz_tese_fato_prova": [], "calculos": [],
             "autoridades_por_tese": {}, "alertas_juridicos": [], "tabelas": {}, "pendencias": [], "valor_da_causa": {},
-            "auditoria": None, "citacoes": None}
+            "auditoria": None, "citacoes": None, "raciocinio": None, "pendencias_do_motor": []}
 
 
 def trace(prep: dict[str, Any], auditoria: dict[str, Any] | None, *, modo: str = "strict", falhas: list[str] | None = None,
@@ -349,6 +436,8 @@ def trace(prep: dict[str, Any], auditoria: dict[str, Any] | None, *, modo: str =
         "auditoria": auditoria and {**{k: auditoria[k] for k in ("veredito", "achados", "authority_ids", "valor_da_causa")},
                                     "impressoes_digitais": auditoria.get("impressoes_digitais") or [], "semantica": auditoria.get("semantica")},
         "citacoes": auditoria and _citacoes_para_trace(auditoria),
+        "raciocinio": raciocinio.para_trace(prep.get("raciocinio"), prep["matriz"]),
+        "pendencias_do_motor": pendencias_do_motor(prep),
     }
 
 

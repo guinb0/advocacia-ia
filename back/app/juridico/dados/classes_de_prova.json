@@ -1,0 +1,18 @@
+{
+  "versao": "2026-10-01",
+  "descricao": "Classe de prova a partir do nome/tipo do documento (regex sobre texto normalizado, primeira que casar vence) e peso de cada classe (0–1). Fato sem documento: entrevista → PARTY_STATEMENT; inferido → INFERENCE_ONLY.",
+  "pesos": {
+    "PRIMARY_DOCUMENT": 1.0,
+    "OFFICIAL_RECORD": 0.95,
+    "MEDICAL_RECORD": 0.85,
+    "PARTY_STATEMENT": 0.4,
+    "WITNESS_NEEDED": 0.3,
+    "EXPERT_EVIDENCE_NEEDED": 0.3,
+    "INFERENCE_ONLY": 0.1
+  },
+  "documentos": [
+    {"classe": "MEDICAL_RECORD", "padroes": ["atestado", "laudo medic", "laudo", "prontuario", "receita", "exame", "relatorio medic", "aso\\b", "cid\\b", "psicolog", "psiquiatr", "hospital", "clinica"]},
+    {"classe": "OFFICIAL_RECORD", "padroes": ["\\binss\\b", "\\bcat\\b", "comunicacao de acidente", "cnis", "infben", "boletim de ocorrencia", "\\bb\\.?o\\.?\\b", "certidao", "sentenca", "acordao", "carta de concessao", "comunicacao de decisao", "beneficio", "extrato (analitico )?(do )?fgts", "caged", "esocial", "ministerio", "receita federal", "cartorio", "ata notarial"]},
+    {"classe": "PRIMARY_DOCUMENT", "padroes": ["ctps", "carteira de trabalho", "contrato", "holerite", "contracheque", "recibo", "trct", "termo de rescis", "aviso previo", "cartao de ponto", "espelho de ponto", "controle de jornada", "folha de ponto", "extrato", "comprovante", "ficha", "advertencia", "suspensao", "e-?mail", "mensage", "whatsapp", "print", "foto", "convencao", "acordo coletivo", "ppp", "ltcat", "pgr", "ppra", "pcmso", "nota fiscal", "declaracao"]}
+  ]
+}

@@ -97,3 +97,8 @@ _zapsign_debug/
 
 # Arquivo de workspace do editor: e de quem edita, nao do projeto.
 *.code-workspace
+
+# Benchmark real do motor juridico: pecas de clientes (mesmo anonimizadas) e o
+# resultado medido sobre elas. Ficam so na maquina de quem extraiu.
+back/benchmark_real/casos/
+back/benchmark_real/resultados/

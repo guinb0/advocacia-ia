@@ -301,6 +301,19 @@ def prioridade(a: Autoridade, trt_competente: str = "") -> int:
     return 7
 
 
+#: Meia-vida do peso de recência (anos). Decaimento suave: autoridade antiga perde pouco e nunca é descartada.
+RECENCIA_ANOS = 10.0
+
+
+def recencia(a: Autoridade, referencia: date | None) -> float:
+    """1.0 para autoridade da data de referência, decaindo suavemente com a idade; 0.5 quando a data é desconhecida."""
+    d = _data(a.data) or _data(a.vigencia_inicio)
+    if not d or not referencia:
+        return 0.5
+    anos = max(0.0, (referencia - d).days / 365.25)
+    return math.exp(-anos / RECENCIA_ANOS)
+
+
 # ------------------------------------------------------------------ registro + busca híbrida
 
 def _tokens(texto: str) -> list[str]:
@@ -339,7 +352,8 @@ class Registro:
         self, consulta: str, *, data_referencia: date | None = None, tipos: Iterable[str] | None = None,
         k: int = 8, vetoriais: dict[str, float] | None = None, incluir_inativas: bool = False, trt_competente: str = "",
     ) -> list[tuple[Autoridade, float]]:
-        """BM25 + ranking vetorial (fusão por posição recíproca) + filtro de metadados + reordenação pela hierarquia."""
+        """BM25 + ranking vetorial (fusão por posição recíproca) + filtro de metadados + reordenação pela hierarquia,
+        verificação, vinculância, recência (decaimento suave) e status (inativa, quando incluída, vem depois)."""
         tipos = set(tipos or [])
         candidatos = [a for a in self.autoridades if (not tipos or a.tipo in tipos)
                       and (incluir_inativas or a.vigente_em(data_referencia) is not False)]
@@ -376,7 +390,9 @@ class Registro:
         for i, a in enumerate(candidatos):
             if rrf[i] <= 0:
                 continue
-            s = rrf[i] + 0.004 * (7 - prioridade(a, trt_competente)) + (0.003 if a.verificada else 0.0)
+            s = (rrf[i] + 0.004 * (7 - prioridade(a, trt_competente)) + (0.003 if a.verificada else 0.0)
+                 + (0.001 if a.vinculante else 0.0) + 0.002 * recencia(a, data_referencia)
+                 - (0.006 if a.vigente_em(data_referencia) is False else 0.0))
             pontuados.append((a, round(s, 6)))
         return sorted(pontuados, key=lambda x: x[1], reverse=True)[:k]
 

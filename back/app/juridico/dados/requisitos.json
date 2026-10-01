@@ -1,0 +1,165 @@
+{
+  "versao": "2026-10-01",
+  "descricao": "Requisitos genéricos por instituto jurídico (trabalhista e previdenciário acidentário). Regex sobre texto normalizado (minúsculo, sem acento). `padroes` reconhece o instituto pelo nome da tese; `termos` reconhece o fato que atende ao requisito; `dispensado_com` lista institutos que, presentes na mesma tese, tornam o requisito desnecessário. Nenhum instituto é de cliente ou de caso; nenhum número de artigo, súmula ou tema (a base jurídica vem do Acervo).",
+  "institutos": [
+    {
+      "id": "responsabilidade_civil",
+      "rotulo": "Responsabilidade civil / indenização",
+      "padroes": ["dano[s]? mora", "dano[s]? materia", "dano[s]? estetic", "indeniza", "responsabilidade (civil|objetiva|subjetiva)", "reparac"],
+      "requisitos": [
+        {"id": "conduta", "requisito": "conduta (ação ou omissão) do empregador ou preposto", "termos": ["conduta", "omiss", "assalt", "agress", "humilh", "ofens", "acident", "exig", "cobranc", "xing", "trat"]},
+        {"id": "dano", "requisito": "dano sofrido (moral, material ou estético)", "termos": ["dano", "abalo", "sofrimento", "lesao", "sequela", "tratamento", "despesa", "afastament", "traum", "ansiedade", "depress"]},
+        {"id": "nexo", "requisito": "nexo de causalidade entre a conduta/atividade e o dano", "termos": ["nexo", "decorr", "em razao", "durante (a|o) (jornada|servico|expediente)", "cat\\b", "comunicacao de acidente", "no exercicio"]},
+        {"id": "culpa_ou_risco", "requisito": "culpa do empregador ou atividade de risco (responsabilidade objetiva)", "termos": ["culpa", "neglig", "risco", "seguranc", "epi", "treinament", "vigilan", "protec", "normas de seguranca"],
+         "dispensado_com": ["assedio_moral"], "motivo_da_dispensa": "o empregador responde objetivamente pelos atos de seus prepostos"}
+      ]
+    },
+    {
+      "id": "assedio_moral",
+      "rotulo": "Assédio moral",
+      "padroes": ["assedio moral", "assedio", "tratamento vexat", "humilha"],
+      "requisitos": [
+        {"id": "condutas_reiteradas", "requisito": "condutas abusivas reiteradas", "termos": ["reiter", "frequent", "diari", "constante", "repetid", "humilh", "xing", "grit", "cobranc", "ameac"]},
+        {"id": "autoria", "requisito": "autoria por superior, colega ou preposto", "termos": ["superior", "gerente", "supervisor", "encarregad", "chefe", "coordenador", "colega", "preposto"]},
+        {"id": "dano", "requisito": "dano à dignidade ou à saúde psíquica", "termos": ["dano", "abalo", "sofrimento", "ansiedade", "depress", "afastament", "tratamento", "psiqui", "psicolog"]}
+      ]
+    },
+    {
+      "id": "horas_extras",
+      "rotulo": "Horas extras",
+      "padroes": ["horas? extra", "sobrejornada", "jornada (excessiva|extraordinaria)", "labor extraordinario"],
+      "requisitos": [
+        {"id": "jornada_contratual", "requisito": "jornada contratual ou legal", "termos": ["jornada contrat", "contrato", "44 horas", "8 horas", "horario contrat", "escala"]},
+        {"id": "jornada_efetiva", "requisito": "jornada efetivamente cumprida acima do limite", "termos": ["jornada", "horario", "entrada", "saida", "das \\d", "ate as", "horas diarias", "cartao de ponto", "ponto", "hora extra", "sobrejornada"]},
+        {"id": "sem_pagamento", "requisito": "ausência de pagamento ou de compensação válida", "termos": ["nao pag", "sem pagamento", "sem o pagamento", "nao (eram|foram) pagas", "contracheque", "holerite", "banco de horas", "compensac"]}
+      ]
+    },
+    {
+      "id": "intervalo_intrajornada",
+      "rotulo": "Intervalo intrajornada",
+      "padroes": ["intervalo intrajornada", "intervalo para (refeicao|descanso|almoco)", "supressao do intervalo"],
+      "requisitos": [
+        {"id": "jornada_superior_6h", "requisito": "jornada superior a seis horas", "termos": ["jornada", "horas diarias", "das \\d", "horario"]},
+        {"id": "intervalo_suprimido", "requisito": "intervalo suprimido ou reduzido", "termos": ["intervalo", "almoco", "refeicao", "minutos", "sem intervalo", "supress"]}
+      ]
+    },
+    {
+      "id": "adicional_noturno",
+      "rotulo": "Adicional noturno",
+      "padroes": ["adicional noturno", "trabalho noturno", "hora noturna"],
+      "requisitos": [
+        {"id": "labor_noturno", "requisito": "trabalho entre 22h e 5h", "termos": ["noturn", "22", "madrugada", "\\b(23|24|0|1|2|3|4|5)h", "turno da noite"]},
+        {"id": "sem_pagamento", "requisito": "adicional não pago ou pago a menor", "termos": ["nao pag", "sem pagamento", "contracheque", "holerite", "adicional"]}
+      ]
+    },
+    {
+      "id": "insalubridade",
+      "rotulo": "Adicional de insalubridade",
+      "padroes": ["insalubr"],
+      "requisitos": [
+        {"id": "exposicao_agente", "requisito": "exposição a agente insalubre", "termos": ["agente", "ruido", "calor", "quimic", "biologic", "produto", "poeira", "exposic", "insalubr", "limpeza", "lixo"]},
+        {"id": "sem_neutralizacao", "requisito": "ausência de EPI eficaz ou de neutralização", "termos": ["epi", "equipamento de protec", "sem protec", "luva", "mascara", "protetor"]},
+        {"id": "pericia", "requisito": "caracterização por perícia técnica", "termos": ["laudo", "pericia", "ppp", "ltcat", "pcmso", "ppra", "pgr"]}
+      ]
+    },
+    {
+      "id": "periculosidade",
+      "rotulo": "Adicional de periculosidade",
+      "padroes": ["periculos"],
+      "requisitos": [
+        {"id": "atividade_perigosa", "requisito": "atividade ou exposição perigosa (inflamáveis, explosivos, energia elétrica, segurança, motocicleta)", "termos": ["inflamav", "combustiv", "explosiv", "eletric", "energia", "vigilan", "seguranca patrimonial", "motocicleta", "moto", "periculos"]},
+        {"id": "exposicao_permanente", "requisito": "exposição permanente ou intermitente (não eventual)", "termos": ["diari", "permanent", "intermitent", "habitual", "rotina"]},
+        {"id": "pericia", "requisito": "caracterização por perícia técnica", "termos": ["laudo", "pericia", "ppp", "ltcat"]}
+      ]
+    },
+    {
+      "id": "estabilidade_acidentaria",
+      "rotulo": "Estabilidade acidentária",
+      "padroes": ["estabilidade (provisoria |acidentaria)?", "garantia (provisoria )?de emprego", "reintegra"],
+      "requisitos": [
+        {"id": "acidente_ou_doenca", "requisito": "acidente do trabalho ou doença ocupacional", "termos": ["acident", "doenca ocupacional", "cat\\b", "comunicacao de acidente", "lesao", "doenca"]},
+        {"id": "afastamento_beneficio", "requisito": "afastamento superior a 15 dias com benefício acidentário, ou nexo reconhecido depois", "termos": ["b91", "b-91", "auxilio[- ]doenca acidentario", "auxilio por incapacidade", "afastad", "afastament", "inss", "beneficio"]},
+        {"id": "dispensa_no_periodo", "requisito": "dispensa durante o período de garantia", "termos": ["dispens", "demit", "desligad", "rescis", "aviso previo", "trct"]}
+      ]
+    },
+    {
+      "id": "doenca_ocupacional",
+      "rotulo": "Doença ocupacional",
+      "padroes": ["doenca ocupacional", "doenca do trabalho", "doenca profissional", "ler\\b", "dort", "burnout", "concausa"],
+      "requisitos": [
+        {"id": "doenca", "requisito": "doença diagnosticada", "termos": ["diagnost", "cid", "doenca", "atestado", "laudo", "lesao", "sindrome", "tendin", "lombal", "hern"]},
+        {"id": "nexo_causal", "requisito": "nexo causal ou concausal com o trabalho", "termos": ["nexo", "concaus", "em razao do trabalho", "atividade", "esforco", "repetitiv", "ergonom", "postura", "carga"]},
+        {"id": "incapacidade", "requisito": "incapacidade ou redução da capacidade (a apurar em perícia)", "termos": ["incapac", "reducao da capacidade", "afastament", "restric", "limitac", "sequela", "inss"]}
+      ]
+    },
+    {
+      "id": "limbo_previdenciario",
+      "rotulo": "Limbo previdenciário",
+      "padroes": ["limbo"],
+      "requisitos": [
+        {"id": "alta_inss", "requisito": "alta ou cessação do benefício pelo INSS", "termos": ["alta", "cessac", "cessad", "indeferi", "inss", "beneficio"]},
+        {"id": "recusa_retorno", "requisito": "empregador recusou o retorno (inaptidão pelo médico da empresa)", "termos": ["inapt", "recus", "medico da empresa", "aso", "nao (permit|aceit)", "impedid"]},
+        {"id": "salarios_nao_pagos", "requisito": "salários do período não pagos", "termos": ["sem salario", "nao (recebeu|pag)", "sem remuneracao", "salarios"]}
+      ]
+    },
+    {
+      "id": "verbas_rescisorias",
+      "rotulo": "Verbas rescisórias",
+      "padroes": ["verbas rescisorias", "aviso previo", "saldo de salario", "ferias proporcionais", "13o? (salario )?proporcional", "multa (do art\\.? )?477", "multa (do art\\.? )?467", "multa de 40"],
+      "requisitos": [
+        {"id": "vinculo", "requisito": "vínculo de emprego e período contratual", "termos": ["admiss", "admitid", "ctps", "contrato", "registro"]},
+        {"id": "termino", "requisito": "término do contrato (ou rescisão indireta pedida nesta ação)", "termos": ["dispens", "demit", "rescis", "desligad", "termino", "extin", "trct", "aviso"]},
+        {"id": "nao_pagamento", "requisito": "verbas não pagas, pagas a menor ou com atraso", "termos": ["nao pag", "nao recebeu", "atraso", "a menor", "inadimpl", "trct", "pendente"]}
+      ]
+    },
+    {
+      "id": "rescisao_indireta",
+      "rotulo": "Rescisão indireta",
+      "padroes": ["rescisao indireta"],
+      "requisitos": [
+        {"id": "falta_grave", "requisito": "falta grave do empregador", "termos": ["atraso", "nao pag", "fgts", "assedio", "rigor excessivo", "descumpr", "inadimpl", "risco"]},
+        {"id": "atualidade", "requisito": "atualidade da falta (sem perdão tácito)", "termos": ["atual", "continua", "persist", "ate hoje", "desde", "reiterad", "meses"]}
+      ]
+    },
+    {
+      "id": "vinculo_empregaticio",
+      "rotulo": "Reconhecimento de vínculo",
+      "padroes": ["vinculo (de emprego|empregaticio)", "reconhecimento (do|de) vinculo", "anotacao (da|na) ctps", "pejotiz", "fraude"],
+      "requisitos": [
+        {"id": "pessoalidade", "requisito": "pessoalidade", "termos": ["pessoal", "pessoalmente", "nao podia (se fazer substituir|mandar outro)"]},
+        {"id": "onerosidade", "requisito": "onerosidade (remuneração)", "termos": ["salario", "remuner", "pagament", "recebia", "pix", "transferenc"]},
+        {"id": "habitualidade", "requisito": "não eventualidade", "termos": ["diari", "habitual", "semana", "segunda a", "escala", "todos os dias"]},
+        {"id": "subordinacao", "requisito": "subordinação jurídica", "termos": ["ordens", "subordin", "supervisor", "gerente", "horario fixo", "controle", "cobranc", "fiscaliz"]}
+      ]
+    },
+    {
+      "id": "equiparacao_salarial",
+      "rotulo": "Equiparação salarial / desvio de função",
+      "padroes": ["equiparac", "desvio de funcao", "acumulo de funcao", "diferencas salariais"],
+      "requisitos": [
+        {"id": "funcao_identica", "requisito": "identidade de funções (ou função acumulada/desviada)", "termos": ["mesma funcao", "mesmas atividades", "acumul", "desvio", "exercia", "funcao de"]},
+        {"id": "paradigma_ou_piso", "requisito": "paradigma, piso ou parâmetro salarial", "termos": ["paradigma", "piso", "convencao", "colega", "recebia mais", "salario de"]},
+        {"id": "diferenca", "requisito": "diferença salarial efetiva", "termos": ["diferenc", "a menor", "inferior", "salario"]}
+      ]
+    },
+    {
+      "id": "fgts",
+      "rotulo": "FGTS",
+      "padroes": ["fgts", "fundo de garantia"],
+      "requisitos": [
+        {"id": "vinculo", "requisito": "vínculo e remuneração do período", "termos": ["admiss", "salario", "remuner", "contrato"]},
+        {"id": "depositos_ausentes", "requisito": "depósitos ausentes ou irregulares", "termos": ["extrato", "fgts", "nao deposit", "sem deposito", "irregular", "ausencia de deposito"]}
+      ]
+    },
+    {
+      "id": "beneficio_previdenciario",
+      "rotulo": "Benefício previdenciário / acidentário",
+      "padroes": ["auxilio", "aposentadoria por incapacidade", "beneficio (previdenciario|acidentario)", "restabelecimento", "pensao"],
+      "requisitos": [
+        {"id": "qualidade_segurado", "requisito": "qualidade de segurado e carência (quando exigida)", "termos": ["segurad", "cnis", "contribui", "carencia", "vinculo"]},
+        {"id": "incapacidade", "requisito": "incapacidade para o trabalho (a apurar em perícia)", "termos": ["incapac", "laudo", "atestado", "pericia", "cid", "afastament"]},
+        {"id": "indeferimento_cessacao", "requisito": "requerimento indeferido ou benefício cessado", "termos": ["indefer", "cessa", "alta", "negad", "requerimento", "der\\b", "dcb\\b"]}
+      ]
+    }
+  ]
+}

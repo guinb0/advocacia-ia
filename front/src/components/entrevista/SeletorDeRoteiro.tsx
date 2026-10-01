@@ -48,7 +48,10 @@ export default function SeletorDeRoteiro({
   const preBusca = useRef<number | null>(null);
 
   useEffect(() => {
-    listarRoteiros()
+    // O catálogo pode ter sido alterado em outra aba ou por outra pessoa desde
+    // o prefetch do botão "Alterar roteiro". Nesta abertura, a lista precisa
+    // refletir o que já está salvo, não a cópia de até cinco minutos atrás.
+    listarRoteiros({ atualizar: true })
       .then((lista) => {
         setRoteiros(lista);
         setAvisoCatalogo(avisoCatalogoRoteirosEmCache());

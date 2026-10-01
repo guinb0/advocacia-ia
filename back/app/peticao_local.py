@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import functools
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import io
@@ -54,8 +55,10 @@ from . import (
 from . import casos as casos_ocr
 from . import juridico
 from .juridico import atualizacao as juridico_atualizacao
+from .juridico import auditores as juridico_auditores
 from .juridico import autoridades as juridico_aut
 from .juridico import orquestrador as juridico_orq
+from .juridico import raciocinio as juridico_raciocinio
 from .juridico import render as juridico_render
 from .juridico import repositorio as juridico_repo
 from .juridico import teses as juridico_teses
@@ -600,13 +603,35 @@ _SOLICITACAO_EM_CURSO: contextvars.ContextVar[str | None] = contextvars.ContextV
 PASSOS_GERACAO = 100
 
 
+_EM_EXECUCAO: set[str] = set()
+#: Passado este tempo sem concluir, a solicitação é dada como perdida (thread travada ou processo reiniciado).
+LIMITE_SOLICITACAO_S = float(os.getenv("PETICAO_LIMITE_SOLICITACAO_S", "1500"))
+_CARENCIA_ORFA_S = 20.0
+
+
 def marcar_solicitacao_em_curso(solicitacao_id: str | None) -> contextvars.Token[str | None]:
     """Usado pela rota assíncrona: a thread de fundo aponta o progresso para este id."""
+    if solicitacao_id:
+        _EM_EXECUCAO.add(solicitacao_id)
     return _SOLICITACAO_EM_CURSO.set(solicitacao_id)
 
 
 def limpar_solicitacao_em_curso(token: contextvars.Token[str | None]) -> None:
+    _EM_EXECUCAO.discard(_SOLICITACAO_EM_CURSO.get() or "")
     _SOLICITACAO_EM_CURSO.reset(token)
+
+
+def _solicitacao_perdida(solicitacao: dict[str, Any]) -> str:
+    """A geração roda numa thread deste processo: reinício ou travamento deixam a linha em andamento para sempre."""
+    try:
+        idade = (datetime.now(timezone.utc) - datetime.fromisoformat(str(solicitacao.get("solicitada_em")))).total_seconds()
+    except (TypeError, ValueError):
+        return ""
+    if idade > LIMITE_SOLICITACAO_S:
+        return "A geração passou do tempo limite sem concluir. Gere a petição novamente."
+    if idade > _CARENCIA_ORFA_S and str(solicitacao.get("id")) not in _EM_EXECUCAO:
+        return "A geração foi interrompida (o servidor foi reiniciado durante a redação). Gere a petição novamente."
+    return ""
 
 
 def avancar_etapa(etapa: str, passo: int, total: int = PASSOS_GERACAO) -> None:
@@ -898,13 +923,14 @@ MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "100000"))
 
 
 def _llm_json(
-    instrucao: str, entrada: str, *, timeout: float = 180.0
+    instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None,
+    repetir_apos_timeout: bool = True,
 ) -> dict[str, Any]:
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
         raise ErroPeticao("DEEPSEEK_API_KEY ausente — configure no .env.")
     base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
-    modelo = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    modelo = modelo or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     # Duas tentativas, não uma: um pedido grande — criar um tópico novo reescreve
     # a peça inteira — já leva dezenas de segundos, e um timeout de rede isolado
     # (a resposta estava a caminho, a conexão caiu) derrubava o pedido inteiro na
@@ -961,6 +987,9 @@ def _llm_json(
             log.warning(
                 "petição local: LLM falhou (tentativa %s/2): %s", tentativa, erro
             )
+            # Etapa opcional que já esperou o prazo inteiro: repetir dobraria a espera com a tela parada.
+            if not repetir_apos_timeout and isinstance(erro, httpx.TimeoutException):
+                break
             continue
         if not isinstance(saida, dict):
             # JSON válido que não é objeto (uma lista, um número) quebraria adiante,
@@ -1155,7 +1184,34 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     return "\n\n".join(blocos)
 
 
+#: Leitura dos documentos guardada durante UMA geração (`gerar` liga): a mesma geração consultava o inventário e
+#: todas as extrações do caso no SQL Server seis ou mais vezes. Fora de `gerar` não há cache.
+_DOCUMENTOS_DA_GERACAO: ContextVar[dict[str, Any] | None] = ContextVar("documentos_da_geracao", default=None)
+
+
 def documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    guardados = _DOCUMENTOS_DA_GERACAO.get()
+    if guardados is not None and caso_id in guardados:
+        ledger, documentos = guardados[caso_id]
+        return list(ledger), list(documentos)
+    resultado = _ler_documentos_logicos(caso_id)
+    if guardados is not None:
+        guardados[caso_id] = resultado
+    return list(resultado[0]), list(resultado[1])
+
+
+def _com_documentos_da_geracao(funcao: Any) -> Any:
+    @functools.wraps(funcao)
+    def envolvida(*args: Any, **kwargs: Any) -> Any:
+        marca = _DOCUMENTOS_DA_GERACAO.set({})
+        try:
+            return funcao(*args, **kwargs)
+        finally:
+            _DOCUMENTOS_DA_GERACAO.reset(marca)
+    return envolvida
+
+
+def _ler_documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """(DOCUMENT_LEDGER, texto de cada documento LÓGICO na ordem do ledger).
 
     O ledger é o inventário dos anexos, não o inventário do OCR.  Antes, um
@@ -1412,7 +1468,7 @@ def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
     ]
 
 
-def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
+def _montar_contexto(caso_id: str, texto_entrevista: str, *, brief: dict[str, Any] | None = None) -> str:
     caso = armazenamento.obter_caso(caso_id) or {}
     situacao = casos_ocr.montar_situacao(caso_id) or {}
     categoria = (
@@ -1441,7 +1497,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     # o case brief antes dos vinte documentos inteiros, a busca por embeddings
     # parte dos fatos e provas do CASO, não do texto cru dos anexos.
     try:
-        linhas.append("\n" + case_brief.para_prompt(case_brief.montar(caso_id)))
+        linhas.append("\n" + case_brief.para_prompt(brief if brief is not None else case_brief.montar(caso_id)))
     except Exception as erro:
         log.warning("petição local: case brief indisponível no contexto: %s", erro)
     # A ANÁLISE DOCUMENTAL (skill documental) chega à geração como MATERIAL do caso — fatos com
@@ -2020,7 +2076,7 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
     try:
         if caso_id:
             instrucao = _com_skill_do_escritorio(caso_id, instrucao)
-        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0)
+        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0, repetir_apos_timeout=False)
     except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
         log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
         return None
@@ -2396,10 +2452,11 @@ def _contexto_isolado(contexto_caso: str, plano_est: dict[str, Any], tese: dict[
 def _aprofundar_topico(
     caso_id: str, secao: dict[str, Any], topico: dict[str, str], *, contexto_caso: str, plano: dict[str, Any] | None,
     categoria: str, assuntos: list[str], sinal: dict[str, Any], apoio: str, contexto_uf: str,
-    plano_est: dict[str, Any] | None = None,
+    plano_est: dict[str, Any] | None = None, orientacoes_motor: dict[str, dict[str, str]] | None = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     titulo, corpo = topico["titulo"], topico["corpo"]
     tese = plano_da_peticao.tese_do_topico(plano_est, titulo, corpo) if plano_est and titulo else None
+    do_motor = juridico_raciocinio.orientacao_para_topico(orientacoes_motor, titulo, corpo)
     if tese:  # cada tese só vê os fatos dela (+ os comuns) e os documentos que a provam
         contexto_caso = _contexto_isolado(contexto_caso, plano_est, tese)  # type: ignore[arg-type]
         apoio = plano_da_peticao.contexto_da_tese(plano_est, tese)  # type: ignore[arg-type]
@@ -2409,11 +2466,13 @@ def _aprofundar_topico(
     antes = recuperacao_por_secao.metricas(corpo)
     orientacao = "\n\n".join([
         _ORIENTACAO_DE_PROFUNDIDADE, _plano_do_topico(titulo, plano, material), _sinal_em_texto(sinal, antes), apoio,
+        *([do_motor] if do_motor else []),
     ])
     base = {"code": secao.get("code"), "label": titulo or secao.get("label"), "content": corpo}
     contexto = contexto_caso + "\n\n" + material.texto
     tel = {**material.telemetria, "secao": secao.get("code"), "antes": antes, "etapas": [],
-           "tese": tese["id"] if tese else None, "textos_acervo": [t for p, t in material.itens if p.canal == "peca"]}
+           "tese": tese["id"] if tese else None, "textos_acervo": [t for p, t in material.itens if p.canal == "peca"],
+           "orientacao_do_motor": bool(do_motor)}
 
     def aceitar(novo: str | None) -> bool:
         return bool(novo) and len(novo.split()) >= len(corpo.split()) * 0.9 and not _RE_PONTO_SEM_FONTE.search(novo or "")
@@ -2462,8 +2521,12 @@ def _aprofundar_pela_referencia(
     categoria: str = "",
     assuntos: list[str] | None = None,
     plano_est: dict[str, Any] | None = None,
+    orientacoes_motor: dict[str, dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Redige/aprofunda TÓPICO A TÓPICO, com recuperação própria no acervo para cada um.
+
+    `orientacoes_motor`: por tese, o que o motor jurídico (modo assistido) pede ao capítulo — requisitos frágeis,
+    prova a usar primeiro, tom pela certeza jurídica e defesas a neutralizar com prova.
 
     Para cada subcapítulo argumentativo: consultas do tópico → busca vetorial no acervo (todas as peças de
     mérito) → reranking híbrido → exemplos diversificados + julgados e legislação do mesmo tópico → redação com
@@ -2507,7 +2570,7 @@ def _aprofundar_pela_referencia(
         try:
             return i, k, *_aprofundar_topico(
                 caso_id, secao, t, contexto_caso=contexto_caso, plano=plano, categoria=categoria, assuntos=assuntos,
-                sinal=sinal, apoio=apoio, contexto_uf=contexto, plano_est=plano_est,
+                sinal=sinal, apoio=apoio, contexto_uf=contexto, plano_est=plano_est, orientacoes_motor=orientacoes_motor,
             )
         except Exception as erro:  # noqa: BLE001 - um tópico que falha fica como estava
             log.warning("aprofundamento do tópico %s falhou: %s", t["titulo"][:40], erro, exc_info=True)
@@ -2638,6 +2701,7 @@ def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
 
 
 @skill_peticao.com_skill_do_caso
+@_com_documentos_da_geracao
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
@@ -2656,17 +2720,18 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
             for r in regras_aplicadas
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
-    contexto = _montar_contexto(caso_id, texto_entrevista)
-    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     try:
         brief = case_brief.montar(caso_id)
     except Exception as erro:
         log.warning("petição local: case brief indisponível para trace/cobertura: %s", erro)
         brief = None
+    contexto = _montar_contexto(caso_id, texto_entrevista, brief=brief)
+    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
     # O plano (teses + fatos + provas) vem ANTES da recuperação: é dele que saem as consultas.
     avancar_etapa("Planejando teses, fatos e provas…", 18)
     plano = _outline_juridico(contexto, caso_id)
+    avancar_etapa("Cruzando o plano com os documentos do caso…", 20)
     outline = _outline_para_redigir(plano)
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
     texto_do_caso = contexto
@@ -2703,8 +2768,11 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     # strict: ANTES da recuperação (as teses viram consultas) e a peça nasce do PETITION_PLAN; falha não cai
     #         em silêncio para o legado — vai a `falhas_juridicas` e a peça não é marcada como pronta.
     # shadow: em paralelo à geração legada, sem tocar texto, prontidão nem avisos da peça entregue.
+    # assistido: o legado (modo off) com o motor jurídico em segundo plano — orienta o aprofundamento se ficar
+    #            pronto a tempo e, no fim, põe lacunas/defesas/críticos nas pendências do advogado.
     modo_juridico = juridico.modo()
     estrito, sombra = modo_juridico == juridico.STRICT, modo_juridico == juridico.SHADOW
+    assistido = juridico.assistido()
     falhas_juridicas: list[str] = []
     prep_juridico: dict[str, Any] | None = None
     analise_em_sombra = None
@@ -2713,7 +2781,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         prep_juridico = _etapa_juridica(
             "análise (fatos, teses, cálculos)", lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista, data_da_peticao),
             falhas_juridicas, diag)
-    elif sombra:
+    elif sombra or assistido:
         analise_em_sombra = _em_sombra(lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista, data_da_peticao))
     plano_para_consultas = plano
     if estrito and prep_juridico:
@@ -2733,7 +2801,9 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     )
     if estrito and prep_juridico:
         prep_juridico = _etapa_juridica(
-            "autoridades e PETITION_PLAN", lambda: _fundamentacao_juridica(prep_juridico, diag, uf_jurisprudencia, falhas_juridicas),
+            "autoridades e PETITION_PLAN", lambda: _fundamentacao_juridica(
+                prep_juridico, diag, uf_jurisprudencia, falhas_juridicas,
+                llm_proposicoes=_llm_raciocinio(120.0) if _ligado("PETICAO_MOTOR_PROPOSICOES_LLM") else None),
             falhas_juridicas, diag)
     if estrito and (prep_juridico is None or falhas_juridicas):
         # strict não tem redação degradada: sem a camada jurídica completa, não há peça.
@@ -2993,16 +3063,19 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # (documento inexistente, número sem origem, pedido sem valor, tópico contra o
     # cliente, súmula de memória). Ver `conferencia_peticao`.
     avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 74)
+    orientacoes_motor, motor_no_aprofundamento = _orientacoes_do_motor(analise_em_sombra) if assistido else ({}, None)
     secoes, aprofundamento = _tentar_etapa(
         "aprofundamento",
         lambda: _aprofundar_pela_referencia(
             caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
             assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
-            plano_est=plano_est,
+            plano_est=plano_est, orientacoes_motor=orientacoes_motor,
         ),
         (secoes, {"por_topico": [], "textos_acervo": []}),
         diag,
     )
+    if motor_no_aprofundamento is not None:
+        aprofundamento["motor_juridico"] = motor_no_aprofundamento
     textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []) or [])]
     # A seção "Dos pedidos" é RENDERIZADA do plano (fonte única), não pedida de novo ao modelo.
     avancar_etapa("Consolidando os pedidos a partir do plano…", 80)
@@ -3073,7 +3146,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
         (secoes, {"pendencias_humanas": [], "rodadas": []}, []),
         diag,
     )
-    violacoes = [*[v for v in violacoes if not v.bloqueia], *achados_finais]
+    violacoes = _mesclar_achados_finais(violacoes, achados_finais, secoes)
     pipeline["documento_final"] = rel_final
     hash_validado = documento_final.impressao_hash(secoes)
     cobertura = _tentar_etapa(
@@ -3082,6 +3155,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
     pendencias += _pendencias_do_auditor(rel_linter)
+    pendencias += [p for p in _pendencias_criticas(violacoes) if p not in pendencias]
     atualizacao = _resultado_da_atualizacao(atualizacao_futura)
     if atualizacao:
         pendencias += [p for p in atualizacao.get("pendencias") or [] if p not in pendencias]
@@ -3089,6 +3163,10 @@ Cada content deve conter parágrafos separados por linha em branco."""
     if sombra:
         pipeline["juridico"] = _juridico_em_sombra(
             analise_em_sombra, secoes, plano_est, pendencias, texto_do_caso, diag, uf_jurisprudencia)
+    elif assistido:
+        pipeline["juridico"] = _juridico_em_sombra(
+            analise_em_sombra, secoes, plano_est, pendencias, texto_do_caso, diag, uf_jurisprudencia, modo=juridico.ASSISTIDO)
+        pendencias += [p for p in _pendencias_do_motor(pipeline["juridico"]) if p not in pendencias]
     if estrito:
         if prep_juridico:
             avancar_etapa("Auditoria jurídica (citações, fatos, cálculos, consistência)…", 97)
@@ -3101,6 +3179,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
                                              carregar_dispositivos=juridico_repo.carregar_dispositivos,
                                              pedidos_obrigatorios_ausentes=ausentes, llm=_verificador_juridico()),
                 falhas_juridicas, diag)
+            pendencias += [p for p in juridico_orq.pendencias_do_motor(prep_juridico) if p not in pendencias]
             pipeline["juridico"] = _etapa_juridica(
                 "rastro", lambda: juridico_orq.trace(prep_juridico, auditoria_juridica, modo=juridico.STRICT, falhas=falhas_juridicas),
                 falhas_juridicas, diag)
@@ -3242,15 +3321,28 @@ def _analise_juridica(caso_id: str, plano_est: dict[str, Any], contexto: str, te
                       data_da_peticao: date | None = None) -> dict[str, Any]:
     fontes = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"]} for d in documentos_logicos(caso_id)[1]]
     fontes.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
+    modelo = juridico.modelo_raciocinio() or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     return juridico_orq.analisar(
-        plano_est=plano_est, contexto_caso=contexto, fontes=fontes,
-        llm=lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=300.0),
-        textos_skill=juridico_teses.textos_da_skill_ativa(), modelo=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-        data_referencia=data_da_peticao,
+        plano_est=plano_est, contexto_caso=contexto, fontes=fontes, llm=_llm_raciocinio(300.0),
+        textos_skill=juridico_teses.textos_da_skill_ativa(), modelo=modelo, data_referencia=data_da_peticao,
+        llm_contrateses=_llm_raciocinio(180.0) if _ligado("PETICAO_MOTOR_CONTRATESES_LLM") else None, modelo_contrateses=modelo,
     )
 
 
-def _fundamentacao_juridica(prep: dict[str, Any], diag: dict[str, Any], uf: str, falhas: list[str]) -> dict[str, Any]:
+def _ligado(variavel: str, padrao: str = "1") -> bool:
+    return os.getenv(variavel, padrao).strip().lower() in ("1", "true", "sim", "on")
+
+
+def _llm_raciocinio(timeout: float) -> Any:
+    """LLM do raciocínio jurídico (issue spotting, contrateses, proposições): `PETICAO_MODELO_RACIOCINIO` ou o da redação."""
+    modelo = juridico.modelo_raciocinio()
+    if not modelo:
+        return lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=timeout)
+    return lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=timeout, modelo=modelo)
+
+
+def _fundamentacao_juridica(prep: dict[str, Any], diag: dict[str, Any], uf: str, falhas: list[str], *,
+                            llm_proposicoes: Any = None) -> dict[str, Any]:
     base, erro = juridico_repo.carregar_autoridades()
     if erro:
         falhas.append(f"autoridades: {erro}")
@@ -3261,6 +3353,7 @@ def _fundamentacao_juridica(prep: dict[str, Any], diag: dict[str, Any], uf: str,
         prep, autoridades_base=base, alertas_base=[erro] if erro else [],
         trechos_legislacao=trechos.get("legislacao") or [], trechos_precedentes=trechos.get("precedentes") or [],
         trt_competente=str((tribunais.UF_PARA_TRT.get(uf) or [""])[0]),
+        llm_proposicoes=llm_proposicoes, modelo_proposicoes=juridico.modelo_raciocinio() or os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
     )
 
 
@@ -3293,6 +3386,8 @@ def _etapa_juridica(nome: str, funcao: Any, falhas: list[str], diag: dict[str, A
 _EXECUTOR_SOMBRA = ThreadPoolExecutor(max_workers=2, thread_name_prefix="juridico-sombra")
 #: Quanto a peça legada, já pronta, pode esperar o modo shadow terminar.
 ESPERA_MAXIMA_SOMBRA_S = float(os.getenv("PETICAO_JURIDICO_SOMBRA_ESPERA_S", "45"))
+#: No assistido o motor só acrescenta pendências: a peça pronta não fica parada esperando por ele.
+ESPERA_ASSISTIDO_S = float(os.getenv("PETICAO_ASSISTIDO_ESPERA_S", "10"))
 
 
 def _em_sombra(funcao: Any) -> Any:
@@ -3312,37 +3407,79 @@ def _em_sombra(funcao: Any) -> Any:
 
 def _juridico_em_sombra(
     futuro: Any, secoes: list[dict[str, Any]], plano_legado: dict[str, Any], pendencias_legado: list[str],
-    texto_do_caso: str, diag: dict[str, Any], uf: str,
+    texto_do_caso: str, diag: dict[str, Any], uf: str, *, modo: str = juridico.SHADOW,
 ) -> dict[str, Any]:
-    """Modo shadow: audita a peça legada com a camada e grava as diferenças. Nunca levanta exceção."""
+    """Modo shadow (e assistido): audita a peça legada com a camada e grava as diferenças. Nunca levanta exceção.
+
+    No assistido a verificação por LLM no fim fica desligada por padrão (`PETICAO_ASSISTIDO_VERIFICACAO_LLM`): a
+    auditoria do motor é por código e a peça não espera chamadas extras."""
     falhas: list[str] = []
     prep = None
     if futuro is None:
         falhas.append("análise: não iniciou")
     else:
+        espera = ESPERA_ASSISTIDO_S if modo == juridico.ASSISTIDO else ESPERA_MAXIMA_SOMBRA_S
         try:
-            prep = futuro.result(timeout=max(1.0, min(ESPERA_MAXIMA_SOMBRA_S, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
+            prep = futuro.result(timeout=max(1.0, min(espera, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
         except TimeoutError:
             falhas.append("análise: não terminou a tempo; a peça legada não esperou")
         except Exception as erro:  # noqa: BLE001
             falhas.append(f"análise: {_erro_curto(erro)}")
     if prep is None:
-        return juridico_orq.trace_de_falha(juridico.SHADOW, falhas)
+        return juridico_orq.trace_de_falha(modo, falhas)
     try:
-        prep = _fundamentacao_juridica(prep, diag, uf, falhas)
+        variavel, padrao = (("PETICAO_ASSISTIDO_VERIFICACAO_LLM", "0") if modo == juridico.ASSISTIDO
+                            else ("PETICAO_SOMBRA_VERIFICACAO_LLM", "1"))
+        com_llm = _ligado(variavel, padrao) and ORCAMENTO_SUAVE_S - _tempo_decorrido() > 150
+        prep = _fundamentacao_juridica(prep, diag, uf, falhas, llm_proposicoes=_llm_raciocinio(120.0) if com_llm else None)
         ausentes = documento_final.pedidos_obrigatorios_ausentes(secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"])
-        com_llm = os.getenv("PETICAO_SOMBRA_VERIFICACAO_LLM", "1").strip() != "0" and ORCAMENTO_SUAVE_S - _tempo_decorrido() > 150
         if not com_llm:
             falhas.append("verificação de sustentação das citações e 2ª camada semântica não rodaram (desligadas ou sem tempo)")
         auditoria = juridico_orq.auditar(secoes, prep, pendencias=list(pendencias_legado), texto_das_fontes=texto_do_caso,
                                          carregar_dispositivos=juridico_repo.carregar_dispositivos, pedidos_obrigatorios_ausentes=ausentes,
                                          llm=_verificador_juridico() if com_llm else None)
         comparacao = juridico_orq.comparar_com_legado(secoes, prep, auditoria, plano_legado=plano_legado, pendencias_legado=pendencias_legado)
-        return juridico_orq.trace(prep, auditoria, modo=juridico.SHADOW, falhas=falhas, comparacao=comparacao)
+        return juridico_orq.trace(prep, auditoria, modo=modo, falhas=falhas, comparacao=comparacao)
     except Exception as erro:  # noqa: BLE001 - shadow nunca afeta a geração
-        log.exception("petição local: modo shadow falhou")
+        log.exception("petição local: modo %s falhou", modo)
         falhas.append(f"auditoria/comparação: {_erro_curto(erro)}")
-        return juridico_orq.trace_de_falha(juridico.SHADOW, falhas)
+        return juridico_orq.trace_de_falha(modo, falhas)
+
+
+#: Quanto o aprofundamento (modo assistido) espera a análise do motor antes de seguir sem a orientação dele.
+ESPERA_MOTOR_NO_APROFUNDAMENTO_S = float(os.getenv("PETICAO_MOTOR_ESPERA_S", "5"))
+#: Autoridade "inexistente" contra uma base verificada vazia não é erro da peça: não vira pendência CRÍTICA.
+_CRITICOS_QUE_DEPENDEM_DA_BASE = {"AUTORIDADE_INEXISTENTE", "DISPOSITIVO_INEXISTENTE", "AUTORIDADE_POSTERIOR_A_PETICAO"}
+
+
+def _orientacoes_do_motor(futuro: Any) -> tuple[dict[str, dict[str, str]], dict[str, Any]]:
+    """Orientação por tese para o aprofundamento, se a análise em segundo plano já terminou. Nunca levanta exceção."""
+    if futuro is None:
+        return {}, {"aplicado": False, "motivo": "análise não iniciou"}
+    try:
+        prep = futuro.result(timeout=ESPERA_MOTOR_NO_APROFUNDAMENTO_S)
+        rac = (prep or {}).get("raciocinio")
+        orient = juridico_raciocinio.orientacoes(rac)
+    except TimeoutError:
+        return {}, {"aplicado": False, "motivo": "análise do motor ainda não terminou"}
+    except Exception as erro:  # noqa: BLE001 - sem orientação o aprofundamento segue como antes
+        return {}, {"aplicado": False, "motivo": f"análise falhou: {_erro_curto(erro)}"}
+    return orient, {"aplicado": bool(orient), "teses_orientadas": len(orient),
+                    "capitulos_vulneraveis": len((rac or {}).get("capitulos_vulneraveis") or [])}
+
+
+def _pendencias_do_motor(trace: dict[str, Any] | None, *, limite_criticos: int = 8) -> list[str]:
+    """Lacunas de prova, defesas sem resposta/prova e alertas de score + os achados CRÍTICOS da auditoria."""
+    if not trace:
+        return []
+    saida = list(trace.get("pendencias_do_motor") or [])
+    sem_base = any(str(f).startswith("autoridades:") for f in trace.get("falhas") or [])
+    criticos = [a for a in ((trace.get("auditoria") or {}).get("achados") or [])
+                if juridico_auditores.nivel(a) == juridico_auditores.CRITICAL
+                and not (sem_base and a.get("codigo") in _CRITICOS_QUE_DEPENDEM_DA_BASE)]
+    saida += [f"CRÍTICO (auditoria jurídica) [{a['codigo']}] {a.get('detalhe') or a.get('trecho') or ''}"[:260]
+              for a in criticos[:limite_criticos]]
+    return list(dict.fromkeys(saida))
 
 
 _EXECUTOR_ATUALIZACAO = ThreadPoolExecutor(max_workers=2, thread_name_prefix="atualizacao-juridica")
@@ -3394,6 +3531,39 @@ def _resultado_da_atualizacao(futuro: Any) -> dict[str, Any] | None:
         return {"executada": False, "motivo": f"não concluiu a tempo ou falhou: {_erro_curto(erro)}", "candidatos": [], "pendencias": []}
 
 
+def _mesclar_achados_finais(anteriores: list[Any], finais: list[Any], secoes: list[dict[str, Any]]) -> list[Any]:
+    """Achados do auditor (linter) + os da validação final, sem perder bloqueante que a validação final não reavaliou.
+
+    O bloqueante do auditor que a validação final não repetiu e cujo trecho ainda está na peça segue em
+    `review.findings` como alerta (a validação final é quem decide a retenção); o que já saiu do texto, não.
+    """
+    vistos = {(v.codigo, v.secao) for v in finais}
+    corpo = " ".join(" ".join(str(s.get("content") or "").split()) for s in secoes)
+    mantidos = []
+    for v in anteriores:
+        if not v.bloqueia:
+            mantidos.append(v)
+            continue
+        nucleo = " ".join(str(v.trecho or "").strip("… ").split())[:80]
+        if (v.codigo, v.secao) in vistos or (nucleo and nucleo not in corpo):
+            continue
+        mantidos.append(conferencia_peticao.Violacao(
+            v.codigo, v.secao, v.trecho, "Apontado pelo auditor e não reavaliado na validação final — confira. " + v.motivo,
+            v.correcao, bloqueia=False, citacao=v.citacao))
+    return [*mantidos, *finais]
+
+
+def _pendencias_criticas(violacoes: list[Any]) -> list[str]:
+    """Achado de nível CRITICAL no legado vira pendência destacada (o legado não retém a peça por ele)."""
+    saida = []
+    for v in violacoes:
+        if juridico_auditores.nivel_de(v.codigo, "bloqueia" if v.bloqueia else "alerta") == juridico_auditores.CRITICAL:
+            item = f"CRÍTICO [{v.codigo}] {v.motivo}"[:300]
+            if item not in saida:
+                saida.append(item)
+    return saida
+
+
 def _pendencias_do_auditor(relatorio: dict[str, Any] | None) -> list[str]:
     retirados = (relatorio or {}).get("pedidos_retirados") or []
     return [f"Pedido retirado: «{r}» é verba rescisória e os documentos indicam o contrato ativo, sem rescisão indireta pedida. "
@@ -3418,16 +3588,19 @@ def _aplicar_veredito_juridico(dados: dict[str, Any], auditoria: dict[str, Any] 
         prontidao["ready"] = False
         prontidao.setdefault("blocking_issues", []).append("Auditoria jurídica não executou — revisão humana obrigatória.")
         return
-    bloqueios = [a for a in auditoria["achados"] if a["severidade"] == "bloqueia"]
-    prontidao["ready"] = bool(prontidao.get("ready")) and auditoria["veredito"]["pronta"]
+    criticos = juridico_auditores.criticos(auditoria["achados"])
+    bloqueios = criticos + [a for a in auditoria["achados"] if a["severidade"] == "bloqueia" and a not in criticos]
+    prontidao["ready"] = bool(prontidao.get("ready")) and auditoria["veredito"]["pronta"] and not criticos
+    prontidao["critico"] = bool(criticos)
     prontidao.setdefault("blocking_issues", []).extend(
-        f"[{a['auditor']}] {a['codigo']}: {a['trecho'] or a['detalhe']}"[:220] for a in bloqueios[:40])
+        f"{'CRÍTICO ' if a in criticos else ''}[{a['auditor']}] {a['codigo']}: {a['trecho'] or a['detalhe']}"[:220] for a in bloqueios[:40])
     prontidao.setdefault("warnings", []).extend(
         f"[{a['auditor']}] {a['codigo']}: {a['trecho'] or a['detalhe']}"[:220] for a in auditoria["achados"] if a["severidade"] != "bloqueia")
     prontidao["auditoria_juridica"] = auditoria["veredito"]
     # READY só quando a peça inteira (estrutura + todos os gates) passou; qualquer bloqueio → BLOCKED.
     prontidao["status"] = "READY" if prontidao["ready"] else "BLOCKED"
-    prontidao["achados_juridicos"] = [{"gate": a["auditor"], "codigo": a["codigo"], "severidade": a["severidade"], "secao": a["secao"],
+    prontidao["achados_juridicos"] = [{"gate": a["auditor"], "codigo": a["codigo"], "severidade": a["severidade"],
+                                       "nivel": juridico_auditores.nivel(a), "secao": a["secao"],
                                        "trecho": a["trecho"], "detalhe": a["detalhe"]} for a in auditoria["achados"]]
 
 
@@ -4589,6 +4762,14 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
                 "etapa": "Petição pronta.",
                 "passo": total,
                 "passos_totais": total,
+            }
+        perdida = _solicitacao_perdida(solicitacao) if solicitacao.get("status") != "failed" else ""
+        if perdida:
+            log.warning("petição local: solicitação %s encerrada como perdida em '%s' (%s%%)", solicitacao.get("id"), etapa, passo)
+            armazenamento.concluir_solicitacao_peticao(str(solicitacao["id"]), perdida)
+            return {
+                "status": "FAILED", "completed_steps": passo, "generation_id": None, "blocking_findings": 0,
+                "erro": perdida, "etapa": etapa, "passo": passo, "passos_totais": total,
             }
         return {
             "status": "RUNNING",

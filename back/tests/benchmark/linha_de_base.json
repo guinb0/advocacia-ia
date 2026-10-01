@@ -1,0 +1,17 @@
+{
+  "casos": 5,
+  "metricas": {
+    "certeza_acerto": 1.0,
+    "falsos_positivos_caso_limpo": 0,
+    "lacunas_precisao": 1.0,
+    "lacunas_recall": 1.0,
+    "linguagem_absoluta_precisao": 1.0,
+    "linguagem_absoluta_recall": 1.0,
+    "pericia_recall": 1.0,
+    "requisitos_acerto": 1.0,
+    "respondidas_acerto": 1.0,
+    "risco_de_contradicao_acerto": 1.0,
+    "vulneraveis_precisao": 1.0,
+    "vulneraveis_recall": 1.0
+  }
+}
