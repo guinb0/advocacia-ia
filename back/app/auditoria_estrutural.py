@@ -662,13 +662,23 @@ _NAO_MONETARIO = re.compile(
     r"recolhimento|dep[óo]sito", re.I)
 
 
+_ESTABILIDADE = re.compile(r"estabilidad", re.I)
+_SUBSTITUTIVO_DA_ESTABILIDADE = re.compile(r"indeniza|pagamento|reintegr|sal[áa]rios?\s+do\s+per[íi]odo|convers", re.I)
+
+
+def _indenizacao_de_estabilidade(rotulo: str) -> bool:
+    """Estabilidade com o contrato ativo é declaratória: indenização substitutiva e reintegração pressupõem dispensa."""
+    return bool(_ESTABILIDADE.search(rotulo) and _SUBSTITUTIVO_DA_ESTABILIDADE.search(rotulo))
+
+
 def pedidos_rescisorios_com_vinculo_ativo(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[dict[str, Any]]:
     """Pedidos de verba rescisória sem término do contrato nos fatos e sem rescisão indireta pedida (vazio = nada a retirar)."""
     claims = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
     resto = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") != "CLAIMS")
     fatos = " ".join(str(f.get(k) or "") for f in plano.get("fatos") or [] if isinstance(f, dict) for k in ("descricao", "fato", "valor"))
     rescisorios = [p for p in plano.get("pedidos") or []
-                   if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")]
+                   if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")
+                   or _indenizacao_de_estabilidade(f"{p.get('tipo', '')} {p.get('objeto', '')}")]
     if not rescisorios:
         return []
     indireta = canonico.pede_rescisao_indireta([{"tese": f"{resto} {claims}"}, *({"tese": p.get("tipo", ""), "pedido": p.get("objeto", "")} for p in plano.get("pedidos") or [])])
