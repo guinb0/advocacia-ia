@@ -5,7 +5,7 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 import { Aviso, Botao, Selo } from "@/components/ui/Basicos";
 import { Camera, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
-import { criarSalaChamada } from "@/lib/api";
+import { ApiError, criarSalaChamada } from "@/lib/api";
 import * as portal from "@/lib/apiPortal";
 import type { ItemPortal, SituacaoPortal } from "@/lib/apiPortal";
 import type { TomSelo } from "@/lib/formato";
@@ -23,6 +23,7 @@ const SELO_TEXTO: Record<ItemPortal["status"], { texto: string; simbolo: string;
   entregue: { texto: "Recebido", simbolo: "✓", tom: "ok" },
   processando: { texto: "Conferindo", simbolo: "◌", tom: "info" },
   conferir: { texto: "Precisa reenviar", simbolo: "!", tom: "atencao" },
+  recebido: { texto: "Recebido", simbolo: "✓", tom: "info" },
   pendente: { texto: "Falta enviar", simbolo: "✕", tom: "critico" },
 };
 /* A faixa lateral do item — a mesma gravidade do checklist interno, no
@@ -31,25 +32,32 @@ const ITEM_BORDA: Record<ItemPortal["status"], string> = {
   entregue: "var(--ok)",
   processando: "var(--acao)",
   conferir: "var(--atencao-marca)",
+  recebido: "var(--acao)",
   pendente: "var(--critico)",
 };
 const ITEM_FUNDO: Record<ItemPortal["status"], string> = {
   entregue: "",
   processando: "",
   conferir: "bg-atencao-claro",
+  recebido: "",
   pendente: "",
 };
 const MARCADOR: Record<ItemPortal["status"], string> = {
   entregue: "border-ok-borda bg-ok-claro text-ok",
   processando: "border-acao-borda bg-acao-clara text-acao",
   conferir: "border-atencao-borda bg-papel text-atencao",
+  recebido: "border-acao-borda bg-acao-clara text-acao",
   pendente: "border-critico-borda bg-critico-claro text-critico",
 };
+
+/* Celular com 4G fraco: um bloco pequeno que cai custa pouco para repetir. */
+const ARQUIVOS_POR_BLOCO = 8;
 
 export default function PaginaPortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
   const [sessao, setSessao] = useState<string | null>(null);
   const [situacao, setSituacao] = useState<SituacaoPortal | null>(null);
+  const [semConexao, setSemConexao] = useState(false);
 
   // Uma sessão da mesma aba evita pedir a senha a cada recarga da página.
   useEffect(() => {
@@ -60,10 +68,17 @@ export default function PaginaPortal({ params }: { params: Promise<{ token: stri
     async (s: string) => {
       try {
         setSituacao(await portal.situacao(token, s));
-      } catch {
-        // Sessão vencida no servidor: volta para a senha.
-        portal.esquecerSessao();
-        setSessao(null);
+        setSemConexao(false);
+      } catch (e) {
+        // Só sessão vencida (401) ou link inválido (404) voltam para a senha. Sinal
+        // fraco ou servidor reiniciando num deploy não podem expulsar o cliente.
+        const status = e instanceof ApiError ? e.status : undefined;
+        if (status === 401 || status === 404) {
+          portal.esquecerSessao();
+          setSessao(null);
+        } else {
+          setSemConexao(true);
+        }
       }
     },
     [token],
@@ -72,6 +87,12 @@ export default function PaginaPortal({ params }: { params: Promise<{ token: stri
   useEffect(() => {
     if (sessao) void carregar(sessao);
   }, [sessao, carregar]);
+
+  useEffect(() => {
+    if (!sessao || !semConexao) return;
+    const id = setTimeout(() => void carregar(sessao), 5000);
+    return () => clearTimeout(id);
+  }, [sessao, semConexao, carregar]);
 
   /* O envio responde antes de a leitura terminar, então a tela se atualiza
    * sozinha enquanto houver documento sendo lido — e só enquanto houver. */
@@ -94,6 +115,7 @@ export default function PaginaPortal({ params }: { params: Promise<{ token: stri
       token={token}
       sessao={sessao}
       situacao={situacao}
+      semConexao={semConexao}
       onAtualizar={setSituacao}
       onSair={() => {
         portal.esquecerSessao();
@@ -194,17 +216,20 @@ function Checklist({
   token,
   sessao,
   situacao,
+  semConexao,
   onAtualizar,
   onSair,
 }: {
   token: string;
   sessao: string;
   situacao: SituacaoPortal | null;
+  semConexao: boolean;
   onAtualizar: (s: SituacaoPortal) => void;
   onSair: () => void;
 }) {
   const [enviando, setEnviando] = useState<string | null>(null);
   const [enviandoLote, setEnviandoLote] = useState(false);
+  const [progressoLote, setProgressoLote] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [avisoLote, setAvisoLote] = useState<string | null>(null);
 
@@ -212,19 +237,21 @@ function Checklist({
     return (
       <div className="min-h-screen px-4 pt-5 pb-12 bg-fundo text-md">
         <div className="w-[min(680px,100%)] mx-auto">
-          <p className="mt-[10px] mb-0 text-tinta-2 text-base leading-[1.6]">Carregando seus documentos…</p>
+          <p className="mt-[10px] mb-0 text-tinta-2 text-base leading-[1.6]">
+            {semConexao
+              ? "Sem conexão com o escritório no momento. Tentando de novo…"
+              : "Carregando seus documentos…"}
+          </p>
         </div>
       </div>
     );
   }
 
   const { progresso } = situacao;
-  const faltam = situacao.itens.filter(
-    (i) => i.obrigatorio && i.status !== "entregue" && i.status !== "processando",
-  );
-  const prontos = situacao.itens.filter(
-    (i) => i.status === "entregue" || i.status === "processando",
-  );
+  const chegou = (i: ItemPortal) =>
+    i.status === "entregue" || i.status === "processando" || i.status === "recebido";
+  const faltam = situacao.itens.filter((i) => i.obrigatorio && !chegou(i));
+  const prontos = situacao.itens.filter(chegou);
 
   async function enviar(item: string, arquivo: File) {
     setEnviando(item);
@@ -238,26 +265,56 @@ function Checklist({
     }
   }
 
+  /* Em blocos, um depois do outro: se a conexão cai no meio, só o bloco que
+   * estava subindo se perde, e o cliente vê o que entrou. Reenviar tudo é seguro —
+   * o que já tinha chegado volta como "já recebido", não como erro. */
   async function enviarLote(arquivos: File[]) {
     setEnviandoLote(true);
     setErro(null);
     setAvisoLote(null);
+    let recebidos = 0;
+    let jaRecebidos = 0;
+    const recusados: { arquivo: string; motivo: string }[] = [];
     try {
-      const resultado = await portal.enviarDocumentosEmLote(token, sessao, arquivos);
-      onAtualizar(resultado.situacao);
-      const recusados = resultado.recusados.length;
-      setAvisoLote(
-        recusados
-          ? `${resultado.recebidos.length} arquivo(s) recebido(s). ${recusados} não entraram e precisam ser selecionados novamente.`
-          : `${resultado.recebidos.length} arquivo(s) recebido(s). Agora estamos identificando cada documento.`,
-      );
-      if (recusados) {
-        setErro(resultado.recusados.map((item) => `${item.arquivo}: ${item.motivo}`).join("; "));
+      for (let i = 0; i < arquivos.length; i += ARQUIVOS_POR_BLOCO) {
+        const bloco = arquivos.slice(i, i + ARQUIVOS_POR_BLOCO);
+        if (arquivos.length > ARQUIVOS_POR_BLOCO) {
+          setProgressoLote(`Enviando ${Math.min(i + bloco.length, arquivos.length)} de ${arquivos.length}…`);
+        }
+        try {
+          const resultado = await portal.enviarDocumentosEmLote(token, sessao, bloco);
+          onAtualizar(resultado.situacao);
+          recebidos += resultado.recebidos.length;
+          jaRecebidos += resultado.ja_recebidos?.length ?? 0;
+          recusados.push(...resultado.recusados);
+        } catch (e) {
+          const status = e instanceof ApiError ? e.status : undefined;
+          const motivo =
+            status === undefined
+              ? "a conexão caiu durante o envio"
+              : e instanceof Error
+                ? e.message
+                : "não foi possível enviar";
+          recusados.push(...bloco.map((arquivo) => ({ arquivo: arquivo.name, motivo })));
+          // Sessão vencida: os blocos seguintes falhariam igual.
+          if (status === 401) break;
+        }
       }
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível enviar os arquivos.");
     } finally {
       setEnviandoLote(false);
+      setProgressoLote(null);
+    }
+
+    const partes = [`${recebidos} arquivo(s) recebido(s).`];
+    if (jaRecebidos) partes.push(`${jaRecebidos} já tinham chegado antes.`);
+    partes.push(
+      recusados.length
+        ? `${recusados.length} não entraram — selecione esses de novo.`
+        : "Agora estamos identificando cada documento.",
+    );
+    if (recebidos || jaRecebidos) setAvisoLote(partes.join(" "));
+    if (recusados.length) {
+      setErro(recusados.map((item) => `${item.arquivo}: ${item.motivo}`).join("; "));
     }
   }
 
@@ -309,8 +366,21 @@ function Checklist({
         <Chamada token={token} />
 
         <div className="mt-5">
-          <EnvioEmLote onEnviar={enviarLote} enviando={enviandoLote} simples />
+          <EnvioEmLote
+            onEnviar={enviarLote}
+            enviando={enviandoLote}
+            textoEnviando={progressoLote ?? undefined}
+            simples
+          />
         </div>
+
+        {semConexao && (
+          <div className="mt-4">
+            <Aviso tom="info" titulo="Sem conexão no momento">
+              Seus documentos continuam guardados. A página tenta de novo sozinha.
+            </Aviso>
+          </div>
+        )}
 
         {avisoLote && (
           <div className="mt-4">
@@ -597,6 +667,15 @@ function Linha({
           style={{ borderLeftColor: "var(--acao)" }}
         >
           Recebemos o arquivo e estamos conferindo. Pode fechar a página — não vai perder nada.
+        </span>
+      )}
+
+      {item.status === "recebido" && (
+        <span
+          className="[flex-basis:100%] ml-10 px-3 py-[10px] rounded-campo text-sm leading-[1.55] border border-acao-borda border-l-4 bg-acao-clara text-tinta-2"
+          style={{ borderLeftColor: "var(--acao)" }}
+        >
+          Recebemos o arquivo. O escritório confere e avisa aqui se precisar de outro.
         </span>
       )}
     </li>

@@ -437,6 +437,8 @@ async def _registrar_lote(
     caso: dict[str, Any],
     arquivos: list[UploadFile],
     idioma: str,
+    *,
+    repetido_conta_como_recebido: bool = False,
 ) -> dict[str, Any]:
     """Vários documentos de uma vez, cada um achando o próprio item.
 
@@ -444,6 +446,9 @@ async def _registrar_lote(
     que não entrou, com o motivo, porque quem mandou doze fotos precisa saber
     qual das doze precisa repetir. Um ZIP é aberto antes: cada arquivo de dentro
     entra como se tivesse sido enviado solto.
+
+    `repetido_conta_como_recebido` é do portal: o cliente que reenvia tudo depois
+    de a conexão cair não fez nada errado — o arquivo idêntico já está no caso.
     """
     if not arquivos:
         raise HTTPException(400, "Nenhum arquivo foi enviado.")
@@ -460,6 +465,7 @@ async def _registrar_lote(
 
     lote_id = uuid.uuid4().hex
     aceitos: list[dict[str, Any]] = []
+    ja_recebidos: list[dict[str, str]] = []
     recusados: list[dict[str, str]] = []
     for arquivo in arquivos:
         nome = arquivo.filename or "sem-nome"
@@ -476,20 +482,28 @@ async def _registrar_lote(
                 caso, None, arquivo, idioma, False, lote_id
             )
             aceitos.append({"arquivo": nome, "entrega_id": registro["entrega"]["id"]})
+        except duplicidade.DocumentoDuplicado as exc:
+            if repetido_conta_como_recebido:
+                ja_recebidos.append({"arquivo": nome})
+            else:
+                recusados.append({"arquivo": nome, "motivo": str(exc.detail)})
         except HTTPException as exc:
             recusados.append({"arquivo": nome, "motivo": str(exc.detail)})
         except Exception as exc:  # noqa: BLE001 - um arquivo ruim não perde o lote
             log.exception("falha ao registrar %s no lote %s", nome, lote_id)
             recusados.append({"arquivo": nome, "motivo": str(exc)[:200]})
 
-    if not aceitos:
+    if not aceitos and not ja_recebidos:
         raise HTTPException(
             400, recusados[0]["motivo"] if recusados else "Nenhum arquivo aceito."
         )
 
-    return {
+    resposta: dict[str, Any] = {
         "lote_id": lote_id,
         "recebidos": aceitos,
         "recusados": recusados,
         "processando": True,
     }
+    if repetido_conta_como_recebido:
+        resposta["ja_recebidos"] = ja_recebidos
+    return resposta

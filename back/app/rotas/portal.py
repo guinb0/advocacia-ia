@@ -106,7 +106,7 @@ async def portal_enviar_lote(
     fotografa a pilha inteira e cada arquivo acha o próprio item do checklist.
     """
     caso = _caso_do_portal(token, request)
-    resultado = await _registrar_lote(caso, arquivos, "pt")
+    resultado = await _registrar_lote(caso, arquivos, "pt", repetido_conta_como_recebido=True)
 
     situacao = casos.montar_situacao(caso["id"])
     return {

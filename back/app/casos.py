@@ -587,7 +587,7 @@ def documentos_pendentes_da_situacao(
         status = str(item.get("status") or "")
         if not obrigatorio and not incluir_opcionais and status != CONFERIR:
             continue
-        if status not in {PENDENTE, CONFERIR}:
+        if status not in {PENDENTE, CONFERIR} or falha_so_da_leitura(item):
             continue
         motivo = (
             _motivo_para_o_cliente(item)
@@ -709,6 +709,26 @@ def _linha_do_item(item: dict[str, Any]) -> str:
     return f"- {item['nome']}{complemento}"
 
 
+#: Status só do portal: o cliente mandou o arquivo, mas a NOSSA leitura falhou.
+#: Na tela da equipe o item segue em "conferir" para alguém mandar ler de novo.
+RECEBIDO_EM_CONFERENCIA = "recebido"
+
+
+def falha_so_da_leitura(item: dict[str, Any]) -> bool:
+    """O item está em "conferir" apenas porque todas as leituras falharam no sistema?
+
+    Erro de leitura (fila, worker, OCR fora do ar) não diz nada sobre o arquivo do
+    cliente — pedir reenvio aí é culpá-lo por falha nossa. Basta uma leitura
+    concluída com ressalva para o pedido de reenvio voltar a valer.
+    """
+    entregas = item.get("entregas") or []
+    return (
+        item.get("status") == CONFERIR
+        and bool(entregas)
+        and all(e.get("status_proc") == "erro" for e in entregas)
+    )
+
+
 def _motivo_para_o_cliente(item: dict[str, Any]) -> str:
     """Por que reenviar, em linguagem de cliente.
 
@@ -750,14 +770,15 @@ def visao_do_cliente(situacao: dict[str, Any]) -> dict[str, Any]:
     itens = []
     for item in situacao["itens"]:
         entregas = item["entregas"]
-        precisa_refazer = item["status"] == CONFERIR
+        so_falhou_a_leitura = falha_so_da_leitura(item)
+        precisa_refazer = item["status"] == CONFERIR and not so_falhou_a_leitura
         itens.append(
             {
                 "codigo": item["codigo"],
                 "nome": item["nome"],
                 "observacao": item.get("observacao", ""),
                 "obrigatorio": item["obrigatorio"],
-                "status": item["status"],
+                "status": RECEBIDO_EM_CONFERENCIA if so_falhou_a_leitura else item["status"],
                 "enviados": len(entregas),
                 "motivo": _motivo_para_o_cliente(item) if precisa_refazer else "",
             }
@@ -772,7 +793,9 @@ def visao_do_cliente(situacao: dict[str, Any]) -> dict[str, Any]:
         # Quantos arquivos o cliente mandou que o escritório ainda está
         # identificando. Sem isto o portal engolia o envio: o arquivo não
         # aparecia em item nenhum, e a tela ficava igual a antes de enviar.
-        "em_analise": len([e for e in triagem if e.get("status_proc") != "erro"]),
+        # Leitura que falhou continua contando: o arquivo chegou e o escritório
+        # é quem resolve — sumir com ele da tela parecia envio perdido.
+        "em_analise": len(triagem),
         "processando": len(
             [e for e in triagem if e.get("status_proc") in {"na_fila", "processando"}]
         ),
@@ -794,7 +817,7 @@ def montar_pedido(caso_id: str, incluir_opcionais: bool = False) -> dict[str, An
     itens = situacao["itens"]
     faltando_obrig = [i for i in itens if i["obrigatorio"] and i["status"] == PENDENTE]
     faltando_opc = [i for i in itens if not i["obrigatorio"] and i["status"] == PENDENTE]
-    reenviar = [i for i in itens if i["status"] == CONFERIR]
+    reenviar = [i for i in itens if i["status"] == CONFERIR and not falha_so_da_leitura(i)]
 
     cliente = situacao["caso"]["cliente"]
     partes = [f"Olá, {cliente}!", ""]
