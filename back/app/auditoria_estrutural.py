@@ -652,27 +652,70 @@ _CRITERIO_GRATUIDADE_SUPERADO = re.compile(
     r"s[úu]mula\s+(?:n[º°.]*\s*)?463\s*,?\s*(?:item\s+)?I\b(?![IV])|tema\s+(?:n[º°.]*\s*)?21\b[^.\n]{0,40}(?:TST|IRR)", re.I)
 
 
-def pressupostos_e_atualidade(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
-    """Fato × pedido e critério jurídico superado, no fluxo legado (o modo strict tem os gates da camada jurídica).
+_PAGAMENTO = re.compile(
+    r"pagamento|indeniza|repara[çc]|danos?\s+(?:mora|materia|est[ée]tic|existencia)|horas?\s+extras?|adicional|diferen[çc]as?|"
+    r"sal[áa]ri|f[ée]rias|d[ée]cimo|13[ºo°]|\bfgts\b|multa|aviso\s+pr[ée]vio|verbas|pens[ãa]o|pensionamento|lucros\s+cessantes|"
+    r"intervalo|reflexos|equipara[çc]", re.I)
+_NAO_MONETARIO = re.compile(
+    r"anota[çc]|retifica|entrega|expedi[çc]|obriga[çc][ãa]o\s+de\s+fazer|reintegra|honor[áa]rios|justi[çc]a\s+gratuita|gratuidade|"
+    r"\bjuros\b|corre[çc][ãa]o\s+monet|cita[çc][ãa]o|produ[çc][ãa]o\s+de\s+provas|exibi[çc]|of[íi]cio|tutela|per[íi]cia|"
+    r"recolhimento|dep[óo]sito", re.I)
 
-    - verba rescisória (multa do art. 477, aviso prévio, 40% do FGTS…) pedida com o contrato ativo e sem rescisão indireta;
-    - critério de gratuidade afastado pela ADC 80 do STF (percentual do teto do RGPS, Súmula 463, I, do TST, Tema 21 do TST);
-    - pedido de pagamento deixado para liquidação e pedidos sem memória de cálculo (aviso: o valor não é inventado na correção).
-    """
-    saida: list[Violacao] = []
+
+def pedidos_rescisorios_com_vinculo_ativo(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pedidos de verba rescisória sem término do contrato nos fatos e sem rescisão indireta pedida (vazio = nada a retirar)."""
     claims = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
     resto = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") != "CLAIMS")
     fatos = " ".join(str(f.get(k) or "") for f in plano.get("fatos") or [] if isinstance(f, dict) for k in ("descricao", "fato", "valor"))
     rescisorios = [p for p in plano.get("pedidos") or []
                    if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")]
+    if not rescisorios:
+        return []
     indireta = canonico.pede_rescisao_indireta([{"tese": f"{resto} {claims}"}, *({"tese": p.get("tipo", ""), "pedido": p.get("objeto", "")} for p in plano.get("pedidos") or [])])
     contexto = f"{resto} {fatos}"
-    if rescisorios and not indireta and (_VINCULO_ATIVO.search(contexto) or not _TERMINO.search(contexto)):
+    if not indireta and (_VINCULO_ATIVO.search(contexto) or not _TERMINO.search(contexto)):
+        return rescisorios
+    return []
+
+
+def pedidos_de_pagamento_sem_valor(plano: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pedido autônomo de pagamento sem valor no ledger: viraria «a apurar em liquidação» na peça."""
+    saida = []
+    for p in plano.get("pedidos") or []:
+        if p.get("tipo_de_item", "autonomo") not in ("autonomo", "") or p.get("de_praxe") or p.get("valor") not in (None, "", 0):
+            continue
+        rotulo = f"{p.get('tipo', '')} {p.get('objeto', '')}"
+        if _PAGAMENTO.search(rotulo) and not _NAO_MONETARIO.search(str(p.get("tipo") or "")) and not re.search(r"R\$\s*\d", str(p.get("valor_ou_base") or "")):
+            saida.append(p)
+    return saida
+
+
+def pressupostos_e_atualidade(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
+    """Fato × pedido e critério jurídico superado, no fluxo legado (o modo strict tem os gates da camada jurídica).
+
+    - verba rescisória (multa do art. 477, aviso prévio, 40% do FGTS…) pedida com o contrato ativo e sem rescisão indireta;
+    - pedido de pagamento sem valor no ledger (bloqueia: o revisor do ledger calcula pelo documento ou retira o pedido);
+    - critério de gratuidade afastado pela ADC 80 do STF (percentual do teto do RGPS, Súmula 463, I, do TST, Tema 21 do TST);
+    - pedido de pagamento deixado para liquidação e pedidos sem memória de cálculo (aviso: o valor não é inventado na correção).
+    """
+    saida: list[Violacao] = []
+    claims = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
+    rescisorios = pedidos_rescisorios_com_vinculo_ativo(secoes, plano)
+    if rescisorios:
         ids = ", ".join(f"{p.get('id')} {str(p.get('tipo') or '')[:40]}" for p in rescisorios)
         saida.append(_v("VERBA_RESCISORIA_COM_VINCULO_ATIVO", "LEDGER", ids,
                         "Pedido de verba rescisória (multa do art. 477, aviso prévio, 40% do FGTS, multa do art. 467, seguro-desemprego) "
                         "sem término do contrato nos fatos: o vínculo está ativo e não há pedido de rescisão indireta.",
                         "Retire esses pedidos do ledger (ou, se a estratégia aprovada for a rescisão indireta, ela tem de estar fundamentada e pedida)."))
+    ja_retirados = {p.get("id") for p in rescisorios}
+    for p in pedidos_de_pagamento_sem_valor(plano):
+        if p.get("id") in ja_retirados:
+            continue
+        saida.append(_v("PEDIDO_DE_PAGAMENTO_SEM_VALOR", "LEDGER", f"{p.get('id')} {str(p.get('tipo') or '')[:40]}",
+                        f"O pedido {p.get('id')} («{p.get('tipo') or p.get('objeto')}») é de pagamento e está sem valor: sairia "
+                        "«a apurar em liquidação», e o rito trabalhista exige pedido líquido (art. 840, § 1º, da CLT).",
+                        "Preencha `valor` e `metodo_calculo` (base do documento, multiplicador, resultado, criterio) com os dados do caso; "
+                        "sem dado nos documentos, retire o pedido do ledger."))
     for s in secoes:
         m = _CRITERIO_GRATUIDADE_SUPERADO.search(str(s.get("content") or ""))
         if m:

@@ -1,8 +1,10 @@
-"""Sincronização noturna do Acervo Jurídico (fila `low`).
+"""Sincronização semanal do Acervo Jurídico (fila `low`).
 
-A ronda do beat não sincroniza nada sozinha: enfileira UMA subtarefa por norma. O worker de
-produção consome `low` junto com `ai`/`documents` e concorrência 1 — uma norma por vez deixa as
-outras filas respirarem entre uma e outra. Enquanto `ACERVO_SINCRONIZACAO_ATIVA != 1`, nada roda.
+A ronda do beat não sincroniza nada sozinha: enfileira UMA subtarefa por norma (padrão: a CLT,
+`ACERVO_DOCUMENTOS_AGENDADOS`). A garantia, a cada 30 min, cobre a primeira carga depois do deploy
+e a ronda que falhou. A rodada automática só roda com embeddings configurados: sem vetor, o texto
+alterado sairia da busca até a próxima sincronização. Enquanto `ACERVO_SINCRONIZACAO_ATIVA != 1`,
+nada roda.
 """
 
 from __future__ import annotations
@@ -14,20 +16,47 @@ from ..celery_app import celery_app
 
 log = logging.getLogger("acervo")
 
+ORIGENS_AUTOMATICAS = ("agendada", "garantia")
+
+
+def _impedimento_automatico() -> str:
+    from ..acervo import agenda, armazenamento, sincronizacao
+    if not agenda.ativa():
+        return "ACERVO_SINCRONIZACAO_ATIVA desligada"
+    if not sincronizacao.embeddings_configurados():
+        return "EMBEDDINGS_* não configurado: a rodada automática não roda sem vetor"
+    if not armazenamento.padrao().migracao_aplicada():
+        log.warning("acervo: migration 011 não aplicada; sincronização não roda")
+        return "migração 011 não aplicada"
+    return ""
+
 
 @celery_app.task(name="app.tasks.acervo.sincronizar_acervo")
 def sincronizar_acervo() -> dict:
-    from ..acervo import agenda, armazenamento, sincronizacao
-    if not agenda.ativa():
-        return {"executado": False, "motivo": "ACERVO_SINCRONIZACAO_ATIVA desligada"}
-    if not armazenamento.padrao().migracao_aplicada():
-        log.warning("acervo: migration 011 não aplicada; sincronização não roda")
-        return {"executado": False, "motivo": "migração 011 não aplicada"}
-    ids = [i["id"] for i in sincronizacao.manifesto() if i.get("categoria", "legislacao") == "legislacao"]
+    from ..acervo import agenda
+    motivo = _impedimento_automatico()
+    if motivo:
+        return {"executado": False, "motivo": motivo}
+    ids = agenda.documentos_agendados()
     for doc in ids:
         sincronizar_documento.apply_async(args=[doc], kwargs={"origem": "agendada"}, queue="low")
     finalizar_ronda.apply_async(countdown=3600, queue="low")
     return {"executado": True, "enfileirados": ids}
+
+
+@celery_app.task(name="app.tasks.acervo.garantir_sincronizacao")
+def garantir_sincronizacao() -> dict:
+    from ..acervo import agenda, armazenamento
+    motivo = _impedimento_automatico()
+    if motivo:
+        return {"executado": False, "motivo": motivo}
+    atrasados = agenda.documentos_atrasados(armazenamento.padrao(), agenda.documentos_agendados())
+    for doc in atrasados:
+        sincronizar_documento.apply_async(args=[doc], kwargs={"origem": "garantia"}, queue="low")
+    if atrasados:
+        log.info("acervo: sincronização garantida para %s", ", ".join(atrasados))
+        finalizar_ronda.apply_async(countdown=3600, queue="low")
+    return {"executado": bool(atrasados), "enfileirados": atrasados}
 
 
 @celery_app.task(name="app.tasks.acervo.sincronizar_documento", soft_time_limit=1500, time_limit=1800)
@@ -38,8 +67,11 @@ def sincronizar_documento(document_id: str, origem: str = "manual", solicitado_p
     item = sincronizacao.item_do_manifesto(document_id)
     if not item:
         return {"executado": False, "motivo": f"norma {document_id} fora do manifesto"}
+    store = armazenamento.padrao()
+    if origem in ORIGENS_AUTOMATICAS and agenda.sincronizada_agora_pouco(store, document_id):
+        return {"executado": False, "motivo": f"{document_id} já sincronizada ou em andamento"}
     gerar = sincronizacao.gerar_embeddings_padrao if sincronizacao.embeddings_configurados() else None
-    rel = sincronizacao.sincronizar_documento(item, armazenamento=armazenamento.padrao(), gerar_embeddings=gerar, origem=origem,
+    rel = sincronizacao.sincronizar_documento(item, armazenamento=store, gerar_embeddings=gerar, origem=origem,
                                               solicitado_por=solicitado_por, forcar_reindexacao=reindexar)
     return {k: v for k, v in rel.items() if not isinstance(v, list)}
 

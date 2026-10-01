@@ -80,8 +80,11 @@ def revisar_ledger(chamar: Callable[[str, str], dict[str, Any]], plano: dict[str
             "Corrija o LEDGER de pedidos de uma petição apontado pelos problemas. Funda pedidos que reparam o MESMO dano: majoração/agravamento NÃO é segundo pedido — "
             "marque-o com tipo_de_item=\"agravante\", agrava=<tipo do pedido principal>, SEM valor, e incorpore o fator ao metodo_calculo (base, multiplicador, resultado) do principal; classifique `natureza` como cumulativo|subsidiario|alternativo; preencha `metodo_calculo` "
             "{base, multiplicador, resultado} e `valor` coerentes; mantenha os pedidos de praxe e NÃO crie pedido sem fato do caso. "
+            "Pedido de PAGAMENTO sem valor: calcule com o dado dos fatos (salário, período, horas) e registre metodo_calculo.criterio "
+            "dizendo de onde veio a base; sem dado para calcular, retire só esse pedido — nunca «a apurar em liquidação». "
             "Devolva APENAS JSON: {\"pedidos\":[mesmo esquema do ledger recebido]}.",
             json.dumps({"ledger": plano["pedidos"], "teses": [{"id": t["id"], "titulo": t["titulo"]} for t in plano["teses"]],
+                        "fatos": [str(f.get("descricao") or f.get("fato") or "")[:300] for f in (plano.get("fatos") or [])[:60] if isinstance(f, dict)],
                         "problemas": [{"codigo": p.codigo, "motivo": p.motivo} for p in problemas]}, ensure_ascii=False))
     except Exception:  # noqa: BLE001
         return None
@@ -100,7 +103,32 @@ def revisar_ledger(chamar: Callable[[str, str], dict[str, Any]], plano: dict[str
     consolidou = depois < antes or ha_agravante_sem_valor
     if any(p.codigo in ("MAJORACAO_COMO_SEGUNDA_INDENIZACAO", "PEDIDOS_SOBREPOSTOS", "MESMA_REPARACAO_DUAS_VEZES", "AGRAVANTE_COM_VALOR_PROPRIO") for p in problemas) and not consolidou:
         return None
+    if any(p.codigo == "PEDIDO_DE_PAGAMENTO_SEM_VALOR" for p in problemas):
+        sem_valor = len(ae.pedidos_de_pagamento_sem_valor(plano))
+        # quem não tem valor pode sair; o resto do ledger não pode sumir junto
+        if ae.pedidos_de_pagamento_sem_valor(candidato) or len(candidato["pedidos"]) < len(plano["pedidos"]) - sem_valor:
+            return None
     return candidato["pedidos"]
+
+
+def retirar_pedidos(plano: dict[str, Any], retirar: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Tira do ledger os pedidos indicados (e os agravantes que dependiam deles) e renumera P01.. Devolve os retirados."""
+    ids = {p.get("id") for p in retirar}
+    if not ids:
+        return []
+    fora = [p for p in plano.get("pedidos") or [] if p.get("id") in ids or p.get("agrava_id") in ids]
+    ids_fora = {id(p) for p in fora}
+    ficam = [dict(p) for p in plano.get("pedidos") or [] if id(p) not in ids_fora]
+    novos_ids = {p["id"]: f"P{i + 1:02d}" for i, p in enumerate(ficam)}
+    for p in ficam:
+        p["id"] = novos_ids[p["id"]]
+        if p.get("agrava_id"):
+            p["agrava_id"] = novos_ids.get(p["agrava_id"], "")
+    for t in plano.get("teses") or []:
+        if isinstance(t.get("pedidos_ids"), list):
+            t["pedidos_ids"] = [novos_ids[i] for i in t["pedidos_ids"] if i in novos_ids]
+    plano["pedidos"] = ficam
+    return fora
 
 
 def executar(
@@ -131,6 +159,16 @@ def executar(
         if any(a.codigo in ("QUALIFICACAO_DUPLICADA", "BLOCO_ESTRUTURAL_DUPLICADO", "TITULO_DA_ACAO_DUPLICADO") for a in criticos):
             secoes, n = ae.remover_aberturas_duplicadas(secoes, plano.get("partes") or {}, params)
             passo["correcoes"].append({"aberturas_duplicadas_removidas": n})
+        # 1b) verba rescisória com o vínculo ativo: retirada DETERMINÍSTICA (não depende do modelo aceitar)
+        if any(a.codigo == "VERBA_RESCISORIA_COM_VINCULO_ATIVO" for a in criticos):
+            fora = retirar_pedidos(plano, ae.pedidos_rescisorios_com_vinculo_ativo(secoes, plano))
+            if fora:
+                secoes = rerenderizar_pedidos(secoes, plano)
+                retirados = [f"{p.get('tipo') or p.get('objeto')}".strip() for p in fora
+                             if p.get("tipo_de_item", "autonomo") in ("autonomo", "acessorio", "")]
+                relatorio.setdefault("pedidos_retirados", []).extend(retirados)
+                passo["correcoes"].append({"pedidos_retirados_vinculo_ativo": retirados})
+            criticos = [a for a in criticos if a.codigo != "VERBA_RESCISORIA_COM_VINCULO_ATIVO"]
         # 2) ledger: o modelo propõe, o código valida
         do_ledger = [a for a in criticos if a.secao == "LEDGER" or a.codigo in (
             "MAJORACAO_COMO_SEGUNDA_INDENIZACAO", "PEDIDOS_SOBREPOSTOS", "SUBSIDIARIO_SOMADO_AO_PRINCIPAL", "VALOR_INCONSISTENTE_COM_METODO", "PEDIDO_DUPLICADO")]

@@ -109,10 +109,17 @@ celery_app.conf.update(
             "schedule": 900.0,
         },
         # Sempre agendada; a tarefa não faz nada enquanto ACERVO_SINCRONIZACAO_ATIVA != 1.
-        # 03:00 de Brasília: fora do expediente e longe das cargas do DJEN.
+        # Semanal, domingo 03:00 de Brasília: fora do expediente e longe das cargas do DJEN.
         "acervo-sincronizar": {
             "task": "app.tasks.acervo.sincronizar_acervo",
-            "schedule": crontab(hour=3, minute=0, app=celery_app),
+            "schedule": crontab(day_of_week=os.getenv("ACERVO_SINCRONIZACAO_DIA", "sun"), hour=3, minute=0, app=celery_app),
+            "options": {"queue": "low"},
+        },
+        # Rede de segurança da semanal: primeira carga logo após o deploy e nova tentativa
+        # quando a ronda falhou (fonte fora do ar, worker reiniciado no meio).
+        "acervo-garantir-sincronizacao": {
+            "task": "app.tasks.acervo.garantir_sincronizacao",
+            "schedule": 1800.0,
             "options": {"queue": "low"},
         },
     },
