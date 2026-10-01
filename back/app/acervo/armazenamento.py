@@ -39,6 +39,16 @@ class Mudancas:
     chunks_invalidar: list[int] = field(default_factory=list)
     referencias: list[tuple[str, str]] = field(default_factory=list)             # (dispositivo, texto citado)
     fonte: dict[str, str] = field(default_factory=dict)                          # titulo, url
+    ordem_dos_artigos: dict[str, int] = field(default_factory=dict)             # dispositivo_id → ordem atual na fonte
+
+
+def _agrupar_por_colunas(itens: Any) -> list[tuple[tuple[str, ...], list[tuple[Any, tuple[Any, ...]]]]]:
+    """(chave, {coluna: valor}) agrupados pelo mesmo conjunto de colunas — um `executemany` por grupo."""
+    grupos: dict[tuple[str, ...], list[tuple[Any, tuple[Any, ...]]]] = {}
+    for chave, campos in itens:
+        if campos:
+            grupos.setdefault(tuple(campos), []).append((chave, tuple(campos.values())))
+    return list(grupos.items())
 
 
 class Armazenamento(Protocol):
@@ -433,24 +443,37 @@ class Postgres:
     def aplicar(self, document_id: str, mudancas: Mudancas, *, agora: datetime) -> dict[str, Any]:
         from psycopg.types.json import Jsonb
         from .. import rag
+        # Tudo em lote (`executemany` usa o pipeline do psycopg): linha a linha, cada dispositivo custava duas idas
+        # e voltas ao servidor e a Constituição levava mais de dez minutos só para gravar.
         with self._conexao() as con, con.transaction():
             cur = con.cursor()
             if mudancas.encerrar:
                 cur.executemany("""UPDATE normative_device_versions SET valid_until=%s, superada_por=%s, ultima_verificacao=%s,
                                    status=COALESCE(%s, status) WHERE id=%s""",
                                 [(ate, sup, agora, novo, vid) for vid, ate, sup, novo in mudancas.encerrar])
-            for vid, campos in mudancas.associar:
-                campos = {k: (Jsonb(v) if k == "hierarchy" else v) for k, v in campos.items() if k in _COLUNAS_VERSAO}
-                cur.execute(f"UPDATE normative_device_versions SET {', '.join(f'{k}=%s' for k in campos)} WHERE id=%s", (*campos.values(), vid))
-            for linha in mudancas.inserir:
-                l = {"ultima_verificacao": agora, **{k: v for k, v in linha.items() if k in _COLUNAS_VERSAO}}
-                if not l.get("version"):
-                    l["version"] = cur.execute(
-                        "SELECT COALESCE(max(version),0)+1 AS v FROM normative_device_versions WHERE document_id=%s AND (identifier=%s OR dispositivo_id=%s)",
-                        (document_id, l["identifier"], l["identifier"])).fetchone()["v"]
-                l["hierarchy"] = Jsonb(l.get("hierarchy") or {})
-                cur.execute(f"INSERT INTO normative_device_versions (document_id, {', '.join(l)}) VALUES (%s, {', '.join(['%s'] * len(l))})",
-                            (document_id, *l.values()))
+            for colunas, lote in _agrupar_por_colunas(
+                    (vid, {k: (Jsonb(v) if k == "hierarchy" else v) for k, v in campos.items() if k in _COLUNAS_VERSAO})
+                    for vid, campos in mudancas.associar):
+                cur.executemany(f"UPDATE normative_device_versions SET {', '.join(f'{k}=%s' for k in colunas)} WHERE id=%s",
+                                [(*valores, vid) for vid, valores in lote])
+            if mudancas.inserir:
+                maior: dict[str, int] = {}
+                for r in cur.execute("SELECT identifier, dispositivo_id, max(version) AS v FROM normative_device_versions "
+                                     "WHERE document_id=%s GROUP BY identifier, dispositivo_id", (document_id,)).fetchall():
+                    for chave in (r["identifier"], r["dispositivo_id"]):
+                        if chave:
+                            maior[chave] = max(maior.get(chave, 0), int(r["v"] or 0))
+                linhas = []
+                for linha in mudancas.inserir:
+                    l = {"ultima_verificacao": agora, **{k: v for k, v in linha.items() if k in _COLUNAS_VERSAO}}
+                    if not l.get("version"):
+                        l["version"] = maior.get(l["identifier"], 0) + 1
+                    maior[l["identifier"]] = max(maior.get(l["identifier"], 0), int(l["version"]))
+                    l["hierarchy"] = Jsonb(l.get("hierarchy") or {})
+                    linhas.append((None, l))
+                for colunas, lote in _agrupar_por_colunas(linhas):
+                    cur.executemany(f"INSERT INTO normative_device_versions (document_id, {', '.join(colunas)}) "
+                                    f"VALUES (%s, {', '.join(['%s'] * len(colunas))})", [(document_id, *valores) for _, valores in lote])
             if mudancas.tocar:
                 cur.execute("UPDATE normative_device_versions SET ultima_verificacao=%s WHERE id = ANY(%s)", (agora, list(mudancas.tocar)))
             abertas = {r["dispositivo_id"]: r["id"] for r in cur.execute(
@@ -463,21 +486,43 @@ class Postgres:
                        ON CONFLICT(tipo,identificador) WHERE identificador IS NOT NULL DO UPDATE SET titulo=EXCLUDED.titulo,url=EXCLUDED.url
                        RETURNING id""",
                     (mudancas.fonte.get("titulo") or document_id, PREFIXO_FONTE + document_id, mudancas.fonte.get("url") or "")).fetchone()["id"]
+            # `uq_chunks_fonte_ordem (fonte_id, ordem)`: o trecho reescrito ganha a ordem ATUAL do artigo, mas os trechos que ficam
+            # (mantidos e invalidados) ainda guardam a ordem da carga anterior — e a coluna é única. Antes de gravar, os trechos da
+            # fonte vão para ordens negativas (abaixo de qualquer negativa já usada); depois, mantidos e reescritos voltam com a
+            # ordem atual do artigo. Invalidado fica no negativo: está fora da busca.
+            renumerar = bool(mudancas.chunks_gravar) and fonte_id is not None
+            if renumerar:
+                piso = cur.execute("SELECT LEAST(COALESCE(min(ordem), 0), 0) AS m FROM knowledge_chunks WHERE fonte_id=%s", (fonte_id,)).fetchone()["m"]
+                cur.execute("UPDATE knowledge_chunks SET ordem = %s - 1 - ordem WHERE fonte_id=%s AND ordem >= 0", (piso, fonte_id))
+            usadas = {g["ordem"] for g in mudancas.chunks_gravar}
+            manter = []
             for cid, disp, h in mudancas.chunks_manter:
-                cur.execute("""UPDATE knowledge_chunks SET metadados=(metadados - 'invalidado_em') || %s, device_version_id=%s, content_hash=%s,
-                               invalidado_em=NULL WHERE id=%s""", (Jsonb({"dispositivo": disp, "content_hash": h}), abertas.get(disp), h, cid))
+                ordem = mudancas.ordem_dos_artigos.get(disp) if renumerar else None
+                if ordem is not None and ordem in usadas:
+                    ordem = None
+                if ordem is not None:
+                    usadas.add(ordem)
+                manter.append((Jsonb({"dispositivo": disp, "content_hash": h}), abertas.get(disp), h, ordem, cid))
+            if manter:
+                cur.executemany("""UPDATE knowledge_chunks SET metadados=(metadados - 'invalidado_em') || %s, device_version_id=%s, content_hash=%s,
+                                   invalidado_em=NULL, ordem=COALESCE(%s, ordem) WHERE id=%s""", manter)
+            atualizar, inserir = [], []
             for g in mudancas.chunks_gravar:
                 vetor = rag.vetor_literal(g["embedding"]) if g.get("embedding") else None
                 valores = (g["ordem"], g["texto"], Jsonb(g["metadados"]), vetor, abertas.get(g["dispositivo_id"]), g["content_hash"],
                            g.get("embedding_model"), g.get("embedding_dimensions"), g.get("embedded_at"))
                 if g.get("chunk_id"):
-                    cur.execute("""UPDATE knowledge_chunks SET ordem=%s, texto=%s, metadados=%s, embedding=%s::vector, device_version_id=%s,
-                                   content_hash=%s, embedding_model=%s, embedding_dimensions=%s, embedded_at=%s, invalidado_em=NULL WHERE id=%s""",
-                                (*valores, g["chunk_id"]))
+                    atualizar.append((*valores, g["chunk_id"]))
                 else:
-                    cur.execute("""INSERT INTO knowledge_chunks (ordem, texto, metadados, embedding, device_version_id, content_hash,
+                    inserir.append((*valores, fonte_id))
+            if atualizar:
+                cur.executemany("""UPDATE knowledge_chunks SET ordem=%s, texto=%s, metadados=%s, embedding=%s::vector, device_version_id=%s,
+                                   content_hash=%s, embedding_model=%s, embedding_dimensions=%s, embedded_at=%s, invalidado_em=NULL WHERE id=%s""",
+                                atualizar)
+            if inserir:
+                cur.executemany("""INSERT INTO knowledge_chunks (ordem, texto, metadados, embedding, device_version_id, content_hash,
                                    embedding_model, embedding_dimensions, embedded_at, fonte_id)
-                                   VALUES (%s, %s, %s, %s::vector, %s, %s, %s, %s, %s, %s)""", (*valores, fonte_id))
+                                   VALUES (%s, %s, %s, %s::vector, %s, %s, %s, %s, %s, %s)""", inserir)
             if mudancas.chunks_invalidar:
                 cur.execute("""UPDATE knowledge_chunks SET invalidado_em=%s, metadados=metadados || %s WHERE id = ANY(%s)""",
                             (agora, Jsonb({"invalidado_em": agora.isoformat()}), list(mudancas.chunks_invalidar)))
