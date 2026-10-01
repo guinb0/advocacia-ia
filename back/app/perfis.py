@@ -69,6 +69,17 @@ MODULOS: tuple[dict[str, str], ...] = (
         "ordem": 40,
     },
     {
+        "codigo": "whatsapp",
+        "rotulo": "WhatsApp",
+        "descricao": (
+            "Conexão do número do escritório, modelos de mensagem, lembretes "
+            "automáticos e histórico de envios."
+        ),
+        "rota": "whatsapp",
+        "grupo": "Atendimento",
+        "ordem": 45,
+    },
+    {
         "codigo": "supervisao",
         "rotulo": "Entrevistas no geral",
         "descricao": (
@@ -217,6 +228,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
             "entrevista", "casos", "documentos", "operacao", "agente", "contratos",
             "investigacao", "usuarios", "roteiros", "revisao",
             "glossario_documentos", "tipos_caso", "skills", "gastos_api", "acervo_juridico",
+            "whatsapp",
         ),
     },
     {
@@ -233,7 +245,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "modulos": (
             "casos", "documentos", "supervisao", "metricas", "operacao", "agente", "usuarios",
             "roteiros", "revisao", "glossario_documentos", "tipos_caso", "skills", "gastos_api",
-            "acervo_juridico",
+            "acervo_juridico", "whatsapp",
         ),
     },
     {

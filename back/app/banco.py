@@ -938,6 +938,9 @@ INDICES = (
     f" (usuario, atualizado_em DESC)",
     f"CREATE INDEX idx_acervo_chat_msg_sessao ON {SCHEMA}.{PREFIXO}chat_mensagens"
     f" (sessao_id, ordem, criado_em)",
+    # O webhook da Evolution identifica a mensagem pelo id dela, não pela chave.
+    f"CREATE INDEX idx_acervo_auto_whats_mensagem ON {SCHEMA}.{PREFIXO}automacoes_whatsapp (mensagem_id)",
+    f"CREATE INDEX idx_acervo_auto_whats_atend ON {SCHEMA}.{PREFIXO}automacoes_whatsapp (atendimento_id)",
 )
 
 
@@ -1099,6 +1102,15 @@ COLUNAS_NOVAS = (
     (f"{PREFIXO}solicitacoes_peticao", "etapa", "nvarchar(240) NULL"),
     (f"{PREFIXO}solicitacoes_peticao", "passo", "int NULL"),
     (f"{PREFIXO}solicitacoes_peticao", "passos_totais", "int NULL"),
+    # Ciclo de entrega das mensagens de WhatsApp (ver `automacoes_whatsapp`). O
+    # `status` antigo é só a trava de idempotência; estas colunas dizem o que o
+    # cliente de fato recebeu, e a que atendimento a mensagem pertence.
+    (f"{PREFIXO}automacoes_whatsapp", "status_entrega", "varchar(30) NULL"),
+    (f"{PREFIXO}automacoes_whatsapp", "mensagem_id", "varchar(120) NULL"),
+    (f"{PREFIXO}automacoes_whatsapp", "atendimento_id", "varchar(64) NULL"),
+    (f"{PREFIXO}automacoes_whatsapp", "texto_resumo", "nvarchar(600) NULL"),
+    (f"{PREFIXO}automacoes_whatsapp", "entregue_em", "varchar(40) NULL"),
+    (f"{PREFIXO}automacoes_whatsapp", "lido_em", "varchar(40) NULL"),
 )
 
 

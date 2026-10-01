@@ -338,7 +338,22 @@ def abrir_conexao_qrcode() -> dict[str, Any]:
     raise RuntimeError(ultimo_erro)
 
 
-async def _enviar_texto(numero: str, texto: str) -> None:
+def _corpo_json(resposta: httpx.Response) -> dict[str, Any]:
+    try:
+        corpo = resposta.json()
+    except ValueError:
+        return {}
+    return corpo if isinstance(corpo, dict) else {}
+
+
+def id_da_mensagem(resposta: dict[str, Any] | None) -> str | None:
+    """O id que a Evolution deu à mensagem — é por ele que o webhook avisa a entrega."""
+    chave = (resposta or {}).get("key") or {}
+    valor = chave.get("id") if isinstance(chave, dict) else None
+    return str(valor)[:120] if valor else None
+
+
+async def _enviar_texto(numero: str, texto: str) -> dict[str, Any]:
     """Uma mensagem de texto pela instância do escritório.
 
     Erro de configuração é 503 (falta ligar), erro da Evolution é 502 (ligado,
@@ -365,7 +380,7 @@ async def _enviar_texto(numero: str, texto: str) -> None:
                     )
                     continue
                 resposta.raise_for_status()
-                return
+                return _corpo_json(resposta)
     except httpx.HTTPError as erro:
         status = (
             erro.response.status_code
@@ -378,9 +393,43 @@ async def _enviar_texto(numero: str, texto: str) -> None:
             type(erro).__name__,
         )
         raise HTTPException(502, _mensagem_erro_evolution(erro, "envio da mensagem")) from erro
+    return {}
 
 
-def _enviar_texto_sync(numero: str, texto: str) -> None:
+def numero_tem_whatsapp_sync(numero: str) -> bool | None:
+    """A Evolution confirma que o número tem WhatsApp? `None` quando não dá para saber.
+
+    Só um "não" explícito barra o envio. Falha de rede ou versão da Evolution sem a
+    rota não pode impedir a mensagem — vira `None` e o envio segue.
+    """
+    if not configurado():
+        return None
+    base = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+    for instancia in _instancias_candidatas():
+        try:
+            resposta = httpx.post(
+                _url_instancia(base, "chat/whatsappNumbers", instancia),
+                headers=_headers_evolution(),
+                json={"numbers": [numero]},
+                timeout=10,
+            )
+        except httpx.HTTPError:
+            return None
+        if resposta.status_code == 404:
+            continue
+        if resposta.status_code >= 400:
+            return None
+        try:
+            corpo = resposta.json()
+        except ValueError:
+            return None
+        if isinstance(corpo, list) and corpo and isinstance(corpo[0], dict) and "exists" in corpo[0]:
+            return bool(corpo[0]["exists"])
+        return None
+    return None
+
+
+def _enviar_texto_sync(numero: str, texto: str) -> dict[str, Any]:
     """Versão síncrona para o worker periódico do Celery."""
     if not configurado():
         raise RuntimeError("O envio por WhatsApp ainda não foi configurado.")
@@ -403,7 +452,7 @@ def _enviar_texto_sync(numero: str, texto: str) -> None:
                 )
                 continue
             resposta.raise_for_status()
-            return
+            return _corpo_json(resposta)
     except httpx.HTTPError as erro:
         status = (
             erro.response.status_code
@@ -416,6 +465,7 @@ def _enviar_texto_sync(numero: str, texto: str) -> None:
             type(erro).__name__,
         )
         raise RuntimeError(_mensagem_erro_evolution(erro, "envio da mensagem")) from erro
+    return {}
 
 
 @roteador.post("/avaliacao-google")
@@ -433,12 +483,29 @@ async def enviar_avaliacao_google(dados: Destinatario) -> dict[str, bool]:
     if not reservado:
         return {"enviado": False, "ja_enviado": True}
     try:
-        await _enviar_texto(numero, MENSAGEM_AVALIACAO + LINK_AVALIACAO)
+        resposta = await _enviar_texto(numero, texto_avaliacao())
     except Exception as erro:
         await run_in_threadpool(automacoes_whatsapp.finalizar, chave, str(erro))
         raise
-    await run_in_threadpool(automacoes_whatsapp.finalizar, chave)
+    mensagem_id = id_da_mensagem(resposta if isinstance(resposta, dict) else None)
+    await run_in_threadpool(
+        lambda: automacoes_whatsapp.finalizar(chave, mensagem_id=mensagem_id)
+        if mensagem_id
+        else automacoes_whatsapp.finalizar(chave)
+    )
     return {"enviado": True, "ja_enviado": False}
+
+
+def texto_avaliacao(cliente: str = "") -> str:
+    personalizado = _modelo_personalizado("avaliacao_google")
+    if personalizado:
+        from app import whatsapp_modelos
+
+        texto = whatsapp_modelos.renderizar(
+            personalizado, {"cliente": cliente, "link": LINK_AVALIACAO}
+        )
+        return texto if LINK_AVALIACAO in texto else f"{texto}\n{LINK_AVALIACAO}"
+    return MENSAGEM_AVALIACAO + LINK_AVALIACAO
 
 
 @roteador.get("/status", dependencies=[Depends(auth.usuario_atual)])
@@ -480,6 +547,16 @@ def _rotulo_do_documento(nome_registrado: str) -> str:
     return rotulo.lower() if rotulo else "o documento"
 
 
+def _modelo_personalizado(codigo: str) -> str | None:
+    """Texto que o escritório editou na tela de modelos; `None` mantém o texto padrão."""
+    try:
+        from app import whatsapp_modelos
+
+        return whatsapp_modelos.texto_personalizado(codigo)
+    except Exception:
+        return None
+
+
 def _variante_cobranca(chave: str, total: int) -> int:
     if total <= 1:
         return 0
@@ -501,6 +578,26 @@ def _mensagem_cobranca_documentos(
     para o cliente, mas a proteção real contra bloqueio é cadência, limite diário
     e idempotência da automação.
     """
+    personalizado = _modelo_personalizado("documentacao_pendente")
+    if personalizado:
+        limite = 12
+        nomes = [
+            f"- {item.get('nome') or item.get('codigo') or 'Documento'}"
+            for item in pendentes[:limite]
+        ]
+        if len(pendentes) > limite:
+            nomes.append(f"- e mais {len(pendentes) - limite} documento(s) pendente(s) no portal")
+        from app import whatsapp_modelos
+
+        texto = whatsapp_modelos.renderizar(
+            personalizado,
+            {"cliente": cliente, "link": url_portal, "documentos": "\n".join(nomes)},
+        )
+        if url_portal not in texto:
+            texto += f"\n\n{url_portal}"
+        if senha:
+            texto += f"\nSenha de acesso: {senha}"
+        return texto
     nome = _primeiro_nome(cliente)
     aberturas = [
         f"Bom dia, {nome}.",
@@ -872,7 +969,7 @@ def _processar_cobranca_documentos(
     )
     texto_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
     try:
-        _enviar_texto_sync(numero, texto)
+        resposta = _enviar_texto_sync(numero, texto)
     except Exception as erro:  # próxima execução volta a tentar
         automacoes_whatsapp.finalizar(chave, str(erro))
         automacoes_whatsapp.registrar_resultado_cobranca(
@@ -881,7 +978,11 @@ def _processar_cobranca_documentos(
             reagendar=reagendar,
         )
         return False
-    automacoes_whatsapp.finalizar(chave)
+    mensagem_id = id_da_mensagem(resposta if isinstance(resposta, dict) else None)
+    if mensagem_id:
+        automacoes_whatsapp.finalizar(chave, mensagem_id=mensagem_id)
+    else:
+        automacoes_whatsapp.finalizar(chave)
     automacoes_whatsapp.registrar_resultado_cobranca(
         config["caso_id"], config["intervalo_dias"], texto_hash,
         intervalo_horas=config.get("intervalo_horas"),

@@ -14,6 +14,15 @@ def analisar(self, operacao: str, argumentos: dict):
     raise ValueError(f"Operação de IA não permitida: {operacao}")
 
 
+@celery_app.task(name="app.tasks.ia.analisar_atendimento")
+def analisar_atendimento(analise_id: str):
+    """Análise jurídica pós-entrevista (ver `app/analise_acoes.py`)."""
+    from ..analise_acoes import executar
+
+    resultado = executar(analise_id)
+    return {"id": analise_id, "status": (resultado or {}).get("status")}
+
+
 @celery_app.task(bind=True, name="app.tasks.ia.gerar_estrategia", autoretry_for=(TimeoutError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
 def gerar_estrategia(self, job_id: str, relato: str, limite: int = 8):
     jobs.atualizar(job_id, status="STARTED", progresso=10, iniciado_em=datetime.now(timezone.utc))
