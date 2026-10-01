@@ -1324,7 +1324,7 @@ def listar_resumos() -> list[dict[str, Any]]:
         resultado.append(
             {
                 "codigo": codigo,
-                "nome": salvo.get("nome", embutido.nome) if salvo_ativo else embutido.nome,
+                "nome": limpar_texto(salvo.get("nome")) or embutido.nome if salvo_ativo else embutido.nome,
                 "descricao": (
                     salvo.get("descricao", embutido.descricao)
                     if salvo_ativo
@@ -1343,8 +1343,8 @@ def listar_resumos() -> list[dict[str, Any]]:
         resultado.append(
             {
                 "codigo": codigo,
-                "nome": str(salvo.get("nome") or codigo),
-                "descricao": str(salvo.get("descricao") or ""),
+                "nome": limpar_texto(salvo.get("nome")) or codigo,
+                "descricao": limpar_texto(salvo.get("descricao")),
                 "importado": True,
                 "original_do_sistema": False,
                 "origem": str(salvo.get("origem") or ""),

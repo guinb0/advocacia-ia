@@ -1549,6 +1549,7 @@ function preencherMarcadores(
    * A trava do microfone não mudou: a transcrição continua começando só depois
    * de nome, CPF, UF e município (ver o auto-início, acima). */
   const roteiroRevelado = escutaEncerrada || revisada;
+  const temSaudacao = (roteiro?.saudacao?.length ?? 0) > 0;
   /* Antes da escuta, a tela é a identificação MAIS o que o CPF acabou de puxar.
    *
    * Os cinco campos fixos nunca somem; os demais (mãe, nascimento, endereço,
@@ -1850,8 +1851,10 @@ function preencherMarcadores(
         * Fica recolhida depois de lida porque ela é longa e ocupa a tela que o
         * roteiro precisa; mas não some, porque a atendente pode querer voltar a
         * uma frase. Ver `roteiros.SAUDACAO`. */}
-      {escutando && roteiro.saudacao?.length > 0 && (
+      {escutando && (
         <section id="leitura-do-roteiro" className="scroll-mt-24 border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
+          {temSaudacao && (
+            <>
           <div className="flex items-center justify-between gap-[10px]">
             <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
               LEIA AO CLIENTE
@@ -1887,6 +1890,8 @@ function preencherMarcadores(
                 {comNomes(p)}
               </p>
             ))}
+            </>
+          )}
 
           {/* O ROTEIRO, ESCRITO, LOGO DEPOIS DO "PODEMOS COMEÇAR?".
             *
