@@ -661,6 +661,8 @@ def higienizar(
     secoes, rel["digitos_verificadores_corrigidos"] = inv.corrigir_digitos_verificadores(secoes)
     secoes, rel["data_do_fecho_preenchida"] = inv.preencher_data_do_fecho(secoes, date.today())
     secoes, rel["letras_duplicadas_removidas"] = inv.sem_letra_duplicada(secoes)
+    secoes, rel["nb_normalizados"] = inv.normalizar_nb(secoes)
+    secoes, rel["andaimes_internos_removidos"] = inv.sem_andaimes_internos(secoes)
     secoes = _renumerar_capitulos(secoes)
     return secoes, rel
 
@@ -813,6 +815,9 @@ def invariantes_numericas_do_documento(final: list[dict[str, Any]]) -> list[Viol
     if divergentes:
         saida.append(_v("IDENTIFICADOR_DIVERGENTE", "FACTS", " / ".join(divergentes), "O mesmo benefício aparece com números diferentes na peça.",
                         "Confira o número no documento de origem e use uma única grafia em toda a peça."))
+    if ae._VINCULO_ATIVO.search(inteiro) and re.search(r"reintegra[çc][ãa]o|indeniza[çc][ãa]o\s+substitutiva", inteiro, re.I):  # noqa: SLF001
+        saida.append(_v("REINTEGRACAO_COM_VINCULO_ATIVO", "CLAIMS", "reintegração/indenização substitutiva", "A peça diz que o vínculo está ativo e pede reintegração ou indenização substitutiva.",
+                        "Com o contrato ativo a estabilidade é pedida só de forma declaratória; retire a reintegração e a indenização substitutiva."))
     for m in re.finditer(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", inteiro):
         if not inv.cnpj_valido(m.group(0)):
             saida.append(_v("CNPJ_INVALIDO", "FACTS", m.group(0), "CNPJ com dígito verificador inválido.", "Confira o CNPJ no documento de origem."))

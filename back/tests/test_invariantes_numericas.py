@@ -47,3 +47,39 @@ def test_verificacoes_que_bloqueiam():
     assert inv.identificadores_divergentes("NB 732.342.882-4 e depois NB 732.343.882-4") == ["7323428824", "7323438824"]
     assert not inv.identificadores_divergentes("NB 732.342.882-4 e NB 732.342.882-4")
     assert not inv.identificadores_divergentes("NB 732.342.882-4 e outro benefício NB 728.038.320-4")
+
+
+def test_indenizacao_de_estabilidade_com_contrato_ativo_sai_do_ledger():
+    from app import auditoria_estrutural as ae
+
+    plano = {
+        "fatos": [{"descricao": "O reclamante segue trabalhando na empresa; o contrato permanece ativo."}],
+        "pedidos": [
+            {"id": "P01", "tipo": "dano moral", "objeto": "indenização por dano moral"},
+            {"id": "P02", "tipo": "estabilidade acidentária", "objeto": "indenização substitutiva da estabilidade provisória"},
+            {"id": "P03", "tipo": "declaração de estabilidade", "objeto": "declarar a estabilidade provisória"},
+        ],
+    }
+    secoes = [{"code": "FACTS", "content": "O contrato permanece ativo."}, {"code": "CLAIMS", "content": "a) dano moral"}]
+    retirar = ae.pedidos_rescisorios_com_vinculo_ativo(secoes, plano)
+    assert [p["id"] for p in retirar] == ["P02"]
+
+
+def test_nb_andaimes_e_rotulo_de_documento():
+    novas, n = inv.normalizar_nb([{"content": "NB 728038320-4 e NB 728.038.320-4"}])
+    assert novas[0]["content"] == "NB 728.038.320-4 e NB 728.038.320-4" and n == 1
+    novas, n = inv.sem_andaimes_internos([{"content": "O INSS indeferiu (evento-1 do brief) e depois (fato-3). Prova: M023, M029."}])
+    assert "brief" not in novas[0]["content"] and "fato-3" not in novas[0]["content"] and "M023" not in novas[0]["content"]
+    from app.juridico import tabelas
+
+    assert tabelas.rotulo_documento("Doc 6. CTPS Digital.pdf") == "Documento 6 — CTPS Digital"
+    assert tabelas.rotulo_documento("calculado pelo sistema") == "memória de cálculo desta peça"
+    assert ".pdf" not in tabelas._rotulos("Doc 10. Declaracao De Afastamentos - Correios.pdf, Doc 11. Contracheques.pdf")
+
+
+def test_reintegracao_com_vinculo_ativo_bloqueia():
+    from app import documento_final as df
+
+    final = [{"code": "FACTS", "content": "O vínculo permanece ativo."}, {"code": "CLAIMS", "content": "requer a reintegração do autor"}]
+    assert "REINTEGRACAO_COM_VINCULO_ATIVO" in [v.codigo for v in df.invariantes_numericas_do_documento(final)]
+    assert "REINTEGRACAO_COM_VINCULO_ATIVO" not in [v.codigo for v in df.invariantes_numericas_do_documento([{"code": "CLAIMS", "content": "requer a reintegração"}])]

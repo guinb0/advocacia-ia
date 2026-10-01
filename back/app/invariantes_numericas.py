@@ -224,3 +224,39 @@ def identificadores_divergentes(texto: str) -> list[str]:
             if len(a) == len(b) and sum(x != y for x, y in zip(a, b)) <= 2:
                 suspeitos.update((a, b))
     return sorted(suspeitos)
+
+
+# ------------------------------------------------------------ andaimes internos, NB e repetição entre seções
+
+_NB_ESCRITO = re.compile(r"\bNB\s*(\d{3})\.?(\d{3})\.?(\d{3})-?(\d)\b")
+_ANDAIME = re.compile(
+    r"\s*[\(\[]\s*(?:evento|fato)-\d+(?:\s+do\s+brief)?\s*[\)\]]|"
+    r"(?:,\s*)?\b(?:conforme\s+|segundo\s+|nos\s+termos\s+d[oa]\s+)?(?:evento|fato)-\d+\s+do\s+brief\b|"
+    r"\bM\d{3}\b(?:\s*,\s*M\d{3}\b)*", re.IGNORECASE)
+
+
+def normalizar_nb(secoes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Um benefício, uma grafia: NB 000.000.000-0 em toda a peça."""
+    n = 0
+
+    def trocar(m: re.Match[str]) -> str:
+        nonlocal n
+        novo = f"NB {m.group(1)}.{m.group(2)}.{m.group(3)}-{m.group(4)}"
+        n += novo != m.group(0)
+        return novo
+
+    return [{**s, "content": _NB_ESCRITO.sub(trocar, s["content"])} if isinstance(s.get("content"), str) else s for s in secoes], n
+
+
+def sem_andaimes_internos(secoes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """«evento-1 do brief», «fato-3», «M023»: ids do pipeline não pertencem a uma peça que um juiz vai ler."""
+    n = 0
+    novas = []
+    for s in secoes:
+        c = s.get("content")
+        if isinstance(c, str) and _ANDAIME.search(c):
+            c, k = _ANDAIME.subn("", c)
+            n += k
+            s = {**s, "content": re.sub(r"[ \t]+([,.;])", r"\1", c)}
+        novas.append(s)
+    return novas, n

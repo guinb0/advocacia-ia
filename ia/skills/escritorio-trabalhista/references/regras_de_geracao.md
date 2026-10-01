@@ -348,3 +348,31 @@ precedentes, datas de prescrição, valores/soma, coerência e limites de cada p
 - Pedido de PAGAMENTO leva valor e critério tirados dos documentos, com o mês do contracheque quando o número vier de lá. Pedido declaratório, procedimental ou probatório NÃO leva valor. Sem documento, o pedido condenatório não entra; não use `[PENDENTE]` nem o art. 322 do CPC.
 - Não escrever capítulo nem parágrafo que destaque fragilidade ou fato desfavorável do próprio caso: isso vai para `analise.observacoes`.
 - Pendência não vai para o corpo da peça. Registre em `pendencias` / relatório interno. `[PENDENTE]` no documento impede o protocolo.
+
+## Consistência, não repetição e estado do contrato (regras de auditoria)
+
+Estas regras vêm de auditorias de petições reais geradas por este sistema; cada uma corrige um erro que se repetiu.
+
+1. **Cada fato é narrado uma só vez.** O relato do acidente, a CAT, os laudos e as decisões do INSS ficam em FATOS. Em DIREITO,
+   remeta ao item («conforme o item II.3») sem recopiar o trecho. Cada dispositivo legal é explicado uma só vez; as demais
+   menções apenas o citam.
+2. **Um identificador, uma grafia.** NB, CNPJ, CPF, número de CAT e CID são copiados do documento de origem e escritos do mesmo
+   jeito em toda a peça (NB 000.000.000-0). Se dois documentos divergem, registre a divergência no relatório, não na peça.
+3. **Contrato ativo.** Reintegração, indenização substitutiva da estabilidade e verbas rescisórias só existem com dispensa ou
+   rescisão indireta pedida. Com o vínculo ativo, a estabilidade é pedida só de forma declaratória.
+4. **Uma classificação do acidente.** Acidente de trajeto e acidente típico (em serviço) são hipóteses diferentes. Adote a que a
+   CAT e os documentos sustentam; se o relato do cliente a contradiz, trate a divergência expressamente. Nunca afirme as duas.
+5. **Dúvida aberta não vira fato.** O que a análise documental marca como dúvida (declaração sem assinatura, pagamento de salário
+   no período de limbo, veículo do acidente, caráter permanente de sequela, diagnóstico sem laudo) só entra em tom condicional
+   («segundo o relato do reclamante», «a ser confirmado em perícia»). Declaração de hipossuficiência só é «firmada» se o
+   documento estiver assinado.
+6. **Pensionamento e indenização por redução da capacidade.** Ou se pede pensão mensal em percentual a apurar em perícia sobre a
+   remuneração, ou valor estimado com memória (base, percentual declarado, sobrevida da tábua do IBGE para a idade do autor,
+   deságio da parcela única). Nunca um valor redondo sem conta.
+7. **Juros e correção.** Não fixe termo inicial em «desde o ajuizamento». Cite o regime vigente (ADC 58 e 59 do STF e Lei nº
+   14.905/2024) e registre como pendência a conferência do índice na data da liquidação.
+8. **Plano de saúde suspenso durante o auxílio-doença acidentário** fundamenta-se na Súmula 440 do TST, com a ressalva de prova.
+9. **Sem andaimes internos.** Nunca escreva ids do pipeline («evento-1», «fato-3», «M023», «brief»), nomes de arquivo (.pdf)
+   nem «calculado pelo sistema» na peça. Documento se cita como «Documento NN».
+10. **Datas.** Evento «previsto» cuja data já passou na data da petição é escrito no passado, e o que veio depois dele é
+    registrado como dado a confirmar, nunca ignorado.
