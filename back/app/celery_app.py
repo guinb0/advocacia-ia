@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 from . import ambiente
 
@@ -46,6 +47,7 @@ celery_app = Celery(
         "app.tasks.ia",
         "app.tasks.manutencao",
         "app.tasks.roteiro",
+        "app.tasks.acervo",
     ),
 )
 
@@ -80,6 +82,7 @@ celery_app.conf.update(
         "app.tasks.roteiro.*": {"queue": "ai"},
         "app.tasks.documentos.*": {"queue": "documents"},
         "app.tasks.manutencao.*": {"queue": "low"},
+        "app.tasks.acervo.*": {"queue": "low"},
     },
     beat_schedule={
         "limpar-temporarios": {
@@ -104,6 +107,13 @@ celery_app.conf.update(
         "cobrar-documentos-pendentes": {
             "task": "app.tasks.manutencao.cobrar_documentos_pendentes",
             "schedule": 900.0,
+        },
+        # Sempre agendada; a tarefa não faz nada enquanto ACERVO_SINCRONIZACAO_ATIVA != 1.
+        # 03:00 de Brasília: fora do expediente e longe das cargas do DJEN.
+        "acervo-sincronizar": {
+            "task": "app.tasks.acervo.sincronizar_acervo",
+            "schedule": crontab(hour=3, minute=0, app=celery_app),
+            "options": {"queue": "low"},
         },
     },
 )

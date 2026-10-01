@@ -157,7 +157,8 @@ def montar(
         novo(fato=str(x.get("fato") or x["chave"]), chave=str(x["chave"]).strip().lower(), valor=valor,
              fonte=str((onde or {}).get("nome") or fonte), documento=str((onde or {}).get("nome") or "") if estado == CONFIRMADO else "",
              pagina=str(x.get("pagina") or pagina or ""), confianca=conf, estado=estado, origem="issue_spotting",
-             ref=str(x.get("id") or ""), categoria=str(x.get("categoria") or ""))
+             ref=str(x.get("id") or ""), categoria=str(x.get("categoria") or ""),
+             certeza_declarada=str(x.get("certeza") or "").strip().upper())
 
     contradicoes = detectar_contradicoes(fatos, case_facts)
     for c in contradicoes:

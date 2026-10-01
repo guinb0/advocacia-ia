@@ -4034,6 +4034,502 @@
   "status_code": null
  },
  {
+  "caminho": "/api/acervo/resumo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "resumo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/configuracao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "configuracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "normas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca",
+    "categoria",
+    "status"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas/{document_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "norma",
+  "parametros": {
+   "caminho": [
+    "document_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/dispositivos/{version_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "dispositivo",
+  "parametros": {
+   "caminho": [
+    "version_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/autoridades/resolver",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "resolver_autoridade",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "autoridade"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/jurisprudencia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "jurisprudencia",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca",
+    "status"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/sincronizacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "sincronizacoes",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "document_id",
+    "limite"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/alertas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "alertas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "abertos",
+    "limite"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/problemas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "problemas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas/{document_id}/verificar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "verificar_agora",
+  "parametros": {
+   "caminho": [
+    "document_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas/{document_id}/reindexar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "reindexar",
+  "parametros": {
+   "caminho": [
+    "document_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/anotacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "anotar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/alertas/{alerta_id}/resolver",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "resolver_alerta",
+  "parametros": {
+   "caminho": [
+    "alerta_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/jurisprudencia/importar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "importar_jurisprudencia",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
   "caminho": "/",
   "tipo": "APIRoute",
   "metodos": [

@@ -6,6 +6,7 @@
 
 export { ApiError, cabecalhos, CREDENCIAIS, duplicidadesDoErro, urlApi } from "./base";
 export * from "./acervo";
+export * from "./acervoJuridico";
 export * from "./analise";
 export * from "./assinatura";
 export * from "./casos";

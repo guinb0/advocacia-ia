@@ -14,6 +14,9 @@ from typing import Any
 
 from . import plano_da_peticao as pp
 from .conferencia_peticao import Violacao
+from .juridico import canonico
+from .juridico.auditores import _ACESSORIO_DA_LIQUIDACAO, _ILIQUIDO
+from .juridico.calculos import valor_da_causa as _valor_da_causa
 from .recuperacao_por_secao import dividir_em_topicos, paragrafos
 
 _PENDENTE = re.compile(r"\[PENDENTE[^\]]*\]", re.IGNORECASE)
@@ -307,8 +310,8 @@ def ledger(plano: dict[str, Any]) -> list[Violacao]:
 
 
 def soma_cumulativos(plano: dict[str, Any]) -> float:
-    return round(sum(float(p["valor"]) for p in plano.get("pedidos") or []
-                     if p.get("valor") and p.get("natureza", "cumulativo") == "cumulativo" and p.get("tipo_de_item", "autonomo") == "autonomo"), 2)
+    """A MESMA soma da camada jurídica (`juridico.calculos.valor_da_causa`): uma regra só para o valor da causa."""
+    return _valor_da_causa(plano.get("pedidos") or [])["valor"]
 
 
 def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
@@ -453,6 +456,7 @@ def auditar(secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[st
         *placeholders_proibidos(secoes),
         *cidade_endereco_vs_vara(secoes, partes),
         *coerencia_juridica_minima(secoes, plano),
+        *pressupostos_e_atualidade(secoes, plano),
         *(candidatos_semanticos(secoes, plano, embed) if embed else []),
         *ledger(plano), *valor_da_causa(secoes, plano), *criterio_de_calculo(secoes, params),
     ]
@@ -633,6 +637,60 @@ def ausencia_falsa_de_documento_listado(
                 "Cite o(s) Documento NN do índice canônico; não marque como inexistente o que o ledger numera.",
             ))
             return saida
+    return saida
+
+
+_VINCULO_ATIVO = re.compile(
+    r"(?:v[íi]nculo|contrato(?:\s+de\s+trabalho)?)\s+(?:permanece|continua|segue|est[áa])\s+(?:ativo|vigente|em\s+curso|em\s+vigor)|"
+    r"(?:ainda|segue|continua|permanece)\s+(?:trabalhando|laborando|prestando\s+servi[çc]os|empregad[oa]|em\s+atividade)|"
+    r"contrato\s+(?:de\s+trabalho\s+)?(?:ativo|vigente|em\s+vigor)|v[íi]nculo\s+(?:empregat[íi]cio\s+)?ativo", re.I)
+_TERMINO = re.compile(
+    r"\bdispensad[oa]|\bdemitid[oa]|\bdispensa\s+(?:sem\s+justa|por\s+justa|imotivada|ocorrida|em\s+\d)|pedido\s+de\s+demiss|"
+    r"rescis[ãa]o\s+(?:do\s+contrato|contratual|indireta)|\bTRCT\b|termo\s+de\s+rescis|desligad[oa]|extin[çc][ãa]o\s+do\s+contrato|baixa\s+na\s+CTPS", re.I)
+_CRITERIO_GRATUIDADE_SUPERADO = re.compile(
+    r"40\s*%\s*(?:\(\s*quarenta\s+por\s+cento\s*\)\s*)?d[oa]\s+(?:limite\s+m[áa]ximo|teto)|quarenta\s+por\s+cento\s+do\s+(?:limite|teto)|"
+    r"s[úu]mula\s+(?:n[º°.]*\s*)?463\s*,?\s*(?:item\s+)?I\b(?![IV])|tema\s+(?:n[º°.]*\s*)?21\b[^.\n]{0,40}(?:TST|IRR)", re.I)
+
+
+def pressupostos_e_atualidade(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
+    """Fato × pedido e critério jurídico superado, no fluxo legado (o modo strict tem os gates da camada jurídica).
+
+    - verba rescisória (multa do art. 477, aviso prévio, 40% do FGTS…) pedida com o contrato ativo e sem rescisão indireta;
+    - critério de gratuidade afastado pela ADC 80 do STF (percentual do teto do RGPS, Súmula 463, I, do TST, Tema 21 do TST);
+    - pedido de pagamento deixado para liquidação e pedidos sem memória de cálculo (aviso: o valor não é inventado na correção).
+    """
+    saida: list[Violacao] = []
+    claims = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
+    resto = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") != "CLAIMS")
+    fatos = " ".join(str(f.get(k) or "") for f in plano.get("fatos") or [] if isinstance(f, dict) for k in ("descricao", "fato", "valor"))
+    rescisorios = [p for p in plano.get("pedidos") or []
+                   if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")]
+    indireta = canonico.pede_rescisao_indireta([{"tese": f"{resto} {claims}"}, *({"tese": p.get("tipo", ""), "pedido": p.get("objeto", "")} for p in plano.get("pedidos") or [])])
+    contexto = f"{resto} {fatos}"
+    if rescisorios and not indireta and (_VINCULO_ATIVO.search(contexto) or not _TERMINO.search(contexto)):
+        ids = ", ".join(f"{p.get('id')} {str(p.get('tipo') or '')[:40]}" for p in rescisorios)
+        saida.append(_v("VERBA_RESCISORIA_COM_VINCULO_ATIVO", "LEDGER", ids,
+                        "Pedido de verba rescisória (multa do art. 477, aviso prévio, 40% do FGTS, multa do art. 467, seguro-desemprego) "
+                        "sem término do contrato nos fatos: o vínculo está ativo e não há pedido de rescisão indireta.",
+                        "Retire esses pedidos do ledger (ou, se a estratégia aprovada for a rescisão indireta, ela tem de estar fundamentada e pedida)."))
+    for s in secoes:
+        m = _CRITERIO_GRATUIDADE_SUPERADO.search(str(s.get("content") or ""))
+        if m:
+            saida.append(_v("GRATUIDADE_CRITERIO_SUPERADO", str(s.get("code") or ""), m.group(0),
+                            "Critério de gratuidade afastado pelo STF na ADC 80 (julgada em 03/09/2026): o percentual do teto do RGPS do "
+                            "art. 790, § 3º, da CLT foi declarado inconstitucional e o item I da Súmula 463 do TST também.",
+                            "Fundamente pela ADC 80: até R$ 5.000,00 de remuneração há presunção relativa de insuficiência (com o salário "
+                            "do contracheque); acima disso, demonstre a insuficiência com documentos (art. 790, § 4º, da CLT). Não cite a "
+                            "Súmula 463, I, nem o Tema 21 do TST como critério atual."))
+    for linha in claims.split("\n"):
+        if _ILIQUIDO.search(linha) and not _ACESSORIO_DA_LIQUIDACAO.search(linha):
+            saida.append(_v("PEDIDO_ILIQUIDO", "CLAIMS", linha.strip(),
+                            "Pedido de pagamento deixado para liquidação: o rito trabalhista exige valor certo (art. 840, § 1º, da CLT).",
+                            "Calcule com os dados dos documentos e traga a memória de cálculo; sem dado, retire o pedido e registre a pendência.", False))
+    if re.search(r"R\$\s*\d", claims) and not re.search(r"mem[óo]ria\s+de\s+c[áa]lculo", claims, re.I) and "|" not in claims:
+        saida.append(_v("MEMORIA_DE_CALCULO_AUSENTE", "CLAIMS", "pedidos com valor",
+                        "Os pedidos têm valor, mas a peça não traz a memória de cálculo discriminada (base, documento, período, conta, resultado).",
+                        "Inclua a memória de cálculo logo após os pedidos, uma linha por parcela.", False))
     return saida
 
 

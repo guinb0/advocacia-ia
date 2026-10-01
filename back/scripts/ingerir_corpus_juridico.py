@@ -1,5 +1,9 @@
 """Ingestão integral, rastreável e segura do corpus jurídico oficial.
 
+SUBSTITUÍDO por `scripts/sincronizar_acervo.py` depois da migration 011: a sincronização versiona
+por dispositivo com id estável e só refaz o embedding do que mudou. Este script apaga e recria todos
+os trechos da norma a cada carga; fica para a primeira carga em banco sem a 011.
+
 Nunca use ``errors='replace'``: texto de lei com erro de codificação é uma falha,
 não um dado aceitável. Primeiro execute ``--reset-legado`` uma única vez para
 remover exclusivamente a antiga carga Planalto; depois ``--coletar`` e, apenas
@@ -14,6 +18,7 @@ import httpx, psycopg
 if __package__ in {None, ""}:  # permite `python scripts/ingerir_corpus_juridico.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.rag import BASE, carregar_env, gerar_embeddings, vetor_literal
+from app.acervo import encoding as acervo_encoding
 
 RAIZ = BASE / "dados" / "corpus_juridico"; MANIFESTO = RAIZ / "manifesto.json"
 RAW, PROCESSADOS, RELATORIOS, ERROS = RAIZ / "raw", RAIZ / "processed", RAIZ / "reports", RAIZ / "errors"
@@ -33,20 +38,8 @@ class Extrator(HTMLParser):
         if not self.ignorar: self.linhas.append(data)
 
 def decodificar(bruto: bytes) -> tuple[str,str]:
-    """Decodifica sem mascarar corrupção; Planalto histórico pode ser cp1252."""
-    tentativas = [("utf-8-sig", "utf-8")]
-    if bruto.startswith((b"\xff\xfe", b"\xfe\xff")):
-        tentativas.append(("utf-16", "utf-16"))
-    tentativas.append(("cp1252", "windows-1252"))
-    for codec, nome in tentativas:
-        try:
-            texto = bruto.decode(codec)
-            # "Ã" existe legitimamente em palavras como "CONSTITUIÇÃO". O que
-            # denuncia mojibake é a sequência UTF-8 mal interpretada (Ã§, Ã£,
-            # Â  etc.), não a letra isolada.
-            if "\ufffd" not in texto and not re.search(r"(?:Ã|Â)[\u0080-\u00bf]", texto): return texto, nome
-        except UnicodeDecodeError: pass
-    raise ValueError("ENCODING_CORRUPTO: nenhum decoder seguro produziu texto jurídico válido")
+    """Decodifica sem mascarar corrupção. A regra mora em `app.acervo.encoding` (a mesma da sincronização)."""
+    return acervo_encoding.decodificar(bruto)
 
 def extrair(html: str) -> str:
     p=Extrator(); p.feed(html.replace("\x00", "")); p.close()
@@ -55,7 +48,7 @@ def extrair(html: str) -> str:
         linha=re.sub(r"[ \t\r\f\v]+", " ", linha).strip()
         if linha and (not linhas or linhas[-1] != linha): linhas.append(linha)
     texto="\n".join(linhas)
-    if "\ufffd" in texto or re.search(r"(?:Ã|Â)[\u0080-\u00bf]", texto): raise ValueError("ENCODING_CORRUPTO após parser")
+    if acervo_encoding.corrompido(texto): raise ValueError("ENCODING_CORRUPTO após parser")
     return texto
 
 def dispositivos(item, texto):

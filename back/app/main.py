@@ -49,6 +49,7 @@ from . import (
 from .banco import limite_de_espera_por_lock
 from .caminhos import SKILL_EMBUTIDA
 from .rotas import (
+    acervo as rotas_acervo,
     analise,
     assinatura as rotas_assinatura,
     casos as rotas_casos,
@@ -424,6 +425,7 @@ except Exception:  # noqa: BLE001
 # antes de `/api/modelos/{codigo}`); `tests/test_rotas_intactas.py` confere isso.
 for _area in (
     gastos,
+    rotas_acervo,
     saude,
     rotas_roteiros,
     contratos,

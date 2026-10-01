@@ -152,13 +152,35 @@ Na reclamação trabalhista, TODO pedido de PAGAMENTO traz o valor NA PRÓPRIA L
 pedido — "a apurar em liquidação" não basta (art. 840, § 1º, da CLT). Pedido
 declaratório, procedimental ou probatório (juízo digital, reconhecimento, oitiva de
 testemunhas, exibição, provas, honorários, juros) NÃO leva valor e é PROIBIDO inventar
-"valor estimado" ou "custo" para ele. Se o valor de um pedido de pagamento depende de
-documento que não está nos autos, escreva [PENDENTE: valor a apurar com <documento>]
-em vez de estimar. Quando os documentos trazem os dados, o valor é
+"valor estimado" ou "custo" para ele. Quando os documentos trazem os dados, o valor é
 ESTIMADO com o critério escrito ao lado, a partir dos dados dos documentos (ex.:
-"2 h/dia × 22 dias × 22 meses × valor-hora de R$ 10,82 × 1,5"). É PROIBIDO criar
-pedido ou parcela sem fato que o sustente, e PROIBIDO ajustar parcela para o total
-dar número redondo: o valor da causa é a soma, seja ela qual for.
+"2 h/dia × 22 dias × 22 meses × valor-hora de R$ 10,82 × 1,5"). Se faltar o dado
+para calcular, o pedido não entra no corpo: vai para `pendencias` com o documento que
+falta. É PROIBIDO criar pedido ou parcela sem fato que o sustente, e PROIBIDO ajustar
+parcela para o total dar número redondo: o valor da causa é a soma, seja ela qual for.
+
+MEMÓRIA DE CÁLCULO É OBRIGATÓRIA. Logo depois da lista de pedidos (antes do valor da
+causa), traga a memória de cálculo discriminada, uma linha por parcela, em tabela
+Markdown com as colunas: Pedido | Base (valor e documento de onde saiu: contracheque
+de mês/ano, CTPS, TRCT, laudo) | Período/quantidade | Conta | Resultado. Cada número
+da memória sai de documento do caso ou de conta feita sobre ele; o resultado de cada
+linha é o mesmo valor escrito no pedido, e a soma das linhas autônomas é o valor da
+causa. Reflexos aparecem em linhas próprias (base × fração), nunca embutidos sem conta.
+"A apurar em liquidação", "a liquidar", "valor a ser apurado" e "por simples cálculo"
+são PROIBIDOS em pedido de pagamento — só juros, correção monetária, contribuições
+previdenciárias e fiscais e honorários se apuram na liquidação.
+
+FATO → PEDIDO. Antes de escrever cada pedido, confira o fato que o gera e o documento
+que prova esse fato; se o fato não está nos documentos, o pedido não existe. Em
+especial, VERBAS RESCISÓRIAS PRESSUPÕEM CONTRATO ENCERRADO: aviso prévio, saldo de
+salário, férias e 13º proporcionais da rescisão, 40% do FGTS, multa do art. 477 e multa
+do art. 467 da CLT, guias do seguro-desemprego e chave do FGTS só cabem se houver
+dispensa, pedido de demissão ou término do contrato documentado (TRCT, aviso, CTPS
+com baixa) — ou se a própria ação pedir a rescisão indireta (art. 483 da CLT), caso em
+que o término considerado é a data do ajuizamento. Empregado com vínculo ativo, sem
+pedido de rescisão indireta, NÃO tem multa do art. 477 por "atraso no pagamento das
+verbas rescisórias": não há rescisão. Esse pedido não entra; registre a análise em
+`analise.observacoes`.
 
 O QUE NÃO SERVE AO CLIENTE NÃO ENTRA NA PEÇA. Verba que você concluiu ser indevida
 (multa sem atraso, direito que os fatos não dão) não vira tópico "não se aplica" na
@@ -265,12 +287,25 @@ PEDIDOS**; linha do valor da causa sem capítulo; fechamento. A numeração roma
 começa em I, é contínua e cada seção aparece uma vez. Todo capítulo é marcado
 com `#` e sai em negrito.
 
-Em I, inclua gratuidade sempre que houver declaração de hipossuficiência: arts.
-5º, LXXIV, CF; 790, §§ 3º e 4º, CLT; 98/99 CPC; Lei 7.115/83; Súmula 463, I,
-TST; e Tema 21/TST quando a fonte verificada estiver disponível. Se a remuneração
-superar 40% do teto, use contracheques com mês, descontos e valores exatos, jamais
-aproximação ou relato. Inclua também comunicações processuais (art. 272, §5º,
-CPC e Súmula 427/TST) e rito pelo critério legal; tutela só quando comprovada.
+Em I, inclua gratuidade sempre que houver declaração de hipossuficiência ou
+documento de renda: arts. 5º, LXXIV, CF; 790, §§ 3º e 4º, CLT; 98/99 CPC; e a ADC 80
+do STF (julgada em 03/09/2026 — ver `precedentes_vinculantes.md`). Remuneração até
+R$ 5.000,00: presunção relativa de insuficiência, com o salário do contracheque/CTPS
+(mês e valor). Acima de R$ 5.000,00: demonstrar a insuficiência com contracheques
+(mês, descontos e valores exatos), despesas e renda familiar — jamais aproximação,
+relato ou só a declaração. NÃO cite a Súmula 463, I, do TST (declarada
+inconstitucional) nem o Tema 21 do TST como critério atual. Inclua também
+comunicações processuais (art. 272, §5º, CPC e Súmula 427/TST) e rito pelo critério
+legal; tutela só quando comprovada.
+
+ATUALIZAÇÃO JURÍDICA POR TESE: para cada tese e cada pedido, confira no material
+recuperado (Acervo Jurídico, precedentes vinculantes, legislação atualizada) se há
+decisão vinculante, súmula, tema ou alteração legislativa POSTERIOR ao modelo que
+mude o critério. Precedente recente e vinculante prevalece sobre o que estiver
+escrito nos modelos desta skill. Lei transcrita entre aspas é a redação VIGENTE na
+data de hoje, tirada do texto recuperado — nunca de memória nem de modelo antigo; se
+o artigo foi alterado (Reforma Trabalhista, Lei 13.467/2017, ou lei posterior), use
+só a redação nova. Sem o texto vigente recuperado, descreva o dispositivo sem aspas.
 
 Em III, trate prescrição: a quinquenal conta do ajuizamento. Antes do protocolo,
 escreva "anteriores aos cinco anos que antecedem o ajuizamento", nunca use data

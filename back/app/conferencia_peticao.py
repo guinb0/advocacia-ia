@@ -139,16 +139,21 @@ class Fontes:
 
         "15/09/2025" não está em documento nenhum, mas é a DCB (15/09/2024) mais doze
         meses — o fim da estabilidade. Derivada = mesmo dia E mesmo mês de uma data
-        conhecida, até cinco anos adiante ou atrás (estabilidade, prescrição). Só o
-        mesmo dia não basta: deixaria passar qualquer data inventada no dia 14.
+        conhecida, PROJETADA para frente por um prazo legal (1, 2 ou 5 anos: estabilidade,
+        prescrição bienal e quinquenal), ou o marco prescricional contado de hoje para trás.
+        A antiga tolerância de ±5 anos em qualquer direção aceitava data inventada até cinco
+        anos antes de qualquer documento; só o mesmo dia também não basta.
         """
         alvo = _data(texto)
         if alvo is None:
             return True
         if alvo in self._datas:
             return True
+        hoje = date.today()
+        if (alvo.day, alvo.month) == (hoje.day, hoje.month) and hoje.year - alvo.year in _PRAZOS_LEGAIS_ANOS:
+            return True
         return any(
-            (conhecida.day, conhecida.month) == (alvo.day, alvo.month) and abs(alvo.year - conhecida.year) <= 5
+            (conhecida.day, conhecida.month) == (alvo.day, alvo.month) and alvo.year - conhecida.year in _PRAZOS_LEGAIS_ANOS
             for conhecida in self._datas
         )
 
@@ -157,6 +162,10 @@ class Fontes:
         return bool(
             re.search(rf"{tipo}\w*\s*(?:n[ºo°.]*\s*)?{re.escape(numero)}\b", self._tudo)
         )
+
+
+#: Prazos que DERIVAM uma data de outra (estabilidade de 12 meses, prescrição bienal e quinquenal).
+_PRAZOS_LEGAIS_ANOS = {1, 2, 5}
 
 
 def _data(texto: str) -> date | None:

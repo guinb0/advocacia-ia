@@ -113,6 +113,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       }),
       itemDoMenu("saudeAgente"),
       itemDoMenu("gastosApi"),
+      itemDoMenu("acervoJuridico"),
       itemDoMenu("modelosDePeticao"),
     ],
   },

@@ -16,7 +16,8 @@ Três passos, em processos separados de propósito:
 Uso (de `back/`):
 
     python -m scripts.e2e_peticao_juridica exportar <caso_id> --saida <pasta>
-    python -m scripts.e2e_peticao_juridica gerar --saida <pasta> --modos off,strict [--autoridades base.json]
+    python -m scripts.e2e_peticao_juridica gerar --saida <pasta> --modos off,strict [--autoridades base.json] [--acervo acervo.json]
+    python -m scripts.e2e_peticao_juridica gerar --saida <pasta> --modo shadow
     python -m scripts.e2e_peticao_juridica relatorio --saida <pasta> [--referencia peca.txt]
 
 `--autoridades`: linhas no formato da tabela `autoridades_juridicas` (sql/010), para homologar a base antes
@@ -282,24 +283,28 @@ def _desviar_conexoes_sql_server(registro: list[str]) -> None:
     banco.sessao = conectar  # type: ignore[assignment]
 
 
-def _carregar_autoridades(arquivo: Path) -> None:
+def _carregar_autoridades(arquivo: Path, *, com_acervo: bool) -> None:
     from app.juridico import autoridades as aut, repositorio
 
     linhas = json.loads(arquivo.read_text(encoding="utf-8"))
     base = aut.de_registro_bruto(linhas)
     repositorio.carregar_autoridades = lambda organization_id="": (list(base), "")  # type: ignore[assignment]
-    repositorio.carregar_dispositivos = lambda chaves: ([], "")  # type: ignore[assignment]
+    if not com_acervo:
+        repositorio.carregar_dispositivos = lambda chaves: ([], "")  # type: ignore[assignment]
 
 
-def gerar(saida: Path, modo: str, autoridades: Path | None) -> Path:
+def gerar(saida: Path, modo: str, autoridades: Path | None, acervo: Path | None = None) -> Path:
     if not os.getenv("DEEPSEEK_API_KEY"):
         raise SystemExit("Defina DEEPSEEK_API_KEY no ambiente deste processo (não grave em arquivo).")
     _isolar_do_banco()
+    if acervo:
+        # Artigos citados conferidos contra o Acervo local (`scripts/sincronizar_acervo --local`), sem pgvector.
+        os.environ["ACERVO_ARMAZENAMENTO_JSON"] = str(acervo.resolve())
     snapshot = _ler(saida / "snapshot.json")
     falso = Armazenamento(snapshot)
     _substituir_armazenamento(falso)
     if autoridades:
-        _carregar_autoridades(autoridades)
+        _carregar_autoridades(autoridades, com_acervo=bool(acervo))
     os.environ["PETICAO_PIPELINE_JURIDICO_MODE"] = modo
     os.environ.pop("PETICAO_PIPELINE_JURIDICO", None)
 
@@ -310,7 +315,8 @@ def gerar(saida: Path, modo: str, autoridades: Path | None) -> Path:
     _desviar_conexoes_sql_server(sql_interceptado)
     caso_id = snapshot["caso_id"]
     inicio = time.monotonic()
-    resultado: dict[str, Any] = {"modo": modo, "caso_id": caso_id, "autoridades_arquivo": str(autoridades or "")}
+    resultado: dict[str, Any] = {"modo": modo, "caso_id": caso_id, "autoridades_arquivo": str(autoridades or ""),
+                                 "acervo_arquivo": str(acervo or "")}
     try:
         entrevista = peticao_fluxo.transcricao(caso_id)
         dados = peticao_local.gerar(caso_id, texto_entrevista=entrevista["texto"])
@@ -428,8 +434,26 @@ def _md_geracao(g: dict[str, Any], saida: Path) -> list[str]:
     out += ["", "#### Plano final", "", f"- valor da causa calculado: {jur.get('valor_da_causa')}", f"- pendências: {jur.get('pendencias')}",
             f"- tabelas: {jur.get('tabelas')}", "", "#### Os quatro auditores", ""]
     aud = jur.get("auditoria") or {}
-    out.append(f"- veredito: `{json.dumps(aud.get('veredito'), ensure_ascii=False)[:500]}`")
+    veredito = aud.get("veredito") or {}
+    out.append(f"- veredito: **{veredito.get('status') or ('READY' if veredito.get('pronta') else 'BLOCKED')}** "
+               f"`{json.dumps(veredito, ensure_ascii=False)[:500]}`")
     out += _md_achados(aud.get("achados") or [], 40)
+    out += ["", "#### Citation Gate", ""]
+    for c in jur.get("citacoes") or []:
+        checks = " ".join(f"{k}={'ok' if v else ('—' if v is None else 'FALHOU')}" for k, v in (c.get("checks") or {}).items())
+        out.append(f"- `{c.get('status') or c.get('classificacao')}` {c.get('trecho') or c.get('chave')} · {checks}"
+                   + (f" · sucessora: {(c.get('sucessora') or {}).get('titulo')}" if c.get("sucessora") else ""))
+    if not jur.get("citacoes"):
+        out.append("- nenhuma citação conferida")
+    out += ["", "#### CROSS_SECTION_AUDITOR (impressões digitais)", ""]
+    for d in aud.get("impressoes_digitais") or []:
+        divergentes = [o for o in d.get("ocorrencias") or [] if not o.get("ok")]
+        out.append(f"- {d.get('chave')} = {d.get('esperado')} · {len(d.get('ocorrencias') or [])} ocorrência(s)"
+                   + (f" · DIVERGE em {[o.get('secao') for o in divergentes]}" if divergentes else " · consistente"))
+    out += ["", "#### Pedidos estruturados", ""]
+    for p in jur.get("pedidos") or []:
+        out.append(f"- `{p.get('request_id')}` {p.get('title')} · valor {p.get('value')} · cálculo {p.get('calculation_id') or '—'} · "
+                   f"fatos {p.get('factual_support') or []} · status {p.get('status')}")
     if jur.get("comparacao_com_legado"):
         out += ["", "#### Comparação com o legado (shadow)", "", "```json", json.dumps(jur["comparacao_com_legado"], ensure_ascii=False, indent=1)[:4000], "```"]
     return out + [""]
@@ -502,8 +526,9 @@ def main() -> None:
     e.add_argument("--saida", type=Path, required=True)
     g = sub.add_parser("gerar")
     g.add_argument("--saida", type=Path, required=True)
-    g.add_argument("--modos", default="off,strict")
+    g.add_argument("--modos", "--modo", dest="modos", default="off,strict", help="off, shadow, strict (separados por vírgula)")
     g.add_argument("--autoridades", type=Path)
+    g.add_argument("--acervo", type=Path, help="JSON do Acervo local gerado por `scripts.sincronizar_acervo --local`")
     r = sub.add_parser("relatorio")
     r.add_argument("--saida", type=Path, required=True)
     r.add_argument("--referencia", type=Path)
@@ -520,9 +545,11 @@ def main() -> None:
                 cmd = [sys.executable, "-m", "scripts.e2e_peticao_juridica", "gerar", "--saida", str(a.saida), "--modos", modo]
                 if a.autoridades:
                     cmd += ["--autoridades", str(a.autoridades)]
+                if a.acervo:
+                    cmd += ["--acervo", str(a.acervo)]
                 subprocess.run(cmd, cwd=RAIZ, check=False)
             else:
-                print(gerar(a.saida, modo, a.autoridades))
+                print(gerar(a.saida, modo, a.autoridades, a.acervo))
     else:
         print(relatorio(a.saida, a.referencia))
 

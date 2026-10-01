@@ -16,7 +16,8 @@ from contextlib import contextmanager
 from datetime import date
 from typing import Any, Callable, Iterable, Iterator
 
-from . import auditores, autoridades as aut, calculos, fatos, plano, tabelas, teses
+from . import (auditor_certeza, auditor_secoes, auditor_semantico, auditor_temporal, auditores, autoridades as aut, calculos,
+               canonico, citacao, fatos, plano, tabelas, teses)
 from .busca import Filtros, ProvedorDeAutoridades
 
 
@@ -109,13 +110,47 @@ def analisar(
         matriz = fatos.montar(plano_est, case_facts=plano_est.get("case_facts"), fontes=fontes, fatos_extraidos=issues["fatos_extraidos"])
         r["resumo"] = matriz["resumo"]
         r["contradicoes"] = [c["chave"] for c in matriz["contradicoes"]]
+    with rastro.etapa("dados_canonicos") as r:
+        canon = canonico.montar(matriz, petition_date=referencia)
+        r["resumo"] = canon["resumo"]
+        r["conflitos"] = [c["chave"] for c in canon["conflitos"]]
+        r["derivados"] = [c["calculation_id"] for c in canon["calculos"] if not c["erro"]]
+    with rastro.etapa("pressupostos_faticos") as r:
+        incluidas = [t for t in issues["teses"] if t["decisao"] == teses.INCLUIR]
+        rescisao_indireta = canonico.pede_rescisao_indireta(incluidas)
+        r["termino_do_contrato"] = canonico.termino_do_contrato(canon)
+        r["rescisao_indireta"] = rescisao_indireta
+        r["rebaixadas"] = []
+        for t in incluidas:
+            motivo = canonico.pressuposto_rescisorio(t, canon, rescisao_indireta=rescisao_indireta)
+            if motivo:
+                t["decisao"], t["rebaixada_por"] = teses.POTENCIAL, motivo
+                r["rebaixadas"].append({"tese_id": t["id"], "tese": t["tese"], "motivo": motivo})
     with rastro.etapa("calculos") as r:
-        specs = [{"rubrica": t["calculo"]["rubrica"], "parametros": t["calculo"]["parametros"], "tese_id": t["id"]}
-                 for t in issues["teses"] if t["decisao"] == teses.INCLUIR and t["calculo"].get("rubrica")]
+        specs, preenchidos = [], {}
+        for t in issues["teses"]:
+            if t["decisao"] != teses.INCLUIR or not t["calculo"].get("rubrica"):
+                continue
+            rubrica = t["calculo"]["rubrica"]
+            params, usados = canonico.completar_parametros(rubrica, t["calculo"]["parametros"], canon)
+            extras: dict[str, dict[str, Any]] = {}
+            if (rescisao_indireta and rubrica in canonico.RUBRICAS_RESCISORIAS and not canonico.termino_do_contrato(canon)
+                    and "dispensa" in canonico.parametros_aceitos(rubrica)):
+                params["dispensa"] = canon["petition_date"]
+                extras["dispensa"] = {"chave": "petition_date", "rotulo": "término considerado", "exibir": referencia.strftime("%d/%m/%Y"),
+                                      "valor": canon["petition_date"], "tipo": "data",
+                                      "fonte": "data do ajuizamento — rescisão indireta pedida nesta ação"}
+            specs.append({"rubrica": rubrica, "parametros": params, "tese_id": t["id"],
+                          "fontes": canonico.fontes_dos_parametros(params, usados, canon, extras=extras)})
+            if usados:
+                preenchidos[t["id"]] = usados
         calcs = [c.como_dict() for c in calculos.executar(specs)]
-        r["executados"] = [{"rubrica": c["rubrica"], "valor": c["valor"], "erro": c["erro"]} for c in calcs]
+        for c, spec in zip(calcs, specs):
+            c["fontes"] = {k: f for k, f in spec["fontes"].items() if k in c["parametros"]}
+        r["executados"] = [{"calculation_id": c["calculation_id"], "rubrica": c["rubrica"], "valor": c["valor"], "erro": c["erro"]} for c in calcs]
+        r["parametros_da_fonte_unica"] = preenchidos
     return {"data_referencia": referencia, "plano_est_base": plano_est, "matriz": matriz, "catalogo": catalogo, "issues": issues,
-            "calculos": calcs, "textos_skill": textos_skill, "rastro": rastro}
+            "canonico": canon, "calculos": calcs, "textos_skill": textos_skill, "rastro": rastro}
 
 
 def fundamentar(
@@ -164,10 +199,17 @@ def fundamentar(
         r["usar"] = [c for c, d in tabs.items() if d["decisao"] == "USE_TABLE"]
     with rastro.etapa("petition_plan") as r:
         plano_novo, pendencias = plano.integrar(plano_est, issues, calcs, matriz)
+        retirados = plano.retirar_pedidos_sem_pressuposto(plano_novo, issues, prep.get("canonico"))
+        pendencias += retirados
+        r["pedidos_retirados_sem_pressuposto"] = retirados
+        plano.estruturar_pedidos(plano_novo, issues, por_tese)
+        r["pedidos_sem_valor"] = [p["id"] for p in plano_novo.get("pedidos") or [] if p.get("status") == "PENDING_CALCULATION"]
+        pendencias += [f"Pedido de pagamento sem valor calculado: {p.get('title') or p['id']} — fica fora do corpo até ser calculado"
+                       for p in plano_novo.get("pedidos") or [] if p.get("status") == "PENDING_CALCULATION"]
         unicas = list({a.id: a for lista in por_tese.values() for a in lista}.values())
         texto_plano = "\n\n".join([
             plano.para_prompt(issues=issues, plano=plano_novo, autoridades_por_tese=por_tese, tabelas=tabs, calculos=calcs, alertas_juridicos=alertas_juridicos),
-            aut.bloco_para_prompt(unicas), fatos.para_prompt(matriz)])
+            canonico.para_prompt(prep.get("canonico")), aut.bloco_para_prompt(unicas), fatos.para_prompt(matriz)])
         r["pedidos"] = len(plano_novo.get("pedidos") or [])
         r["pendencias"] = len(pendencias)
         r["chars"] = len(texto_plano)
@@ -179,10 +221,16 @@ def fundamentar(
 def auditar(
     secoes: list[dict[str, Any]], prep: dict[str, Any], *, pendencias: list[str], texto_das_fontes: str = "",
     carregar_dispositivos: Callable[[Iterable[str]], tuple[list[aut.Autoridade], str]] | None = None,
-    pedidos_obrigatorios_ausentes: list[str] | None = None,
+    pedidos_obrigatorios_ausentes: list[str] | None = None, llm: Callable[[str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Os auditores originais + os gates TEMPORAL, FACT_CERTAINTY, SEMANTIC_CONTRADICTION, CITATION_GATE e
+    CROSS_SECTION. `llm`: o verificador de sustentação das citações e a 2ª camada semântica; sem ele, a
+    sustentação fica NOT_EVALUATED e a peça não fica READY."""
     rastro: Rastro = prep["rastro"]
     registro: aut.Registro = prep["registro"]
+    referencia: date = prep["data_referencia"]
+    canon = prep.get("canonico")
+    pedidos = prep["plano_est"].get("pedidos") or []
     with rastro.etapa("auditoria") as r:
         if carregar_dispositivos:
             chaves = {c.chave for s in secoes for c in aut.extrair_citacoes(str(s.get("content") or ""))}
@@ -192,17 +240,30 @@ def auditar(
             r["dispositivos_carregados"] = len(novos)
             if erro:
                 r["aviso"] = erro
-        legal = auditores.auditar_legal(secoes, registro, prep["data_referencia"])
+        legal = auditores.auditar_legal(secoes, registro, referencia)
         fato = auditores.auditar_fatos(secoes, prep["matriz"], calculos=prep["calculos"], texto_das_fontes=texto_das_fontes)
-        conta = auditores.auditar_calculos(secoes, prep["plano_est"].get("pedidos") or [], prep["calculos"])
+        conta = auditores.auditar_calculos(secoes, pedidos, prep["calculos"])
         consist = auditores.auditar_consistencia(secoes, issues=prep["issues"], plano_est=prep["plano_est"], pendencias=pendencias,
                                                  matriz=prep["matriz"], tabelas=prep["tabelas"],
                                                  pedidos_obrigatorios_ausentes=pedidos_obrigatorios_ausentes)
-        v = auditores.veredito(legal, fato, conta, consist)
+    with rastro.etapa("gates") as r:
+        citadas = [registro.por_id[c["authority_id"]] for c in legal["citacoes"] if c.get("authority_id") in registro.por_id]
+        temporal = auditor_temporal.auditar(secoes, petition_date=referencia, matriz=prep["matriz"], canon=canon, autoridades_citadas=citadas)
+        certeza = auditor_certeza.auditar(secoes, canon=canon, matriz=prep["matriz"],
+                                          exige_pericia=any(t.get("exige_pericia") and t["decisao"] == teses.SUPPORTED for t in prep["issues"]["teses"]))
+        semantica = auditor_semantico.auditar(secoes, canon=canon, calculos=prep["calculos"], matriz=prep["matriz"], llm=llm)
+        gate2 = citacao.verificar(secoes, registro, referencia, llm=llm)
+        cruzado = auditor_secoes.auditar(secoes, canon=canon, pedidos=pedidos, calculos=prep["calculos"], matriz=prep["matriz"],
+                                         texto_das_fontes=texto_das_fontes)
+        r["citacoes"] = gate2["resumo"]
+        r["semantica_llm"] = semantica["relatorio"]["camada_llm"]
+        v = auditores.veredito(legal, fato, conta, consist, temporal, certeza, semantica, gate2, cruzado)
         r.update(v)
-    return {"veredito": v, "achados": [*legal["achados"], *fato["achados"], *conta["achados"], *consist["achados"]],
-            "citacoes": legal["citacoes"], "authority_ids": legal["authority_ids"], "valor_da_causa": conta["valor_da_causa"],
-            "valor_da_causa_declarado": conta["declarados"]}
+    relatorios = (legal, fato, conta, consist, temporal, certeza, semantica, gate2, cruzado)
+    return {"veredito": v, "achados": [a for rel in relatorios for a in rel["achados"]],
+            "citacoes": legal["citacoes"], "citacoes_verificadas": gate2["citacoes"], "authority_ids": legal["authority_ids"],
+            "valor_da_causa": conta["valor_da_causa"], "valor_da_causa_declarado": conta["declarados"],
+            "impressoes_digitais": cruzado["impressoes"], "semantica": semantica["relatorio"]}
 
 
 def comparar_com_legado(secoes_legado: list[dict[str, Any]], prep: dict[str, Any], auditoria: dict[str, Any] | None,
@@ -242,7 +303,7 @@ def comparar_com_legado(secoes_legado: list[dict[str, Any]], prep: dict[str, Any
 def trace_de_falha(modo: str, falhas: list[str]) -> dict[str, Any]:
     """Rastro quando a camada não chegou a produzir análise: o motivo aparece no admin e no veredito."""
     return {"ativo": True, "modo": modo, "falhas": list(falhas) or ["camada jurídica não produziu análise"],
-            "comparacao_com_legado": None, "data_referencia": date.today().isoformat(), "etapas": [], "fatos": [],
+            "comparacao_com_legado": None, "data_referencia": date.today().isoformat(), "etapas": [], "canonico": None, "fatos": [],
             "contradicoes": [], "catalogo": [], "teses": [], "nao_avaliadas": [], "matriz_tese_fato_prova": [], "calculos": [],
             "autoridades_por_tese": {}, "alertas_juridicos": [], "tabelas": {}, "pendencias": [], "valor_da_causa": {},
             "auditoria": None, "citacoes": None}
@@ -259,8 +320,9 @@ def trace(prep: dict[str, Any], auditoria: dict[str, Any] | None, *, modo: str =
         "comparacao_com_legado": comparacao,
         "data_referencia": prep["data_referencia"].isoformat(),
         "etapas": prep["rastro"].etapas,
-        "fatos": [{k: f.get(k) for k in ("id", "fato", "chave", "valor", "fonte", "documento", "pagina", "confianca", "estado", "contradicoes")}
-                  for f in prep["matriz"]["fatos"]],
+        "canonico": canonico.para_trace(prep.get("canonico")),
+        "fatos": [{**{k: f.get(k) for k in ("id", "fato", "chave", "valor", "fonte", "documento", "pagina", "confianca", "estado", "contradicoes")},
+                   "certeza": canonico.certeza_do_fato(f)} for f in prep["matriz"]["fatos"]],
         "contradicoes": prep["matriz"]["contradicoes"],
         "catalogo": [{"id": k["id"], "tema": k["tema"], "arquivo": k["arquivo"]} for k in prep["catalogo"]],
         "teses": [{**{k: t.get(k) for k in ("id", "catalogo_id", "tese", "decisao", "decisao_do_modelo", "motivo", "rebaixada_por",
@@ -281,6 +343,24 @@ def trace(prep: dict[str, Any], auditoria: dict[str, Any] | None, *, modo: str =
         "tabelas": prep["tabelas"],
         "pendencias": prep["pendencias"],
         "valor_da_causa": (prep["plano_est"].get("valor_da_causa_calculado") or {}),
-        "auditoria": auditoria and {k: auditoria[k] for k in ("veredito", "achados", "authority_ids", "valor_da_causa")},
-        "citacoes": auditoria and [{k: c.get(k) for k in ("trecho", "chave", "status", "authority_id", "motivo", "secao")} for c in auditoria["citacoes"]],
+        "pedidos": [{k: p.get(k) for k in ("request_id", "title", "factual_support", "authority_ids", "calculation_id", "value", "reflexes",
+                                           "expert_evidence_required", "status", "natureza", "tipo_de_item")}
+                    for p in prep["plano_est"].get("pedidos") or []],
+        "auditoria": auditoria and {**{k: auditoria[k] for k in ("veredito", "achados", "authority_ids", "valor_da_causa")},
+                                    "impressoes_digitais": auditoria.get("impressoes_digitais") or [], "semantica": auditoria.get("semantica")},
+        "citacoes": auditoria and _citacoes_para_trace(auditoria),
     }
+
+
+def _citacoes_para_trace(auditoria: dict[str, Any]) -> list[dict[str, Any]]:
+    """Citação com o status do gate antigo e as quatro checagens do 2.0 (mesma ordem de ocorrência na peça)."""
+    verificadas = list(auditoria.get("citacoes_verificadas") or [])
+    saida = []
+    for i, c in enumerate(auditoria.get("citacoes") or []):
+        base = {k: c.get(k) for k in ("trecho", "chave", "status", "authority_id", "motivo", "secao")}
+        v = verificadas[i] if i < len(verificadas) and verificadas[i].get("chave") == c.get("chave") else None
+        if v:
+            base.update({k: v.get(k) for k in ("versao", "titulo", "checks", "classificacao", "trecho_oficial", "justificativa", "sucessora", "aprovada", "afirmacao")})
+            base["motivo"] = base["motivo"] or v.get("motivo")
+        saida.append(base)
+    return saida

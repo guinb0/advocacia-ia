@@ -24,7 +24,7 @@ import json
 import re
 from typing import Any, Callable
 
-from . import calculos
+from . import calculos, canonico
 from .autoridades import norm
 from .fatos import INFERIDO
 
@@ -115,9 +115,15 @@ def catalogo_da_skill(textos: dict[str, str]) -> list[dict[str, Any]]:
 def _assinaturas_de_calculo() -> str:
     linhas = []
     for nome, funcao in calculos.CALCULADORAS.items():
+        if nome in calculos.UNIDADES:
+            continue
         params = [p for p in inspect.signature(funcao).parameters.values() if p.kind == p.KEYWORD_ONLY]
         linhas.append(f"- {nome}(" + ", ".join(p.name + ("?" if p.default is not p.empty else "") for p in params) + ")")
     return "\n".join(linhas)
+
+
+def _chaves_canonicas() -> str:
+    return ", ".join(f"{c.chave} ({c.rotulo})" for c in canonico.CAMPOS)
 
 
 def instrucao(catalogo: list[dict[str, Any]], estrategia_da_skill: str = "") -> str:
@@ -133,7 +139,8 @@ Devolva JSON:
 {{
   "fatos_extraidos": [{{"chave":"area.atributo (ex.: contrato.salario, contrato.admissao, jornada.entrada, jornada.intervalo_minutos, pagamento.atraso_dias)",
      "valor":"como está escrito na fonte", "fonte":"nome exato do documento ou 'entrevista'", "pagina":"se houver",
-     "categoria":"contrato|cronologia|pagamentos|descontos|fgts|jornada|provas|outros", "fato":"frase curta"}}],
+     "categoria":"contrato|cronologia|pagamentos|descontos|fgts|jornada|provas|outros", "fato":"frase curta",
+     "certeza":"opcional: INDICATED_BY_DOCUMENTS (o documento só indica) | REQUIRES_EXPERT_CONFIRMATION (depende de perícia)"}}],
   "teses": [{{"catalogo_id":"K01 ou null", "tese":"nome da tese",
      "decisao":"SUPPORTED|POTENTIAL_NEEDS_CONFIRMATION|REJECTED_NO_FACTUAL_BASIS|REJECTED_LEGAL|REJECTED_STRATEGIC",
      "motivo":"por que (obrigatório em toda decisão, ligado aos fatos, ao óbice jurídico ou à estratégia)",
@@ -149,7 +156,11 @@ Devolva JSON:
 CALCULADORAS (o sistema calcula; você só informa os parâmetros do caso, com valor numérico e datas dd/mm/aaaa):
 {_assinaturas_de_calculo()}
 
+CHAVES FIXAS (use exatamente estas quando o fato for um destes dados): {_chaves_canonicas()}
+
 REGRAS:
+- Datas de nascimento, admissão, término e do evento, salário, remuneração e percentual de incapacidade vão SEMPRE
+  em `fatos_extraidos` com a chave fixa. Idade e tempo de serviço NÃO se informam: o sistema calcula.
 - Uma entrada em `teses` para CADA id do catálogo, com a decisão que explica POR QUE a tese entra ou morre:
   REJECTED_NO_FACTUAL_BASIS só quando nenhum fato do caso aponta para ela (ex.: "nenhum fato de jornada");
   REJECTED_LEGAL quando há fato mas a tese não para em pé juridicamente (diga o óbice, sem número de memória);
