@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import type { Categoria, ItemSituacao, SituacaoCaso } from "@/lib/types";
+import type { Categoria, Entrega, ItemSituacao, SituacaoCaso } from "@/lib/types";
 import { buscarNoConteudoDoCaso, tentarNovamenteCaso, type AnaliseDocumental } from "@/lib/api";
 import { Aviso, Botao, CampoSeletor, Selo } from "@/components/ui/Basicos";
 import { BotaoProcesso } from "@/components/ui/BotaoProcesso";
@@ -128,10 +128,14 @@ export default function DocumentacaoGuiada({
   const pendentesObrigatorios = itens.filter((i) => i.status === "pendente" && i.obrigatorio);
   const pendentesOpcionais = itens.filter((i) => i.status === "pendente" && !i.obrigatorio);
   const aConferir = itens.filter((i) => i.status === "conferir");
-  const lendo = itens.filter((i) => i.status === "processando").length;
-  const comErro = itens.reduce((soma, i) => soma + i.entregas.filter((e) => e.status_proc === "erro").length, 0);
+  // Envio em lote cai primeiro na triagem e só sai dela depois de lido: contar só os itens
+  // do checklist escondia justamente os arquivos que acabaram de chegar.
+  const arquivos = [...new Map([...itens.flatMap((i) => i.entregas), ...triagem].map((e) => [e.id, e])).values()];
+  const emLeitura = arquivos.filter((e) => e.status_proc === "processando" || e.status_proc === "na_fila");
+  const lendo = emLeitura.length;
+  const comErro = arquivos.filter((e) => e.status_proc === "erro").length;
   const recebidos = itens.filter((i) => i.entregas.length > 0);
-  const totalArquivos = new Set([...itens.flatMap((i) => i.entregas.map((e) => e.id)), ...triagem.map((e) => e.id)]).size;
+  const totalArquivos = arquivos.length;
 
   const feito: Record<Passo, boolean> = {
     juntar: progresso.obrigatorios_pendentes === 0,
@@ -295,6 +299,12 @@ export default function DocumentacaoGuiada({
           {progresso.obrigatorios_recebidos ?? progresso.obrigatorios_entregues} de {progresso.obrigatorios_total} obrigatórios
           recebidos
         </p>
+        <LeituraDosDocumentos
+          total={totalArquivos}
+          emLeitura={emLeitura}
+          comErro={comErro}
+          onVerErros={() => setEscolhido("conferir")}
+        />
       </div>
 
       {erro && (
@@ -568,6 +578,69 @@ export default function DocumentacaoGuiada({
         />
       )}
     </>
+  );
+}
+
+/** Se os arquivos já foram lidos — visível em todos os passos, porque é a primeira pergunta de quem
+ *  acabou de enviar. A barra é a fração real de arquivos lidos, não uma estimativa de tempo. */
+function LeituraDosDocumentos({
+  total,
+  emLeitura,
+  comErro,
+  onVerErros,
+}: {
+  total: number;
+  emLeitura: Entrega[];
+  comErro: number;
+  onVerErros: () => void;
+}) {
+  if (total === 0) return null;
+  const lidos = total - emLeitura.length - comErro;
+  const nomes = emLeitura.slice(0, 4).map((e) => e.arquivo);
+  return (
+    <div className="mt-4 border-t border-borda pt-3" role="status" aria-live="polite">
+      {emLeitura.length > 0 ? (
+        <>
+          <p className="m-0 text-base font-semibold text-acao">
+            Lendo os documentos… {lidos} de {total} já {lidos === 1 ? "lido" : "lidos"}
+          </p>
+          <div
+            className="mt-2 h-2 overflow-hidden rounded-pill bg-papel-3"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={lidos}
+            aria-label="Arquivos já lidos"
+          >
+            <i
+              className="block h-full rounded-pill bg-acao transition-[width] duration-[240ms]"
+              style={{ width: `${Math.round((lidos / total) * 100)}%` }}
+            />
+          </div>
+          <p className="m-0 mt-1 text-xs text-tinta-2">
+            Ainda lendo: {nomes.join(", ")}
+            {emLeitura.length > nomes.length ? ` e mais ${emLeitura.length - nomes.length}` : ""}. A tela atualiza
+            sozinha — não precisa recarregar.
+          </p>
+        </>
+      ) : comErro === 0 ? (
+        <p className="m-0 text-base font-semibold text-ok">
+          ✓ {total === 1 ? "O arquivo enviado já foi lido" : `Todos os ${total} arquivos enviados já foram lidos`}
+        </p>
+      ) : (
+        <p className="m-0 text-base font-semibold text-tinta">✓ {lidos} de {total} arquivos lidos</p>
+      )}
+      {comErro > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <span className="text-sm font-semibold text-atencao">
+            {comErro} {comErro === 1 ? "arquivo deu erro" : "arquivos deram erro"} na leitura
+          </span>
+          <Botao variante="texto" pequeno onClick={onVerErros}>
+            Ver e mandar ler de novo →
+          </Botao>
+        </div>
+      )}
+    </div>
   );
 }
 
