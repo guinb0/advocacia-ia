@@ -603,13 +603,35 @@ _SOLICITACAO_EM_CURSO: contextvars.ContextVar[str | None] = contextvars.ContextV
 PASSOS_GERACAO = 100
 
 
+_EM_EXECUCAO: set[str] = set()
+#: Passado este tempo sem concluir, a solicitação é dada como perdida (thread travada ou processo reiniciado).
+LIMITE_SOLICITACAO_S = float(os.getenv("PETICAO_LIMITE_SOLICITACAO_S", "1500"))
+_CARENCIA_ORFA_S = 20.0
+
+
 def marcar_solicitacao_em_curso(solicitacao_id: str | None) -> contextvars.Token[str | None]:
     """Usado pela rota assíncrona: a thread de fundo aponta o progresso para este id."""
+    if solicitacao_id:
+        _EM_EXECUCAO.add(solicitacao_id)
     return _SOLICITACAO_EM_CURSO.set(solicitacao_id)
 
 
 def limpar_solicitacao_em_curso(token: contextvars.Token[str | None]) -> None:
+    _EM_EXECUCAO.discard(_SOLICITACAO_EM_CURSO.get() or "")
     _SOLICITACAO_EM_CURSO.reset(token)
+
+
+def _solicitacao_perdida(solicitacao: dict[str, Any]) -> str:
+    """A geração roda numa thread deste processo: reinício ou travamento deixam a linha em andamento para sempre."""
+    try:
+        idade = (datetime.now(timezone.utc) - datetime.fromisoformat(str(solicitacao.get("solicitada_em")))).total_seconds()
+    except (TypeError, ValueError):
+        return ""
+    if idade > LIMITE_SOLICITACAO_S:
+        return "A geração passou do tempo limite sem concluir. Gere a petição novamente."
+    if idade > _CARENCIA_ORFA_S and str(solicitacao.get("id")) not in _EM_EXECUCAO:
+        return "A geração foi interrompida (o servidor foi reiniciado durante a redação). Gere a petição novamente."
+    return ""
 
 
 def avancar_etapa(etapa: str, passo: int, total: int = PASSOS_GERACAO) -> None:
@@ -4740,6 +4762,14 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
                 "etapa": "Petição pronta.",
                 "passo": total,
                 "passos_totais": total,
+            }
+        perdida = _solicitacao_perdida(solicitacao) if solicitacao.get("status") != "failed" else ""
+        if perdida:
+            log.warning("petição local: solicitação %s encerrada como perdida em '%s' (%s%%)", solicitacao.get("id"), etapa, passo)
+            armazenamento.concluir_solicitacao_peticao(str(solicitacao["id"]), perdida)
+            return {
+                "status": "FAILED", "completed_steps": passo, "generation_id": None, "blocking_findings": 0,
+                "erro": perdida, "etapa": etapa, "passo": passo, "passos_totais": total,
             }
         return {
             "status": "RUNNING",

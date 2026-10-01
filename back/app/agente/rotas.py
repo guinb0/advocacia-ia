@@ -85,11 +85,14 @@ def _gerar_peticao_registrada(caso_id: str, usuario: auth.Usuario, origem: str, 
     solicitacao, _solicitada_em = armazenamento.registrar_solicitacao_peticao(
         caso_id, usuario.id, usuario.nome, origem
     )
+    token = peticao_local.marcar_solicitacao_em_curso(solicitacao)
     try:
         resultado = acao()
     except Exception as erro:
         armazenamento.concluir_solicitacao_peticao(solicitacao, str(erro))
         raise
+    finally:
+        peticao_local.limpar_solicitacao_em_curso(token)
     armazenamento.concluir_solicitacao_peticao(solicitacao)
     return resultado
 
