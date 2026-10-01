@@ -2894,24 +2894,6 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     elif sombra or assistido:
         analise_em_sombra = _em_sombra(lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista, data_da_peticao))
     plano_para_consultas = plano
-    instrucao_base += (
-        "\n\n=== FONTE CANONICA OBRIGATORIA ===\n"
-        "O PETITION_PLAN fornecido na entrada e a unica fonte para datas, valores, "
-        "percentuais e fatos no corpo. Nao complete cronologia por inferencia. "
-        "Em FACTS, so escreva uma data se ela estiver identificada no plano com fonte; "
-        "caso contrario, omita o marco e registre a lacuna apenas em pendencias. "
-        "Nao escreva valores monetarios em CLAIMS ou VALUE: o renderer os substitui "
-        "pelos objetos de calculo e pelo valor da causa canonicos."
-    )
-    instrucao_base += (
-        "\n\n=== PADRAO DE RACIOCINIO FORENSE ===\n"
-        "Para cada tese aproveitada, conecte fato documental especifico -> regra ou precedente verificado -> "
-        "consequencia juridica -> pedido correspondente. Antecipe a defesa previsivel apenas quando os autos "
-        "derem base e responda com prova ou regra aplicavel; nao crie uma controversia artificial. Diferencie "
-        "o que esta provado, o que e alegacao e o que depende de pericia. Prefira uma fundamentacao precisa "
-        "e aderente aos fatos a uma lista de artigos ou julgados. Toda citacao deve explicar, em linguagem "
-        "propria, por que a sua razao de decidir alcanca este caso."
-    )
     if estrito and prep_juridico:
         plano_para_consultas = {**(plano or {}), "teses": [*juridico_orq.consultas_das_teses(prep_juridico), *((plano or {}).get("teses") or [])]}
     consultas = recuperacao_por_tese.consultas_do_plano(
@@ -3108,6 +3090,22 @@ Cada content deve conter parágrafos separados por linha em branco."""
             for b in plano_est["contrato_secoes"]["blocos"]
         )
         + "\nUse somente esses papéis, nessa ordem, cada um UMA vez e com conteúdo próprio. PRELIMINARY é obrigatória e deve trazer a gratuidade quando houver declaração/elemento de hipossuficiência. Preserve a marcação visual exigida pela skill (# para capítulo, > para citação curta verificável, ::: para blocos centralizados). Análise, lacunas, alertas e pendências são metadados internos e nunca podem aparecer no content das seções."
+    )
+    instrucao_base += (
+        "\n\n=== FONTE CANONICA OBRIGATORIA ===\n"
+        "O PETITION_PLAN fornecido na entrada e a unica fonte para datas, valores, "
+        "percentuais e fatos no corpo. Nao complete cronologia por inferencia. "
+        "Em FACTS, so escreva uma data se ela estiver identificada no plano com fonte; "
+        "caso contrario, omita o marco e registre a lacuna apenas em pendencias. "
+        "Nao escreva valores monetarios em CLAIMS ou VALUE: o renderer os substitui "
+        "pelos objetos de calculo e pelo valor da causa canonicos."
+        "\n\n=== PADRAO DE RACIOCINIO FORENSE ===\n"
+        "Para cada tese aproveitada, conecte fato documental especifico -> regra ou precedente verificado -> "
+        "consequencia juridica -> pedido correspondente. Antecipe a defesa previsivel apenas quando os autos "
+        "derem base e responda com prova ou regra aplicavel; nao crie uma controversia artificial. Diferencie "
+        "o que esta provado, o que e alegacao e o que depende de pericia. Prefira uma fundamentacao precisa "
+        "e aderente aos fatos a uma lista de artigos ou julgados. Toda citacao deve explicar, em linguagem "
+        "propria, por que a sua razao de decidir alcanca este caso."
     )
     if estrito and prep_juridico:
         instrucao_base += _CONTRATO_JURIDICO
