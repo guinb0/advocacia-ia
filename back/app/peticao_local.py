@@ -5,7 +5,8 @@ from __future__ import annotations
 import contextvars
 import functools
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
+from concurrent.futures import wait as futures_wait
 import io
 import json
 import statistics
@@ -927,6 +928,7 @@ MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "100000"))
 MAX_TOKENS_PLANO = int(os.getenv("PETICAO_MAX_TOKENS_PLANO", "16000"))
 PRAZO_PLANO_S = float(os.getenv("PETICAO_PRAZO_PLANO_S", "150"))
 _EXECUTOR_PRAZO = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm-prazo")
+_EXECUTOR_PROVEDOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="llm-provedor")
 
 
 def _com_prazo_total(chamada: Any, prazo_s: float) -> Any:
@@ -939,6 +941,75 @@ def _com_prazo_total(chamada: Any, prazo_s: float) -> Any:
         raise ErroPeticao(f"a chamada ao modelo passou de {prazo_s:.0f}s e foi abandonada") from erro
 
 
+#: DeepSeek lento ou fora do ar não pode parar a peça (18/09 e 01/10: um "oi" levava mais de 40 s). Passado este
+#: tempo sem resposta, a OpenAI é chamada em paralelo e vale quem responder primeiro com sucesso.
+ATRASO_RESERVA_S = float(os.getenv("PETICAO_ATRASO_RESERVA_S", "40"))
+MODELO_RESERVA = os.getenv("PETICAO_MODELO_RESERVA", "") or os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
+
+
+def _reserva_configurada() -> tuple[str, str] | None:
+    chave = os.getenv("OPENAI_API_KEY", "").strip()
+    if not chave:
+        return None
+    return os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"), chave
+
+
+def _chamar_provedor(fornecedor: str, base: str, chave: str, modelo: str, instrucao: str, entrada: str,
+                     max_tokens: int | None, timeout: float) -> dict[str, Any]:
+    teto = max_tokens or MAX_TOKENS_RESPOSTA
+    corpo: dict[str, Any] = {
+        "model": modelo,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "system", "content": instrucao}, {"role": "user", "content": entrada[:120_000]}],
+    }
+    if fornecedor == "openai":
+        corpo["max_completion_tokens"] = min(teto, 64000)
+    else:
+        corpo["temperature"] = 0.2
+        corpo["max_tokens"] = teto
+    inicio = time.monotonic()
+    resposta = httpx.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {chave}"}, json=corpo,
+                          timeout=timeout)
+    resposta.raise_for_status()
+    custos_api.registrar(fornecedor, modelo, "geracao_peticao", resposta,
+                         latencia_ms=round((time.monotonic() - inicio) * 1000))
+    return resposta.json()["choices"][0]
+
+
+def _escolha_com_reserva(base: str, chave: str, modelo: str, instrucao: str, entrada: str,
+                         max_tokens: int | None, timeout: float, *, reserva_permitida: bool) -> dict[str, Any]:
+    reserva = _reserva_configurada() if reserva_permitida else None
+    if reserva is None:
+        return _chamar_provedor("deepseek", base, chave, modelo, instrucao, entrada, max_tokens, timeout)
+
+    def lancar(fornecedor: str, b: str, c: str, m: str) -> Any:
+        return _EXECUTOR_PROVEDOR.submit(contextvars.copy_context().run, _chamar_provedor, fornecedor, b, c, m,
+                                      instrucao, entrada, max_tokens, timeout)
+
+    pendentes = {lancar("deepseek", base, chave, modelo)}
+    reserva_lancada = False
+    limite = time.monotonic() + timeout
+    ultimo_erro: Exception | None = None
+    while pendentes:
+        espera = limite - time.monotonic()
+        if espera <= 0:
+            break
+        prazo = min(espera, ATRASO_RESERVA_S) if not reserva_lancada else espera
+        prontos, pendentes = futures_wait(pendentes, timeout=prazo, return_when=FIRST_COMPLETED)
+        for futuro in prontos:
+            try:
+                return futuro.result()
+            except Exception as erro:  # noqa: BLE001
+                ultimo_erro = erro
+        if not reserva_lancada and (not prontos or not pendentes):
+            reserva_lancada = True
+            log.warning("petição local: DeepSeek lento ou com erro (%s); chamando a OpenAI em paralelo", ultimo_erro or "sem resposta")
+            pendentes.add(lancar("openai", reserva[0], reserva[1], MODELO_RESERVA))
+    for futuro in pendentes:
+        futuro.cancel()
+    raise ultimo_erro or httpx.ReadTimeout("nenhum provedor respondeu a tempo")
+
+
 def _llm_json(
     instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None,
     repetir_apos_timeout: bool = True, max_tokens: int | None = None,
@@ -947,6 +1018,7 @@ def _llm_json(
     if not chave:
         raise ErroPeticao("DEEPSEEK_API_KEY ausente — configure no .env.")
     base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    reserva_permitida = modelo is None
     modelo = modelo or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     # Duas tentativas, não uma: um pedido grande — criar um tópico novo reescreve
     # a peça inteira — já leva dezenas de segundos, e um timeout de rede isolado
@@ -960,25 +1032,8 @@ def _llm_json(
     for tentativa in (1, 2):
         inicio_chamada = time.monotonic()
         try:
-            resposta = httpx.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {chave}"},
-                json={
-                    "model": modelo,
-                    "temperature": 0.2,
-                    "max_tokens": max_tokens or MAX_TOKENS_RESPOSTA,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": instrucao},
-                        {"role": "user", "content": entrada[:120_000]},
-                    ],
-                },
-                timeout=timeout,
-            )
-            resposta.raise_for_status()
-            custos_api.registrar("deepseek", modelo, "geracao_peticao", resposta,
-                                 latencia_ms=round((time.monotonic() - inicio_chamada) * 1000))
-            escolha = resposta.json()["choices"][0]
+            escolha = _escolha_com_reserva(base, chave, modelo, instrucao, entrada, max_tokens, timeout,
+                                           reserva_permitida=reserva_permitida)
             conteudo = escolha["message"]["content"]
             if escolha.get("finish_reason") == "length":
                 # Cortado pelo teto de saída: o JSON chega sem fechar. Dizer "não
