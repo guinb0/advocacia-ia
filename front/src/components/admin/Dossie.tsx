@@ -707,10 +707,12 @@ export function PainelAnaliseDocumentos({ casoId }: { casoId: string }) {
       /* A IA conta no chat da petição o que a leitura achou. O painel é aqui, a
        * conversa é lá embaixo, e sem este aviso ela continuaria falando do caso como
        * se os anexos nunca tivessem sido lidos. */
-      avisarChatDaPeticao(casoId, "documentos_analisados", {
-        documentos_lidos: resultado.documentos_lidos,
-        achados: (resultado.achados ?? []).length,
-      });
+      if (!resultado.reaproveitada) {
+        avisarChatDaPeticao(casoId, "documentos_analisados", {
+          documentos_lidos: resultado.documentos_lidos,
+          achados: (resultado.achados ?? []).length,
+        });
+      }
     } catch (e) {
       const texto = e instanceof Error ? e.message : "Não foi possível analisar os documentos.";
       setErro(texto);

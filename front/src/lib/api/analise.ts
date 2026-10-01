@@ -52,6 +52,8 @@ export interface AnaliseDocumentos {
   /** Gastos dos documentos, em ordem cronológica, ligados ao arquivo de origem. */
   gastos?: GastoDocumento[];
   documentos_lidos: number;
+  /** Veio do que já estava guardado: os mesmos textos não são lidos de novo. */
+  reaproveitada?: boolean;
   /** Contradição entre dois documentos, com as duas citações conferidas. */
   contradicoes?: Array<{
     titulo: string;
