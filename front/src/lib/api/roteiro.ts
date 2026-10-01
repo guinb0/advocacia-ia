@@ -37,9 +37,18 @@ export async function obterRoteiro(codigo: string): Promise<RoteiroCompleto> {
   return valor;
 }
 
-export async function listarRoteiros(): Promise<RoteiroResumo[]> {
+/**
+ * Lista o catálogo disponível no atendimento.
+ *
+ * Ao abrir o seletor, `atualizar` evita que uma lista pré-carregada antes de
+ * alguém salvar um roteiro esconda a novidade pelos cinco minutos do cache.
+ * O cache normal continua útil para o prefetch do botão da entrevista.
+ */
+export async function listarRoteiros(
+  { atualizar = false }: { atualizar?: boolean } = {},
+): Promise<RoteiroResumo[]> {
   const agora = Date.now();
-  if (catalogoRoteiros && catalogoRoteiros.ate > agora) return catalogoRoteiros.valor;
+  if (!atualizar && catalogoRoteiros && catalogoRoteiros.ate > agora) return catalogoRoteiros.valor;
   const valor = buscar("/api/roteiros")
     .then((resposta) => comoJson<{ roteiros: RoteiroResumo[]; aviso_catalogo?: string }>(resposta))
     .then((dados) => {
