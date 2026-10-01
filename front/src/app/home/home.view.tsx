@@ -1,5 +1,6 @@
 "use client";
 
+import AlertasAtendimento from "@/components/atendimento/AlertasAtendimento";
 import { Botao } from "@/components/ui/Basicos";
 import AppShell from "@/components/layout/AppShell";
 import ModuleFrame from "@/components/layout/ModuleFrame";
@@ -31,6 +32,9 @@ const HomeView = (props: HomeViewProps) => (
      * `chave={props.tela}` faz a navegação valer como nova tentativa. */}
     <LimiteDeErro chave={`${props.tela}:${props.skillAberta ?? ""}`}>
       <Telas {...props} />
+    </LimiteDeErro>
+    <LimiteDeErro chave="alertas-atendimento">
+      <AlertasAtendimento onNavegar={props.setTela} onAbrirCaso={props.abrirCaso} />
     </LimiteDeErro>
   </AppShell>
 );

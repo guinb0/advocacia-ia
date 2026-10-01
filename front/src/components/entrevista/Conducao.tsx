@@ -74,6 +74,8 @@ interface Props {
   onIrPara: (perguntaId: string) => void;
   onPular: (perguntaId: string) => void;
   onRetomarPuladas: () => void;
+  /** Rótulo do botão que passa à pergunta seguinte (a atual fica pendente). */
+  rotuloProxima?: string;
 }
 
 const ACAO =
@@ -100,6 +102,7 @@ export default function Conducao({
   onRetomarPuladas,
   onAceitar,
   onDescartar,
+  rotuloProxima,
 }: Props) {
   /* Segundos na pergunta ATUAL.
    *
@@ -337,20 +340,32 @@ export default function Conducao({
       )}
 
       <div className="flex items-center flex-wrap gap-2 mt-[11px]">
+        {rotuloProxima && (
+          <button
+            type="button"
+            className="border border-acao bg-acao text-papel text-[10px] font-semibold leading-none font-ui tracking-[0.06em] uppercase px-[11px] py-2 cursor-pointer hover:bg-acao-forte"
+            onClick={() => onPular(pergunta.id)}
+            title="Passa à seguinte; sem resposta, esta continua pendente no roteiro"
+          >
+            {rotuloProxima}
+          </button>
+        )}
         <button type="button" className={ACAO} onClick={() => onIrPara(pergunta.id)}>
           Ir ao campo
         </button>
         {/* Sem isto, uma pergunta que o cliente não pode responder travaria a
           * sequência e a cobrança tocaria para sempre. Pular é explícito e
           * contado — o roteiro não deixa a pergunta cair no esquecimento. */}
-        <button
-          type="button"
-          className={ACAO_DISCRETA}
-          onClick={() => onPular(pergunta.id)}
-          title="Sai da vez, mas continua pendente no roteiro"
-        >
-          Deixar para depois
-        </button>
+        {!rotuloProxima && (
+          <button
+            type="button"
+            className={ACAO_DISCRETA}
+            onClick={() => onPular(pergunta.id)}
+            title="Sai da vez, mas continua pendente no roteiro"
+          >
+            Deixar para depois
+          </button>
+        )}
         {puladas > 0 && (
           <button type="button" className={ACAO_DISCRETA} onClick={onRetomarPuladas}>
             retomar {puladas} pulada(s)

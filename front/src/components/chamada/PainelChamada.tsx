@@ -32,6 +32,8 @@ interface Props {
   onFimDaFaixa?: () => void;
   /** No fluxo de entrevista pronta, a chamada acompanha a coleta de documentos. */
   modo?: "roteiro" | "documentos";
+  /** Sala já combinada com o cliente (atendimento agendado): entra nela em vez de sortear outra. */
+  salaExistente?: string | null;
 }
 
 const LEGENDA: Record<EstadoChamada, string> = {
@@ -59,7 +61,7 @@ const BOTAO_SECUNDARIO =
   "flex-1 min-w-[118px] border border-borda-forte bg-transparent text-tinta text-[10px] font-semibold leading-none " +
   "font-ui tracking-[0.08em] uppercase px-[10px] py-[9px] cursor-pointer hover:bg-papel-2";
 
-export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "roteiro" }: Props) {
+export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "roteiro", salaExistente }: Props) {
   const chamada = useChamada();
   const [sala, setSala] = useState<{ sala: string; url: string; token: string; p2p: boolean } | null>(null);
   const [abrindo, setAbrindo] = useState(false);
@@ -111,7 +113,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
     setAbrindo(true);
     try {
       // Se já há uma chamada de pé (por exemplo, retomada), reaproveita a sala.
-      const nova = sala ?? (await criarSalaChamada());
+      const nova = sala ?? (await criarSalaChamada(salaExistente || undefined));
       setSala(nova);
       await chamada.entrar(nova.sala, "advogado", { nome: "Escritório", p2p: nova.p2p }, nova.token);
     } catch (e) {
@@ -124,7 +126,7 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
     } finally {
       setAbrindo(false);
     }
-  }, [sala, chamada]);
+  }, [sala, chamada, salaExistente]);
 
   async function copiar(texto: string, qual: string) {
     try {
@@ -162,7 +164,9 @@ export default function PainelChamada({ onFaixaRemota, onFimDaFaixa, modo = "rot
       {!naChamada ? (
         <>
           <p className="mb-3 mt-0 font-normal text-[12px] leading-[1.6] font-ui text-tinta-3">
-            {modo === "documentos"
+            {salaExistente
+              ? "Atendimento agendado: a sala é a mesma do link que o cliente recebeu no WhatsApp."
+              : modo === "documentos"
               ? "Crie a chamada no Jitsi Meet e mande o link ao cliente. Você continua na aba de documentos, e a conversa entra na mesma gravação do atendimento."
               : "Abra a chamada e mande o link ao entrevistado. A voz dele chega separada da sua — é ela, e só ela, que vira texto no roteiro."}
           </p>

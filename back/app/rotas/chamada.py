@@ -13,7 +13,9 @@ from fastapi import (
     WebSocketDisconnect,
 )
 
-from .. import chamada
+from pydantic import BaseModel, Field
+
+from .. import atendimentos, chamada
 from .comum import URL_PORTAL, log
 
 roteador = APIRouter()
@@ -163,6 +165,29 @@ def token_da_sala(sala_id: str):
         # seguiria o servidor — as duas pontas negociando modos diferentes.
         "p2p": p2p_ligado(),
     }
+
+
+class PresencaCliente(BaseModel):
+    evento: str = Field("batida", pattern="^(entrou|batida|saiu)$")
+
+
+@roteador.post("/api/chamada/sala/{sala_id}/presenca")
+def presenca_na_sala(sala_id: str, pedido: PresencaCliente) -> dict:
+    """O navegador do CLIENTE avisa que entrou, segue ou saiu da sala. Sem login.
+
+    O Jitsi não conta ao servidor quem está na sala; sem este aviso, o escritório só
+    saberia da chegada do cliente olhando a chamada. Pública pela mesma razão da rota
+    do token: o nome da sala é o segredo. Não devolve nada do atendimento — só se a
+    sala pertence a um atendimento vivo.
+    """
+    try:
+        registro = atendimentos.presenca_do_cliente(sala_id.strip(), pedido.evento)
+    except atendimentos.ErroAtendimento:
+        return {"ok": False}
+    except Exception:  # noqa: BLE001 - presença é sinal auxiliar; a chamada não pode cair
+        log.warning("Presença do cliente não registrada na sala %s.", sala_id, exc_info=True)
+        return {"ok": False}
+    return {"ok": registro is not None}
 
 
 @roteador.websocket("/ws/chamada/{sala_id}")

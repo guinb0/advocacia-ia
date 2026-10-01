@@ -72,6 +72,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       // Primeiro da lista de propósito: é a tela de onde se pergunta qualquer coisa,
       // inclusive "por onde eu começo".
       itemDoMenu("chat"),
+      itemDoMenu("agenda"),
       itemDoMenu("entrevista"),
       // O dossiê, o painel, a jurimetria e o checklist são leituras de UM caso.
       // Acendem a carteira para a barra não ficar sem resposta quando o advogado
@@ -84,6 +85,7 @@ export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
       itemDoMenu("pecasProtocoladas"),
       itemDoMenu("followup"),
       itemDoMenu("documentacao"),
+      itemDoMenu("whatsapp"),
     ],
   },
   {

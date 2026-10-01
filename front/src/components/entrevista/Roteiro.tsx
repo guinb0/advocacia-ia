@@ -310,6 +310,8 @@ interface Props {
   onEscuta?: (estado: EstadoEscuta | null) => void;
   /** A versão exata que a tela mostra e que a IA deve revisar. */
   onContextoRevisao?: (contexto: ContextoRevisaoRoteiro | null) => void;
+  /** Mostra a barra "Pergunte agora" (pergunta da vez + "Próxima pergunta"). */
+  conducao?: boolean;
   ref?: Ref<ManipuladorRoteiro>;
 }
 
@@ -318,6 +320,7 @@ export default function Roteiro({
   onRespostas,
   onEscuta,
   onContextoRevisao,
+  conducao = false,
   ref,
 }: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
@@ -1926,7 +1929,8 @@ function preencherMarcadores(
             * não por cima do painel: os dois grudam ao rolar, e um passaria por
             * cima do outro. Enquanto a escuta não abriu ela só aponta por onde
             * começar — sem relógio, porque não há entrevista para cobrar ainda. */}
-          {false && <Conducao
+          {conducao && <Conducao
+            rotuloProxima="Próxima pergunta"
             pergunta={atual?.pergunta ?? null}
             bloco={atual?.bloco ?? ""}
             posicao={posicaoAtual + 1}
