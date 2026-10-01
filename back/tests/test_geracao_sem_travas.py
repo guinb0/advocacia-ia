@@ -69,3 +69,17 @@ def test_autoridades_em_cache(monkeypatch):
     a, _ = repositorio.carregar_autoridades()
     b, _ = repositorio.carregar_autoridades()
     assert len(consultas) == 1 and len(a) == len(b)
+
+
+def _solicitacao(idade_s, sid="s1"):
+    from datetime import datetime, timedelta, timezone
+    return {"id": sid, "solicitada_em": (datetime.now(timezone.utc) - timedelta(seconds=idade_s)).isoformat()}
+
+
+def test_solicitacao_orfa_ou_estourada_e_encerrada(monkeypatch):
+    monkeypatch.setattr(pl, "_EM_EXECUCAO", set())
+    assert pl._solicitacao_perdida(_solicitacao(5)) == ""
+    assert "interrompida" in pl._solicitacao_perdida(_solicitacao(60))
+    pl._EM_EXECUCAO.add("s1")
+    assert pl._solicitacao_perdida(_solicitacao(60)) == ""
+    assert "tempo limite" in pl._solicitacao_perdida(_solicitacao(pl.LIMITE_SOLICITACAO_S + 10))
