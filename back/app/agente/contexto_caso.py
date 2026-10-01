@@ -210,6 +210,32 @@ def refazer(caso_id: str, anexos: list[dict[str, Any]]) -> dict[str, Any]:
         return {"documentos": _digerir(anexos), "pesquisas": [], "buscas": [], "indisponivel": True}
 
 
+# ------------------------------------------------- análise entrevista × documentos
+
+
+def analise_guardada(caso_id: str, assinatura_dos_textos: str) -> dict[str, Any] | None:
+    """A análise já feita para ESTES textos lidos, ou None. Falha de leitura vale como ausência."""
+    try:
+        guardada = _ler(caso_id).get("analise_documentos")
+    except Exception as erro:  # noqa: BLE001
+        log.warning("análise guardada do caso %s ilegível: %s", caso_id, str(erro)[:200])
+        return None
+    if isinstance(guardada, dict) and guardada.get("assinatura") == assinatura_dos_textos:
+        resultado = guardada.get("resultado")
+        return resultado if isinstance(resultado, dict) else None
+    return None
+
+
+def guardar_analise(caso_id: str, assinatura_dos_textos: str, resultado: dict[str, Any]) -> None:
+    try:
+        with _trava:
+            dados = _ler(caso_id)
+            dados["analise_documentos"] = {"assinatura": assinatura_dos_textos, "resultado": resultado, "em": _agora()}
+            _gravar(caso_id, dados)
+    except Exception as erro:  # noqa: BLE001 — otimização, nunca requisito
+        log.warning("não foi possível guardar a análise do caso %s: %s", caso_id, str(erro)[:200])
+
+
 # ---------------------------------------------------------------------- pesquisas
 
 
