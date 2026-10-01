@@ -2002,6 +2002,12 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
         "Um AGRAVANTE (ex.: sequela, adoecimento, duração que aumenta a extensão do MESMO dano) NÃO é pedido econômico próprio: "
         "registre-o com tipo_de_item=agravante, agrava=<pedido principal>, sem valor, e considere-o no metodo_calculo do principal; "
         "só é pedido autônomo se o DANO for outro e isso estiver fundamentado. "
+        "Todo pedido de PAGAMENTO autônomo leva `valor_numerico` e `metodo_calculo` (base do documento, multiplicador, resultado, "
+        "criterio dizendo de onde saiu a base): no processo do trabalho o pedido é líquido (art. 840, § 1º, da CLT) e a peça traz a "
+        "memória de cálculo — nunca «a apurar em liquidação». Sem dado para calcular, o pedido não entra e vai para "
+        "`riscos_ou_lacunas`. Verba rescisória (multa do art. 477, multa do art. 467, aviso prévio, 40% do FGTS, seguro-desemprego, "
+        "saldo de salário) só existe com o contrato ENCERRADO nos documentos ou com rescisão indireta pedida nesta ação: com o "
+        "vínculo ativo, não peça. "
         "`ausencias`: [{\"afirmacao\":\"o que os documentos disponíveis NÃO registram\",\"estado\":\"NOT_FOUND_IN_AVAILABLE_DOCUMENTS|UNKNOWN|DISPUTED\"}] — "
         "nunca como ausência comprovada. "
         "`partes`: SOMENTE dados que constam dos documentos, da entrevista ou do cadastro — campo desconhecido fica vazio, "
@@ -3075,6 +3081,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     )
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
+    pendencias += _pendencias_do_auditor(rel_linter)
     atualizacao = _resultado_da_atualizacao(atualizacao_futura)
     if atualizacao:
         pendencias += [p for p in atualizacao.get("pendencias") or [] if p not in pendencias]
@@ -3385,6 +3392,12 @@ def _resultado_da_atualizacao(futuro: Any) -> dict[str, Any] | None:
         return futuro.result(timeout=max(1.0, min(ESPERA_MAXIMA_ATUALIZACAO_S, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
     except Exception as erro:  # noqa: BLE001 - inclui TimeoutError
         return {"executada": False, "motivo": f"não concluiu a tempo ou falhou: {_erro_curto(erro)}", "candidatos": [], "pendencias": []}
+
+
+def _pendencias_do_auditor(relatorio: dict[str, Any] | None) -> list[str]:
+    retirados = (relatorio or {}).get("pedidos_retirados") or []
+    return [f"Pedido retirado: «{r}» é verba rescisória e os documentos indicam o contrato ativo, sem rescisão indireta pedida. "
+            "Se o contrato terminou ou a estratégia for a rescisão indireta, informe e gere de novo." for r in retirados]
 
 
 def _avisos_de_atualizacao(atualizacao: dict[str, Any] | None) -> list[str]:

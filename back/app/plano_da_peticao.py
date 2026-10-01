@@ -373,5 +373,57 @@ def renderizar_pedidos(plano: dict[str, Any], redigir: Callable[[list[dict[str, 
         linhas.append(f"{letra}) {texto}{';' if n < len(pedidos) - 1 else '.'}")
     abertura = str(saida.get("abertura") or "").strip()
     fecho = str(saida.get("fecho") or "").strip()
-    texto = "\n\n".join(x for x in (abertura, "\n\n".join(linhas), fecho) if x)
-    return texto, {"pedidos_renderizados": [p["id"] for p in pedidos], "sem_redacao_do_modelo": faltou}
+    memoria = memoria_de_calculo(pedidos)
+    texto = "\n\n".join(x for x in (abertura, "\n\n".join(linhas), fecho, memoria) if x)
+    return texto, {"pedidos_renderizados": [p["id"] for p in pedidos], "sem_redacao_do_modelo": faltou,
+                   "memoria_de_calculo": bool(memoria)}
+
+
+TITULO_MEMORIA = "Memória de cálculo dos pedidos"
+
+
+def _numero(v: Any) -> float | None:
+    from .juridico.calculos import valor_numerico
+
+    n = valor_numerico(v) if v not in (None, "") else None
+    return float(n) if n is not None else None
+
+
+def _fator(x: float) -> str:
+    return f"{int(x)}" if float(x).is_integer() else f"{x:.4f}".rstrip("0").replace(".", ",")
+
+
+def memoria_de_calculo(pedidos: list[dict[str, Any]]) -> str:
+    """Tabela da memória de cálculo montada do LEDGER (nunca do modelo): pedido, critério/base, conta e resultado.
+
+    A letra é a mesma da lista de pedidos; só entram os pedidos com valor em R$. O total soma apenas os
+    cumulativos autônomos — a mesma regra do valor da causa.
+    """
+    from .juridico.calculos import brl, valor_da_causa
+
+    linhas = []
+    for n, p in enumerate(pedidos):
+        valor = _numero(p.get("valor"))
+        if valor is None or valor <= 0 or str(p.get("unidade") or "BRL") != "BRL":
+            continue
+        letra = "abcdefghijklmnopqrstuvwxyz"[n] if n < 26 else f"{n + 1}"
+        metodo = p.get("metodo_calculo") if isinstance(p.get("metodo_calculo"), dict) else {}
+        base, mult = _numero(metodo.get("base")), _numero(metodo.get("multiplicador"))
+        criterio = str(metodo.get("criterio") or p.get("valor_ou_base") or "valor atribuído ao pedido").strip()
+        if base is not None and mult is not None:
+            conta = f"{brl(base)} × {_fator(mult)}"
+        elif base is not None:
+            conta = brl(base)
+        else:
+            conta = "valor atribuído"
+        nome = str(p.get("tipo") or p.get("objeto") or "").strip()
+        if str(p.get("natureza") or "cumulativo") != "cumulativo":
+            nome += f" ({p['natureza']})"
+        nome, criterio = nome.replace("|", "/"), criterio.replace("|", "/")
+        linhas.append(f"| {letra}) {nome} | {criterio} | {conta} | {brl(valor)} |")
+    if not linhas:
+        return ""
+    total = valor_da_causa(pedidos)["valor"]
+    tabela = ["| Pedido | Critério e base | Conta | Resultado |", "| --- | --- | --- | --- |", *linhas,
+              f"| Total dos pedidos cumulativos |  |  | {brl(total)} |"]
+    return f"{TITULO_MEMORIA}:\n\n" + "\n".join(tabela)

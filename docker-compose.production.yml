@@ -102,6 +102,11 @@ services:
       PGVECTOR_PASSWORD: ${PGVECTOR_PASSWORD?PGVECTOR_PASSWORD is required}
       PGVECTOR_SSLMODE: prefer
       PGVECTOR_TABLE: knowledge_chunks
+      # Acervo Juridico: CLT conferida toda semana (domingo 03:00) contra o texto oficial
+      # do Planalto/Camara; a garantia (30 min) faz a primeira carga apos o deploy.
+      # So roda com EMBEDDINGS_* configurado (ver app/tasks/acervo.py).
+      ACERVO_SINCRONIZACAO_ATIVA: ${ACERVO_SINCRONIZACAO_ATIVA:-1}
+      ACERVO_DOCUMENTOS_AGENDADOS: ${ACERVO_DOCUMENTOS_AGENDADOS:-clt-1943}
 
       # Vazio DESLIGA a autenticacao e abre a API inteira (ver app/auth.py).
       JWT_SECRET: ${JWT_SECRET?JWT_SECRET is required}
@@ -381,6 +386,8 @@ services:
   # chamada lenta de IA não deixa o watchdog sem executar.
   worker-maintenance:
     image: registry.level33lab.cloud/ia/advocacia-ia:${IMAGE_TAG:-latest}
+    # O limite de memoria cobre o parse do texto integral da CLT na sincronizacao
+    # semanal do Acervo (alguns minutos por semana; o watchdog espera na fila).
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--pool=prefork", "--concurrency=1", "--max-tasks-per-child=100", "--max-memory-per-child=196608", "-Q", "low", "-n", "maintenance@%h"]
     environment: *ambiente_api
     volumes:
@@ -393,7 +400,7 @@ services:
         window: "30s"
       resources:
         limits:
-          memory: 256M
+          memory: 1024M
           cpus: "0.50"
     networks:
       interna: {}
