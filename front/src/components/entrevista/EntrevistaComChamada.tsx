@@ -726,7 +726,6 @@ export default function EntrevistaComChamada({
             * embaixo, depois das etapas seguintes. */}
           <Roteiro
             ref={roteiro}
-            conducao={fluxoV2 && encerrada === null}
             onEscuta={setEscuta}
             onContextoRevisao={atualizarContextoRoteiro}
             onRespostas={(respostas, relato, entrevistaId) => {
