@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   analisarEstrategia,
   consultarCpf,
+  encerrarAtendimentoDocumentacao,
   gravarEntrevistaAoVivo,
   listarAssinaturas,
   obterRoteiro,
@@ -12,6 +13,15 @@ import {
   triarEntrevista,
   vincularAssinaturaAoCaso,
 } from "@/lib/api";
+import {
+  finalizarEntrevistaAtendimento,
+  ligarEntrevistaAoAtendimento,
+  seguirParaAnalise,
+  type CasoDoAtendimento,
+  type EntradaAnalise,
+} from "@/lib/api/atendimentos";
+import { definirAtendimentoAtivo, useAtendimentoAtivo, useFluxoV2 } from "@/lib/atendimentoAtivo";
+import FluxoPosEntrevista from "@/components/atendimento/FluxoPosEntrevista";
 import {
   CapturaEntrevista,
   montarTranscricaoBruta,
@@ -138,12 +148,26 @@ function edicoesPreenchidas(edicoes: Record<string, string>): Record<string, str
   return Object.fromEntries(Object.entries(edicoes).filter(([, valor]) => valor.trim() !== ""));
 }
 
-function DadosCadastraisFinais({ respostas, confirmado, avisoCpf, onAlterar, onContinuar }: {
+function DadosCadastraisFinais({
+  respostas,
+  confirmado,
+  avisoCpf,
+  onAlterar,
+  onContinuar,
+  etapa = "Etapa 1 · fechamento",
+  rotuloContinuar,
+  nota = "Depois disso aparecem avaliação, documentos e criação do caso.",
+  ocupado,
+}: {
   respostas: Record<string, string | string[]>;
   confirmado: boolean;
   avisoCpf?: string;
   onAlterar: (id: string, valor: string) => void;
   onContinuar: () => void;
+  etapa?: string;
+  rotuloContinuar?: string;
+  nota?: string;
+  ocupado?: boolean;
 }) {
   const [tentouContinuar, setTentouContinuar] = useState(false);
   const telefone = String(respostas.telefone ?? "");
@@ -186,7 +210,7 @@ function DadosCadastraisFinais({ respostas, confirmado, avisoCpf, onAlterar, onC
   return (
     <section className="mb-5 mt-6 overflow-hidden rounded-cartao border border-borda-forte bg-papel shadow-cartao">
       <header className="border-b border-borda bg-papel-2 px-4 py-4 sm:px-5">
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">Etapa 1 · fechamento</span>
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-acao">{etapa}</span>
         <h3 className="mt-1 text-lg font-semibold text-tinta">Confira os dados cadastrais</h3>
         <p className="mb-0 mt-1 max-w-[72ch] text-xs leading-[1.55] text-tinta-3">
           Qualificação do cliente, depois da entrevista. Digite o CPF para puxar os dados da base; o que foi dito na entrevista também já vem preenchido. Confira e corrija o que precisar; e-mail e WhatsApp serão usados no contato com o cliente.
@@ -209,6 +233,8 @@ function DadosCadastraisFinais({ respostas, confirmado, avisoCpf, onAlterar, onC
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-borda pt-4">
           <Botao
             variante="primario"
+            carregando={ocupado}
+            textoCarregando="Salvando…"
             onClick={() => {
               if (telefoneVazio && !tentouContinuar) {
                 setTentouContinuar(true);
@@ -217,11 +243,9 @@ function DadosCadastraisFinais({ respostas, confirmado, avisoCpf, onAlterar, onC
               onContinuar();
             }}
           >
-            {confirmado ? "Dados atualizados" : "Salvar e continuar"}
+            {rotuloContinuar ?? (confirmado ? "Dados atualizados" : "Salvar e continuar")}
           </Botao>
-          <span className="text-xs text-tinta-3">
-            Depois disso aparecem avaliação, documentos e criação do caso.
-          </span>
+          <span className="text-xs text-tinta-3">{nota}</span>
         </div>
       </div>
     </section>
@@ -396,6 +420,102 @@ export default function TriagemEntrevista({
   // A chamada vive na raiz do app; aqui ela serve para a última etapa saber se
   // ainda há cliente na linha, e para oferecer o desligar sem sair da tela.
   const chamada = useChamada();
+
+  /* -------- fluxo de atendimento v2 --------
+   *
+   * Com a flag ligada, a entrevista pertence a um atendimento do servidor (o
+   * agendado que trouxe até aqui, ou um avulso criado agora) e o pós-entrevista
+   * segue o estado dele. Desligada, tudo abaixo fica como sempre foi. */
+  const fluxoV2 = useFluxoV2() === true;
+  const atendimentoAtivo = useAtendimentoAtivo();
+  const [atendimentoId, setAtendimentoId] = useState<string | null>(null);
+  const [erroAtendimento, setErroAtendimento] = useState<string | null>(null);
+  const ligacao = useRef<Promise<string> | null>(null);
+  const casosDoAtendimento = useRef<string[]>([]);
+  const transcricaoAtual = useRef<TrechoTranscrito[]>([]);
+  transcricaoAtual.current = transcricao;
+  const abertoPeloAtivo = useRef<string | null>(null);
+
+  const garantirAtendimento = (entrevistaId: string): Promise<string> => {
+    ligacao.current ??= ligarEntrevistaAoAtendimento({
+      entrevista_id: entrevistaId,
+      cliente: String(qualificacao?.nome ?? atendimentoAtivo?.cliente ?? ""),
+      sala: chamada.sala ?? atendimentoAtivo?.sala ?? null,
+      atendimento_id: atendimentoAtivo?.id ?? null,
+    }).then(
+      (registro) => {
+        setAtendimentoId(registro.id);
+        setErroAtendimento(null);
+        return registro.id;
+      },
+      (e: unknown) => {
+        ligacao.current = null;
+        setErroAtendimento(e instanceof Error ? e.message : "Não foi possível registrar o atendimento.");
+        throw e;
+      },
+    );
+    return ligacao.current;
+  };
+
+  useEffect(() => {
+    if (fluxoV2 && mostrarRoteiro && audioEntrevista && !atendimentoId) {
+      void garantirAtendimento(audioEntrevista).catch(() => undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- liga uma vez por entrevista
+  }, [fluxoV2, mostrarRoteiro, audioEntrevista, atendimentoId]);
+
+  /* Veio da agenda ou do alerta "cliente entrou": abre a entrevista na sala dele. */
+  useEffect(() => {
+    if (!fluxoV2 || !atendimentoAtivo || abertoPeloAtivo.current === atendimentoAtivo.id) return;
+    abertoPeloAtivo.current = atendimentoAtivo.id;
+    if (!mostrarRoteiro && !qualificacao) setMostrarRoteiro(true);
+  }, [fluxoV2, atendimentoAtivo, mostrarRoteiro, qualificacao]);
+
+  const aoFinalizarEntrevista = async (entrevistaId: string, revisada: boolean) => {
+    const id = await garantirAtendimento(entrevistaId);
+    await finalizarEntrevistaAtendimento(id);
+    await seguirParaAnalise(id, revisada);
+  };
+
+  const montarEntradaAnalise = (): EntradaAnalise => {
+    const perguntas: Record<string, string> = {};
+    for (const bloco of roteiroAtivo?.blocos ?? []) {
+      for (const pergunta of bloco.perguntas) perguntas[pergunta.id] = pergunta.texto;
+    }
+    const respostas = Object.fromEntries(
+      Object.entries(qualificacao ?? {}).filter(([, v]) => (Array.isArray(v) ? v.length > 0 : String(v ?? "").trim() !== "")),
+    );
+    return {
+      transcricao: montarTranscricaoBruta(transcricaoAtual.current),
+      relato: texto,
+      respostas,
+      perguntas: Object.fromEntries(Object.entries(perguntas).filter(([id]) => id in respostas)),
+      triagem_ao_vivo: null,
+    };
+  };
+
+  const qualificarCasos = async (casos: CasoDoAtendimento[]) => {
+    const dados = qualificacao ?? {};
+    casosDoAtendimento.current = casos.map((c) => c.id);
+    const nome = String(dados.nome ?? "");
+    const cpf = String(dados.cpf ?? "");
+    let assinaturas: Awaited<ReturnType<typeof listarAssinaturas>> = [];
+    if (nome && cpf) {
+      try {
+        assinaturas = await listarAssinaturas({ cliente: nome, cpf });
+      } catch {
+        // A listagem de assinaturas retoma o vínculo na próxima abertura.
+      }
+    }
+    for (const caso of casos) {
+      await guardarEntrevista(caso.id, transcricaoAtual.current, audioEntrevista, false);
+      // A mesma gravação do fluxo antigo: é ela que traduz os campos da tela
+      // (mae, pai…) para as colunas da qualificação.
+      await salvarQualificacaoDoCaso(caso.id, dados);
+      await Promise.allSettled(assinaturas.map((item) => vincularAssinaturaAoCaso(item.id, caso.id)));
+    }
+    return null;
+  };
 
   /* Avisa a tela de fora em que ponto este atendimento está.
    *
@@ -593,18 +713,51 @@ export default function TriagemEntrevista({
    * durante a entrevista elas ficam logo abaixo do roteiro, na mesma rolagem, e
    * depois de fechada continuam aqui na tela de casos. Duplicar o bloco faria
    * as duas cópias divergirem no primeiro ajuste. */
-  const etapasDoAtendimento = qualificacao && (
+  const alterarCadastro = (id: string, bruto: string) => {
+    const valor = id === "cpf" ? formatarCpf(bruto) : bruto;
+    edicoesCadastro.current = { ...edicoesCadastro.current, [id]: valor };
+    setQualificacao((atuais) => ({ ...(atuais ?? {}), [id]: valor }));
+    if (id === "cpf") consultarCpfDaQualificacao(valor);
+  };
+
+  /* v2: o pós-entrevista é do atendimento — análise, ações, casos, qualificação,
+   * avaliação e aviso à Documentação. Contrato e assinatura ficam na tela do caso. */
+  const etapasV2 = atendimentoId ? (
+    <FluxoPosEntrevista
+      atendimentoId={atendimentoId}
+      categorias={categorias}
+      montarEntrada={montarEntradaAnalise}
+      telefoneInicial={String(qualificacao?.telefone ?? atendimentoAtivo?.telefone ?? "")}
+      cliente={String(qualificacao?.nome ?? atendimentoAtivo?.cliente ?? "")}
+      onQualificar={qualificarCasos}
+      onAbrirCaso={onAbrirDossie}
+      renderCadastro={(aoConfirmar, ocupado) => (
+        <DadosCadastraisFinais
+          respostas={qualificacao ?? {}}
+          confirmado={false}
+          avisoCpf={avisoCpf}
+          onAlterar={alterarCadastro}
+          onContinuar={aoConfirmar}
+          etapa="Qualificação"
+          rotuloContinuar="Salvar qualificação e continuar"
+          nota="Grava o cadastro em todos os casos criados e segue para a avaliação do escritório."
+          ocupado={ocupado}
+        />
+      )}
+    />
+  ) : erroAtendimento ? (
+    <Aviso tom="critico" titulo="O atendimento não foi registrado">
+      {erroAtendimento}
+    </Aviso>
+  ) : null;
+
+  const etapasDoAtendimento = fluxoV2 ? etapasV2 : qualificacao && (
     <>
       <DadosCadastraisFinais
         respostas={qualificacao}
         confirmado={cadastroConfirmado}
         avisoCpf={avisoCpf}
-        onAlterar={(id, bruto) => {
-          const valor = id === "cpf" ? formatarCpf(bruto) : bruto;
-          edicoesCadastro.current = { ...edicoesCadastro.current, [id]: valor };
-          setQualificacao((atuais) => ({ ...(atuais ?? {}), [id]: valor }));
-          if (id === "cpf") consultarCpfDaQualificacao(valor);
-        }}
+        onAlterar={alterarCadastro}
         onContinuar={() => {
           setCadastroConfirmado(true);
           window.setTimeout(() => {
@@ -746,6 +899,9 @@ export default function TriagemEntrevista({
       <div className="min-w-0 p-4 sm:p-5">
       {mostrarRoteiro ? (
         <EntrevistaComChamada
+          fluxoV2={fluxoV2}
+          salaExistente={fluxoV2 ? atendimentoAtivo?.sala ?? null : null}
+          onEntrevistaFinalizada={fluxoV2 ? aoFinalizarEntrevista : undefined}
           onRoteiroAtivo={setRoteiroAtivo}
           /* As respostas sobem a cada mudança: é o que deixa as etapas abaixo
            * do roteiro prontas antes de a entrevista fechar. O relato e o id do
@@ -775,6 +931,12 @@ export default function TriagemEntrevista({
             if (casoCriado) {
               void guardarEntrevista(casoCriado, trechos, entrevistaId, true, relato);
             }
+            for (const casoId of casosDoAtendimento.current) {
+              void guardarEntrevista(casoId, trechos, entrevistaId, true, relato);
+            }
+            // Pedido de presença antigo não pode tocar na Documentação depois do fim.
+            if (entrevistaId) void encerrarAtendimentoDocumentacao(entrevistaId).catch(() => undefined);
+            if (fluxoV2) definirAtendimentoAtivo(null);
           }}
           onFechar={() => setMostrarRoteiro(false)}
           depois={etapasDoAtendimento}
@@ -805,7 +967,7 @@ export default function TriagemEntrevista({
         * Elas foram feitas lá dentro, na mesma rolagem da entrevista; mostrá-las
         * de novo, zeradas, faz o atendente achar que perdeu o que já tinha feito
         * — foi o que aconteceu. Fica o resumo e o próximo passo. */}
-      {encerrado && !mostrarRoteiro && (
+      {encerrado && !mostrarRoteiro && !fluxoV2 && (
         <div className="mt-5 border-l-[3px] border-ok px-[14px] py-3 bg-papel-2 max-w-[74ch] font-normal text-[12.5px] leading-[1.6] font-ui">
           <strong>Atendimento encerrado.</strong> A gravação foi fechada e a chamada,
           desligada.{" "}

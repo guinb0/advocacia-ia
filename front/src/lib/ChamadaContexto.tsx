@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 
+import { avisarPresenca } from "./api/atendimentos";
 import { ChamadaJitsi } from "./chamadaJitsi";
 import type {
   EstadoChamada,
@@ -248,6 +249,25 @@ export function ProvedorChamada({ children }: { children: React.ReactNode }) {
     window.addEventListener("pagehide", aoSair);
     return () => window.removeEventListener("pagehide", aoSair);
   }, []);
+
+  /* PRESENÇA NA SALA. O Jitsi não conta ao servidor quem entrou; quem conta é
+   * este navegador: "entrou" ao ficar na sala, "batida" a cada 30 s, "saiu" ao
+   * desligar ou fechar a aba. É o que cria (e resolve) o alerta de cliente
+   * aguardando. Sala que não é de atendimento responde ok:false e nada muda. */
+  const naSala = estado === "aguardando" || estado === "conectando" || estado === "falando";
+  useEffect(() => {
+    if (!naSala || !sala || !papel) return;
+    const lado = papel === "cliente" ? "cliente" : "escritorio";
+    void avisarPresenca(sala, "entrou", lado);
+    const batida = window.setInterval(() => void avisarPresenca(sala, "batida", lado), 30_000);
+    const aoFechar = () => void avisarPresenca(sala, "saiu", lado);
+    window.addEventListener("pagehide", aoFechar);
+    return () => {
+      window.clearInterval(batida);
+      window.removeEventListener("pagehide", aoFechar);
+      void avisarPresenca(sala, "saiu", lado);
+    };
+  }, [naSala, sala, papel]);
 
   const valor: ValorChamada = {
     estado,

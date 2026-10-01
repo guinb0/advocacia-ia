@@ -26,6 +26,7 @@ const CHAMADA_VIVA_MS = 90_000;
 const ROTULO_STATUS: Record<AtendimentoDocumentacao["status"], string> = {
   entrevista: "entrevista em andamento",
   solicitado: "aguardando documentador",
+  aguardando_documentacao: "aguardando documentação",
   assumido: "assumido",
   encerrado: "encerrado",
 };

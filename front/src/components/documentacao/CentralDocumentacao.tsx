@@ -36,13 +36,35 @@ interface Props {
 
 const ROTULO_STATUS: Record<AtendimentoDocumentacao["status"], string> = {
   entrevista: "entrevista em andamento",
-  solicitado: "aguardando documentação",
+  solicitado: "chamando na chamada",
+  aguardando_documentacao: "aguardando documentação",
   assumido: "assumido",
   encerrado: "encerrado",
 };
 const CHAMADA_VIVA_MS = 90_000;
 
-type Filtro = "todos" | "solicitados" | "em_chamada" | "com_pendencias";
+/* Pedidos já avisados, por pedido (entrevista + instante do pedido): sobrevive à
+ * troca de tela e ao F5 — com `useRef` cada volta à Central tocava tudo de novo. */
+const CHAVE_AVISADOS = "documentacao:avisados";
+const MAXIMO_AVISADOS = 200;
+
+function lerAvisados(): Set<string> {
+  try {
+    return new Set(JSON.parse(window.localStorage.getItem(CHAVE_AVISADOS) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function gravarAvisados(avisados: Set<string>) {
+  try {
+    window.localStorage.setItem(CHAVE_AVISADOS, JSON.stringify([...avisados].slice(-MAXIMO_AVISADOS)));
+  } catch {
+    /* sem armazenamento: no pior caso o aviso toca de novo */
+  }
+}
+
+type Filtro = "todos" | "solicitados" | "novos_casos" | "em_chamada" | "com_pendencias";
 
 function chamadaViva(item: AtendimentoDocumentacao): boolean {
   if (!item.sala) return false;
@@ -81,7 +103,7 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
   const [permissao, setPermissao] = useState<NotificationPermission | "indisponivel">(
     typeof window !== "undefined" && "Notification" in window ? Notification.permission : "indisponivel",
   );
-  const vistas = useRef(new Set<string>());
+  const vistas = useRef<Set<string> | null>(null);
   const chamada = useChamada();
   const sessao = useSessao();
 
@@ -128,11 +150,18 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
           prontos: r.casos_prontos,
         });
         setErro(null);
+        vistas.current ??= lerAvisados();
+        let mudou = false;
         for (const item of r.atendimentos) {
-          if (item.status !== "solicitado" || vistas.current.has(item.entrevista_id)) continue;
-          vistas.current.add(item.entrevista_id);
+          // Só toca pedido de chamada ainda de pé; caso novo sem chamada aparece na lista e no alerta global.
+          if (item.status !== "solicitado" || !chamadaViva(item)) continue;
+          const chave = `${item.entrevista_id}:${item.solicitado_em ?? ""}`;
+          if (vistas.current.has(chave)) continue;
+          vistas.current.add(chave);
+          mudou = true;
           avisar(item);
         }
+        if (mudou) gravarAvisados(vistas.current);
       })
       .catch((e) => setErro(e instanceof Error ? e.message : "Não foi possível atualizar a fila."));
   }, [avisar]);
@@ -150,6 +179,20 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
   }, [carregar]);
 
   async function assumir(item: AtendimentoDocumentacao) {
+    if (item.status === "aguardando_documentacao") {
+      setAssumindo(item.entrevista_id);
+      setErro(null);
+      try {
+        const reservado = await assumirAtendimentoDocumentacao(item.entrevista_id);
+        if (!reservado.caso_id) throw new Error("O atendimento ainda não possui um caso vinculado.");
+        onAbrirDocumentos(reservado.caso_id);
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : "Não foi possível assumir o caso.");
+      } finally {
+        setAssumindo(null);
+      }
+      return;
+    }
     if (!item.sala) return;
     setAssumindo(item.entrevista_id);
     setErro(null);
@@ -179,6 +222,7 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
 
   const filtrada = fila.filter((item) => {
     if (filtro === "solicitados") return item.status === "solicitado";
+    if (filtro === "novos_casos") return item.status === "aguardando_documentacao";
     if (filtro === "em_chamada") return chamadaViva(item);
     if (filtro === "com_pendencias") {
       return Boolean(item.documentos && (item.documentos.pendencias.length || item.documentos.a_conferir.length || item.documentos.em_triagem));
@@ -309,6 +353,7 @@ export default function CentralDocumentacao({ onVoltar, onAbrirDocumentos }: Pro
             {([
               ["todos", "Todos", fila.length],
               ["solicitados", "Chamando equipe", metricas.solicitacoes],
+              ["novos_casos", "Novos casos", fila.filter((i) => i.status === "aguardando_documentacao").length],
               ["em_chamada", "Em chamada", fila.filter(chamadaViva).length],
               ["com_pendencias", "Com pendências", fila.filter((i) => Boolean(i.documentos?.pendencias.length)).length],
             ] as Array<[Filtro, string, number]>).map(([codigo, rotulo, total]) => (
@@ -415,8 +460,9 @@ function AtendimentoLinha({
   onAlternar: () => void;
   onAbrirDocumentos: (casoId: string) => void;
 }) {
-  const solicitado = item.status === "solicitado";
-  const viva = chamadaViva(item);
+  const aguardandoCaso = item.status === "aguardando_documentacao";
+  const solicitado = item.status === "solicitado" || aguardandoCaso;
+  const viva = !aguardandoCaso && chamadaViva(item);
   const docs = item.documentos;
   return (
     <li className={solicitado ? "bg-acao-clara" : "bg-papel"}>
@@ -472,7 +518,20 @@ function AtendimentoLinha({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          {solicitado && viva ? (
+          {aguardandoCaso ? (
+            <BotaoProcesso
+              variante="primario"
+              pequeno
+              onClick={() => void onAssumir(item)}
+              processando={assumindo === item.entrevista_id}
+              textoProcessando="Assumindo…"
+              aguardando={assumindo !== null}
+              className="max-w-full"
+            >
+              <FolderOpen size={15} aria-hidden />
+              <span className="min-w-0 truncate">Assumir caso</span>
+            </BotaoProcesso>
+          ) : solicitado && viva ? (
             <BotaoProcesso
               variante="primario"
               pequeno
