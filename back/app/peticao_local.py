@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import functools
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import io
@@ -900,7 +901,8 @@ MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "100000"))
 
 
 def _llm_json(
-    instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None
+    instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None,
+    repetir_apos_timeout: bool = True,
 ) -> dict[str, Any]:
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
@@ -963,6 +965,9 @@ def _llm_json(
             log.warning(
                 "petição local: LLM falhou (tentativa %s/2): %s", tentativa, erro
             )
+            # Etapa opcional que já esperou o prazo inteiro: repetir dobraria a espera com a tela parada.
+            if not repetir_apos_timeout and isinstance(erro, httpx.TimeoutException):
+                break
             continue
         if not isinstance(saida, dict):
             # JSON válido que não é objeto (uma lista, um número) quebraria adiante,
@@ -1157,7 +1162,34 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     return "\n\n".join(blocos)
 
 
+#: Leitura dos documentos guardada durante UMA geração (`gerar` liga): a mesma geração consultava o inventário e
+#: todas as extrações do caso no SQL Server seis ou mais vezes. Fora de `gerar` não há cache.
+_DOCUMENTOS_DA_GERACAO: ContextVar[dict[str, Any] | None] = ContextVar("documentos_da_geracao", default=None)
+
+
 def documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    guardados = _DOCUMENTOS_DA_GERACAO.get()
+    if guardados is not None and caso_id in guardados:
+        ledger, documentos = guardados[caso_id]
+        return list(ledger), list(documentos)
+    resultado = _ler_documentos_logicos(caso_id)
+    if guardados is not None:
+        guardados[caso_id] = resultado
+    return list(resultado[0]), list(resultado[1])
+
+
+def _com_documentos_da_geracao(funcao: Any) -> Any:
+    @functools.wraps(funcao)
+    def envolvida(*args: Any, **kwargs: Any) -> Any:
+        marca = _DOCUMENTOS_DA_GERACAO.set({})
+        try:
+            return funcao(*args, **kwargs)
+        finally:
+            _DOCUMENTOS_DA_GERACAO.reset(marca)
+    return envolvida
+
+
+def _ler_documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """(DOCUMENT_LEDGER, texto de cada documento LÓGICO na ordem do ledger).
 
     O ledger é o inventário dos anexos, não o inventário do OCR.  Antes, um
@@ -1414,7 +1446,7 @@ def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
     ]
 
 
-def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
+def _montar_contexto(caso_id: str, texto_entrevista: str, *, brief: dict[str, Any] | None = None) -> str:
     caso = armazenamento.obter_caso(caso_id) or {}
     situacao = casos_ocr.montar_situacao(caso_id) or {}
     categoria = (
@@ -1443,7 +1475,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     # o case brief antes dos vinte documentos inteiros, a busca por embeddings
     # parte dos fatos e provas do CASO, não do texto cru dos anexos.
     try:
-        linhas.append("\n" + case_brief.para_prompt(case_brief.montar(caso_id)))
+        linhas.append("\n" + case_brief.para_prompt(brief if brief is not None else case_brief.montar(caso_id)))
     except Exception as erro:
         log.warning("petição local: case brief indisponível no contexto: %s", erro)
     # A ANÁLISE DOCUMENTAL (skill documental) chega à geração como MATERIAL do caso — fatos com
@@ -2022,7 +2054,7 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
     try:
         if caso_id:
             instrucao = _com_skill_do_escritorio(caso_id, instrucao)
-        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0)
+        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0, repetir_apos_timeout=False)
     except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
         log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
         return None
@@ -2647,6 +2679,7 @@ def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
 
 
 @skill_peticao.com_skill_do_caso
+@_com_documentos_da_geracao
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
@@ -2665,17 +2698,18 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
             for r in regras_aplicadas
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
-    contexto = _montar_contexto(caso_id, texto_entrevista)
-    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     try:
         brief = case_brief.montar(caso_id)
     except Exception as erro:
         log.warning("petição local: case brief indisponível para trace/cobertura: %s", erro)
         brief = None
+    contexto = _montar_contexto(caso_id, texto_entrevista, brief=brief)
+    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
     # O plano (teses + fatos + provas) vem ANTES da recuperação: é dele que saem as consultas.
     avancar_etapa("Planejando teses, fatos e provas…", 18)
     plano = _outline_juridico(contexto, caso_id)
+    avancar_etapa("Cruzando o plano com os documentos do caso…", 20)
     outline = _outline_para_redigir(plano)
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
     texto_do_caso = contexto
@@ -3330,6 +3364,8 @@ def _etapa_juridica(nome: str, funcao: Any, falhas: list[str], diag: dict[str, A
 _EXECUTOR_SOMBRA = ThreadPoolExecutor(max_workers=2, thread_name_prefix="juridico-sombra")
 #: Quanto a peça legada, já pronta, pode esperar o modo shadow terminar.
 ESPERA_MAXIMA_SOMBRA_S = float(os.getenv("PETICAO_JURIDICO_SOMBRA_ESPERA_S", "45"))
+#: No assistido o motor só acrescenta pendências: a peça pronta não fica parada esperando por ele.
+ESPERA_ASSISTIDO_S = float(os.getenv("PETICAO_ASSISTIDO_ESPERA_S", "10"))
 
 
 def _em_sombra(funcao: Any) -> Any:
@@ -3360,8 +3396,9 @@ def _juridico_em_sombra(
     if futuro is None:
         falhas.append("análise: não iniciou")
     else:
+        espera = ESPERA_ASSISTIDO_S if modo == juridico.ASSISTIDO else ESPERA_MAXIMA_SOMBRA_S
         try:
-            prep = futuro.result(timeout=max(1.0, min(ESPERA_MAXIMA_SOMBRA_S, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
+            prep = futuro.result(timeout=max(1.0, min(espera, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
         except TimeoutError:
             falhas.append("análise: não terminou a tempo; a peça legada não esperou")
         except Exception as erro:  # noqa: BLE001
