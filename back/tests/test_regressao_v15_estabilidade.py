@@ -163,6 +163,12 @@ def test_ausencia_falsa_de_contracheque_listado():
     )
 
 
+def test_documento_listado_sem_negacao_devolve_lista_vazia():
+    secoes = [{"code": "FACTS", "content": "Os contracheques (Documento 13) comprovam o salário."}]
+    ledger = [{"document_type": "contracheque", "canonical_file": "holerite.pdf"}]
+    assert ae.ausencia_falsa_de_documento_listado(secoes, ledger) == []
+
+
 def test_erros_juridicos_ect_bloqueiam_a_entrega():
     secoes = [{"code": "LEGAL_GROUNDS", "content": """
 O nexo presumido do TEPT decorre do evento. O serviço médico da própria
