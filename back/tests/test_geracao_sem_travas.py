@@ -83,3 +83,12 @@ def test_solicitacao_orfa_ou_estourada_e_encerrada(monkeypatch):
     pl._EM_EXECUCAO.add("s1")
     assert pl._solicitacao_perdida(_solicitacao(60)) == ""
     assert "tempo limite" in pl._solicitacao_perdida(_solicitacao(pl.LIMITE_SOLICITACAO_S + 10))
+
+
+def test_plano_tem_prazo_total_e_a_geracao_segue_sem_ele(monkeypatch):
+    import time
+    monkeypatch.setattr(pl, "PRAZO_PLANO_S", 0.3)
+    monkeypatch.setattr(pl, "_llm_json", lambda *a, **k: time.sleep(2) or {"teses": [1]})
+    inicio = time.monotonic()
+    assert pl._outline_juridico("contexto") is None
+    assert time.monotonic() - inicio < 1.5
